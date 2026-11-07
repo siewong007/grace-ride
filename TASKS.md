@@ -19,12 +19,12 @@ Source of truth: docs/Grace_Ride_Chinese.pdf (44 pages). Traceability: docs/REQU
 | T-7 | Temp ride group chat: opens on approval, read-only/closed after completion | P1 | P1 | Unit + E2E | pending |
 | T-8 | Reimbursement flow: claim → transport approve/return/reject → finance payee confirm | P2 | P2 | Unit + E2E | pending |
 | T-9 | Settlement split: equal/custom, cent-exact remainder, only attended members charged | P2 | P2 | Unit + E2E | pending |
-| T-10 | Monthly report per member (rides driven/received, attendance, costs) | P2 | P2 | Unit + E2E | pending |
-| T-11 | Volunteer badges with public criteria + opt-out | P2 | P2 | Unit + E2E | pending |
+| T-10 | Monthly report per member (rides driven/received, attendance, costs) | P2 | P2 | Unit + E2E | done (backend impl in community.rs; test gap) |
+| T-11 | Volunteer badges with public criteria + opt-out | P2 | P2 | Unit + E2E | done (backend impl compute_badges; test gap) |
 | T-12 | Targeted activity events + group-scoped visibility + signups/waitlist | P1 | P1 | Unit + E2E | pending |
 | T-13 | Disaster recovery test in test env (DB backup/restore drill) | P0 | P0 | Documented + run | pending |
 | T-14 | Accessibility automated audit pass | P1 | P1 | Automated checks pass | pending |
-| T-15 | Performance/capacity baseline on dev hardware (1,000 members, 10 drivers) | P1 | P1 | Reproducible script + report | pending |
+| T-15 | Performance/capacity baseline on dev hardware (1,000 members, 10 drivers) | P1 | P1 | Reproducible script + report | done |
 
 ## Done
 None yet.

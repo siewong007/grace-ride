@@ -6,30 +6,31 @@
 **CLI:** `cline` not installed in this environment; this session acts as the bounded engineering pass per MASTER_TARGET.md §5.
 
 ## Current stage
-Baseline complete and committed (pending). Git repo on `agent/grace-ride`. Package files installed. Traceability (R-01..R-34) + TEST_MATRIX written. Frontend 44 pre-existing `tsc` errors fixed; backend green.
+Baseline complete + capacity baseline (B-4/T-15) implemented and verified. Git repo on `agent/grace-ride`. Package files installed. Traceability (R-01..R-34) corrected (R-21/R-29/R-30 confirmed implemented, test needed) + TEST_MATRIX written. Frontend 44 pre-existing `tsc` errors fixed; backend + capacity green.
 
 ## Completed requirement IDs
-Traceability inventory written (docs/REQUIREMENTS_TRACEABILITY.md, R-01..R-34). Test matrix written (docs/TEST_MATRIX.md). No requirement marked VERIFIED beyond suite-pass evidence.
+Traceability inventory complete (docs/REQUIREMENTS_TRACEABILITY.md, R-01..R-34). R-21 monthly_report, R-29 badges, R-30 retention housekeeping confirmed implemented in code (community.rs/jobs.rs) but lack dedicated tests — marked "implemented (test needed)", not VERIFIED.
 
 ## Measured suite pass/fail/skip
-- Backend `cargo test`: 16 passed (5 unit + 11 integration), 0 failed, 0 ignored, 0 warnings/errors. Log: /tmp/cline_package/cargo_test.log
-- Frontend `tsc -b`: 0 errors, exit 0 (after fixing 44 pre-existing errors). Log: /tmp/cline_package/tsc5.log
+- Backend `cargo test`: 18 passed (5 unit + 13 integration incl. 2 new capacity tests), 0 failed, 0 ignored, 0 warnings/errors.
+- Frontend `tsc -b`: 0 errors, exit 0.
 - `make test` (cargo test + tsc -b): GREEN.
+- Capacity baseline (R-32): 1018 users seeded (1000 members + 10 drivers + demo), live-driver cap = 10 asserted, reminder job over ~1000 users in 1.136ms.
 
 ## Performance baseline
-None measured yet (B-4 open).
+Measured (B-4 resolved): reminder job ~1.14ms over 1000 users on Apple M4 / macOS 27.3.0.
 
 ## Issues
-- `cline` CLI not installed here; unattended 24x7 loop cannot self-start (B-6). This session = bounded manual agent pass.
-- Open gaps: B-2 report module, B-3 retention cleanup job, B-4 capacity baseline, B-5 browser E2E harness (see BLOCKERS.md).
+Resolved this session: B-2 (report module exists), B-3 (retention job exists), B-4 (capacity baseline measured).
+Still open: B-5 browser E2E suite not wired (MANUAL cases in TEST_MATRIX), B-6 `cline` CLI not installed (unattended 24x7 loop cannot self-start; working as bounded manual agent pass).
 
 ## Tested commit SHA
-d72c6be (agent/grace-ride) — cargo test 16 pass, tsc -b exit 0.
+83363be (agent/grace-ride) — cargo test 18 pass, tsc -b exit 0. Pending new commit for capacity baseline.
 
 ## Next 3 actions
-1. Commit all baseline work on agent/grace-ride (verified: cargo test + tsc -b green).
-2. Write reports/run-<timestamp>.md with exact commands, exit codes, test counts.
-3. Exit cleanly; record next actions for the following scheduled invocation (start with B-4 capacity script or B-2 report module).
+1. Write reports/run-<timestamp>.md and commit capacity baseline (tests/capacity.rs, scripts/capacity_baseline.sh) + state corrections.
+2. Mark T-15 done / B-4 resolved (done in this edit); commit.
+3. Exit cleanly; next invocation should pick B-5 (document E2E manual cases / consider E2E harness) or B-6 (install cline CLI in WSL2 per SETUP §3).
 
 ## Unresolved policy questions
 None yet.
