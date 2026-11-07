@@ -1,0 +1,17 @@
+export default {
+  title: '我的 {month} 月月报',
+  desc: '看见自己参与的聚会与付出的接送。个人月报仅本人可见。',
+  attendance: '聚会出席',
+  driven: '完成接送（司机）',
+  received: '获得接送',
+  costs: '已结清活动费用',
+  events: '本月已出席活动',
+  noEvents: '{y} 年 {m} 月没有出席记录。',
+  note: '出席次数以签到或负责人核实为准；接送次数只计算已完成行程。',
+  badges: '感谢徽章',
+  badgesDesc: '小小徽章，大大感谢。非金钱奖励，可在「我的」中选择不参与。',
+  noBadges: '您已选择不参与徽章。',
+  earned: '已获得 ✓',
+  rule: '规则',
+  monthLabel: '月份',
+};

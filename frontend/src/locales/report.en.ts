@@ -1,0 +1,17 @@
+export default {
+  title: 'My {month} monthly report',
+  desc: 'See the events you attended and rides you gave. Your monthly report is visible only to you.',
+  attendance: 'Event attendance',
+  driven: 'Rides completed (driver)',
+  received: 'Rides received',
+  costs: 'Event costs settled',
+  events: 'Events attended this month',
+  noEvents: 'No attendance records in {y} {m}.',
+  note: 'Attendance is based on check-in or organiser confirmation; rides count only completed trips.',
+  badges: 'Thank-you badges',
+  badgesDesc: 'Small badges, big thanks. Non-monetary; opt out in “Profile”.',
+  noBadges: 'You\"ve opted out of badges.',
+  earned: 'Earned ✓',
+  rule: 'Rule',
+  monthLabel: 'Month',
+};

@@ -1,0 +1,18 @@
+export default {
+  title: '运动与团契活动',
+  desc: '只显示发给您所属群体的活动。',
+  create: '发起活动',
+  upcoming: '即将举行',
+  past: '过往活动',
+  managing: '我负责的',
+  none: '暂时没有活动',
+  going: '已报名',
+  waitlist: '候补中',
+  needRide: '需要接送',
+  people: '{going}/{capacity} 人',
+  peopleNoLimit: '{going} 人参加',
+  cancelled: '已结束',
+  finished: '已结束',
+  peopleUnit: '人',
+  peopleAttend: '人参加',
+};

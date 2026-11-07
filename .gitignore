@@ -1,0 +1,10 @@
+.env.production
+.env
+*.zip
+backups/
+backend/target/
+backend/data/
+frontend/node_modules/
+frontend/dist/
+*.tsbuildinfo
+.DS_Store

@@ -1,0 +1,6 @@
+# cargo-audit configuration
+[advisories]
+# RUSTSEC-2023-0071 (rsa Marvin attack): `rsa` is pulled into Cargo.lock only by
+# sqlx-mysql, which this project never compiles (sqlite feature only).
+# `cargo tree -i rsa --target all` prints nothing. Re-evaluate if MySQL support is added.
+ignore = ["RUSTSEC-2023-0071"]
