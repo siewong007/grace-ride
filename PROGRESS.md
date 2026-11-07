@@ -24,7 +24,7 @@ None measured yet (B-4 open).
 - Open gaps: B-2 report module, B-3 retention cleanup job, B-4 capacity baseline, B-5 browser E2E harness (see BLOCKERS.md).
 
 ## Tested commit SHA
-Pending initial import commit on agent/grace-ride.
+d72c6be (agent/grace-ride) — cargo test 16 pass, tsc -b exit 0.
 
 ## Next 3 actions
 1. Commit all baseline work on agent/grace-ride (verified: cargo test + tsc -b green).
