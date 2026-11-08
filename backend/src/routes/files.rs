@@ -12,9 +12,10 @@ use axum::{
 use serde_json::{json, Value};
 
 use crate::auth::CurrentUser;
-use crate::error::{bad, forbidden, AppError, AppResult, not_found};
+use crate::error::{bad, forbidden, not_found, AppError, AppResult};
+use crate::i18n::ErrorKey;
 use crate::state::AppState;
-use crate::util::{now, t};
+use crate::util::now;
 
 pub fn router() -> Router<AppState> {
     Router::new()
@@ -49,18 +50,18 @@ async fn upload(
     u: CurrentUser,
     mut mp: Multipart,
 ) -> AppResult<Json<Value>> {
-    while let Some(field) = mp.next_field().await.map_err(|_| bad(t(u.lang, "上传失败", "Upload failed")))? {
+    while let Some(field) = mp.next_field().await.map_err(|_| bad(u.lang, ErrorKey::UploadFailed))? {
         if field.name() != Some("file") {
             continue;
         }
         let original = field.file_name().unwrap_or("upload").to_string();
-        let data = field.bytes().await.map_err(|_| bad(t(u.lang, "上传失败", "Upload failed")))?;
+        let data = field.bytes().await.map_err(|_| bad(u.lang, ErrorKey::UploadFailed))?;
         if data.len() > MAX_BYTES {
-            return Err(bad(t(u.lang, "文件不能超过 8MB", "File cannot exceed 8MB")));
+            return Err(bad(u.lang, ErrorKey::FileTooLarge));
         }
         // Trust the bytes, not the browser-supplied Content-Type.
         let (mime, ext) =
-            sniff(&data).ok_or_else(|| bad(t(u.lang, "只接受图片（JPG/PNG/WEBP/HEIC）或 PDF", "Only images (JPG/PNG/WEBP/HEIC) or PDF are accepted")))?;
+            sniff(&data).ok_or_else(|| bad(u.lang, ErrorKey::InvalidFileType))?;
         let mime = mime.to_string();
         let stored = format!("{}.{}", uuid::Uuid::new_v4(), ext);
         tokio::fs::create_dir_all(&st.cfg.upload_dir)
@@ -80,7 +81,7 @@ async fn upload(
             .await?;
         return Ok(Json(json!({ "id": id, "mime": mime, "name": original })));
     }
-    Err(bad(t(u.lang, "没有收到文件", "No file received")))
+    Err(bad(u.lang, ErrorKey::NoFileReceived))
 }
 
 pub async fn can_access_file(st: &AppState, u: &CurrentUser, file_id: i64) -> AppResult<bool> {
@@ -146,7 +147,7 @@ async fn download(
     Path(id): Path<i64>,
 ) -> AppResult<Response> {
     if !can_access_file(&st, &u, id).await? {
-        return Err(forbidden(t(u.lang, "您无法查看此文件", "You cannot view this file")));
+        return Err(forbidden(u.lang, ErrorKey::CannotViewFile));
     }
     let (stored, mime, name): (String, String, String) =
         sqlx::query_as("SELECT stored_name, mime, original_name FROM files WHERE id=$1")

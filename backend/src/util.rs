@@ -68,48 +68,7 @@ pub async fn audit(
     }
 }
 
-/// Recipient UI language. Messages are authored as 中文/English pairs and
-/// rendered server-side in each user's saved language (users.lang).
-#[derive(Clone, Copy, PartialEq, Eq, Debug, Serialize)]
-pub enum Lang {
-    Zh,
-    En,
-}
-
-impl Lang {
-    pub fn code(self) -> &'static str {
-        match self {
-            Lang::Zh => "zh",
-            Lang::En => "en",
-        }
-    }
-
-    pub fn from_code(s: &str) -> Lang {
-        match s {
-            "en" => Lang::En,
-            _ => Lang::Zh,
-        }
-    }
-
-    /// Unauthenticated requests carry no users.lang; fall back to Accept-Language.
-    pub fn from_accept_language(v: &str) -> Lang {
-        // "zh-CN,zh;q=0.9,en;q=0.8" → zh; anything else defaults to zh.
-        let first = v.split(',').next().unwrap_or("").trim().to_lowercase();
-        if first.starts_with("en") {
-            Lang::En
-        } else {
-            Lang::Zh
-        }
-    }
-}
-
-/// Pick the side of a 中文/English message pair.
-pub fn t<'a>(lang: Lang, zh: &'a str, en: &'a str) -> &'a str {
-    match lang {
-        Lang::Zh => zh,
-        Lang::En => en,
-    }
-}
+pub use crate::i18n::{t, ErrorKey, Lang};
 
 async fn user_lang(db: &PgPool, user_id: i64) -> Lang {
     let row: Option<(String,)> = sqlx::query_as("SELECT lang FROM users WHERE id=$1")
@@ -181,19 +140,11 @@ pub async fn system_message(db: &PgPool, trip_id: i64, zh_body: &str, en_body: &
 pub fn require_any(u: &CurrentUser, roles: &[&str]) -> AppResult<()> {
     if roles.iter().any(|r| u.has(r)) {
         if !u.mfa_ok {
-            return Err(forbidden(t(
-                u.lang,
-                "此功能需要通行密钥或双重验证（2FA）登入",
-                "This feature requires a passkey or two-factor (2FA) login",
-            )));
+            return Err(forbidden(u.lang, ErrorKey::MfaRequired));
         }
         Ok(())
     } else {
-        Err(forbidden(t(
-            u.lang,
-            "您没有权限执行此操作",
-            "You do not have permission to do this",
-        )))
+        Err(forbidden(u.lang, ErrorKey::NoPermission))
     }
 }
 

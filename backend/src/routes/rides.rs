@@ -12,9 +12,11 @@ use serde::Deserialize;
 use serde_json::{json, Value};
 
 use crate::auth::CurrentUser;
-use crate::error::{bad, conflict, forbidden, AppResult, not_found};
+use crate::error::{bad, conflict, forbidden, not_found, AppResult};
 use crate::state::AppState;
-use crate::util::{Lang, t, audit, norm_dt, notify, notify_roles, now, require_any, system_message};
+use crate::util::{
+    audit, norm_dt, notify, notify_roles, now, require_any, system_message, ErrorKey, Lang,
+};
 
 pub fn router() -> Router<AppState> {
     Router::new()
@@ -166,13 +168,7 @@ fn can_view(r: &RideRow, u: &CurrentUser) -> bool {
         || (u.has("driver") && r.status == "pending_driver")
 }
 
-async fn set_status(
-    st: &AppState,
-    id: i64,
-    from: &[&str],
-    to: &str,
-    lang: Lang,
-) -> AppResult<()> {
+async fn set_status(st: &AppState, id: i64, from: &[&str], to: &str, lang: Lang) -> AppResult<()> {
     let placeholders = (0..from.len())
         .map(|i| format!("${}", i + 4))
         .collect::<Vec<_>>()
@@ -185,11 +181,7 @@ async fn set_status(
         q = q.bind(*f);
     }
     if q.execute(&st.db).await?.rows_affected() == 0 {
-        return Err(conflict(t(
-            lang,
-            "接送状态已改变，请重新整理",
-            "Ride status has changed, please refresh",
-        )));
+        return Err(conflict(lang, ErrorKey::RideStatusChanged));
     }
     Ok(())
 }
@@ -226,35 +218,25 @@ async fn create_ride(
     u: CurrentUser,
     Json(req): Json<CreateRide>,
 ) -> AppResult<Json<Value>> {
-    let at = norm_dt(&req.pickup_at).ok_or_else(|| {
-        bad(t(u.lang, "请填写正确的接送时间", "Please enter a valid pickup time"))
-    })?;
+    let at = norm_dt(&req.pickup_at).ok_or_else(|| bad(u.lang, ErrorKey::InvalidPickupTime))?;
     if at.as_str() < &now()[..16] {
-        return Err(bad(t(
-            u.lang,
-            "接送时间不能早于现在",
-            "Pickup time cannot be in the past",
-        )));
+        return Err(bad(u.lang, ErrorKey::PickupTimeInPast));
     }
     let seats = req.seats.unwrap_or(1);
     if !(1..=6).contains(&seats) {
-        return Err(bad(t(u.lang, "乘车人数需为 1–6 位", "Seats must be between 1 and 6")));
+        return Err(bad(u.lang, ErrorKey::SeatsRange));
     }
     if req.pickup_address.trim().is_empty() || req.destination.trim().is_empty() {
-        return Err(bad(t(
-            u.lang,
-            "请填写上车地址及目的地",
-            "Please enter pickup address and destination",
-        )));
+        return Err(bad(u.lang, ErrorKey::AddressAndDestinationRequired));
     }
     let area: Option<(i64,)> = sqlx::query_as("SELECT id FROM areas WHERE id=$1 AND active=1")
         .bind(req.pickup_area_id)
         .fetch_optional(&st.db)
         .await?;
-    area.ok_or_else(|| bad(t(u.lang, "请选择接送地区", "Please choose a pickup area")))?;
+    area.ok_or_else(|| bad(u.lang, ErrorKey::PickupAreaRequired))?;
     if let Some(eid) = req.event_id {
         if !crate::routes::events::can_see_event(&st, &u, eid).await? {
-            return Err(forbidden(t(u.lang, "您无法查看此活动", "You cannot view this event")));
+            return Err(forbidden(u.lang, ErrorKey::CannotViewEvent));
         }
     }
     let (id,): (i64,) = sqlx::query_as(
@@ -332,7 +314,7 @@ async fn get_ride(
 ) -> AppResult<Json<Value>> {
     let r = load_ride(&st, u.lang, id).await?;
     if !can_view(&r, &u) {
-        return Err(forbidden(t(u.lang, "您无法查看此接送", "You cannot view this ride")));
+        return Err(forbidden(u.lang, ErrorKey::CannotViewRide));
     }
     let mut v = ride_json(&r, &u);
     if u.is_staff() {
@@ -371,11 +353,7 @@ async fn cancel_ride(
 ) -> AppResult<Json<Value>> {
     let r = load_ride(&st, u.lang, id).await?;
     if r.passenger_id != u.id && !u.is_staff() {
-        return Err(forbidden(t(
-            u.lang,
-            "只有乘客或交通组可以取消",
-            "Only the passenger or transport staff can cancel",
-        )));
+        return Err(forbidden(u.lang, ErrorKey::OnlyPassengerOrStaffCanCancel));
     }
     let reason = body.and_then(|b| b.0.reason).unwrap_or_default();
     set_status(
@@ -454,7 +432,7 @@ async fn passenger_respond(
 ) -> AppResult<Json<Value>> {
     let r = load_ride(&st, u.lang, id).await?;
     if r.passenger_id != u.id {
-        return Err(forbidden(t(u.lang, "只有乘客本人可以回应", "Only the passenger can respond")));
+        return Err(forbidden(u.lang, ErrorKey::OnlyPassengerCanRespond));
     }
     if req.accept {
         set_status(&st, id, &["pending_passenger"], "pending_approval", u.lang).await?;
@@ -563,38 +541,22 @@ async fn driver_claim(
     Path(id): Path<i64>,
 ) -> AppResult<Json<Value>> {
     if !u.has("driver") {
-        return Err(forbidden(t(
-            u.lang,
-            "只有志愿司机可以选择接送",
-            "Only volunteer drivers can choose rides",
-        )));
+        return Err(forbidden(u.lang, ErrorKey::OnlyVolunteerDriversCanChoose));
     }
     let r = load_ride(&st, u.lang, id).await?;
     if r.passenger_id == u.id {
-        return Err(bad(t(
-            u.lang,
-            "不能选择自己的接送报名",
-            "You cannot pick your own ride request",
-        )));
+        return Err(bad(u.lang, ErrorKey::CannotPickOwnRide));
     }
     let has_vehicle: Option<(i64,)> = sqlx::query_as("SELECT seats FROM vehicles WHERE user_id=$1")
         .bind(u.id)
         .fetch_optional(&st.db)
         .await?;
     if has_vehicle.is_none() {
-        return Err(bad(t(
-            u.lang,
-            "请先在司机设置中填写车辆资料",
-            "Please add your vehicle details in driver settings first",
-        )));
+        return Err(bad(u.lang, ErrorKey::FillVehicleDetailsFirst));
     }
     let (load, cap) = driver_load(&st, u.id, &r.pickup_at, Some(id)).await?;
     if load + r.seats > cap {
-        return Err(bad(t(
-            u.lang,
-            &format!("座位不足：该时段已安排 {load} 位，可提供 {cap} 位。如需多载，请在司机设置开启共乘模式。"),
-            &format!("Not enough seats: {load} booked in this slot, {cap} available. Enable carpool mode in driver settings to carry more."),
-        )));
+        return Err(bad(u.lang, ErrorKey::NotEnoughSeatsSlot { load, cap }));
     }
     // Atomic claim prevents two drivers choosing the same request.
     let res = sqlx::query("UPDATE rides SET driver_id=$1, status='pending_passenger', updated_at=$2 WHERE id=$3 AND status='pending_driver'")
@@ -604,11 +566,7 @@ async fn driver_claim(
         .execute(&st.db)
         .await?;
     if res.rows_affected() == 0 {
-        return Err(conflict(t(
-            u.lang,
-            "此报名已被其他司机选择",
-            "This request has been picked by another driver",
-        )));
+        return Err(conflict(u.lang, ErrorKey::RidePickedByAnotherDriver));
     }
     notify(
         &st.db,
@@ -642,7 +600,7 @@ async fn driver_withdraw(
 ) -> AppResult<Json<Value>> {
     let r = load_ride(&st, u.lang, id).await?;
     if r.driver_id != Some(u.id) {
-        return Err(forbidden(t(u.lang, "您不是此接送的司机", "You are not the driver of this ride")));
+        return Err(forbidden(u.lang, ErrorKey::NotRideDriver));
     }
     let was_confirmed = matches!(r.status.as_str(), "confirmed" | "pending_driver_confirm");
     set_status(
@@ -695,7 +653,10 @@ async fn driver_withdraw(
             &st.db,
             t,
             &format!("司机 {} 无法出车，交通组正在重新安排。", u.name),
-            &format!("Driver {} cannot drive; transport staff are rearranging.", u.name),
+            &format!(
+                "Driver {} cannot drive; transport staff are rearranging.",
+                u.name
+            ),
         )
         .await;
     }
@@ -740,7 +701,10 @@ async fn announce_confirmed(st: &AppState, r: &RideRow, trip: i64, reassigned: b
         r.v_plate.clone().unwrap_or_default()
     );
     let title_pairs = if reassigned {
-        ("已为您安排新的司机", "A new driver has been arranged for you")
+        (
+            "已为您安排新的司机",
+            "A new driver has been arranged for you",
+        )
     } else {
         ("接送已确认", "Ride confirmed")
     };
@@ -806,7 +770,7 @@ async fn driver_confirm_assignment(
 ) -> AppResult<Json<Value>> {
     let r = load_ride(&st, u.lang, id).await?;
     if r.driver_id != Some(u.id) {
-        return Err(forbidden(t(u.lang, "您不是此接送的司机", "You are not the driver of this ride")));
+        return Err(forbidden(u.lang, ErrorKey::NotRideDriver));
     }
     set_status(&st, id, &["pending_driver_confirm"], "confirmed", u.lang).await?;
     sqlx::query("UPDATE rides SET needs_attention=0 WHERE id=$1")
@@ -835,7 +799,7 @@ async fn start_ride(
 ) -> AppResult<Json<Value>> {
     let r = load_ride(&st, u.lang, id).await?;
     if r.driver_id != Some(u.id) {
-        return Err(forbidden(t(u.lang, "您不是此接送的司机", "You are not the driver of this ride")));
+        return Err(forbidden(u.lang, ErrorKey::NotRideDriver));
     }
     // 同一时间最多追踪 N 位司机
     let (live,): (i64,) = sqlx::query_as(
@@ -845,11 +809,13 @@ async fn start_ride(
     .fetch_one(&st.db)
     .await?;
     if live >= st.cfg.max_live_drivers {
-        return Err(conflict(t(
+        return Err(conflict(
             u.lang,
-            &format!("目前已有 {live} 位司机在行程中（上限 {}），请稍后或联系交通组。", st.cfg.max_live_drivers),
-            &format!("There are already {live} drivers on trips (limit {}); try again later or contact transport staff.", st.cfg.max_live_drivers),
-        )));
+            ErrorKey::MaxLiveDriversReached {
+                live,
+                limit: st.cfg.max_live_drivers,
+            },
+        ));
     }
     set_status(&st, id, &["confirmed"], "in_progress", u.lang).await?;
     sqlx::query("UPDATE rides SET started_at=$1 WHERE id=$2")
@@ -863,7 +829,10 @@ async fn start_ride(
         ("司机已出发", "Driver departed"),
         (
             &format!("{} 正在前往 {}，可在应用内查看位置。", u.name, r.area_name),
-            &format!("{} is en route to {}; you can follow the location in the app.", u.name, r.area_name),
+            &format!(
+                "{} is en route to {}; you can follow the location in the app.",
+                u.name, r.area_name
+            ),
         ),
         &format!("/rides/{id}"),
     )
@@ -888,10 +857,10 @@ async fn pickup(
 ) -> AppResult<Json<Value>> {
     let r = load_ride(&st, u.lang, id).await?;
     if r.driver_id != Some(u.id) {
-        return Err(forbidden(t(u.lang, "您不是此接送的司机", "You are not the driver of this ride")));
+        return Err(forbidden(u.lang, ErrorKey::NotRideDriver));
     }
     if r.status != "in_progress" {
-        return Err(bad(t(u.lang, "请先开始行程", "Start the trip first")));
+        return Err(bad(u.lang, ErrorKey::StartTripFirst));
     }
     sqlx::query("UPDATE rides SET picked_up_at=$1, updated_at=$2 WHERE id=$3")
         .bind(now())
@@ -934,7 +903,7 @@ async fn no_show(
 ) -> AppResult<Json<Value>> {
     let r = load_ride(&st, u.lang, id).await?;
     if r.driver_id != Some(u.id) && !u.is_staff() {
-        return Err(forbidden(t(u.lang, "您不是此接送的司机", "You are not the driver of this ride")));
+        return Err(forbidden(u.lang, ErrorKey::NotRideDriver));
     }
     set_status(&st, id, &["in_progress", "confirmed"], "no_show", u.lang).await?;
     sqlx::query("UPDATE rides SET completed_at=$1 WHERE id=$2")
@@ -985,7 +954,7 @@ async fn complete(
 ) -> AppResult<Json<Value>> {
     let r = load_ride(&st, u.lang, id).await?;
     if r.driver_id != Some(u.id) {
-        return Err(forbidden(t(u.lang, "您不是此接送的司机", "You are not the driver of this ride")));
+        return Err(forbidden(u.lang, ErrorKey::NotRideDriver));
     }
     set_status(&st, id, &["in_progress"], "completed", u.lang).await?;
     sqlx::query(
@@ -1049,11 +1018,7 @@ async fn driver_requests(
     Query(q): Query<RequestsQuery>,
 ) -> AppResult<Json<Value>> {
     if !u.has("driver") {
-        return Err(forbidden(t(
-            u.lang,
-            "只有志愿司机可以查看",
-            "Only volunteer drivers can view",
-        )));
+        return Err(forbidden(u.lang, ErrorKey::OnlyVolunteerDriversCanView));
     }
     let mut conds = vec![
         "r.status='pending_driver'".to_string(),
@@ -1168,18 +1133,10 @@ async fn put_driver_profile(
     Json(req): Json<DriverProfileIn>,
 ) -> AppResult<Json<Value>> {
     if !u.has("driver") {
-        return Err(forbidden(t(
-            u.lang,
-            "只有志愿司机可以设置",
-            "Only volunteer drivers can change settings",
-        )));
+        return Err(forbidden(u.lang, ErrorKey::OnlyVolunteerDriversCanSet));
     }
     if !(1..=7).contains(&req.spare_seats) {
-        return Err(bad(t(
-            u.lang,
-            "空余座位需为 1–7",
-            "Spare seats must be between 1 and 7",
-        )));
+        return Err(bad(u.lang, ErrorKey::SpareSeatsRange));
     }
     let mut tx = st.db.begin().await?;
     sqlx::query("UPDATE users SET carpool_enabled=$1, spare_seats=$2 WHERE id=$3")
@@ -1203,18 +1160,10 @@ async fn put_driver_profile(
     }
     if let Some(v) = req.vehicle {
         if v.model.trim().is_empty() || v.plate.trim().is_empty() {
-            return Err(bad(t(
-                u.lang,
-                "请填写车型及车牌",
-                "Please enter vehicle model and plate",
-            )));
+            return Err(bad(u.lang, ErrorKey::VehicleModelAndPlateRequired));
         }
         if !(2..=9).contains(&v.seats) {
-            return Err(bad(t(
-                u.lang,
-                "车辆座位数需为 2–9",
-                "Vehicle seats must be between 2 and 9",
-            )));
+            return Err(bad(u.lang, ErrorKey::VehicleSeatsRange));
         }
         sqlx::query(
             "INSERT INTO vehicles (user_id, model, color, plate, seats) VALUES ($1,$2,$3,$4,$5)
@@ -1246,7 +1195,7 @@ async fn post_location(
     Json(req): Json<LocIn>,
 ) -> AppResult<Json<Value>> {
     if !(-90.0..=90.0).contains(&req.lat) || !(-180.0..=180.0).contains(&req.lng) {
-        return Err(bad(t(u.lang, "位置无效", "Invalid location")));
+        return Err(bad(u.lang, ErrorKey::InvalidLocation));
     }
     let (n,): (i64,) =
         sqlx::query_as("SELECT COUNT(*) FROM rides WHERE driver_id=$1 AND status='in_progress'")
@@ -1289,7 +1238,7 @@ async fn ride_location(
 ) -> AppResult<Json<Value>> {
     let r = load_ride(&st, u.lang, id).await?;
     if r.passenger_id != u.id && r.driver_id != Some(u.id) && !u.is_staff() {
-        return Err(forbidden(t(u.lang, "您无法查看此位置", "You cannot view this location")));
+        return Err(forbidden(u.lang, ErrorKey::CannotViewLocation));
     }
     if r.status != "in_progress" {
         return Ok(Json(json!({"sharing": false})));
@@ -1314,7 +1263,7 @@ async fn chat_access(st: &AppState, u: &CurrentUser, ride_id: i64) -> AppResult<
     let r = load_ride(st, u.lang, ride_id).await?;
     let trip = r
         .trip_id
-        .ok_or_else(|| bad(t(u.lang, "行程获批准后才开放群聊", "Group chat opens once the trip is approved")))?;
+        .ok_or_else(|| bad(u.lang, ErrorKey::GroupChatNotApproved))?;
     let members: Vec<(i64, Option<i64>, String)> =
         sqlx::query_as("SELECT passenger_id, driver_id, status FROM rides WHERE trip_id=$1")
             .bind(trip)
@@ -1324,11 +1273,7 @@ async fn chat_access(st: &AppState, u: &CurrentUser, ride_id: i64) -> AppResult<
         .iter()
         .any(|(p, d, s)| (*p == u.id && s != "cancelled") || *d == Some(u.id));
     if !is_member && !u.is_staff() {
-        return Err(forbidden(t(
-            u.lang,
-            "只有本趟成员可以查看群聊",
-            "Only members of this trip can view the chat",
-        )));
+        return Err(forbidden(u.lang, ErrorKey::OnlyTripMembersCanViewChat));
     }
     let open = members
         .iter()
@@ -1383,11 +1328,11 @@ async fn post_message(
 ) -> AppResult<Json<Value>> {
     let (trip, open) = chat_access(&st, &u, id).await?;
     if !open {
-        return Err(bad(t(u.lang, "本趟群聊已关闭", "The group chat for this trip is closed")));
+        return Err(bad(u.lang, ErrorKey::GroupChatClosed));
     }
     let body = req.body.trim();
     if body.is_empty() || body.chars().count() > 1000 {
-        return Err(bad(t(u.lang, "讯息长度不正确", "Message length is invalid")));
+        return Err(bad(u.lang, ErrorKey::InvalidMessageLength));
     }
     sqlx::query(
         "INSERT INTO ride_messages (trip_id, user_id, body, created_at) VALUES ($1,$2,$3,$4)",
@@ -1412,14 +1357,10 @@ async fn staff_approve(
     let r = load_ride(&st, u.lang, id).await?;
     let d = r
         .driver_id
-        .ok_or_else(|| bad(t(u.lang, "尚未有司机", "No driver yet")))?;
+        .ok_or_else(|| bad(u.lang, ErrorKey::NoDriverYet))?;
     let (load, cap) = driver_load(&st, d, &r.pickup_at, Some(id)).await?;
     if load + r.seats > cap {
-        return Err(bad(t(
-            u.lang,
-            &format!("司机座位不足：已安排 {load} 位，可提供 {cap} 位"),
-            &format!("Not enough driver seats: {load} booked, {cap} available"),
-        )));
+        return Err(bad(u.lang, ErrorKey::NotEnoughDriverSeats { load, cap }));
     }
     set_status(&st, id, &["pending_approval"], "confirmed", u.lang).await?;
     sqlx::query("UPDATE rides SET approved_by=$1, needs_attention=0 WHERE id=$2")
@@ -1474,7 +1415,10 @@ async fn staff_return(
         notify(
             &st.db,
             d,
-            ("接送安排已被交通组退回", "The ride was returned by transport staff"),
+            (
+                "接送安排已被交通组退回",
+                "The ride was returned by transport staff",
+            ),
             (&line, &line),
             "/drive",
         )
@@ -1502,28 +1446,19 @@ async fn staff_reassign(
             .bind(req.driver_id)
             .fetch_optional(&st.db)
             .await?
-            .ok_or_else(|| bad(t(u.lang, "找不到此司机", "Driver not found")))?;
+            .ok_or_else(|| bad(u.lang, ErrorKey::DriverNotFound))?;
     if !roles.split(',').any(|r| r == "driver") {
-        return Err(bad(t(
-            u.lang,
-            "此会员不是志愿司机",
-            "This member is not a volunteer driver",
-        )));
+        return Err(bad(u.lang, ErrorKey::MemberNotVolunteerDriver));
     }
     if req.driver_id == r.passenger_id {
-        return Err(bad(t(
-            u.lang,
-            "司机不能是乘客本人",
-            "The driver cannot be the passenger themselves",
-        )));
+        return Err(bad(u.lang, ErrorKey::DriverCannotBePassenger));
     }
     let (load, cap) = driver_load(&st, req.driver_id, &r.pickup_at, Some(id)).await?;
     if load + r.seats > cap {
-        return Err(bad(t(
+        return Err(bad(
             u.lang,
-            &format!("该司机座位不足：已安排 {load} 位，可提供 {cap} 位"),
-            &format!("Not enough seats for this driver: {load} booked, {cap} available"),
-        )));
+            ErrorKey::NotEnoughDriverSeatsReassign { load, cap },
+        ));
     }
     set_status(
         &st,
@@ -1571,10 +1506,21 @@ async fn staff_reassign(
     notify(
         &st.db,
         req.driver_id,
-        ("交通组为您安排了接送", "Transport staff arranged a ride for you"),
         (
-            &format!("{} · {} · 请确认", r.pickup_at.replace('T', " "), r.area_name),
-            &format!("{} · {} · please confirm", r.pickup_at.replace('T', " "), r.area_name),
+            "交通组为您安排了接送",
+            "Transport staff arranged a ride for you",
+        ),
+        (
+            &format!(
+                "{} · {} · 请确认",
+                r.pickup_at.replace('T', " "),
+                r.area_name
+            ),
+            &format!(
+                "{} · {} · please confirm",
+                r.pickup_at.replace('T', " "),
+                r.area_name
+            ),
         ),
         "/drive",
     )
@@ -1629,7 +1575,9 @@ async fn staff_alt_transport(
         ("已批准替代交通", "Alternative transport approved"),
         (
             &format!("{note}。行程后可上传 Grab 收据申请报销。"),
-            &format!("{note}. After the trip you can upload your Grab receipt to claim reimbursement."),
+            &format!(
+                "{note}. After the trip you can upload your Grab receipt to claim reimbursement."
+            ),
         ),
         "/reimbursements/new",
     )

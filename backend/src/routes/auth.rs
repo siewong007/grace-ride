@@ -24,10 +24,11 @@ use std::net::SocketAddr;
 use crate::auth::{
     hash_token, is_privileged, CurrentUser, PRIVILEGED, SESSION_COOKIE, SESSION_COOKIE_SECURE,
 };
-use crate::error::{bad, forbidden, AppError, AppResult, not_found};
+use crate::error::{bad, forbidden, not_found, too_many_requests, AppError, AppResult};
+use crate::i18n::ErrorKey;
 use crate::security::client_ip;
 use crate::state::AppState;
-use crate::util::{Lang, audit, in_hours, notify_roles, now, random_token, t};
+use crate::util::{audit, in_hours, notify_roles, now, random_token, t, Lang};
 
 /// Failed password attempts per account before a temporary lock (per 15 minutes).
 const MAX_FAILURES: i64 = 5;
@@ -100,11 +101,7 @@ pub async fn verify_totp(
         if totp.generate(t_slot) == code {
             let step = (t_slot / 30) as i64;
             if step <= last {
-                return Err(bad(t(
-                    lang,
-                    "此验证码已使用，请等待下一组数字",
-                    "This code has already been used; please wait for the next one",
-                )));
+                return Err(bad(lang, ErrorKey::CodeAlreadyUsed));
             }
             sqlx::query("UPDATE users SET totp_last_step=$1 WHERE id=$2")
                 .bind(step)
@@ -114,13 +111,13 @@ pub async fn verify_totp(
             return Ok(());
         }
     }
-    Err(bad(t(lang, "验证码不正确", "Incorrect verification code")))
+    Err(bad(lang, ErrorKey::InvalidCode))
 }
 
 fn totp_for(secret_b32: &str, email: &str, lang: Lang) -> AppResult<TOTP> {
     let bytes = Secret::Encoded(secret_b32.to_string())
         .to_bytes()
-        .map_err(|_| bad(t(lang, "2FA 密钥无效", "Invalid 2FA secret")))?;
+        .map_err(|_| bad(lang, ErrorKey::Invalid2FaSecret))?;
     TOTP::new(
         Algorithm::SHA1,
         6,
@@ -260,14 +257,7 @@ async fn login_password(
     .fetch_one(&st.db)
     .await?;
     if fails >= MAX_FAILURES {
-        return Err(AppError::TooManyRequests(
-            t(
-                lang,
-                "登入失败次数过多，账号已暂时锁定 15 分钟。可改用通行密钥登入。",
-                "Too many failed logins; the account is locked for 15 minutes. You can sign in with a passkey instead.",
-            )
-            .into(),
-        ));
+        return Err(too_many_requests(lang, ErrorKey::TooManyFailedLogins));
     }
     let row: Option<(i64, Option<String>, Option<String>, i64, String, String)> = sqlx::query_as(
         "SELECT id, password_hash, totp_secret, totp_enabled, roles, status FROM users WHERE email=$1",
@@ -280,7 +270,7 @@ async fn login_password(
         _ => {
             let _ = verify_password(&req.password, dummy_hash());
             record_failure(&st, &email, &ip).await?;
-            return Err(bad(t(lang, "电邮或密码不正确", "Incorrect email or password")));
+            return Err(bad(lang, ErrorKey::InvalidCredentials));
         }
     };
     if !verify_password(&req.password, &hash) || status != "active" {
@@ -294,7 +284,7 @@ async fn login_password(
             format!("ip {ip}"),
         )
         .await;
-        return Err(bad(t(lang, "电邮或密码不正确", "Incorrect email or password")));
+        return Err(bad(lang, ErrorKey::InvalidCredentials));
     }
     let mut mfa_ok = false;
     if totp_enabled == 1 {
@@ -389,7 +379,7 @@ async fn take_challenge(st: &AppState, id: &str, kind: &str, lang: Lang) -> AppR
         .bind(id)
         .execute(&st.db)
         .await?;
-    row.ok_or_else(|| bad(t(lang, "验证已过期，请重试", "Verification expired; please try again")))
+    row.ok_or_else(|| bad(lang, ErrorKey::VerificationExpired))
 }
 
 #[derive(Deserialize)]
@@ -414,19 +404,11 @@ async fn passkey_login_start(
             .fetch_optional(&st.db)
             .await?;
     let Some((uid,)) = row else {
-        return Err(bad(t(
-            lang,
-            "此电邮尚未设置通行密钥",
-            "No passkey is set up for this email",
-        )));
+        return Err(bad(lang, ErrorKey::PasskeyNotFound));
     };
     let keys = load_passkeys(&st, uid).await?;
     if keys.is_empty() {
-        return Err(bad(t(
-            lang,
-            "此电邮尚未设置通行密钥",
-            "No passkey is set up for this email",
-        )));
+        return Err(bad(lang, ErrorKey::PasskeyNotFound));
     }
     let (rcr, auth_state) = st
         .webauthn
@@ -466,7 +448,7 @@ async fn passkey_login_finish(
     let res = st
         .webauthn
         .finish_passkey_authentication(&req.credential, &auth_state)
-        .map_err(|_| bad(t(lang, "通行密钥验证失败", "Passkey verification failed")))?;
+        .map_err(|_| bad(lang, ErrorKey::PasskeyFailed))?;
     // Update stored credential counters if needed.
     let rows: Vec<(i64, String)> =
         sqlx::query_as("SELECT id, passkey FROM passkeys WHERE user_id=$1")
@@ -533,20 +515,14 @@ async fn passkey_register_finish(
 ) -> AppResult<Json<Value>> {
     let (uid, state_json) = take_challenge(&st, &req.challenge_id, "reg", u.lang).await?;
     if uid != u.id {
-        return Err(forbidden(t(u.lang, "验证不匹配", "Challenge does not match")));
+        return Err(forbidden(u.lang, ErrorKey::ChallengeMismatch));
     }
     let reg_state: PasskeyRegistration =
         serde_json::from_str(&state_json).map_err(anyhow::Error::from)?;
     let pk = st
         .webauthn
         .finish_passkey_registration(&req.credential, &reg_state)
-        .map_err(|e| {
-            bad(t(
-                u.lang,
-                &format!("通行密钥注册失败：{e:?}"),
-                &format!("Passkey registration failed: {e:?}"),
-            ))
-        })?;
+        .map_err(|e| bad(u.lang, ErrorKey::PasskeyRegistrationFailed(format!("{e:?}"))))?;
     let cred_id = serde_json::to_string(pk.cred_id()).map_err(anyhow::Error::from)?;
     sqlx::query(
         "INSERT INTO passkeys (user_id, cred_id, passkey, label, created_at) VALUES ($1,$2,$3,$4,$5)",
@@ -619,11 +595,7 @@ async fn totp_setup(State(st): State<AppState>, u: CurrentUser) -> AppResult<Jso
         .fetch_one(&st.db)
         .await?;
     if enabled == 1 {
-        return Err(bad(t(
-            u.lang,
-            "2FA 已开启。如需更换验证器，请通过管理员的账号恢复程序。",
-            "2FA is already on. To change your authenticator, contact an admin for account recovery.",
-        )));
+        return Err(bad(u.lang, ErrorKey::TwoFactorAlreadyEnabled));
     }
     let secret = Secret::generate_secret().to_encoded().to_string();
     sqlx::query("UPDATE users SET totp_secret=$1, totp_enabled=0 WHERE id=$2")
@@ -654,7 +626,7 @@ async fn totp_enable(
         u.id,
         secret
             .as_deref()
-            .ok_or_else(|| bad(t(u.lang, "请先开始设置", "Please start setup first")))?,
+            .ok_or_else(|| bad(u.lang, ErrorKey::StartSetupFirst))?,
         &u.email,
         &req.code,
         u.lang,
@@ -684,11 +656,7 @@ async fn set_password(
     Json(req): Json<PwReq>,
 ) -> AppResult<Json<Value>> {
     if req.new_password.chars().count() < 10 {
-        return Err(bad(t(
-            u.lang,
-            "密码至少需要 10 个字符",
-            "Password must be at least 10 characters",
-        )));
+        return Err(bad(u.lang, ErrorKey::PasswordTooShort));
     }
     let (hash,): (Option<String>,) = sqlx::query_as("SELECT password_hash FROM users WHERE id=$1")
         .bind(u.id)
@@ -696,7 +664,7 @@ async fn set_password(
         .await?;
     if let Some(h) = hash {
         if !verify_password(req.current.as_deref().unwrap_or(""), &h) {
-            return Err(bad(t(u.lang, "目前密码不正确", "Current password is incorrect")));
+            return Err(bad(u.lang, ErrorKey::CurrentPasswordIncorrect));
         }
     }
     sqlx::query("UPDATE users SET password_hash=$1 WHERE id=$2")
@@ -769,11 +737,7 @@ async fn invite_preview(
         return Err(not_found(lang));
     };
     if used.is_some() || expires < now() {
-        return Err(bad(t(
-            lang,
-            "邀请连结已失效，请联系管理员",
-            "This invite link is no longer valid; contact an admin",
-        )));
+        return Err(bad(lang, ErrorKey::InviteExpired));
     }
     Ok(Json(json!({ "kind": kind, "email": email, "name": name })))
 }
@@ -809,11 +773,7 @@ async fn invite_accept(
         return Err(not_found(lang));
     };
     if used.is_some() || expires < now() {
-        return Err(bad(t(
-            lang,
-            "邀请连结已失效，请联系管理员",
-            "This invite link is no longer valid; contact an admin",
-        )));
+        return Err(bad(lang, ErrorKey::InviteExpired));
     }
     // Mark used first (single use, guards against double submit).
     let r = sqlx::query("UPDATE invites SET used_at=$1 WHERE id=$2 AND used_at IS NULL")
@@ -822,15 +782,11 @@ async fn invite_accept(
         .execute(&st.db)
         .await?;
     if r.rows_affected() == 0 {
-        return Err(bad(t(
-            lang,
-            "邀请连结已被使用",
-            "This invite link has already been used",
-        )));
+        return Err(bad(lang, ErrorKey::InviteAlreadyUsed));
     }
 
     let uid = if kind == "recovery" {
-        rec_user.ok_or_else(|| bad(t(lang, "恢复连结无效", "Invalid recovery link")))?
+        rec_user.ok_or_else(|| bad(lang, ErrorKey::RecoveryLinkInvalid))?
     } else {
         let name = req
             .name
@@ -840,16 +796,10 @@ async fn invite_accept(
             .unwrap_or(&inv_name)
             .to_string();
         if name.is_empty() {
-            return Err(bad(t(lang, "请填写姓名", "Please enter your name")));
+            return Err(bad(lang, ErrorKey::NameRequired));
         }
         let pw_hash = match req.password.as_deref().filter(|p| !p.is_empty()) {
-            Some(p) if p.chars().count() < 10 => {
-                return Err(bad(t(
-                    lang,
-                    "密码至少需要 10 个字符",
-                    "Password must be at least 10 characters",
-                )))
-            }
+            Some(p) if p.chars().count() < 10 => return Err(bad(lang, ErrorKey::PasswordTooShort)),
             Some(p) => Some(hash_password(p)?),
             None => None,
         };
@@ -865,7 +815,7 @@ async fn invite_accept(
         .bind(now())
         .fetch_one(&st.db)
         .await
-        .map_err(|_| bad(t(lang, "此电邮已经注册", "This email is already registered")))?;
+        .map_err(|_| bad(lang, ErrorKey::EmailAlreadyRegistered))?;
         let gids: Vec<i64> = serde_json::from_str(&group_ids).unwrap_or_default();
         for g in gids {
             sqlx::query("INSERT INTO group_members (group_id, user_id) VALUES ($1,$2) ON CONFLICT DO NOTHING")

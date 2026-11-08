@@ -7,6 +7,7 @@
 
 pub mod auth;
 pub mod error;
+pub mod i18n;
 pub mod jobs;
 pub mod routes;
 pub mod security;
@@ -54,6 +55,7 @@ pub async fn init(cfg: Config) -> anyhow::Result<AppState> {
         webauthn,
         cfg: Arc::new(cfg),
         limiter: Arc::new(RateLimiter::default()),
+        http_client: reqwest::Client::new(),
     })
 }
 

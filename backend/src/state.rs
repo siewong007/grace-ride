@@ -1,6 +1,7 @@
 use std::{path::PathBuf, sync::Arc};
 
 use sqlx::PgPool;
+use url::Url;
 use webauthn_rs::prelude::*;
 
 use crate::security::RateLimiter;
@@ -25,6 +26,10 @@ pub struct Config {
     pub audit_retention_days: i64,
     /// Emit JSON logs (for log shippers).
     pub json_logs: bool,
+    /// Google OAuth client id (empty ⇒ Google sign-in is disabled).
+    pub google_client_id: Option<String>,
+    /// Google OAuth client secret (empty ⇒ Google sign-in is disabled).
+    pub google_client_secret: Option<String>,
 }
 
 impl Config {
@@ -52,6 +57,14 @@ impl Config {
             chat_retention_days: num("CHAT_RETENTION_DAYS", 180)?,
             audit_retention_days: num("AUDIT_RETENTION_DAYS", 730)?,
             json_logs: env("LOG_FORMAT", "text") == "json",
+            google_client_id: {
+                let v = env("GOOGLE_CLIENT_ID", "");
+                if v.is_empty() { None } else { Some(v) }
+            },
+            google_client_secret: {
+                let v = env("GOOGLE_CLIENT_SECRET", "");
+                if v.is_empty() { None } else { Some(v) }
+            },
         };
         cfg.validate()?;
         Ok(cfg)
@@ -85,6 +98,16 @@ impl Config {
             .map(|u| u.origin().ascii_serialization())
             .unwrap_or_else(|_| self.public_url.clone())
     }
+
+    /// Callback URL that Google redirects to after the user signs in.
+    pub fn google_redirect_uri(&self) -> String {
+        format!("{}/api/auth/google/callback", self.origin())
+    }
+
+    /// True when Google sign-in is configured (both client id and secret set).
+    pub fn google_configured(&self) -> bool {
+        self.google_client_id.is_some() && self.google_client_secret.is_some()
+    }
 }
 
 #[derive(Clone)]
@@ -93,6 +116,7 @@ pub struct AppState {
     pub webauthn: Arc<Webauthn>,
     pub cfg: Arc<Config>,
     pub limiter: Arc<RateLimiter>,
+    pub http_client: reqwest::Client,
 }
 
 pub fn build_webauthn(public_url: &str) -> anyhow::Result<Webauthn> {

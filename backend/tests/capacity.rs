@@ -41,6 +41,8 @@ async fn setup_capacity() -> (Router, AppState) {
         chat_retention_days: 180,
         audit_retention_days: 730,
         json_logs: false,
+        google_client_id: None,
+        google_client_secret: None,
     };
     cfg.validate().unwrap();
     let state = init(cfg.clone()).await.unwrap();

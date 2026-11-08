@@ -1,4 +1,24 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
+import i18n from './i18n';
+
+const ERROR_GROUPS = ['common', 'admin', 'auth', 'events', 'rides', 'settlements', 'community', 'files'] as const
+
+type ErrorBody = { error?: string; code?: string; params?: Record<string, unknown> } | null
+
+/** Prefer the active UI language for a known error code. Fall back to the server message. */
+export function apiMessage(data: ErrorBody, fallback: 'network' | 'uploadFailed'): string {
+  const code = data?.code
+  if (code) {
+    for (const group of ERROR_GROUPS) {
+      const key = `${group}.${code}`
+      if (i18n.exists(key, { ns: 'errors' })) {
+        return String(i18n.t(key, { ns: 'errors', ...(data?.params ?? {}) }))
+      }
+    }
+  }
+  if (data?.error) return data.error
+  return String(i18n.t(fallback, { ns: 'errors' }))
+}
 
 export class ApiError extends Error {
   status: number;
@@ -19,7 +39,7 @@ export async function api<T = any>(path: string, opts: { method?: string; body?:
   const data = text ? JSON.parse(text) : null;
   if (!res.ok) {
     if (res.status === 401 && !path.startsWith('/auth/')) window.dispatchEvent(new Event('gr:unauthorized'));
-    throw new ApiError(res.status, data?.error ?? '网络错误，请稍后再试');
+    throw new ApiError(res.status, apiMessage(data, 'network'));
   }
   return data as T;
 }
@@ -33,7 +53,7 @@ export async function uploadFile(file: File): Promise<{ id: number; mime: string
   fd.append('file', file);
   const res = await fetch('/api/files', { method: 'POST', body: fd, credentials: 'same-origin' });
   const data = await res.json().catch(() => null);
-  if (!res.ok) throw new ApiError(res.status, data?.error ?? '上传失败');
+  if (!res.ok) throw new ApiError(res.status, apiMessage(data, 'uploadFailed'));
   return data;
 }
 

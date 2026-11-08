@@ -42,6 +42,8 @@ import zhAdmin from './admin.zh'
 import enAdmin from './admin.en'
 import zhFormat from './format.zh'
 import enFormat from './format.en'
+import zhErrors from './errors.zh'
+import enErrors from './errors.en'
 
 export const namespaces = [
   'common',
@@ -66,6 +68,7 @@ export const namespaces = [
   'report',
   'admin',
   'format',
+  'errors',
 ] as const
 
 export type Namespace = (typeof namespaces)[number]
@@ -94,6 +97,7 @@ export const resources = {
     report: enReport,
     admin: enAdmin,
     format: enFormat,
+    errors: enErrors,
   },
   zh: {
     common: zhCommon,
@@ -118,5 +122,6 @@ export const resources = {
     report: zhReport,
     admin: zhAdmin,
     format: zhFormat,
+    errors: zhErrors,
   },
 } as const

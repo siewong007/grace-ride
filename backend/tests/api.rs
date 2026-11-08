@@ -43,6 +43,8 @@ async fn setup() -> (Router, AppState) {
         chat_retention_days: 180,
         audit_retention_days: 730,
         json_logs: false,
+        google_client_id: None,
+        google_client_secret: None,
     };
     cfg.validate().unwrap();
     let state = init(cfg).await.unwrap();
@@ -650,6 +652,8 @@ fn production_config_rejects_dev_mode_and_plain_http() {
         chat_retention_days: 180,
         audit_retention_days: 730,
         json_logs: true,
+        google_client_id: None,
+        google_client_secret: None,
     };
     assert!(
         cfg.validate().is_err(),

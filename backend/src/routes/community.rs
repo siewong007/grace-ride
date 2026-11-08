@@ -9,9 +9,10 @@ use serde::Deserialize;
 use serde_json::{json, Value};
 
 use crate::auth::CurrentUser;
-use crate::error::{bad, forbidden, AppResult, not_found};
+use crate::error::{bad, forbidden, not_found, AppResult};
+use crate::i18n::ErrorKey;
 use crate::state::AppState;
-use crate::util::{Lang, audit, fmt_rm, notify, notify_roles, now, require_any, t};
+use crate::util::{audit, fmt_rm, notify, notify_roles, now, require_any, t, Lang};
 
 pub fn router() -> Router<AppState> {
     Router::new()
@@ -62,12 +63,12 @@ async fn update_profile(
 ) -> AppResult<Json<Value>> {
     if let Some(ref name) = req.name {
         if name.trim().is_empty() {
-            return Err(bad(t(u.lang, "请填写姓名", "Please enter your name")));
+            return Err(bad(u.lang, ErrorKey::NameRequired));
         }
     }
     if let Some(ref lang) = req.lang {
         if lang != "zh" && lang != "en" {
-            return Err(bad(t(u.lang, "语言只支持中文或英文", "Language must be zh or en")));
+            return Err(bad(u.lang, ErrorKey::LanguageInvalid));
         }
     }
     if let Some(f) = req.photo_file_id {
@@ -77,7 +78,7 @@ async fn update_profile(
             .await?
             .ok_or(not_found(u.lang))?;
         if owner != u.id {
-            return Err(forbidden(t(u.lang, "照片无效", "Invalid photo")));
+            return Err(forbidden(u.lang, ErrorKey::InvalidPhoto));
         }
     }
     sqlx::query(
@@ -164,7 +165,7 @@ async fn create_announcement(
 ) -> AppResult<Json<Value>> {
     require_any(&u, &["transport", "admin"])?;
     if req.title.trim().is_empty() || req.body.trim().is_empty() {
-        return Err(bad(t(u.lang, "请填写标题及内容", "Please enter both a title and content")));
+        return Err(bad(u.lang, ErrorKey::TitleAndContentRequired));
     }
     let (id,): (i64,) = sqlx::query_as("INSERT INTO announcements (title, body, pinned, created_by, created_at) VALUES ($1,$2,$3,$4,$5) RETURNING id")
         .bind(req.title.trim())
@@ -180,7 +181,14 @@ async fn create_announcement(
             .await?;
         let title = req.title.trim();
         for (uid,) in users {
-            notify(&st.db, uid, ("新公告", "New announcement"), (title, title), "/").await;
+            notify(
+                &st.db,
+                uid,
+                ("新公告", "New announcement"),
+                (title, title),
+                "/",
+            )
+            .await;
         }
     }
     audit(
@@ -254,7 +262,7 @@ async fn create_ticket(
     Json(req): Json<TicketIn>,
 ) -> AppResult<Json<Value>> {
     if req.subject.trim().is_empty() || req.body.trim().is_empty() {
-        return Err(bad(t(u.lang, "请填写问题与说明", "Please enter your question and details")));
+        return Err(bad(u.lang, ErrorKey::QuestionAndDetailsRequired));
     }
     if let Some(r) = req.ride_id {
         let (p, d): (i64, Option<i64>) =
@@ -264,11 +272,7 @@ async fn create_ticket(
                 .await?
                 .ok_or(not_found(u.lang))?;
         if p != u.id && d != Some(u.id) {
-            return Err(forbidden(t(
-                u.lang,
-                "只能关联自己的接送",
-                "You can only link your own rides",
-            )));
+            return Err(forbidden(u.lang, ErrorKey::OnlyLinkOwnRides));
         }
     }
     let (id,): (i64,) = sqlx::query_as("INSERT INTO help_tickets (user_id, ride_id, subject, created_at, updated_at) VALUES ($1,$2,$3,$4,$5) RETURNING id")
@@ -314,7 +318,7 @@ async fn ticket_owner(
             .await?
             .ok_or(not_found(u.lang))?;
     if row.0 != u.id && !u.is_staff() {
-        return Err(forbidden(t(u.lang, "无权限", "You don't have permission")));
+        return Err(forbidden(u.lang, ErrorKey::Forbidden));
     }
     Ok(row)
 }
@@ -350,10 +354,10 @@ async fn reply_ticket(
 ) -> AppResult<Json<Value>> {
     let (owner, subject, status, _) = ticket_owner(&st, &u, id).await?;
     if status == "closed" {
-        return Err(bad(t(u.lang, "此求助已结案", "This request has already been closed")));
+        return Err(bad(u.lang, ErrorKey::RequestAlreadyClosed));
     }
     if req.body.trim().is_empty() {
-        return Err(bad(t(u.lang, "请填写内容", "Please enter your reply")));
+        return Err(bad(u.lang, ErrorKey::ReplyContentRequired));
     }
     sqlx::query(
         "INSERT INTO help_replies (ticket_id, user_id, body, created_at) VALUES ($1,$2,$3,$4)",
@@ -511,7 +515,7 @@ async fn get_reimbursement(
 ) -> AppResult<Json<Value>> {
     let r = load_reimb(&st, u.lang, id).await?;
     if r.user_id != u.id && !u.is_staff() && !(u.has("finance") && u.mfa_ok) {
-        return Err(forbidden(t(u.lang, "无权限", "You don't have permission")));
+        return Err(forbidden(u.lang, ErrorKey::Forbidden));
     }
     Ok(Json(reimb_json(&r, &u)))
 }
@@ -528,26 +532,18 @@ struct ReimbIn {
 
 async fn validate_reimb(st: &AppState, u: &CurrentUser, req: &ReimbIn) -> AppResult<()> {
     if req.amount_cents <= 0 || req.amount_cents > 50_000 {
-        return Err(bad(t(
-            u.lang,
-            "金额需介于 RM0.01 – RM500",
-            "Amount must be between RM0.01 and RM500",
-        )));
+        return Err(bad(u.lang, ErrorKey::AmountRangeRM001to500));
     }
     if req.payee_name.trim().is_empty() || req.payee_phone.trim().is_empty() {
-        return Err(bad(t(
-            u.lang,
-            "请填写收款人姓名及手机号（TNG / DuitNow）",
-            "Please enter the payee name and phone (TNG / DuitNow)",
-        )));
+        return Err(bad(u.lang, ErrorKey::PayeeNameAndPhoneRequired));
     }
     let (owner,): (i64,) = sqlx::query_as("SELECT owner_id FROM files WHERE id=$1")
         .bind(req.receipt_file_id)
         .fetch_optional(&st.db)
         .await?
-        .ok_or_else(|| bad(t(u.lang, "请上传收据", "Please upload a receipt")))?;
+        .ok_or_else(|| bad(u.lang, ErrorKey::ReceiptRequired))?;
     if owner != u.id {
-        return Err(forbidden(t(u.lang, "收据无效", "Invalid receipt")));
+        return Err(forbidden(u.lang, ErrorKey::InvalidReceipt));
     }
     if let Some(rid) = req.ride_id {
         let (p,): (i64,) = sqlx::query_as("SELECT passenger_id FROM rides WHERE id=$1")
@@ -556,11 +552,7 @@ async fn validate_reimb(st: &AppState, u: &CurrentUser, req: &ReimbIn) -> AppRes
             .await?
             .ok_or(not_found(u.lang))?;
         if p != u.id {
-            return Err(forbidden(t(
-                u.lang,
-                "只能关联自己的接送",
-                "You can only link your own rides",
-            )));
+            return Err(forbidden(u.lang, ErrorKey::OnlyLinkOwnRides));
         }
     }
     Ok(())
@@ -617,11 +609,7 @@ async fn resubmit_reimbursement(
 ) -> AppResult<Json<Value>> {
     let r = load_reimb(&st, u.lang, id).await?;
     if r.user_id != u.id || r.status != "returned" {
-        return Err(bad(t(
-            u.lang,
-            "只有被退回的申请可以补资料重新提交",
-            "Only returned requests can be resubmitted",
-        )));
+        return Err(bad(u.lang, ErrorKey::OnlyReturnedReimbCanBeResubmitted));
     }
     validate_reimb(&st, &u, &req).await?;
     sqlx::query("UPDATE reimbursements SET ride_id=$1, amount_cents=$2, description=$3, receipt_file_id=$4, payee_name=$5, payee_phone=$6, status='pending', payee_verified=0, updated_at=$7 WHERE id=$8")
@@ -673,28 +661,20 @@ async fn review_reimbursement(
     require_any(&u, &["transport"])?;
     let r = load_reimb(&st, u.lang, id).await?;
     if r.status != "pending" {
-        return Err(bad(t(
-            u.lang,
-            "此申请已审核",
-            "This request has already been reviewed",
-        )));
+        return Err(bad(u.lang, ErrorKey::ReimbAlreadyReviewed));
     }
     if r.user_id == u.id {
-        return Err(forbidden(t(
-            u.lang,
-            "不能审核自己的申请",
-            "You cannot review your own request",
-        )));
+        return Err(forbidden(u.lang, ErrorKey::CannotReviewOwnRequest));
     }
     let note = req.note.unwrap_or_default();
     let status = match req.action.as_str() {
         "approve" => "approved",
         "return" => "returned",
         "reject" => "rejected",
-        _ => return Err(bad(t(u.lang, "操作无效", "Invalid action"))),
+        _ => return Err(bad(u.lang, ErrorKey::InvalidAction)),
     };
     if status != "approved" && note.trim().is_empty() {
-        return Err(bad(t(u.lang, "请填写原因", "Please provide a reason")));
+        return Err(bad(u.lang, ErrorKey::ReasonRequired));
     }
     sqlx::query(
         "UPDATE reimbursements SET status=$1, review_note=$2, reviewed_by=$3, updated_at=$4 WHERE id=$5",
@@ -763,28 +743,16 @@ async fn pay_reimbursement(
     require_any(&u, &["finance"])?;
     let r = load_reimb(&st, u.lang, id).await?;
     if r.status != "approved" {
-        return Err(bad(t(
-            u.lang,
-            "只有已批准的申请可以付款",
-            "Only approved requests can be paid",
-        )));
+        return Err(bad(u.lang, ErrorKey::OnlyApprovedReimbCanBePaid));
     }
     if r.user_id == u.id {
-        return Err(forbidden(t(
-            u.lang,
-            "不能为自己的申请付款",
-            "You cannot pay your own request",
-        )));
+        return Err(forbidden(u.lang, ErrorKey::CannotPayOwnRequest));
     }
     if !req.payee_verified {
-        return Err(bad(t(
-            u.lang,
-            "请先核对收款人姓名、手机号及 DuitNow 收款去向",
-            "Please verify the payee name, phone and DuitNow destination first",
-        )));
+        return Err(bad(u.lang, ErrorKey::PayeeVerificationRequired));
     }
     if req.paid_ref.trim().len() < 4 {
-        return Err(bad(t(u.lang, "请填写交易编号", "Please enter the transaction reference")));
+        return Err(bad(u.lang, ErrorKey::TxnRefRequired));
     }
     sqlx::query("UPDATE reimbursements SET status='paid', payee_verified=1, paid_ref=$1, paid_by=$2, paid_at=$3, updated_at=$4 WHERE id=$5")
         .bind(req.paid_ref.trim())
@@ -871,7 +839,11 @@ pub async fn compute_badges(st: &AppState, user_id: i64, lang: Lang) -> AppResul
             "night",
             t(lang, "宵", "N"),
             t(lang, "宵夜王", "Night Owl"),
-            t(lang, "完成 3 次或以上晚上 9 点后的接送", "Complete 3 or more rides after 9 pm"),
+            t(
+                lang,
+                "完成 3 次或以上晚上 9 点后的接送",
+                "Complete 3 or more rides after 9 pm",
+            ),
             night,
             3,
         ),
@@ -879,7 +851,11 @@ pub async fn compute_badges(st: &AppState, user_id: i64, lang: Lang) -> AppResul
             "regular",
             t(lang, "勤", "R"),
             t(lang, "常驻司机", "Resident Driver"),
-            t(lang, "过去 6 个月中至少 3 个月有完成接送", "Completed rides in at least 3 of the past 6 months"),
+            t(
+                lang,
+                "过去 6 个月中至少 3 个月有完成接送",
+                "Completed rides in at least 3 of the past 6 months",
+            ),
             months,
             3,
         ),
@@ -887,7 +863,11 @@ pub async fn compute_badges(st: &AppState, user_id: i64, lang: Lang) -> AppResul
             "carpool",
             t(lang, "爱", "C"),
             t(lang, "爱心同行者", "Caring Companion"),
-            t(lang, "开启共乘并完成 2 趟或以上多人同车接送", "Enable carpool and complete 2 or more rides with multiple passengers"),
+            t(
+                lang,
+                "开启共乘并完成 2 趟或以上多人同车接送",
+                "Enable carpool and complete 2 or more rides with multiple passengers",
+            ),
             if carpool == 1 { shared } else { 0 },
             2,
         ),
@@ -915,7 +895,7 @@ async fn monthly_report(
     }
     let month = q.month.unwrap_or_else(|| now()[..7].to_string());
     if month.len() != 7 {
-        return Err(bad(t(u.lang, "月份格式应为 YYYY-MM", "Month must be in YYYY-MM format")));
+        return Err(bad(u.lang, ErrorKey::MonthFormatInvalid));
     }
     let (name,): (String,) = sqlx::query_as("SELECT name FROM users WHERE id=$1")
         .bind(target)
