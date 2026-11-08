@@ -25,7 +25,7 @@ Resolved this session: B-2 (report module exists), B-3 (retention job exists), B
 Still open: B-5 browser E2E suite not wired (MANUAL cases in TEST_MATRIX), B-6 `cline` CLI not installed (unattended 24x7 loop cannot self-start; working as bounded manual agent pass).
 
 ## Tested commit SHA
-83363be (agent/grace-ride) — cargo test 18 pass, tsc -b exit 0. Pending new commit for capacity baseline.
+a102353 (agent/grace-ride) — cargo test 19 pass + 2 capacity, tsc -b exit 0. Bilingual error messages following user config (users.lang).
 
 ## Next 3 actions
 1. Write reports/run-<timestamp>.md and commit this session (bilingual error messages following user config) + state corrections.
