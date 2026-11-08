@@ -2,7 +2,7 @@
 
 An invite-only ride and fellowship web app for PJ State CMC members, built from `Grace_Ride_Chinese.pdf`.
 
-- **Backend:** Rust (Axum 0.8, SQLx with SQLite, webauthn-rs passkeys, TOTP 2FA)
+- **Backend:** Rust (Axum 0.8, SQLx with PostgreSQL, webauthn-rs passkeys, TOTP 2FA)
 - **Frontend:** React 18, TypeScript and Vite. One responsive UI:
   - **Phone (under 768px):** bottom tab bar, single column, tables shown as cards
   - **Tablet (768–1199px):** icon rail, grids, one column of content up to 1024px
@@ -16,6 +16,12 @@ An invite-only ride and fellowship web app for PJ State CMC members, built from 
 cd backend
 cp .env.example .env            # DEV_MODE=true loads demo data
 ../dev-env.sh cargo run         # API on http://127.0.0.1:8080
+```
+
+Requires a local PostgreSQL server. Create the database first (day one):
+
+```bash
+createdb grace_ride_dev         # tables + demo data are created on first start
 ```
 
 ```bash
@@ -36,7 +42,7 @@ Demo accounts (dev mode only). The password for all of them is `GraceRide2026!`.
 | driver2@example.org | 志愿司机 |
 | member@example.org / amina@example.org / sophie@example.org | 会员 (乘客) |
 
-To reset the demo data, delete `backend/data/` and restart the API.
+To reset the demo data, drop and recreate the `grace_ride_dev` database and restart the API.
 
 ## Spec coverage
 

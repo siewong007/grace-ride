@@ -2,7 +2,7 @@
 //! in production we only create the first administrator and print a one-time setup link.
 
 use chrono::{Datelike, Duration, Local, Weekday};
-use sqlx::SqlitePool;
+use sqlx::PgPool;
 
 use crate::routes::auth::hash_password;
 use crate::state::Config;
@@ -10,7 +10,7 @@ use crate::util::{in_days, now, random_token};
 
 pub const DEMO_PASSWORD: &str = "GraceRide2026!";
 
-pub async fn run(db: &SqlitePool, cfg: &Config) -> anyhow::Result<()> {
+pub async fn run(db: &PgPool, cfg: &Config) -> anyhow::Result<()> {
     let (n,): (i64,) = sqlx::query_as("SELECT COUNT(*) FROM users")
         .fetch_one(db)
         .await?;
@@ -26,7 +26,7 @@ pub async fn run(db: &SqlitePool, cfg: &Config) -> anyhow::Result<()> {
         "蒲种",
         "吉隆坡市中心",
     ] {
-        sqlx::query("INSERT INTO areas (name) VALUES (?)")
+        sqlx::query("INSERT INTO areas (name) VALUES ($1)")
             .bind(a)
             .execute(db)
             .await?;
@@ -45,14 +45,14 @@ pub async fn run(db: &SqlitePool, cfg: &Config) -> anyhow::Result<()> {
 
     if !cfg.dev_mode {
         let email = std::env::var("ADMIN_EMAIL").unwrap_or_else(|_| "admin@example.org".into());
-        let id = sqlx::query("INSERT INTO users (name, email, roles, webauthn_uuid) VALUES ('管理员', ?, 'admin', ?)")
+        let id = sqlx::query_as::<_, (i64,)>("INSERT INTO users (name, email, roles, webauthn_uuid) VALUES ('管理员', $1, 'admin', $2) RETURNING id")
             .bind(&email)
             .bind(uuid::Uuid::new_v4().to_string())
-            .execute(db)
+            .fetch_one(db)
             .await?
-            .last_insert_rowid();
+            .0;
         let token = random_token(32);
-        sqlx::query("INSERT INTO invites (token, kind, email, user_id, created_by, expires_at) VALUES (?, 'recovery', ?, ?, ?, ?)")
+        sqlx::query("INSERT INTO invites (token, kind, email, user_id, created_by, expires_at) VALUES ($1, 'recovery', $2, $3, $4, $5)")
             .bind(&token)
             .bind(&email)
             .bind(id)
@@ -87,16 +87,16 @@ pub async fn run(db: &SqlitePool, cfg: &Config) -> anyhow::Result<()> {
     ];
     let mut ids = vec![];
     for (name, email, phone, roles) in users {
-        let id = sqlx::query("INSERT INTO users (name, email, phone, roles, password_hash, webauthn_uuid) VALUES (?,?,?,?,?,?)")
+        let id = sqlx::query_as::<_, (i64,)>("INSERT INTO users (name, email, phone, roles, password_hash, webauthn_uuid) VALUES ($1,$2,$3,$4,$5,$6) RETURNING id")
             .bind(name)
             .bind(email)
             .bind(phone)
             .bind(roles)
             .bind(&pw)
             .bind(uuid::Uuid::new_v4().to_string())
-            .execute(db)
+            .fetch_one(db)
             .await?
-            .last_insert_rowid();
+            .0;
         ids.push(id);
     }
     let (admin, transport, _finance, deming, jiale, fala, amina, sophie) = (
@@ -113,20 +113,20 @@ pub async fn run(db: &SqlitePool, cfg: &Config) -> anyhow::Result<()> {
         (jiale, 3),
         (transport, 2),
     ] {
-        sqlx::query("INSERT INTO group_members (group_id, user_id) VALUES (?,?)")
+        sqlx::query("INSERT INTO group_members (group_id, user_id) VALUES ($1,$2)")
             .bind(g)
             .bind(uid)
             .execute(db)
             .await?;
     }
-    sqlx::query("INSERT INTO vehicles (user_id, model, color, plate, seats) VALUES (?, 'Perodua Myvi', '白色', 'VXX 1234', 5)").bind(deming).execute(db).await?;
-    sqlx::query("INSERT INTO vehicles (user_id, model, color, plate, seats) VALUES (?, 'Honda City', '银色', 'WQA 8821', 5)").bind(jiale).execute(db).await?;
-    sqlx::query("INSERT INTO vehicles (user_id, model, color, plate, seats) VALUES (?, 'Proton X50', '灰色', 'BPM 3302', 5)").bind(transport).execute(db).await?;
-    sqlx::query("UPDATE users SET carpool_enabled=1, spare_seats=2 WHERE id=?")
+    sqlx::query("INSERT INTO vehicles (user_id, model, color, plate, seats) VALUES ($1, 'Perodua Myvi', '白色', 'VXX 1234', 5)").bind(deming).execute(db).await?;
+    sqlx::query("INSERT INTO vehicles (user_id, model, color, plate, seats) VALUES ($1, 'Honda City', '银色', 'WQA 8821', 5)").bind(jiale).execute(db).await?;
+    sqlx::query("INSERT INTO vehicles (user_id, model, color, plate, seats) VALUES ($1, 'Proton X50', '灰色', 'BPM 3302', 5)").bind(transport).execute(db).await?;
+    sqlx::query("UPDATE users SET carpool_enabled=1, spare_seats=2 WHERE id=$1")
         .bind(deming)
         .execute(db)
         .await?;
-    sqlx::query("UPDATE users SET carpool_enabled=0, spare_seats=1 WHERE id=?")
+    sqlx::query("UPDATE users SET carpool_enabled=0, spare_seats=1 WHERE id=$1")
         .bind(jiale)
         .execute(db)
         .await?;
@@ -139,7 +139,7 @@ pub async fn run(db: &SqlitePool, cfg: &Config) -> anyhow::Result<()> {
         (transport, 1),
         (transport, 5),
     ] {
-        sqlx::query("INSERT INTO driver_areas (user_id, area_id) VALUES (?,?)")
+        sqlx::query("INSERT INTO driver_areas (user_id, area_id) VALUES ($1,$2)")
             .bind(uid)
             .bind(area)
             .execute(db)
@@ -205,31 +205,31 @@ pub async fn run(db: &SqlitePool, cfg: &Config) -> anyhow::Result<()> {
         ),
     ];
     for (title, kind, desc, at, loc, cap, cost, by, groups) in events {
-        let eid = sqlx::query("INSERT INTO events (title, kind, description, starts_at, location, capacity, cost_note, created_by, signup_deadline) VALUES (?,?,?,?,?,?,?,?,?)")
+        let eid = sqlx::query_as::<_, (i64,)>("INSERT INTO events (title, kind, description, starts_at, location, capacity, cost_note, created_by, signup_deadline) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9) RETURNING id")
             .bind(title).bind(kind).bind(desc).bind(&at).bind(loc).bind(cap).bind(cost).bind(by)
             .bind(format!("{}T12:00", &at[..10]))
-            .execute(db).await?.last_insert_rowid();
+            .fetch_one(db).await?.0;
         for g in groups {
-            sqlx::query("INSERT INTO event_groups (event_id, group_id) VALUES (?,?)")
+            sqlx::query("INSERT INTO event_groups (event_id, group_id) VALUES ($1,$2)")
                 .bind(eid)
                 .bind(g)
                 .execute(db)
                 .await?;
         }
     }
-    sqlx::query("INSERT INTO event_signups (event_id, user_id, status, need_ride) VALUES (1, ?, 'going', 1)").bind(fala).execute(db).await?;
-    sqlx::query("INSERT INTO event_signups (event_id, user_id, status, offer_drive, offer_seats) VALUES (1, ?, 'going', 1, 2)").bind(deming).execute(db).await?;
+    sqlx::query("INSERT INTO event_signups (event_id, user_id, status, need_ride) VALUES (1, $1, 'going', 1)").bind(fala).execute(db).await?;
+    sqlx::query("INSERT INTO event_signups (event_id, user_id, status, offer_drive, offer_seats) VALUES (1, $1, 'going', 1, 2)").bind(deming).execute(db).await?;
 
     // A finished past badminton game with attendance, ready for 费用分摊.
     let past = fmt(today - Duration::days(5), "19:30");
-    let past_id = sqlx::query("INSERT INTO events (title, kind, description, starts_at, location, capacity, cost_note, created_by, status) VALUES ('上周羽毛球局','badminton','双打交流',?, 'PJ 室内羽球馆', 12, '场租 RM120 + 羽球 RM48', ?, 'finished')")
-        .bind(&past).bind(deming).execute(db).await?.last_insert_rowid();
-    sqlx::query("INSERT INTO event_groups (event_id, group_id) VALUES (?, 3)")
+    let past_id = sqlx::query_as::<_, (i64,)>("INSERT INTO events (title, kind, description, starts_at, location, capacity, cost_note, created_by, status) VALUES ('上周羽毛球局','badminton','双打交流',$1, 'PJ 室内羽球馆', 12, '场租 RM120 + 羽球 RM48', $2, 'finished') RETURNING id")
+        .bind(&past).bind(deming).fetch_one(db).await?.0;
+    sqlx::query("INSERT INTO event_groups (event_id, group_id) VALUES ($1, 3)")
         .bind(past_id)
         .execute(db)
         .await?;
     for uid in [deming, fala, amina, jiale, transport, sophie] {
-        sqlx::query("INSERT INTO event_signups (event_id, user_id, status, attended) VALUES (?, ?, 'going', 1)").bind(past_id).bind(uid).execute(db).await?;
+        sqlx::query("INSERT INTO event_signups (event_id, user_id, status, attended) VALUES ($1, $2, 'going', 1)").bind(past_id).bind(uid).execute(db).await?;
     }
 
     // Rides in different states
@@ -296,22 +296,22 @@ pub async fn run(db: &SqlitePool, cfg: &Config) -> anyhow::Result<()> {
         ),
     ];
     for (p, d, at, area, addr, dest, seats, status) in rides {
-        let rid = sqlx::query("INSERT INTO rides (passenger_id, driver_id, pickup_at, pickup_area_id, pickup_address, destination, seats, status, created_at, updated_at, completed_at) VALUES (?,?,?,?,?,?,?,?,?,?,?)")
+        let rid = sqlx::query_as::<_, (i64,)>("INSERT INTO rides (passenger_id, driver_id, pickup_at, pickup_area_id, pickup_address, destination, seats, status, created_at, updated_at, completed_at) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11) RETURNING id")
             .bind(p).bind(d).bind(&at).bind(area).bind(addr).bind(dest).bind(seats).bind(status).bind(now()).bind(now())
             .bind(if status == "completed" { Some(at.clone()) } else { None })
-            .execute(db).await?.last_insert_rowid();
+            .fetch_one(db).await?.0;
         if matches!(status, "confirmed" | "completed") {
-            sqlx::query("UPDATE rides SET trip_id=id, approved_by=? WHERE id=?")
+            sqlx::query("UPDATE rides SET trip_id=id, approved_by=$1 WHERE id=$2")
                 .bind(transport)
                 .bind(rid)
                 .execute(db)
                 .await?;
-            sqlx::query("INSERT INTO ride_messages (trip_id, user_id, body) VALUES (?, NULL, '行程已获批准，群聊已开启。')").bind(rid).execute(db).await?;
+            sqlx::query("INSERT INTO ride_messages (trip_id, user_id, body) VALUES ($1, NULL, '行程已获批准，群聊已开启。')").bind(rid).execute(db).await?;
         }
         if status == "confirmed" {
-            sqlx::query("INSERT INTO ride_messages (trip_id, user_id, body) VALUES (?, ?, '是在北门入口集合吗？')").bind(rid).bind(p).execute(db).await?;
+            sqlx::query("INSERT INTO ride_messages (trip_id, user_id, body) VALUES ($1, $2, '是在北门入口集合吗？')").bind(rid).bind(p).execute(db).await?;
             sqlx::query(
-                "INSERT INTO ride_messages (trip_id, user_id, body) VALUES (?, ?, '对，8 点见！')",
+                "INSERT INTO ride_messages (trip_id, user_id, body) VALUES ($1, $2, '对，8 点见！')",
             )
             .bind(rid)
             .bind(d)
@@ -320,9 +320,9 @@ pub async fn run(db: &SqlitePool, cfg: &Config) -> anyhow::Result<()> {
         }
     }
 
-    sqlx::query("INSERT INTO announcements (title, body, pinned, created_by) VALUES ('欢迎使用恩典同行', '接送、活动与重要消息，集中在同一个平台。如有问题，请到帮助中心提问。', 1, ?)")
+    sqlx::query("INSERT INTO announcements (title, body, pinned, created_by) VALUES ('欢迎使用恩典同行', '接送、活动与重要消息，集中在同一个平台。如有问题，请到帮助中心提问。', 1, $1)")
         .bind(admin).execute(db).await?;
-    sqlx::query("INSERT INTO announcements (title, body, created_by) VALUES ('本周日接送安排', '请于周五前提交周日崇拜的接送报名，交通组会在周六确认。', ?)")
+    sqlx::query("INSERT INTO announcements (title, body, created_by) VALUES ('本周日接送安排', '请于周五前提交周日崇拜的接送报名，交通组会在周六确认。', $1)")
         .bind(transport).execute(db).await?;
 
     tracing::warn!(

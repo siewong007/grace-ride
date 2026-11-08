@@ -23,7 +23,7 @@ use serde_json::json;
 use crate::state::AppState;
 
 /// Fixed-window counter keyed by "bucket:ip". Single-process is fine: the app runs
-/// as one instance on SQLite. Move to Redis if it is ever scaled horizontally.
+/// as one instance of this app. Move to Redis if it is ever scaled horizontally.
 pub struct RateLimiter {
     windows: Mutex<HashMap<String, (Instant, u32)>>,
 }

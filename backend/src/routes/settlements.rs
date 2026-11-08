@@ -136,7 +136,7 @@ fn compute_shares(req: &SettlementIn) -> AppResult<Vec<(i64, i64)>> {
 }
 
 async fn event_owner(st: &AppState, event_id: i64) -> AppResult<(i64, String)> {
-    sqlx::query_as("SELECT created_by, title FROM events WHERE id=?")
+    sqlx::query_as("SELECT created_by, title FROM events WHERE id=$1")
         .bind(event_id)
         .fetch_optional(&st.db)
         .await?
@@ -150,7 +150,7 @@ async fn write_body(
     shares: &[(i64, i64)],
 ) -> AppResult<()> {
     let mut tx = st.db.begin().await?;
-    sqlx::query("UPDATE settlements SET title=?, split_mode=?, subsidy_cents=?, payee_name=?, payee_account=?, due_date=? WHERE id=?")
+    sqlx::query("UPDATE settlements SET title=$1, split_mode=$2, subsidy_cents=$3, payee_name=$4, payee_account=$5, due_date=$6 WHERE id=$7")
         .bind(req.title.trim())
         .bind(&req.split_mode)
         .bind(req.subsidy_cents.unwrap_or(0))
@@ -160,12 +160,12 @@ async fn write_body(
         .bind(sid)
         .execute(&mut *tx)
         .await?;
-    sqlx::query("DELETE FROM settlement_items WHERE settlement_id=?")
+    sqlx::query("DELETE FROM settlement_items WHERE settlement_id=$1")
         .bind(sid)
         .execute(&mut *tx)
         .await?;
     for i in &req.items {
-        sqlx::query("INSERT INTO settlement_items (settlement_id, label, amount_cents, receipt_file_id) VALUES (?,?,?,?)")
+        sqlx::query("INSERT INTO settlement_items (settlement_id, label, amount_cents, receipt_file_id) VALUES ($1,$2,$3,$4)")
             .bind(sid)
             .bind(i.label.trim())
             .bind(i.amount_cents)
@@ -175,7 +175,7 @@ async fn write_body(
     }
     // Upsert shares; keep payment state where the amount did not change.
     let existing: Vec<(i64, i64, String)> = sqlx::query_as(
-        "SELECT user_id, amount_cents, status FROM settlement_shares WHERE settlement_id=?",
+        "SELECT user_id, amount_cents, status FROM settlement_shares WHERE settlement_id=$1",
     )
     .bind(sid)
     .fetch_all(&mut *tx)
@@ -183,7 +183,7 @@ async fn write_body(
     for (uid, old_amt, status) in &existing {
         match shares.iter().find(|s| s.0 == *uid) {
             None => {
-                sqlx::query("DELETE FROM settlement_shares WHERE settlement_id=? AND user_id=?")
+                sqlx::query("DELETE FROM settlement_shares WHERE settlement_id=$1 AND user_id=$2")
                     .bind(sid)
                     .bind(uid)
                     .execute(&mut *tx)
@@ -202,7 +202,7 @@ async fn write_body(
                 } else {
                     ("unpaid", String::new())
                 };
-                sqlx::query("UPDATE settlement_shares SET amount_cents=?, status=?, note=?, updated_at=? WHERE settlement_id=? AND user_id=?")
+                sqlx::query("UPDATE settlement_shares SET amount_cents=$1, status=$2, note=$3, updated_at=$4 WHERE settlement_id=$5 AND user_id=$6")
                     .bind(amt)
                     .bind(new_status)
                     .bind(note)
@@ -217,7 +217,7 @@ async fn write_body(
     }
     for (uid, amt) in shares {
         if !existing.iter().any(|e| e.0 == *uid) {
-            sqlx::query("INSERT INTO settlement_shares (settlement_id, user_id, amount_cents, status, updated_at) VALUES (?,?,?,?,?)")
+            sqlx::query("INSERT INTO settlement_shares (settlement_id, user_id, amount_cents, status, updated_at) VALUES ($1,$2,$3,$4,$5)")
                 .bind(sid)
                 .bind(uid)
                 .bind(amt)
@@ -242,16 +242,15 @@ async fn create(
         return Err(forbidden("只有活动发起者可以发起费用分摊"));
     }
     let shares = compute_shares(&req)?;
-    let sid = sqlx::query(
-        "INSERT INTO settlements (event_id, created_by, title, created_at) VALUES (?,?,?,?)",
+    let (sid,): (i64,) = sqlx::query_as(
+        "INSERT INTO settlements (event_id, created_by, title, created_at) VALUES ($1,$2,$3,$4) RETURNING id",
     )
     .bind(event_id)
     .bind(u.id)
     .bind(req.title.trim())
     .bind(now())
-    .execute(&st.db)
-    .await?
-    .last_insert_rowid();
+    .fetch_one(&st.db)
+    .await?;
     write_body(&st, sid, &req, &shares).await?;
     audit(
         &st.db,
@@ -288,7 +287,7 @@ async fn load(st: &AppState, id: i64) -> AppResult<SRow> {
     sqlx::query_as::<_, SRow>(
         "SELECT s.id, s.event_id, s.created_by, s.title, s.split_mode, s.subsidy_cents, s.payee_name, s.payee_account, s.due_date,
                 s.status, s.version, s.created_at, e.title AS event_title, e.starts_at AS event_starts_at, u.name AS creator_name
-         FROM settlements s JOIN events e ON e.id=s.event_id JOIN users u ON u.id=s.created_by WHERE s.id=?",
+         FROM settlements s JOIN events e ON e.id=s.event_id JOIN users u ON u.id=s.created_by WHERE s.id=$1",
     )
     .bind(id)
     .fetch_optional(&st.db)
@@ -297,13 +296,13 @@ async fn load(st: &AppState, id: i64) -> AppResult<SRow> {
 }
 
 async fn snapshot(st: &AppState, s: &SRow) -> AppResult<Value> {
-    let items: Vec<(i64, String, i64, Option<i64>)> = sqlx::query_as("SELECT id, label, amount_cents, receipt_file_id FROM settlement_items WHERE settlement_id=? ORDER BY id")
+    let items: Vec<(i64, String, i64, Option<i64>)> = sqlx::query_as("SELECT id, label, amount_cents, receipt_file_id FROM settlement_items WHERE settlement_id=$1 ORDER BY id")
         .bind(s.id)
         .fetch_all(&st.db)
         .await?;
     let shares: Vec<(i64, i64, String, i64, String, Option<i64>, String, Option<String>, String, String)> = sqlx::query_as(
         "SELECT sh.id, sh.user_id, u.name, sh.amount_cents, sh.status, sh.proof_file_id, sh.txn_ref, sh.paid_date, sh.note, sh.updated_at
-         FROM settlement_shares sh JOIN users u ON u.id=sh.user_id WHERE sh.settlement_id=? ORDER BY u.name",
+         FROM settlement_shares sh JOIN users u ON u.id=sh.user_id WHERE sh.settlement_id=$1 ORDER BY u.name",
     )
     .bind(s.id)
     .fetch_all(&st.db)
@@ -355,10 +354,10 @@ async fn list_mine_organised(State(st): State<AppState>, u: CurrentUser) -> AppR
     let finance = u.has("finance") && u.mfa_ok;
     let rows: Vec<(i64, String, String, String, i64, i64, i64)> = sqlx::query_as(
         "SELECT s.id, s.title, e.title, s.status,
-            (SELECT COALESCE(SUM(amount_cents),0) FROM settlement_shares WHERE settlement_id=s.id),
+            (SELECT COALESCE(SUM(amount_cents),0)::BIGINT FROM settlement_shares WHERE settlement_id=s.id),
             (SELECT COUNT(*) FROM settlement_shares WHERE settlement_id=s.id AND status='confirmed'),
             (SELECT COUNT(*) FROM settlement_shares WHERE settlement_id=s.id)
-         FROM settlements s JOIN events e ON e.id=s.event_id WHERE s.created_by=? OR ? ORDER BY s.id DESC LIMIT 200",
+         FROM settlements s JOIN events e ON e.id=s.event_id WHERE s.created_by=$1 OR $2 ORDER BY s.id DESC LIMIT 200",
     )
     .bind(u.id)
     .bind(finance)
@@ -391,7 +390,7 @@ async fn update(
             .ok_or_else(|| bad("发布后修改金额，请填写修改原因"))?;
         // 发布后若改金额，必须保留旧版并通知
         let snap = snapshot(&st, &s).await?;
-        sqlx::query("INSERT INTO settlement_revisions (settlement_id, version, snapshot, reason, created_by, created_at) VALUES (?,?,?,?,?,?)")
+        sqlx::query("INSERT INTO settlement_revisions (settlement_id, version, snapshot, reason, created_by, created_at) VALUES ($1,$2,$3,$4,$5,$6)")
             .bind(id)
             .bind(s.version)
             .bind(snap.to_string())
@@ -400,12 +399,12 @@ async fn update(
             .bind(now())
             .execute(&st.db)
             .await?;
-        sqlx::query("UPDATE settlements SET version=version+1 WHERE id=?")
+        sqlx::query("UPDATE settlements SET version=version+1 WHERE id=$1")
             .bind(id)
             .execute(&st.db)
             .await?;
         let before: Vec<(i64, i64)> = sqlx::query_as(
-            "SELECT user_id, amount_cents FROM settlement_shares WHERE settlement_id=?",
+            "SELECT user_id, amount_cents FROM settlement_shares WHERE settlement_id=$1",
         )
         .bind(id)
         .fetch_all(&st.db)
@@ -487,7 +486,7 @@ async fn delete_draft(
     if s.created_by != u.id || s.status != "draft" {
         return Err(bad("只有草稿可以删除"));
     }
-    sqlx::query("DELETE FROM settlements WHERE id=?")
+    sqlx::query("DELETE FROM settlements WHERE id=$1")
         .bind(id)
         .execute(&st.db)
         .await?;
@@ -511,8 +510,8 @@ async fn publish(
     }
     // 分摊前检查出席: only members whose attendance is confirmed may be charged.
     let (not_attended,): (i64,) = sqlx::query_as(
-        "SELECT COUNT(*) FROM settlement_shares sh WHERE sh.settlement_id=? AND NOT EXISTS
-            (SELECT 1 FROM event_signups es WHERE es.event_id=? AND es.user_id=sh.user_id AND es.attended=1)",
+        "SELECT COUNT(*) FROM settlement_shares sh WHERE sh.settlement_id=$1 AND NOT EXISTS
+            (SELECT 1 FROM event_signups es WHERE es.event_id=$2 AND es.user_id=sh.user_id AND es.attended=1)",
     )
     .bind(id)
     .bind(s.event_id)
@@ -523,15 +522,16 @@ async fn publish(
             "有 {not_attended} 位成员尚未记录为“已出席”，请先在活动页面核实出席。"
         )));
     }
-    sqlx::query("UPDATE settlements SET status='published' WHERE id=?")
+    sqlx::query("UPDATE settlements SET status='published' WHERE id=$1")
         .bind(id)
         .execute(&st.db)
         .await?;
-    let shares: Vec<(i64, i64)> =
-        sqlx::query_as("SELECT user_id, amount_cents FROM settlement_shares WHERE settlement_id=?")
-            .bind(id)
-            .fetch_all(&st.db)
-            .await?;
+    let shares: Vec<(i64, i64)> = sqlx::query_as(
+        "SELECT user_id, amount_cents FROM settlement_shares WHERE settlement_id=$1",
+    )
+    .bind(id)
+    .fetch_all(&st.db)
+    .await?;
     for (uid, amt) in shares {
         if uid != u.id && amt > 0 {
             notify(
@@ -575,7 +575,7 @@ async fn close(
         return Err(forbidden("只有发起者可以关闭账单"));
     }
     let (open,): (i64,) = sqlx::query_as(
-        "SELECT COUNT(*) FROM settlement_shares WHERE settlement_id=? AND status != 'confirmed'",
+        "SELECT COUNT(*) FROM settlement_shares WHERE settlement_id=$1 AND status != 'confirmed'",
     )
     .bind(id)
     .fetch_one(&st.db)
@@ -583,7 +583,7 @@ async fn close(
     if open > 0 {
         return Err(bad(format!("尚有 {open} 位成员未确认付款")));
     }
-    sqlx::query("UPDATE settlements SET status='closed' WHERE id=?")
+    sqlx::query("UPDATE settlements SET status='closed' WHERE id=$1")
         .bind(id)
         .execute(&st.db)
         .await?;
@@ -609,7 +609,7 @@ async fn revisions(
         return Err(forbidden("无权限"));
     }
     let rows: Vec<(i64, String, String, String, String)> = sqlx::query_as(
-        "SELECT r.version, r.snapshot, r.reason, u.name, r.created_at FROM settlement_revisions r JOIN users u ON u.id=r.created_by WHERE r.settlement_id=? ORDER BY r.version DESC",
+        "SELECT r.version, r.snapshot, r.reason, u.name, r.created_at FROM settlement_revisions r JOIN users u ON u.id=r.created_by WHERE r.settlement_id=$1 ORDER BY r.version DESC",
     )
     .bind(id)
     .fetch_all(&st.db)
@@ -623,7 +623,7 @@ async fn my_shares(State(st): State<AppState>, u: CurrentUser) -> AppResult<Json
     let rows: Vec<(i64, i64, String, String, i64, String, String, String, Option<String>, String, String, Option<i64>)> = sqlx::query_as(
         "SELECT sh.id, s.id, s.title, e.title, sh.amount_cents, sh.status, s.payee_name, s.payee_account, s.due_date, sh.note, sh.txn_ref, sh.proof_file_id
          FROM settlement_shares sh JOIN settlements s ON s.id=sh.settlement_id JOIN events e ON e.id=s.event_id
-         WHERE sh.user_id=? AND s.status IN ('published','closed') AND s.created_by != ?
+         WHERE sh.user_id=$1 AND s.status IN ('published','closed') AND s.created_by != $2
          ORDER BY CASE sh.status WHEN 'confirmed' THEN 1 ELSE 0 END, s.id DESC LIMIT 100",
     )
     .bind(u.id)
@@ -650,7 +650,7 @@ async fn submit_proof(
     Json(req): Json<ProofIn>,
 ) -> AppResult<Json<Value>> {
     let row: Option<(i64, i64, String, String, i64, String)> = sqlx::query_as(
-        "SELECT sh.user_id, s.id, sh.status, s.status, s.created_by, s.title FROM settlement_shares sh JOIN settlements s ON s.id=sh.settlement_id WHERE sh.id=?",
+        "SELECT sh.user_id, s.id, sh.status, s.status, s.created_by, s.title FROM settlement_shares sh JOIN settlements s ON s.id=sh.settlement_id WHERE sh.id=$1",
     )
     .bind(id)
     .fetch_optional(&st.db)
@@ -662,7 +662,7 @@ async fn submit_proof(
     if s_status != "published" || !matches!(status.as_str(), "unpaid" | "needs_info") {
         return Err(bad("此费用目前不需要上传凭证"));
     }
-    let (fowner,): (i64,) = sqlx::query_as("SELECT owner_id FROM files WHERE id=?")
+    let (fowner,): (i64,) = sqlx::query_as("SELECT owner_id FROM files WHERE id=$1")
         .bind(req.proof_file_id)
         .fetch_optional(&st.db)
         .await?
@@ -675,7 +675,7 @@ async fn submit_proof(
         return Err(bad("请填写交易参考编号"));
     }
     // Duplicate screenshot / reference protection.
-    let (dup,): (i64,) = sqlx::query_as("SELECT COUNT(*) FROM settlement_shares WHERE id != ? AND (txn_ref = ? OR proof_file_id = ?)")
+    let (dup,): (i64,) = sqlx::query_as("SELECT COUNT(*) FROM settlement_shares WHERE id != $1 AND (txn_ref = $2 OR proof_file_id = $3)")
         .bind(id)
         .bind(txn)
         .bind(req.proof_file_id)
@@ -684,7 +684,7 @@ async fn submit_proof(
     if dup > 0 {
         return Err(bad("此交易编号或收据已被使用，请确认是否重复上传"));
     }
-    sqlx::query("UPDATE settlement_shares SET status='pending', proof_file_id=?, txn_ref=?, paid_date=?, updated_at=? WHERE id=?")
+    sqlx::query("UPDATE settlement_shares SET status='pending', proof_file_id=$1, txn_ref=$2, paid_date=$3, updated_at=$4 WHERE id=$5")
         .bind(req.proof_file_id)
         .bind(txn)
         .bind(req.paid_date)
@@ -725,7 +725,7 @@ async fn verify(
     Json(req): Json<VerifyIn>,
 ) -> AppResult<Json<Value>> {
     let row: Option<(i64, i64, i64, String, i64)> = sqlx::query_as(
-        "SELECT sh.user_id, s.id, s.created_by, s.title, sh.amount_cents FROM settlement_shares sh JOIN settlements s ON s.id=sh.settlement_id WHERE sh.id=?",
+        "SELECT sh.user_id, s.id, s.created_by, s.title, sh.amount_cents FROM settlement_shares sh JOIN settlements s ON s.id=sh.settlement_id WHERE sh.id=$1",
     )
     .bind(id)
     .fetch_optional(&st.db)
@@ -749,7 +749,7 @@ async fn verify(
         "reset" => ("unpaid", format!("{} · 付款状态已重设", title)),
         _ => return Err(bad("操作无效")),
     };
-    sqlx::query("UPDATE settlement_shares SET status=?, note=?, updated_at=? WHERE id=?")
+    sqlx::query("UPDATE settlement_shares SET status=$1, note=$2, updated_at=$3 WHERE id=$4")
         .bind(status)
         .bind(&note)
         .bind(now())

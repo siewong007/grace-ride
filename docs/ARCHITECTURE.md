@@ -20,16 +20,16 @@
  │  jobs     every 60 s: reminders, escalation, retention       │
  └──────────┬─────────────────────────────┬─────────────────────┘
             ▼                             ▼
-   SQLite (WAL) /data/grace_ride.db   /data/uploads (receipts, photos)
+   PostgreSQL /data (pg-data volume)  /data/uploads (receipts, photos)
             │
-            └── litestream → S3-compatible bucket (optional, continuous)
+            └── nightly pg_dump → encrypted, off-site storage (scripts/backup.sh)
 ```
 
 ## Why these choices
 
 | Decision | Reason | Revisit when |
 |---|---|---|
-| **Single binary + SQLite** | About 1,000 members, at most 10 live drivers, low write rate. One file to back up, nothing to operate. WAL mode handles concurrent readers. | More than one app instance is needed, or writes exceed ~100/s. Then move to Postgres (sqlx makes this mostly a driver swap) and Redis for the rate limiter. |
+| **Single binary + PostgreSQL** | About 1,000 members, at most 10 live drivers, low write rate. Transactions and indexes from one mature engine; nothing exotic to operate. | More than one app instance is needed, or writes exceed ~100/s — then add Redis for the rate limiter. |
 | **Same-origin SPA served by the API** | No CORS. Session cookies stay `SameSite=Lax` + HttpOnly. One deployable. | — |
 | **Polling, not WebSockets** | Chat polls every 4 s, the map every 15 s, notifications every 30 s, and only while the tab is visible. At 10 live trips that is trivial load and survives flaky mobile networks. | Chat volume grows, or push notifications arrive (see roadmap). |
 | **In-process job loop** | Reminders and cleanup are idempotent (`reminder_sent` flags) and tolerate a missed minute. | Multiple instances (then use a leader lock or an external scheduler). |

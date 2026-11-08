@@ -1,6 +1,6 @@
 use std::{path::PathBuf, sync::Arc};
 
-use sqlx::SqlitePool;
+use sqlx::PgPool;
 use webauthn_rs::prelude::*;
 
 use crate::security::RateLimiter;
@@ -37,7 +37,7 @@ impl Config {
         };
         let cfg = Config {
             dev_mode: env("DEV_MODE", "false") == "true",
-            database_url: env("DATABASE_URL", "sqlite://./data/grace_ride.db"),
+            database_url: env("DATABASE_URL", "postgres://localhost/grace_ride_dev"),
             upload_dir: PathBuf::from(env("UPLOAD_DIR", "./data/uploads")),
             static_dir: std::env::var("STATIC_DIR")
                 .ok()
@@ -89,7 +89,7 @@ impl Config {
 
 #[derive(Clone)]
 pub struct AppState {
-    pub db: SqlitePool,
+    pub db: PgPool,
     pub webauthn: Arc<Webauthn>,
     pub cfg: Arc<Config>,
     pub limiter: Arc<RateLimiter>,

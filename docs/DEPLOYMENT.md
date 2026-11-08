@@ -29,19 +29,15 @@ git pull   # or copy the new release
 docker compose --env-file .env.production up -d --build
 ```
 
-Migrations run automatically at startup and are additive. The app shuts down gracefully on SIGTERM and checkpoints the SQLite WAL.
+Migrations run automatically at startup and are additive. The app shuts down gracefully on SIGTERM; PostgreSQL checkpoints automatically.
 
 ## Backups
 
-- **Continuous (recommended):** set the `LITESTREAM_*` variables, then run:
-  ```bash
-  docker compose --env-file .env.production --profile backup up -d
-  ```
-  This streams every database change to S3-compatible storage with 30-day point-in-time restore.
-- **Nightly snapshot** of the database plus receipts (cron on the host). The script defaults to `./backend/data` for local runs; on the server, pass the Docker volume's path as the first argument:
+- **Nightly snapshot** of the database plus receipts (cron on the host). `DATABASE_URL` comes from the environment; on the server, pass the Docker volume's path as the first argument, or run it where the volume is mounted:
   ```bash
   scripts/backup.sh /var/lib/docker/volumes/graceride_app-data/_data /srv/backups 30
   ```
+  Or restore in-place consistency by exec'ing into the stack's Postgres instead.
   Encrypt the output (e.g. `age` or `gpg`) before it leaves the server.
 - **Restore drill**, at least once before launch:
   ```bash

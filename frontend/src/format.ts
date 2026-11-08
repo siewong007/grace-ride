@@ -64,7 +64,7 @@ const WEEKDAY = ['format:weekday.0', 'format:weekday.1', 'format:weekday.2', 'fo
 
 export function parseLocal(s: string): Date {
   // "YYYY-MM-DDTHH:MM[:SS]" in local time
-  // Accepts both "T" and space separators (SQLite defaults use a space).
+  // Accepts both "T" and space separators.
   const [d, t = '00:00'] = s.trim().split(/[T ]/);
   const [y, m, day] = d.split('-').map(Number);
   const [hh, mm, ss = 0] = t.split(':').map(Number);

@@ -85,7 +85,7 @@ pub async fn verify_totp(
     code: &str,
 ) -> AppResult<()> {
     let totp = totp_for(secret_b32, email)?;
-    let (last,): (i64,) = sqlx::query_as("SELECT totp_last_step FROM users WHERE id=?")
+    let (last,): (i64,) = sqlx::query_as("SELECT totp_last_step FROM users WHERE id=$1")
         .bind(user_id)
         .fetch_one(&st.db)
         .await?;
@@ -101,7 +101,7 @@ pub async fn verify_totp(
             if step <= last {
                 return Err(bad("此验证码已使用，请等待下一组数字"));
             }
-            sqlx::query("UPDATE users SET totp_last_step=? WHERE id=?")
+            sqlx::query("UPDATE users SET totp_last_step=$1 WHERE id=$2")
                 .bind(step)
                 .bind(user_id)
                 .execute(&st.db)
@@ -136,14 +136,14 @@ async fn create_session(
     user_id: i64,
     mfa_ok: bool,
 ) -> AppResult<CookieJar> {
-    let (roles,): (String,) = sqlx::query_as("SELECT roles FROM users WHERE id=?")
+    let (roles,): (String,) = sqlx::query_as("SELECT roles FROM users WHERE id=$1")
         .bind(user_id)
         .fetch_one(&state.db)
         .await?;
     let hours: i64 = if is_privileged(&roles) { 12 } else { 24 * 30 };
     let token = random_token(48);
     sqlx::query(
-        "INSERT INTO sessions (token, user_id, mfa_ok, expires_at, created_at) VALUES (?,?,?,?,?)",
+        "INSERT INTO sessions (token, user_id, mfa_ok, expires_at, created_at) VALUES ($1,$2,$3,$4,$5)",
     )
     .bind(hash_token(&token))
     .bind(user_id)
@@ -182,22 +182,22 @@ fn clear_cookies(jar: CookieJar) -> CookieJar {
 
 async fn me(State(st): State<AppState>, u: CurrentUser) -> AppResult<Json<Value>> {
     let row: (String, Option<i64>, i64, Option<String>, i64, i64, i64) = sqlx::query_as(
-        "SELECT phone, photo_file_id, totp_enabled, password_hash, badges_opt_out, carpool_enabled, spare_seats FROM users WHERE id=?",
+        "SELECT phone, photo_file_id, totp_enabled, password_hash, badges_opt_out, carpool_enabled, spare_seats FROM users WHERE id=$1",
     )
     .bind(u.id)
     .fetch_one(&st.db)
     .await?;
-    let passkeys: (i64,) = sqlx::query_as("SELECT COUNT(*) FROM passkeys WHERE user_id=?")
+    let passkeys: (i64,) = sqlx::query_as("SELECT COUNT(*) FROM passkeys WHERE user_id=$1")
         .bind(u.id)
         .fetch_one(&st.db)
         .await?;
     let unread: (i64,) =
-        sqlx::query_as("SELECT COUNT(*) FROM notifications WHERE user_id=? AND read_at IS NULL")
+        sqlx::query_as("SELECT COUNT(*) FROM notifications WHERE user_id=$1 AND read_at IS NULL")
             .bind(u.id)
             .fetch_one(&st.db)
             .await?;
     let groups: Vec<(i64, String)> = sqlx::query_as(
-        "SELECT g.id, g.name FROM groups g JOIN group_members m ON m.group_id=g.id WHERE m.user_id=? ORDER BY g.name",
+        "SELECT g.id, g.name FROM groups g JOIN group_members m ON m.group_id=g.id WHERE m.user_id=$1 ORDER BY g.name",
     )
     .bind(u.id)
     .fetch_all(&st.db)
@@ -222,7 +222,7 @@ struct LoginReq {
 }
 
 async fn record_failure(st: &AppState, email: &str, ip: &str) -> AppResult<()> {
-    sqlx::query("INSERT INTO login_failures (email, ip, created_at) VALUES (?,?,?)")
+    sqlx::query("INSERT INTO login_failures (email, ip, created_at) VALUES ($1,$2,$3)")
         .bind(email)
         .bind(ip)
         .bind(now())
@@ -242,7 +242,7 @@ async fn login_password(
     let ip = client_ip(&headers, peer.map(|p| (p.0).0), st.cfg.trust_proxy);
     // Per-account lockout (the per-IP limit lives in the rate-limit middleware).
     let (fails,): (i64,) = sqlx::query_as(
-        "SELECT COUNT(*) FROM login_failures WHERE email=? AND created_at > strftime('%Y-%m-%dT%H:%M:%S','now','localtime','-15 minutes')",
+        "SELECT COUNT(*) FROM login_failures WHERE email=$1 AND created_at > to_char(LOCALTIMESTAMP - interval '15 minutes', 'YYYY-MM-DD\"T\"HH24:MI:SS')",
     )
     .bind(&email)
     .fetch_one(&st.db)
@@ -253,7 +253,7 @@ async fn login_password(
         ));
     }
     let row: Option<(i64, Option<String>, Option<String>, i64, String, String)> = sqlx::query_as(
-        "SELECT id, password_hash, totp_secret, totp_enabled, roles, status FROM users WHERE email=?",
+        "SELECT id, password_hash, totp_secret, totp_enabled, roles, status FROM users WHERE email=$1",
     )
     .bind(&email)
     .fetch_optional(&st.db)
@@ -290,7 +290,7 @@ async fn login_password(
         }
         mfa_ok = true;
     }
-    sqlx::query("DELETE FROM login_failures WHERE email=?")
+    sqlx::query("DELETE FROM login_failures WHERE email=$1")
         .bind(&email)
         .execute(&st.db)
         .await?;
@@ -316,7 +316,7 @@ async fn logout(
     jar: CookieJar,
     u: CurrentUser,
 ) -> AppResult<(CookieJar, Json<Value>)> {
-    sqlx::query("DELETE FROM sessions WHERE token=?")
+    sqlx::query("DELETE FROM sessions WHERE token=$1")
         .bind(&u.session_id)
         .execute(&st.db)
         .await?;
@@ -326,7 +326,7 @@ async fn logout(
 // ---------- Passkeys ----------
 
 async fn load_passkeys(st: &AppState, user_id: i64) -> AppResult<Vec<Passkey>> {
-    let rows: Vec<(String,)> = sqlx::query_as("SELECT passkey FROM passkeys WHERE user_id=?")
+    let rows: Vec<(String,)> = sqlx::query_as("SELECT passkey FROM passkeys WHERE user_id=$1")
         .bind(user_id)
         .fetch_all(&st.db)
         .await?;
@@ -343,11 +343,11 @@ async fn save_challenge(
     state: String,
 ) -> AppResult<String> {
     let id = uuid::Uuid::new_v4().to_string();
-    sqlx::query("DELETE FROM auth_challenges WHERE created_at < strftime('%Y-%m-%dT%H:%M:%S','now','localtime','-10 minutes')")
+    sqlx::query("DELETE FROM auth_challenges WHERE created_at < to_char(LOCALTIMESTAMP - interval '10 minutes', 'YYYY-MM-DD\"T\"HH24:MI:SS')")
         .execute(&st.db)
         .await?;
     sqlx::query(
-        "INSERT INTO auth_challenges (id, user_id, kind, state, created_at) VALUES (?,?,?,?,?)",
+        "INSERT INTO auth_challenges (id, user_id, kind, state, created_at) VALUES ($1,$2,$3,$4,$5)",
     )
     .bind(&id)
     .bind(user_id)
@@ -361,12 +361,12 @@ async fn save_challenge(
 
 async fn take_challenge(st: &AppState, id: &str, kind: &str) -> AppResult<(i64, String)> {
     let row: Option<(i64, String)> =
-        sqlx::query_as("SELECT user_id, state FROM auth_challenges WHERE id=? AND kind=?")
+        sqlx::query_as("SELECT user_id, state FROM auth_challenges WHERE id=$1 AND kind=$2")
             .bind(id)
             .bind(kind)
             .fetch_optional(&st.db)
             .await?;
-    sqlx::query("DELETE FROM auth_challenges WHERE id=?")
+    sqlx::query("DELETE FROM auth_challenges WHERE id=$1")
         .bind(id)
         .execute(&st.db)
         .await?;
@@ -383,7 +383,7 @@ async fn passkey_login_start(
     Json(req): Json<EmailReq>,
 ) -> AppResult<Json<Value>> {
     let row: Option<(i64,)> =
-        sqlx::query_as("SELECT id FROM users WHERE email=? AND status='active'")
+        sqlx::query_as("SELECT id FROM users WHERE email=$1 AND status='active'")
             .bind(req.email.trim())
             .fetch_optional(&st.db)
             .await?;
@@ -428,7 +428,7 @@ async fn passkey_login_finish(
         .map_err(|_| bad("通行密钥验证失败"))?;
     // Update stored credential counters if needed.
     let rows: Vec<(i64, String)> =
-        sqlx::query_as("SELECT id, passkey FROM passkeys WHERE user_id=?")
+        sqlx::query_as("SELECT id, passkey FROM passkeys WHERE user_id=$1")
             .bind(uid)
             .fetch_all(&st.db)
             .await?;
@@ -436,7 +436,7 @@ async fn passkey_login_finish(
         if let Ok(mut pk) = serde_json::from_str::<Passkey>(&pj) {
             if pk.cred_id() == res.cred_id() {
                 pk.update_credential(&res);
-                sqlx::query("UPDATE passkeys SET passkey=?, last_used=? WHERE id=?")
+                sqlx::query("UPDATE passkeys SET passkey=$1, last_used=$2 WHERE id=$3")
                     .bind(serde_json::to_string(&pk).map_err(anyhow::Error::from)?)
                     .bind(now())
                     .bind(pid)
@@ -454,7 +454,7 @@ async fn passkey_register_start(
     State(st): State<AppState>,
     u: CurrentUser,
 ) -> AppResult<Json<Value>> {
-    let (wuuid,): (String,) = sqlx::query_as("SELECT webauthn_uuid FROM users WHERE id=?")
+    let (wuuid,): (String,) = sqlx::query_as("SELECT webauthn_uuid FROM users WHERE id=$1")
         .bind(u.id)
         .fetch_one(&st.db)
         .await?;
@@ -502,7 +502,7 @@ async fn passkey_register_finish(
         .map_err(|e| bad(format!("通行密钥注册失败：{e:?}")))?;
     let cred_id = serde_json::to_string(pk.cred_id()).map_err(anyhow::Error::from)?;
     sqlx::query(
-        "INSERT INTO passkeys (user_id, cred_id, passkey, label, created_at) VALUES (?,?,?,?,?)",
+        "INSERT INTO passkeys (user_id, cred_id, passkey, label, created_at) VALUES ($1,$2,$3,$4,$5)",
     )
     .bind(u.id)
     .bind(cred_id)
@@ -512,7 +512,7 @@ async fn passkey_register_finish(
     .execute(&st.db)
     .await?;
     // Registering a passkey upgrades the current session to strong auth.
-    sqlx::query("UPDATE sessions SET mfa_ok=1 WHERE token=?")
+    sqlx::query("UPDATE sessions SET mfa_ok=1 WHERE token=$1")
         .bind(&u.session_id)
         .execute(&st.db)
         .await?;
@@ -530,7 +530,7 @@ async fn passkey_register_finish(
 
 async fn list_passkeys(State(st): State<AppState>, u: CurrentUser) -> AppResult<Json<Value>> {
     let rows: Vec<(i64, String, String, Option<String>)> = sqlx::query_as(
-        "SELECT id, label, created_at, last_used FROM passkeys WHERE user_id=? ORDER BY id",
+        "SELECT id, label, created_at, last_used FROM passkeys WHERE user_id=$1 ORDER BY id",
     )
     .bind(u.id)
     .fetch_all(&st.db)
@@ -546,7 +546,7 @@ async fn delete_passkey(
     u: CurrentUser,
     Path(id): Path<i64>,
 ) -> AppResult<Json<Value>> {
-    sqlx::query("DELETE FROM passkeys WHERE id=? AND user_id=?")
+    sqlx::query("DELETE FROM passkeys WHERE id=$1 AND user_id=$2")
         .bind(id)
         .bind(u.id)
         .execute(&st.db)
@@ -567,7 +567,7 @@ async fn delete_passkey(
 
 async fn totp_setup(State(st): State<AppState>, u: CurrentUser) -> AppResult<Json<Value>> {
     // A stolen session must not be able to silently replace an existing second factor.
-    let (enabled,): (i64,) = sqlx::query_as("SELECT totp_enabled FROM users WHERE id=?")
+    let (enabled,): (i64,) = sqlx::query_as("SELECT totp_enabled FROM users WHERE id=$1")
         .bind(u.id)
         .fetch_one(&st.db)
         .await?;
@@ -577,7 +577,7 @@ async fn totp_setup(State(st): State<AppState>, u: CurrentUser) -> AppResult<Jso
         ));
     }
     let secret = Secret::generate_secret().to_encoded().to_string();
-    sqlx::query("UPDATE users SET totp_secret=?, totp_enabled=0 WHERE id=?")
+    sqlx::query("UPDATE users SET totp_secret=$1, totp_enabled=0 WHERE id=$2")
         .bind(&secret)
         .bind(u.id)
         .execute(&st.db)
@@ -596,7 +596,7 @@ async fn totp_enable(
     u: CurrentUser,
     Json(req): Json<CodeReq>,
 ) -> AppResult<Json<Value>> {
-    let (secret,): (Option<String>,) = sqlx::query_as("SELECT totp_secret FROM users WHERE id=?")
+    let (secret,): (Option<String>,) = sqlx::query_as("SELECT totp_secret FROM users WHERE id=$1")
         .bind(u.id)
         .fetch_one(&st.db)
         .await?;
@@ -608,11 +608,11 @@ async fn totp_enable(
         &req.code,
     )
     .await?;
-    sqlx::query("UPDATE users SET totp_enabled=1 WHERE id=?")
+    sqlx::query("UPDATE users SET totp_enabled=1 WHERE id=$1")
         .bind(u.id)
         .execute(&st.db)
         .await?;
-    sqlx::query("UPDATE sessions SET mfa_ok=1 WHERE token=?")
+    sqlx::query("UPDATE sessions SET mfa_ok=1 WHERE token=$1")
         .bind(&u.session_id)
         .execute(&st.db)
         .await?;
@@ -634,7 +634,7 @@ async fn set_password(
     if req.new_password.chars().count() < 10 {
         return Err(bad("密码至少需要 10 个字符"));
     }
-    let (hash,): (Option<String>,) = sqlx::query_as("SELECT password_hash FROM users WHERE id=?")
+    let (hash,): (Option<String>,) = sqlx::query_as("SELECT password_hash FROM users WHERE id=$1")
         .bind(u.id)
         .fetch_one(&st.db)
         .await?;
@@ -643,7 +643,7 @@ async fn set_password(
             return Err(bad("目前密码不正确"));
         }
     }
-    sqlx::query("UPDATE users SET password_hash=? WHERE id=?")
+    sqlx::query("UPDATE users SET password_hash=$1 WHERE id=$2")
         .bind(hash_password(&req.new_password)?)
         .bind(u.id)
         .execute(&st.db)
@@ -665,12 +665,12 @@ async fn recovery_request(
     Json(req): Json<RecoveryReq>,
 ) -> AppResult<Json<Value>> {
     // Always answer the same way so the endpoint can't be used to probe member emails.
-    let exists: Option<(i64,)> = sqlx::query_as("SELECT id FROM users WHERE email=?")
+    let exists: Option<(i64,)> = sqlx::query_as("SELECT id FROM users WHERE email=$1")
         .bind(req.email.trim())
         .fetch_optional(&st.db)
         .await?;
     if exists.is_some() {
-        sqlx::query("INSERT INTO recovery_requests (email, reason, created_at) VALUES (?,?,?)")
+        sqlx::query("INSERT INTO recovery_requests (email, reason, created_at) VALUES ($1,$2,$3)")
             .bind(req.email.trim())
             .bind(req.reason.chars().take(500).collect::<String>())
             .bind(now())
@@ -695,7 +695,7 @@ async fn invite_preview(
     Path(token): Path<String>,
 ) -> AppResult<Json<Value>> {
     let row: Option<(String, String, String, String, Option<String>)> =
-        sqlx::query_as("SELECT kind, email, name, expires_at, used_at FROM invites WHERE token=?")
+        sqlx::query_as("SELECT kind, email, name, expires_at, used_at FROM invites WHERE token=$1")
             .bind(&token)
             .fetch_optional(&st.db)
             .await?;
@@ -722,7 +722,7 @@ async fn invite_accept(
     Json(req): Json<AcceptReq>,
 ) -> AppResult<(CookieJar, Json<Value>)> {
     let row: Option<(i64, String, String, String, String, String, Option<i64>, String, Option<String>)> = sqlx::query_as(
-        "SELECT id, kind, email, name, roles, group_ids, user_id, expires_at, used_at FROM invites WHERE token=?",
+        "SELECT id, kind, email, name, roles, group_ids, user_id, expires_at, used_at FROM invites WHERE token=$1",
     )
     .bind(&token)
     .fetch_optional(&st.db)
@@ -735,7 +735,7 @@ async fn invite_accept(
         return Err(bad("邀请连结已失效，请联系管理员"));
     }
     // Mark used first (single use, guards against double submit).
-    let r = sqlx::query("UPDATE invites SET used_at=? WHERE id=? AND used_at IS NULL")
+    let r = sqlx::query("UPDATE invites SET used_at=$1 WHERE id=$2 AND used_at IS NULL")
         .bind(now())
         .bind(inv_id)
         .execute(&st.db)
@@ -762,8 +762,8 @@ async fn invite_accept(
             Some(p) => Some(hash_password(p)?),
             None => None,
         };
-        let id = sqlx::query(
-            "INSERT INTO users (name, email, phone, roles, password_hash, webauthn_uuid, created_at) VALUES (?,?,?,?,?,?,?)",
+        let (id,): (i64,) = sqlx::query_as(
+            "INSERT INTO users (name, email, phone, roles, password_hash, webauthn_uuid, created_at) VALUES ($1,$2,$3,$4,$5,$6,$7) RETURNING id",
         )
         .bind(&name)
         .bind(&email)
@@ -772,13 +772,12 @@ async fn invite_accept(
         .bind(pw_hash)
         .bind(uuid::Uuid::new_v4().to_string())
         .bind(now())
-        .execute(&st.db)
+        .fetch_one(&st.db)
         .await
-        .map_err(|_| bad("此电邮已经注册"))?
-        .last_insert_rowid();
+        .map_err(|_| bad("此电邮已经注册"))?;
         let gids: Vec<i64> = serde_json::from_str(&group_ids).unwrap_or_default();
         for g in gids {
-            sqlx::query("INSERT OR IGNORE INTO group_members (group_id, user_id) VALUES (?,?)")
+            sqlx::query("INSERT INTO group_members (group_id, user_id) VALUES ($1,$2) ON CONFLICT DO NOTHING")
                 .bind(g)
                 .bind(id)
                 .execute(&st.db)

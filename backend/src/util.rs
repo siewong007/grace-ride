@@ -2,7 +2,7 @@
 
 use chrono::{Duration, Local, NaiveDateTime};
 use rand::{distributions::Alphanumeric, Rng};
-use sqlx::SqlitePool;
+use sqlx::PgPool;
 
 use crate::auth::CurrentUser;
 use crate::error::{forbidden, AppResult};
@@ -44,7 +44,7 @@ pub fn norm_dt(s: &str) -> Option<String> {
 }
 
 pub async fn audit(
-    db: &SqlitePool,
+    db: &PgPool,
     actor: Option<i64>,
     action: &str,
     entity: &str,
@@ -52,7 +52,7 @@ pub async fn audit(
     detail: impl AsRef<str>,
 ) {
     let r = sqlx::query(
-        "INSERT INTO audit_logs (actor_id, action, entity, entity_id, detail, created_at) VALUES (?,?,?,?,?,?)",
+        "INSERT INTO audit_logs (actor_id, action, entity, entity_id, detail, created_at) VALUES ($1,$2,$3,$4,$5,$6)",
     )
     .bind(actor)
     .bind(action)
@@ -67,9 +67,9 @@ pub async fn audit(
     }
 }
 
-pub async fn notify(db: &SqlitePool, user_id: i64, title: &str, body: impl AsRef<str>, link: &str) {
+pub async fn notify(db: &PgPool, user_id: i64, title: &str, body: impl AsRef<str>, link: &str) {
     let r = sqlx::query(
-        "INSERT INTO notifications (user_id, title, body, link, created_at) VALUES (?,?,?,?,?)",
+        "INSERT INTO notifications (user_id, title, body, link, created_at) VALUES ($1,$2,$3,$4,$5)",
     )
     .bind(user_id)
     .bind(title)
@@ -84,7 +84,7 @@ pub async fn notify(db: &SqlitePool, user_id: i64, title: &str, body: impl AsRef
 }
 
 /// Notify every active user holding any of the given roles.
-pub async fn notify_roles(db: &SqlitePool, roles: &[&str], title: &str, body: &str, link: &str) {
+pub async fn notify_roles(db: &PgPool, roles: &[&str], title: &str, body: &str, link: &str) {
     let users: Vec<(i64, String)> =
         sqlx::query_as("SELECT id, roles FROM users WHERE status='active'")
             .fetch_all(db)
@@ -97,9 +97,9 @@ pub async fn notify_roles(db: &SqlitePool, roles: &[&str], title: &str, body: &s
     }
 }
 
-pub async fn system_message(db: &SqlitePool, trip_id: i64, body: &str) {
+pub async fn system_message(db: &PgPool, trip_id: i64, body: &str) {
     let _ = sqlx::query(
-        "INSERT INTO ride_messages (trip_id, user_id, body, created_at) VALUES (?,NULL,?,?)",
+        "INSERT INTO ride_messages (trip_id, user_id, body, created_at) VALUES ($1,NULL,$2,$3)",
     )
     .bind(trip_id)
     .bind(body)

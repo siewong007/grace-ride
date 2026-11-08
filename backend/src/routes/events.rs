@@ -32,10 +32,10 @@ pub const KINDS: &[&str] = &["badminton", "bowling", "kayak", "walk", "other"];
 /// or if they created it / are staff.
 pub async fn can_see_event(st: &AppState, u: &CurrentUser, event_id: i64) -> AppResult<bool> {
     let (n,): (i64,) = sqlx::query_as(
-        "SELECT COUNT(*) FROM events e WHERE e.id = ? AND (
-            e.created_by = ? OR EXISTS (
+        "SELECT COUNT(*) FROM events e WHERE e.id = $1 AND (
+            e.created_by = $2 OR EXISTS (
               SELECT 1 FROM event_groups eg JOIN groups g ON g.id = eg.group_id
-              WHERE eg.event_id = e.id AND (g.is_all = 1 OR EXISTS (SELECT 1 FROM group_members gm WHERE gm.group_id = g.id AND gm.user_id = ?))
+              WHERE eg.event_id = e.id AND (g.is_all = 1 OR EXISTS (SELECT 1 FROM group_members gm WHERE gm.group_id = g.id AND gm.user_id = $3))
             ))",
     )
     .bind(event_id)
@@ -58,7 +58,7 @@ async fn list_groups(State(st): State<AppState>, u: CurrentUser) -> AppResult<Js
             .await?
     } else {
         sqlx::query_as(
-            "SELECT g.id, g.name, g.description, g.is_all, 0 FROM groups g WHERE g.is_all=1 OR g.id IN (SELECT group_id FROM group_members WHERE user_id=?) ORDER BY g.is_all DESC, g.name",
+            "SELECT g.id, g.name, g.description, g.is_all, 0 FROM groups g WHERE g.is_all=1 OR g.id IN (SELECT group_id FROM group_members WHERE user_id=$1) ORDER BY g.is_all DESC, g.name",
         )
         .bind(u.id)
         .fetch_all(&st.db)
@@ -95,9 +95,9 @@ const EVENT_SELECT: &str = "SELECT e.id, e.title, e.kind, e.description, e.start
     (SELECT COUNT(*) FROM event_signups s WHERE s.event_id=e.id AND s.status='going') AS going,
     (SELECT COUNT(*) FROM event_signups s WHERE s.event_id=e.id AND s.status='waitlist') AS waitlist,
     ms.status AS my_status, ms.need_ride AS my_need_ride, ms.offer_drive AS my_offer_drive, ms.attended AS my_attended,
-    (SELECT group_concat(g.name, '、') FROM event_groups eg JOIN groups g ON g.id=eg.group_id WHERE eg.event_id=e.id) AS groups
+    (SELECT string_agg(g.name, '、') FROM event_groups eg JOIN groups g ON g.id=eg.group_id WHERE eg.event_id=e.id) AS groups
     FROM events e JOIN users c ON c.id = e.created_by
-    LEFT JOIN event_signups ms ON ms.event_id = e.id AND ms.user_id = ?";
+    LEFT JOIN event_signups ms ON ms.event_id = e.id AND ms.user_id = $1";
 
 fn event_json(e: &EventRow, u: &CurrentUser) -> Value {
     json!({
@@ -122,23 +122,21 @@ async fn list_events(
     u: CurrentUser,
     Query(q): Query<ListQuery>,
 ) -> AppResult<Json<Value>> {
-    let visibility = "(e.created_by = ? OR EXISTS (SELECT 1 FROM event_groups eg JOIN groups g ON g.id = eg.group_id
-        WHERE eg.event_id = e.id AND (g.is_all = 1 OR EXISTS (SELECT 1 FROM group_members gm WHERE gm.group_id = g.id AND gm.user_id = ?))))";
+    let visibility = "(e.created_by = $1 OR EXISTS (SELECT 1 FROM event_groups eg JOIN groups g ON g.id = eg.group_id
+        WHERE eg.event_id = e.id AND (g.is_all = 1 OR EXISTS (SELECT 1 FROM group_members gm WHERE gm.group_id = g.id AND gm.user_id = $2))))";
     let sql = match q.scope.as_deref() {
-        Some("past") => format!("{EVENT_SELECT} WHERE {visibility} AND (e.starts_at < ? OR e.status='finished') ORDER BY e.starts_at DESC LIMIT 50"),
-        Some("managing") => format!("{EVENT_SELECT} WHERE e.created_by = ? ORDER BY e.starts_at DESC LIMIT 100"),
-        _ => format!("{EVENT_SELECT} WHERE {visibility} AND e.starts_at >= ? AND e.status = 'published' ORDER BY e.starts_at LIMIT 100"),
+        Some("past") => format!("{EVENT_SELECT} WHERE {visibility} AND (e.starts_at < $3 OR e.status='finished') ORDER BY e.starts_at DESC LIMIT 50"),
+        Some("managing") => format!("{EVENT_SELECT} WHERE e.created_by = $1 ORDER BY e.starts_at DESC LIMIT 100"),
+        _ => format!("{EVENT_SELECT} WHERE {visibility} AND e.starts_at >= $3 AND e.status = 'published' ORDER BY e.starts_at LIMIT 100"),
     };
     let cutoff = now()[..16].to_string();
     let rows = if q.scope.as_deref() == Some("managing") {
         sqlx::query_as::<_, EventRow>(&sql)
             .bind(u.id)
-            .bind(u.id)
             .fetch_all(&st.db)
             .await?
     } else {
         sqlx::query_as::<_, EventRow>(&sql)
-            .bind(u.id)
             .bind(u.id)
             .bind(u.id)
             .bind(&cutoff)
@@ -152,7 +150,7 @@ async fn list_events(
 }
 
 async fn load_event(st: &AppState, u: &CurrentUser, id: i64) -> AppResult<EventRow> {
-    sqlx::query_as::<_, EventRow>(&format!("{EVENT_SELECT} WHERE e.id = ?"))
+    sqlx::query_as::<_, EventRow>(&format!("{EVENT_SELECT} WHERE e.id = $2"))
         .bind(u.id)
         .bind(id)
         .fetch_optional(&st.db)
@@ -170,13 +168,13 @@ async fn get_event(
     }
     let e = load_event(&st, &u, id).await?;
     let mut v = event_json(&e, &u);
-    let gids: Vec<(i64,)> = sqlx::query_as("SELECT group_id FROM event_groups WHERE event_id=?")
+    let gids: Vec<(i64,)> = sqlx::query_as("SELECT group_id FROM event_groups WHERE event_id=$1")
         .bind(id)
         .fetch_all(&st.db)
         .await?;
     v["group_ids"] = json!(gids.into_iter().map(|g| g.0).collect::<Vec<_>>());
     let my_ride: Option<(i64, String)> = sqlx::query_as(
-        "SELECT id, status FROM rides WHERE event_id=? AND passenger_id=? AND status NOT IN ('cancelled') ORDER BY id DESC LIMIT 1",
+        "SELECT id, status FROM rides WHERE event_id=$1 AND passenger_id=$2 AND status NOT IN ('cancelled') ORDER BY id DESC LIMIT 1",
     )
     .bind(id)
     .bind(u.id)
@@ -184,7 +182,7 @@ async fn get_event(
     .await?;
     v["my_ride"] = json!(my_ride.map(|(i, s)| json!({"id": i, "status": s})));
     let settlement: Option<(i64, String)> = sqlx::query_as(
-        "SELECT id, status FROM settlements WHERE event_id=? ORDER BY id DESC LIMIT 1",
+        "SELECT id, status FROM settlements WHERE event_id=$1 ORDER BY id DESC LIMIT 1",
     )
     .bind(id)
     .fetch_optional(&st.db)
@@ -239,9 +237,9 @@ async fn create_event(
         return Err(forbidden("只有活动负责人可以发起活动"));
     }
     let (at, dl) = validate(&req)?;
-    let id = sqlx::query(
+    let (id,): (i64,) = sqlx::query_as(
         "INSERT INTO events (title, kind, description, starts_at, location, capacity, cost_note, signup_deadline, created_by, created_at)
-         VALUES (?,?,?,?,?,?,?,?,?,?)",
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10) RETURNING id",
     )
     .bind(req.title.trim())
     .bind(&req.kind)
@@ -253,21 +251,22 @@ async fn create_event(
     .bind(&dl)
     .bind(u.id)
     .bind(now())
-    .execute(&st.db)
-    .await?
-    .last_insert_rowid();
+    .fetch_one(&st.db)
+    .await?;
     for g in &req.group_ids {
-        sqlx::query("INSERT OR IGNORE INTO event_groups (event_id, group_id) VALUES (?,?)")
-            .bind(id)
-            .bind(g)
-            .execute(&st.db)
-            .await?;
+        sqlx::query(
+            "INSERT INTO event_groups (event_id, group_id) VALUES ($1,$2) ON CONFLICT DO NOTHING",
+        )
+        .bind(id)
+        .bind(g)
+        .execute(&st.db)
+        .await?;
     }
     // Invite members of the target groups (相关活动邀请).
     let members: Vec<(i64,)> = sqlx::query_as(
-        "SELECT DISTINCT u.id FROM users u WHERE u.status='active' AND u.id != ? AND (
-            EXISTS (SELECT 1 FROM event_groups eg JOIN groups g ON g.id=eg.group_id WHERE eg.event_id=? AND g.is_all=1)
-            OR u.id IN (SELECT gm.user_id FROM group_members gm JOIN event_groups eg ON eg.group_id=gm.group_id WHERE eg.event_id=?))",
+        "SELECT DISTINCT u.id FROM users u WHERE u.status='active' AND u.id != $1 AND (
+            EXISTS (SELECT 1 FROM event_groups eg JOIN groups g ON g.id=eg.group_id WHERE eg.event_id=$2 AND g.is_all=1)
+            OR u.id IN (SELECT gm.user_id FROM group_members gm JOIN event_groups eg ON eg.group_id=gm.group_id WHERE eg.event_id=$3))",
     )
     .bind(u.id)
     .bind(id)
@@ -307,7 +306,7 @@ async fn update_event(
         return Err(forbidden("只有活动负责人可以修改"));
     }
     let (at, dl) = validate(&req)?;
-    sqlx::query("UPDATE events SET title=?, kind=?, description=?, starts_at=?, location=?, capacity=?, cost_note=?, signup_deadline=? WHERE id=?")
+    sqlx::query("UPDATE events SET title=$1, kind=$2, description=$3, starts_at=$4, location=$5, capacity=$6, cost_note=$7, signup_deadline=$8 WHERE id=$9")
         .bind(req.title.trim())
         .bind(&req.kind)
         .bind(req.description.clone().unwrap_or_default())
@@ -319,16 +318,18 @@ async fn update_event(
         .bind(id)
         .execute(&st.db)
         .await?;
-    sqlx::query("DELETE FROM event_groups WHERE event_id=?")
+    sqlx::query("DELETE FROM event_groups WHERE event_id=$1")
         .bind(id)
         .execute(&st.db)
         .await?;
     for g in &req.group_ids {
-        sqlx::query("INSERT OR IGNORE INTO event_groups (event_id, group_id) VALUES (?,?)")
-            .bind(id)
-            .bind(g)
-            .execute(&st.db)
-            .await?;
+        sqlx::query(
+            "INSERT INTO event_groups (event_id, group_id) VALUES ($1,$2) ON CONFLICT DO NOTHING",
+        )
+        .bind(id)
+        .bind(g)
+        .execute(&st.db)
+        .await?;
     }
     if at != e.starts_at || req.location.trim() != e.location {
         notify_signups(
@@ -350,7 +351,7 @@ async fn update_event(
 
 async fn notify_signups(st: &AppState, id: i64, title: &str, body: &str) -> AppResult<()> {
     let users: Vec<(i64,)> = sqlx::query_as(
-        "SELECT user_id FROM event_signups WHERE event_id=? AND status IN ('going','waitlist')",
+        "SELECT user_id FROM event_signups WHERE event_id=$1 AND status IN ('going','waitlist')",
     )
     .bind(id)
     .fetch_all(&st.db)
@@ -370,20 +371,20 @@ async fn cancel_event(
     if !can_manage(&u, e.created_by) {
         return Err(forbidden("只有活动负责人可以取消"));
     }
-    sqlx::query("UPDATE events SET status='cancelled' WHERE id=?")
+    sqlx::query("UPDATE events SET status='cancelled' WHERE id=$1")
         .bind(id)
         .execute(&st.db)
         .await?;
     notify_signups(&st, id, "活动已取消", &e.title).await?;
     // Release linked ride requests that are not yet underway.
     let rides: Vec<(i64, Option<i64>)> = sqlx::query_as(
-        "SELECT id, driver_id FROM rides WHERE event_id=? AND status IN ('pending_driver','pending_passenger','pending_approval','pending_driver_confirm','confirmed')",
+        "SELECT id, driver_id FROM rides WHERE event_id=$1 AND status IN ('pending_driver','pending_passenger','pending_approval','pending_driver_confirm','confirmed')",
     )
     .bind(id)
     .fetch_all(&st.db)
     .await?;
     for (rid, d) in rides {
-        sqlx::query("UPDATE rides SET status='cancelled', attention_reason='活动已取消', updated_at=? WHERE id=?").bind(now()).bind(rid).execute(&st.db).await?;
+        sqlx::query("UPDATE rides SET status='cancelled', attention_reason='活动已取消', updated_at=$1 WHERE id=$2").bind(now()).bind(rid).execute(&st.db).await?;
         if let Some(d) = d {
             notify(&st.db, d, "活动已取消，接送随之取消", &e.title, "/drive").await;
         }
@@ -401,7 +402,7 @@ async fn finish_event(
     if !can_manage(&u, e.created_by) {
         return Err(forbidden("只有活动负责人可以操作"));
     }
-    sqlx::query("UPDATE events SET status='finished' WHERE id=?")
+    sqlx::query("UPDATE events SET status='finished' WHERE id=$1")
         .bind(id)
         .execute(&st.db)
         .await?;
@@ -448,7 +449,7 @@ async fn signup(
         "waitlist"
     };
     sqlx::query(
-        "INSERT INTO event_signups (event_id, user_id, status, need_ride, offer_drive, offer_seats, created_at) VALUES (?,?,?,?,?,?,?)
+        "INSERT INTO event_signups (event_id, user_id, status, need_ride, offer_drive, offer_seats, created_at) VALUES ($1,$2,$3,$4,$5,$6,$7)
          ON CONFLICT(event_id, user_id) DO UPDATE SET status=excluded.status, need_ride=excluded.need_ride, offer_drive=excluded.offer_drive, offer_seats=excluded.offer_seats",
     )
     .bind(id)
@@ -480,18 +481,18 @@ async fn withdraw(
 ) -> AppResult<Json<Value>> {
     let e = load_event(&st, &u, id).await?;
     let was_going = e.my_status.as_deref() == Some("going");
-    sqlx::query("UPDATE event_signups SET status='cancelled' WHERE event_id=? AND user_id=?")
+    sqlx::query("UPDATE event_signups SET status='cancelled' WHERE event_id=$1 AND user_id=$2")
         .bind(id)
         .bind(u.id)
         .execute(&st.db)
         .await?;
     if was_going && e.capacity > 0 {
-        let next: Option<(i64, i64)> = sqlx::query_as("SELECT id, user_id FROM event_signups WHERE event_id=? AND status='waitlist' ORDER BY created_at, id LIMIT 1")
+        let next: Option<(i64, i64)> = sqlx::query_as("SELECT id, user_id FROM event_signups WHERE event_id=$1 AND status='waitlist' ORDER BY created_at, id LIMIT 1")
             .bind(id)
             .fetch_optional(&st.db)
             .await?;
         if let Some((sid, uid)) = next {
-            sqlx::query("UPDATE event_signups SET status='going' WHERE id=?")
+            sqlx::query("UPDATE event_signups SET status='going' WHERE id=$1")
                 .bind(sid)
                 .execute(&st.db)
                 .await?;
@@ -506,14 +507,14 @@ async fn withdraw(
         }
     }
     let rides: Vec<(i64, Option<i64>)> = sqlx::query_as(
-        "SELECT id, driver_id FROM rides WHERE event_id=? AND passenger_id=? AND status IN ('pending_driver','pending_passenger','pending_approval','pending_driver_confirm','confirmed')",
+        "SELECT id, driver_id FROM rides WHERE event_id=$1 AND passenger_id=$2 AND status IN ('pending_driver','pending_passenger','pending_approval','pending_driver_confirm','confirmed')",
     )
     .bind(id)
     .bind(u.id)
     .fetch_all(&st.db)
     .await?;
     for (rid, d) in rides {
-        sqlx::query("UPDATE rides SET status='cancelled', attention_reason='乘客取消活动报名', updated_at=? WHERE id=?").bind(now()).bind(rid).execute(&st.db).await?;
+        sqlx::query("UPDATE rides SET status='cancelled', attention_reason='乘客取消活动报名', updated_at=$1 WHERE id=$2").bind(now()).bind(rid).execute(&st.db).await?;
         if let Some(d) = d {
             notify(
                 &st.db,
@@ -552,7 +553,7 @@ async fn list_signups(
     let rows: Vec<(i64, i64, String, String, i64, i64, i64, Option<i64>, Option<String>)> = sqlx::query_as(
         "SELECT s.id, s.user_id, u.name, s.status, s.need_ride, s.offer_drive, s.offer_seats, s.attended,
             (SELECT r.status FROM rides r WHERE r.event_id = s.event_id AND r.passenger_id = s.user_id AND r.status != 'cancelled' ORDER BY r.id DESC LIMIT 1)
-         FROM event_signups s JOIN users u ON u.id = s.user_id WHERE s.event_id=? ORDER BY s.status, s.created_at",
+         FROM event_signups s JOIN users u ON u.id = s.user_id WHERE s.event_id=$1 ORDER BY s.status, s.created_at",
     )
     .bind(id)
     .fetch_all(&st.db)
@@ -580,7 +581,7 @@ async fn mark_attendance(
         return Err(forbidden("只有活动负责人可以记录出席"));
     }
     let v = req.attended.map(|a| a as i64);
-    let r = sqlx::query("UPDATE event_signups SET attended=? WHERE event_id=? AND user_id=?")
+    let r = sqlx::query("UPDATE event_signups SET attended=$1 WHERE event_id=$2 AND user_id=$3")
         .bind(v)
         .bind(id)
         .bind(req.user_id)
@@ -588,7 +589,7 @@ async fn mark_attendance(
         .await?;
     if r.rows_affected() == 0 {
         // Walk-in: organiser may record someone who attended without signing up.
-        sqlx::query("INSERT INTO event_signups (event_id, user_id, status, attended, created_at) VALUES (?,?, 'going', ?, ?)")
+        sqlx::query("INSERT INTO event_signups (event_id, user_id, status, attended, created_at) VALUES ($1,$2, 'going', $3, $4)")
             .bind(id)
             .bind(req.user_id)
             .bind(v)

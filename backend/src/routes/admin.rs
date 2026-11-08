@@ -46,17 +46,17 @@ async fn dashboard(State(st): State<AppState>, u: CurrentUser) -> AppResult<Json
         }
     };
     let today_total = count(
-        "SELECT COUNT(*) FROM rides WHERE substr(pickup_at,1,10)=? AND status NOT IN ('cancelled')",
+        "SELECT COUNT(*) FROM rides WHERE substr(pickup_at,1,10)=$1 AND status NOT IN ('cancelled')",
     )
     .await?;
-    let today_confirmed = count("SELECT COUNT(*) FROM rides WHERE substr(pickup_at,1,10)=? AND status IN ('confirmed','in_progress','completed')").await?;
-    let today_changes = count("SELECT COUNT(*) FROM rides WHERE substr(updated_at,1,10)=? AND (needs_attention=1 OR status IN ('cancelled','no_show','alt_transport'))").await?;
+    let today_confirmed = count("SELECT COUNT(*) FROM rides WHERE substr(pickup_at,1,10)=$1 AND status IN ('confirmed','in_progress','completed')").await?;
+    let today_changes = count("SELECT COUNT(*) FROM rides WHERE substr(updated_at,1,10)=$1 AND (needs_attention=1 OR status IN ('cancelled','no_show','alt_transport'))").await?;
     let pending_approval =
-        count("SELECT COUNT(*) FROM rides WHERE status='pending_approval' AND ? != ''").await?;
+        count("SELECT COUNT(*) FROM rides WHERE status='pending_approval' AND $1 != ''").await?;
     let no_driver =
-        count("SELECT COUNT(*) FROM rides WHERE status='pending_driver' AND pickup_at >= ?")
+        count("SELECT COUNT(*) FROM rides WHERE status='pending_driver' AND pickup_at >= $1")
             .await?;
-    let attention = count("SELECT COUNT(*) FROM rides WHERE needs_attention=1 AND status NOT IN ('cancelled','completed') AND ? != ''").await?;
+    let attention = count("SELECT COUNT(*) FROM rides WHERE needs_attention=1 AND status NOT IN ('cancelled','completed') AND $1 != ''").await?;
     let (live,): (i64,) =
         sqlx::query_as("SELECT COUNT(DISTINCT driver_id) FROM rides WHERE status='in_progress'")
             .fetch_one(&st.db)
@@ -104,8 +104,8 @@ async fn list_users(
     let like = format!("%{}%", q.q.unwrap_or_default().trim());
     let rows: Vec<(i64, String, String, String, String, String, String, i64, Option<String>)> = sqlx::query_as(
         "SELECT u.id, u.name, u.email, u.phone, u.roles, u.status, u.created_at, (SELECT COUNT(*) FROM passkeys p WHERE p.user_id=u.id),
-            (SELECT group_concat(g.name, '、') FROM group_members gm JOIN groups g ON g.id=gm.group_id WHERE gm.user_id=u.id)
-         FROM users u WHERE (u.name LIKE ? OR u.email LIKE ? OR u.phone LIKE ?) ORDER BY u.name LIMIT 500",
+            (SELECT string_agg(g.name, '、') FROM group_members gm JOIN groups g ON g.id=gm.group_id WHERE gm.user_id=u.id)
+         FROM users u WHERE (u.name LIKE $1 OR u.email LIKE $2 OR u.phone LIKE $3) ORDER BY u.name LIMIT 500",
     )
     .bind(&like)
     .bind(&like)
@@ -149,30 +149,30 @@ async fn update_user(
     }
     let roles = parse_roles(&req.roles.join(",")).join(",");
     let (old_roles, old_status): (String, String) =
-        sqlx::query_as("SELECT roles, status FROM users WHERE id=?")
+        sqlx::query_as("SELECT roles, status FROM users WHERE id=$1")
             .bind(id)
             .fetch_optional(&st.db)
             .await?
             .ok_or(AppError::NotFound)?;
-    sqlx::query("UPDATE users SET roles=?, status=? WHERE id=?")
+    sqlx::query("UPDATE users SET roles=$1, status=$2 WHERE id=$3")
         .bind(&roles)
         .bind(&req.status)
         .bind(id)
         .execute(&st.db)
         .await?;
     if req.status == "disabled" {
-        sqlx::query("DELETE FROM sessions WHERE user_id=?")
+        sqlx::query("DELETE FROM sessions WHERE user_id=$1")
             .bind(id)
             .execute(&st.db)
             .await?;
     }
     if let Some(gids) = req.group_ids {
-        sqlx::query("DELETE FROM group_members WHERE user_id=?")
+        sqlx::query("DELETE FROM group_members WHERE user_id=$1")
             .bind(id)
             .execute(&st.db)
             .await?;
         for g in gids {
-            sqlx::query("INSERT OR IGNORE INTO group_members (group_id, user_id) VALUES (?,?)")
+            sqlx::query("INSERT INTO group_members (group_id, user_id) VALUES ($1,$2) ON CONFLICT DO NOTHING")
                 .bind(g)
                 .bind(id)
                 .execute(&st.db)
@@ -212,7 +212,7 @@ async fn create_invite(
     if !email.contains('@') {
         return Err(bad("电邮格式不正确"));
     }
-    let (exists,): (i64,) = sqlx::query_as("SELECT COUNT(*) FROM users WHERE email=?")
+    let (exists,): (i64,) = sqlx::query_as("SELECT COUNT(*) FROM users WHERE email=$1")
         .bind(&email)
         .fetch_one(&st.db)
         .await?;
@@ -220,7 +220,7 @@ async fn create_invite(
         return Err(bad("此电邮已是会员"));
     }
     let token = random_token(32);
-    let id = sqlx::query("INSERT INTO invites (token, kind, email, name, roles, group_ids, created_by, expires_at, created_at) VALUES (?, 'invite', ?,?,?,?,?,?,?)")
+    let (id,): (i64,) = sqlx::query_as("INSERT INTO invites (token, kind, email, name, roles, group_ids, created_by, expires_at, created_at) VALUES ($1, 'invite', $2,$3,$4,$5,$6,$7,$8) RETURNING id")
         .bind(&token)
         .bind(&email)
         .bind(req.name.unwrap_or_default().trim())
@@ -229,9 +229,8 @@ async fn create_invite(
         .bind(u.id)
         .bind(in_days(14))
         .bind(now())
-        .execute(&st.db)
-        .await?
-        .last_insert_rowid();
+        .fetch_one(&st.db)
+        .await?;
     audit(
         &st.db,
         Some(u.id),
@@ -267,7 +266,7 @@ async fn revoke_invite(
     Path(id): Path<i64>,
 ) -> AppResult<Json<Value>> {
     require_any(&u, &["admin"])?;
-    sqlx::query("UPDATE invites SET expires_at=? WHERE id=? AND used_at IS NULL")
+    sqlx::query("UPDATE invites SET expires_at=$1 WHERE id=$2 AND used_at IS NULL")
         .bind(now())
         .bind(id)
         .execute(&st.db)
@@ -291,13 +290,13 @@ async fn create_group(
     if req.name.trim().is_empty() {
         return Err(bad("请填写群体名称"));
     }
-    let id = sqlx::query("INSERT INTO groups (name, description) VALUES (?,?)")
-        .bind(req.name.trim())
-        .bind(req.description.unwrap_or_default())
-        .execute(&st.db)
-        .await
-        .map_err(|_| bad("群体名称已存在"))?
-        .last_insert_rowid();
+    let (id,): (i64,) =
+        sqlx::query_as("INSERT INTO groups (name, description) VALUES ($1,$2) RETURNING id")
+            .bind(req.name.trim())
+            .bind(req.description.unwrap_or_default())
+            .fetch_one(&st.db)
+            .await
+            .map_err(|_| bad("群体名称已存在"))?;
     audit(
         &st.db,
         Some(u.id),
@@ -317,7 +316,7 @@ async fn update_group(
     Json(req): Json<GroupIn>,
 ) -> AppResult<Json<Value>> {
     require_any(&u, &["admin"])?;
-    sqlx::query("UPDATE groups SET name=?, description=? WHERE id=?")
+    sqlx::query("UPDATE groups SET name=$1, description=$2 WHERE id=$3")
         .bind(req.name.trim())
         .bind(req.description.unwrap_or_default())
         .bind(id)
@@ -341,7 +340,7 @@ async fn delete_group(
     Path(id): Path<i64>,
 ) -> AppResult<Json<Value>> {
     require_any(&u, &["admin"])?;
-    let (is_all,): (i64,) = sqlx::query_as("SELECT is_all FROM groups WHERE id=?")
+    let (is_all,): (i64,) = sqlx::query_as("SELECT is_all FROM groups WHERE id=$1")
         .bind(id)
         .fetch_optional(&st.db)
         .await?
@@ -349,7 +348,7 @@ async fn delete_group(
     if is_all == 1 {
         return Err(bad("不能删除“全体会员”群体"));
     }
-    sqlx::query("DELETE FROM groups WHERE id=?")
+    sqlx::query("DELETE FROM groups WHERE id=$1")
         .bind(id)
         .execute(&st.db)
         .await?;
@@ -363,7 +362,7 @@ async fn group_members(
     Path(id): Path<i64>,
 ) -> AppResult<Json<Value>> {
     require_any(&u, &["admin"])?;
-    let rows: Vec<(i64, String)> = sqlx::query_as("SELECT u.id, u.name FROM group_members m JOIN users u ON u.id=m.user_id WHERE m.group_id=? ORDER BY u.name")
+    let rows: Vec<(i64, String)> = sqlx::query_as("SELECT u.id, u.name FROM group_members m JOIN users u ON u.id=m.user_id WHERE m.group_id=$1 ORDER BY u.name")
         .bind(id)
         .fetch_all(&st.db)
         .await?;
@@ -386,16 +385,18 @@ async fn set_group_members(
 ) -> AppResult<Json<Value>> {
     require_any(&u, &["admin"])?;
     let mut tx = st.db.begin().await?;
-    sqlx::query("DELETE FROM group_members WHERE group_id=?")
+    sqlx::query("DELETE FROM group_members WHERE group_id=$1")
         .bind(id)
         .execute(&mut *tx)
         .await?;
     for uid in &req.user_ids {
-        sqlx::query("INSERT OR IGNORE INTO group_members (group_id, user_id) VALUES (?,?)")
-            .bind(id)
-            .bind(uid)
-            .execute(&mut *tx)
-            .await?;
+        sqlx::query(
+            "INSERT INTO group_members (group_id, user_id) VALUES ($1,$2) ON CONFLICT DO NOTHING",
+        )
+        .bind(id)
+        .bind(uid)
+        .execute(&mut *tx)
+        .await?;
     }
     tx.commit().await?;
     audit(
@@ -425,12 +426,12 @@ async fn create_area(
     if req.name.trim().is_empty() {
         return Err(bad("请填写地区名称"));
     }
-    let id = sqlx::query("INSERT INTO areas (name, active) VALUES (?, 1)")
-        .bind(req.name.trim())
-        .execute(&st.db)
-        .await
-        .map_err(|_| bad("地区已存在"))?
-        .last_insert_rowid();
+    let (id,): (i64,) =
+        sqlx::query_as("INSERT INTO areas (name, active) VALUES ($1, 1) RETURNING id")
+            .bind(req.name.trim())
+            .fetch_one(&st.db)
+            .await
+            .map_err(|_| bad("地区已存在"))?;
     audit(
         &st.db,
         Some(u.id),
@@ -450,7 +451,7 @@ async fn update_area(
     Json(req): Json<AreaIn>,
 ) -> AppResult<Json<Value>> {
     require_any(&u, &["transport"])?;
-    sqlx::query("UPDATE areas SET name=?, active=? WHERE id=?")
+    sqlx::query("UPDATE areas SET name=$1, active=$2 WHERE id=$3")
         .bind(req.name.trim())
         .bind(req.active.unwrap_or(true) as i64)
         .bind(id)
@@ -486,7 +487,7 @@ async fn approve_recovery(
 ) -> AppResult<Json<Value>> {
     require_any(&u, &["admin"])?;
     let (email, status): (String, String) =
-        sqlx::query_as("SELECT email, status FROM recovery_requests WHERE id=?")
+        sqlx::query_as("SELECT email, status FROM recovery_requests WHERE id=$1")
             .bind(id)
             .fetch_optional(&st.db)
             .await?
@@ -494,13 +495,13 @@ async fn approve_recovery(
     if status != "pending" {
         return Err(bad("此申请已处理"));
     }
-    let (uid,): (i64,) = sqlx::query_as("SELECT id FROM users WHERE email=?")
+    let (uid,): (i64,) = sqlx::query_as("SELECT id FROM users WHERE email=$1")
         .bind(&email)
         .fetch_optional(&st.db)
         .await?
         .ok_or(AppError::NotFound)?;
     let token = random_token(32);
-    sqlx::query("INSERT INTO invites (token, kind, email, user_id, created_by, expires_at, created_at) VALUES (?, 'recovery', ?, ?, ?, ?, ?)")
+    sqlx::query("INSERT INTO invites (token, kind, email, user_id, created_by, expires_at, created_at) VALUES ($1, 'recovery', $2, $3, $4, $5, $6)")
         .bind(&token)
         .bind(&email)
         .bind(uid)
@@ -509,22 +510,22 @@ async fn approve_recovery(
         .bind(now())
         .execute(&st.db)
         .await?;
-    sqlx::query("UPDATE recovery_requests SET status='approved', resolved_by=? WHERE id=?")
+    sqlx::query("UPDATE recovery_requests SET status='approved', resolved_by=$1 WHERE id=$2")
         .bind(u.id)
         .bind(id)
         .execute(&st.db)
         .await?;
     // The old phone is presumed lost: revoke its sessions, passkeys and authenticator.
     // The member registers a new passkey with the one-time link.
-    sqlx::query("DELETE FROM sessions WHERE user_id=?")
+    sqlx::query("DELETE FROM sessions WHERE user_id=$1")
         .bind(uid)
         .execute(&st.db)
         .await?;
-    sqlx::query("DELETE FROM passkeys WHERE user_id=?")
+    sqlx::query("DELETE FROM passkeys WHERE user_id=$1")
         .bind(uid)
         .execute(&st.db)
         .await?;
-    sqlx::query("UPDATE users SET totp_enabled=0, totp_secret=NULL, totp_last_step=0 WHERE id=?")
+    sqlx::query("UPDATE users SET totp_enabled=0, totp_secret=NULL, totp_last_step=0 WHERE id=$1")
         .bind(uid)
         .execute(&st.db)
         .await?;
@@ -548,7 +549,7 @@ async fn reject_recovery(
     Path(id): Path<i64>,
 ) -> AppResult<Json<Value>> {
     require_any(&u, &["admin"])?;
-    sqlx::query("UPDATE recovery_requests SET status='rejected', resolved_by=? WHERE id=? AND status='pending'").bind(u.id).bind(id).execute(&st.db).await?;
+    sqlx::query("UPDATE recovery_requests SET status='rejected', resolved_by=$1 WHERE id=$2 AND status='pending'").bind(u.id).bind(id).execute(&st.db).await?;
     audit(
         &st.db,
         Some(u.id),
@@ -576,7 +577,7 @@ async fn audit_log(
     require_any(&u, &["admin", "transport"])?;
     let rows: Vec<(i64, Option<String>, String, String, Option<i64>, String, String)> = sqlx::query_as(
         "SELECT a.id, u.name, a.action, a.entity, a.entity_id, a.detail, a.created_at FROM audit_logs a LEFT JOIN users u ON u.id=a.actor_id
-         WHERE (? IS NULL OR a.entity = ?) AND (? IS NULL OR a.entity_id = ?) ORDER BY a.id DESC LIMIT 300",
+         WHERE ($1 IS NULL OR a.entity = $2) AND ($3 IS NULL OR a.entity_id = $4) ORDER BY a.id DESC LIMIT 300",
     )
     .bind(&q.entity)
     .bind(&q.entity)

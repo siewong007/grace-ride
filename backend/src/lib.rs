@@ -14,7 +14,7 @@ pub mod seed;
 pub mod state;
 pub mod util;
 
-use std::{str::FromStr, sync::Arc, time::Duration};
+use std::sync::Arc;
 
 use axum::{
     extract::{DefaultBodyLimit, State},
@@ -24,10 +24,9 @@ use axum::{
     Json, Router,
 };
 use serde_json::{json, Value};
-use sqlx::{
-    sqlite::{SqliteConnectOptions, SqliteJournalMode, SqlitePoolOptions, SqliteSynchronous},
-    SqlitePool,
-};
+use sqlx::postgres::PgConnectOptions;
+use sqlx::PgPool;
+use std::str::FromStr;
 use tower_http::{
     compression::CompressionLayer,
     services::{ServeDir, ServeFile},
@@ -37,25 +36,9 @@ use tower_http::{
 use security::RateLimiter;
 use state::{build_webauthn, AppState, Config};
 
-pub async fn connect_db(url: &str) -> anyhow::Result<SqlitePool> {
-    if let Some(path) = url.strip_prefix("sqlite://") {
-        if let Some(parent) = std::path::Path::new(path.split('?').next().unwrap_or(path)).parent()
-        {
-            if !parent.as_os_str().is_empty() {
-                std::fs::create_dir_all(parent)?;
-            }
-        }
-    }
-    let opts = SqliteConnectOptions::from_str(url)?
-        .create_if_missing(true)
-        .journal_mode(SqliteJournalMode::Wal)
-        .synchronous(SqliteSynchronous::Normal)
-        .foreign_keys(true)
-        .busy_timeout(Duration::from_secs(5));
-    let db = SqlitePoolOptions::new()
-        .max_connections(8)
-        .connect_with(opts)
-        .await?;
+pub async fn connect_db(url: &str) -> anyhow::Result<PgPool> {
+    let opts = PgConnectOptions::from_str(url)?;
+    let db = PgPool::connect_with(opts).await?;
     sqlx::migrate!("./migrations").run(&db).await?;
     Ok(db)
 }

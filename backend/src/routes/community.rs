@@ -61,7 +61,7 @@ async fn update_profile(
         return Err(bad("请填写姓名"));
     }
     if let Some(f) = req.photo_file_id {
-        let (owner,): (i64,) = sqlx::query_as("SELECT owner_id FROM files WHERE id=?")
+        let (owner,): (i64,) = sqlx::query_as("SELECT owner_id FROM files WHERE id=$1")
             .bind(f)
             .fetch_optional(&st.db)
             .await?
@@ -70,7 +70,7 @@ async fn update_profile(
             return Err(forbidden("照片无效"));
         }
     }
-    sqlx::query("UPDATE users SET name=?, phone=?, photo_file_id=COALESCE(?, photo_file_id), badges_opt_out=? WHERE id=?")
+    sqlx::query("UPDATE users SET name=$1, phone=$2, photo_file_id=COALESCE($3, photo_file_id), badges_opt_out=$4 WHERE id=$5")
         .bind(req.name.trim())
         .bind(req.phone.trim())
         .bind(req.photo_file_id)
@@ -86,7 +86,7 @@ async fn update_profile(
 
 async fn list_notifications(State(st): State<AppState>, u: CurrentUser) -> AppResult<Json<Value>> {
     let rows: Vec<(i64, String, String, String, Option<String>, String)> = sqlx::query_as(
-        "SELECT id, title, body, link, read_at, created_at FROM notifications WHERE user_id=? ORDER BY id DESC LIMIT 100",
+        "SELECT id, title, body, link, read_at, created_at FROM notifications WHERE user_id=$1 ORDER BY id DESC LIMIT 100",
     )
     .bind(u.id)
     .fetch_all(&st.db)
@@ -95,7 +95,7 @@ async fn list_notifications(State(st): State<AppState>, u: CurrentUser) -> AppRe
 }
 
 async fn read_all(State(st): State<AppState>, u: CurrentUser) -> AppResult<Json<Value>> {
-    sqlx::query("UPDATE notifications SET read_at=? WHERE user_id=? AND read_at IS NULL")
+    sqlx::query("UPDATE notifications SET read_at=$1 WHERE user_id=$2 AND read_at IS NULL")
         .bind(now())
         .bind(u.id)
         .execute(&st.db)
@@ -108,12 +108,14 @@ async fn read_one(
     u: CurrentUser,
     Path(id): Path<i64>,
 ) -> AppResult<Json<Value>> {
-    sqlx::query("UPDATE notifications SET read_at=? WHERE id=? AND user_id=? AND read_at IS NULL")
-        .bind(now())
-        .bind(id)
-        .bind(u.id)
-        .execute(&st.db)
-        .await?;
+    sqlx::query(
+        "UPDATE notifications SET read_at=$1 WHERE id=$2 AND user_id=$3 AND read_at IS NULL",
+    )
+    .bind(now())
+    .bind(id)
+    .bind(u.id)
+    .execute(&st.db)
+    .await?;
     Ok(Json(json!({"ok": true})))
 }
 
@@ -145,15 +147,14 @@ async fn create_announcement(
     if req.title.trim().is_empty() || req.body.trim().is_empty() {
         return Err(bad("请填写标题及内容"));
     }
-    let id = sqlx::query("INSERT INTO announcements (title, body, pinned, created_by, created_at) VALUES (?,?,?,?,?)")
+    let (id,): (i64,) = sqlx::query_as("INSERT INTO announcements (title, body, pinned, created_by, created_at) VALUES ($1,$2,$3,$4,$5) RETURNING id")
         .bind(req.title.trim())
         .bind(req.body.trim())
         .bind(req.pinned.unwrap_or(false) as i64)
         .bind(u.id)
         .bind(now())
-        .execute(&st.db)
-        .await?
-        .last_insert_rowid();
+        .fetch_one(&st.db)
+        .await?;
     if req.notify_all.unwrap_or(false) {
         let users: Vec<(i64,)> = sqlx::query_as("SELECT id FROM users WHERE status='active'")
             .fetch_all(&st.db)
@@ -180,7 +181,7 @@ async fn delete_announcement(
     Path(id): Path<i64>,
 ) -> AppResult<Json<Value>> {
     require_any(&u, &["transport", "admin"])?;
-    sqlx::query("DELETE FROM announcements WHERE id=?")
+    sqlx::query("DELETE FROM announcements WHERE id=$1")
         .bind(id)
         .execute(&st.db)
         .await?;
@@ -211,7 +212,7 @@ async fn list_tickets(
     let all = q.all.unwrap_or(false) && u.is_staff();
     let rows: Vec<(i64, String, String, Option<i64>, String, String, String)> = sqlx::query_as(
         "SELECT t.id, t.subject, t.status, t.ride_id, u.name, t.created_at, t.updated_at FROM help_tickets t JOIN users u ON u.id=t.user_id
-         WHERE (? OR t.user_id=?) ORDER BY CASE t.status WHEN 'open' THEN 0 WHEN 'answered' THEN 1 ELSE 2 END, t.updated_at DESC LIMIT 200",
+         WHERE ($1 OR t.user_id=$2) ORDER BY CASE t.status WHEN 'open' THEN 0 WHEN 'answered' THEN 1 ELSE 2 END, t.updated_at DESC LIMIT 200",
     )
     .bind(all)
     .bind(u.id)
@@ -237,7 +238,7 @@ async fn create_ticket(
     }
     if let Some(r) = req.ride_id {
         let (p, d): (i64, Option<i64>) =
-            sqlx::query_as("SELECT passenger_id, driver_id FROM rides WHERE id=?")
+            sqlx::query_as("SELECT passenger_id, driver_id FROM rides WHERE id=$1")
                 .bind(r)
                 .fetch_optional(&st.db)
                 .await?
@@ -246,22 +247,23 @@ async fn create_ticket(
             return Err(forbidden("只能关联自己的接送"));
         }
     }
-    let id = sqlx::query("INSERT INTO help_tickets (user_id, ride_id, subject, created_at, updated_at) VALUES (?,?,?,?,?)")
+    let (id,): (i64,) = sqlx::query_as("INSERT INTO help_tickets (user_id, ride_id, subject, created_at, updated_at) VALUES ($1,$2,$3,$4,$5) RETURNING id")
         .bind(u.id)
         .bind(req.ride_id)
         .bind(req.subject.trim())
         .bind(now())
         .bind(now())
-        .execute(&st.db)
-        .await?
-        .last_insert_rowid();
-    sqlx::query("INSERT INTO help_replies (ticket_id, user_id, body, created_at) VALUES (?,?,?,?)")
-        .bind(id)
-        .bind(u.id)
-        .bind(req.body.trim())
-        .bind(now())
-        .execute(&st.db)
+        .fetch_one(&st.db)
         .await?;
+    sqlx::query(
+        "INSERT INTO help_replies (ticket_id, user_id, body, created_at) VALUES ($1,$2,$3,$4)",
+    )
+    .bind(id)
+    .bind(u.id)
+    .bind(req.body.trim())
+    .bind(now())
+    .execute(&st.db)
+    .await?;
     notify_roles(
         &st.db,
         &["transport", "admin"],
@@ -279,7 +281,7 @@ async fn ticket_owner(
     id: i64,
 ) -> AppResult<(i64, String, String, Option<i64>)> {
     let row: (i64, String, String, Option<i64>) =
-        sqlx::query_as("SELECT user_id, subject, status, ride_id FROM help_tickets WHERE id=?")
+        sqlx::query_as("SELECT user_id, subject, status, ride_id FROM help_tickets WHERE id=$1")
             .bind(id)
             .fetch_optional(&st.db)
             .await?
@@ -297,7 +299,7 @@ async fn get_ticket(
 ) -> AppResult<Json<Value>> {
     let (owner, subject, status, ride) = ticket_owner(&st, &u, id).await?;
     let replies: Vec<(i64, i64, String, String, String)> = sqlx::query_as(
-        "SELECT r.id, r.user_id, u.name, r.body, r.created_at FROM help_replies r JOIN users u ON u.id=r.user_id WHERE r.ticket_id=? ORDER BY r.id",
+        "SELECT r.id, r.user_id, u.name, r.body, r.created_at FROM help_replies r JOIN users u ON u.id=r.user_id WHERE r.ticket_id=$1 ORDER BY r.id",
     )
     .bind(id)
     .fetch_all(&st.db)
@@ -326,15 +328,17 @@ async fn reply_ticket(
     if req.body.trim().is_empty() {
         return Err(bad("请填写内容"));
     }
-    sqlx::query("INSERT INTO help_replies (ticket_id, user_id, body, created_at) VALUES (?,?,?,?)")
-        .bind(id)
-        .bind(u.id)
-        .bind(req.body.trim())
-        .bind(now())
-        .execute(&st.db)
-        .await?;
+    sqlx::query(
+        "INSERT INTO help_replies (ticket_id, user_id, body, created_at) VALUES ($1,$2,$3,$4)",
+    )
+    .bind(id)
+    .bind(u.id)
+    .bind(req.body.trim())
+    .bind(now())
+    .execute(&st.db)
+    .await?;
     let new_status = if u.id == owner { "open" } else { "answered" };
-    sqlx::query("UPDATE help_tickets SET status=?, updated_at=? WHERE id=?")
+    sqlx::query("UPDATE help_tickets SET status=$1, updated_at=$2 WHERE id=$3")
         .bind(new_status)
         .bind(now())
         .bind(id)
@@ -368,7 +372,7 @@ async fn close_ticket(
     Path(id): Path<i64>,
 ) -> AppResult<Json<Value>> {
     ticket_owner(&st, &u, id).await?;
-    sqlx::query("UPDATE help_tickets SET status='closed', updated_at=? WHERE id=?")
+    sqlx::query("UPDATE help_tickets SET status='closed', updated_at=$1 WHERE id=$2")
         .bind(now())
         .bind(id)
         .execute(&st.db)
@@ -452,7 +456,7 @@ async fn list_reimbursements(
         }
         _ => {
             sqlx::query_as::<_, ReimbRow>(&format!(
-                "{REIMB_SELECT} WHERE r.user_id=? ORDER BY r.id DESC LIMIT 100"
+                "{REIMB_SELECT} WHERE r.user_id=$1 ORDER BY r.id DESC LIMIT 100"
             ))
             .bind(u.id)
             .fetch_all(&st.db)
@@ -466,7 +470,7 @@ async fn list_reimbursements(
 }
 
 async fn load_reimb(st: &AppState, id: i64) -> AppResult<ReimbRow> {
-    sqlx::query_as::<_, ReimbRow>(&format!("{REIMB_SELECT} WHERE r.id=?"))
+    sqlx::query_as::<_, ReimbRow>(&format!("{REIMB_SELECT} WHERE r.id=$1"))
         .bind(id)
         .fetch_optional(&st.db)
         .await?
@@ -502,7 +506,7 @@ async fn validate_reimb(st: &AppState, u: &CurrentUser, req: &ReimbIn) -> AppRes
     if req.payee_name.trim().is_empty() || req.payee_phone.trim().is_empty() {
         return Err(bad("请填写收款人姓名及手机号（TNG / DuitNow）"));
     }
-    let (owner,): (i64,) = sqlx::query_as("SELECT owner_id FROM files WHERE id=?")
+    let (owner,): (i64,) = sqlx::query_as("SELECT owner_id FROM files WHERE id=$1")
         .bind(req.receipt_file_id)
         .fetch_optional(&st.db)
         .await?
@@ -511,7 +515,7 @@ async fn validate_reimb(st: &AppState, u: &CurrentUser, req: &ReimbIn) -> AppRes
         return Err(forbidden("收据无效"));
     }
     if let Some(rid) = req.ride_id {
-        let (p,): (i64,) = sqlx::query_as("SELECT passenger_id FROM rides WHERE id=?")
+        let (p,): (i64,) = sqlx::query_as("SELECT passenger_id FROM rides WHERE id=$1")
             .bind(rid)
             .fetch_optional(&st.db)
             .await?
@@ -529,8 +533,8 @@ async fn create_reimbursement(
     Json(req): Json<ReimbIn>,
 ) -> AppResult<Json<Value>> {
     validate_reimb(&st, &u, &req).await?;
-    let id = sqlx::query(
-        "INSERT INTO reimbursements (user_id, ride_id, amount_cents, description, receipt_file_id, payee_name, payee_phone, created_at, updated_at) VALUES (?,?,?,?,?,?,?,?,?)",
+    let (id,): (i64,) = sqlx::query_as(
+        "INSERT INTO reimbursements (user_id, ride_id, amount_cents, description, receipt_file_id, payee_name, payee_phone, created_at, updated_at) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9) RETURNING id",
     )
     .bind(u.id)
     .bind(req.ride_id)
@@ -541,9 +545,8 @@ async fn create_reimbursement(
     .bind(req.payee_phone.trim())
     .bind(now())
     .bind(now())
-    .execute(&st.db)
-    .await?
-    .last_insert_rowid();
+    .fetch_one(&st.db)
+    .await?;
     notify_roles(
         &st.db,
         &["transport"],
@@ -575,7 +578,7 @@ async fn resubmit_reimbursement(
         return Err(bad("只有被退回的申请可以补资料重新提交"));
     }
     validate_reimb(&st, &u, &req).await?;
-    sqlx::query("UPDATE reimbursements SET ride_id=?, amount_cents=?, description=?, receipt_file_id=?, payee_name=?, payee_phone=?, status='pending', payee_verified=0, updated_at=? WHERE id=?")
+    sqlx::query("UPDATE reimbursements SET ride_id=$1, amount_cents=$2, description=$3, receipt_file_id=$4, payee_name=$5, payee_phone=$6, status='pending', payee_verified=0, updated_at=$7 WHERE id=$8")
         .bind(req.ride_id)
         .bind(req.amount_cents)
         .bind(req.description.trim())
@@ -637,7 +640,7 @@ async fn review_reimbursement(
         return Err(bad("请填写原因"));
     }
     sqlx::query(
-        "UPDATE reimbursements SET status=?, review_note=?, reviewed_by=?, updated_at=? WHERE id=?",
+        "UPDATE reimbursements SET status=$1, review_note=$2, reviewed_by=$3, updated_at=$4 WHERE id=$5",
     )
     .bind(status)
     .bind(&note)
@@ -708,7 +711,7 @@ async fn pay_reimbursement(
     if req.paid_ref.trim().len() < 4 {
         return Err(bad("请填写交易编号"));
     }
-    sqlx::query("UPDATE reimbursements SET status='paid', payee_verified=1, paid_ref=?, paid_by=?, paid_at=?, updated_at=? WHERE id=?")
+    sqlx::query("UPDATE reimbursements SET status='paid', payee_verified=1, paid_ref=$1, paid_by=$2, paid_at=$3, updated_at=$4 WHERE id=$5")
         .bind(req.paid_ref.trim())
         .bind(u.id)
         .bind(now())
@@ -750,7 +753,7 @@ struct ReportQuery {
 
 pub async fn compute_badges(st: &AppState, user_id: i64) -> AppResult<Vec<Value>> {
     let (opt_out, carpool): (i64, i64) =
-        sqlx::query_as("SELECT badges_opt_out, carpool_enabled FROM users WHERE id=?")
+        sqlx::query_as("SELECT badges_opt_out, carpool_enabled FROM users WHERE id=$1")
             .bind(user_id)
             .fetch_one(&st.db)
             .await?;
@@ -758,24 +761,24 @@ pub async fn compute_badges(st: &AppState, user_id: i64) -> AppResult<Vec<Value>
         return Ok(vec![]);
     }
     let (night,): (i64,) = sqlx::query_as(
-        "SELECT COUNT(*) FROM rides WHERE driver_id=? AND status='completed' AND (substr(pickup_at,12,2) >= '21' OR substr(pickup_at,12,2) < '05')",
+        "SELECT COUNT(*) FROM rides WHERE driver_id=$1 AND status='completed' AND (substr(pickup_at,12,2) >= '21' OR substr(pickup_at,12,2) < '05')",
     )
     .bind(user_id)
     .fetch_one(&st.db)
     .await?;
     let (months,): (i64,) = sqlx::query_as(
-        "SELECT COUNT(DISTINCT substr(pickup_at,1,7)) FROM rides WHERE driver_id=? AND status='completed' AND pickup_at >= date('now','localtime','-6 months')",
+        "SELECT COUNT(DISTINCT substr(pickup_at,1,7)) FROM rides WHERE driver_id=$1 AND status='completed' AND pickup_at >= to_char(LOCALTIMESTAMP - interval '6 months','YYYY-MM-DD')",
     )
     .bind(user_id)
     .fetch_one(&st.db)
     .await?;
     let (total,): (i64,) =
-        sqlx::query_as("SELECT COUNT(*) FROM rides WHERE driver_id=? AND status='completed'")
+        sqlx::query_as("SELECT COUNT(*) FROM rides WHERE driver_id=$1 AND status='completed'")
             .bind(user_id)
             .fetch_one(&st.db)
             .await?;
     let (shared,): (i64,) = sqlx::query_as(
-        "SELECT COUNT(*) FROM (SELECT trip_id FROM rides WHERE driver_id=? AND status='completed' AND trip_id IS NOT NULL GROUP BY trip_id HAVING COUNT(*) >= 2)",
+        "SELECT COUNT(*) FROM (SELECT trip_id FROM rides WHERE driver_id=$1 AND status='completed' AND trip_id IS NOT NULL GROUP BY trip_id HAVING COUNT(*) >= 2)",
     )
     .bind(user_id)
     .fetch_one(&st.db)
@@ -832,24 +835,24 @@ async fn monthly_report(
     if month.len() != 7 {
         return Err(bad("月份格式应为 YYYY-MM"));
     }
-    let (name,): (String,) = sqlx::query_as("SELECT name FROM users WHERE id=?")
+    let (name,): (String,) = sqlx::query_as("SELECT name FROM users WHERE id=$1")
         .bind(target)
         .fetch_optional(&st.db)
         .await?
         .ok_or(AppError::NotFound)?;
-    let (driven,): (i64,) = sqlx::query_as("SELECT COUNT(*) FROM rides WHERE driver_id=? AND status='completed' AND substr(pickup_at,1,7)=?")
+    let (driven,): (i64,) = sqlx::query_as("SELECT COUNT(*) FROM rides WHERE driver_id=$1 AND status='completed' AND substr(pickup_at,1,7)=$2")
         .bind(target)
         .bind(&month)
         .fetch_one(&st.db)
         .await?;
-    let (received,): (i64,) = sqlx::query_as("SELECT COUNT(*) FROM rides WHERE passenger_id=? AND status='completed' AND substr(pickup_at,1,7)=?")
+    let (received,): (i64,) = sqlx::query_as("SELECT COUNT(*) FROM rides WHERE passenger_id=$1 AND status='completed' AND substr(pickup_at,1,7)=$2")
         .bind(target)
         .bind(&month)
         .fetch_one(&st.db)
         .await?;
     let attended: Vec<(String, i64)> = sqlx::query_as(
         "SELECT e.kind, COUNT(*) FROM event_signups s JOIN events e ON e.id=s.event_id
-         WHERE s.user_id=? AND s.attended=1 AND substr(e.starts_at,1,7)=? GROUP BY e.kind",
+         WHERE s.user_id=$1 AND s.attended=1 AND substr(e.starts_at,1,7)=$2 GROUP BY e.kind",
     )
     .bind(target)
     .bind(&month)
@@ -857,15 +860,15 @@ async fn monthly_report(
     .await?;
     let events: Vec<(i64, String, String, String)> = sqlx::query_as(
         "SELECT e.id, e.title, e.kind, e.starts_at FROM event_signups s JOIN events e ON e.id=s.event_id
-         WHERE s.user_id=? AND s.attended=1 AND substr(e.starts_at,1,7)=? ORDER BY e.starts_at",
+         WHERE s.user_id=$1 AND s.attended=1 AND substr(e.starts_at,1,7)=$2 ORDER BY e.starts_at",
     )
     .bind(target)
     .bind(&month)
     .fetch_all(&st.db)
     .await?;
     let (paid,): (i64,) = sqlx::query_as(
-        "SELECT COALESCE(SUM(sh.amount_cents),0) FROM settlement_shares sh JOIN settlements s ON s.id=sh.settlement_id JOIN events e ON e.id=s.event_id
-         WHERE sh.user_id=? AND sh.status='confirmed' AND substr(e.starts_at,1,7)=?",
+        "SELECT COALESCE(SUM(sh.amount_cents),0)::BIGINT FROM settlement_shares sh JOIN settlements s ON s.id=sh.settlement_id JOIN events e ON e.id=s.event_id
+         WHERE sh.user_id=$1 AND sh.status='confirmed' AND substr(e.starts_at,1,7)=$2",
     )
     .bind(target)
     .bind(&month)

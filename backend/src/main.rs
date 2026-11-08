@@ -30,7 +30,6 @@ async fn main() -> anyhow::Result<()> {
 
     let state = init(cfg.clone()).await?;
     jobs::spawn(state.db.clone(), cfg.clone());
-    let db = state.db.clone();
     let app = router(state);
 
     let addr: SocketAddr = cfg.bind.parse()?;
@@ -47,11 +46,6 @@ async fn main() -> anyhow::Result<()> {
     .with_graceful_shutdown(shutdown())
     .await?;
 
-    // Flush the WAL so a copied database file is complete.
-    let _ = sqlx::query("PRAGMA wal_checkpoint(TRUNCATE)")
-        .execute(&db)
-        .await;
-    db.close().await;
     tracing::info!("shut down cleanly");
     Ok(())
 }

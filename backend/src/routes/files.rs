@@ -69,23 +69,22 @@ async fn upload(
         tokio::fs::write(st.cfg.upload_dir.join(&stored), &data)
             .await
             .map_err(anyhow::Error::from)?;
-        let id = sqlx::query("INSERT INTO files (owner_id, stored_name, mime, original_name, size, created_at) VALUES (?,?,?,?,?,?)")
+        let (id,): (i64,) = sqlx::query_as("INSERT INTO files (owner_id, stored_name, mime, original_name, size, created_at) VALUES ($1,$2,$3,$4,$5,$6) RETURNING id")
             .bind(u.id)
             .bind(&stored)
             .bind(&mime)
             .bind(original.chars().take(120).collect::<String>())
             .bind(data.len() as i64)
             .bind(now())
-            .execute(&st.db)
-            .await?
-            .last_insert_rowid();
+            .fetch_one(&st.db)
+            .await?;
         return Ok(Json(json!({ "id": id, "mime": mime, "name": original })));
     }
     Err(bad("没有收到文件"))
 }
 
 pub async fn can_access_file(st: &AppState, u: &CurrentUser, file_id: i64) -> AppResult<bool> {
-    let (owner,): (i64,) = sqlx::query_as("SELECT owner_id FROM files WHERE id=?")
+    let (owner,): (i64,) = sqlx::query_as("SELECT owner_id FROM files WHERE id=$1")
         .bind(file_id)
         .fetch_optional(&st.db)
         .await?
@@ -95,7 +94,7 @@ pub async fn can_access_file(st: &AppState, u: &CurrentUser, file_id: i64) -> Ap
     }
     let finance = u.has("finance") && u.mfa_ok;
     // Profile photos are visible to members (passengers recognise their driver).
-    let (photo,): (i64,) = sqlx::query_as("SELECT COUNT(*) FROM users WHERE photo_file_id=?")
+    let (photo,): (i64,) = sqlx::query_as("SELECT COUNT(*) FROM users WHERE photo_file_id=$1")
         .bind(file_id)
         .fetch_one(&st.db)
         .await?;
@@ -105,7 +104,7 @@ pub async fn can_access_file(st: &AppState, u: &CurrentUser, file_id: i64) -> Ap
     // Settlement expense receipts: organiser, participants, finance.
     let (item,): (i64,) = sqlx::query_as(
         "SELECT COUNT(*) FROM settlement_items i JOIN settlements s ON s.id=i.settlement_id
-         WHERE i.receipt_file_id=? AND (s.created_by=? OR ? OR EXISTS (SELECT 1 FROM settlement_shares sh WHERE sh.settlement_id=s.id AND sh.user_id=?))",
+         WHERE i.receipt_file_id=$1 AND (s.created_by=$2 OR $3 OR EXISTS (SELECT 1 FROM settlement_shares sh WHERE sh.settlement_id=s.id AND sh.user_id=$4))",
     )
     .bind(file_id)
     .bind(u.id)
@@ -119,7 +118,7 @@ pub async fn can_access_file(st: &AppState, u: &CurrentUser, file_id: i64) -> Ap
     // Payment proofs: payer (owner), organiser/payee, finance.
     let (proof,): (i64,) = sqlx::query_as(
         "SELECT COUNT(*) FROM settlement_shares sh JOIN settlements s ON s.id=sh.settlement_id
-         WHERE sh.proof_file_id=? AND (s.created_by=? OR ?)",
+         WHERE sh.proof_file_id=$1 AND (s.created_by=$2 OR $3)",
     )
     .bind(file_id)
     .bind(u.id)
@@ -130,13 +129,14 @@ pub async fn can_access_file(st: &AppState, u: &CurrentUser, file_id: i64) -> Ap
         return Ok(true);
     }
     // Grab reimbursement receipts: claimant, 交通组, finance.
-    let (reimb,): (i64,) =
-        sqlx::query_as("SELECT COUNT(*) FROM reimbursements WHERE receipt_file_id=? AND (? OR ?)")
-            .bind(file_id)
-            .bind(u.is_staff())
-            .bind(finance)
-            .fetch_one(&st.db)
-            .await?;
+    let (reimb,): (i64,) = sqlx::query_as(
+        "SELECT COUNT(*) FROM reimbursements WHERE receipt_file_id=$1 AND ($2 OR $3)",
+    )
+    .bind(file_id)
+    .bind(u.is_staff())
+    .bind(finance)
+    .fetch_one(&st.db)
+    .await?;
     Ok(reimb > 0)
 }
 
@@ -149,7 +149,7 @@ async fn download(
         return Err(forbidden("您无法查看此文件"));
     }
     let (stored, mime, name): (String, String, String) =
-        sqlx::query_as("SELECT stored_name, mime, original_name FROM files WHERE id=?")
+        sqlx::query_as("SELECT stored_name, mime, original_name FROM files WHERE id=$1")
             .bind(id)
             .fetch_one(&st.db)
             .await?;

@@ -103,7 +103,7 @@ const RIDE_SELECT: &str = "SELECT r.id, r.passenger_id, r.driver_id, r.event_id,
     LEFT JOIN events e ON e.id = r.event_id";
 
 pub async fn load_ride(st: &AppState, id: i64) -> AppResult<RideRow> {
-    sqlx::query_as::<_, RideRow>(&format!("{RIDE_SELECT} WHERE r.id = ?"))
+    sqlx::query_as::<_, RideRow>(&format!("{RIDE_SELECT} WHERE r.id = $1"))
         .bind(id)
         .fetch_optional(&st.db)
         .await?
@@ -167,9 +167,12 @@ fn can_view(r: &RideRow, u: &CurrentUser) -> bool {
 }
 
 async fn set_status(st: &AppState, id: i64, from: &[&str], to: &str) -> AppResult<()> {
-    let placeholders = from.iter().map(|_| "?").collect::<Vec<_>>().join(",");
+    let placeholders = (0..from.len())
+        .map(|i| format!("${}", i + 4))
+        .collect::<Vec<_>>()
+        .join(",");
     let sql = format!(
-        "UPDATE rides SET status=?, updated_at=? WHERE id=? AND status IN ({placeholders})"
+        "UPDATE rides SET status=$1, updated_at=$2 WHERE id=$3 AND status IN ({placeholders})"
     );
     let mut q = sqlx::query(&sql).bind(to).bind(now()).bind(id);
     for f in from {
@@ -224,7 +227,7 @@ async fn create_ride(
     if req.pickup_address.trim().is_empty() || req.destination.trim().is_empty() {
         return Err(bad("请填写上车地址及目的地"));
     }
-    let area: Option<(i64,)> = sqlx::query_as("SELECT id FROM areas WHERE id=? AND active=1")
+    let area: Option<(i64,)> = sqlx::query_as("SELECT id FROM areas WHERE id=$1 AND active=1")
         .bind(req.pickup_area_id)
         .fetch_optional(&st.db)
         .await?;
@@ -234,9 +237,9 @@ async fn create_ride(
             return Err(forbidden("您无法查看此活动"));
         }
     }
-    let id = sqlx::query(
+    let (id,): (i64,) = sqlx::query_as(
         "INSERT INTO rides (passenger_id, event_id, pickup_at, pickup_area_id, pickup_address, destination, seats, assistance, notes, created_at, updated_at)
-         VALUES (?,?,?,?,?,?,?,?,?,?,?)",
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11) RETURNING id",
     )
     .bind(u.id)
     .bind(req.event_id)
@@ -249,15 +252,14 @@ async fn create_ride(
     .bind(req.notes.unwrap_or_default())
     .bind(now())
     .bind(now())
-    .execute(&st.db)
-    .await?
-    .last_insert_rowid();
+    .fetch_one(&st.db)
+    .await?;
     audit(&st.db, Some(u.id), "ride.create", "ride", Some(id), &at).await;
 
     // Let drivers who serve that area know there's a new request.
     let drivers: Vec<(i64,)> = sqlx::query_as(
         "SELECT da.user_id FROM driver_areas da JOIN users u ON u.id = da.user_id
-         WHERE da.area_id=? AND u.status='active' AND u.id != ?",
+         WHERE da.area_id=$1 AND u.status='active' AND u.id != $2",
     )
     .bind(req.pickup_area_id)
     .bind(u.id)
@@ -288,9 +290,9 @@ async fn my_rides(
 ) -> AppResult<Json<Value>> {
     let past = q.scope.as_deref() == Some("past");
     let sql = if past {
-        format!("{RIDE_SELECT} WHERE r.passenger_id=? AND r.status IN ('completed','cancelled','no_show','alt_transport') ORDER BY r.pickup_at DESC LIMIT 50")
+        format!("{RIDE_SELECT} WHERE r.passenger_id=$1 AND r.status IN ('completed','cancelled','no_show','alt_transport') ORDER BY r.pickup_at DESC LIMIT 50")
     } else {
-        format!("{RIDE_SELECT} WHERE r.passenger_id=? AND r.status NOT IN ('completed','cancelled','no_show','alt_transport') ORDER BY r.pickup_at")
+        format!("{RIDE_SELECT} WHERE r.passenger_id=$1 AND r.status NOT IN ('completed','cancelled','no_show','alt_transport') ORDER BY r.pickup_at")
     };
     let rows = sqlx::query_as::<_, RideRow>(&sql)
         .bind(u.id)
@@ -319,8 +321,8 @@ async fn get_ride(
         }
         // Passenger time conflicts
         let conflicts: Vec<(i64, String)> = sqlx::query_as(
-            "SELECT id, pickup_at FROM rides WHERE passenger_id=? AND id != ? AND status IN ('pending_approval','confirmed','in_progress')
-             AND abs(julianday(pickup_at) - julianday(?)) < (60.0/1440.0)",
+            "SELECT id, pickup_at FROM rides WHERE passenger_id=$1 AND id != $2 AND status IN ('pending_approval','confirmed','in_progress')
+             AND abs(EXTRACT(EPOCH FROM (pickup_at::timestamp - $3::timestamp))) < 3600",
         )
         .bind(r.passenger_id)
         .bind(r.id)
@@ -364,7 +366,7 @@ async fn cancel_ride(
         "cancelled",
     )
     .await?;
-    sqlx::query("UPDATE rides SET needs_attention=0, attention_reason=? WHERE id=?")
+    sqlx::query("UPDATE rides SET needs_attention=0, attention_reason=$1 WHERE id=$2")
         .bind(&reason)
         .bind(id)
         .execute(&st.db)
@@ -449,7 +451,7 @@ async fn passenger_respond(
         }
     } else {
         set_status(&st, id, &["pending_passenger"], "pending_driver").await?;
-        sqlx::query("UPDATE rides SET driver_id=NULL WHERE id=?")
+        sqlx::query("UPDATE rides SET driver_id=NULL WHERE id=$1")
             .bind(id)
             .execute(&st.db)
             .await?;
@@ -490,8 +492,8 @@ async fn driver_load(
     exclude: Option<i64>,
 ) -> AppResult<(i64, i64)> {
     let (load,): (i64,) = sqlx::query_as(
-        "SELECT COALESCE(SUM(seats),0) FROM rides WHERE driver_id=? AND id != ? AND status IN ('pending_passenger','pending_approval','pending_driver_confirm','confirmed','in_progress')
-         AND abs(julianday(pickup_at) - julianday(?)) < (60.0/1440.0)",
+        "SELECT COALESCE(SUM(seats),0)::BIGINT FROM rides WHERE driver_id=$1 AND id != $2 AND status IN ('pending_passenger','pending_approval','pending_driver_confirm','confirmed','in_progress')
+         AND abs(EXTRACT(EPOCH FROM (pickup_at::timestamp - $3::timestamp))) < 3600",
     )
     .bind(driver)
     .bind(exclude.unwrap_or(-1))
@@ -499,7 +501,7 @@ async fn driver_load(
     .fetch_one(&st.db)
     .await?;
     let row: Option<(i64, i64, Option<i64>)> = sqlx::query_as(
-        "SELECT u.carpool_enabled, u.spare_seats, v.seats FROM users u LEFT JOIN vehicles v ON v.user_id=u.id WHERE u.id=?",
+        "SELECT u.carpool_enabled, u.spare_seats, v.seats FROM users u LEFT JOIN vehicles v ON v.user_id=u.id WHERE u.id=$1",
     )
     .bind(driver)
     .fetch_optional(&st.db)
@@ -530,7 +532,7 @@ async fn driver_claim(
     if r.passenger_id == u.id {
         return Err(bad("不能选择自己的接送报名"));
     }
-    let has_vehicle: Option<(i64,)> = sqlx::query_as("SELECT seats FROM vehicles WHERE user_id=?")
+    let has_vehicle: Option<(i64,)> = sqlx::query_as("SELECT seats FROM vehicles WHERE user_id=$1")
         .bind(u.id)
         .fetch_optional(&st.db)
         .await?;
@@ -542,7 +544,7 @@ async fn driver_claim(
         return Err(bad(format!("座位不足：该时段已安排 {load} 位，可提供 {cap} 位。如需多载，请在司机设置开启共乘模式。")));
     }
     // Atomic claim prevents two drivers choosing the same request.
-    let res = sqlx::query("UPDATE rides SET driver_id=?, status='pending_passenger', updated_at=? WHERE id=? AND status='pending_driver'")
+    let res = sqlx::query("UPDATE rides SET driver_id=$1, status='pending_passenger', updated_at=$2 WHERE id=$3 AND status='pending_driver'")
         .bind(u.id)
         .bind(now())
         .bind(id)
@@ -592,7 +594,7 @@ async fn driver_withdraw(
     )
     .await?;
     let reason = req.reason.unwrap_or_else(|| "司机无法出车".into());
-    sqlx::query("UPDATE rides SET driver_id=NULL, trip_id=NULL, needs_attention=?, attention_reason=? WHERE id=?")
+    sqlx::query("UPDATE rides SET driver_id=NULL, trip_id=NULL, needs_attention=$1, attention_reason=$2 WHERE id=$3")
         .bind(was_confirmed as i64)
         .bind(format!("原司机 {} 无法出车：{}", u.name, reason))
         .bind(id)
@@ -642,8 +644,8 @@ async fn driver_withdraw(
 /// Assign a confirmed ride to a trip: same driver, same destination, within 60 minutes.
 async fn assign_trip(st: &AppState, r: &RideRow) -> AppResult<i64> {
     let existing: Option<(i64,)> = sqlx::query_as(
-        "SELECT trip_id FROM rides WHERE driver_id=? AND id != ? AND trip_id IS NOT NULL AND status IN ('confirmed','in_progress')
-         AND destination = ? AND abs(julianday(pickup_at) - julianday(?)) < (60.0/1440.0) LIMIT 1",
+        "SELECT trip_id FROM rides WHERE driver_id=$1 AND id != $2 AND trip_id IS NOT NULL AND status IN ('confirmed','in_progress')
+         AND destination = $3 AND abs(EXTRACT(EPOCH FROM (pickup_at::timestamp - $4::timestamp))) < 3600 LIMIT 1",
     )
     .bind(r.driver_id)
     .bind(r.id)
@@ -652,7 +654,7 @@ async fn assign_trip(st: &AppState, r: &RideRow) -> AppResult<i64> {
     .fetch_optional(&st.db)
     .await?;
     let trip = existing.map(|t| t.0).unwrap_or(r.id);
-    sqlx::query("UPDATE rides SET trip_id=? WHERE id=?")
+    sqlx::query("UPDATE rides SET trip_id=$1 WHERE id=$2")
         .bind(trip)
         .bind(r.id)
         .execute(&st.db)
@@ -723,7 +725,7 @@ async fn driver_confirm_assignment(
         return Err(forbidden("您不是此接送的司机"));
     }
     set_status(&st, id, &["pending_driver_confirm"], "confirmed").await?;
-    sqlx::query("UPDATE rides SET needs_attention=0 WHERE id=?")
+    sqlx::query("UPDATE rides SET needs_attention=0 WHERE id=$1")
         .bind(id)
         .execute(&st.db)
         .await?;
@@ -753,7 +755,7 @@ async fn start_ride(
     }
     // 同一时间最多追踪 N 位司机
     let (live,): (i64,) = sqlx::query_as(
-        "SELECT COUNT(DISTINCT driver_id) FROM rides WHERE status='in_progress' AND driver_id != ?",
+        "SELECT COUNT(DISTINCT driver_id) FROM rides WHERE status='in_progress' AND driver_id != $1",
     )
     .bind(u.id)
     .fetch_one(&st.db)
@@ -765,7 +767,7 @@ async fn start_ride(
         )));
     }
     set_status(&st, id, &["confirmed"], "in_progress").await?;
-    sqlx::query("UPDATE rides SET started_at=? WHERE id=?")
+    sqlx::query("UPDATE rides SET started_at=$1 WHERE id=$2")
         .bind(now())
         .bind(id)
         .execute(&st.db)
@@ -797,7 +799,7 @@ async fn pickup(
     if r.status != "in_progress" {
         return Err(bad("请先开始行程"));
     }
-    sqlx::query("UPDATE rides SET picked_up_at=?, updated_at=? WHERE id=?")
+    sqlx::query("UPDATE rides SET picked_up_at=$1, updated_at=$2 WHERE id=$3")
         .bind(now())
         .bind(now())
         .bind(id)
@@ -812,12 +814,12 @@ async fn pickup(
 
 async fn clear_location_if_idle(st: &AppState, driver: i64) -> AppResult<()> {
     let (n,): (i64,) =
-        sqlx::query_as("SELECT COUNT(*) FROM rides WHERE driver_id=? AND status='in_progress'")
+        sqlx::query_as("SELECT COUNT(*) FROM rides WHERE driver_id=$1 AND status='in_progress'")
             .bind(driver)
             .fetch_one(&st.db)
             .await?;
     if n == 0 {
-        sqlx::query("DELETE FROM driver_locations WHERE driver_id=?")
+        sqlx::query("DELETE FROM driver_locations WHERE driver_id=$1")
             .bind(driver)
             .execute(&st.db)
             .await?;
@@ -835,7 +837,7 @@ async fn no_show(
         return Err(forbidden("您不是此接送的司机"));
     }
     set_status(&st, id, &["in_progress", "confirmed"], "no_show").await?;
-    sqlx::query("UPDATE rides SET completed_at=? WHERE id=?")
+    sqlx::query("UPDATE rides SET completed_at=$1 WHERE id=$2")
         .bind(now())
         .bind(id)
         .execute(&st.db)
@@ -877,7 +879,7 @@ async fn complete(
     }
     set_status(&st, id, &["in_progress"], "completed").await?;
     sqlx::query(
-        "UPDATE rides SET completed_at=?, picked_up_at=COALESCE(picked_up_at, ?) WHERE id=?",
+        "UPDATE rides SET completed_at=$1, picked_up_at=COALESCE(picked_up_at, $2) WHERE id=$3",
     )
     .bind(now())
     .bind(now())
@@ -896,7 +898,7 @@ async fn complete(
     if let Some(t) = r.trip_id {
         system_message(&st.db, t, &format!("{} 已送达。", r.p_name)).await;
         let (open,): (i64,) = sqlx::query_as(
-            "SELECT COUNT(*) FROM rides WHERE trip_id=? AND status IN ('confirmed','in_progress')",
+            "SELECT COUNT(*) FROM rides WHERE trip_id=$1 AND status IN ('confirmed','in_progress')",
         )
         .bind(t)
         .fetch_one(&st.db)
@@ -924,18 +926,28 @@ async fn driver_requests(
     if !u.has("driver") {
         return Err(forbidden("只有志愿司机可以查看"));
     }
-    let mut sql = format!("{RIDE_SELECT} WHERE r.status='pending_driver' AND r.passenger_id != ? AND r.pickup_at >= ?");
+    let mut conds = vec![
+        "r.status='pending_driver'".to_string(),
+        "r.passenger_id != $1".to_string(),
+        "r.pickup_at >= $2".to_string(),
+    ];
+    let mut n = 3;
     if q.area_id.is_some() {
-        sql.push_str(" AND r.pickup_area_id = ?");
+        conds.push(format!("r.pickup_area_id = ${n}"));
+        n += 1;
     } else if q.mine_areas.unwrap_or(false) {
-        sql.push_str(
-            " AND r.pickup_area_id IN (SELECT area_id FROM driver_areas WHERE user_id = ?)",
-        );
+        conds.push(format!(
+            "r.pickup_area_id IN (SELECT area_id FROM driver_areas WHERE user_id = ${n})"
+        ));
+        n += 1;
     }
     if q.date.is_some() {
-        sql.push_str(" AND substr(r.pickup_at,1,10) = ?");
+        conds.push(format!("substr(r.pickup_at,1,10) = ${n}"));
     }
-    sql.push_str(" ORDER BY r.pickup_at LIMIT 100");
+    let sql = format!(
+        "{RIDE_SELECT} WHERE {} ORDER BY r.pickup_at LIMIT 100",
+        conds.join(" AND ")
+    );
     let mut query = sqlx::query_as::<_, RideRow>(&sql)
         .bind(u.id)
         .bind(now()[..16].to_string());
@@ -968,7 +980,7 @@ async fn driver_schedule(
     let from = q.from.unwrap_or_else(|| now()[..10].to_string());
     let to = q.to.unwrap_or_else(|| from.clone());
     let rows = sqlx::query_as::<_, RideRow>(&format!(
-        "{RIDE_SELECT} WHERE r.driver_id=? AND substr(r.pickup_at,1,10) BETWEEN ? AND ?
+        "{RIDE_SELECT} WHERE r.driver_id=$1 AND substr(r.pickup_at,1,10) BETWEEN $2 AND $3
          AND r.status NOT IN ('cancelled') ORDER BY r.pickup_at"
     ))
     .bind(u.id)
@@ -984,16 +996,16 @@ async fn driver_schedule(
 
 async fn get_driver_profile(State(st): State<AppState>, u: CurrentUser) -> AppResult<Json<Value>> {
     let (carpool, spare): (i64, i64) =
-        sqlx::query_as("SELECT carpool_enabled, spare_seats FROM users WHERE id=?")
+        sqlx::query_as("SELECT carpool_enabled, spare_seats FROM users WHERE id=$1")
             .bind(u.id)
             .fetch_one(&st.db)
             .await?;
-    let areas: Vec<(i64,)> = sqlx::query_as("SELECT area_id FROM driver_areas WHERE user_id=?")
+    let areas: Vec<(i64,)> = sqlx::query_as("SELECT area_id FROM driver_areas WHERE user_id=$1")
         .bind(u.id)
         .fetch_all(&st.db)
         .await?;
     let v: Option<(String, String, String, i64)> =
-        sqlx::query_as("SELECT model, color, plate, seats FROM vehicles WHERE user_id=?")
+        sqlx::query_as("SELECT model, color, plate, seats FROM vehicles WHERE user_id=$1")
             .bind(u.id)
             .fetch_optional(&st.db)
             .await?;
@@ -1033,22 +1045,24 @@ async fn put_driver_profile(
         return Err(bad("空余座位需为 1–7"));
     }
     let mut tx = st.db.begin().await?;
-    sqlx::query("UPDATE users SET carpool_enabled=?, spare_seats=? WHERE id=?")
+    sqlx::query("UPDATE users SET carpool_enabled=$1, spare_seats=$2 WHERE id=$3")
         .bind(req.carpool_enabled as i64)
         .bind(req.spare_seats)
         .bind(u.id)
         .execute(&mut *tx)
         .await?;
-    sqlx::query("DELETE FROM driver_areas WHERE user_id=?")
+    sqlx::query("DELETE FROM driver_areas WHERE user_id=$1")
         .bind(u.id)
         .execute(&mut *tx)
         .await?;
     for a in &req.area_ids {
-        sqlx::query("INSERT OR IGNORE INTO driver_areas (user_id, area_id) VALUES (?,?)")
-            .bind(u.id)
-            .bind(a)
-            .execute(&mut *tx)
-            .await?;
+        sqlx::query(
+            "INSERT INTO driver_areas (user_id, area_id) VALUES ($1,$2) ON CONFLICT DO NOTHING",
+        )
+        .bind(u.id)
+        .bind(a)
+        .execute(&mut *tx)
+        .await?;
     }
     if let Some(v) = req.vehicle {
         if v.model.trim().is_empty() || v.plate.trim().is_empty() {
@@ -1058,7 +1072,7 @@ async fn put_driver_profile(
             return Err(bad("车辆座位数需为 2–9"));
         }
         sqlx::query(
-            "INSERT INTO vehicles (user_id, model, color, plate, seats) VALUES (?,?,?,?,?)
+            "INSERT INTO vehicles (user_id, model, color, plate, seats) VALUES ($1,$2,$3,$4,$5)
              ON CONFLICT(user_id) DO UPDATE SET model=excluded.model, color=excluded.color, plate=excluded.plate, seats=excluded.seats",
         )
         .bind(u.id)
@@ -1090,19 +1104,19 @@ async fn post_location(
         return Err(bad("位置无效"));
     }
     let (n,): (i64,) =
-        sqlx::query_as("SELECT COUNT(*) FROM rides WHERE driver_id=? AND status='in_progress'")
+        sqlx::query_as("SELECT COUNT(*) FROM rides WHERE driver_id=$1 AND status='in_progress'")
             .bind(u.id)
             .fetch_one(&st.db)
             .await?;
     if n == 0 {
-        sqlx::query("DELETE FROM driver_locations WHERE driver_id=?")
+        sqlx::query("DELETE FROM driver_locations WHERE driver_id=$1")
             .bind(u.id)
             .execute(&st.db)
             .await?;
         return Ok(Json(json!({"ok": false, "sharing": false})));
     }
     sqlx::query(
-        "INSERT INTO driver_locations (driver_id, lat, lng, heading, updated_at) VALUES (?,?,?,?,?)
+        "INSERT INTO driver_locations (driver_id, lat, lng, heading, updated_at) VALUES ($1,$2,$3,$4,$5)
          ON CONFLICT(driver_id) DO UPDATE SET lat=excluded.lat, lng=excluded.lng, heading=excluded.heading, updated_at=excluded.updated_at",
     )
     .bind(u.id)
@@ -1116,7 +1130,7 @@ async fn post_location(
 }
 
 async fn stop_location(State(st): State<AppState>, u: CurrentUser) -> AppResult<Json<Value>> {
-    sqlx::query("DELETE FROM driver_locations WHERE driver_id=?")
+    sqlx::query("DELETE FROM driver_locations WHERE driver_id=$1")
         .bind(u.id)
         .execute(&st.db)
         .await?;
@@ -1136,7 +1150,7 @@ async fn ride_location(
         return Ok(Json(json!({"sharing": false})));
     }
     let loc: Option<(f64, f64, Option<f64>, String)> = sqlx::query_as(
-        "SELECT lat, lng, heading, updated_at FROM driver_locations WHERE driver_id=?",
+        "SELECT lat, lng, heading, updated_at FROM driver_locations WHERE driver_id=$1",
     )
     .bind(r.driver_id)
     .fetch_optional(&st.db)
@@ -1155,7 +1169,7 @@ async fn chat_access(st: &AppState, u: &CurrentUser, ride_id: i64) -> AppResult<
     let r = load_ride(st, ride_id).await?;
     let trip = r.trip_id.ok_or_else(|| bad("行程获批准后才开放群聊"))?;
     let members: Vec<(i64, Option<i64>, String)> =
-        sqlx::query_as("SELECT passenger_id, driver_id, status FROM rides WHERE trip_id=?")
+        sqlx::query_as("SELECT passenger_id, driver_id, status FROM rides WHERE trip_id=$1")
             .bind(trip)
             .fetch_all(&st.db)
             .await?;
@@ -1185,7 +1199,7 @@ async fn list_messages(
     let (trip, open) = chat_access(&st, &u, id).await?;
     let rows: Vec<(i64, Option<i64>, Option<String>, String, String)> = sqlx::query_as(
         "SELECT m.id, m.user_id, u.name, m.body, m.created_at FROM ride_messages m LEFT JOIN users u ON u.id=m.user_id
-         WHERE m.trip_id=? AND m.id > ? ORDER BY m.id LIMIT 300",
+         WHERE m.trip_id=$1 AND m.id > $2 ORDER BY m.id LIMIT 300",
     )
     .bind(trip)
     .bind(q.after.unwrap_or(0))
@@ -1193,7 +1207,7 @@ async fn list_messages(
     .await?;
     let members: Vec<(String,)> = sqlx::query_as(
         "SELECT DISTINCT u.name FROM rides r JOIN users u ON u.id = r.passenger_id OR u.id = r.driver_id
-         WHERE r.trip_id=? AND r.status NOT IN ('cancelled')",
+         WHERE r.trip_id=$1 AND r.status NOT IN ('cancelled')",
     )
     .bind(trip)
     .fetch_all(&st.db)
@@ -1224,13 +1238,15 @@ async fn post_message(
     if body.is_empty() || body.chars().count() > 1000 {
         return Err(bad("讯息长度不正确"));
     }
-    sqlx::query("INSERT INTO ride_messages (trip_id, user_id, body, created_at) VALUES (?,?,?,?)")
-        .bind(trip)
-        .bind(u.id)
-        .bind(body)
-        .bind(now())
-        .execute(&st.db)
-        .await?;
+    sqlx::query(
+        "INSERT INTO ride_messages (trip_id, user_id, body, created_at) VALUES ($1,$2,$3,$4)",
+    )
+    .bind(trip)
+    .bind(u.id)
+    .bind(body)
+    .bind(now())
+    .execute(&st.db)
+    .await?;
     Ok(Json(json!({"ok": true})))
 }
 
@@ -1251,7 +1267,7 @@ async fn staff_approve(
         )));
     }
     set_status(&st, id, &["pending_approval"], "confirmed").await?;
-    sqlx::query("UPDATE rides SET approved_by=?, needs_attention=0 WHERE id=?")
+    sqlx::query("UPDATE rides SET approved_by=$1, needs_attention=0 WHERE id=$2")
         .bind(u.id)
         .bind(id)
         .execute(&st.db)
@@ -1284,7 +1300,7 @@ async fn staff_return(
     )
     .await?;
     let reason = req.reason.unwrap_or_default();
-    sqlx::query("UPDATE rides SET driver_id=NULL, trip_id=NULL, attention_reason=? WHERE id=?")
+    sqlx::query("UPDATE rides SET driver_id=NULL, trip_id=NULL, attention_reason=$1 WHERE id=$2")
         .bind(format!("交通组退回：{reason}"))
         .bind(id)
         .execute(&st.db)
@@ -1325,7 +1341,7 @@ async fn staff_reassign(
     require_any(&u, &["transport"])?;
     let r = load_ride(&st, id).await?;
     let (roles,): (String,) =
-        sqlx::query_as("SELECT roles FROM users WHERE id=? AND status='active'")
+        sqlx::query_as("SELECT roles FROM users WHERE id=$1 AND status='active'")
             .bind(req.driver_id)
             .fetch_optional(&st.db)
             .await?
@@ -1355,7 +1371,7 @@ async fn staff_reassign(
         "pending_driver_confirm",
     )
     .await?;
-    sqlx::query("UPDATE rides SET driver_id=?, trip_id=NULL, approved_by=?, needs_attention=1, attention_reason='等待新司机确认' WHERE id=?")
+    sqlx::query("UPDATE rides SET driver_id=$1, trip_id=NULL, approved_by=$2, needs_attention=1, attention_reason='等待新司机确认' WHERE id=$3")
         .bind(req.driver_id)
         .bind(u.id)
         .bind(id)
@@ -1428,7 +1444,7 @@ async fn staff_alt_transport(
     let note = req
         .reason
         .unwrap_or_else(|| "已批准使用 Grab 替代交通".into());
-    sqlx::query("UPDATE rides SET driver_id=NULL, needs_attention=0, attention_reason=?, approved_by=? WHERE id=?")
+    sqlx::query("UPDATE rides SET driver_id=NULL, needs_attention=0, attention_reason=$1, approved_by=$2 WHERE id=$3")
         .bind(&note)
         .bind(u.id)
         .bind(id)
@@ -1467,17 +1483,24 @@ async fn admin_rides(
     Query(q): Query<AdminRidesQuery>,
 ) -> AppResult<Json<Value>> {
     require_any(&u, &["transport"])?;
-    let mut sql = format!("{RIDE_SELECT} WHERE 1=1");
+    let mut conds = vec!["1=1".to_string()];
+    let mut n = 1;
     if q.date.is_some() {
-        sql.push_str(" AND substr(r.pickup_at,1,10) = ?");
+        conds.push(format!("substr(r.pickup_at,1,10) = ${n}"));
+        n += 1;
     }
     if q.status.is_some() {
-        sql.push_str(" AND r.status = ?");
+        conds.push(format!("r.status = ${n}"));
     }
     if q.attention.unwrap_or(false) {
-        sql.push_str(" AND (r.needs_attention = 1 OR (r.status='pending_driver' AND julianday(r.pickup_at) - julianday('now','localtime') < 1))");
+        conds.push(
+            "(r.needs_attention = 1 OR (r.status='pending_driver' AND r.pickup_at::timestamp - LOCALTIMESTAMP < interval '1 day'))".to_string(),
+        );
     }
-    sql.push_str(" ORDER BY r.pickup_at LIMIT 300");
+    let sql = format!(
+        "{RIDE_SELECT} WHERE {} ORDER BY r.pickup_at LIMIT 300",
+        conds.join(" AND ")
+    );
     let mut query = sqlx::query_as::<_, RideRow>(&sql);
     if let Some(d) = &q.date {
         query = query.bind(d);
@@ -1518,7 +1541,7 @@ async fn admin_drivers(
     let _ = q;
     let rows: Vec<(i64, String, String, i64, i64, Option<String>, Option<String>, Option<i64>, Option<String>)> = sqlx::query_as(
         "SELECT u.id, u.name, u.roles, u.carpool_enabled, u.spare_seats, v.model, v.plate, v.seats,
-                (SELECT group_concat(a.name, ', ') FROM driver_areas da JOIN areas a ON a.id = da.area_id WHERE da.user_id = u.id)
+                (SELECT string_agg(a.name, ', ') FROM driver_areas da JOIN areas a ON a.id = da.area_id WHERE da.user_id = u.id)
          FROM users u LEFT JOIN vehicles v ON v.user_id = u.id WHERE u.status='active' ORDER BY u.name",
     )
     .fetch_all(&st.db)

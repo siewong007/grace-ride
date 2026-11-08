@@ -95,7 +95,7 @@ impl FromRequestParts<AppState> for CurrentUser {
         let row: Option<(i64, String, String, String, i64, String)> = sqlx::query_as(
             "SELECT u.id, u.name, u.email, u.roles, s.mfa_ok, s.expires_at
              FROM sessions s JOIN users u ON u.id = s.user_id
-             WHERE s.token = ? AND u.status = 'active'",
+             WHERE s.token = $1 AND u.status = 'active'",
         )
         .bind(&session_id)
         .fetch_optional(&state.db)
