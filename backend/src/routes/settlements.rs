@@ -11,9 +11,9 @@ use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 
 use crate::auth::CurrentUser;
-use crate::error::{bad, forbidden, AppError, AppResult};
+use crate::error::{bad, forbidden, AppResult, not_found};
 use crate::state::AppState;
-use crate::util::{audit, fmt_rm, notify, now};
+use crate::util::{audit, fmt_rm, notify, now, t, Lang};
 
 pub fn router() -> Router<AppState> {
     Router::new()
@@ -72,35 +72,51 @@ struct SettlementIn {
 }
 
 /// Validates the request and returns (user_id, amount) pairs.
-fn compute_shares(req: &SettlementIn) -> AppResult<Vec<(i64, i64)>> {
+fn compute_shares(lang: Lang, req: &SettlementIn) -> AppResult<Vec<(i64, i64)>> {
     if req.title.trim().is_empty() {
-        return Err(bad("请填写结算名称"));
+        return Err(bad(t(lang, "请填写结算名称", "Please enter a settlement name")));
     }
     if req.items.is_empty() {
-        return Err(bad("请至少填写一项开销"));
+        return Err(bad(t(
+            lang,
+            "请至少填写一项开销",
+            "Please add at least one expense item",
+        )));
     }
     if req
         .items
         .iter()
         .any(|i| i.amount_cents < 0 || i.label.trim().is_empty())
     {
-        return Err(bad("开销项目不能为负数或空白"));
+        return Err(bad(t(
+            lang,
+            "开销项目不能为负数或空白",
+            "Expense items cannot be negative or blank",
+        )));
     }
     let subsidy = req.subsidy_cents.unwrap_or(0);
     if subsidy < 0 {
-        return Err(bad("补贴不能为负数"));
+        return Err(bad(t(lang, "补贴不能为负数", "Subsidy cannot be negative")));
     }
     let gross: i64 = req.items.iter().map(|i| i.amount_cents).sum();
     let total = gross - subsidy;
     if total < 0 {
-        return Err(bad("补贴不能超过开销总额"));
+        return Err(bad(t(
+            lang,
+            "补贴不能超过开销总额",
+            "Subsidy cannot exceed the total expenses",
+        )));
     }
     let mut seen = std::collections::HashSet::new();
     if !req.participants.iter().all(|p| seen.insert(p.user_id)) {
-        return Err(bad("参与名单有重复"));
+        return Err(bad(t(
+            lang,
+            "参与名单有重复",
+            "Duplicate members in the participant list",
+        )));
     }
     if req.participants.is_empty() {
-        return Err(bad("请选择分摊成员"));
+        return Err(bad(t(lang, "请选择分摊成员", "Please select participants")));
     }
     match req.split_mode.as_str() {
         "equal" => {
@@ -115,32 +131,42 @@ fn compute_shares(req: &SettlementIn) -> AppResult<Vec<(i64, i64)>> {
         "custom" => {
             let mut out = vec![];
             for p in &req.participants {
-                let a = p.amount_cents.ok_or_else(|| bad("请为每位成员填写金额"))?;
+                let a = p
+                    .amount_cents
+                    .ok_or_else(|| bad(t(lang, "请为每位成员填写金额", "Please enter an amount for each member")))?;
                 if a < 0 {
-                    return Err(bad("金额不能为负数"));
+                    return Err(bad(t(lang, "金额不能为负数", "Amount cannot be negative")));
                 }
                 out.push((p.user_id, a));
             }
             let sum: i64 = out.iter().map(|x| x.1).sum();
             if sum != total {
-                return Err(bad(format!(
-                    "个别金额合计 {} 与应分摊总额 {} 不一致",
-                    fmt_rm(sum),
-                    fmt_rm(total)
-                )));
+                let mismatch = (
+                    format!(
+                        "个别金额合计 {} 与应分摊总额 {} 不一致",
+                        fmt_rm(sum),
+                        fmt_rm(total)
+                    ),
+                    format!(
+                        "Individual amounts total {} but must equal the shared total {}",
+                        fmt_rm(sum),
+                        fmt_rm(total)
+                    ),
+                );
+                return Err(bad(t(lang, &mismatch.0, &mismatch.1)));
             }
             Ok(out)
         }
-        _ => Err(bad("分摊方式无效")),
+        _ => Err(bad(t(lang, "分摊方式无效", "Invalid split mode"))),
     }
 }
 
-async fn event_owner(st: &AppState, event_id: i64) -> AppResult<(i64, String)> {
+async fn event_owner(st: &AppState, lang: Lang, event_id: i64) -> AppResult<(i64, String)> {
     sqlx::query_as("SELECT created_by, title FROM events WHERE id=$1")
         .bind(event_id)
         .fetch_optional(&st.db)
         .await?
-        .ok_or(AppError::NotFound)
+        .ok_or(not_found(lang))
 }
 
 async fn write_body(
@@ -237,11 +263,15 @@ async fn create(
     Path(event_id): Path<i64>,
     Json(req): Json<SettlementIn>,
 ) -> AppResult<Json<Value>> {
-    let (owner, _) = event_owner(&st, event_id).await?;
+    let (owner, _) = event_owner(&st, u.lang, event_id).await?;
     if owner != u.id {
-        return Err(forbidden("只有活动发起者可以发起费用分摊"));
+        return Err(forbidden(t(
+            u.lang,
+            "只有活动发起者可以发起费用分摊",
+            "Only the event organiser can create a cost split",
+        )));
     }
-    let shares = compute_shares(&req)?;
+    let shares = compute_shares(u.lang, &req)?;
     let (sid,): (i64,) = sqlx::query_as(
         "INSERT INTO settlements (event_id, created_by, title, created_at) VALUES ($1,$2,$3,$4) RETURNING id",
     )
@@ -283,7 +313,7 @@ struct SRow {
     creator_name: String,
 }
 
-async fn load(st: &AppState, id: i64) -> AppResult<SRow> {
+async fn load(st: &AppState, lang: Lang, id: i64) -> AppResult<SRow> {
     sqlx::query_as::<_, SRow>(
         "SELECT s.id, s.event_id, s.created_by, s.title, s.split_mode, s.subsidy_cents, s.payee_name, s.payee_account, s.due_date,
                 s.status, s.version, s.created_at, e.title AS event_title, e.starts_at AS event_starts_at, u.name AS creator_name
@@ -292,7 +322,7 @@ async fn load(st: &AppState, id: i64) -> AppResult<SRow> {
     .bind(id)
     .fetch_optional(&st.db)
     .await?
-    .ok_or(AppError::NotFound)
+    .ok_or(not_found(lang))
 }
 
 async fn snapshot(st: &AppState, s: &SRow) -> AppResult<Value> {
@@ -328,7 +358,7 @@ async fn get_one(
     u: CurrentUser,
     Path(id): Path<i64>,
 ) -> AppResult<Json<Value>> {
-    let s = load(&st, id).await?;
+    let s = load(&st, u.lang, id).await?;
     let mut v = snapshot(&st, &s).await?;
     let organiser = s.created_by == u.id || (u.has("finance") && u.mfa_ok);
     if organiser {
@@ -342,7 +372,11 @@ async fn get_one(
         .filter(|sh| sh["user_id"] == json!(u.id))
         .collect();
     if mine.is_empty() || s.status == "draft" {
-        return Err(forbidden("您不在此分摊名单中"));
+        return Err(forbidden(t(
+            u.lang,
+            "您不在此分摊名单中",
+            "You are not on this cost split's participant list",
+        )));
     }
     v["participant_count"] = json!(v["shares"].as_array().map(|a| a.len()).unwrap_or(0));
     v["shares"] = json!(mine);
@@ -374,20 +408,28 @@ async fn update(
     Path(id): Path<i64>,
     Json(req): Json<SettlementIn>,
 ) -> AppResult<Json<Value>> {
-    let s = load(&st, id).await?;
+    let s = load(&st, u.lang, id).await?;
     if s.created_by != u.id {
-        return Err(forbidden("只有发起者可以修改"));
+        return Err(forbidden(t(u.lang, "只有发起者可以修改", "Only the organiser can edit this")));
     }
     if s.status == "closed" {
-        return Err(bad("账单已关闭，不能修改"));
+        return Err(bad(t(
+            u.lang,
+            "账单已关闭，不能修改",
+            "This bill is closed and can no longer be edited",
+        )));
     }
-    let shares = compute_shares(&req)?;
+    let shares = compute_shares(u.lang, &req)?;
     if s.status == "published" {
         let reason = req
             .reason
             .clone()
             .filter(|r| !r.trim().is_empty())
-            .ok_or_else(|| bad("发布后修改金额，请填写修改原因"))?;
+            .ok_or_else(|| bad(t(
+                u.lang,
+                "发布后修改金额，请填写修改原因",
+                "After publishing, a revision reason is required to change amounts",
+            )))?;
         // 发布后若改金额，必须保留旧版并通知
         let snap = snapshot(&st, &s).await?;
         sqlx::query("INSERT INTO settlement_revisions (settlement_id, version, snapshot, reason, created_by, created_at) VALUES ($1,$2,$3,$4,$5,$6)")
@@ -416,13 +458,22 @@ async fn update(
                     notify(
                         &st.db,
                         *uid,
-                        "费用分摊已更新",
-                        format!(
-                            "{}：{} → {}（{}）",
-                            s.title,
-                            fmt_rm(*old),
-                            fmt_rm(*new),
-                            reason
+                        ("费用分摊已更新", "Cost split updated"),
+                        (
+                            &format!(
+                                "{}：{} → {}（{}）",
+                                s.title,
+                                fmt_rm(*old),
+                                fmt_rm(*new),
+                                reason
+                            ),
+                            &format!(
+                                "{}: {} → {} ({})",
+                                s.title,
+                                fmt_rm(*old),
+                                fmt_rm(*new),
+                                reason
+                            ),
                         ),
                         "/costs",
                     )
@@ -432,8 +483,11 @@ async fn update(
                     notify(
                         &st.db,
                         *uid,
-                        "您已从分摊名单移除",
-                        format!("{}（{}）", s.title, reason),
+                        ("您已从分摊名单移除", "Removed from the cost split"),
+                        (
+                            &format!("{}（{}）", s.title, reason),
+                            &format!("{} ({})", s.title, reason),
+                        ),
                         "/costs",
                     )
                     .await
@@ -446,8 +500,11 @@ async fn update(
                 notify(
                     &st.db,
                     *uid,
-                    "新的费用分摊",
-                    format!("{} · 您应付 {}", s.title, fmt_rm(*amt)),
+                    ("新的费用分摊", "New cost split"),
+                    (
+                        &format!("{} · 您应付 {}", s.title, fmt_rm(*amt)),
+                        &format!("{} · You owe {}", s.title, fmt_rm(*amt)),
+                    ),
                     "/costs",
                 )
                 .await;
@@ -482,9 +539,9 @@ async fn delete_draft(
     u: CurrentUser,
     Path(id): Path<i64>,
 ) -> AppResult<Json<Value>> {
-    let s = load(&st, id).await?;
+    let s = load(&st, u.lang, id).await?;
     if s.created_by != u.id || s.status != "draft" {
-        return Err(bad("只有草稿可以删除"));
+        return Err(bad(t(u.lang, "只有草稿可以删除", "Only drafts can be deleted")));
     }
     sqlx::query("DELETE FROM settlements WHERE id=$1")
         .bind(id)
@@ -498,15 +555,19 @@ async fn publish(
     u: CurrentUser,
     Path(id): Path<i64>,
 ) -> AppResult<Json<Value>> {
-    let s = load(&st, id).await?;
+    let s = load(&st, u.lang, id).await?;
     if s.created_by != u.id {
-        return Err(forbidden("只有发起者可以发布"));
+        return Err(forbidden(t(u.lang, "只有发起者可以发布", "Only the organiser can publish")));
     }
     if s.status != "draft" {
-        return Err(bad("此结算已发布"));
+        return Err(bad(t(u.lang, "此结算已发布", "This settlement has already been published")));
     }
     if s.payee_account.trim().is_empty() {
-        return Err(bad("请填写收款资料（TNG 手机号 / DuitNow / 银行）"));
+        return Err(bad(t(
+            u.lang,
+            "请填写收款资料（TNG 手机号 / DuitNow / 银行）",
+            "Please fill in payee details (TNG number / DuitNow / bank)",
+        )));
     }
     // 分摊前检查出席: only members whose attendance is confirmed may be charged.
     let (not_attended,): (i64,) = sqlx::query_as(
@@ -518,9 +579,11 @@ async fn publish(
     .fetch_one(&st.db)
     .await?;
     if not_attended > 0 {
-        return Err(bad(format!(
-            "有 {not_attended} 位成员尚未记录为“已出席”，请先在活动页面核实出席。"
-        )));
+        let attend = (
+            format!("有 {not_attended} 位成员尚未记录为“已出席”，请先在活动页面核实出席。"),
+            format!("{not_attended} member(s) are not recorded as \"attended\" yet; please verify attendance on the event page first."),
+        );
+        return Err(bad(t(u.lang, &attend.0, &attend.1)));
     }
     sqlx::query("UPDATE settlements SET status='published' WHERE id=$1")
         .bind(id)
@@ -534,19 +597,29 @@ async fn publish(
     .await?;
     for (uid, amt) in shares {
         if uid != u.id && amt > 0 {
+            let due_zh = s
+                .due_date
+                .as_deref()
+                .map(|d| format!(" · {d} 前"))
+                .unwrap_or_default();
+            let due_en = s
+                .due_date
+                .as_deref()
+                .map(|d| format!(" · due by {d}"))
+                .unwrap_or_default();
             notify(
                 &st.db,
                 uid,
-                "费用分摊通知",
-                format!(
-                    "{} · 应付 {} · 付给 {}{}",
-                    s.title,
-                    fmt_rm(amt),
-                    s.payee_name,
-                    s.due_date
-                        .as_deref()
-                        .map(|d| format!(" · {d} 前"))
-                        .unwrap_or_default()
+                ("费用分摊通知", "Cost split issued"),
+                (
+                    &format!("{} · 应付 {} · 付给 {}{}", s.title, fmt_rm(amt), s.payee_name, due_zh),
+                    &format!(
+                        "{} · You owe {} · Pay to {}{}",
+                        s.title,
+                        fmt_rm(amt),
+                        s.payee_name,
+                        due_en
+                    ),
                 ),
                 "/costs",
             )
@@ -570,9 +643,13 @@ async fn close(
     u: CurrentUser,
     Path(id): Path<i64>,
 ) -> AppResult<Json<Value>> {
-    let s = load(&st, id).await?;
+    let s = load(&st, u.lang, id).await?;
     if s.created_by != u.id {
-        return Err(forbidden("只有发起者可以关闭账单"));
+        return Err(forbidden(t(
+            u.lang,
+            "只有发起者可以关闭账单",
+            "Only the organiser can close this bill",
+        )));
     }
     let (open,): (i64,) = sqlx::query_as(
         "SELECT COUNT(*) FROM settlement_shares WHERE settlement_id=$1 AND status != 'confirmed'",
@@ -581,7 +658,11 @@ async fn close(
     .fetch_one(&st.db)
     .await?;
     if open > 0 {
-        return Err(bad(format!("尚有 {open} 位成员未确认付款")));
+        let open_msg = (
+            format!("尚有 {open} 位成员未确认付款"),
+            format!("{open} member(s) have not confirmed payment yet"),
+        );
+        return Err(bad(t(u.lang, &open_msg.0, &open_msg.1)));
     }
     sqlx::query("UPDATE settlements SET status='closed' WHERE id=$1")
         .bind(id)
@@ -604,9 +685,9 @@ async fn revisions(
     u: CurrentUser,
     Path(id): Path<i64>,
 ) -> AppResult<Json<Value>> {
-    let s = load(&st, id).await?;
+    let s = load(&st, u.lang, id).await?;
     if s.created_by != u.id && !(u.has("finance") && u.mfa_ok) {
-        return Err(forbidden("无权限"));
+        return Err(forbidden(t(u.lang, "无权限", "No permission")));
     }
     let rows: Vec<(i64, String, String, String, String)> = sqlx::query_as(
         "SELECT r.version, r.snapshot, r.reason, u.name, r.created_at FROM settlement_revisions r JOIN users u ON u.id=r.created_by WHERE r.settlement_id=$1 ORDER BY r.version DESC",
@@ -655,24 +736,36 @@ async fn submit_proof(
     .bind(id)
     .fetch_optional(&st.db)
     .await?;
-    let (owner, sid, status, s_status, payee, title) = row.ok_or(AppError::NotFound)?;
+    let (owner, sid, status, s_status, payee, title) = row.ok_or(not_found(u.lang))?;
     if owner != u.id {
-        return Err(forbidden("只能为自己的费用上传凭证"));
+        return Err(forbidden(t(
+            u.lang,
+            "只能为自己的费用上传凭证",
+            "You can only submit proof for your own share",
+        )));
     }
     if s_status != "published" || !matches!(status.as_str(), "unpaid" | "needs_info") {
-        return Err(bad("此费用目前不需要上传凭证"));
+        return Err(bad(t(
+            u.lang,
+            "此费用目前不需要上传凭证",
+            "Proof upload is not needed for this share at the moment",
+        )));
     }
     let (fowner,): (i64,) = sqlx::query_as("SELECT owner_id FROM files WHERE id=$1")
         .bind(req.proof_file_id)
         .fetch_optional(&st.db)
         .await?
-        .ok_or_else(|| bad("请先上传收据"))?;
+        .ok_or_else(|| bad(t(u.lang, "请先上传收据", "Please upload the receipt first")))?;
     if fowner != u.id {
-        return Err(forbidden("凭证无效"));
+        return Err(forbidden(t(u.lang, "凭证无效", "Invalid proof document")));
     }
     let txn = req.txn_ref.trim();
     if txn.len() < 4 {
-        return Err(bad("请填写交易参考编号"));
+        return Err(bad(t(
+            u.lang,
+            "请填写交易参考编号",
+            "Please enter the transaction reference number",
+        )));
     }
     // Duplicate screenshot / reference protection.
     let (dup,): (i64,) = sqlx::query_as("SELECT COUNT(*) FROM settlement_shares WHERE id != $1 AND (txn_ref = $2 OR proof_file_id = $3)")
@@ -682,7 +775,11 @@ async fn submit_proof(
         .fetch_one(&st.db)
         .await?;
     if dup > 0 {
-        return Err(bad("此交易编号或收据已被使用，请确认是否重复上传"));
+        return Err(bad(t(
+            u.lang,
+            "此交易编号或收据已被使用，请确认是否重复上传",
+            "This transaction reference or receipt has already been used; please check for a duplicate upload",
+        )));
     }
     sqlx::query("UPDATE settlement_shares SET status='pending', proof_file_id=$1, txn_ref=$2, paid_date=$3, updated_at=$4 WHERE id=$5")
         .bind(req.proof_file_id)
@@ -692,11 +789,12 @@ async fn submit_proof(
         .bind(id)
         .execute(&st.db)
         .await?;
+    let by = format!("{} · {}", u.name, title);
     notify(
         &st.db,
         payee,
-        "有新的付款凭证待核对",
-        format!("{} · {}", u.name, title),
+        ("有新的付款凭证待核对", "New payment proof to verify"),
+        (&by, &by),
         &format!("/settlements/{sid}"),
     )
     .await;
@@ -730,24 +828,37 @@ async fn verify(
     .bind(id)
     .fetch_optional(&st.db)
     .await?;
-    let (member, _sid, payee, title, amt) = row.ok_or(AppError::NotFound)?;
+    let (member, _sid, payee, title, amt) = row.ok_or(not_found(u.lang))?;
     if payee != u.id {
-        return Err(forbidden("只有收款者可以核对"));
+        return Err(forbidden(t(u.lang, "只有收款者可以核对", "Only the payee can verify")));
     }
     let note = req.note.unwrap_or_default();
-    let (status, msg) = match req.action.as_str() {
+    let (status, zh_msg, en_msg) = match req.action.as_str() {
         "confirm" => (
             "confirmed",
             format!("{} · {} 已确认到账", title, fmt_rm(amt)),
+            format!("{} · {} confirmed as received", title, fmt_rm(amt)),
         ),
         "needs_info" => {
             if note.trim().is_empty() {
-                return Err(bad("请说明需补充的资料"));
+                return Err(bad(t(
+                    u.lang,
+                    "请说明需补充的资料",
+                    "Please describe what information is needed",
+                )));
             }
-            ("needs_info", format!("{} · 需补资料：{}", title, note))
+            (
+                "needs_info",
+                format!("{} · 需补资料：{}", title, note),
+                format!("{} · More info needed: {}", title, note),
+            )
         }
-        "reset" => ("unpaid", format!("{} · 付款状态已重设", title)),
-        _ => return Err(bad("操作无效")),
+        "reset" => (
+            "unpaid",
+            format!("{} · 付款状态已重设", title),
+            format!("{} · Payment status has been reset", title),
+        ),
+        _ => return Err(bad(t(u.lang, "操作无效", "Invalid action"))),
     };
     sqlx::query("UPDATE settlement_shares SET status=$1, note=$2, updated_at=$3 WHERE id=$4")
         .bind(status)
@@ -756,15 +867,16 @@ async fn verify(
         .bind(id)
         .execute(&st.db)
         .await?;
+    let (zh_title, en_title) = if status == "confirmed" {
+        ("付款已确认", "Payment confirmed")
+    } else {
+        ("付款需要跟进", "Payment needs follow-up")
+    };
     notify(
         &st.db,
         member,
-        if status == "confirmed" {
-            "付款已确认"
-        } else {
-            "付款需要跟进"
-        },
-        msg,
+        (zh_title, en_title),
+        (&zh_msg, &en_msg),
         "/costs",
     )
     .await;

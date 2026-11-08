@@ -72,10 +72,19 @@ async fn health(State(st): State<AppState>) -> (StatusCode, Json<Value>) {
     )
 }
 
-async fn api_not_found() -> (StatusCode, Json<Value>) {
+async fn api_not_found(headers: axum::http::HeaderMap) -> (StatusCode, Json<Value>) {
     (
         StatusCode::NOT_FOUND,
-        Json(json!({ "error": "找不到此功能" })),
+        Json(json!({ "error": crate::util::t(
+            crate::util::Lang::from_accept_language(
+                headers
+                    .get(axum::http::header::ACCEPT_LANGUAGE)
+                    .and_then(|v| v.to_str().ok())
+                    .unwrap_or("")
+            ),
+            "找不到此功能",
+            "Not found",
+        ) })),
     )
 }
 

@@ -55,8 +55,11 @@ async fn ride_reminders(db: &PgPool) -> anyhow::Result<()> {
         notify(
             db,
             passenger,
-            "接送提醒",
-            format!("司机 {dname} 将于 {time} 到 {area} 接您。"),
+            ("接送提醒", "Ride reminder"),
+            (
+                &format!("司机 {dname} 将于 {time} 到 {area} 接您。"),
+                &format!("Driver {dname} will pick you up at {area} at {time}."),
+            ),
             &format!("/rides/{id}"),
         )
         .await;
@@ -64,8 +67,11 @@ async fn ride_reminders(db: &PgPool) -> anyhow::Result<()> {
             notify(
                 db,
                 d,
-                "接送提醒",
-                format!("{time} 接载 {pname}（{area}）。出发时请按「开始行程」。"),
+                ("接送提醒", "Ride reminder"),
+                (
+                    &format!("{time} 接载 {pname}（{area}）。出发时请按「开始行程」。"),
+                    &format!("{time} pick up {pname} ({area}). Tap \"Start trip\" when departing."),
+                ),
                 &format!("/rides/{id}"),
             )
             .await;
@@ -98,8 +104,11 @@ async fn event_reminders(db: &PgPool) -> anyhow::Result<()> {
             notify(
                 db,
                 u,
-                "活动提醒",
-                format!("{title} · {} · {loc}", at.replace('T', " ")),
+                ("活动提醒", "Event reminder"),
+                (
+                    &format!("{title} · {} · {loc}", at.replace('T', " ")),
+                    &format!("{title} · {} · {loc}", at.replace('T', " ")),
+                ),
                 &format!("/events/{id}"),
             )
             .await;
@@ -122,7 +131,7 @@ async fn escalate_unmatched(db: &PgPool) -> anyhow::Result<()> {
     .fetch_all(db)
     .await?;
     for (id, name, at) in rows {
-        sqlx::query("UPDATE rides SET needs_attention=1, attention_reason='接送前 12 小时仍未有司机', updated_at=$1 WHERE id=$2")
+        sqlx::query("UPDATE rides SET needs_attention=1, attention_reason='接送前 12 小时仍未有司机 / No driver confirmed 12h before pickup', updated_at=$1 WHERE id=$2")
             .bind(now())
             .bind(id)
             .execute(db)
@@ -130,8 +139,11 @@ async fn escalate_unmatched(db: &PgPool) -> anyhow::Result<()> {
         notify_roles(
             db,
             &["transport"],
-            "没人接单",
-            &format!("{name} · {}", at.replace('T', " ")),
+            ("没人接单", "No driver"),
+            (
+                &format!("{name} · {}", at.replace('T', " ")),
+                &format!("{name} · {}", at.replace('T', " ")),
+            ),
             &format!("/admin/rides/{id}"),
         )
         .await;

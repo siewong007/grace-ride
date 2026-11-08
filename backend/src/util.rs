@@ -6,6 +6,7 @@ use sqlx::PgPool;
 
 use crate::auth::CurrentUser;
 use crate::error::{forbidden, AppResult};
+use serde::Serialize;
 
 pub fn now() -> String {
     Local::now().format("%Y-%m-%dT%H:%M:%S").to_string()
@@ -67,13 +68,69 @@ pub async fn audit(
     }
 }
 
-pub async fn notify(db: &PgPool, user_id: i64, title: &str, body: impl AsRef<str>, link: &str) {
+/// Recipient UI language. Messages are authored as 中文/English pairs and
+/// rendered server-side in each user's saved language (users.lang).
+#[derive(Clone, Copy, PartialEq, Eq, Debug, Serialize)]
+pub enum Lang {
+    Zh,
+    En,
+}
+
+impl Lang {
+    pub fn code(self) -> &'static str {
+        match self {
+            Lang::Zh => "zh",
+            Lang::En => "en",
+        }
+    }
+
+    pub fn from_code(s: &str) -> Lang {
+        match s {
+            "en" => Lang::En,
+            _ => Lang::Zh,
+        }
+    }
+
+    /// Unauthenticated requests carry no users.lang; fall back to Accept-Language.
+    pub fn from_accept_language(v: &str) -> Lang {
+        // "zh-CN,zh;q=0.9,en;q=0.8" → zh; anything else defaults to zh.
+        let first = v.split(',').next().unwrap_or("").trim().to_lowercase();
+        if first.starts_with("en") {
+            Lang::En
+        } else {
+            Lang::Zh
+        }
+    }
+}
+
+/// Pick the side of a 中文/English message pair.
+pub fn t<'a>(lang: Lang, zh: &'a str, en: &'a str) -> &'a str {
+    match lang {
+        Lang::Zh => zh,
+        Lang::En => en,
+    }
+}
+
+async fn user_lang(db: &PgPool, user_id: i64) -> Lang {
+    let row: Option<(String,)> = sqlx::query_as("SELECT lang FROM users WHERE id=$1")
+        .bind(user_id)
+        .fetch_optional(db)
+        .await
+        .ok()
+        .flatten();
+    row.map(|(l,)| Lang::from_code(&l)).unwrap_or(Lang::Zh)
+}
+
+/// Insert one notification. Title and body are (中文, English) pairs and the
+/// recipient's saved language decides which side is rendered.
+pub async fn notify(db: &PgPool, user_id: i64, title: (&str, &str), body: (&str, &str), link: &str) {
+    let lang = user_lang(db, user_id).await;
     let r = sqlx::query(
         "INSERT INTO notifications (user_id, title, body, link, created_at) VALUES ($1,$2,$3,$4,$5)",
     )
     .bind(user_id)
-    .bind(title)
-    .bind(body.as_ref())
+    .bind(t(lang, title.0, title.1))
+    .bind(t(lang, body.0, body.1))
     .bind(link)
     .bind(now())
     .execute(db)
@@ -83,8 +140,15 @@ pub async fn notify(db: &PgPool, user_id: i64, title: &str, body: impl AsRef<str
     }
 }
 
-/// Notify every active user holding any of the given roles.
-pub async fn notify_roles(db: &PgPool, roles: &[&str], title: &str, body: &str, link: &str) {
+/// Notify every active user holding any of the given roles; each recipient
+/// gets the message in their own language.
+pub async fn notify_roles(
+    db: &PgPool,
+    roles: &[&str],
+    title: (&str, &str),
+    body: (&str, &str),
+    link: &str,
+) {
     let users: Vec<(i64, String)> =
         sqlx::query_as("SELECT id, roles FROM users WHERE status='active'")
             .fetch_all(db)
@@ -97,12 +161,18 @@ pub async fn notify_roles(db: &PgPool, roles: &[&str], title: &str, body: &str, 
     }
 }
 
-pub async fn system_message(db: &PgPool, trip_id: i64, body: &str) {
+/// Chat system message: one shared row for the whole trip, so both languages
+/// ride along (中文 / English) and every reader understands it.
+pub async fn system_message(db: &PgPool, trip_id: i64, zh_body: &str, en_body: &str) {
     let _ = sqlx::query(
         "INSERT INTO ride_messages (trip_id, user_id, body, created_at) VALUES ($1,NULL,$2,$3)",
     )
     .bind(trip_id)
-    .bind(body)
+    .bind(if zh_body == en_body {
+        zh_body.to_string()
+    } else {
+        format!("{zh_body} / {en_body}")
+    })
     .bind(now())
     .execute(db)
     .await;
@@ -111,11 +181,19 @@ pub async fn system_message(db: &PgPool, trip_id: i64, body: &str) {
 pub fn require_any(u: &CurrentUser, roles: &[&str]) -> AppResult<()> {
     if roles.iter().any(|r| u.has(r)) {
         if !u.mfa_ok {
-            return Err(forbidden("此功能需要通行密钥或双重验证（2FA）登入"));
+            return Err(forbidden(t(
+                u.lang,
+                "此功能需要通行密钥或双重验证（2FA）登入",
+                "This feature requires a passkey or two-factor (2FA) login",
+            )));
         }
         Ok(())
     } else {
-        Err(forbidden("您没有权限执行此操作"))
+        Err(forbidden(t(
+            u.lang,
+            "您没有权限执行此操作",
+            "You do not have permission to do this",
+        )))
     }
 }
 

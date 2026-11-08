@@ -9,9 +9,9 @@ use serde::Deserialize;
 use serde_json::{json, Value};
 
 use crate::auth::{parse_roles, CurrentUser};
-use crate::error::{bad, AppError, AppResult};
+use crate::error::{bad, AppError, AppResult, not_found};
 use crate::state::AppState;
-use crate::util::{audit, in_days, now, random_token, require_any};
+use crate::util::{Lang, audit, in_days, now, random_token, require_any, t};
 
 pub fn router() -> Router<AppState> {
     Router::new()
@@ -99,7 +99,7 @@ async fn list_users(
 ) -> AppResult<Json<Value>> {
     let staff = require_any(&u, &["admin", "transport"]).is_ok();
     if !staff && !u.has("leader") {
-        return Err(AppError::Forbidden("无权限".into()));
+        return Err(AppError::Forbidden(t(u.lang, "无权限", "No permission").into()));
     }
     let like = format!("%{}%", q.q.unwrap_or_default().trim());
     let rows: Vec<(i64, String, String, String, String, String, String, i64, Option<String>)> = sqlx::query_as(
@@ -142,10 +142,14 @@ async fn update_user(
 ) -> AppResult<Json<Value>> {
     require_any(&u, &["admin"])?;
     if !matches!(req.status.as_str(), "active" | "disabled") {
-        return Err(bad("状态无效"));
+        return Err(bad(t(u.lang, "状态无效", "Invalid status")));
     }
     if id == u.id && (req.status != "active" || !req.roles.iter().any(|r| r == "admin")) {
-        return Err(bad("不能停用自己或移除自己的管理员权限"));
+        return Err(bad(t(
+            u.lang,
+            "不能停用自己或移除自己的管理员权限",
+            "You cannot disable yourself or remove your own admin role",
+        )));
     }
     let roles = parse_roles(&req.roles.join(",")).join(",");
     let (old_roles, old_status): (String, String) =
@@ -153,7 +157,7 @@ async fn update_user(
             .bind(id)
             .fetch_optional(&st.db)
             .await?
-            .ok_or(AppError::NotFound)?;
+            .ok_or(not_found(u.lang))?;
     sqlx::query("UPDATE users SET roles=$1, status=$2 WHERE id=$3")
         .bind(&roles)
         .bind(&req.status)
@@ -210,14 +214,14 @@ async fn create_invite(
     require_any(&u, &["admin"])?;
     let email = req.email.trim().to_lowercase();
     if !email.contains('@') {
-        return Err(bad("电邮格式不正确"));
+        return Err(bad(t(u.lang, "电邮格式不正确", "Invalid email address")));
     }
     let (exists,): (i64,) = sqlx::query_as("SELECT COUNT(*) FROM users WHERE email=$1")
         .bind(&email)
         .fetch_one(&st.db)
         .await?;
     if exists > 0 {
-        return Err(bad("此电邮已是会员"));
+        return Err(bad(t(u.lang, "此电邮已是会员", "This email is already a member")));
     }
     let token = random_token(32);
     let (id,): (i64,) = sqlx::query_as("INSERT INTO invites (token, kind, email, name, roles, group_ids, created_by, expires_at, created_at) VALUES ($1, 'invite', $2,$3,$4,$5,$6,$7,$8) RETURNING id")
@@ -288,7 +292,7 @@ async fn create_group(
 ) -> AppResult<Json<Value>> {
     require_any(&u, &["admin"])?;
     if req.name.trim().is_empty() {
-        return Err(bad("请填写群体名称"));
+        return Err(bad(t(u.lang, "请填写群体名称", "Please enter a group name")));
     }
     let (id,): (i64,) =
         sqlx::query_as("INSERT INTO groups (name, description) VALUES ($1,$2) RETURNING id")
@@ -296,7 +300,7 @@ async fn create_group(
             .bind(req.description.unwrap_or_default())
             .fetch_one(&st.db)
             .await
-            .map_err(|_| bad("群体名称已存在"))?;
+            .map_err(|_| bad(t(u.lang, "群体名称已存在", "This group name already exists")))?;
     audit(
         &st.db,
         Some(u.id),
@@ -344,9 +348,13 @@ async fn delete_group(
         .bind(id)
         .fetch_optional(&st.db)
         .await?
-        .ok_or(AppError::NotFound)?;
+        .ok_or(not_found(u.lang))?;
     if is_all == 1 {
-        return Err(bad("不能删除“全体会员”群体"));
+        return Err(bad(t(
+            u.lang,
+            "不能删除“全体会员”群体",
+            "The \"All members\" group cannot be deleted",
+        )));
     }
     sqlx::query("DELETE FROM groups WHERE id=$1")
         .bind(id)
@@ -424,14 +432,14 @@ async fn create_area(
 ) -> AppResult<Json<Value>> {
     require_any(&u, &["transport"])?;
     if req.name.trim().is_empty() {
-        return Err(bad("请填写地区名称"));
+        return Err(bad(t(u.lang, "请填写地区名称", "Please enter an area name")));
     }
     let (id,): (i64,) =
         sqlx::query_as("INSERT INTO areas (name, active) VALUES ($1, 1) RETURNING id")
             .bind(req.name.trim())
             .fetch_one(&st.db)
             .await
-            .map_err(|_| bad("地区已存在"))?;
+            .map_err(|_| bad(t(u.lang, "地区已存在", "This area already exists")))?;
     audit(
         &st.db,
         Some(u.id),
@@ -491,15 +499,15 @@ async fn approve_recovery(
             .bind(id)
             .fetch_optional(&st.db)
             .await?
-            .ok_or(AppError::NotFound)?;
+            .ok_or(not_found(u.lang))?;
     if status != "pending" {
-        return Err(bad("此申请已处理"));
+        return Err(bad(t(u.lang, "此申请已处理", "This request has already been handled")));
     }
     let (uid,): (i64,) = sqlx::query_as("SELECT id FROM users WHERE email=$1")
         .bind(&email)
         .fetch_optional(&st.db)
         .await?
-        .ok_or(AppError::NotFound)?;
+        .ok_or(not_found(u.lang))?;
     let token = random_token(32);
     sqlx::query("INSERT INTO invites (token, kind, email, user_id, created_by, expires_at, created_at) VALUES ($1, 'recovery', $2, $3, $4, $5, $6)")
         .bind(&token)

@@ -9,9 +9,9 @@ use serde::Deserialize;
 use serde_json::{json, Value};
 
 use crate::auth::CurrentUser;
-use crate::error::{bad, forbidden, AppError, AppResult};
+use crate::error::{bad, forbidden, AppResult, not_found};
 use crate::state::AppState;
-use crate::util::{audit, norm_dt, notify, now};
+use crate::util::{audit, norm_dt, notify, now, t, Lang};
 
 pub fn router() -> Router<AppState> {
     Router::new()
@@ -155,7 +155,7 @@ async fn load_event(st: &AppState, u: &CurrentUser, id: i64) -> AppResult<EventR
         .bind(id)
         .fetch_optional(&st.db)
         .await?
-        .ok_or(AppError::NotFound)
+        .ok_or(not_found(u.lang))
 }
 
 async fn get_event(
@@ -164,7 +164,7 @@ async fn get_event(
     Path(id): Path<i64>,
 ) -> AppResult<Json<Value>> {
     if !can_see_event(&st, &u, id).await? {
-        return Err(forbidden("此活动不对您所属的群体开放"));
+        return Err(forbidden(t(u.lang, "此活动不对您所属的群体开放", "This event is not open to your groups")));
     }
     let e = load_event(&st, &u, id).await?;
     let mut v = event_json(&e, &u);
@@ -204,22 +204,22 @@ struct EventIn {
     group_ids: Vec<i64>,
 }
 
-fn validate(req: &EventIn) -> AppResult<(String, Option<String>)> {
+fn validate(req: &EventIn, lang: Lang) -> AppResult<(String, Option<String>)> {
     if req.title.trim().is_empty() {
-        return Err(bad("请填写活动名称"));
+        return Err(bad(t(lang, "请填写活动名称", "Please enter an event name")));
     }
     if !KINDS.contains(&req.kind.as_str()) {
-        return Err(bad("活动类型无效"));
+        return Err(bad(t(lang, "活动类型无效", "Invalid event type")));
     }
     if req.group_ids.is_empty() {
-        return Err(bad("请至少选择一个可见群体"));
+        return Err(bad(t(lang, "请至少选择一个可见群体", "Please select at least one visible group")));
     }
-    let at = norm_dt(&req.starts_at).ok_or_else(|| bad("请填写正确的活动时间"))?;
+    let at = norm_dt(&req.starts_at).ok_or_else(|| bad(t(lang, "请填写正确的活动时间", "Please enter a valid event time")))?;
     let dl = match req.signup_deadline.as_deref().filter(|s| !s.is_empty()) {
         Some(s) => {
-            let d = norm_dt(s).ok_or_else(|| bad("报名截止时间格式不正确"))?;
+            let d = norm_dt(s).ok_or_else(|| bad(t(lang, "报名截止时间格式不正确", "Signup deadline format is invalid")))?;
             if d > at {
-                return Err(bad("报名截止不能晚于活动时间"));
+                return Err(bad(t(lang, "报名截止不能晚于活动时间", "Signup deadline cannot be later than the event time")));
             }
             Some(d)
         }
@@ -234,9 +234,9 @@ async fn create_event(
     Json(req): Json<EventIn>,
 ) -> AppResult<Json<Value>> {
     if !u.has("leader") {
-        return Err(forbidden("只有活动负责人可以发起活动"));
+        return Err(forbidden(t(u.lang, "只有活动负责人可以发起活动", "Only event organisers can create events")));
     }
-    let (at, dl) = validate(&req)?;
+    let (at, dl) = validate(&req, u.lang)?;
     let (id,): (i64,) = sqlx::query_as(
         "INSERT INTO events (title, kind, description, starts_at, location, capacity, cost_note, signup_deadline, created_by, created_at)
          VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10) RETURNING id",
@@ -274,11 +274,12 @@ async fn create_event(
     .fetch_all(&st.db)
     .await?;
     for (m,) in members {
+        let body = format!("{} · {}", req.title.trim(), at.replace('T', " "));
         notify(
             &st.db,
             m,
-            "新的活动邀请",
-            format!("{} · {}", req.title.trim(), at.replace('T', " ")),
+            ("新的活动邀请", "New event invitation"),
+            (&body, &body),
             &format!("/events/{id}"),
         )
         .await;
@@ -303,9 +304,9 @@ async fn update_event(
 ) -> AppResult<Json<Value>> {
     let e = load_event(&st, &u, id).await?;
     if !can_manage(&u, e.created_by) {
-        return Err(forbidden("只有活动负责人可以修改"));
+        return Err(forbidden(t(u.lang, "只有活动负责人可以修改", "Only the event organiser can edit")));
     }
-    let (at, dl) = validate(&req)?;
+    let (at, dl) = validate(&req, u.lang)?;
     sqlx::query("UPDATE events SET title=$1, kind=$2, description=$3, starts_at=$4, location=$5, capacity=$6, cost_note=$7, signup_deadline=$8 WHERE id=$9")
         .bind(req.title.trim())
         .bind(&req.kind)
@@ -332,16 +333,12 @@ async fn update_event(
         .await?;
     }
     if at != e.starts_at || req.location.trim() != e.location {
+        let body = format!("{} · {} · {}", req.title.trim(), at.replace('T', " "), req.location.trim());
         notify_signups(
             &st,
             id,
-            "活动资料已更新",
-            &format!(
-                "{} · {} · {}",
-                req.title.trim(),
-                at.replace('T', " "),
-                req.location.trim()
-            ),
+            ("活动资料已更新", "Event details updated"),
+            (&body, &body),
         )
         .await?;
     }
@@ -349,7 +346,7 @@ async fn update_event(
     Ok(Json(json!({"ok": true})))
 }
 
-async fn notify_signups(st: &AppState, id: i64, title: &str, body: &str) -> AppResult<()> {
+async fn notify_signups(st: &AppState, id: i64, title: (&str, &str), body: (&str, &str)) -> AppResult<()> {
     let users: Vec<(i64,)> = sqlx::query_as(
         "SELECT user_id FROM event_signups WHERE event_id=$1 AND status IN ('going','waitlist')",
     )
@@ -369,13 +366,13 @@ async fn cancel_event(
 ) -> AppResult<Json<Value>> {
     let e = load_event(&st, &u, id).await?;
     if !can_manage(&u, e.created_by) {
-        return Err(forbidden("只有活动负责人可以取消"));
+        return Err(forbidden(t(u.lang, "只有活动负责人可以取消", "Only the event organiser can cancel")));
     }
     sqlx::query("UPDATE events SET status='cancelled' WHERE id=$1")
         .bind(id)
         .execute(&st.db)
         .await?;
-    notify_signups(&st, id, "活动已取消", &e.title).await?;
+    notify_signups(&st, id, ("活动已取消", "Event cancelled"), (e.title.as_str(), e.title.as_str())).await?;
     // Release linked ride requests that are not yet underway.
     let rides: Vec<(i64, Option<i64>)> = sqlx::query_as(
         "SELECT id, driver_id FROM rides WHERE event_id=$1 AND status IN ('pending_driver','pending_passenger','pending_approval','pending_driver_confirm','confirmed')",
@@ -386,7 +383,14 @@ async fn cancel_event(
     for (rid, d) in rides {
         sqlx::query("UPDATE rides SET status='cancelled', attention_reason='活动已取消', updated_at=$1 WHERE id=$2").bind(now()).bind(rid).execute(&st.db).await?;
         if let Some(d) = d {
-            notify(&st.db, d, "活动已取消，接送随之取消", &e.title, "/drive").await;
+            notify(
+                &st.db,
+                d,
+                ("活动已取消，接送随之取消", "Event cancelled, ride cancelled with it"),
+                (e.title.as_str(), e.title.as_str()),
+                "/drive",
+            )
+            .await;
         }
     }
     audit(&st.db, Some(u.id), "event.cancel", "event", Some(id), "").await;
@@ -400,7 +404,7 @@ async fn finish_event(
 ) -> AppResult<Json<Value>> {
     let e = load_event(&st, &u, id).await?;
     if !can_manage(&u, e.created_by) {
-        return Err(forbidden("只有活动负责人可以操作"));
+        return Err(forbidden(t(u.lang, "只有活动负责人可以操作", "Only the event organiser can perform this action")));
     }
     sqlx::query("UPDATE events SET status='finished' WHERE id=$1")
         .bind(id)
@@ -424,11 +428,11 @@ async fn signup(
     Json(req): Json<SignupIn>,
 ) -> AppResult<Json<Value>> {
     if !can_see_event(&st, &u, id).await? {
-        return Err(forbidden("此活动不对您所属的群体开放"));
+        return Err(forbidden(t(u.lang, "此活动不对您所属的群体开放", "This event is not open to your groups")));
     }
     let e = load_event(&st, &u, id).await?;
     if e.status != "published" {
-        return Err(bad("此活动不开放报名"));
+        return Err(bad(t(u.lang, "此活动不开放报名", "This event is not open for signup")));
     }
     let n = now()[..16].to_string();
     if e.signup_deadline
@@ -437,10 +441,10 @@ async fn signup(
         .unwrap_or(false)
         || e.starts_at < n
     {
-        return Err(bad("报名已截止"));
+        return Err(bad(t(u.lang, "报名已截止", "Signup has closed")));
     }
     if req.offer_drive.unwrap_or(false) && !u.has("driver") {
-        return Err(bad("需由交通组登记为志愿司机后才能提供接送"));
+        return Err(bad(t(u.lang, "需由交通组登记为志愿司机后才能提供接送", "You must be registered by the transport team as a volunteer driver to offer rides")));
     }
     let already_going = e.my_status.as_deref() == Some("going");
     let status = if already_going || e.capacity == 0 || e.going < e.capacity {
@@ -496,11 +500,13 @@ async fn withdraw(
                 .bind(sid)
                 .execute(&st.db)
                 .await?;
+            let zh = format!("您已获得「{}」的名额", e.title);
+            let en = format!("You now have a spot in \"{}\"", e.title);
             notify(
                 &st.db,
                 uid,
-                "候补成功",
-                format!("您已获得「{}」的名额", e.title),
+                ("候补成功", "Off the waitlist"),
+                (&zh, &en),
                 &format!("/events/{id}"),
             )
             .await;
@@ -516,22 +522,24 @@ async fn withdraw(
     for (rid, d) in rides {
         sqlx::query("UPDATE rides SET status='cancelled', attention_reason='乘客取消活动报名', updated_at=$1 WHERE id=$2").bind(now()).bind(rid).execute(&st.db).await?;
         if let Some(d) = d {
+            let body = format!("{} · {}", u.name, e.title);
             notify(
                 &st.db,
                 d,
-                "乘客已取消，座位已释放",
-                format!("{} · {}", u.name, e.title),
+                ("乘客已取消，座位已释放", "Passenger cancelled, seat released"),
+                (&body, &body),
                 "/drive",
             )
             .await;
         }
     }
     if e.created_by != u.id {
+        let body = format!("{} · {}", u.name, e.title);
         notify(
             &st.db,
             e.created_by,
-            "有会员取消报名",
-            format!("{} · {}", u.name, e.title),
+            ("有会员取消报名", "A member withdrew their signup"),
+            (&body, &body),
             &format!("/events/{id}"),
         )
         .await;
@@ -548,7 +556,7 @@ async fn list_signups(
 ) -> AppResult<Json<Value>> {
     let e = load_event(&st, &u, id).await?;
     if !can_manage(&u, e.created_by) {
-        return Err(forbidden("只有活动负责人可以查看报名名单"));
+        return Err(forbidden(t(u.lang, "只有活动负责人可以查看报名名单", "Only the event organiser can view the signup list")));
     }
     let rows: Vec<(i64, i64, String, String, i64, i64, i64, Option<i64>, Option<String>)> = sqlx::query_as(
         "SELECT s.id, s.user_id, u.name, s.status, s.need_ride, s.offer_drive, s.offer_seats, s.attended,
@@ -578,7 +586,7 @@ async fn mark_attendance(
 ) -> AppResult<Json<Value>> {
     let e = load_event(&st, &u, id).await?;
     if !can_manage(&u, e.created_by) {
-        return Err(forbidden("只有活动负责人可以记录出席"));
+        return Err(forbidden(t(u.lang, "只有活动负责人可以记录出席", "Only the event organiser can record attendance")));
     }
     let v = req.attended.map(|a| a as i64);
     let r = sqlx::query("UPDATE event_signups SET attended=$1 WHERE event_id=$2 AND user_id=$3")

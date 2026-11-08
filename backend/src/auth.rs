@@ -9,9 +9,9 @@ use axum_extra::extract::CookieJar;
 use serde::Serialize;
 use sha2::{Digest, Sha256};
 
-use crate::error::AppError;
+use crate::error::{AppError, unauthorized};
 use crate::state::AppState;
-use crate::util::now;
+use crate::util::{now, Lang};
 
 /// Cookie name over plain http (localhost dev).
 pub const SESSION_COOKIE: &str = "gr_session";
@@ -36,6 +36,7 @@ pub struct CurrentUser {
     pub email: String,
     pub roles: Vec<String>,
     pub mfa_ok: bool,
+    pub lang: Lang,
     /// SHA-256 of the session token (the primary key in `sessions`).
     #[serde(skip)]
     pub session_id: String,
@@ -73,6 +74,13 @@ impl FromRequestParts<AppState> for CurrentUser {
         parts: &mut Parts,
         state: &AppState,
     ) -> Result<Self, Self::Rejection> {
+        let accept_lang = Lang::from_accept_language(
+            parts
+                .headers
+                .get(axum::http::header::ACCEPT_LANGUAGE)
+                .and_then(|v| v.to_str().ok())
+                .unwrap_or(""),
+        );
         let jar = CookieJar::from_headers(&parts.headers);
         let token = jar
             .get(SESSION_COOKIE_SECURE)
@@ -86,14 +94,14 @@ impl FromRequestParts<AppState> for CurrentUser {
                     .and_then(|v| v.strip_prefix("Bearer "))
                     .map(|s| s.to_string())
             })
-            .ok_or(AppError::Unauthorized)?;
+            .ok_or(unauthorized(accept_lang))?;
         if token.len() != 48 {
-            return Err(AppError::Unauthorized);
+            return Err(unauthorized(accept_lang));
         }
         let session_id = hash_token(&token);
 
-        let row: Option<(i64, String, String, String, i64, String)> = sqlx::query_as(
-            "SELECT u.id, u.name, u.email, u.roles, s.mfa_ok, s.expires_at
+        let row: Option<(i64, String, String, String, i64, String, String)> = sqlx::query_as(
+            "SELECT u.id, u.name, u.email, u.roles, s.mfa_ok, s.expires_at, u.lang
              FROM sessions s JOIN users u ON u.id = s.user_id
              WHERE s.token = $1 AND u.status = 'active'",
         )
@@ -101,9 +109,10 @@ impl FromRequestParts<AppState> for CurrentUser {
         .fetch_optional(&state.db)
         .await?;
 
-        let (id, name, email, roles, mfa_ok, expires) = row.ok_or(AppError::Unauthorized)?;
+        let (id, name, email, roles, mfa_ok, expires, lang) =
+            row.ok_or(unauthorized(accept_lang))?;
         if expires < now() {
-            return Err(AppError::Unauthorized);
+            return Err(unauthorized(accept_lang));
         }
         Ok(CurrentUser {
             id,
@@ -111,6 +120,7 @@ impl FromRequestParts<AppState> for CurrentUser {
             email,
             roles: parse_roles(&roles),
             mfa_ok: mfa_ok == 1 || state.cfg.dev_mode,
+            lang: Lang::from_code(&lang),
             session_id,
         })
     }

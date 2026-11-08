@@ -21,6 +21,7 @@ use axum::{
 use serde_json::json;
 
 use crate::state::AppState;
+use crate::util::{t, Lang};
 
 /// Fixed-window counter keyed by "bucket:ip". Single-process is fine: the app runs
 /// as one instance of this app. Move to Redis if it is ever scaled horizontally.
@@ -77,16 +78,25 @@ pub fn client_ip(headers: &HeaderMap, req_ip: Option<SocketAddr>, trust_proxy: b
         .unwrap_or_else(|| "unknown".into())
 }
 
-fn too_many(retry_after: u64) -> Response {
+fn too_many(retry_after: u64, lang: Lang) -> Response {
     let mut res = (
         StatusCode::TOO_MANY_REQUESTS,
-        Json(json!({ "error": format!("尝试次数过多，请 {} 秒后再试", retry_after) })),
+        Json(json!({ "error": t(lang, &format!("尝试次数过多，请 {retry_after} 秒后再试"), &format!("Too many attempts, try again in {retry_after} seconds")) })),
     )
         .into_response();
     if let Ok(v) = HeaderValue::from_str(&retry_after.to_string()) {
         res.headers_mut().insert(header::RETRY_AFTER, v);
     }
     res
+}
+
+/// Unauthenticated paths use Accept-Language (default 中文).
+fn visitor_lang(headers: &HeaderMap) -> Lang {
+    headers
+        .get(header::ACCEPT_LANGUAGE)
+        .and_then(|v| v.to_str().ok())
+        .map(Lang::from_accept_language)
+        .unwrap_or(Lang::Zh)
 }
 
 /// Rate limits for unauthenticated / credential endpoints.
@@ -117,7 +127,8 @@ pub async fn rate_limit(State(st): State<AppState>, req: Request, next: Next) ->
                 .check(&format!("{bucket}:{ip}"), limit, Duration::from_secs(secs))
         {
             tracing::warn!(bucket, ip, "rate limited");
-            return too_many(wait);
+            let lang = visitor_lang(req.headers());
+            return too_many(wait, lang);
         }
     }
     next.run(req).await
@@ -137,9 +148,14 @@ pub async fn origin_guard(State(st): State<AppState>, req: Request, next: Next) 
         };
         if !ok {
             tracing::warn!(?origin, ?fetch_site, path = %req.uri().path(), "blocked cross-origin request");
+            let accept = crate::util::t(
+                visitor_lang(req.headers()),
+                "请求来源不被允许",
+                "Request origin not allowed",
+            );
             return (
                 StatusCode::FORBIDDEN,
-                Json(json!({ "error": "请求来源不被允许" })),
+                Json(json!({ "error": accept })),
             )
                 .into_response();
         }
