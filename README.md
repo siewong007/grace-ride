@@ -79,4 +79,6 @@ docker compose --env-file .env.production up -d --build
 
 Quality gates (also run in CI on every push): `make lint test audit`.
 
+Schema lives in a **single** file, `backend/migrations/0001_init.sql`. Edit that file while data is disposable (then reset the DB); once production has real members, switch to additive `0002+` migrations — see [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
+
 Before launch, the church still needs a PDPA privacy notice, approved retention periods, and decisions on the open questions on page 42: who collects, absentee rules, subsidy approval, refund handling.

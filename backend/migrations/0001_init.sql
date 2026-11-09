@@ -1,5 +1,6 @@
 -- 恩典同行 Grace Ride — consolidated schema (PostgreSQL)
--- Folded from former 0001–0005 into a single init for greenfield deploys.
+-- Single source of truth: keep ONE migration file. Fold former 0001–0006
+-- (hardening, lang, oauth, demo_batch, terms) into this init for greenfield deploys.
 --
 -- Conventions:
 --   • Times are local Asia/Kuala_Lumpur ISO strings: YYYY-MM-DD"T"HH24:MI:SS
@@ -33,6 +34,7 @@ CREATE TABLE users (
     carpool_enabled BIGINT NOT NULL DEFAULT 0,
     spare_seats     BIGINT NOT NULL DEFAULT 1,
     lang            TEXT NOT NULL DEFAULT 'zh' CHECK (lang IN ('zh','en')),  -- ex-0003
+    terms_accepted_at TEXT,                         -- ex-0006; NULL = not yet agreed
     demo_batch      TEXT,                           -- ex-0005
     created_at      TEXT NOT NULL DEFAULT (to_char(NOW() AT TIME ZONE 'Asia/Kuala_Lumpur', 'YYYY-MM-DD"T"HH24:MI:SS'))
 );

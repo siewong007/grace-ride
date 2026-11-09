@@ -8,10 +8,13 @@ name: Deploy production
 # Required environment secret (production):
 #   VPS_SSH_PRIVATE_KEY
 #
-# The database container and its volume stay in place. Only the app
-# container is replaced. Host Caddy keeps ports 80 and 443.
+# The database container and its volume normally stay in place; only the app
+# container is replaced. Fresh/empty DBs are allowed (user count may grow from
+# first-boot seed). Host Caddy keeps ports 80 and 443.
+# Manual dispatch: Actions → Deploy production → Run workflow.
 
 on:
+  workflow_dispatch:
   push:
     branches: [master]
     paths-ignore:
@@ -110,9 +113,15 @@ jobs:
             df -h / >&2
             exit 1
           fi
-          users_before=$(docker exec grace-ride-db psql -U grace -d grace_ride -tAc 'SELECT COUNT(*) FROM users')
+          # Empty/fresh DBs may not have a users table yet (pre-migrate).
+          users_before=$(docker exec grace-ride-db psql -U grace -d grace_ride -tAc 'SELECT COUNT(*) FROM users' 2>/dev/null || echo 0)
+          users_before=${users_before:-0}
           db_before=$(docker inspect -f '{{.Id}}' grace-ride-db)
-          old_image=$(docker inspect -f '{{.Config.Image}}' grace-ride)
+          old_image=$(docker inspect -f '{{.Config.Image}}' grace-ride 2>/dev/null || echo '')
+          if [[ -z "$old_image" ]]; then
+            echo "No existing app container; will start fresh."
+            old_image="grace-ride:none"
+          fi
           old_tag=${old_image#grace-ride:}
           echo "users_before=$users_before"
           echo "old_image=$old_image"
@@ -122,6 +131,10 @@ jobs:
           rm -f "/tmp/grace-ride-$SHA.tar.gz"
           rollback() {
             trap - ERR
+            if [[ "$old_tag" == "none" || -z "$old_tag" ]]; then
+              echo "No previous image to restore" >&2
+              return 0
+            fi
             sed -i "s/^IMAGE_TAG=.*/IMAGE_TAG=${old_tag}/" /opt/grace-ride/secrets.env
             docker compose --env-file /opt/grace-ride/secrets.env -f /opt/grace-ride/docker-compose.aic.yml up -d --no-deps app
           }
@@ -140,13 +153,32 @@ jobs:
             sleep 2
           done
           db_after=$(docker inspect -f '{{.Id}}' grace-ride-db)
-          users_after=$(docker exec grace-ride-db psql -U grace -d grace_ride -tAc 'SELECT COUNT(*) FROM users')
+          users_after=$(docker exec grace-ride-db psql -U grace -d grace_ride -tAc 'SELECT COUNT(*) FROM users' 2>/dev/null || echo 0)
+          users_after=${users_after:-0}
           echo "users_after=$users_after"
-          if [[ "$ok" != 1 || "$db_before" != "$db_after" || "$users_before" != "$users_after" ]]; then
-            echo "roll failed; restoring $old_image" >&2
+          # Allow first-boot seed growth (0→1 admin) or unchanged counts.
+          # Reject unexpected shrinkage; keep health + same DB container checks.
+          if [[ "$ok" != 1 || "$db_before" != "$db_after" ]]; then
+            echo "roll failed (health/db); restoring $old_image" >&2
             rollback
             docker logs grace-ride 2>&1 | grep -v -e 'one-time' -e '/invite/' | tail -30 >&2 || true
             exit 1
+          fi
+          if ! [[ "$users_after" =~ ^[0-9]+$ && "$users_before" =~ ^[0-9]+$ ]]; then
+            echo "roll failed (user count unreadable); restoring $old_image" >&2
+            rollback
+            exit 1
+          fi
+          if (( users_after < users_before )); then
+            echo "roll failed (users shrank $users_before → $users_after); restoring $old_image" >&2
+            rollback
+            docker logs grace-ride 2>&1 | grep -v -e 'one-time' -e '/invite/' | tail -30 >&2 || true
+            exit 1
+          fi
+          if (( users_before == 0 && users_after > 0 )); then
+            echo "first_boot_seed users_before=0 users_after=$users_after"
+          elif (( users_after != users_before )); then
+            echo "user_count_grew $users_before → $users_after (allowed)"
           fi
           docker images grace-ride --format '{{.Repository}}:{{.Tag}}' | while read -r img; do
             if [[ "$img" != "grace-ride:$SHA" && "$img" != "$old_image" ]]; then

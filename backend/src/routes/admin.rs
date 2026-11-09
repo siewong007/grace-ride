@@ -31,10 +31,7 @@ pub fn router() -> Router<AppState> {
         .route("/admin/areas/{id}", put(update_area))
         .route("/admin/recovery", get(list_recovery))
         .route("/admin/recovery/{id}/approve", post(approve_recovery))
-        
-        .route("/admin/rides/{ride_id}/start", post(admin_ride_start))
-        .route("/admin/rides/{ride_id}/end", post(admin_ride_end))
-        
+
         .route("/admin/recovery/{id}/reject", post(reject_recovery))
         .route("/admin/audit", get(audit_log))
 }
@@ -559,77 +556,4 @@ async fn audit_log(
     Ok(Json(json!(rows.into_iter().map(|(id, actor, action, entity, eid, detail, at)| json!({
         "id": id, "actor": actor, "action": action, "entity": entity, "entity_id": eid, "detail": detail, "created_at": at,
     })).collect::<Vec<_>>())))
-}
-
-
-/// Mark ride as started by driver
-pub async fn admin_ride_start(
-    State(st): State<AppState>)
-    Query(params): axum::extract::Query<serde_json::Value>
-    AcceptLanguage: axum::http::HeaderMap,
-) -> AppResult<Json<Value>> {
-    let lang = Lang::from_accept_language(
-        AcceptLanguage
-            .get(axum::http::header::ACCEPT_LANGUAGE)
-            .and_then(|v| v.to_str().ok())
-            .unwrap_or(""),
-    );
-    
-    let ride_id = params.get("ride_id")
-        .and_then(|v| v.as_i64())
-        .ok_or(bad(lang, ErrorKey::MissingParameter))?;
-    
-    // Update ride status to in_progress and set started_at
-    sqlx::query("UPDATE rides SET status = 'in_progress', started_at = NOW() WHERE id = $1")
-        .bind(ride_id)
-        .execute(&st.db)
-        .await?;
-    
-    audit(
-        &st.db,
-        None,
-        "ride.start",
-        "ride",
-        Some(ride_id),
-        &format!("ride_{}", ride_id),
-    )
-    .await;
-    
-    Ok(Json(json!({ "ok": true, "status": "in_progress", "started_at": "now" })))
-}
-
-/// Mark ride as completed by driver
-pub async fn admin_ride_end(
-    State(st): State<AppState>)
-    Query(params): axum::extract::Query<serde_json::Value>
-    AcceptLanguage: axum::http::HeaderMap,
-) -> AppResult<Json<Value>> {
-    let lang = Lang::from_accept_language(
-        AcceptLanguage
-            .get(axum::http::header::ACCEPT_LANGUAGE)
-            .and_then(|v| v.to_str().ok())
-            .unwrap_or(""),
-    );
-    
-    let ride_id = params.get("ride_id")
-        .and_then(|v| v.as_i64())
-        .ok_or(bad(lang, ErrorKey::MissingParameter))?;
-    
-    // Update ride status to completed and set completed_at
-    sqlx::query("UPDATE rides SET status = 'completed', completed_at = NOW() WHERE id = $1")
-        .bind(ride_id)
-        .execute(&st.db)
-        .await?;
-    
-    audit(
-        &st.db,
-        None,
-        "ride.complete",
-        "ride",
-        Some(ride_id),
-        &format!("ride_{}", ride_id),
-    )
-    .await;
-    
-    Ok(Json(json!({ "ok": true, "status": "completed", "completed_at": "now" })))
 }

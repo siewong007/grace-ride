@@ -64,6 +64,13 @@ pub fn parse_roles(s: &str) -> Vec<String> {
         .collect()
 }
 
+pub fn is_privileged(roles: &str) -> bool {
+    parse_roles(roles)
+        .iter()
+        .any(|r| PRIVILEGED.contains(&r.as_str()))
+}
+
+
 impl FromRequestParts<AppState> for CurrentUser {
     type Rejection = AppError;
 
