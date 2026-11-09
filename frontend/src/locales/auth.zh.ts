@@ -27,15 +27,4 @@ export default {
   recoveryReason: '说明',
   recoveryReasonHint: '例如：换了新手机，旧手机已遗失',
   submitRecovery: '提交申请',
-  // New i18n keys for enhanced auth
-  chooseSignInMethod: '选择登入方式',
-  passkey: '通行密钥',
-  password: '密码',
-  emailVerification: '电邮验证',
-  verifyEmailToSignIn: '验证电邮以登入',
-  emailAlreadyVerified: '您的电邮已验证',
-  toSignInYouNeedTo: '要登入，您需要',
-  configureSignInMethod: '配置登入方式',
-  setUpPasskey: '设置通行密钥',
-  skipForNow: '稍后再设',
 };
