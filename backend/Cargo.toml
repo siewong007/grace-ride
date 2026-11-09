@@ -22,7 +22,7 @@ url = "2"
 thiserror = "2"
 anyhow = "1"
 tracing = "0.1"
-reqwest = { version = "0.12", features = ["json"] }
+reqwest = { version = "0.13", features = ["json"] }
 tracing-subscriber = { version = "0.3", features = ["env-filter", "json"] }
 dotenvy = "0.15"
 base64 = "0.22"
