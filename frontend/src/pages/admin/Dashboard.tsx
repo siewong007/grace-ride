@@ -40,6 +40,9 @@ export default function Dashboard() {
         {stat(d.today_confirmed, t('dashboard.todayConfirmed'), '/admin/rides')}
         {stat(d.pending_approval, t('dashboard.pendingApproval'), '/admin/rides?status=pending_approval', d.pending_approval ? 'warn' : '')}
         {stat(d.no_driver, t('dashboard.noDriver'), '/admin/rides?status=pending_driver', d.no_driver ? 'warn' : '')}
+        {stat(d.live_drivers, t('dashboard.liveDrivers'), '/admin/live')}
+        {stat(d.rides_started_today || 0, t('dashboard.ridesStarted'), '/admin/rides')}
+        {stat(d.rides_completed_today || 0, t('dashboard.ridesCompleted'), '/admin/rides')}
         {stat(d.needs_attention, t('dashboard.needsAttention'), '/admin/rides?attention=true', d.needs_attention ? 'bad' : '')}
         {stat(d.live_drivers, t('dashboard.liveDrivers'), '/admin/live')}
         {stat(d.open_help, t('dashboard.openHelp'), '/help', d.open_help ? 'warn' : '')}

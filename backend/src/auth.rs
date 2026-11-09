@@ -23,7 +23,7 @@ pub const SESSION_COOKIE_SECURE: &str = "__Host-gr_session";
 /// Every active member is implicitly a passenger / participant.
 pub const ROLES: &[&str] = &["admin", "transport", "finance", "leader", "driver"];
 /// Roles that see other members' data and must use passkey or password+2FA.
-pub const PRIVILEGED: &[&str] = &["admin", "transport", "finance"];
+pub const PRIVILEGED: &[&str] = &["superadmin", "admin", "transport", "finance"];
 
 pub fn hash_token(token: &str) -> String {
     hex::encode(Sha256::digest(token.as_bytes()))
@@ -62,12 +62,6 @@ pub fn parse_roles(s: &str) -> Vec<String> {
         .map(|r| r.trim().to_string())
         .filter(|r| ROLES.contains(&r.as_str()))
         .collect()
-}
-
-pub fn is_privileged(roles: &str) -> bool {
-    parse_roles(roles)
-        .iter()
-        .any(|r| PRIVILEGED.contains(&r.as_str()))
 }
 
 impl FromRequestParts<AppState> for CurrentUser {
