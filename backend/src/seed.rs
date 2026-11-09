@@ -447,7 +447,45 @@ async fn seed_core(db: &PgPool) -> anyhow::Result<()> {
         .bind(43001i64).bind(settle).bind(r#"{"title":"上周羽毛球费用","total_cents":16800}"#).bind(deming).bind(DEMO_BATCH).bind(now_kl()).execute(db).await?;
 
     audit(db, Some(admin), "seed.core", "users", Some(13), &format!("core demo users {}-{}", core.first().unwrap().0, core.last().unwrap().0)).await;
+    // Explicit ids above do not advance IDENTITY sequences; bump them so later
+    // inserts (tests, capacity seed, invites) do not collide on primary keys.
+    sync_identity_sequences(db).await?;
     tracing::info!("Core demo fixtures seeded ({} users)", id_of.len());
+    Ok(())
+}
+
+/// Align each IDENTITY sequence with MAX(id) after seed inserts with fixed ids.
+async fn sync_identity_sequences(db: &PgPool) -> anyhow::Result<()> {
+    for table in [
+        "users",
+        "invites",
+        "passkeys",
+        "recovery_requests",
+        "areas",
+        "groups",
+        "files",
+        "events",
+        "event_signups",
+        "rides",
+        "ride_messages",
+        "notifications",
+        "announcements",
+        "help_tickets",
+        "help_replies",
+        "audit_logs",
+        "login_failures",
+        "oauth_accounts",
+        "reimbursements",
+        "settlements",
+        "settlement_items",
+        "settlement_shares",
+        "settlement_revisions",
+    ] {
+        let sql = format!(
+            "SELECT setval(pg_get_serial_sequence('{table}', 'id'), COALESCE((SELECT MAX(id) FROM {table}), 1))"
+        );
+        sqlx::query(&sql).execute(db).await?;
+    }
     Ok(())
 }
 /// Scalable fictional membership: `scale` additional members with stable ids
