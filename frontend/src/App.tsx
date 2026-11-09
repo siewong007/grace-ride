@@ -5,6 +5,7 @@ import Layout from './components/Layout';
 import { Spinner } from './components/ui';
 import Login from './pages/Login';
 import Home from './pages/Home';
+import TermsPage from './components/Terms';
 
 // Route-level code splitting: the login screen and home page load first; everything
 // else (admin tools, Leaflet maps, cost splitting) downloads only when visited.
@@ -54,6 +55,7 @@ export default function App() {
   return (
     <Routes>
       <Route path="/login" element={<Login />} />
+      <Route path="/terms" element={<TermsPage />} />
       <Route path="/invite/:token" element={page(<Invite />)} />
       <Route element={<RequireAuth><Layout /></RequireAuth>}>
         <Route index element={<Home />} />

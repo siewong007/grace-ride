@@ -50,6 +50,7 @@ pub enum ErrorKey {
     TooManyFailedLogins,
     AuthDisabled,
     AccountPending,
+    TermsRequired,
 
     // === Events ===
     EventNameRequired,
@@ -261,6 +262,7 @@ impl ErrorKey {
             Self::TooManyFailedLogins => "TOO_MANY_FAILED_LOGINS",
             Self::AuthDisabled => "AUTH_DISABLED",
             Self::AccountPending => "ACCOUNT_PENDING",
+            Self::TermsRequired => "TERMS_REQUIRED",
 
             Self::EventNameRequired => "EVENT_NAME_REQUIRED",
             Self::InvalidEventType => "INVALID_EVENT_TYPE",

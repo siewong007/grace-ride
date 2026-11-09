@@ -3,6 +3,7 @@ import { useNavigate, useParams } from 'react-router-dom';
 import { Fingerprint } from 'lucide-react';
 import { post, useApi } from '../api';
 import { useAuth } from '../auth';
+import { TermsOptIn, TermsText } from '../components/Terms';
 import { ErrorBox, Field, Spinner, useAction } from '../components/ui';
 import { passkeySupported, registerPasskey } from '../webauthn';
 import { useTranslation } from 'react-i18next';
@@ -14,7 +15,9 @@ export default function Invite() {
   const { refresh } = useAuth();
   const { data, error, loading } = useApi<{ kind: string; email: string; name: string }>(`/invites/${token}`);
   const [name, setName] = useState('');
+  const [email, setEmail] = useState('');
   const [phone, setPhone] = useState('');
+  const [terms, setTerms] = useState(false);
   const [step, setStep] = useState<'details' | 'passkey'>('details');
   const { busy, error: actErr, run } = useAction();
 
@@ -31,7 +34,7 @@ export default function Invite() {
   const accept = (e: FormEvent) => {
     e.preventDefault();
     run(async () => {
-      await post(`/invites/${token}/accept`, recovery ? {} : { name: name || data.name, phone });
+      await post(`/invites/${token}/accept`, recovery ? { terms: true } : { name: name.trim(), email: email.trim(), phone, terms: true });
       await refresh();
       setStep('passkey');
     });
@@ -52,22 +55,29 @@ export default function Invite() {
           <form className="stack" onSubmit={accept}>
             <div>
               <h2>{recovery ? t('recover') : t('join')}</h2>
-              <p className="muted">{data.email}</p>
+              {recovery && data.email && <p className="muted">{data.email}</p>}
             </div>
             {recovery ? (
               <p>{t('recoverDesc')}</p>
             ) : (
               <>
                 <Field label={t('name')}>
-                  <input className="input" required defaultValue={data.name} onChange={(e) => setName(e.target.value)} />
+                  <input className="input" required autoComplete="name" value={name} onChange={(e) => setName(e.target.value)} />
+                </Field>
+                <Field label={t('email')}>
+                  <input className="input" type="email" required autoComplete="email" value={email} onChange={(e) => setEmail(e.target.value)} />
                 </Field>
                 <Field label={t('phone')} hint={t('phoneHint')}>
                   <input className="input" type="tel" required value={phone} onChange={(e) => setPhone(e.target.value)} />
                 </Field>
               </>
             )}
+            <div className="card flat" style={{ maxHeight: 220, overflow: 'auto' }}>
+              <TermsText />
+            </div>
+            <TermsOptIn checked={terms} onChange={setTerms} />
             <ErrorBox error={actErr} />
-            <button className="btn primary block" disabled={busy}>{t('continue')}</button>
+            <button className="btn primary block" disabled={busy || !terms}>{t('continue')}</button>
           </form>
         ) : (
           <div className="stack">

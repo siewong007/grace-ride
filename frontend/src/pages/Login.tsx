@@ -1,5 +1,5 @@
 import { FormEvent, useEffect, useState } from 'react';
-import { Navigate, useLocation, useNavigate } from 'react-router-dom';
+import { Link, Navigate, useLocation, useNavigate } from 'react-router-dom';
 import { Fingerprint } from 'lucide-react';
 import { api, post } from '../api';
 import { useAuth } from '../auth';
@@ -70,6 +70,7 @@ export default function Login() {
             <div className="notice">{t('noPasskey')}</div>
           )}
           <p className="muted small">{t('passkeyHelp')}</p>
+          <Link to="/terms">{t('title', { ns: 'terms' })}</Link>
         </form>
 
         {/* Link to other login methods */}

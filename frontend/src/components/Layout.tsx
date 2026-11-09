@@ -5,6 +5,7 @@ import {
   LifeBuoy, MapPinned, Megaphone, Receipt, ScrollText, User, Users, Wallet, BarChart3,
 } from 'lucide-react';
 import { useAuth } from '../auth';
+import { TermsGate } from './Terms';
 import { useTranslation } from 'react-i18next';
 
 interface NavItem { to: string; label: string; icon: ReactNode; end?: boolean }
@@ -14,6 +15,7 @@ export default function Layout() {
   const { me, has, isStaff } = useAuth();
   const loc = useLocation();
   if (!me) return null;
+  if (!me.terms_accepted) return <TermsGate />;
   const pending = me.status === 'pending';
   if (pending && loc.pathname !== '/me') return <Navigate to="/me" replace />;
   const sz = 22;

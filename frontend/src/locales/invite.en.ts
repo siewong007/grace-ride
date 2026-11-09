@@ -3,6 +3,7 @@ export default {
   recover: 'Recover account',
   recoverDesc: 'An admin has verified your identity. Continue to set up a passkey for your new device.',
   name: 'Name',
+  email: 'Email',
   phone: 'Phone number',
   phoneHint: 'Shown to the assigned driver or passenger only after the ride is approved',
   password: 'Backup password (optional)',

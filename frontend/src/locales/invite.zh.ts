@@ -3,6 +3,7 @@ export default {
   recover: '恢复账号',
   recoverDesc: '管理员已核实您的身份。继续后，请为新设备设置通行密钥。',
   name: '姓名',
+  email: '电邮',
   phone: '手机号码',
   phoneHint: '仅在接送获批准后显示给相关司机或乘客',
   password: '备用密码（可选）',

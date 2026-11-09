@@ -1,7 +1,7 @@
 import { FormEvent, useState } from 'react';
 import { del, post, put, useApi } from '../../api';
 import { useAuth } from '../../auth';
-import { Empty, ErrorBox, Field, Modal, Pill, Spinner, useAction } from '../../components/ui';
+import { Empty, ErrorBox, Modal, Pill, Spinner, useAction } from '../../components/ui';
 import { fmtAgo, ROLE_LABEL, useFormatT } from '../../format';
 import { useTranslation } from 'react-i18next';
 
@@ -135,21 +135,14 @@ function ApproveUser({ user, t, ft, onClose }: { user: User; t: (k: string, o?: 
 
 function Invites({ t, ft }: { t: (k: string, o?: any) => string; ft: (k: string) => string }) {
   const { data, reload } = useApi<any[]>('/admin/invites');
-  const [email, setEmail] = useState('');
-  const [name, setName] = useState('');
   const [link, setLink] = useState<string | null>(null);
   const { busy, error, run } = useAction();
   const copy = (s: string) => { navigator.clipboard?.writeText(s); };
   const submit = (e: FormEvent) => {
     e.preventDefault();
     run(async () => {
-      const r = await post<{ url: string }>('/admin/invites', {
-        email: email.trim(),
-        name: name.trim(),
-      });
+      const r = await post<{ url: string }>('/admin/invites', {});
       setLink(r.url);
-      setEmail('');
-      setName('');
       reload();
     }, t('members.inviteCreated'));
   };
@@ -157,12 +150,6 @@ function Invites({ t, ft }: { t: (k: string, o?: any) => string; ft: (k: string)
     <div className="stack">
       <form className="card stack" onSubmit={submit}>
         <p className="muted">{t('members.inviteHint')}</p>
-        <Field label={t('members.email')}>
-          <input className="input" type="email" required autoComplete="off" value={email} onChange={(e) => setEmail(e.target.value)} />
-        </Field>
-        <Field label={t('members.name')}>
-          <input className="input" value={name} onChange={(e) => setName(e.target.value)} />
-        </Field>
         <ErrorBox error={error} />
         <button className="btn primary" disabled={busy}>{t('members.createInvite')}</button>
         {link && (
@@ -179,7 +166,7 @@ function Invites({ t, ft }: { t: (k: string, o?: any) => string; ft: (k: string)
           {data?.map((i) => (
             <div key={i.id} className="item">
               <div className="grow">
-                <div className="bold">{i.email} {i.kind === 'recovery' && <Pill tone="blue">{t('members.recovery')}</Pill>}</div>
+                <div className="bold">{i.email || t('members.openInvite')} {i.kind === 'recovery' && <Pill tone="blue">{t('members.recovery')}</Pill>}</div>
                 <div className="muted tiny">{i.roles.map((r: string) => ft(ROLE_LABEL[r])).join('、') || t('members.member')} · {fmtAgo(i.created_at)}</div>
               </div>
               {i.status === 'open' ? (

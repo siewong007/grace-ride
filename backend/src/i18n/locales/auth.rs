@@ -29,6 +29,7 @@ pub fn render(lang: Lang, key: &ErrorKey) -> String {
         ErrorKey::TooManyFailedLogins => pair(lang, "登入失败次数过多，账号已暂时锁定 15 分钟。可改用通行密钥登入。", "Too many failed logins; the account is locked for 15 minutes. You can sign in with a passkey instead."),
         ErrorKey::AuthDisabled => pair(lang, "此应用使用通行密钥登入，不使用密码。", "This app signs in with a passkey, not a password."),
         ErrorKey::AccountPending => pair(lang, "账号尚未通过审核，目前只能使用个人资料。", "This account is waiting for approval. Only the profile is available."),
+        ErrorKey::TermsRequired => pair(lang, "请先阅读并勾选同意使用条款。", "Please read the terms and opt in before continuing."),
         other => panic!("{} is not an auth error", other.code()),
     }
 }

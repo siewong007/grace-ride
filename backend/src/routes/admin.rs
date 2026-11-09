@@ -195,50 +195,18 @@ async fn update_user(
     Ok(Json(json!({"ok": true})))
 }
 
-#[derive(Deserialize)]
-struct InviteIn {
-    email: String,
-    name: Option<String>,
-}
-
-async fn create_invite(
-    State(st): State<AppState>,
-    u: CurrentUser,
-    Json(req): Json<InviteIn>,
-) -> AppResult<Json<Value>> {
+async fn create_invite(State(st): State<AppState>, u: CurrentUser) -> AppResult<Json<Value>> {
     require_any(&u, &["admin"])?;
-    let email = req.email.trim().to_lowercase();
-    if !email.contains('@') {
-        return Err(bad(u.lang, ErrorKey::EmailInvalid));
-    }
-    let (exists,): (i64,) = sqlx::query_as("SELECT COUNT(*) FROM users WHERE email=$1")
-        .bind(&email)
-        .fetch_one(&st.db)
-        .await?;
-    if exists > 0 {
-        return Err(bad(u.lang, ErrorKey::EmailAlreadyMember));
-    }
+    // The invited person types their own name and email. The link carries neither.
     let token = random_token(32);
-    let (id,): (i64,) = sqlx::query_as("INSERT INTO invites (token, kind, email, name, roles, group_ids, created_by, expires_at, created_at) VALUES ($1, 'invite', $2,$3,$4,$5,$6,$7,$8) RETURNING id")
+    let (id,): (i64,) = sqlx::query_as("INSERT INTO invites (token, kind, email, name, roles, group_ids, created_by, expires_at, created_at) VALUES ($1, 'invite', '', '', '', '[]', $2,$3,$4) RETURNING id")
         .bind(&token)
-        .bind(&email)
-        .bind(req.name.unwrap_or_default().trim())
-        .bind("")
-        .bind("[]")
         .bind(u.id)
         .bind(in_days(3))
         .bind(now())
         .fetch_one(&st.db)
         .await?;
-    audit(
-        &st.db,
-        Some(u.id),
-        "invite.create",
-        "invite",
-        Some(id),
-        &email,
-    )
-    .await;
+    audit(&st.db, Some(u.id), "invite.create", "invite", Some(id), "open").await;
     Ok(Json(
         json!({"id": id, "token": token, "url": format!("{}/invite/{}", st.cfg.public_url, token)}),
     ))

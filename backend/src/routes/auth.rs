@@ -41,6 +41,7 @@ pub fn router() -> Router<AppState> {
         .route("/auth/dev-users", get(dev_users))
         .route("/auth/dev-login", post(dev_login))
         .route("/auth/logout", post(logout))
+        .route("/auth/terms", post(accept_terms))
         .route("/auth/passkey/login/start", post(passkey_login_start))
         .route("/auth/passkey/login/finish", post(passkey_login_finish))
         .route("/auth/passkey/register/start", post(passkey_register_start))
@@ -186,8 +187,8 @@ fn clear_cookies(jar: CookieJar) -> CookieJar {
 }
 
 async fn me(State(st): State<AppState>, u: CurrentUser) -> AppResult<Json<Value>> {
-    let row: (String, Option<i64>, i64, Option<String>, i64, i64, i64) = sqlx::query_as(
-        "SELECT phone, photo_file_id, totp_enabled, password_hash, badges_opt_out, carpool_enabled, spare_seats FROM users WHERE id=$1",
+    let row: (String, Option<i64>, i64, Option<String>, i64, i64, i64, Option<String>) = sqlx::query_as(
+        "SELECT phone, photo_file_id, totp_enabled, password_hash, badges_opt_out, carpool_enabled, spare_seats, terms_accepted_at FROM users WHERE id=$1",
     )
     .bind(u.id)
     .fetch_one(&st.db)
@@ -215,6 +216,7 @@ async fn me(State(st): State<AppState>, u: CurrentUser) -> AppResult<Json<Value>
         "roles": u.roles, "mfa_ok": u.mfa_ok, "totp_enabled": row.2 == 1,
         "has_password": row.3.is_some(), "passkey_count": passkeys.0,
         "badges_opt_out": row.4 == 1, "carpool_enabled": row.5 == 1, "spare_seats": row.6,
+        "terms_accepted": row.7.is_some(),
         "privileged": privileged, "unread": unread.0,
         "groups": groups.into_iter().map(|(id, name)| json!({"id": id, "name": name})).collect::<Vec<_>>(),
         "dev_mode": st.cfg.dev_mode,
@@ -735,9 +737,33 @@ async fn invite_preview(
 }
 
 #[derive(Deserialize)]
+struct TermsIn {
+    accepted: bool,
+}
+
+async fn accept_terms(
+    State(st): State<AppState>,
+    u: CurrentUser,
+    Json(req): Json<TermsIn>,
+) -> AppResult<Json<Value>> {
+    if !req.accepted {
+        return Err(bad(u.lang, ErrorKey::TermsRequired));
+    }
+    sqlx::query("UPDATE users SET terms_accepted_at=COALESCE(terms_accepted_at, $1) WHERE id=$2")
+        .bind(now())
+        .bind(u.id)
+        .execute(&st.db)
+        .await?;
+    audit(&st.db, Some(u.id), "terms.accept", "user", Some(u.id), "").await;
+    Ok(Json(json!({ "ok": true })))
+}
+
+#[derive(Deserialize)]
 struct AcceptReq {
     name: Option<String>,
+    email: Option<String>,
     phone: Option<String>,
+    terms: Option<bool>,
 }
 
 async fn invite_accept(
@@ -766,9 +792,46 @@ async fn invite_accept(
     if used.is_some() || expires < now() {
         return Err(bad(lang, ErrorKey::InviteExpired));
     }
+    if req.terms != Some(true) {
+        return Err(bad(lang, ErrorKey::TermsRequired));
+    }
+    let joined_email;
+    let joined_name;
+    if kind == "recovery" {
+        joined_email = email;
+        joined_name = inv_name;
+    } else {
+        joined_name = req
+            .name
+            .as_deref()
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+            .unwrap_or("")
+            .to_string();
+        joined_email = req
+            .email
+            .unwrap_or_default()
+            .trim()
+            .to_lowercase();
+        if joined_name.is_empty() {
+            return Err(bad(lang, ErrorKey::NameRequired));
+        }
+        if !joined_email.contains('@') {
+            return Err(bad(lang, ErrorKey::EmailInvalid));
+        }
+        let (exists,): (i64,) = sqlx::query_as("SELECT COUNT(*) FROM users WHERE email=$1")
+            .bind(&joined_email)
+            .fetch_one(&st.db)
+            .await?;
+        if exists > 0 {
+            return Err(bad(lang, ErrorKey::EmailAlreadyRegistered));
+        }
+    }
     // Mark used first (single use, guards against double submit).
-    let r = sqlx::query("UPDATE invites SET used_at=$1 WHERE id=$2 AND used_at IS NULL")
+    let r = sqlx::query("UPDATE invites SET used_at=$1, email=$2, name=$3 WHERE id=$4 AND used_at IS NULL")
         .bind(now())
+        .bind(&joined_email)
+        .bind(&joined_name)
         .bind(inv_id)
         .execute(&st.db)
         .await?;
@@ -777,24 +840,20 @@ async fn invite_accept(
     }
 
     let uid = if kind == "recovery" {
-        rec_user.ok_or_else(|| bad(lang, ErrorKey::RecoveryLinkInvalid))?
+        let id = rec_user.ok_or_else(|| bad(lang, ErrorKey::RecoveryLinkInvalid))?;
+        sqlx::query("UPDATE users SET terms_accepted_at=COALESCE(terms_accepted_at, $1) WHERE id=$2")
+            .bind(now())
+            .bind(id)
+            .execute(&st.db)
+            .await?;
+        id
     } else {
-        let name = req
-            .name
-            .as_deref()
-            .map(str::trim)
-            .filter(|s| !s.is_empty())
-            .unwrap_or(&inv_name)
-            .to_string();
-        if name.is_empty() {
-            return Err(bad(lang, ErrorKey::NameRequired));
-        }
         // The invite only opens a profile. Role and group are assigned when an admin approves.
         let (id,): (i64,) = sqlx::query_as(
-            "INSERT INTO users (name, email, phone, roles, status, password_hash, webauthn_uuid, created_at) VALUES ($1,$2,$3,'','pending',$4,$5,$6) RETURNING id",
+            "INSERT INTO users (name, email, phone, roles, status, password_hash, webauthn_uuid, terms_accepted_at) VALUES ($1,$2,$3,'','pending',$4,$5,$6) RETURNING id",
         )
-        .bind(&name)
-        .bind(&email)
+        .bind(&joined_name)
+        .bind(&joined_email)
         .bind(req.phone.unwrap_or_default())
         .bind(None::<String>)
         .bind(uuid::Uuid::new_v4().to_string())
@@ -815,7 +874,7 @@ async fn invite_accept(
         },
         "user",
         Some(uid),
-        &email,
+        &joined_email,
     )
     .await;
     Ok((jar, Json(json!({ "ok": true, "kind": kind }))))

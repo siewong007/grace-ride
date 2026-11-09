@@ -45,7 +45,8 @@ export default {
     "EMAIL_ALREADY_REGISTERED": "此电邮已经注册",
     "TOO_MANY_FAILED_LOGINS": "登入失败次数过多，账号已暂时锁定 15 分钟。可改用通行密钥登入。",
     "AUTH_DISABLED": "此应用使用通行密钥登入，不使用密码。",
-    "ACCOUNT_PENDING": "账号尚未通过审核，目前只能使用个人资料。"
+    "ACCOUNT_PENDING": "账号尚未通过审核，目前只能使用个人资料。",
+    "TERMS_REQUIRED": "请先阅读并勾选同意使用条款。"
   },
   "events": {
     "EVENT_NAME_REQUIRED": "请填写活动名称",

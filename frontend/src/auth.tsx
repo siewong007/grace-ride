@@ -11,6 +11,7 @@ export interface Me {
   photo_file_id: number | null;
   roles: Role[];
   status: 'active' | 'pending' | 'disabled';
+  terms_accepted: boolean;
   mfa_ok: boolean;
   totp_enabled: boolean;
   has_password: boolean;
