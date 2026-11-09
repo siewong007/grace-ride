@@ -1,6 +1,6 @@
 //! Shared helpers: time, audit log, notifications, permission checks.
 
-use chrono::{Duration, FixedOffset, Local, NaiveDate, NaiveDateTime, Weekday};
+use chrono::{Duration, FixedOffset, Local, NaiveDate, NaiveDateTime, Utc, Weekday};
 use rand::{distributions::Alphanumeric, Rng};
 use sqlx::PgPool;
 
@@ -157,17 +157,15 @@ pub fn fmt_rm(cents: i64) -> String {
 pub const KL_OFFSET_SECS: i32 = 8 * 3600;
 
 pub fn now_kl() -> String {
-    FixedOffset::east_opt(KL_OFFSET_SECS)
-        .expect("UTC+8 is a valid offset")
-        .now()
+    let offset = FixedOffset::east_opt(KL_OFFSET_SECS).expect("UTC+8 is a valid offset");
+    Utc::now()
+        .with_timezone(&offset)
         .format("%Y-%m-%dT%H:%M:%S")
         .to_string()
 }
 
 /// Demo "today" in KL time; all relative seed dates anchor on this date.
 pub fn today_kl() -> NaiveDate {
-    FixedOffset::east_opt(KL_OFFSET_SECS)
-        .expect("UTC+8 is a valid offset")
-        .now()
-        .date_naive()
+    let offset = FixedOffset::east_opt(KL_OFFSET_SECS).expect("UTC+8 is a valid offset");
+    Utc::now().with_timezone(&offset).date_naive()
 }

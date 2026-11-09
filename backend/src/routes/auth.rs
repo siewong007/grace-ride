@@ -238,16 +238,17 @@ async fn record_failure(st: &AppState, email: &str, ip: &str) -> AppResult<()> {
 }
 
 async fn login_password(
-    _State(_st): State<AppState>,
+    State(_st): State<AppState>,
     _peer: Option<axum::Extension<ConnectInfo<SocketAddr>>>,
-    _headers: HeaderMap,
+    headers: HeaderMap,
     _jar: CookieJar,
-    _Json(_req): Json<LoginReq>,
+    Json(_req): Json<LoginReq>,
 ) -> AppResult<(CookieJar, Json<Value>)> {
-    // Password login is disabled. All authentication is via passkey (WebAuthn).
+    // Password login is disabled. Members sign in with a passkey.
     let lang = Lang::from_accept_language(
-        _headers.get(axum::http::header::ACCEPT_LANGUAGE).and_then(|v| v.to_str().ok()).unwrap_or(""),
+        headers.get(axum::http::header::ACCEPT_LANGUAGE).and_then(|v| v.to_str().ok()).unwrap_or(""),
     );
+    let _ = (_st, _req);
     Err(bad(lang, ErrorKey::AuthDisabled))
 }
 

@@ -27,6 +27,7 @@ pub fn render(lang: Lang, key: &ErrorKey) -> String {
         ErrorKey::NameRequired => pair(lang, "请填写姓名", "Please enter your name"),
         ErrorKey::EmailAlreadyRegistered => pair(lang, "此电邮已经注册", "This email is already registered"),
         ErrorKey::TooManyFailedLogins => pair(lang, "登入失败次数过多，账号已暂时锁定 15 分钟。可改用通行密钥登入。", "Too many failed logins; the account is locked for 15 minutes. You can sign in with a passkey instead."),
+        ErrorKey::AuthDisabled => pair(lang, "此应用使用通行密钥登入，不使用密码。", "This app signs in with a passkey, not a password."),
         other => panic!("{} is not an auth error", other.code()),
     }
 }

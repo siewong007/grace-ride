@@ -43,7 +43,8 @@ export default {
     "CHALLENGE_MISMATCH": "Challenge does not match",
     "NAME_REQUIRED": "Please enter your name",
     "EMAIL_ALREADY_REGISTERED": "This email is already registered",
-    "TOO_MANY_FAILED_LOGINS": "Too many failed logins; the account is locked for 15 minutes. You can sign in with a passkey instead."
+    "TOO_MANY_FAILED_LOGINS": "Too many failed logins; the account is locked for 15 minutes. You can sign in with a passkey instead.",
+    "AUTH_DISABLED": "This app signs in with a passkey, not a password."
   },
   "events": {
     "EVENT_NAME_REQUIRED": "Please enter an event name",

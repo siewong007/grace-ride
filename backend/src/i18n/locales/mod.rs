@@ -57,7 +57,8 @@ pub fn render(lang: Lang, key: &ErrorKey) -> String {
         | ErrorKey::ChallengeMismatch
         | ErrorKey::NameRequired
         | ErrorKey::EmailAlreadyRegistered
-        | ErrorKey::TooManyFailedLogins => auth::render(lang, key),
+        | ErrorKey::TooManyFailedLogins
+        | ErrorKey::AuthDisabled => auth::render(lang, key),
         ErrorKey::EventNameRequired
         | ErrorKey::InvalidEventType
         | ErrorKey::SelectVisibleGroup
@@ -237,6 +238,7 @@ mod tests {
             ErrorKey::NameRequired,
             ErrorKey::EmailAlreadyRegistered,
             ErrorKey::TooManyFailedLogins,
+            ErrorKey::AuthDisabled,
             ErrorKey::EventNameRequired,
             ErrorKey::InvalidEventType,
             ErrorKey::SelectVisibleGroup,

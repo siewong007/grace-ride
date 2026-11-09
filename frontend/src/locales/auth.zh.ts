@@ -9,7 +9,7 @@ export default {
   email: '电邮',
   loginWithPasskey: '使用通行密钥登入',
   or: '或',
-  useEmailToLogin: '使用电邮登入'
+  useEmailToLogin: '使用电邮登入',
   passkeyHelp: '用手机刷脸、指纹或屏幕密码确认身份；教会不保存任何人脸或指纹资料。',
   noPasskey: '此浏览器不能使用通行密钥。请在手机上打开邀请连结，或请管理员重新邀请。',
   testAccounts: '测试账号',
