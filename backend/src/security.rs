@@ -203,11 +203,7 @@ pub async fn origin_guard(State(st): State<AppState>, req: Request, next: Next) 
                 "请求来源不被允许",
                 "Request origin not allowed",
             );
-            return (
-                StatusCode::FORBIDDEN,
-                Json(json!({ "error": accept })),
-            )
-                .into_response();
+            return (StatusCode::FORBIDDEN, Json(json!({ "error": accept }))).into_response();
         }
     }
     next.run(req).await

@@ -15,6 +15,7 @@
 //!   data is ever used.
 //! - No real passkey private keys, SMS, email, GPS streaming or payment transfers.
 
+#![allow(dead_code, clippy::too_many_arguments, clippy::needless_borrow)]
 use chrono::{Datelike, Duration, NaiveDate, Weekday};
 use rand::rngs::StdRng;
 use rand::seq::SliceRandom;
@@ -37,20 +38,55 @@ const GENERATED_EVENT_ID_BASE: i64 = 1001;
 const GENERATED_RIDE_ID_BASE: i64 = 30001;
 const SIMULATED_TOTP_SECRET: &str = "MFRGGZDF73DGXYP3";
 const LEGACY_DEMO_EMAILS: &[&str] = &[
-    "admin@example.org", "transport@example.org", "finance@example.org",
-    "driver@example.org", "driver2@example.org", "member@example.org",
-    "amina@example.org", "sophie@example.org", "yawen@example.org",
-    "zhiqiang@example.org", "meiling@example.org", "enci@example.org",
+    "admin@example.org",
+    "transport@example.org",
+    "finance@example.org",
+    "driver@example.org",
+    "driver2@example.org",
+    "member@example.org",
+    "amina@example.org",
+    "sophie@example.org",
+    "yawen@example.org",
+    "zhiqiang@example.org",
+    "meiling@example.org",
+    "enci@example.org",
     "guorong@example.org",
 ];
 const GIVEN_NAMES: &[&str] = &[
-    "Ah Mei", "Demo", "Grace", "Kumar", "Rahman", "Siti", "Wei", "Ling",
-    "Sample", "Fictional", "PJ", "Ride", "Member", "Volunteer", "Trial",
-    "Demo Ana", "Grace Ridzuan", "Daniel Sample",
+    "Ah Mei",
+    "Demo",
+    "Grace",
+    "Kumar",
+    "Rahman",
+    "Siti",
+    "Wei",
+    "Ling",
+    "Sample",
+    "Fictional",
+    "PJ",
+    "Ride",
+    "Member",
+    "Volunteer",
+    "Trial",
+    "Demo Ana",
+    "Grace Ridzuan",
+    "Daniel Sample",
 ];
 const FAMILY_NAMES: &[&str] = &[
-    "Tan", "Lim", "Member", "Rider", "Driver", "Kumar", "Rahman", "Ali",
-    "Demo", "Sample", "Test", "Fictional", "Raja", "Nair",
+    "Tan",
+    "Lim",
+    "Member",
+    "Rider",
+    "Driver",
+    "Kumar",
+    "Rahman",
+    "Ali",
+    "Demo",
+    "Sample",
+    "Test",
+    "Fictional",
+    "Raja",
+    "Nair",
 ];
 const ADDRESSES: &[&str] = &[
     "12 Jalan Demo, SS2/24, 47400 Petaling Jaya (SS2)",
@@ -67,19 +103,38 @@ const ADDRESSES: &[&str] = &[
     "No 77, Jalan SS2/55, SS2",
 ];
 const VEHICLE_MODELS: &[&str] = &[
-    "Perodua Myvi", "Honda City", "Toyota Vios", "Mazda 3", "Proton X50",
-    "Nissan Almera", "Perodua Axia", "Toyota Innova",
+    "Perodua Myvi",
+    "Honda City",
+    "Toyota Vios",
+    "Mazda 3",
+    "Proton X50",
+    "Nissan Almera",
+    "Perodua Axia",
+    "Toyota Innova",
 ];
 const VEHICLE_COLORS: &[&str] = &["白色", "银色", "灰色", "蓝色", "红色", "黑色"];
 const VEHICLE_PLATE_PREFIXES: &[&str] = &["W", "B", "V", "F", "S"];
 const DESTINATIONS: &[&str] = &[
-    "PJ State CMC 教会", "社区中心礼堂", "诊所入口", "PJ 室内羽球馆",
-    "图书馆入口", "宵夜团契", "Sunway Pyramid 保龄球馆", "Putrajaya 湖畔",
-    "Taman Jaya 公园入口", "北门入口",
+    "PJ State CMC 教会",
+    "社区中心礼堂",
+    "诊所入口",
+    "PJ 室内羽球馆",
+    "图书馆入口",
+    "宵夜团契",
+    "Sunway Pyramid 保龄球馆",
+    "Putrajaya 湖畔",
+    "Taman Jaya 公园入口",
+    "北门入口",
 ];
 const AREA_NAMES: &[&str] = &[
-    "八打灵再也 PJ", "SS2", "新市", "梳邦再也", "白沙罗", "蒲种",
-    "吉隆坡市中心", "Kelana Jaya",
+    "八打灵再也 PJ",
+    "SS2",
+    "新市",
+    "梳邦再也",
+    "白沙罗",
+    "蒲种",
+    "吉隆坡市中心",
+    "Kelana Jaya",
 ];
 
 fn kl(dt: NaiveDate, h: i32, m: i32) -> String {
@@ -100,7 +155,9 @@ struct Rng {
 
 impl Rng {
     fn new() -> Self {
-        Self { inner: StdRng::seed_from_u64(PRNG_SEED) }
+        Self {
+            inner: StdRng::seed_from_u64(PRNG_SEED),
+        }
     }
     fn pick<T: Clone>(&mut self, vals: &[T]) -> T {
         vals.choose(&mut self.inner).unwrap().clone()
@@ -121,7 +178,12 @@ impl Rng {
                 .take(3)
                 .map(char::from)
                 .collect();
-            let plate = format!("{} {} {}", self.pick(VEHICLE_PLATE_PREFIXES), letters, self.range(1000, 9999));
+            let plate = format!(
+                "{} {} {}",
+                self.pick(VEHICLE_PLATE_PREFIXES),
+                letters,
+                self.range(1000, 9999)
+            );
             if used.insert(plate.clone()) {
                 return plate;
             }
@@ -152,6 +214,8 @@ pub async fn run(db: &PgPool, cfg: &Config) -> anyhow::Result<()> {
     if !cfg.dev_mode {
         return seed_admin_only(db, cfg).await;
     }
+    // 0005 FK requires demo_batches rows before any demo_batch-stamped seed insert.
+    ensure_demo_batches(db).await?;
     let (n,): (i64,) = sqlx::query_as("SELECT COUNT(*) FROM users WHERE demo_batch = $1")
         .bind(DEMO_BATCH)
         .fetch_one(db)
@@ -162,14 +226,31 @@ pub async fn run(db: &PgPool, cfg: &Config) -> anyhow::Result<()> {
     Ok(())
 }
 
+async fn ensure_demo_batches(db: &PgPool) -> anyhow::Result<()> {
+    for (batch, note) in [
+        (DEMO_BATCH, "Core demo fixtures"),
+        (EDGE_BATCH, "Edge / scale fixtures"),
+    ] {
+        sqlx::query(
+            "INSERT INTO demo_batches (batch, scale, note) VALUES ($1, 'core', $2) ON CONFLICT (batch) DO NOTHING",
+        )
+        .bind(batch)
+        .bind(note)
+        .execute(db)
+        .await?;
+    }
+    Ok(())
+}
 
 /// Canonical reference data (areas + groups). Safe to re-run: uses ON CONFLICT.
 async fn insert_reference_data(db: &PgPool) -> anyhow::Result<()> {
     for name in AREA_NAMES {
-        sqlx::query("INSERT INTO areas (name, demo_batch) VALUES ($1, NULL) ON CONFLICT (name) DO NOTHING")
-            .bind(name)
-            .execute(db)
-            .await?;
+        sqlx::query(
+            "INSERT INTO areas (name, demo_batch) VALUES ($1, NULL) ON CONFLICT (name) DO NOTHING",
+        )
+        .bind(name)
+        .execute(db)
+        .await?;
     }
     sqlx::query("INSERT INTO groups (name, description, is_all, demo_batch) VALUES ('全体会员', '所有获批准的会员', 1, NULL) ON CONFLICT (name) DO NOTHING").execute(db).await?;
     sqlx::query("INSERT INTO groups (name, description, demo_batch) VALUES ('青年团契', 'PJ State CMC 青年团契', NULL) ON CONFLICT (name) DO NOTHING").execute(db).await?;
@@ -181,7 +262,9 @@ async fn insert_reference_data(db: &PgPool) -> anyhow::Result<()> {
 /// Existing members are left alone. A second insert would fail the unique email
 /// and stop the process on every restart.
 async fn seed_admin_only(db: &PgPool, cfg: &Config) -> anyhow::Result<()> {
-    let (n,): (i64,) = sqlx::query_as("SELECT COUNT(*) FROM users").fetch_one(db).await?;
+    let (n,): (i64,) = sqlx::query_as("SELECT COUNT(*) FROM users")
+        .fetch_one(db)
+        .await?;
     if n > 0 {
         return Ok(());
     }
@@ -281,29 +364,137 @@ async fn seed_core(db: &PgPool) -> anyhow::Result<()> {
 
     // --- core demo users (ids 1..=13) ---
     let core = [
-        (1, "管理员 Grace", "admin@example.org", "012-300 0001", "admin", "active"),
-        (2, "黄美仪", "transport@example.org", "012-300 0002", "transport,driver", "active"),
-        (3, "林慧君", "finance@example.org", "012-300 0003", "finance", "active"),
-        (4, "李德明", "driver@example.org", "012-300 0004", "driver,leader", "active"),
-        (5, "张家乐", "driver2@example.org", "012-300 0005", "driver", "active"),
-        (6, "陈法拉", "member@example.org", "012-300 0006", "", "active"),
-        (7, "阿米娜", "amina@example.org", "012-300 0007", "", "active"),
-        (8, "林苏菲", "sophie@example.org", "012-300 0008", "", "active"),
-        (9, "周雅文", "yawen@example.org", "012-300 0011", "", "active"),
-        (10, "吴志强", "zhiqiang@example.org", "012-300 0012", "driver", "active"),
-        (11, "郑美玲", "meiling@example.org", "012-300 0013", "", "active"),
-        (12, "许恩慈", "enci@example.org", "012-300 0014", "leader", "active"),
-        (13, "陈国荣", "guorong@example.org", "012-300 0015", "driver,transport", "active"),
+        (
+            1,
+            "管理员 Grace",
+            "admin@example.org",
+            "012-300 0001",
+            "admin",
+            "active",
+        ),
+        (
+            2,
+            "黄美仪",
+            "transport@example.org",
+            "012-300 0002",
+            "transport,driver",
+            "active",
+        ),
+        (
+            3,
+            "林慧君",
+            "finance@example.org",
+            "012-300 0003",
+            "finance",
+            "active",
+        ),
+        (
+            4,
+            "李德明",
+            "driver@example.org",
+            "012-300 0004",
+            "driver,leader",
+            "active",
+        ),
+        (
+            5,
+            "张家乐",
+            "driver2@example.org",
+            "012-300 0005",
+            "driver",
+            "active",
+        ),
+        (
+            6,
+            "陈法拉",
+            "member@example.org",
+            "012-300 0006",
+            "",
+            "active",
+        ),
+        (
+            7,
+            "阿米娜",
+            "amina@example.org",
+            "012-300 0007",
+            "",
+            "active",
+        ),
+        (
+            8,
+            "林苏菲",
+            "sophie@example.org",
+            "012-300 0008",
+            "",
+            "active",
+        ),
+        (
+            9,
+            "周雅文",
+            "yawen@example.org",
+            "012-300 0011",
+            "",
+            "active",
+        ),
+        (
+            10,
+            "吴志强",
+            "zhiqiang@example.org",
+            "012-300 0012",
+            "driver",
+            "active",
+        ),
+        (
+            11,
+            "郑美玲",
+            "meiling@example.org",
+            "012-300 0013",
+            "",
+            "active",
+        ),
+        (
+            12,
+            "许恩慈",
+            "enci@example.org",
+            "012-300 0014",
+            "leader",
+            "active",
+        ),
+        (
+            13,
+            "陈国荣",
+            "guorong@example.org",
+            "012-300 0015",
+            "driver,transport",
+            "active",
+        ),
     ];
     let mut id_of = std::collections::HashMap::<&str, i64>::new();
     for (id, name, email, phone, roles, status) in core {
-        let uid = insert_member(db, &mut Rng::new(), id, name, email, phone, roles, status, DEMO_BATCH, &pw, false, false).await;
+        let uid = insert_member(
+            db,
+            &mut Rng::new(),
+            id,
+            name,
+            email,
+            phone,
+            roles,
+            status,
+            DEMO_BATCH,
+            &pw,
+            false,
+            false,
+        )
+        .await;
         id_of.insert(name, uid);
     }
-    let get = |dbg: &str, map: &std::collections::HashMap<&str, i64>| *map.get(dbg).unwrap_or_else(|| panic!("unknown core member {dbg}"));
+    let get = |dbg: &str, map: &std::collections::HashMap<&str, i64>| {
+        *map.get(dbg)
+            .unwrap_or_else(|| panic!("unknown core member {dbg}"))
+    };
     let admin = get("管理员 Grace", &id_of);
     let transport = get("黄美仪", &id_of);
-    let finance = get("林慧君", &id_of);
+    let _finance = get("林慧君", &id_of);
     let deming = get("李德明", &id_of);
     let jiale = get("张家乐", &id_of);
     let fala = get("陈法拉", &id_of);
@@ -317,9 +508,20 @@ async fn seed_core(db: &PgPool) -> anyhow::Result<()> {
 
     // --- group memberships ---
     for (uid, g) in [
-        (deming, 2), (deming, 3), (fala, 2), (fala, 3), (amina, 3),
-        (sophie, 2), (jiale, 3), (transport, 2), (yawen, 2),
-        (meiling, 2), (meiling, 3), (enci, 2), (zhiqiang, 3), (guorong, 3),
+        (deming, 2),
+        (deming, 3),
+        (fala, 2),
+        (fala, 3),
+        (amina, 3),
+        (sophie, 2),
+        (jiale, 3),
+        (transport, 2),
+        (yawen, 2),
+        (meiling, 2),
+        (meiling, 3),
+        (enci, 2),
+        (zhiqiang, 3),
+        (guorong, 3),
     ] {
         sqlx::query("INSERT INTO group_members (group_id, user_id, demo_batch) VALUES ($1,$2,$3) ON CONFLICT DO NOTHING")
             .bind(g).bind(uid).bind(DEMO_BATCH).execute(db).await?;
@@ -336,13 +538,30 @@ async fn seed_core(db: &PgPool) -> anyhow::Result<()> {
         .bind(zhiqiang).bind(DEMO_BATCH).execute(db).await?;
     sqlx::query("INSERT INTO vehicles (user_id, model, color, plate, seats, demo_batch) VALUES ($1,'Mazda 3','红色','VBE 7788',5,$2) ON CONFLICT(user_id) DO UPDATE SET model=excluded.model, color=excluded.color, plate=excluded.plate, seats=excluded.seats, demo_batch=excluded.demo_batch")
         .bind(guorong).bind(DEMO_BATCH).execute(db).await?;
-    sqlx::query("UPDATE users SET carpool_enabled=1, spare_seats=2 WHERE id=$1").bind(deming).execute(db).await?;
-    sqlx::query("UPDATE users SET carpool_enabled=0, spare_seats=1 WHERE id=$1").bind(jiale).execute(db).await?;
-    sqlx::query("UPDATE users SET carpool_enabled=1, spare_seats=3 WHERE id=$1").bind(zhiqiang).execute(db).await?;
+    sqlx::query("UPDATE users SET carpool_enabled=1, spare_seats=2 WHERE id=$1")
+        .bind(deming)
+        .execute(db)
+        .await?;
+    sqlx::query("UPDATE users SET carpool_enabled=0, spare_seats=1 WHERE id=$1")
+        .bind(jiale)
+        .execute(db)
+        .await?;
+    sqlx::query("UPDATE users SET carpool_enabled=1, spare_seats=3 WHERE id=$1")
+        .bind(zhiqiang)
+        .execute(db)
+        .await?;
     for (uid, area) in [
-        (deming, 1), (deming, 2), (deming, 4), (jiale, 3), (jiale, 6),
-        (transport, 1), (transport, 5), (zhiqiang, 1), (zhiqiang, 5),
-        (guorong, 2), (guorong, 7),
+        (deming, 1),
+        (deming, 2),
+        (deming, 4),
+        (jiale, 3),
+        (jiale, 6),
+        (transport, 1),
+        (transport, 5),
+        (zhiqiang, 1),
+        (zhiqiang, 5),
+        (guorong, 2),
+        (guorong, 7),
     ] {
         sqlx::query("INSERT INTO driver_areas (user_id, area_id, demo_batch) VALUES ($1,$2,$3) ON CONFLICT DO NOTHING")
             .bind(uid).bind(area).bind(DEMO_BATCH).execute(db).await?;
@@ -352,13 +571,90 @@ async fn seed_core(db: &PgPool) -> anyhow::Result<()> {
 
     // --- events (ids 1..=7) ---
     let events = [
-        (1i64, "周四羽毛球局", "badminton", "轻松双打交流，欢迎初学者。", kl_hm(next_weekday(today, Weekday::Thu), 19, 30), "PJ 室内羽球馆", 12, "场租及羽球活动后平均分摊", deming, vec![2i64, 3]),
-        (2, "周末保龄球", "bowling", "周末保龄球活动。", kl_hm(next_weekday(today, Weekday::Sat), 14, 0), "Sunway Pyramid 保龄球馆", 8, "每局约 RM12，自付", deming, vec![3]),
-        (3, "皮划艇体验", "kayak", "户外划艇体验，请穿运动服。", kl_hm(next_weekday(today, Weekday::Sat), 8, 0), "Putrajaya 湖畔", 10, "器材租借费活动后分摊", deming, vec![2]),
-        (4, "公园散步", "walk", "轻松结伴散步，一起享受早晨。", kl_hm(next_weekday(today, Weekday::Sun), 7, 0), "Taman Jaya 公园入口", 0, "免费", deming, vec![1]),
-        (5, "上周羽毛球局", "badminton", "双打交流（已结束，用于费用分摊示例）", kl_hm(today - Duration::days(5), 19, 30), "PJ 室内羽球馆", 12, "场租 RM120 + 羽球 RM48", deming, vec![3]),
-        (6, "主日崇拜接送", "other", "主日崇拜前后的接送安排。", kl_hm(next_weekday(today, Weekday::Sun), 9, 0), "PJ State CMC 教会", 0, "免费", transport, vec![1]),
-        (7, "团契聚餐", "other", "每人带一道菜，交通组协助接送。", kl_hm(next_weekday(today, Weekday::Fri), 18, 30), "社区中心礼堂", 20, "自备食物", enci, vec![2]),
+        (
+            1i64,
+            "周四羽毛球局",
+            "badminton",
+            "轻松双打交流，欢迎初学者。",
+            kl_hm(next_weekday(today, Weekday::Thu), 19, 30),
+            "PJ 室内羽球馆",
+            12,
+            "场租及羽球活动后平均分摊",
+            deming,
+            vec![2i64, 3],
+        ),
+        (
+            2,
+            "周末保龄球",
+            "bowling",
+            "周末保龄球活动。",
+            kl_hm(next_weekday(today, Weekday::Sat), 14, 0),
+            "Sunway Pyramid 保龄球馆",
+            8,
+            "每局约 RM12，自付",
+            deming,
+            vec![3],
+        ),
+        (
+            3,
+            "皮划艇体验",
+            "kayak",
+            "户外划艇体验，请穿运动服。",
+            kl_hm(next_weekday(today, Weekday::Sat), 8, 0),
+            "Putrajaya 湖畔",
+            10,
+            "器材租借费活动后分摊",
+            deming,
+            vec![2],
+        ),
+        (
+            4,
+            "公园散步",
+            "walk",
+            "轻松结伴散步，一起享受早晨。",
+            kl_hm(next_weekday(today, Weekday::Sun), 7, 0),
+            "Taman Jaya 公园入口",
+            0,
+            "免费",
+            deming,
+            vec![1],
+        ),
+        (
+            5,
+            "上周羽毛球局",
+            "badminton",
+            "双打交流（已结束，用于费用分摊示例）",
+            kl_hm(today - Duration::days(5), 19, 30),
+            "PJ 室内羽球馆",
+            12,
+            "场租 RM120 + 羽球 RM48",
+            deming,
+            vec![3],
+        ),
+        (
+            6,
+            "主日崇拜接送",
+            "other",
+            "主日崇拜前后的接送安排。",
+            kl_hm(next_weekday(today, Weekday::Sun), 9, 0),
+            "PJ State CMC 教会",
+            0,
+            "免费",
+            transport,
+            vec![1],
+        ),
+        (
+            7,
+            "团契聚餐",
+            "other",
+            "每人带一道菜，交通组协助接送。",
+            kl_hm(next_weekday(today, Weekday::Fri), 18, 30),
+            "社区中心礼堂",
+            20,
+            "自备食物",
+            enci,
+            vec![2],
+        ),
     ];
     for (eid, title, kind, desc, at, loc, cap, cost, by, groups) in events {
         let deadline = format!("{}T12:00", &at[..10]);
@@ -389,22 +685,129 @@ async fn seed_core(db: &PgPool) -> anyhow::Result<()> {
     }
     // --- rides (ids 20001..=20009) ---
     let rides = [
-        (20001i64, fala, None::<i64>, kl_hm(tomorrow, 8, 30), 2, "SS2, Jalan 21/1 门牌 12", "社区中心 · 北门入口", 1, "", "pending_driver"),
-        (20002, sophie, None, kl_hm(tomorrow, 9, 15), 1, "PJ Section 14 公寓 B 座", "PJ State CMC 教会", 2, "", "pending_driver"),
-        (20003, amina, Some(deming), kl_hm(tomorrow, 10, 10), 4, "梳邦再也 SS15 门牌 8", "诊所入口", 1, "", "pending_approval"),
-        (20004, fala, Some(deming), kl_hm(today, 20, 0), 2, "SS2, Jalan 21/1 门牌 12", "PJ State CMC 教会", 1, "", "confirmed"),
-        (20005, sophie, Some(jiale), kl_hm(today - Duration::days(3), 9, 5), 1, "PJ Section 14 公寓 B 座", "图书馆入口", 1, "", "completed"),
-        (20006, amina, Some(deming), kl_hm(today - Duration::days(10), 22, 0), 4, "梳邦再也 SS15 门牌 8", "宵夜团契", 1, "", "completed"),
-        (20007, yawen, Some(zhiqiang), kl_hm(tomorrow, 18, 40), 6, "白沙罗 SS2 附近", "社区中心礼堂", 2, "", "pending_passenger"),
-        (20008, enci, Some(guorong), kl_hm(today - Duration::days(1), 9, 0), 7, "吉隆坡市中心公寓", "PJ State CMC 教会", 1, "", "cancelled"),
-        (20009, yawen, Some(deming), kl_hm(today - Duration::days(8), 19, 20), 2, "SS2, Jalan 21/1 门牌 12", "PJ 室内羽球馆", 1, "", "no_show"),
+        (
+            20001i64,
+            fala,
+            None::<i64>,
+            kl_hm(tomorrow, 8, 30),
+            2,
+            "SS2, Jalan 21/1 门牌 12",
+            "社区中心 · 北门入口",
+            1,
+            "",
+            "pending_driver",
+        ),
+        (
+            20002,
+            sophie,
+            None,
+            kl_hm(tomorrow, 9, 15),
+            1,
+            "PJ Section 14 公寓 B 座",
+            "PJ State CMC 教会",
+            2,
+            "",
+            "pending_driver",
+        ),
+        (
+            20003,
+            amina,
+            Some(deming),
+            kl_hm(tomorrow, 10, 10),
+            4,
+            "梳邦再也 SS15 门牌 8",
+            "诊所入口",
+            1,
+            "",
+            "pending_approval",
+        ),
+        (
+            20004,
+            fala,
+            Some(deming),
+            kl_hm(today, 20, 0),
+            2,
+            "SS2, Jalan 21/1 门牌 12",
+            "PJ State CMC 教会",
+            1,
+            "",
+            "confirmed",
+        ),
+        (
+            20005,
+            sophie,
+            Some(jiale),
+            kl_hm(today - Duration::days(3), 9, 5),
+            1,
+            "PJ Section 14 公寓 B 座",
+            "图书馆入口",
+            1,
+            "",
+            "completed",
+        ),
+        (
+            20006,
+            amina,
+            Some(deming),
+            kl_hm(today - Duration::days(10), 22, 0),
+            4,
+            "梳邦再也 SS15 门牌 8",
+            "宵夜团契",
+            1,
+            "",
+            "completed",
+        ),
+        (
+            20007,
+            yawen,
+            Some(zhiqiang),
+            kl_hm(tomorrow, 18, 40),
+            6,
+            "白沙罗 SS2 附近",
+            "社区中心礼堂",
+            2,
+            "",
+            "pending_passenger",
+        ),
+        (
+            20008,
+            enci,
+            Some(guorong),
+            kl_hm(today - Duration::days(1), 9, 0),
+            7,
+            "吉隆坡市中心公寓",
+            "PJ State CMC 教会",
+            1,
+            "",
+            "cancelled",
+        ),
+        (
+            20009,
+            yawen,
+            Some(deming),
+            kl_hm(today - Duration::days(8), 19, 20),
+            2,
+            "SS2, Jalan 21/1 门牌 12",
+            "PJ 室内羽球馆",
+            1,
+            "",
+            "no_show",
+        ),
     ];
     for (id, p, d, at, area, addr, dest, seats, assistance, status) in rides {
-        let completed = if status == "completed" { Some(at.clone()) } else { None };
+        let completed = if status == "completed" {
+            Some(at.clone())
+        } else {
+            None
+        };
         sqlx::query_as::<_, (i64,)>("INSERT INTO rides (id, passenger_id, driver_id, pickup_at, pickup_area_id, pickup_address, destination, seats, assistance, status, created_at, updated_at, completed_at, demo_batch) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14) RETURNING id")
             .bind(id).bind(p).bind(d).bind(&at).bind(area).bind(addr).bind(dest).bind(seats).bind(assistance).bind(status).bind(now_kl()).bind(now_kl()).bind(completed).bind(DEMO_BATCH).fetch_one(db).await?;
         if matches!(status, "confirmed" | "completed") {
-            sqlx::query("UPDATE rides SET trip_id=id, approved_by=$1 WHERE id=$2").bind(transport).bind(id).execute(db).await?;
+            sqlx::query("UPDATE rides SET trip_id=id, approved_by=$1 WHERE id=$2")
+                .bind(transport)
+                .bind(id)
+                .execute(db)
+                .await?;
             sqlx::query("INSERT INTO ride_messages (id, trip_id, user_id, body, demo_batch, created_at) VALUES ($1,$2,NULL,'行程已获批准，群聊已开启。',$3,$4) ON CONFLICT DO NOTHING")
                 .bind(id).bind(id).bind(DEMO_BATCH).bind(now_kl()).execute(db).await?;
         }
@@ -439,14 +842,33 @@ async fn seed_core(db: &PgPool) -> anyhow::Result<()> {
         .bind(40001i64).bind(5).bind(deming).bind(&due).bind(DEMO_BATCH).bind(now_kl()).fetch_one(db).await?.0;
     sqlx::query("INSERT INTO settlement_items (id, settlement_id, label, amount_cents, receipt_file_id, demo_batch) VALUES ($1,$2,'场租',12000,NULL,$3) ON CONFLICT DO NOTHING").bind(41001i64).bind(settle).bind(DEMO_BATCH).execute(db).await?;
     sqlx::query("INSERT INTO settlement_items (id, settlement_id, label, amount_cents, receipt_file_id, demo_batch) VALUES ($1,$2,'羽球',4800,NULL,$3) ON CONFLICT DO NOTHING").bind(41002).bind(settle).bind(DEMO_BATCH).execute(db).await?;
-    for (uid, status) in [(deming, "confirmed"), (fala, "unpaid"), (amina, "pending"), (jiale, "unpaid"), (transport, "confirmed"), (sophie, "unpaid")] {
+    for (uid, status) in [
+        (deming, "confirmed"),
+        (fala, "unpaid"),
+        (amina, "pending"),
+        (jiale, "unpaid"),
+        (transport, "confirmed"),
+        (sophie, "unpaid"),
+    ] {
         sqlx::query("INSERT INTO settlement_shares (id, settlement_id, user_id, amount_cents, status, proof_file_id, txn_ref, paid_date, note, updated_at, demo_batch) VALUES ($1,$2,$3,2800,$4,NULL,'',NULL,'',$5,$6) ON CONFLICT DO NOTHING")
             .bind(42000i64 + uid).bind(settle).bind(uid).bind(status).bind(now_kl()).bind(DEMO_BATCH).execute(db).await?;
     }
     sqlx::query("INSERT INTO settlement_revisions (id, settlement_id, version, snapshot, reason, created_by, demo_batch, created_at) VALUES ($1,$2,1,$3,'首次发布',$4,$5,$6) ON CONFLICT DO NOTHING")
         .bind(43001i64).bind(settle).bind(r#"{"title":"上周羽毛球费用","total_cents":16800}"#).bind(deming).bind(DEMO_BATCH).bind(now_kl()).execute(db).await?;
 
-    audit(db, Some(admin), "seed.core", "users", Some(13), &format!("core demo users {}-{}", core.first().unwrap().0, core.last().unwrap().0)).await;
+    audit(
+        db,
+        Some(admin),
+        "seed.core",
+        "users",
+        Some(13),
+        &format!(
+            "core demo users {}-{}",
+            core.first().unwrap().0,
+            core.last().unwrap().0
+        ),
+    )
+    .await;
     // Explicit ids above do not advance IDENTITY sequences; bump them so later
     // inserts (tests, capacity seed, invites) do not collide on primary keys.
     sync_identity_sequences(db).await?;
@@ -496,7 +918,9 @@ async fn seed_scale(db: &PgPool, scale: i64) -> anyhow::Result<()> {
     let today = today_kl();
     let mut rng = Rng::new();
     let mut plate_pool = HashSet::new();
-    for p in ["VXX 1234", "WQA 8821", "BPM 3302", "BKS 4410", "VBE 7788"] { plate_pool.insert(p.to_string()); }
+    for p in ["VXX 1234", "WQA 8821", "BPM 3302", "BKS 4410", "VBE 7788"] {
+        plate_pool.insert(p.to_string());
+    }
 
     // --- generated members ---
     for i in 0..n {
@@ -527,7 +951,11 @@ async fn seed_scale(db: &PgPool, scale: i64) -> anyhow::Result<()> {
         };
         let totp = i < 20;
         let passkey = i < 15;
-        insert_member(db, &mut rng, id, &name, &email, &phone, &roles, &status, DEMO_BATCH, &pw, totp, passkey).await;
+        insert_member(
+            db, &mut rng, id, &name, &email, &phone, &roles, &status, DEMO_BATCH, &pw, totp,
+            passkey,
+        )
+        .await;
 
         if roles.contains("driver") && rng.bool(0.90) {
             let carpool = if rng.bool(0.40) { 1 } else { 0 };
@@ -535,7 +963,12 @@ async fn seed_scale(db: &PgPool, scale: i64) -> anyhow::Result<()> {
             let plate = rng.unique_plate(&mut plate_pool);
             sqlx::query("INSERT INTO vehicles (user_id, model, color, plate, seats, demo_batch) VALUES ($1,$2,$3,$4,5,$5) ON CONFLICT(user_id) DO UPDATE SET model=excluded.model, color=excluded.color, plate=excluded.plate, seats=excluded.seats, demo_batch=excluded.demo_batch")
                 .bind(id).bind(rng.pick(VEHICLE_MODELS)).bind(rng.pick(VEHICLE_COLORS)).bind(plate).bind(DEMO_BATCH).execute(db).await?;
-            sqlx::query("UPDATE users SET carpool_enabled=$1, spare_seats=$2 WHERE id=$3").bind(carpool).bind(spare).bind(id).execute(db).await?;
+            sqlx::query("UPDATE users SET carpool_enabled=$1, spare_seats=$2 WHERE id=$3")
+                .bind(carpool)
+                .bind(spare)
+                .bind(id)
+                .execute(db)
+                .await?;
             let mut areas: Vec<i64> = vec![1, 2, 4, 5, 7, 8];
             rng.shuffle(&mut areas);
             for area in areas.into_iter().take(rng.range(1, 4) as usize) {

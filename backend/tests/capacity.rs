@@ -52,10 +52,11 @@ async fn setup_capacity() -> (Router, AppState) {
     for i in 0..MEMBER_COUNT {
         let (id,): (i64,) = sqlx::query_as(
             "INSERT INTO users (name, email, phone, roles, password_hash, webauthn_uuid)
-             VALUES ($1, $2, '', '', NULL, $3) RETURNING id",
+             VALUES ($1, $2, $3, '', NULL, $4) RETURNING id",
         )
         .bind(format!("会员 {i}"))
         .bind(format!("capmember{i}@example.org"))
+        .bind(format!("012-9{i:06}"))
         .bind(uuid::Uuid::new_v4().to_string())
         .fetch_one(&state.db)
         .await
@@ -68,10 +69,11 @@ async fn setup_capacity() -> (Router, AppState) {
     for i in 0..DRIVER_COUNT {
         let (id,): (i64,) = sqlx::query_as(
             "INSERT INTO users (name, email, phone, roles, password_hash, webauthn_uuid)
-             VALUES ($1, $2, '', 'driver', NULL, $3) RETURNING id",
+             VALUES ($1, $2, $3, 'driver', NULL, $4) RETURNING id",
         )
         .bind(format!("司机 {i}"))
         .bind(format!("capdriver{i}@example.org"))
+        .bind(format!("013-9{:06}", i))
         .bind(uuid::Uuid::new_v4().to_string())
         .fetch_one(&state.db)
         .await

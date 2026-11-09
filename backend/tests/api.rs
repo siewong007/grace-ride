@@ -6,7 +6,12 @@ use axum::{
     http::{header, HeaderMap, Method, Request, StatusCode},
     Router,
 };
-use grace_ride::{auth::{hash_token, SESSION_COOKIE}, init, jobs, router, state::AppState, state::Config};
+use grace_ride::{
+    auth::{hash_token, SESSION_COOKIE},
+    init, jobs, router,
+    state::AppState,
+    state::Config,
+};
 use http_body_util::BodyExt;
 use serde_json::{json, Value};
 use tower::ServiceExt;
@@ -109,7 +114,8 @@ async fn login(st: &AppState, email: &str) -> String {
         .fetch_one(&st.db)
         .await
         .unwrap_or_else(|e| panic!("demo user {email}: {e}"));
-    let token = uuid::Uuid::new_v4().simple().to_string() + &uuid::Uuid::new_v4().simple().to_string();
+    let token =
+        uuid::Uuid::new_v4().simple().to_string() + &uuid::Uuid::new_v4().simple().to_string();
     let token = token[..48].to_string();
     let expires = (chrono::Local::now() + chrono::Duration::days(7))
         .format("%Y-%m-%dT%H:%M:%S")
@@ -1435,10 +1441,7 @@ async fn disaster_recovery_backup_restore_drill() {
     let pg_bin = std::env::var("PATH").unwrap_or_default();
     let out = Command::new("bash")
         .env("DATABASE_URL", &database_url)
-        .env(
-            "PATH",
-            format!("/workspace/pgsql/bin:{pg_bin}"),
-        )
+        .env("PATH", format!("/workspace/pgsql/bin:{pg_bin}"))
         .current_dir(&repo)
         .arg("./scripts/backup.sh")
         .arg(data_dir)
@@ -1462,7 +1465,10 @@ async fn disaster_recovery_backup_restore_drill() {
         .into_iter()
         .max_by_key(|e| e.metadata().unwrap().modified().unwrap())
         .unwrap();
-    assert!(newest.metadata().unwrap().len() > 0, "backup artifact is non-empty");
+    assert!(
+        newest.metadata().unwrap().len() > 0,
+        "backup artifact is non-empty"
+    );
     let _ = app;
     let _ = std::fs::remove_dir_all(&backup_dir);
 }

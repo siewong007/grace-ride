@@ -40,8 +40,8 @@ ALTER TABLE user_roles ADD CONSTRAINT chk_user_roles_role CHECK (
 );
 
 -- Step 5: Create indexes for the new user_roles table
-CREATE INDEX idx_user_roles_user ON user_roles(user_id);
-CREATE INDEX idx_user_roles_role ON user_roles(role);
+CREATE INDEX IF NOT EXISTS idx_user_roles_user ON user_roles(user_id);
+CREATE INDEX IF NOT EXISTS idx_user_roles_role ON user_roles(role);
 
 -- Step 6: Normalize group_ids similarly - create group_user join table
 -- Before: group_ids TEXT NOT NULL DEFAULT '[]' (comma-separated)

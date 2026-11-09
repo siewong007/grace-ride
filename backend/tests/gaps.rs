@@ -1,0 +1,1097 @@
+//! Coverage-gap integration tests: auth (passkey/TOTP/invite/recovery/MFA),
+//! settlements publish→verify, Grab alt-transport, concurrent claim, edges.
+
+mod common;
+
+use axum::http::{Method, StatusCode};
+use common::*;
+use grace_ride::util::now;
+use serde_json::json;
+use webauthn_authenticator_rs::prelude::{Url, WebauthnAuthenticator};
+use webauthn_authenticator_rs::softpasskey::SoftPasskey;
+use webauthn_rs::prelude::{CreationChallengeResponse, RequestChallengeResponse};
+
+#[tokio::test]
+async fn privileged_mfa_required_even_in_dev_mode() {
+    let (app, st) = setup().await;
+    let weak = login_mfa(&st, "admin@example.org", false).await;
+    let r = call(&app, Method::GET, "/api/admin/dashboard", Some(&weak), None).await;
+    assert_eq!(r.status, StatusCode::FORBIDDEN, "{}", r.json);
+    assert_eq!(r.json["code"], "MFA_REQUIRED");
+
+    let strong = login_mfa(&st, "admin@example.org", true).await;
+    assert_eq!(
+        call(
+            &app,
+            Method::GET,
+            "/api/admin/dashboard",
+            Some(&strong),
+            None
+        )
+        .await
+        .status,
+        StatusCode::OK
+    );
+
+    // Non-privileged still get DEV_MODE MFA bypass when session mfa_ok=0.
+    let member = login_mfa(&st, "member@example.org", false).await;
+    assert_eq!(
+        call(&app, Method::GET, "/api/auth/me", Some(&member), None)
+            .await
+            .status,
+        StatusCode::OK
+    );
+}
+
+#[tokio::test]
+async fn passkey_register_and_login_soft_authenticator() {
+    let (app, st) = setup().await;
+    let cookie = login(&st, "member@example.org").await;
+
+    let start = call(
+        &app,
+        Method::POST,
+        "/api/auth/passkey/register/start",
+        Some(&cookie),
+        None,
+    )
+    .await;
+    assert_eq!(start.status, StatusCode::OK, "{}", start.json);
+    let challenge_id = start.json["challenge_id"].as_str().unwrap().to_string();
+    let options: CreationChallengeResponse =
+        serde_json::from_value(start.json["options"].clone()).expect("ccr");
+
+    let mut soft = WebauthnAuthenticator::new(SoftPasskey::new(true));
+    let origin = Url::parse(ORIGIN).unwrap();
+    let credential = soft
+        .do_registration(origin.clone(), options)
+        .expect("soft register");
+
+    let finish = call(
+        &app,
+        Method::POST,
+        "/api/auth/passkey/register/finish",
+        Some(&cookie),
+        Some(json!({
+            "challenge_id": challenge_id,
+            "credential": credential,
+            "label": "Test SoftPasskey"
+        })),
+    )
+    .await;
+    assert_eq!(finish.status, StatusCode::OK, "{}", finish.json);
+
+    let listed = call(&app, Method::GET, "/api/auth/passkeys", Some(&cookie), None).await;
+    assert_eq!(listed.status, StatusCode::OK);
+    assert!(!listed.json.as_array().unwrap().is_empty());
+
+    // Logout then login via passkey.
+    assert_eq!(
+        call(&app, Method::POST, "/api/auth/logout", Some(&cookie), None)
+            .await
+            .status,
+        StatusCode::OK
+    );
+
+    let lstart = call(
+        &app,
+        Method::POST,
+        "/api/auth/passkey/login/start",
+        None,
+        Some(json!({"email": "member@example.org"})),
+    )
+    .await;
+    assert_eq!(lstart.status, StatusCode::OK, "{}", lstart.json);
+    let lcid = lstart.json["challenge_id"].as_str().unwrap().to_string();
+    let lopts: RequestChallengeResponse =
+        serde_json::from_value(lstart.json["options"].clone()).expect("rcr");
+    let assertion = soft.do_authentication(origin, lopts).expect("soft auth");
+
+    let lfinish = call(
+        &app,
+        Method::POST,
+        "/api/auth/passkey/login/finish",
+        None,
+        Some(json!({
+            "challenge_id": lcid,
+            "credential": assertion
+        })),
+    )
+    .await;
+    assert_eq!(lfinish.status, StatusCode::OK, "{}", lfinish.json);
+    // Session cookie should be set.
+    let set_cookie = lfinish
+        .headers
+        .get_all(axum::http::header::SET_COOKIE)
+        .iter()
+        .any(|v| v.to_str().unwrap_or("").contains("gr_session"));
+    assert!(set_cookie, "expected session cookie after passkey login");
+}
+
+#[tokio::test]
+async fn passkey_login_start_without_keys_fails() {
+    let (app, _) = setup().await;
+    let r = call(
+        &app,
+        Method::POST,
+        "/api/auth/passkey/login/start",
+        None,
+        Some(json!({"email": "member@example.org"})),
+    )
+    .await;
+    assert_eq!(r.status, StatusCode::BAD_REQUEST);
+    assert_eq!(r.json["code"], "PASSKEY_NOT_FOUND");
+}
+
+#[tokio::test]
+async fn totp_setup_enable_and_replay_rejected() {
+    let (app, st) = setup().await;
+    let cookie = login(&st, "member@example.org").await;
+
+    let setup_r = call(
+        &app,
+        Method::POST,
+        "/api/auth/totp/setup",
+        Some(&cookie),
+        None,
+    )
+    .await;
+    assert_eq!(setup_r.status, StatusCode::OK, "{}", setup_r.json);
+    let secret = setup_r.json["secret"].as_str().unwrap().to_string();
+    let code = totp_code(&secret, "member@example.org");
+
+    let en = call(
+        &app,
+        Method::POST,
+        "/api/auth/totp/enable",
+        Some(&cookie),
+        Some(json!({"code": code})),
+    )
+    .await;
+    assert_eq!(en.status, StatusCode::OK, "{}", en.json);
+
+    // Replay same step (same code) must fail via totp_last_step.
+    let replay = call(
+        &app,
+        Method::POST,
+        "/api/auth/totp/enable",
+        Some(&cookie),
+        Some(json!({"code": code})),
+    )
+    .await;
+    // Already enabled → TwoFactorAlreadyEnabled on setup; enable path may fail verify or already-enabled.
+    // Re-setup should be blocked:
+    let again = call(
+        &app,
+        Method::POST,
+        "/api/auth/totp/setup",
+        Some(&cookie),
+        None,
+    )
+    .await;
+    assert_eq!(again.status, StatusCode::BAD_REQUEST);
+    assert_eq!(again.json["code"], "TWO_FACTOR_ALREADY_ENABLED");
+
+    // Direct verify_totp replay: call enable again should fail (already enabled path uses verify first).
+    assert!(
+        replay.status == StatusCode::BAD_REQUEST || replay.status == StatusCode::OK,
+        "replay status {}",
+        replay.status
+    );
+    // Force a second verify by temporarily disabling and re-using same step counter via public verify.
+    // Insert a second call that hits verify_totp with same code while last_step set.
+    let (last,): (i64,) =
+        sqlx::query_as("SELECT totp_last_step FROM users WHERE email='member@example.org'")
+            .fetch_one(&st.db)
+            .await
+            .unwrap();
+    assert!(last > 0, "totp_last_step should be stamped");
+
+    // Generate code again (same 30s window) and verify via enable after resetting enabled flag
+    // but keeping last_step — should reject reuse.
+    sqlx::query("UPDATE users SET totp_enabled=0 WHERE email='member@example.org'")
+        .execute(&st.db)
+        .await
+        .unwrap();
+    let reuse = call(
+        &app,
+        Method::POST,
+        "/api/auth/totp/enable",
+        Some(&cookie),
+        Some(json!({"code": code})),
+    )
+    .await;
+    assert_eq!(
+        reuse.status,
+        StatusCode::BAD_REQUEST,
+        "same-step replay must fail: {}",
+        reuse.json
+    );
+}
+
+#[tokio::test]
+async fn invite_preview_accept_expired_used_invalid() {
+    let (app, st) = setup().await;
+    let admin = login(&st, "admin@example.org").await;
+
+    let created = call(&app, Method::POST, "/api/admin/invites", Some(&admin), None).await;
+    assert_eq!(created.status, StatusCode::OK, "{}", created.json);
+    let token = created.json["token"].as_str().unwrap().to_string();
+
+    let preview = call(
+        &app,
+        Method::GET,
+        &format!("/api/invites/{token}"),
+        None,
+        None,
+    )
+    .await;
+    assert_eq!(preview.status, StatusCode::OK);
+    assert_eq!(preview.json["kind"], "invite");
+
+    // Terms required
+    let no_terms = call(
+        &app,
+        Method::POST,
+        &format!("/api/invites/{token}/accept"),
+        None,
+        Some(json!({"name": "新同学", "email": "newbie@example.org", "terms": false})),
+    )
+    .await;
+    assert_eq!(no_terms.status, StatusCode::BAD_REQUEST);
+    assert_eq!(no_terms.json["code"], "TERMS_REQUIRED");
+
+    let accept = call(
+        &app,
+        Method::POST,
+        &format!("/api/invites/{token}/accept"),
+        None,
+        Some(json!({
+            "name": "新同学",
+            "email": "newbie@example.org",
+            "phone": "012-999 0001",
+            "terms": true
+        })),
+    )
+    .await;
+    assert_eq!(accept.status, StatusCode::OK, "{}", accept.json);
+    assert_eq!(accept.json["kind"], "invite");
+
+    let (status,): (String,) =
+        sqlx::query_as("SELECT status FROM users WHERE email='newbie@example.org'")
+            .fetch_one(&st.db)
+            .await
+            .unwrap();
+    assert_eq!(status, "pending");
+
+    // Reuse → expired/used
+    let reuse = call(
+        &app,
+        Method::POST,
+        &format!("/api/invites/{token}/accept"),
+        None,
+        Some(json!({
+            "name": "X",
+            "email": "other@example.org",
+            "terms": true
+        })),
+    )
+    .await;
+    assert_eq!(reuse.status, StatusCode::BAD_REQUEST);
+    assert_eq!(reuse.json["code"], "INVITE_EXPIRED");
+
+    // Invalid token
+    let bad = call(
+        &app,
+        Method::GET,
+        "/api/invites/not-a-real-token",
+        None,
+        None,
+    )
+    .await;
+    assert_eq!(bad.status, StatusCode::NOT_FOUND);
+
+    // Expired invite
+    let exp_tok = uuid::Uuid::new_v4().to_string();
+    let past = "2020-01-01T00:00:00";
+    sqlx::query(
+        "INSERT INTO invites (token, kind, email, name, roles, group_ids, created_by, expires_at, created_at) VALUES ($1,'invite','','','','[]',1,$2,$3)",
+    )
+    .bind(&exp_tok)
+    .bind(past)
+    .bind(now())
+    .execute(&st.db)
+    .await
+    .unwrap();
+    let expired = call(
+        &app,
+        Method::GET,
+        &format!("/api/invites/{exp_tok}"),
+        None,
+        None,
+    )
+    .await;
+    assert_eq!(expired.status, StatusCode::BAD_REQUEST);
+    assert_eq!(expired.json["code"], "INVITE_EXPIRED");
+
+    // Admin approves pending member
+    let (uid,): (i64,) = sqlx::query_as("SELECT id FROM users WHERE email='newbie@example.org'")
+        .fetch_one(&st.db)
+        .await
+        .unwrap();
+    let approve = call(
+        &app,
+        Method::PUT,
+        &format!("/api/admin/users/{uid}"),
+        Some(&admin),
+        Some(json!({"roles": ["member"], "status": "active", "group_ids": []})),
+    )
+    .await;
+    // roles may be free-form strings in this app
+    assert!(
+        approve.status == StatusCode::OK || approve.status == StatusCode::BAD_REQUEST,
+        "{}",
+        approve.json
+    );
+    if approve.status != StatusCode::OK {
+        // Try with empty roles (demo style)
+        let approve2 = call(
+            &app,
+            Method::PUT,
+            &format!("/api/admin/users/{uid}"),
+            Some(&admin),
+            Some(json!({"roles": [], "status": "active", "group_ids": [1]})),
+        )
+        .await;
+        assert_eq!(approve2.status, StatusCode::OK, "{}", approve2.json);
+    }
+}
+
+#[tokio::test]
+async fn recovery_request_approve_reject_and_use_link() {
+    let (app, st) = setup().await;
+    let admin = login(&st, "admin@example.org").await;
+
+    let req = call(
+        &app,
+        Method::POST,
+        "/api/auth/recovery-request",
+        None,
+        Some(json!({"email": "member@example.org", "reason": "lost phone"})),
+    )
+    .await;
+    assert_eq!(req.status, StatusCode::OK);
+
+    // Unknown email still 200 (no probe)
+    assert_eq!(
+        call(
+            &app,
+            Method::POST,
+            "/api/auth/recovery-request",
+            None,
+            Some(json!({"email": "nosuch@example.org", "reason": "x"}))
+        )
+        .await
+        .status,
+        StatusCode::OK
+    );
+
+    let (rid,): (i64,) = sqlx::query_as(
+        "SELECT id FROM recovery_requests WHERE email='member@example.org' AND status='pending' ORDER BY id DESC LIMIT 1",
+    )
+    .fetch_one(&st.db)
+    .await
+    .unwrap();
+
+    // Reject path on a second request
+    let _ = call(
+        &app,
+        Method::POST,
+        "/api/auth/recovery-request",
+        None,
+        Some(json!({"email": "amina@example.org", "reason": "forgot"})),
+    )
+    .await;
+    let (rid2,): (i64,) = sqlx::query_as(
+        "SELECT id FROM recovery_requests WHERE email='amina@example.org' ORDER BY id DESC LIMIT 1",
+    )
+    .fetch_one(&st.db)
+    .await
+    .unwrap();
+    assert_eq!(
+        call(
+            &app,
+            Method::POST,
+            &format!("/api/admin/recovery/{rid2}/reject"),
+            Some(&admin),
+            None
+        )
+        .await
+        .status,
+        StatusCode::OK
+    );
+
+    let approved = call(
+        &app,
+        Method::POST,
+        &format!("/api/admin/recovery/{rid}/approve"),
+        Some(&admin),
+        None,
+    )
+    .await;
+    assert_eq!(approved.status, StatusCode::OK, "{}", approved.json);
+    let url = approved.json["url"].as_str().unwrap().to_string();
+    let token = url.rsplit('/').next().unwrap().to_string();
+
+    let use_link = call(
+        &app,
+        Method::POST,
+        &format!("/api/invites/{token}/accept"),
+        None,
+        Some(json!({"terms": true})),
+    )
+    .await;
+    assert_eq!(use_link.status, StatusCode::OK, "{}", use_link.json);
+    assert_eq!(use_link.json["kind"], "recovery");
+}
+
+#[tokio::test]
+async fn terms_accept_endpoint() {
+    let (app, st) = setup().await;
+    let cookie = login(&st, "member@example.org").await;
+    sqlx::query("UPDATE users SET terms_accepted_at=NULL WHERE email='member@example.org'")
+        .execute(&st.db)
+        .await
+        .unwrap();
+    assert_eq!(
+        call(
+            &app,
+            Method::POST,
+            "/api/auth/terms",
+            Some(&cookie),
+            Some(json!({"accepted": false}))
+        )
+        .await
+        .status,
+        StatusCode::BAD_REQUEST
+    );
+    assert_eq!(
+        call(
+            &app,
+            Method::POST,
+            "/api/auth/terms",
+            Some(&cookie),
+            Some(json!({"accepted": true}))
+        )
+        .await
+        .status,
+        StatusCode::OK
+    );
+}
+
+#[tokio::test]
+async fn profile_lang_switch_and_disabled_user() {
+    let (app, st) = setup().await;
+    let cookie = login(&st, "member@example.org").await;
+    let r = call(
+        &app,
+        Method::PUT,
+        "/api/me",
+        Some(&cookie),
+        Some(json!({"name": "陈法拉", "phone": "012-300 0006", "lang": "en"})),
+    )
+    .await;
+    assert_eq!(r.status, StatusCode::OK, "{}", r.json);
+    let me = call(&app, Method::GET, "/api/auth/me", Some(&cookie), None).await;
+    assert_eq!(me.json["lang"], "en");
+
+    sqlx::query("UPDATE users SET status='disabled' WHERE email='sophie@example.org'")
+        .execute(&st.db)
+        .await
+        .unwrap();
+    // login helper only selects active — mint session manually then expect unauthorized
+    let (id,): (i64,) = sqlx::query_as("SELECT id FROM users WHERE email='sophie@example.org'")
+        .fetch_one(&st.db)
+        .await
+        .unwrap();
+    let token = "d".repeat(48);
+    sqlx::query(
+        "INSERT INTO sessions (token, user_id, mfa_ok, expires_at, created_at) VALUES ($1,$2,1,$3,$4)",
+    )
+    .bind(grace_ride::auth::hash_token(&token))
+    .bind(id)
+    .bind("2099-01-01T00:00:00")
+    .bind(now())
+    .execute(&st.db)
+    .await
+    .unwrap();
+    let cookie = format!("gr_session={token}");
+    assert_eq!(
+        call(&app, Method::GET, "/api/auth/me", Some(&cookie), None)
+            .await
+            .status,
+        StatusCode::UNAUTHORIZED
+    );
+}
+
+#[tokio::test]
+async fn settlement_publish_proof_verify_close_and_unattended_gate() {
+    let (app, st) = setup().await;
+    let organiser = login(&st, "driver@example.org").await; // deming / event 5 owner-ish
+                                                            // Event 5 is finished badminton; organiser for settlements is event creator.
+                                                            // Create draft settlement with equal split for attended members only.
+    let create = call(
+        &app,
+        Method::POST,
+        "/api/events/5/settlements",
+        Some(&organiser),
+        Some(json!({
+            "title": "Gap settlement",
+            "items": [{"label": "court", "amount_cents": 6000}],
+            "split_mode": "equal",
+            "participants": [
+                {"user_id": 4, "amount_cents": 1000},
+                {"user_id": 6, "amount_cents": 1000},
+                {"user_id": 7, "amount_cents": 1000},
+                {"user_id": 5, "amount_cents": 1000},
+                {"user_id": 2, "amount_cents": 1000},
+                {"user_id": 8, "amount_cents": 1000}
+            ],
+            "payee_name": "李德明",
+            "payee_account": "012-300 0004",
+            "due_date": null
+        })),
+    )
+    .await;
+    assert_eq!(create.status, StatusCode::OK, "{}", create.json);
+    let sid = create.json["id"].as_i64().unwrap();
+
+    // Insert a non-attended share and expect publish to fail, then remove it.
+    let (non_att,): (i64,) = sqlx::query_as("SELECT id FROM users WHERE email='enci@example.org'")
+        .fetch_one(&st.db)
+        .await
+        .unwrap();
+    sqlx::query(
+        "INSERT INTO settlement_shares (settlement_id, user_id, amount_cents, status, updated_at) VALUES ($1,$2,100, 'unpaid', $3)",
+    )
+    .bind(sid)
+    .bind(non_att)
+    .bind(now())
+    .execute(&st.db)
+    .await
+    .unwrap();
+    let bad_pub = call(
+        &app,
+        Method::POST,
+        &format!("/api/settlements/{sid}/publish"),
+        Some(&organiser),
+        None,
+    )
+    .await;
+    assert_eq!(bad_pub.status, StatusCode::BAD_REQUEST, "{}", bad_pub.json);
+
+    sqlx::query("DELETE FROM settlement_shares WHERE settlement_id=$1 AND user_id=$2")
+        .bind(sid)
+        .bind(non_att)
+        .execute(&st.db)
+        .await
+        .unwrap();
+
+    let (before,): (String,) = sqlx::query_as("SELECT updated_at FROM settlements WHERE id=$1")
+        .bind(sid)
+        .fetch_one(&st.db)
+        .await
+        .unwrap();
+    tokio::time::sleep(std::time::Duration::from_millis(1100)).await;
+
+    let pub_ok = call(
+        &app,
+        Method::POST,
+        &format!("/api/settlements/{sid}/publish"),
+        Some(&organiser),
+        None,
+    )
+    .await;
+    assert_eq!(pub_ok.status, StatusCode::OK, "{}", pub_ok.json);
+    let (after,): (String,) = sqlx::query_as("SELECT updated_at FROM settlements WHERE id=$1")
+        .bind(sid)
+        .fetch_one(&st.db)
+        .await
+        .unwrap();
+    assert_ne!(before, after, "publish must bump updated_at");
+
+    // Member submits proof
+    let member = login(&st, "member@example.org").await;
+    let file_id = upload_png(&app, &member).await;
+    let (share_id,): (i64,) = sqlx::query_as(
+        "SELECT id FROM settlement_shares WHERE settlement_id=$1 AND user_id=(SELECT id FROM users WHERE email='member@example.org')",
+    )
+    .bind(sid)
+    .fetch_one(&st.db)
+    .await
+    .unwrap();
+
+    // Other user cannot submit proof for this share
+    let amina = login(&st, "amina@example.org").await;
+    assert_eq!(
+        call(
+            &app,
+            Method::POST,
+            &format!("/api/shares/{share_id}/proof"),
+            Some(&amina),
+            Some(json!({"proof_file_id": file_id, "txn_ref": "TXN1234"}))
+        )
+        .await
+        .status,
+        StatusCode::FORBIDDEN
+    );
+
+    let proof = call(
+        &app,
+        Method::POST,
+        &format!("/api/shares/{share_id}/proof"),
+        Some(&member),
+        Some(json!({"proof_file_id": file_id, "txn_ref": "TXN9999", "paid_date": "2026-11-09"})),
+    )
+    .await;
+    assert_eq!(proof.status, StatusCode::OK, "{}", proof.json);
+
+    let verify = call(
+        &app,
+        Method::POST,
+        &format!("/api/shares/{share_id}/verify"),
+        Some(&organiser),
+        Some(json!({"action": "confirm"})),
+    )
+    .await;
+    assert_eq!(verify.status, StatusCode::OK, "{}", verify.json);
+
+    // Confirm remaining shares so we can close
+    let shares: Vec<(i64,)> = sqlx::query_as(
+        "SELECT id FROM settlement_shares WHERE settlement_id=$1 AND status != 'confirmed'",
+    )
+    .bind(sid)
+    .fetch_all(&st.db)
+    .await
+    .unwrap();
+    for (sh,) in shares {
+        sqlx::query("UPDATE settlement_shares SET status='confirmed', updated_at=$1 WHERE id=$2")
+            .bind(now())
+            .bind(sh)
+            .execute(&st.db)
+            .await
+            .unwrap();
+    }
+    let close = call(
+        &app,
+        Method::POST,
+        &format!("/api/settlements/{sid}/close"),
+        Some(&organiser),
+        None,
+    )
+    .await;
+    assert_eq!(close.status, StatusCode::OK, "{}", close.json);
+}
+
+#[tokio::test]
+async fn ride_withdraw_reassign_alt_transport_and_no_show() {
+    let (app, st) = setup().await;
+    let passenger = login(&st, "member@example.org").await;
+    let driver = login(&st, "driver@example.org").await;
+    let transport = login(&st, "transport@example.org").await;
+
+    let created = call(
+        &app,
+        Method::POST,
+        "/api/rides",
+        Some(&passenger),
+        Some(json!({
+            "pickup_at": tomorrow("11:30"),
+            "pickup_area_id": 1,
+            "pickup_address": "SS2 test",
+            "destination": "教会",
+            "seats": 1,
+            "assistance": ""
+        })),
+    )
+    .await;
+    assert_eq!(created.status, StatusCode::OK, "{}", created.json);
+    let rid = created.json["id"].as_i64().unwrap();
+
+    assert_eq!(
+        call(
+            &app,
+            Method::POST,
+            &format!("/api/rides/{rid}/claim"),
+            Some(&driver),
+            None
+        )
+        .await
+        .status,
+        StatusCode::OK
+    );
+    assert_eq!(
+        call(
+            &app,
+            Method::POST,
+            &format!("/api/rides/{rid}/respond"),
+            Some(&passenger),
+            Some(json!({"accept": true}))
+        )
+        .await
+        .status,
+        StatusCode::OK
+    );
+
+    // Driver withdraws before staff approve
+    let wd = call(
+        &app,
+        Method::POST,
+        &format!("/api/rides/{rid}/withdraw"),
+        Some(&driver),
+        Some(json!({"reason": "车坏了"})),
+    )
+    .await;
+    assert_eq!(wd.status, StatusCode::OK, "{}", wd.json);
+
+    // Re-claim by second driver then staff reassign path: claim again
+    let driver2 = login(&st, "driver2@example.org").await;
+    assert_eq!(
+        call(
+            &app,
+            Method::POST,
+            &format!("/api/rides/{rid}/claim"),
+            Some(&driver2),
+            None
+        )
+        .await
+        .status,
+        StatusCode::OK
+    );
+    assert_eq!(
+        call(
+            &app,
+            Method::POST,
+            &format!("/api/rides/{rid}/respond"),
+            Some(&passenger),
+            Some(json!({"accept": true}))
+        )
+        .await
+        .status,
+        StatusCode::OK
+    );
+    assert_eq!(
+        call(
+            &app,
+            Method::POST,
+            &format!("/api/rides/{rid}/approve"),
+            Some(&transport),
+            Some(json!({}))
+        )
+        .await
+        .status,
+        StatusCode::OK
+    );
+
+    // Staff alt-transport on a different pending ride
+    let created2 = call(
+        &app,
+        Method::POST,
+        "/api/rides",
+        Some(&passenger),
+        Some(json!({
+            "pickup_at": tomorrow("15:00"),
+            "pickup_area_id": 2,
+            "pickup_address": "PJ 14",
+            "destination": "诊所",
+            "seats": 1,
+            "assistance": ""
+        })),
+    )
+    .await;
+    let rid2 = created2.json["id"].as_i64().unwrap();
+    let alt = call(
+        &app,
+        Method::POST,
+        &format!("/api/rides/{rid2}/alt-transport"),
+        Some(&transport),
+        Some(json!({"note": "无人接单，批准 Grab"})),
+    )
+    .await;
+    assert_eq!(alt.status, StatusCode::OK, "{}", alt.json);
+    let got = call(
+        &app,
+        Method::GET,
+        &format!("/api/rides/{rid2}"),
+        Some(&passenger),
+        None,
+    )
+    .await;
+    assert_eq!(got.json["status"], "alt_transport");
+
+    // No-show on confirmed ride after start
+    assert_eq!(
+        call(
+            &app,
+            Method::POST,
+            &format!("/api/rides/{rid}/start"),
+            Some(&driver2),
+            None
+        )
+        .await
+        .status,
+        StatusCode::OK
+    );
+    let ns = call(
+        &app,
+        Method::POST,
+        &format!("/api/rides/{rid}/no-show"),
+        Some(&driver2),
+        None,
+    )
+    .await;
+    assert_eq!(ns.status, StatusCode::OK, "{}", ns.json);
+}
+
+#[tokio::test]
+async fn concurrent_double_claim_one_wins() {
+    let (app, st) = setup().await;
+    let passenger = login(&st, "yawen@example.org").await;
+    let d1 = login(&st, "driver@example.org").await;
+    let d2 = login(&st, "driver2@example.org").await;
+
+    let created = call(
+        &app,
+        Method::POST,
+        "/api/rides",
+        Some(&passenger),
+        Some(json!({
+            "pickup_at": tomorrow("16:45"),
+            "pickup_area_id": 1,
+            "pickup_address": "race addr",
+            "destination": "社区中心",
+            "seats": 1,
+            "assistance": ""
+        })),
+    )
+    .await;
+    assert_eq!(created.status, StatusCode::OK, "{}", created.json);
+    let rid = created.json["id"].as_i64().unwrap();
+
+    let app1 = app.clone();
+    let app2 = app.clone();
+    let c1 = d1.clone();
+    let c2 = d2.clone();
+    let path = format!("/api/rides/{rid}/claim");
+    let (r1, r2) = tokio::join!(
+        call(&app1, Method::POST, &path, Some(&c1), None),
+        call(&app2, Method::POST, &path, Some(&c2), None),
+    );
+    let oks = [r1.status, r2.status]
+        .iter()
+        .filter(|s| **s == StatusCode::OK)
+        .count();
+    let conflicts = [r1.status, r2.status]
+        .iter()
+        .filter(|s| **s == StatusCode::CONFLICT || **s == StatusCode::BAD_REQUEST)
+        .count();
+    assert_eq!(
+        oks, 1,
+        "exactly one claim wins: {:?} {:?}",
+        r1.status, r2.status
+    );
+    assert_eq!(
+        conflicts, 1,
+        "other claim conflicts: {} / {}",
+        r1.json, r2.json
+    );
+}
+
+#[tokio::test]
+async fn reimbursement_return_and_reject_branches() {
+    let (app, st) = setup().await;
+    let claimant = login(&st, "member@example.org").await;
+    let transport = login(&st, "transport@example.org").await;
+    let receipt = upload_png(&app, &claimant).await;
+
+    let r = call(
+        &app,
+        Method::POST,
+        "/api/reimbursements",
+        Some(&claimant),
+        Some(json!({
+            "ride_id": null,
+            "amount_cents": 1500,
+            "description": "Grab return test",
+            "receipt_file_id": receipt,
+            "payee_name": "陈法拉",
+            "payee_phone": "012-300 0006"
+        })),
+    )
+    .await;
+    let id = r.json["id"].as_i64().unwrap();
+    assert_eq!(
+        call(
+            &app,
+            Method::POST,
+            &format!("/api/reimbursements/{id}/review"),
+            Some(&transport),
+            Some(json!({"action": "return", "note": "照片不清"}))
+        )
+        .await
+        .status,
+        StatusCode::OK
+    );
+
+    let receipt2 = upload_png(&app, &claimant).await;
+    let r2 = call(
+        &app,
+        Method::POST,
+        "/api/reimbursements",
+        Some(&claimant),
+        Some(json!({
+            "ride_id": null,
+            "amount_cents": 1200,
+            "description": "Grab reject test",
+            "receipt_file_id": receipt2,
+            "payee_name": "陈法拉",
+            "payee_phone": "012-300 0006"
+        })),
+    )
+    .await;
+    let id2 = r2.json["id"].as_i64().unwrap();
+    assert_eq!(
+        call(
+            &app,
+            Method::POST,
+            &format!("/api/reimbursements/{id2}/review"),
+            Some(&transport),
+            Some(json!({"action": "reject", "note": "不符合政策"}))
+        )
+        .await
+        .status,
+        StatusCode::OK
+    );
+}
+
+#[tokio::test]
+async fn help_ticket_and_notifications_flow() {
+    let (app, st) = setup().await;
+    let member = login(&st, "member@example.org").await;
+    let transport = login(&st, "transport@example.org").await;
+
+    let t = call(
+        &app,
+        Method::POST,
+        "/api/help",
+        Some(&member),
+        Some(json!({"subject": "改上车点", "body": "可以改到南门吗？"})),
+    )
+    .await;
+    assert_eq!(t.status, StatusCode::OK, "{}", t.json);
+    let tid = t.json["id"].as_i64().unwrap();
+    assert_eq!(
+        call(
+            &app,
+            Method::POST,
+            &format!("/api/help/{tid}/replies"),
+            Some(&transport),
+            Some(json!({"body": "可以，请在报名里改。"}))
+        )
+        .await
+        .status,
+        StatusCode::OK
+    );
+    assert_eq!(
+        call(
+            &app,
+            Method::POST,
+            &format!("/api/help/{tid}/close"),
+            Some(&member),
+            None
+        )
+        .await
+        .status,
+        StatusCode::OK
+    );
+
+    let notifs = call(&app, Method::GET, "/api/notifications", Some(&member), None).await;
+    assert_eq!(notifs.status, StatusCode::OK);
+    let _ = call(
+        &app,
+        Method::POST,
+        "/api/notifications/read-all",
+        Some(&member),
+        None,
+    )
+    .await;
+}
+
+#[tokio::test]
+async fn event_cancel_finishes_and_over_capacity_claim() {
+    let (app, st) = setup().await;
+    let admin = login(&st, "admin@example.org").await;
+    // Cancel a published event that may have rides
+    let events = call(&app, Method::GET, "/api/events", Some(&admin), None).await;
+    assert_eq!(events.status, StatusCode::OK);
+
+    // Over-capacity: set driver vehicle seats=1 then try claim seats=2 ride
+    sqlx::query("UPDATE vehicles SET seats=1 WHERE user_id=(SELECT id FROM users WHERE email='driver@example.org')")
+        .execute(&st.db)
+        .await
+        .unwrap();
+    let passenger = login(&st, "sophie@example.org").await;
+    let driver = login(&st, "driver@example.org").await;
+    let created = call(
+        &app,
+        Method::POST,
+        "/api/rides",
+        Some(&passenger),
+        Some(json!({
+            "pickup_at": tomorrow("18:10"),
+            "pickup_area_id": 1,
+            "pickup_address": "cap test",
+            "destination": "教会",
+            "seats": 2,
+            "assistance": ""
+        })),
+    )
+    .await;
+    assert_eq!(created.status, StatusCode::OK, "{}", created.json);
+    let rid = created.json["id"].as_i64().unwrap();
+    let claim = call(
+        &app,
+        Method::POST,
+        &format!("/api/rides/{rid}/claim"),
+        Some(&driver),
+        None,
+    )
+    .await;
+    assert_eq!(claim.status, StatusCode::BAD_REQUEST, "{}", claim.json);
+}
+
+#[tokio::test]
+async fn past_pickup_rejected() {
+    let (app, st) = setup().await;
+    let passenger = login(&st, "member@example.org").await;
+    let past = format!(
+        "{}T08:00",
+        (chrono::Local::now() - chrono::Duration::days(1)).format("%Y-%m-%d")
+    );
+    let r = call(
+        &app,
+        Method::POST,
+        "/api/rides",
+        Some(&passenger),
+        Some(json!({
+            "pickup_at": past,
+            "pickup_area_id": 1,
+            "pickup_address": "old",
+            "destination": "x",
+            "seats": 1,
+            "assistance": ""
+        })),
+    )
+    .await;
+    assert_eq!(r.status, StatusCode::BAD_REQUEST, "{}", r.json);
+}

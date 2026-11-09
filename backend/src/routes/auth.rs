@@ -24,14 +24,14 @@ use std::net::SocketAddr;
 use crate::auth::{
     hash_token, is_privileged, CurrentUser, PRIVILEGED, SESSION_COOKIE, SESSION_COOKIE_SECURE,
 };
-use crate::error::{bad, forbidden, not_found, too_many_requests, AppError, AppResult};
+use crate::error::{bad, forbidden, not_found, AppError, AppResult};
 use crate::i18n::ErrorKey;
-use crate::security::client_ip;
 use crate::state::AppState;
 use crate::util::{audit, in_hours, notify_roles, now, random_token, t, Lang};
 
 /// Password login is disabled. All authentication is via passkey (WebAuthn).
 /// Per-account lockout does not apply to passkey auth.
+#[allow(dead_code)]
 const MAX_FAILURES: i64 = 0; // disable password lockout since password login is disabled
 
 pub fn router() -> Router<AppState> {
@@ -75,6 +75,7 @@ fn verify_password(pw: &str, hash: &str) -> bool {
 
 /// Verifying against a fixed dummy hash when the account does not exist keeps response
 /// time the same, so attackers cannot discover which emails are members.
+#[allow(dead_code)]
 fn dummy_hash() -> &'static str {
     static H: OnceLock<String> = OnceLock::new();
     H.get_or_init(|| hash_password("dummy-password-for-timing").unwrap_or_default())
@@ -224,12 +225,14 @@ async fn me(State(st): State<AppState>, u: CurrentUser) -> AppResult<Json<Value>
 }
 
 #[derive(Deserialize)]
+#[allow(dead_code)]
 struct LoginReq {
     email: String,
     password: String,
     code: Option<String>,
 }
 
+#[allow(dead_code)]
 async fn record_failure(st: &AppState, email: &str, ip: &str) -> AppResult<()> {
     sqlx::query("INSERT INTO login_failures (email, ip, created_at) VALUES ($1,$2,$3)")
         .bind(email)
@@ -249,7 +252,10 @@ async fn login_password(
 ) -> AppResult<(CookieJar, Json<Value>)> {
     // Password login is disabled. Members sign in with a passkey.
     let lang = Lang::from_accept_language(
-        headers.get(axum::http::header::ACCEPT_LANGUAGE).and_then(|v| v.to_str().ok()).unwrap_or(""),
+        headers
+            .get(axum::http::header::ACCEPT_LANGUAGE)
+            .and_then(|v| v.to_str().ok())
+            .unwrap_or(""),
     );
     let _ = (_st, _req);
     Err(bad(lang, ErrorKey::AuthDisabled))
@@ -261,11 +267,10 @@ async fn dev_users(State(st): State<AppState>, headers: HeaderMap) -> AppResult<
     if !st.cfg.dev_mode {
         return Err(not_found(lang));
     }
-    let rows: Vec<(String, String, String)> = sqlx::query_as(
-        "SELECT name, email, roles FROM users WHERE status='active' ORDER BY id",
-    )
-    .fetch_all(&st.db)
-    .await?;
+    let rows: Vec<(String, String, String)> =
+        sqlx::query_as("SELECT name, email, roles FROM users WHERE status='active' ORDER BY id")
+            .fetch_all(&st.db)
+            .await?;
     let users: Vec<Value> = rows
         .into_iter()
         .map(|(name, email, roles)| json!({ "name": name, "email": email, "roles": roles }))
@@ -289,11 +294,10 @@ async fn dev_login(
     if !st.cfg.dev_mode {
         return Err(not_found(lang));
     }
-    let row: Option<(i64, String)> =
-        sqlx::query_as("SELECT id, status FROM users WHERE email=$1")
-            .bind(req.email.trim())
-            .fetch_optional(&st.db)
-            .await?;
+    let row: Option<(i64, String)> = sqlx::query_as("SELECT id, status FROM users WHERE email=$1")
+        .bind(req.email.trim())
+        .fetch_optional(&st.db)
+        .await?;
     let Some((id, status)) = row else {
         return Err(bad(lang, ErrorKey::InvalidCredentials));
     };
@@ -362,7 +366,12 @@ async fn save_challenge(
     Ok(id)
 }
 
-async fn take_challenge(st: &AppState, id: &str, kind: &str, lang: Lang) -> AppResult<(i64, String)> {
+async fn take_challenge(
+    st: &AppState,
+    id: &str,
+    kind: &str,
+    lang: Lang,
+) -> AppResult<(i64, String)> {
     let row: Option<(i64, String)> =
         sqlx::query_as("SELECT user_id, state FROM auth_challenges WHERE id=$1 AND kind=$2")
             .bind(id)
@@ -516,7 +525,12 @@ async fn passkey_register_finish(
     let pk = st
         .webauthn
         .finish_passkey_registration(&req.credential, &reg_state)
-        .map_err(|e| bad(u.lang, ErrorKey::PasskeyRegistrationFailed(format!("{e:?}"))))?;
+        .map_err(|e| {
+            bad(
+                u.lang,
+                ErrorKey::PasskeyRegistrationFailed(format!("{e:?}")),
+            )
+        })?;
     let cred_id = serde_json::to_string(pk.cred_id()).map_err(anyhow::Error::from)?;
     sqlx::query(
         "INSERT INTO passkeys (user_id, cred_id, passkey, label, created_at) VALUES ($1,$2,$3,$4,$5)",
@@ -808,11 +822,7 @@ async fn invite_accept(
             .filter(|s| !s.is_empty())
             .unwrap_or("")
             .to_string();
-        joined_email = req
-            .email
-            .unwrap_or_default()
-            .trim()
-            .to_lowercase();
+        joined_email = req.email.unwrap_or_default().trim().to_lowercase();
         if joined_name.is_empty() {
             return Err(bad(lang, ErrorKey::NameRequired));
         }
@@ -828,24 +838,28 @@ async fn invite_accept(
         }
     }
     // Mark used first (single use, guards against double submit).
-    let r = sqlx::query("UPDATE invites SET used_at=$1, email=$2, name=$3 WHERE id=$4 AND used_at IS NULL")
-        .bind(now())
-        .bind(&joined_email)
-        .bind(&joined_name)
-        .bind(inv_id)
-        .execute(&st.db)
-        .await?;
+    let r = sqlx::query(
+        "UPDATE invites SET used_at=$1, email=$2, name=$3 WHERE id=$4 AND used_at IS NULL",
+    )
+    .bind(now())
+    .bind(&joined_email)
+    .bind(&joined_name)
+    .bind(inv_id)
+    .execute(&st.db)
+    .await?;
     if r.rows_affected() == 0 {
         return Err(bad(lang, ErrorKey::InviteAlreadyUsed));
     }
 
     let uid = if kind == "recovery" {
         let id = rec_user.ok_or_else(|| bad(lang, ErrorKey::RecoveryLinkInvalid))?;
-        sqlx::query("UPDATE users SET terms_accepted_at=COALESCE(terms_accepted_at, $1) WHERE id=$2")
-            .bind(now())
-            .bind(id)
-            .execute(&st.db)
-            .await?;
+        sqlx::query(
+            "UPDATE users SET terms_accepted_at=COALESCE(terms_accepted_at, $1) WHERE id=$2",
+        )
+        .bind(now())
+        .bind(id)
+        .execute(&st.db)
+        .await?;
         id
     } else {
         // The invite only opens a profile. Role and group are assigned when an admin approves.
