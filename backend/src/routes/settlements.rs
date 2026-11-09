@@ -155,13 +155,14 @@ async fn write_body(
     shares: &[(i64, i64)],
 ) -> AppResult<()> {
     let mut tx = st.db.begin().await?;
-    sqlx::query("UPDATE settlements SET title=$1, split_mode=$2, subsidy_cents=$3, payee_name=$4, payee_account=$5, due_date=$6 WHERE id=$7")
+    sqlx::query("UPDATE settlements SET title=$1, split_mode=$2, subsidy_cents=$3, payee_name=$4, payee_account=$5, due_date=$6, updated_at=$7 WHERE id=$8")
         .bind(req.title.trim())
         .bind(&req.split_mode)
         .bind(req.subsidy_cents.unwrap_or(0))
         .bind(req.payee_name.trim())
         .bind(req.payee_account.trim())
         .bind(req.due_date.clone().filter(|d| !d.is_empty()))
+        .bind(now())
         .bind(sid)
         .execute(&mut *tx)
         .await?;
@@ -407,7 +408,8 @@ async fn update(
             .bind(now())
             .execute(&st.db)
             .await?;
-        sqlx::query("UPDATE settlements SET version=version+1 WHERE id=$1")
+        sqlx::query("UPDATE settlements SET version=version+1, updated_at=$1 WHERE id=$2")
+            .bind(now())
             .bind(id)
             .execute(&st.db)
             .await?;
@@ -543,7 +545,8 @@ async fn publish(
     if not_attended > 0 {
         return Err(bad(u.lang, ErrorKey::UnattendedMembers(not_attended)));
     }
-    sqlx::query("UPDATE settlements SET status='published' WHERE id=$1")
+    sqlx::query("UPDATE settlements SET status='published', updated_at=$1 WHERE id=$2")
+        .bind(now())
         .bind(id)
         .execute(&st.db)
         .await?;
@@ -620,7 +623,8 @@ async fn close(
     if open > 0 {
         return Err(bad(u.lang, ErrorKey::OpenPaymentsRemain(open)));
     }
-    sqlx::query("UPDATE settlements SET status='closed' WHERE id=$1")
+    sqlx::query("UPDATE settlements SET status='closed', updated_at=$1 WHERE id=$2")
+        .bind(now())
         .bind(id)
         .execute(&st.db)
         .await?;
