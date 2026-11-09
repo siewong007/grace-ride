@@ -25,7 +25,7 @@ export default {
   totp: '双重验证（2FA）',
   totpEnabled: '已开启',
   totpDisabled: '未开启',
-  totpNote: '管理员使用密码登入时须额外验证。',
+  totpNote: '登入靠邀请和通行密钥。管理员可以在同一账号上再加这一层验证。',
   setupTotp: '设置 2FA',
   totpTitle: '设置双重验证',
   totpStep1: '打开验证器应用（Google Authenticator、Microsoft Authenticator 等）',

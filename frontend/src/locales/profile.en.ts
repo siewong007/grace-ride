@@ -25,7 +25,7 @@ export default {
   totp: 'Two-factor authentication (2FA)',
   totpEnabled: 'Enabled',
   totpDisabled: 'Not enabled',
-  totpNote: 'Admins must verify with an extra code when logging in by password.',
+  totpNote: 'Sign-in is by invitation and passkey. Admins can add this extra check on the same account.',
   setupTotp: 'Set up 2FA',
   totpTitle: 'Set up two-factor authentication',
   totpStep1: 'Open your authenticator app (Google Authenticator, Microsoft Authenticator, etc.)',

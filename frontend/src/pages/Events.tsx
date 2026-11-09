@@ -4,7 +4,7 @@ import { Plus } from 'lucide-react';
 import { useApi } from '../api';
 import { useAuth } from '../auth';
 import { Empty, ErrorBox, Pill, Spinner } from '../components/ui';
-import { EVENT_KIND, fmtDateTime } from '../format';
+import { EVENT_KIND, fmtDateTime, useFormatT } from '../format';
 import { useTranslation } from 'react-i18next';
 
 export interface EventItem {
@@ -29,6 +29,7 @@ export interface EventItem {
 
 export default function Events() {
   const { t } = useTranslation('events');
+  const ft = useFormatT();
   const { has } = useAuth();
   const [scope, setScope] = useState<'upcoming' | 'past' | 'managing'>('upcoming');
   const { data, error, loading } = useApi<EventItem[]>(`/events?scope=${scope}`);
@@ -55,10 +56,10 @@ export default function Events() {
                 <span className="event-emoji" aria-hidden>{EVENT_KIND[e.kind]?.emoji}</span>
                 <div className="grow">
                   <div className="bold">{e.title}</div>
-                  <div className="muted small">{EVENT_KIND[e.kind]?.label} · {e.groups}</div>
+                  <div className="muted small">{ft(EVENT_KIND[e.kind]?.label ?? e.kind)} · {e.groups}</div>
                 </div>
               </div>
-              <div>{fmtDateTime(e.starts_at)}</div>
+              <div>{fmtDateTime(e.starts_at, ft)}</div>
               <div className="muted small">{e.location}</div>
               <div className="row">
                 {e.status !== 'published' && <Pill tone="gray">{e.status === 'cancelled' ? t('cancelled') : t('finished')}</Pill>}

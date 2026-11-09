@@ -9,7 +9,7 @@ export default {
   passwordHint: 'At least 10 characters. We recommend logging in mainly with a passkey.',
   continue: 'Continue',
   setupPasskey: 'Set up passkey',
-  setupPasskeyDesc: 'From now on, log in with face, fingerprint or screen lock on your phone — no password to remember.',
+  setupPasskeyDesc: 'From now on, log in with face, fingerprint or screen lock on your phone. There is no password.',
   noPasskey: 'This browser does not support passkeys. Set it up later on another device.',
   setNow: 'Set up now',
   setLater: 'Later',

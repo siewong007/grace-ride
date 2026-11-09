@@ -9,7 +9,7 @@ export default {
   passwordHint: '至少 10 个字符。建议主要使用通行密钥登入。',
   continue: '继续',
   setupPasskey: '设置通行密钥',
-  setupPasskeyDesc: '以后只需用手机刷脸、指纹或屏幕密码即可登入，不用记密码。',
+  setupPasskeyDesc: '以后用手机刷脸、指纹或屏幕锁登入。这个应用不使用密码。',
   noPasskey: '此浏览器不支持通行密钥，请稍后在其他设备设置。',
   setNow: '立即设置',
   setLater: '稍后再说',

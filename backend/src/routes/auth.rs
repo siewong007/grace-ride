@@ -37,6 +37,8 @@ pub fn router() -> Router<AppState> {
     Router::new()
         .route("/auth/me", get(me))
         .route("/auth/login", post(login_password))
+        .route("/auth/dev-users", get(dev_users))
+        .route("/auth/dev-login", post(dev_login))
         .route("/auth/logout", post(logout))
         .route("/auth/passkey/login/start", post(passkey_login_start))
         .route("/auth/passkey/login/finish", post(passkey_login_finish))
@@ -318,6 +320,65 @@ async fn login_password(
         jar,
         Json(json!({ "ok": true, "mfa_setup_needed": privileged && !mfa_ok && !st.cfg.dev_mode })),
     ))
+}
+
+/// Demo accounts for local development. Production returns 404 and never lists members.
+async fn dev_users(State(st): State<AppState>, headers: HeaderMap) -> AppResult<Json<Value>> {
+    let lang = visitor_lang(&headers);
+    if !st.cfg.dev_mode {
+        return Err(not_found(lang));
+    }
+    let rows: Vec<(String, String, String)> = sqlx::query_as(
+        "SELECT name, email, roles FROM users WHERE status='active' ORDER BY id",
+    )
+    .fetch_all(&st.db)
+    .await?;
+    let users: Vec<Value> = rows
+        .into_iter()
+        .map(|(name, email, roles)| json!({ "name": name, "email": email, "roles": roles }))
+        .collect();
+    Ok(Json(json!(users)))
+}
+
+#[derive(Deserialize)]
+struct DevLoginReq {
+    email: String,
+}
+
+/// Sign in as a seeded test account. Only available when DEV_MODE is on.
+async fn dev_login(
+    State(st): State<AppState>,
+    jar: CookieJar,
+    headers: HeaderMap,
+    Json(req): Json<DevLoginReq>,
+) -> AppResult<(CookieJar, Json<Value>)> {
+    let lang = visitor_lang(&headers);
+    if !st.cfg.dev_mode {
+        return Err(not_found(lang));
+    }
+    let row: Option<(i64, String)> =
+        sqlx::query_as("SELECT id, status FROM users WHERE email=$1")
+            .bind(req.email.trim())
+            .fetch_optional(&st.db)
+            .await?;
+    let Some((id, status)) = row else {
+        return Err(bad(lang, ErrorKey::InvalidCredentials));
+    };
+    if status != "active" {
+        return Err(bad(lang, ErrorKey::InvalidCredentials));
+    }
+    let jar = create_session(&st, jar, id, true).await?;
+    audit(&st.db, Some(id), "login.dev", "user", Some(id), "").await;
+    Ok((jar, Json(json!({ "ok": true }))))
+}
+
+fn visitor_lang(headers: &HeaderMap) -> Lang {
+    Lang::from_accept_language(
+        headers
+            .get(axum::http::header::ACCEPT_LANGUAGE)
+            .and_then(|v| v.to_str().ok())
+            .unwrap_or(""),
+    )
 }
 
 async fn logout(
@@ -746,7 +807,6 @@ async fn invite_preview(
 struct AcceptReq {
     name: Option<String>,
     phone: Option<String>,
-    password: Option<String>,
 }
 
 async fn invite_accept(
@@ -798,11 +858,7 @@ async fn invite_accept(
         if name.is_empty() {
             return Err(bad(lang, ErrorKey::NameRequired));
         }
-        let pw_hash = match req.password.as_deref().filter(|p| !p.is_empty()) {
-            Some(p) if p.chars().count() < 10 => return Err(bad(lang, ErrorKey::PasswordTooShort)),
-            Some(p) => Some(hash_password(p)?),
-            None => None,
-        };
+        // Invitation is the credential. New members do not get a password.
         let (id,): (i64,) = sqlx::query_as(
             "INSERT INTO users (name, email, phone, roles, password_hash, webauthn_uuid, created_at) VALUES ($1,$2,$3,$4,$5,$6,$7) RETURNING id",
         )
@@ -810,7 +866,7 @@ async fn invite_accept(
         .bind(&email)
         .bind(req.phone.unwrap_or_default())
         .bind(&roles)
-        .bind(pw_hash)
+        .bind(None::<String>)
         .bind(uuid::Uuid::new_v4().to_string())
         .bind(now())
         .fetch_one(&st.db)

@@ -15,7 +15,6 @@ export default function Invite() {
   const { data, error, loading } = useApi<{ kind: string; email: string; name: string }>(`/invites/${token}`);
   const [name, setName] = useState('');
   const [phone, setPhone] = useState('');
-  const [password, setPassword] = useState('');
   const [step, setStep] = useState<'details' | 'passkey'>('details');
   const { busy, error: actErr, run } = useAction();
 
@@ -32,7 +31,7 @@ export default function Invite() {
   const accept = (e: FormEvent) => {
     e.preventDefault();
     run(async () => {
-      await post(`/invites/${token}/accept`, recovery ? {} : { name: name || data.name, phone, password: password || undefined });
+      await post(`/invites/${token}/accept`, recovery ? {} : { name: name || data.name, phone });
       await refresh();
       setStep('passkey');
     });
@@ -64,9 +63,6 @@ export default function Invite() {
                 </Field>
                 <Field label={t('phone')} hint={t('phoneHint')}>
                   <input className="input" type="tel" required value={phone} onChange={(e) => setPhone(e.target.value)} />
-                </Field>
-                <Field label={t('password')} hint={t('passwordHint')}>
-                  <input className="input" type="password" autoComplete="new-password" minLength={10} value={password} onChange={(e) => setPassword(e.target.value)} />
                 </Field>
               </>
             )}

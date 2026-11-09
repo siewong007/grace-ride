@@ -1,0 +1,20 @@
+# One process serves the API and the SPA. Replace X-Forwarded-For so the
+# app's first-hop trust sees the visitor Caddy already resolved
+# (global trusted_proxies + Cf-Connecting-Ip), not a client-supplied chain.
+graceride.saliminn.my {
+	# Origin is only reachable through Cloudflare, which is in Full mode.
+	# A public ACME challenge cannot reach this host. Same pattern as the
+	# other AIC sites that set tls internal.
+	tls internal
+	encode zstd gzip
+	header -Server
+	header ?Strict-Transport-Security "max-age=31536000; includeSubDomains"
+	request_body {
+		max_size 12MB
+	}
+	reverse_proxy 127.0.0.1:8090 {
+		header_up X-Forwarded-For {client_ip}
+		health_uri /api/health
+		health_interval 30s
+	}
+}

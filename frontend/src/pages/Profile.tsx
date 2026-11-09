@@ -15,7 +15,6 @@ export default function Profile() {
   const passkeys = useApi<{ id: number; label: string; created_at: string; last_used: string | null }[]>('/auth/passkeys');
   const [f, setF] = useState({ name: me!.name, phone: me!.phone, photo: null as number | null, optOut: me!.badges_opt_out });
   const [totp, setTotp] = useState<{ secret: string; url: string } | null>(null);
-  const [pw, setPw] = useState(false);
   const { busy, error, run } = useAction();
   if (!me) return null;
 
@@ -91,13 +90,10 @@ export default function Profile() {
             <p className="muted small">{t('totpNote')}</p>
             {!me.totp_enabled && <button className="btn" disabled={busy} onClick={() => run(async () => setTotp(await post('/auth/totp/setup')))}>{t('setupTotp')}</button>}
           </div>
-          <div className="divider" />
-          <button className="btn" onClick={() => setPw(true)}>{me.has_password ? t('changePassword') : t('setPassword')}</button>
           <ErrorBox error={error} />
         </div>
       </div>
       {totp && <TotpModal secret={totp.secret} url={totp.url} onClose={() => setTotp(null)} onDone={() => { setTotp(null); refresh(); }} />}
-      {pw && <PasswordModal hasPassword={me.has_password} onClose={() => setPw(false)} onDone={() => { setPw(false); refresh(); }} />}
     </div>
   );
 
@@ -129,21 +125,4 @@ function TotpModal({ secret, url, onClose, onDone }: { secret: string; url: stri
   );
 }
 
-function PasswordModal({ hasPassword, onClose, onDone }: { hasPassword: boolean; onClose: () => void; onDone: () => void }) {
-  const { t } = useTranslation('profile');
-  const [current, setCurrent] = useState('');
-  const [next, setNext] = useState('');
-  const { busy, error, run } = useAction();
-  return (
-    <Modal title={t('password')} onClose={onClose}>
-      {hasPassword && <Field label={t('currentPassword')}>
-        <input className="input" type="password" autoComplete="current-password" value={current} onChange={(e) => setCurrent(e.target.value)} />
-      </Field>}
-      <Field label={t('newPassword')} hint={t('newPasswordHint')}>
-        <input className="input" type="password" autoComplete="new-password" minLength={10} value={next} onChange={(e) => setNext(e.target.value)} />
-      </Field>
-      <ErrorBox error={error} />
-      <button className="btn primary" disabled={busy || next.length < 10} onClick={() => run(() => post('/auth/password', { current, new_password: next }).then(onDone), t('passwordUpdated'))}>{t('savePassword')}</button>
-    </Modal>
-  );
-}
+

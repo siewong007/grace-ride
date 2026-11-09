@@ -105,7 +105,10 @@ pub async fn rate_limit(State(st): State<AppState>, req: Request, next: Next) ->
     let rule: Option<(&str, u32, u64)> =
         if req.method() == Method::GET && !path.starts_with("/api/invites/") {
             None
-        } else if path == "/api/auth/login" || path.starts_with("/api/auth/passkey/login") {
+        } else if path == "/api/auth/login"
+            || path == "/api/auth/dev-login"
+            || path.starts_with("/api/auth/passkey/login")
+        {
             Some(("login", 10, 60))
         } else if path == "/api/auth/recovery-request" {
             Some(("recovery", 3, 3600))

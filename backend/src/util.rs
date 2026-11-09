@@ -1,6 +1,6 @@
 //! Shared helpers: time, audit log, notifications, permission checks.
 
-use chrono::{Duration, Local, NaiveDateTime};
+use chrono::{Duration, FixedOffset, Local, NaiveDate, NaiveDateTime, Weekday};
 use rand::{distributions::Alphanumeric, Rng};
 use sqlx::PgPool;
 
@@ -150,4 +150,24 @@ pub fn require_any(u: &CurrentUser, roles: &[&str]) -> AppResult<()> {
 
 pub fn fmt_rm(cents: i64) -> String {
     format!("RM {}.{:02}", cents / 100, (cents % 100).abs())
+}
+
+/// Asia/Kuala Lumpur is UTC+8. All demo timestamps are generated with this
+/// fixed offset so seed data is reproducible regardless of the host time zone.
+pub const KL_OFFSET_SECS: i32 = 8 * 3600;
+
+pub fn now_kl() -> String {
+    FixedOffset::east_opt(KL_OFFSET_SECS)
+        .expect("UTC+8 is a valid offset")
+        .now()
+        .format("%Y-%m-%dT%H:%M:%S")
+        .to_string()
+}
+
+/// Demo "today" in KL time; all relative seed dates anchor on this date.
+pub fn today_kl() -> NaiveDate {
+    FixedOffset::east_opt(KL_OFFSET_SECS)
+        .expect("UTC+8 is a valid offset")
+        .now()
+        .date_naive()
 }

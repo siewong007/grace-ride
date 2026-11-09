@@ -1,11 +1,13 @@
-import { FormEvent, useState } from 'react';
+import { FormEvent, useEffect, useState } from 'react';
 import { Navigate, useLocation, useNavigate } from 'react-router-dom';
-import { Fingerprint, KeyRound } from 'lucide-react';
-import { post } from '../api';
+import { Fingerprint } from 'lucide-react';
+import { api, post } from '../api';
 import { useAuth } from '../auth';
 import { ErrorBox, Field, Modal, useAction } from '../components/ui';
 import { loginWithPasskey, passkeySupported } from '../webauthn';
 import { useTranslation } from 'react-i18next';
+
+type DevUser = { name: string; email: string; roles: string };
 
 export default function Login() {
   const { t } = useTranslation('auth');
@@ -13,13 +15,17 @@ export default function Login() {
   const nav = useNavigate();
   const loc = useLocation();
   const from = (loc.state as { from?: string } | null)?.from ?? '/';
+  const steps = t('steps', { returnObjects: true });
+  const stepList = Array.isArray(steps) ? steps : [];
   const [email, setEmail] = useState('');
-  const [password, setPassword] = useState('');
-  const [code, setCode] = useState('');
-  const [needCode, setNeedCode] = useState(false);
-  const [mode, setMode] = useState<'passkey' | 'password'>(passkeySupported() ? 'passkey' : 'password');
+  const [who, setWho] = useState('');
+  const [devUsers, setDevUsers] = useState<DevUser[] | null>(null);
   const [recover, setRecover] = useState(false);
   const { busy, error, run } = useAction();
+
+  useEffect(() => {
+    api<DevUser[]>('/auth/dev-users').then(setDevUsers).catch(() => setDevUsers(null));
+  }, []);
 
   if (me) return <Navigate to={from} replace />;
 
@@ -36,14 +42,10 @@ export default function Login() {
     });
   };
 
-  const onPassword = (e: FormEvent) => {
+  const onTestAccount = (e: FormEvent) => {
     e.preventDefault();
     run(async () => {
-      const r = await post<{ mfa_required?: boolean }>('/auth/login', { email: email.trim(), password, code: needCode ? code : undefined });
-      if (r.mfa_required) {
-        setNeedCode(true);
-        return;
-      }
+      await post('/auth/dev-login', { email: who });
       await done();
     });
   };
@@ -58,7 +60,7 @@ export default function Login() {
             {t('desc')}
           </p>
           <ul className="steps">
-            {(t('steps') as unknown as string[]).map((s: string) => <li key={s}>{s}</li>)}
+            {stepList.map((s) => <li key={s}>{s}</li>)}
           </ul>
         </div>
 
@@ -71,41 +73,30 @@ export default function Login() {
             </div>
           </div>
 
-          <div className="tabs" role="tablist">
-            <button className={mode === 'passkey' ? 'on' : ''} onClick={() => setMode('passkey')} role="tab">
-              {t('passkey')}
-            </button>
-            <button className={mode === 'password' ? 'on' : ''} onClick={() => setMode('password')} role="tab">
-              {t('password')}
-            </button>
-          </div>
-
-          {mode === 'passkey' ? (
-            <form className="stack" onSubmit={onPasskey}>
-              <Field label={t('email')}>
-                <input className="input" type="email" autoComplete="username webauthn" required value={email} onChange={(e) => setEmail(e.target.value)} />
-              </Field>
+          <form className="stack" onSubmit={onPasskey}>
+            <Field label={t('email')}>
+              <input className="input" type="email" autoComplete="username webauthn" required value={email} onChange={(e) => setEmail(e.target.value)} />
+            </Field>
+            {passkeySupported() ? (
               <button className="btn primary block" disabled={busy}>
                 <Fingerprint size={20} /> {busy ? t('loggingIn') : t('loginWithPasskey')}
               </button>
-              <p className="muted small">{t('passkeyHelp')}</p>
-            </form>
-          ) : (
-            <form className="stack" onSubmit={onPassword}>
-              <Field label={t('email')}>
-                <input className="input" type="email" autoComplete="username" required value={email} onChange={(e) => setEmail(e.target.value)} />
+            ) : (
+              <div className="notice">{t('noPasskey')}</div>
+            )}
+            <p className="muted small">{t('passkeyHelp')}</p>
+          </form>
+          {devUsers && devUsers.length > 0 && (
+            <form className="stack" onSubmit={onTestAccount}>
+              <Field label={t('testAccounts')} hint={t('testAccountsHint')}>
+                <select className="input" required value={who} onChange={(e) => setWho(e.target.value)}>
+                  <option value="">{t('testChoose')}</option>
+                  {devUsers.map((u) => (
+                    <option key={u.email} value={u.email}>{u.name} · {u.email}</option>
+                  ))}
+                </select>
               </Field>
-              <Field label={t('passwordField')}>
-                <input className="input" type="password" autoComplete="current-password" required value={password} onChange={(e) => setPassword(e.target.value)} />
-              </Field>
-              {needCode && (
-                <Field label={t('mfaField')} hint={t('mfaHint')}>
-                  <input className="input" inputMode="numeric" autoComplete="one-time-code" maxLength={6} autoFocus value={code} onChange={(e) => setCode(e.target.value)} />
-                </Field>
-              )}
-              <button className="btn primary block" disabled={busy}>
-                <KeyRound size={20} /> {busy ? t('loggingIn') : t('login')}
-              </button>
+              <button className="btn block" disabled={busy || !who}>{busy ? t('loggingIn') : t('login')}</button>
             </form>
           )}
           <ErrorBox error={error} />

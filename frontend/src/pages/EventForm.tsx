@@ -2,13 +2,14 @@ import { FormEvent, useEffect, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import { post, put, useApi } from '../api';
 import { ErrorBox, Field, useAction } from '../components/ui';
-import { EVENT_KIND } from '../format';
+import { EVENT_KIND, useFormatT } from '../format';
 import { useTranslation } from 'react-i18next';
 
 interface Group { id: number; name: string; description: string; is_all: boolean; member_count: number }
 
 export default function EventForm() {
   const { t } = useTranslation('eventForm');
+  const ft = useFormatT();
   const { id } = useParams();
   const nav = useNavigate();
   const { data: groups } = useApi<Group[]>('/groups');
@@ -55,7 +56,7 @@ export default function EventForm() {
             <input className="input" required value={f.title} onChange={set('title')} placeholder={t('namePlaceholder')} /></Field></div>
           <Field label={t('type')}>
             <select className="input" value={f.kind} onChange={set('kind')}>
-              {Object.entries(EVENT_KIND).map(([k, v]) => <option key={k} value={k}>{v.emoji} {v.label}</option>)}
+              {Object.entries(EVENT_KIND).map(([k, v]) => <option key={k} value={k}>{v.emoji} {ft(v.label)}</option>)}
             </select>
           </Field>
           <Field label={t('capacity')} hint={t('capacityHint')}>

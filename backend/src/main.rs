@@ -25,7 +25,7 @@ async fn main() -> anyhow::Result<()> {
         tracing_subscriber::fmt().with_env_filter(filter).init();
     }
     if cfg.dev_mode {
-        tracing::warn!("DEV_MODE is on: demo accounts are active and password logins count as 2FA. Never use in production.");
+        tracing::warn!("DEV_MODE is on: demo accounts are on the login page and do not need a password. Never use in production.");
     }
 
     let state = init(cfg.clone()).await?;
