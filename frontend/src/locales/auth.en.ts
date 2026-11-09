@@ -8,6 +8,8 @@ export default {
   password: 'Password login',
   email: 'Email',
   loginWithPasskey: 'Log in with passkey',
+  or: 'or',
+  useEmailToLogin: 'Use email to login'
   passkeyHelp: 'Confirm your identity with face, fingerprint or screen lock on your phone; the church stores no face or fingerprint data.',
   noPasskey: 'This browser cannot use a passkey. Open your invitation on a phone, or ask an admin for a new invite.',
   testAccounts: 'Test accounts',

@@ -228,7 +228,7 @@ async fn create_invite(
         .bind(parse_roles(&req.roles.join(",")).join(","))
         .bind(serde_json::to_string(&req.group_ids).map_err(anyhow::Error::from)?)
         .bind(u.id)
-        .bind(in_days(14))
+        .bind(in_days(3))
         .bind(now())
         .fetch_one(&st.db)
         .await?;

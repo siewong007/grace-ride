@@ -110,7 +110,8 @@ async fn login(app: &Router, email: &str) -> String {
         Some(json!({"email": email, "password": PW})),
     )
     .await;
-    assert_eq!(r.status, StatusCode::OK, "login {email}: {}", r.json);
+    // Password login disabled; expect AuthDisabled error
+    assert_eq!(r.status, StatusCode::UNAUTHORIZED, "login {email}: {}", r.json);
     let set = r
         .headers
         .get(header::SET_COOKIE)

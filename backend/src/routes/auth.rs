@@ -30,8 +30,9 @@ use crate::security::client_ip;
 use crate::state::AppState;
 use crate::util::{audit, in_hours, notify_roles, now, random_token, t, Lang};
 
-/// Failed password attempts per account before a temporary lock (per 15 minutes).
-const MAX_FAILURES: i64 = 5;
+/// Password login is disabled. All authentication is via passkey (WebAuthn).
+/// Per-account lockout does not apply to passkey auth.
+const MAX_FAILURES: i64 = 0; // disable password lockout since password login is disabled
 
 pub fn router() -> Router<AppState> {
     Router::new()
@@ -237,89 +238,17 @@ async fn record_failure(st: &AppState, email: &str, ip: &str) -> AppResult<()> {
 }
 
 async fn login_password(
-    State(st): State<AppState>,
-    peer: Option<axum::Extension<ConnectInfo<SocketAddr>>>,
-    headers: HeaderMap,
-    jar: CookieJar,
-    Json(req): Json<LoginReq>,
+    _State(_st): State<AppState>,
+    _peer: Option<axum::Extension<ConnectInfo<SocketAddr>>>,
+    _headers: HeaderMap,
+    _jar: CookieJar,
+    _Json(_req): Json<LoginReq>,
 ) -> AppResult<(CookieJar, Json<Value>)> {
+    // Password login is disabled. All authentication is via passkey (WebAuthn).
     let lang = Lang::from_accept_language(
-        headers
-            .get(axum::http::header::ACCEPT_LANGUAGE)
-            .and_then(|v| v.to_str().ok())
-            .unwrap_or(""),
+        _headers.get(axum::http::header::ACCEPT_LANGUAGE).and_then(|v| v.to_str().ok()).unwrap_or(""),
     );
-    let email = req.email.trim().to_lowercase();
-    let ip = client_ip(&headers, peer.map(|p| (p.0).0), st.cfg.trust_proxy);
-    // Per-account lockout (the per-IP limit lives in the rate-limit middleware).
-    let (fails,): (i64,) = sqlx::query_as(
-        "SELECT COUNT(*) FROM login_failures WHERE email=$1 AND created_at > to_char(LOCALTIMESTAMP - interval '15 minutes', 'YYYY-MM-DD\"T\"HH24:MI:SS')",
-    )
-    .bind(&email)
-    .fetch_one(&st.db)
-    .await?;
-    if fails >= MAX_FAILURES {
-        return Err(too_many_requests(lang, ErrorKey::TooManyFailedLogins));
-    }
-    let row: Option<(i64, Option<String>, Option<String>, i64, String, String)> = sqlx::query_as(
-        "SELECT id, password_hash, totp_secret, totp_enabled, roles, status FROM users WHERE email=$1",
-    )
-    .bind(&email)
-    .fetch_optional(&st.db)
-    .await?;
-    let (id, hash, secret, totp_enabled, roles, status) = match row {
-        Some((id, Some(h), s, t, r, st_)) => (id, h, s, t, r, st_),
-        _ => {
-            let _ = verify_password(&req.password, dummy_hash());
-            record_failure(&st, &email, &ip).await?;
-            return Err(bad(lang, ErrorKey::InvalidCredentials));
-        }
-    };
-    if !verify_password(&req.password, &hash) || status != "active" {
-        record_failure(&st, &email, &ip).await?;
-        audit(
-            &st.db,
-            Some(id),
-            "login.failed",
-            "user",
-            Some(id),
-            format!("ip {ip}"),
-        )
-        .await;
-        return Err(bad(lang, ErrorKey::InvalidCredentials));
-    }
-    let mut mfa_ok = false;
-    if totp_enabled == 1 {
-        let Some(code) = req.code.as_deref().filter(|c| !c.trim().is_empty()) else {
-            return Ok((jar, Json(json!({ "mfa_required": true }))));
-        };
-        if let Err(e) =
-            verify_totp(&st, id, secret.as_deref().unwrap_or(""), &email, code, lang).await
-        {
-            record_failure(&st, &email, &ip).await?;
-            return Err(e);
-        }
-        mfa_ok = true;
-    }
-    sqlx::query("DELETE FROM login_failures WHERE email=$1")
-        .bind(&email)
-        .execute(&st.db)
-        .await?;
-    let privileged = is_privileged(&roles);
-    let jar = create_session(&st, jar, id, mfa_ok).await?;
-    audit(
-        &st.db,
-        Some(id),
-        "login.password",
-        "user",
-        Some(id),
-        if mfa_ok { "with 2FA" } else { "" },
-    )
-    .await;
-    Ok((
-        jar,
-        Json(json!({ "ok": true, "mfa_setup_needed": privileged && !mfa_ok && !st.cfg.dev_mode })),
-    ))
+    Err(bad(lang, ErrorKey::AuthDisabled))
 }
 
 /// Demo accounts for local development. Production returns 404 and never lists members.
