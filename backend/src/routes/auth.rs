@@ -210,6 +210,7 @@ async fn me(State(st): State<AppState>, u: CurrentUser) -> AppResult<Json<Value>
     let privileged = u.roles.iter().any(|r| PRIVILEGED.contains(&r.as_str()));
     Ok(Json(json!({
         "id": u.id, "name": u.name, "email": u.email, "phone": row.0, "photo_file_id": row.1,
+        "status": u.status,
         "lang": u.lang.code(),
         "roles": u.roles, "mfa_ok": u.mfa_ok, "totp_enabled": row.2 == 1,
         "has_password": row.3.is_some(), "passkey_count": passkeys.0,
@@ -390,7 +391,7 @@ async fn passkey_login_start(
             .unwrap_or(""),
     );
     let row: Option<(i64,)> =
-        sqlx::query_as("SELECT id FROM users WHERE email=$1 AND status='active'")
+        sqlx::query_as("SELECT id FROM users WHERE email=$1 AND status IN ('active', 'pending')")
             .bind(req.email.trim())
             .fetch_optional(&st.db)
             .await?;
@@ -758,7 +759,7 @@ async fn invite_accept(
     .bind(&token)
     .fetch_optional(&st.db)
     .await?;
-    let Some((inv_id, kind, email, inv_name, roles, group_ids, rec_user, expires, used)) = row
+    let Some((inv_id, kind, email, inv_name, _roles, _group_ids, rec_user, expires, used)) = row
     else {
         return Err(not_found(lang));
     };
@@ -788,28 +789,19 @@ async fn invite_accept(
         if name.is_empty() {
             return Err(bad(lang, ErrorKey::NameRequired));
         }
-        // Invitation is the credential. New members do not get a password.
+        // The invite only opens a profile. Role and group are assigned when an admin approves.
         let (id,): (i64,) = sqlx::query_as(
-            "INSERT INTO users (name, email, phone, roles, password_hash, webauthn_uuid, created_at) VALUES ($1,$2,$3,$4,$5,$6,$7) RETURNING id",
+            "INSERT INTO users (name, email, phone, roles, status, password_hash, webauthn_uuid, created_at) VALUES ($1,$2,$3,'','pending',$4,$5,$6) RETURNING id",
         )
         .bind(&name)
         .bind(&email)
         .bind(req.phone.unwrap_or_default())
-        .bind(&roles)
         .bind(None::<String>)
         .bind(uuid::Uuid::new_v4().to_string())
         .bind(now())
         .fetch_one(&st.db)
         .await
         .map_err(|_| bad(lang, ErrorKey::EmailAlreadyRegistered))?;
-        let gids: Vec<i64> = serde_json::from_str(&group_ids).unwrap_or_default();
-        for g in gids {
-            sqlx::query("INSERT INTO group_members (group_id, user_id) VALUES ($1,$2) ON CONFLICT DO NOTHING")
-                .bind(g)
-                .bind(id)
-                .execute(&st.db)
-                .await?;
-        }
         id
     };
     let jar = create_session(&st, jar, uid, false).await?;

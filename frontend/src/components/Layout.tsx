@@ -1,5 +1,5 @@
 import { ReactNode } from 'react';
-import { Link, NavLink, Outlet } from 'react-router-dom';
+import { Link, NavLink, Navigate, Outlet, useLocation } from 'react-router-dom';
 import {
   Bell, Calendar, Car, CarFront, ClipboardList, HandCoins, HeartHandshake, Home, LayoutDashboard,
   LifeBuoy, MapPinned, Megaphone, Receipt, ScrollText, User, Users, Wallet, BarChart3,
@@ -12,10 +12,13 @@ interface NavItem { to: string; label: string; icon: ReactNode; end?: boolean }
 export default function Layout() {
   const { t } = useTranslation('layout');
   const { me, has, isStaff } = useAuth();
+  const loc = useLocation();
   if (!me) return null;
+  const pending = me.status === 'pending';
+  if (pending && loc.pathname !== '/me') return <Navigate to="/me" replace />;
   const sz = 22;
 
-  const member: NavItem[] = [
+  const member: NavItem[] = pending ? [] : [
     { to: '/', label: t('home'), icon: <Home size={sz} />, end: true },
     { to: '/rides', label: t('myRides'), icon: <Car size={sz} /> },
     { to: '/events', label: t('events'), icon: <Calendar size={sz} /> },
@@ -46,14 +49,16 @@ export default function Layout() {
   }
   if (isStaff) staff.push({ to: '/admin/audit', label: t('audit'), icon: <ScrollText size={sz} /> });
 
-  const bottom: NavItem[] = [
-    member[0],
-    member[1],
-    ...(has('driver') ? driver : []),
-    member[2],
-    ...(isStaff && !has('driver') ? [staff[0]] : []),
-    { to: '/me', label: t('profile'), icon: <User size={sz} /> },
-  ].slice(0, 5);
+  const bottom: NavItem[] = pending
+    ? [{ to: '/me', label: t('profile'), icon: <User size={sz} /> }]
+    : [
+        member[0],
+        member[1],
+        ...(has('driver') ? driver : []),
+        member[2],
+        ...(isStaff && !has('driver') ? [staff[0]] : []),
+        { to: '/me', label: t('profile'), icon: <User size={sz} /> },
+      ].slice(0, 5);
 
   const link = (n: NavItem) => (
     <NavLink key={n.to} to={n.to} end={n.end} className={({ isActive }) => (isActive ? 'active' : '')}>
@@ -67,11 +72,11 @@ export default function Layout() {
   return (
     <div className="shell">
       <nav className="sidebar" aria-label="主选单">
-        <Link to="/" className="brand">
+        <Link to={pending ? '/me' : '/'} className="brand">
           <img className="brand-mark" src="/icon.svg" alt="" />
           <span>{t('brand')}<small>{t('brandSub')}</small></span>
         </Link>
-        <div className="section-label">{t('sectionMember')}</div>
+        {member.length > 0 && <div className="section-label">{t('sectionMember')}</div>}
         {member.map(link)}
         {(driver.length > 0 || leader.length > 0) && <div className="section-label">{t('sectionService')}</div>}
         {driver.map(link)}
@@ -84,15 +89,22 @@ export default function Layout() {
 
       <div>
         <header className="topbar">
-          <Link to="/" className="brand">
+          <Link to={pending ? '/me' : '/'} className="brand">
             <img className="brand-mark" src="/icon.svg" alt="" />
             {t('brand')}
           </Link>
-          <Link to="/notifications" className="icon-btn" aria-label={t('notifications') + (unreadLabel ? ` ${unreadLabel}` : '')}>
-            <Bell size={22} />
-            {me.unread > 0 && <span className="dot">{me.unread > 99 ? '99+' : me.unread}</span>}
-          </Link>
+          {!pending && (
+            <Link to="/notifications" className="icon-btn" aria-label={t('notifications') + (unreadLabel ? ` ${unreadLabel}` : '')}>
+              <Bell size={22} />
+              {me.unread > 0 && <span className="dot">{me.unread > 99 ? '99+' : me.unread}</span>}
+            </Link>
+          )}
         </header>
+        {pending && (
+          <div className="main" style={{ paddingBottom: 0 }}>
+            <div className="notice">{t('pendingNotice')}</div>
+          </div>
+        )}
         {me.privileged && !me.mfa_ok && (
           <div className="main" style={{ paddingBottom: 0 }}>
             <div className="notice">

@@ -49,6 +49,7 @@ pub enum ErrorKey {
     EmailAlreadyRegistered,
     TooManyFailedLogins,
     AuthDisabled,
+    AccountPending,
 
     // === Events ===
     EventNameRequired,
@@ -259,6 +260,7 @@ impl ErrorKey {
             Self::EmailAlreadyRegistered => "EMAIL_ALREADY_REGISTERED",
             Self::TooManyFailedLogins => "TOO_MANY_FAILED_LOGINS",
             Self::AuthDisabled => "AUTH_DISABLED",
+            Self::AccountPending => "ACCOUNT_PENDING",
 
             Self::EventNameRequired => "EVENT_NAME_REQUIRED",
             Self::InvalidEventType => "INVALID_EVENT_TYPE",

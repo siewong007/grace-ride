@@ -1,6 +1,8 @@
 export default {
   logout: '登出',
   member: '会员',
+  pending: '待批准',
+  pendingNotice: '管理员核对资料后才会分配职务与群体。在此之前你可以更新个人资料和通行密钥。',
   roles: '职务',
   myCosts: '我的费用',
   myReimb: 'Grab 报销',

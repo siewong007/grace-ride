@@ -20,8 +20,13 @@ use axum::{
 };
 use serde_json::json;
 
+use axum_extra::extract::CookieJar;
+
+use crate::auth::{hash_token, SESSION_COOKIE, SESSION_COOKIE_SECURE};
+use crate::error::forbidden;
+use crate::i18n::ErrorKey;
 use crate::state::AppState;
-use crate::util::{t, Lang};
+use crate::util::{now, t, Lang};
 
 /// Fixed-window counter keyed by "bucket:ip". Single-process is fine: the app runs
 /// as one instance of this app. Move to Redis if it is ever scaled horizontally.
@@ -132,6 +137,48 @@ pub async fn rate_limit(State(st): State<AppState>, req: Request, next: Next) ->
             tracing::warn!(bucket, ip, "rate limited");
             let lang = visitor_lang(req.headers());
             return too_many(wait, lang);
+        }
+    }
+    next.run(req).await
+}
+
+fn pending_profile_only(path: &str) -> bool {
+    let path = path.strip_prefix("/api").unwrap_or(path);
+    path == "/health"
+        || path == "/me"
+        || path == "/auth"
+        || path.starts_with("/auth/")
+        || path == "/files"
+        || path.starts_with("/files/")
+        || path.starts_with("/invites/")
+}
+
+/// A member who has accepted an invite but is not yet approved may use their
+/// profile, passkey, and photo. Every other API route stays closed.
+pub async fn pending_guard(State(st): State<AppState>, req: Request, next: Next) -> Response {
+    let path = req.uri().path().to_string();
+    if pending_profile_only(&path) {
+        return next.run(req).await;
+    }
+    let jar = CookieJar::from_headers(req.headers());
+    let token = jar
+        .get(SESSION_COOKIE_SECURE)
+        .or_else(|| jar.get(SESSION_COOKIE))
+        .map(|c| c.value().to_string());
+    let Some(token) = token.filter(|t| t.len() == 48) else {
+        return next.run(req).await;
+    };
+    let row: Option<(String, String, String)> = sqlx::query_as(
+        "SELECT u.status, u.lang, s.expires_at FROM sessions s JOIN users u ON u.id = s.user_id WHERE s.token = $1",
+    )
+    .bind(hash_token(&token))
+    .fetch_optional(&st.db)
+    .await
+    .ok()
+    .flatten();
+    if let Some((status, lang, expires)) = row {
+        if status == "pending" && expires >= now() {
+            return forbidden(Lang::from_code(&lang), ErrorKey::AccountPending).into_response();
         }
     }
     next.run(req).await

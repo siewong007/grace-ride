@@ -35,6 +35,9 @@ pub struct CurrentUser {
     pub name: String,
     pub email: String,
     pub roles: Vec<String>,
+    /// `active` members can use the app. `pending` members can only use their profile
+    /// until an admin approves them and assigns a role and group.
+    pub status: String,
     pub mfa_ok: bool,
     pub lang: Lang,
     /// SHA-256 of the session token (the primary key in `sessions`).
@@ -100,16 +103,16 @@ impl FromRequestParts<AppState> for CurrentUser {
         }
         let session_id = hash_token(&token);
 
-        let row: Option<(i64, String, String, String, i64, String, String)> = sqlx::query_as(
-            "SELECT u.id, u.name, u.email, u.roles, s.mfa_ok, s.expires_at, u.lang
+        let row: Option<(i64, String, String, String, String, i64, String, String)> = sqlx::query_as(
+            "SELECT u.id, u.name, u.email, u.roles, u.status, s.mfa_ok, s.expires_at, u.lang
              FROM sessions s JOIN users u ON u.id = s.user_id
-             WHERE s.token = $1 AND u.status = 'active'",
+             WHERE s.token = $1 AND u.status IN ('active', 'pending')",
         )
         .bind(&session_id)
         .fetch_optional(&state.db)
         .await?;
 
-        let (id, name, email, roles, mfa_ok, expires, lang) =
+        let (id, name, email, roles, status, mfa_ok, expires, lang) =
             row.ok_or(unauthorized(accept_lang))?;
         if expires < now() {
             return Err(unauthorized(accept_lang));
@@ -119,6 +122,7 @@ impl FromRequestParts<AppState> for CurrentUser {
             name,
             email,
             roles: parse_roles(&roles),
+            status,
             mfa_ok: mfa_ok == 1 || state.cfg.dev_mode,
             lang: Lang::from_code(&lang),
             session_id,

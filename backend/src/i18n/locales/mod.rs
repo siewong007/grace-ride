@@ -58,7 +58,8 @@ pub fn render(lang: Lang, key: &ErrorKey) -> String {
         | ErrorKey::NameRequired
         | ErrorKey::EmailAlreadyRegistered
         | ErrorKey::TooManyFailedLogins
-        | ErrorKey::AuthDisabled => auth::render(lang, key),
+        | ErrorKey::AuthDisabled
+        | ErrorKey::AccountPending => auth::render(lang, key),
         ErrorKey::EventNameRequired
         | ErrorKey::InvalidEventType
         | ErrorKey::SelectVisibleGroup
@@ -239,6 +240,7 @@ mod tests {
             ErrorKey::EmailAlreadyRegistered,
             ErrorKey::TooManyFailedLogins,
             ErrorKey::AuthDisabled,
+            ErrorKey::AccountPending,
             ErrorKey::EventNameRequired,
             ErrorKey::InvalidEventType,
             ErrorKey::SelectVisibleGroup,

@@ -199,8 +199,6 @@ async fn update_user(
 struct InviteIn {
     email: String,
     name: Option<String>,
-    roles: Vec<String>,
-    group_ids: Vec<i64>,
 }
 
 async fn create_invite(
@@ -225,8 +223,8 @@ async fn create_invite(
         .bind(&token)
         .bind(&email)
         .bind(req.name.unwrap_or_default().trim())
-        .bind(parse_roles(&req.roles.join(",")).join(","))
-        .bind(serde_json::to_string(&req.group_ids).map_err(anyhow::Error::from)?)
+        .bind("")
+        .bind("[]")
         .bind(u.id)
         .bind(in_days(3))
         .bind(now())

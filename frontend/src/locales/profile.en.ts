@@ -1,6 +1,8 @@
 export default {
   logout: 'Log out',
   member: 'Member',
+  pending: 'Pending approval',
+  pendingNotice: 'An admin will assign your role and group after checking your profile. Until then you can update your details and passkey.',
   roles: 'Roles',
   myCosts: 'My costs',
   myReimb: 'Grab reimbursement',

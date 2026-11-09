@@ -31,12 +31,13 @@ export default function Profile() {
         <button className="btn" onClick={() => run(async () => { await post('/auth/logout'); await refresh(); nav('/login'); })}><LogOut size={18} />{t('logout')}</button>
       </div>
       <div className="row">
-        <Pill tone="green">{t('member')}</Pill>
+        <Pill tone={me.status === 'pending' ? 'gray' : 'green'}>{me.status === 'pending' ? t('pending') : t('member')}</Pill>
         {me.roles.map((r) => <Pill key={r} tone="blue">{ft(ROLE_LABEL[r])}</Pill>)}
         {me.groups.map((g) => <Pill key={g.id}>{g.name}</Pill>)}
       </div>
+      {me.status === 'pending' && <div className="notice">{t('pendingNotice')}</div>}
 
-      <div className="grid cols-2 hide-tablet-up">
+      {me.status !== 'pending' && <div className="grid cols-2 hide-tablet-up">
         <Link className="btn" to="/costs">{t('myCosts')}</Link>
         <Link className="btn" to="/reimbursements">{t('myReimb')}</Link>
         <Link className="btn" to="/report">{t('myReport')}</Link>
@@ -45,7 +46,7 @@ export default function Profile() {
         {me.mfa_ok && (has('transport') || has('admin')) && <Link className="btn" to="/admin">{t('dashboard')}</Link>}
         {me.mfa_ok && (has('transport') || has('finance')) && <Link className="btn" to="/admin/reimbursements">{t('reimbReview')}</Link>}
         {me.mfa_ok && has('admin') && <Link className="btn" to="/admin/members">{t('members')}</Link>}
-      </div>
+      </div>}
 
       <div className="split">
         <form className="card stack" onSubmit={(e) => { e.preventDefault(); run(() => put('/me', { name: f.name, phone: f.phone, photo_file_id: f.photo, badges_opt_out: f.optOut }).then(refresh), t('saved')); }}>
@@ -84,12 +85,14 @@ export default function Profile() {
               <Fingerprint size={18} />{t('addPasskey')}
             </button>
           </div>
+          {me.status !== 'pending' && <>
           <div className="divider" />
           <div className="stack-sm">
             <div className="row between"><strong>{t('totp')}</strong>{me.totp_enabled ? <Pill tone="green">{t('totpEnabled')}</Pill> : <Pill>{t('totpDisabled')}</Pill>}</div>
             <p className="muted small">{t('totpNote')}</p>
             {!me.totp_enabled && <button className="btn" disabled={busy} onClick={() => run(async () => setTotp(await post('/auth/totp/setup')))}>{t('setupTotp')}</button>}
           </div>
+          </>}
           <ErrorBox error={error} />
         </div>
       </div>

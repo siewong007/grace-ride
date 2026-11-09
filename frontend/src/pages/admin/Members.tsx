@@ -1,5 +1,5 @@
 import { FormEvent, useState } from 'react';
-import { del, post, useApi } from '../../api';
+import { del, post, put, useApi } from '../../api';
 import { useAuth } from '../../auth';
 import { Empty, ErrorBox, Field, Modal, Pill, Spinner, useAction } from '../../components/ui';
 import { fmtAgo, ROLE_LABEL, useFormatT } from '../../format';
@@ -39,6 +39,7 @@ function MemberList({ t, ft }: { t: (k: string, o?: any) => string; ft: (k: stri
   const [q, setQ] = useState('');
   const { data, loading, reload } = useApi<User[]>(`/admin/users?q=${encodeURIComponent(q)}`);
   const [edit, setEdit] = useState<User | null>(null);
+  const [approve, setApprove] = useState<User | null>(null);
   return (
     <div className="stack">
       <input className="input" placeholder={t('members.search')} value={q} onChange={(e) => setQ(e.target.value)} />
@@ -50,12 +51,14 @@ function MemberList({ t, ft }: { t: (k: string, o?: any) => string; ft: (k: stri
               <tbody>
                 {data.map((u) => (
                   <tr key={u.id}>
-                    <td data-label={t('members.name')} className="bold">{u.name} {u.status !== 'active' && <Pill tone="red">{t('members.statusActive')}</Pill>}</td>
+                    <td data-label={t('members.name')} className="bold">{u.name} {u.status === 'pending' && <Pill>{t('members.pending')}</Pill>}{u.status === 'disabled' && <Pill tone="red">{t('members.statusActive')}</Pill>}</td>
                     <td data-label={t('members.email')}>{u.email}</td>
                     <td data-label={t('members.role')}>{u.roles.map((r) => ft(ROLE_LABEL[r])).join('、') || t('members.member')}</td>
                     <td data-label={t('members.group')} className="small">{u.groups}</td>
                     <td data-label={t('members.passkey')}>{u.passkeys}</td>
-                    <td><button className="btn sm" onClick={() => setEdit(u)}>{t('members.edit')}</button></td>
+                    <td>{u.status === 'pending'
+                      ? <button className="btn sm primary" onClick={() => setApprove(u)}>{t('members.approveMember')}</button>
+                      : <button className="btn sm" onClick={() => setEdit(u)}>{t('members.edit')}</button>}</td>
                   </tr>
                 ))}
               </tbody>
@@ -64,6 +67,7 @@ function MemberList({ t, ft }: { t: (k: string, o?: any) => string; ft: (k: stri
         )}
       </div>
       {edit && <EditUser user={edit} t={t} ft={ft} onClose={() => { setEdit(null); reload(); }} />}
+      {approve && <ApproveUser user={approve} t={t} ft={ft} onClose={() => { setApprove(null); reload(); }} />}
     </div>
   );
 }
@@ -97,40 +101,19 @@ function EditUser({ user, t, ft, onClose }: { user: User; t: (k: string, o?: any
   );
 }
 
-function Invites({ t, ft }: { t: (k: string, o?: any) => string; ft: (k: string) => string }) {
-  const { data, reload } = useApi<any[]>('/admin/invites');
+function ApproveUser({ user, t, ft, onClose }: { user: User; t: (k: string, o?: any) => string; ft: (k: string) => string; onClose: () => void }) {
   const { data: groups } = useApi<Group[]>('/groups');
-  const [email, setEmail] = useState('');
-  const [name, setName] = useState('');
   const [roles, setRoles] = useState<string[]>([]);
   const [gids, setGids] = useState<number[]>([]);
-  const [link, setLink] = useState<string | null>(null);
   const { busy, error, run } = useAction();
-  const copy = (s: string) => { navigator.clipboard?.writeText(s); };
-  const submit = (e: FormEvent) => {
-    e.preventDefault();
-    run(async () => {
-      const r = await post<{ url: string }>('/admin/invites', {
-        email: email.trim(),
-        name: name.trim(),
-        roles,
-        group_ids: gids,
-      });
-      setLink(r.url);
-      setEmail('');
-      setName('');
-      reload();
-    }, t('members.inviteCreated'));
-  };
+  const save = () => run(
+    () => put(`/admin/users/${user.id}`, { roles, status: 'active', group_ids: gids }).then(onClose),
+    t('members.memberApproved'),
+  );
   return (
-    <div className="stack">
-      <form className="card stack" onSubmit={submit}>
-        <Field label={t('members.email')}>
-          <input className="input" type="email" required autoComplete="off" value={email} onChange={(e) => setEmail(e.target.value)} />
-        </Field>
-        <Field label={t('members.name')}>
-          <input className="input" value={name} onChange={(e) => setName(e.target.value)} />
-        </Field>
+    <Modal title={`${t('members.approveMember')} ${user.name}`} onClose={onClose}>
+      <div className="stack-sm">
+        <p className="muted">{user.email}</p>
         <strong>{t('members.role')}</strong>
         <div className="chips">
           {ROLES.map((r) => (
@@ -143,6 +126,43 @@ function Invites({ t, ft }: { t: (k: string, o?: any) => string; ft: (k: string)
             <button key={g.id} type="button" className={`chip ${gids.includes(g.id) ? 'on' : ''}`} onClick={() => setGids(gids.includes(g.id) ? gids.filter((x) => x !== g.id) : [...gids, g.id])}>{g.name}</button>
           ))}
         </div>
+        <ErrorBox error={error} />
+        <button className="btn primary" disabled={busy} onClick={save}>{t('members.approveMember')}</button>
+      </div>
+    </Modal>
+  );
+}
+
+function Invites({ t, ft }: { t: (k: string, o?: any) => string; ft: (k: string) => string }) {
+  const { data, reload } = useApi<any[]>('/admin/invites');
+  const [email, setEmail] = useState('');
+  const [name, setName] = useState('');
+  const [link, setLink] = useState<string | null>(null);
+  const { busy, error, run } = useAction();
+  const copy = (s: string) => { navigator.clipboard?.writeText(s); };
+  const submit = (e: FormEvent) => {
+    e.preventDefault();
+    run(async () => {
+      const r = await post<{ url: string }>('/admin/invites', {
+        email: email.trim(),
+        name: name.trim(),
+      });
+      setLink(r.url);
+      setEmail('');
+      setName('');
+      reload();
+    }, t('members.inviteCreated'));
+  };
+  return (
+    <div className="stack">
+      <form className="card stack" onSubmit={submit}>
+        <p className="muted">{t('members.inviteHint')}</p>
+        <Field label={t('members.email')}>
+          <input className="input" type="email" required autoComplete="off" value={email} onChange={(e) => setEmail(e.target.value)} />
+        </Field>
+        <Field label={t('members.name')}>
+          <input className="input" value={name} onChange={(e) => setName(e.target.value)} />
+        </Field>
         <ErrorBox error={error} />
         <button className="btn primary" disabled={busy}>{t('members.createInvite')}</button>
         {link && (

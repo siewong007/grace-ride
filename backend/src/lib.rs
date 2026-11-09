@@ -93,7 +93,8 @@ async fn api_not_found(headers: axum::http::HeaderMap) -> (StatusCode, Json<Valu
 pub fn router(state: AppState) -> Router {
     let api = routes::api()
         .route("/health", get(health))
-        .fallback(api_not_found);
+        .fallback(api_not_found)
+        .layer(from_fn_with_state(state.clone(), security::pending_guard));
     let mut app = Router::new().nest("/api", api);
 
     // In production the compiled React app is served from the same origin.
