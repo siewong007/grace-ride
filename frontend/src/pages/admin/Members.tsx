@@ -1,7 +1,7 @@
-import { useState } from 'react';
+import { FormEvent, useState } from 'react';
 import { del, post, useApi } from '../../api';
 import { useAuth } from '../../auth';
-import { Empty, ErrorBox, Modal, Pill, Spinner, useAction } from '../../components/ui';
+import { Empty, ErrorBox, Field, Modal, Pill, Spinner, useAction } from '../../components/ui';
 import { fmtAgo, ROLE_LABEL, useFormatT } from '../../format';
 import { useTranslation } from 'react-i18next';
 
@@ -99,18 +99,57 @@ function EditUser({ user, t, ft, onClose }: { user: User; t: (k: string, o?: any
 
 function Invites({ t, ft }: { t: (k: string, o?: any) => string; ft: (k: string) => string }) {
   const { data, reload } = useApi<any[]>('/admin/invites');
+  const { data: groups } = useApi<Group[]>('/groups');
+  const [email, setEmail] = useState('');
+  const [name, setName] = useState('');
+  const [roles, setRoles] = useState<string[]>([]);
+  const [gids, setGids] = useState<number[]>([]);
   const [link, setLink] = useState<string | null>(null);
-  const { busy, run } = useAction();
+  const { busy, error, run } = useAction();
   const copy = (s: string) => { navigator.clipboard?.writeText(s); };
+  const submit = (e: FormEvent) => {
+    e.preventDefault();
+    run(async () => {
+      const r = await post<{ url: string }>('/admin/invites', {
+        email: email.trim(),
+        name: name.trim(),
+        roles,
+        group_ids: gids,
+      });
+      setLink(r.url);
+      setEmail('');
+      setName('');
+      reload();
+    }, t('members.inviteCreated'));
+  };
   return (
     <div className="stack">
-      <form className="card stack" onSubmit={(e) => { e.preventDefault(); run(() => post('/admin/invites', { }).then((r: any) => { setLink(r.url); reload(); }), t('members.inviteCreated')); }}>
+      <form className="card stack" onSubmit={submit}>
+        <Field label={t('members.email')}>
+          <input className="input" type="email" required autoComplete="off" value={email} onChange={(e) => setEmail(e.target.value)} />
+        </Field>
+        <Field label={t('members.name')}>
+          <input className="input" value={name} onChange={(e) => setName(e.target.value)} />
+        </Field>
+        <strong>{t('members.role')}</strong>
+        <div className="chips">
+          {ROLES.map((r) => (
+            <button key={r} type="button" className={`chip ${roles.includes(r) ? 'on' : ''}`} onClick={() => setRoles(roles.includes(r) ? roles.filter((x) => x !== r) : [...roles, r])}>{ft(ROLE_LABEL[r])}</button>
+          ))}
+        </div>
+        <strong>{t('members.group')}</strong>
+        <div className="chips">
+          {groups?.filter((g) => !g.is_all).map((g) => (
+            <button key={g.id} type="button" className={`chip ${gids.includes(g.id) ? 'on' : ''}`} onClick={() => setGids(gids.includes(g.id) ? gids.filter((x) => x !== g.id) : [...gids, g.id])}>{g.name}</button>
+          ))}
+        </div>
+        <ErrorBox error={error} />
         <button className="btn primary" disabled={busy}>{t('members.createInvite')}</button>
         {link && (
           <div className="notice ok stack-sm">
             <span>{t('members.inviteLink')}</span>
             <code style={{ wordBreak: 'break-all' }}>{link}</code>
-            <button type="button" className="btn sm" onClick={() => copy(link)}>{t('copy')}</button>
+            <button type="button" className="btn sm" onClick={() => copy(link)}>{t('members.copy')}</button>
           </div>
         )}
       </form>
@@ -125,7 +164,7 @@ function Invites({ t, ft }: { t: (k: string, o?: any) => string; ft: (k: string)
               </div>
               {i.status === 'open' ? (
                 <>
-                  <button className="btn sm" onClick={() => copy(i.url)}>{t('copy')}</button>
+                  <button className="btn sm" onClick={() => copy(i.url)}>{t('members.copy')}</button>
                   <button className="btn sm danger" onClick={() => run(() => del(`/admin/invites/${i.id}`).then(reload), t('members.revoked'))}>{t('members.revoke')}</button>
                 </>
               ) : <Pill tone={i.status === 'used' ? 'green' : 'gray'}>{i.status === 'used' ? t('members.used') : t('members.expired')}</Pill>}

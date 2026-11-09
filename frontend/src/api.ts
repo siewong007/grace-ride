@@ -36,7 +36,14 @@ export async function api<T = any>(path: string, opts: { method?: string; body?:
     credentials: 'same-origin',
   });
   const text = await res.text();
-  const data = text ? JSON.parse(text) : null;
+  let data: ErrorBody = null;
+  if (text) {
+    try {
+      data = JSON.parse(text);
+    } catch {
+      data = { error: text.slice(0, 300) };
+    }
+  }
   if (!res.ok) {
     if (res.status === 401 && !path.startsWith('/auth/')) window.dispatchEvent(new Event('gr:unauthorized'));
     throw new ApiError(res.status, apiMessage(data, 'network'));
