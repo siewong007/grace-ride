@@ -9,7 +9,7 @@ use axum_extra::extract::CookieJar;
 use serde::Serialize;
 use sha2::{Digest, Sha256};
 
-use crate::error::{AppError, unauthorized};
+use crate::error::{unauthorized, AppError};
 use crate::state::AppState;
 use crate::util::{now, Lang};
 
@@ -70,7 +70,6 @@ pub fn is_privileged(roles: &str) -> bool {
         .any(|r| PRIVILEGED.contains(&r.as_str()))
 }
 
-
 impl FromRequestParts<AppState> for CurrentUser {
     type Rejection = AppError;
 
@@ -104,14 +103,15 @@ impl FromRequestParts<AppState> for CurrentUser {
         }
         let session_id = hash_token(&token);
 
-        let row: Option<(i64, String, String, String, String, i64, String, String)> = sqlx::query_as(
-            "SELECT u.id, u.name, u.email, u.roles, u.status, s.mfa_ok, s.expires_at, u.lang
+        let row: Option<(i64, String, String, String, String, i64, String, String)> =
+            sqlx::query_as(
+                "SELECT u.id, u.name, u.email, u.roles, u.status, s.mfa_ok, s.expires_at, u.lang
              FROM sessions s JOIN users u ON u.id = s.user_id
              WHERE s.token = $1 AND u.status IN ('active', 'pending')",
-        )
-        .bind(&session_id)
-        .fetch_optional(&state.db)
-        .await?;
+            )
+            .bind(&session_id)
+            .fetch_optional(&state.db)
+            .await?;
 
         let (id, name, email, roles, status, mfa_ok, expires, lang) =
             row.ok_or(unauthorized(accept_lang))?;
@@ -124,7 +124,14 @@ impl FromRequestParts<AppState> for CurrentUser {
             email,
             roles: parse_roles(&roles),
             status,
-            mfa_ok: mfa_ok == 1 || state.cfg.dev_mode,
+            // Privileged roles always honour the session MFA flag (even in DEV_MODE),
+            // so demos via /auth/dev-login (mfa_ok=1) still work while tests can assert
+            // mfa_ok=0 is denied on admin/transport/finance routes.
+            mfa_ok: if is_privileged(&roles) {
+                mfa_ok == 1
+            } else {
+                mfa_ok == 1 || state.cfg.dev_mode
+            },
             lang: Lang::from_code(&lang),
             session_id,
         })

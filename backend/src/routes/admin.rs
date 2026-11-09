@@ -31,7 +31,6 @@ pub fn router() -> Router<AppState> {
         .route("/admin/areas/{id}", put(update_area))
         .route("/admin/recovery", get(list_recovery))
         .route("/admin/recovery/{id}/approve", post(approve_recovery))
-
         .route("/admin/recovery/{id}/reject", post(reject_recovery))
         .route("/admin/audit", get(audit_log))
 }
@@ -207,7 +206,15 @@ async fn create_invite(State(st): State<AppState>, u: CurrentUser) -> AppResult<
         .bind(now())
         .fetch_one(&st.db)
         .await?;
-    audit(&st.db, Some(u.id), "invite.create", "invite", Some(id), "open").await;
+    audit(
+        &st.db,
+        Some(u.id),
+        "invite.create",
+        "invite",
+        Some(id),
+        "open",
+    )
+    .await;
     Ok(Json(
         json!({"id": id, "token": token, "url": format!("{}/invite/{}", st.cfg.public_url, token)}),
     ))

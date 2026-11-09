@@ -50,18 +50,24 @@ async fn upload(
     u: CurrentUser,
     mut mp: Multipart,
 ) -> AppResult<Json<Value>> {
-    while let Some(field) = mp.next_field().await.map_err(|_| bad(u.lang, ErrorKey::UploadFailed))? {
+    while let Some(field) = mp
+        .next_field()
+        .await
+        .map_err(|_| bad(u.lang, ErrorKey::UploadFailed))?
+    {
         if field.name() != Some("file") {
             continue;
         }
         let original = field.file_name().unwrap_or("upload").to_string();
-        let data = field.bytes().await.map_err(|_| bad(u.lang, ErrorKey::UploadFailed))?;
+        let data = field
+            .bytes()
+            .await
+            .map_err(|_| bad(u.lang, ErrorKey::UploadFailed))?;
         if data.len() > MAX_BYTES {
             return Err(bad(u.lang, ErrorKey::FileTooLarge));
         }
         // Trust the bytes, not the browser-supplied Content-Type.
-        let (mime, ext) =
-            sniff(&data).ok_or_else(|| bad(u.lang, ErrorKey::InvalidFileType))?;
+        let (mime, ext) = sniff(&data).ok_or_else(|| bad(u.lang, ErrorKey::InvalidFileType))?;
         let mime = mime.to_string();
         let stored = format!("{}.{}", uuid::Uuid::new_v4(), ext);
         tokio::fs::create_dir_all(&st.cfg.upload_dir)

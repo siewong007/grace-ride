@@ -1,12 +1,11 @@
 //! Shared helpers: time, audit log, notifications, permission checks.
 
-use chrono::{Duration, FixedOffset, Local, NaiveDate, NaiveDateTime, Utc, Weekday};
+use chrono::{Duration, FixedOffset, Local, NaiveDate, NaiveDateTime, Utc};
 use rand::{distributions::Alphanumeric, Rng};
 use sqlx::PgPool;
 
 use crate::auth::CurrentUser;
 use crate::error::{forbidden, AppResult};
-use serde::Serialize;
 
 pub fn now() -> String {
     Local::now().format("%Y-%m-%dT%H:%M:%S").to_string()
@@ -82,7 +81,13 @@ async fn user_lang(db: &PgPool, user_id: i64) -> Lang {
 
 /// Insert one notification. Title and body are (中文, English) pairs and the
 /// recipient's saved language decides which side is rendered.
-pub async fn notify(db: &PgPool, user_id: i64, title: (&str, &str), body: (&str, &str), link: &str) {
+pub async fn notify(
+    db: &PgPool,
+    user_id: i64,
+    title: (&str, &str),
+    body: (&str, &str),
+    link: &str,
+) {
     let lang = user_lang(db, user_id).await;
     let r = sqlx::query(
         "INSERT INTO notifications (user_id, title, body, link, created_at) VALUES ($1,$2,$3,$4,$5)",

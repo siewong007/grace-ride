@@ -59,11 +59,19 @@ impl Config {
             json_logs: env("LOG_FORMAT", "text") == "json",
             google_client_id: {
                 let v = env("GOOGLE_CLIENT_ID", "");
-                if v.is_empty() { None } else { Some(v) }
+                if v.is_empty() {
+                    None
+                } else {
+                    Some(v)
+                }
             },
             google_client_secret: {
                 let v = env("GOOGLE_CLIENT_SECRET", "");
-                if v.is_empty() { None } else { Some(v) }
+                if v.is_empty() {
+                    None
+                } else {
+                    Some(v)
+                }
             },
         };
         cfg.validate()?;
