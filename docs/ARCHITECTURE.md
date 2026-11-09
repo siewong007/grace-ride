@@ -46,7 +46,7 @@ backend/
   src/auth.rs       session extractor (hashed tokens), role model
   src/jobs.rs       reminders, unmatched-ride escalation, retention
   src/routes/*.rs   one module per domain
-  migrations/       0001_init.sql (single consolidated schema)
+  migrations/       0001_init.sql ONLY — single consolidated schema (see note below)
   tests/api.rs      end-to-end tests (privacy, RBAC, CSRF, lockout, uploads, jobs)
 frontend/
   src/App.tsx       routes; every page except Login/Home is lazy-loaded
@@ -54,6 +54,14 @@ frontend/
   src/prefs.ts      大字模式 / theme (per device)
   src/i18n.ts, src/locales/     zh / en strings
 ```
+
+
+## Schema / migrations
+
+Grace Ride keeps **one** SQLx migration file: `backend/migrations/0001_init.sql`.
+
+- **While the app is brand-new / no irreplaceable prod data:** edit `0001_init.sql` in place, then wipe/recreate the Postgres volume (or re-baseline `_sqlx_migrations`) before deploy. Rewriting `0001` changes its checksum; sqlx will refuse to start on a DB that already applied an older version of the same file.
+- **Once real member data exists:** stop rewriting `0001`. Add forward-only `0002_*.sql` migrations instead, and never edit applied files.
 
 ## Domain state machine (rides)
 
