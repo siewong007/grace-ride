@@ -1,10 +1,11 @@
 use std::{path::PathBuf, sync::Arc};
 
 use sqlx::PgPool;
+use tokio::sync::broadcast;
 use url::Url;
 use webauthn_rs::prelude::*;
 
-use crate::security::RateLimiter;
+use crate::{security::RateLimiter, stream::Push};
 
 #[derive(Clone, Debug)]
 pub struct Config {
@@ -125,6 +126,8 @@ pub struct AppState {
     pub cfg: Arc<Config>,
     pub limiter: Arc<RateLimiter>,
     pub http_client: reqwest::Client,
+    /// Live updates for open tabs (`/api/stream`).
+    pub events: broadcast::Sender<Push>,
 }
 
 pub fn build_webauthn(public_url: &str) -> anyhow::Result<Webauthn> {

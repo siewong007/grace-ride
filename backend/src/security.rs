@@ -145,6 +145,7 @@ pub async fn rate_limit(State(st): State<AppState>, req: Request, next: Next) ->
 fn pending_profile_only(path: &str) -> bool {
     let path = path.strip_prefix("/api").unwrap_or(path);
     path == "/health"
+        || path == "/stream"
         || path == "/me"
         || path == "/auth"
         || path.starts_with("/auth/")

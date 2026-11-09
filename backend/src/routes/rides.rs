@@ -15,7 +15,8 @@ use crate::auth::CurrentUser;
 use crate::error::{bad, conflict, forbidden, not_found, AppResult};
 use crate::state::AppState;
 use crate::util::{
-    audit, norm_dt, notify, notify_roles, now, require_any, system_message, ErrorKey, Lang,
+    audit, norm_dt, notify, notify_roles, notify_trip, now, require_any, system_message, ErrorKey,
+    Lang,
 };
 
 pub fn router() -> Router<AppState> {
@@ -1343,6 +1344,7 @@ async fn post_message(
     .bind(now())
     .execute(&st.db)
     .await?;
+    notify_trip(&st.db, trip).await;
     Ok(Json(json!({"ok": true})))
 }
 

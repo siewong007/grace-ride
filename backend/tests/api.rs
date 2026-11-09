@@ -162,6 +162,49 @@ async fn health_headers_and_unknown_api() {
 }
 
 #[tokio::test]
+async fn stream_needs_a_session_and_pushes_events() {
+    let (app, st) = setup().await;
+
+    let req = Request::builder()
+        .method(Method::GET)
+        .uri("/api/stream")
+        .body(Body::empty())
+        .unwrap();
+    let res = app.clone().oneshot(req).await.unwrap();
+    assert_eq!(res.status(), StatusCode::UNAUTHORIZED);
+
+    let cookie = login(&st, "member@example.org").await;
+    let (uid,): (i64,) = sqlx::query_as("SELECT id FROM users WHERE email='member@example.org'")
+        .fetch_one(&st.db)
+        .await
+        .unwrap();
+    let req = Request::builder()
+        .method(Method::GET)
+        .uri("/api/stream")
+        .header(header::COOKIE, &cookie)
+        .body(Body::empty())
+        .unwrap();
+    let res = app.clone().oneshot(req).await.unwrap();
+    assert_eq!(res.status(), StatusCode::OK);
+    assert_eq!(res.headers()[header::CONTENT_TYPE], "text/event-stream");
+
+    let mut body = res.into_body();
+    st.events
+        .send(grace_ride::stream::Push {
+            user_id: uid,
+            kind: "notify",
+        })
+        .unwrap();
+    let frame = tokio::time::timeout(std::time::Duration::from_secs(2), body.frame())
+        .await
+        .expect("event should arrive")
+        .expect("body frame")
+        .expect("data frame");
+    let bytes = frame.into_data().expect("data frame");
+    assert!(String::from_utf8_lossy(&bytes).contains("data: notify"));
+}
+
+#[tokio::test]
 async fn session_tokens_are_stored_hashed() {
     let (app, st) = setup().await;
     let cookie = login(&st, "member@example.org").await;

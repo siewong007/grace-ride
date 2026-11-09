@@ -31,7 +31,7 @@
 |---|---|---|
 | **Single binary + PostgreSQL** | About 1,000 members, at most 10 live drivers, low write rate. Transactions and indexes from one mature engine; nothing exotic to operate. | More than one app instance is needed, or writes exceed ~100/s — then add Redis for the rate limiter. |
 | **Same-origin SPA served by the API** | No CORS. Session cookies stay `SameSite=Lax` + HttpOnly. One deployable. | — |
-| **Polling, not WebSockets** | Chat polls every 4 s, the map every 15 s, notifications every 30 s, and only while the tab is visible. At 10 live trips that is trivial load and survives flaky mobile networks. | Chat volume grows, or push notifications arrive (see roadmap). |
+| **Polling + SSE, not WebSockets** | Chat, the map and notifications poll (4 s / 15 s / 20 s, only while the tab is visible). `/api/stream` pushes a "something changed for you" tick over SSE, so chat and ride-status changes appear immediately. One-way push is all the app needs; polling remains the fallback, so a dropped stream degrades quietly and flaky mobile networks are not a problem. | Chat volume grows enough that polling load matters, or push notifications arrive (see roadmap). |
 | **In-process job loop** | Reminders and cleanup are idempotent (`reminder_sent` flags) and tolerate a missed minute. | Multiple instances (then use a leader lock or an external scheduler). |
 | **OpenStreetMap tiles** | Free, no API key, no billing exposure. | Heavy traffic. OSM's tile policy expects a modest volume; switch to a commercial tile provider then. |
 

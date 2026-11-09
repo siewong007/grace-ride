@@ -13,6 +13,7 @@ pub mod routes;
 pub mod security;
 pub mod seed;
 pub mod state;
+pub mod stream;
 pub mod util;
 
 use std::sync::Arc;
@@ -56,6 +57,7 @@ pub async fn init(cfg: Config) -> anyhow::Result<AppState> {
         cfg: Arc::new(cfg),
         limiter: Arc::new(RateLimiter::default()),
         http_client: reqwest::Client::new(),
+        events: stream::channel(),
     })
 }
 
@@ -92,6 +94,7 @@ async fn api_not_found(headers: axum::http::HeaderMap) -> (StatusCode, Json<Valu
 
 pub fn router(state: AppState) -> Router {
     let api = routes::api()
+        .route("/stream", get(stream::handler))
         .route("/health", get(health))
         .fallback(api_not_found)
         .layer(from_fn_with_state(state.clone(), security::pending_guard));

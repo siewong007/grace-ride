@@ -101,6 +101,23 @@ pub async fn notify(
     .await;
     if let Err(e) = r {
         tracing::error!("notify failed: {e}");
+    } else {
+        crate::stream::publish(user_id, "notify");
+    }
+}
+
+/// Wake every member's open tab for this trip (new chat message).
+pub async fn notify_trip(db: &PgPool, trip_id: i64) {
+    let ids: Vec<(i64,)> = sqlx::query_as(
+        "SELECT passenger_id FROM rides WHERE trip_id=$1 AND status <> 'cancelled'
+         UNION SELECT driver_id FROM rides WHERE trip_id=$1 AND driver_id IS NOT NULL",
+    )
+    .bind(trip_id)
+    .fetch_all(db)
+    .await
+    .unwrap_or_default();
+    for (id,) in ids {
+        crate::stream::publish(id, "chat");
     }
 }
 
@@ -140,6 +157,7 @@ pub async fn system_message(db: &PgPool, trip_id: i64, zh_body: &str, en_body: &
     .bind(now())
     .execute(db)
     .await;
+    notify_trip(db, trip_id).await;
 }
 
 pub fn require_any(u: &CurrentUser, roles: &[&str]) -> AppResult<()> {

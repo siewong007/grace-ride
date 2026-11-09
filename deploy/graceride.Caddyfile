@@ -6,13 +6,16 @@ graceride.saliminn.my {
 	# A public ACME challenge cannot reach this host. Same pattern as the
 	# other AIC sites that set tls internal.
 	tls internal
-	encode zstd gzip
+	# Server-sent events (/api/stream) must not be buffered or compressed.
+	@notsse not path /api/stream
+	encode @notsse zstd gzip
 	header -Server
 	header ?Strict-Transport-Security "max-age=31536000; includeSubDomains"
 	request_body {
 		max_size 12MB
 	}
 	reverse_proxy 127.0.0.1:8090 {
+		flush_interval -1
 		header_up X-Forwarded-For {client_ip}
 		health_uri /api/health
 		health_interval 30s

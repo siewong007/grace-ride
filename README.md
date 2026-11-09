@@ -60,7 +60,7 @@ To reset the demo data, drop and recreate the `grace_ride_dev` database and rest
 | 活动、指定群体、报名、候补、接送连结、签到 (22–24, 30, 35) | `routes/events.rs`. Visibility comes from groups. Waitlist auto-promotes. Withdrawing cancels linked rides. The signup list is visible only to the organiser. |
 | 费用分摊 平分 / 个别 (31–33, 38, 39) | `routes/settlements.rs`. Cent-exact remainder handling. Custom amounts must equal the total. Only attended members can be charged. Payment proof needs payee confirmation. Duplicate references are blocked. Revisions are kept and members notified. |
 | 个人月报 (25, 40) | `/report`: attendance by type, rides driven / received, settled costs, badges |
-| 公告、帮助中心、通知、操作记录 (11, 15) | Announcements, help tickets, in-app notifications (polled), audit log at `/admin/audit` |
+| 公告、帮助中心、通知、操作记录 (11, 15) | Announcements, help tickets, in-app notifications (pushed live over SSE, polled as fallback), audit log at `/admin/audit` |
 
 ## Production
 

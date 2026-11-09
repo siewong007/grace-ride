@@ -3,13 +3,16 @@
 }
 
 {$DOMAIN} {
-	encode zstd gzip
+	# Server-sent events (/api/stream) must not be buffered or compressed.
+	@notsse not path /api/stream
+	encode @notsse zstd gzip
 	# The app sets its own security headers (CSP, HSTS, …); hide server banners.
 	header -Server
 	request_body {
 		max_size 12MB
 	}
 	reverse_proxy app:8080 {
+		flush_interval -1
 		# Caddy replaces any client-supplied X-Forwarded-For, so TRUST_PROXY=true is safe here.
 		health_uri /api/health
 		health_interval 30s

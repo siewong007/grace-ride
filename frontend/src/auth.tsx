@@ -1,5 +1,5 @@
 import { createContext, ReactNode, useCallback, useContext, useEffect, useState } from 'react';
-import { api } from './api';
+import { api, subscribe } from './api';
 
 export type Role = 'admin' | 'transport' | 'finance' | 'leader' | 'driver';
 
@@ -58,6 +58,14 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       clearInterval(t);
     };
   }, [refresh]);
+
+  // Keep the unread badge fresh.
+  useEffect(() => {
+    if (!me) return;
+    return subscribe((kind) => {
+      if (kind === 'notify' || kind === 'resume') refresh();
+    });
+  }, [me?.id, refresh]);
 
   // Mirrors the server: admins also act as 交通组 and 活动负责人 (not finance / driver).
   const has = (r: Role) =>

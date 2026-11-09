@@ -64,6 +64,45 @@ export async function uploadFile(file: File): Promise<{ id: number; mime: string
   return data;
 }
 
+/** One shared server-sent-events connection per tab. Polling stays as the
+ *  fallback; events only make changes appear without waiting for the next tick. */
+const listeners = new Set<(kind: string) => void>();
+let stream: EventSource | null = null;
+
+function openStream() {
+  if (stream || document.visibilityState === 'hidden') return;
+  const es = new EventSource('/api/stream');
+  es.onmessage = (e) => listeners.forEach((fn) => fn(e.data));
+  stream = es;
+}
+
+function closeStream() {
+  stream?.close();
+  stream = null;
+}
+
+export function subscribe(fn: (kind: string) => void) {
+  listeners.add(fn);
+  openStream();
+  return () => {
+    listeners.delete(fn);
+    if (!listeners.size) closeStream();
+  };
+}
+
+if (typeof window !== 'undefined') {
+  // EventSource retries a rejected handshake forever; a 401 from any poll closes it.
+  window.addEventListener('gr:unauthorized', closeStream);
+  document.addEventListener('visibilitychange', () => {
+    if (document.hidden) {
+      closeStream();
+    } else if (listeners.size) {
+      openStream();
+      listeners.forEach((fn) => fn('resume'));
+    }
+  });
+}
+
 /** Fetch JSON for a path; re-fetch on `reload()` and optionally poll every `pollMs`. */
 export function useApi<T>(path: string | null, pollMs?: number) {
   const [data, setData] = useState<T | null>(null);
@@ -93,7 +132,11 @@ export function useApi<T>(path: string | null, pollMs?: number) {
     const t = setInterval(() => {
       if (document.visibilityState === 'visible') reload();
     }, pollMs);
-    return () => clearInterval(t);
+    const unsub = subscribe(reload);
+    return () => {
+      clearInterval(t);
+      unsub();
+    };
   }, [path, pollMs, reload]);
 
   return { data, error, loading, reload, setData };
