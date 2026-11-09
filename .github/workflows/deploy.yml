@@ -121,9 +121,11 @@ jobs:
           gunzip -c "/tmp/grace-ride-$SHA.tar.gz" | docker load
           rm -f "/tmp/grace-ride-$SHA.tar.gz"
           rollback() {
+            trap - ERR
             sed -i "s/^IMAGE_TAG=.*/IMAGE_TAG=${old_tag}/" /opt/grace-ride/secrets.env
             docker compose --env-file /opt/grace-ride/secrets.env -f /opt/grace-ride/docker-compose.aic.yml up -d --no-deps app
           }
+          trap rollback ERR
           sed -i "s/^IMAGE_TAG=.*/IMAGE_TAG=${SHA}/" /opt/grace-ride/secrets.env
           grep -q "^IMAGE_TAG=${SHA}$" /opt/grace-ride/secrets.env
           docker compose --env-file /opt/grace-ride/secrets.env -f /opt/grace-ride/docker-compose.aic.yml up -d --no-deps app
