@@ -46,7 +46,7 @@ backend/
   src/auth.rs       session extractor (hashed tokens), role model
   src/jobs.rs       reminders, unmatched-ride escalation, retention
   src/routes/*.rs   one module per domain
-  migrations/       0001 schema, 0002 hardening + indexes
+  migrations/       0001_init.sql (single consolidated schema)
   tests/api.rs      end-to-end tests (privacy, RBAC, CSRF, lockout, uploads, jobs)
 frontend/
   src/App.tsx       routes; every page except Login/Home is lazy-loaded

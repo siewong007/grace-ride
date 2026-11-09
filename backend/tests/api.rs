@@ -6,7 +6,7 @@ use axum::{
     http::{header, HeaderMap, Method, Request, StatusCode},
     Router,
 };
-use grace_ride::{auth::hash_token, init, jobs, router, state::AppState, state::Config};
+use grace_ride::{auth::{hash_token, SESSION_COOKIE}, init, jobs, router, state::AppState, state::Config};
 use http_body_util::BodyExt;
 use serde_json::{json, Value};
 use tower::ServiceExt;
@@ -101,24 +101,30 @@ async fn call_with(
     }
 }
 
-async fn login(app: &Router, email: &str) -> String {
-    let r = call(
-        app,
-        Method::POST,
-        "/api/auth/login",
-        None,
-        Some(json!({"email": email, "password": PW})),
+/// Test-only auth: mint a hashed session row and return the Cookie header value.
+/// Password login is disabled in the app (passkeys); tests must not call /auth/login.
+async fn login(st: &AppState, email: &str) -> String {
+    let (id,): (i64,) = sqlx::query_as("SELECT id FROM users WHERE email=$1 AND status='active'")
+        .bind(email)
+        .fetch_one(&st.db)
+        .await
+        .unwrap_or_else(|e| panic!("demo user {email}: {e}"));
+    let token = uuid::Uuid::new_v4().simple().to_string() + &uuid::Uuid::new_v4().simple().to_string();
+    let token = token[..48].to_string();
+    let expires = (chrono::Local::now() + chrono::Duration::days(7))
+        .format("%Y-%m-%dT%H:%M:%S")
+        .to_string();
+    sqlx::query(
+        "INSERT INTO sessions (token, user_id, mfa_ok, expires_at, created_at) VALUES ($1,$2,1,$3,$4)",
     )
-    .await;
-    // Password login disabled; expect AuthDisabled error
-    assert_eq!(r.status, StatusCode::UNAUTHORIZED, "login {email}: {}", r.json);
-    let set = r
-        .headers
-        .get(header::SET_COOKIE)
-        .expect("cookie")
-        .to_str()
-        .unwrap();
-    set.split(';').next().unwrap().to_string()
+    .bind(hash_token(&token))
+    .bind(id)
+    .bind(&expires)
+    .bind(grace_ride::util::now())
+    .execute(&st.db)
+    .await
+    .unwrap();
+    format!("{SESSION_COOKIE}={token}")
 }
 
 fn tomorrow(hhmm: &str) -> String {
@@ -152,7 +158,7 @@ async fn health_headers_and_unknown_api() {
 #[tokio::test]
 async fn session_tokens_are_stored_hashed() {
     let (app, st) = setup().await;
-    let cookie = login(&app, "member@example.org").await;
+    let cookie = login(&st, "member@example.org").await;
     let token = cookie.split('=').nth(1).unwrap();
     let (stored,): (String,) = sqlx::query_as("SELECT token FROM sessions LIMIT 1")
         .fetch_one(&st.db)
@@ -178,40 +184,21 @@ async fn session_tokens_are_stored_hashed() {
 }
 
 #[tokio::test]
-async fn account_lockout_after_repeated_failures() {
+async fn password_login_is_disabled() {
     let (app, _) = setup().await;
-    for _ in 0..5 {
+    // Password login stays off in every mode; passkeys / invites are the only path.
+    for email in ["member@example.org", "nobody@example.org"] {
         let r = call(
             &app,
             Method::POST,
             "/api/auth/login",
             None,
-            Some(json!({"email": "member@example.org", "password": "wrong-password"})),
+            Some(json!({"email": email, "password": PW})),
         )
         .await;
-        assert_eq!(r.status, StatusCode::BAD_REQUEST);
+        assert_eq!(r.status, StatusCode::BAD_REQUEST, "{email}: {}", r.json);
+        assert_eq!(r.json["code"], "AUTH_DISABLED");
     }
-    // Correct password is refused while locked.
-    let r = call(
-        &app,
-        Method::POST,
-        "/api/auth/login",
-        None,
-        Some(json!({"email": "member@example.org", "password": PW})),
-    )
-    .await;
-    assert_eq!(r.status, StatusCode::TOO_MANY_REQUESTS);
-    // Unknown emails get the same generic error (no account enumeration).
-    let r = call(
-        &app,
-        Method::POST,
-        "/api/auth/login",
-        None,
-        Some(json!({"email": "nobody@example.org", "password": "x"})),
-    )
-    .await;
-    assert_eq!(r.status, StatusCode::BAD_REQUEST);
-    assert_eq!(r.json["error"], "电邮或密码不正确");
 }
 
 #[tokio::test]
@@ -238,8 +225,8 @@ async fn per_ip_rate_limit_on_login() {
 
 #[tokio::test]
 async fn cross_origin_writes_are_blocked() {
-    let (app, _) = setup().await;
-    let cookie = login(&app, "member@example.org").await;
+    let (app, st) = setup().await;
+    let cookie = login(&st, "member@example.org").await;
     let r = call_with(
         &app,
         Method::POST,
@@ -263,10 +250,10 @@ async fn cross_origin_writes_are_blocked() {
 
 #[tokio::test]
 async fn role_based_access() {
-    let (app, _) = setup().await;
-    let member = login(&app, "member@example.org").await;
-    let transport = login(&app, "transport@example.org").await;
-    let finance = login(&app, "finance@example.org").await;
+    let (app, st) = setup().await;
+    let member = login(&st, "member@example.org").await;
+    let transport = login(&st, "transport@example.org").await;
+    let finance = login(&st, "finance@example.org").await;
     assert_eq!(
         call(
             &app,
@@ -337,12 +324,12 @@ async fn role_based_access() {
 
 #[tokio::test]
 async fn ride_matching_flow_protects_address() {
-    let (app, _) = setup().await;
-    let passenger = login(&app, "member@example.org").await;
-    let driver = login(&app, "driver@example.org").await;
-    let driver2 = login(&app, "driver2@example.org").await;
-    let transport = login(&app, "transport@example.org").await;
-    let other = login(&app, "sophie@example.org").await;
+    let (app, st) = setup().await;
+    let passenger = login(&st, "member@example.org").await;
+    let driver = login(&st, "driver@example.org").await;
+    let driver2 = login(&st, "driver2@example.org").await;
+    let transport = login(&st, "transport@example.org").await;
+    let other = login(&st, "sophie@example.org").await;
 
     let r = call(&app, Method::POST, "/api/rides", Some(&passenger), Some(json!({
         "pickup_at": tomorrow("15:00"), "pickup_area_id": 2, "pickup_address": "SECRET 12", "destination": "教会", "seats": 1
@@ -524,9 +511,9 @@ async fn upload(app: &Router, cookie: &str, ct: &str, bytes: &[u8]) -> Res {
 
 #[tokio::test]
 async fn uploads_are_sniffed_and_access_controlled() {
-    let (app, _) = setup().await;
-    let owner = login(&app, "member@example.org").await;
-    let stranger = login(&app, "sophie@example.org").await;
+    let (app, st) = setup().await;
+    let owner = login(&st, "member@example.org").await;
+    let stranger = login(&st, "sophie@example.org").await;
 
     // HTML disguised as a PNG is rejected.
     let r = upload(&app, &owner, "image/png", b"<script>alert(1)</script>").await;
@@ -568,8 +555,8 @@ async fn uploads_are_sniffed_and_access_controlled() {
 
 #[tokio::test]
 async fn settlement_custom_split_must_match_total() {
-    let (app, _) = setup().await;
-    let leader = login(&app, "driver@example.org").await;
+    let (app, st) = setup().await;
+    let leader = login(&st, "driver@example.org").await;
     let body = |a: i64| {
         json!({
             "title": "羽球", "items": [{"label": "场租", "amount_cents": 10000}], "split_mode": "custom",
@@ -596,7 +583,7 @@ async fn settlement_custom_split_must_match_total() {
     .await;
     assert_eq!(r.status, StatusCode::OK, "{}", r.json);
     // Only the organiser of the event may create settlements.
-    let member = login(&app, "member@example.org").await;
+    let member = login(&st, "member@example.org").await;
     assert_eq!(
         call(
             &app,
@@ -673,11 +660,11 @@ fn production_config_rejects_dev_mode_and_plain_http() {
 
 #[tokio::test]
 async fn ride_full_lifecycle_start_pickup_complete() {
-    let (app, _) = setup().await;
-    let passenger = login(&app, "member@example.org").await; // id 6
-    let driver = login(&app, "driver@example.org").await; // id 4
-    let transport = login(&app, "transport@example.org").await; // id 2
-    let outsider = login(&app, "sophie@example.org").await; // id 8
+    let (app, st) = setup().await;
+    let passenger = login(&st, "member@example.org").await; // id 6
+    let driver = login(&st, "driver@example.org").await; // id 4
+    let transport = login(&st, "transport@example.org").await; // id 2
+    let outsider = login(&st, "sophie@example.org").await; // id 8
 
     let r = call(
         &app,
@@ -696,7 +683,7 @@ async fn ride_full_lifecycle_start_pickup_complete() {
     assert_eq!(r.status, StatusCode::OK, "{}", r.json);
     let id = r.json["id"].as_i64().unwrap();
 
-    let driver2 = login(&app, "driver2@example.org").await; // id 5
+    let driver2 = login(&st, "driver2@example.org").await; // id 5
     assert_eq!(
         call(
             &app,
@@ -975,8 +962,8 @@ async fn insert_driver_session(st: &AppState, n: i64) -> (i64, String) {
 #[tokio::test]
 async fn live_location_max_drivers_cap() {
     let (app, st) = setup().await;
-    let transport = login(&app, "transport@example.org").await;
-    let _passenger = login(&app, "member@example.org").await;
+    let transport = login(&st, "transport@example.org").await;
+    let _passenger = login(&st, "member@example.org").await;
     let tomorrow_ts = tomorrow("10:00");
 
     // Insert 10 confirmed rides directly into the DB (bypasses create_ride validation quirks),
@@ -1103,10 +1090,10 @@ async fn live_location_max_drivers_cap() {
 
 #[tokio::test]
 async fn reimbursement_flow_claim_approve_pay() {
-    let (app, _) = setup().await;
-    let claimant = login(&app, "member@example.org").await;
-    let transport = login(&app, "transport@example.org").await;
-    let finance = login(&app, "finance@example.org").await;
+    let (app, st) = setup().await;
+    let claimant = login(&st, "member@example.org").await;
+    let transport = login(&st, "transport@example.org").await;
+    let finance = login(&st, "finance@example.org").await;
 
     let mut png = vec![0x89, b'P', b'N', b'G', 0x0D, 0x0A, 0x1A, 0x0A];
     png.extend_from_slice(&[0u8; 32]);
@@ -1206,8 +1193,8 @@ async fn reimbursement_flow_claim_approve_pay() {
 
 #[tokio::test]
 async fn monthly_report_returns_user_stats() {
-    let (app, _) = setup().await;
-    let member = login(&app, "member@example.org").await;
+    let (app, st) = setup().await;
+    let member = login(&st, "member@example.org").await;
 
     let this_month = chrono::Local::now().format("%Y-%m").to_string();
     let r = call(
@@ -1236,7 +1223,7 @@ async fn monthly_report_returns_user_stats() {
         );
     }
 
-    let stranger = login(&app, "sophie@example.org").await;
+    let stranger = login(&st, "sophie@example.org").await;
     assert_eq!(
         call(
             &app,
@@ -1249,7 +1236,7 @@ async fn monthly_report_returns_user_stats() {
         .status,
         StatusCode::FORBIDDEN
     );
-    let admin = login(&app, "admin@example.org").await;
+    let admin = login(&st, "admin@example.org").await;
     assert_eq!(
         call(
             &app,
@@ -1268,8 +1255,8 @@ async fn monthly_report_returns_user_stats() {
 
 #[tokio::test]
 async fn badges_public_criteria_and_opt_out() {
-    let (app, _) = setup().await;
-    let driver = login(&app, "driver@example.org").await;
+    let (app, st) = setup().await;
+    let driver = login(&st, "driver@example.org").await;
 
     let r = call(&app, Method::GET, "/api/badges", Some(&driver), None).await;
     assert_eq!(r.status, StatusCode::OK);
@@ -1309,10 +1296,10 @@ async fn badges_public_criteria_and_opt_out() {
 
 #[tokio::test]
 async fn activity_events_group_scoped_signup_waitlist() {
-    let (app, _) = setup().await;
-    let leader = login(&app, "driver@example.org").await;
-    let member = login(&app, "member@example.org").await;
-    let outsider = login(&app, "sophie@example.org").await;
+    let (app, st) = setup().await;
+    let leader = login(&st, "driver@example.org").await;
+    let member = login(&st, "member@example.org").await;
+    let outsider = login(&st, "sophie@example.org").await;
 
     let r = call(&app, Method::GET, "/api/events", Some(&member), None).await;
     assert_eq!(r.status, StatusCode::OK);
@@ -1423,10 +1410,11 @@ async fn retention_config_range_and_housekeeping_ids() {
 
 #[tokio::test]
 async fn disaster_recovery_backup_restore_drill() {
+    use std::path::PathBuf;
     use std::process::Command;
 
-    let (app, _st) = setup().await;
-    let admin = login(&app, "admin@example.org").await;
+    let (app, st) = setup().await;
+    let admin = login(&st, "admin@example.org").await;
     assert_eq!(
         call(&app, Method::GET, "/api/admin/audit", Some(&admin), None)
             .await
@@ -1436,31 +1424,45 @@ async fn disaster_recovery_backup_restore_drill() {
 
     let database_url = std::env::var("TEST_DATABASE_URL")
         .unwrap_or_else(|_| "postgres://localhost/grace_ride_test".into());
+    let repo = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("..")
+        .canonicalize()
+        .expect("repo root");
+    let backup_dir = std::env::temp_dir().join(format!("gr-backups-{}", uuid::Uuid::new_v4()));
+    std::fs::create_dir_all(&backup_dir).unwrap();
+    let data_dir = st.cfg.upload_dir.parent().expect("upload parent");
+    // Prefer the portable Postgres tools when present (CI / agent boxes).
+    let pg_bin = std::env::var("PATH").unwrap_or_default();
     let out = Command::new("bash")
-        .arg("-c")
-        .arg(format!(
-            r#"cd "/Users/goaltosuceed/Documents/Grace Ride" && DATABASE_URL={} ./scripts/backup.sh"#,
-            database_url
-        ))
+        .env("DATABASE_URL", &database_url)
+        .env(
+            "PATH",
+            format!("/workspace/pgsql/bin:{pg_bin}"),
+        )
+        .current_dir(&repo)
+        .arg("./scripts/backup.sh")
+        .arg(data_dir)
+        .arg(&backup_dir)
+        .arg("1")
         .output()
         .expect("backup script failed to start");
     assert!(
         out.status.success(),
-        "backup.sh exit: {:?}",
+        "backup.sh exit: stdout={} stderr={}",
+        String::from_utf8_lossy(&out.stdout),
         String::from_utf8_lossy(&out.stderr)
     );
 
-    let entries = std::fs::read_dir("/Users/goaltosuceed/Documents/Grace Ride/backups")
-        .unwrap()
-        .count();
-    assert!(entries > 0, "backup produced at least one artifact");
-
-    let newest = std::fs::read_dir("/Users/goaltosuceed/Documents/Grace Ride/backups")
+    let entries: Vec<_> = std::fs::read_dir(&backup_dir)
         .unwrap()
         .filter_map(|e| e.ok())
+        .collect();
+    assert!(!entries.is_empty(), "backup produced at least one artifact");
+    let newest = entries
+        .into_iter()
         .max_by_key(|e| e.metadata().unwrap().modified().unwrap())
         .unwrap();
-    let meta = newest.metadata().unwrap();
-    assert!(meta.len() > 0, "backup artifact is non-empty");
+    assert!(newest.metadata().unwrap().len() > 0, "backup artifact is non-empty");
     let _ = app;
+    let _ = std::fs::remove_dir_all(&backup_dir);
 }
