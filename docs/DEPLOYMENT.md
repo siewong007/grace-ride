@@ -29,6 +29,12 @@ git pull   # or copy the new release
 docker compose --env-file .env.production up -d --build
 ```
 
+## AIC cloud (GitHub)
+
+The live site is https://graceride.saliminn.my. Pushing the `master` branch to GitHub runs `.github/workflows/deploy.yml`. That workflow builds the linux/amd64 image and replaces only the app container on the AIC VPS. The Postgres container and its volume are left as they are. Host Caddy keeps ports 80 and 443.
+
+The production environment needs one secret, `VPS_SSH_PRIVATE_KEY`, the same key hotel-app uses for `root@162.19.81.122` port `20049`. A commit message that contains `[skip ci]` does not deploy. Markdown-only pushes do not deploy.
+
 Migrations run automatically at startup and are additive. The app shuts down gracefully on SIGTERM; PostgreSQL checkpoints automatically.
 
 ## Backups
