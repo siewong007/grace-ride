@@ -1,0 +1,10 @@
+error: failed to acquire package cache lock
+
+Caused by:
+  failed to open: /Users/goaltosuceed/.cargo/.package-cache
+
+Caused by:
+  failed to create directory `/Users/goaltosuceed/.cargo`
+
+Caused by:
+  File exists (os error 17)

@@ -1,0 +1,44 @@
+import { FormEvent, useState } from 'react';
+import { del, post, useApi } from '../../api';
+import { ErrorBox, Field, useAction } from '../../components/ui';
+import { fmtAgo } from '../../format';
+import { useTranslation } from 'react-i18next';
+
+export default function Announcements() {
+  const { t } = useTranslation('admin');
+  const { data, reload } = useApi<any[]>('/announcements');
+  const [f, setF] = useState({ title: '', body: '', pinned: false, notify_all: true });
+  const { busy, error, run } = useAction();
+  const submit = (e: FormEvent) => {
+    e.preventDefault();
+    run(() => post('/announcements', f).then(() => { setF({ title: '', body: '', pinned: false, notify_all: true }); reload(); }), t('announcements.addDone'));
+  };
+  return (
+    <div className="stack">
+      <div className="page-head"><h1>{t('announcements.title')}</h1></div>
+      <div className="split">
+        <form className="card stack" onSubmit={submit}>
+          <Field label={t('announcements.titleLabel')}>
+            <input className="input" required value={f.title} onChange={(e) => setF({ ...f, title: e.target.value })} />
+          </Field>
+          <Field label={t('announcements.bodyLabel')}>
+            <textarea className="input" required value={f.body} onChange={(e) => setF({ ...f, body: e.target.value })} />
+          </Field>
+          <label className={`check ${f.pinned ? 'on' : ''}`}><input type="checkbox" checked={f.pinned} onChange={(e) => setF({ ...f, pinned: e.target.checked })} />{t('announcements.pinned')}</label>
+          <label className={`check ${f.notify_all ? 'on' : ''}`}><input type="checkbox" checked={f.notify_all} onChange={(e) => setF({ ...f, notify_all: e.target.checked })} />{t('announcements.notifyAll')}</label>
+          <ErrorBox error={error} />
+          <button className="btn primary" disabled={busy}>{t('announcements.add')}</button>
+        </form>
+        <div className="stack-sm">
+          {data?.map((a) => (
+            <div key={a.id} className="card stack-sm">
+              <div className="row between"><strong>{a.pinned && '📌 '}{a.title}</strong><button className="btn sm danger" onClick={() => confirm(t('announcements.deleteConfirm')) && run(() => del(`/announcements/${a.id}`).then(reload))}>{t('announcements.delete')}</button></div>
+              <p className="small" style={{ whiteSpace: 'pre-wrap' }}>{a.body}</p>
+              <span className="muted tiny">{t('announcements.by', { by: a.by, ago: fmtAgo(a.created_at) })}</span>
+            </div>
+          ))}
+        </div>
+      </div>
+    </div>
+  );
+}

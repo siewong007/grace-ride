@@ -1,0 +1,105 @@
+# Grace Ride on the AIC cloud VPS (vps-av1w).
+#
+# Host Caddy owns ports 80/443. This stack binds only 127.0.0.1:8090.
+# Payroll uses :8080, saliminn :3030/:8081, shopping :4000/:8082.
+# Postgres is not published. Maintenance: docker exec grace-ride-db.
+#
+# /opt/grace-ride/secrets.env supplies POSTGRES_PASSWORD, ADMIN_EMAIL, and IMAGE_TAG.
+# The image is loaded on the host; this file does not build it.
+
+name: grace-ride
+
+x-logging: &default-logging
+  driver: json-file
+  options:
+    max-size: "10m"
+    max-file: "3"
+
+services:
+  db:
+    image: postgres:18-alpine
+    container_name: grace-ride-db
+    restart: unless-stopped
+    command:
+      - postgres
+      - -c
+      - max_connections=20
+      - -c
+      - shared_buffers=32MB
+      - -c
+      - work_mem=2MB
+      - -c
+      - maintenance_work_mem=16MB
+      - -c
+      - max_parallel_workers=1
+    environment:
+      POSTGRES_USER: grace
+      POSTGRES_PASSWORD: "${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}"
+      POSTGRES_DB: grace_ride
+    volumes:
+      - pg-data:/var/lib/postgresql
+    shm_size: 64mb
+    mem_limit: 160m
+    cpus: 0.25
+    pids_limit: 256
+    security_opt:
+      - no-new-privileges:true
+    stop_grace_period: 60s
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U grace -d grace_ride"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 20s
+    logging: *default-logging
+    networks:
+      - database
+
+  app:
+    image: "grace-ride:${IMAGE_TAG:?IMAGE_TAG is required}"
+    container_name: grace-ride
+    restart: unless-stopped
+    init: true
+    depends_on:
+      db:
+        condition: service_healthy
+    ports:
+      - "127.0.0.1:8090:8080"
+    environment:
+      DATABASE_URL: "postgres://grace:${POSTGRES_PASSWORD}@db/grace_ride"
+      PUBLIC_URL: https://graceride.saliminn.my
+      ADMIN_EMAIL: "${ADMIN_EMAIL:?ADMIN_EMAIL is required}"
+      DEV_MODE: "false"
+      TRUST_PROXY: "true"
+      LOG_FORMAT: json
+      BIND: "0.0.0.0:8080"
+      UPLOAD_DIR: /data/uploads
+      STATIC_DIR: /app/web
+      TZ: Asia/Kuala_Lumpur
+      MAX_LIVE_DRIVERS: "10"
+      CHAT_RETENTION_DAYS: "180"
+      AUDIT_RETENTION_DAYS: "730"
+      RUST_LOG: grace_ride=info,tower_http=warn
+    volumes:
+      - app-data:/data
+    read_only: true
+    tmpfs:
+      - /tmp
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    mem_limit: 256m
+    cpus: 0.40
+    pids_limit: 512
+    stop_grace_period: 20s
+    logging: *default-logging
+    networks:
+      - database
+
+networks:
+  database:
+
+volumes:
+  pg-data:
+  app-data:

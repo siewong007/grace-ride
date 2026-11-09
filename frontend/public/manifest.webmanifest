@@ -1,0 +1,9 @@
+{
+  "name": "恩典同行 Grace Ride",
+  "short_name": "恩典同行",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#f7f7f5",
+  "theme_color": "#f7f7f5",
+  "icons": [{ "src": "/icon.svg", "sizes": "any", "type": "image/svg+xml" }]
+}

@@ -1,0 +1,18 @@
+export default {
+  title: 'Sports & fellowship events',
+  desc: 'Shows only events sent to your groups.',
+  create: 'Create an event',
+  upcoming: 'Upcoming',
+  past: 'Past events',
+  managing: 'I manage',
+  none: 'No events at the moment',
+  going: 'Going',
+  waitlist: 'Waitlist',
+  needRide: 'Needs ride',
+  people: '{going}/{capacity} people',
+  peopleNoLimit: '{going} attending',
+  cancelled: 'Ended',
+  finished: 'Ended',
+  peopleUnit: 'people',
+  peopleAttend: 'attending',
+};

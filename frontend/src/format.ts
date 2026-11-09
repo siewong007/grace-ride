@@ -1,0 +1,121 @@
+import { useTranslation } from 'react-i18next'
+
+/** Translate a format label key (e.g. 'format:rideStatus.pending_driver'). */
+export function useFormatT() {
+  const { t } = useTranslation()
+  return (key: string) => t(key)
+}
+
+export type Tone = 'green' | 'amber' | 'blue' | 'red' | 'gray' | 'teal'
+
+export interface StatusMap {
+  label: string // i18n key
+  tone: Tone
+  emoji?: string
+}
+
+export const RIDE_STATUS: Record<string, StatusMap> = {
+  pending_driver: { label: 'format:rideStatus.pending_driver', tone: 'amber' },
+  pending_passenger: { label: 'format:rideStatus.pending_passenger', tone: 'amber' },
+  pending_approval: { label: 'format:rideStatus.pending_approval', tone: 'blue' },
+  pending_driver_confirm: { label: 'format:rideStatus.pending_driver_confirm', tone: 'amber' },
+  confirmed: { label: 'format:rideStatus.confirmed', tone: 'green' },
+  in_progress: { label: 'format:rideStatus.in_progress', tone: 'teal' },
+  completed: { label: 'format:rideStatus.completed', tone: 'gray' },
+  cancelled: { label: 'format:rideStatus.cancelled', tone: 'gray' },
+  no_show: { label: 'format:rideStatus.no_show', tone: 'red' },
+  alt_transport: { label: 'format:rideStatus.alt_transport', tone: 'blue' },
+};
+
+export const RIDE_FLOW = ['pending_driver', 'pending_passenger', 'pending_approval', 'completed'];
+
+export const EVENT_KIND: Record<string, { label: string; emoji: string }> = {
+  badminton: { label: 'format:eventKind.badminton', emoji: '🏸' },
+  bowling: { label: 'format:eventKind.bowling', emoji: '🎳' },
+  kayak: { label: 'format:eventKind.kayak', emoji: '🛶' },
+  walk: { label: 'format:eventKind.walk', emoji: '🚶' },
+  other: { label: 'format:eventKind.other', emoji: '✨' },
+};
+
+export const SHARE_STATUS: Record<string, StatusMap> = {
+  unpaid: { label: 'format:shareStatus.unpaid', tone: 'amber' },
+  pending: { label: 'format:shareStatus.pending', tone: 'blue' },
+  confirmed: { label: 'format:shareStatus.confirmed', tone: 'green' },
+  needs_info: { label: 'format:shareStatus.needs_info', tone: 'red' },
+};
+
+export const REIMB_STATUS: Record<string, StatusMap> = {
+  pending: { label: 'format:reimbStatus.pending', tone: 'blue' },
+  returned: { label: 'format:reimbStatus.returned', tone: 'amber' },
+  rejected: { label: 'format:reimbStatus.rejected', tone: 'red' },
+  approved: { label: 'format:reimbStatus.approved', tone: 'teal' },
+  paid: { label: 'format:reimbStatus.paid', tone: 'green' },
+};
+
+export const ROLE_LABEL: Record<string, string> = {
+  admin: 'format:role.admin',
+  transport: 'format:role.transport',
+  finance: 'format:role.finance',
+  leader: 'format:role.leader',
+  driver: 'format:role.driver',
+};
+
+const WEEKDAY = ['format:weekday.0', 'format:weekday.1', 'format:weekday.2', 'format:weekday.3', 'format:weekday.4', 'format:weekday.5', 'format:weekday.6'];
+
+export function parseLocal(s: string): Date {
+  // "YYYY-MM-DDTHH:MM[:SS]" in local time
+  // Accepts both "T" and space separators.
+  const [d, t = '00:00'] = s.trim().split(/[T ]/);
+  const [y, m, day] = d.split('-').map(Number);
+  const [hh, mm, ss = 0] = t.split(':').map(Number);
+  return new Date(y, m - 1, day, hh, mm, ss);
+}
+
+export function fmtTime(s: string, tt?: (k: string) => string) {
+  const d = parseLocal(s);
+  const h = d.getHours();
+  const t = tt ?? ((k: string) => k);
+  const period = h < 12 ? t('format:period.am') : h < 18 ? t('format:period.pm') : t('format:period.evening');
+  const h12 = h % 12 === 0 ? 12 : h % 12;
+  return `${period} ${h12}:${String(d.getMinutes()).padStart(2, '0')}`;
+}
+
+export function fmtDay(s: string, tt?: (k: string) => string) {
+  const d = parseLocal(s);
+  const today = new Date();
+  const tomorrow = new Date();
+  tomorrow.setDate(today.getDate() + 1);
+  const same = (a: Date, b: Date) => a.toDateString() === b.toDateString();
+  const t = tt ?? ((k: string) => k);
+  if (same(d, today)) return `${t('format:today')} ${t(WEEKDAY[d.getDay()])}`;
+  if (same(d, tomorrow)) return `${t('format:tomorrow')} ${t(WEEKDAY[d.getDay()])}`;
+  return `${t('format:monthDay').replace('{m}', String(d.getMonth() + 1)).replace('{d}', String(d.getDate()))} ${t(WEEKDAY[d.getDay()])}`;
+}
+
+export const fmtDateTime = (s: string, t?: (k: string) => string) => `${fmtDay(s, t)} · ${fmtTime(s, t)}`;
+
+export function fmtAgo(s: string, tt?: (k: string) => string) {
+  const diff = (Date.now() - parseLocal(s).getTime()) / 1000;
+  const t = tt ?? ((k: string) => k);
+  if (diff < 60) return t('format:justNow');
+  if (diff < 3600) return t('format:minutesAgo').replace('{n}', String(Math.floor(diff / 60)));
+  if (diff < 86400) return t('format:hoursAgo').replace('{n}', String(Math.floor(diff / 3600)));
+  return fmtDay(s, t);
+}
+
+export const rm = (cents: number) => `RM ${(cents / 100).toFixed(2)}`;
+
+/** Parse "28.50" → 2850 cents. Returns NaN for invalid input. */
+export function toCents(v: string): number {
+  if (!/^\d+(\.\d{0,2})?$/.test(v.trim())) return NaN;
+  return Math.round(parseFloat(v) * 100);
+}
+
+export const todayStr = () => localDate(new Date());
+export function localDate(d: Date) {
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+}
+export const greeting = (t: (k: string) => string) => {
+  const h = new Date().getHours();
+  return h < 12 ? t('format:morning') : h < 18 ? t('format:afternoon') : t('format:evening');
+};

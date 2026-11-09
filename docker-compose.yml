@@ -1,0 +1,62 @@
+# Production stack: Caddy (automatic HTTPS) → Grace Ride (API + web) → PostgreSQL on a volume.
+# Usage:  cp deploy/.env.production.example .env.production   (then edit it)
+#         docker compose --env-file .env.production up -d --build
+services:
+  db:
+    image: postgres:18-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: grace
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env.production}
+      POSTGRES_DB: grace_ride
+    volumes:
+      - pg-data:/var/lib/postgresql
+    shm_size: 128m
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U grace -d grace_ride"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  app:
+    build: .
+    image: grace-ride:latest
+    restart: unless-stopped
+    depends_on:
+      db: { condition: service_healthy }
+    environment:
+      DATABASE_URL: postgres://grace:${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env.production}@db/grace_ride
+    env_file: .env.production
+    volumes:
+      - app-data:/data
+    read_only: true
+    tmpfs: [/tmp]
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    expose: ["8080"]
+    deploy:
+      resources:
+        limits: { memory: 512m }
+    logging:
+      driver: json-file
+      options: { max-size: "10m", max-file: "5" }
+
+  caddy:
+    image: caddy:2-alpine
+    restart: unless-stopped
+    depends_on:
+      app: { condition: service_healthy }
+    ports: ["80:80", "443:443", "443:443/udp"]
+    environment:
+      DOMAIN: ${DOMAIN:?set DOMAIN in .env.production}
+      ACME_EMAIL: ${ACME_EMAIL:?set ACME_EMAIL in .env.production}
+    volumes:
+      - ./deploy/Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy-data:/data
+      - caddy-config:/config
+
+volumes:
+  pg-data:
+  app-data:
+  caddy-data:
+  caddy-config:

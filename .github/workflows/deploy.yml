@@ -1,0 +1,187 @@
+name: Deploy production
+
+# Push to master builds the image on a GitHub runner and rolls it onto the
+# AIC VPS. The runner cannot reach the host over IPv6, so SSH uses the
+# forwarded port 20049. The pinned host key is
+# SHA256:HV6OszvuYmwmWRLEY7z7jm8GojWZJppJlDBHIhJVUxw.
+#
+# Required environment secret (production):
+#   VPS_SSH_PRIVATE_KEY
+#
+# The database container and its volume stay in place. Only the app
+# container is replaced. Host Caddy keeps ports 80 and 443.
+
+on:
+  push:
+    branches: [master]
+    paths-ignore:
+      - '**.md'
+      - 'docs/**'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: grace-ride-production
+  cancel-in-progress: false
+
+env:
+  VPS_HOST: 162.19.81.122
+  VPS_PORT: "20049"
+  VPS_USER: root
+  VPS_HOST_KEY: "[162.19.81.122]:20049 ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIIxenH95jfg3hxfkumJpZJyV7phwCNDrXrAL0wUXnta9"
+  PUBLIC_URL: https://graceride.saliminn.my
+
+jobs:
+  deploy:
+    name: Build and roll onto AIC
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    environment: production
+    steps:
+      - name: Check out master
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+
+      - name: Build the linux/amd64 image
+        shell: bash
+        run: |
+          set -euo pipefail
+          sha=$(git rev-parse HEAD)
+          [[ "$sha" =~ ^[0-9a-f]{40}$ ]]
+          docker build \
+            --platform linux/amd64 \
+            --pull \
+            --label "org.opencontainers.image.revision=$sha" \
+            --tag "grace-ride:$sha" \
+            .
+          test "$(docker image inspect --format '{{.Os}}/{{.Architecture}}' "grace-ride:$sha")" = "linux/amd64"
+          docker save "grace-ride:$sha" | gzip -1 > "$RUNNER_TEMP/grace-ride-$sha.tar.gz"
+          gzip -t "$RUNNER_TEMP/grace-ride-$sha.tar.gz"
+          echo "SHA=$sha" >> "$GITHUB_ENV"
+
+      - name: Configure pinned SSH access
+        shell: bash
+        env:
+          VPS_SSH_PRIVATE_KEY: ${{ secrets.VPS_SSH_PRIVATE_KEY }}
+        run: |
+          set -euo pipefail
+          test -n "$VPS_SSH_PRIVATE_KEY"
+          install -m 0600 /dev/null "$RUNNER_TEMP/vps-key"
+          printf '%s\n' "$VPS_SSH_PRIVATE_KEY" > "$RUNNER_TEMP/vps-key"
+          install -m 0600 /dev/null "$RUNNER_TEMP/vps-known-hosts"
+          printf '%s\n' "$VPS_HOST_KEY" > "$RUNNER_TEMP/vps-known-hosts"
+          ssh-keygen -lf "$RUNNER_TEMP/vps-known-hosts" \
+            | grep -Fq 'SHA256:HV6OszvuYmwmWRLEY7z7jm8GojWZJppJlDBHIhJVUxw'
+
+      - name: Upload the image and roll the app
+        shell: bash
+        run: |
+          set -euo pipefail
+          [[ "$SHA" =~ ^[0-9a-f]{40}$ ]]
+          scp \
+            -i "$RUNNER_TEMP/vps-key" \
+            -P "$VPS_PORT" \
+            -o BatchMode=yes \
+            -o ConnectTimeout=20 \
+            -o IdentitiesOnly=yes \
+            -o StrictHostKeyChecking=yes \
+            -o "UserKnownHostsFile=$RUNNER_TEMP/vps-known-hosts" \
+            "$RUNNER_TEMP/grace-ride-$SHA.tar.gz" \
+            "$VPS_USER@$VPS_HOST:/tmp/grace-ride-$SHA.tar.gz.part"
+          ssh \
+            -i "$RUNNER_TEMP/vps-key" \
+            -p "$VPS_PORT" \
+            -o BatchMode=yes \
+            -o ConnectTimeout=20 \
+            -o IdentitiesOnly=yes \
+            -o ServerAliveInterval=15 \
+            -o ServerAliveCountMax=8 \
+            -o StrictHostKeyChecking=yes \
+            -o "UserKnownHostsFile=$RUNNER_TEMP/vps-known-hosts" \
+            "$VPS_USER@$VPS_HOST" \
+            "SHA='$SHA' bash -s" <<'REMOTE'
+          set -euo pipefail
+          [[ "$SHA" =~ ^[0-9a-f]{40}$ ]]
+          avail=$(df --output=avail -B1 / | tail -n 1 | tr -d ' ')
+          if [[ "$avail" -lt 1500000000 ]]; then
+            echo "Not enough free disk for a Grace Ride roll" >&2
+            df -h / >&2
+            exit 1
+          fi
+          users_before=$(docker exec grace-ride-db psql -U grace -d grace_ride -tAc 'SELECT COUNT(*) FROM users')
+          db_before=$(docker inspect -f '{{.Id}}' grace-ride-db)
+          old_image=$(docker inspect -f '{{.Config.Image}}' grace-ride)
+          old_tag=${old_image#grace-ride:}
+          echo "users_before=$users_before"
+          echo "old_image=$old_image"
+          mv "/tmp/grace-ride-$SHA.tar.gz.part" "/tmp/grace-ride-$SHA.tar.gz"
+          gzip -t "/tmp/grace-ride-$SHA.tar.gz"
+          gunzip -c "/tmp/grace-ride-$SHA.tar.gz" | docker load
+          rm -f "/tmp/grace-ride-$SHA.tar.gz"
+          rollback() {
+            trap - ERR
+            sed -i "s/^IMAGE_TAG=.*/IMAGE_TAG=${old_tag}/" /opt/grace-ride/secrets.env
+            docker compose --env-file /opt/grace-ride/secrets.env -f /opt/grace-ride/docker-compose.aic.yml up -d --no-deps app
+          }
+          trap rollback ERR
+          sed -i "s/^IMAGE_TAG=.*/IMAGE_TAG=${SHA}/" /opt/grace-ride/secrets.env
+          grep -q "^IMAGE_TAG=${SHA}$" /opt/grace-ride/secrets.env
+          docker compose --env-file /opt/grace-ride/secrets.env -f /opt/grace-ride/docker-compose.aic.yml up -d --no-deps app
+          ok=0
+          for i in $(seq 1 30); do
+            if curl -fsS http://127.0.0.1:8090/api/health; then
+              echo
+              echo "health_try=$i"
+              ok=1
+              break
+            fi
+            sleep 2
+          done
+          db_after=$(docker inspect -f '{{.Id}}' grace-ride-db)
+          users_after=$(docker exec grace-ride-db psql -U grace -d grace_ride -tAc 'SELECT COUNT(*) FROM users')
+          echo "users_after=$users_after"
+          if [[ "$ok" != 1 || "$db_before" != "$db_after" || "$users_before" != "$users_after" ]]; then
+            echo "roll failed; restoring $old_image" >&2
+            rollback
+            docker logs grace-ride 2>&1 | grep -v -e 'one-time' -e '/invite/' | tail -30 >&2 || true
+            exit 1
+          fi
+          docker images grace-ride --format '{{.Repository}}:{{.Tag}}' | while read -r img; do
+            if [[ "$img" != "grace-ride:$SHA" && "$img" != "$old_image" ]]; then
+              docker image rm "$img" >/dev/null 2>&1 || true
+            fi
+          done
+          echo "app_image=$(docker inspect -f '{{.Config.Image}}' grace-ride)"
+          REMOTE
+
+      - name: Check the public site
+        shell: bash
+        run: |
+          set -euo pipefail
+          curl --fail --silent --show-error \
+            --retry 12 --retry-delay 5 --retry-all-errors \
+            --max-time 20 \
+            "$PUBLIC_URL/api/health"
+          echo
+          echo "Public health check passed."
+
+      - name: Remove the uploaded archive
+        if: always()
+        shell: bash
+        run: |
+          if [[ -s "$RUNNER_TEMP/vps-key" && -s "$RUNNER_TEMP/vps-known-hosts" && -n "${SHA:-}" ]]; then
+            ssh \
+              -i "$RUNNER_TEMP/vps-key" \
+              -p "$VPS_PORT" \
+              -o BatchMode=yes \
+              -o ConnectTimeout=15 \
+              -o IdentitiesOnly=yes \
+              -o StrictHostKeyChecking=yes \
+              -o "UserKnownHostsFile=$RUNNER_TEMP/vps-known-hosts" \
+              "$VPS_USER@$VPS_HOST" \
+              "rm -f -- /tmp/grace-ride-$SHA.tar.gz.part /tmp/grace-ride-$SHA.tar.gz" \
+              || true
+          fi
+          rm -f "$RUNNER_TEMP/vps-key" "$RUNNER_TEMP/vps-known-hosts" "$RUNNER_TEMP/grace-ride-$SHA.tar.gz"
