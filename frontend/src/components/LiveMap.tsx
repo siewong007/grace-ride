@@ -9,7 +9,7 @@ const carIcon = (label?: string) =>
     className: '',
     iconSize: [44, 44],
     iconAnchor: [22, 22],
-    html: `<div style="display:grid;place-items:center;width:44px;height:44px;border-radius:50%;background:#1f5c4a;color:#fff;border:3px solid #fff;box-shadow:0 2px 8px rgba(0,0,0,.35);font-weight:800;font-size:15px;font-family:sans-serif">${
+    html: `<div style="display:grid;place-items:center;width:44px;height:44px;border-radius:50%;background:#1a1a1a;color:#fff;border:3px solid #fff;box-shadow:0 2px 8px rgba(0,0,0,.35);font-weight:800;font-size:15px;font-family:sans-serif">${
       label ? label.slice(0, 1) : '🚗'
     }</div>`,
   });

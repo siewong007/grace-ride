@@ -34,7 +34,7 @@ export function applyPrefs(p: Prefs) {
   else root.dataset.theme = p.theme;
   const meta = document.querySelector('meta[name="theme-color"]');
   const dark = p.theme === 'dark' || (p.theme === 'system' && window.matchMedia?.('(prefers-color-scheme: dark)').matches);
-  meta?.setAttribute('content', dark ? '#121614' : '#1f5c4a');
+  meta?.setAttribute('content', dark ? '#141414' : '#f7f7f5');
 }
 
 export function savePrefs(p: Prefs) {

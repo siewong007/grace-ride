@@ -789,17 +789,15 @@ async fn invite_accept(
             return Err(bad(lang, ErrorKey::NameRequired));
         }
         // Invitation is the credential. New members do not get a password.
-        // Username is unique and used for login
-        let username = format!("{}_{}", name.trim().to_lowercase(), id);
         let (id,): (i64,) = sqlx::query_as(
-            "INSERT INTO users (name, email, phone, roles, password_hash, webauthn_uuid, username, created_at) VALUES ($1,$2,$3,$4,$5,$6,$7,$8) RETURNING id",
+            "INSERT INTO users (name, email, phone, roles, password_hash, webauthn_uuid, created_at) VALUES ($1,$2,$3,$4,$5,$6,$7) RETURNING id",
         )
         .bind(&name)
         .bind(&email)
         .bind(req.phone.unwrap_or_default())
         .bind(&roles)
         .bind(None::<String>)
-        .bind(username)
+        .bind(uuid::Uuid::new_v4().to_string())
         .bind(now())
         .fetch_one(&st.db)
         .await
