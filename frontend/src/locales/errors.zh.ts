@@ -15,6 +15,8 @@ export default {
   },
   "admin": {
     "CANNOT_DISABLE_SELF": "不能停用自己或移除自己的管理员权限",
+    "CANNOT_GRANT_SELF_FINANCE": "不能自行授予财务职务，请由另一位管理员操作",
+    "SECOND_ADMIN_REQUIRED": "恢复管理职务账号需要另一位管理员确认",
     "CANNOT_DELETE_ALL_MEMBERS_GROUP": "不能删除“全体会员”群体",
     "GROUP_NAME_REQUIRED": "请填写群体名称",
     "GROUP_NAME_EXISTS": "群体名称已存在",

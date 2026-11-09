@@ -456,6 +456,157 @@ async fn recovery_request_approve_reject_and_use_link() {
 }
 
 #[tokio::test]
+async fn admin_cannot_grant_self_finance() {
+    let (app, st) = setup().await;
+    let admin = login(&st, "admin@example.org").await;
+    let (admin_id,): (i64,) =
+        sqlx::query_as("SELECT id FROM users WHERE email='admin@example.org'")
+            .fetch_one(&st.db)
+            .await
+            .unwrap();
+
+    // Self-grant of finance is refused.
+    let denied = call(
+        &app,
+        Method::PUT,
+        &format!("/api/admin/users/{admin_id}"),
+        Some(&admin),
+        Some(json!({"roles": ["admin", "finance"], "status": "active"})),
+    )
+    .await;
+    assert_eq!(denied.status, StatusCode::FORBIDDEN, "{}", denied.json);
+    assert_eq!(denied.json["code"], "CANNOT_GRANT_SELF_FINANCE");
+
+    // A different admin may grant it.
+    sqlx::query("UPDATE users SET roles='transport,admin' WHERE email='transport@example.org'")
+        .execute(&st.db)
+        .await
+        .unwrap();
+    let other = login(&st, "transport@example.org").await;
+    let granted = call(
+        &app,
+        Method::PUT,
+        &format!("/api/admin/users/{admin_id}"),
+        Some(&other),
+        Some(json!({"roles": ["admin", "finance"], "status": "active"})),
+    )
+    .await;
+    assert_eq!(granted.status, StatusCode::OK, "{}", granted.json);
+
+    // Keeping finance in a self-update is fine; the guard only blocks the grant.
+    let keep = call(
+        &app,
+        Method::PUT,
+        &format!("/api/admin/users/{admin_id}"),
+        Some(&admin),
+        Some(json!({"roles": ["admin", "finance"], "status": "active"})),
+    )
+    .await;
+    assert_eq!(keep.status, StatusCode::OK, "{}", keep.json);
+}
+
+#[tokio::test]
+async fn privileged_recovery_needs_two_admins() {
+    let (app, st) = setup().await;
+    let admin = login(&st, "admin@example.org").await;
+    sqlx::query("UPDATE users SET roles='transport,admin' WHERE email='transport@example.org'")
+        .execute(&st.db)
+        .await
+        .unwrap();
+    let second = login(&st, "transport@example.org").await;
+
+    // finance@example.org is a privileged target.
+    let _ = call(
+        &app,
+        Method::POST,
+        "/api/auth/recovery-request",
+        None,
+        Some(json!({"email": "finance@example.org", "reason": "lost phone"})),
+    )
+    .await;
+    let (rid,): (i64,) = sqlx::query_as(
+        "SELECT id FROM recovery_requests WHERE email='finance@example.org' ORDER BY id DESC LIMIT 1",
+    )
+    .fetch_one(&st.db)
+    .await
+    .unwrap();
+
+    // First admin only flags it; no link is issued yet.
+    let first = call(
+        &app,
+        Method::POST,
+        &format!("/api/admin/recovery/{rid}/approve"),
+        Some(&admin),
+        None,
+    )
+    .await;
+    assert_eq!(first.status, StatusCode::OK, "{}", first.json);
+    assert_eq!(first.json["awaiting_second"], true);
+    assert!(first.json["url"].is_null());
+    let (status,): (String,) = sqlx::query_as("SELECT status FROM recovery_requests WHERE id=$1")
+        .bind(rid)
+        .fetch_one(&st.db)
+        .await
+        .unwrap();
+    assert_eq!(status, "awaiting_second");
+    let (invites,): (i64,) = sqlx::query_as(
+        "SELECT COUNT(*) FROM invites WHERE kind='recovery' AND email='finance@example.org'",
+    )
+    .fetch_one(&st.db)
+    .await
+    .unwrap();
+    assert_eq!(invites, 0);
+
+    // The same admin cannot confirm their own flag.
+    let again = call(
+        &app,
+        Method::POST,
+        &format!("/api/admin/recovery/{rid}/approve"),
+        Some(&admin),
+        None,
+    )
+    .await;
+    assert_eq!(again.status, StatusCode::FORBIDDEN, "{}", again.json);
+    assert_eq!(again.json["code"], "SECOND_ADMIN_REQUIRED");
+
+    // A different admin confirms and receives the link.
+    let confirmed = call(
+        &app,
+        Method::POST,
+        &format!("/api/admin/recovery/{rid}/approve"),
+        Some(&second),
+        None,
+    )
+    .await;
+    assert_eq!(confirmed.status, StatusCode::OK, "{}", confirmed.json);
+    assert!(confirmed.json["url"].is_string());
+    let (status,): (String,) = sqlx::query_as("SELECT status FROM recovery_requests WHERE id=$1")
+        .bind(rid)
+        .fetch_one(&st.db)
+        .await
+        .unwrap();
+    assert_eq!(status, "approved");
+
+    // Credentials are wiped only on final approval.
+    let (uid,): (i64,) = sqlx::query_as("SELECT id FROM users WHERE email='finance@example.org'")
+        .fetch_one(&st.db)
+        .await
+        .unwrap();
+    let (sessions,): (i64,) = sqlx::query_as("SELECT COUNT(*) FROM sessions WHERE user_id=$1")
+        .bind(uid)
+        .fetch_one(&st.db)
+        .await
+        .unwrap();
+    let (passkeys,): (i64,) = sqlx::query_as("SELECT COUNT(*) FROM passkeys WHERE user_id=$1")
+        .bind(uid)
+        .fetch_one(&st.db)
+        .await
+        .unwrap();
+    assert_eq!(sessions, 0);
+    assert_eq!(passkeys, 0);
+}
+
+#[tokio::test]
 async fn terms_accept_endpoint() {
     let (app, st) = setup().await;
     let cookie = login(&st, "member@example.org").await;

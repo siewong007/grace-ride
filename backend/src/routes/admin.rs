@@ -8,7 +8,7 @@ use axum::{
 use serde::Deserialize;
 use serde_json::{json, Value};
 
-use crate::auth::{parse_roles, CurrentUser};
+use crate::auth::{is_privileged, parse_roles, CurrentUser};
 use crate::error::{bad, forbidden, not_found, AppError, AppResult};
 use crate::i18n::ErrorKey;
 use crate::state::AppState;
@@ -73,10 +73,11 @@ async fn dashboard(State(st): State<AppState>, u: CurrentUser) -> AppResult<Json
     let (members,): (i64,) = sqlx::query_as("SELECT COUNT(*) FROM users WHERE status='active'")
         .fetch_one(&st.db)
         .await?;
-    let (recovery,): (i64,) =
-        sqlx::query_as("SELECT COUNT(*) FROM recovery_requests WHERE status='pending'")
-            .fetch_one(&st.db)
-            .await?;
+    let (recovery,): (i64,) = sqlx::query_as(
+        "SELECT COUNT(*) FROM recovery_requests WHERE status IN ('pending','awaiting_second')",
+    )
+    .fetch_one(&st.db)
+    .await?;
     Ok(Json(json!({
         "today": today, "today_total": today_total, "today_confirmed": today_confirmed, "today_changes": today_changes,
         "pending_approval": pending_approval, "no_driver": no_driver, "needs_attention": attention,
@@ -145,16 +146,25 @@ async fn update_user(
     if !matches!(req.status.as_str(), "active" | "disabled") {
         return Err(bad(u.lang, ErrorKey::InvalidStatus));
     }
-    if id == u.id && (req.status != "active" || !req.roles.iter().any(|r| r == "admin")) {
-        return Err(bad(u.lang, ErrorKey::CannotDisableSelf));
-    }
-    let roles = parse_roles(&req.roles.join(",")).join(",");
     let (old_roles, old_status): (String, String) =
         sqlx::query_as("SELECT roles, status FROM users WHERE id=$1")
             .bind(id)
             .fetch_optional(&st.db)
             .await?
             .ok_or(not_found(u.lang))?;
+    let new_roles = parse_roles(&req.roles.join(","));
+    if id == u.id {
+        if req.status != "active" || !new_roles.iter().any(|r| r == "admin") {
+            return Err(bad(u.lang, ErrorKey::CannotDisableSelf));
+        }
+        // Finance sees every receipt and payment record, so an admin cannot
+        // grant it to themselves; another admin must decide.
+        let already_finance = parse_roles(&old_roles).iter().any(|r| r == "finance");
+        if !already_finance && new_roles.iter().any(|r| r == "finance") {
+            return Err(forbidden(u.lang, ErrorKey::CannotGrantSelfFinance));
+        }
+    }
+    let roles = new_roles.join(",");
     sqlx::query("UPDATE users SET roles=$1, status=$2 WHERE id=$3")
         .bind(&roles)
         .bind(&req.status)
@@ -447,7 +457,7 @@ async fn update_area(
 async fn list_recovery(State(st): State<AppState>, u: CurrentUser) -> AppResult<Json<Value>> {
     require_any(&u, &["admin"])?;
     let rows: Vec<(i64, String, String, String, String, Option<String>)> = sqlx::query_as(
-        "SELECT r.id, r.email, r.reason, r.status, r.created_at, u.name FROM recovery_requests r LEFT JOIN users u ON u.email = r.email ORDER BY r.status='pending' DESC, r.id DESC LIMIT 100",
+        "SELECT r.id, r.email, r.reason, r.status, r.created_at, u.name FROM recovery_requests r LEFT JOIN users u ON u.email = r.email ORDER BY r.status IN ('pending','awaiting_second') DESC, r.id DESC LIMIT 100",
     )
     .fetch_all(&st.db)
     .await?;
@@ -461,20 +471,44 @@ async fn approve_recovery(
     Path(id): Path<i64>,
 ) -> AppResult<Json<Value>> {
     require_any(&u, &["admin"])?;
-    let (email, status): (String, String) =
-        sqlx::query_as("SELECT email, status FROM recovery_requests WHERE id=$1")
+    let (email, status, resolved_by): (String, String, Option<i64>) =
+        sqlx::query_as("SELECT email, status, resolved_by FROM recovery_requests WHERE id=$1")
             .bind(id)
             .fetch_optional(&st.db)
             .await?
             .ok_or(not_found(u.lang))?;
-    if status != "pending" {
+    if !matches!(status.as_str(), "pending" | "awaiting_second") {
         return Err(bad(u.lang, ErrorKey::RequestAlreadyHandled));
     }
-    let (uid,): (i64,) = sqlx::query_as("SELECT id FROM users WHERE email=$1")
+    let (uid, roles): (i64, String) = sqlx::query_as("SELECT id, roles FROM users WHERE email=$1")
         .bind(&email)
         .fetch_optional(&st.db)
         .await?
         .ok_or(not_found(u.lang))?;
+    // Recovering a privileged account needs two different admins: the first
+    // only flags the request, the second confirms and receives the link.
+    if status == "pending" && is_privileged(&roles) {
+        sqlx::query(
+            "UPDATE recovery_requests SET status='awaiting_second', resolved_by=$1 WHERE id=$2",
+        )
+        .bind(u.id)
+        .bind(id)
+        .execute(&st.db)
+        .await?;
+        audit(
+            &st.db,
+            Some(u.id),
+            "recovery.await_second",
+            "user",
+            Some(uid),
+            &email,
+        )
+        .await;
+        return Ok(Json(json!({"awaiting_second": true})));
+    }
+    if status == "awaiting_second" && resolved_by == Some(u.id) {
+        return Err(forbidden(u.lang, ErrorKey::SecondAdminRequired));
+    }
     let token = random_token(32);
     sqlx::query("INSERT INTO invites (token, kind, email, user_id, created_by, expires_at, created_at) VALUES ($1, 'recovery', $2, $3, $4, $5, $6)")
         .bind(&token)
@@ -524,7 +558,7 @@ async fn reject_recovery(
     Path(id): Path<i64>,
 ) -> AppResult<Json<Value>> {
     require_any(&u, &["admin"])?;
-    sqlx::query("UPDATE recovery_requests SET status='rejected', resolved_by=$1 WHERE id=$2 AND status='pending'").bind(u.id).bind(id).execute(&st.db).await?;
+    sqlx::query("UPDATE recovery_requests SET status='rejected', resolved_by=$1 WHERE id=$2 AND status IN ('pending','awaiting_second')").bind(u.id).bind(id).execute(&st.db).await?;
     audit(
         &st.db,
         Some(u.id),

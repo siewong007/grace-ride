@@ -15,6 +15,8 @@ export default {
   },
   "admin": {
     "CANNOT_DISABLE_SELF": "You cannot disable yourself or remove your own admin role",
+    "CANNOT_GRANT_SELF_FINANCE": "You cannot grant yourself the finance role; another admin must do it",
+    "SECOND_ADMIN_REQUIRED": "Recovering a privileged account requires a second, different admin to confirm",
     "CANNOT_DELETE_ALL_MEMBERS_GROUP": "The \"All members\" group cannot be deleted",
     "GROUP_NAME_REQUIRED": "Please enter a group name",
     "GROUP_NAME_EXISTS": "This group name already exists",

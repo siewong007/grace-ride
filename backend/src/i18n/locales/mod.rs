@@ -31,6 +31,8 @@ pub fn render(lang: Lang, key: &ErrorKey) -> String {
         | ErrorKey::MfaRequired
         | ErrorKey::RateLimited => common::render(lang, key),
         ErrorKey::CannotDisableSelf
+        | ErrorKey::CannotGrantSelfFinance
+        | ErrorKey::SecondAdminRequired
         | ErrorKey::CannotDeleteAllMembersGroup
         | ErrorKey::GroupNameRequired
         | ErrorKey::GroupNameExists

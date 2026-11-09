@@ -10,6 +10,16 @@ pub fn render(lang: Lang, key: &ErrorKey) -> String {
             "不能停用自己或移除自己的管理员权限",
             "You cannot disable yourself or remove your own admin role",
         ),
+        ErrorKey::CannotGrantSelfFinance => pair(
+            lang,
+            "不能自行授予财务职务，请由另一位管理员操作",
+            "You cannot grant yourself the finance role; another admin must do it",
+        ),
+        ErrorKey::SecondAdminRequired => pair(
+            lang,
+            "恢复管理职务账号需要另一位管理员确认",
+            "Recovering a privileged account requires a second, different admin to confirm",
+        ),
         ErrorKey::CannotDeleteAllMembersGroup => pair(
             lang,
             "不能删除“全体会员”群体",

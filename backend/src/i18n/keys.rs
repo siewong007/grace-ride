@@ -19,6 +19,8 @@ pub enum ErrorKey {
 
     // === Admin ===
     CannotDisableSelf,
+    CannotGrantSelfFinance,
+    SecondAdminRequired,
     CannotDeleteAllMembersGroup,
     GroupNameRequired,
     GroupNameExists,
@@ -232,6 +234,8 @@ impl ErrorKey {
             Self::RateLimited => "TOO_MANY_REQUESTS",
 
             Self::CannotDisableSelf => "CANNOT_DISABLE_SELF",
+            Self::CannotGrantSelfFinance => "CANNOT_GRANT_SELF_FINANCE",
+            Self::SecondAdminRequired => "SECOND_ADMIN_REQUIRED",
             Self::CannotDeleteAllMembersGroup => "CANNOT_DELETE_ALL_MEMBERS_GROUP",
             Self::GroupNameRequired => "GROUP_NAME_REQUIRED",
             Self::GroupNameExists => "GROUP_NAME_EXISTS",

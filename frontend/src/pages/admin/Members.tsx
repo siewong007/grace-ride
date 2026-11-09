@@ -202,9 +202,14 @@ function Recovery({ t }: { t: (k: string, o?: any) => string }) {
                   <div className="small">{r.reason}</div>
                   <div className="muted tiny">{fmtAgo(r.created_at)}</div>
                 </div>
-                {r.status === 'pending' ? (
+                {r.status === 'pending' || r.status === 'awaiting_second' ? (
                   <div className="btn-row">
-                    <button className="btn sm primary" disabled={busy || !r.name} onClick={() => run(async () => { const x = await post<{ url: string }>(`/admin/recovery/${r.id}/approve`); setLink(x.url); reload(); })}>{t('members.approve')}</button>
+                    {r.status === 'awaiting_second' && <span className="muted tiny">{t('members.secondAdminNotice')}</span>}
+                    <button className="btn sm primary" disabled={busy || !r.name} onClick={() => run(async () => {
+                      const x = await post<{ url?: string; awaiting_second?: boolean }>(`/admin/recovery/${r.id}/approve`);
+                      if (x.url) setLink(x.url);
+                      reload();
+                    })}>{r.status === 'awaiting_second' ? t('members.confirmSecond') : t('members.approve')}</button>
                     <button className="btn sm" disabled={busy} onClick={() => run(() => post(`/admin/recovery/${r.id}/reject`).then(reload))}>{t('members.reject')}</button>
                   </div>
                 ) : <Pill tone={r.status === 'approved' ? 'green' : 'gray'}>{r.status === 'approved' ? t('members.approved') : t('members.rejected')}</Pill>}

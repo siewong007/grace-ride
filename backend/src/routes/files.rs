@@ -108,15 +108,15 @@ pub async fn can_access_file(st: &AppState, u: &CurrentUser, file_id: i64) -> Ap
     if photo > 0 {
         return Ok(true);
     }
-    // Settlement expense receipts: organiser, participants, finance.
+    // Settlement expense receipts: organiser, finance. Participants see the
+    // bill lines but not the organiser's receipts.
     let (item,): (i64,) = sqlx::query_as(
         "SELECT COUNT(*) FROM settlement_items i JOIN settlements s ON s.id=i.settlement_id
-         WHERE i.receipt_file_id=$1 AND (s.created_by=$2 OR $3 OR EXISTS (SELECT 1 FROM settlement_shares sh WHERE sh.settlement_id=s.id AND sh.user_id=$4))",
+         WHERE i.receipt_file_id=$1 AND (s.created_by=$2 OR $3)",
     )
     .bind(file_id)
     .bind(u.id)
     .bind(finance)
-    .bind(u.id)
     .fetch_one(&st.db)
     .await?;
     if item > 0 {
