@@ -1,0 +1,8 @@
+# cargo-audit (CI cwd = backend/). Also passed via --ignore in ci.yml.
+[advisories]
+ignore = [
+  # Marvin Attack; transitive via webauthn/rsa stack — no upgrade path on 0.9 yet.
+  "RUSTSEC-2023-0071",
+  # SQLite CVE via webauthn-authenticator-rs SoftPasskey (dev-dep only; not in prod binary).
+  "RUSTSEC-2026-0459",
+]
