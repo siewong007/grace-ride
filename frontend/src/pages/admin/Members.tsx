@@ -10,7 +10,7 @@ interface Group { id: number; name: string; is_all: boolean }
 const ROLES = ['admin', 'transport', 'finance', 'leader', 'driver'];
 
 export default function Members() {
-  const { t, ft } = useTranslationHooks();
+  const { t } = useTranslation('admin');
   const { has, me } = useAuth();
   const [tab, setTab] = useState<'members' | 'invites' | 'recovery'>('members');
   if (!has('admin') || !me?.mfa_ok) return <Empty>{t('members.noPermission')}</Empty>;
@@ -22,20 +22,16 @@ export default function Members() {
         <button className={tab === 'invites' ? 'on' : ''} onClick={() => setTab('invites')}>{t('members.invitesTab')}</button>
         <button className={tab === 'recovery' ? 'on' : ''} onClick={() => setTab('recovery')}>{t('members.recoveryTab')}</button>
       </div>
-      {tab === 'members' && <MemberList t={t} ft={ft} />}
-      {tab === 'invites' && <Invites t={t} ft={ft} />}
-      {tab === 'recovery' && <Recovery t={t} />}
+      {tab === 'members' && <MemberList />}
+      {tab === 'invites' && <Invites />}
+      {tab === 'recovery' && <Recovery />}
     </div>
   );
-
-  function useTranslationHooks() {
-    const { t } = useTranslation('admin');
-    const ft = useFormatT();
-    return { t, ft };
-  }
 }
 
-function MemberList({ t, ft }: { t: (k: string, o?: any) => string; ft: (k: string) => string }) {
+function MemberList() {
+  const { t } = useTranslation('admin');
+  const ft = useFormatT();
   const [q, setQ] = useState('');
   const { data, loading, reload } = useApi<User[]>(`/admin/users?q=${encodeURIComponent(q)}`);
   const [edit, setEdit] = useState<User | null>(null);
@@ -66,13 +62,15 @@ function MemberList({ t, ft }: { t: (k: string, o?: any) => string; ft: (k: stri
           </div>
         )}
       </div>
-      {edit && <EditUser user={edit} t={t} ft={ft} onClose={() => { setEdit(null); reload(); }} />}
-      {approve && <ApproveUser user={approve} t={t} ft={ft} onClose={() => { setApprove(null); reload(); }} />}
+      {edit && <EditUser user={edit} onClose={() => { setEdit(null); reload(); }} />}
+      {approve && <ApproveUser user={approve} onClose={() => { setApprove(null); reload(); }} />}
     </div>
   );
 }
 
-function EditUser({ user, t, ft, onClose }: { user: User; t: (k: string, o?: any) => string; ft: (k: string) => string; onClose: () => void }) {
+function EditUser({ user, onClose }: { user: User; onClose: () => void }) {
+  const { t } = useTranslation('admin');
+  const ft = useFormatT();
   const { data: groups } = useApi<Group[]>('/groups');
   const [roles, setRoles] = useState<string[]>(user.roles);
   const initialGroups = user.groups ? user.groups.split('、') : [];
@@ -105,7 +103,9 @@ function EditUser({ user, t, ft, onClose }: { user: User; t: (k: string, o?: any
   );
 }
 
-function ApproveUser({ user, t, ft, onClose }: { user: User; t: (k: string, o?: any) => string; ft: (k: string) => string; onClose: () => void }) {
+function ApproveUser({ user, onClose }: { user: User; onClose: () => void }) {
+  const { t } = useTranslation('admin');
+  const ft = useFormatT();
   const { data: groups } = useApi<Group[]>('/groups');
   const [roles, setRoles] = useState<string[]>([]);
   const [gids, setGids] = useState<number[]>([]);
@@ -137,7 +137,9 @@ function ApproveUser({ user, t, ft, onClose }: { user: User; t: (k: string, o?: 
   );
 }
 
-function Invites({ t, ft }: { t: (k: string, o?: any) => string; ft: (k: string) => string }) {
+function Invites() {
+  const { t } = useTranslation('admin');
+  const ft = useFormatT();
   const { data, reload } = useApi<any[]>('/admin/invites');
   const [link, setLink] = useState<string | null>(null);
   const { busy, error, run } = useAction();
@@ -171,7 +173,7 @@ function Invites({ t, ft }: { t: (k: string, o?: any) => string; ft: (k: string)
             <div key={i.id} className="item">
               <div className="grow">
                 <div className="bold">{i.email || t('members.openInvite')} {i.kind === 'recovery' && <Pill tone="blue">{t('members.recovery')}</Pill>}</div>
-                <div className="muted tiny">{i.roles.map((r: string) => ft(ROLE_LABEL[r])).join('、') || t('members.member')} · {fmtAgo(i.created_at)}</div>
+                <div className="muted tiny">{i.roles.map((r: string) => ft(ROLE_LABEL[r])).join('、') || t('members.member')} · {fmtAgo(i.created_at, ft)}</div>
               </div>
               {i.status === 'open' ? (
                 <>
@@ -187,7 +189,9 @@ function Invites({ t, ft }: { t: (k: string, o?: any) => string; ft: (k: string)
   );
 }
 
-function Recovery({ t }: { t: (k: string, o?: any) => string }) {
+function Recovery() {
+  const { t } = useTranslation('admin');
+  const ft = useFormatT();
   const { data, reload } = useApi<any[]>('/admin/recovery');
   const [link, setLink] = useState<string | null>(null);
   const { busy, error, run } = useAction();
@@ -202,9 +206,9 @@ function Recovery({ t }: { t: (k: string, o?: any) => string }) {
             {data.map((r) => (
               <div key={r.id} className="item">
                 <div className="grow">
-                  <div className="bold">{r.name ?? '（非会员）'} · {r.email}</div>
+                  <div className="bold">{r.name ?? t('members.nonMember')} · {r.email}</div>
                   <div className="small">{r.reason}</div>
-                  <div className="muted tiny">{fmtAgo(r.created_at)}</div>
+                  <div className="muted tiny">{fmtAgo(r.created_at, ft)}</div>
                 </div>
                 {r.status === 'pending' || r.status === 'awaiting_second' ? (
                   <div className="btn-row">

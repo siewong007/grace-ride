@@ -97,8 +97,9 @@ export default function EventDetail() {
                       <div className="grow">
                         <div className="bold">{s.name} {s.status === 'waitlist' && <Pill tone="amber">{t('waitlist')}</Pill>}</div>
                         <div className="muted tiny">
-                          {s.need_ride && `需要接送${s.ride_status ? `（${ft(`format:rideStatus.${s.ride_status}`)}）` : ''} `}
-                          {s.offer_drive && `提供 ${s.offer_seats} 座`}
+                          {s.need_ride && (s.ride_status ? t('needsRideWithStatus', { status: ft(`format:rideStatus.${s.ride_status}`) }) : t('needsRide'))}
+                          {s.need_ride && s.offer_drive ? ' ' : ''}
+                          {s.offer_drive && t('offersSeats', { n: s.offer_seats })}
                         </div>
                       </div>
                       <div className="chips">

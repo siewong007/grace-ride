@@ -20,4 +20,5 @@ export default {
   send: 'Send',
   resolved: 'Issue resolved',
   resolvedDone: 'Closed',
+  staffTag: 'Help centre',
 };

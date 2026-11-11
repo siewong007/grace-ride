@@ -11,7 +11,8 @@ import { Trans, useTranslation } from 'react-i18next';
 import type { TFunction } from 'i18next';
 
 export default function RideDetail() {
-  const { t, ft } = useTranslationHooks();
+  const { t } = useTranslation('rideDetail');
+  const ft = useFormatT();
   const { id } = useParams();
   const { data: r, error, reload } = useApi<Ride>(`/rides/${id}`, 15000);
   if (error) return <ErrorBox error={error} />;
@@ -28,17 +29,17 @@ export default function RideDetail() {
         </div>
         <StatusPill map={RIDE_STATUS} status={r.status} />
       </div>
-      <Flow status={r.status} ft={ft} />
+      <Flow status={r.status} />
       {r.needs_attention && r.attention_reason && <div className="notice">⚠ {r.attention_reason}</div>}
 
       <div className="split">
         <div className="stack">
-          {live && <TrackCard t={t} ft={ft} ride={r} />}
-          <Details ride={r} t={t} ft={ft} />
-          {r.viewer.is_passenger && <PassengerActions ride={r} reload={reload} t={t} />}
-          {r.viewer.is_driver && <DriverActions ride={r} reload={reload} t={t} />}
-          {r.viewer.is_staff && <StaffActions ride={r} reload={reload} t={t} />}
-          {!r.viewer.is_passenger && !r.viewer.is_driver && !r.viewer.is_staff && r.status === 'pending_driver' && <DriverActions ride={r} reload={reload} t={t} />}
+          {live && <TrackCard ride={r} />}
+          <Details ride={r} />
+          {r.viewer.is_passenger && <PassengerActions ride={r} reload={reload} />}
+          {r.viewer.is_driver && <DriverActions ride={r} reload={reload} />}
+          {r.viewer.is_staff && <StaffActions ride={r} reload={reload} />}
+          {!r.viewer.is_passenger && !r.viewer.is_driver && !r.viewer.is_staff && r.status === 'pending_driver' && <DriverActions ride={r} reload={reload} />}
         </div>
         <div className="stack">
           {chatVisible && <Chat rideId={r.id} />}
@@ -51,13 +52,8 @@ export default function RideDetail() {
   );
 }
 
-function useTranslationHooks() {
-  const { t } = useTranslation('rideDetail');
+function Flow({ status }: { status: string }) {
   const ft = useFormatT();
-  return { t, ft };
-}
-
-function Flow({ status, ft }: { status: string; ft: (k: string) => string }) {
   const idx = RIDE_FLOW.indexOf(status === 'pending_driver_confirm' ? 'pending_approval' : status);
   if (idx < 0) return null;
   const labels = RIDE_FLOW.map((s) => ft(`format:rideStatus.${s}`));
@@ -71,7 +67,9 @@ function Flow({ status, ft }: { status: string; ft: (k: string) => string }) {
   );
 }
 
-function Details({ ride: r, t, ft }: { ride: Ride; t: (k: string, o?: any) => string; ft: (k: string) => string }) {
+function Details({ ride: r }: { ride: Ride }) {
+  const { t } = useTranslation('rideDetail');
+  const ft = useFormatT();
   const d = r.driver;
   return (
     <div className="card stack">
@@ -134,7 +132,9 @@ interface RideLocation {
   passenger?: { lat: number; lng: number; updated_at: string };
 }
 
-function TrackCard({ t, ft, ride }: { t: (k: string, o?: any) => string; ft: (k: string) => string; ride: Ride }) {
+function TrackCard({ ride }: { ride: Ride }) {
+  const { t } = useTranslation('rideDetail');
+  const ft = useFormatT();
   const { data, reload } = useApi<RideLocation>(`/rides/${ride.id}/location`, 10000);
   const points: MapPoint[] = [];
   if (data?.sharing && data.lat != null && data.lng != null) {
@@ -318,7 +318,8 @@ function PassengerShareLocation({ rideId, sharing, onChange }: { rideId: number;
   );
 }
 
-function PassengerActions({ ride: r, reload, t }: { ride: Ride; reload: () => void; t: (k: string, o?: any) => string }) {
+function PassengerActions({ ride: r, reload }: { ride: Ride; reload: () => void }) {
+  const { t } = useTranslation('rideDetail');
   const { busy, error, run } = useAction();
   const nav = useNavigate();
   const [cancel, setCancel] = useState(false);
@@ -352,7 +353,8 @@ function PassengerActions({ ride: r, reload, t }: { ride: Ride; reload: () => vo
   );
 }
 
-function DriverActions({ ride: r, reload, t }: { ride: Ride; reload: () => void; t: (k: string, o?: any) => string }) {
+function DriverActions({ ride: r, reload }: { ride: Ride; reload: () => void }) {
+  const { t } = useTranslation('rideDetail');
   const { busy, error, run } = useAction();
   const [withdraw, setWithdraw] = useState(false);
   const act = (path: string, msg: string) => run(() => post(`/rides/${r.id}/${path}`).then(reload), msg);
@@ -395,7 +397,8 @@ function DriverActions({ ride: r, reload, t }: { ride: Ride; reload: () => void;
 
 interface DriverOpt { id: number; name: string; areas: string; carpool_enabled: boolean; spare_seats: number; vehicle: { model: string; plate: string } | null }
 
-function StaffActions({ ride: r, reload, t }: { ride: Ride; reload: () => void; t: (k: string, o?: any) => string }) {
+function StaffActions({ ride: r, reload }: { ride: Ride; reload: () => void }) {
+  const { t } = useTranslation('rideDetail');
   const { busy, error, run } = useAction();
   const [modal, setModal] = useState<'reassign' | 'return' | 'alt' | 'cancel' | null>(null);
   const drivers = useApi<DriverOpt[]>(modal === 'reassign' ? '/admin/drivers' : null);

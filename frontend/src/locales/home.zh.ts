@@ -28,4 +28,5 @@ export default {
   going: '已报名',
   waitlist: '候补中',
   finished: '已结束',
+  spotsLeft: '余 {n}',
 };

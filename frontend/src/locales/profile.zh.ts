@@ -48,4 +48,5 @@ export default {
   photo: '照片（方便司机/乘客辨认）',
   mfaRequired: '您拥有管理权限。请设置通行密钥或双重验证（2FA），才能使用管理功能。',
   myPhone: '我的手机',
+  none: '无',
 };

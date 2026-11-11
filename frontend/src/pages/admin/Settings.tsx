@@ -15,14 +15,15 @@ export default function Settings() {
     <div className="stack">
       <div className="page-head"><div><h1>{t('settings.title')}</h1><p>{t('settings.desc')}</p></div></div>
       <div className="split">
-        <Groups t={t} />
-        <Areas t={t} />
+        <Groups />
+        <Areas />
       </div>
     </div>
   );
 }
 
-function Groups({ t }: { t: (k: string, o?: any) => string }) {
+function Groups() {
+  const { t } = useTranslation('admin');
   const { data, reload } = useApi<Group[]>('/groups');
   const [name, setName] = useState('');
   const [members, setMembers] = useState<Group | null>(null);
@@ -49,12 +50,13 @@ function Groups({ t }: { t: (k: string, o?: any) => string }) {
         <button className="btn primary" disabled={busy}>{t('settings.addGroup')}</button>
       </form>
       <ErrorBox error={error} />
-      {members && <GroupMembers group={members} t={t} onClose={() => { setMembers(null); reload(); }} />}
+      {members && <GroupMembers group={members} onClose={() => { setMembers(null); reload(); }} />}
     </div>
   );
 }
 
-function GroupMembers({ group, t, onClose }: { group: Group; t: (k: string, o?: any) => string; onClose: () => void }) {
+function GroupMembers({ group, onClose }: { group: Group; onClose: () => void }) {
+  const { t } = useTranslation('admin');
   const { data: current } = useApi<{ id: number; name: string }[]>(`/admin/groups/${group.id}/members`);
   const { data: all } = useApi<{ id: number; name: string; status: string }[]>('/admin/users');
   const [sel, setSel] = useState<number[] | null>(null);
@@ -78,7 +80,8 @@ function GroupMembers({ group, t, onClose }: { group: Group; t: (k: string, o?: 
   );
 }
 
-function Areas({ t }: { t: (k: string, o?: any) => string }) {
+function Areas() {
+  const { t } = useTranslation('admin');
   const { data, reload } = useApi<Area[]>('/areas');
   const [name, setName] = useState('');
   const [edit, setEdit] = useState<Area | null>(null);

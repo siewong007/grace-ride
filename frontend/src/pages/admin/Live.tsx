@@ -32,7 +32,7 @@ export default function AdminLive() {
                 <div key={d.driver_id} className="item">
                   <div className="grow">
                     <div className="bold">{d.name}</div>
-                    <div className="muted tiny">{d.rides} 项行程 · 首站 {fmtTime(d.first_pickup, ft)}</div>
+                    <div className="muted tiny">{t('live.driverTripsSummary', { rides: d.rides, time: fmtTime(d.first_pickup, ft) })}</div>
                   </div>
                   {stale(d.updated_at) ? <Pill tone="amber">{d.updated_at ? `${fmtAgo(d.updated_at, ft)}${t('live.updated')}` : t('live.noLocation')}</Pill> : <Pill tone="green">{t('live.normal')}</Pill>}
                 </div>

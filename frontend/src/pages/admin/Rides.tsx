@@ -7,7 +7,8 @@ import { RideTable } from './Dashboard';
 import { useTranslation } from 'react-i18next';
 
 export default function AdminRides() {
-  const { t, ft } = useTranslationHooks();
+  const { t } = useTranslation('admin');
+  const ft = useFormatT();
   const [params, setParams] = useSearchParams();
   const nav = useNavigate();
   const status = params.get('status') ?? '';
@@ -39,14 +40,8 @@ export default function AdminRides() {
       </div>
       <ErrorBox error={error} />
       <div className="card">
-        {loading ? <Spinner /> : !data?.length ? <Empty>{t('rides.none')}</Empty> : <RideTable rides={data} onOpen={(id) => nav(`/admin/rides/${id}`)} t={t} ft={ft} />}
+        {loading ? <Spinner /> : !data?.length ? <Empty>{t('rides.none')}</Empty> : <RideTable rides={data} onOpen={(id) => nav(`/admin/rides/${id}`)} />}
       </div>
     </div>
   );
-
-  function useTranslationHooks() {
-    const { t } = useTranslation('admin');
-    const ft = useFormatT();
-    return { t, ft };
-  }
 }

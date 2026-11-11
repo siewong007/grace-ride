@@ -12,7 +12,7 @@ interface Area { id: number; name: string; active: boolean }
 interface Profile { carpool_enabled: boolean; spare_seats: number; area_ids: number[]; vehicle: { model: string; color: string; plate: string; seats: number } | null }
 
 export default function Drive() {
-  const { t, ft } = useTranslationHooks();
+  const { t } = useTranslation('drive');
   const { has } = useAuth();
   const [tab, setTab] = useState<'schedule' | 'requests' | 'settings'>('schedule');
   if (!has('driver')) return <Empty>{t('notDriver')}</Empty>;
@@ -29,21 +29,16 @@ export default function Drive() {
         <button className={tab === 'requests' ? 'on' : ''} onClick={() => setTab('requests')}>{t('requests')}</button>
         <button className={tab === 'settings' ? 'on' : ''} onClick={() => setTab('settings')}>{t('settings')}</button>
       </div>
-      {tab === 'schedule' && <Schedule ft={ft} />}
-      {tab === 'requests' && <Requests t={t} ft={ft} />}
-      {tab === 'settings' && <Settings t={t} />}
+      {tab === 'schedule' && <Schedule />}
+      {tab === 'requests' && <Requests />}
+      {tab === 'settings' && <Settings />}
     </div>
   );
 }
 
-function useTranslationHooks() {
+function Schedule() {
   const { t } = useTranslation('drive');
   const ft = useFormatT();
-  return { t, ft };
-}
-
-function Schedule({ ft }: { ft: (k: string) => string }) {
-  const { t } = useTranslation('drive');
   const [range, setRange] = useState<'day' | 'week'>('day');
   const from = todayStr();
   const end = new Date();
@@ -110,7 +105,9 @@ function Schedule({ ft }: { ft: (k: string) => string }) {
   );
 }
 
-function Requests({ t, ft }: { t: (k: string, o?: any) => string; ft: (k: string) => string }) {
+function Requests() {
+  const { t } = useTranslation('drive');
+  const ft = useFormatT();
   const { data: areas } = useApi<Area[]>('/areas');
   const [area, setArea] = useState<string>('mine');
   const [date, setDate] = useState('');
@@ -158,7 +155,8 @@ function Requests({ t, ft }: { t: (k: string, o?: any) => string; ft: (k: string
   );
 }
 
-function Settings({ t }: { t: (k: string, o?: any) => string }) {
+function Settings() {
+  const { t } = useTranslation('drive');
   const { data: areas } = useApi<Area[]>('/areas');
   const { data: profile, loading } = useApi<Profile>('/driver/profile');
   const [p, setP] = useState<Profile | null>(null);
@@ -219,7 +217,7 @@ function Settings({ t }: { t: (k: string, o?: any) => string }) {
               <input className="input" required value={v.model} onChange={(e) => setV('model', e.target.value)} placeholder="Perodua Myvi" />
             </Field>
             <Field label={t('color')}>
-              <input className="input" required value={v.color} onChange={(e) => setV('color', e.target.value)} placeholder="白色" />
+              <input className="input" required value={v.color} onChange={(e) => setV('color', e.target.value)} placeholder={t('colorPlaceholder')} />
             </Field>
             <Field label={t('plate')}>
               <input className="input" required value={v.plate} onChange={(e) => setV('plate', e.target.value)} placeholder="VXX 1234" />

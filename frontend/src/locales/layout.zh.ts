@@ -26,4 +26,6 @@ export default {
   unread: '，{count} 则未读',
   adminNotice: '您拥有管理权限。请到 我的 → 账号安全 设置通行密钥或双重验证（2FA），才能使用管理功能。',
   pendingNotice: '管理员核对资料后才会分配职务与群体。在此之前你可以更新个人资料和通行密钥。',
+  mainNav: '主选单',
+  bottomNav: '底部选单',
 };

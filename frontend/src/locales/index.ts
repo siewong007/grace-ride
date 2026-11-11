@@ -48,6 +48,8 @@ import zhTerms from './terms.zh'
 import enTerms from './terms.en'
 import zhNotFound from './notFound.zh'
 import enNotFound from './notFound.en'
+import zhChrome from './chrome.zh'
+import enChrome from './chrome.en'
 
 export const namespaces = [
   'common',
@@ -75,6 +77,7 @@ export const namespaces = [
   'errors',
   'terms',
   'notFound',
+  'chrome',
 ] as const
 
 export type Namespace = (typeof namespaces)[number]
@@ -106,6 +109,7 @@ export const resources = {
     errors: enErrors,
     terms: enTerms,
     notFound: enNotFound,
+    chrome: enChrome,
   },
   zh: {
     common: zhCommon,
@@ -133,5 +137,6 @@ export const resources = {
     errors: zhErrors,
     terms: zhTerms,
     notFound: zhNotFound,
+    chrome: zhChrome,
   },
 } as const

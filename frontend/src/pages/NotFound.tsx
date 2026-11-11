@@ -1,13 +1,8 @@
 import { Link } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
 
-function useTranslationHooks() {
-  const { t } = useTranslation('notFound');
-  return { t };
-}
-
 export default function NotFound() {
-  const { t } = useTranslationHooks();
+  const { t } = useTranslation('notFound');
   return (
     <div className="stack">
       <div className="page-head">

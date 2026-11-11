@@ -41,4 +41,5 @@ export default {
   call: '致电',
   cannotDriveNotice: '无法出车？打开该接送，按「无法出车？通知交通组」，系统会通知乘客并安排其他司机。',
   slotRides: '{n} 项接送',
+  colorPlaceholder: '白色',
 };

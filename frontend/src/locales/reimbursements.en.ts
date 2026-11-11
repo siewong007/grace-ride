@@ -32,4 +32,5 @@ export default {
   reviewNote: 'Note',
   receiptLink: 'Receipt',
   resubmit: 'Resubmit with details',
+  ridePrefix: 'Ride {time}',
 };

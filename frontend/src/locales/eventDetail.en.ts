@@ -34,4 +34,7 @@ export default {
   attending: 'Attended',
   absent: 'Absent',
   going: 'Going',
+  needsRide: 'Needs a ride',
+  needsRideWithStatus: 'Needs a ride ({status})',
+  offersSeats: 'Offering {n} seats',
 };

@@ -60,6 +60,7 @@ export default {
   chat: '本趟群聊',
   chatMembers: '仅限本趟 {count} 位成员',
   chatPlaceholder: '例如：我在北门入口等',
+  chatInput: '讯息',
   send: '发送',
   chatReadOnly: '本趟接送已结束，群聊为只读。记录按教会政策保留。',
   driverLocation: '司机位置',

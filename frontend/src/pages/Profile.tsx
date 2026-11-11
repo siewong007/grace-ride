@@ -9,7 +9,8 @@ import { passkeySupported, registerPasskey } from '../webauthn';
 import { useTranslation } from 'react-i18next';
 
 export default function Profile() {
-  const { t, ft } = useTranslationHooks();
+  const { t } = useTranslation('profile');
+  const ft = useFormatT();
   const { me, refresh, has } = useAuth();
   const nav = useNavigate();
   const passkeys = useApi<{ id: number; label: string; created_at: string; last_used: string | null }[]>('/auth/passkeys');
@@ -80,7 +81,7 @@ export default function Profile() {
                   </div>
                 ))}
               </div>
-            ) : <p className="muted">无</p>}
+            ) : <p className="muted">{t('none')}</p>}
             <button className="btn primary" disabled={busy || !passkeySupported()} onClick={() => run(() => registerPasskey(navigator.platform || t('myPhone')).then(passkeys.reload).then(refresh), t('addPasskeyDone'))}>
               <Fingerprint size={18} />{t('addPasskey')}
             </button>
@@ -99,12 +100,6 @@ export default function Profile() {
       {totp && <TotpModal secret={totp.secret} url={totp.url} onClose={() => setTotp(null)} onDone={() => { setTotp(null); refresh(); }} />}
     </div>
   );
-
-  function useTranslationHooks() {
-    const { t } = useTranslation('profile');
-    const ft = useFormatT();
-    return { t, ft };
-  }
 }
 
 function TotpModal({ secret, url, onClose, onDone }: { secret: string; url: string; onClose: () => void; onDone: () => void }) {

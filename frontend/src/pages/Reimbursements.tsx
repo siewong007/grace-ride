@@ -14,7 +14,8 @@ export interface Reimb {
 }
 
 export default function Reimbursements() {
-  const { t, ft } = useTranslationHooks();
+  const { t } = useTranslation('reimbursements');
+  const ft = useFormatT();
   const { data, error, loading } = useApi<Reimb[]>('/reimbursements');
   return (
     <div className="stack">
@@ -38,7 +39,7 @@ export default function Reimbursements() {
             <Link key={r.id} to={`/reimbursements/${r.id}`} className="card link stack-sm">
               <div className="row between"><strong className="mono">{rm(r.amount_cents)}</strong><StatusPill map={REIMB_STATUS} status={r.status} /></div>
               <div className="small">{r.description || t('noneDesc')}</div>
-              <div className="muted tiny">{fmtDay(r.created_at, ft)}{r.ride_at && ` · 接送 ${fmtDateTime(r.ride_at, ft)}`}</div>
+              <div className="muted tiny">{fmtDay(r.created_at, ft)}{r.ride_at && ` · ${t('ridePrefix', { time: fmtDateTime(r.ride_at, ft) })}`}</div>
             </Link>
           ))}
         </div>
@@ -48,14 +49,9 @@ export default function Reimbursements() {
   );
 }
 
-function useTranslationHooks() {
-  const { t } = useTranslation('reimbursements');
-  const ft = useFormatT();
-  return { t, ft };
-}
-
 export function ReimbursementForm() {
   const { t } = useTranslation('reimbursements');
+  const ft = useFormatT();
   const nav = useNavigate();
   const [params] = useSearchParams();
   const editId = params.get('edit');
@@ -91,7 +87,7 @@ export function ReimbursementForm() {
         <Field label={t('ride')}>
           <select className="input" value={f.ride} onChange={(e) => setF({ ...f, ride: e.target.value })}>
             <option value="">{t('noneRide')}</option>
-            {past.data?.map((r) => <option key={r.id} value={r.id}>{fmtDateTime(r.pickup_at)} · {r.area.name} → {r.destination}</option>)}
+            {past.data?.map((r) => <option key={r.id} value={r.id}>{fmtDateTime(r.pickup_at, ft)} · {r.area.name} → {r.destination}</option>)}
           </select>
         </Field>
         <Field label={t('amount')}>
@@ -117,7 +113,8 @@ export function ReimbursementForm() {
 }
 
 export function ReimbursementDetail() {
-  const { t, ft } = useTranslationHooks();
+  const { t } = useTranslation('reimbursements');
+  const ft = useFormatT();
   const { id } = useParams();
   const { data: r, error } = useApi<Reimb>(`/reimbursements/${id}`);
   if (error) return <ErrorBox error={error} />;

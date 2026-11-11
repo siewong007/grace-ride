@@ -3,7 +3,7 @@ import { Link, useNavigate, useParams } from 'react-router-dom';
 import { del, post, put, useApi } from '../api';
 import { useAuth } from '../auth';
 import { Empty, ErrorBox, Field, FileInput, Modal, Spinner, StatusPill, useAction } from '../components/ui';
-import { fmtAgo, rm, SHARE_STATUS, toCents, useFormatT } from '../format';
+import { fmtAgo, rm, SETTLEMENT_STATUS, SHARE_STATUS, toCents, useFormatT } from '../format';
 import { useTranslation } from 'react-i18next';
 
 interface ShareRow { id: number; user_id: number; name: string; amount_cents: number; status: string; proof_file_id: number | null; txn_ref: string; paid_date: string | null; note: string; updated_at: string }
@@ -32,7 +32,7 @@ export default function Settlements() {
         <div className="grid cols-3">
           {data.map((s) => (
             <Link key={s.id} to={`/settlements/${s.id}`} className="card link stack-sm">
-              <div className="row between"><strong>{s.title}</strong><StatusPill map={STATUS_MAP(t)} status={s.status} /></div>
+              <div className="row between"><strong>{s.title}</strong><StatusPill map={SETTLEMENT_STATUS} status={s.status} /></div>
               <div className="muted small">{s.event_title}</div>
               <div className="row between"><span className="bold">{rm(s.total_cents)}</span><span className="small">{t('confirmedCount', { confirmed: s.confirmed, count: s.count })}</span></div>
               <div className="bar"><div style={{ width: `${s.count ? (s.confirmed / s.count) * 100 : 0}%` }} /></div>
@@ -42,14 +42,6 @@ export default function Settlements() {
       )}
     </div>
   );
-}
-
-function STATUS_MAP(t: (k: string, o?: any) => string) {
-  return {
-    draft: { label: t('statusDraft'), tone: 'gray' as const },
-    published: { label: t('statusPublished'), tone: 'blue' as const },
-    closed: { label: t('statusClosed'), tone: 'green' as const },
-  };
 }
 
 interface Signup { user_id: number; name: string; status: string; attended: number | null }
@@ -200,7 +192,7 @@ export function SettlementForm() {
                 </div>
               ))}
             </div>
-          ) : <div className="muted">加载中…</div>}
+          ) : <div className="muted">{t('loading')}</div>}
           {mode === 'custom' && selected.length > 0 && customSum !== total && (
             <div className="small muted" style={{ color: 'var(--danger)' }}>
               {t('customMismatch', { sum: rm(customSum), total: rm(Math.max(total, 0)) })}
@@ -210,7 +202,7 @@ export function SettlementForm() {
         <div className="row between"><strong>{t('totalLabel')}</strong><strong>{rm(Math.max(total, 0))}</strong></div>
         <ErrorBox error={error} />
         <button className="btn primary block" disabled={busy || !title || !payee.name || !payee.account || selected.length === 0 || total <= 0 || !customValid}>
-          {busy ? '保存中…' : (id ? t('saveDraft') : t('publishBill'))}
+          {busy ? t('saving') : (id ? t('saveDraft') : t('publishBill'))}
         </button>
       </form>
 
@@ -244,11 +236,11 @@ export function SettlementForm() {
               <div key={x.id} className="item">
                 <div className="grow">
                   <div className="bold">{x.name} · <span className="mono">{rm(x.amount_cents)}</span></div>
-                  {x.txn_ref && <div className="muted tiny">交易编号 {x.txn_ref}{x.paid_date && ` · ${x.paid_date}`}</div>}
+                  {x.txn_ref && <div className="muted tiny">{t('txnRef', { ref: x.txn_ref })}{x.paid_date && ` · ${x.paid_date}`}</div>}
                   {x.note && <div className="tiny" style={{ color: 'var(--accent)' }}>{x.note}</div>}
                 </div>
                 <StatusPill map={SHARE_STATUS} status={x.status} />
-                {existing.can_manage && existing.status === 'published' && <button className="btn sm" onClick={() => setReview(x)}>核对</button>}
+                {existing.can_manage && existing.status === 'published' && <button className="btn sm" onClick={() => setReview(x)}>{t('verify')}</button>}
               </div>
             ))}
           </div>
@@ -278,7 +270,7 @@ export function SettlementDetail() {
       <div className="page-head">
         <div>
           <h1>{t('settlementDetail.title', { title: s.title })}</h1>
-          <StatusPill map={getStatusMap(t)} status={s.status} />
+          <StatusPill map={SETTLEMENT_STATUS} status={s.status} />
         </div>
         {canEdit && <Link className="btn" to={`/settlements/${s.id}/edit`}>{t('settlementDetail.edit')}</Link>}
       </div>
@@ -321,15 +313,6 @@ export function SettlementDetail() {
   );
 }
 
-function getStatusMap(t: (k: string) => string) {
-  return {
-    draft: { label: t('statusDraft'), tone: 'gray' as const },
-    published: { label: t('statusPublished'), tone: 'blue' as const },
-    closed: { label: t('statusClosed'), tone: 'green' as const },
-  };
-}
-
-
 function VerifyModal({ share, onClose, onDone }: { share: ShareRow; onClose: () => void; onDone: () => void }) {
   const { t } = useTranslation('settlements');
   const [note, setNote] = useState('');
@@ -338,10 +321,10 @@ function VerifyModal({ share, onClose, onDone }: { share: ShareRow; onClose: () 
   return (
     <Modal title={`${share.name} · ${rm(share.amount_cents)}`} onClose={onClose}>
       {share.proof_file_id ? (
-        <a href={`/api/files/${share.proof_file_id}`} target="_blank" rel="noreferrer"><img className="receipt-thumb" src={`/api/files/${share.proof_file_id}`} alt="付款凭证（PDF 请点击打开）" /></a>
-      ) : <p className="muted">尚未上传凭证。</p>}
-      {share.txn_ref && <p>交易编号：<strong>{share.txn_ref}</strong>{share.paid_date && ` · ${share.paid_date}`}</p>}
-      <Field label="备注（退回时必填）"><input className="input" value={note} onChange={(e) => setNote(e.target.value)} placeholder="例如：金额不符 / 凭证不清" /></Field>
+        <a href={`/api/files/${share.proof_file_id}`} target="_blank" rel="noreferrer"><img className="receipt-thumb" src={`/api/files/${share.proof_file_id}`} alt={t('proofAlt')} /></a>
+      ) : <p className="muted">{t('noProofYet')}</p>}
+      {share.txn_ref && <p>{t('txnRefLabel')}<strong>{share.txn_ref}</strong>{share.paid_date && ` · ${share.paid_date}`}</p>}
+      <Field label={t('noteLabel')}><input className="input" value={note} onChange={(e) => setNote(e.target.value)} placeholder={t('notePlaceholder')} /></Field>
       <ErrorBox error={error} />
       <div className="btn-row">
         <button className="btn primary" disabled={busy} onClick={() => act('confirm', t('confirmReceivedDone'))}>{t('confirmReceived')}</button>
