@@ -48,7 +48,7 @@ export default function Dashboard() {
 
       <div className="split">
         <div className="card">
-          <div className="card-title"><h3>{t('dashboard.todayRides')}</h3><Link to="/admin/rides" className="small">{t('all')} →</Link></div>
+          <div className="card-title"><h3>{t('dashboard.todayRides')}</h3><Link to="/admin/rides" className="small">{t('rides.all')} →</Link></div>
           {today.loading ? <Spinner /> : !today.data?.length ? <Empty>{t('dashboard.noTodayRides')}</Empty> : <RideTable rides={today.data} onOpen={(id) => nav(`/admin/rides/${id}`)} t={t} ft={ft} />}
         </div>
         <div className="stack">

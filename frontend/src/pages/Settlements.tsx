@@ -1,6 +1,7 @@
 import { FormEvent, useEffect, useMemo, useState } from 'react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
 import { del, post, put, useApi } from '../api';
+import { useAuth } from '../auth';
 import { Empty, ErrorBox, Field, FileInput, Modal, Spinner, StatusPill, useAction } from '../components/ui';
 import { fmtAgo, rm, SHARE_STATUS, toCents, useFormatT } from '../format';
 import { useTranslation } from 'react-i18next';
@@ -62,14 +63,14 @@ export function SettlementForm() {
   const evId = eventId ?? existing?.event.id;
   const { data: signups } = useApi<Signup[]>(evId ? `/events/${evId}/signups` : null);
   const { data: event } = useApi<{ title: string }>(evId ? `/events/${evId}` : null);
-  const { data: revisions } = id ? useApi<any[]>(`/settlements/${id}/revisions`) : { data: null };
+  const { data: revisions } = useApi<any[]>(id ? `/settlements/${id}/revisions` : null);
 
   const [title, setTitle] = useState('');
   const [items, setItems] = useState([{ label: t('itemLabel'), amount: '', receipt: null as number | null }]);
   const [subsidy, setSubsidy] = useState('0');
   const [mode, setMode] = useState<'equal' | 'custom'>('equal');
   const [selected, setSelected] = useState<number[]>([]);
-  const [custom] = useState<Record<number, string>>({});
+  const [custom, setCustom] = useState<Record<number, string>>({});
   const [payee, setPayee] = useState({ name: '', account: '' });
   const [review, setReview] = useState<ShareRow | null>(null);
 
@@ -82,6 +83,14 @@ export function SettlementForm() {
       setMode(existing.split_mode);
       setPayee({ name: existing.payee_name, account: existing.payee_account });
       setItems(existing.items.map((it) => ({ label: it.label, amount: String(it.amount_cents / 100), receipt: it.receipt_file_id })));
+      if (existing.shares) {
+        setSelected(existing.shares.map((s) => s.user_id));
+        const c: Record<number, string> = {};
+        existing.shares.forEach((s) => {
+          c[s.user_id] = String(s.amount_cents / 100);
+        });
+        setCustom(c);
+      }
     }
   }, [existing]);
 
@@ -90,8 +99,28 @@ export function SettlementForm() {
   const total = useMemo(() => items.reduce((s, it) => s + (toCents(it.amount) || 0), 0) - (toCents(subsidy) || 0), [items, subsidy]);
   const perPerson = selected.length ? Math.round(total / selected.length) : 0;
 
+  const customSum = useMemo(() => {
+    return selected.reduce((sum, uid) => {
+      const v = custom[uid];
+      const cents = v !== undefined && v !== '' ? toCents(v) : null;
+      return sum + (cents !== null && cents >= 0 ? cents : 0);
+    }, 0);
+  }, [selected, custom]);
+
+  const customValid = useMemo(() => {
+    if (mode !== 'custom') return true;
+    if (selected.length === 0) return false;
+    for (const uid of selected) {
+      const v = custom[uid];
+      const cents = v !== undefined && v !== '' ? toCents(v) : null;
+      if (cents === null || cents < 0) return false;
+    }
+    return customSum === total;
+  }, [mode, selected, custom, customSum, total]);
+
   const submit = (e: FormEvent) => {
     e.preventDefault();
+    if (!customValid) return;
     const body = {
       title, event_id: evId ? Number(evId) : undefined,
       items: items.map((it) => ({ label: it.label, amount_cents: toCents(it.amount), receipt_file_id: it.receipt })),
@@ -141,10 +170,10 @@ export function SettlementForm() {
                 <input className="input" value={it.label} onChange={(e) => setItems(items.map((x, ix) => ix === i ? { ...x, label: e.target.value } : x))} placeholder={t('itemLabel')} />
                 <input className="input" type="number" step="0.01" value={it.amount} onChange={(e) => setItems(items.map((x, ix) => ix === i ? { ...x, amount: e.target.value } : x))} placeholder={t('amount')} />
                 <FileInput label={t('receipt')} value={it.receipt} onChange={(rid) => setItems(items.map((x, ix) => ix === i ? { ...x, receipt: rid } : x))} />
-                {items.length > 1 && <button className="btn sm danger" onClick={() => removeItem(i)}>{t('delete')}</button>}
+                {items.length > 1 && <button type="button" className="btn sm danger" onClick={() => removeItem(i)}>{t('delete')}</button>}
               </div>
             ))}
-            <button className="btn ghost sm" onClick={addItem}>+ {t('item')}</button>
+            <button type="button" className="btn ghost sm" onClick={addItem}>+ {t('item')}</button>
           </div>
         </div>
         <div className="stack-sm">
@@ -152,17 +181,35 @@ export function SettlementForm() {
           {signups ? (
             <div className="grid cols-3">
               {signups.map((s) => (
-                <label key={s.user_id} className={`check ${selected.includes(s.user_id) ? 'on' : ''}`}>
-                  <input type="checkbox" checked={selected.includes(s.user_id)} onChange={() => setSelected(selected.includes(s.user_id) ? selected.filter((x) => x !== s.user_id) : [...selected, s.user_id])} />
-                  {s.name} {mode === 'equal' && ` · ${rm(perPerson)}`}
-                </label>
+                <div key={s.user_id} className="stack-xs">
+                  <label className={`check ${selected.includes(s.user_id) ? 'on' : ''}`}>
+                    <input type="checkbox" checked={selected.includes(s.user_id)} onChange={() => setSelected(selected.includes(s.user_id) ? selected.filter((x) => x !== s.user_id) : [...selected, s.user_id])} />
+                    {s.name} {mode === 'equal' && ` · ${rm(perPerson)}`}
+                  </label>
+                  {mode === 'custom' && selected.includes(s.user_id) && (
+                    <input
+                      type="number"
+                      step="0.01"
+                      min="0"
+                      className="input"
+                      placeholder="0.00"
+                      value={custom[s.user_id] ?? ''}
+                      onChange={(e) => setCustom({ ...custom, [s.user_id]: e.target.value })}
+                    />
+                  )}
+                </div>
               ))}
             </div>
           ) : <div className="muted">加载中…</div>}
+          {mode === 'custom' && selected.length > 0 && customSum !== total && (
+            <div className="small muted" style={{ color: 'var(--danger)' }}>
+              {t('customMismatch', { sum: rm(customSum), total: rm(Math.max(total, 0)) })}
+            </div>
+          )}
         </div>
         <div className="row between"><strong>{t('totalLabel')}</strong><strong>{rm(Math.max(total, 0))}</strong></div>
         <ErrorBox error={error} />
-        <button className="btn primary block" disabled={busy || !title || !payee.name || !payee.account || selected.length === 0 || total <= 0}>
+        <button className="btn primary block" disabled={busy || !title || !payee.name || !payee.account || selected.length === 0 || total <= 0 || !customValid}>
           {busy ? '保存中…' : (id ? t('saveDraft') : t('publishBill'))}
         </button>
       </form>
@@ -173,7 +220,7 @@ export function SettlementForm() {
             <button className="btn danger" disabled={busy} onClick={() => run(() => del(`/settlements/${existing.id}`).then(() => nav('/settlements')), t('deletedBill'))}>{t('deleteDraft')}</button>
           )}
           {existing.status === 'published' && (
-            <button className="btn primary" disabled={busy || confirmedShares < existing.shares.length} onClick={() => run(() => post(`/settlements/${existing.id}/close`).then(() => { existing.status; reload(); }), t('closed'))}>{t('close')}</button>
+            <button className="btn primary" disabled={busy || confirmedShares < existing.shares.length} onClick={() => run(() => post(`/settlements/${existing.id}/close`).then(reload), t('closed'))}>{t('close')}</button>
           )}
         </>
       )}
@@ -209,16 +256,23 @@ export function SettlementForm() {
         </div>
       )}
 
-      {review && <VerifyModal share={review} onClose={() => setReview(null)} onDone={() => { setReview(null); existing && reload(); }} />}
+      {review && <VerifyModal share={review} onClose={() => setReview(null)} onDone={() => { setReview(null); if (existing) reload(); }} />}
     </div>
   );
 }
 
 export function SettlementDetail() {
   const { t } = useTranslation('settlements');
-  const { data: s, error } = useApi<Settlement>('/settlements/:id'.replace(':id', useParams().id as string));
+  const { has, me } = useAuth();
+  const { id } = useParams();
+  const { data: s, error } = useApi<Settlement>(id ? `/settlements/${id}` : null);
   if (error) return <ErrorBox error={error} />;
   if (!s) return <Spinner />;
+
+  const canEdit = s.can_manage || has('admin') || me?.id === s.created_by.id;
+  const paidCents = s.shares.filter((x) => x.status === 'confirmed').reduce((sum, x) => sum + x.amount_cents, 0);
+  const paidPercent = s.total_cents > 0 ? Math.min(100, Math.round((paidCents / s.total_cents) * 100)) : 0;
+
   return (
     <div className="stack" style={{ maxWidth: 820 }}>
       <div className="page-head">
@@ -226,7 +280,7 @@ export function SettlementDetail() {
           <h1>{t('settlementDetail.title', { title: s.title })}</h1>
           <StatusPill map={getStatusMap(t)} status={s.status} />
         </div>
-        <Link className="btn" to={`/settlements/${s.id}/edit`}>{t('settlementDetail.edit')}</Link>
+        {canEdit && <Link className="btn" to={`/settlements/${s.id}/edit`}>{t('settlementDetail.edit')}</Link>}
       </div>
       <div className="card stack">
         <dl className="kv">
@@ -259,7 +313,7 @@ export function SettlementDetail() {
             {s.version > 1 && <span className="small muted">v{s.version}</span>}
           </div>
           {s.shares.filter((x) => x.status === 'confirmed').length > 0 && (
-            <div className="bar"><div style={{ width: '60%' }} /></div>
+            <div className="bar"><div style={{ width: `${paidPercent}%` }} /></div>
           )}
         </div>
       </div>

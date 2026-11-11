@@ -51,7 +51,7 @@ function MemberList({ t, ft }: { t: (k: string, o?: any) => string; ft: (k: stri
               <tbody>
                 {data.map((u) => (
                   <tr key={u.id}>
-                    <td data-label={t('members.name')} className="bold">{u.name} {u.status === 'pending' && <Pill>{t('members.pending')}</Pill>}{u.status === 'disabled' && <Pill tone="red">{t('members.statusActive')}</Pill>}</td>
+                    <td data-label={t('members.name')} className="bold">{u.name} {u.status === 'pending' && <Pill>{t('members.pending')}</Pill>}{u.status === 'disabled' && <Pill tone="red">{t('members.statusDisabled')}</Pill>}</td>
                     <td data-label={t('members.email')}>{u.email}</td>
                     <td data-label={t('members.role')}>{u.roles.map((r) => ft(ROLE_LABEL[r])).join('、') || t('members.member')}</td>
                     <td data-label={t('members.group')} className="small">{u.groups}</td>

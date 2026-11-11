@@ -19,16 +19,16 @@ export default function EventDetail() {
   const ft = useFormatT();
   const { id } = useParams();
   const { has } = useAuth();
-  const { data: e, error, reload } = useApi<EventFull>(`/events/${id}`);
+  const { data: e, error, reload } = useApi<EventFull>(id ? `/events/${id}` : null);
   const { busy, error: actErr, run } = useAction();
   const [walkIn, setWalkIn] = useState(false);
+  const { data: signups, reload: reloadS } = useApi<Signup[]>(id ? `/events/${id}/signups` : null);
 
   if (error) return <ErrorBox error={error} />;
   if (!e) return <Spinner />;
   const signed = e.my_signup && e.my_signup.status !== 'cancelled';
   const open = e.status === 'published';
 
-  const { data: signups, reload: reloadS } = useApi<Signup[]>(`/events/${e.id}/signups`);
   const active = signups?.filter((s) => s.status !== 'cancelled') ?? [];
   const signupsAttended = active.filter((s) => s.attended === 1).length;
   const mark = (uid: number, attended: boolean | null) => run(() => post(`/events/${e.id}/attendance`, { user_id: uid, attended }).then(reloadS));
