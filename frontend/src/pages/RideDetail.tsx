@@ -412,7 +412,7 @@ function StaffActions({ ride: r, reload, t }: { ride: Ride; reload: () => void; 
           <Field label={t('reassignDriver')} hint={t('reassignHint')}>
             <select className="input" value={driverId} onChange={(e) => setDriverId(e.target.value)}>
               <option value="">{t('chooseDriver')}</option>
-              {drivers.data?.filter((d) => d.id !== r.passenger.id).map((d) => (
+              {(drivers.data ?? []).filter((d) => d.id !== r.passenger.id).map((d) => (
                 <option key={d.id} value={d.id}>{d.name} · {d.areas || t('noVehicle')} · {d.vehicle?.model ?? t('noVehicle')}{d.carpool_enabled ? t('carpool', { seats: d.spare_seats }) : ''}</option>
               ))}
             </select>

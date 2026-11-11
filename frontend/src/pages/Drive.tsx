@@ -232,7 +232,7 @@ function Settings({ t }: { t: (k: string, o?: any) => string }) {
           </div>
         </div>
         <ErrorBox error={error} />
-        <button className="btn primary block" disabled={busy}>{t('saveSettings')}</button>
+        <button className="btn primary block" disabled={busy} type="submit">{t('saveSettings')}</button>
         <Link to="/report" className="btn block">{t('badges')}</Link>
       </div>
     </form>
