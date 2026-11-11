@@ -108,9 +108,14 @@ function Details({ ride: r, t, ft }: { ride: Ride; t: (k: string, o?: any) => st
         {r.picked_up_at && <><dt>{t('pickedUp')}</dt><dd>{fmtAgo(r.picked_up_at, ft)}</dd></>}
       </dl>
       {r.pickup_address && (r.viewer.is_driver || r.viewer.is_staff) && (
-        <a className="btn" target="_blank" rel="noreferrer" href={`https://www.google.com/maps/dir/?api=1&destination=${encodeURIComponent(r.pickup_address)}`}>
-          <MapPin size={18} />{t('navigateToPickup')}
-        </a>
+        <div className="row between">
+          <a className="btn sm" target="_blank" rel="noreferrer" href={`https://www.google.com/maps/dir/?api=1&destination=${encodeURIComponent(r.pickup_address)}`}>
+            <MapPin size={16} /> {t('navigateGoogleMaps')}
+          </a>
+          <a className="btn sm" target="_blank" rel="noreferrer" href={`https://www.waze.com/ul?q=${encodeURIComponent(r.pickup_address)}`}>
+            {t('navigateWaze')}
+          </a>
+        </div>
       )}
     </div>
   );

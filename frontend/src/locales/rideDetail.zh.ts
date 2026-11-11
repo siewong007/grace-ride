@@ -19,6 +19,8 @@ export default {
   pickedUp: '已上车',
   seatsUnit: '位',
   navigateToPickup: '导航到上车地点',
+  navigateGoogleMaps: 'Google 地图',
+  navigateWaze: 'Waze',
   noDriverYet: '正在等待志愿司机选择…',
   confirmPending: '待新司机确认',
   conflict: '乘客在相近时间另有 {count} 项接送，请留意冲突。',

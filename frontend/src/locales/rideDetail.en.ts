@@ -19,6 +19,8 @@ export default {
   pickedUp: 'Picked up',
   seatsUnit: 'seats',
   navigateToPickup: 'Navigate to pickup',
+  navigateGoogleMaps: 'Google Maps',
+  navigateWaze: 'Waze',
   noDriverYet: 'Waiting for a volunteer driver to pick up…',
   confirmPending: 'Awaiting new driver confirmation',
   conflict: 'The passenger has {count} other rides around the same time — watch for conflicts.',
