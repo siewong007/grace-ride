@@ -27,7 +27,7 @@ export default function Announcements() {
           <label className={`check ${f.pinned ? 'on' : ''}`}><input type="checkbox" checked={f.pinned} onChange={(e) => setF({ ...f, pinned: e.target.checked })} />{t('announcements.pinned')}</label>
           <label className={`check ${f.notify_all ? 'on' : ''}`}><input type="checkbox" checked={f.notify_all} onChange={(e) => setF({ ...f, notify_all: e.target.checked })} />{t('announcements.notifyAll')}</label>
           <ErrorBox error={error} />
-          <button className="btn primary" disabled={busy}>{t('announcements.add')}</button>
+          <button className="btn primary" disabled={busy} type="submit">{t('announcements.add')}</button>
         </form>
         <div className="stack-sm">
           {data?.map((a) => (

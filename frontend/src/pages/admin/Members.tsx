@@ -78,7 +78,11 @@ function EditUser({ user, t, ft, onClose }: { user: User; t: (k: string, o?: any
   const initialGroups = user.groups ? user.groups.split('、') : [];
   const [gids, setGids] = useState<number[] | null>(null);
   const selectedG = gids ?? (groups?.filter((g) => initialGroups.includes(g.name)).map((g) => g.id) ?? []);
-  const { busy, error } = useAction();
+  const { busy, error, run } = useAction();
+  const save = () => run(
+    () => put(`/admin/users/${user.id}`, { roles, status: 'active', group_ids: gids }).then(onClose),
+    t('members.memberUpdated'),
+  );
   return (
     <Modal title={`${t('members.edit')} ${user.name}`} onClose={onClose}>
       <div className="stack-sm">
@@ -95,7 +99,7 @@ function EditUser({ user, t, ft, onClose }: { user: User; t: (k: string, o?: any
           ))}
         </div>
         <ErrorBox error={error} />
-        <button className="btn primary" disabled={busy}>{t('members.update')}</button>
+        <button className="btn primary" disabled={busy} onClick={save}>{t('members.update')}</button>
       </div>
     </Modal>
   );
@@ -151,7 +155,7 @@ function Invites({ t, ft }: { t: (k: string, o?: any) => string; ft: (k: string)
       <form className="card stack" onSubmit={submit}>
         <p className="muted">{t('members.inviteHint')}</p>
         <ErrorBox error={error} />
-        <button className="btn primary" disabled={busy}>{t('members.createInvite')}</button>
+        <button className="btn primary" disabled={busy} type="submit">{t('members.createInvite')}</button>
         {link && (
           <div className="notice ok stack-sm">
             <span>{t('members.inviteLink')}</span>
