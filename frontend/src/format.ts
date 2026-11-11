@@ -12,7 +12,19 @@ export function useFormatT(): FormatT {
   return (key, values) => String(t(key, values))
 }
 
-export type Tone = 'green' | 'amber' | 'blue' | 'red' | 'gray' | 'teal'
+export type Tone =
+  | 'green'
+  | 'amber'
+  | 'blue'
+  | 'red'
+  | 'gray'
+  | 'teal'
+  | 'neutral'
+  | 'success'
+  | 'warning'
+  | 'danger'
+  | 'info'
+  | 'primary';
 
 export interface StatusMap {
   label: string // i18n key

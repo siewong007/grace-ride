@@ -3,7 +3,7 @@ import { Link, useNavigate } from 'react-router-dom';
 import { Fingerprint, LogOut, ShieldCheck } from 'lucide-react';
 import { del, post, put, useApi } from '../api';
 import { useAuth } from '../auth';
-import { Avatar, ErrorBox, Field, FileInput, Modal, Pill, useAction } from '../components/ui';
+import { Avatar, ErrorBox, Field, FileInput, Modal, Pill, useAction, useConfirm } from '../components/ui';
 import { fmtAgo, ROLE_LABEL, useFormatT } from '../format';
 import { passkeySupported, registerPasskey } from '../webauthn';
 import { useTranslation } from 'react-i18next';
@@ -11,6 +11,7 @@ import { useTranslation } from 'react-i18next';
 export default function Profile() {
   const { t } = useTranslation('profile');
   const ft = useFormatT();
+  const confirm = useConfirm();
   const { me, refresh, has } = useAuth();
   const nav = useNavigate();
   const passkeys = useApi<{ id: number; label: string; created_at: string; last_used: string | null }[]>('/auth/passkeys');
@@ -77,7 +78,20 @@ export default function Profile() {
                 {passkeys.data.map((p) => (
                   <div key={p.id} className="row between card flat tight">
                     <div><div className="bold">{p.label}</div><div className="muted tiny">{t('passkeyLabel', { date: fmtAgo(p.created_at, ft) })}{p.last_used && ` · ${t('lastUsed', { date: fmtAgo(p.last_used, ft) })}`}</div></div>
-                    <button className="btn sm danger" onClick={() => confirm(t('removeConfirm')) && run(() => del(`/auth/passkeys/${p.id}`).then(passkeys.reload).then(refresh), t('removed'))}>{t('remove')}</button>
+                    <button
+                      className="btn sm danger"
+                      onClick={async () => {
+                        const ok = await confirm({
+                          title: t('remove'),
+                          body: t('removeConfirm'),
+                          confirmLabel: t('remove'),
+                          tone: 'danger',
+                        });
+                        if (ok) run(() => del(`/auth/passkeys/${p.id}`).then(passkeys.reload).then(refresh), t('removed'));
+                      }}
+                    >
+                      {t('remove')}
+                    </button>
                   </div>
                 ))}
               </div>

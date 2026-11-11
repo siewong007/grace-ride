@@ -1,5 +1,6 @@
 import { FormEvent, useState } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
+import { Lock } from 'lucide-react';
 import { post, useApi } from '../api';
 import { ErrorBox, Field, useAction } from '../components/ui';
 import { todayStr } from '../format';
@@ -72,7 +73,15 @@ export default function RideNew() {
             </select>
           </Field>
           <div className="full">
-            <Field label={t('address')} hint={t('addressHint')}>
+            <Field
+              label={t('address')}
+              hint={
+                <span className="row nowrap" style={{ gap: 'var(--space-1)' }}>
+                  <Lock size={12} aria-hidden="true" />
+                  <span>{t('addressHint')}</span>
+                </span>
+              }
+            >
               <input className="input" required value={f.address} onChange={set('address')} placeholder={t('addressPlaceholder')} />
             </Field>
           </div>

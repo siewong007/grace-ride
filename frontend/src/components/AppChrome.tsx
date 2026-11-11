@@ -1,5 +1,6 @@
 // App-wide UX safety nets: error boundary, offline banner, skip link, display preferences.
 import { Component, ErrorInfo, ReactNode, useEffect, useState } from 'react';
+import { Radio } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import i18n from '../i18n';
 import { loadPrefs, Prefs, savePrefs, TextSize, Theme } from '../prefs';
@@ -44,7 +45,12 @@ export function OfflineBanner() {
     };
   }, []);
   if (online) return null;
-  return <div className="offline-banner" role="status">📡 {t('offline')}</div>;
+  return (
+    <div className="offline-banner row nowrap" style={{ justifyContent: 'center', gap: 'var(--space-2)' }} role="status">
+      <Radio size={16} aria-hidden="true" />
+      <span>{t('offline')}</span>
+    </div>
+  );
 }
 
 /** Keyboard / screen-reader users jump past the navigation straight to the page content. */

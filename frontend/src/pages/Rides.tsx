@@ -3,7 +3,7 @@ import { Link } from 'react-router-dom';
 import { CalendarPlus } from 'lucide-react';
 import { useApi } from '../api';
 import RideCard, { Ride } from '../components/RideCard';
-import { Empty, ErrorBox, Spinner } from '../components/ui';
+import { Empty, ErrorBox, Spinner, Tabs } from '../components/ui';
 import { useTranslation } from 'react-i18next';
 
 export default function Rides() {
@@ -19,10 +19,14 @@ export default function Rides() {
         </div>
         <Link className="btn primary" to="/rides/new"><CalendarPlus size={20} />{t('signupRide')}</Link>
       </div>
-      <div className="tabs">
-        <button className={scope === 'upcoming' ? 'on' : ''} onClick={() => setScope('upcoming')}>{t('upcoming')}</button>
-        <button className={scope === 'past' ? 'on' : ''} onClick={() => setScope('past')}>{t('past')}</button>
-      </div>
+      <Tabs
+        value={scope}
+        onChange={(v) => setScope(v as 'upcoming' | 'past')}
+        items={[
+          { value: 'upcoming', label: t('upcoming') },
+          { value: 'past', label: t('past') },
+        ]}
+      />
       <ErrorBox error={error} />
       {loading ? <Spinner /> : data?.length ? (
         <div className="grid cols-2">{data.map((r) => <RideCard key={r.id} ride={r} />)}</div>

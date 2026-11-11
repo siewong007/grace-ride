@@ -1,4 +1,5 @@
 import { Link, useNavigate } from 'react-router-dom';
+import { AlertTriangle } from 'lucide-react';
 import { useApi } from '../../api';
 import { useAuth } from '../../auth';
 import { Ride } from '../../components/RideCard';
@@ -88,21 +89,34 @@ export default function Dashboard() {
   );
 }
 
-export function RideTable({ rides, onOpen }: { rides: Ride[]; onOpen: (id: number) => void }) {
+export function RideTable({ rides }: { rides: Ride[]; onOpen?: (id: number) => void }) {
   const { t } = useTranslation('admin');
   const ft = useFormatT();
   return (
     <div className="table-wrap">
-      <table className="table responsive">
+      <table className="table responsive row-clickable">
         <thead><tr><th>{t('dashboard.pickupTime')}</th><th>{t('dashboard.passenger')}</th><th>{t('dashboard.area')}</th><th>{t('dashboard.driver')}</th><th>{t('dashboard.status')}</th></tr></thead>
         <tbody>
           {rides.map((r) => (
-            <tr key={r.id} className="clickable" onClick={() => onOpen(r.id)}>
-              <td data-label={t('dashboard.pickupTime')} className="mono bold">{fmtDay(r.pickup_at, ft).split(' ')[0]} {r.pickup_at.slice(11, 16)}</td>
+            <tr key={r.id}>
+              <td data-label={t('dashboard.pickupTime')} className="mono bold">
+                <Link to={`/admin/rides/${r.id}`} className="row-link">
+                  {fmtDay(r.pickup_at, ft).split(' ')[0]} {r.pickup_at.slice(11, 16)}
+                </Link>
+              </td>
               <td data-label={t('dashboard.passenger')}>{r.passenger.name}{r.seats > 1 && ` (${r.seats})`}</td>
               <td data-label={t('dashboard.area')}>{r.area.name}</td>
               <td data-label={t('dashboard.driver')}>{r.driver?.name ?? <span className="muted">—</span>}</td>
-              <td data-label={t('dashboard.status')}><StatusPill map={RIDE_STATUS} status={r.status} />{r.needs_attention && ' ⚠'}</td>
+              <td data-label={t('dashboard.status')}>
+                <StatusPill map={RIDE_STATUS} status={r.status} />
+                {r.needs_attention && (
+                  <AlertTriangle
+                    size={14}
+                    aria-hidden="true"
+                    style={{ color: 'var(--accent)', marginLeft: 'var(--space-1)', verticalAlign: 'middle' }}
+                  />
+                )}
+              </td>
             </tr>
           ))}
         </tbody>

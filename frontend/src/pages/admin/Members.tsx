@@ -1,7 +1,7 @@
 import { FormEvent, useState } from 'react';
 import { del, post, put, useApi } from '../../api';
 import { useAuth } from '../../auth';
-import { Empty, ErrorBox, Modal, Pill, Spinner, useAction } from '../../components/ui';
+import { Empty, ErrorBox, Modal, Pill, Spinner, Tabs, useAction } from '../../components/ui';
 import { fmtAgo, ROLE_LABEL, useFormatT } from '../../format';
 import { useTranslation } from 'react-i18next';
 
@@ -17,11 +17,15 @@ export default function Members() {
   return (
     <div className="stack">
       <div className="page-head"><div><h1>{t('members.title')}</h1><p>{t('members.desc')}</p></div></div>
-      <div className="tabs">
-        <button className={tab === 'members' ? 'on' : ''} onClick={() => setTab('members')}>{t('members.membersTab')}</button>
-        <button className={tab === 'invites' ? 'on' : ''} onClick={() => setTab('invites')}>{t('members.invitesTab')}</button>
-        <button className={tab === 'recovery' ? 'on' : ''} onClick={() => setTab('recovery')}>{t('members.recoveryTab')}</button>
-      </div>
+      <Tabs
+        value={tab}
+        onChange={(v) => setTab(v as 'members' | 'invites' | 'recovery')}
+        items={[
+          { value: 'members', label: t('members.membersTab') },
+          { value: 'invites', label: t('members.invitesTab') },
+          { value: 'recovery', label: t('members.recoveryTab') },
+        ]}
+      />
       {tab === 'members' && <MemberList />}
       {tab === 'invites' && <Invites />}
       {tab === 'recovery' && <Recovery />}

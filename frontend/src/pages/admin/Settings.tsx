@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { del, post, put, useApi } from '../../api';
 import { useAuth } from '../../auth';
-import { Empty, ErrorBox, Field, Modal, Pill, useAction } from '../../components/ui';
+import { Empty, ErrorBox, Field, Modal, Pill, useAction, useConfirm } from '../../components/ui';
 import { useTranslation } from 'react-i18next';
 
 interface Group { id: number; name: string; description: string; is_all: boolean; member_count: number }
@@ -24,6 +24,7 @@ export default function Settings() {
 
 function Groups() {
   const { t } = useTranslation('admin');
+  const confirm = useConfirm();
   const { data, reload } = useApi<Group[]>('/groups');
   const [name, setName] = useState('');
   const [members, setMembers] = useState<Group | null>(null);
@@ -40,7 +41,20 @@ function Groups() {
             </div>
             {!g.is_all && <>
               <button className="btn sm" onClick={() => setMembers(g)}>{t('settings.membersBtn')}</button>
-              <button className="btn sm danger" onClick={() => confirm(t('settings.deleteGroupConfirm', { name: g.name })) && run(() => del(`/admin/groups/${g.id}`).then(reload), t('settings.deleted'))}>{t('settings.delete')}</button>
+              <button
+                className="btn sm danger"
+                onClick={async () => {
+                  const ok = await confirm({
+                    title: t('settings.delete'),
+                    body: t('settings.deleteGroupConfirm', { name: g.name }),
+                    confirmLabel: t('settings.delete'),
+                    tone: 'danger',
+                  });
+                  if (ok) run(() => del(`/admin/groups/${g.id}`).then(reload), t('settings.deleted'));
+                }}
+              >
+                {t('settings.delete')}
+              </button>
             </>}
           </div>
         ))}

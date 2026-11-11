@@ -10,7 +10,7 @@ export default {
   passenger: 'Passenger',
   pickupArea: 'Pickup area',
   pickupAddress: 'Pickup address',
-  pickupAddressLocked: '🔒 Detailed address shown after approval',
+  pickupAddressLocked: 'Detailed address shown after approval',
   destination: 'Destination',
   people: 'Passengers',
   assistance: 'Special needs',

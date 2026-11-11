@@ -2,7 +2,7 @@ import { useState } from 'react';
 import { Link, useParams } from 'react-router-dom';
 import { post, useApi } from '../api';
 import { useAuth } from '../auth';
-import { Empty, ErrorBox, Modal, Pill, Spinner, StatusPill, useAction } from '../components/ui';
+import { Empty, ErrorBox, Modal, Pill, Spinner, StatusPill, useAction, useConfirm } from '../components/ui';
 import { EVENT_KIND, fmtDateTime, RIDE_STATUS, useFormatT } from '../format';
 import type { EventItem } from './Events';
 import { useTranslation } from 'react-i18next';
@@ -21,6 +21,7 @@ export default function EventDetail() {
   const { has } = useAuth();
   const { data: e, error, reload } = useApi<EventFull>(id ? `/events/${id}` : null);
   const { busy, error: actErr, run } = useAction();
+  const confirm = useConfirm();
   const [walkIn, setWalkIn] = useState(false);
   const { data: signups, reload: reloadS } = useApi<Signup[]>(id ? `/events/${id}/signups` : null);
 
@@ -125,7 +126,21 @@ export default function EventDetail() {
             {e.status === 'published' && (
               <div className="btn-row">
                 <button className="btn" disabled={busy} onClick={() => run(() => post(`/events/${e.id}/finish`).then(reload), t('finishedDone'))}>{t('finish')}</button>
-                <button className="btn danger" disabled={busy} onClick={() => confirm(t('cancelConfirm')) && run(() => post(`/events/${e.id}/cancel`).then(reload), t('cancelledDone'))}>{t('cancelEvent')}</button>
+                <button
+                  className="btn danger"
+                  disabled={busy}
+                  onClick={async () => {
+                    const ok = await confirm({
+                      title: t('cancelEvent'),
+                      body: t('cancelConfirm'),
+                      confirmLabel: t('cancelEvent'),
+                      tone: 'danger',
+                    });
+                    if (ok) run(() => post(`/events/${e.id}/cancel`).then(reload), t('cancelledDone'));
+                  }}
+                >
+                  {t('cancelEvent')}
+                </button>
               </div>
             )}
           </div>

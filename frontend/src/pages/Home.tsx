@@ -1,5 +1,5 @@
 import { Link } from 'react-router-dom';
-import { CalendarPlus, CarFront, LifeBuoy, Phone } from 'lucide-react';
+import { CalendarPlus, CarFront, LifeBuoy, Phone, Pin } from 'lucide-react';
 import { useApi } from '../api';
 import { useAuth } from '../auth';
 import RideCard, { Ride } from '../components/RideCard';
@@ -128,7 +128,13 @@ export default function Home() {
               <div className="stack-sm">
                 {ann.data.slice(0, 3).map((a) => (
                   <div key={a.id} className="card flat tight">
-                    <div className="row between"><strong>{a.pinned && '📌 '}{a.title}</strong><span className="muted tiny">{fmtDay(a.created_at, ft)}</span></div>
+                    <div className="row between">
+                      <strong className="row nowrap" style={{ gap: 'var(--space-1)' }}>
+                        {a.pinned && <Pin size={14} aria-hidden="true" />}
+                        <span>{a.title}</span>
+                      </strong>
+                      <span className="muted tiny">{fmtDay(a.created_at, ft)}</span>
+                    </div>
                     <p className="small" style={{ whiteSpace: 'pre-wrap' }}>{a.body}</p>
                   </div>
                 ))}

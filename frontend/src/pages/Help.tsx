@@ -2,7 +2,7 @@ import { FormEvent, useState } from 'react';
 import { Link, useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import { post, useApi } from '../api';
 import { useAuth } from '../auth';
-import { Empty, ErrorBox, Field, Pill, Spinner, StatusPill, useAction } from '../components/ui';
+import { Empty, ErrorBox, Field, Pill, Spinner, StatusPill, Tabs, useAction } from '../components/ui';
 import { fmtAgo, HELP_STATUS, useFormatT } from '../format';
 import { useTranslation } from 'react-i18next';
 
@@ -47,10 +47,14 @@ export default function Help() {
         </form>
         <div className="stack">
           {isStaff && (
-            <div className="tabs">
-              <button className={all ? 'on' : ''} onClick={() => setAll(true)}>{t('allHelp')}</button>
-              <button className={!all ? 'on' : ''} onClick={() => setAll(false)}>{t('mine')}</button>
-            </div>
+            <Tabs
+              value={all ? 'all' : 'mine'}
+              onChange={(v) => setAll(v === 'all')}
+              items={[
+                { value: 'all', label: t('allHelp') },
+                { value: 'mine', label: t('mine') },
+              ]}
+            />
           )}
           <ErrorBox error={error} />
           {loading ? <Spinner /> : !data?.length ? <Empty>{t('none')}</Empty> : (

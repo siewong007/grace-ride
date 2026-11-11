@@ -32,6 +32,6 @@ export default {
   membersLabel: 'Members',
   uploading: 'Uploading...',
   uploaded: '✓ Uploaded {name}',
-  chooseFile: '📎 Choose image or PDF',
+  chooseFile: 'Choose image or PDF',
   viewReceipt: 'View receipt',
 };
