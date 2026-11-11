@@ -31,6 +31,7 @@ const HelpDetail = named(() => import('./pages/Help'), 'HelpDetail');
 const Report = lazy(() => import('./pages/Report'));
 const Notifications = lazy(() => import('./pages/Notifications'));
 const Profile = lazy(() => import('./pages/Profile'));
+const NotFound = lazy(() => import('./pages/NotFound'));
 const AdminDashboard = lazy(() => import('./pages/admin/Dashboard'));
 const AdminRides = lazy(() => import('./pages/admin/Rides'));
 const AdminLive = lazy(() => import('./pages/admin/Live'));
@@ -89,7 +90,7 @@ export default function App() {
         <Route path="admin/reimbursements" element={page(<AdminReimbursements />)} />
         <Route path="admin/announcements" element={page(<AdminAnnouncements />)} />
         <Route path="admin/audit" element={page(<AdminAudit />)} />
-        <Route path="*" element={<Navigate to="/" replace />} />
+        <Route path="*" element={page(<NotFound />)} />
       </Route>
     </Routes>
   );
