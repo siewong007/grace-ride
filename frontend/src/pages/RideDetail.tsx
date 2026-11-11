@@ -1,13 +1,14 @@
 import { useEffect, useRef, useState } from 'react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
 import { LifeBuoy, MapPin, Phone } from 'lucide-react';
-import { post, useApi } from '../api';
+import { del, post, useApi } from '../api';
 import Chat from '../components/Chat';
-import LiveMap from '../components/LiveMap';
+import LiveMap, { MapPoint } from '../components/LiveMap';
 import { Ride } from '../components/RideCard';
 import { Avatar, ErrorBox, Field, Modal, Spinner, StatusPill, useAction } from '../components/ui';
 import { fmtAgo, fmtDateTime, RIDE_FLOW, RIDE_STATUS, useFormatT } from '../format';
-import { useTranslation } from 'react-i18next';
+import { Trans, useTranslation } from 'react-i18next';
+import type { TFunction } from 'i18next';
 
 export default function RideDetail() {
   const { t, ft } = useTranslationHooks();
@@ -115,17 +116,105 @@ function Details({ ride: r, t, ft }: { ride: Ride; t: (k: string, o?: any) => st
   );
 }
 
+interface RideLocation {
+  sharing: boolean;
+  lat?: number;
+  lng?: number;
+  updated_at?: string;
+  passenger?: { lat: number; lng: number; updated_at: string };
+}
+
 function TrackCard({ t, ft, ride }: { t: (k: string, o?: any) => string; ft: (k: string) => string; ride: Ride }) {
-  const { data } = useApi<{ sharing: boolean; lat?: number; lng?: number; updated_at?: string }>(`/rides/${ride.id}/location`, 15000);
-  if (ride.viewer.is_driver) return <ShareLocation />;
+  const { data, reload } = useApi<RideLocation>(`/rides/${ride.id}/location`, 10000);
+  const points: MapPoint[] = [];
+  if (data?.sharing && data.lat != null && data.lng != null) {
+    points.push({ id: 'driver', lat: data.lat, lng: data.lng, label: ride.driver?.name ?? t('driver'), detail: data.updated_at && `${t('lastUpdated')} ${fmtAgo(data.updated_at, ft)}` });
+  }
+  if (data?.passenger) {
+    points.push({ id: 'passenger', kind: 'person', lat: data.passenger.lat, lng: data.passenger.lng, label: ride.passenger.name, detail: `${t('lastUpdated')} ${fmtAgo(data.passenger.updated_at, ft)}` });
+  }
+  const waiting = !ride.picked_up_at;
+
+  if (ride.viewer.is_driver) {
+    return (
+      <div className="card stack-sm">
+        <h3>{t('tripMap')}</h3>
+        <ShareLocation />
+        {points.length > 0 && <LiveMap points={points} />}
+        {waiting && (data?.passenger
+          ? <p className="small">🙋 {ride.passenger.name} {t('passengerSharing')} {fmtAgo(data.passenger.updated_at, ft)}</p>
+          : <p className="muted small">{t('passengerNotSharing')}</p>)}
+      </div>
+    );
+  }
   return (
     <div className="card stack-sm">
       <div className="row between"><h3>{t('driverLocation')}</h3>{data?.updated_at && <span className="muted small">{t('lastUpdated')} {fmtAgo(data.updated_at, ft)}</span>}</div>
-      {data?.sharing && data.lat != null && data.lng != null ? (
-        <LiveMap points={[{ id: ride.driver?.id ?? 0, lat: data.lat, lng: data.lng, label: ride.driver?.name ?? t('driver') }]} />
-      ) : <p className="muted">{t('waitingLocation')}</p>}
+      {points.length > 0 ? <LiveMap points={points} /> : null}
+      {!data?.sharing && <p className="muted">{t('waitingLocation')}</p>}
+      {ride.viewer.is_passenger && waiting && <PassengerShareLocation rideId={ride.id} sharing={!!data?.passenger} onChange={reload} />}
       <p className="muted tiny">{t('shareInfo')}</p>
     </div>
+  );
+}
+
+/** Ask the browser for location once, so the permission prompt shows before anything starts. */
+export function requestPosition(): Promise<GeolocationPosition> {
+  return new Promise((resolve, reject) => {
+    if (!('geolocation' in navigator)) { reject(new Error('unsupported')); return; }
+    navigator.geolocation.getCurrentPosition(resolve, reject, { enableHighAccuracy: true, timeout: 15000, maximumAge: 10000 });
+  });
+}
+
+const sendDriverPosition = (pos: GeolocationPosition) =>
+  post('/driver/location', { lat: pos.coords.latitude, lng: pos.coords.longitude, heading: pos.coords.heading }).catch(() => {});
+
+/**
+ * "Start trip" for drivers: explains that location is shared automatically, asks the
+ * browser for permission, then starts the ride and sends the first position at once.
+ * If permission is refused the driver can still start; passengers just won't see a map.
+ */
+export function StartTripButton({ ride, onStarted, className = 'btn primary', label }: { ride: { id: number }; onStarted: () => void; className?: string; label: string }) {
+  const { t } = useTranslation('rideDetail');
+  const { busy, error, run } = useAction();
+  const [open, setOpen] = useState(false);
+  const [locErr, setLocErr] = useState<'denied' | 'unsupported' | null>(null);
+
+  const start = async (pos: GeolocationPosition | null) => {
+    const ok = await run(async () => {
+      await post(`/rides/${ride.id}/start`);
+      if (pos) await sendDriverPosition(pos);
+    }, pos ? t('respondedStarted') : t('startedNoLocation'));
+    if (ok) { setOpen(false); onStarted(); }
+  };
+
+  const allow = async () => {
+    setLocErr(null);
+    try {
+      await start(await requestPosition());
+    } catch (e) {
+      setLocErr((e as Error).message === 'unsupported' ? 'unsupported' : 'denied');
+    }
+  };
+
+  return (
+    <>
+      <button className={className} disabled={busy} onClick={() => { setLocErr(null); setOpen(true); }}>{label}</button>
+      {open && (
+        <Modal title={t('startPromptTitle')} onClose={() => setOpen(false)}>
+          <p>{t('startPromptBody')}</p>
+          <ul className="small stack-sm" style={{ paddingLeft: 18, margin: 0 }}>
+            <li>{t('startPromptWho')}</li>
+            <li>{t('startPromptWhen')}</li>
+            <li>{t('startPromptPassenger')}</li>
+          </ul>
+          {locErr && <div className="notice">{locErr === 'unsupported' ? t('sharingUnsupported') : t('sharingDenied')}</div>}
+          <ErrorBox error={error} />
+          <button className="btn primary block" disabled={busy} onClick={allow}><MapPin size={18} />{locErr ? t('tryAgain') : t('allowAndStart')}</button>
+          {locErr && <button className="btn block" disabled={busy} onClick={() => start(null)}>{t('startWithoutLocation')}</button>}
+        </Modal>
+      )}
+    </>
   );
 }
 
@@ -140,7 +229,7 @@ export function ShareLocation() {
         setState('on');
         if (Date.now() - last.current < 15000) return;
         last.current = Date.now();
-        post('/driver/location', { lat: pos.coords.latitude, lng: pos.coords.longitude, heading: pos.coords.heading }).catch(() => {});
+        sendDriverPosition(pos);
       },
       () => setState('denied'),
       { enableHighAccuracy: true, maximumAge: 10000 },
@@ -153,6 +242,64 @@ export function ShareLocation() {
       {state === 'idle' && t('sharingIdle')}
       {state === 'denied' && t('sharingDenied')}
       {state === 'unsupported' && t('sharingUnsupported')}
+    </div>
+  );
+}
+
+const shareKey = (rideId: number) => `gr-share-loc-${rideId}`;
+const readShare = (rideId: number) => { try { return localStorage.getItem(shareKey(rideId)) === '1'; } catch { return false; } };
+const writeShare = (rideId: number, on: boolean) => {
+  try { if (on) localStorage.setItem(shareKey(rideId), '1'); else localStorage.removeItem(shareKey(rideId)); } catch { /* storage blocked */ }
+};
+
+/**
+ * Passenger opt-in: show the driver where you're waiting until pickup. Off by default;
+ * remembered per ride in this browser so reopening the page keeps sharing.
+ */
+function PassengerShareLocation({ rideId, sharing, onChange }: { rideId: number; sharing: boolean; onChange: () => void }) {
+  const { t } = useTranslation('rideDetail');
+  const [on, setOn] = useState(() => readShare(rideId));
+  const [state, setState] = useState<'idle' | 'denied' | 'unsupported' | null>(null);
+  const last = useRef(0);
+
+  useEffect(() => {
+    if (!on) return;
+    if (!('geolocation' in navigator)) { setState('unsupported'); setOn(false); return; }
+    setState('idle');
+    last.current = 0;
+    const watch = navigator.geolocation.watchPosition(
+      (pos) => {
+        setState(null);
+        if (Date.now() - last.current < 15000) return;
+        last.current = Date.now();
+        post<{ sharing: boolean }>(`/rides/${rideId}/passenger-location`, { lat: pos.coords.latitude, lng: pos.coords.longitude })
+          .then((res) => {
+            if (!res.sharing) { writeShare(rideId, false); setOn(false); }
+            onChange();
+          })
+          .catch(() => {});
+      },
+      () => { setState('denied'); writeShare(rideId, false); setOn(false); },
+      { enableHighAccuracy: true, maximumAge: 10000 },
+    );
+    return () => navigator.geolocation.clearWatch(watch);
+  }, [on, rideId]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const toggle = () => {
+    const next = !on;
+    writeShare(rideId, next);
+    setOn(next);
+    if (!next) { setState(null); del(`/rides/${rideId}/passenger-location`).then(onChange).catch(() => {}); }
+  };
+
+  return (
+    <div className={`notice ${on && sharing ? 'ok' : 'info'} stack-sm`}>
+      <div>{on ? (sharing ? t('passengerShareOn') : t('sharingIdle')) : t('passengerSharePrompt')}</div>
+      {state === 'denied' && <div className="small">{t('passengerShareDenied')}</div>}
+      {state === 'unsupported' && <div className="small">{t('sharingUnsupported')}</div>}
+      <button className={`btn sm ${on ? '' : 'primary'}`} onClick={toggle}>
+        <MapPin size={16} />{on ? t('passengerShareStop') : t('passengerShareStart')}
+      </button>
     </div>
   );
 }
@@ -178,7 +325,7 @@ function PassengerActions({ ride: r, reload, t }: { ride: Ride; reload: () => vo
       {r.status === 'pending_approval' && <div className="notice info">{t('awaitingApproval')}</div>}
       {r.status === 'alt_transport' && (
         <div className="notice info">
-          {t('altTransportNotice', { link: <Link to={`/reimbursements/new?ride=${r.id}`}>上传 Grab 收据</Link> })}
+          <Trans t={t as TFunction} i18nKey="altTransportNotice" components={{ receipt: <Link to={`/reimbursements/new?ride=${r.id}`} /> }} />
         </div>
       )}
       <ErrorBox error={error} />
@@ -212,7 +359,7 @@ function DriverActions({ ride: r, reload, t }: { ride: Ride; reload: () => void;
           <button className="btn primary" disabled={busy} onClick={() => act('confirm-assignment', t('respondedCompleted'))}>{t('confirmAssignment')}</button>
         </>
       )}
-      {r.status === 'confirmed' && <button className="btn primary" disabled={busy} onClick={() => act('start', t('respondedStarted'))}>{t('startTrip')}</button>}
+      {r.status === 'confirmed' && <StartTripButton ride={r} onStarted={reload} label={t('startTrip')} />}
       {r.status === 'in_progress' && (
         <div className="btn-row">
           {!r.picked_up_at && <button className="btn primary" disabled={busy} onClick={() => act('pickup', t('respondedPickedUp'))}>{t('pickedUp')}</button>}

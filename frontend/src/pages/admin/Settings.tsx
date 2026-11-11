@@ -35,11 +35,11 @@ function Groups({ t }: { t: (k: string, o?: any) => string }) {
           <div key={g.id} className="item">
             <div className="grow">
               <div className="bold">{g.name} {g.is_all && <Pill tone="blue">{t('settings.allMembers')}</Pill>}</div>
-              <div className="muted tiny">{g.is_all ? t('settings.allDesc') : `${g.member_count} ${t('settings.memberCount', { count: g.member_count })}`}{g.description && ` · ${g.description}`}</div>
+              <div className="muted tiny">{g.is_all ? t('settings.allDesc') : t('settings.memberCount', { count: g.member_count })}{g.description && ` · ${g.description}`}</div>
             </div>
             {!g.is_all && <>
               <button className="btn sm" onClick={() => setMembers(g)}>{t('settings.membersBtn')}</button>
-              <button className="btn sm danger" onClick={() => confirm(t('settings.deleteGroupConfirm', { name: g.name })) && run(() => del(`/admin/groups/${g.id}`).then(reload), t('settings.deleted'))}>{t('delete')}</button>
+              <button className="btn sm danger" onClick={() => confirm(t('settings.deleteGroupConfirm', { name: g.name })) && run(() => del(`/admin/groups/${g.id}`).then(reload), t('settings.deleted'))}>{t('settings.delete')}</button>
             </>}
           </div>
         ))}

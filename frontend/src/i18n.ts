@@ -22,6 +22,9 @@ i18n.use(initReactI18next).init({
   defaultNS: 'common',
   interpolation: {
     escapeValue: false, // React already escapes
+    // Locale files write placeholders as {name}, not i18next's default {{name}}.
+    prefix: '{',
+    suffix: '}',
   },
 })
 

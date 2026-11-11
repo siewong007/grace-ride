@@ -1,5 +1,5 @@
 export default {
-  title: '我的 {month} 月月报',
+  title: '我的 {month}月报',
   desc: '看见自己参与的聚会与付出的接送。个人月报仅本人可见。',
   attendance: '聚会出席',
   driven: '完成接送（司机）',

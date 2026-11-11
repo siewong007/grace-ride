@@ -119,6 +119,7 @@ pub fn render(lang: Lang, key: &ErrorKey) -> String {
         | ErrorKey::NotEnoughDriverSeats { .. }
         | ErrorKey::NotEnoughDriverSeatsReassign { .. }
         | ErrorKey::NotRideDriver
+        | ErrorKey::NotRidePassenger
         | ErrorKey::CannotViewLocation
         | ErrorKey::CannotViewRide
         | ErrorKey::TripResponseNotAllowed
@@ -301,6 +302,7 @@ mod tests {
             ErrorKey::NotEnoughDriverSeats { load: 1, cap: 1 },
             ErrorKey::NotEnoughDriverSeatsReassign { load: 1, cap: 1 },
             ErrorKey::NotRideDriver,
+            ErrorKey::NotRidePassenger,
             ErrorKey::CannotViewLocation,
             ErrorKey::CannotViewRide,
             ErrorKey::TripResponseNotAllowed,

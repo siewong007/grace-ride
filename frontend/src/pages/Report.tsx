@@ -13,13 +13,13 @@ interface MonthReport {
 }
 
 function useTranslationHooks() {
-  const { t } = useTranslation('report');
+  const { t, i18n } = useTranslation('report');
   const ft = useFormatT();
-  return { t, ft };
+  return { t, ft, lang: i18n.language };
 }
 
 export default function Report() {
-  const { t, ft } = useTranslationHooks();
+  const { t, ft, lang } = useTranslationHooks();
   const now = new Date();
   const [month, setMonth] = useState(`${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`);
   const [y, m] = month.split('-').map(Number);
@@ -29,7 +29,7 @@ export default function Report() {
     <div className="stack">
       <div className="page-head">
         <div>
-          <h1>{t('title', { month: `${y} 年 ${m} 月` })}</h1>
+          <h1>{t('title', { month: new Date(y, m - 1, 1).toLocaleDateString(lang === 'zh' ? 'zh-CN' : 'en-GB', { year: 'numeric', month: 'long' }) })}</h1>
           <p>{t('desc')}</p>
         </div>
         <input className="input" type="month" value={month} onChange={(e) => setMonth(e.target.value)} style={{ maxWidth: 200 }} aria-label={t('monthLabel')} />

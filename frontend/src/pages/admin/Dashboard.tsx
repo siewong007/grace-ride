@@ -32,7 +32,7 @@ export default function Dashboard() {
   return (
     <div className="stack">
       <div className="page-head">
-        <div><h1>{ft(fmtDay(`${d.today}T00:00`))} {t('dashboard.title')} </h1><p>{t('dashboard.desc')}</p></div>
+        <div><h1>{fmtDay(`${d.today}T00:00`, ft)} {t('dashboard.title')} </h1><p>{t('dashboard.desc')}</p></div>
         <Link className="btn" to="/admin/live">{t('dashboard.liveMap', { live: d.live_drivers, max: d.max_live_drivers })}</Link>
       </div>
       <div className="grid cols-4">

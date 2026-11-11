@@ -45,6 +45,10 @@ pub fn router() -> Router<AppState> {
             get(list_messages).post(post_message),
         )
         .route("/rides/{id}/location", get(ride_location))
+        .route(
+            "/rides/{id}/passenger-location",
+            post(post_passenger_location).delete(stop_passenger_location),
+        )
         .route("/driver/requests", get(driver_requests))
         .route("/driver/schedule", get(driver_schedule))
         .route(
@@ -869,6 +873,7 @@ async fn pickup(
         .bind(id)
         .execute(&st.db)
         .await?;
+    clear_passenger_location(&st, id).await?;
     if let Some(t) = r.trip_id {
         system_message(
             &st.db,
@@ -880,6 +885,14 @@ async fn pickup(
     }
     audit(&st.db, Some(u.id), "ride.pickup", "ride", Some(id), "").await;
     Ok(Json(json!({"ok": true})))
+}
+
+async fn clear_passenger_location(st: &AppState, ride: i64) -> AppResult<()> {
+    sqlx::query("DELETE FROM passenger_locations WHERE ride_id=$1")
+        .bind(ride)
+        .execute(&st.db)
+        .await?;
+    Ok(())
 }
 
 async fn clear_location_if_idle(st: &AppState, driver: i64) -> AppResult<()> {
@@ -915,6 +928,7 @@ async fn no_show(
     if let Some(d) = r.driver_id {
         clear_location_if_idle(&st, d).await?;
     }
+    clear_passenger_location(&st, id).await?;
     notify(
         &st.db,
         r.passenger_id,
@@ -967,6 +981,7 @@ async fn complete(
     .execute(&st.db)
     .await?;
     clear_location_if_idle(&st, u.id).await?;
+    clear_passenger_location(&st, id).await?;
     notify(
         &st.db,
         r.passenger_id,
@@ -1250,12 +1265,76 @@ async fn ride_location(
     .bind(r.driver_id)
     .fetch_optional(&st.db)
     .await?;
-    Ok(Json(match loc {
+    let mut out = match loc {
         Some((lat, lng, h, at)) => {
             json!({"sharing": true, "lat": lat, "lng": lng, "heading": h, "updated_at": at})
         }
         None => json!({"sharing": false}),
-    }))
+    };
+    // The passenger's own spot, only until they're in the car.
+    if r.picked_up_at.is_none() {
+        let p: Option<(f64, f64, String)> =
+            sqlx::query_as("SELECT lat, lng, updated_at FROM passenger_locations WHERE ride_id=$1")
+                .bind(id)
+                .fetch_optional(&st.db)
+                .await?;
+        if let Some((lat, lng, at)) = p {
+            out["passenger"] = json!({"lat": lat, "lng": lng, "updated_at": at});
+        }
+    }
+    Ok(Json(out))
+}
+
+#[derive(Deserialize)]
+struct PassengerLocIn {
+    lat: f64,
+    lng: f64,
+}
+
+/// Passenger opts in to showing the driver where they are waiting. Accepted only
+/// while the driver is on the way (in progress, not yet picked up); otherwise the
+/// stored spot is dropped and `sharing: false` tells the client to stop.
+async fn post_passenger_location(
+    State(st): State<AppState>,
+    u: CurrentUser,
+    Path(id): Path<i64>,
+    Json(req): Json<PassengerLocIn>,
+) -> AppResult<Json<Value>> {
+    if !(-90.0..=90.0).contains(&req.lat) || !(-180.0..=180.0).contains(&req.lng) {
+        return Err(bad(u.lang, ErrorKey::InvalidLocation));
+    }
+    let r = load_ride(&st, u.lang, id).await?;
+    if r.passenger_id != u.id {
+        return Err(forbidden(u.lang, ErrorKey::NotRidePassenger));
+    }
+    if r.status != "in_progress" || r.picked_up_at.is_some() {
+        clear_passenger_location(&st, id).await?;
+        return Ok(Json(json!({"ok": false, "sharing": false})));
+    }
+    sqlx::query(
+        "INSERT INTO passenger_locations (ride_id, lat, lng, updated_at) VALUES ($1,$2,$3,$4)
+         ON CONFLICT(ride_id) DO UPDATE SET lat=excluded.lat, lng=excluded.lng, updated_at=excluded.updated_at",
+    )
+    .bind(id)
+    .bind(req.lat)
+    .bind(req.lng)
+    .bind(now())
+    .execute(&st.db)
+    .await?;
+    Ok(Json(json!({"ok": true, "sharing": true})))
+}
+
+async fn stop_passenger_location(
+    State(st): State<AppState>,
+    u: CurrentUser,
+    Path(id): Path<i64>,
+) -> AppResult<Json<Value>> {
+    let r = load_ride(&st, u.lang, id).await?;
+    if r.passenger_id != u.id {
+        return Err(forbidden(u.lang, ErrorKey::NotRidePassenger));
+    }
+    clear_passenger_location(&st, id).await?;
+    Ok(Json(json!({"ok": true})))
 }
 
 // ---------------- Trip chat ----------------

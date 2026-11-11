@@ -11,7 +11,7 @@ export default function AdminLive() {
   const ft = useFormatT();
   const { data, error } = useApi<Live>('/admin/live', 15000);
   const pts = (data?.drivers ?? []).filter((d) => d.lat != null && d.lng != null).map((d) => ({
-    id: d.driver_id, lat: d.lat!, lng: d.lng!, label: d.name, detail: `${d.rides} ${t('live.trips', { rides: d.rides })} · 更新 ${d.updated_at ? fmtAgo(d.updated_at, ft) : '—'}`,
+    id: d.driver_id, lat: d.lat!, lng: d.lng!, label: d.name, detail: `${t('live.trips', { rides: d.rides })} · ${t('live.updated')} ${d.updated_at ? fmtAgo(d.updated_at, ft) : '—'}`,
   }));
   const stale = (s: string | null) => !s || Date.now() - parseLocal(s).getTime() > 2 * 60 * 1000;
 

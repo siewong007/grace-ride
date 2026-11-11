@@ -8,7 +8,7 @@ export default {
   nextRide: 'Upcoming ride',
   noRide: 'No rides scheduled at the moment.',
   otherRides: 'Other rides',
-  driveSchedule: 'Today\"s driving schedule',
+  driveSchedule: 'Today’s driving schedule',
   all: 'All →',
   noDriveToday: 'No driving tasks today.',
   unpaid: 'Awaiting payment',

@@ -837,6 +837,17 @@ async fn ride_full_lifecycle_start_pickup_complete() {
     .await;
     assert_eq!(loc.status, StatusCode::OK);
     assert_eq!(loc.json["sharing"], false);
+    // Passenger can't share before the driver sets off; others can't share for them.
+    let ploc = call(
+        &app,
+        Method::POST,
+        &format!("/api/rides/{id}/passenger-location"),
+        Some(&passenger),
+        Some(json!({ "lat": 3.2, "lng": 101.7 })),
+    )
+    .await;
+    assert_eq!(ploc.status, StatusCode::OK);
+    assert_eq!(ploc.json["sharing"], false);
 
     assert_eq!(
         call(
@@ -868,6 +879,84 @@ async fn ride_full_lifecycle_start_pickup_complete() {
     )
     .await;
     assert_eq!(loc.status, StatusCode::OK);
+    assert_eq!(loc.json["sharing"], true);
+    assert_eq!(loc.json["lat"], 3.1);
+    assert!(loc.json.get("passenger").is_none());
+
+    // Passenger opts in to showing where they're waiting; the driver sees it.
+    for (who, want) in [
+        (&driver, StatusCode::FORBIDDEN),
+        (&outsider, StatusCode::FORBIDDEN),
+    ] {
+        let res = call(
+            &app,
+            Method::POST,
+            &format!("/api/rides/{id}/passenger-location"),
+            Some(who),
+            Some(json!({ "lat": 3.2, "lng": 101.7 })),
+        )
+        .await;
+        assert_eq!(res.status, want);
+    }
+    let bad_loc = call(
+        &app,
+        Method::POST,
+        &format!("/api/rides/{id}/passenger-location"),
+        Some(&passenger),
+        Some(json!({ "lat": 91.0, "lng": 101.7 })),
+    )
+    .await;
+    assert_eq!(bad_loc.status, StatusCode::BAD_REQUEST);
+    let ploc = call(
+        &app,
+        Method::POST,
+        &format!("/api/rides/{id}/passenger-location"),
+        Some(&passenger),
+        Some(json!({ "lat": 3.2, "lng": 101.7 })),
+    )
+    .await;
+    assert_eq!(ploc.json["sharing"], true);
+    let seen = call(
+        &app,
+        Method::GET,
+        &format!("/api/rides/{id}/location"),
+        Some(&driver),
+        None,
+    )
+    .await;
+    assert_eq!(seen.json["passenger"]["lat"], 3.2);
+    assert_eq!(seen.json["passenger"]["lng"], 101.7);
+
+    // Stopping removes it; sharing again brings it back.
+    assert_eq!(
+        call(
+            &app,
+            Method::DELETE,
+            &format!("/api/rides/{id}/passenger-location"),
+            Some(&passenger),
+            None
+        )
+        .await
+        .status,
+        StatusCode::OK
+    );
+    let seen = call(
+        &app,
+        Method::GET,
+        &format!("/api/rides/{id}/location"),
+        Some(&driver),
+        None,
+    )
+    .await;
+    assert!(seen.json.get("passenger").is_none());
+    call(
+        &app,
+        Method::POST,
+        &format!("/api/rides/{id}/passenger-location"),
+        Some(&passenger),
+        Some(json!({ "lat": 3.2, "lng": 101.7 })),
+    )
+    .await;
 
     assert_eq!(
         call(
@@ -881,6 +970,32 @@ async fn ride_full_lifecycle_start_pickup_complete() {
         .status,
         StatusCode::OK
     );
+    // Once in the car, the passenger's spot is dropped and no longer accepted.
+    let seen = call(
+        &app,
+        Method::GET,
+        &format!("/api/rides/{id}/location"),
+        Some(&driver),
+        None,
+    )
+    .await;
+    assert!(seen.json.get("passenger").is_none());
+    let (left,): (i64,) =
+        sqlx::query_as("SELECT COUNT(*) FROM passenger_locations WHERE ride_id=$1")
+            .bind(id)
+            .fetch_one(&st.db)
+            .await
+            .unwrap();
+    assert_eq!(left, 0);
+    let ploc = call(
+        &app,
+        Method::POST,
+        &format!("/api/rides/{id}/passenger-location"),
+        Some(&passenger),
+        Some(json!({ "lat": 3.2, "lng": 101.7 })),
+    )
+    .await;
+    assert_eq!(ploc.json["sharing"], false);
 
     assert_eq!(
         call(

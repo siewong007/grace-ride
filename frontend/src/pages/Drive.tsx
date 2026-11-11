@@ -5,7 +5,7 @@ import { useAuth } from '../auth';
 import { Ride } from '../components/RideCard';
 import { Empty, ErrorBox, Field, Pill, Spinner, StatusPill, useAction } from '../components/ui';
 import { fmtDay, fmtTime, localDate, RIDE_STATUS, todayStr, useFormatT } from '../format';
-import { ShareLocation } from './RideDetail';
+import { ShareLocation, StartTripButton } from './RideDetail';
 import { useTranslation } from 'react-i18next';
 
 interface Area { id: number; name: string; active: boolean }
@@ -87,7 +87,7 @@ function Schedule({ ft }: { ft: (k: string) => string }) {
                     <div className="muted small">{r.pickup_address ?? r.area.name} → {r.destination}</div>
                     {r.assistance && <div className="small">♿ {r.assistance}</div>}
                     <div className="btn-row">
-                      {r.status === 'confirmed' && <button className="btn sm primary" disabled={busy} onClick={() => act(r, 'start', t('respondedStarted'))}>{t('startTrip')}</button>}
+                      {r.status === 'confirmed' && <StartTripButton ride={r} onStarted={reload} className="btn sm primary" label={t('startTrip')} />}
                       {r.status === 'in_progress' && !r.picked_up_at && (
                         <>
                           <button className="btn sm primary" disabled={busy} onClick={() => act(r, 'pickup', t('respondedPickedUp'))}>{t('pickedUp')}</button>

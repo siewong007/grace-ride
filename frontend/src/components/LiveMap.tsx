@@ -4,17 +4,22 @@ import L from 'leaflet';
 import 'leaflet/dist/leaflet.css';
 
 // Car marker as an inline SVG (avoids Leaflet's default image paths under Vite).
-const carIcon = (label?: string) =>
+// Passengers get a blue pin so the driver can tell them apart from the car.
+const markerIcon = (label: string | undefined, kind: 'car' | 'person') =>
   L.divIcon({
     className: '',
     iconSize: [44, 44],
     iconAnchor: [22, 22],
-    html: `<div style="display:grid;place-items:center;width:44px;height:44px;border-radius:50%;background:#1a1a1a;color:#fff;border:3px solid #fff;box-shadow:0 2px 8px rgba(0,0,0,.35);font-weight:800;font-size:15px;font-family:sans-serif">${
-      label ? label.slice(0, 1) : '🚗'
+    html: `<div style="display:grid;place-items:center;width:44px;height:44px;border-radius:50%;background:${
+      kind === 'person' ? '#2563eb' : '#1a1a1a'
+    };color:#fff;border:3px solid #fff;box-shadow:0 2px 8px rgba(0,0,0,.35);font-weight:800;font-size:15px;font-family:sans-serif">${
+      label ? escapeHtml(label.slice(0, 1)) : kind === 'person' ? '🙋' : '🚗'
     }</div>`,
   });
 
-export interface MapPoint { id: number | string; lat: number; lng: number; label: string; detail?: string }
+const escapeHtml = (s: string) => s.replace(/[&<>"']/g, (c) => `&#${c.charCodeAt(0)};`);
+
+export interface MapPoint { id: number | string; lat: number; lng: number; label: string; detail?: string; kind?: 'car' | 'person' }
 
 function Fit({ points }: { points: MapPoint[] }) {
   const map = useMap();
@@ -32,7 +37,7 @@ export default function LiveMap({ points, tall }: { points: MapPoint[]; tall?: b
     <MapContainer center={center} zoom={13} className={`map ${tall ? 'tall' : ''}`} scrollWheelZoom={false}>
       <TileLayer attribution='&copy; OpenStreetMap contributors' url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png" />
       {points.map((p) => (
-        <Marker key={p.id} position={[p.lat, p.lng]} icon={carIcon(p.label)}>
+        <Marker key={p.id} position={[p.lat, p.lng]} icon={markerIcon(p.label, p.kind ?? 'car')}>
           <Popup>
             <strong>{p.label}</strong>
             {p.detail && <div>{p.detail}</div>}

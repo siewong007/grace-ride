@@ -169,6 +169,9 @@ async fn housekeeping(db: &PgPool, cfg: &Config) -> anyhow::Result<()> {
     sqlx::query("DELETE FROM driver_locations WHERE driver_id NOT IN (SELECT driver_id FROM rides WHERE status='in_progress' AND driver_id IS NOT NULL)")
         .execute(db)
         .await?;
+    sqlx::query("DELETE FROM passenger_locations WHERE ride_id NOT IN (SELECT id FROM rides WHERE status='in_progress' AND picked_up_at IS NULL)")
+        .execute(db)
+        .await?;
     sqlx::query(
         "DELETE FROM ride_messages WHERE created_at < $1
          AND trip_id NOT IN (SELECT trip_id FROM rides WHERE trip_id IS NOT NULL AND status IN ('confirmed','in_progress'))",

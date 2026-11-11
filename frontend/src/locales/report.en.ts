@@ -10,7 +10,7 @@ export default {
   note: 'Attendance is based on check-in or organiser confirmation; rides count only completed trips.',
   badges: 'Thank-you badges',
   badgesDesc: 'Small badges, big thanks. Non-monetary; opt out in “Profile”.',
-  noBadges: 'You\"ve opted out of badges.',
+  noBadges: 'You’ve opted out of badges.',
   earned: 'Earned ✓',
   rule: 'Rule',
   monthLabel: 'Month',

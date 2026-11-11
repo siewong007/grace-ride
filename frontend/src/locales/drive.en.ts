@@ -39,6 +39,6 @@ export default {
   completed: 'Arrived',
   confirmAssignment: 'Confirm assignment',
   call: 'Call',
-  cannotDriveNotice: 'Can\"t drive? Open the ride and tap “Can’t drive? Notify transport team”; the system will notify the passenger and arrange another driver.',
+  cannotDriveNotice: 'Can’t drive? Open the ride and tap “Can’t drive? Notify transport team”; the system will notify the passenger and arrange another driver.',
   slotRides: '{n} rides',
 };

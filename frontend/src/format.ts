@@ -1,9 +1,15 @@
 import { useTranslation } from 'react-i18next'
+import i18n from './i18n'
+
+/** Translator for format keys; takes interpolation values like `{ n: 5 }`. */
+export type FormatT = (key: string, values?: Record<string, unknown>) => string
+
+const globalT: FormatT = (key, values) => String(i18n.t(key, values))
 
 /** Translate a format label key (e.g. 'format:rideStatus.pending_driver'). */
-export function useFormatT() {
+export function useFormatT(): FormatT {
   const { t } = useTranslation()
-  return (key: string) => t(key)
+  return (key, values) => String(t(key, values))
 }
 
 export type Tone = 'green' | 'amber' | 'blue' | 'red' | 'gray' | 'teal'
@@ -71,35 +77,35 @@ export function parseLocal(s: string): Date {
   return new Date(y, m - 1, day, hh, mm, ss);
 }
 
-export function fmtTime(s: string, tt?: (k: string) => string) {
+export function fmtTime(s: string, tt?: FormatT) {
   const d = parseLocal(s);
   const h = d.getHours();
-  const t = tt ?? ((k: string) => k);
+  const t = tt ?? globalT;
   const period = h < 12 ? t('format:period.am') : h < 18 ? t('format:period.pm') : t('format:period.evening');
   const h12 = h % 12 === 0 ? 12 : h % 12;
   return `${period} ${h12}:${String(d.getMinutes()).padStart(2, '0')}`;
 }
 
-export function fmtDay(s: string, tt?: (k: string) => string) {
+export function fmtDay(s: string, tt?: FormatT) {
   const d = parseLocal(s);
   const today = new Date();
   const tomorrow = new Date();
   tomorrow.setDate(today.getDate() + 1);
   const same = (a: Date, b: Date) => a.toDateString() === b.toDateString();
-  const t = tt ?? ((k: string) => k);
+  const t = tt ?? globalT;
   if (same(d, today)) return `${t('format:today')} ${t(WEEKDAY[d.getDay()])}`;
   if (same(d, tomorrow)) return `${t('format:tomorrow')} ${t(WEEKDAY[d.getDay()])}`;
-  return `${t('format:monthDay').replace('{m}', String(d.getMonth() + 1)).replace('{d}', String(d.getDate()))} ${t(WEEKDAY[d.getDay()])}`;
+  return `${t('format:monthDay', { m: d.getMonth() + 1, d: d.getDate() })} ${t(WEEKDAY[d.getDay()])}`;
 }
 
-export const fmtDateTime = (s: string, t?: (k: string) => string) => `${fmtDay(s, t)} · ${fmtTime(s, t)}`;
+export const fmtDateTime = (s: string, t?: FormatT) => `${fmtDay(s, t)} · ${fmtTime(s, t)}`;
 
-export function fmtAgo(s: string, tt?: (k: string) => string) {
+export function fmtAgo(s: string, tt?: FormatT) {
   const diff = (Date.now() - parseLocal(s).getTime()) / 1000;
-  const t = tt ?? ((k: string) => k);
+  const t = tt ?? globalT;
   if (diff < 60) return t('format:justNow');
-  if (diff < 3600) return t('format:minutesAgo').replace('{n}', String(Math.floor(diff / 60)));
-  if (diff < 86400) return t('format:hoursAgo').replace('{n}', String(Math.floor(diff / 3600)));
+  if (diff < 3600) return t('format:minutesAgo', { n: Math.floor(diff / 60) });
+  if (diff < 86400) return t('format:hoursAgo', { n: Math.floor(diff / 3600) });
   return fmtDay(s, t);
 }
 

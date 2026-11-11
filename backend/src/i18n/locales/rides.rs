@@ -57,6 +57,7 @@ pub fn render(lang: Lang, key: &ErrorKey) -> String {
             Lang::En => format!("Not enough seats for this driver: {load} booked, {cap} available"),
         },
         ErrorKey::NotRideDriver => pair(lang, "您不是此接送的司机", "You are not the driver of this ride"),
+        ErrorKey::NotRidePassenger => pair(lang, "您不是此接送的乘客", "You are not the passenger of this ride"),
         ErrorKey::CannotViewLocation => pair(lang, "您无法查看此位置", "You cannot view this location"),
         ErrorKey::CannotViewRide => pair(lang, "您无法查看此接送", "You cannot view this ride"),
         ErrorKey::TripResponseNotAllowed => pair(lang, "此行程目前不接受回应", "This ride is not accepting responses right now"),

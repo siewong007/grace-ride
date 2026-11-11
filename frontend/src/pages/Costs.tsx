@@ -47,12 +47,12 @@ export default function Costs() {
                 </div>
                 <div className="center" style={{ fontSize: '2rem', fontWeight: 800 }}>{rm(s.amount_cents)}</div>
                 <div className="card flat tight stack-sm">
-                  <div className="small">{t('payee', { name: s.payee_name })}（活动发起者）</div>
+                  <div className="small">{t('payee', { name: s.payee_name })}</div>
                   <div className="row between">
                     <span className="mono">{s.payee_account}</span>
                     <button className="btn sm" onClick={() => copyAccount(s)}><Copy size={16} />{t('copy')}</button>
                   </div>
-                  {s.due_date && <div className="small muted">{t('due', { date: s.due_date })} 前</div>}
+                  {s.due_date && <div className="small muted">{t('due', { date: s.due_date })}</div>}
                 </div>
                 {s.note && <div className="notice">{s.note}</div>}
                 {s.status === 'pending' ? (
