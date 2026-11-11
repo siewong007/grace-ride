@@ -5,17 +5,34 @@ import 'leaflet/dist/leaflet.css';
 
 // Car marker as an inline SVG (avoids Leaflet's default image paths under Vite).
 // Passengers get a blue pin so the driver can tell them apart from the car.
-const markerIcon = (label: string | undefined, kind: 'car' | 'person') =>
-  L.divIcon({
+const getMarkerStyles = (kind: 'car' | 'person') => {
+  if (typeof window === 'undefined') {
+    return {
+      bg: kind === 'person' ? 'var(--info)' : 'var(--primary)',
+      ink: 'var(--primary-ink)',
+    };
+  }
+  const cs = getComputedStyle(document.documentElement);
+  const personColor = cs.getPropertyValue('--info').trim();
+  const carColor = cs.getPropertyValue('--primary').trim();
+  const inkColor = cs.getPropertyValue('--primary-ink').trim();
+  return {
+    bg: (kind === 'person' ? personColor : carColor) || (kind === 'person' ? 'var(--info)' : 'var(--primary)'),
+    ink: inkColor || 'var(--primary-ink)',
+  };
+};
+
+const markerIcon = (label: string | undefined, kind: 'car' | 'person') => {
+  const { bg, ink } = getMarkerStyles(kind);
+  return L.divIcon({
     className: '',
     iconSize: [44, 44],
     iconAnchor: [22, 22],
-    html: `<div style="display:grid;place-items:center;width:44px;height:44px;border-radius:50%;background:${
-      kind === 'person' ? '#2563eb' : '#1a1a1a'
-    };color:#fff;border:3px solid #fff;box-shadow:0 2px 8px rgba(0,0,0,.35);font-weight:800;font-size:15px;font-family:sans-serif">${
+    html: `<div style="display:grid;place-items:center;width:44px;height:44px;border-radius:50%;background:${bg};color:${ink};border:3px solid ${ink};box-shadow:0 2px 8px rgba(0,0,0,.35);font-weight:700;font-size:15px;font-family:sans-serif">${
       label ? escapeHtml(label.slice(0, 1)) : kind === 'person' ? '🙋' : '🚗'
     }</div>`,
   });
+};
 
 const escapeHtml = (s: string) => s.replace(/[&<>"']/g, (c) => `&#${c.charCodeAt(0)};`);
 
