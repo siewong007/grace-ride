@@ -17,7 +17,13 @@ vi.mock('../webauthn', () => ({
   passkeySupported: () => false,
 }));
 
+vi.mock('../i18n', () => ({
+  setLanguage: vi.fn(),
+  default: { language: 'en', changeLanguage: vi.fn() },
+}));
+
 vi.mock('react-i18next', () => ({
+  initReactI18next: { type: '3rdParty', init: vi.fn() },
   useTranslation: () => ({
     t: (k: string) => k,
     i18n: { language: 'en' },

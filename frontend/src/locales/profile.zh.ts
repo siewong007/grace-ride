@@ -49,4 +49,11 @@ export default {
   mfaRequired: '您拥有管理权限。请设置通行密钥或双重验证（2FA），才能使用管理功能。',
   myPhone: '我的手机',
   none: '无',
+  personalInfo: '个人资料',
+  display: '显示',
+  account: '账号',
+  name: '姓名',
+  email: '电邮',
+  status: '状态',
+  groups: '群体',
 };

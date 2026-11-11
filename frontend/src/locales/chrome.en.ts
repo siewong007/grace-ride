@@ -15,5 +15,8 @@ export default {
   system: 'System',
   light: 'Light',
   dark: 'Dark',
+  language: 'Language',
+  zh: '中文',
+  en: 'English',
   preview: 'Preview: Tue 8:30 AM · North gate',
 };

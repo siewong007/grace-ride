@@ -49,4 +49,11 @@ export default {
   mfaRequired: 'You have admin privileges. Set up a passkey or 2FA before using admin functions.',
   myPhone: 'My phone',
   none: 'None',
+  personalInfo: 'Personal details',
+  display: 'Display',
+  account: 'Account',
+  name: 'Name',
+  email: 'Email',
+  status: 'Status',
+  groups: 'Groups',
 };

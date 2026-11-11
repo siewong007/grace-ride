@@ -94,6 +94,7 @@ export interface IconButtonProps extends React.ButtonHTMLAttributes<HTMLButtonEl
   variant?: 'primary' | 'secondary' | 'ghost' | 'danger';
   size?: 'sm' | 'md';
   to?: string;
+  children?: ReactNode;
 }
 
 /**
@@ -107,6 +108,7 @@ export function IconButton({
   to,
   type = 'button',
   className = '',
+  children,
   ...rest
 }: IconButtonProps) {
   const classes = [
@@ -120,6 +122,7 @@ export function IconButton({
     return (
       <Link to={to} className={classes} aria-label={label} {...(rest as unknown as React.AnchorHTMLAttributes<HTMLAnchorElement>)}>
         {icon}
+        {children}
       </Link>
     );
   }
@@ -127,6 +130,7 @@ export function IconButton({
   return (
     <button type={type} className={classes} aria-label={label} {...rest}>
       {icon}
+      {children}
     </button>
   );
 }
@@ -826,10 +830,28 @@ export const Spinner = () => {
 export const ErrorBox = ({ error }: { error?: string | null }) =>
   error ? <div className="error" role="alert">{error}</div> : null;
 
-export function Avatar({ name, fileId, size }: { name: string; fileId?: number | null; size?: 'lg' }) {
+export function Avatar({ name, fileId, size }: { name: string; fileId?: number | null; size?: 'sm' | 'md' | 'lg' }) {
   return (
-    <div className={`avatar ${size ?? ''}`} aria-hidden>
+    <div className={`avatar ${size ?? ''}`.trim()} aria-hidden>
       {fileId ? <img src={`/api/files/${fileId}`} alt="" /> : name.slice(0, 1)}
+    </div>
+  );
+}
+
+export interface NoticeProps extends React.HTMLAttributes<HTMLDivElement> {
+  tone?: 'warning' | 'info' | 'danger' | 'success';
+  icon?: ReactNode;
+  children: ReactNode;
+}
+
+/**
+ * Notice banner with tone and icon for account status, announcements, and alerts.
+ */
+export function Notice({ tone = 'warning', icon, children, className = '', ...rest }: NoticeProps) {
+  return (
+    <div className={`notice ${tone} ${className}`.trim()} role="status" {...rest}>
+      {icon && <span className="notice-icon" aria-hidden="true">{icon}</span>}
+      <div className="notice-content">{children}</div>
     </div>
   );
 }

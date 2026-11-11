@@ -1,19 +1,69 @@
-import { ReactNode } from 'react';
+import { ReactNode, useEffect, useRef, useState } from 'react';
 import { Link, NavLink, Navigate, Outlet, useLocation } from 'react-router-dom';
 import {
-  Bell, Calendar, Car, CarFront, ClipboardList, HandCoins, HeartHandshake, Home, LayoutDashboard,
-  LifeBuoy, MapPinned, Megaphone, Receipt, ScrollText, User, Users, Wallet, BarChart3,
+  Bell, Calendar, Car, CarFront, ClipboardList, Clock, HandCoins, HeartHandshake, Home, LayoutDashboard,
+  LifeBuoy, MapPinned, Megaphone, Receipt, ScrollText, ShieldAlert, User, Users, Wallet, BarChart3,
 } from 'lucide-react';
 import { useAuth } from '../auth';
 import { TermsGate } from './Terms';
+import { Avatar, IconButton, Notice } from './ui';
 import { useTranslation } from 'react-i18next';
 
-interface NavItem { to: string; label: string; icon: ReactNode; end?: boolean }
+interface NavItem {
+  to: string;
+  label: string;
+  icon: ReactNode;
+  end?: boolean;
+}
+
+function getPageTitle(pathname: string, t: (key: string) => string): string {
+  if (pathname === '/' || pathname === '') return t('home');
+  if (pathname.startsWith('/rides/new')) return t('newRide');
+  if (pathname.startsWith('/rides/')) return t('rideDetail');
+  if (pathname === '/rides') return t('myRides');
+  if (pathname.startsWith('/events/new')) return t('newEvent');
+  if (pathname.includes('/events/') && pathname.endsWith('/edit')) return t('editEvent');
+  if (pathname.startsWith('/events/')) return t('eventDetail');
+  if (pathname === '/events') return t('events');
+  if (pathname === '/costs') return t('myCosts');
+  if (pathname === '/reimbursements') return t('reimbursements');
+  if (pathname === '/report') return t('myReport');
+  if (pathname === '/help') return t('help');
+  if (pathname === '/drive') return t('drive');
+  if (pathname === '/settlements') return t('settlements');
+  if (pathname === '/notifications') return t('notifications');
+  if (pathname === '/me') return t('profile');
+  if (pathname === '/admin/rides') return t('adminRides');
+  if (pathname === '/admin/live') return t('liveMap');
+  if (pathname === '/admin/announcements') return t('announcements');
+  if (pathname === '/admin/reimbursements') return t('reimbReview');
+  if (pathname === '/admin/members') return t('members');
+  if (pathname === '/admin/settings') return t('settings');
+  if (pathname === '/admin/audit') return t('audit');
+  if (pathname === '/admin') return t('dashboard');
+  return '';
+}
 
 export default function Layout() {
   const { t } = useTranslation('layout');
   const { me, has, isStaff } = useAuth();
   const loc = useLocation();
+  const [scrolled, setScrolled] = useState(false);
+  const sentinelRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    const el = sentinelRef.current;
+    if (!el || typeof IntersectionObserver === 'undefined') return;
+    const obs = new IntersectionObserver(
+      ([entry]) => {
+        setScrolled(!entry.isIntersecting);
+      },
+      { threshold: 0 }
+    );
+    obs.observe(el);
+    return () => obs.disconnect();
+  }, []);
+
   if (!me) return null;
   if (!me.terms_accepted) return <TermsGate />;
   const pending = me.status === 'pending';
@@ -62,65 +112,111 @@ export default function Layout() {
         { to: '/me', label: t('profile'), icon: <User size={sz} /> },
       ].slice(0, 5);
 
-  const link = (n: NavItem) => (
-    <NavLink key={n.to} to={n.to} end={n.end} className={({ isActive }) => (isActive ? 'active' : '')}>
-      {n.icon}
-      <span>{n.label}</span>
+  const sidebarLink = (n: NavItem) => (
+    <NavLink
+      key={n.to}
+      to={n.to}
+      end={n.end}
+      className={({ isActive }) => `sidebar-link ${isActive ? 'active' : ''}`}
+    >
+      <span className="sidebar-icon">{n.icon}</span>
+      <span className="sidebar-label">{n.label}</span>
+      <span className="sidebar-tooltip" role="tooltip">{n.label}</span>
     </NavLink>
   );
 
   const unreadLabel = me.unread ? t('unread', { count: me.unread }) : '';
+  const isHome = loc.pathname === '/';
+  const pageTitle = getPageTitle(loc.pathname, t);
 
   return (
     <div className="shell">
       <nav className="sidebar" aria-label={t('mainNav')}>
-        <Link to={pending ? '/me' : '/'} className="brand">
+        <Link to={pending ? '/me' : '/'} className="sidebar-brand">
           <img className="brand-mark" src="/icon.svg" alt="" />
-          <span>{t('brand')}<small>{t('brandSub')}</small></span>
+          <span className="sidebar-brand-text">
+            {t('brand')}
+            <small>{t('brandSub')}</small>
+          </span>
         </Link>
         {member.length > 0 && <div className="section-label">{t('sectionMember')}</div>}
-        {member.map(link)}
+        {member.map(sidebarLink)}
         {(driver.length > 0 || leader.length > 0) && <div className="section-label">{t('sectionService')}</div>}
-        {driver.map(link)}
-        {leader.map(link)}
+        {driver.map(sidebarLink)}
+        {leader.map(sidebarLink)}
         {staff.length > 0 && <div className="section-label">{t('sectionAdmin')}</div>}
-        {staff.map(link)}
+        {staff.map(sidebarLink)}
         <div className="spacer" />
-        {link({ to: '/me', label: me.name, icon: <User size={sz} /> })}
+        {sidebarLink({ to: '/me', label: me.name, icon: <User size={sz} /> })}
       </nav>
 
-      <div>
-        <header className="topbar">
-          <Link to={pending ? '/me' : '/'} className="brand">
-            <img className="brand-mark" src="/icon.svg" alt="" />
-            {t('brand')}
-          </Link>
-          {!pending && (
-            <Link to="/notifications" className="icon-btn" aria-label={t('notifications') + (unreadLabel ? ` ${unreadLabel}` : '')}>
-              <Bell size={22} />
-              {me.unread > 0 && <span className="dot">{me.unread > 99 ? '99+' : me.unread}</span>}
+      <div className="shell-content">
+        <div ref={sentinelRef} className="scroll-sentinel" aria-hidden="true" />
+        <header className={`topbar ${scrolled ? 'is-scrolled' : ''}`}>
+          <div className="topbar-left">
+            {isHome ? (
+              <Link to="/" className="topbar-brand">
+                <img className="brand-mark" src="/icon.svg" alt="" />
+                <span className="topbar-brand-name">{t('brand')}</span>
+              </Link>
+            ) : (
+              <h1 className="topbar-title">{pageTitle}</h1>
+            )}
+          </div>
+
+          <div className="topbar-actions row nowrap">
+            {!pending && (
+              <IconButton
+                to="/notifications"
+                icon={<Bell size={20} />}
+                label={t('notifications') + (unreadLabel ? ` ${unreadLabel}` : '')}
+                variant="ghost"
+                className="topbar-bell"
+              >
+                {me.unread > 0 && (
+                  <span className="dot" aria-hidden="true">
+                    {me.unread > 9 ? '9+' : me.unread}
+                  </span>
+                )}
+              </IconButton>
+            )}
+            <Link to="/me" className="topbar-avatar" aria-label={t('profile')}>
+              <Avatar name={me.name} fileId={me.photo_file_id} size="sm" />
             </Link>
-          )}
+          </div>
         </header>
+
         {pending && (
-          <div className="main" style={{ paddingBottom: 0 }}>
-            <div className="notice">{t('pendingNotice')}</div>
+          <div className="shell-notice-container">
+            <Notice tone="warning" icon={<Clock size={20} />}>
+              {t('pendingNotice')}
+            </Notice>
           </div>
         )}
         {me.privileged && !me.mfa_ok && (
-          <div className="main" style={{ paddingBottom: 0 }}>
-            <div className="notice">
+          <div className="shell-notice-container">
+            <Notice tone="info" icon={<ShieldAlert size={20} />}>
               {t('adminNotice')}
-            </div>
+            </Notice>
           </div>
         )}
-        <main className="main">
+        <main className="main" id="main">
           <Outlet />
         </main>
       </div>
 
       <nav className="bottom-nav" aria-label={t('bottomNav')}>
-        {bottom.map(link)}
+        {bottom.map((n) => (
+          <NavLink
+            key={n.to}
+            to={n.to}
+            end={n.end}
+            className={({ isActive }) => `bottom-tab ${isActive ? 'active' : ''}`}
+          >
+            <span className="bottom-tab-icon">{n.icon}</span>
+            <span className="bottom-tab-label">{n.label}</span>
+          </NavLink>
+        ))}
       </nav>
     </div>
   );

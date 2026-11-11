@@ -1,16 +1,17 @@
 import { FormEvent, useEffect, useState } from 'react';
 import { Link, Navigate, useLocation, useNavigate } from 'react-router-dom';
-import { Fingerprint } from 'lucide-react';
+import { Fingerprint, Globe } from 'lucide-react';
 import { api, post } from '../api';
 import { useAuth } from '../auth';
 import { useTranslation } from 'react-i18next';
+import { setLanguage, SupportedLanguage } from '../i18n';
 import { useAction, ErrorBox, Field } from '../components/ui';
 import { loginWithPasskey, passkeySupported } from '../webauthn';
 
 type DevUser = { name: string; email: string; roles: string };
 
 export default function Login() {
-  const { t } = useTranslation('auth');
+  const { t, i18n } = useTranslation('auth');
   const { me, refresh } = useAuth();
   const nav = useNavigate();
   const loc = useLocation();
@@ -19,6 +20,7 @@ export default function Login() {
   const [who, setWho] = useState('');
   const [devUsers, setDevUsers] = useState<DevUser[] | null>(null);
   const { busy, error, run } = useAction();
+  const currentLang: SupportedLanguage = i18n.language?.startsWith('zh') ? 'zh' : 'en';
 
   useEffect(() => {
     api<DevUser[]>('/auth/dev-users').then(setDevUsers).catch(() => setDevUsers(null));
@@ -50,6 +52,18 @@ export default function Login() {
   return (
     <div className="auth-page">
       <div className="auth-card stack">
+        <div className="auth-header-row row between">
+          <img src="/icon.svg" width={36} height={36} alt="" />
+          <button
+            type="button"
+            className="btn sm ghost lang-toggle"
+            onClick={() => setLanguage(currentLang === 'zh' ? 'en' : 'zh')}
+            aria-label={t('lang')}
+          >
+            <Globe size={16} aria-hidden="true" />
+            <span>{currentLang === 'zh' ? t('en', { ns: 'chrome' }) : t('zh', { ns: 'chrome' })}</span>
+          </button>
+        </div>
         <h2>{t('welcomeBack')}</h2>
 
         {/* Passkey as default primary login */}

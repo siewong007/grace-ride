@@ -28,4 +28,5 @@ export default {
   recoveryReasonHint: '例如：换了新手机，旧手机已遗失',
   submitRecovery: '提交申请',
   cancelled: '已取消',
+  lang: '语言',
 };

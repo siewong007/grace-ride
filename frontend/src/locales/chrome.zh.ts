@@ -15,5 +15,8 @@ export default {
   system: '跟随系统',
   light: '浅色',
   dark: '深色',
+  language: '语言',
+  zh: '中文',
+  en: 'English',
   preview: '预览：周二 上午 8:30 · 北门入口',
 };
