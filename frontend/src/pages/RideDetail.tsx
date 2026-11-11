@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
-import { LifeBuoy, MapPin, Phone } from 'lucide-react';
+import { LifeBuoy, Lock, MapPin, Phone } from 'lucide-react';
 import { del, post, useApi } from '../api';
 import Chat from '../components/Chat';
 import LiveMap, { MapPoint } from '../components/LiveMap';
@@ -99,7 +99,12 @@ function Details({ ride: r, t, ft }: { ride: Ride; t: (k: string, o?: any) => st
         </dd>
         <dt>{t('pickupArea')}</dt><dd>{r.area.name}</dd>
         <dt>{t('pickupAddress')}</dt>
-        <dd>{r.pickup_address ?? <span className="muted">{t('pickupAddressLocked')}</span>}</dd>
+        <dd>{r.pickup_address ?? (
+          <div className="row between">
+            <span className="muted">{t('pickupAddressLocked')}</span>
+            <Lock size={14} className="muted" />
+          </div>
+        )}</dd>
         <dt>{t('destination')}</dt><dd>{r.destination}</dd>
         <dt>{t('people')}</dt><dd>{r.seats} {t('seatsUnit')}</dd>
         {r.assistance && <><dt>{t('assistance')}</dt><dd>{r.assistance}</dd></>}
