@@ -1,8 +1,8 @@
 // App-wide UX safety nets: error boundary, offline banner, skip link, display preferences.
 import { Component, ErrorInfo, ReactNode, useEffect, useState } from 'react';
-import { Radio } from 'lucide-react';
+import { Globe, Laptop, Moon, Radio, Sun } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
-import i18n from '../i18n';
+import i18n, { setLanguage, SupportedLanguage } from '../i18n';
 import { loadPrefs, Prefs, savePrefs, TextSize, Theme } from '../prefs';
 
 export class ErrorBoundary extends Component<{ children: ReactNode }, { failed: boolean }> {
@@ -74,44 +74,106 @@ export function SkipLink() {
   );
 }
 
-/** Large text mode and theme — the spec asks for clear buttons and large text for all ages. */
+/**
+ * Display preferences: Theme, Text size, and Language controls.
+ * Uses accessible segmented controls with a live "Aa" preview.
+ */
 export function DisplayPreferences() {
-  const { t } = useTranslation('chrome');
+  const { t, i18n: i18nInstance } = useTranslation('chrome');
   const [p, setP] = useState<Prefs>(loadPrefs);
+  const currentLang: SupportedLanguage = i18nInstance.language?.startsWith('zh') ? 'zh' : 'en';
+
   const update = (next: Partial<Prefs>) => {
     const merged = { ...p, ...next };
     setP(merged);
     savePrefs(merged);
   };
-  const sizes: TextSize[] = ['normal', 'large', 'xlarge'];
-  const themes: Theme[] = ['system', 'light', 'dark'];
+
+  const sizes: { value: TextSize; label: string }[] = [
+    { value: 'normal', label: t('normal') },
+    { value: 'large', label: t('large') },
+    { value: 'xlarge', label: t('xlarge') },
+  ];
+
+  const themes: { value: Theme; label: string; icon: ReactNode }[] = [
+    { value: 'system', label: t('system'), icon: <Laptop size={16} aria-hidden="true" /> },
+    { value: 'light', label: t('light'), icon: <Sun size={16} aria-hidden="true" /> },
+    { value: 'dark', label: t('dark'), icon: <Moon size={16} aria-hidden="true" /> },
+  ];
+
+  const languages: { value: SupportedLanguage; label: string }[] = [
+    { value: 'zh', label: t('zh') },
+    { value: 'en', label: t('en') },
+  ];
+
   return (
-    <div className="card stack">
-      <div>
-        <h3>{t('display')}</h3>
-        <p className="muted small">{t('displayHint')}</p>
-      </div>
-      <div className="stack-sm" role="radiogroup" aria-label={t('textSize')}>
-        <strong>{t('textSize')}</strong>
-        <div className="chips">
-          {sizes.map((v) => (
-            <button key={v} type="button" role="radio" aria-checked={p.textSize === v} className={`chip ${p.textSize === v ? 'on' : ''}`} onClick={() => update({ textSize: v })}>
-              {t(v)}
-            </button>
-          ))}
-        </div>
-      </div>
+    <div className="stack">
+      <p className="muted small">{t('displayHint')}</p>
+
+      {/* Theme control */}
       <div className="stack-sm" role="radiogroup" aria-label={t('theme')}>
-        <strong>{t('theme')}</strong>
-        <div className="chips">
-          {themes.map((v) => (
-            <button key={v} type="button" role="radio" aria-checked={p.theme === v} className={`chip ${p.theme === v ? 'on' : ''}`} onClick={() => update({ theme: v })}>
-              {t(v)}
+        <span className="bold small">{t('theme')}</span>
+        <div className="segmented-control">
+          {themes.map((item) => (
+            <button
+              key={item.value}
+              type="button"
+              role="radio"
+              aria-checked={p.theme === item.value}
+              className={`segmented-item ${p.theme === item.value ? 'active' : ''}`}
+              onClick={() => update({ theme: item.value })}
+            >
+              {item.icon}
+              <span>{item.label}</span>
             </button>
           ))}
         </div>
       </div>
-      <div className="card flat tight">{t('preview')}</div>
+
+      {/* Text size control */}
+      <div className="stack-sm" role="radiogroup" aria-label={t('textSize')}>
+        <span className="bold small">{t('textSize')}</span>
+        <div className="segmented-control">
+          {sizes.map((item) => (
+            <button
+              key={item.value}
+              type="button"
+              role="radio"
+              aria-checked={p.textSize === item.value}
+              className={`segmented-item ${p.textSize === item.value ? 'active' : ''}`}
+              onClick={() => update({ textSize: item.value })}
+            >
+              <span>{item.label}</span>
+            </button>
+          ))}
+        </div>
+      </div>
+
+      {/* Live Aa preview */}
+      <div className="text-preview card flat tight row nowrap">
+        <span className="preview-aa" aria-hidden="true">Aa</span>
+        <span className="preview-text">{t('preview')}</span>
+      </div>
+
+      {/* Language control */}
+      <div className="stack-sm" role="radiogroup" aria-label={t('language')}>
+        <span className="bold small">{t('language')}</span>
+        <div className="segmented-control">
+          {languages.map((item) => (
+            <button
+              key={item.value}
+              type="button"
+              role="radio"
+              aria-checked={currentLang === item.value}
+              className={`segmented-item ${currentLang === item.value ? 'active' : ''}`}
+              onClick={() => setLanguage(item.value)}
+            >
+              <Globe size={16} aria-hidden="true" />
+              <span>{item.label}</span>
+            </button>
+          ))}
+        </div>
+      </div>
     </div>
   );
 }

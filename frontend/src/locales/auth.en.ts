@@ -28,4 +28,5 @@ export default {
   recoveryReasonHint: 'E.g. got a new phone, old phone lost',
   submitRecovery: 'Submit request',
   cancelled: 'Cancelled',
+  lang: 'Language',
 };
