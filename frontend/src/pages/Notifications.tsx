@@ -29,8 +29,8 @@ export default function Notifications() {
       {loading ? <Spinner /> : !data?.length ? <Empty>{t('none')}</Empty> : (
         <div className="card"><div className="list">
           {data.map((n) => (
-            <button key={n.id} className="item" onClick={() => open(n)} style={{ background: 'none', border: 'none', borderBottom: '1px solid var(--border)', textAlign: 'left', cursor: 'pointer', width: '100%' }}>
-              <span aria-hidden style={{ width: 10, height: 10, borderRadius: 5, background: n.read ? 'transparent' : 'var(--danger)', flex: 'none' }} />
+            <button key={n.id} className="item notif-item" onClick={() => open(n)}>
+              <span aria-hidden className={`unread-dot ${n.read ? 'read' : ''}`} />
               <div className="grow">
                 <div className={n.read ? '' : 'bold'}>{n.title}</div>
                 {n.body && <div className="muted small">{n.body}</div>}

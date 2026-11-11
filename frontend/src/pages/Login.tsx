@@ -74,11 +74,10 @@ export default function Login() {
         </form>
 
         {/* Link to other login methods */}
-        <div className="other-methods" style={{ marginTop: '1rem', fontSize: '0.85rem' }}>
+        <div className="other-methods">
           <span>{t('or')}</span>
           <a
             href="/api/auth/recovery-request"
-            style={{ color: '#3b82f6', textDecoration: 'underline' }}
             onClick={(e) => {
               e.preventDefault();
               run(async () => {

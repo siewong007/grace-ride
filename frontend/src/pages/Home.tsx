@@ -155,23 +155,23 @@ function NextRide({ ride }: { ride: Ride }) {
     <div className="card hero stack">
       <div className="row between">
         <span className="bold">{t('nextRide')}</span>
-        <span className="pill" style={{ background: 'rgba(255,255,255,.18)', color: 'inherit' }}>{ft(RIDE_STATUS[ride.status]?.label)}</span>
+        <span className="pill hero-pill">{ft(RIDE_STATUS[ride.status]?.label)}</span>
       </div>
       <div>
-        <div style={{ fontSize: '1.9rem', fontWeight: 800 }}>{fmtDay(ride.pickup_at, ft)} {fmtTime(ride.pickup_at, ft)}</div>
+        <div className="hero-time">{fmtDay(ride.pickup_at, ft)} {fmtTime(ride.pickup_at, ft)}</div>
         <div className="muted">{ride.area.name} → {ride.destination}</div>
       </div>
       {d ? (
-        <div className="row nowrap" style={{ background: 'rgba(255,255,255,.1)', padding: 12, borderRadius: 12 }}>
+        <div className="row nowrap hero-row">
           <Avatar name={d.name} />
           <div className="grow">
             <div className="bold">{d.name} · {t('yourDriver')}</div>
-            {d.vehicle && <div className="small">{d.vehicle.color} {d.vehicle.model} · <span className="plate" style={{ borderColor: 'currentColor', padding: '0 6px' }}>{d.vehicle.plate}</span></div>}
+            {d.vehicle && <div className="small">{d.vehicle.color} {d.vehicle.model} · <span className="plate hero-plate">{d.vehicle.plate}</span></div>}
           </div>
           {d.phone && <a className="btn sm" href={`tel:${d.phone}`} aria-label={t('callDriver')}><Phone size={18} /></a>}
         </div>
       ) : <div className="muted">{t('waitingDriver')}</div>}
-      <Link className="btn block" to={`/rides/${ride.id}`} style={{ color: 'var(--text)' }}>{t('viewDetail')}</Link>
+      <Link className="btn block hero-btn" to={`/rides/${ride.id}`}>{t('viewDetail')}</Link>
     </div>
   );
 }
