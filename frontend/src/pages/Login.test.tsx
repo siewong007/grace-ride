@@ -32,12 +32,18 @@ vi.mock('react-i18next', () => ({
 
 vi.mock('../components/ui', () => ({
   useAction: () => ({ busy: false, error: null, run: (fn: () => Promise<void>) => fn() }),
-  ErrorBox: ({ children }: { children?: unknown }) => <div>{children as string}</div>,
+  ErrorBox: ({ error }: { error?: string | null }) => (error ? <div>{error}</div> : null),
   Field: ({ label, children }: { label: string; children: unknown }) => (
     <label>
       {label}
       {children as never}
     </label>
+  ),
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
+  Button: ({ children, type = 'button', block: _block, ...rest }: React.ButtonHTMLAttributes<HTMLButtonElement> & { block?: boolean }) => (
+    <button type={type} {...rest}>
+      {children}
+    </button>
   ),
 }));
 
