@@ -1,4 +1,5 @@
 import { Link } from 'react-router-dom';
+import { AlertTriangle } from 'lucide-react';
 import { fmtDay, fmtTime, RIDE_STATUS, useFormatT } from '../format';
 import { StatusPill } from './ui';
 import { useTranslation } from 'react-i18next';
@@ -49,7 +50,12 @@ export default function RideCard({ ride, to, perspective = 'passenger' }: { ride
             {ride.area.name} → {ride.destination} · {ride.seats} {t('seats')}{ride.event ? ` · ${ride.event.title}` : ''}
           </div>
           <div className="small">{who}</div>
-          {ride.needs_attention && <div className="small" style={{ color: 'var(--accent)' }}>⚠ {ride.attention_reason || t('needsAttention')}</div>}
+          {ride.needs_attention && (
+            <div className="small row nowrap" style={{ color: 'var(--accent)', gap: 'var(--space-1)' }}>
+              <AlertTriangle size={14} aria-hidden="true" />
+              <span>{ride.attention_reason || t('needsAttention')}</span>
+            </div>
+          )}
         </div>
       </div>
     </Link>

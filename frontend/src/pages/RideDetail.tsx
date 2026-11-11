@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
-import { LifeBuoy, Lock, MapPin, Phone } from 'lucide-react';
+import { AlertTriangle, Hand, LifeBuoy, Lock, MapPin, Phone } from 'lucide-react';
 import { del, post, useApi } from '../api';
 import Chat from '../components/Chat';
 import LiveMap, { MapPoint } from '../components/LiveMap';
@@ -30,7 +30,12 @@ export default function RideDetail() {
         <StatusPill map={RIDE_STATUS} status={r.status} />
       </div>
       <Flow status={r.status} />
-      {r.needs_attention && r.attention_reason && <div className="notice">⚠ {r.attention_reason}</div>}
+      {r.needs_attention && r.attention_reason && (
+        <div className="notice row nowrap" style={{ gap: 'var(--space-2)' }}>
+          <AlertTriangle size={16} aria-hidden="true" />
+          <span>{r.attention_reason}</span>
+        </div>
+      )}
 
       <div className="split">
         <div className="stack">
@@ -152,7 +157,12 @@ function TrackCard({ ride }: { ride: Ride }) {
         <ShareLocation />
         {points.length > 0 && <LiveMap points={points} />}
         {waiting && (data?.passenger
-          ? <p className="small">🙋 {ride.passenger.name} {t('passengerSharing')} {fmtAgo(data.passenger.updated_at, ft)}</p>
+          ? (
+            <p className="small row nowrap" style={{ gap: 'var(--space-1)' }}>
+              <Hand size={14} aria-hidden="true" />
+              <span>{ride.passenger.name} {t('passengerSharing')} {fmtAgo(data.passenger.updated_at, ft)}</span>
+            </p>
+          )
           : <p className="muted small">{t('passengerNotSharing')}</p>)}
       </div>
     );
@@ -410,7 +420,12 @@ function StaffActions({ ride: r, reload }: { ride: Ride; reload: () => void }) {
       {r.driver_load && (
         <p className="small">{t('driverLoad', { used: r.driver_load.seats_used, capacity: r.driver_load.capacity, seats: r.seats })}</p>
       )}
-      {!!r.needs_attention && r.attention_reason && <div className="notice">⚠ {r.attention_reason}</div>}
+      {!!r.needs_attention && r.attention_reason && (
+        <div className="notice row nowrap" style={{ gap: 'var(--space-2)' }}>
+          <AlertTriangle size={16} aria-hidden="true" />
+          <span>{r.attention_reason}</span>
+        </div>
+      )}
       {r.assistance && <div className="notice info">{t('assistanceLabel', { assistance: r.assistance })}</div>}
       <div className="btn-row">
         {r.status === 'pending_approval' && (

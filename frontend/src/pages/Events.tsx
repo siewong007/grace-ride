@@ -3,7 +3,7 @@ import { Link } from 'react-router-dom';
 import { Plus } from 'lucide-react';
 import { useApi } from '../api';
 import { useAuth } from '../auth';
-import { Empty, ErrorBox, Pill, Spinner } from '../components/ui';
+import { Empty, ErrorBox, Pill, Spinner, Tabs } from '../components/ui';
 import { EVENT_KIND, fmtDateTime, useFormatT } from '../format';
 import { useTranslation } from 'react-i18next';
 
@@ -42,11 +42,15 @@ export default function Events() {
         </div>
         {has('leader') && <Link className="btn primary" to="/events/new"><Plus size={20} />{t('create')}</Link>}
       </div>
-      <div className="tabs">
-        <button className={scope === 'upcoming' ? 'on' : ''} onClick={() => setScope('upcoming')}>{t('upcoming')}</button>
-        <button className={scope === 'past' ? 'on' : ''} onClick={() => setScope('past')}>{t('past')}</button>
-        {has('leader') && <button className={scope === 'managing' ? 'on' : ''} onClick={() => setScope('managing')}>{t('managing')}</button>}
-      </div>
+      <Tabs
+        value={scope}
+        onChange={(v) => setScope(v as 'upcoming' | 'past' | 'managing')}
+        items={[
+          { value: 'upcoming', label: t('upcoming') },
+          { value: 'past', label: t('past') },
+          ...(has('leader') ? [{ value: 'managing', label: t('managing') }] : []),
+        ]}
+      />
       <ErrorBox error={error} />
       {loading ? <Spinner /> : !data?.length ? <Empty>{t('none')}</Empty> : (
         <div className="grid cols-3">

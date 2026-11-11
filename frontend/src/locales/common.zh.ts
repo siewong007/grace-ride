@@ -32,6 +32,6 @@ export default {
   membersLabel: '成员',
   uploading: '上传中…',
   uploaded: '✓ 已上传 {name}',
-  chooseFile: '📎 选择图片或 PDF',
+  chooseFile: '选择图片或 PDF',
   viewReceipt: '查看收据',
 };

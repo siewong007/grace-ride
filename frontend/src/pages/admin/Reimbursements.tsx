@@ -2,7 +2,7 @@ import { useState } from 'react';
 import { Link } from 'react-router-dom';
 import { post, useApi } from '../../api';
 import { useAuth } from '../../auth';
-import { Empty, ErrorBox, Field, Modal, ReceiptLink, Spinner, StatusPill, useAction } from '../../components/ui';
+import { Empty, ErrorBox, Field, Modal, ReceiptLink, Spinner, StatusPill, Tabs, useAction } from '../../components/ui';
 import { fmtDateTime, fmtDay, REIMB_STATUS, rm, useFormatT } from '../../format';
 import type { Reimb } from '../Reimbursements';
 import { useTranslation } from 'react-i18next';
@@ -18,10 +18,14 @@ export default function AdminReimbursements() {
     <div className="stack">
       <div className="page-head"><div><h1>{t('reimb.title')}</h1><p>{t('reimb.desc')}</p></div></div>
       {canReview && canPay && (
-        <div className="tabs">
-          <button className={tab === 'review' ? 'on' : ''} onClick={() => setTab('review')}>{t('reimb.review')}</button>
-          <button className={tab === 'payout' ? 'on' : ''} onClick={() => setTab('payout')}>{t('reimb.payout')}</button>
-        </div>
+        <Tabs
+          value={tab}
+          onChange={(v) => setTab(v as 'review' | 'payout')}
+          items={[
+            { value: 'review', label: t('reimb.review') },
+            { value: 'payout', label: t('reimb.payout') },
+          ]}
+        />
       )}
       <List scope={tab} />
     </div>

@@ -9,7 +9,7 @@ export default {
   area: 'Pickup area',
   areaHint: 'The driver sees only the area before approval',
   address: 'Detailed pickup address',
-  addressHint: '🔒 The exact address is shared with the assigned driver only after transport team approval',
+  addressHint: 'The exact address is shared with the assigned driver only after transport team approval',
   addressPlaceholder: 'E.g. SS2 Jalan 21/1, house 12',
   destination: 'Destination',
   destinationPlaceholder: 'E.g. Community centre · North entrance',

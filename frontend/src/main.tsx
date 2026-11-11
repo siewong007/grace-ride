@@ -3,7 +3,7 @@ import ReactDOM from 'react-dom/client';
 import { BrowserRouter } from 'react-router-dom';
 import App from './App';
 import { AuthProvider } from './auth';
-import { ToastProvider } from './components/ui';
+import { ConfirmProvider, ToastProvider } from './components/ui';
 import { ErrorBoundary, OfflineBanner, SkipLink } from './components/AppChrome';
 import './i18n';
 import './prefs';
@@ -17,7 +17,9 @@ ReactDOM.createRoot(document.getElementById('root')!).render(
         <OfflineBanner />
         <AuthProvider>
           <ToastProvider>
-            <App />
+            <ConfirmProvider>
+              <App />
+            </ConfirmProvider>
           </ToastProvider>
         </AuthProvider>
       </BrowserRouter>

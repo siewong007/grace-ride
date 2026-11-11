@@ -10,7 +10,7 @@ export default {
   passenger: '乘客',
   pickupArea: '上车地区',
   pickupAddress: '上车地址',
-  pickupAddressLocked: '🔒 批准后才显示详细地址',
+  pickupAddressLocked: '批准后才显示详细地址',
   destination: '目的地',
   people: '人数',
   assistance: '协助需要',

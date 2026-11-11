@@ -1,9 +1,10 @@
 import { FormEvent, useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
+import { Accessibility, Lock } from 'lucide-react';
 import { post, put, useApi } from '../api';
 import { useAuth } from '../auth';
 import { Ride } from '../components/RideCard';
-import { Empty, ErrorBox, Field, Pill, Spinner, StatusPill, useAction } from '../components/ui';
+import { Empty, ErrorBox, Field, Pill, Spinner, StatusPill, Tabs, useAction } from '../components/ui';
 import { fmtDay, fmtTime, localDate, RIDE_STATUS, todayStr, useFormatT } from '../format';
 import { ShareLocation, StartTripButton } from './RideDetail';
 import { useTranslation } from 'react-i18next';
@@ -24,11 +25,15 @@ export default function Drive() {
           <p>{t('desc')}</p>
         </div>
       </div>
-      <div className="tabs">
-        <button className={tab === 'schedule' ? 'on' : ''} onClick={() => setTab('schedule')}>{t('schedule')}</button>
-        <button className={tab === 'requests' ? 'on' : ''} onClick={() => setTab('requests')}>{t('requests')}</button>
-        <button className={tab === 'settings' ? 'on' : ''} onClick={() => setTab('settings')}>{t('settings')}</button>
-      </div>
+      <Tabs
+        value={tab}
+        onChange={(v) => setTab(v as 'schedule' | 'requests' | 'settings')}
+        items={[
+          { value: 'schedule', label: t('schedule') },
+          { value: 'requests', label: t('requests') },
+          { value: 'settings', label: t('settings') },
+        ]}
+      />
       {tab === 'schedule' && <Schedule />}
       {tab === 'requests' && <Requests />}
       {tab === 'settings' && <Settings />}
@@ -80,7 +85,7 @@ function Schedule() {
                       <StatusPill map={RIDE_STATUS} status={r.status} />
                     </Link>
                     <div className="muted small">{r.pickup_address ?? r.area.name} → {r.destination}</div>
-                    {r.assistance && <div className="small">♿ {r.assistance}</div>}
+                    {r.assistance && <div className="small row nowrap" style={{ gap: 'var(--space-1)' }}><Accessibility size={14} /><span>{r.assistance}</span></div>}
                     <div className="btn-row">
                       {r.status === 'confirmed' && <StartTripButton ride={r} onStarted={reload} className="btn sm primary" label={t('startTrip')} />}
                       {r.status === 'in_progress' && !r.picked_up_at && (
@@ -144,8 +149,8 @@ function Requests() {
               </div>
               <div>{fmtDay(r.pickup_at, ft)} · {fmtTime(r.pickup_at, ft)} · {r.seats} {t('seatUnit')}</div>
               <div className="muted small">{t('passenger')} {r.passenger.name} → {r.destination}</div>
-              {r.assistance && <div className="small">♿ {r.assistance}</div>}
-              <div className="muted tiny">🔒 {t('pickupAddressLocked')}</div>
+              {r.assistance && <div className="small row nowrap" style={{ gap: 'var(--space-1)' }}><Accessibility size={14} /><span>{r.assistance}</span></div>}
+              <div className="muted tiny row nowrap" style={{ gap: 'var(--space-1)' }}><Lock size={12} /><span>{t('pickupAddressLocked')}</span></div>
               <button className="btn primary" disabled={busy} onClick={() => run(() => post(`/rides/${r.id}/claim`).then(reload), t('claimed'))}>{t('selectRide')}</button>
             </div>
           ))}

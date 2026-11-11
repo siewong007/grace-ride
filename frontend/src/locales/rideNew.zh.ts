@@ -9,7 +9,7 @@ export default {
   area: '上车地区',
   areaHint: '司机在批准前只会看到地区',
   address: '详细上车地址',
-  addressHint: '🔒 具体地址在交通组批准后才开放给获分配的司机',
+  addressHint: '具体地址在交通组批准后才开放给获分配的司机',
   addressPlaceholder: '例如：SS2 Jalan 21/1 门牌 12',
   destination: '目的地',
   destinationPlaceholder: '例如：社区中心 · 北门入口',

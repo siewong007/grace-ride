@@ -1,12 +1,14 @@
 import { FormEvent, useState } from 'react';
+import { Pin } from 'lucide-react';
 import { del, post, useApi } from '../../api';
-import { ErrorBox, Field, useAction } from '../../components/ui';
+import { ErrorBox, Field, useAction, useConfirm } from '../../components/ui';
 import { fmtAgo, useFormatT } from '../../format';
 import { useTranslation } from 'react-i18next';
 
 export default function Announcements() {
   const { t } = useTranslation('admin');
   const ft = useFormatT();
+  const confirm = useConfirm();
   const { data, reload } = useApi<any[]>('/announcements');
   const [f, setF] = useState({ title: '', body: '', pinned: false, notify_all: true });
   const { busy, error, run } = useAction();
@@ -33,7 +35,26 @@ export default function Announcements() {
         <div className="stack-sm">
           {data?.map((a) => (
             <div key={a.id} className="card stack-sm">
-              <div className="row between"><strong>{a.pinned && '📌 '}{a.title}</strong><button className="btn sm danger" onClick={() => confirm(t('announcements.deleteConfirm')) && run(() => del(`/announcements/${a.id}`).then(reload))}>{t('announcements.delete')}</button></div>
+              <div className="row between">
+                <strong className="row nowrap" style={{ gap: 'var(--space-1)' }}>
+                  {a.pinned && <Pin size={14} />}
+                  <span>{a.title}</span>
+                </strong>
+                <button
+                  className="btn sm danger"
+                  onClick={async () => {
+                    const ok = await confirm({
+                      title: t('announcements.delete'),
+                      body: t('announcements.deleteConfirm'),
+                      confirmLabel: t('announcements.delete'),
+                      tone: 'danger',
+                    });
+                    if (ok) run(() => del(`/announcements/${a.id}`).then(reload));
+                  }}
+                >
+                  {t('announcements.delete')}
+                </button>
+              </div>
               <p className="small" style={{ whiteSpace: 'pre-wrap' }}>{a.body}</p>
               <span className="muted tiny">{t('announcements.by', { by: a.by, ago: fmtAgo(a.created_at, ft) })}</span>
             </div>
