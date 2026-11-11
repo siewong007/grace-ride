@@ -1,8 +1,10 @@
+import fs from 'node:fs';
+import path from 'node:path';
 import { beforeAll, describe, expect, it } from 'vitest';
 import i18n from './i18n';
 import { resources } from './locales';
 import { apiMessage } from './api';
-import { fmtAgo, fmtDay } from './format';
+import { fmtAgo, fmtDay, HELP_STATUS, SETTLEMENT_STATUS } from './format';
 
 const pad = (n: number) => String(n).padStart(2, '0');
 const local = (d: Date) =>
@@ -56,5 +58,56 @@ describe('placeholders', () => {
     };
     walk((resources as any).en, (resources as any).zh, '');
     expect(diffs).toEqual([]);
+  });
+
+  it('has identical key structure across English and Chinese', () => {
+    const missingInZh: string[] = [];
+    const missingInEn: string[] = [];
+    const checkKeys = (a: Record<string, unknown>, b: Record<string, unknown>, prefix: string, missing: string[]) => {
+      for (const k of Object.keys(a)) {
+        const next = prefix ? `${prefix}.${k}` : k;
+        if (!(k in b)) {
+          missing.push(next);
+        } else if (typeof a[k] === 'object' && a[k] !== null && typeof b[k] === 'object' && b[k] !== null) {
+          checkKeys(a[k] as Record<string, unknown>, b[k] as Record<string, unknown>, next, missing);
+        }
+      }
+    };
+    checkKeys(resources.en as any, resources.zh as any, '', missingInZh);
+    checkKeys(resources.zh as any, resources.en as any, '', missingInEn);
+    expect(missingInZh).toEqual([]);
+    expect(missingInEn).toEqual([]);
+  });
+
+  it('defines valid format keys for SETTLEMENT_STATUS and HELP_STATUS', () => {
+    for (const item of Object.values(SETTLEMENT_STATUS)) {
+      expect(i18n.exists(item.label)).toBe(true);
+      expect(item.tone).toBeDefined();
+    }
+    for (const item of Object.values(HELP_STATUS)) {
+      expect(i18n.exists(item.label)).toBe(true);
+      expect(item.tone).toBeDefined();
+    }
+  });
+
+  it('contains no CJK characters in TypeScript source files outside locales', () => {
+    const cjk = /[\u4e00-\u9fff]/;
+    const cjkHits: string[] = [];
+    const srcDir = path.resolve(__dirname);
+    const walkFiles = (dir: string) => {
+      for (const f of fs.readdirSync(dir)) {
+        const full = path.join(dir, f);
+        if (fs.statSync(full).isDirectory()) {
+          if (f !== 'locales') walkFiles(full);
+        } else if (f.endsWith('.ts') || f.endsWith('.tsx')) {
+          const content = fs.readFileSync(full, 'utf8');
+          if (cjk.test(content)) {
+            cjkHits.push(path.relative(srcDir, full));
+          }
+        }
+      }
+    };
+    walkFiles(srcDir);
+    expect(cjkHits).toEqual([]);
   });
 });

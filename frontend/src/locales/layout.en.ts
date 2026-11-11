@@ -26,4 +26,6 @@ export default {
   unread: ', {count} unread',
   adminNotice: 'You have admin privileges. Go to Profile → Account Security to set up a passkey or two-factor authentication (2FA) before using admin functions.',
   pendingNotice: 'An admin will assign your role and group after checking your profile. Until then you can update your details and passkey.',
+  mainNav: 'Main navigation',
+  bottomNav: 'Bottom navigation',
 };

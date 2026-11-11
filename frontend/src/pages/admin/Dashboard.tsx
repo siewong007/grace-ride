@@ -49,7 +49,7 @@ export default function Dashboard() {
       <div className="split">
         <div className="card">
           <div className="card-title"><h3>{t('dashboard.todayRides')}</h3><Link to="/admin/rides" className="small">{t('rides.all')} →</Link></div>
-          {today.loading ? <Spinner /> : !today.data?.length ? <Empty>{t('dashboard.noTodayRides')}</Empty> : <RideTable rides={today.data} onOpen={(id) => nav(`/admin/rides/${id}`)} t={t} ft={ft} />}
+          {today.loading ? <Spinner /> : !today.data?.length ? <Empty>{t('dashboard.noTodayRides')}</Empty> : <RideTable rides={today.data} onOpen={(id) => nav(`/admin/rides/${id}`)} />}
         </div>
         <div className="stack">
           <div className="card">
@@ -73,7 +73,7 @@ export default function Dashboard() {
                   <Link key={r.id} to={`/admin/rides/${r.id}`} className="item">
                     <div className="grow">
                       <div className="bold">{r.passenger.name} · {fmtDay(r.pickup_at, ft)} {fmtTime(r.pickup_at, ft)}</div>
-                      <div className="tiny" style={{ color: 'var(--accent)' }}>{r.attention_reason || '24 小时内仍未有司机'}</div>
+                      <div className="tiny" style={{ color: 'var(--accent)' }}>{r.attention_reason || t('dashboard.noDriverWithin24h')}</div>
                     </div>
                     <StatusPill map={RIDE_STATUS} status={r.status} />
                   </Link>
@@ -88,7 +88,9 @@ export default function Dashboard() {
   );
 }
 
-export function RideTable({ rides, onOpen, t, ft }: { rides: Ride[]; onOpen: (id: number) => void; t: (k: string, o?: any) => string; ft: (k: string) => string }) {
+export function RideTable({ rides, onOpen }: { rides: Ride[]; onOpen: (id: number) => void }) {
+  const { t } = useTranslation('admin');
+  const ft = useFormatT();
   return (
     <div className="table-wrap">
       <table className="table responsive">
@@ -96,7 +98,7 @@ export function RideTable({ rides, onOpen, t, ft }: { rides: Ride[]; onOpen: (id
         <tbody>
           {rides.map((r) => (
             <tr key={r.id} className="clickable" onClick={() => onOpen(r.id)}>
-              <td data-label={t('dashboard.pickupTime')} className="mono bold">{ft(fmtDay(r.pickup_at)).split(' ')[0]} {r.pickup_at.slice(11, 16)}</td>
+              <td data-label={t('dashboard.pickupTime')} className="mono bold">{fmtDay(r.pickup_at, ft).split(' ')[0]} {r.pickup_at.slice(11, 16)}</td>
               <td data-label={t('dashboard.passenger')}>{r.passenger.name}{r.seats > 1 && ` (${r.seats})`}</td>
               <td data-label={t('dashboard.area')}>{r.area.name}</td>
               <td data-label={t('dashboard.driver')}>{r.driver?.name ?? <span className="muted">—</span>}</td>

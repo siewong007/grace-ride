@@ -30,4 +30,8 @@ export default {
   actions: 'Actions',
   details: 'Details',
   membersLabel: 'Members',
+  uploading: 'Uploading...',
+  uploaded: '✓ Uploaded {name}',
+  chooseFile: '📎 Choose image or PDF',
+  viewReceipt: 'View receipt',
 };

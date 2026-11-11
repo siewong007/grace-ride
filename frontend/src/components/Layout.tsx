@@ -73,7 +73,7 @@ export default function Layout() {
 
   return (
     <div className="shell">
-      <nav className="sidebar" aria-label="主选单">
+      <nav className="sidebar" aria-label={t('mainNav')}>
         <Link to={pending ? '/me' : '/'} className="brand">
           <img className="brand-mark" src="/icon.svg" alt="" />
           <span>{t('brand')}<small>{t('brandSub')}</small></span>
@@ -119,7 +119,7 @@ export default function Layout() {
         </main>
       </div>
 
-      <nav className="bottom-nav" aria-label="底部选单">
+      <nav className="bottom-nav" aria-label={t('bottomNav')}>
         {bottom.map(link)}
       </nav>
     </div>

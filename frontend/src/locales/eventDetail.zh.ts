@@ -34,4 +34,7 @@ export default {
   attending: '出席',
   absent: '缺席',
   going: '已报名',
+  needsRide: '需要接送',
+  needsRideWithStatus: '需要接送（{status}）',
+  offersSeats: '提供 {n} 座',
 };

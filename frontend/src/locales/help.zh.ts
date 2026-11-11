@@ -20,4 +20,5 @@ export default {
   send: '发送',
   resolved: '问题已解决',
   resolvedDone: '已结案',
+  staffTag: '帮助中心',
 };

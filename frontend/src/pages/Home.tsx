@@ -43,7 +43,7 @@ export default function Home() {
 
       <div className="split">
         <div className="stack">
-          {next ? <NextRide ride={next} t={t} ft={ft} /> : (
+          {next ? <NextRide ride={next} /> : (
             <div className="card stack">
               <h3>{t('nextRide')}</h3>
               <p className="muted">{t('noRide')}</p>
@@ -115,7 +115,7 @@ export default function Home() {
                       <div className="bold">{e.title}</div>
                       <div className="muted small">{ft(EVENT_KIND[e.kind]?.label)} · {e.location}</div>
                     </div>
-                    {e.my_signup?.status === 'going' ? <Pill tone="green">{t('going')}</Pill> : e.spots_left != null ? <Pill tone="amber">余 {e.spots_left}</Pill> : null}
+                    {e.my_signup?.status === 'going' ? <Pill tone="green">{t('going')}</Pill> : e.spots_left != null ? <Pill tone="amber">{t('spotsLeft', { n: e.spots_left })}</Pill> : null}
                   </Link>
                 ))}
               </div>
@@ -147,8 +147,9 @@ export default function Home() {
   );
 }
 
-interface NextRideProps { ride: Ride; t: (k: string, opts?: any) => string; ft: (k: string) => string }
-function NextRide({ ride, t, ft }: NextRideProps) {
+function NextRide({ ride }: { ride: Ride }) {
+  const { t } = useTranslation('home');
+  const ft = useFormatT();
   const d = ride.driver;
   return (
     <div className="card hero stack">

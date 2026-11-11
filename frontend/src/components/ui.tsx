@@ -13,7 +13,10 @@ export function StatusPill({ map, status }: { map: Record<string, { label: strin
   return <Pill tone={s.tone}>{t(s.label)}</Pill>;
 }
 
-export const Spinner = () => <div className="spinner" role="status" aria-label="载入中" />;
+export const Spinner = () => {
+  const { t } = useTranslation();
+  return <div className="spinner" role="status" aria-label={t('loading')} />;
+};
 
 export const Empty = ({ children }: { children: ReactNode }) => <div className="empty">{children}</div>;
 
@@ -38,12 +41,13 @@ export function Field({ label, hint, children }: { label: string; hint?: ReactNo
 }
 
 export function Modal({ title, onClose, children }: { title: string; onClose: () => void; children: ReactNode }) {
+  const { t } = useTranslation();
   return (
     <div className="modal-bg" onClick={onClose} role="dialog" aria-modal="true" aria-label={title}>
       <div className="modal stack" onClick={(e) => e.stopPropagation()}>
         <div className="row between">
           <h2>{title}</h2>
-          <button className="btn ghost sm" onClick={onClose}>关闭</button>
+          <button className="btn ghost sm" onClick={onClose}>{t('close')}</button>
         </div>
         {children}
       </div>
@@ -99,6 +103,7 @@ export function FileInput({ label, value, onChange, accept = 'image/*,applicatio
   onChange: (id: number | null) => void;
   accept?: string;
 }) {
+  const { t } = useTranslation();
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
   const [name, setName] = useState<string>('');
@@ -126,18 +131,19 @@ export function FileInput({ label, value, onChange, accept = 'image/*,applicatio
             }
           }}
         />
-        {busy ? '上传中…' : value ? `✓ 已上传 ${name || ''}` : '📎 选择图片或 PDF'}
+        {busy ? t('uploading') : value ? t('uploaded', { name: name || '' }).trim() : t('chooseFile')}
       </label>
       {err && <small className="error">{err}</small>}
     </div>
   );
 }
 
-export function ReceiptLink({ id, label = '查看收据' }: { id?: number | null; label?: string }) {
+export function ReceiptLink({ id, label }: { id?: number | null; label?: string }) {
+  const { t } = useTranslation();
   if (!id) return null;
   return (
     <a className="btn sm" href={`/api/files/${id}`} target="_blank" rel="noreferrer">
-      {label}
+      {label ?? t('viewReceipt')}
     </a>
   );
 }

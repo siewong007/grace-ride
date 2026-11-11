@@ -2,18 +2,9 @@ import { FormEvent, useState } from 'react';
 import { Link, useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import { post, useApi } from '../api';
 import { useAuth } from '../auth';
-import { Empty, ErrorBox, Field, Pill, Spinner, useAction } from '../components/ui';
-import { fmtAgo, useFormatT } from '../format';
+import { Empty, ErrorBox, Field, Pill, Spinner, StatusPill, useAction } from '../components/ui';
+import { fmtAgo, HELP_STATUS, useFormatT } from '../format';
 import { useTranslation } from 'react-i18next';
-
-function STATUS(t: (k: string) => string, st: string) {
-  const map: Record<string, { label: string; tone: 'amber' | 'blue' | 'gray' }> = {
-    open: { label: t('statusOpen'), tone: 'amber' },
-    answered: { label: t('statusAnswered'), tone: 'blue' },
-    closed: { label: t('statusClosed'), tone: 'gray' },
-  };
-  return map[st] ?? { label: st, tone: 'gray' as const };
-}
 
 export default function Help() {
   const { t } = useTranslation('help');
@@ -70,7 +61,7 @@ export default function Help() {
                     <div className="bold">{tk.subject}</div>
                     <div className="muted tiny">{all && `${tk.user_name} · `}{fmtAgo(tk.updated_at, ft)}</div>
                   </div>
-                  <Pill tone={STATUS(t, tk.status)?.tone}>{STATUS(t, tk.status)?.label}</Pill>
+                  <StatusPill map={HELP_STATUS} status={tk.status} />
                 </Link>
               ))}
             </div></div>
@@ -83,6 +74,7 @@ export default function Help() {
 
 export function HelpDetail() {
   const { t } = useTranslation('help');
+  const ft = useFormatT();
   const { id } = useParams();
   const { data: tk, error, reload } = useApi<any>(`/help/${id}`, 15000);
   const [body, setBody] = useState('');
@@ -93,14 +85,14 @@ export function HelpDetail() {
     <div className="stack" style={{ maxWidth: 820 }}>
       <div className="page-head">
         <div><h1>{tk.subject}</h1>{tk.ride_id && <p><Link to={`/rides/${tk.ride_id}`}>{t('viewRide')}</Link></p>}</div>
-        <Pill tone={STATUS(t, tk.status)?.tone}>{STATUS(t, tk.status)?.label}</Pill>
+        <StatusPill map={HELP_STATUS} status={tk.status} />
       </div>
       <div className="card stack">
         {tk.replies.map((r: any) => (
           <div key={r.id} className={`bubble ${r.staff ? '' : 'mine'}`} style={{ maxWidth: '100%' }}>
-            <div className="who">{r.name}{r.staff && ' · 帮助中心'}</div>
+            <div className="who">{r.name}{r.staff && ` · ${t('staffTag')}`}</div>
             <div style={{ whiteSpace: 'pre-wrap' }}>{r.body}</div>
-            <div className="at">{fmtAgo(r.created_at)}</div>
+            <div className="at">{fmtAgo(r.created_at, ft)}</div>
           </div>
         ))}
       </div>

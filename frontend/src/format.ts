@@ -58,6 +58,18 @@ export const REIMB_STATUS: Record<string, StatusMap> = {
   paid: { label: 'format:reimbStatus.paid', tone: 'green' },
 };
 
+export const SETTLEMENT_STATUS: Record<string, StatusMap> = {
+  draft: { label: 'format:settlementStatus.draft', tone: 'gray' },
+  published: { label: 'format:settlementStatus.published', tone: 'blue' },
+  closed: { label: 'format:settlementStatus.closed', tone: 'green' },
+};
+
+export const HELP_STATUS: Record<string, StatusMap> = {
+  open: { label: 'format:helpStatus.open', tone: 'amber' },
+  answered: { label: 'format:helpStatus.answered', tone: 'blue' },
+  closed: { label: 'format:helpStatus.closed', tone: 'gray' },
+};
+
 export const ROLE_LABEL: Record<string, string> = {
   admin: 'format:role.admin',
   transport: 'format:role.transport',

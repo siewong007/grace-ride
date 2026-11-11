@@ -32,4 +32,5 @@ export default {
   reviewNote: '备注',
   receiptLink: '收据',
   resubmit: '补资料重新提交',
+  ridePrefix: '接送 {time}',
 };

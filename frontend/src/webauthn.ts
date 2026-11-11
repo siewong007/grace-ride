@@ -1,5 +1,6 @@
 // Minimal WebAuthn helpers translating between webauthn-rs JSON (base64url) and the browser API.
 import { post } from './api';
+import i18n from './i18n';
 
 const b64urlToBuf = (s: string): ArrayBuffer => {
   const pad = '='.repeat((4 - (s.length % 4)) % 4);
@@ -30,7 +31,7 @@ export async function registerPasskey(label?: string) {
       excludeCredentials: (pk.excludeCredentials ?? []).map((c: any) => ({ ...c, id: b64urlToBuf(c.id) })),
     },
   })) as PublicKeyCredential | null;
-  if (!cred) throw new Error('已取消');
+  if (!cred) throw new Error(i18n.t('auth:cancelled'));
   const r = cred.response as AuthenticatorAttestationResponse;
   const credential = {
     id: cred.id,
@@ -56,7 +57,7 @@ export async function loginWithPasskey(email: string) {
       allowCredentials: (pk.allowCredentials ?? []).map((c: any) => ({ ...c, id: b64urlToBuf(c.id) })),
     },
   })) as PublicKeyCredential | null;
-  if (!cred) throw new Error('已取消');
+  if (!cred) throw new Error(i18n.t('auth:cancelled'));
   const r = cred.response as AuthenticatorAssertionResponse;
   const credential = {
     id: cred.id,

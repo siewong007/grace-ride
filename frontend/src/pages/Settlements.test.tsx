@@ -47,6 +47,7 @@ vi.mock('../format', () => ({
     return isNaN(n) ? null : Math.round(n * 100);
   },
   SHARE_STATUS: {},
+  SETTLEMENT_STATUS: {},
 }));
 
 vi.mock('../components/ui', () => ({

@@ -28,4 +28,5 @@ export default {
   going: 'Going',
   waitlist: 'Waitlist',
   finished: 'Ended',
+  spotsLeft: '{n} left',
 };

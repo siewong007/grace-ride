@@ -60,6 +60,7 @@ export default {
   chat: 'Trip group chat',
   chatMembers: 'Only {count} members on this trip',
   chatPlaceholder: 'E.g. I’m at the north entrance',
+  chatInput: 'Message',
   send: 'Send',
   chatReadOnly: 'This trip is complete, so the group chat is read-only. Records are kept per church policy.',
   driverLocation: 'Driver’s location',

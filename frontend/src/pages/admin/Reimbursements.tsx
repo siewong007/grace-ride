@@ -8,7 +8,7 @@ import type { Reimb } from '../Reimbursements';
 import { useTranslation } from 'react-i18next';
 
 export default function AdminReimbursements() {
-  const { t, ft } = useTranslationHooks();
+  const { t } = useTranslation('admin');
   const { has, me } = useAuth();
   const canReview = has('transport') && me?.mfa_ok;
   const canPay = has('finance') && me?.mfa_ok;
@@ -23,18 +23,14 @@ export default function AdminReimbursements() {
           <button className={tab === 'payout' ? 'on' : ''} onClick={() => setTab('payout')}>{t('reimb.payout')}</button>
         </div>
       )}
-      <List scope={tab} t={t} ft={ft} />
+      <List scope={tab} />
     </div>
   );
-
-  function useTranslationHooks() {
-    const { t } = useTranslation('admin');
-    const ft = useFormatT();
-    return { t, ft };
-  }
 }
 
-function List({ scope, t, ft }: { scope: 'review' | 'payout'; t: (k: string, o?: any) => string; ft: (k: string) => string }) {
+function List({ scope }: { scope: 'review' | 'payout' }) {
+  const { t } = useTranslation('admin');
+  const ft = useFormatT();
   const { data, error, loading, reload } = useApi<Reimb[]>(`/reimbursements?scope=${scope}`);
   const [open, setOpen] = useState<Reimb | null>(null);
   return (
@@ -63,19 +59,21 @@ function List({ scope, t, ft }: { scope: 'review' | 'payout'; t: (k: string, o?:
           </table>
         </div>
       )}
-      {open && scope === 'review' && <ReviewModal r={open} t={t} ft={ft} onClose={() => setOpen(null)} onDone={() => { setOpen(null); reload(); }} />}
-      {open && scope === 'payout' && <PayModal r={open} t={t} onClose={() => setOpen(null)} onDone={() => { setOpen(null); reload(); }} />}
+      {open && scope === 'review' && <ReviewModal r={open} onClose={() => setOpen(null)} onDone={() => { setOpen(null); reload(); }} />}
+      {open && scope === 'payout' && <PayModal r={open} onClose={() => setOpen(null)} onDone={() => { setOpen(null); reload(); }} />}
     </>
   );
 }
 
-function ReviewModal({ r, t, ft, onClose, onDone }: { r: Reimb; t: (k: string, o?: any) => string; ft: (k: string) => string; onClose: () => void; onDone: () => void }) {
+function ReviewModal({ r, onClose, onDone }: { r: Reimb; onClose: () => void; onDone: () => void }) {
+  const { t } = useTranslation('admin');
+  const ft = useFormatT();
   const [note, setNote] = useState('');
   const { busy, error, run } = useAction();
   const act = (action: string, msg: string) => run(() => post(`/reimbursements/${r.id}/review`, { action, note }).then(onDone), msg);
   return (
     <Modal title={t('reimb.reviewTitle', { name: r.user.name, amount: rm(r.amount_cents) })} onClose={onClose}>
-      <img className="receipt-thumb" src={`/api/files/${r.receipt_file_id}`} alt="收据" />
+      <img className="receipt-thumb" src={`/api/files/${r.receipt_file_id}`} alt={t('reimb.receiptAlt')} />
       <ReceiptLink id={r.receipt_file_id} label={t('reimb.openReceipt')} />
       <p>{r.description}</p>
       {r.ride_at && <p className="small">{t('reimb.ride', { time: fmtDateTime(r.ride_at, ft) })}</p>}
@@ -92,7 +90,8 @@ function ReviewModal({ r, t, ft, onClose, onDone }: { r: Reimb; t: (k: string, o
   );
 }
 
-function PayModal({ r, t, onClose, onDone }: { r: Reimb; t: (k: string, o?: any) => string; onClose: () => void; onDone: () => void }) {
+function PayModal({ r, onClose, onDone }: { r: Reimb; onClose: () => void; onDone: () => void }) {
+  const { t } = useTranslation('admin');
   const [verified, setVerified] = useState(false);
   const [ref, setRef] = useState('');
   const { busy, error, run } = useAction();

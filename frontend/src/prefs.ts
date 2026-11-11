@@ -1,4 +1,4 @@
-// Per-device display preferences (大字模式 / theme). Stored in localStorage only;
+// Per-device display preferences (large text mode / theme). Stored in localStorage only;
 // every access is guarded because storage can be unavailable (private mode, blocked).
 
 export type TextSize = 'normal' | 'large' | 'xlarge';

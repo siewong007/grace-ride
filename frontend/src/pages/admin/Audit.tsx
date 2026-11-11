@@ -1,11 +1,12 @@
 import { useSearchParams } from 'react-router-dom';
 import { useApi } from '../../api';
 import { Empty, ErrorBox, Spinner } from '../../components/ui';
-import { fmtDateTime } from '../../format';
+import { fmtDateTime, useFormatT } from '../../format';
 import { useTranslation } from 'react-i18next';
 
 export default function Audit() {
   const { t } = useTranslation('admin');
+  const ft = useFormatT();
   const [params] = useSearchParams();
   const q = params.toString();
   const { data, error, loading } = useApi<{ id: number; actor: string | null; action: string; entity: string; entity_id: number | null; detail: string; created_at: string }[]>(`/admin/audit${q ? `?${q}` : ''}`);
@@ -21,7 +22,7 @@ export default function Audit() {
               <tbody>
                 {data.map((a) => (
                   <tr key={a.id}>
-                    <td data-label={t('audit.time')} className="small">{fmtDateTime(a.created_at)}</td>
+                    <td data-label={t('audit.time')} className="small">{fmtDateTime(a.created_at, ft)}</td>
                     <td data-label={t('audit.actor')}>{a.actor ?? t('audit.system')}</td>
                     <td data-label={t('audit.action')} className="mono small">{a.action}</td>
                     <td data-label={t('audit.object')} className="small">{a.entity}{a.entity_id != null && ` #${a.entity_id}`}</td>

@@ -12,14 +12,10 @@ interface MonthReport {
   costs_paid_cents: number; badges: Badge[];
 }
 
-function useTranslationHooks() {
+export default function Report() {
   const { t, i18n } = useTranslation('report');
   const ft = useFormatT();
-  return { t, ft, lang: i18n.language };
-}
-
-export default function Report() {
-  const { t, ft, lang } = useTranslationHooks();
+  const lang = i18n.language;
   const now = new Date();
   const [month, setMonth] = useState(`${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`);
   const [y, m] = month.split('-').map(Number);

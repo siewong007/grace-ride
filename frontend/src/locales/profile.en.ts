@@ -48,4 +48,5 @@ export default {
   photo: 'Photo (helps drivers/passengers recognize you)',
   mfaRequired: 'You have admin privileges. Set up a passkey or 2FA before using admin functions.',
   myPhone: 'My phone',
+  none: 'None',
 };

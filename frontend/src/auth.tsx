@@ -67,7 +67,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     });
   }, [me?.id, refresh]);
 
-  // Mirrors the server: admins also act as 交通组 and 活动负责人 (not finance / driver).
+  // Mirrors the server: admins also act as transport lead and event lead (not finance / driver).
   const has = (r: Role) =>
     !!me && (me.roles.includes(r) || ((r === 'transport' || r === 'leader') && me.roles.includes('admin')));
   const isStaff = !!me && me.mfa_ok && (has('transport') || has('admin'));
