@@ -107,12 +107,15 @@ if (typeof window !== 'undefined') {
 export function useApi<T>(path: string | null, pollMs?: number) {
   const [data, setData] = useState<T | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [loading, setLoading] = useState(true);
+  const [loading, setLoading] = useState(Boolean(path));
   const pathRef = useRef(path);
   pathRef.current = path;
 
   const reload = useCallback(async () => {
-    if (!pathRef.current) return;
+    if (!pathRef.current) {
+      setLoading(false);
+      return;
+    }
     try {
       const d = await api<T>(pathRef.current);
       setData(d);
@@ -125,6 +128,12 @@ export function useApi<T>(path: string | null, pollMs?: number) {
   }, []);
 
   useEffect(() => {
+    if (!path) {
+      setLoading(false);
+      setData(null);
+      setError(null);
+      return;
+    }
     setLoading(true);
     setData(null);
     reload();

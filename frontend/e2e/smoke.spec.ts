@@ -29,3 +29,9 @@ test('unauthenticated home redirects to login', async ({ page }) => {
   await page.goto('/');
   await expect(page).toHaveURL(/\/login/);
 });
+
+test('unauthenticated unknown path shows not found page', async ({ page }) => {
+  await page.goto('/unknown-page');
+  await expect(page).not.toHaveURL(/\/login/);
+  await expect(page.locator('h1')).toBeVisible();
+});

@@ -1,5 +1,4 @@
 import { Link } from 'react-router-dom';
-import { ErrorBox } from '../components/ui';
 import { useTranslation } from 'react-i18next';
 
 function useTranslationHooks() {
@@ -17,7 +16,6 @@ export default function NotFound() {
           <p>{t('desc')}</p>
         </div>
       </div>
-      <ErrorBox error={null} />
       <div className="card stack-sm">
         <h3>{t('whatHappened')}</h3>
         <p className="muted">{t('pageMissing')}</p>

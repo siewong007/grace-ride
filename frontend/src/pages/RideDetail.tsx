@@ -268,6 +268,7 @@ const writeShare = (rideId: number, on: boolean) => {
  */
 function PassengerShareLocation({ rideId, sharing, onChange }: { rideId: number; sharing: boolean; onChange: () => void }) {
   const { t } = useTranslation('rideDetail');
+  const { run } = useAction();
   const [on, setOn] = useState(() => readShare(rideId));
   const [state, setState] = useState<'idle' | 'denied' | 'unsupported' | null>(null);
   const last = useRef(0);
@@ -299,7 +300,10 @@ function PassengerShareLocation({ rideId, sharing, onChange }: { rideId: number;
     const next = !on;
     writeShare(rideId, next);
     setOn(next);
-    if (!next) { setState(null); del(`/rides/${rideId}/passenger-location`).then(onChange).catch(() => {}); }
+    if (!next) {
+      setState(null);
+      run(() => del(`/rides/${rideId}/passenger-location`).then(onChange));
+    }
   };
 
   return (

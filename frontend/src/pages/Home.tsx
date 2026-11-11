@@ -87,7 +87,7 @@ export default function Home() {
             {unpaid.length ? (
               <div className="list">
                 {unpaid.map((s) => (
-                  <Link key={s.id} to={`/settlements/${s.title}`} className="item">
+                  <Link key={s.id} to={`/settlements/${s.id}`} className="item">
                     <div className="grow">
                       <div className="bold">{s.title}</div>
                       <div className="muted small">{rm(s.amount_cents)}</div>

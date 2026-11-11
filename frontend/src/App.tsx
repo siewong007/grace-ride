@@ -90,8 +90,8 @@ export default function App() {
         <Route path="admin/reimbursements" element={page(<AdminReimbursements />)} />
         <Route path="admin/announcements" element={page(<AdminAnnouncements />)} />
         <Route path="admin/audit" element={page(<AdminAudit />)} />
-        <Route path="*" element={page(<NotFound />)} />
       </Route>
+      <Route path="*" element={page(<NotFound />)} />
     </Routes>
   );
 }
