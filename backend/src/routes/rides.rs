@@ -1775,7 +1775,7 @@ async fn admin_live(State(st): State<AppState>, u: CurrentUser) -> AppResult<Jso
     let rows: Vec<(i64, String, Option<f64>, Option<f64>, Option<String>, i64, String)> = sqlx::query_as(
         "SELECT d.id, d.name, l.lat, l.lng, l.updated_at, COUNT(r.id), MIN(r.pickup_at)
          FROM rides r JOIN users d ON d.id = r.driver_id LEFT JOIN driver_locations l ON l.driver_id = d.id
-         WHERE r.status = 'in_progress' GROUP BY d.id",
+         WHERE r.status = 'in_progress' GROUP BY d.id, l.driver_id",
     )
     .fetch_all(&st.db)
     .await?;
