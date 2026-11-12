@@ -76,7 +76,7 @@ pending_driver ──claim──▶ pending_passenger ──accept──▶ pend
  staff Grab fallback ──▶ alt_transport          any open state ──cancel──▶ cancelled
 ```
 
-Every transition is a single conditional `UPDATE … WHERE status IN (…)`. The event plan board (`routes/plan.rs`) applies a whole batch in one transaction, each row re-checking the status and driver the board showed, so a stale board changes nothing. Two drivers claiming the same request cannot both win, and a stale screen gets `409`.
+Every transition is a single conditional `UPDATE … WHERE status IN (…)`. The event plan board (`routes/plan.rs`) applies a whole batch in one transaction, each row re-checking the status and driver the board showed, so a stale board changes nothing. Its Auto-arrange (`src/arrange.rs`) only suggests: it fills passengers without a driver (pinned ones stay), within seats and the one-booking rule, preferring nearby carmates (straight-line distance from `geocode_cache`, or the pickup area when an address isn't located yet), drivers who serve the area (specialists first) and previous drivers, then improves with moves and swaps. Two drivers claiming the same request cannot both win, and a stale screen gets `409`.
 
 ## Roadmap (not built yet)
 

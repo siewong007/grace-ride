@@ -96,3 +96,21 @@ export const changesOf = (plan: Plan, draft: Draft): Change[] =>
   plan.rides
     .filter((r) => (draft[r.id] ?? null) !== r.driver_id)
     .map((r) => ({ ride_id: r.id, from_driver_id: r.driver_id, driver_id: draft[r.id] ?? null }));
+
+/** Why Auto-arrange put a passenger in a car (from POST …/plan/arrange). */
+export interface Reason {
+  driver_id: number;
+  near: { ride_id: number; name: string; km: number | null } | null;
+  in_area: boolean;
+  together: number;
+}
+
+export interface ArrangeResult {
+  placed: (Reason & { ride_id: number })[];
+  unplaced: number[];
+  /** Pickups without cached coordinates, grouped by area instead of distance. */
+  approximate: number;
+}
+
+export const draftEntries = (plan: Plan, draft: Draft) =>
+  plan.rides.map((r) => ({ ride_id: r.id, driver_id: draft[r.id] ?? null }));

@@ -4,7 +4,7 @@
 import { DragEvent, useEffect, useMemo, useState } from 'react';
 import { useParams } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
-import { Accessibility, Car, History, RotateCcw, Send, UserRound } from 'lucide-react';
+import { Accessibility, Car, History, RotateCcw, Send, Sparkles, UserRound } from 'lucide-react';
 import { ApiError, post, useApi } from '../../api';
 import {
   Button,
@@ -22,11 +22,14 @@ import {
 import { fmtDateTime, fmtTime, RIDE_STATUS, useFormatT } from '../../format';
 import {
   applyLastTime,
+  ArrangeResult,
   changesOf,
   Draft,
+  draftEntries,
   driverLoad,
   Plan,
   PlanRide,
+  Reason,
   savedDraft,
   servesArea,
 } from './planLogic';
@@ -43,10 +46,18 @@ export default function PlanTransport() {
   const [draft, setDraft] = useState<Draft>({});
   const [busy, setBusy] = useState(false);
   const [dropTarget, setDropTarget] = useState<string | null>(null);
+  // Auto-arrange's explanations, and who it couldn't fit; cleared when the board resets.
+  const [reasons, setReasons] = useState<Record<number, Reason>>({});
+  const [noRoom, setNoRoom] = useState<Set<number>>(new Set());
+  const [arranging, setArranging] = useState(false);
 
   // A fresh board (first load, after sending, after a conflict) resets the draft.
   useEffect(() => {
-    if (data) setDraft(savedDraft(data));
+    if (data) {
+      setDraft(savedDraft(data));
+      setReasons({});
+      setNoRoom(new Set());
+    }
   }, [data]);
 
   const changes = useMemo(() => (data ? changesOf(data, draft) : []), [data, draft]);
@@ -99,6 +110,26 @@ export default function PlanTransport() {
     onDrop: onDrop(target),
   });
 
+  const autoArrange = async () => {
+    setArranging(true);
+    try {
+      const res = await post<ArrangeResult>(`/admin/events/${plan.event.id}/plan/arrange`, {
+        draft: draftEntries(plan, draft),
+      });
+      setDraft((d) => ({ ...d, ...Object.fromEntries(res.placed.map((p) => [p.ride_id, p.driver_id])) }));
+      setReasons((cur) => ({ ...cur, ...Object.fromEntries(res.placed.map((p) => [p.ride_id, p])) }));
+      setNoRoom(new Set(res.unplaced));
+      if (res.placed.length === 0 && res.unplaced.length === 0) toast.info(t('autoArrangeNone'));
+      if (res.placed.length > 0) toast.success(t('autoArrangeDone', { count: res.placed.length }));
+      if (res.unplaced.length > 0) toast.error(t('autoArrangeUnplaced', { count: res.unplaced.length }));
+      if (res.approximate > 0 && res.placed.length > 0) toast.info(t('autoArrangeApprox', { count: res.approximate }));
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : String(e));
+    } finally {
+      setArranging(false);
+    }
+  };
+
   const sameAsLast = () => {
     const res = applyLastTime(plan, draft);
     setDraft(res.draft);
@@ -149,6 +180,8 @@ export default function PlanTransport() {
       draft={draft}
       onAssign={(d) => assign(r.id, d)}
       changed={(draft[r.id] ?? null) !== r.driver_id}
+      reason={reasons[r.id]?.driver_id === draft[r.id] ? reasons[r.id] : undefined}
+      noRoom={draft[r.id] == null && noRoom.has(r.id)}
     />
   );
 
@@ -165,6 +198,15 @@ export default function PlanTransport() {
           {t('summary', { placed, total: plan.rides.length, seats: seatsUsed })}
         </div>
         <div className="btn-row">
+          <Button
+            variant="secondary"
+            icon={<Sparkles size={16} />}
+            onClick={autoArrange}
+            loading={arranging}
+            disabled={unassigned.length === 0 || arranging}
+          >
+            {t('autoArrange')}
+          </Button>
           <Button variant="secondary" icon={<History size={16} />} onClick={sameAsLast} disabled={unassigned.length === 0}>
             {t('sameAsLast')}
           </Button>
@@ -250,12 +292,16 @@ function PassengerCard({
   draft,
   onAssign,
   changed,
+  reason,
+  noRoom,
 }: {
   ride: PlanRide;
   plan: Plan;
   draft: Draft;
   onAssign: (driverId: number | null) => void;
   changed: boolean;
+  reason?: Reason;
+  noRoom?: boolean;
 }) {
   const { t } = useTranslation('plan');
   const ft = useFormatT();
@@ -289,7 +335,25 @@ function PassengerCard({
         )}
         {r.last && <Pill tone="neutral" icon={<History size={14} />}>{t('last', { name: r.last.driver_name, times: r.last.times })}</Pill>}
         {driver && !servesArea(driver, r) && <Pill tone="warning">{t('outsideArea')}</Pill>}
+        {noRoom && <Pill tone="danger">{t('noRoom')}</Pill>}
       </div>
+      {reason && (
+        <p className="plan-why">
+          <Sparkles size={13} aria-hidden="true" />
+          <span>
+            {[
+              reason.near &&
+                (reason.near.km != null
+                  ? t('whyNear', { name: reason.near.name, km: reason.near.km })
+                  : t('whySameArea', { name: reason.near.name })),
+              reason.together > 0 && t('whyTogether', { times: reason.together }),
+              reason.in_area && t('whyInArea'),
+            ]
+              .filter(Boolean)
+              .join(' · ')}
+          </span>
+        </p>
+      )}
       <label className="sr-only" htmlFor={selectId}>
         {t('assignTo', { name: r.passenger.name })}
       </label>

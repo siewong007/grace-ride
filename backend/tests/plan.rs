@@ -274,3 +274,59 @@ async fn seat_limits_and_stale_boards_apply_nothing() {
         ("pending_driver".into(), None)
     );
 }
+
+#[tokio::test]
+async fn auto_arrange_suggests_without_saving_and_keeps_pinned_rides() {
+    let (app, st) = setup().await;
+    let f = fixture(&st).await;
+    let staff = login(&st, "transport@example.org").await;
+    let url = format!("/api/admin/events/{}/plan/arrange", f.event);
+
+    // Pin ride 0 on the driver who takes one booking; the rest are open.
+    let draft: Vec<Value> = f
+        .rides
+        .iter()
+        .enumerate()
+        .map(|(i, r)| json!({ "ride_id": r, "driver_id": if i == 0 { Some(f.driver2) } else { None } }))
+        .collect();
+    let r = call(
+        &app,
+        Method::POST,
+        &url,
+        Some(&staff),
+        Some(json!({ "draft": draft })),
+    )
+    .await;
+    assert_eq!(r.status, StatusCode::OK, "{}", r.json);
+    let placed = r.json["placed"].as_array().unwrap();
+    assert!(
+        placed.iter().all(|p| p["ride_id"] != f.rides[0]),
+        "pinned ride left alone"
+    );
+    assert!(
+        placed.iter().all(|p| p["driver_id"] != f.driver2),
+        "one booking for a non-carpool driver"
+    );
+    assert_eq!(
+        placed.len() + r.json["unplaced"].as_array().unwrap().len(),
+        3
+    );
+    // No coordinates are cached in tests, so every pickup is grouped by area only.
+    assert_eq!(r.json["approximate"], 4);
+
+    // Suggesting changes nothing.
+    for id in &f.rides {
+        assert_eq!(ride_state(&st, *id).await, ("pending_driver".into(), None));
+    }
+
+    let member = login(&st, "member@example.org").await;
+    let r = call(
+        &app,
+        Method::POST,
+        &url,
+        Some(&member),
+        Some(json!({ "draft": [] })),
+    )
+    .await;
+    assert_eq!(r.status, StatusCode::FORBIDDEN);
+}

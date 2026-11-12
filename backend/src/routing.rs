@@ -440,6 +440,40 @@ pub async fn geocode(st: &AppState, address: &str) -> Option<(LatLng, bool)> {
     found
 }
 
+/// Coordinates already in `geocode_cache` for these addresses (no network calls).
+pub async fn cached_points(st: &AppState, addresses: &[String]) -> HashMap<String, LatLng> {
+    let keys: Vec<String> = addresses.iter().map(|a| cache_key(a)).collect();
+    let rows: Vec<(String, f64, f64)> = sqlx::query_as(
+        "SELECT query, lat, lng FROM geocode_cache WHERE query = ANY($1) AND lat IS NOT NULL AND lng IS NOT NULL",
+    )
+    .bind(&keys)
+    .fetch_all(&st.db)
+    .await
+    .unwrap_or_default();
+    let found: HashMap<String, LatLng> = rows
+        .into_iter()
+        .map(|(k, lat, lng)| (k, LatLng { lat, lng }))
+        .collect();
+    addresses
+        .iter()
+        .filter_map(|a| found.get(&cache_key(a)).map(|p| (a.clone(), *p)))
+        .collect()
+}
+
+/// Look up uncached addresses in the background (rate-limited like any geocode), so the
+/// next planning run has exact distances. No-op when routing is off.
+pub fn warm_geocodes(st: &AppState, addresses: Vec<String>) {
+    if !st.cfg.routing.enabled || addresses.is_empty() {
+        return;
+    }
+    let st = st.clone();
+    tokio::spawn(async move {
+        for a in addresses {
+            let _ = geocode(&st, &a).await;
+        }
+    });
+}
+
 fn ago(d: Duration) -> String {
     (Local::now() - chrono::Duration::from_std(d).unwrap_or_default())
         .format("%Y-%m-%dT%H:%M:%S")

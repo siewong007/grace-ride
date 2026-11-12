@@ -4,6 +4,8 @@
 //! - `GET  /admin/events/{id}/plan` — the event's open ride requests, the active drivers
 //!   with their seats and areas, and each passenger's previous driver ("same as last time").
 //! - `POST /admin/events/{id}/plan` — apply a batch of changes in one transaction.
+//! - `POST /admin/events/{id}/plan/arrange` — suggest drivers for passengers without one
+//!   (see `crate::arrange`); changes nothing until the board sends it.
 //!
 //! Assigning a driver is the same transition as a single staff reassignment: the ride
 //! becomes `pending_driver_confirm` and the driver confirms it. Each driver gets one
@@ -14,12 +16,13 @@ use std::collections::{BTreeMap, HashMap, HashSet};
 
 use axum::{
     extract::{Path, State},
-    routing::get,
+    routing::{get, post},
     Json, Router,
 };
 use serde::Deserialize;
 use serde_json::{json, Value};
 
+use crate::arrange::{arrange, Car, Rider};
 use crate::auth::CurrentUser;
 use crate::error::{bad, conflict, not_found, AppResult};
 use crate::routes::rides::seat_capacity;
@@ -27,7 +30,9 @@ use crate::state::AppState;
 use crate::util::{audit, notify, now, require_any, system_message, ErrorKey};
 
 pub fn router() -> Router<AppState> {
-    Router::new().route("/admin/events/{id}/plan", get(get_plan).post(save_plan))
+    Router::new()
+        .route("/admin/events/{id}/plan", get(get_plan).post(save_plan))
+        .route("/admin/events/{id}/plan/arrange", post(arrange_plan))
 }
 
 /// Ride states the board may (re)assign. In-progress and finished rides are left alone.
@@ -164,16 +169,22 @@ async fn other_load(
     Ok(rows.into_iter().map(|(d, s, n)| (d, (s, n))).collect())
 }
 
-async fn get_plan(
-    State(st): State<AppState>,
-    u: CurrentUser,
-    Path(id): Path<i64>,
-) -> AppResult<Json<Value>> {
-    require_any(&u, &["transport"])?;
-    let ev = load_event(&st, &u, id).await?;
-    let rides = plan_rides(&st, id).await?;
-    let drivers = plan_drivers(&st).await?;
-    let other = other_load(&st, id, &rides, &ev.starts_at).await?;
+/// Everything the board shows, loaded once for viewing or arranging.
+struct Board {
+    ev: EventRow,
+    rides: Vec<PlanRide>,
+    drivers: Vec<PlanDriver>,
+    other: HashMap<i64, (i64, i64)>,
+    driver_areas: HashMap<i64, Vec<i64>>,
+    /// Passenger → (previous driver, name, rides together, last ride time).
+    last: HashMap<i64, (i64, String, i64, String)>,
+}
+
+async fn load_board(st: &AppState, u: &CurrentUser, id: i64) -> AppResult<Board> {
+    let ev = load_event(st, u, id).await?;
+    let rides = plan_rides(st, id).await?;
+    let drivers = plan_drivers(st).await?;
+    let other = other_load(st, id, &rides, &ev.starts_at).await?;
 
     let areas: Vec<(i64, i64)> = sqlx::query_as("SELECT user_id, area_id FROM driver_areas")
         .fetch_all(&st.db)
@@ -204,6 +215,30 @@ async fn get_plan(
             last.insert(p, (d, name, times, at));
         }
     }
+    Ok(Board {
+        ev,
+        rides,
+        drivers,
+        other,
+        driver_areas,
+        last,
+    })
+}
+
+async fn get_plan(
+    State(st): State<AppState>,
+    u: CurrentUser,
+    Path(id): Path<i64>,
+) -> AppResult<Json<Value>> {
+    require_any(&u, &["transport"])?;
+    let Board {
+        ev,
+        rides,
+        drivers,
+        other,
+        driver_areas,
+        last,
+    } = load_board(&st, &u, id).await?;
 
     Ok(Json(json!({
         "event": { "id": id, "title": ev.title, "starts_at": ev.starts_at, "location": ev.location, "status": ev.status },
@@ -235,6 +270,102 @@ async fn get_plan(
                 "vehicle": { "model": d.v_model, "plate": d.v_plate, "seats": d.v_seats },
             })
         }).collect::<Vec<_>>(),
+    })))
+}
+
+#[derive(Deserialize)]
+struct DraftEntry {
+    ride_id: i64,
+    driver_id: Option<i64>,
+}
+
+#[derive(Deserialize)]
+struct ArrangeReq {
+    /// The board's current draft; passengers with a driver here stay where they are.
+    draft: Vec<DraftEntry>,
+}
+
+/// Suggest drivers for every passenger the draft leaves without one. Changes nothing:
+/// the admin reviews the suggestion and sends it with "Confirm & notify".
+async fn arrange_plan(
+    State(st): State<AppState>,
+    u: CurrentUser,
+    Path(id): Path<i64>,
+    Json(req): Json<ArrangeReq>,
+) -> AppResult<Json<Value>> {
+    require_any(&u, &["transport"])?;
+    let b = load_board(&st, &u, id).await?;
+
+    let addresses: Vec<String> = b
+        .rides
+        .iter()
+        .map(|r| r.pickup_address.clone())
+        .filter(|a| !a.trim().is_empty())
+        .collect();
+    let points = crate::routing::cached_points(&st, &addresses).await;
+    let missing: Vec<String> = addresses
+        .iter()
+        .filter(|a| !points.contains_key(*a))
+        .cloned()
+        .collect();
+    let approximate = b
+        .rides
+        .iter()
+        .filter(|r| !points.contains_key(&r.pickup_address))
+        .count();
+    crate::routing::warm_geocodes(&st, missing);
+
+    let riders: Vec<Rider> = b
+        .rides
+        .iter()
+        .map(|r| Rider {
+            ride_id: r.id,
+            passenger_id: r.passenger_id,
+            seats: r.seats,
+            area_id: r.area_id,
+            point: points.get(&r.pickup_address).copied(),
+            needs_assistance: !r.assistance.is_empty(),
+            last: b.last.get(&r.passenger_id).map(|(d, _, t, _)| (*d, *t)),
+        })
+        .collect();
+    let cars: Vec<Car> = b
+        .drivers
+        .iter()
+        .map(|d| {
+            let (o_seats, o_rides) = b.other.get(&d.id).copied().unwrap_or((0, 0));
+            Car {
+                driver_id: d.id,
+                seats_left: seat_capacity(d.spare_seats, d.v_seats) - o_seats,
+                carpool: d.carpool_enabled == 1,
+                other_rides: o_rides,
+                area_ids: b.driver_areas.get(&d.id).cloned().unwrap_or_default(),
+            }
+        })
+        .collect();
+    let known: HashSet<i64> = b.rides.iter().map(|r| r.id).collect();
+    let fixed: HashMap<i64, i64> = req
+        .draft
+        .iter()
+        .filter(|e| known.contains(&e.ride_id))
+        .filter_map(|e| e.driver_id.map(|d| (e.ride_id, d)))
+        .collect();
+
+    let result = arrange(&riders, &cars, &fixed);
+    let names: HashMap<i64, &str> = b.rides.iter().map(|r| (r.id, r.p_name.as_str())).collect();
+    Ok(Json(json!({
+        "placed": result.placed.iter().map(|p| json!({
+            "ride_id": p.ride_id,
+            "driver_id": p.driver_id,
+            "near": p.near.map(|(ride, m)| json!({
+                "ride_id": ride,
+                "name": names.get(&ride),
+                "km": m.map(|m| (m / 100.0).round() / 10.0),
+            })),
+            "in_area": p.in_area,
+            "together": p.together,
+        })).collect::<Vec<_>>(),
+        "unplaced": result.unplaced,
+        "approximate": approximate,
     })))
 }
 

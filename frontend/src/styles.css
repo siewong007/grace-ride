@@ -2013,3 +2013,5 @@ main:focus { outline: none; }
 .plan-tags { display: flex; flex-wrap: wrap; gap: 4px; }
 .plan-tags:empty { display: none; }
 .plan-select { min-height: 40px; padding-top: 6px; padding-bottom: 6px; font-size: var(--fs-sm); margin-top: 2px; }
+.plan-why { display: flex; gap: 6px; align-items: flex-start; margin: 0; font-size: var(--fs-sm); color: var(--primary); }
+.plan-why svg { flex: none; margin-top: 3px; }

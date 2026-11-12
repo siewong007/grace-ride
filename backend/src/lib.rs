@@ -5,6 +5,7 @@
 // tuple as a type alias would hide the column list from the reader.
 #![allow(clippy::type_complexity)]
 
+pub mod arrange;
 pub mod auth;
 pub mod error;
 pub mod i18n;
