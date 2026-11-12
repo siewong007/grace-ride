@@ -3,6 +3,7 @@ pub mod auth;
 pub mod community;
 pub mod events;
 pub mod files;
+pub mod plan;
 pub mod rides;
 pub mod settlements;
 
@@ -14,6 +15,7 @@ pub fn api() -> Router<AppState> {
     Router::new()
         .merge(auth::router())
         .merge(rides::router())
+        .merge(plan::router())
         .merge(events::router())
         .merge(settlements::router())
         .merge(files::router())

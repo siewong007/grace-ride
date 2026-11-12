@@ -545,8 +545,7 @@ async fn driver_load(
     .fetch_optional(&st.db)
     .await?;
     let (carpool, spare, vseats) = row.unwrap_or((0, 1, None));
-    let vehicle_cap = vseats.map(|s| (s - 1).max(1)).unwrap_or(0);
-    let cap = spare.max(1).min(vehicle_cap);
+    let cap = seat_capacity(spare, vseats);
     // Without 共乘模式 a driver takes one booking per time slot.
     let cap = if carpool == 1 {
         cap
@@ -556,6 +555,13 @@ async fn driver_load(
         cap
     };
     Ok((load, cap))
+}
+
+/// Passenger seats a driver offers: their spare seats, never more than the car holds
+/// besides the driver. No vehicle on file ⇒ 0.
+pub(crate) fn seat_capacity(spare_seats: i64, vehicle_seats: Option<i64>) -> i64 {
+    let vehicle_cap = vehicle_seats.map(|s| (s - 1).max(1)).unwrap_or(0);
+    spare_seats.max(1).min(vehicle_cap)
 }
 
 async fn driver_claim(

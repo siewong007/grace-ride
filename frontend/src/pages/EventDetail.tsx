@@ -4,6 +4,7 @@ import {
   CarFront,
   Edit2,
   Plus,
+  Route,
 } from 'lucide-react';
 import { post, useApi } from '../api';
 import { useAuth } from '../auth';
@@ -49,7 +50,9 @@ export default function EventDetail() {
   const { t } = useTranslation('eventDetail');
   const ft = useFormatT();
   const { id } = useParams();
-  const { has } = useAuth();
+  const { has, isStaff: staff } = useAuth();
+  // Planning the whole event's transport is for the transport team (the server checks too).
+  const isStaff = staff && has('transport');
   const { data: e, error, reload } = useApi<EventFull>(id ? `/events/${id}` : null);
   const { busy, error: actErr, run } = useAction();
   const confirm = useConfirm();
@@ -111,10 +114,19 @@ export default function EventDetail() {
           subtitle={`${fmtDateTime(e.starts_at, ft)} · ${e.location}`}
           back="/events"
           actions={
-            e.can_manage && open ? (
-              <Button variant="secondary" to={`/events/${e.id}/edit`} icon={<Edit2 size={16} />}>
-                {t('edit')}
-              </Button>
+            (e.can_manage && open) || (isStaff && open) ? (
+              <div className="btn-row">
+                {isStaff && (
+                  <Button variant="primary" to={`/admin/events/${e.id}/plan`} icon={<Route size={16} />}>
+                    {t('open', { ns: 'plan' })}
+                  </Button>
+                )}
+                {e.can_manage && (
+                  <Button variant="secondary" to={`/events/${e.id}/edit`} icon={<Edit2 size={16} />}>
+                    {t('edit')}
+                  </Button>
+                )}
+              </div>
             ) : undefined
           }
         />

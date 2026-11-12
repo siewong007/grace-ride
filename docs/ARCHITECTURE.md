@@ -72,11 +72,11 @@ pending_driver ──claim──▶ pending_passenger ──accept──▶ pend
       └─────────────────────────┴─────────────────────────────┘                            │
       ▲  driver withdraws (needs_attention)                                                │
       └────────────────────────────────────────────────────────────────────────────────────┘
- staff reassign ──▶ pending_driver_confirm ──driver confirms──▶ confirmed
+ staff reassign / event plan board ──▶ pending_driver_confirm ──driver confirms──▶ confirmed
  staff Grab fallback ──▶ alt_transport          any open state ──cancel──▶ cancelled
 ```
 
-Every transition is a single conditional `UPDATE … WHERE status IN (…)`. Two drivers claiming the same request cannot both win, and a stale screen gets `409`.
+Every transition is a single conditional `UPDATE … WHERE status IN (…)`. The event plan board (`routes/plan.rs`) applies a whole batch in one transaction, each row re-checking the status and driver the board showed, so a stale board changes nothing. Two drivers claiming the same request cannot both win, and a stale screen gets `409`.
 
 ## Roadmap (not built yet)
 
