@@ -89,7 +89,6 @@ export default function Login() {
               type="button"
               className="btn sm ghost lang-toggle"
               onClick={() => setLanguage(currentLang === 'zh' ? 'en' : 'zh')}
-              aria-label={t('lang')}
             >
               <Globe size={16} aria-hidden="true" />
               <span>{currentLang === 'zh' ? t('en', { ns: 'chrome' }) : t('zh', { ns: 'chrome' })}</span>
