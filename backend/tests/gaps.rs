@@ -1246,3 +1246,41 @@ async fn past_pickup_rejected() {
     .await;
     assert_eq!(r.status, StatusCode::BAD_REQUEST, "{}", r.json);
 }
+
+#[tokio::test]
+async fn admin_live_map_with_driver_location() {
+    let (app, st) = setup().await;
+    let (driver_id,): (i64,) =
+        sqlx::query_as("SELECT id FROM users WHERE email='driver@example.org'")
+            .fetch_one(&st.db)
+            .await
+            .unwrap();
+    let (ride_id,): (i64,) = sqlx::query_as("SELECT id FROM rides ORDER BY id LIMIT 1")
+        .fetch_one(&st.db)
+        .await
+        .unwrap();
+    sqlx::query("UPDATE rides SET status='in_progress', driver_id=$1 WHERE id=$2")
+        .bind(driver_id)
+        .bind(ride_id)
+        .execute(&st.db)
+        .await
+        .unwrap();
+    sqlx::query(
+        "INSERT INTO driver_locations (driver_id, lat, lng) VALUES ($1, 3.1, 101.6)
+         ON CONFLICT (driver_id) DO UPDATE SET lat=EXCLUDED.lat, lng=EXCLUDED.lng",
+    )
+    .bind(driver_id)
+    .execute(&st.db)
+    .await
+    .unwrap();
+
+    let transport = login(&st, "transport@example.org").await;
+    let r = call(&app, Method::GET, "/api/admin/live", Some(&transport), None).await;
+    assert_eq!(r.status, StatusCode::OK, "{}", r.json);
+    let drivers = r.json["drivers"].as_array().unwrap();
+    let d = drivers
+        .iter()
+        .find(|d| d["driver_id"] == driver_id)
+        .expect("driver on live map");
+    assert_eq!(d["lat"], 3.1);
+}
