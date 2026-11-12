@@ -1769,5 +1769,82 @@ main:focus { outline: none; }
   }
 }
 
+/* Phase 10: Admin & Staff */
+.table.sticky-header thead th {
+  position: sticky;
+  top: 0;
+  background: var(--surface);
+  z-index: 2;
+  box-shadow: 0 1px 0 var(--border);
+}
+
+.admin-table-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-2);
+  margin-bottom: var(--space-2);
+}
+
+.admin-filters-bar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-3);
+}
+
+.map-legend {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-4);
+  padding: var(--space-2) var(--space-3);
+  background: var(--surface-2);
+  border-radius: var(--radius-sm);
+  font-size: var(--fs-xs);
+  color: var(--muted);
+  margin-top: var(--space-2);
+}
+
+.map-legend-item {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+}
+
+.map-legend-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  display: inline-block;
+}
+
+.map-legend-dot.active {
+  background: var(--primary);
+}
+
+.map-legend-dot.stale {
+  background: var(--accent);
+}
+
+.map-legend-dot.passenger {
+  background: var(--info);
+}
+
+.announcement-preview-card {
+  border: 1px dashed var(--border);
+  background: var(--surface-2);
+}
+
+.group-members-list {
+  max-height: 360px;
+  overflow-y: auto;
+}
+
+.admin-input-compact {
+  max-width: 220px;
+}
+
+
 
 

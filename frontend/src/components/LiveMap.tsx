@@ -40,17 +40,29 @@ const escapeHtml = (s: string) => s.replace(/[&<>"']/g, (c) => `&#${c.charCodeAt
 
 export interface MapPoint { id: number | string; lat: number; lng: number; label: string; detail?: string; kind?: 'car' | 'person' }
 
-function Fit({ points }: { points: MapPoint[] }) {
+function Fit({ points, focusPoint }: { points: MapPoint[]; focusPoint?: { lat: number; lng: number } | null }) {
   const map = useMap();
   useEffect(() => {
+    if (focusPoint) {
+      map.setView([focusPoint.lat, focusPoint.lng], 16, { animate: true });
+      return;
+    }
     if (points.length === 1) map.setView([points[0].lat, points[0].lng], 15);
     else if (points.length > 1) map.fitBounds(L.latLngBounds(points.map((p) => [p.lat, p.lng])), { padding: [40, 40] });
-  }, [map, points.map((p) => `${p.lat},${p.lng}`).join('|')]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [map, focusPoint?.lat, focusPoint?.lng, points.map((p) => `${p.lat},${p.lng}`).join('|')]); // eslint-disable-line react-hooks/exhaustive-deps
   return null;
 }
 
 // Free OpenStreetMap tiles — no Google Maps bill. Swap the TileLayer URL for another provider if needed.
-export default function LiveMap({ points, tall }: { points: MapPoint[]; tall?: boolean }) {
+export default function LiveMap({
+  points,
+  tall,
+  focusPoint,
+}: {
+  points: MapPoint[];
+  tall?: boolean;
+  focusPoint?: { lat: number; lng: number } | null;
+}) {
   const center: [number, number] = points[0] ? [points[0].lat, points[0].lng] : [3.1073, 101.6067]; // Petaling Jaya
   return (
     <MapContainer center={center} zoom={13} className={`map ${tall ? 'tall' : ''}`} scrollWheelZoom={false}>
@@ -63,7 +75,7 @@ export default function LiveMap({ points, tall }: { points: MapPoint[]; tall?: b
           </Popup>
         </Marker>
       ))}
-      <Fit points={points} />
+      <Fit points={points} focusPoint={focusPoint} />
     </MapContainer>
   );
 }
