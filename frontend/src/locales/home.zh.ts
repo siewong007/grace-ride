@@ -29,4 +29,9 @@ export default {
   waitlist: '候补中',
   finished: '已结束',
   spotsLeft: '余 {n}',
+  quickEvents: '活动',
+  pickupArea: '上车地区',
+  destination: '目的地',
+  noUpcomingRides: '没有其他即将开始的接送',
+  viewRide: '查看接送',
 };

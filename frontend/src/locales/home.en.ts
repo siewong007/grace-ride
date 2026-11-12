@@ -29,4 +29,9 @@ export default {
   waitlist: 'Waitlist',
   finished: 'Ended',
   spotsLeft: '{n} left',
+  quickEvents: 'Events',
+  pickupArea: 'Pickup area',
+  destination: 'Destination',
+  noUpcomingRides: 'No other upcoming rides',
+  viewRide: 'View ride',
 };

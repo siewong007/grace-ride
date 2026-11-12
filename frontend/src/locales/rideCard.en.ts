@@ -4,4 +4,5 @@ export default {
   passenger: 'Passenger {name}',
   noDriver: 'No driver yet',
   needsAttention: 'Needs attention',
+  seats: 'seats',
 };

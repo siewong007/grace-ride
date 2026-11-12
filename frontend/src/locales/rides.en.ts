@@ -6,4 +6,6 @@ export default {
   past: 'Past records',
   noUpcoming: 'No ride requests at the moment.',
   noPast: 'No past records yet.',
+  dateToday: 'Today',
+  dateTomorrow: 'Tomorrow',
 };

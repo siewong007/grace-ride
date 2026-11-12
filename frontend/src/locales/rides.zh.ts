@@ -6,4 +6,6 @@ export default {
   past: '过往记录',
   noUpcoming: '目前没有接送报名。',
   noPast: '还没有过往记录。',
+  dateToday: '今天',
+  dateTomorrow: '明天',
 };
