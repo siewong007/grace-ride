@@ -37,4 +37,11 @@ export default {
   needsRide: '需要接送',
   needsRideWithStatus: '需要接送（{status}）',
   offersSeats: '提供 {n} 座',
+  signUp: '立即报名',
+  joinWaitlist: '加入候补',
+  manageTitle: '活动管理',
+  manageDesc: '主办人签到与结算工具',
+  seatsLeft: '余 {n} 名额',
+  full: '已满额',
+  signedUpSuccess: '报名成功',
 };

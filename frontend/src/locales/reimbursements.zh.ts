@@ -33,4 +33,9 @@ export default {
   receiptLink: '收据',
   resubmit: '补资料重新提交',
   ridePrefix: '接送 {time}',
+  statusTimeline: '报销进度',
+  stepSubmitted: '已提交',
+  stepReviewed: '已审核',
+  stepPaid: '已付款',
+  viewRide: '查看接送',
 };

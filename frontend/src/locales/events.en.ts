@@ -15,4 +15,7 @@ export default {
   finished: 'Ended',
   peopleUnit: 'people',
   peopleAttend: 'attending',
+  signedUp: 'Signed up',
+  spotsLeft: '{n} spots left',
+  full: 'Full',
 };

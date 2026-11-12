@@ -50,21 +50,25 @@ vi.mock('../format', () => ({
   SETTLEMENT_STATUS: {},
 }));
 
-vi.mock('../components/ui', () => ({
-  useAction: () => ({ busy: false, error: null, run: (fn: () => Promise<void>) => fn() }),
-  ErrorBox: () => null,
-  Empty: ({ children }: { children?: unknown }) => <div>{children as string}</div>,
-  Spinner: () => <div>Loading...</div>,
-  StatusPill: () => <span>Pill</span>,
-  Modal: ({ children }: { children?: unknown }) => <div>{children as never}</div>,
-  Field: ({ label, children }: { label: string; children: unknown }) => (
-    <label>
-      {label}
-      {children as never}
-    </label>
-  ),
-  FileInput: () => <input type="file" />,
-}));
+vi.mock('../components/ui', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../components/ui')>();
+  return {
+    ...actual,
+    useAction: () => ({ busy: false, error: null, run: (fn: () => Promise<void>) => fn() }),
+    ErrorBox: () => null,
+    Empty: ({ children }: { children?: unknown }) => <div>{children as string}</div>,
+    Spinner: () => <div>Loading...</div>,
+    StatusPill: () => <span>Pill</span>,
+    Modal: ({ children }: { children?: unknown }) => <div>{children as never}</div>,
+    Field: ({ label, children }: { label: string; children: unknown }) => (
+      <label>
+        {label}
+        {children as never}
+      </label>
+    ),
+    FileInput: () => <input type="file" />,
+  };
+});
 
 describe('SettlementForm', () => {
   beforeEach(() => {

@@ -15,4 +15,7 @@ export default {
   finished: '已结束',
   peopleUnit: '人',
   peopleAttend: '人参加',
+  signedUp: '已报名',
+  spotsLeft: '余 {n} 名额',
+  full: '已满额',
 };

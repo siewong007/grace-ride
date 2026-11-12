@@ -37,4 +37,11 @@ export default {
   needsRide: 'Needs a ride',
   needsRideWithStatus: 'Needs a ride ({status})',
   offersSeats: 'Offering {n} seats',
+  signUp: 'Sign up',
+  joinWaitlist: 'Join waitlist',
+  manageTitle: 'Manage event',
+  manageDesc: 'Organiser tools for check-in and settlements',
+  seatsLeft: '{n} spots left',
+  full: 'Full',
+  signedUpSuccess: 'Successfully signed up',
 };

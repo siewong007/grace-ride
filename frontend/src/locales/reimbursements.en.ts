@@ -33,4 +33,9 @@ export default {
   receiptLink: 'Receipt',
   resubmit: 'Resubmit with details',
   ridePrefix: 'Ride {time}',
+  statusTimeline: 'Reimbursement status',
+  stepSubmitted: 'Submitted',
+  stepReviewed: 'Reviewed',
+  stepPaid: 'Paid',
+  viewRide: 'View ride',
 };

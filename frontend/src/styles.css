@@ -1361,3 +1361,152 @@ main:focus { outline: none; }
   }
 }
 
+/* ---------- Phase 8: Member Secondary Pages ---------- */
+
+/* Events */
+.event-card {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  text-decoration: none;
+}
+.event-card-head {
+  display: flex;
+  flex-direction: row;
+  align-items: flex-start;
+  gap: var(--space-3);
+}
+.event-date-badge {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  width: 52px;
+  height: 52px;
+  border-radius: var(--radius-sm);
+  background: var(--surface-2);
+  border: 1px solid var(--border-soft);
+  flex-shrink: 0;
+  text-align: center;
+  line-height: 1;
+}
+.event-date-month {
+  font-size: var(--fs-xs);
+  font-weight: 700;
+  color: var(--primary);
+  text-transform: uppercase;
+}
+.event-date-day {
+  font-size: var(--fs-lg);
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  color: var(--text-high);
+  margin-top: 2px;
+}
+.event-seats-meter {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+/* Event Detail */
+.event-detail-hero {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+/* Costs */
+.costs-amount {
+  font-size: var(--fs-2xl);
+  font-weight: 800;
+  color: var(--text-high);
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+  text-align: center;
+  margin: var(--space-2) 0;
+}
+
+/* Settlements Form items */
+.settlement-item-row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  flex-wrap: wrap;
+}
+
+/* Notifications */
+.notif-item {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-3);
+  padding: var(--space-3) var(--space-4);
+  width: 100%;
+  text-align: left;
+  border-bottom: 1px solid var(--border-soft);
+  background: transparent;
+  cursor: pointer;
+  transition: background var(--dur-fast) var(--ease);
+}
+.notif-item:hover {
+  background: var(--surface-2);
+}
+.notif-item.notif-unread {
+  background: var(--primary-soft);
+}
+.notif-item.notif-unread:hover {
+  background: color-mix(in srgb, var(--primary-soft) 85%, var(--primary));
+}
+.notif-icon-wrap {
+  width: 36px;
+  height: 36px;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  background: var(--surface-2);
+  color: var(--text-high);
+}
+.notif-item.notif-unread .notif-icon-wrap {
+  background: var(--primary);
+  color: var(--primary-ink);
+}
+.notif-date-header {
+  padding: var(--space-2) var(--space-4);
+  font-size: var(--fs-xs);
+  font-weight: 700;
+  color: var(--muted);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  background: var(--surface-2);
+  border-bottom: 1px solid var(--border-soft);
+}
+
+/* Reimbursements */
+.receipt-drop-preview {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  margin-top: var(--space-2);
+}
+.receipt-drop-thumb {
+  width: 64px;
+  height: 64px;
+  border-radius: var(--radius-sm);
+  object-fit: cover;
+  border: 1px solid var(--border);
+}
+
+/* Reports */
+.report-month-input {
+  max-width: 200px;
+}
+.badge-card {
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+  gap: var(--space-3);
+}
+
+

@@ -1,11 +1,34 @@
 import { useNavigate } from 'react-router-dom';
+import {
+  Bell,
+  Calendar,
+  CarFront,
+  CheckCheck,
+  CreditCard,
+  MessageSquare,
+} from 'lucide-react';
 import { post, useApi } from '../api';
 import { useAuth } from '../auth';
-import { Empty, Spinner, useAction } from '../components/ui';
-import { fmtAgo, useFormatT } from '../format';
+import {
+  Button,
+  Card,
+  EmptyState,
+  Page,
+  PageHeader,
+  Spinner,
+  useAction,
+} from '../components/ui';
+import { fmtAgo, todayStr, useFormatT } from '../format';
 import { useTranslation } from 'react-i18next';
 
-interface Notif { id: number; title: string; body: string; link: string; read: boolean; created_at: string }
+interface Notif {
+  id: number;
+  title: string;
+  body: string;
+  link: string;
+  read: boolean;
+  created_at: string;
+}
 
 export default function Notifications() {
   const { t } = useTranslation('notifications');
@@ -14,32 +37,117 @@ export default function Notifications() {
   const { refresh } = useAuth();
   const { run } = useAction();
   const nav = useNavigate();
+
   const open = async (n: Notif) => {
     if (!n.read) await run(() => post(`/notifications/${n.id}/read`));
     refresh();
     if (n.link) nav(n.link);
     else reload();
   };
+
+  const markAllRead = async () => {
+    await run(async () => {
+      await post('/notifications/read-all');
+      reload();
+      refresh();
+    });
+  };
+
+  const getNotifIcon = (n: Notif) => {
+    const l = (n.link || '').toLowerCase();
+    const title = (n.title || '').toLowerCase();
+    if (l.includes('ride') || title.includes('ride')) return <CarFront size={18} />;
+    if (l.includes('event') || title.includes('event')) return <Calendar size={18} />;
+    if (l.includes('settlement') || l.includes('share') || l.includes('cost')) {
+      return <CreditCard size={18} />;
+    }
+    if (l.includes('help') || l.includes('chat')) return <MessageSquare size={18} />;
+    return <Bell size={18} />;
+  };
+
+  const today = todayStr();
+  const todayNotifs = (data ?? []).filter((n) => n.created_at.slice(0, 10) === today);
+  const earlierNotifs = (data ?? []).filter((n) => n.created_at.slice(0, 10) !== today);
+
   return (
-    <div className="stack" style={{ maxWidth: 820 }}>
-      <div className="page-head">
-        <h1>{t('title')}</h1>
-        <button className="btn sm" onClick={() => run(async () => { await post('/notifications/read-all'); reload(); refresh(); })}>{t('readAll')}</button>
-      </div>
-      {loading ? <Spinner /> : !data?.length ? <Empty>{t('none')}</Empty> : (
-        <div className="card"><div className="list">
-          {data.map((n) => (
-            <button key={n.id} className="item notif-item" onClick={() => open(n)}>
-              <span aria-hidden className={`unread-dot ${n.read ? 'read' : ''}`} />
-              <div className="grow">
-                <div className={n.read ? '' : 'bold'}>{n.title}</div>
-                {n.body && <div className="muted small">{n.body}</div>}
+    <Page width="narrow">
+      <div className="stack">
+        <PageHeader
+          title={t('title')}
+          actions={
+            data && data.some((n) => !n.read) ? (
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={markAllRead}
+                icon={<CheckCheck size={16} />}
+              >
+                {t('readAll')}
+              </Button>
+            ) : undefined
+          }
+        />
+
+        {loading ? (
+          <Spinner />
+        ) : !data?.length ? (
+          <EmptyState title={t('none')} />
+        ) : (
+          <Card padding="sm" className="stack-none overflow-hidden">
+            {todayNotifs.length > 0 && (
+              <div>
+                <div className="notif-date-header">{t('today')}</div>
+                <div className="list">
+                  {todayNotifs.map((n) => (
+                    <button
+                      key={n.id}
+                      type="button"
+                      className={`notif-item ${n.read ? '' : 'notif-unread'}`}
+                      onClick={() => open(n)}
+                    >
+                      <div className="notif-icon-wrap" aria-hidden="true">
+                        {getNotifIcon(n)}
+                      </div>
+                      <div className="grow min-w-0">
+                        <div className={`ellipsis ${n.read ? '' : 'bold'}`}>{n.title}</div>
+                        {n.body && <div className="muted small ellipsis">{n.body}</div>}
+                        <div className="muted tiny">{fmtAgo(n.created_at, ft)}</div>
+                      </div>
+                      <span aria-hidden className={`unread-dot ${n.read ? 'read' : ''}`} />
+                    </button>
+                  ))}
+                </div>
               </div>
-              <span className="muted tiny">{fmtAgo(n.created_at, ft)}</span>
-            </button>
-          ))}
-        </div></div>
-      )}
-    </div>
+            )}
+
+            {earlierNotifs.length > 0 && (
+              <div>
+                <div className="notif-date-header">{t('earlier')}</div>
+                <div className="list">
+                  {earlierNotifs.map((n) => (
+                    <button
+                      key={n.id}
+                      type="button"
+                      className={`notif-item ${n.read ? '' : 'notif-unread'}`}
+                      onClick={() => open(n)}
+                    >
+                      <div className="notif-icon-wrap" aria-hidden="true">
+                        {getNotifIcon(n)}
+                      </div>
+                      <div className="grow min-w-0">
+                        <div className={`ellipsis ${n.read ? '' : 'bold'}`}>{n.title}</div>
+                        {n.body && <div className="muted small ellipsis">{n.body}</div>}
+                        <div className="muted tiny">{fmtAgo(n.created_at, ft)}</div>
+                      </div>
+                      <span aria-hidden className={`unread-dot ${n.read ? 'read' : ''}`} />
+                    </button>
+                  ))}
+                </div>
+              </div>
+            )}
+          </Card>
+        )}
+      </div>
+    </Page>
   );
 }
