@@ -1,8 +1,8 @@
 import { useState } from 'react';
-import { Link, useNavigate } from 'react-router-dom';
+import { useNavigate } from 'react-router-dom';
 import { post } from '../api';
 import { useAuth } from '../auth';
-import { ErrorBox, useAction } from './ui';
+import { Button, ErrorBox, useAction } from './ui';
 import { useTranslation } from 'react-i18next';
 
 const SECTIONS = ['service', 'who', 'info', 'location', 'see', 'choices', 'accept'] as const;
@@ -10,14 +10,16 @@ const SECTIONS = ['service', 'who', 'info', 'location', 'see', 'choices', 'accep
 export function TermsText() {
   const { t } = useTranslation('terms');
   return (
-    <div className="stack-sm">
-      <h2>{t('title')}</h2>
-      <p className="muted small">{t('updated')}</p>
-      <p>{t('intro')}</p>
+    <div className="terms-measure stack">
+      <div>
+        <h2>{t('title')}</h2>
+        <p className="muted small">{t('updated')}</p>
+      </div>
+      <p className="terms-intro">{t('intro')}</p>
       {SECTIONS.map((key) => (
-        <section key={key}>
+        <section key={key} className="stack-sm">
           <h3>{t(`${key}Title`)}</h3>
-          <p>{t(`${key}Body`)}</p>
+          <p className="muted">{t(`${key}Body`)}</p>
         </section>
       ))}
     </div>
@@ -34,23 +36,43 @@ export function TermsOptIn({ checked, onChange }: { checked: boolean; onChange: 
   );
 }
 
-/** Blocks the app after sign-in until the person opts in. The box starts clear. */
+/** Blocks the app after sign-in until the person opts in. */
 export function TermsGate() {
   const { t } = useTranslation('terms');
   const { refresh } = useAuth();
   const nav = useNavigate();
   const [checked, setChecked] = useState(false);
   const { busy, error, run } = useAction();
+
   return (
-    <div className="auth-page">
-      <div className="card auth-card stack">
-        <div className="card flat" style={{ maxHeight: 320, overflow: 'auto' }}>
-          <TermsText />
-        </div>
-        <TermsOptIn checked={checked} onChange={setChecked} />
+    <div className="terms-gate-page">
+      <div className="terms-gate-container terms-measure stack">
+        <TermsText />
         <ErrorBox error={error} />
-        <button className="btn primary block" disabled={busy || !checked} onClick={() => run(async () => { await post('/auth/terms', { accepted: true }); await refresh(); })}>{t('agree')}</button>
-        <button className="btn ghost" disabled={busy} onClick={() => run(async () => { await post('/auth/logout'); await refresh(); nav('/login'); })}>{t('logout')}</button>
+      </div>
+
+      {/* Sticky accept bar at the bottom */}
+      <div className="terms-sticky-bar">
+        <div className="terms-sticky-inner terms-measure row between">
+          <TermsOptIn checked={checked} onChange={setChecked} />
+          <div className="row">
+            <Button
+              variant="ghost"
+              disabled={busy}
+              onClick={() => run(async () => { await post('/auth/logout'); await refresh(); nav('/login'); })}
+            >
+              {t('logout')}
+            </Button>
+            <Button
+              variant="primary"
+              disabled={busy || !checked}
+              loading={busy}
+              onClick={() => run(async () => { await post('/auth/terms', { accepted: true }); await refresh(); })}
+            >
+              {t('agree')}
+            </Button>
+          </div>
+        </div>
       </div>
     </div>
   );
@@ -60,9 +82,11 @@ export default function TermsPage() {
   const { t } = useTranslation('terms');
   return (
     <div className="auth-page">
-      <div className="card auth-card stack">
+      <div className="card auth-card terms-measure stack">
         <TermsText />
-        <Link to="/login">{t('back')}</Link>
+        <div>
+          <Button variant="secondary" to="/login">{t('back')}</Button>
+        </div>
       </div>
     </div>
   );

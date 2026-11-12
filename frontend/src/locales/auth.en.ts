@@ -29,4 +29,7 @@ export default {
   submitRecovery: 'Submit request',
   cancelled: 'Cancelled',
   lang: 'Language',
+  welcomeBilingual: 'Care that walks with you · 让关爱一路相伴',
+  emailRecovery: 'Email recovery',
+  devBadge: 'DEV / LOCAL ONLY',
 };

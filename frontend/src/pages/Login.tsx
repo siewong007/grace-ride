@@ -5,7 +5,7 @@ import { api, post } from '../api';
 import { useAuth } from '../auth';
 import { useTranslation } from 'react-i18next';
 import { setLanguage, SupportedLanguage } from '../i18n';
-import { useAction, ErrorBox, Field } from '../components/ui';
+import { Button, ErrorBox, Field, useAction } from '../components/ui';
 import { loginWithPasskey, passkeySupported } from '../webauthn';
 
 type DevUser = { name: string; email: string; roles: string };
@@ -49,64 +49,124 @@ export default function Login() {
     });
   };
 
+  const onEmailRecovery = () => {
+    run(async () => {
+      await post('/auth/recovery-request', { email: email.trim(), reason: '' });
+    }, t('recoveryReceived'));
+  };
+
   return (
-    <div className="auth-page">
-      <div className="auth-card stack">
-        <div className="auth-header-row row between">
-          <img src="/icon.svg" width={36} height={36} alt="" />
-          <button
-            type="button"
-            className="btn sm ghost lang-toggle"
-            onClick={() => setLanguage(currentLang === 'zh' ? 'en' : 'zh')}
-            aria-label={t('lang')}
-          >
-            <Globe size={16} aria-hidden="true" />
-            <span>{currentLang === 'zh' ? t('en', { ns: 'chrome' }) : t('zh', { ns: 'chrome' })}</span>
-          </button>
+    <div className="login-page-wrap">
+      <div className="login-split">
+        {/* Brand panel on ≥900px */}
+        <div className="login-brand-panel">
+          <div className="login-brand-content stack">
+            <div className="row nowrap login-brand-header">
+              <img src="/icon.svg" width={44} height={44} alt="" className="brand-mark" />
+              <div>
+                <h1 className="login-brand-title">{t('brand', { ns: 'layout' })}</h1>
+                <p className="login-brand-sub">{t('brandSub', { ns: 'layout' })}</p>
+              </div>
+            </div>
+            <p className="login-welcome-tagline">{t('welcomeBilingual')}</p>
+            <div className="login-illustration-wrap" aria-hidden="true">
+              <svg className="login-road-svg" viewBox="0 0 320 180" fill="none" xmlns="http://www.w3.org/2000/svg">
+                <path d="M 20 160 Q 160 20 300 160" stroke="currentColor" strokeWidth="20" strokeLinecap="round" className="road-path" />
+                <path d="M 20 160 Q 160 20 300 160" stroke="currentColor" strokeWidth="3" strokeDasharray="10 10" className="road-stripes" />
+                <circle cx="160" cy="65" r="14" fill="currentColor" className="road-sun" />
+              </svg>
+            </div>
+          </div>
         </div>
-        <h2>{t('welcomeBack')}</h2>
 
-        {/* Passkey as default primary login */}
-        <form className="stack" onSubmit={onPasskey}>
-          <Field label={t('email')}> <input
-              className="input"
-              type="email"
-              autoComplete="username webauthn"
-              required
-              value={email}
-              onChange={(e) => setEmail(e.target.value)}
-            /> </Field>
-          {passkeySupported() ? (
-            <button className="btn primary block" disabled={busy}>
-              <Fingerprint size={20} />{busy ? t('loggingIn') : t('loginWithPasskey')}
+        {/* Right card form panel */}
+        <div className="card auth-card stack">
+          <div className="auth-header-row row between">
+            <div className="row nowrap hide-desktop">
+              <img src="/icon.svg" width={36} height={36} alt="" className="brand-mark" />
+            </div>
+            <button
+              type="button"
+              className="btn sm ghost lang-toggle"
+              onClick={() => setLanguage(currentLang === 'zh' ? 'en' : 'zh')}
+              aria-label={t('lang')}
+            >
+              <Globe size={16} aria-hidden="true" />
+              <span>{currentLang === 'zh' ? t('en', { ns: 'chrome' }) : t('zh', { ns: 'chrome' })}</span>
             </button>
-          ) : (
-            <div className="notice">{t('noPasskey')}</div>
+          </div>
+
+          <h2>{t('welcomeBack')}</h2>
+
+          {/* Passkey primary login form */}
+          <form className="stack" onSubmit={onPasskey}>
+            <Field label={t('email')}>
+              <input
+                className="input"
+                type="email"
+                autoComplete="username webauthn"
+                required
+                value={email}
+                onChange={(e) => setEmail(e.target.value)}
+              />
+            </Field>
+
+            {passkeySupported() ? (
+              <Button variant="primary" size="lg" type="submit" block loading={busy} disabled={busy}>
+                <Fingerprint size={20} />
+                {busy ? t('loggingIn') : t('loginWithPasskey')}
+              </Button>
+            ) : (
+              <div className="notice warning">{t('noPasskey')}</div>
+            )}
+
+            <Button
+              variant="ghost"
+              type="button"
+              block
+              disabled={busy}
+              onClick={onEmailRecovery}
+            >
+              {t('emailRecovery')}
+            </Button>
+
+            <p className="muted small">{t('passkeyHelp')}</p>
+            <div>
+              <Link to="/terms">{t('title', { ns: 'terms' })}</Link>
+            </div>
+          </form>
+
+          {/* Dev account picker in a dashed frame */}
+          {devUsers && devUsers.length > 0 && (
+            <div className="dev-account-frame stack-sm">
+              <div className="row between dev-frame-header">
+                <span className="dev-badge">{t('devBadge')}</span>
+              </div>
+              <form className="stack-sm" onSubmit={onTestAccount}>
+                <Field label={t('testAccounts')} hint={t('testAccountsHint')}>
+                  <select
+                    className="input"
+                    required
+                    value={who}
+                    onChange={(e) => setWho(e.target.value)}
+                  >
+                    <option value="">{t('testChoose')}</option>
+                    {devUsers.map((u) => (
+                      <option key={u.email} value={u.email}>
+                        {u.name} · {u.email}
+                      </option>
+                    ))}
+                  </select>
+                </Field>
+                <Button variant="secondary" type="submit" block disabled={busy || !who}>
+                  {busy ? t('loggingIn') : t('login')}
+                </Button>
+              </form>
+            </div>
           )}
-          <p className="muted small">{t('passkeyHelp')}</p>
-          <Link to="/terms">{t('title', { ns: 'terms' })}</Link>
-        </form>
 
-        {/* Link to other login methods */}
-        <div className="other-methods">
-          <span>{t('or')}</span>
-          <a
-            href="/api/auth/recovery-request"
-            onClick={(e) => {
-              e.preventDefault();
-              run(async () => {
-                await post('/auth/recovery-request', { email, reason: '' });
-              });
-            }}
-          >{t('useEmailToLogin')}</a>
+          <ErrorBox error={error} />
         </div>
-
-        {devUsers && devUsers.length > 0 && (
-          <form className="stack" onSubmit={onTestAccount}>
-            <Field label={t('testAccounts')} hint={t('testAccountsHint')}> <select className="input" required value={who} onChange={(e) => setWho(e.target.value)}> <option value="">{t('testChoose')}</option> {devUsers.map((u) => (<option key={u.email} value={u.email}>{u.name} · {u.email}</option>))} </select> </Field> <button className="btn block" disabled={busy || !who}>{busy ? t('loggingIn') : t('login')}</button> </form>
-        )}
-
-        <ErrorBox error={error} />
       </div>
     </div>
   );

@@ -29,4 +29,7 @@ export default {
   submitRecovery: '提交申请',
   cancelled: '已取消',
   lang: '语言',
+  welcomeBilingual: '让关爱一路相伴 · Care that walks with you',
+  emailRecovery: '电邮恢复账号',
+  devBadge: 'DEV / 仅本地',
 };

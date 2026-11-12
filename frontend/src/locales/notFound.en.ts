@@ -4,4 +4,5 @@ export default {
   whatHappened: 'What happened?',
   pageMissing: 'The page may have been moved or deleted, or the link may be incorrect.',
   goHome: 'Go back to home',
+  back: 'Go back',
 };
