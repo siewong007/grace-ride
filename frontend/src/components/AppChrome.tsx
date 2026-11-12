@@ -5,6 +5,7 @@ import { useTranslation } from 'react-i18next';
 import i18n, { setLanguage, SupportedLanguage } from '../i18n';
 import { loadPrefs, Prefs, savePrefs, TextSize, Theme } from '../prefs';
 import { hideSplash } from '../splash';
+import { LogoMark } from './Brand';
 
 export class ErrorBoundary extends Component<{ children: ReactNode }, { failed: boolean }> {
   state = { failed: false };
@@ -20,7 +21,7 @@ export class ErrorBoundary extends Component<{ children: ReactNode }, { failed: 
     return (
       <div className="auth-page" role="alert">
         <div className="card auth-card stack">
-          <img src="/icon.svg" width={48} height={48} alt="" />
+          <LogoMark size={48} />
           <h2>{i18n.t('chrome:errTitle')}</h2>
           <p className="muted">{i18n.t('chrome:errBody')}</p>
           <div className="btn-row">

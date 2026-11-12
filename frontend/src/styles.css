@@ -12,15 +12,16 @@
   --text: #1D1B18;
   --muted: #5E5A52;
 
-  /* Brand and semantic colors */
-  --primary: #1E6B5C;
-  --primary-hover: #17574A;
+  /* Brand and semantic colors. Primary is the logo's Ride blue; accent is the logo's
+     Grace red, a shade deeper than --brand-red so white text on it passes WCAG AA. */
+  --primary: #1F5DB4;
+  --primary-hover: #194E9C;
   --primary-ink: #FFFFFF;
-  --primary-soft: #E3F0EC;
-  --accent: #C2841F;
-  --accent-ink: #1D1B18;
-  --accent-soft: #FBF0DC;
-  --success: #2F7D4F;
+  --primary-soft: #E6EEF9;
+  --accent: #D23C25;
+  --accent-ink: #FFFFFF;
+  --accent-soft: #FDEAE6;
+  --success: #2B7549; /* AA (4.8:1) on --success-soft for pill text */
   --success-soft: #E3F2E8;
   --warning: #9A6200;
   --warning-soft: #FCF0D6;
@@ -87,19 +88,19 @@
 
 @media (prefers-color-scheme: dark) {
   :root:not([data-theme='light']) {
-    --bg: #121412;
-    --surface: #1A1D1B;
-    --surface-2: #232725;
-    --border: #323835;
+    --bg: #111317;
+    --surface: #191C21;
+    --surface-2: #22262C;
+    --border: #30353D;
     --text: #F1EFEA;
     --muted: #A8A49B;
-    --primary: #5FBFA8;
-    --primary-hover: #7CCDB9;
-    --primary-ink: #0F1F1A;
-    --primary-soft: #1D3530;
-    --accent: #E0A644;
+    --primary: #7AA7EE;
+    --primary-hover: #9ABDF3;
+    --primary-ink: #0B1730;
+    --primary-soft: #1A2A44;
+    --accent: #F26B54;
     --accent-ink: #1D1B18;
-    --accent-soft: #3A2E17;
+    --accent-soft: #3D1E19;
     --success: #6CC18D;
     --success-soft: #1C3326;
     --warning: #E5B454;
@@ -125,19 +126,19 @@
 }
 
 :root[data-theme='dark'] {
-  --bg: #121412;
-  --surface: #1A1D1B;
-  --surface-2: #232725;
-  --border: #323835;
+  --bg: #111317;
+  --surface: #191C21;
+  --surface-2: #22262C;
+  --border: #30353D;
   --text: #F1EFEA;
   --muted: #A8A49B;
-  --primary: #5FBFA8;
-  --primary-hover: #7CCDB9;
-  --primary-ink: #0F1F1A;
-  --primary-soft: #1D3530;
-  --accent: #E0A644;
+  --primary: #7AA7EE;
+  --primary-hover: #9ABDF3;
+  --primary-ink: #0B1730;
+  --primary-soft: #1A2A44;
+  --accent: #F26B54;
   --accent-ink: #1D1B18;
-  --accent-soft: #3A2E17;
+  --accent-soft: #3D1E19;
   --success: #6CC18D;
   --success-soft: #1C3326;
   --warning: #E5B454;
@@ -188,7 +189,7 @@ h3 { font-size: var(--fs-lg); }
 p { margin: 0; }
 img { max-width: 100%; }
 button, input, select, textarea { font: inherit; color: inherit; }
-:focus-visible { outline: 3px solid var(--accent); outline-offset: 2px; border-radius: 6px; }
+:focus-visible { outline: 3px solid var(--primary); outline-offset: 2px; border-radius: 6px; }
 
 /* ---------- App shell ---------- */
 .shell { min-height: 100vh; position: relative; }
@@ -221,7 +222,6 @@ button, input, select, textarea { font: inherit; color: inherit; }
 .topbar-avatar { display: inline-flex; border-radius: 50%; outline-offset: 2px; text-decoration: none; }
 .topbar-avatar:hover { opacity: 0.85; }
 
-.brand-mark { width: 30px; height: 30px; border-radius: var(--radius-sm); }
 .icon-btn {
   position: relative; display: inline-grid; place-items: center;
   width: 44px; height: 44px; border-radius: var(--radius); border: 1px solid var(--border);
@@ -460,7 +460,7 @@ button, input, select, textarea { font: inherit; color: inherit; }
 @media (max-width: 767px) { .stat .num { font-size: var(--fs-2xl); } .card.stat { padding: 14px; } }
 .stat .num { font-size: 2rem; font-weight: 700; line-height: 1.1; font-variant-numeric: tabular-nums; }
 .stat .label { color: var(--muted); font-size: var(--fs-sm); font-weight: 600; }
-.stat.warn .num { color: var(--accent); }
+.stat.warn .num { color: var(--warning); }
 .stat.bad .num { color: var(--danger); }
 
 /* ---------- Forms ---------- */
@@ -502,7 +502,7 @@ textarea.input { min-height: 96px; resize: vertical; }
   background: var(--surface-2); color: var(--text);
   border-left: 4px solid var(--primary); font-size: var(--fs-sm); line-height: 1.5;
 }
-.notice.warning { background: var(--accent-soft); border-left-color: var(--accent); }
+.notice.warning { background: var(--warning-soft); border-left-color: var(--warning); }
 .notice.info { background: var(--info-soft); border-left-color: var(--info); }
 .notice.danger { background: var(--danger-soft); border-left-color: var(--danger); }
 .notice.success, .notice.ok { background: var(--primary-soft); border-left-color: var(--primary); }
@@ -544,7 +544,7 @@ textarea.input { min-height: 96px; resize: vertical; }
 }
 .passkey-row:last-child { border-bottom: none; }
 .auth-header-row { margin-bottom: var(--space-2); }
-.lang-toggle { gap: var(--space-1); font-weight: 600; }
+.lang-toggle { gap: var(--space-1); font-weight: 600; margin-left: auto; }
 
 /* ---------- Tabs ---------- */
 .tabs { display: flex; gap: 6px; padding: var(--space-1); background: var(--surface-2); border-radius: var(--radius); overflow-x: auto; scrollbar-width: none; }
@@ -696,6 +696,8 @@ table.table { width: 100%; border-collapse: collapse; font-size: .92rem; }
     background: var(--surface);
     border: 1px solid var(--border);
   }
+  /* The brand panel carries the logo here, so the card's own logo row steps aside. */
+  .login-split .hide-desktop { display: none; }
   .login-brand-panel {
     display: flex;
     flex-direction: column;
@@ -927,6 +929,17 @@ table.table { width: 100%; border-collapse: collapse; font-size: .92rem; }
 .wordmark-grace { font-weight: 700; color: var(--logo-red); }
 .wordmark-ride { font-weight: 300; color: var(--logo-blue); }
 .wordmark.is-mono .wordmark-grace, .wordmark.is-mono .wordmark-ride { color: inherit; }
+
+/* Logo mark (the kit's small-size drawing, from the app icon). is-mono = white / one-colour version. */
+.logo-mark { display: block; flex: none; }
+.logo-mark-arc { fill: none; stroke: var(--logo-blue); stroke-width: 9; }
+.logo-mark-ground { fill: none; stroke: var(--logo-blue); stroke-width: 4.5; }
+.logo-mark-dot { fill: var(--logo-blue); }
+.logo-mark-cross { fill: var(--logo-red); }
+.logo-mark.is-mono .logo-mark-arc, .logo-mark.is-mono .logo-mark-ground { stroke: currentColor; }
+.logo-mark.is-mono .logo-mark-dot, .logo-mark.is-mono .logo-mark-cross { fill: currentColor; }
+.auth-brand { gap: var(--space-2); }
+.auth-brand .wordmark { font-size: var(--fs-xl); }
 .receipt-thumb { width: 100%; max-height: 260px; object-fit: contain; border-radius: var(--radius-sm); background: var(--surface-2); }
 .page-head .btn-row > .btn { flex: 0 0 auto; }
 
@@ -971,7 +984,7 @@ main:focus { outline: none; }
 
 .offline-banner {
   position: sticky; top: 0; z-index: 250; padding: 10px var(--space-4); text-align: center; font-weight: 600;
-  background: var(--accent-soft); color: var(--text); border-bottom: 1px solid var(--accent);
+  background: var(--warning-soft); color: var(--text); border-bottom: 1px solid var(--warning);
 }
 
 /* Larger touch targets for icon-only controls on phones. */
@@ -1037,7 +1050,7 @@ main:focus { outline: none; }
   white-space: nowrap;
 }
 .ride-card-attention {
-  color: var(--accent);
+  color: var(--warning);
   gap: var(--space-1);
   margin-top: 2px;
 }
@@ -1773,7 +1786,7 @@ main:focus { outline: none; }
 }
 
 .dirty-indicator.dirty {
-  color: var(--accent);
+  color: var(--warning);
 }
 
 .dirty-indicator.clean {
@@ -1784,7 +1797,7 @@ main:focus { outline: none; }
   width: 8px;
   height: 8px;
   border-radius: 50%;
-  background: var(--accent);
+  background: var(--warning);
   display: inline-block;
 }
 
@@ -1865,7 +1878,7 @@ main:focus { outline: none; }
 }
 
 .map-legend-dot.stale {
-  background: var(--accent);
+  background: var(--warning);
 }
 
 .map-legend-dot.passenger {

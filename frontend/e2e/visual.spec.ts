@@ -11,6 +11,11 @@ const mockMe = {
   phone: '+60123456789',
   roles: ['admin', 'driver', 'transport', 'finance'],
   mfa_ok: true,
+  // Without these the app shows the terms gate instead of the pages under test.
+  status: 'active',
+  terms_accepted: true,
+  groups: [],
+  unread: 0,
 };
 
 const mockRide = {

@@ -119,5 +119,18 @@ describe('Design Tokens & Visual Language (Phase 3)', () => {
 
     expect(css).toContain('--brand-red: #E8462F;');
     expect(css).toContain('--brand-blue: #1F5DB4;');
+    // The theme follows the logo: Ride blue primary, Grace red accent.
+    expect(css).toMatch(/:root\s*\{[^}]*--primary:\s*#1F5DB4;/);
+    expect(css).toMatch(/:root\s*\{[^}]*--accent:\s*#D23C25;/);
+  });
+
+  it('draws logos with the inline mark, not the app-icon image', () => {
+    const scan = (dir: string): string[] =>
+      fs.readdirSync(dir, { withFileTypes: true }).flatMap((e) => {
+        const full = path.join(dir, e.name);
+        if (e.isDirectory()) return scan(full);
+        return e.name.endsWith('.tsx') && fs.readFileSync(full, 'utf-8').includes('src="/icon.svg"') ? [e.name] : [];
+      });
+    expect(scan(path.resolve(__dirname))).toEqual([]);
   });
 });

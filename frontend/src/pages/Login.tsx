@@ -5,7 +5,7 @@ import { api, post } from '../api';
 import { useAuth } from '../auth';
 import { useTranslation } from 'react-i18next';
 import { setLanguage, SupportedLanguage } from '../i18n';
-import { Wordmark } from '../components/Brand';
+import { LogoMark, Wordmark } from '../components/Brand';
 import { Button, ErrorBox, Field, useAction } from '../components/ui';
 import { loginWithPasskey, passkeySupported } from '../webauthn';
 
@@ -63,7 +63,7 @@ export default function Login() {
         <div className="login-brand-panel">
           <div className="login-brand-content stack">
             <div className="row nowrap login-brand-header">
-              <img src="/icon.svg" width={44} height={44} alt="" className="brand-mark" />
+              <LogoMark size={44} mono />
               <div>
                 <h1 className="login-brand-title"><Wordmark mono /></h1>
                 <p className="login-brand-sub">{t('brandSub', { ns: 'layout' })}</p>
@@ -83,8 +83,9 @@ export default function Login() {
         {/* Right card form panel */}
         <div className="card auth-card stack">
           <div className="auth-header-row row between">
-            <div className="row nowrap hide-desktop">
-              <img src="/icon.svg" width={36} height={36} alt="" className="brand-mark" />
+            <div className="row nowrap hide-desktop auth-brand">
+              <LogoMark size={36} />
+              <Wordmark />
             </div>
             <button
               type="button"

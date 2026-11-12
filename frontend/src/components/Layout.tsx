@@ -5,7 +5,7 @@ import {
   LifeBuoy, MapPinned, Megaphone, Receipt, ScrollText, ShieldAlert, User, Users, Wallet, BarChart3,
 } from 'lucide-react';
 import { useAuth } from '../auth';
-import { Wordmark } from './Brand';
+import { LogoMark, Wordmark } from './Brand';
 import { TermsGate } from './Terms';
 import { Avatar, IconButton, Notice } from './ui';
 import { useTranslation } from 'react-i18next';
@@ -134,7 +134,7 @@ export default function Layout() {
     <div className="shell">
       <nav className="sidebar" aria-label={t('mainNav')}>
         <Link to={pending ? '/me' : '/'} className="sidebar-brand">
-          <img className="brand-mark" src="/icon.svg" alt="" />
+          <LogoMark />
           <span className="sidebar-brand-text">
             <Wordmark />
             <small>{t('brandSub')}</small>
@@ -157,7 +157,7 @@ export default function Layout() {
           <div className="topbar-left">
             {isHome ? (
               <Link to="/" className="topbar-brand">
-                <img className="brand-mark" src="/icon.svg" alt="" />
+                <LogoMark />
                 <Wordmark className="topbar-brand-name" />
               </Link>
             ) : (
