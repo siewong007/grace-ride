@@ -5,7 +5,11 @@ use tokio::sync::broadcast;
 use url::Url;
 use webauthn_rs::prelude::*;
 
-use crate::{security::RateLimiter, stream::Push};
+use crate::{
+    routing::{RoutingConfig, RoutingState},
+    security::RateLimiter,
+    stream::Push,
+};
 
 #[derive(Clone, Debug)]
 pub struct Config {
@@ -31,6 +35,8 @@ pub struct Config {
     pub google_client_id: Option<String>,
     /// Google OAuth client secret (empty ⇒ Google sign-in is disabled).
     pub google_client_secret: Option<String>,
+    /// Pickup routing and ETAs (OpenStreetMap geocoder + router).
+    pub routing: RoutingConfig,
 }
 
 impl Config {
@@ -74,6 +80,7 @@ impl Config {
                     Some(v)
                 }
             },
+            routing: RoutingConfig::from_env(),
         };
         cfg.validate()?;
         Ok(cfg)
@@ -93,6 +100,14 @@ impl Config {
         }
         if !(1..=100).contains(&self.max_live_drivers) {
             anyhow::bail!("MAX_LIVE_DRIVERS must be between 1 and 100");
+        }
+        if self.routing.enabled {
+            for (k, v) in [
+                ("OSRM_URL", &self.routing.osrm_url),
+                ("NOMINATIM_URL", &self.routing.nominatim_url),
+            ] {
+                Url::parse(v).map_err(|_| anyhow::anyhow!("{k} is not a valid URL"))?;
+            }
         }
         Ok(())
     }
@@ -126,6 +141,8 @@ pub struct AppState {
     pub cfg: Arc<Config>,
     pub limiter: Arc<RateLimiter>,
     pub http_client: reqwest::Client,
+    /// Route and geocoder caches for pickup routing.
+    pub routing: Arc<RoutingState>,
     /// Live updates for open tabs (`/api/stream`).
     pub events: broadcast::Sender<Push>,
 }

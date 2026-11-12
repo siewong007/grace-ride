@@ -22,6 +22,7 @@ import { del, post, useApi } from '../api';
 import Chat from '../components/Chat';
 import LiveMap, { MapPoint } from '../components/LiveMap';
 import { Ride } from '../components/RideCard';
+import type { RideEta } from '../components/TripRoute';
 import {
   NavButtonGroup,
   ReasonModal,
@@ -43,6 +44,7 @@ import {
   Notice,
   Page,
   PageHeader,
+  Pill,
   Spinner,
   StatusPill,
   useAction,
@@ -51,6 +53,9 @@ import {
 import {
   fmtAgo,
   fmtDateTime,
+  fmtDistance,
+  fmtDuration,
+  fmtTime,
   RIDE_STATUS,
   useFormatT,
 } from '../format';
@@ -383,6 +388,50 @@ interface RideLocation {
   lng?: number;
   updated_at?: string;
   passenger?: { lat: number; lng: number; updated_at: string };
+  /** Distance/ETA to this passenger's pickup, or to the destination once aboard. */
+  eta?: RideEta;
+}
+
+/** "Your driver is about 8 min away · 3.2 km · arriving around 10:12". */
+function EtaSummary({ ride, eta }: { ride: Ride; eta: RideEta }) {
+  const { t } = useTranslation('rideDetail');
+  const ft = useFormatT();
+  const driverView = ride.viewer.is_driver || (ride.viewer.is_staff && !ride.viewer.is_passenger);
+  if (!eta.located) {
+    if (eta.phase === 'dropoff') return null;
+    return (
+      <Notice tone="info" icon={<MapPin size={18} />}>
+        {driverView ? t('etaNoAddressDriver') : t('etaNoAddress')}
+      </Notice>
+    );
+  }
+  if (eta.duration_s == null || eta.distance_m == null) return null;
+  const duration = fmtDuration(eta.duration_s, ft);
+  const title =
+    eta.phase === 'dropoff'
+      ? t('etaArriving', { duration, place: eta.destination ?? ride.destination })
+      : driverView
+        ? t('etaToPassenger', { duration, name: ride.passenger.name })
+        : t('etaDriverAway', { duration });
+  return (
+    <div className="eta-summary" role="status">
+      <Clock size={20} aria-hidden="true" />
+      <div className="stack-sm">
+        <p className="eta-summary-title">{title}</p>
+        <p className="small">
+          {t('etaDetail', { distance: fmtDistance(eta.distance_m, ft), time: eta.eta ? fmtTime(eta.eta, ft) : '–' })}
+        </p>
+        {eta.stops_before > 0 && (
+          <p className="small">
+            {eta.phase === 'dropoff'
+              ? t('etaStopsOnWay', { n: eta.stops_before })
+              : t('etaStopsBefore', { n: eta.stops_before })}
+          </p>
+        )}
+        <p className="muted tiny">{eta.approximate ? t('etaApproximate') : t('etaNoTraffic')}</p>
+      </div>
+    </div>
+  );
 }
 
 function CollapsibleTrackCard({ ride }: { ride: Ride }) {
@@ -411,6 +460,20 @@ function CollapsibleTrackCard({ ride }: { ride: Ride }) {
       detail: `${t('lastUpdated')} ${fmtAgo(data.passenger.updated_at, ft)}`,
     });
   }
+  const eta = data?.eta;
+  // Where the driver is heading: the pickup point (unless the passenger's live spot is
+  // already on the map) or, once aboard, the destination.
+  if (eta?.located && eta.target && (eta.phase === 'dropoff' || !data?.passenger)) {
+    const dropoff = eta.phase === 'dropoff';
+    points.push({
+      id: 'target',
+      kind: dropoff ? 'dest' : 'stop',
+      lat: eta.target[0],
+      lng: eta.target[1],
+      label: dropoff ? eta.destination ?? ride.destination : ride.passenger.name,
+      detail: eta.eta ? fmtTime(eta.eta, ft) : undefined,
+    });
+  }
   const waiting = !ride.picked_up_at;
 
   return (
@@ -428,6 +491,11 @@ function CollapsibleTrackCard({ ride }: { ride: Ride }) {
           </h3>
         </div>
         <div className="row nowrap gap-sm">
+          {eta?.located && eta.duration_s != null && (
+            <Pill tone="info" icon={<Clock size={12} />}>
+              {fmtDuration(eta.duration_s, ft)}
+            </Pill>
+          )}
           {data?.updated_at && (
             <span className="muted small">
               {t('lastUpdated')} {fmtAgo(data.updated_at, ft)}
@@ -445,8 +513,9 @@ function CollapsibleTrackCard({ ride }: { ride: Ride }) {
       {!collapsed && (
         <div className="stack-sm">
           {ride.viewer.is_driver && <ShareLocation />}
+          {eta && <EtaSummary ride={ride} eta={eta} />}
           {points.length > 0 ? (
-            <LiveMap points={points} />
+            <LiveMap points={points} route={eta?.path} />
           ) : (
             !data?.sharing && <p className="muted small">{t('waitingLocation')}</p>
           )}

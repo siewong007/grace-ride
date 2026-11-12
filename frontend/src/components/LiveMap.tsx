@@ -1,33 +1,38 @@
 import { useEffect } from 'react';
-import { MapContainer, Marker, Popup, TileLayer, useMap } from 'react-leaflet';
+import { MapContainer, Marker, Polyline, Popup, TileLayer, useMap } from 'react-leaflet';
 import L from 'leaflet';
 import 'leaflet/dist/leaflet.css';
 
+type MarkerKind = 'car' | 'person' | 'stop' | 'dest';
+
+const cssVar = (name: string) =>
+  (typeof window !== 'undefined' && getComputedStyle(document.documentElement).getPropertyValue(name).trim()) ||
+  `var(${name})`;
+
 // Car marker as an inline SVG (avoids Leaflet's default image paths under Vite).
-// Passengers get a blue pin so the driver can tell them apart from the car.
-const getMarkerStyles = (kind: 'car' | 'person') => {
-  if (typeof window === 'undefined') {
-    return {
-      bg: kind === 'person' ? 'var(--info)' : 'var(--primary)',
-      ink: 'var(--primary-ink)',
-    };
-  }
-  const cs = getComputedStyle(document.documentElement);
-  const personColor = cs.getPropertyValue('--info').trim();
-  const carColor = cs.getPropertyValue('--primary').trim();
-  const inkColor = cs.getPropertyValue('--primary-ink').trim();
-  return {
-    bg: (kind === 'person' ? personColor : carColor) || (kind === 'person' ? 'var(--info)' : 'var(--primary)'),
-    ink: inkColor || 'var(--primary-ink)',
-  };
-};
+// Passengers and pickup stops get a blue pin so the driver can tell them apart from the
+// car; the destination gets an amber flag.
+const getMarkerStyles = (kind: MarkerKind) => ({
+  bg: cssVar(kind === 'car' ? '--primary' : kind === 'dest' ? '--accent' : '--info'),
+  ink: cssVar(kind === 'dest' ? '--accent-ink' : '--primary-ink'),
+});
 
 const CAR_SVG = '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M19 17h2c.6 0 1-.4 1-1v-3c0-.9-.7-1.7-1.5-1.9C18.7 10.6 16 10 16 10s-1.3-1.4-2.2-2.3c-.5-.4-1.1-.7-1.8-.7H5c-.6 0-1.1.4-1.4.9l-1.5 2.8C2.1 11 2 11.5 2 12v4c0 .6.4 1 1 1h2"/><circle cx="7" cy="17" r="2"/><path d="M9 17h6"/><circle cx="17" cy="17" r="2"/></svg>';
 const HAND_SVG = '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 11V6a2 2 0 0 0-2-2v0a2 2 0 0 0-2 2v0"/><path d="M14 10V4a2 2 0 0 0-2-2v0a2 2 0 0 0-2 2v2"/><path d="M10 10.5V6a2 2 0 0 0-2-2v0a2 2 0 0 0-2 2v8"/><path d="M18 8a2 2 0 1 1 4 0v6a8 8 0 0 1-8 8h-2c-2.8 0-4.5-.86-5.99-2.34l-3.6-3.6a2 2 0 0 1 2.83-2.82L7 15"/></svg>';
 
-const markerIcon = (label: string | undefined, kind: 'car' | 'person') => {
+const FLAG_SVG = '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 15s1-1 4-1 5 2 8 2 4-1 4-1V3s-1 1-4 1-5-2-8-2-4 1-4 1z"/><line x1="4" x2="4" y1="22" y2="15"/></svg>';
+
+const markerIcon = (label: string | undefined, kind: MarkerKind, badge?: string) => {
   const { bg, ink } = getMarkerStyles(kind);
-  const iconContent = label ? escapeHtml(label.slice(0, 1)) : kind === 'person' ? HAND_SVG : CAR_SVG;
+  const iconContent = badge
+    ? escapeHtml(badge)
+    : kind === 'dest'
+      ? FLAG_SVG
+      : label
+        ? escapeHtml(label.slice(0, 1))
+        : kind === 'person' || kind === 'stop'
+          ? HAND_SVG
+          : CAR_SVG;
   return L.divIcon({
     className: '',
     iconSize: [44, 44],
@@ -38,18 +43,39 @@ const markerIcon = (label: string | undefined, kind: 'car' | 'person') => {
 
 const escapeHtml = (s: string) => s.replace(/[&<>"']/g, (c) => `&#${c.charCodeAt(0)};`);
 
-export interface MapPoint { id: number | string; lat: number; lng: number; label: string; detail?: string; kind?: 'car' | 'person' }
+export interface MapPoint {
+  id: number | string;
+  lat: number;
+  lng: number;
+  label: string;
+  detail?: string;
+  kind?: MarkerKind;
+  /** Short text shown inside the pin instead of the label's first letter (e.g. stop number). */
+  badge?: string;
+}
 
-function Fit({ points, focusPoint }: { points: MapPoint[]; focusPoint?: { lat: number; lng: number } | null }) {
+/** Route line as [lat, lng] pairs. */
+export type RouteLine = [number, number][];
+
+function Fit({
+  points,
+  route,
+  focusPoint,
+}: {
+  points: MapPoint[];
+  route?: RouteLine;
+  focusPoint?: { lat: number; lng: number } | null;
+}) {
   const map = useMap();
+  const all: [number, number][] = [...points.map((p): [number, number] => [p.lat, p.lng]), ...(route ?? [])];
   useEffect(() => {
     if (focusPoint) {
       map.setView([focusPoint.lat, focusPoint.lng], 16, { animate: true });
       return;
     }
-    if (points.length === 1) map.setView([points[0].lat, points[0].lng], 15);
-    else if (points.length > 1) map.fitBounds(L.latLngBounds(points.map((p) => [p.lat, p.lng])), { padding: [40, 40] });
-  }, [map, focusPoint?.lat, focusPoint?.lng, points.map((p) => `${p.lat},${p.lng}`).join('|')]); // eslint-disable-line react-hooks/exhaustive-deps
+    if (all.length === 1) map.setView(all[0], 15);
+    else if (all.length > 1) map.fitBounds(L.latLngBounds(all), { padding: [40, 40] });
+  }, [map, focusPoint?.lat, focusPoint?.lng, all.map((p) => p.join(',')).join('|')]); // eslint-disable-line react-hooks/exhaustive-deps
   return null;
 }
 
@@ -58,24 +84,30 @@ export default function LiveMap({
   points,
   tall,
   focusPoint,
+  route,
 }: {
   points: MapPoint[];
   tall?: boolean;
   focusPoint?: { lat: number; lng: number } | null;
+  /** Suggested driving route, drawn under the markers. */
+  route?: RouteLine;
 }) {
   const center: [number, number] = points[0] ? [points[0].lat, points[0].lng] : [3.1073, 101.6067]; // Petaling Jaya
   return (
     <MapContainer center={center} zoom={13} className={`map ${tall ? 'tall' : ''}`} scrollWheelZoom={false}>
       <TileLayer attribution='&copy; OpenStreetMap contributors' url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png" />
+      {route && route.length > 1 && (
+        <Polyline positions={route} pathOptions={{ color: cssVar('--primary'), weight: 5, opacity: 0.75 }} />
+      )}
       {points.map((p) => (
-        <Marker key={p.id} position={[p.lat, p.lng]} icon={markerIcon(p.label, p.kind ?? 'car')}>
+        <Marker key={p.id} position={[p.lat, p.lng]} icon={markerIcon(p.label, p.kind ?? 'car', p.badge)}>
           <Popup>
             <strong>{p.label}</strong>
             {p.detail && <div>{p.detail}</div>}
           </Popup>
         </Marker>
       ))}
-      <Fit points={points} focusPoint={focusPoint} />
+      <Fit points={points} route={route} focusPoint={focusPoint} />
     </MapContainer>
   );
 }

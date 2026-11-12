@@ -5,6 +5,7 @@ import { useTranslation } from 'react-i18next';
 import { post, put, useApi } from '../api';
 import { useAuth } from '../auth';
 import { Ride } from '../components/RideCard';
+import { DriverRouteCard } from '../components/TripRoute';
 import {
   NavButtonGroup,
   ReasonModal,
@@ -156,6 +157,9 @@ function Schedule() {
       </div>
 
       {active && <ShareLocation />}
+      <DriverRouteCard
+        refreshKey={data?.map((r) => `${r.id}:${r.status}:${r.picked_up_at ?? ''}`).join(',')}
+      />
       <ErrorBox error={error ?? actErr} />
 
       {loading ? (
@@ -219,6 +223,15 @@ function Schedule() {
                           onStarted={reload}
                           block
                           label={t('startTrip')}
+                          others={data
+                            .filter(
+                              (o) =>
+                                o.id !== r.id &&
+                                o.status === 'confirmed' &&
+                                o.trip_id != null &&
+                                o.trip_id === r.trip_id,
+                            )
+                            .map((o) => o.passenger.name)}
                         />
                       </div>
                     )}

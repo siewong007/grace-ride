@@ -1,7 +1,7 @@
 //! Background maintenance (runs once a minute):
 //! - reminders: confirmed rides ~1h away, published events ~24h away
 //! - escalation: unmatched rides still driverless ~12h before pickup
-//! - housekeeping: expired sessions/challenges, stale GPS, old login failures
+//! - housekeeping: expired sessions/challenges, stale GPS, old login failures, old geocodes
 //! - retention (资料保存期限): purge chat messages and audit entries past the configured age
 
 use std::time::Duration;
@@ -183,6 +183,14 @@ async fn housekeeping(db: &PgPool, cfg: &Config) -> anyhow::Result<()> {
         .bind(ts_in(-cfg.audit_retention_days * 24 * 60))
         .execute(db)
         .await?;
+    // Geocoded addresses: re-looked-up monthly; "not found" retried after a day.
+    sqlx::query(
+        "DELETE FROM geocode_cache WHERE updated_at < $1 OR (lat IS NULL AND updated_at < $2)",
+    )
+    .bind(ts_in(-30 * 24 * 60))
+    .bind(t(-24 * 60))
+    .execute(db)
+    .await?;
     sqlx::query("DELETE FROM notifications WHERE read_at IS NOT NULL AND created_at < $1")
         .bind(ts_in(-90 * 24 * 60))
         .execute(db)

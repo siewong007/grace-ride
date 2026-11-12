@@ -28,6 +28,8 @@ export const sendDriverPosition = (pos: GeolocationPosition) =>
 /**
  * "Start trip" for drivers: explains that location is shared automatically, asks the
  * browser for permission, then starts the ride and sends the first position at once.
+ * The server starts every other confirmed passenger in the same trip too; `others`
+ * names them so the driver knows who will be notified.
  */
 export function StartTripButton({
   ride,
@@ -35,12 +37,14 @@ export function StartTripButton({
   className = 'btn primary',
   label,
   block = false,
+  others = [],
 }: {
   ride: { id: number };
   onStarted: () => void;
   className?: string;
   label: string;
   block?: boolean;
+  others?: string[];
 }) {
   const { t } = useTranslation('rideDetail');
   const { busy, error, run } = useAction();
@@ -84,6 +88,7 @@ export function StartTripButton({
       {open && (
         <Modal title={t('startPromptTitle')} onClose={() => setOpen(false)}>
           <p>{t('startPromptBody')}</p>
+          {others.length > 0 && <p className="bold">{t('startPromptOthers', { names: others.join(', ') })}</p>}
           <ul className="small stack-sm">
             <li>{t('startPromptWho')}</li>
             <li>{t('startPromptWhen')}</li>

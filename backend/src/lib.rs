@@ -10,6 +10,7 @@ pub mod error;
 pub mod i18n;
 pub mod jobs;
 pub mod routes;
+pub mod routing;
 pub mod security;
 pub mod seed;
 pub mod state;
@@ -57,6 +58,7 @@ pub async fn init(cfg: Config) -> anyhow::Result<AppState> {
         cfg: Arc::new(cfg),
         limiter: Arc::new(RateLimiter::default()),
         http_client: reqwest::Client::new(),
+        routing: Arc::new(routing::RoutingState::default()),
         events: stream::channel(),
     })
 }

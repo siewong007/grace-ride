@@ -51,6 +51,7 @@ pub fn router() -> Router<AppState> {
         )
         .route("/driver/requests", get(driver_requests))
         .route("/driver/schedule", get(driver_schedule))
+        .route("/driver/route", get(driver_route))
         .route(
             "/driver/profile",
             get(get_driver_profile).put(put_driver_profile),
@@ -823,36 +824,66 @@ async fn start_ride(
         ));
     }
     set_status(&st, id, &["confirmed"], "in_progress", u.lang).await?;
+    // The driver sets off once for the whole carpool: every other confirmed passenger in
+    // this trip starts too, so each of them can follow the car and see their ETA.
+    let started_at = now();
+    let trip = r.trip_id.unwrap_or(id);
+    let others: Vec<(i64,)> = sqlx::query_as(
+        "UPDATE rides SET status='in_progress', started_at=$1, updated_at=$1
+         WHERE driver_id=$2 AND trip_id=$3 AND id != $4 AND status='confirmed' RETURNING id",
+    )
+    .bind(&started_at)
+    .bind(u.id)
+    .bind(trip)
+    .bind(id)
+    .fetch_all(&st.db)
+    .await?;
     sqlx::query("UPDATE rides SET started_at=$1 WHERE id=$2")
-        .bind(now())
+        .bind(&started_at)
         .bind(id)
         .execute(&st.db)
         .await?;
-    notify(
-        &st.db,
-        r.passenger_id,
-        ("司机已出发", "Driver departed"),
-        (
-            &format!("{} 正在前往 {}，可在应用内查看位置。", u.name, r.area_name),
-            &format!(
-                "{} is en route to {}; you can follow the location in the app.",
-                u.name, r.area_name
+    let mut started = vec![r.clone()];
+    for (other,) in &others {
+        started.push(load_ride(&st, u.lang, *other).await?);
+    }
+    for ride in &started {
+        notify(
+            &st.db,
+            ride.passenger_id,
+            ("司机已出发", "Driver departed"),
+            (
+                &format!(
+                    "{} 正在前往 {}，可在应用内查看位置。",
+                    u.name, ride.area_name
+                ),
+                &format!(
+                    "{} is en route to {}; you can follow the location in the app.",
+                    u.name, ride.area_name
+                ),
             ),
-        ),
-        &format!("/rides/{id}"),
-    )
-    .await;
+            &format!("/rides/{}", ride.id),
+        )
+        .await;
+        audit(&st.db, Some(u.id), "ride.start", "ride", Some(ride.id), "").await;
+    }
     if let Some(t) = r.trip_id {
+        let names: Vec<&str> = started.iter().map(|x| x.p_name.as_str()).collect();
         system_message(
             &st.db,
             t,
-            &format!("系统：{} 的行程已开始。", r.p_name),
-            &format!("System: trip for {} has started.", r.p_name),
+            &format!("系统：{} 的行程已开始。", names.join("、")),
+            &format!("System: trip for {} has started.", names.join(", ")),
         )
         .await;
     }
-    audit(&st.db, Some(u.id), "ride.start", "ride", Some(id), "").await;
-    Ok(Json(json!({"ok": true})))
+    // Look up the trip's addresses now, so the first route and ETAs come back quickly.
+    let (bg, driver) = (st.clone(), u.id);
+    tokio::spawn(async move {
+        let _ = crate::routing::driver_route(&bg, driver, Some(trip)).await;
+    });
+    let ids: Vec<i64> = started.iter().map(|x| x.id).collect();
+    Ok(Json(json!({"ok": true, "started": ids})))
 }
 
 async fn pickup(
@@ -1104,6 +1135,13 @@ async fn driver_schedule(
         .collect::<Vec<_>>())))
 }
 
+/// The driver's current (or next) trip: pickups in the best order with road distance,
+/// ETAs and the route line. `{"route": null}` when there's nothing to drive.
+async fn driver_route(State(st): State<AppState>, u: CurrentUser) -> AppResult<Json<Value>> {
+    let route = crate::routing::driver_route(&st, u.id, None).await?;
+    Ok(Json(json!({ "route": route })))
+}
+
 async fn get_driver_profile(State(st): State<AppState>, u: CurrentUser) -> AppResult<Json<Value>> {
     let (carpool, spare): (i64, i64) =
         sqlx::query_as("SELECT carpool_enabled, spare_seats FROM users WHERE id=$1")
@@ -1280,6 +1318,18 @@ async fn ride_location(
                 .await?;
         if let Some((lat, lng, at)) = p {
             out["passenger"] = json!({"lat": lat, "lng": lng, "updated_at": at});
+        }
+    }
+    // Distance and ETA to this passenger (or to the destination once aboard).
+    if let (true, Some(driver)) = (out["sharing"] == true, r.driver_id) {
+        let trip = r.trip_id.unwrap_or(r.id);
+        let full_view = r.driver_id == Some(u.id) || u.is_staff();
+        if let Ok(Some(route)) = crate::routing::driver_route(&st, driver, Some(trip)).await {
+            if let Some(eta) =
+                crate::routing::ride_eta(&route, id, r.picked_up_at.is_some(), full_view)
+            {
+                out["eta"] = eta;
+            }
         }
     }
     Ok(Json(out))

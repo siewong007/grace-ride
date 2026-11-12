@@ -50,6 +50,7 @@ async fn setup() -> (Router, AppState) {
         json_logs: false,
         google_client_id: None,
         google_client_secret: None,
+        routing: Default::default(),
     };
     cfg.validate().unwrap();
     let state = init(cfg).await.unwrap();
@@ -691,6 +692,7 @@ fn production_config_rejects_dev_mode_and_plain_http() {
         json_logs: true,
         google_client_id: None,
         google_client_secret: None,
+        routing: Default::default(),
     };
     assert!(
         cfg.validate().is_err(),

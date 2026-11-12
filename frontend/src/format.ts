@@ -133,6 +133,21 @@ export function fmtAgo(s: string, tt?: FormatT) {
   return fmtDay(s, t);
 }
 
+/** Road distance: "850 m", "3.2 km", "12 km". */
+export function fmtDistance(m: number, tt?: FormatT) {
+  const t = tt ?? globalT;
+  if (m < 950) return t('format:meters', { n: Math.max(10, Math.round(m / 10) * 10) });
+  return t('format:km', { n: (m / 1000).toFixed(m < 9950 ? 1 : 0) });
+}
+
+/** Drive time: "1 min", "25 min", "1 h 5 min". */
+export function fmtDuration(s: number, tt?: FormatT) {
+  const t = tt ?? globalT;
+  const mins = Math.max(1, Math.round(s / 60));
+  if (mins < 60) return t('format:minutes', { n: mins });
+  return t('format:hoursMinutes', { h: Math.floor(mins / 60), m: mins % 60 });
+}
+
 export const rm = (cents: number) => `RM ${(cents / 100).toFixed(2)}`;
 
 /** Parse "28.50" → 2850 cents. Returns NaN for invalid input. */

@@ -55,6 +55,7 @@ pub async fn setup() -> (Router, AppState) {
         json_logs: false,
         google_client_id: None,
         google_client_secret: None,
+        routing: Default::default(),
     };
     cfg.validate().unwrap();
     let state = init(cfg).await.unwrap();
