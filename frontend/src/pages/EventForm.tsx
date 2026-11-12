@@ -4,6 +4,7 @@ import { post, put, useApi } from '../api';
 import { Button, ErrorBox, Field, Page, PageHeader, useAction } from '../components/ui';
 import { EVENT_KIND, useFormatT } from '../format';
 import { useTranslation } from 'react-i18next';
+import { AddressInput } from '../components/AddressInput';
 
 interface Group {
   id: number;
@@ -157,14 +158,13 @@ export default function EventForm() {
               />
             </Field>
             <div className="full">
-              <Field label={t('location')}>
-                <input
-                  className="input"
-                  required
-                  value={f.location}
-                  onChange={set('location')}
-                />
-              </Field>
+              <AddressInput
+                id="field-location"
+                label={t('location')}
+                required
+                value={f.location}
+                onChange={(v) => setF((cur) => ({ ...cur, location: v }))}
+              />
             </div>
             <Field label={t('cost')}>
               <input

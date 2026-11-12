@@ -24,6 +24,7 @@ import {
 } from '../components/ui';
 import { todayStr } from '../format';
 import { useTranslation } from 'react-i18next';
+import { AddressInput } from '../components/AddressInput';
 
 interface Area {
   id: number;
@@ -243,7 +244,8 @@ export default function RideNew() {
               </div>
 
               <div className="full">
-                <Field
+                <AddressInput
+                  id="field-address"
                   label={t('address')}
                   hint={
                     <span className="row nowrap">
@@ -251,42 +253,35 @@ export default function RideNew() {
                       <span>{t('addressHint')}</span>
                     </span>
                   }
-                >
-                  <input
-                    id="field-address"
-                    className="input"
-                    required
-                    value={address}
-                    onChange={(e) => {
-                      setAddress(e.target.value);
-                      if (touched.address) setErrors((c) => ({ ...c, address: validateField('address', e.target.value) }));
-                    }}
-                    onBlur={(e) => handleBlur('address', e.target.value)}
-                    placeholder={t('addressPlaceholder')}
-                    aria-invalid={touched.address && !!errors.address}
-                  />
-                </Field>
+                  required
+                  value={address}
+                  onChange={(v) => {
+                    setAddress(v);
+                    if (touched.address) setErrors((c) => ({ ...c, address: validateField('address', v) }));
+                  }}
+                  onBlur={(v) => handleBlur('address', v)}
+                  placeholder={t('addressPlaceholder')}
+                  invalid={touched.address && !!errors.address}
+                />
                 {touched.address && errors.address && (
                   <div className="field-error-msg" role="alert">{errors.address}</div>
                 )}
               </div>
 
               <div className="full">
-                <Field label={t('destination')}>
-                  <input
-                    id="field-destination"
-                    className="input"
-                    required
-                    value={destination}
-                    onChange={(e) => {
-                      setDestination(e.target.value);
-                      if (touched.destination) setErrors((c) => ({ ...c, destination: validateField('destination', e.target.value) }));
-                    }}
-                    onBlur={(e) => handleBlur('destination', e.target.value)}
-                    placeholder={t('destinationPlaceholder')}
-                    aria-invalid={touched.destination && !!errors.destination}
-                  />
-                </Field>
+                <AddressInput
+                  id="field-destination"
+                  label={t('destination')}
+                  required
+                  value={destination}
+                  onChange={(v) => {
+                    setDestination(v);
+                    if (touched.destination) setErrors((c) => ({ ...c, destination: validateField('destination', v) }));
+                  }}
+                  onBlur={(v) => handleBlur('destination', v)}
+                  placeholder={t('destinationPlaceholder')}
+                  invalid={touched.destination && !!errors.destination}
+                />
                 {touched.destination && errors.destination && (
                   <div className="field-error-msg" role="alert">{errors.destination}</div>
                 )}

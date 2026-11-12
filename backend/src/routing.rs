@@ -6,6 +6,10 @@
 //!   are cached in `geocode_cache` and requests are spaced at least 1 s apart, as its
 //!   usage policy asks. A passenger's shared GPS spot beats their geocoded address.
 //! - **OSRM** gives the road travel-time matrix (to choose the order) and the route line.
+//! - **Photon** (komoot) suggests places while someone types an address. Nominatim's usage
+//!   policy forbids search-as-you-type, so autocomplete uses Photon, which is built for it.
+//!   Suggestions are proxied (the browser never contacts Photon) and each one is written
+//!   to `geocode_cache`, so a ride booked with a picked address routes to that exact point.
 //!
 //! Both base URLs are configurable so the services can be self-hosted. When routing is
 //! turned off or a service fails, straight-line estimates are used and the route is
@@ -38,6 +42,8 @@ pub struct RoutingConfig {
     pub osrm_url: String,
     /// Nominatim base URL.
     pub nominatim_url: String,
+    /// Photon base URL, for address autocomplete.
+    pub photon_url: String,
     /// Sent with every request; Nominatim requires clients to identify themselves.
     pub user_agent: String,
     /// Nominatim `countrycodes` filter (comma-separated ISO codes); empty = worldwide.
@@ -51,6 +57,7 @@ impl Default for RoutingConfig {
             enabled: false,
             osrm_url: "https://router.project-osrm.org".into(),
             nominatim_url: "https://nominatim.openstreetmap.org".into(),
+            photon_url: "https://photon.komoot.io".into(),
             user_agent: concat!("GraceRide/", env!("CARGO_PKG_VERSION")).into(),
             country: "my".into(),
         }
@@ -74,6 +81,9 @@ impl RoutingConfig {
             nominatim_url: env("NOMINATIM_URL", &d.nominatim_url)
                 .trim_end_matches('/')
                 .to_string(),
+            photon_url: env("PHOTON_URL", &d.photon_url)
+                .trim_end_matches('/')
+                .to_string(),
             user_agent: env("GEOCODER_USER_AGENT", &d.user_agent),
             // Set but empty means "search worldwide".
             country: std::env::var("GEOCODER_COUNTRY").unwrap_or(d.country),
@@ -89,6 +99,9 @@ pub struct RoutingState {
     /// together cost one set of routing calls.
     inflight: Mutex<HashMap<(i64, i64), Arc<Mutex<()>>>>,
     geocoder_gate: Mutex<Option<Instant>>,
+    /// Recent autocomplete answers, so retyping or several members typing the same
+    /// thing don't each cost a Photon request.
+    places: Mutex<HashMap<String, (Instant, Vec<Place>)>>,
     http: reqwest::Client,
 }
 
@@ -98,6 +111,7 @@ impl Default for RoutingState {
             routes: Mutex::default(),
             inflight: Mutex::default(),
             geocoder_gate: Mutex::default(),
+            places: Mutex::default(),
             // rustls for TLS 1.3 everywhere (the public OSRM server refuses 1.2). Public
             // servers also drop idle keep-alive connections, so don't hold ours long.
             http: reqwest::Client::builder()
@@ -481,6 +495,177 @@ async fn nominatim(st: &AppState, q: &str) -> Result<Option<LatLng>, String> {
         let lng = f["lon"].as_str()?.parse().ok()?;
         Some(LatLng { lat, lng })
     }))
+}
+
+// ---------------- Address autocomplete (Photon) ----------------
+
+/// One autocomplete suggestion.
+#[derive(Clone, Debug, PartialEq, Serialize)]
+pub struct Place {
+    pub label: String,
+    pub lat: f64,
+    pub lng: f64,
+}
+
+const PLACES_TTL: Duration = Duration::from_secs(24 * 3600);
+const PLACES_CACHE_MAX: usize = 2000;
+const PLACES_LIMIT: usize = 6;
+/// Results lean towards Petaling Jaya, where the church is.
+const BIAS: LatLng = LatLng {
+    lat: 3.1073,
+    lng: 101.6067,
+};
+
+/// A readable one-line address from a Photon feature's properties, e.g.
+/// "Wisma Damai, 12 Jalan SS 2/24, SS 2, 47300 Petaling Jaya, Selangor".
+pub fn place_label(p: &Value) -> Option<String> {
+    let s = |k: &str| {
+        p[k].as_str()
+            .map(str::trim)
+            .filter(|v| !v.is_empty())
+            .map(String::from)
+    };
+    let street = match (s("housenumber"), s("street")) {
+        (Some(n), Some(st)) => Some(format!("{n} {st}")),
+        (None, st) => st,
+        (Some(_), None) => None,
+    };
+    let town = s("city").or_else(|| s("county"));
+    let town = match (s("postcode"), town) {
+        (Some(pc), Some(t)) => Some(format!("{pc} {t}")),
+        (pc, t) => t.or(pc),
+    };
+    let mut parts: Vec<String> = Vec::new();
+    for part in [
+        s("name"),
+        street,
+        s("locality").or_else(|| s("district")),
+        town,
+        s("state"),
+    ]
+    .into_iter()
+    .flatten()
+    {
+        // Skip repeats such as a place named after its street or town.
+        if !parts
+            .iter()
+            .any(|q| q.eq_ignore_ascii_case(&part) || q.ends_with(&format!(" {part}")))
+        {
+            parts.push(part);
+        }
+    }
+    (parts.len() >= 2).then(|| parts.join(", "))
+}
+
+/// Suggestions from a Photon response, limited to `country` (ISO code; empty = any).
+pub fn parse_photon(v: &Value, country: &str) -> Vec<Place> {
+    let want: Vec<String> = country
+        .split(',')
+        .map(|c| c.trim().to_ascii_uppercase())
+        .filter(|c| !c.is_empty())
+        .collect();
+    let mut out: Vec<Place> = Vec::new();
+    for f in v["features"].as_array().into_iter().flatten() {
+        let p = &f["properties"];
+        let cc = p["countrycode"].as_str().unwrap_or("").to_ascii_uppercase();
+        if !want.is_empty() && !want.contains(&cc) {
+            continue;
+        }
+        let (Some(lng), Some(lat)) = (
+            f["geometry"]["coordinates"][0].as_f64(),
+            f["geometry"]["coordinates"][1].as_f64(),
+        ) else {
+            continue;
+        };
+        let Some(label) = place_label(p) else {
+            continue;
+        };
+        if out.iter().any(|o| o.label == label) {
+            continue;
+        }
+        out.push(Place {
+            label,
+            lat: round5(lat),
+            lng: round5(lng),
+        });
+        if out.len() == PLACES_LIMIT {
+            break;
+        }
+    }
+    out
+}
+
+/// Places matching what someone has typed so far. Empty when routing is off, the query is
+/// too short, or Photon is unavailable: the field then works as plain text.
+pub async fn search_places(st: &AppState, q: &str, lang: &str) -> Vec<Place> {
+    let cfg = &st.cfg.routing;
+    let q = q.split_whitespace().collect::<Vec<_>>().join(" ");
+    if !cfg.enabled || q.chars().count() < 3 || q.chars().count() > 120 {
+        return Vec::new();
+    }
+    let key = format!("{lang}|{}", q.to_lowercase());
+    {
+        let cache = st.routing.places.lock().await;
+        if let Some((at, hits)) = cache.get(&key) {
+            if at.elapsed() < PLACES_TTL {
+                return hits.clone();
+            }
+        }
+    }
+    let req = st
+        .routing
+        .http
+        .get(format!("{}/api/", cfg.photon_url))
+        .query(&[
+            ("q", q.as_str()),
+            ("limit", "15"),
+            ("lat", &BIAS.lat.to_string()),
+            ("lon", &BIAS.lng.to_string()),
+            // Photon labels in en/de/fr/it; Chinese falls back to local names.
+            ("lang", if lang == "en" { "en" } else { "default" }),
+        ])
+        .header(reqwest::header::USER_AGENT, &cfg.user_agent);
+    let hits = match send(req).await {
+        Ok(res) if res.status().is_success() => match res.json::<Value>().await {
+            Ok(v) => parse_photon(&v, &cfg.country),
+            Err(e) => {
+                tracing::warn!("place search unreadable: {}", http_err(e));
+                return Vec::new();
+            }
+        },
+        Ok(res) => {
+            tracing::warn!("place search unavailable: HTTP {}", res.status());
+            return Vec::new();
+        }
+        Err(e) => {
+            // Never log the query: it's often a member's home.
+            tracing::warn!("place search unavailable: {e}");
+            return Vec::new();
+        }
+    };
+    // Picking a suggestion books the ride with this exact label, so let routing find it.
+    for h in &hits {
+        let _ = sqlx::query(
+            "INSERT INTO geocode_cache (query, lat, lng, approx, updated_at) VALUES ($1,$2,$3,$4,$5)
+             ON CONFLICT(query) DO NOTHING",
+        )
+        .bind(cache_key(&h.label))
+        .bind(h.lat)
+        .bind(h.lng)
+        .bind(false)
+        .bind(now())
+        .execute(&st.db)
+        .await;
+    }
+    let mut cache = st.routing.places.lock().await;
+    if cache.len() >= PLACES_CACHE_MAX {
+        cache.retain(|_, (at, _)| at.elapsed() < PLACES_TTL);
+        if cache.len() >= PLACES_CACHE_MAX {
+            cache.clear();
+        }
+    }
+    cache.insert(key, (Instant::now(), hits.clone()));
+    hits
 }
 
 // ---------------- Road routing (OSRM) ----------------
@@ -1083,6 +1268,61 @@ pub fn ride_eta(
 
 #[cfg(test)]
 mod tests {
+
+    #[test]
+    fn place_label_builds_a_malaysian_address() {
+        let p = json!({
+            "name": "Wisma Damai", "housenumber": "12", "street": "Jalan SS 2/24",
+            "district": "SS 2", "postcode": "47300", "city": "Petaling Jaya", "state": "Selangor"
+        });
+        assert_eq!(
+            super::place_label(&p).as_deref(),
+            Some("Wisma Damai, 12 Jalan SS 2/24, SS 2, 47300 Petaling Jaya, Selangor")
+        );
+        // A town on its own is too vague to be a pickup point.
+        assert_eq!(
+            super::place_label(&json!({ "name": "Petaling Jaya" })),
+            None
+        );
+        // No repeats when a place is named after its street.
+        let p =
+            json!({ "name": "Jalan Gasing", "street": "Jalan Gasing", "city": "Petaling Jaya" });
+        assert_eq!(
+            super::place_label(&p).as_deref(),
+            Some("Jalan Gasing, Petaling Jaya")
+        );
+    }
+
+    #[test]
+    fn parse_photon_keeps_country_dedupes_and_limits() {
+        let f = |name: &str, cc: &str, lng: f64| {
+            json!({
+                "geometry": { "coordinates": [lng, 3.1] },
+                "properties": { "name": name, "city": "Petaling Jaya", "countrycode": cc }
+            })
+        };
+        let mut feats = vec![
+            f("A", "MY", 101.6),
+            f("A", "MY", 101.7),
+            f("B", "SG", 103.8),
+        ];
+        for i in 0..10 {
+            feats.push(f(&format!("P{i}"), "MY", 101.6));
+        }
+        let v = json!({ "features": feats });
+        let got = super::parse_photon(&v, "my");
+        assert_eq!(got.len(), super::PLACES_LIMIT);
+        assert_eq!(got[0].label, "A, Petaling Jaya");
+        assert!(got.iter().all(|p| !p.label.starts_with("B,")));
+        assert_eq!(
+            super::parse_photon(&v, "")
+                .iter()
+                .filter(|p| p.label.starts_with("B,"))
+                .count(),
+            1
+        );
+    }
+
     use super::*;
 
     fn line_matrix(xs: &[f64]) -> Vec<Vec<f64>> {

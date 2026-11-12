@@ -390,3 +390,23 @@ async fn start_trip_starts_every_passenger_in_the_carpool() {
     .await;
     assert_eq!(again.status, StatusCode::CONFLICT);
 }
+
+#[tokio::test]
+async fn place_search_is_members_only_and_quiet_when_routing_is_off() {
+    let (app, st) = setup().await;
+    let anon = call(&app, Method::GET, "/api/places?q=jalan%20ss2", None, None).await;
+    assert_eq!(anon.status, StatusCode::UNAUTHORIZED);
+
+    // Tests run with routing network calls off: the field falls back to plain text.
+    let member = login(&st, "member@example.org").await;
+    let r = call(
+        &app,
+        Method::GET,
+        "/api/places?q=jalan%20ss2",
+        Some(&member),
+        None,
+    )
+    .await;
+    assert_eq!(r.status, StatusCode::OK, "{}", r.json);
+    assert_eq!(r.json, json!([]));
+}

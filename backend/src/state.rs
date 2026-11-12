@@ -105,6 +105,7 @@ impl Config {
             for (k, v) in [
                 ("OSRM_URL", &self.routing.osrm_url),
                 ("NOMINATIM_URL", &self.routing.nominatim_url),
+                ("PHOTON_URL", &self.routing.photon_url),
             ] {
                 Url::parse(v).map_err(|_| anyhow::anyhow!("{k} is not a valid URL"))?;
             }

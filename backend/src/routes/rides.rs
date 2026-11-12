@@ -22,6 +22,7 @@ use crate::util::{
 pub fn router() -> Router<AppState> {
     Router::new()
         .route("/areas", get(list_areas))
+        .route("/places", get(search_places))
         .route("/rides", get(my_rides).post(create_ride))
         .route("/rides/{id}", get(get_ride))
         .route("/rides/{id}/cancel", post(cancel_ride))
@@ -193,6 +194,22 @@ async fn set_status(st: &AppState, id: i64, from: &[&str], to: &str, lang: Lang)
 }
 
 // ---------------- Areas ----------------
+
+#[derive(Deserialize)]
+struct PlacesQuery {
+    q: String,
+}
+
+/// Address autocomplete for the pickup, destination and event location fields.
+/// Signed-in members only, so the proxy can't be used by anyone on the internet.
+async fn search_places(
+    State(st): State<AppState>,
+    u: CurrentUser,
+    Query(q): Query<PlacesQuery>,
+) -> AppResult<Json<Value>> {
+    let hits = crate::routing::search_places(&st, &q.q, u.lang.code()).await;
+    Ok(Json(json!(hits)))
+}
 
 async fn list_areas(State(st): State<AppState>, _u: CurrentUser) -> AppResult<Json<Value>> {
     let rows: Vec<(i64, String, i64)> =
