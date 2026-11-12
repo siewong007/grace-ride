@@ -1,5 +1,8 @@
-import { test, expect } from '@playwright/test';
+import { test, expect, Page } from '@playwright/test';
 import AxeBuilder from '@axe-core/playwright';
+
+/** The boot splash (index.html) covers the app until its intro finishes; wait for it to go. */
+const splashGone = (page: Page) => page.locator('#splash').waitFor({ state: 'detached' });
 
 const mockMe = {
   id: 1,
@@ -145,6 +148,7 @@ test.describe('Visual regression and accessibility', () => {
       await page.setViewportSize({ width: 375, height: 812 });
       await page.goto(p.path);
       await page.waitForLoadState('networkidle');
+      await splashGone(page);
 
       // Accessibility audit
       const a11yResults = await new AxeBuilder({ page }).analyze();
@@ -169,6 +173,7 @@ test.describe('Visual regression and accessibility', () => {
       await page.setViewportSize({ width: 1280, height: 800 });
       await page.goto(p.path);
       await page.waitForLoadState('networkidle');
+      await splashGone(page);
 
       // Accessibility audit
       const a11yResults = await new AxeBuilder({ page }).analyze();
@@ -199,6 +204,7 @@ test.describe('Visual regression and accessibility', () => {
     await page.setViewportSize({ width: 375, height: 812 });
     await page.goto('/login');
     await page.waitForLoadState('networkidle');
+    await splashGone(page);
 
     // Accessibility audit
     const a11yResults = await new AxeBuilder({ page }).analyze();

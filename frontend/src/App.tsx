@@ -1,8 +1,9 @@
-import { ComponentType, lazy, ReactNode, Suspense } from 'react';
+import { ComponentType, lazy, ReactNode, Suspense, useEffect } from 'react';
 import { Navigate, Route, Routes, useLocation } from 'react-router-dom';
 import { useAuth } from './auth';
 import Layout from './components/Layout';
 import { Spinner } from './components/ui';
+import { hideSplash } from './splash';
 import Login from './pages/Login';
 import Home from './pages/Home';
 import TermsPage from './components/Terms';
@@ -53,6 +54,12 @@ function RequireAuth({ children }: { children: JSX.Element }) {
 }
 
 export default function App() {
+  const { loading } = useAuth();
+  // The boot splash keeps playing until we know whether to show the app or the login screen.
+  useEffect(() => {
+    if (!loading) hideSplash();
+  }, [loading]);
+
   return (
     <Routes>
       <Route path="/login" element={<Login />} />

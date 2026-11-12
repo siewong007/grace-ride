@@ -20,6 +20,7 @@ import {
 } from 'lucide-react';
 import { uploadFile } from '../api';
 import { Tone } from '../format';
+import { LoadingMark } from './Brand';
 import { useTranslation } from 'react-i18next';
 
 // ==========================================
@@ -822,9 +823,14 @@ export function KeyValue({ items, className = '' }: KeyValueProps) {
 // Existing Utilities & Field Components
 // ==========================================
 
+/** Loading indicator: the animated Grace Ride mark from the logo kit. */
 export const Spinner = () => {
   const { t } = useTranslation();
-  return <div className="spinner" role="status" aria-label={t('loading')} />;
+  return (
+    <div className="spinner" role="status" aria-label={t('loading')}>
+      <LoadingMark />
+    </div>
+  );
 };
 
 export const ErrorBox = ({ error }: { error?: string | null }) =>

@@ -5,6 +5,7 @@ import { api, post } from '../api';
 import { useAuth } from '../auth';
 import { useTranslation } from 'react-i18next';
 import { setLanguage, SupportedLanguage } from '../i18n';
+import { Wordmark } from '../components/Brand';
 import { Button, ErrorBox, Field, useAction } from '../components/ui';
 import { loginWithPasskey, passkeySupported } from '../webauthn';
 
@@ -64,7 +65,7 @@ export default function Login() {
             <div className="row nowrap login-brand-header">
               <img src="/icon.svg" width={44} height={44} alt="" className="brand-mark" />
               <div>
-                <h1 className="login-brand-title">{t('brand', { ns: 'layout' })}</h1>
+                <h1 className="login-brand-title"><Wordmark mono /></h1>
                 <p className="login-brand-sub">{t('brandSub', { ns: 'layout' })}</p>
               </div>
             </div>

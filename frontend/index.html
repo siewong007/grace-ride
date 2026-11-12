@@ -3,14 +3,84 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
-    <meta name="theme-color" content="#1E6B5C" />
+    <meta name="theme-color" content="#1F5DB4" />
     <meta name="description" content="恩典同行 — PJ State CMC 会员接送与活动应用" />
     <link rel="icon" href="/icon.svg" type="image/svg+xml" />
     <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
     <link rel="manifest" href="/manifest.webmanifest" />
     <title>恩典同行 Grace Ride</title>
+    <style>
+      /* Boot splash, from the logo kit's animation/grace-ride-loading-screen.html.
+         Pure HTML + CSS so it paints before any JavaScript; src/splash.ts fades it out.
+         Jost comes from the app stylesheet (@fontsource/jost) once it loads. The real space in the
+         wordmark keeps it readable as "Grace Ride"; word-spacing narrows Jost's 0.3em space to the kit's 0.125em gap. */
+      #splash{position:fixed;inset:0;z-index:2000;overflow:auto;background:#FFFFFF;color:#474A4F;font-family:Jost,'Century Gothic',Futura,'Segoe UI',sans-serif;transition:opacity .3s ease}
+      #splash.is-done{opacity:0;pointer-events:none}
+      #splash .screen{min-height:100%;box-sizing:border-box;padding:calc(56px + env(safe-area-inset-top,0px)) 32px calc(48px + env(safe-area-inset-bottom,0px));display:flex;flex-direction:column;align-items:center;justify-content:space-between}
+      #splash .middle{display:flex;flex-direction:column;align-items:center;gap:16px}
+      #splash svg{display:block;overflow:visible}
+      #splash .word{font-size:48px;line-height:1;padding:4px 2px;letter-spacing:-0.5px;word-spacing:-0.175em;white-space:nowrap}
+      #splash .word .g{color:#E8462F;font-weight:700}
+      #splash .word .r{color:#1F5DB4;font-weight:300}
+      #splash .tag{font-size:12px;font-weight:500;letter-spacing:3px;color:#5F636A}
+      #splash .church{display:flex;flex-direction:column;align-items:center;gap:6px}
+      #splash .zh{font-family:'Noto Sans SC','PingFang SC','Microsoft YaHei',sans-serif;font-size:15px;letter-spacing:3px}
+      #splash .zh .b{color:#1F5DB4;font-weight:500}
+      #splash .zh .k{color:#474A4F;font-weight:700}
+      #splash .pj{font-size:11px;font-weight:500;letter-spacing:3px;color:#5F636A}
+      #splash .sr{position:absolute;width:1px;height:1px;overflow:hidden;clip-path:inset(50%);white-space:nowrap}
+
+      #splash .drop{animation:gr-drop 1s .15s cubic-bezier(.25,.1,.15,1) both}
+      #splash .ground{transform-box:view-box;transform-origin:120px 213px;animation:gr-ground .5s 1.1s cubic-bezier(.2,.8,.2,1) both}
+      #splash .ping{transform-box:view-box;transform-origin:120px 213px;animation:gr-ping 2.4s 1.12s infinite both}
+      #splash .ping2{animation-delay:1.42s}
+      #splash .arc-l{stroke-dasharray:94 94;animation:gr-arc .37s 1.2s linear both}
+      #splash .arc-r{stroke-dasharray:94 94;animation:gr-arc .37s 1.68s linear both}
+      #splash .dot-l{transform-box:view-box;transform-origin:41.76px 150.04px;animation:gr-pop .2s 1.2s ease-out both}
+      #splash .dot-r{transform-box:view-box;transform-origin:198.24px 150.04px;animation:gr-pop .2s 2s ease-out both}
+      #splash .word{animation:gr-wipe .8s 1.95s cubic-bezier(.6,0,.2,1) both}
+      #splash .tag{animation:gr-fade .7s 2.45s ease-out both}
+      #splash .church{animation:gr-fade .7s 2.65s ease-out both}
+      @keyframes gr-drop{0%{transform:translateY(-250px);opacity:0}25%{opacity:1}100%{transform:none;opacity:1}}
+      @keyframes gr-ground{from{transform:scaleX(0);opacity:0}to{transform:none;opacity:1}}
+      @keyframes gr-ping{0%{transform:scale(.5);opacity:0}6%{opacity:.7}55%,100%{transform:scale(2.8);opacity:0}}
+      @keyframes gr-arc{from{stroke-dashoffset:94}to{stroke-dashoffset:0}}
+      @keyframes gr-pop{from{transform:scale(0)}to{transform:none}}
+      @keyframes gr-wipe{from{clip-path:inset(0 100% 0 0);transform:translateX(-8px)}to{clip-path:inset(0 0 0 0);transform:none}}
+      @keyframes gr-fade{from{opacity:0;transform:translateY(6px)}to{opacity:1;transform:none}}
+      @media (prefers-reduced-motion: reduce){
+        #splash,#splash .drop,#splash .ground,#splash .ping,#splash .arc-l,#splash .arc-r,#splash .dot-l,#splash .dot-r,#splash .word,#splash .tag,#splash .church{animation:none;transition:none}
+        #splash .arc-l,#splash .arc-r{stroke-dasharray:none}
+        #splash .ping{opacity:0}
+      }
+    </style>
+    <noscript><style>#splash{display:none}</style></noscript>
   </head>
   <body>
+    <div id="splash" role="status">
+      <div class="screen">
+        <div style="height:20px"></div>
+        <div class="middle">
+          <svg viewBox="0 4 240 240" width="212" height="212" aria-hidden="true" focusable="false">
+            <path class="arc-l" d="M41.76 150.04 A81 81 0 0 1 107 91.05" fill="none" stroke="#1F5DB4" stroke-width="5"/>
+            <path class="arc-r" d="M133 91.05 A81 81 0 0 1 198.24 150.04" fill="none" stroke="#1F5DB4" stroke-width="5"/>
+            <circle class="dot-l" cx="41.76" cy="150.04" r="2.5" fill="#1F5DB4"/>
+            <circle class="dot-r" cx="198.24" cy="150.04" r="2.5" fill="#1F5DB4"/>
+            <ellipse class="ping" cx="120" cy="213" rx="20" ry="5.5" fill="none" stroke="#1F5DB4" stroke-width="2" vector-effect="non-scaling-stroke"/>
+            <ellipse class="ping ping2" cx="120" cy="213" rx="20" ry="5.5" fill="none" stroke="#1F5DB4" stroke-width="2" vector-effect="non-scaling-stroke"/>
+            <ellipse class="ground" cx="120" cy="213" rx="20" ry="5.5" fill="none" stroke="#1F5DB4" stroke-width="2.5"/>
+            <path class="drop" d="M113 30H127V52H159V66H127V158L120 212L113 158V66H81V52H113Z" fill="#E8462F"/>
+          </svg>
+          <div class="word"><span class="g">Grace</span> <span class="r">Ride</span></div>
+          <div class="tag">FREE RIDES · CHURCH EVENTS</div>
+          <span class="sr">加载中 Loading…</span>
+        </div>
+        <div class="church">
+          <div class="zh"><span class="b">卫理公会八达灵</span><span class="k">新市堂</span></div>
+          <div class="pj">PJ STATE</div>
+        </div>
+      </div>
+    </div>
     <div id="root"></div>
     <script type="module" src="/src/main.tsx"></script>
   </body>

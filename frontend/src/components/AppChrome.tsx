@@ -4,6 +4,7 @@ import { Globe, Laptop, Moon, Radio, Sun } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import i18n, { setLanguage, SupportedLanguage } from '../i18n';
 import { loadPrefs, Prefs, savePrefs, TextSize, Theme } from '../prefs';
+import { hideSplash } from '../splash';
 
 export class ErrorBoundary extends Component<{ children: ReactNode }, { failed: boolean }> {
   state = { failed: false };
@@ -12,6 +13,7 @@ export class ErrorBoundary extends Component<{ children: ReactNode }, { failed: 
   }
   componentDidCatch(error: Error, info: ErrorInfo) {
     console.error('UI error', error, info.componentStack);
+    hideSplash();
   }
   render() {
     if (!this.state.failed) return this.props.children;

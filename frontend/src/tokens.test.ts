@@ -101,15 +101,23 @@ describe('Design Tokens & Visual Language (Phase 3)', () => {
     expect(hits).toEqual([]);
   });
 
-  it('updates brand assets with primary brand color #1E6B5C', () => {
+  it('uses the logo kit app icon, brand colours and a white launch background', () => {
     const iconSvg = fs.readFileSync(path.resolve(__dirname, '../public/icon.svg'), 'utf-8');
-    expect(iconSvg).toContain('#1E6B5C');
+    const kitIcon = fs.readFileSync(
+      path.resolve(__dirname, '../../docs/brand/grace-ride-logo-kit/svg/grace-ride-app-icon.svg'),
+      'utf-8',
+    );
+    expect(iconSvg).toBe(kitIcon);
 
     const indexHtml = fs.readFileSync(path.resolve(__dirname, '../index.html'), 'utf-8');
-    expect(indexHtml).toContain('<meta name="theme-color" content="#1E6B5C" />');
+    expect(indexHtml).toContain('<meta name="theme-color" content="#1F5DB4" />');
+    expect(indexHtml).toContain('<div id="splash"');
 
     const manifest = fs.readFileSync(path.resolve(__dirname, '../public/manifest.webmanifest'), 'utf-8');
-    expect(manifest).toContain('"theme_color": "#1E6B5C"');
-    expect(manifest).toContain('"background_color": "#F6F4EF"');
+    expect(manifest).toContain('"theme_color": "#1F5DB4"');
+    expect(manifest).toContain('"background_color": "#FFFFFF"'); // matches the white loading screen
+
+    expect(css).toContain('--brand-red: #E8462F;');
+    expect(css).toContain('--brand-blue: #1F5DB4;');
   });
 });

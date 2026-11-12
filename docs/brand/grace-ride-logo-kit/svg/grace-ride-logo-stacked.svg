@@ -1,0 +1,15 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 420 380" width="420" height="380">
+  <title>Grace Ride – stacked logo</title>
+  <!-- Wordmark uses Jost (free, Google Fonts). Install it, or open this file in a browser while online, for exact lettering. -->
+  <style>@import url('https://fonts.googleapis.com/css2?family=Jost:wght@300;500;700&amp;family=Noto+Sans+SC:wght@500;700&amp;display=swap');</style>
+  <g transform="translate(90 -16)">
+    <path d="M41.76 150.04 A81 81 0 0 1 107 91.05 M133 91.05 A81 81 0 0 1 198.24 150.04" fill="none" stroke="#1F5DB4" stroke-width="5"/>
+    <circle cx="41.76" cy="150.04" r="2.5" fill="#1F5DB4"/>
+    <circle cx="198.24" cy="150.04" r="2.5" fill="#1F5DB4"/>
+    <ellipse cx="120" cy="213" rx="20" ry="5.5" fill="none" stroke="#1F5DB4" stroke-width="2.5"/>
+    <path d="M113 30H127V52H159V66H127V158L120 212L113 158V66H81V52H113Z" fill="#E8462F"/>
+  </g>
+  <text x="210" y="290" text-anchor="middle" font-family="Jost, 'Century Gothic', Futura, 'Segoe UI', sans-serif" font-size="64" letter-spacing="-0.5"><tspan font-weight="700" fill="#E8462F">Grace</tspan><tspan dx="8" font-weight="300" fill="#1F5DB4">Ride</tspan></text>
+  <text x="211.5" y="330" text-anchor="middle" font-family="'Noto Sans SC', 'PingFang SC', 'Microsoft YaHei', sans-serif" font-size="18" letter-spacing="3"><tspan font-weight="500" fill="#1F5DB4">卫理公会八达灵</tspan><tspan font-weight="700" fill="#474A4F">新市堂</tspan></text>
+  <text x="211.5" y="356" text-anchor="middle" font-family="Jost, 'Century Gothic', Futura, 'Segoe UI', sans-serif" font-size="13" font-weight="500" letter-spacing="3" fill="#5F636A">PJ STATE</text>
+</svg>

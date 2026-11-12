@@ -1,6 +1,6 @@
 export default {
   brand: '恩典同行',
-  brandSub: 'PJ State CMC',
+  brandSub: '恩典同行 · PJ State CMC',
   sectionMember: '会员',
   sectionService: '服事',
   sectionAdmin: '管理',

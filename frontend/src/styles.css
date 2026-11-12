@@ -29,6 +29,13 @@
   --info: #2C5D9C;
   --info-soft: #E4ECF8;
 
+  /* Logo kit colours (docs/brand/grace-ride-logo-kit). --logo-* switch to the kit's
+     white version on dark backgrounds. */
+  --brand-red: #E8462F;
+  --brand-blue: #1F5DB4;
+  --logo-red: var(--brand-red);
+  --logo-blue: var(--brand-blue);
+
   /* Backwards compatibility aliases */
   --blue: var(--info);
   --blue-soft: var(--info-soft);
@@ -74,6 +81,7 @@
 
   --nav-h: 68px;
   --font: -apple-system, BlinkMacSystemFont, 'PingFang SC', 'Hiragino Sans GB', 'Noto Sans SC', 'Microsoft YaHei', 'Segoe UI', Roboto, sans-serif;
+  --font-brand: Jost, 'Century Gothic', Futura, 'Segoe UI', sans-serif;
   color-scheme: light;
 }
 
@@ -100,6 +108,8 @@
     --danger-soft: #3D1F1C;
     --info: #86AEE6;
     --info-soft: #1C2A3D;
+    --logo-red: #FFFFFF;
+    --logo-blue: #FFFFFF;
 
     --blue: var(--info);
     --blue-soft: var(--info-soft);
@@ -136,6 +146,8 @@
   --danger-soft: #3D1F1C;
   --info: #86AEE6;
   --info-soft: #1C2A3D;
+  --logo-red: #FFFFFF;
+  --logo-blue: #FFFFFF;
 
   --blue: var(--info);
   --blue-soft: var(--info-soft);
@@ -884,8 +896,37 @@ table.table { width: 100%; border-collapse: collapse; font-size: .92rem; }
   gap: var(--space-3);
 }
 .event-emoji { font-size: 1.75rem; width: 52px; height: 52px; display: grid; place-items: center; background: var(--surface-2); border-radius: var(--radius); flex: none; }
-.spinner { width: 28px; height: 28px; border: 3px solid var(--border); border-top-color: var(--primary); border-radius: 50%; animation: spin 0.8s linear infinite; margin: var(--space-10) auto; }
+.spinner { display: grid; place-items: center; margin: var(--space-10) auto; }
 @keyframes spin { to { transform: rotate(360deg); } }
+
+/* Animated loading mark, from the logo kit's animation/grace-ride-loading-mark.svg. */
+.loading-mark { display: block; overflow: visible; }
+.lm-arc { fill: none; stroke: var(--logo-blue); stroke-width: 5; stroke-dasharray: 94 94; animation: gr-arc .37s 1.2s linear both; }
+.lm-arc-r { animation-delay: 1.68s; }
+.lm-dot { fill: var(--logo-blue); transform-box: view-box; animation: gr-pop .2s 1.2s ease-out both; }
+.lm-dot-l { transform-origin: 41.76px 150.04px; }
+.lm-dot-r { transform-origin: 198.24px 150.04px; animation-delay: 2s; }
+.lm-ping { fill: none; stroke: var(--logo-blue); stroke-width: 2; transform-box: view-box; transform-origin: 120px 213px; animation: gr-ping 2.4s 1.12s infinite both; }
+.lm-ping-2 { animation-delay: 1.42s; }
+.lm-ground { fill: none; stroke: var(--logo-blue); stroke-width: 2.5; transform-box: view-box; transform-origin: 120px 213px; animation: gr-ground .5s 1.1s cubic-bezier(.2, .8, .2, 1) both; }
+.lm-drop { fill: var(--logo-red); animation: gr-drop-mark 1s .15s cubic-bezier(.25, .1, .15, 1) both; }
+@keyframes gr-drop-mark { 0% { transform: translateY(-70px); opacity: 0; } 35% { opacity: 1; } 100% { transform: none; opacity: 1; } }
+@keyframes gr-ground { from { transform: scaleX(0); opacity: 0; } to { transform: none; opacity: 1; } }
+@keyframes gr-ping { 0% { transform: scale(.5); opacity: 0; } 6% { opacity: .7; } 55%, 100% { transform: scale(2.8); opacity: 0; } }
+@keyframes gr-arc { from { stroke-dashoffset: 94; } to { stroke-dashoffset: 0; } }
+@keyframes gr-pop { from { transform: scale(0); } to { transform: none; } }
+@media (prefers-reduced-motion: reduce) {
+  .lm-arc, .lm-dot, .lm-ping, .lm-ground, .lm-drop { animation: none; }
+  .lm-arc { stroke-dasharray: none; }
+  .lm-ping { opacity: 0; }
+}
+
+/* "Grace Ride" wordmark: Jost Bold + Light. Jost's space is 0.3em; word-spacing narrows it
+   to the kit's 0.125em gap while keeping a real space for screen readers and copy/paste. */
+.wordmark { font-family: var(--font-brand); font-weight: 300; line-height: 1; letter-spacing: -0.01em; word-spacing: -0.175em; white-space: nowrap; }
+.wordmark-grace { font-weight: 700; color: var(--logo-red); }
+.wordmark-ride { font-weight: 300; color: var(--logo-blue); }
+.wordmark.is-mono .wordmark-grace, .wordmark.is-mono .wordmark-ride { color: inherit; }
 .receipt-thumb { width: 100%; max-height: 260px; object-fit: contain; border-radius: var(--radius-sm); background: var(--surface-2); }
 .page-head .btn-row > .btn { flex: 0 0 auto; }
 

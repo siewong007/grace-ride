@@ -5,6 +5,7 @@ import {
   LifeBuoy, MapPinned, Megaphone, Receipt, ScrollText, ShieldAlert, User, Users, Wallet, BarChart3,
 } from 'lucide-react';
 import { useAuth } from '../auth';
+import { Wordmark } from './Brand';
 import { TermsGate } from './Terms';
 import { Avatar, IconButton, Notice } from './ui';
 import { useTranslation } from 'react-i18next';
@@ -135,7 +136,7 @@ export default function Layout() {
         <Link to={pending ? '/me' : '/'} className="sidebar-brand">
           <img className="brand-mark" src="/icon.svg" alt="" />
           <span className="sidebar-brand-text">
-            {t('brand')}
+            <Wordmark />
             <small>{t('brandSub')}</small>
           </span>
         </Link>
@@ -157,7 +158,7 @@ export default function Layout() {
             {isHome ? (
               <Link to="/" className="topbar-brand">
                 <img className="brand-mark" src="/icon.svg" alt="" />
-                <span className="topbar-brand-name">{t('brand')}</span>
+                <Wordmark className="topbar-brand-name" />
               </Link>
             ) : (
               <h1 className="topbar-title">{pageTitle}</h1>

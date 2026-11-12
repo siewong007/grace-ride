@@ -3,8 +3,8 @@
   "short_name": "恩典同行",
   "start_url": "/",
   "display": "standalone",
-  "background_color": "#F6F4EF",
-  "theme_color": "#1E6B5C",
+  "background_color": "#FFFFFF",
+  "theme_color": "#1F5DB4",
   "icons": [
     { "src": "/icon.svg", "sizes": "any", "type": "image/svg+xml" },
     { "src": "/icon-192.png", "sizes": "192x192", "type": "image/png" },
