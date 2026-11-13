@@ -1,8 +1,9 @@
 import { useState } from 'react';
 import { Link } from 'react-router-dom';
-import { Award, Calendar, CarFront, CheckCircle2, DollarSign, Map } from 'lucide-react';
+import { Award, Calendar, CarFront, CheckCircle2, DollarSign, Download, FileText, Map } from 'lucide-react';
 import { useApi } from '../api';
 import {
+  Button,
   Card,
   EmptyState,
   ErrorBox,
@@ -13,6 +14,7 @@ import {
 } from '../components/ui';
 import { EVENT_KIND, fmtDateTime, rm, useFormatT } from '../format';
 import { useTranslation } from 'react-i18next';
+import jsPDF from 'jspdf';
 
 interface Badge {
   key: string;
@@ -71,6 +73,140 @@ export default function Report() {
     return `${fmt(start)} – ${fmt(end)}`;
   };
 
+  const fileBase = `grace-ride-report-${range}-${month}`;
+
+  const escapeCsv = (v: unknown) => {
+    const s = String(v ?? '');
+    if (/[",\n\r]/.test(s)) return `"${s.replace(/"/g, '""')}"`;
+    return s;
+  };
+
+  const exportCsv = () => {
+    if (!r) return;
+    const lines: string[] = [];
+    lines.push('Grace Ride — Report Export');
+    lines.push(`User,${r.user.name} (${r.user.id})`);
+    lines.push(`Period,${r.period_start} to ${r.period_end}`);
+    lines.push(`Range,${r.range}`);
+    lines.push(`Type,${r.type}`);
+    lines.push('');
+    lines.push('Summary,Value');
+    lines.push(`Events attended,${r.events_attended}`);
+    lines.push(`Rides driven,${r.rides_driven}`);
+    lines.push(`Rides received,${r.rides_received}`);
+    lines.push(`Distance (km),${r.distance_km}`);
+    lines.push(`Reimbursement (cents),${r.reimbursement_cents}`);
+    lines.push(`Costs paid (cents),${r.costs_paid_cents}`);
+    lines.push('');
+    lines.push('Event Kind,Count');
+    for (const k of r.by_kind) lines.push(`${escapeCsv(k.kind)},${k.count}`);
+    lines.push('');
+    lines.push('Event ID,Title,Kind,Starts At');
+    for (const e of r.events)
+      lines.push(`${e.id},${escapeCsv(e.title)},${escapeCsv(e.kind)},${e.starts_at}`);
+    lines.push('');
+    lines.push('Badge Key,Name,Rule,Progress,Target,Earned');
+    for (const b of r.badges)
+      lines.push(
+        `${escapeCsv(b.key)},${escapeCsv(b.name)},${escapeCsv(b.rule)},${b.progress},${b.target},${b.earned}`,
+      );
+    const csv = lines.join('\n');
+    const blob = new Blob([csv], { type: 'text/csv;charset=utf-8' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `${fileBase}.csv`;
+    a.click();
+    URL.revokeObjectURL(url);
+  };
+
+  const exportPdf = () => {
+    if (!r) return;
+    const doc = new jsPDF();
+    const pageW = doc.internal.pageSize.getWidth();
+    const pageH = doc.internal.pageSize.getHeight();
+    let y = 20;
+
+    const pt = (key: string) => t(key);
+
+    doc.setFontSize(18);
+    doc.text(pt('pdfTitle'), 20, y);
+    y += 10;
+    doc.setFontSize(11);
+    doc.text(`${pt('user')}: ${r.user.name} (${r.user.id})`, 20, y);
+    y += 7;
+    doc.text(`${pt('period')}: ${r.period_start} to ${r.period_end}`, 20, y);
+    y += 7;
+    doc.text(`${pt('range')}: ${r.range}`, 20, y);
+    y += 7;
+    doc.text(`${pt('type')}: ${r.type}`, 20, y);
+    y += 12;
+
+    doc.setFontSize(14);
+    doc.text(pt('summary'), 20, y);
+    y += 8;
+    const rows: [string, string][] = [
+      [pt('events_attended'), String(r.events_attended)],
+      [pt('rides_driven'), String(r.rides_driven)],
+      [pt('rides_received'), String(r.rides_received)],
+      [pt('distance_km'), `${r.distance_km} km`],
+      [pt('reimbursement_cents'), `${r.reimbursement_cents}`],
+      [pt('costs_paid_cents'), `${r.costs_paid_cents}`],
+    ];
+    for (const [label, val] of rows) {
+      doc.text(label, 25, y);
+      doc.text(val, pageW - 40 - doc.getTextWidth(val), y);
+      y += 7;
+    }
+    y += 8;
+
+    if (r.by_kind.length > 0) {
+      doc.setFontSize(14);
+      doc.text('By event kind', 20, y);
+      y += 8;
+      for (const k of r.by_kind) {
+        doc.text(`${ft(EVENT_KIND[k.kind]?.label ?? k.kind)} × ${k.count}`, 25, y);
+        y += 6;
+      }
+      y += 8;
+    }
+
+    if (r.events.length > 0) {
+      doc.setFontSize(14);
+      doc.text('Events', 20, y);
+      y += 8;
+      for (const e of r.events) {
+        if (y > pageH - 40) {
+          doc.addPage();
+          y = 20;
+        }
+        doc.text(`${e.title} — ${fmtDateTime(e.starts_at, ft)}`, 25, y);
+        y += 6;
+      }
+      y += 8;
+    }
+
+    if (r.badges.length > 0) {
+      doc.setFontSize(14);
+      doc.text(pt('badges'), 20, y);
+      y += 8;
+      for (const b of r.badges) {
+        if (y > pageH - 40) {
+          doc.addPage();
+          y = 20;
+        }
+        doc.text(
+          `${b.name} — ${b.rule} (${b.progress}/${b.target}) ${b.earned ? 'earned' : ''}`,
+          25,
+          y,
+        );
+        y += 6;
+      }
+    }
+
+    doc.save(`${fileBase}.pdf`);
+  };
+
   return (
     <Page width="wide">
       <div className="stack">
@@ -106,6 +242,24 @@ export default function Report() {
                 <option value="driver">{t('typeDriver')}</option>
                 <option value="passenger">{t('typePassenger')}</option>
               </select>
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={exportCsv}
+                disabled={!r}
+                icon={<FileText size={16} />}
+              >
+                {t('exportCsv')}
+              </Button>
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={exportPdf}
+                disabled={!r}
+                icon={<Download size={16} />}
+              >
+                {t('exportPdf')}
+              </Button>
             </>
           }
         />
