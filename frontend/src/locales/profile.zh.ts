@@ -53,6 +53,7 @@ export default {
   display: '显示',
   account: '账号',
   name: '姓名',
+  phone: '电话',
   email: '电邮',
   status: '状态',
   groups: '群体',

@@ -53,6 +53,7 @@ export default {
   display: 'Display',
   account: 'Account',
   name: 'Name',
+  phone: 'Phone',
   email: 'Email',
   status: 'Status',
   groups: 'Groups',

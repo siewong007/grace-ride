@@ -67,7 +67,7 @@ export default function Home() {
 
   const next = rides.data?.[0];
   const unpaid = (shares.data ?? []).filter((s) => s.status !== 'confirmed');
-  const formattedToday = fmtDay(new Date().toISOString(), ft);
+  const formattedToday = fmtDay(`${todayStr()}T00:00`, ft);
 
   return (
     <Page width="medium">
@@ -346,11 +346,7 @@ function NextRide({ ride }: { ride: Ride }) {
             </a>
           )}
         </div>
-      ) : (
-        <div className="hero-waiting-row row nowrap">
-          <Pill tone="warning">{t('waitingDriver')}</Pill>
-        </div>
-      )}
+      ) : null}
 
       <Button variant="primary" block to={`/rides/${ride.id}`} className="hero-btn">
         {t('viewRide')}

@@ -11,7 +11,7 @@ import {
   PageHeader,
   Tabs,
 } from '../components/ui';
-import { fmtDay, todayStr, useFormatT } from '../format';
+import { fmtDay, localDate, todayStr, useFormatT } from '../format';
 import { useTranslation } from 'react-i18next';
 
 interface DateGroup {
@@ -29,7 +29,7 @@ function groupRidesByDate(
   const today = todayStr();
   const tmr = new Date();
   tmr.setDate(tmr.getDate() + 1);
-  const tmrStr = tmr.toISOString().slice(0, 10);
+  const tmrStr = localDate(tmr);
 
   for (const ride of rides) {
     const day = ride.pickup_at.slice(0, 10);

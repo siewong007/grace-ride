@@ -195,7 +195,7 @@ export function PageHeader({ title, subtitle, back, actions, className = '' }: P
   const { t } = useTranslation();
   return (
     <div className={`page-head ${className}`.trim()}>
-      <div className="row nowrap" style={{ gap: 'var(--space-3)' }}>
+      <div className="row nowrap page-head-title">
         {back && (
           <Link to={back} className="icon-btn sm hide-tablet-up" aria-label={t('back') || 'Back'}>
             <ArrowLeft size={20} />
@@ -452,7 +452,7 @@ export function ConfirmProvider({ children }: { children: ReactNode }) {
           onClose={() => handleClose(false)}
           size="sm"
           footer={
-            <div className="btn-row" style={{ width: '100%', justifyContent: 'flex-end' }}>
+            <div className="btn-row end">
               <Button variant="ghost" onClick={() => handleClose(false)}>
                 {opts.cancelLabel || t('cancel') || 'Cancel'}
               </Button>
@@ -562,7 +562,7 @@ export function ListSkeleton({ count = 3 }: { count?: number }) {
   return (
     <div className="list list-skeleton" aria-hidden="true">
       {Array.from({ length: count }).map((_, i) => (
-        <div key={i} className="item" style={{ gap: 'var(--space-3)' }}>
+        <div key={i} className="item">
           <Skeleton circle width={44} height={44} />
           <div className="grow stack-sm">
             <Skeleton width="45%" height="1.1rem" />
@@ -915,11 +915,11 @@ export function FileInput({
   return (
     <div className="field">
       <span>{label}</span>
-      <label className="check" style={{ justifyContent: 'center', borderStyle: 'dashed' }}>
+      <label className="check upload">
         <input
           type="file"
           accept={accept}
-          style={{ display: 'none' }}
+          className="sr-only"
           onChange={async (e) => {
             const f = e.target.files?.[0];
             if (!f) return;
@@ -936,7 +936,7 @@ export function FileInput({
             }
           }}
         />
-        <Paperclip size={16} aria-hidden="true" style={{ marginRight: 'var(--space-2)' }} />
+        <Paperclip size={16} aria-hidden="true" />
         {busy ? t('uploading') : value ? t('uploaded', { name: name || '' }).trim() : t('chooseFile')}
       </label>
       {err && <small className="error">{err}</small>}

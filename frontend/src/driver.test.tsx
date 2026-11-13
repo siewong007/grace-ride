@@ -1,4 +1,4 @@
-import { beforeAll, describe, expect, it, vi } from 'vitest';
+import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { MemoryRouter } from 'react-router-dom';
 import i18n from './i18n';
@@ -6,6 +6,13 @@ import Drive from './pages/Drive';
 
 beforeAll(async () => {
   await i18n.changeLanguage('en');
+  // The schedule mocks below are keyed to this date; Drive asks for "today".
+  vi.useFakeTimers({ toFake: ['Date'] });
+  vi.setSystemTime(new Date('2026-11-12T09:00:00'));
+});
+
+afterAll(() => {
+  vi.useRealTimers();
 });
 
 const mockScheduleRides = [

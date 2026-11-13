@@ -49,7 +49,7 @@ export function OfflineBanner() {
   }, []);
   if (online) return null;
   return (
-    <div className="offline-banner row nowrap" style={{ justifyContent: 'center', gap: 'var(--space-2)' }} role="status">
+    <div className="offline-banner row nowrap" role="status">
       <Radio size={16} aria-hidden="true" />
       <span>{t('offline')}</span>
     </div>

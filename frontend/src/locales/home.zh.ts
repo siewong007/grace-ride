@@ -22,7 +22,6 @@ export default {
   noAnnouncements: '没有公告',
   yourDriver: '您的司机',
   viewDetail: '查看详情',
-  waitingDriver: '正在等待志愿司机选择…',
   callDriver: '致电司机',
   seats: '位',
   going: '已报名',

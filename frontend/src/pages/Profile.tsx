@@ -208,7 +208,7 @@ function TotpModal({ secret, url, onClose, onDone }: { secret: string; url: stri
         <li>{t('totpStep1')}</li>
         <li>{t('totpStep2')}</li>
       </ol>
-      <code className="card flat tight mono" style={{ wordBreak: 'break-all' }}>{secret}</code>
+      <code className="card flat tight mono break-all">{secret}</code>
       <a className="small" href={url}>{t('totpJoin')}</a>
       <Field label={t('totpCode')}>
         <input className="input" inputMode="numeric" maxLength={6} value={code} onChange={(e) => setCode(e.target.value)} />

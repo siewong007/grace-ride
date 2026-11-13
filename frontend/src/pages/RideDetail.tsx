@@ -349,7 +349,7 @@ function Details({ ride: r }: { ride: Ride }) {
       ),
     },
     { label: t('destination'), value: r.destination },
-    { label: t('people'), value: `${r.seats} ${t('seatsUnit')}` },
+    { label: t('people'), value: t('seatCount', { count: r.seats }) },
   ];
 
   if (r.assistance) {

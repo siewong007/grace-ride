@@ -96,7 +96,7 @@ describe('RideCard', () => {
     expect(link).toHaveAttribute('href', '/rides/42');
   });
 
-  it('renders waiting indicator when ride has no driver', () => {
+  it('shows the waiting status once when ride has no driver', () => {
     const noDriverRide: Ride = {
       ...mockRide,
       id: 43,
@@ -110,7 +110,8 @@ describe('RideCard', () => {
       </MemoryRouter>
     );
 
-    expect(screen.getByText('Waiting for driver')).toBeInTheDocument();
+    expect(screen.getAllByText('Awaiting driver')).toHaveLength(1);
+    expect(screen.queryByText('Waiting for driver')).not.toBeInTheDocument();
   });
 });
 

@@ -78,6 +78,8 @@ const mockDashboard = {
 };
 
 test.beforeEach(async ({ page }) => {
+  // Home shows today's date and a time-of-day greeting; pin the clock so snapshots stay stable.
+  await page.clock.setFixedTime(new Date('2026-11-20T09:00:00'));
   await page.route('**/api/**', async (route) => {
     const url = route.request().url();
 
@@ -135,6 +137,9 @@ test.beforeEach(async ({ page }) => {
     if (url.includes('/api/notifications')) {
       return route.fulfill({ status: 200, json: [] });
     }
+    if (url.includes('/api/me/shares')) {
+      return route.fulfill({ status: 200, json: [] });
+    }
 
     return route.fulfill({ status: 200, json: {} });
   });
@@ -154,6 +159,8 @@ test.describe('Visual regression and accessibility', () => {
       await page.goto(p.path);
       await page.waitForLoadState('networkidle');
       await splashGone(page);
+      // A crash shows the error screen; never accept it as a baseline.
+      await expect(page.getByRole('heading', { name: 'Something went wrong' })).toHaveCount(0);
 
       // Accessibility audit
       const a11yResults = await new AxeBuilder({ page }).analyze();
@@ -179,6 +186,8 @@ test.describe('Visual regression and accessibility', () => {
       await page.goto(p.path);
       await page.waitForLoadState('networkidle');
       await splashGone(page);
+      // A crash shows the error screen; never accept it as a baseline.
+      await expect(page.getByRole('heading', { name: 'Something went wrong' })).toHaveCount(0);
 
       // Accessibility audit
       const a11yResults = await new AxeBuilder({ page }).analyze();
@@ -210,6 +219,8 @@ test.describe('Visual regression and accessibility', () => {
     await page.goto('/login');
     await page.waitForLoadState('networkidle');
     await splashGone(page);
+    // A crash shows the error screen; never accept it as a baseline.
+    await expect(page.getByRole('heading', { name: 'Something went wrong' })).toHaveCount(0);
 
     // Accessibility audit
     const a11yResults = await new AxeBuilder({ page }).analyze();

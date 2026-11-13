@@ -77,9 +77,7 @@ export default function RideCard({
                 <span className="small muted hide-mobile">{ride.driver.name}</span>
                 <Avatar name={ride.driver.name} size="sm" />
               </div>
-            ) : (
-              <span className="pill warning small">{t('waitingDriver')}</span>
-            )
+            ) : null
           ) : perspective === 'driver' ? (
             <div className="row nowrap ride-card-driver" title={ride.passenger.name}>
               <span className="small muted hide-mobile">{ride.passenger.name}</span>

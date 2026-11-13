@@ -153,7 +153,7 @@ function Schedule() {
             {t('week7')}
           </button>
         </div>
-        <span className="muted small">{t('slotRides', { n: data?.length ?? 0 })}</span>
+        <span className="muted small">{t('slotRides', { count: data?.length ?? 0 })}</span>
       </div>
 
       {active && <ShareLocation />}
@@ -170,7 +170,7 @@ function Schedule() {
         [...byDay.entries()].map(([day, rides]) => (
           <div key={day} className="stack">
             <div className="sticky-date-header">
-              {fmtDay(`${day}T00:00`, ft)} · {rides.length} {t('seatsUnit')}
+              {fmtDay(`${day}T00:00`, ft)} · {t('seatCount', { count: rides.reduce((n, r) => n + r.seats, 0) })}
             </div>
             <div className="stack">
               {rides.map((r) => (
@@ -183,7 +183,7 @@ function Schedule() {
                       <div>
                         <Link to={`/rides/${r.id}`} className="driver-trip-title">
                           <span>{r.passenger.name}</span>
-                          <span className="muted small">· {r.seats} {t('seatsUnit')}</span>
+                          <span className="muted small">· {t('seatCount', { count: r.seats })}</span>
                         </Link>
                         <div className="driver-trip-route">
                           <span>

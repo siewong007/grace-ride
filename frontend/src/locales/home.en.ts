@@ -22,7 +22,6 @@ export default {
   noAnnouncements: 'No announcements',
   yourDriver: 'Your driver',
   viewDetail: 'View details',
-  waitingDriver: 'Waiting for a volunteer driver to pick up…',
   callDriver: 'Call driver',
   seats: 'seats',
   going: 'Going',

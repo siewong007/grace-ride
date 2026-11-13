@@ -133,4 +133,24 @@ describe('Design Tokens & Visual Language (Phase 3)', () => {
       });
     expect(scan(path.resolve(__dirname))).toEqual([]);
   });
+
+  it('only uses CSS variables that are defined', () => {
+    // An undefined var() silently drops the whole declaration (no border, no font, no colour).
+    const files = (dir: string): string[] =>
+      fs.readdirSync(dir, { withFileTypes: true }).flatMap((e) => {
+        const full = path.join(dir, e.name);
+        if (e.isDirectory()) return files(full);
+        return /\.(css|tsx)$/.test(e.name) ? [full] : [];
+      });
+    const defined = new Set([...css.matchAll(/(--[a-z0-9-]+)\s*:/g)].map((m) => m[1]));
+    const undefinedVars = new Set<string>();
+    for (const f of files(path.resolve(__dirname))) {
+      const src = fs.readFileSync(f, 'utf-8');
+      // var(--x, fallback) is fine: it has a value even when --x is unset.
+      for (const m of src.matchAll(/var\((--[a-z0-9-]+)\s*\)/g)) {
+        if (!defined.has(m[1])) undefinedVars.add(m[1]);
+      }
+    }
+    expect([...undefinedVars].sort()).toEqual([]);
+  });
 });

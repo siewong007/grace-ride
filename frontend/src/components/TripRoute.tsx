@@ -164,7 +164,7 @@ export function DriverRouteCard({ refreshKey }: { refreshKey?: string }) {
           </h3>
           <span className="muted small">
             {route.stops.length > 0
-              ? t('routeSummary', { n: route.stops.length, distance, duration })
+              ? t('routeSummary', { count: route.stops.length, distance, duration })
               : t('routeAllAboard', { distance, duration })}
           </span>
           {dest.eta && (
@@ -208,7 +208,7 @@ export function DriverRouteCard({ refreshKey }: { refreshKey?: string }) {
                   {s.seats > 1 && (
                     <span className="muted small">
                       {' '}
-                      · {s.seats} {t('seatsUnit')}
+                      · {t('seatCount', { count: s.seats })}
                     </span>
                   )}
                 </Link>

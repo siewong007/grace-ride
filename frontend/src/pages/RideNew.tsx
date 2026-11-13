@@ -299,7 +299,7 @@ export default function RideNew() {
                 disabled={seats <= 1}
                 onClick={() => setSeats((s) => Math.max(1, s - 1))}
               />
-              <span className="stepper-value bold">{seats} {t('seatsUnit')}</span>
+              <span className="stepper-value bold">{t('seatCount', { count: seats })}</span>
               <IconButton
                 label={t('increaseSeats')}
                 icon={<Plus size={20} />}
