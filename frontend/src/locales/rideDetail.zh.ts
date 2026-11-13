@@ -38,6 +38,7 @@ export default {
   chooseDriver: '请选择',
   carpool: '· 共乘 {seats} 座',
   noVehicle: '无车辆',
+  noAreas: '未设置偏好地区',
   confirmAssign: '确认分配',
   returnTitle: '退回重新配对',
   returnLabel: '原因',

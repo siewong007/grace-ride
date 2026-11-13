@@ -38,6 +38,7 @@ export default {
   chooseDriver: 'Please select',
   carpool: '· carpool {seats} seats',
   noVehicle: 'No vehicle',
+  noAreas: 'No preferred areas',
   confirmAssign: 'Confirm assignment',
   returnTitle: 'Return for re-matching',
   returnLabel: 'Reason',
