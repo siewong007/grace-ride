@@ -28,7 +28,7 @@ export class ApiError extends Error {
   }
 }
 
-export async function api<T = any>(path: string, opts: { method?: string; body?: unknown } = {}): Promise<T> {
+export async function api<T = unknown>(path: string, opts: { method?: string; body?: unknown } = {}): Promise<T> {
   const res = await fetch(`/api${path}`, {
     method: opts.method ?? (opts.body !== undefined ? 'POST' : 'GET'),
     headers: opts.body !== undefined ? { 'content-type': 'application/json' } : undefined,
@@ -51,9 +51,9 @@ export async function api<T = any>(path: string, opts: { method?: string; body?:
   return data as T;
 }
 
-export const post = <T = any>(path: string, body: unknown = {}) => api<T>(path, { method: 'POST', body });
-export const put = <T = any>(path: string, body: unknown) => api<T>(path, { method: 'PUT', body });
-export const del = <T = any>(path: string) => api<T>(path, { method: 'DELETE' });
+export const post = <T = unknown>(path: string, body: unknown = {}) => api<T>(path, { method: 'POST', body });
+export const put = <T = unknown>(path: string, body: unknown) => api<T>(path, { method: 'PUT', body });
+export const del = <T = unknown>(path: string) => api<T>(path, { method: 'DELETE' });
 
 export async function uploadFile(file: File): Promise<{ id: number; mime: string; name: string }> {
   const fd = new FormData();

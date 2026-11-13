@@ -59,13 +59,14 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     };
   }, [refresh]);
 
-  // Keep the unread badge fresh.
+  // Keep the unread badge fresh. Re-subscribe only when the signed-in user changes.
+  const meId = me?.id;
   useEffect(() => {
-    if (!me) return;
+    if (meId == null) return;
     return subscribe((kind) => {
       if (kind === 'notify' || kind === 'resume') refresh();
     });
-  }, [me?.id, refresh]);
+  }, [meId, refresh]);
 
   // Mirrors the server: admins also act as transport lead and event lead (not finance / driver).
   const has = (r: Role) =>

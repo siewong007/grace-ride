@@ -18,18 +18,30 @@ const bufToB64url = (buf: ArrayBuffer | null | undefined): string | undefined =>
   return btoa(bin).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
 };
 
+/** Credential descriptor as the server sends it: id is base64url text. */
+type ServerCredential = { id: string } & Record<string, unknown>;
+/** WebAuthn options from the server, with binary fields as base64url strings. */
+interface ServerPasskeyOptions {
+  publicKey: Record<string, unknown> & {
+    challenge: string;
+    user?: { id: string } & Record<string, unknown>;
+    excludeCredentials?: ServerCredential[];
+    allowCredentials?: ServerCredential[];
+  };
+}
+
 export const passkeySupported = () => typeof window !== 'undefined' && !!window.PublicKeyCredential;
 
 export async function registerPasskey(label?: string) {
-  const { challenge_id, options } = await post<{ challenge_id: string; options: any }>('/auth/passkey/register/start');
+  const { challenge_id, options } = await post<{ challenge_id: string; options: ServerPasskeyOptions }>('/auth/passkey/register/start');
   const pk = options.publicKey;
   const cred = (await navigator.credentials.create({
     publicKey: {
       ...pk,
       challenge: b64urlToBuf(pk.challenge),
-      user: { ...pk.user, id: b64urlToBuf(pk.user.id) },
-      excludeCredentials: (pk.excludeCredentials ?? []).map((c: any) => ({ ...c, id: b64urlToBuf(c.id) })),
-    },
+      user: { ...pk.user, id: b64urlToBuf(pk.user!.id) },
+      excludeCredentials: (pk.excludeCredentials ?? []).map((c) => ({ ...c, id: b64urlToBuf(c.id) })),
+    } as unknown as PublicKeyCredentialCreationOptions,
   })) as PublicKeyCredential | null;
   if (!cred) throw new Error(i18n.t('auth:cancelled'));
   const r = cred.response as AuthenticatorAttestationResponse;
@@ -48,14 +60,14 @@ export async function registerPasskey(label?: string) {
 }
 
 export async function loginWithPasskey(email: string) {
-  const { challenge_id, options } = await post<{ challenge_id: string; options: any }>('/auth/passkey/login/start', { email });
+  const { challenge_id, options } = await post<{ challenge_id: string; options: ServerPasskeyOptions }>('/auth/passkey/login/start', { email });
   const pk = options.publicKey;
   const cred = (await navigator.credentials.get({
     publicKey: {
       ...pk,
       challenge: b64urlToBuf(pk.challenge),
-      allowCredentials: (pk.allowCredentials ?? []).map((c: any) => ({ ...c, id: b64urlToBuf(c.id) })),
-    },
+      allowCredentials: (pk.allowCredentials ?? []).map((c) => ({ ...c, id: b64urlToBuf(c.id) })),
+    } as unknown as PublicKeyCredentialRequestOptions,
   })) as PublicKeyCredential | null;
   if (!cred) throw new Error(i18n.t('auth:cancelled'));
   const r = cred.response as AuthenticatorAssertionResponse;

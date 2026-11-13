@@ -61,10 +61,10 @@ describe('placeholders', () => {
       if (typeof en === 'string' && typeof zh === 'string') {
         if (vars(en) !== vars(zh)) diffs.push(path);
       } else if (en && zh && typeof en === 'object' && typeof zh === 'object') {
-        for (const k of Object.keys(en)) walk((en as any)[k], (zh as any)[k], `${path}.${k}`);
+        for (const k of Object.keys(en)) walk((en as Record<string, unknown>)[k], (zh as Record<string, unknown>)[k], `${path}.${k}`);
       }
     };
-    walk((resources as any).en, (resources as any).zh, '');
+    walk(resources.en, resources.zh, '');
     expect(diffs).toEqual([]);
   });
 
@@ -81,8 +81,8 @@ describe('placeholders', () => {
         }
       }
     };
-    checkKeys(resources.en as any, resources.zh as any, '', missingInZh);
-    checkKeys(resources.zh as any, resources.en as any, '', missingInEn);
+    checkKeys(resources.en, resources.zh, '', missingInZh);
+    checkKeys(resources.zh, resources.en, '', missingInEn);
     expect(missingInZh).toEqual([]);
     expect(missingInEn).toEqual([]);
   });
