@@ -73,12 +73,12 @@ function List({ scope }: { scope: 'review' | 'payout' }) {
 
       <ErrorBox error={error} />
 
-      <Card>
-        {loading ? (
-          <CardSkeleton count={3} />
-        ) : !data?.length ? (
-          <EmptyState title={t('reimb.none')} />
-        ) : (
+      {loading ? (
+        <CardSkeleton count={3} />
+      ) : !data?.length ? (
+        <EmptyState title={t('reimb.none')} />
+      ) : (
+        <Card>
           <div className="table-wrap">
             <table className="table responsive sticky-header">
               <thead>
@@ -141,8 +141,8 @@ function List({ scope }: { scope: 'review' | 'payout' }) {
               </tbody>
             </table>
           </div>
-        )}
-      </Card>
+        </Card>
+      )}
 
       {open && scope === 'review' && (
         <ReviewModal

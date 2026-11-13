@@ -3,7 +3,6 @@ import { useTranslation } from 'react-i18next';
 import { useApi } from '../../api';
 import LiveMap, { MapPoint } from '../../components/LiveMap';
 import {
-  Card,
   CardSkeleton,
   EmptyState,
   ErrorBox,
@@ -74,7 +73,7 @@ export default function AdminLive() {
 
           {/* Legend */}
           <div className="map-legend" role="region" aria-label={t('live.legendTitle')}>
-            <span className="bold">{t('live.legendTitle')}:</span>
+            <span>{t('live.legendTitle')}:</span>
             <span className="map-legend-item">
               <span className="map-legend-dot active" aria-hidden="true" />
               <span>{t('live.legendActive')}</span>
@@ -91,8 +90,10 @@ export default function AdminLive() {
         </div>
 
         {/* Side list of active drivers */}
-        <Card className="stack">
-          <h3>{t('live.driversList')}</h3>
+        <section>
+          <div className="section-head">
+            <h2>{t('live.driversList')}</h2>
+          </div>
           {loading ? (
             <CardSkeleton count={3} />
           ) : !data?.drivers.length ? (
@@ -131,7 +132,7 @@ export default function AdminLive() {
               })}
             </div>
           )}
-        </Card>
+        </section>
       </div>
     </Page>
   );

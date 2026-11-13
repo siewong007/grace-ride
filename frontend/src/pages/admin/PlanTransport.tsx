@@ -193,31 +193,33 @@ export default function PlanTransport() {
         back={`/events/${plan.event.id}`}
       />
 
-      <div className="plan-toolbar">
-        <div className="plan-summary" aria-live="polite">
-          {t('summary', { placed, total: plan.rides.length, seats: seatsUsed })}
+      {plan.rides.length > 0 && (
+        <div className="plan-toolbar">
+          <div className="plan-summary" aria-live="polite">
+            {t('summary', { placed, total: plan.rides.length, seats: seatsUsed })}
+          </div>
+          <div className="btn-row">
+            <Button
+              variant="secondary"
+              icon={<Sparkles size={16} />}
+              onClick={autoArrange}
+              loading={arranging}
+              disabled={unassigned.length === 0 || arranging}
+            >
+              {t('autoArrange')}
+            </Button>
+            <Button variant="secondary" icon={<History size={16} />} onClick={sameAsLast} disabled={unassigned.length === 0}>
+              {t('sameAsLast')}
+            </Button>
+            <Button variant="ghost" icon={<RotateCcw size={16} />} onClick={() => setDraft(savedDraft(plan))} disabled={!dirty}>
+              {t('reset')}
+            </Button>
+            <Button variant="primary" icon={<Send size={16} />} onClick={send} disabled={!dirty || busy} loading={busy}>
+              {t('confirm', { count: changes.length })}
+            </Button>
+          </div>
         </div>
-        <div className="btn-row">
-          <Button
-            variant="secondary"
-            icon={<Sparkles size={16} />}
-            onClick={autoArrange}
-            loading={arranging}
-            disabled={unassigned.length === 0 || arranging}
-          >
-            {t('autoArrange')}
-          </Button>
-          <Button variant="secondary" icon={<History size={16} />} onClick={sameAsLast} disabled={unassigned.length === 0}>
-            {t('sameAsLast')}
-          </Button>
-          <Button variant="ghost" icon={<RotateCcw size={16} />} onClick={() => setDraft(savedDraft(plan))} disabled={!dirty}>
-            {t('reset')}
-          </Button>
-          <Button variant="primary" icon={<Send size={16} />} onClick={send} disabled={!dirty || busy} loading={busy}>
-            {t('confirm', { count: changes.length })}
-          </Button>
-        </div>
-      </div>
+      )}
       {dirty && <p className="plan-unsaved">{t('unsaved')}</p>}
 
       {plan.rides.length === 0 ? (
