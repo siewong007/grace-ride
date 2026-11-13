@@ -13,7 +13,6 @@ import {
 import { post, useApi } from '../api';
 import {
   Button,
-  Card,
   ErrorBox,
   Field,
   IconButton,
@@ -165,8 +164,8 @@ export default function RideNew() {
         )}
 
         <form onSubmit={submit} noValidate className="stack">
-          {/* Card 1: When */}
-          <Card className="stack">
+          {/* Section 1: When */}
+          <section className="form-section stack">
             <h3>{t('whenSection')}</h3>
             <div className="form-grid two">
               <div>
@@ -212,10 +211,10 @@ export default function RideNew() {
                 )}
               </div>
             </div>
-          </Card>
+          </section>
 
-          {/* Card 2: Where */}
-          <Card className="stack">
+          {/* Section 2: Where */}
+          <section className="form-section stack">
             <h3>{t('whereSection')}</h3>
             <div className="form-grid two">
               <div className="full">
@@ -287,10 +286,10 @@ export default function RideNew() {
                 )}
               </div>
             </div>
-          </Card>
+          </section>
 
-          {/* Card 3: Who */}
-          <Card className="stack">
+          {/* Section 3: Who */}
+          <section className="form-section stack">
             <h3>{t('whoSection')}</h3>
             <div className="stepper" role="group" aria-label={t('whoSection')}>
               <IconButton
@@ -307,10 +306,10 @@ export default function RideNew() {
                 onClick={() => setSeats((s) => Math.min(6, s + 1))}
               />
             </div>
-          </Card>
+          </section>
 
-          {/* Card 4: Needs & Notes */}
-          <Card className="stack">
+          {/* Section 4: Needs & Notes */}
+          <section className="form-section stack">
             <h3>{t('needsSection')}</h3>
             <Field label={t('assistance')} hint={t('assistanceHint')}>
               <div className="chips-grid">
@@ -370,7 +369,7 @@ export default function RideNew() {
                 rows={3}
               />
             </Field>
-          </Card>
+          </section>
 
           {/* Sticky Submit Bar on Phone */}
           <div className="ride-new-submit-bar">
@@ -384,8 +383,8 @@ export default function RideNew() {
             >
               {busy ? t('submitting') : t('submitBtn')}
             </Button>
-            <p className="muted small center">{t('note')}</p>
           </div>
+          <p className="muted small center">{t('note')}</p>
         </form>
       </div>
     </Page>

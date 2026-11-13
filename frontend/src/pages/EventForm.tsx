@@ -125,7 +125,7 @@ export default function EventForm() {
               <select className="input" value={f.kind} onChange={set('kind')}>
                 {Object.entries(EVENT_KIND).map(([k, v]) => (
                   <option key={k} value={k}>
-                    {v.emoji} {ft(v.label)}
+                    {ft(v.label)}
                   </option>
                 ))}
               </select>

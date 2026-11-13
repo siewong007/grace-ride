@@ -1,30 +1,10 @@
 import { Link } from 'react-router-dom';
-import {
-  Calendar,
-  CalendarPlus,
-  CarFront,
-  CreditCard,
-  LifeBuoy,
-  Megaphone,
-  Phone,
-  Pin,
-} from 'lucide-react';
+import { CalendarPlus, Phone, Pin } from 'lucide-react';
 import { useApi } from '../api';
 import { useAuth } from '../auth';
 import RideCard, { Ride } from '../components/RideCard';
+import { Button, CardSkeleton, EmptyState, ListSkeleton, Page, Pill, StatusPill } from '../components/ui';
 import {
-  Avatar,
-  Button,
-  Card,
-  CardSkeleton,
-  EmptyState,
-  ListSkeleton,
-  Page,
-  Pill,
-  StatusPill,
-} from '../components/ui';
-import {
-  EVENT_KIND,
   fmtDay,
   fmtTime,
   greeting,
@@ -36,6 +16,7 @@ import {
 } from '../format';
 import type { EventItem } from './Events';
 import { useTranslation } from 'react-i18next';
+import type { ReactNode } from 'react';
 
 interface Share {
   id: number;
@@ -54,6 +35,19 @@ interface Announcement {
   created_at: string;
 }
 
+/** A titled list on Home: heading, optional "All →" link, then rows. No frame around it. */
+function Section({ title, more, children }: { title: ReactNode; more?: { to: string; label: string }; children: ReactNode }) {
+  return (
+    <section className="home-section">
+      <div className="section-head">
+        <h2>{title}</h2>
+        {more && <Link to={more.to} className="small">{more.label}</Link>}
+      </div>
+      {children}
+    </section>
+  );
+}
+
 export default function Home() {
   const { t } = useTranslation(['home', 'events']);
   const ft = useFormatT();
@@ -66,82 +60,39 @@ export default function Home() {
   const driving = useApi<Ride[]>(has('driver') ? `/driver/schedule?from=${today}&to=${today}` : null);
 
   const next = rides.data?.[0];
+  const otherRides = (rides.data ?? []).slice(next ? 1 : 0, 4);
   const unpaid = (shares.data ?? []).filter((s) => s.status !== 'confirmed');
   const formattedToday = fmtDay(`${todayStr()}T00:00`, ft);
 
   return (
     <Page width="medium">
-      <div className="stack">
-        {/* Header Greeting with Date */}
-        <div className="page-head">
+      <div className="home">
+        {/* Greeting, today's date, and the one main action */}
+        <div className="page-head home-head">
           <div>
             <h1>{greeting(ft)}{me?.name ? `, ${me.name}` : ''}</h1>
-            <p className="muted row nowrap">
-              <span>{formattedToday}</span>
-              <span>·</span>
-              <Pill tone="green">{t('verified')}</Pill>
-              {me?.groups.map((g) => <Pill key={g.id}>{g.name}</Pill>)}
-            </p>
+            <p className="muted">{formattedToday}</p>
           </div>
-          <div className="btn-row hide-mobile">
+          <div className="btn-row page-head-actions">
             <Button variant="primary" to="/rides/new" icon={<CalendarPlus size={20} />}>
               {t('signupRide')}
             </Button>
-            {isStaff && <Link className="btn" to="/admin">{t('dashboard')}</Link>}
+            {isStaff && <Link className="btn hide-mobile" to="/admin">{t('dashboard')}</Link>}
           </div>
         </div>
 
-        {/* Next Ride Hero Card */}
+        {/* Next ride */}
         {rides.loading ? (
           <CardSkeleton count={1} />
         ) : next ? (
           <NextRide ride={next} />
         ) : (
-          <Card className="stack">
-            <EmptyState
-              icon={<CalendarPlus size={36} />}
-              title={t('noRide')}
-              action={
-                <Button variant="primary" to="/rides/new" icon={<CalendarPlus size={18} />}>
-                  {t('signupRide')}
-                </Button>
-              }
-            />
-          </Card>
+          <EmptyState icon={<CalendarPlus size={32} />} title={t('noRide')} />
         )}
 
-        {/* Quick Action Tiles */}
-        <div className="home-quick-actions" role="region" aria-label="Quick actions">
-          <Link to="/rides/new" className="card link home-action-tile">
-            <div className="home-action-icon primary" aria-hidden="true">
-              <CalendarPlus size={22} />
-            </div>
-            <span className="home-action-label">{t('signupRide')}</span>
-          </Link>
-          <Link to="/events" className="card link home-action-tile">
-            <div className="home-action-icon secondary" aria-hidden="true">
-              <Calendar size={22} />
-            </div>
-            <span className="home-action-label">{t('quickEvents')}</span>
-          </Link>
-          <Link to="/help" className="card link home-action-tile">
-            <div className="home-action-icon neutral" aria-hidden="true">
-              <LifeBuoy size={22} />
-            </div>
-            <span className="home-action-label">{t('helpCentre')}</span>
-          </Link>
-        </div>
-
-        {/* Section 1: Today's driving (drivers only) */}
+        {/* Today's driving (drivers only) */}
         {has('driver') && (
-          <Card className="stack">
-            <div className="card-title">
-              <h3 className="row nowrap">
-                <CarFront size={18} aria-hidden="true" />
-                <span>{t('driveSchedule')}</span>
-              </h3>
-              <Link to="/drive" className="small">{t('all')}</Link>
-            </div>
+          <Section title={t('driveSchedule')} more={{ to: '/drive', label: t('all') }}>
             {driving.loading ? (
               <ListSkeleton count={2} />
             ) : driving.data?.length ? (
@@ -158,50 +109,25 @@ export default function Home() {
                 ))}
               </div>
             ) : (
-              <EmptyState title={t('noDriveToday')} />
+              <p className="muted">{t('noDriveToday')}</p>
             )}
-          </Card>
+          </Section>
         )}
 
-        {/* Section 2: Upcoming rides */}
-        <Card className="stack">
-          <div className="card-title">
-            <h3>{t('otherRides')}</h3>
-            <Link to="/rides" className="small">{t('all')}</Link>
-          </div>
-          {rides.loading ? (
-            <ListSkeleton count={2} />
-          ) : rides.data && rides.data.length > (next ? 1 : 0) ? (
-            <div className="grid cols-2">
-              {rides.data.slice(next ? 1 : 0, 4).map((r) => (
+        {/* Other upcoming rides — only when there are some */}
+        {otherRides.length > 0 && (
+          <Section title={t('otherRides')} more={{ to: '/rides', label: t('all') }}>
+            <div className="list">
+              {otherRides.map((r) => (
                 <RideCard key={r.id} ride={r} />
               ))}
             </div>
-          ) : (
-            <EmptyState
-              title={t('noUpcomingRides')}
-              action={
-                <Button to="/rides/new" variant="secondary" size="sm">
-                  {t('signupRide')}
-                </Button>
-              }
-            />
-          )}
-        </Card>
+          </Section>
+        )}
 
-        {/* Section 3: Unpaid shares */}
-        <Card className="stack">
-          <div className="card-title">
-            <h3 className="row nowrap">
-              <CreditCard size={18} aria-hidden="true" />
-              <span>{t('unpaid')}</span>
-              {unpaid.length > 0 && <Pill tone="warning">{unpaid.length}</Pill>}
-            </h3>
-            <Link to="/settlements" className="small">{t('all')}</Link>
-          </div>
-          {shares.loading ? (
-            <ListSkeleton count={2} />
-          ) : unpaid.length ? (
+        {/* Unpaid shares — only when something is owed */}
+        {unpaid.length > 0 && (
+          <Section title={t('unpaid')} more={{ to: '/settlements', label: t('all') }}>
             <div className="list">
               {unpaid.map((s) => (
                 <Link key={s.id} to={`/settlements/${s.id}`} className="item">
@@ -213,80 +139,61 @@ export default function Home() {
                 </Link>
               ))}
             </div>
-          ) : (
-            <EmptyState title={t('noUnpaid')} />
-          )}
-        </Card>
+          </Section>
+        )}
 
-        {/* Section 4: Events */}
-        <Card className="stack">
-          <div className="card-title">
-            <h3 className="row nowrap">
-              <Calendar size={18} aria-hidden="true" />
-              <span>{t('events')}</span>
-            </h3>
-            <Link to="/events" className="small">{t('allEvents')}</Link>
-          </div>
-          {events.loading ? (
-            <ListSkeleton count={2} />
-          ) : events.data?.length ? (
-            <div className="list">
-              {events.data.slice(0, 4).map((e) => (
-                <Link key={e.id} to={`/events/${e.id}`} className="item">
-                  <span className="event-emoji" aria-hidden>{EVENT_KIND[e.kind]?.emoji}</span>
-                  <div className="grow">
-                    <div className="bold">{e.title}</div>
-                    <div className="muted small">{ft(EVENT_KIND[e.kind]?.label)} · {e.location}</div>
-                  </div>
-                  {e.my_signup?.status === 'going' ? (
-                    <Pill tone="green">{t('going')}</Pill>
-                  ) : e.spots_left != null ? (
-                    <Pill tone="amber">{t('spotsLeft', { n: e.spots_left })}</Pill>
-                  ) : null}
-                </Link>
-              ))}
-            </div>
-          ) : (
-            <EmptyState title={t('noEvents')} />
-          )}
-        </Card>
+        {/* Events */}
+        {(events.loading || (events.data?.length ?? 0) > 0) && (
+          <Section title={t('events')} more={{ to: '/events', label: t('allEvents') }}>
+            {events.loading ? (
+              <ListSkeleton count={2} />
+            ) : (
+              <div className="list">
+                {events.data!.slice(0, 4).map((e) => (
+                  <Link key={e.id} to={`/events/${e.id}`} className="item">
+                    <div className="grow">
+                      <div className="bold">{e.title}</div>
+                      <div className="muted small">
+                        {fmtDay(e.starts_at, ft)} · {fmtTime(e.starts_at, ft)} · {e.location}
+                      </div>
+                    </div>
+                    {e.my_signup?.status === 'going' ? (
+                      <Pill tone="green">{t('going')}</Pill>
+                    ) : e.spots_left != null ? (
+                      <span className="muted small nowrap">{t('spotsLeft', { n: e.spots_left })}</span>
+                    ) : null}
+                  </Link>
+                ))}
+              </div>
+            )}
+          </Section>
+        )}
 
-        {/* Section 5: Announcements */}
-        <Card className="stack">
-          <div className="card-title">
-            <h3 className="row nowrap">
-              <Megaphone size={18} aria-hidden="true" />
-              <span>{t('announcements')}</span>
-            </h3>
-          </div>
-          {ann.loading ? (
-            <ListSkeleton count={2} />
-          ) : ann.data?.length ? (
-            <div className="stack-sm">
-              {ann.data.slice(0, 3).map((a) => (
-                <div key={a.id} className="card flat tight">
-                  <div className="row between">
-                    <strong className="row nowrap">
-                      {a.pinned && <Pin size={14} aria-hidden="true" />}
-                      <span>{a.title}</span>
-                    </strong>
-                    <span className="muted tiny">{fmtDay(a.created_at, ft)}</span>
-                  </div>
-                  <p className="small">{a.body}</p>
-                </div>
-              ))}
-            </div>
-          ) : (
-            <EmptyState title={t('noAnnouncements')} />
-          )}
-        </Card>
-
-        {/* Mobile sticky or bottom button */}
-        <div className="hide-tablet-up">
-          <Button variant="primary" block to="/rides/new" icon={<CalendarPlus size={20} />}>
-            {t('signupRide')}
-          </Button>
-        </div>
+        {/* Announcements */}
+        {(ann.loading || (ann.data?.length ?? 0) > 0) && (
+          <Section title={t('announcements')}>
+            {ann.loading ? (
+              <ListSkeleton count={2} />
+            ) : (
+              <div className="list">
+                {ann.data!.slice(0, 3).map((a) => (
+                  <article key={a.id} className="item home-announcement">
+                    <div className="grow stack-sm">
+                      <div className="row between nowrap">
+                        <strong className="row nowrap">
+                          {a.pinned && <Pin size={14} aria-hidden="true" />}
+                          <span>{a.title}</span>
+                        </strong>
+                        <span className="muted small nowrap">{fmtDay(a.created_at, ft)}</span>
+                      </div>
+                      <p className="muted">{a.body}</p>
+                    </div>
+                  </article>
+                ))}
+              </div>
+            )}
+          </Section>
+        )}
       </div>
     </Page>
   );
@@ -298,59 +205,43 @@ function NextRide({ ride }: { ride: Ride }) {
   const d = ride.driver;
 
   return (
-    <Card variant="hero" className="stack home-hero-card">
+    <section className="card home-next" aria-labelledby="home-next-title">
       <div className="row between nowrap">
-        <span className="bold">{t('nextRide')}</span>
-        <span className="pill hero-pill">{ft(RIDE_STATUS[ride.status]?.label)}</span>
+        <span id="home-next-title" className="muted small">{t('nextRide')}</span>
+        <StatusPill map={RIDE_STATUS} status={ride.status} />
       </div>
 
-      <div className="home-hero-time-block">
-        <div className="home-hero-time">
-          {fmtDay(ride.pickup_at, ft)} · {fmtTime(ride.pickup_at, ft)}
-        </div>
-      </div>
+      <p className="home-next-time">
+        {fmtDay(ride.pickup_at, ft)} · {fmtTime(ride.pickup_at, ft)}
+      </p>
+      <p className="home-next-route">
+        <span className="sr-only">{t('pickupArea')}: </span>{ride.area.name}
+        <span aria-hidden="true"> → </span>
+        <span className="sr-only">, {t('destination')}: </span>{ride.destination}
+      </p>
 
-      <div className="route-display">
-        <div className="route-track">
-          <span className="route-dot pickup" aria-hidden="true" />
-          <span className="route-line" aria-hidden="true" />
-          <span className="route-dot dropoff" aria-hidden="true" />
-        </div>
-        <div className="route-stops">
-          <div className="route-stop">
-            <span className="muted tiny">{t('pickupArea')}</span>
-            <span className="route-location bold">{ride.area.name}</span>
-          </div>
-          <div className="route-stop">
-            <span className="muted tiny">{t('destination')}</span>
-            <span className="route-location bold">{ride.destination}</span>
-          </div>
-        </div>
-      </div>
-
-      {d ? (
-        <div className="row nowrap hero-row">
-          <Avatar name={d.name} size="md" />
+      {d && (
+        <div className="home-next-driver row nowrap">
           <div className="grow">
-            <div className="bold">{d.name} · {t('yourDriver')}</div>
+            <div className="bold">{d.name} <span className="muted">· {t('yourDriver')}</span></div>
             {d.vehicle && (
               <div className="small muted row nowrap">
                 <span>{d.vehicle.color} {d.vehicle.model}</span>
-                <span className="plate hero-plate">{d.vehicle.plate}</span>
+                <span className="plate">{d.vehicle.plate}</span>
               </div>
             )}
           </div>
           {d.phone && (
-            <a className="btn sm ghost" href={`tel:${d.phone}`} aria-label={t('callDriver')}>
-              <Phone size={18} />
+            <a className="icon-btn" href={`tel:${d.phone}`} aria-label={t('callDriver')}>
+              <Phone size={20} />
             </a>
           )}
         </div>
-      ) : null}
+      )}
 
-      <Button variant="primary" block to={`/rides/${ride.id}`} className="hero-btn">
+      <Button variant="secondary" block to={`/rides/${ride.id}`}>
         {t('viewRide')}
       </Button>
-    </Card>
+    </section>
   );
 }

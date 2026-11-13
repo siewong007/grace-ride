@@ -140,12 +140,7 @@ export default function EventDetail() {
           <div className="stack">
             {/* Event Hero Card */}
             <Card className="stack">
-              <div className="row nowrap between">
-                <span className="event-emoji" aria-hidden>{EVENT_KIND[e.kind]?.emoji}</span>
-                <Pill tone={open ? 'success' : 'neutral'}>
-                  {ft(EVENT_KIND[e.kind]?.label ?? e.kind)}
-                </Pill>
-              </div>
+              <span className="muted small">{ft(EVENT_KIND[e.kind]?.label ?? e.kind)}</span>
 
               {e.description && (
                 <p className="pre-wrap">{e.description}</p>

@@ -117,7 +117,6 @@ export default function Report() {
                   <div className="list">
                     {r.events.map((e) => (
                       <Link key={e.id} to={`/events/${e.id}`} className="item">
-                        <span aria-hidden>{EVENT_KIND[e.kind]?.emoji}</span>
                         <span className="grow min-w-0 ellipsis">{e.title}</span>
                         <span className="muted small">{fmtDateTime(e.starts_at, ft)}</span>
                       </Link>

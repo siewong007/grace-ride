@@ -65,11 +65,10 @@ export default function Rides() {
   }, [data, ft, t]);
 
   return (
-    <Page width="wide">
+    <Page width="medium">
       <div className="stack">
         <PageHeader
           title={t('title')}
-          subtitle={t('desc')}
           actions={
             <Button variant="primary" to="/rides/new" icon={<CalendarPlus size={20} />}>
               {t('signupRide')}
@@ -91,22 +90,23 @@ export default function Rides() {
         {loading ? (
           <ListSkeleton count={4} />
         ) : dateGroups.length > 0 ? (
-          <div className="rides-grouped-list stack">
+          <div className="rides-grouped-list">
             {dateGroups.map((group) => (
-              <div key={group.dateKey} className="rides-date-section">
-                <div className="sticky-date-header">{group.label}</div>
-                <div className="grid cols-2">
+              <section key={group.dateKey} className="rides-date-section" aria-label={group.label}>
+                <h2 className="sticky-date-header">{group.label}</h2>
+                <div className="list">
                   {group.rides.map((r) => (
-                    <RideCard key={r.id} ride={r} />
+                    <RideCard key={r.id} ride={r} showDate={false} />
                   ))}
                 </div>
-              </div>
+              </section>
             ))}
           </div>
         ) : (
           <EmptyState
             icon={<CalendarPlus size={36} />}
             title={scope === 'upcoming' ? t('noUpcoming') : t('noPast')}
+            description={scope === 'upcoming' ? t('desc') : undefined}
             action={
               scope === 'upcoming' ? (
                 <Button variant="primary" to="/rides/new" icon={<CalendarPlus size={18} />}>

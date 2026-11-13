@@ -1,13 +1,23 @@
-import { useState } from 'react';
-import { useNavigate } from 'react-router-dom';
-import { Clock, Fingerprint, LogOut, ShieldAlert, ShieldCheck } from 'lucide-react';
+import { ReactNode, useState } from 'react';
+import { Link, useNavigate } from 'react-router-dom';
+import { ChevronRight, Clock, Fingerprint, LogOut, ShieldAlert, ShieldCheck } from 'lucide-react';
 import { del, post, put, useApi } from '../api';
 import { useAuth } from '../auth';
 import { DisplayPreferences } from '../components/AppChrome';
-import { Avatar, Button, Card, ErrorBox, Field, FileInput, Modal, Notice, Pill, useAction, useConfirm } from '../components/ui';
+import { Button, Card, ErrorBox, Field, FileInput, Modal, Notice, PageHeader, Pill, useAction, useConfirm } from '../components/ui';
 import { fmtAgo, ROLE_LABEL, useFormatT } from '../format';
 import { passkeySupported, registerPasskey } from '../webauthn';
 import { useTranslation } from 'react-i18next';
+
+/** A row in the phone-only shortcut list: label and a chevron. */
+function ProfileLink({ to, children }: { to: string; children: ReactNode }) {
+  return (
+    <Link to={to} className="item profile-link">
+      <span className="grow">{children}</span>
+      <ChevronRight size={18} className="muted" aria-hidden="true" />
+    </Link>
+  );
+}
 
 export default function Profile() {
   const { t } = useTranslation('profile');
@@ -23,15 +33,7 @@ export default function Profile() {
 
   return (
     <div className="stack">
-      <div className="page-head row between">
-        <div className="row nowrap">
-          <Avatar name={me.name} fileId={me.photo_file_id} size="lg" />
-          <div>
-            <h1>{me.name}</h1>
-            <p className="muted">{me.email}</p>
-          </div>
-        </div>
-      </div>
+      <PageHeader title={me.name} subtitle={me.email} />
 
       {me.status === 'pending' && (
         <Notice tone="warning" icon={<Clock size={20} />}>
@@ -167,16 +169,16 @@ export default function Profile() {
           {me.status !== 'pending' && (
             <div className="stack-sm hide-tablet-up">
               <div className="bold small">{t('roles')}</div>
-              <div className="grid cols-2">
-                <Button variant="secondary" to="/costs">{t('myCosts')}</Button>
-                <Button variant="secondary" to="/reimbursements">{t('myReimb')}</Button>
-                <Button variant="secondary" to="/report">{t('myReport')}</Button>
-                <Button variant="secondary" to="/help">{t('myHelp')}</Button>
-                {has('leader') && <Button variant="secondary" to="/settlements">{t('settlements')}</Button>}
-                {me.mfa_ok && (has('transport') || has('admin')) && <Button variant="secondary" to="/admin">{t('dashboard')}</Button>}
-                {me.mfa_ok && (has('transport') || has('finance')) && <Button variant="secondary" to="/admin/reimbursements">{t('reimbReview')}</Button>}
-                {me.mfa_ok && has('admin') && <Button variant="secondary" to="/admin/members">{t('members')}</Button>}
-              </div>
+              <nav className="list profile-links" aria-label={t('roles')}>
+                <ProfileLink to="/costs">{t('myCosts')}</ProfileLink>
+                <ProfileLink to="/reimbursements">{t('myReimb')}</ProfileLink>
+                <ProfileLink to="/report">{t('myReport')}</ProfileLink>
+                <ProfileLink to="/help">{t('myHelp')}</ProfileLink>
+                {has('leader') && <ProfileLink to="/settlements">{t('settlements')}</ProfileLink>}
+                {me.mfa_ok && (has('transport') || has('admin')) && <ProfileLink to="/admin">{t('dashboard')}</ProfileLink>}
+                {me.mfa_ok && (has('transport') || has('finance')) && <ProfileLink to="/admin/reimbursements">{t('reimbReview')}</ProfileLink>}
+                {me.mfa_ok && has('admin') && <ProfileLink to="/admin/members">{t('members')}</ProfileLink>}
+              </nav>
               <div className="divider" />
             </div>
           )}

@@ -129,7 +129,7 @@ export function fmtAgo(s: string, tt?: FormatT) {
   const t = tt ?? globalT;
   if (diff < 60) return t('format:justNow');
   if (diff < 3600) return t('format:minutesAgo', { n: Math.floor(diff / 60) });
-  if (diff < 86400) return t('format:hoursAgo', { n: Math.floor(diff / 3600) });
+  if (diff < 86400) return t('format:hoursAgo', { count: Math.floor(diff / 3600) });
   return fmtDay(s, t);
 }
 

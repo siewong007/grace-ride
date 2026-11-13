@@ -142,7 +142,7 @@ export function IconButton({
 // ==========================================
 
 export interface CardProps extends React.HTMLAttributes<HTMLDivElement> {
-  variant?: 'default' | 'flat' | 'hero' | 'link';
+  variant?: 'default' | 'flat' | 'link';
   padding?: 'sm' | 'md' | 'lg';
   to?: string;
   children: ReactNode;

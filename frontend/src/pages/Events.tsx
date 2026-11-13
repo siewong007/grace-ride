@@ -44,7 +44,7 @@ export default function Events() {
   const { data, error, loading } = useApi<EventItem[]>(`/events?scope=${scope}`);
 
   return (
-    <Page width="wide">
+    <Page width="medium">
       <div className="stack">
         <PageHeader
           title={t('title')}
@@ -84,56 +84,43 @@ export default function Events() {
             }
           />
         ) : (
-          <div className="grid cols-3">
+          <div className="list event-list">
             {data.map((e) => {
               const d = new Date(e.starts_at);
               const monthName = d.toLocaleDateString(undefined, { month: 'short' });
               const dayNum = d.getDate();
-              const percent = e.capacity > 0 ? Math.min(100, Math.round((e.going / e.capacity) * 100)) : 0;
 
               return (
-                <Link key={e.id} to={`/events/${e.id}`} className="card link event-card">
-                  <div className="event-card-head">
-                    <div className="event-date-badge" aria-hidden="true">
-                      <span className="event-date-month">{monthName}</span>
-                      <span className="event-date-day">{dayNum}</span>
+                <Link key={e.id} to={`/events/${e.id}`} className="item event-card">
+                  <div className="event-date-badge" aria-hidden="true">
+                    <span className="event-date-month">{monthName}</span>
+                    <span className="event-date-day">{dayNum}</span>
+                  </div>
+                  <div className="grow min-w-0 event-card-main">
+                    <div className="bold ellipsis">{e.title}</div>
+                    <div className="muted small ellipsis">
+                      {fmtDateTime(e.starts_at, ft)} · {e.location}
                     </div>
-                    <div className="grow min-w-0">
-                      <div className="bold ellipsis">{e.title}</div>
-                      <div className="muted small ellipsis">
-                        {ft(EVENT_KIND[e.kind]?.label ?? e.kind)} · {e.groups}
-                      </div>
+                    <div className="muted small ellipsis">
+                      {ft(EVENT_KIND[e.kind]?.label ?? e.kind)} · {e.groups}
                     </div>
                   </div>
-
-                  <div className="small">{fmtDateTime(e.starts_at, ft)}</div>
-                  <div className="muted small ellipsis">{e.location}</div>
-
-                  {e.capacity > 0 ? (
-                    <div className="event-seats-meter">
-                      <div className="row between small muted">
-                        <span>{e.going}/{e.capacity} {t('peopleUnit')}</span>
-                        {e.spots_left != null && (
-                          <span>{e.spots_left > 0 ? t('spotsLeft', { n: e.spots_left }) : t('full')}</span>
-                        )}
-                      </div>
-                      <div className="bar">
-                        <div style={{ width: `${percent}%` }} />
-                      </div>
-                    </div>
-                  ) : (
-                    <div className="small muted">
-                      {e.going} {t('peopleAttend')}
-                    </div>
-                  )}
-
-                  <div className="row wrap gap-xs">
-                    {e.status !== 'published' && (
+                  <div className="event-card-side">
+                    {e.status !== 'published' ? (
                       <Pill tone="neutral">{e.status === 'cancelled' ? t('cancelled') : t('finished')}</Pill>
+                    ) : e.my_signup?.status === 'going' ? (
+                      <Pill tone="success">{t('signedUp')}</Pill>
+                    ) : e.my_signup?.status === 'waitlist' ? (
+                      <Pill tone="warning">{t('waitlist')}</Pill>
+                    ) : null}
+                    {e.my_signup?.need_ride && <span className="muted small">{t('needRide')}</span>}
+                    {e.status === 'published' && !e.my_signup && (
+                      e.capacity > 0 && e.spots_left != null ? (
+                        <span className="muted small nowrap">{e.spots_left > 0 ? t('spotsLeft', { n: e.spots_left }) : t('full')}</span>
+                      ) : (
+                        <span className="muted small nowrap">{e.going} {t('peopleAttend')}</span>
+                      )
                     )}
-                    {e.my_signup?.status === 'going' && <Pill tone="success">{t('signedUp')}</Pill>}
-                    {e.my_signup?.status === 'waitlist' && <Pill tone="warning">{t('waitlist')}</Pill>}
-                    {e.my_signup?.need_ride && <Pill tone="info">{t('needRide')}</Pill>}
                   </div>
                 </Link>
               );

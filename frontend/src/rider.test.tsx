@@ -44,7 +44,7 @@ const mockApiData: Record<string, unknown> = {
   '/rides': [mockRide],
   '/rides?scope=upcoming': [mockRide],
   '/rides?scope=past': [],
-  '/events': [{ id: 101, title: 'Sunday Service', kind: 'service', location: 'Grace Hall' }],
+  '/events': [{ id: 101, title: 'Sunday Service', kind: 'service', location: 'Grace Hall', starts_at: '2026-11-15T09:00:00' }],
   '/me/shares': [{ id: 1, title: 'Lunch share', amount_cents: 1500, status: 'pending', due_date: null }],
   '/announcements': [
     {
@@ -116,7 +116,7 @@ describe('RideCard', () => {
 });
 
 describe('Home page', () => {
-  it('renders greeting, hero card, quick actions, and sections', () => {
+  it('renders greeting, one main action, and the next ride', () => {
     render(
       <MemoryRouter>
         <Home />
@@ -124,7 +124,9 @@ describe('Home page', () => {
     );
 
     expect(screen.getByRole('heading', { level: 1 })).toBeInTheDocument();
-    expect(screen.getByRole('region', { name: /quick actions/i })).toBeInTheDocument();
+    // One "Request a ride" action, not a tile plus a header button plus a footer button.
+    expect(screen.getAllByRole('link', { name: /request a ride/i })).toHaveLength(1);
+    expect(screen.getByRole('region', { name: /upcoming ride/i })).toBeInTheDocument();
     expect(screen.getAllByText(/David Driver/i).length).toBeGreaterThan(0);
     expect(screen.getAllByText(/Grace Community Church/i).length).toBeGreaterThan(0);
   });
