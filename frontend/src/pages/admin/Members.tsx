@@ -41,7 +41,7 @@ interface Group {
 interface InviteItem {
   id: number;
   email: string | null;
-  url: string;
+  url: string | null;
   kind: string;
   roles: string[];
   status: string;
@@ -403,9 +403,12 @@ function Invites() {
                 </div>
                 {i.status === 'open' ? (
                   <div className="btn-row">
-                    <Button variant="secondary" size="sm" onClick={() => copy(i.url)}>
-                      {t('members.copy')}
-                    </Button>
+                    {/* Recovery links are shown once, on approval, and never listed. */}
+                    {i.url && (
+                      <Button variant="secondary" size="sm" onClick={() => copy(i.url!)}>
+                        {t('members.copy')}
+                      </Button>
+                    )}
                     <Button
                       variant="danger"
                       size="sm"

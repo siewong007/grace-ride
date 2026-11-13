@@ -14,12 +14,6 @@
       "port": 8080
     },
     {
-      "name": "api-sec-audit",
-      "runtimeExecutable": "bash",
-      "runtimeArgs": ["-c", "cd '/Users/goaltosuceed/Documents/Grace Ride/backend' && DATABASE_URL=postgres://localhost/grace_ride_sec_audit DEV_MODE=true BIND=127.0.0.1:8097 PUBLIC_URL=http://localhost:8097 ROUTING_ENABLED=false UPLOAD_DIR='/private/tmp/claude-501/-Users-goaltosuceed--claude-spares-spare-f7vn1Z/cbd675e5-0092-4c23-839d-75354b23a092/scratchpad/uploads' ./target/debug/grace-ride"],
-      "port": 8097
-    },
-    {
       "name": "web",
       "runtimeExecutable": "npm",
       "runtimeArgs": ["--prefix", "frontend", "run", "dev"],

@@ -108,19 +108,19 @@ pub async fn can_access_file(st: &AppState, u: &CurrentUser, file_id: i64) -> Ap
     if photo > 0 {
         return Ok(true);
     }
-    // Settlement expense receipts: organiser, finance. Participants see the
-    // bill lines but not the organiser's receipts.
-    let (item,): (i64,) = sqlx::query_as(
-        "SELECT COUNT(*) FROM settlement_items i JOIN settlements s ON s.id=i.settlement_id
-         WHERE i.receipt_file_id=$1 AND (s.created_by=$2 OR $3)",
-    )
-    .bind(file_id)
-    .bind(u.id)
-    .bind(finance)
-    .fetch_one(&st.db)
-    .await?;
-    if item > 0 {
-        return Ok(true);
+    // Settlement expense receipts: finance. The organiser attaches only their own
+    // uploads (checked when the bill is saved) and reaches them through the owner
+    // check above, so naming another member's file id on a bill opens nothing.
+    // Participants see the bill lines but not the receipts.
+    if finance {
+        let (item,): (i64,) =
+            sqlx::query_as("SELECT COUNT(*) FROM settlement_items WHERE receipt_file_id=$1")
+                .bind(file_id)
+                .fetch_one(&st.db)
+                .await?;
+        if item > 0 {
+            return Ok(true);
+        }
     }
     // Payment proofs: payer (owner), organiser/payee, finance.
     let (proof,): (i64,) = sqlx::query_as(

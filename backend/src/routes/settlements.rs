@@ -140,6 +140,22 @@ fn compute_shares(lang: Lang, req: &SettlementIn) -> AppResult<Vec<(i64, i64)>> 
     }
 }
 
+/// A receipt on a bill must be a file the organiser uploaded themself. Attaching a
+/// file makes it readable through the bill, so someone else's file id is refused
+/// (and an unknown id answers the same way, so ids can't be probed).
+async fn check_receipts(st: &AppState, u: &CurrentUser, req: &SettlementIn) -> AppResult<()> {
+    for file_id in req.items.iter().filter_map(|i| i.receipt_file_id) {
+        let owner: Option<(i64,)> = sqlx::query_as("SELECT owner_id FROM files WHERE id=$1")
+            .bind(file_id)
+            .fetch_optional(&st.db)
+            .await?;
+        if owner != Some((u.id,)) {
+            return Err(forbidden(u.lang, ErrorKey::InvalidReceipt));
+        }
+    }
+    Ok(())
+}
+
 async fn event_owner(st: &AppState, lang: Lang, event_id: i64) -> AppResult<(i64, String)> {
     sqlx::query_as("SELECT created_by, title FROM events WHERE id=$1")
         .bind(event_id)
@@ -251,6 +267,7 @@ async fn create(
         ));
     }
     let shares = compute_shares(u.lang, &req)?;
+    check_receipts(&st, &u, &req).await?;
     let (sid,): (i64,) = sqlx::query_as(
         "INSERT INTO settlements (event_id, created_by, title, created_at) VALUES ($1,$2,$3,$4) RETURNING id",
     )
@@ -391,6 +408,7 @@ async fn update(
         return Err(bad(u.lang, ErrorKey::BillClosedCannotEdit));
     }
     let shares = compute_shares(u.lang, &req)?;
+    check_receipts(&st, &u, &req).await?;
     if s.status == "published" {
         let reason = req
             .reason

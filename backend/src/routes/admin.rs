@@ -238,10 +238,13 @@ async fn list_invites(State(st): State<AppState>, u: CurrentUser) -> AppResult<J
     .fetch_all(&st.db)
     .await?;
     let n = now();
+    // A recovery link signs its holder in as that member, so it is shown once, to the
+    // admin who approved it (`approve_recovery`), and never listed again: otherwise any
+    // other admin, including the one who only flagged a privileged recovery, could use it.
     Ok(Json(json!(rows.into_iter().map(|(id, token, kind, email, name, roles, exp, used, c)| json!({
         "id": id, "kind": kind, "email": email, "name": name, "roles": parse_roles(&roles), "expires_at": exp, "used_at": used, "created_at": c,
         "status": if used.is_some() { "used" } else if exp < n { "expired" } else { "open" },
-        "url": if used.is_none() && exp >= n { Some(format!("{}/invite/{}", st.cfg.public_url, token)) } else { None },
+        "url": if kind != "recovery" && used.is_none() && exp >= n { Some(format!("{}/invite/{}", st.cfg.public_url, token)) } else { None },
     })).collect::<Vec<_>>())))
 }
 

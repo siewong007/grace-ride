@@ -580,6 +580,40 @@ async fn privileged_recovery_needs_two_admins() {
     .await;
     assert_eq!(confirmed.status, StatusCode::OK, "{}", confirmed.json);
     assert!(confirmed.json["url"].is_string());
+
+    // The link is shown once, to the confirming admin. Nobody can read it back from
+    // the invite list, so the admin who only flagged the request never holds it.
+    let link_token = confirmed.json["url"]
+        .as_str()
+        .unwrap()
+        .rsplit('/')
+        .next()
+        .unwrap()
+        .to_string();
+    for who in [&admin, &second] {
+        let list = call(&app, Method::GET, "/api/admin/invites", Some(who), None).await;
+        assert_eq!(list.status, StatusCode::OK, "{}", list.json);
+        let listed = list
+            .json
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|r| r["kind"] == "recovery" && r["email"] == "finance@example.org")
+            .expect("the recovery invite stays in the log");
+        assert_eq!(listed["status"], "open");
+        assert!(listed["url"].is_null(), "{listed}");
+        assert!(!list.json.to_string().contains(&link_token));
+    }
+    // Ordinary invite links are still listed for copying.
+    let invite = call(&app, Method::POST, "/api/admin/invites", Some(&admin), None).await;
+    let list = call(&app, Method::GET, "/api/admin/invites", Some(&admin), None).await;
+    assert!(list
+        .json
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|r| r["kind"] == "invite" && r["url"] == invite.json["url"]));
+
     let (status,): (String,) = sqlx::query_as("SELECT status FROM recovery_requests WHERE id=$1")
         .bind(rid)
         .fetch_one(&st.db)
@@ -1283,4 +1317,163 @@ async fn admin_live_map_with_driver_location() {
         .find(|d| d["driver_id"] == driver_id)
         .expect("driver on live map");
     assert_eq!(d["lat"], 3.1);
+}
+
+#[tokio::test]
+async fn pending_member_is_kept_out_however_the_token_is_sent() {
+    let (app, st) = setup().await;
+    let admin = login(&st, "admin@example.org").await;
+    let created = call(&app, Method::POST, "/api/admin/invites", Some(&admin), None).await;
+    let token = created.json["token"].as_str().unwrap().to_string();
+    let accept = call(
+        &app,
+        Method::POST,
+        &format!("/api/invites/{token}/accept"),
+        None,
+        Some(json!({
+            "name": "待批会员",
+            "email": "waiting@example.org",
+            "phone": "012-999 0002",
+            "terms": true
+        })),
+    )
+    .await;
+    assert_eq!(accept.status, StatusCode::OK, "{}", accept.json);
+    // "gr_session=<token>" from the Set-Cookie header.
+    let cookie = accept.headers["set-cookie"]
+        .to_str()
+        .unwrap()
+        .split(';')
+        .next()
+        .unwrap()
+        .to_string();
+    let session = cookie.split_once('=').unwrap().1.to_string();
+
+    // Their own profile is open before approval; member routes are not.
+    let me = call(&app, Method::GET, "/api/auth/me", Some(&cookie), None).await;
+    assert_eq!(me.status, StatusCode::OK, "{}", me.json);
+    assert_eq!(me.json["status"], "pending");
+    for path in ["/api/rides", "/api/announcements", "/api/events"] {
+        let blocked = call(&app, Method::GET, path, Some(&cookie), None).await;
+        assert_eq!(blocked.status, StatusCode::FORBIDDEN, "{path}");
+        assert_eq!(blocked.json["code"], "ACCOUNT_PENDING", "{path}");
+    }
+
+    // The same token as a Bearer header is not a second way in: the cookie is the
+    // only credential, so the pending guard cannot be sidestepped.
+    for path in ["/api/rides", "/api/announcements", "/api/auth/me"] {
+        let req = axum::http::Request::builder()
+            .method(Method::GET)
+            .uri(path)
+            .header(
+                axum::http::header::AUTHORIZATION,
+                format!("Bearer {session}"),
+            )
+            .body(axum::body::Body::empty())
+            .unwrap();
+        let res = tower::ServiceExt::oneshot(app.clone(), req).await.unwrap();
+        assert_eq!(res.status(), StatusCode::UNAUTHORIZED, "{path}");
+    }
+    let (rides,): (i64,) = sqlx::query_as(
+        "SELECT COUNT(*) FROM rides r JOIN users u ON u.id=r.passenger_id WHERE u.email='waiting@example.org'",
+    )
+    .fetch_one(&st.db)
+    .await
+    .unwrap();
+    assert_eq!(rides, 0);
+}
+
+#[tokio::test]
+async fn settlement_receipt_must_be_the_organisers_own_upload() {
+    let (app, st) = setup().await;
+    // driver@example.org (id 4) is 活动负责人 and organiser of event 5.
+    let leader = login(&st, "driver@example.org").await;
+    let member = login(&st, "member@example.org").await;
+    let theirs = upload_png(&app, &member).await;
+    let own = upload_png(&app, &leader).await;
+    let file = |id: i64| format!("/api/files/{id}");
+    let bill = |receipt: i64| {
+        json!({
+            "title": "羽球",
+            "items": [{"label": "场租", "amount_cents": 10000, "receipt_file_id": receipt}],
+            "split_mode": "equal",
+            "participants": [{"user_id": 4}],
+            "payee_name": "李德明", "payee_account": "TNG 012"
+        })
+    };
+    let can_open = |who: String, id: i64| {
+        let (app, path) = (app.clone(), file(id));
+        async move {
+            call(&app, Method::GET, &path, Some(&who), None)
+                .await
+                .status
+        }
+    };
+    assert_eq!(
+        can_open(leader.clone(), theirs).await,
+        StatusCode::FORBIDDEN
+    );
+
+    // Naming another member's file on a bill is refused, and opens nothing.
+    let r = call(
+        &app,
+        Method::POST,
+        "/api/events/5/settlements",
+        Some(&leader),
+        Some(bill(theirs)),
+    )
+    .await;
+    assert_eq!(r.status, StatusCode::FORBIDDEN, "{}", r.json);
+    assert_eq!(r.json["code"], "INVALID_RECEIPT");
+    assert_eq!(
+        can_open(leader.clone(), theirs).await,
+        StatusCode::FORBIDDEN
+    );
+    // An id that doesn't exist answers the same way, so ids can't be probed.
+    let r = call(
+        &app,
+        Method::POST,
+        "/api/events/5/settlements",
+        Some(&leader),
+        Some(bill(999_999)),
+    )
+    .await;
+    assert_eq!(r.status, StatusCode::FORBIDDEN, "{}", r.json);
+
+    // The organiser's own receipt is accepted; editing the draft is checked too.
+    let made = call(
+        &app,
+        Method::POST,
+        "/api/events/5/settlements",
+        Some(&leader),
+        Some(bill(own)),
+    )
+    .await;
+    assert_eq!(made.status, StatusCode::OK, "{}", made.json);
+    let sid = made.json["id"].as_i64().unwrap();
+    let edit = call(
+        &app,
+        Method::PUT,
+        &format!("/api/settlements/{sid}"),
+        Some(&leader),
+        Some(bill(theirs)),
+    )
+    .await;
+    assert_eq!(edit.status, StatusCode::FORBIDDEN, "{}", edit.json);
+    assert_eq!(can_open(leader.clone(), own).await, StatusCode::OK);
+
+    // A row planted before this check existed still opens nothing for the organiser;
+    // finance, who reviews every bill, can open it.
+    sqlx::query("UPDATE settlement_items SET receipt_file_id=$1 WHERE settlement_id=$2")
+        .bind(theirs)
+        .bind(sid)
+        .execute(&st.db)
+        .await
+        .unwrap();
+    assert_eq!(
+        can_open(leader.clone(), theirs).await,
+        StatusCode::FORBIDDEN
+    );
+    let finance = login(&st, "finance@example.org").await;
+    assert_eq!(can_open(finance, theirs).await, StatusCode::OK);
 }

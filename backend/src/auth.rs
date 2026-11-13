@@ -84,19 +84,14 @@ impl FromRequestParts<AppState> for CurrentUser {
                 .and_then(|v| v.to_str().ok())
                 .unwrap_or(""),
         );
+        // The session cookie is the only credential. `security::pending_guard` reads the
+        // same cookie to keep unapproved members out; a second way to present the token
+        // (it used to be accepted as a Bearer header) would walk straight past that guard.
         let jar = CookieJar::from_headers(&parts.headers);
         let token = jar
             .get(SESSION_COOKIE_SECURE)
             .or_else(|| jar.get(SESSION_COOKIE))
             .map(|c| c.value().to_string())
-            .or_else(|| {
-                parts
-                    .headers
-                    .get("authorization")
-                    .and_then(|v| v.to_str().ok())
-                    .and_then(|v| v.strip_prefix("Bearer "))
-                    .map(|s| s.to_string())
-            })
             .ok_or(unauthorized(accept_lang))?;
         if token.len() != 48 {
             return Err(unauthorized(accept_lang));
