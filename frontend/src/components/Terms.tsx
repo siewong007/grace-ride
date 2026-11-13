@@ -7,12 +7,13 @@ import { useTranslation } from 'react-i18next';
 
 const SECTIONS = ['service', 'who', 'info', 'location', 'see', 'choices', 'accept'] as const;
 
-export function TermsText() {
+/** The terms. `heading` is h1 on a page of its own, lower when shown inside another step. */
+export function TermsText({ heading: Heading = 'h2' }: { heading?: 'h1' | 'h2' | 'h3' }) {
   const { t } = useTranslation('terms');
   return (
     <div className="terms-measure stack">
       <div>
-        <h2>{t('title')}</h2>
+        <Heading className="terms-title">{t('title')}</Heading>
         <p className="muted small">{t('updated')}</p>
       </div>
       <p className="terms-intro">{t('intro')}</p>
@@ -47,7 +48,7 @@ export function TermsGate() {
   return (
     <div className="terms-gate-page">
       <div className="terms-gate-container terms-measure stack">
-        <TermsText />
+        <TermsText heading="h1" />
         <ErrorBox error={error} />
       </div>
 
@@ -83,7 +84,7 @@ export default function TermsPage() {
   return (
     <div className="auth-page">
       <div className="card auth-card terms-measure stack">
-        <TermsText />
+        <TermsText heading="h1" />
         <div>
           <Button variant="secondary" to="/login">{t('back')}</Button>
         </div>

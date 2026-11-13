@@ -107,7 +107,7 @@ export function fmtTime(s: string, tt?: FormatT) {
   const t = tt ?? globalT;
   const period = h < 12 ? t('format:period.am') : h < 18 ? t('format:period.pm') : t('format:period.evening');
   const h12 = h % 12 === 0 ? 12 : h % 12;
-  return `${period} ${h12}:${String(d.getMinutes()).padStart(2, '0')}`;
+  return t('format:clock', { period, time: `${h12}:${String(d.getMinutes()).padStart(2, '0')}` });
 }
 
 export function fmtDay(s: string, tt?: FormatT) {

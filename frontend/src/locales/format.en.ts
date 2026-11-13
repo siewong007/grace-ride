@@ -8,6 +8,8 @@ export default {
   role: { admin: 'Admin', transport: 'Transport', finance: 'Finance', leader: 'Event leader', driver: 'Volunteer driver' },
   weekday: ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'],
   period: { am: 'am', pm: 'pm', evening: 'pm' },
+  // Word order differs: "10:00 am" in English, "上午 10:00" in Chinese.
+  clock: '{time} {period}',
   today: 'Today',
   tomorrow: 'Tomorrow',
   justNow: 'Just now',

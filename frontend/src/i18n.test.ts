@@ -4,7 +4,7 @@ import { beforeAll, describe, expect, it } from 'vitest';
 import i18n from './i18n';
 import { resources } from './locales';
 import { apiMessage } from './api';
-import { fmtAgo, fmtDay, HELP_STATUS, SETTLEMENT_STATUS } from './format';
+import { fmtAgo, fmtDay, fmtTime, HELP_STATUS, SETTLEMENT_STATUS } from './format';
 
 const pad = (n: number) => String(n).padStart(2, '0');
 const local = (d: Date) =>
@@ -31,6 +31,14 @@ describe('placeholders', () => {
     expect(fmtAgo(local(new Date(Date.now() - 5 * 60_000)))).toBe('5 min ago');
     const far = new Date(2026, 2, 7, 9, 0);
     expect(fmtDay(local(far))).toMatch(/^3\/7 /);
+  });
+
+  it('puts am/pm after the time in English and before it in Chinese', async () => {
+    expect(fmtTime('2026-11-20T10:05:00')).toBe('10:05 am');
+    expect(fmtTime('2026-11-20T19:30:00')).toBe('7:30 pm');
+    await i18n.changeLanguage('zh');
+    expect(fmtTime('2026-11-20T10:05:00')).toBe(`${i18n.t('format:period.am')} 10:05`);
+    await i18n.changeLanguage('en');
   });
 
   it('has no leftover {{x}} or escaped quotes in any locale string', () => {

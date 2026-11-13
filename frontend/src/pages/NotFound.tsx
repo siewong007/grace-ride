@@ -9,7 +9,7 @@ export default function NotFound() {
     <Page width="narrow" className="not-found-page">
       <div className="card auth-card not-found-card stack">
         <div className="not-found-icon-wrap" aria-hidden="true">
-          <MapPinOff size={72} className="not-found-icon" />
+          <MapPinOff size={40} className="not-found-icon" />
         </div>
         <div className="stack-sm not-found-text">
           <h1>{t('notFound')}</h1>
@@ -17,10 +17,10 @@ export default function NotFound() {
           <p className="muted small">{t('pageMissing')}</p>
         </div>
         <div className="btn-row not-found-actions">
-          <Button variant="primary" to="/" size="lg">
+          <Button variant="primary" to="/">
             {t('goHome')}
           </Button>
-          <Button variant="secondary" onClick={() => window.history.back()} size="lg">
+          <Button variant="secondary" onClick={() => window.history.back()}>
             {t('back')}
           </Button>
         </div>

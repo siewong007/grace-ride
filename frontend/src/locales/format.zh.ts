@@ -8,6 +8,7 @@ export default {
   role: { admin: '管理员', transport: '交通组', finance: '财务', leader: '活动负责人', driver: '志愿司机' },
   weekday: ['周日', '周一', '周二', '周三', '周四', '周五', '周六'],
   period: { am: '上午', pm: '下午', evening: '晚上' },
+  clock: '{period} {time}',
   today: '今天',
   tomorrow: '明天',
   justNow: '刚刚',

@@ -110,7 +110,8 @@ describe('Design Tokens & Visual Language (Phase 3)', () => {
     expect(iconSvg).toBe(kitIcon);
 
     const indexHtml = fs.readFileSync(path.resolve(__dirname, '../index.html'), 'utf-8');
-    expect(indexHtml).toContain('<meta name="theme-color" content="#1F5DB4" />');
+    // The browser bar matches the white top bar and splash (minimalist pass).
+    expect(indexHtml).toContain('<meta name="theme-color" content="#FFFFFF" />');
     expect(indexHtml).toContain('<div id="splash"');
 
     const manifest = fs.readFileSync(path.resolve(__dirname, '../public/manifest.webmanifest'), 'utf-8');

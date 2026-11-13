@@ -21,7 +21,7 @@ test.beforeEach(async ({ page }) => {
 
 test('login page loads and shows passkey gate', async ({ page }) => {
   await page.goto('/login');
-  await expect(page.locator('h2')).toBeVisible();
+  await expect(page.getByRole('heading', { level: 1 })).toBeVisible();
   await expect(page.locator('input[type="email"]')).toBeVisible();
 });
 

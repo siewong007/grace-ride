@@ -59,33 +59,14 @@ export default function Login() {
   return (
     <div className="login-page-wrap">
       <div className="login-split">
-        {/* Brand panel on ≥900px */}
-        <div className="login-brand-panel">
-          <div className="login-brand-content stack">
-            <div className="row nowrap login-brand-header">
-              <LogoMark size={44} mono />
-              <div>
-                <h1 className="login-brand-title"><Wordmark mono /></h1>
-                <p className="login-brand-sub">{t('brandSub', { ns: 'layout' })}</p>
-              </div>
-            </div>
-            <p className="login-welcome-tagline">{t('welcomeBilingual')}</p>
-            <div className="login-illustration-wrap" aria-hidden="true">
-              <svg className="login-road-svg" viewBox="0 0 320 180" fill="none" xmlns="http://www.w3.org/2000/svg">
-                <path d="M 20 160 Q 160 20 300 160" stroke="currentColor" strokeWidth="20" strokeLinecap="round" className="road-path" />
-                <path d="M 20 160 Q 160 20 300 160" stroke="currentColor" strokeWidth="3" strokeDasharray="10 10" className="road-stripes" />
-                <circle cx="160" cy="65" r="14" fill="currentColor" className="road-sun" />
-              </svg>
-            </div>
-          </div>
-        </div>
-
-        {/* Right card form panel */}
         <div className="card auth-card stack">
           <div className="auth-header-row row between">
-            <div className="row nowrap hide-desktop auth-brand">
+            <div className="row nowrap auth-brand">
               <LogoMark size={36} />
-              <Wordmark />
+              <div>
+                <Wordmark />
+                <p className="muted small">{t('brandSub', { ns: 'layout' })}</p>
+              </div>
             </div>
             <button
               type="button"
@@ -97,7 +78,10 @@ export default function Login() {
             </button>
           </div>
 
-          <h2>{t('welcomeBack')}</h2>
+          <div>
+            <h1 className="auth-title">{t('welcomeBack')}</h1>
+            <p className="muted">{t('welcomeBilingual')}</p>
+          </div>
 
           {/* Passkey primary login form */}
           <form className="stack" onSubmit={onPasskey}>

@@ -180,7 +180,7 @@ export default function Invite() {
               <h2>{t('stepTerms')}</h2>
             </div>
             <div className="card flat terms-scroll">
-              <TermsText />
+              <TermsText heading="h3" />
             </div>
             <TermsOptIn checked={terms} onChange={(v) => { setTerms(v); if (v) setFieldErrors({ ...fieldErrors, terms: undefined }); }} />
             {fieldErrors.terms && <span className="field-error" role="alert">{fieldErrors.terms}</span>}

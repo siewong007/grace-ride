@@ -55,3 +55,15 @@ Problems seen across the app:
 5. **Driver** — Drive, trip actions, route.
 6. **Admin** — Dashboard, Ride management, Live map, Members, Settings, Announcements, Audit, transport planning board.
 7. **Public pages and final checks** — Login, Invite, Terms, 404; retake visual baselines; full viewport, theme, language and text-size sweep.
+
+## Outcome (13 Nov 2026)
+
+All eight phases are done on the `ui/minimalist` branch, one commit per phase.
+
+Final sweep of the running app with demo data: 27 pages × 375 / 768 / 1280 px × English / Chinese × normal / largest text (324 visits) found no horizontal overflow, no crash screens and no console errors. Contrast (axe, light and dark, 375 px) found no serious or critical issues. The only flags were `login.dev` entries in the audit log, which are recorded action names, not missing translations.
+
+Checks at the end: lint 0 errors (18 older warnings unchanged), TypeScript clean, 97 unit tests, build, 12 Playwright tests with refreshed baselines.
+
+Bugs found and fixed along the way (beyond Phase 0): English times read "am 10:00" (now "10:00 am"; Chinese keeps "上午 10:00"); the admin ride filter offered statuses that do not exist; four admin labels showed raw keys; "Tomorrow" was computed in UTC; due dates showed a raw timestamp; pages had two `h1`s; Login had no `h1`.
+
+Left as they were: Ride detail layout, the Invite wizard, Announcements, Audit, Reimbursement review, Live map and the planning board only picked up the shared styles; the 18 older lint warnings; locale keys that may no longer be used.
