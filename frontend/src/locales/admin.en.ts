@@ -38,6 +38,7 @@ export default {
     date: 'Date',
     clearFilters: 'Clear filters',
     count: '{count} rides found',
+    count_one: '{count} ride found',
   },
   live: {
     title: 'Live map',

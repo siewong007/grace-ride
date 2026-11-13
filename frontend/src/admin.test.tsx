@@ -1,5 +1,6 @@
 import { beforeAll, describe, expect, it, vi } from 'vitest';
-import { fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
+import { RIDE_STATUS } from './format';
 import { MemoryRouter } from 'react-router-dom';
 import i18n from './i18n';
 import Dashboard from './pages/admin/Dashboard';
@@ -222,7 +223,7 @@ describe('Admin Dashboard', () => {
 });
 
 describe('Admin Rides', () => {
-  it('renders status filter chips and ride table', () => {
+  it('renders the status filter and ride table', () => {
     render(
       <MemoryRouter>
         <AdminRides />
@@ -230,7 +231,12 @@ describe('Admin Rides', () => {
     );
 
     expect(screen.getByRole('heading', { level: 1, name: /ride management/i })).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: /all statuses/i })).toBeInTheDocument();
+    const statusFilter = screen.getByRole('combobox', { name: /status/i });
+    const options = within(statusFilter).getAllByRole('option').map((o) => (o as HTMLOptionElement).value);
+    // "All" plus real statuses only: the API filters on the exact value.
+    expect(options[0]).toBe('');
+    expect(options.slice(1).sort()).toEqual(Object.keys(RIDE_STATUS).sort());
+    expect(screen.getByRole('option', { name: /all statuses/i })).toBeInTheDocument();
     expect(screen.getByLabelText(/only needs attention/i)).toBeInTheDocument();
     expect(screen.getByText(/Brother Barnabas/)).toBeInTheDocument();
   });

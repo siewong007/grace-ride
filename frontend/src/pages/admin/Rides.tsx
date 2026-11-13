@@ -14,14 +14,9 @@ import {
 import { RIDE_STATUS, useFormatT } from '../../format';
 import { RideTable } from './RideTable';
 
-const FILTER_STATUSES = [
-  'requested',
-  'matched',
-  'confirmed',
-  'in_progress',
-  'completed',
-  'cancelled',
-];
+// Every status a ride can have. The API filters on the exact status, so these must be real
+// values ("requested" / "matched" were not, and always returned nothing).
+const FILTER_STATUSES = Object.keys(RIDE_STATUS);
 
 export default function AdminRides() {
   const { t } = useTranslation('admin');
@@ -57,29 +52,19 @@ export default function AdminRides() {
     <Page>
       <PageHeader title={t('rides.title')} subtitle={t('rides.desc')} />
 
-      {/* Filter bar with status chips, date, attention toggle, and clear link */}
-      <Card className="tight stack-sm">
-        <div className="chips" role="group" aria-label={t('rides.status')}>
-          <button
-            type="button"
-            className={`chip ${status === '' ? 'on' : ''}`}
-            onClick={() => set('status', '')}
+      {/* Filters: status menu, date, attention toggle, clear */}
+      <div className="admin-filters-bar">
+          <select
+            className="input admin-input-compact"
+            value={status}
+            onChange={(e) => set('status', e.target.value)}
+            aria-label={t('rides.status')}
           >
-            {t('rides.allStatus')}
-          </button>
-          {FILTER_STATUSES.map((k) => (
-            <button
-              key={k}
-              type="button"
-              className={`chip ${status === k ? 'on' : ''}`}
-              onClick={() => set('status', k)}
-            >
-              {ft(RIDE_STATUS[k]?.label ?? k)}
-            </button>
-          ))}
-        </div>
-
-        <div className="admin-filters-bar">
+            <option value="">{t('rides.allStatus')}</option>
+            {FILTER_STATUSES.map((k) => (
+              <option key={k} value={k}>{ft(RIDE_STATUS[k].label)}</option>
+            ))}
+          </select>
           <input
             className="input admin-input-compact"
             type="date"
@@ -100,8 +85,7 @@ export default function AdminRides() {
               {t('rides.clearFilters')}
             </Button>
           )}
-        </div>
-      </Card>
+      </div>
 
       <ErrorBox error={error} />
 

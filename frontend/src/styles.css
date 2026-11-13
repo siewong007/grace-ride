@@ -335,7 +335,7 @@ button, input, select, textarea { font: inherit; color: inherit; }
 }
 
 /* ---------- Layout primitives ---------- */
-.page-container { width: 100%; }
+.page-container { width: 100%; display: flex; flex-direction: column; gap: var(--space-5); }
 .page-narrow { max-width: 720px; margin: 0 auto; }
 .page-medium { max-width: 900px; margin: 0 auto; }
 .page-wide { width: 100%; }
@@ -476,6 +476,12 @@ button, input, select, textarea { font: inherit; color: inherit; }
 @media (max-width: 767px) { .stat .num { font-size: var(--fs-2xl); } .card.stat { padding: var(--space-3); } }
 .stat .num { font-size: var(--fs-3xl); font-weight: 700; line-height: 1.1; font-variant-numeric: tabular-nums; }
 .stat .label { color: var(--muted); font-size: var(--fs-sm); font-weight: 600; }
+/* Several key numbers in one framed block, divided by hairlines (admin dashboard). */
+.stat-strip { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 1px; background: var(--border); border: 1px solid var(--border); border-radius: var(--radius); overflow: hidden; }
+@media (min-width: 900px) { .stat-strip { grid-template-columns: repeat(4, minmax(0, 1fr)); } }
+.stat-strip > .card.stat { border: none; border-radius: 0; background: var(--bg); padding: var(--space-3) var(--space-4); }
+.stat-strip > .card.stat.link:hover { background: var(--surface-2); }
+.stat-strip .stat .num { font-size: var(--fs-2xl); }
 .stat.warn .num { color: var(--warning); }
 .stat.bad .num { color: var(--danger); }
 
@@ -517,7 +523,7 @@ textarea.input { min-height: 96px; resize: vertical; }
 .check.on { border-color: var(--primary); background: var(--primary-soft); }
 .chips { display: flex; flex-wrap: wrap; gap: var(--space-2); }
 .chip { min-height: 44px; padding: 0 var(--space-3); border-radius: var(--radius-pill); border: 1px solid var(--border); background: var(--surface); cursor: pointer; font-weight: 600; }
-.chip.on { background: var(--primary); color: var(--primary-ink); border-color: var(--primary); }
+.chip.on { background: var(--primary-soft); color: var(--primary); border-color: var(--primary); }
 .form-grid { display: grid; gap: var(--space-4); }
 @media (min-width: 768px) { .form-grid.two { grid-template-columns: 1fr 1fr; } .form-grid .full { grid-column: 1 / -1; } }
 .error { color: var(--danger); border: 1px solid color-mix(in srgb, var(--danger) 40%, transparent); padding: var(--space-2) var(--space-3); border-radius: var(--radius-sm); font-weight: 600; }

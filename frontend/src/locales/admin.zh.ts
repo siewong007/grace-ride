@@ -38,6 +38,7 @@ export default {
     date: '日期',
     clearFilters: '清除筛选',
     count: '找到 {count} 项接送',
+    count_one: '找到 {count} 项接送',
   },
   live: {
     title: '实时地图',

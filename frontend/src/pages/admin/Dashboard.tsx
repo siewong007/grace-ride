@@ -1,14 +1,4 @@
 import { Link, useNavigate } from 'react-router-dom';
-import {
-  AlertTriangle,
-  Calendar,
-  CheckCircle2,
-  Clock,
-  LifeBuoy,
-  MapPin,
-  Receipt,
-  UserX,
-} from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import { useApi } from '../../api';
 import { useAuth } from '../../auth';
@@ -93,58 +83,50 @@ export default function Dashboard() {
         }
       />
 
-      {/* 8 Stat tiles with semantic tones and icons */}
-      <div className="grid cols-4">
+      {/* Key numbers: one block split by hairlines; each links to its filtered list */}
+      <div className="stat-strip">
         <Stat
           label={t('dashboard.todayArranged')}
           value={d.today_total}
-          icon={<Calendar size={20} />}
           to={`/admin/rides?date=${d.today}`}
         />
         <Stat
           label={t('dashboard.todayConfirmed')}
           value={d.today_confirmed}
-          icon={<CheckCircle2 size={20} />}
           to={`/admin/rides?date=${d.today}&status=confirmed`}
         />
         <Stat
           label={t('dashboard.pendingApproval')}
           value={d.pending_approval}
-          icon={<Clock size={20} />}
           tone={d.pending_approval > 0 ? 'warn' : 'normal'}
           to="/admin/rides?status=pending_approval"
         />
         <Stat
           label={t('dashboard.noDriver')}
           value={d.no_driver}
-          icon={<UserX size={20} />}
           tone={d.no_driver > 0 ? 'warn' : 'normal'}
           to="/admin/rides?status=pending_driver"
         />
         <Stat
           label={t('dashboard.needsAttention')}
           value={d.needs_attention}
-          icon={<AlertTriangle size={20} />}
           tone={d.needs_attention > 0 ? 'bad' : 'normal'}
           to="/admin/rides?attention=true"
         />
         <Stat
           label={t('dashboard.liveDrivers')}
           value={d.live_drivers}
-          icon={<MapPin size={20} />}
           to="/admin/live"
         />
         <Stat
           label={t('dashboard.openHelp')}
           value={d.open_help}
-          icon={<LifeBuoy size={20} />}
           tone={d.open_help > 0 ? 'warn' : 'normal'}
           to="/help"
         />
         <Stat
           label={t('dashboard.pendingReimb')}
           value={d.pending_reimbursements}
-          icon={<Receipt size={20} />}
           tone={d.pending_reimbursements > 0 ? 'warn' : 'normal'}
           to="/admin/reimbursements"
         />
