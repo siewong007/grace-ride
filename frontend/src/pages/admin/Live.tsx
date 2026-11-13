@@ -33,6 +33,9 @@ export default function AdminLive() {
 
   const { data, error, loading } = useApi<Live>('/admin/live', 15000);
 
+  const stale = (s: string | null) =>
+    !s || Date.now() - parseLocal(s).getTime() > 2 * 60 * 1000;
+
   const pts: MapPoint[] = (data?.drivers ?? [])
     .filter((d) => d.lat != null && d.lng != null)
     .map((d) => ({
@@ -40,12 +43,10 @@ export default function AdminLive() {
       lat: d.lat!,
       lng: d.lng!,
       label: d.name,
-      detail: `${t('live.trips', { rides: d.rides })} · ${t('live.updated')} ${d.updated_at ? fmtAgo(d.updated_at, ft) : '—'}`,
+      detail: `${t('live.trips', { count: d.rides })} · ${t('live.updated')} ${d.updated_at ? fmtAgo(d.updated_at, ft) : '—'}`,
       kind: 'car',
+      stale: stale(d.updated_at),
     }));
-
-  const stale = (s: string | null) =>
-    !s || Date.now() - parseLocal(s).getTime() > 2 * 60 * 1000;
 
   const selectDriver = (d: Live['drivers'][0]) => {
     setSelectedId(d.driver_id);
@@ -82,10 +83,6 @@ export default function AdminLive() {
               <span className="map-legend-dot stale" aria-hidden="true" />
               <span>{t('live.legendStale')}</span>
             </span>
-            <span className="map-legend-item">
-              <span className="map-legend-dot passenger" aria-hidden="true" />
-              <span>{t('live.legendPassenger')}</span>
-            </span>
           </div>
         </div>
 
@@ -113,7 +110,7 @@ export default function AdminLive() {
                       <div className="bold">{d.name}</div>
                       <div className="muted tiny">
                         {t('live.driverTripsSummary', {
-                          rides: d.rides,
+                          count: d.rides,
                           time: fmtTime(d.first_pickup, ft),
                         })}
                       </div>

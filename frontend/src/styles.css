@@ -615,6 +615,10 @@ textarea.input { min-height: 96px; resize: vertical; }
 .list { display: flex; flex-direction: column; }
 .list > .item { display: flex; align-items: center; gap: var(--space-3); padding: var(--space-3) 0; border-bottom: 1px solid var(--border); color: inherit; }
 .list > .item:last-child { border-bottom: none; }
+/* A clickable row that is a <button> (e.g. live map drivers) looks like any other row. */
+.list > button.item { width: 100%; background: none; border: 0; border-bottom: 1px solid var(--border); border-radius: 0; font: inherit; color: inherit; text-align: left; cursor: pointer; padding-inline: var(--space-2); }
+.list > button.item:last-child { border-bottom: none; }
+.list > button.item:hover, .list > button.item.active { background: var(--surface-2); }
 .timeline-time { min-width: 64px; font-weight: 700; font-variant-numeric: tabular-nums; }
 .table-wrap { overflow-x: auto; }
 table.table { width: 100%; border-collapse: collapse; font-size: var(--fs-md); }
@@ -1694,9 +1698,6 @@ main:focus { outline: none; }
   background: var(--warning);
 }
 
-.map-legend-dot.passenger {
-  background: var(--success);
-}
 
 .list > .announcement-item { align-items: flex-start; }
 .btn.ghost.text-danger { color: var(--danger); }

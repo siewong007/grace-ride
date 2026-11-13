@@ -13,8 +13,9 @@ const cssVar = (name: string) =>
 // The car is the app's blue; passengers and pickup stops get a green pin and the
 // destination an amber flag, so the three never look alike (status colours, not --accent,
 // which is the same blue as the car).
-const getMarkerStyles = (kind: MarkerKind) => ({
-  bg: cssVar(kind === 'car' ? '--primary' : kind === 'dest' ? '--warning' : '--success'),
+// A car whose location is out of date turns amber too (admin live map legend).
+const getMarkerStyles = (kind: MarkerKind, stale = false) => ({
+  bg: cssVar(kind === 'car' ? (stale ? '--warning' : '--primary') : kind === 'dest' ? '--warning' : '--success'),
   ink: cssVar('--primary-ink'),
 });
 
@@ -23,8 +24,8 @@ const HAND_SVG = '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" st
 
 const FLAG_SVG = '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 15s1-1 4-1 5 2 8 2 4-1 4-1V3s-1 1-4 1-5-2-8-2-4 1-4 1z"/><line x1="4" x2="4" y1="22" y2="15"/></svg>';
 
-const markerIcon = (label: string | undefined, kind: MarkerKind, badge?: string) => {
-  const { bg, ink } = getMarkerStyles(kind);
+const markerIcon = (label: string | undefined, kind: MarkerKind, badge?: string, stale?: boolean) => {
+  const { bg, ink } = getMarkerStyles(kind, stale);
   const iconContent = badge
     ? escapeHtml(badge)
     : kind === 'dest'
@@ -53,6 +54,8 @@ export interface MapPoint {
   kind?: MarkerKind;
   /** Short text shown inside the pin instead of the label's first letter (e.g. stop number). */
   badge?: string;
+  /** Location not updated recently: the car pin is drawn amber. */
+  stale?: boolean;
 }
 
 /** Route line as [lat, lng] pairs. */
@@ -101,7 +104,7 @@ export default function LiveMap({
         <Polyline positions={route} pathOptions={{ color: cssVar('--primary'), weight: 5, opacity: 0.75 }} />
       )}
       {points.map((p) => (
-        <Marker key={p.id} position={[p.lat, p.lng]} icon={markerIcon(p.label, p.kind ?? 'car', p.badge)}>
+        <Marker key={p.id} position={[p.lat, p.lng]} icon={markerIcon(p.label, p.kind ?? 'car', p.badge, p.stale)}>
           <Popup>
             <strong>{p.label}</strong>
             {p.detail && <div>{p.detail}</div>}
