@@ -1701,10 +1701,8 @@ main:focus { outline: none; }
   background: var(--info);
 }
 
-.announcement-preview-card {
-  border: 1px dashed var(--border);
-  background: var(--surface-2);
-}
+.list > .announcement-item { align-items: flex-start; }
+.btn.ghost.text-danger { color: var(--danger); }
 
 .group-members-list {
   max-height: 360px;
@@ -1818,3 +1816,4 @@ main:focus { outline: none; }
 /* Call and Chat sit on their own line under the driver, sharing the width. */
 .ride-driver-actions { width: 100%; }
 .ride-driver-actions > * { flex: 1 1 0; }
+.terms-scroll .terms-title { font-size: var(--fs-lg); }

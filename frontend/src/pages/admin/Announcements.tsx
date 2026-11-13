@@ -116,66 +116,54 @@ export default function Announcements() {
         </form>
 
         <div className="stack">
-          {/* Member Preview Card */}
-          <Card className="stack-sm announcement-preview-card">
+          {/* What members will see */}
+          <Card className="stack-sm">
             <div className="row between">
-              <span className="muted small bold">{t('announcements.preview')}</span>
+              <span className="muted small">{t('announcements.preview')}</span>
               {f.pinned && (
-                <Pill tone="amber">
-                  <span className="row nowrap">
-                    <Pin size={12} aria-hidden="true" />
-                    <span>{t('announcements.pinned')}</span>
-                  </span>
+                <Pill tone="amber" icon={<Pin size={12} />}>
+                  {t('announcements.pinned')}
                 </Pill>
               )}
             </div>
-            <h4>{f.title || t('announcements.titleLabel')}</h4>
-            <p className="small text-pre-wrap">
-              {f.body || t('announcements.bodyLabel')}
-            </p>
-            <span className="muted tiny">
-              {t('announcements.by', {
-                by: me?.name || 'Staff',
-                ago: ft('justNow') || 'just now',
-              })}
+            <h3>{f.title || t('announcements.titleLabel')}</h3>
+            <p className="pre-wrap">{f.body || t('announcements.bodyLabel')}</p>
+            <span className="muted small">
+              {t('announcements.by', { by: me?.name || 'Staff', ago: ft('format:justNow') })}
             </span>
           </Card>
 
-          {/* Published announcements list */}
-          <div className="stack-sm">
+          {/* Published announcements */}
+          <section>
+            <div className="section-head">
+              <h2>{t('announcements.published')}</h2>
+            </div>
             {loading ? (
               <CardSkeleton count={2} />
             ) : !data?.length ? (
-              <Card>
-                <EmptyState title={t('announcements.empty')} />
-              </Card>
+              <EmptyState title={t('announcements.empty')} />
             ) : (
-              data.map((a) => (
-                <Card key={a.id} className="stack-sm">
-                  <div className="row between">
-                    <strong className="row nowrap">
-                      {a.pinned && <Pin size={14} aria-hidden="true" />}
-                      <span>{a.title}</span>
-                    </strong>
-                    <Button
-                      variant="danger"
-                      size="sm"
-                      onClick={() => remove(a)}
-                    >
+              <div className="list">
+                {data.map((a) => (
+                  <div key={a.id} className="item announcement-item">
+                    <div className="grow min-w-0 stack-xs">
+                      <strong className="row nowrap">
+                        {a.pinned && <Pin size={14} aria-label={t('announcements.pinned')} />}
+                        <span>{a.title}</span>
+                      </strong>
+                      <p className="pre-wrap">{a.body}</p>
+                      <span className="muted small">
+                        {t('announcements.by', { by: a.by, ago: fmtAgo(a.created_at, ft) })}
+                      </span>
+                    </div>
+                    <Button variant="ghost" size="sm" className="text-danger" onClick={() => remove(a)}>
                       {t('announcements.delete')}
                     </Button>
                   </div>
-                  <p className="small text-pre-wrap">{a.body}</p>
-                  <span className="muted tiny">
-                    {t('announcements.by', {
-                      by: a.by,
-                      ago: fmtAgo(a.created_at, ft),
-                    })}
-                  </span>
-                </Card>
-              ))
+                ))}
+              </div>
             )}
-          </div>
+          </section>
         </div>
       </div>
     </Page>

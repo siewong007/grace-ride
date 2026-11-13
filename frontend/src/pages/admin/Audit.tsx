@@ -50,25 +50,23 @@ export default function Audit() {
     <Page>
       <PageHeader title={t('audit.title')} subtitle={t('audit.desc')} />
 
-      {/* Search box */}
-      <Card className="tight">
-        <input
-          className="input"
-          placeholder={t('audit.search')}
-          value={search}
-          onChange={(e) => setSearch(e.target.value)}
-          aria-label={t('audit.search')}
-        />
-      </Card>
+      <input
+        className="input"
+        type="search"
+        placeholder={t('audit.search')}
+        value={search}
+        onChange={(e) => setSearch(e.target.value)}
+        aria-label={t('audit.search')}
+      />
 
       <ErrorBox error={error} />
 
-      <Card>
-        {loading ? (
-          <CardSkeleton count={4} />
-        ) : !filtered.length ? (
-          <EmptyState title={t('audit.none')} />
-        ) : (
+      {loading ? (
+        <CardSkeleton count={4} />
+      ) : !filtered.length ? (
+        <EmptyState title={t('audit.none')} />
+      ) : (
+        <Card>
           <div className="table-wrap">
             <table className="table responsive sticky-header">
               <thead>
@@ -104,8 +102,8 @@ export default function Audit() {
               </tbody>
             </table>
           </div>
-        )}
-      </Card>
+        </Card>
+      )}
     </Page>
   );
 }

@@ -193,6 +193,7 @@ export default {
     deleteConfirm: '删除公告？',
     by: '{by} · {ago}',
     preview: '会员端预览',
+    published: '已发布',
     empty: '暂无发布的公告',
   },
   audit: {

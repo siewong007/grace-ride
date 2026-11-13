@@ -192,7 +192,8 @@ export default {
     delete: 'Delete',
     deleteConfirm: 'Delete announcement?',
     by: '{by} · {ago}',
-    preview: 'Member Preview',
+    preview: 'Member preview',
+    published: 'Published',
     empty: 'No announcements published yet',
   },
   audit: {

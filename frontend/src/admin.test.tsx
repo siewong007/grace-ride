@@ -288,7 +288,7 @@ describe('Admin Announcements', () => {
     );
 
     expect(screen.getByRole('heading', { level: 1, name: /announcements/i })).toBeInTheDocument();
-    expect(screen.getByText('Member Preview')).toBeInTheDocument();
+    expect(screen.getByText('Member preview')).toBeInTheDocument();
     expect(screen.getByText('Combined Thanksgiving Service')).toBeInTheDocument();
   });
 });

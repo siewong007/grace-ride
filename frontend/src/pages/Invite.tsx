@@ -114,7 +114,7 @@ export default function Invite() {
         {step === 'details' && (
           <form className="stack" onSubmit={handleDetailsNext}>
             <div>
-              <h2>{recovery ? t('recover') : t('join')}</h2>
+              <h1 className="auth-title">{recovery ? t('recover') : t('join')}</h1>
               {recovery && data.email && <p className="muted">{data.email}</p>}
             </div>
 
@@ -177,7 +177,7 @@ export default function Invite() {
         {step === 'terms' && (
           <form className="stack" onSubmit={handleAcceptTerms}>
             <div>
-              <h2>{t('stepTerms')}</h2>
+              <h1 className="auth-title">{t('stepTerms')}</h1>
             </div>
             <div className="card flat terms-scroll">
               <TermsText heading="h3" />
@@ -199,7 +199,7 @@ export default function Invite() {
         {/* Step 3: Passkey */}
         {step === 'passkey' && (
           <div className="stack">
-            <h2>{t('setupPasskey')}</h2>
+            <h1 className="auth-title">{t('setupPasskey')}</h1>
             <div className="passkey-explainer-card row nowrap">
               <Fingerprint size={28} className="passkey-icon" aria-hidden="true" />
               <p className="passkey-explainer-text">{t('passkeyExplainer')}</p>
