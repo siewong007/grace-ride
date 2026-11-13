@@ -67,7 +67,7 @@ export default function Settlements() {
   }[]>('/settlements');
 
   return (
-    <Page width="wide">
+    <Page width="medium">
       <div className="stack">
         <PageHeader
           title={t('title')}
@@ -86,28 +86,21 @@ export default function Settlements() {
         ) : !data?.length ? (
           <EmptyState title={t('none')} />
         ) : (
-          <div className="grid cols-3">
-            {data.map((s) => {
-              const percent = s.count > 0 ? Math.min(100, Math.round((s.confirmed / s.count) * 100)) : 0;
-              return (
-                <Link key={s.id} to={`/settlements/${s.id}`} className="card link stack-sm">
-                  <div className="row between nowrap">
-                    <strong className="ellipsis">{s.title}</strong>
-                    <StatusPill map={SETTLEMENT_STATUS} status={s.status} />
+          <div className="list list-ruled">
+            {data.map((s) => (
+              <Link key={s.id} to={`/settlements/${s.id}`} className="item money-row">
+                <div className="grow min-w-0">
+                  <div className="bold ellipsis">{s.title}</div>
+                  <div className="muted small ellipsis">
+                    {s.event_title} · {t('confirmedCount', { confirmed: s.confirmed, count: s.count })}
                   </div>
-                  <div className="muted small ellipsis">{s.event_title}</div>
-                  <div className="row between nowrap">
-                    <span className="bold">{rm(s.total_cents)}</span>
-                    <span className="small muted">
-                      {t('confirmedCount', { confirmed: s.confirmed, count: s.count })}
-                    </span>
-                  </div>
-                  <div className="bar">
-                    <div style={{ width: `${percent}%` }} />
-                  </div>
-                </Link>
-              );
-            })}
+                </div>
+                <div className="money-row-side">
+                  <span className="money">{rm(s.total_cents)}</span>
+                  <StatusPill map={SETTLEMENT_STATUS} status={s.status} />
+                </div>
+              </Link>
+            ))}
           </div>
         )}
       </div>
@@ -603,7 +596,7 @@ export function SettlementDetail() {
             {s.shares.filter((x) => x.status === 'confirmed').length > 0 && (
               <div className="stack-xs">
                 <div className="row between small muted">
-                  <span>{paidPercent}% paid</span>
+                  <span>{t('settlementDetail.paidPercent', { percent: paidPercent })}</span>
                   <span className="mono">{rm(paidCents)} / {rm(s.total_cents)}</span>
                 </div>
                 <div className="bar">

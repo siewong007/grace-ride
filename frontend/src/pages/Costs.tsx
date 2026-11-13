@@ -17,7 +17,7 @@ import {
   useAction,
   useToast,
 } from '../components/ui';
-import { rm, SHARE_STATUS, todayStr } from '../format';
+import { fmtDateTime, fmtDay, rm, SHARE_STATUS, todayStr, useFormatT } from '../format';
 import { useTranslation } from 'react-i18next';
 
 interface Share {
@@ -37,6 +37,7 @@ interface Share {
 
 export default function Costs() {
   const { t } = useTranslation('costs');
+  const ft = useFormatT();
   const { data, error, loading, reload } = useApi<Share[]>('/me/shares');
   const toast = useToast();
   const [paying, setPaying] = useState<Share | null>(null);
@@ -61,7 +62,7 @@ export default function Costs() {
           <EmptyState title={t('none')} />
         ) : (
           <>
-            <div className="grid cols-2">
+            <div className="stack">
               {owing.map((s) => (
                 <Card key={s.id} className="stack">
                   <div className="row between nowrap">
@@ -87,7 +88,7 @@ export default function Costs() {
                         {t('copy')}
                       </Button>
                     </div>
-                    {s.due_date && <div className="small muted">{t('due', { date: s.due_date })}</div>}
+                    {s.due_date && <div className="small muted">{t('due', { date: s.due_date.includes('T') ? fmtDateTime(s.due_date, ft) : fmtDay(s.due_date, ft) })}</div>}
                   </div>
 
                   {s.note && <div className="notice warning small">{s.note}</div>}
@@ -105,7 +106,7 @@ export default function Costs() {
                     </Button>
                   )}
 
-                  <Link className="small muted text-center" to={`/settlements/${s.settlement_id}`}>
+                  <Link className="small center" to={`/settlements/${s.settlement_id}`}>
                     {t('viewBill')}
                   </Link>
                 </Card>
@@ -115,23 +116,25 @@ export default function Costs() {
             </div>
 
             {done.length > 0 && (
-              <Card className="stack">
-                <div className="card-title">
-                  <h3>{t('paid')}</h3>
+              <section>
+                <div className="section-head">
+                  <h2>{t('paid')}</h2>
                 </div>
-                <div className="list">
+                <div className="list list-ruled">
                   {done.map((s) => (
                     <Link key={s.id} to={`/settlements/${s.settlement_id}`} className="item">
                       <div className="grow min-w-0">
                         <div className="bold ellipsis">{s.title}</div>
-                        <div className="muted tiny ellipsis">{s.event_title}</div>
+                        <div className="muted small ellipsis">{s.event_title}</div>
                       </div>
-                      <span className="mono bold">{rm(s.amount_cents)}</span>
-                      <StatusPill map={SHARE_STATUS} status={s.status} />
+                      <div className="money-row-side">
+                        <span className="money">{rm(s.amount_cents)}</span>
+                        <StatusPill map={SHARE_STATUS} status={s.status} />
+                      </div>
                     </Link>
                   ))}
                 </div>
-              </Card>
+              </section>
             )}
           </>
         )}

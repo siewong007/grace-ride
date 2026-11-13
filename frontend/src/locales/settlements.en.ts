@@ -72,6 +72,7 @@ export default {
   settlementDetail: {
     title: '{title}',
     edit: 'Edit',
+    paidPercent: '{percent}% paid',
     event: 'Related event',
     split: 'Split method',
     equal: 'Equal split',

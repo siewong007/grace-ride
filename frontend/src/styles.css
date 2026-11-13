@@ -369,6 +369,23 @@ button, input, select, textarea { font: inherit; color: inherit; }
 .bold { font-weight: 700; }
 .center { text-align: center; }
 .mono { font-variant-numeric: tabular-nums; }
+/* Small helpers that pages already used but were never defined. */
+.gap-xs { gap: var(--space-1); }
+.gap-sm { gap: var(--space-2); }
+.gap-md { gap: var(--space-3); }
+.stack-xs { display: flex; flex-direction: column; gap: var(--space-1); }
+.pre-wrap, .text-pre-wrap { white-space: pre-wrap; }
+.text-break { overflow-wrap: anywhere; }
+.text-left { text-align: left; }
+.text-accent, .text-primary { color: var(--primary); }
+.no-margin { margin: 0; }
+.font-lg { font-size: var(--fs-lg); }
+
+/* Money rows (costs, cost splits, reimbursements): label left, amount and status right. */
+.money { font-weight: 700; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.money-row { align-items: center; text-decoration: none; color: inherit; }
+.money-row-side { display: flex; flex-direction: column; align-items: flex-end; gap: var(--space-1); flex-shrink: 0; }
+.list-ruled { border-top: 1px solid var(--border); }
 @media (max-width: 767px) { .hide-mobile { display: none !important; } }
 @media (min-width: 768px) { .hide-tablet-up { display: none !important; } }
 

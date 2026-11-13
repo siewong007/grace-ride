@@ -6,7 +6,6 @@ import { useAuth } from '../auth';
 import {
   Button,
   Card,
-  EmptyState,
   ErrorBox,
   Field,
   FileInput,
@@ -49,7 +48,7 @@ export default function Reimbursements() {
       <div className="stack">
         <PageHeader
           title={t('title')}
-          subtitle={t('desc')}
+          subtitle={t('note')}
           actions={
             <Button variant="primary" to="/reimbursements/new" icon={<Plus size={20} />}>
               {t('apply')}
@@ -57,44 +56,40 @@ export default function Reimbursements() {
           }
         />
 
-        <ol className="steps card">
-          <li>{t('step1')}</li>
-          <li>{t('step2')}</li>
-          <li>{t('step3')}</li>
-          <li>{t('step4')}</li>
-        </ol>
-
         <ErrorBox error={error} />
 
         {loading ? (
           <Spinner />
         ) : !data?.length ? (
-          <EmptyState
-            title={t('none')}
-            action={
-              <Button variant="primary" to="/reimbursements/new" icon={<Plus size={18} />}>
-                {t('apply')}
-              </Button>
-            }
-          />
+          <div className="stack">
+            <p className="muted">{t('none')}</p>
+            {/* How it works: only useful before the first request. */}
+            <ol className="steps">
+              <li>{t('step1')}</li>
+              <li>{t('step2')}</li>
+              <li>{t('step3')}</li>
+              <li>{t('step4')}</li>
+            </ol>
+          </div>
         ) : (
-          <div className="grid cols-2">
+          <div className="list">
             {data.map((r) => (
-              <Link key={r.id} to={`/reimbursements/${r.id}`} className="card link stack-sm">
-                <div className="row between nowrap">
-                  <strong className="mono">{rm(r.amount_cents)}</strong>
-                  <StatusPill map={REIMB_STATUS} status={r.status} />
+              <Link key={r.id} to={`/reimbursements/${r.id}`} className="item money-row">
+                <div className="grow min-w-0">
+                  <div className="bold ellipsis">{r.description || t('noneDesc')}</div>
+                  <div className="muted small">
+                    {fmtDay(r.created_at, ft)}
+                    {r.ride_at && ` · ${t('ridePrefix', { time: fmtDateTime(r.ride_at, ft) })}`}
+                  </div>
                 </div>
-                <div className="small ellipsis">{r.description || t('noneDesc')}</div>
-                <div className="muted tiny">
-                  {fmtDay(r.created_at, ft)}
-                  {r.ride_at && ` · ${t('ridePrefix', { time: fmtDateTime(r.ride_at, ft) })}`}
+                <div className="money-row-side">
+                  <span className="money">{rm(r.amount_cents)}</span>
+                  <StatusPill map={REIMB_STATUS} status={r.status} />
                 </div>
               </Link>
             ))}
           </div>
         )}
-        <p className="muted small center">{t('note')}</p>
       </div>
     </Page>
   );

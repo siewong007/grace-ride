@@ -72,6 +72,7 @@ export default {
   settlementDetail: {
     title: '{title}',
     edit: '编辑',
+    paidPercent: '已付 {percent}%',
     event: '关联活动',
     split: '分摊方式',
     equal: '平分',
