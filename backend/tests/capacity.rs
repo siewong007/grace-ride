@@ -2,6 +2,9 @@
 //! (Grace_Ride_Chinese.pdf p.15, requirement R-32, phase P0).
 //! Reproducible: `cargo test --test capacity -- --nocapture`
 
+#[path = "common/schema.rs"]
+mod schema;
+
 use axum::Router;
 use grace_ride::{
     init, jobs, router,
@@ -13,17 +16,7 @@ const MEMBER_COUNT: i64 = 1000;
 const DRIVER_COUNT: i64 = 10;
 
 async fn fresh_db() -> String {
-    let base = std::env::var("TEST_DATABASE_URL")
-        .unwrap_or_else(|_| "postgres://localhost/grace_ride_test".into());
-    let schema = format!("gr_cap_{}", uuid::Uuid::new_v4().simple());
-    let pool = sqlx::PgPool::connect(&base).await.unwrap();
-    sqlx::query(&format!("CREATE SCHEMA \"{schema}\""))
-        .execute(&pool)
-        .await
-        .unwrap();
-    pool.close().await;
-    let sep = if base.contains('?') { '&' } else { '?' };
-    format!("{base}{sep}options[search_path]={schema},public")
+    schema::fresh_schema("gr_cap_").await
 }
 
 async fn setup_capacity() -> (Router, AppState) {

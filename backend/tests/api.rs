@@ -1,6 +1,9 @@
 //! End-to-end API tests against a fresh PostgreSQL schema with demo data.
 //! Each test builds its own app (own schema, own rate limiter).
 
+#[path = "common/schema.rs"]
+mod schema;
+
 use axum::{
     body::Body,
     http::{header, HeaderMap, Method, Request, StatusCode},
@@ -20,17 +23,7 @@ const PW: &str = "GraceRide2026!";
 const ORIGIN: &str = "http://localhost:5173";
 
 async fn fresh_db() -> String {
-    let base = std::env::var("TEST_DATABASE_URL")
-        .unwrap_or_else(|_| "postgres://localhost/grace_ride_test".into());
-    let schema = format!("gr_{}", uuid::Uuid::new_v4().simple());
-    let pool = sqlx::PgPool::connect(&base).await.unwrap();
-    sqlx::query(&format!("CREATE SCHEMA \"{schema}\""))
-        .execute(&pool)
-        .await
-        .unwrap();
-    pool.close().await;
-    let sep = if base.contains('?') { '&' } else { '?' };
-    format!("{base}{sep}options[search_path]={schema},public")
+    schema::fresh_schema("gr_").await
 }
 
 async fn setup() -> (Router, AppState) {
