@@ -192,24 +192,32 @@ button, input, select, textarea { font: inherit; color: inherit; }
 
 .sidebar { display: none; }
 
+/* Top bar: back (phones), a title that appears once the page heading scrolls away, bell, avatar. */
 .topbar {
   position: sticky; top: 0; z-index: 20;
-  display: flex; align-items: center; justify-content: space-between; gap: var(--space-3);
-  padding: calc(env(safe-area-inset-top) + 10px) var(--space-4) 10px;
+  display: flex; align-items: center; justify-content: space-between; gap: var(--space-2);
+  min-height: 60px;
+  padding: calc(env(safe-area-inset-top) + var(--space-2)) var(--space-4) var(--space-2);
   background: var(--bg);
   border-bottom: 1px solid transparent;
   transition: border-color var(--dur-fast) var(--ease);
 }
 .topbar.is-scrolled { border-bottom-color: var(--border); }
 
-.topbar-left { display: flex; align-items: center; gap: var(--space-2); min-width: 0; flex: 1; }
+.topbar-left { display: flex; align-items: center; gap: var(--space-1); min-width: 0; flex: 1; }
+.topbar-back { margin-left: calc(-1 * var(--space-2)); }
 .topbar-brand { font-weight: 700; font-size: var(--fs-lg); display: flex; align-items: center; gap: var(--space-2); color: var(--text); }
 .topbar-brand-name { white-space: nowrap; }
-.topbar-title { font-size: var(--fs-lg); font-weight: 700; margin: 0; color: var(--text); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.topbar-title {
+  font-size: var(--fs-md); font-weight: 600; margin: 0; color: var(--text);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  transition: opacity var(--dur) var(--ease);
+}
+.topbar-title.is-hidden { opacity: 0; }
 
-.topbar-actions { display: flex; align-items: center; gap: var(--space-2); flex-shrink: 0; }
+.topbar-actions { display: flex; align-items: center; gap: var(--space-1); flex-shrink: 0; }
 .topbar-bell { position: relative; }
-.topbar-avatar { display: inline-flex; border-radius: 50%; outline-offset: 2px; text-decoration: none; }
+.topbar-avatar { display: inline-flex; border-radius: 50%; outline-offset: 2px; text-decoration: none; margin-left: var(--space-1); }
 .topbar-avatar:hover { opacity: 0.85; }
 
 .icon-btn {
@@ -219,68 +227,67 @@ button, input, select, textarea { font: inherit; color: inherit; }
   transition: background var(--dur-fast) var(--ease);
 }
 .icon-btn:hover { background: var(--surface-2); }
+/* Unread count. The 11px size is the one exception to the 14px floor: it is a counter on an
+   icon that already has an accessible label with the full count. */
 .dot {
-  position: absolute; top: 6px; right: 6px; min-width: 18px; height: 18px; padding: 0 5px;
-  border-radius: var(--radius-pill); background: var(--danger); color: var(--primary-ink); font-size: .6875rem; font-weight: 700;
-  display: grid; place-items: center;
+  position: absolute; top: 2px; right: 0; min-width: 16px; height: 16px; padding: 0 4px; line-height: 1;
+  border-radius: var(--radius-pill); background: var(--danger); color: var(--bg); font-size: .6875rem; font-weight: 700;
+  display: grid; place-items: center; border: 2px solid var(--bg); box-sizing: content-box;
 }
 
 .main { padding: var(--space-4) var(--space-4) calc(var(--nav-h) + env(safe-area-inset-bottom) + var(--space-6)); max-width: 1240px; margin: 0 auto; width: 100%; }
 
+/* Bottom nav (phones): icon over label, the active tab in the accent colour. */
 .bottom-nav {
   position: fixed; left: 0; right: 0; bottom: 0; z-index: 30;
   display: grid; grid-auto-flow: column; grid-auto-columns: 1fr;
   height: calc(var(--nav-h) + env(safe-area-inset-bottom));
   padding-bottom: env(safe-area-inset-bottom);
-  background: var(--surface); border-top: 1px solid var(--border);
+  background: var(--bg); border-top: 1px solid var(--border);
 }
 .bottom-tab {
-  display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 2px;
-  color: var(--muted); text-decoration: none; min-height: 48px; padding: 4px 2px;
+  display: flex; flex-direction: column; align-items: center; justify-content: center; gap: var(--space-1);
+  color: var(--muted); text-decoration: none; min-height: var(--tap); padding: var(--space-1) 2px;
+  transition: color var(--dur-fast) var(--ease);
 }
-.bottom-tab-icon {
-  display: grid; place-items: center; width: 48px; height: 28px;
-  border-radius: var(--radius-pill);
-  transition: background var(--dur-fast) var(--ease), color var(--dur-fast) var(--ease);
-}
+.bottom-tab-icon { display: grid; place-items: center; height: 24px; }
 .bottom-tab-label {
-  font-size: var(--fs-xs); /* >= 0.75rem / 12px */
-  font-weight: 600; line-height: 1.1; text-align: center;
+  font-size: var(--fs-sm); font-weight: 500; line-height: 1.1; text-align: center;
   max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
+.bottom-tab:hover { color: var(--text); }
 .bottom-tab.active { color: var(--primary); }
-.bottom-tab.active .bottom-tab-icon { background: var(--primary-soft); color: var(--primary); }
+.bottom-tab.active .bottom-tab-label { font-weight: 700; }
 .bottom-tab.active svg { stroke-width: 2.25; }
 
-/* Tablet: icon rail */
+/* Sidebar links (tablet rail and desktop): quiet text, the active page in bold with a fill. */
 @media (min-width: 768px) {
-  .shell { display: grid; grid-template-columns: 88px 1fr; }
+  .shell { display: grid; grid-template-columns: 80px 1fr; }
   .bottom-nav { display: none; }
   .sidebar {
-    display: flex; flex-direction: column; gap: var(--space-1);
+    display: flex; flex-direction: column; gap: 2px;
     position: sticky; top: 0; height: 100vh; overflow-y: auto;
-    padding: var(--space-4) var(--space-2); background: var(--surface); border-right: 1px solid var(--border);
+    padding: var(--space-4) var(--space-2); background: var(--bg); border-right: 1px solid var(--border);
   }
-  .sidebar-brand { display: grid; place-items: center; margin-bottom: var(--space-3); }
+  .sidebar-brand { display: grid; place-items: center; margin-bottom: var(--space-4); }
   .sidebar-brand-text, .section-label { display: none; }
   .sidebar-link {
     position: relative;
     display: flex; flex-direction: column; align-items: center; justify-content: center;
-    padding: 10px var(--space-1); border-radius: var(--radius); color: var(--muted); font-size: var(--fs-xs); font-weight: 600; text-align: center;
-    border-left: 3px solid transparent;
-    transition: background var(--dur-fast) var(--ease), color var(--dur-fast) var(--ease), border-color var(--dur-fast) var(--ease);
+    min-height: var(--tap); padding: var(--space-2); border-radius: var(--radius);
+    color: var(--muted); font-size: var(--fs-sm); font-weight: 500; text-align: center;
+    transition: background var(--dur-fast) var(--ease), color var(--dur-fast) var(--ease);
   }
+  .sidebar-icon { display: inline-flex; flex: none; }
   .sidebar-link:hover { background: var(--surface-2); color: var(--text); }
-  .sidebar-link.active {
-    background: var(--primary-soft);
-    color: var(--primary);
-    border-left-color: var(--primary);
-  }
-  .sidebar .spacer { flex: 1; }
-  .topbar { padding: var(--space-3) var(--space-6); }
-  .main { padding: var(--space-6) var(--space-8) 48px; }
+  .sidebar-link.active { background: var(--surface-2); color: var(--text); font-weight: 700; }
+  .sidebar-link.active .sidebar-icon { color: var(--primary); }
+  .sidebar .spacer { flex: 1; min-height: var(--space-4); }
+  .topbar { padding: var(--space-2) var(--space-6); }
+  .main { padding: var(--space-6) var(--space-8) var(--space-10); }
 }
 
+/* Tablet: icon rail with a tooltip for each label */
 @media (min-width: 768px) and (max-width: 1199px) {
   .sidebar-label { display: none; }
   .sidebar-tooltip {
@@ -288,13 +295,11 @@ button, input, select, textarea { font: inherit; color: inherit; }
     left: calc(100% + var(--space-2));
     top: 50%;
     transform: translateY(-50%);
-    background: var(--surface-2);
-    color: var(--text);
-    padding: var(--space-1) var(--space-3);
+    background: var(--text);
+    color: var(--bg);
+    padding: var(--space-1) var(--space-2);
     border-radius: var(--radius-sm);
-    border: 1px solid var(--border);
-    box-shadow: var(--shadow-md);
-    font-size: var(--fs-xs);
+    font-size: var(--fs-sm);
     font-weight: 600;
     white-space: nowrap;
     pointer-events: none;
@@ -310,28 +315,22 @@ button, input, select, textarea { font: inherit; color: inherit; }
   }
 }
 
-/* Desktop: full sidebar */
+/* Desktop: full sidebar, links left-aligned in one column */
 @media (min-width: 1200px) {
   .shell { grid-template-columns: 264px 1fr; }
   .sidebar { padding: var(--space-5) var(--space-3); }
-  .sidebar-brand { display: flex; align-items: center; gap: 10px; place-items: initial; padding: var(--space-1) 10px var(--space-4); font-weight: 700; font-size: var(--fs-lg); }
+  .sidebar-brand { display: flex; align-items: center; gap: var(--space-2); place-items: initial; padding: 0 var(--space-2) var(--space-3); font-weight: 700; font-size: var(--fs-lg); }
   .sidebar-brand-text { display: inline; color: var(--text); }
-  .sidebar-brand-text small { display: block; font-size: var(--fs-xs); color: var(--muted); font-weight: 500; }
-  .section-label { display: block; padding: 14px var(--space-3) var(--space-1); font-size: var(--fs-xs); color: var(--muted); font-weight: 700; letter-spacing: 0.04em; }
+  .sidebar-brand-text small { display: block; font-size: var(--fs-sm); color: var(--muted); font-weight: 500; }
+  .section-label { display: block; padding: var(--space-4) var(--space-2) var(--space-1); font-size: var(--fs-sm); color: var(--muted); font-weight: 600; }
   .sidebar-link {
-    flex-direction: row; gap: var(--space-3); padding: 10px var(--space-3);
-    font-size: .92rem; text-align: left;
-    border-left: 3px solid transparent;
+    flex-direction: row; justify-content: flex-start; gap: var(--space-3);
+    min-height: 40px; padding: var(--space-2); font-size: var(--fs-md); text-align: left;
   }
-  .sidebar-link.active {
-    background: var(--primary-soft);
-    color: var(--primary);
-    border-left-color: var(--primary);
-  }
-  .sidebar-label { display: inline; }
+  .sidebar-label { display: inline; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .sidebar-tooltip { display: none; }
-  .topbar { padding: var(--space-4) var(--space-8); }
-  .main { padding: var(--space-8) var(--space-10) 56px; }
+  .topbar { padding: var(--space-2) var(--space-8); }
+  .main { padding: var(--space-6) var(--space-10) var(--space-16); }
 }
 
 /* ---------- Layout primitives ---------- */

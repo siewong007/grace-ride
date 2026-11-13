@@ -1,11 +1,12 @@
-import { ReactNode, useEffect, useRef, useState } from 'react';
+import { ReactNode, useEffect, useMemo, useRef, useState } from 'react';
 import { Link, NavLink, Navigate, Outlet, useLocation } from 'react-router-dom';
 import {
-  Bell, Calendar, Car, CarFront, ClipboardList, Clock, HandCoins, HeartHandshake, Home, LayoutDashboard,
-  LifeBuoy, MapPinned, Megaphone, Receipt, ScrollText, ShieldAlert, User, Users, Wallet, BarChart3,
+  ArrowLeft, Bell, Calendar, Car, CarFront, ClipboardList, Clock, HandCoins, HeartHandshake, Home, LayoutDashboard,
+  LifeBuoy, MapPinned, Megaphone, Receipt, ScrollText, Settings, ShieldAlert, User, Users, Wallet, BarChart3,
 } from 'lucide-react';
 import { useAuth } from '../auth';
 import { LogoMark, Wordmark } from './Brand';
+import { PageChromeContext } from './PageChrome';
 import { TermsGate } from './Terms';
 import { Avatar, IconButton, Notice } from './ui';
 import { useTranslation } from 'react-i18next';
@@ -47,10 +48,15 @@ function getPageTitle(pathname: string, t: (key: string) => string): string {
 
 export default function Layout() {
   const { t } = useTranslation('layout');
+  const { t: tc } = useTranslation();
   const { me, has, isStaff } = useAuth();
   const loc = useLocation();
   const [scrolled, setScrolled] = useState(false);
   const sentinelRef = useRef<HTMLDivElement>(null);
+  // Set by the page's PageHeader: its back target, and whether its heading is on screen.
+  const [back, setBack] = useState<string | null>(null);
+  const [headingVisible, setHeadingVisible] = useState(false);
+  const chrome = useMemo(() => ({ setBack, setHeadingVisible }), []);
 
   useEffect(() => {
     const el = sentinelRef.current;
@@ -69,7 +75,7 @@ export default function Layout() {
   if (!me.terms_accepted) return <TermsGate />;
   const pending = me.status === 'pending';
   if (pending && loc.pathname !== '/me') return <Navigate to="/me" replace />;
-  const sz = 22;
+  const sz = 20;
 
   const member: NavItem[] = pending ? [] : [
     { to: '/', label: t('home'), icon: <Home size={sz} />, end: true },
@@ -97,7 +103,7 @@ export default function Layout() {
   if (has('admin') && me.mfa_ok) {
     staff.push(
       { to: '/admin/members', label: t('members'), icon: <Users size={sz} /> },
-      { to: '/admin/settings', label: t('settings'), icon: <ScrollText size={sz} /> },
+      { to: '/admin/settings', label: t('settings'), icon: <Settings size={sz} /> },
     );
   }
   if (isStaff) staff.push({ to: '/admin/audit', label: t('audit'), icon: <ScrollText size={sz} /> });
@@ -161,7 +167,17 @@ export default function Layout() {
                 <Wordmark className="topbar-brand-name" />
               </Link>
             ) : (
-              <h1 className="topbar-title">{pageTitle}</h1>
+              <>
+                {back && (
+                  <Link to={back} className="icon-btn topbar-back hide-tablet-up" aria-label={tc('back')}>
+                    <ArrowLeft size={22} />
+                  </Link>
+                )}
+                {/* The page's own h1 is the heading; this is a reminder once it scrolls away. */}
+                <span className={`topbar-title ${headingVisible ? 'is-hidden' : ''}`.trim()} aria-hidden={headingVisible}>
+                  {pageTitle}
+                </span>
+              </>
             )}
           </div>
 
@@ -202,7 +218,9 @@ export default function Layout() {
           </div>
         )}
         <main className="main" id="main">
-          <Outlet />
+          <PageChromeContext.Provider value={chrome}>
+            <Outlet />
+          </PageChromeContext.Provider>
         </main>
       </div>
 

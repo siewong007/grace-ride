@@ -21,6 +21,7 @@ import {
 import { uploadFile } from '../api';
 import { Tone } from '../format';
 import { LoadingMark } from './Brand';
+import { usePageChrome } from './PageChrome';
 import { useTranslation } from 'react-i18next';
 
 // ==========================================
@@ -189,20 +190,23 @@ export interface PageHeaderProps {
 }
 
 /**
- * Standard top header with title, subtitle, mobile back navigation, and action buttons.
+ * Page heading with optional subtitle and actions. Inside the app frame the back link
+ * lives in the top bar, and the top bar shows the title only once this heading scrolls away.
  */
 export function PageHeader({ title, subtitle, back, actions, className = '' }: PageHeaderProps) {
   const { t } = useTranslation();
+  const headingRef = useRef<HTMLHeadingElement>(null);
+  const inFrame = usePageChrome(headingRef, back);
   return (
     <div className={`page-head ${className}`.trim()}>
       <div className="row nowrap page-head-title">
-        {back && (
+        {back && !inFrame && (
           <Link to={back} className="icon-btn sm hide-tablet-up" aria-label={t('back') || 'Back'}>
             <ArrowLeft size={20} />
           </Link>
         )}
         <div>
-          <h1>{title}</h1>
+          <h1 ref={headingRef}>{title}</h1>
           {subtitle && <p className="muted">{subtitle}</p>}
         </div>
       </div>

@@ -2,7 +2,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { fireEvent, render, screen } from '@testing-library/react';
 import { MemoryRouter, Route, Routes } from 'react-router-dom';
 import { DisplayPreferences } from './components/AppChrome';
-import { Notice } from './components/ui';
+import { Notice, PageHeader } from './components/ui';
 import Layout from './components/Layout';
 import * as i18nModule from './i18n';
 
@@ -121,7 +121,7 @@ describe('Layout and Navigation', () => {
     expect(screen.getByText('9+')).toBeInTheDocument();
   });
 
-  it('renders page title on non-home routes', () => {
+  it('shows the page title in the top bar without adding a second h1', () => {
     render(
       <MemoryRouter initialEntries={['/rides']}>
         <Routes>
@@ -132,8 +132,26 @@ describe('Layout and Navigation', () => {
       </MemoryRouter>
     );
 
-    // Title heading should be rendered
-    const heading = screen.getByRole('heading', { level: 1 });
-    expect(heading).toHaveClass('topbar-title');
+    // The page owns the h1; the top bar title is plain text.
+    expect(screen.getByText('My rides', { selector: '.topbar-title' })).toBeInTheDocument();
+    expect(screen.queryByRole('heading', { level: 1 })).not.toBeInTheDocument();
+  });
+
+  it('moves a page back link into the top bar', () => {
+    render(
+      <MemoryRouter initialEntries={['/rides/new']}>
+        <Routes>
+          <Route element={<Layout />}>
+            <Route path="/rides/new" element={<PageHeader title="Request a ride" back="/rides" />} />
+          </Route>
+        </Routes>
+      </MemoryRouter>
+    );
+
+    const backLinks = screen.getAllByRole('link', { name: 'Back' });
+    expect(backLinks).toHaveLength(1);
+    expect(backLinks[0]).toHaveClass('topbar-back');
+    expect(backLinks[0]).toHaveAttribute('href', '/rides');
+    expect(screen.getAllByRole('heading', { level: 1 })).toHaveLength(1);
   });
 });
