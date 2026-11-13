@@ -41,6 +41,7 @@ const AdminSettings = lazy(() => import('./pages/admin/Settings'));
 const AdminReimbursements = lazy(() => import('./pages/admin/Reimbursements'));
 const AdminAnnouncements = lazy(() => import('./pages/admin/Announcements'));
 const AdminAudit = lazy(() => import('./pages/admin/Audit'));
+const AdminReports = lazy(() => import('./pages/admin/Reports'));
 const PlanTransport = lazy(() => import('./pages/admin/PlanTransport'));
 
 /** Wrap a lazily-loaded page so only the content area shows a spinner while it loads. */
@@ -98,6 +99,7 @@ export default function App() {
         <Route path="admin/reimbursements" element={page(<AdminReimbursements />)} />
         <Route path="admin/announcements" element={page(<AdminAnnouncements />)} />
         <Route path="admin/audit" element={page(<AdminAudit />)} />
+        <Route path="admin/reports" element={page(<AdminReports />)} />
         <Route path="admin/events/:id/plan" element={page(<PlanTransport />)} />
       </Route>
       <Route path="*" element={page(<NotFound />)} />
