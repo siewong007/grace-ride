@@ -168,38 +168,35 @@ function DriverCard({
   }
 
   return (
-    <Card className="stack-sm">
-      <div className="row between nowrap">
-        <div className="row nowrap gap-md">
-          <Avatar name={d.name} size="lg" />
-          <div>
-            <div className="muted small">
-              {r.viewer.is_driver ? t('youAreDriver') : t('driver')}
-            </div>
-            <div className="bold font-lg">{d.name}</div>
-            {d.vehicle && (
-              <div className="row nowrap gap-sm">
-                <span className="small muted">{d.vehicle.color} {d.vehicle.model}</span>
-                <span className="plate">{d.vehicle.plate}</span>
-              </div>
-            )}
+    <Card className="ride-driver">
+      <div className="row nowrap gap-md min-w-0">
+        <Avatar name={d.name} size="lg" />
+        <div className="min-w-0">
+          <div className="muted small">
+            {r.viewer.is_driver ? t('youAreDriver') : t('driver')}
           </div>
+          <div className="bold font-lg">{d.name}</div>
+          {d.vehicle && (
+            <div className="small muted ride-driver-car">
+              {d.vehicle.color} {d.vehicle.model} <span className="plate">{d.vehicle.plate}</span>
+            </div>
+          )}
         </div>
+      </div>
 
-        <div className="btn-row nowrap">
-          {d.phone && !r.viewer.is_driver && (
-            <a className="btn sm primary" href={`tel:${d.phone}`}>
-              <Phone size={16} aria-hidden="true" />
-              <span>{t('call')}</span>
-            </a>
-          )}
-          {r.trip_id != null && onChatClick && (
-            <Button variant="ghost" size="sm" onClick={onChatClick}>
-              <MessageSquare size={16} aria-hidden="true" />
-              <span>{t('chatBtn')}</span>
-            </Button>
-          )}
-        </div>
+      <div className="btn-row ride-driver-actions">
+        {d.phone && !r.viewer.is_driver && (
+          <a className="btn sm primary" href={`tel:${d.phone}`}>
+            <Phone size={16} aria-hidden="true" />
+            <span>{t('call')}</span>
+          </a>
+        )}
+        {r.trip_id != null && onChatClick && (
+          <Button variant="ghost" size="sm" onClick={onChatClick}>
+            <MessageSquare size={16} aria-hidden="true" />
+            <span>{t('chatBtn')}</span>
+          </Button>
+        )}
       </div>
     </Card>
   );
@@ -214,7 +211,7 @@ function StatusTimeline({ ride }: { ride: Ride }) {
   if (isTerminal) {
     return (
       <Card className="stack-sm">
-        <h3>{t('statusTimeline')}</h3>
+        <h2>{t('statusTimeline')}</h2>
         <div className="status-timeline">
           <div className="timeline-step done">
             <div className="timeline-step-indicator">
@@ -292,7 +289,7 @@ function StatusTimeline({ ride }: { ride: Ride }) {
 
   return (
     <Card className="stack-sm">
-      <h3>{t('statusTimeline')}</h3>
+      <h2>{t('statusTimeline')}</h2>
       <div className="status-timeline">
         {steps.map((st, i) => (
           <div key={i} className={`timeline-step ${st.state}`}>
@@ -486,9 +483,9 @@ function CollapsibleTrackCard({ ride }: { ride: Ride }) {
       >
         <div className="row nowrap gap-sm">
           <Navigation size={18} aria-hidden="true" />
-          <h3 className="no-margin">
+          <h2 className="no-margin">
             {ride.viewer.is_driver ? t('tripMap') : t('driverLocation')}
-          </h3>
+          </h2>
         </div>
         <div className="row nowrap gap-sm">
           {eta?.located && eta.duration_s != null && (
@@ -636,7 +633,7 @@ function PassengerActions({ ride: r, reload }: { ride: Ride; reload: () => void 
     <Card className="stack">
       {r.status === 'pending_passenger' && r.driver && (
         <div className="stack">
-          <h3>{t('driverInvite')}</h3>
+          <h2>{t('driverInvite')}</h2>
           <p>{t('driverInviteDesc', { name: r.driver.name })}</p>
           <div className="btn-row">
             <Button
@@ -704,7 +701,7 @@ function DriverActions({ ride: r, reload }: { ride: Ride; reload: () => void }) 
 
   return (
     <Card className="stack">
-      <h3>{t('driverActions')}</h3>
+      <h2>{t('driverActions')}</h2>
       {r.status === 'pending_driver' && (
         <>
           <p className="muted">{t('driverClaimDesc')}</p>
@@ -793,7 +790,7 @@ function StaffActions({ ride: r, reload }: { ride: Ride; reload: () => void }) {
 
   return (
     <Card className="stack">
-      <h3>{t('staffActions')}</h3>
+      <h2>{t('staffActions')}</h2>
       {r.driver_load && (
         <p className="small">{t('driverLoad', { used: r.driver_load.seats_used, capacity: r.driver_load.capacity, seats: r.seats })}</p>
       )}

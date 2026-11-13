@@ -505,7 +505,12 @@ export function EmptyState({
   return (
     <div className={`empty ${className}`.trim()}>
       {icon && <div className="empty-icon" aria-hidden="true">{icon}</div>}
-      <h3 className="empty-title">{title}</h3>
+      {/* A bare "nothing here" line is a quiet message; with more to say it gets a heading. */}
+      {icon || description || action || children ? (
+        <h3 className="empty-title">{title}</h3>
+      ) : (
+        <p className="empty-title">{title}</p>
+      )}
       {description && <p className="muted small empty-desc">{description}</p>}
       {children}
       {action && <div className="empty-action">{action}</div>}

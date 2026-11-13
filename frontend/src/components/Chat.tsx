@@ -37,7 +37,7 @@ export default function Chat({ rideId }: { rideId: number }) {
   return (
     <div className="card stack-sm">
       <div className="row between">
-        <h3>{t('chat')}</h3>
+        <h2>{t('chat')}</h2>
         <span className="muted small">{t('chatMembers', { count: data.members.length })}</span>
       </div>
       <div className="chat">
