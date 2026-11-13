@@ -1,5 +1,6 @@
 export default {
   title: '帮助中心',
+  thread: '帮助对话',
   desc: '有问题，可向帮助中心求助；管理员负责跟进。',
   ask: '提出问题',
   relatedRide: '关联接送 #{rideId}',

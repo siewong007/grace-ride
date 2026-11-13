@@ -693,6 +693,7 @@ const ToastCtx = createContext<ToastFn>(noopToast);
  * Accessible toast notification provider queueing up to 3 messages with variant icons.
  */
 export function ToastProvider({ children }: { children: ReactNode }) {
+  const { t: tr } = useTranslation();
   const [toasts, setToasts] = useState<ToastMessage[]>([]);
 
   const remove = useCallback((id: string) => {
@@ -740,7 +741,7 @@ export function ToastProvider({ children }: { children: ReactNode }) {
                 type="button"
                 className="toast-close"
                 onClick={() => remove(t.id)}
-                aria-label="Dismiss"
+                aria-label={tr('close')}
               >
                 <X size={16} />
               </button>

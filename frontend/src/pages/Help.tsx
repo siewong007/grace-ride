@@ -189,7 +189,7 @@ export function HelpDetail() {
 
         <Card className="stack">
           {/* Chat-style thread */}
-          <div className="chat-log" role="log" aria-label="Help discussion">
+          <div className="chat-log" role="log" aria-label={t('thread')}>
             {tk.replies.map((r) => (
               <div
                 key={r.id}

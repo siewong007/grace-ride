@@ -1,5 +1,6 @@
 export default {
   title: 'Help centre',
+  thread: 'Help discussion',
   desc: 'Have a question? Ask the help centre; an admin will follow up.',
   ask: 'Ask a question',
   relatedRide: 'Related ride #{rideId}',
