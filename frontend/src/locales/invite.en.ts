@@ -7,7 +7,6 @@ export default {
   phone: 'Phone number',
   phoneHint: 'Shown to the assigned driver or passenger only after the ride is approved',
   password: 'Backup password (optional)',
-  passwordHint: 'At least 10 characters. We recommend logging in mainly with a passkey.',
   continue: 'Continue',
   setupPasskey: 'Set up passkey',
   setupPasskeyDesc: 'From now on, log in with face, fingerprint or screen lock on your phone. There is no password.',

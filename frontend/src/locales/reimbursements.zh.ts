@@ -29,8 +29,6 @@ export default {
   submittedAt: '提交',
   reviewer: '审核',
   paid: '付款',
-  reviewNote: '备注',
-  receiptLink: '收据',
   resubmit: '补资料重新提交',
   ridePrefix: '接送 {time}',
   statusTimeline: '报销进度',

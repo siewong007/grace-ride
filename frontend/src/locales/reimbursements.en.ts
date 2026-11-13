@@ -29,8 +29,6 @@ export default {
   submittedAt: 'Submitted',
   reviewer: 'Reviewer',
   paid: 'Paid',
-  reviewNote: 'Note',
-  receiptLink: 'Receipt',
   resubmit: 'Resubmit with details',
   ridePrefix: 'Ride {time}',
   statusTimeline: 'Reimbursement status',

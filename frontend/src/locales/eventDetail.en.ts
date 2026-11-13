@@ -41,7 +41,6 @@ export default {
   joinWaitlist: 'Join waitlist',
   manageTitle: 'Manage event',
   manageDesc: 'Organiser tools for check-in and settlements',
-  seatsLeft: '{n} spots left',
   full: 'Full',
   signedUpSuccess: 'Successfully signed up',
 };

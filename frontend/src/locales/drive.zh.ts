@@ -33,7 +33,6 @@ export default {
   seatCount: '{count} 个座位',
   seatCount_one: '{count} 个座位',
   passenger: '乘客',
-  selectRide: '主动接送',
   offerToDrive: '主动接送',
   claimed: '已发出邀请，等待乘客确认',
   startTrip: '开始行程',
@@ -88,5 +87,4 @@ export default {
   routeApproximate: '粗略估算：暂时无法连接路线服务，距离按直线计算。',
   routeStopsLabel: '按顺序的上车点',
   routeDestination: '目的地',
-  liveBadgePreview: '车辆预览',
 };

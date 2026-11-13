@@ -7,7 +7,6 @@ export default {
   phone: '手机号码',
   phoneHint: '仅在接送获批准后显示给相关司机或乘客',
   password: '备用密码（可选）',
-  passwordHint: '至少 10 个字符。建议主要使用通行密钥登入。',
   continue: '继续',
   setupPasskey: '设置通行密钥',
   setupPasskeyDesc: '以后用手机刷脸、指纹或屏幕锁登入。这个应用不使用密码。',

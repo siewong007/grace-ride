@@ -12,8 +12,6 @@ export default {
   allHelp: 'All requests',
   mine: 'Mine',
   none: 'No help requests',
-  statusOpen: 'In progress',
-  statusAnswered: 'Replied',
   statusClosed: 'Closed',
   viewRide: 'View related ride →',
   reply: 'Reply',

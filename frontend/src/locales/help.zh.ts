@@ -12,8 +12,6 @@ export default {
   allHelp: '全部求助',
   mine: '我的',
   none: '没有求助记录',
-  statusOpen: '处理中',
-  statusAnswered: '已回复',
   statusClosed: '已结案',
   viewRide: '查看相关接送 →',
   reply: '回复',
