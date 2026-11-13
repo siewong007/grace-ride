@@ -40,6 +40,11 @@ use tower_http::{
 use security::RateLimiter;
 use state::{build_webauthn, AppState, Config};
 
+/// Largest request body for every route except uploads (`routes::files` raises it).
+/// The biggest real request, a transport plan or a bill, is a few kilobytes; the cap
+/// keeps free-text fields from being used to store megabytes per row.
+pub const MAX_JSON_BODY: usize = 128 * 1024;
+
 pub async fn connect_db(url: &str) -> anyhow::Result<PgPool> {
     let opts = PgConnectOptions::from_str(url)?;
     let db = PgPool::connect_with(opts).await?;
@@ -112,7 +117,7 @@ pub fn router(state: AppState) -> Router {
     // Layers run bottom-up on the way in: trace → headers → compression → body limit → origin → rate limit.
     app.layer(from_fn_with_state(state.clone(), security::rate_limit))
         .layer(from_fn_with_state(state.clone(), security::origin_guard))
-        .layer(DefaultBodyLimit::max(10 * 1024 * 1024))
+        .layer(DefaultBodyLimit::max(MAX_JSON_BODY))
         .layer(CompressionLayer::new())
         .layer(from_fn_with_state(
             state.clone(),

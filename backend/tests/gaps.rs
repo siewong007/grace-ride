@@ -128,19 +128,105 @@ async fn passkey_register_and_login_soft_authenticator() {
     assert!(set_cookie, "expected session cookie after passkey login");
 }
 
+/// Field names (and nesting) of a JSON value, values ignored, to compare shapes.
+fn shape(v: &serde_json::Value) -> serde_json::Value {
+    match v {
+        serde_json::Value::Object(m) => {
+            serde_json::Value::Object(m.iter().map(|(k, v)| (k.clone(), shape(v))).collect())
+        }
+        serde_json::Value::Array(a) => json!(a.first().map(shape)),
+        _ => json!(null),
+    }
+}
+
 #[tokio::test]
-async fn passkey_login_start_without_keys_fails() {
-    let (app, _) = setup().await;
-    let r = call(
+async fn passkey_login_start_does_not_reveal_who_is_a_member() {
+    let (app, st) = setup().await;
+    let start = |email: &str| {
+        let (app, email) = (app.clone(), email.to_string());
+        async move {
+            call(
+                &app,
+                Method::POST,
+                "/api/auth/passkey/login/start",
+                None,
+                Some(json!({ "email": email })),
+            )
+            .await
+        }
+    };
+
+    // A real member with a passkey, for the shape of a genuine challenge.
+    let cookie = login(&st, "amina@example.org").await;
+    let reg = call(
         &app,
         Method::POST,
-        "/api/auth/passkey/login/start",
+        "/api/auth/passkey/register/start",
+        Some(&cookie),
         None,
-        Some(json!({"email": "member@example.org"})),
     )
     .await;
-    assert_eq!(r.status, StatusCode::BAD_REQUEST);
-    assert_eq!(r.json["code"], "PASSKEY_NOT_FOUND");
+    let mut soft = WebauthnAuthenticator::new(SoftPasskey::new(true));
+    let origin = Url::parse(ORIGIN).unwrap();
+    let credential = soft
+        .do_registration(
+            origin,
+            serde_json::from_value::<CreationChallengeResponse>(reg.json["options"].clone())
+                .unwrap(),
+        )
+        .unwrap();
+    let fin = call(
+        &app,
+        Method::POST,
+        "/api/auth/passkey/register/finish",
+        Some(&cookie),
+        Some(json!({"challenge_id": reg.json["challenge_id"], "credential": credential})),
+    )
+    .await;
+    assert_eq!(fin.status, StatusCode::OK, "{}", fin.json);
+    let real = start("amina@example.org").await;
+    assert_eq!(real.status, StatusCode::OK, "{}", real.json);
+
+    // A member without a passkey and an unknown email both get a challenge, not an error.
+    for email in ["member@example.org", "nobody-here@example.org"] {
+        let r = start(email).await;
+        assert_eq!(r.status, StatusCode::OK, "{email}: {}", r.json);
+        let opts: RequestChallengeResponse = serde_json::from_value(r.json["options"].clone())
+            .expect("decoy parses as a real challenge");
+        assert_eq!(shape(&r.json), shape(&real.json), "{email}");
+        let pk = &r.json["options"]["publicKey"];
+        let real_pk = &real.json["options"]["publicKey"];
+        for f in ["timeout", "rpId", "userVerification"] {
+            assert_eq!(pk[f], real_pk[f], "{email}: {f}");
+        }
+        assert_ne!(pk["challenge"], real_pk["challenge"]);
+        drop(opts);
+
+        // The same email always gets the same credential ids (a changing list would give it away).
+        let again = start(email).await;
+        assert_eq!(
+            pk["allowCredentials"],
+            again.json["options"]["publicKey"]["allowCredentials"]
+        );
+        assert_ne!(
+            pk["challenge"],
+            again.json["options"]["publicKey"]["challenge"]
+        );
+
+        // Finishing a decoy fails exactly like a wrong passkey.
+        let finish = call(
+            &app,
+            Method::POST,
+            "/api/auth/passkey/login/finish",
+            None,
+            Some(json!({"challenge_id": r.json["challenge_id"], "credential": serde_json::to_value(
+                soft.do_authentication(Url::parse(ORIGIN).unwrap(),
+                    serde_json::from_value(real.json["options"].clone()).unwrap()).unwrap()).unwrap()})),
+        )
+        .await;
+        assert_eq!(finish.status, StatusCode::BAD_REQUEST, "{}", finish.json);
+        assert_eq!(finish.json["code"], "PASSKEY_FAILED");
+    }
 }
 
 #[tokio::test]
@@ -1476,4 +1562,300 @@ async fn settlement_receipt_must_be_the_organisers_own_upload() {
     );
     let finance = login(&st, "finance@example.org").await;
     assert_eq!(can_open(finance, theirs).await, StatusCode::OK);
+}
+
+#[tokio::test]
+async fn adding_or_removing_a_sign_in_method_needs_a_recent_sign_in() {
+    let (app, st) = setup().await;
+    let cookie = login(&st, "sophie@example.org").await;
+    let register = |cookie: String| {
+        let app = app.clone();
+        async move {
+            let start = call(
+                &app,
+                Method::POST,
+                "/api/auth/passkey/register/start",
+                Some(&cookie),
+                None,
+            )
+            .await;
+            if start.status != StatusCode::OK {
+                return start;
+            }
+            let mut soft = WebauthnAuthenticator::new(SoftPasskey::new(true));
+            let credential = soft
+                .do_registration(
+                    Url::parse(ORIGIN).unwrap(),
+                    serde_json::from_value::<CreationChallengeResponse>(
+                        start.json["options"].clone(),
+                    )
+                    .unwrap(),
+                )
+                .unwrap();
+            call(
+                &app,
+                Method::POST,
+                "/api/auth/passkey/register/finish",
+                Some(&cookie),
+                Some(json!({"challenge_id": start.json["challenge_id"], "credential": credential})),
+            )
+            .await
+        }
+    };
+    // Nothing set up yet: an old session may add the first passkey (new member, after recovery).
+    let age = |minutes: i64| {
+        let db = st.db.clone();
+        async move {
+            sqlx::query("UPDATE sessions SET created_at=$1 WHERE user_id=(SELECT id FROM users WHERE email='sophie@example.org')")
+                .bind(grace_ride::util::minutes_ago(minutes))
+                .execute(&db)
+                .await
+                .unwrap();
+        }
+    };
+    age(120).await;
+    let first = register(cookie.clone()).await;
+    assert_eq!(first.status, StatusCode::OK, "{}", first.json);
+
+    // With a passkey on the account, the same old session can't add, remove or set up 2FA.
+    for (path, method) in [
+        ("/api/auth/passkey/register/start", Method::POST),
+        ("/api/auth/totp/setup", Method::POST),
+        ("/api/auth/passkeys/1", Method::DELETE),
+    ] {
+        let r = call(&app, method, path, Some(&cookie), None).await;
+        assert_eq!(r.status, StatusCode::FORBIDDEN, "{path}: {}", r.json);
+        assert_eq!(r.json["code"], "RECENT_SIGN_IN_REQUIRED", "{path}");
+    }
+    // Signed in within the last 15 minutes: allowed.
+    age(5).await;
+    let second = register(cookie.clone()).await;
+    assert_eq!(second.status, StatusCode::OK, "{}", second.json);
+}
+
+#[tokio::test]
+async fn recovery_links_are_stored_hashed() {
+    let (app, st) = setup().await;
+    let admin = login(&st, "admin@example.org").await;
+    let _ = call(
+        &app,
+        Method::POST,
+        "/api/auth/recovery-request",
+        None,
+        Some(json!({"email": "amina@example.org", "reason": "new phone"})),
+    )
+    .await;
+    let (rid,): (i64,) =
+        sqlx::query_as("SELECT id FROM recovery_requests WHERE email='amina@example.org'")
+            .fetch_one(&st.db)
+            .await
+            .unwrap();
+    let ok = call(
+        &app,
+        Method::POST,
+        &format!("/api/admin/recovery/{rid}/approve"),
+        Some(&admin),
+        None,
+    )
+    .await;
+    assert_eq!(ok.status, StatusCode::OK, "{}", ok.json);
+    let token = ok.json["url"]
+        .as_str()
+        .unwrap()
+        .rsplit('/')
+        .next()
+        .unwrap()
+        .to_string();
+
+    let (stored,): (String,) = sqlx::query_as(
+        "SELECT token FROM invites WHERE kind='recovery' AND email='amina@example.org'",
+    )
+    .fetch_one(&st.db)
+    .await
+    .unwrap();
+    assert_ne!(stored, token, "the link itself is never stored");
+    assert_eq!(stored, grace_ride::auth::hash_token(&token));
+
+    // What a leaked backup holds (the hash) doesn't open the link.
+    for t in [&stored] {
+        let r = call(&app, Method::GET, &format!("/api/invites/{t}"), None, None).await;
+        assert_eq!(r.status, StatusCode::NOT_FOUND, "{}", r.json);
+    }
+    let preview = call(
+        &app,
+        Method::GET,
+        &format!("/api/invites/{token}"),
+        None,
+        None,
+    )
+    .await;
+    assert_eq!(preview.status, StatusCode::OK, "{}", preview.json);
+    assert_eq!(preview.json["kind"], "recovery");
+    let used = call(
+        &app,
+        Method::POST,
+        &format!("/api/invites/{token}/accept"),
+        None,
+        Some(json!({"terms": true})),
+    )
+    .await;
+    assert_eq!(used.status, StatusCode::OK, "{}", used.json);
+}
+
+#[tokio::test]
+async fn bad_profile_details_are_refused_without_burning_the_invite() {
+    let (app, st) = setup().await;
+    let admin = login(&st, "admin@example.org").await;
+    let created = call(&app, Method::POST, "/api/admin/invites", Some(&admin), None).await;
+    let token = created.json["token"].as_str().unwrap().to_string();
+    let accept = |body: serde_json::Value| {
+        let (app, path) = (app.clone(), format!("/api/invites/{token}/accept"));
+        async move { call(&app, Method::POST, &path, None, Some(body)).await }
+    };
+    let short =
+        accept(json!({"name": "陈", "email": "chen@example.org", "phone": "0123", "terms": true}))
+            .await;
+    assert_eq!(short.status, StatusCode::BAD_REQUEST, "{}", short.json);
+    assert_eq!(short.json["code"], "PHONE_INVALID");
+    let long =
+        accept(json!({"name": "名".repeat(61), "email": "chen@example.org", "terms": true})).await;
+    assert_eq!(long.status, StatusCode::BAD_REQUEST, "{}", long.json);
+    assert_eq!(long.json["code"], "NAME_TOO_LONG");
+    // The link still works after both mistakes.
+    let ok = accept(
+        json!({"name": "陈", "email": "chen@example.org", "phone": "012-345 6789", "terms": true}),
+    )
+    .await;
+    assert_eq!(ok.status, StatusCode::OK, "{}", ok.json);
+
+    // The profile form applies the same rules.
+    let member = login(&st, "member@example.org").await;
+    let r = call(
+        &app,
+        Method::PUT,
+        "/api/me",
+        Some(&member),
+        Some(json!({"phone": "12"})),
+    )
+    .await;
+    assert_eq!(r.json["code"], "PHONE_INVALID", "{}", r.json);
+    let r = call(
+        &app,
+        Method::PUT,
+        "/api/me",
+        Some(&member),
+        Some(json!({"name": "x".repeat(61)})),
+    )
+    .await;
+    assert_eq!(r.json["code"], "NAME_TOO_LONG", "{}", r.json);
+    let r = call(
+        &app,
+        Method::PUT,
+        "/api/me",
+        Some(&member),
+        Some(json!({"phone": ""})),
+    )
+    .await;
+    assert_eq!(r.status, StatusCode::OK, "{}", r.json);
+}
+
+#[tokio::test]
+async fn members_can_list_their_groups() {
+    let (app, st) = setup().await;
+    let member = login(&st, "member@example.org").await;
+    let r = call(&app, Method::GET, "/api/groups", Some(&member), None).await;
+    assert_eq!(r.status, StatusCode::OK, "{}", r.json);
+    assert!(r
+        .json
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|g| g["is_all"] == true));
+}
+
+#[tokio::test]
+async fn request_bodies_and_uploads_are_bounded() {
+    let (app, st) = setup().await;
+    let member = login(&st, "member@example.org").await;
+
+    // A JSON body past the cap is refused before it reaches the handler.
+    let huge = call(
+        &app,
+        Method::POST,
+        "/api/help",
+        Some(&member),
+        Some(json!({"subject": "x", "body": "x".repeat(grace_ride::MAX_JSON_BODY + 1)})),
+    )
+    .await;
+    assert_eq!(huge.status, StatusCode::PAYLOAD_TOO_LARGE);
+    let normal = call(
+        &app,
+        Method::POST,
+        "/api/help",
+        Some(&member),
+        Some(json!({"subject": "x", "body": "y"})),
+    )
+    .await;
+    assert_eq!(normal.status, StatusCode::OK, "{}", normal.json);
+
+    // Uploads keep their own, larger limit.
+    let mut png = vec![0x89, b'P', b'N', b'G', 0x0D, 0x0A, 0x1A, 0x0A];
+    png.extend(std::iter::repeat_n(0u8, 2 * 1024 * 1024));
+    let boundary = "XgrBOUNDARY";
+    let mut body = format!(
+        "--{boundary}\r\nContent-Disposition: form-data; name=\"file\"; filename=\"big.png\"\r\nContent-Type: image/png\r\n\r\n"
+    )
+    .into_bytes();
+    body.extend_from_slice(&png);
+    body.extend_from_slice(format!("\r\n--{boundary}--\r\n").as_bytes());
+    let req = axum::http::Request::builder()
+        .method(Method::POST)
+        .uri("/api/files")
+        .header(axum::http::header::COOKIE, &member)
+        .header(axum::http::header::ORIGIN, ORIGIN)
+        .header(
+            axum::http::header::CONTENT_TYPE,
+            format!("multipart/form-data; boundary={boundary}"),
+        )
+        .body(axum::body::Body::from(body))
+        .unwrap();
+    let res = tower::ServiceExt::oneshot(app.clone(), req).await.unwrap();
+    assert_eq!(res.status(), StatusCode::OK, "a 2 MB receipt still uploads");
+
+    // One account can't fill the disk: past the daily quota uploads are refused.
+    let (uid,): (i64,) = sqlx::query_as("SELECT id FROM users WHERE email='member@example.org'")
+        .fetch_one(&st.db)
+        .await
+        .unwrap();
+    for i in 0..grace_ride::routes::files::MAX_UPLOADS_PER_DAY {
+        sqlx::query("INSERT INTO files (owner_id, stored_name, mime, original_name, size, created_at) VALUES ($1,$2,'image/png','x.png',1,$3)")
+            .bind(uid)
+            .bind(format!("quota-{i}.png"))
+            .bind(now())
+            .execute(&st.db)
+            .await
+            .unwrap();
+    }
+    let mut small = vec![0x89, b'P', b'N', b'G', 0x0D, 0x0A, 0x1A, 0x0A];
+    small.extend_from_slice(&[0u8; 32]);
+    let boundary = "XgrB2";
+    let mut body = format!(
+        "--{boundary}\r\nContent-Disposition: form-data; name=\"file\"; filename=\"r.png\"\r\nContent-Type: image/png\r\n\r\n"
+    )
+    .into_bytes();
+    body.extend_from_slice(&small);
+    body.extend_from_slice(format!("\r\n--{boundary}--\r\n").as_bytes());
+    let req = axum::http::Request::builder()
+        .method(Method::POST)
+        .uri("/api/files")
+        .header(axum::http::header::COOKIE, &member)
+        .header(axum::http::header::ORIGIN, ORIGIN)
+        .header(
+            axum::http::header::CONTENT_TYPE,
+            format!("multipart/form-data; boundary={boundary}"),
+        )
+        .body(axum::body::Body::from(body))
+        .unwrap();
+    let res = tower::ServiceExt::oneshot(app.clone(), req).await.unwrap();
+    assert_eq!(res.status(), StatusCode::TOO_MANY_REQUESTS);
 }

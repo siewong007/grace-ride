@@ -12,7 +12,9 @@ use crate::auth::CurrentUser;
 use crate::error::{bad, forbidden, not_found, AppResult};
 use crate::i18n::ErrorKey;
 use crate::state::AppState;
-use crate::util::{audit, fmt_rm, notify, notify_roles, now, require_any, t, Lang};
+use crate::util::{
+    audit, check_name, check_phone, fmt_rm, notify, notify_roles, now, require_any, t, Lang,
+};
 
 pub fn router() -> Router<AppState> {
     Router::new()
@@ -62,9 +64,10 @@ async fn update_profile(
     Json(req): Json<ProfileIn>,
 ) -> AppResult<Json<Value>> {
     if let Some(ref name) = req.name {
-        if name.trim().is_empty() {
-            return Err(bad(u.lang, ErrorKey::NameRequired));
-        }
+        check_name(u.lang, name)?;
+    }
+    if let Some(ref phone) = req.phone {
+        check_phone(u.lang, phone)?;
     }
     if let Some(ref lang) = req.lang {
         if lang != "zh" && lang != "en" {

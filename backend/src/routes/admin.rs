@@ -8,7 +8,7 @@ use axum::{
 use serde::Deserialize;
 use serde_json::{json, Value};
 
-use crate::auth::{is_privileged, parse_roles, CurrentUser};
+use crate::auth::{hash_token, is_privileged, parse_roles, CurrentUser};
 use crate::error::{bad, forbidden, not_found, AppError, AppResult};
 use crate::i18n::ErrorKey;
 use crate::state::AppState;
@@ -512,9 +512,10 @@ async fn approve_recovery(
     if status == "awaiting_second" && resolved_by == Some(u.id) {
         return Err(forbidden(u.lang, ErrorKey::SecondAdminRequired));
     }
+    // Only the hash is stored (see `routes::auth::INVITE_BY_TOKEN`); the link is returned once.
     let token = random_token(32);
     sqlx::query("INSERT INTO invites (token, kind, email, user_id, created_by, expires_at, created_at) VALUES ($1, 'recovery', $2, $3, $4, $5, $6)")
-        .bind(&token)
+        .bind(hash_token(&token))
         .bind(&email)
         .bind(uid)
         .bind(u.id)

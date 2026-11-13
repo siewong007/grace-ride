@@ -273,7 +273,7 @@ async fn seed_admin_only(db: &PgPool, cfg: &Config) -> anyhow::Result<()> {
         .bind(&email).bind(stable_uuid(0)).fetch_one(db).await?.0;
     let token = random_token(32);
     sqlx::query("INSERT INTO invites (token, kind, email, name, roles, group_ids, user_id, created_by, expires_at, demo_batch) VALUES ($1, 'recovery', $2, '管理员', 'admin', '[]', $3, $3, $4, NULL)")
-        .bind(&token).bind(&email).bind(id).bind(in_days(2)).execute(db).await?;
+        .bind(crate::auth::hash_token(&token)).bind(&email).bind(id).bind(in_days(2)).execute(db).await?;
     tracing::warn!("First administrator created for {email}. Open this one-time link to register a passkey: {}/invite/{token}", cfg.public_url);
     Ok(())
 }

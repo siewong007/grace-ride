@@ -58,6 +58,9 @@ pub fn render(lang: Lang, key: &ErrorKey) -> String {
         | ErrorKey::PasskeyRegistrationFailed(_)
         | ErrorKey::ChallengeMismatch
         | ErrorKey::NameRequired
+        | ErrorKey::NameTooLong
+        | ErrorKey::PhoneInvalid
+        | ErrorKey::RecentSignInRequired
         | ErrorKey::EmailAlreadyRegistered
         | ErrorKey::TooManyFailedLogins
         | ErrorKey::AuthDisabled
@@ -191,6 +194,7 @@ pub fn render(lang: Lang, key: &ErrorKey) -> String {
         | ErrorKey::FileTooLarge
         | ErrorKey::InvalidFileType
         | ErrorKey::UploadFailed
+        | ErrorKey::UploadQuotaReached
         | ErrorKey::InvalidReceipt
         | ErrorKey::InvalidPhoto
         | ErrorKey::CannotViewFile => files::render(lang, key),
@@ -241,6 +245,9 @@ mod tests {
             ErrorKey::PasskeyRegistrationFailed("x".into()),
             ErrorKey::ChallengeMismatch,
             ErrorKey::NameRequired,
+            ErrorKey::NameTooLong,
+            ErrorKey::PhoneInvalid,
+            ErrorKey::RecentSignInRequired,
             ErrorKey::EmailAlreadyRegistered,
             ErrorKey::TooManyFailedLogins,
             ErrorKey::AuthDisabled,
@@ -385,6 +392,7 @@ mod tests {
             ErrorKey::FileTooLarge,
             ErrorKey::InvalidFileType,
             ErrorKey::UploadFailed,
+            ErrorKey::UploadQuotaReached,
             ErrorKey::InvalidReceipt,
             ErrorKey::InvalidPhoto,
             ErrorKey::CannotViewFile,

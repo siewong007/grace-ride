@@ -44,6 +44,9 @@ export default {
     "PASSKEY_REGISTRATION_FAILED": "Passkey registration failed: {detail}",
     "CHALLENGE_MISMATCH": "Challenge does not match",
     "NAME_REQUIRED": "Please enter your name",
+    "NAME_TOO_LONG": "Name cannot exceed 60 characters",
+    "PHONE_INVALID": "Phone number must be 10 to 20 characters",
+    "RECENT_SIGN_IN_REQUIRED": "To protect your account, sign out and sign in again with your passkey, then finish this within 15 minutes.",
     "EMAIL_ALREADY_REGISTERED": "This email is already registered",
     "TOO_MANY_FAILED_LOGINS": "Too many failed logins; the account is locked for 15 minutes. You can sign in with a passkey instead.",
     "AUTH_DISABLED": "This app signs in with a passkey, not a password.",
@@ -187,6 +190,7 @@ export default {
     "FILE_TOO_LARGE": "File cannot exceed 8MB",
     "INVALID_FILE_TYPE": "Only images (JPG/PNG/WEBP/HEIC) or PDF are accepted",
     "UPLOAD_FAILED": "Upload failed",
+    "UPLOAD_QUOTA_REACHED": "You have uploaded too many files today; please try again tomorrow",
     "INVALID_RECEIPT": "Invalid receipt",
     "INVALID_PHOTO": "Invalid photo",
     "CANNOT_VIEW_FILE": "You cannot view this file"

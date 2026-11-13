@@ -1,7 +1,7 @@
 name: Deploy production
 
-# Push to master builds the image on a GitHub runner and rolls it onto the
-# AIC VPS. The runner cannot reach the host over IPv6, so SSH uses the
+# A push to master whose CI run passes builds the image on a GitHub runner and
+# rolls it onto the AIC VPS. The runner cannot reach the host over IPv6, so SSH uses the
 # forwarded port 20049. The pinned host key is
 # SHA256:HV6OszvuYmwmWRLEY7z7jm8GojWZJppJlDBHIhJVUxw.
 #
@@ -13,13 +13,14 @@ name: Deploy production
 # first-boot seed). Host Caddy keeps ports 80 and 443.
 # Manual dispatch: Actions → Deploy production → Run workflow.
 
+# Deploys only after CI has passed for the pushed commit. A push that fails lint,
+# tests, e2e or the dependency audit never reaches production.
 on:
   workflow_dispatch:
-  push:
+  workflow_run:
+    workflows: [CI]
+    types: [completed]
     branches: [master]
-    paths-ignore:
-      - '**.md'
-      - 'docs/**'
 
 permissions:
   contents: read
@@ -41,10 +42,17 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 45
     environment: production
+    # A CI run from a push to master that passed (not a pull request's run, not a failure).
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      (github.event.workflow_run.conclusion == 'success' &&
+       github.event.workflow_run.event == 'push' &&
+       github.event.workflow_run.head_repository.full_name == github.repository)
     steps:
-      - name: Check out master
+      - name: Check out the commit CI tested
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
+          ref: ${{ github.event.workflow_run.head_sha || github.sha }}
           persist-credentials: false
 
       - name: Build the linux/amd64 image

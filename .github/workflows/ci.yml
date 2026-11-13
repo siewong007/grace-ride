@@ -46,6 +46,10 @@ jobs:
 
   frontend:
     runs-on: ubuntu-latest
+    # Visual baselines (e2e/*-linux.png) were rendered in this image; a plain runner has
+    # different fonts and fails every screenshot. Keep the tag equal to the
+    # @playwright/test version in package-lock.json, and retake the baselines when it moves.
+    container: mcr.microsoft.com/playwright:v1.65.0-noble
     defaults: { run: { working-directory: frontend } }
     steps:
       - uses: actions/checkout@v4
@@ -55,8 +59,6 @@ jobs:
       - run: npm run lint
       - run: npm run test
       - run: npm run build
-      - name: Install Playwright Chromium
-        run: npx playwright install chromium
       - run: npm run test:e2e
       - run: npm audit --audit-level=high
 

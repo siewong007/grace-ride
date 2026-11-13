@@ -27,7 +27,18 @@ use crate::auth::{
 use crate::error::{bad, forbidden, not_found, AppError, AppResult};
 use crate::i18n::ErrorKey;
 use crate::state::AppState;
-use crate::util::{audit, in_hours, notify_roles, now, random_token, t, Lang};
+use crate::util::{
+    audit, check_name, check_phone, in_hours, minutes_ago, notify_roles, now, random_token, t, Lang,
+};
+use webauthn_rs::fake::{FakePasskeyDistribution, WebauthnFakeCredentialGenerator};
+
+/// Invite lookup by the token in the link. Recovery links sign their holder in as an
+/// existing member, so only their SHA-256 is stored ($2); a leaked database or backup
+/// can't be replayed. Ordinary invites ($1) only open a pending profile and are kept as
+/// is so admins can copy the link again. The kind check stops a stored hash being
+/// presented as if it were a token.
+const INVITE_BY_TOKEN: &str =
+    "((kind <> 'recovery' AND token = $1) OR (kind = 'recovery' AND token = $2))";
 
 /// Password login is disabled. All authentication is via passkey (WebAuthn).
 /// Per-account lockout does not apply to passkey auth.
@@ -401,18 +412,25 @@ async fn passkey_login_start(
             .and_then(|v| v.to_str().ok())
             .unwrap_or(""),
     );
+    let _ = lang;
+    let email = req.email.trim();
     let row: Option<(i64,)> =
         sqlx::query_as("SELECT id FROM users WHERE email=$1 AND status IN ('active', 'pending')")
-            .bind(req.email.trim())
+            .bind(email)
             .fetch_optional(&st.db)
             .await?;
-    let Some((uid,)) = row else {
-        return Err(bad(lang, ErrorKey::PasskeyNotFound));
+    let keys = match row {
+        Some((uid,)) => Some((uid, load_passkeys(&st, uid).await?)),
+        None => None,
     };
-    let keys = load_passkeys(&st, uid).await?;
-    if keys.is_empty() {
-        return Err(bad(lang, ErrorKey::PasskeyNotFound));
-    }
+    // Unknown email, or a member with no passkey yet: answer with a believable challenge
+    // instead of an error, so this endpoint can't be used to find out who is a member.
+    let Some((uid, keys)) = keys.filter(|(_, k)| !k.is_empty()) else {
+        return Ok(Json(json!({
+            "challenge_id": uuid::Uuid::new_v4().to_string(),
+            "options": decoy_challenge(&st, email).await?,
+        })));
+    };
     let (rcr, auth_state) = st
         .webauthn
         .start_passkey_authentication(&keys)
@@ -425,6 +443,74 @@ async fn passkey_login_start(
     )
     .await?;
     Ok(Json(json!({ "challenge_id": cid, "options": rcr })))
+}
+
+/// The persisted HMAC key behind the decoy challenges, created on first use.
+async fn decoy_key(st: &AppState) -> AppResult<Vec<u8>> {
+    let fresh = WebauthnFakeCredentialGenerator::<FakePasskeyDistribution>::new_hmac_key()
+        .map_err(|e| AppError::Other(anyhow::anyhow!("webauthn: {e:?}")))?;
+    sqlx::query(
+        "INSERT INTO app_secrets (name, value) VALUES ('decoy_passkey_hmac', $1) ON CONFLICT (name) DO NOTHING",
+    )
+    .bind(hex::encode(fresh))
+    .execute(&st.db)
+    .await?;
+    let (key,): (String,) =
+        sqlx::query_as("SELECT value FROM app_secrets WHERE name='decoy_passkey_hmac'")
+            .fetch_one(&st.db)
+            .await?;
+    hex::decode(key).map_err(|e| AppError::Other(anyhow::anyhow!("decoy key: {e}")))
+}
+
+/// Sign-in options for an email with no passkey. Same shape as a real challenge, with
+/// credential ids derived from the email under a secret key: the same email always gets
+/// the same ids, with the count and lengths real devices produce. No browser holds them,
+/// so the sign-in fails the way a wrong device would.
+async fn decoy_challenge(st: &AppState, email: &str) -> AppResult<Value> {
+    let generator =
+        WebauthnFakeCredentialGenerator::<FakePasskeyDistribution>::new(&decoy_key(st).await?)
+            .map_err(|e| AppError::Other(anyhow::anyhow!("webauthn: {e:?}")))?;
+    let ids = generator
+        .generate(email.to_lowercase().as_bytes())
+        .map_err(|e| AppError::Other(anyhow::anyhow!("webauthn: {e:?}")))?;
+    let rp_id = url::Url::parse(&st.cfg.public_url)
+        .ok()
+        .and_then(|u| u.host_str().map(str::to_string))
+        .unwrap_or_default();
+    let challenge: [u8; 32] = rand::random();
+    // Parsed back through webauthn-rs's own type so the field names and encoding are
+    // exactly what a real challenge serialises to.
+    let options: RequestChallengeResponse = serde_json::from_value(json!({
+        "publicKey": {
+            "challenge": Base64UrlSafeData::from(challenge.to_vec()),
+            "timeout": 300_000,
+            "rpId": rp_id,
+            "allowCredentials": ids.iter().map(|id| json!({"type": "public-key", "id": id})).collect::<Vec<_>>(),
+            "userVerification": "required",
+        }
+    }))
+    .map_err(anyhow::Error::from)?;
+    Ok(serde_json::to_value(options).map_err(anyhow::Error::from)?)
+}
+
+/// Adding or removing a passkey or authenticator needs a sign-in from the last
+/// 15 minutes once the account has one, so a stolen or left-open session can't
+/// quietly add the thief's own device and keep access after the session ends.
+/// Accounts with nothing set up yet (new members, after recovery) are not held back.
+async fn require_recent_sign_in(st: &AppState, u: &CurrentUser) -> AppResult<()> {
+    let (keys, totp, signed_in): (i64, i64, String) = sqlx::query_as(
+        "SELECT (SELECT COUNT(*) FROM passkeys WHERE user_id=$1),
+                (SELECT totp_enabled FROM users WHERE id=$1),
+                (SELECT created_at FROM sessions WHERE token=$2)",
+    )
+    .bind(u.id)
+    .bind(&u.session_id)
+    .fetch_one(&st.db)
+    .await?;
+    if (keys > 0 || totp == 1) && signed_in < minutes_ago(15) {
+        return Err(forbidden(u.lang, ErrorKey::RecentSignInRequired));
+    }
+    Ok(())
 }
 
 #[derive(Deserialize)]
@@ -445,7 +531,11 @@ async fn passkey_login_finish(
             .and_then(|v| v.to_str().ok())
             .unwrap_or(""),
     );
-    let (uid, state_json) = take_challenge(&st, &req.challenge_id, "auth", lang).await?;
+    // A decoy challenge has no stored state. Answer exactly as a wrong passkey would,
+    // so finishing a decoy doesn't reveal that the email has no account.
+    let (uid, state_json) = take_challenge(&st, &req.challenge_id, "auth", lang)
+        .await
+        .map_err(|_| bad(lang, ErrorKey::PasskeyFailed))?;
     let auth_state: PasskeyAuthentication =
         serde_json::from_str(&state_json).map_err(anyhow::Error::from)?;
     let res = st
@@ -480,6 +570,7 @@ async fn passkey_register_start(
     State(st): State<AppState>,
     u: CurrentUser,
 ) -> AppResult<Json<Value>> {
+    require_recent_sign_in(&st, &u).await?;
     let (wuuid,): (String,) = sqlx::query_as("SELECT webauthn_uuid FROM users WHERE id=$1")
         .bind(u.id)
         .fetch_one(&st.db)
@@ -577,6 +668,7 @@ async fn delete_passkey(
     u: CurrentUser,
     Path(id): Path<i64>,
 ) -> AppResult<Json<Value>> {
+    require_recent_sign_in(&st, &u).await?;
     sqlx::query("DELETE FROM passkeys WHERE id=$1 AND user_id=$2")
         .bind(id)
         .bind(u.id)
@@ -605,6 +697,7 @@ async fn totp_setup(State(st): State<AppState>, u: CurrentUser) -> AppResult<Jso
     if enabled == 1 {
         return Err(bad(u.lang, ErrorKey::TwoFactorAlreadyEnabled));
     }
+    require_recent_sign_in(&st, &u).await?;
     let secret = Secret::generate_secret().to_encoded().to_string();
     sqlx::query("UPDATE users SET totp_secret=$1, totp_enabled=0 WHERE id=$2")
         .bind(&secret)
@@ -736,11 +829,13 @@ async fn invite_preview(
             .and_then(|v| v.to_str().ok())
             .unwrap_or(""),
     );
-    let row: Option<(String, String, String, String, Option<String>)> =
-        sqlx::query_as("SELECT kind, email, name, expires_at, used_at FROM invites WHERE token=$1")
-            .bind(&token)
-            .fetch_optional(&st.db)
-            .await?;
+    let row: Option<(String, String, String, String, Option<String>)> = sqlx::query_as(&format!(
+        "SELECT kind, email, name, expires_at, used_at FROM invites WHERE {INVITE_BY_TOKEN}"
+    ))
+    .bind(&token)
+    .bind(hash_token(&token))
+    .fetch_optional(&st.db)
+    .await?;
     let Some((kind, email, name, expires, used)) = row else {
         return Err(not_found(lang));
     };
@@ -794,9 +889,10 @@ async fn invite_accept(
             .unwrap_or(""),
     );
     let row: Option<(i64, String, String, String, String, String, Option<i64>, String, Option<String>)> = sqlx::query_as(
-        "SELECT id, kind, email, name, roles, group_ids, user_id, expires_at, used_at FROM invites WHERE token=$1",
+        &format!("SELECT id, kind, email, name, roles, group_ids, user_id, expires_at, used_at FROM invites WHERE {INVITE_BY_TOKEN}"),
     )
     .bind(&token)
+    .bind(hash_token(&token))
     .fetch_optional(&st.db)
     .await?;
     let Some((inv_id, kind, email, inv_name, _roles, _group_ids, rec_user, expires, used)) = row
@@ -823,9 +919,10 @@ async fn invite_accept(
             .unwrap_or("")
             .to_string();
         joined_email = req.email.unwrap_or_default().trim().to_lowercase();
-        if joined_name.is_empty() {
-            return Err(bad(lang, ErrorKey::NameRequired));
-        }
+        check_name(lang, &joined_name)?;
+        // Checked before the invite is marked used: a value the database would refuse
+        // used to burn the single-use link and then report a misleading error.
+        check_phone(lang, req.phone.as_deref().unwrap_or(""))?;
         if !joined_email.contains('@') {
             return Err(bad(lang, ErrorKey::EmailInvalid));
         }
@@ -868,7 +965,7 @@ async fn invite_accept(
         )
         .bind(&joined_name)
         .bind(&joined_email)
-        .bind(req.phone.unwrap_or_default())
+        .bind(req.phone.unwrap_or_default().trim())
         .bind(None::<String>)
         .bind(uuid::Uuid::new_v4().to_string())
         .bind(now())

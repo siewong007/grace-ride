@@ -3,7 +3,7 @@
 
 use axum::{
     body::Body,
-    extract::{Multipart, Path, State},
+    extract::{DefaultBodyLimit, Multipart, Path, State},
     http::{header, StatusCode},
     response::Response,
     routing::{get, post},
@@ -12,18 +12,26 @@ use axum::{
 use serde_json::{json, Value};
 
 use crate::auth::CurrentUser;
-use crate::error::{bad, forbidden, not_found, AppError, AppResult};
+use crate::error::{bad, forbidden, not_found, too_many_requests, AppError, AppResult};
 use crate::i18n::ErrorKey;
 use crate::state::AppState;
-use crate::util::now;
+use crate::util::{in_hours, now};
 
 pub fn router() -> Router<AppState> {
     Router::new()
-        .route("/files", post(upload))
+        // Uploads are the one route allowed a large body; every other API request is
+        // capped at `crate::MAX_JSON_BODY` by the app-wide limit.
+        .route(
+            "/files",
+            post(upload).layer(DefaultBodyLimit::max(MAX_BYTES + 1024 * 1024)),
+        )
         .route("/files/{id}", get(download))
 }
 
 const MAX_BYTES: usize = 8 * 1024 * 1024;
+/// Files one member may upload in 24 hours. Receipts and photos are a handful a week;
+/// this only stops one account filling the disk (the per-IP limit resets every 10 min).
+pub const MAX_UPLOADS_PER_DAY: i64 = 100;
 
 /// Identify allowed file types by magic bytes.
 pub fn sniff(b: &[u8]) -> Option<(&'static str, &'static str)> {
@@ -50,6 +58,15 @@ async fn upload(
     u: CurrentUser,
     mut mp: Multipart,
 ) -> AppResult<Json<Value>> {
+    let (today,): (i64,) =
+        sqlx::query_as("SELECT COUNT(*) FROM files WHERE owner_id=$1 AND created_at >= $2")
+            .bind(u.id)
+            .bind(in_hours(-24))
+            .fetch_one(&st.db)
+            .await?;
+    if today >= MAX_UPLOADS_PER_DAY {
+        return Err(too_many_requests(u.lang, ErrorKey::UploadQuotaReached));
+    }
     while let Some(field) = mp
         .next_field()
         .await

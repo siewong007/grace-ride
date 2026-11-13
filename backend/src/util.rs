@@ -5,7 +5,7 @@ use rand::{distributions::Alphanumeric, Rng};
 use sqlx::PgPool;
 
 use crate::auth::CurrentUser;
-use crate::error::{forbidden, AppResult};
+use crate::error::{bad, forbidden, AppResult};
 
 pub fn now() -> String {
     Local::now().format("%Y-%m-%dT%H:%M:%S").to_string()
@@ -21,6 +21,36 @@ pub fn in_hours(hours: i64) -> String {
     (Local::now() + Duration::hours(hours))
         .format("%Y-%m-%dT%H:%M:%S")
         .to_string()
+}
+
+/// Timestamp `minutes` ago, in the same text format as `now()`, for comparisons.
+pub fn minutes_ago(minutes: i64) -> String {
+    (Local::now() - Duration::minutes(minutes))
+        .format("%Y-%m-%dT%H:%M:%S")
+        .to_string()
+}
+
+/// Longest display name accepted. Names show on every list, chat and notification.
+pub const MAX_NAME_CHARS: usize = 60;
+
+pub fn check_name(lang: Lang, name: &str) -> AppResult<()> {
+    let name = name.trim();
+    if name.is_empty() {
+        return Err(bad(lang, ErrorKey::NameRequired));
+    }
+    if name.chars().count() > MAX_NAME_CHARS {
+        return Err(bad(lang, ErrorKey::NameTooLong));
+    }
+    Ok(())
+}
+
+/// Phone is optional; when given it must fit the database rule (10–20 characters).
+pub fn check_phone(lang: Lang, phone: &str) -> AppResult<()> {
+    let n = phone.trim().chars().count();
+    if n != 0 && !(10..=20).contains(&n) {
+        return Err(bad(lang, ErrorKey::PhoneInvalid));
+    }
+    Ok(())
 }
 
 pub fn random_token(len: usize) -> String {

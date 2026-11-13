@@ -59,7 +59,7 @@ async fn list_groups(State(st): State<AppState>, u: CurrentUser) -> AppResult<Js
             .await?
     } else {
         sqlx::query_as(
-            "SELECT g.id, g.name, g.description, g.is_all, 0 FROM groups g WHERE g.is_all=1 OR g.id IN (SELECT group_id FROM group_members WHERE user_id=$1) ORDER BY g.is_all DESC, g.name",
+            "SELECT g.id, g.name, g.description, g.is_all, 0::BIGINT FROM groups g WHERE g.is_all=1 OR g.id IN (SELECT group_id FROM group_members WHERE user_id=$1) ORDER BY g.is_all DESC, g.name",
         )
         .bind(u.id)
         .fetch_all(&st.db)
