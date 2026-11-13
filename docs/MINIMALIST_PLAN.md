@@ -67,3 +67,19 @@ Checks at the end: lint 0 errors (18 older warnings unchanged), TypeScript clean
 Bugs found and fixed along the way (beyond Phase 0): English times read "am 10:00" (now "10:00 am"; Chinese keeps "上午 10:00"); the admin ride filter offered statuses that do not exist; four admin labels showed raw keys; "Tomorrow" was computed in UTC; due dates showed a raw timestamp; pages had two `h1`s; Login had no `h1`.
 
 Left as they were: Ride detail layout, the Invite wizard, Announcements, Audit, Reimbursement review, Live map and the planning board only picked up the shared styles; the 18 older lint warnings; locale keys that may no longer be used.
+
+## Part 2: pages left out of the first pass (13 Nov 2026)
+
+Branch `ui/minimalist-2`, one commit per group of pages.
+
+- **Ride detail:** car and number plate on one line (the plate used to split over two lines on phones); Call and Chat share a row under the driver; card headings are h2 at section size; no blank strip above the details; the chat box grows with its messages instead of a fixed empty 420px.
+- **Invite:** each step's heading is the page h1; the terms text inside the step has a smaller title.
+- **Announcements:** the preview showed the raw key "justNow" (now "Just now"); plain preview card; published notices are one list under "Published" with a quiet Delete.
+- **Audit log:** plain search field; on phones, empty Detail rows are hidden.
+- **Reimbursement review:** the empty message stands alone, no empty frame.
+- **Live map:** drivers list is a plain section; plain-text legend.
+- **Trip map markers:** the destination flag is amber again and passengers/pickup stops are green. Phase 1 had made `--accent` the same blue as the car marker, so all three looked alike.
+- **Plan transport:** with no ride requests, the greyed-out toolbar is hidden.
+- **Everywhere:** a bare "nothing here" message is a quiet muted line instead of a bold heading.
+
+Not changed: the admin live map legend lists "No signal > 2m" and "Passenger waiting", but the admin map only draws car markers; staleness shows in the side list. Behaviour left as it was.
