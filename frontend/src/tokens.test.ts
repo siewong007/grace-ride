@@ -119,9 +119,45 @@ describe('Design Tokens & Visual Language (Phase 3)', () => {
 
     expect(css).toContain('--brand-red: #E8462F;');
     expect(css).toContain('--brand-blue: #1F5DB4;');
-    // The theme follows the logo: Ride blue primary, Grace red accent.
+    // One accent: the logo's Ride blue. Grace red stays in the logo (--brand-red / --logo-red).
     expect(css).toMatch(/:root\s*\{[^}]*--primary:\s*#1F5DB4;/);
-    expect(css).toMatch(/:root\s*\{[^}]*--accent:\s*#D23C25;/);
+    expect(css).toMatch(/:root\s*\{[^}]*--accent:\s*var\(--primary\);/);
+    expect(css).toMatch(/:root\s*\{[^}]*--brand-red:\s*#E8462F;/);
+  });
+
+  describe('minimalist rules (docs/MINIMALIST_PLAN.md)', () => {
+    const rootBlock = css.match(/:root\s*\{([^}]*)\}/)![1];
+    const token = (name: string) => rootBlock.match(new RegExp(`${name}:\\s*([^;]+);`))?.[1].trim();
+
+    it('uses no gradients', () => {
+      expect(css).not.toMatch(/(linear|radial|conic)-gradient\(/);
+    });
+
+    it('draws page surfaces flat: no card shadow, one background', () => {
+      expect(token('--shadow')).toBe('none');
+      expect(token('--shadow-sm')).toBe('none');
+      expect(token('--surface')).toBe(token('--bg'));
+      const card = css.match(/\n\.card \{([^}]*)\}/)![1];
+      expect(card).not.toMatch(/box-shadow/);
+    });
+
+    it('uses a single corner radius', () => {
+      expect(token('--radius-sm')).toBe('8px');
+      expect(token('--radius')).toBe('8px');
+      expect(token('--radius-lg')).toBe('8px');
+    });
+
+    it('keeps text at 14px or larger', () => {
+      expect(token('--fs-xs')).toBe(token('--fs-sm'));
+      // 14px at the 17px root.
+      expect(parseFloat(token('--fs-sm')!) * 17).toBeGreaterThanOrEqual(13.99);
+    });
+
+    it('accent does not change in dark mode on its own', () => {
+      // --accent follows --primary, so the dark blocks must not redefine it.
+      const darkBlocks = css.match(/data-theme='dark'\]\s*\{[^}]*\}/g)!.join('');
+      expect(darkBlocks).not.toMatch(/--accent:/);
+    });
   });
 
   it('draws logos with the inline mark, not the app-icon image', () => {

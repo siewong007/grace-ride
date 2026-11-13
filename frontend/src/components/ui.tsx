@@ -764,7 +764,6 @@ export interface StatProps {
 export function Stat({
   label,
   value,
-  icon,
   tone = 'normal',
   to,
   className = '',
@@ -774,10 +773,7 @@ export function Stat({
 
   const content = (
     <>
-      <div className="row between nowrap">
-        <span className="label grow">{label}</span>
-        {icon && <span className="stat-icon muted" aria-hidden="true">{icon}</span>}
-      </div>
+      <span className="label">{label}</span>
       <span className="num">{value}</span>
     </>
   );
