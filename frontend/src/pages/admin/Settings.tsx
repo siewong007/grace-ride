@@ -65,12 +65,12 @@ function Groups() {
   const removeGroup = async (g: Group) => {
     const ok = await confirm({
       title: t('settings.delete'),
-      body: t('settings.deleteGroupConfirm', { name: g.name }),
+      body: t('members.deleteGroupConfirm', { name: g.name }),
       confirmLabel: t('settings.delete'),
       tone: 'danger',
     });
     if (ok) {
-      run(() => del(`/admin/groups/${g.id}`).then(reload), t('settings.deleted'));
+      run(() => del(`/admin/groups/${g.id}`).then(reload), t('members.deleted'));
     }
   };
 
@@ -189,7 +189,7 @@ function GroupMembers({
         put(`/admin/groups/${group.id}/members`, { user_ids: chosen }).then(
           onClose,
         ),
-      t('settings.memberUpdated'),
+      t('members.memberUpdated'),
     );
 
   return (

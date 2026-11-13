@@ -289,18 +289,15 @@ function Schedule() {
 
                     {(r.status === 'confirmed' || r.status === 'pending_driver_confirm') && (
                       <Button
-                        variant="secondary"
+                        variant="ghost"
                         size="sm"
+                        className="driver-trip-withdraw"
                         disabled={busy}
                         onClick={() => setWithdrawRide(r)}
                       >
                         {t('withdrawDriver')}
                       </Button>
                     )}
-
-                    <Link to={`/rides/${r.id}`} className="btn sm secondary">
-                      {t('viewRide')}
-                    </Link>
                   </div>
                 </div>
               ))}
@@ -324,7 +321,6 @@ function Schedule() {
         />
       )}
 
-      <p className="muted small">{t('cannotDriveNotice')}</p>
     </div>
   );
 }
@@ -362,50 +358,35 @@ function Requests() {
 
   return (
     <div className="stack">
-      <Card className="tight stack-sm">
-        <div className="chips" role="group" aria-label={t('areas')}>
-          <button
-            type="button"
-            className={`chip ${area === 'mine' ? 'on' : ''}`}
-            onClick={() => setArea('mine')}
-          >
-            {t('myAreas')}
-          </button>
-          <button
-            type="button"
-            className={`chip ${area === '' ? 'on' : ''}`}
-            onClick={() => setArea('')}
-          >
-            {t('all')}
-          </button>
+      {/* Filters: one area menu and an optional date, instead of a wall of chips. */}
+      <div className="driver-filters">
+        <select
+          className="input"
+          value={area}
+          onChange={(e) => setArea(e.target.value)}
+          aria-label={t('areas')}
+        >
+          <option value="mine">{t('myAreas')}</option>
+          <option value="">{t('all')}</option>
           {areas
             ?.filter((a) => a.active)
             .map((a) => (
-              <button
-                key={a.id}
-                type="button"
-                className={`chip ${area === String(a.id) ? 'on' : ''}`}
-                onClick={() => setArea(String(a.id))}
-              >
-                {a.name}
-              </button>
+              <option key={a.id} value={String(a.id)}>{a.name}</option>
             ))}
-        </div>
-        <div className="row">
-          <input
-            className="input driver-date-input"
-            type="date"
-            value={date}
-            onChange={(e) => setDate(e.target.value)}
-            aria-label={t('dateLabel')}
-          />
-          {date && (
-            <Button variant="ghost" size="sm" onClick={() => setDate('')}>
-              {t('clearDate')}
-            </Button>
-          )}
-        </div>
-      </Card>
+        </select>
+        <input
+          className="input driver-date-input"
+          type="date"
+          value={date}
+          onChange={(e) => setDate(e.target.value)}
+          aria-label={t('dateLabel')}
+        />
+        {date && (
+          <Button variant="ghost" size="sm" onClick={() => setDate('')}>
+            {t('clearDate')}
+          </Button>
+        )}
+      </div>
 
       <ErrorBox error={error ?? actErr} />
 
@@ -423,8 +404,7 @@ function Requests() {
               </div>
 
               <div className="driver-request-meta">
-                {fmtDay(r.pickup_at, ft)} · {fmtTime(r.pickup_at, ft)} · {r.seats}{' '}
-                {t('seatUnit')}
+                {fmtDay(r.pickup_at, ft)} · {fmtTime(r.pickup_at, ft)} · {t('seatCount', { count: r.seats })}
               </div>
 
               <div className="driver-request-route">
@@ -594,7 +574,7 @@ function Settings() {
                   }
                 />
                 <span className="stepper-value bold">
-                  {p.spare_seats} {t('seatUnit')}
+                  {t('seatCount', { count: p.spare_seats })}
                 </span>
                 <IconButton
                   label={t('increaseSeats')}
@@ -662,7 +642,7 @@ function Settings() {
                     onClick={() => setV('seats', Math.max(2, v.seats - 1))}
                   />
                   <span className="stepper-value bold">
-                    {v.seats} {t('seatUnit')}
+                    {t('seatCount', { count: v.seats })}
                   </span>
                   <IconButton
                     label={t('increaseSeats')}

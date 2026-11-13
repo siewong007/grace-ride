@@ -138,7 +138,7 @@ describe('Drive page - Available requests tab', () => {
     );
 
     // Switch to requests tab
-    const requestsTab = screen.getByRole('tab', { name: /available ride requests/i });
+    const requestsTab = screen.getByRole('tab', { name: /^requests$/i });
     fireEvent.click(requestsTab);
 
     await waitFor(() => {
@@ -160,7 +160,7 @@ describe('Drive page - Settings tab', () => {
     );
 
     // Switch to settings tab
-    const settingsTab = screen.getByRole('tab', { name: /driver settings/i });
+    const settingsTab = screen.getByRole('tab', { name: /^settings$/i });
     fireEvent.click(settingsTab);
 
     await waitFor(() => {

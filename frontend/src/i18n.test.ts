@@ -111,3 +111,48 @@ describe('placeholders', () => {
     expect(cjkHits).toEqual([]);
   });
 });
+
+describe('keys used in components exist', () => {
+  // Catches a label that renders as its raw key (e.g. "phone") because the string was never
+  // added, or was removed while still in use. Checks literal t('key') calls in files that read
+  // a single namespace; "ns:key" and keys with a default value are resolved as written.
+  const en = (resources as Record<string, Record<string, Record<string, unknown>>>).en;
+  const has = (ns: string, key: string): boolean => {
+    let node: unknown = en[ns];
+    for (const part of key.split('.')) {
+      if (node == null || typeof node !== 'object') return false;
+      node = (node as Record<string, unknown>)[part];
+    }
+    if (node != null) return true;
+    // Plurals: t('x', { count }) resolves x_one / x_other.
+    const leaf = key.split('.').pop()!;
+    let p: unknown = en[ns];
+    for (const part of key.split('.').slice(0, -1)) p = (p as Record<string, unknown>)?.[part];
+    return p != null && typeof p === 'object' && (`${leaf}_one` in (p as object) || `${leaf}_other` in (p as object));
+  };
+  const files = (dir: string): string[] =>
+    fs.readdirSync(dir, { withFileTypes: true }).flatMap((e) => {
+      const full = path.join(dir, e.name);
+      if (e.isDirectory()) return e.name === 'locales' ? [] : files(full);
+      return e.name.endsWith('.tsx') && !e.name.includes('.test.') ? [full] : [];
+    });
+
+  it('every literal t() key is defined in English', () => {
+    const missing: string[] = [];
+    for (const f of files(path.resolve(__dirname))) {
+      const src = fs.readFileSync(f, 'utf-8');
+      const namespaces = [...src.matchAll(/useTranslation\('([\w]+)'\)/g)].map((m) => m[1]);
+      const unique = [...new Set(namespaces)];
+      if (unique.length !== 1 || /useTranslation\(\[/.test(src)) continue;
+      const ns = unique[0];
+      for (const m of src.matchAll(/\bt\('([\w.:]+)'(,\s*\{[^}]*\})?/g)) {
+        const opts = m[2] ?? '';
+        if (/defaultValue/.test(opts)) continue;
+        const optNs = opts.match(/\bns:\s*'(\w+)'/)?.[1];
+        const [kns, key] = m[1].includes(':') ? m[1].split(':') : [optNs ?? ns, m[1]];
+        if (!has(kns, key) && !has('common', key)) missing.push(`${path.basename(f)}: ${kns}:${key}`);
+      }
+    }
+    expect(missing).toEqual([]);
+  });
+});

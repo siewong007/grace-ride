@@ -1,6 +1,6 @@
 import { useEffect, useRef } from 'react';
 import { Link } from 'react-router-dom';
-import { AlertTriangle, Flag, MapPin, Navigation, Route } from 'lucide-react';
+import { AlertTriangle, Flag, MapPin, Navigation } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import { useApi } from '../api';
 import { fmtDistance, fmtDuration, fmtTime, useFormatT } from '../format';
@@ -117,6 +117,9 @@ export function DriverRouteCard({ refreshKey }: { refreshKey?: string }) {
 
   const route = data?.route;
   if (!route) return null;
+  // A single planned pickup is already fully covered by its ride card (address, Google/Waze,
+  // warnings). The route block earns its place for several stops, or once the trip is live.
+  if (!route.live && route.stops.length < 2) return null;
 
   const located = route.stops.filter((s) => s.location != null);
   const next = route.stops[0];
@@ -158,10 +161,7 @@ export function DriverRouteCard({ refreshKey }: { refreshKey?: string }) {
     <Card className="stack trip-route-card" aria-label={t('routeTitle')}>
       <div className="row between nowrap trip-route-head">
         <div className="trip-route-col">
-          <h3 className="row nowrap trip-route-title">
-            <Route size={18} aria-hidden="true" />
-            <span>{t('routeTitle')}</span>
-          </h3>
+          <h3 className="trip-route-title">{t('routeTitle')}</h3>
           <span className="muted small">
             {route.stops.length > 0
               ? t('routeSummary', { count: route.stops.length, distance, duration })
@@ -173,7 +173,7 @@ export function DriverRouteCard({ refreshKey }: { refreshKey?: string }) {
             </span>
           )}
         </div>
-        <Pill tone={route.live ? 'success' : 'neutral'}>{route.live ? t('routeLive') : t('routePlanned')}</Pill>
+        {route.live && <Pill tone="success">{t('routeLive')}</Pill>}
       </div>
 
       <div className="trip-route-nav">

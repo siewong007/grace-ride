@@ -1483,8 +1483,9 @@ main:focus { outline: none; }
 
 .driver-trip-title {
   display: flex;
-  align-items: center;
-  gap: var(--space-2);
+  flex-wrap: wrap;
+  align-items: baseline;
+  column-gap: var(--space-2);
   font-weight: 700;
   font-size: var(--fs-md);
   color: var(--text-high);
@@ -1542,6 +1543,11 @@ main:focus { outline: none; }
 .driver-trip-primary-btn {
   flex: 1 1 200px;
 }
+.btn.driver-trip-withdraw { margin-left: auto; color: var(--muted); }
+.btn.driver-trip-withdraw:hover { color: var(--danger); }
+.driver-filters { display: flex; flex-wrap: wrap; gap: var(--space-2); align-items: center; }
+.driver-filters > select { flex: 1 1 180px; width: auto; }
+.driver-filters > .driver-date-input { flex: 1 1 160px; width: auto; }
 
 .driver-requests-grid {
   display: grid;
@@ -1621,8 +1627,8 @@ main:focus { outline: none; }
   justify-content: center;
   gap: var(--space-2);
   padding: var(--space-4);
-  background: var(--surface-2);
-  border: 1px dashed var(--border);
+  background: transparent;
+  border: 1px solid var(--border);
   border-radius: var(--radius);
   margin-bottom: var(--space-3);
 }

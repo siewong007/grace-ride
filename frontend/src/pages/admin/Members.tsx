@@ -392,7 +392,7 @@ function Invites() {
                   <div className="bold">
                     {i.email || t('members.openInvite')}{' '}
                     {i.kind === 'recovery' && (
-                      <Pill tone="blue">{t('members.recovery')}</Pill>
+                      <Pill tone="blue">{t('members.recoveryTab')}</Pill>
                     )}
                   </div>
                   <div className="muted tiny">
