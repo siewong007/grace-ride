@@ -96,14 +96,17 @@ pub struct RideRow {
     pub v_model: Option<String>,
     pub v_color: Option<String>,
     pub v_plate: Option<String>,
+    pub v_type: Option<String>,
+    pub distance_km: Option<i64>,
+    pub reimbursement_amount_cents: Option<i64>,
     pub event_title: Option<String>,
 }
 
 const RIDE_SELECT: &str = "SELECT r.id, r.passenger_id, r.driver_id, r.event_id, r.trip_id, r.pickup_at, r.pickup_area_id,
     r.pickup_address, r.destination, r.seats, r.assistance, r.notes, r.status, r.needs_attention, r.attention_reason,
-    r.started_at, r.picked_up_at, r.completed_at, r.created_at, r.updated_at,
+    r.started_at, r.picked_up_at, r.completed_at, r.distance_km, r.reimbursement_amount_cents, r.created_at, r.updated_at,
     a.name AS area_name, p.name AS p_name, p.phone AS p_phone, d.name AS d_name, d.phone AS d_phone,
-    v.model AS v_model, v.color AS v_color, v.plate AS v_plate, e.title AS event_title
+    v.model AS v_model, v.color AS v_color, v.plate AS v_plate, v.vehicle_type AS v_type, e.title AS event_title
     FROM rides r
     JOIN areas a ON a.id = r.pickup_area_id
     JOIN users p ON p.id = r.passenger_id
@@ -134,7 +137,12 @@ pub fn ride_json(r: &RideRow, u: &CurrentUser) -> Value {
             "id": id,
             "name": r.d_name,
             "phone": if is_driver || staff || (is_passenger && approved) { r.d_phone.clone() } else { None },
-            "vehicle": r.v_model.as_ref().map(|m| json!({"model": m, "color": r.v_color, "plate": r.v_plate})),
+            "vehicle": r.v_model.as_ref().map(|m| json!({
+                "model": m,
+                "color": r.v_color,
+                "plate": r.v_plate,
+                "type": r.v_type,
+            })),
         })
     });
     json!({
@@ -149,6 +157,8 @@ pub fn ride_json(r: &RideRow, u: &CurrentUser) -> Value {
         "notes": r.notes,
         "event": r.event_id.map(|id| json!({"id": id, "title": r.event_title})),
         "trip_id": r.trip_id,
+        "distance_km": r.distance_km,
+        "reimbursement_amount_cents": r.reimbursement_amount_cents,
         "passenger": {
             "id": r.passenger_id,
             "name": r.p_name,
@@ -1025,12 +1035,29 @@ async fn complete(
     if r.driver_id != Some(u.id) {
         return Err(forbidden(u.lang, ErrorKey::NotRideDriver));
     }
+
+    // --- Auto reimbursement: distance × per-km rate for the driver's vehicle type ---
+    let distance_km: Option<i64> = r.distance_km;
+    let reimbursement_cents: i64 = match (distance_km, &r.v_type) {
+        (Some(km), Some(vt)) => {
+            let rate: Option<(i64,)> = sqlx::query_as(
+                "SELECT rate_cents_per_km FROM reimbursement_rates WHERE vehicle_type = $1",
+            )
+            .bind(vt)
+            .fetch_optional(&st.db)
+            .await?;
+            km * rate.map(|r| r.0).unwrap_or(0)
+        }
+        _ => 0,
+    };
+
     set_status(&st, id, &["in_progress"], "completed", u.lang).await?;
     sqlx::query(
-        "UPDATE rides SET completed_at=$1, picked_up_at=COALESCE(picked_up_at, $2) WHERE id=$3",
+        "UPDATE rides SET completed_at=$1, picked_up_at=COALESCE(picked_up_at, $2), reimbursement_amount_cents=$3 WHERE id=$4",
     )
     .bind(now())
     .bind(now())
+    .bind(reimbursement_cents)
     .bind(id)
     .execute(&st.db)
     .await?;
@@ -1175,8 +1202,8 @@ async fn get_driver_profile(State(st): State<AppState>, u: CurrentUser) -> AppRe
         .bind(u.id)
         .fetch_all(&st.db)
         .await?;
-    let v: Option<(String, String, String, i64)> =
-        sqlx::query_as("SELECT model, color, plate, seats FROM vehicles WHERE user_id=$1")
+    let v: Option<(String, String, String, i64, String)> =
+        sqlx::query_as("SELECT model, color, plate, seats, vehicle_type FROM vehicles WHERE user_id=$1")
             .bind(u.id)
             .fetch_optional(&st.db)
             .await?;
@@ -1184,7 +1211,7 @@ async fn get_driver_profile(State(st): State<AppState>, u: CurrentUser) -> AppRe
         "carpool_enabled": carpool == 1,
         "spare_seats": spare,
         "area_ids": areas.into_iter().map(|a| a.0).collect::<Vec<_>>(),
-        "vehicle": v.map(|(m, c, p, s)| json!({"model": m, "color": c, "plate": p, "seats": s})),
+        "vehicle": v.map(|(m, c, p, s, t)| json!({"model": m, "color": c, "plate": p, "seats": s, "type": t})),
     })))
 }
 
@@ -1194,6 +1221,12 @@ struct VehicleIn {
     color: String,
     plate: String,
     seats: i64,
+    #[serde(default = "default_vehicle_type")]
+    vehicle_type: String,
+}
+
+fn default_vehicle_type() -> String {
+    "standard".to_string()
 }
 
 #[derive(Deserialize)]
@@ -1243,14 +1276,15 @@ async fn put_driver_profile(
             return Err(bad(u.lang, ErrorKey::VehicleSeatsRange));
         }
         sqlx::query(
-            "INSERT INTO vehicles (user_id, model, color, plate, seats) VALUES ($1,$2,$3,$4,$5)
-             ON CONFLICT(user_id) DO UPDATE SET model=excluded.model, color=excluded.color, plate=excluded.plate, seats=excluded.seats",
+            "INSERT INTO vehicles (user_id, model, color, plate, seats, vehicle_type) VALUES ($1,$2,$3,$4,$5,$6)
+             ON CONFLICT(user_id) DO UPDATE SET model=excluded.model, color=excluded.color, plate=excluded.plate, seats=excluded.seats, vehicle_type=excluded.vehicle_type",
         )
         .bind(u.id)
         .bind(v.model.trim())
         .bind(v.color.trim())
         .bind(v.plate.trim().to_uppercase())
         .bind(v.seats)
+        .bind(v.vehicle_type)
         .execute(&mut *tx)
         .await?;
     }

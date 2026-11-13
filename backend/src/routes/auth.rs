@@ -21,14 +21,13 @@ use axum::extract::ConnectInfo;
 use axum::http::HeaderMap;
 use std::net::SocketAddr;
 
-use crate::auth::{
-    hash_token, is_privileged, CurrentUser, PRIVILEGED, SESSION_COOKIE, SESSION_COOKIE_SECURE,
-};
+use crate::auth::{hash_token, CurrentUser, SESSION_COOKIE, SESSION_COOKIE_SECURE};
 use crate::error::{bad, forbidden, not_found, AppError, AppResult};
 use crate::i18n::ErrorKey;
+use crate::perms::{self, Act, Page};
 use crate::state::AppState;
 use crate::util::{
-    audit, check_name, check_phone, in_hours, minutes_ago, notify_roles, now, random_token, t, Lang,
+    audit, check_name, check_phone, in_hours, minutes_ago, notify_perm, now, random_token, t, Lang,
 };
 use webauthn_rs::fake::{FakePasskeyDistribution, WebauthnFakeCredentialGenerator};
 
@@ -158,7 +157,11 @@ async fn create_session(
         .bind(user_id)
         .fetch_one(&state.db)
         .await?;
-    let hours: i64 = if is_privileged(&roles) { 12 } else { 24 * 30 };
+    let hours: i64 = if perms::is_privileged(&state.db, &roles).await? {
+        12
+    } else {
+        24 * 30
+    };
     let token = random_token(48);
     sqlx::query(
         "INSERT INTO sessions (token, user_id, mfa_ok, expires_at, created_at) VALUES ($1,$2,$3,$4,$5)",
@@ -220,16 +223,28 @@ async fn me(State(st): State<AppState>, u: CurrentUser) -> AppResult<Json<Value>
     .bind(u.id)
     .fetch_all(&st.db)
     .await?;
-    let privileged = u.roles.iter().any(|r| PRIVILEGED.contains(&r.as_str()));
+    // Built-in roles are named by the app in the member's language; custom ones carry
+    // the name their administrator typed.
+    let custom: Vec<(String, String)> =
+        sqlx::query_as("SELECT key, name FROM roles WHERE key = ANY($1) AND is_system = 0")
+            .bind(&u.roles)
+            .fetch_all(&st.db)
+            .await?;
+    let role_names: serde_json::Map<String, Value> =
+        custom.into_iter().map(|(k, n)| (k, json!(n))).collect();
     Ok(Json(json!({
         "id": u.id, "name": u.name, "email": u.email, "phone": row.0, "photo_file_id": row.1,
         "status": u.status,
         "lang": u.lang.code(),
-        "roles": u.roles, "mfa_ok": u.mfa_ok, "totp_enabled": row.2 == 1,
+        "roles": u.roles, "role_names": role_names,
+        // What this session may do, as '<page>.<action>'. Staff permissions are left out
+        // until the member signs in with a passkey or 2FA (`privileged` says they exist).
+        "permissions": u.perms.usable_keys(u.mfa_ok),
+        "mfa_ok": u.mfa_ok, "totp_enabled": row.2 == 1,
         "has_password": row.3.is_some(), "passkey_count": passkeys.0,
         "badges_opt_out": row.4 == 1, "carpool_enabled": row.5 == 1, "spare_seats": row.6,
         "terms_accepted": row.7.is_some(),
-        "privileged": privileged, "unread": unread.0,
+        "privileged": u.perms.privileged(), "unread": unread.0,
         "groups": groups.into_iter().map(|(id, name)| json!({"id": id, "name": name})).collect::<Vec<_>>(),
         "dev_mode": st.cfg.dev_mode,
     })))
@@ -801,9 +816,10 @@ async fn recovery_request(
             .bind(now())
             .execute(&st.db)
             .await?;
-        notify_roles(
+        notify_perm(
             &st.db,
-            &["admin"],
+            Page::AdminRecovery,
+            Act::Update,
             ("新的账号恢复申请", "New account recovery request"),
             (
                 &format!("会员 {} 提交了账号恢复申请", req.email),

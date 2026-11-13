@@ -10,6 +10,7 @@ pub mod auth;
 pub mod error;
 pub mod i18n;
 pub mod jobs;
+pub mod perms;
 pub mod routes;
 pub mod routing;
 pub mod security;

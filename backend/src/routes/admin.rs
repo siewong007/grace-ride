@@ -8,7 +8,8 @@ use axum::{
 use serde::Deserialize;
 use serde_json::{json, Value};
 
-use crate::auth::{hash_token, is_privileged, parse_roles, CurrentUser};
+use crate::auth::{hash_token, CurrentUser};
+use crate::perms::{self, parse_roles};
 use crate::error::{bad, forbidden, not_found, AppError, AppResult};
 use crate::i18n::ErrorKey;
 use crate::state::AppState;
@@ -490,7 +491,7 @@ async fn approve_recovery(
         .ok_or(not_found(u.lang))?;
     // Recovering a privileged account needs two different admins: the first
     // only flags the request, the second confirms and receives the link.
-    if status == "pending" && is_privileged(&roles) {
+    if status == "pending" && perms::is_privileged(&st.db, &roles).await? {
         sqlx::query(
             "UPDATE recovery_requests SET status='awaiting_second', resolved_by=$1 WHERE id=$2",
         )

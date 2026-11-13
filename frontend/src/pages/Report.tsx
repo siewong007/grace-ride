@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { Link } from 'react-router-dom';
-import { Award, Calendar, CarFront, CheckCircle2, DollarSign } from 'lucide-react';
+import { Award, Calendar, CarFront, CheckCircle2, DollarSign, Map } from 'lucide-react';
 import { useApi } from '../api';
 import {
   Card,
@@ -27,8 +27,14 @@ interface Badge {
 interface MonthReport {
   user: { id: number; name: string };
   month: string;
+  range: string;
+  type: string;
+  period_start: string;
+  period_end: string;
   rides_driven: number;
   rides_received: number;
+  distance_km: number;
+  reimbursement_cents: number;
   events_attended: number;
   by_kind: { kind: string; count: number }[];
   events: { id: number; title: string; kind: string; starts_at: string }[];
@@ -44,28 +50,63 @@ export default function Report() {
   const [month, setMonth] = useState(
     `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`,
   );
+  const [range, setRange] = useState<'monthly' | 'quarterly' | 'yearly'>('monthly');
+  const [type, setType] = useState<'all' | 'driver' | 'passenger'>('all');
   const [y, m] = month.split('-').map(Number);
-  const { data: r, error } = useApi<MonthReport>(`/reports/monthly?month=${month}`);
-
-  const formattedMonth = new Date(y, m - 1, 1).toLocaleDateString(
-    lang === 'zh' ? 'zh-CN' : 'en-GB',
-    { year: 'numeric', month: 'long' },
+  const params = new URLSearchParams({ month, range, type });
+  const { data: r, error } = useApi<MonthReport>(
+    `/reports/monthly?${params.toString()}`,
   );
+
+  const periodLabel = () => {
+    const start = new Date(r?.period_start ?? `${month}-01`);
+    const end = new Date(r?.period_end ?? `${month}-01`);
+    end.setMonth(end.getMonth() + 1);
+    const fmt = (d: Date) =>
+      d.toLocaleDateString(lang === 'zh' ? 'zh-CN' : 'en-GB', {
+        year: 'numeric',
+        month: 'long',
+      });
+    if (range === 'monthly') return fmt(start);
+    return `${fmt(start)} – ${fmt(end)}`;
+  };
 
   return (
     <Page width="wide">
       <div className="stack">
         <PageHeader
-          title={t('title', { month: formattedMonth })}
+          title={t('title', { month: periodLabel() })}
           subtitle={t('desc')}
           actions={
-            <input
-              className="input report-month-input"
-              type="month"
-              value={month}
-              onChange={(e) => setMonth(e.target.value)}
-              aria-label={t('monthLabel')}
-            />
+            <>
+              <input
+                className="input report-month-input"
+                type="month"
+                value={month}
+                onChange={(e) => setMonth(e.target.value)}
+                aria-label={t('monthLabel')}
+              />
+              <select
+                className="input"
+                value={range}
+                onChange={(e) => setRange(e.target.value as any)}
+                aria-label="range"
+              >
+                <option value="monthly">{t('rangeMonthly')}</option>
+                <option value="quarterly">{t('rangeQuarterly')}</option>
+                <option value="yearly">{t('rangeYearly')}</option>
+              </select>
+              <select
+                className="input"
+                value={type}
+                onChange={(e) => setType(e.target.value as any)}
+                aria-label="type"
+              >
+                <option value="all">{t('typeAll')}</option>
+                <option value="driver">{t('typeDriver')}</option>
+                <option value="passenger">{t('typePassenger')}</option>
+              </select>
+            </>
           }
         />
 
@@ -97,6 +138,20 @@ export default function Report() {
                 value={rm(r.costs_paid_cents)}
                 icon={<DollarSign size={20} />}
               />
+              {type !== 'passenger' && (
+                <>
+                  <Stat
+                    label={t('distance')}
+                    value={`${r.distance_km} km`}
+                    icon={<Map size={20} />}
+                  />
+                  <Stat
+                    label={t('reimbursement')}
+                    value={rm(r.reimbursement_cents)}
+                    icon={<DollarSign size={20} />}
+                  />
+                </>
+              )}
             </div>
 
             <div className="split">

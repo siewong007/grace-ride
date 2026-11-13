@@ -13,8 +13,9 @@ use serde_json::{json, Value};
 use crate::auth::CurrentUser;
 use crate::error::{bad, forbidden, not_found, AppResult};
 use crate::i18n::ErrorKey;
+use crate::perms::{Act, Page};
 use crate::state::AppState;
-use crate::util::{audit, fmt_rm, notify, now, Lang};
+use crate::util::{audit, fmt_rm, notify, now, require, Lang};
 
 pub fn router() -> Router<AppState> {
     Router::new()
@@ -260,7 +261,7 @@ async fn create(
     Json(req): Json<SettlementIn>,
 ) -> AppResult<Json<Value>> {
     let (owner, _) = event_owner(&st, u.lang, event_id).await?;
-    if owner != u.id {
+    if owner != u.id || !u.can(Page::Settlements, Act::Create) {
         return Err(forbidden(
             u.lang,
             ErrorKey::OnlyOrganiserCanInitiateCostSplit,
@@ -356,9 +357,12 @@ async fn get_one(
 ) -> AppResult<Json<Value>> {
     let s = load(&st, u.lang, id).await?;
     let mut v = snapshot(&st, &s).await?;
-    let organiser = s.created_by == u.id || (u.has("finance") && u.mfa_ok);
+    let organiser = s.created_by == u.id || u.can(Page::AdminBills, Act::View);
     if organiser {
-        v["can_manage"] = json!(s.created_by == u.id);
+        v["can_manage"] =
+            json!(s.created_by == u.id && u.can(Page::Settlements, Act::Update));
+        v["can_delete"] =
+            json!(s.created_by == u.id && u.can(Page::Settlements, Act::Delete));
         return Ok(Json(v));
     }
     // Participants see the bill and only their own share.
@@ -377,15 +381,27 @@ async fn get_one(
 }
 
 async fn list_mine_organised(State(st): State<AppState>, u: CurrentUser) -> AppResult<Json<Value>> {
-    let finance = u.has("finance") && u.mfa_ok;
+    // 费用分摊 lists the bills a member organised; 账单查阅 (finance) lists every bill.
+    let own = u.can(Page::Settlements, Act::View);
+    let finance = u.can(Page::AdminBills, Act::View);
+    if !own && !finance {
+        crate::util::require_one(
+            &u,
+            &[
+                (Page::Settlements, Act::View),
+                (Page::AdminBills, Act::View),
+            ],
+        )?;
+    }
     let rows: Vec<(i64, String, String, String, i64, i64, i64)> = sqlx::query_as(
         "SELECT s.id, s.title, e.title, s.status,
             (SELECT COALESCE(SUM(amount_cents),0)::BIGINT FROM settlement_shares WHERE settlement_id=s.id),
             (SELECT COUNT(*) FROM settlement_shares WHERE settlement_id=s.id AND status='confirmed'),
             (SELECT COUNT(*) FROM settlement_shares WHERE settlement_id=s.id)
-         FROM settlements s JOIN events e ON e.id=s.event_id WHERE s.created_by=$1 OR $2 ORDER BY s.id DESC LIMIT 200",
+         FROM settlements s JOIN events e ON e.id=s.event_id WHERE (s.created_by=$1 AND $2) OR $3 ORDER BY s.id DESC LIMIT 200",
     )
     .bind(u.id)
+    .bind(own)
     .bind(finance)
     .fetch_all(&st.db)
     .await?;
@@ -401,7 +417,7 @@ async fn update(
     Json(req): Json<SettlementIn>,
 ) -> AppResult<Json<Value>> {
     let s = load(&st, u.lang, id).await?;
-    if s.created_by != u.id {
+    if s.created_by != u.id || !u.can(Page::Settlements, Act::Update) {
         return Err(forbidden(u.lang, ErrorKey::OnlyOrganiserCanEditBill));
     }
     if s.status == "closed" {
@@ -529,6 +545,7 @@ async fn delete_draft(
     if s.created_by != u.id || s.status != "draft" {
         return Err(bad(u.lang, ErrorKey::OnlyDraftsCanBeDeleted));
     }
+    require(&u, Page::Settlements, Act::Delete)?;
     sqlx::query("DELETE FROM settlements WHERE id=$1")
         .bind(id)
         .execute(&st.db)
@@ -542,7 +559,7 @@ async fn publish(
     Path(id): Path<i64>,
 ) -> AppResult<Json<Value>> {
     let s = load(&st, u.lang, id).await?;
-    if s.created_by != u.id {
+    if s.created_by != u.id || !u.can(Page::Settlements, Act::Update) {
         return Err(forbidden(u.lang, ErrorKey::OnlyOrganiserCanPublish));
     }
     if s.status != "draft" {
@@ -629,7 +646,7 @@ async fn close(
     Path(id): Path<i64>,
 ) -> AppResult<Json<Value>> {
     let s = load(&st, u.lang, id).await?;
-    if s.created_by != u.id {
+    if s.created_by != u.id || !u.can(Page::Settlements, Act::Update) {
         return Err(forbidden(u.lang, ErrorKey::OnlyOrganiserCanCloseBill));
     }
     let (open,): (i64,) = sqlx::query_as(
@@ -664,7 +681,7 @@ async fn revisions(
     Path(id): Path<i64>,
 ) -> AppResult<Json<Value>> {
     let s = load(&st, u.lang, id).await?;
-    if s.created_by != u.id && !(u.has("finance") && u.mfa_ok) {
+    if s.created_by != u.id && !u.can(Page::AdminBills, Act::View) {
         return Err(forbidden(u.lang, ErrorKey::Forbidden));
     }
     let rows: Vec<(i64, String, String, String, String)> = sqlx::query_as(
@@ -679,6 +696,7 @@ async fn revisions(
 }
 
 async fn my_shares(State(st): State<AppState>, u: CurrentUser) -> AppResult<Json<Value>> {
+    require(&u, Page::Costs, Act::View)?;
     let rows: Vec<(i64, i64, String, String, i64, String, String, String, Option<String>, String, String, Option<i64>)> = sqlx::query_as(
         "SELECT sh.id, s.id, s.title, e.title, sh.amount_cents, sh.status, s.payee_name, s.payee_account, s.due_date, sh.note, sh.txn_ref, sh.proof_file_id
          FROM settlement_shares sh JOIN settlements s ON s.id=sh.settlement_id JOIN events e ON e.id=s.event_id
@@ -718,6 +736,7 @@ async fn submit_proof(
     if owner != u.id {
         return Err(forbidden(u.lang, ErrorKey::ProofOnlyForOwnShare));
     }
+    require(&u, Page::Costs, Act::Update)?;
     if s_status != "published" || !matches!(status.as_str(), "unpaid" | "needs_info") {
         return Err(bad(u.lang, ErrorKey::ProofNotNeededNow));
     }
@@ -791,7 +810,7 @@ async fn verify(
     .fetch_optional(&st.db)
     .await?;
     let (member, _sid, payee, title, amt) = row.ok_or(not_found(u.lang))?;
-    if payee != u.id {
+    if payee != u.id || !u.can(Page::Settlements, Act::Update) {
         return Err(forbidden(u.lang, ErrorKey::OnlyPayeeCanVerify));
     }
     let note = req.note.unwrap_or_default();

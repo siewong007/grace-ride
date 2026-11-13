@@ -27,7 +27,8 @@ use crate::auth::CurrentUser;
 use crate::error::{bad, conflict, not_found, AppResult};
 use crate::routes::rides::seat_capacity;
 use crate::state::AppState;
-use crate::util::{audit, notify, now, require_any, system_message, ErrorKey};
+use crate::perms::{self, Act, Page, Perm};
+use crate::util::{audit, notify, now, require, system_message, ErrorKey};
 
 pub fn router() -> Router<AppState> {
     Router::new()
@@ -117,27 +118,26 @@ async fn plan_rides(st: &AppState, event: i64) -> AppResult<Vec<PlanRide>> {
     .await?)
 }
 
-/// Active volunteer drivers with a vehicle on file.
+/// Active members who may take rides (接送 · create) and have a vehicle on file.
 async fn plan_drivers(st: &AppState) -> AppResult<Vec<PlanDriver>> {
-    let rows: Vec<(PlanDriver, String)> = sqlx::query_as::<_, (i64, String, i64, i64, Option<String>, Option<String>, Option<i64>, String)>(
-        "SELECT u.id, u.name, u.carpool_enabled, u.spare_seats, v.model, v.plate, v.seats, u.roles
-         FROM users u JOIN vehicles v ON v.user_id = u.id WHERE u.status = 'active' ORDER BY u.name",
-    )
+    Ok(sqlx::query_as::<_, (i64, String, i64, i64, Option<String>, Option<String>, Option<i64>)>(&format!(
+        "SELECT u.id, u.name, u.carpool_enabled, u.spare_seats, v.model, v.plate, v.seats
+         FROM users u JOIN vehicles v ON v.user_id = u.id WHERE {} ORDER BY u.name",
+        perms::sql_holds("u", Perm(Page::Drive, Act::Create))
+    ))
     .fetch_all(&st.db)
     .await?
     .into_iter()
-    .map(|(id, name, carpool_enabled, spare_seats, v_model, v_plate, v_seats, roles)| {
-        (
-            PlanDriver { id, name, carpool_enabled, spare_seats, v_model, v_plate, v_seats },
-            roles,
-        )
+    .map(|(id, name, carpool_enabled, spare_seats, v_model, v_plate, v_seats)| PlanDriver {
+        id,
+        name,
+        carpool_enabled,
+        spare_seats,
+        v_model,
+        v_plate,
+        v_seats,
     })
-    .collect();
-    Ok(rows
-        .into_iter()
-        .filter(|(_, roles)| roles.split(',').any(|r| r == "driver"))
-        .map(|(d, _)| d)
-        .collect())
+    .collect())
 }
 
 /// Seats and bookings each driver already holds outside this event, around its pickup times.
@@ -230,7 +230,7 @@ async fn get_plan(
     u: CurrentUser,
     Path(id): Path<i64>,
 ) -> AppResult<Json<Value>> {
-    require_any(&u, &["transport"])?;
+    require(&u, Page::AdminPlan, Act::View)?;
     let Board {
         ev,
         rides,
@@ -293,7 +293,7 @@ async fn arrange_plan(
     Path(id): Path<i64>,
     Json(req): Json<ArrangeReq>,
 ) -> AppResult<Json<Value>> {
-    require_any(&u, &["transport"])?;
+    require(&u, Page::AdminPlan, Act::Update)?;
     let b = load_board(&st, &u, id).await?;
 
     let addresses: Vec<String> = b
@@ -389,7 +389,7 @@ async fn save_plan(
     Path(id): Path<i64>,
     Json(req): Json<SavePlan>,
 ) -> AppResult<Json<Value>> {
-    require_any(&u, &["transport"])?;
+    require(&u, Page::AdminPlan, Act::Update)?;
     let ev = load_event(&st, &u, id).await?;
     let rides = plan_rides(&st, id).await?;
     let by_id: HashMap<i64, &PlanRide> = rides.iter().map(|r| (r.id, r)).collect();

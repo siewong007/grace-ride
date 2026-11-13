@@ -14,6 +14,7 @@ use serde_json::{json, Value};
 use crate::auth::CurrentUser;
 use crate::error::{bad, forbidden, not_found, too_many_requests, AppError, AppResult};
 use crate::i18n::ErrorKey;
+use crate::perms::{Act, Page};
 use crate::state::AppState;
 use crate::util::{in_hours, now};
 
@@ -116,7 +117,7 @@ pub async fn can_access_file(st: &AppState, u: &CurrentUser, file_id: i64) -> Ap
     if owner == u.id {
         return Ok(true);
     }
-    let finance = u.has("finance") && u.mfa_ok;
+    let bills = u.can(Page::AdminBills, Act::View);
     // Profile photos are visible to members (passengers recognise their driver).
     let (photo,): (i64,) = sqlx::query_as("SELECT COUNT(*) FROM users WHERE photo_file_id=$1")
         .bind(file_id)
@@ -125,11 +126,11 @@ pub async fn can_access_file(st: &AppState, u: &CurrentUser, file_id: i64) -> Ap
     if photo > 0 {
         return Ok(true);
     }
-    // Settlement expense receipts: finance. The organiser attaches only their own
+    // Settlement expense receipts: 账单查阅 (finance). The organiser attaches only their own
     // uploads (checked when the bill is saved) and reaches them through the owner
     // check above, so naming another member's file id on a bill opens nothing.
     // Participants see the bill lines but not the receipts.
-    if finance {
+    if bills {
         let (item,): (i64,) =
             sqlx::query_as("SELECT COUNT(*) FROM settlement_items WHERE receipt_file_id=$1")
                 .bind(file_id)
@@ -139,26 +140,26 @@ pub async fn can_access_file(st: &AppState, u: &CurrentUser, file_id: i64) -> Ap
             return Ok(true);
         }
     }
-    // Payment proofs: payer (owner), organiser/payee, finance.
+    // Payment proofs: payer (owner), organiser/payee, 账单查阅 (finance).
     let (proof,): (i64,) = sqlx::query_as(
         "SELECT COUNT(*) FROM settlement_shares sh JOIN settlements s ON s.id=sh.settlement_id
          WHERE sh.proof_file_id=$1 AND (s.created_by=$2 OR $3)",
     )
     .bind(file_id)
     .bind(u.id)
-    .bind(finance)
+    .bind(bills)
     .fetch_one(&st.db)
     .await?;
     if proof > 0 {
         return Ok(true);
     }
-    // Grab reimbursement receipts: claimant, 交通组, finance.
+    // Grab reimbursement receipts: claimant, 报销审核 (交通组), 报销付款 (finance).
     let (reimb,): (i64,) = sqlx::query_as(
         "SELECT COUNT(*) FROM reimbursements WHERE receipt_file_id=$1 AND ($2 OR $3)",
     )
     .bind(file_id)
-    .bind(u.is_staff())
-    .bind(finance)
+    .bind(u.can(Page::AdminReimbReview, Act::View))
+    .bind(u.can(Page::AdminReimbPay, Act::View))
     .fetch_one(&st.db)
     .await?;
     Ok(reimb > 0)

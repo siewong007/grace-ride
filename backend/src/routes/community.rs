@@ -802,6 +802,10 @@ async fn pay_reimbursement(
 struct ReportQuery {
     month: Option<String>, // YYYY-MM
     user_id: Option<i64>,
+    /// "driver" | "passenger" | "all" — which side of rides to report (default: all)
+    r#type: Option<String>,
+    /// "monthly" | "quarterly" | "yearly" — report period granularity (default: monthly)
+    range: Option<String>,
 }
 
 pub async fn compute_badges(st: &AppState, user_id: i64, lang: Lang) -> AppResult<Vec<Value>> {
@@ -887,6 +891,7 @@ async fn my_badges(State(st): State<AppState>, u: CurrentUser) -> AppResult<Json
 }
 
 /// 个人月报 — only the member themself or an admin (获授权人员) may view.
+/// Supports driver/passenger filter and monthly/quarterly/yearly ranges.
 async fn monthly_report(
     State(st): State<AppState>,
     u: CurrentUser,
@@ -896,53 +901,112 @@ async fn monthly_report(
     if target != u.id {
         require_any(&u, &["admin"])?;
     }
+    let rtype = q.r#type.as_deref().unwrap_or("all");
+    let range = q.range.as_deref().unwrap_or("monthly");
     let month = q.month.unwrap_or_else(|| now()[..7].to_string());
     if month.len() != 7 {
         return Err(bad(u.lang, ErrorKey::MonthFormatInvalid));
     }
+
+    // Compute period bounds from month (YYYY-MM) and range
+    let y: i32 = month[..4].parse().unwrap_or(0);
+    let m: i32 = month[5..7].parse().unwrap_or(1);
+    let (start, end): (String, String) = match range {
+        "quarterly" => {
+            let q = ((m - 1) / 3) + 1;
+            let start_m = (q - 1) * 3 + 1;
+            let end_m = start_m + 2;
+            let end_y = if end_m > 12 { y + 1 } else { y };
+            let end_m = if end_m > 12 { end_m - 12 } else { end_m };
+            (format!("{:04}-{:02}-01", y, start_m), format!("{:04}-{:02}-01", end_y, end_m))
+        }
+        "yearly" => (format!("{:04}-01-01", y), format!("{:04}-12-01", y)),
+        _ => (format!("{:04}-{:02}-01", y, m), format!("{:04}-{:02}-01", y, m)),
+    };
+
     let (name,): (String,) = sqlx::query_as("SELECT name FROM users WHERE id=$1")
         .bind(target)
         .fetch_optional(&st.db)
         .await?
         .ok_or(not_found(u.lang))?;
-    let (driven,): (i64,) = sqlx::query_as("SELECT COUNT(*) FROM rides WHERE driver_id=$1 AND status='completed' AND substr(pickup_at,1,7)=$2")
-        .bind(target)
-        .bind(&month)
-        .fetch_one(&st.db)
-        .await?;
-    let (received,): (i64,) = sqlx::query_as("SELECT COUNT(*) FROM rides WHERE passenger_id=$1 AND status='completed' AND substr(pickup_at,1,7)=$2")
-        .bind(target)
-        .bind(&month)
-        .fetch_one(&st.db)
-        .await?;
-    let attended: Vec<(String, i64)> = sqlx::query_as(
-        "SELECT e.kind, COUNT(*) FROM event_signups s JOIN events e ON e.id=s.event_id
-         WHERE s.user_id=$1 AND s.attended=1 AND substr(e.starts_at,1,7)=$2 GROUP BY e.kind",
-    )
+
+    let side_filter = match rtype {
+        "driver" => "r.driver_id=$1 AND".to_string(),
+        "passenger" => "r.passenger_id=$1 AND".to_string(),
+        _ => "(r.driver_id=$1 OR r.passenger_id=$1) AND".to_string(),
+    };
+
+    let (driven,): (i64,) = sqlx::query_as(&format!(
+        "SELECT COUNT(*) FROM rides r WHERE {} r.status='completed' AND r.pickup_at >= $2 AND r.pickup_at < $3",
+        side_filter
+    ))
     .bind(target)
-    .bind(&month)
-    .fetch_all(&st.db)
-    .await?;
-    let events: Vec<(i64, String, String, String)> = sqlx::query_as(
-        "SELECT e.id, e.title, e.kind, e.starts_at FROM event_signups s JOIN events e ON e.id=s.event_id
-         WHERE s.user_id=$1 AND s.attended=1 AND substr(e.starts_at,1,7)=$2 ORDER BY e.starts_at",
-    )
-    .bind(target)
-    .bind(&month)
-    .fetch_all(&st.db)
-    .await?;
-    let (paid,): (i64,) = sqlx::query_as(
-        "SELECT COALESCE(SUM(sh.amount_cents),0)::BIGINT FROM settlement_shares sh JOIN settlements s ON s.id=sh.settlement_id JOIN events e ON e.id=s.event_id
-         WHERE sh.user_id=$1 AND sh.status='confirmed' AND substr(e.starts_at,1,7)=$2",
-    )
-    .bind(target)
-    .bind(&month)
+    .bind(&start)
+    .bind(&end)
     .fetch_one(&st.db)
     .await?;
+
+    let (received,): (i64,) = sqlx::query_as(
+        "SELECT COUNT(*) FROM rides r WHERE r.passenger_id=$1 AND r.status='completed' AND r.pickup_at >= $2 AND r.pickup_at < $3",
+    )
+    .bind(target)
+    .bind(&start)
+    .bind(&end)
+    .fetch_one(&st.db)
+    .await?;
+
+    let (dist_total, reimb_total): (Option<i64>, i64) = sqlx::query_as(
+        "SELECT COALESCE(SUM(r.distance_km),0)::BIGINT, COALESCE(SUM(r.reimbursement_amount_cents),0)::BIGINT FROM rides r WHERE r.driver_id=$1 AND r.status='completed' AND r.pickup_at >= $2 AND r.pickup_at < $3",
+    )
+    .bind(target)
+    .bind(&start)
+    .bind(&end)
+    .fetch_one(&st.db)
+    .await?;
+
+    let attended: Vec<(String, i64)> = sqlx::query_as(
+        "SELECT e.kind, COUNT(*) FROM event_signups s JOIN events e ON e.id=s.event_id
+         WHERE s.user_id=$1 AND s.attended=1 AND e.starts_at >= $2 AND e.starts_at < $3 GROUP BY e.kind",
+    )
+    .bind(target)
+    .bind(&start)
+    .bind(&end)
+    .fetch_all(&st.db)
+    .await?;
+
+    let events: Vec<(i64, String, String, String)> = sqlx::query_as(
+        "SELECT e.id, e.title, e.kind, e.starts_at FROM event_signups s JOIN events e ON e.id=s.event_id
+         WHERE s.user_id=$1 AND s.attended=1 AND e.starts_at >= $2 AND e.starts_at < $3 ORDER BY e.starts_at",
+    )
+    .bind(target)
+    .bind(&start)
+    .bind(&end)
+    .fetch_all(&st.db)
+    .await?;
+
+    let (paid,): (i64,) = sqlx::query_as(
+        "SELECT COALESCE(SUM(sh.amount_cents),0)::BIGINT FROM settlement_shares sh JOIN settlements s ON s.id=sh.settlement_id JOIN events e ON e.id=s.event_id
+         WHERE sh.user_id=$1 AND sh.status='confirmed' AND e.starts_at >= $2 AND e.starts_at < $3",
+    )
+    .bind(target)
+    .bind(&start)
+    .bind(&end)
+    .fetch_one(&st.db)
+    .await?;
+
     let total_attended: i64 = attended.iter().map(|a| a.1).sum();
     Ok(Json(json!({
-        "user": {"id": target, "name": name}, "month": month,
-        "rides_driven": driven, "rides_received": received, "events_attended": total_attended,
+        "user": {"id": target, "name": name},
+        "month": month,
+        "range": range,
+        "type": rtype,
+        "period_start": start,
+        "period_end": end,
+        "rides_driven": driven,
+        "rides_received": received,
+        "distance_km": dist_total.unwrap_or(0),
+        "reimbursement_cents": reimb_total,
+        "events_attended": total_attended,
         "by_kind": attended.into_iter().map(|(k, n)| json!({"kind": k, "count": n})).collect::<Vec<_>>(),
         "events": events.into_iter().map(|(id, t, k, at)| json!({"id": id, "title": t, "kind": k, "starts_at": at})).collect::<Vec<_>>(),
         "costs_paid_cents": paid,

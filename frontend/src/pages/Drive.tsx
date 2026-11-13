@@ -54,6 +54,7 @@ interface Profile {
     color: string;
     plate: string;
     seats: number;
+    vehicle_type: string;
   } | null;
 }
 
@@ -462,6 +463,7 @@ function Settings() {
           color: profile.vehicle?.color ?? '',
           plate: profile.vehicle?.plate ?? '',
           seats: Number(profile.vehicle?.seats) || 5,
+          vehicle_type: profile.vehicle?.vehicle_type ?? 'standard',
         },
       };
       setP(initial);
@@ -479,6 +481,7 @@ function Settings() {
         color: p.vehicle?.color ?? '',
         plate: p.vehicle?.plate ?? '',
         seats: Number(p.vehicle?.seats) || 5,
+        vehicle_type: p.vehicle?.vehicle_type ?? 'standard',
       },
     };
     return JSON.stringify(currentNormalized) !== initialRef.current;
@@ -651,6 +654,16 @@ function Settings() {
                     onClick={() => setV('seats', Math.min(9, v.seats + 1))}
                   />
                 </div>
+              </Field>
+              <Field label={t('vehicleType')}>
+                <select
+                  className="input"
+                  value={v.vehicle_type}
+                  onChange={(e) => setV('vehicle_type', e.target.value)}
+                >
+                  <option value="standard">{t('vehicleTypeStandard')}</option>
+                  <option value="other">{t('vehicleTypeOther')}</option>
+                </select>
               </Field>
             </div>
           </Card>

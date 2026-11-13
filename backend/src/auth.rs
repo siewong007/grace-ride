@@ -1,4 +1,4 @@
-//! Session extraction and role model.
+//! Session extraction. What the signed-in member may do is in `crate::perms`.
 //!
 //! Session tokens are 48 random characters given to the browser in an HttpOnly cookie.
 //! Only their SHA-256 hash is stored, so a leaked database or backup cannot be replayed
@@ -10,6 +10,7 @@ use serde::Serialize;
 use sha2::{Digest, Sha256};
 
 use crate::error::{unauthorized, AppError};
+use crate::perms::{self, Act, Page, PermSet};
 use crate::state::AppState;
 use crate::util::{now, Lang};
 
@@ -18,12 +19,6 @@ pub const SESSION_COOKIE: &str = "gr_session";
 /// Over https the `__Host-` prefix makes browsers refuse the cookie unless it is
 /// Secure, Path=/ and has no Domain — it cannot be planted by a sibling subdomain.
 pub const SESSION_COOKIE_SECURE: &str = "__Host-gr_session";
-
-/// Roles: admin (管理员), transport (交通组), finance (财务), leader (活动负责人), driver (志愿司机).
-/// Every active member is implicitly a passenger / participant.
-pub const ROLES: &[&str] = &["admin", "transport", "finance", "leader", "driver"];
-/// Roles that see other members' data and must use passkey or password+2FA.
-pub const PRIVILEGED: &[&str] = &["superadmin", "admin", "transport", "finance"];
 
 pub fn hash_token(token: &str) -> String {
     hex::encode(Sha256::digest(token.as_bytes()))
@@ -34,7 +29,11 @@ pub struct CurrentUser {
     pub id: i64,
     pub name: String,
     pub email: String,
+    /// Role keys from `users.roles`. Every active member also holds `member`.
     pub roles: Vec<String>,
+    /// Everything those roles grant. Empty until an admin approves the member.
+    #[serde(skip)]
+    pub perms: PermSet,
     /// `active` members can use the app. `pending` members can only use their profile
     /// until an admin approves them and assigns a role and group.
     pub status: String,
@@ -46,28 +45,23 @@ pub struct CurrentUser {
 }
 
 impl CurrentUser {
+    /// May do `act` on `page` in this session. Staff pages need a passkey / 2FA session
+    /// on top of the permission; `util::require` tells the two failures apart.
+    pub fn can(&self, page: Page, act: Act) -> bool {
+        self.perms.has(page, act) && (self.mfa_ok || !page.sensitive())
+    }
+
+    /// Holds the given role key (e.g. `"driver"`, `"leader"`, `"finance"`).
     pub fn has(&self, role: &str) -> bool {
-        // Admins also act as 交通组 and 活动负责人, but NOT finance or driver:
-        // receipts and payment records stay with finance (按职务需要查看).
         self.roles.iter().any(|r| r == role)
-            || (matches!(role, "transport" | "leader") && self.roles.iter().any(|r| r == "admin"))
     }
+
+    /// Whether this member holds a staff role (admin / transport / finance).
     pub fn is_staff(&self) -> bool {
-        self.mfa_ok && (self.has("transport") || self.has("admin"))
+        self.roles
+            .iter()
+            .any(|r| matches!(r.as_str(), "admin" | "transport" | "finance"))
     }
-}
-
-pub fn parse_roles(s: &str) -> Vec<String> {
-    s.split(',')
-        .map(|r| r.trim().to_string())
-        .filter(|r| ROLES.contains(&r.as_str()))
-        .collect()
-}
-
-pub fn is_privileged(roles: &str) -> bool {
-    parse_roles(roles)
-        .iter()
-        .any(|r| PRIVILEGED.contains(&r.as_str()))
 }
 
 impl FromRequestParts<AppState> for CurrentUser {
@@ -98,31 +92,43 @@ impl FromRequestParts<AppState> for CurrentUser {
         }
         let session_id = hash_token(&token);
 
-        let row: Option<(i64, String, String, String, String, i64, String, String)> =
-            sqlx::query_as(
-                "SELECT u.id, u.name, u.email, u.roles, u.status, s.mfa_ok, s.expires_at, u.lang
+        // Permissions are read with the session on every request, so a change to a role
+        // or to a member's roles applies to their very next call.
+        type Row = (i64, String, String, String, String, i64, String, String, String);
+        let row: Option<Row> = sqlx::query_as(
+            "SELECT u.id, u.name, u.email, u.roles, u.status, s.mfa_ok, s.expires_at, u.lang,
+                    COALESCE((SELECT string_agg(rp.permission, ',') FROM role_permissions rp
+                              WHERE rp.role_key = $2 OR rp.role_key = ANY(string_to_array(u.roles, ','))), '')
              FROM sessions s JOIN users u ON u.id = s.user_id
              WHERE s.token = $1 AND u.status IN ('active', 'pending')",
-            )
-            .bind(&session_id)
-            .fetch_optional(&state.db)
-            .await?;
+        )
+        .bind(&session_id)
+        .bind(perms::MEMBER_ROLE)
+        .fetch_optional(&state.db)
+        .await?;
 
-        let (id, name, email, roles, status, mfa_ok, expires, lang) =
+        let (id, name, email, roles, status, mfa_ok, expires, lang, granted) =
             row.ok_or(unauthorized(accept_lang))?;
         if expires < now() {
             return Err(unauthorized(accept_lang));
         }
+        let perms = if status == "active" {
+            PermSet::from_keys(granted.split(','))
+        } else {
+            PermSet::default()
+        };
+        let privileged = perms.privileged();
         Ok(CurrentUser {
             id,
             name,
             email,
-            roles: parse_roles(&roles),
+            roles: perms::parse_roles(&roles),
+            perms,
             status,
-            // Privileged roles always honour the session MFA flag (even in DEV_MODE),
-            // so demos via /auth/dev-login (mfa_ok=1) still work while tests can assert
-            // mfa_ok=0 is denied on admin/transport/finance routes.
-            mfa_ok: if is_privileged(&roles) {
+            // Accounts that reach staff pages always honour the session MFA flag (even in
+            // DEV_MODE), so demos via /auth/dev-login (mfa_ok=1) still work while tests
+            // can assert mfa_ok=0 is denied on staff routes.
+            mfa_ok: if privileged {
                 mfa_ok == 1
             } else {
                 mfa_ok == 1 || state.cfg.dev_mode

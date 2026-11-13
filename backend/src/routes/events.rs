@@ -11,8 +11,9 @@ use serde_json::{json, Value};
 use crate::auth::CurrentUser;
 use crate::error::{bad, forbidden, not_found, AppResult};
 use crate::i18n::ErrorKey;
+use crate::perms::{Act, Page};
 use crate::state::AppState;
-use crate::util::{audit, norm_dt, notify, now, Lang};
+use crate::util::{audit, norm_dt, notify, now, require, Lang};
 
 pub fn router() -> Router<AppState> {
     Router::new()
@@ -44,16 +45,32 @@ pub async fn can_see_event(st: &AppState, u: &CurrentUser, event_id: i64) -> App
     .bind(u.id)
     .fetch_one(&st.db)
     .await?;
-    Ok(n > 0 || (u.has("admin") && u.mfa_ok))
+    Ok((n > 0 && u.can(Page::Events, Act::View)) || u.can(Page::AdminEvents, Act::View))
 }
 
-fn can_manage(u: &CurrentUser, created_by: i64) -> bool {
-    created_by == u.id || (u.has("admin") && u.mfa_ok)
+/// The organiser may change their own event while they hold the matching 活动
+/// permission; 全部活动 (admin_events) reaches every event.
+fn can_manage(u: &CurrentUser, created_by: i64, act: Act) -> bool {
+    (created_by == u.id && u.can(Page::Events, act)) || u.can(Page::AdminEvents, act)
+}
+
+/// An organiser always sees who signed up for their own event.
+fn can_see_signups(u: &CurrentUser, created_by: i64) -> bool {
+    created_by == u.id || u.can(Page::AdminEvents, Act::View)
 }
 
 async fn list_groups(State(st): State<AppState>, u: CurrentUser) -> AppResult<Json<Value>> {
     // Leaders choose target groups, so they see all group names (not member lists).
-    let rows: Vec<(i64, String, String, i64, i64)> = if u.has("leader") || u.has("admin") {
+    let all = [
+        (Page::Events, Act::Create),
+        (Page::Events, Act::Update),
+        (Page::AdminEvents, Act::View),
+        (Page::AdminGroups, Act::View),
+        (Page::AdminMembers, Act::View),
+    ]
+    .iter()
+    .any(|(p, a)| u.can(*p, *a));
+    let rows: Vec<(i64, String, String, i64, i64)> = if all {
         sqlx::query_as("SELECT g.id, g.name, g.description, g.is_all, (SELECT COUNT(*) FROM group_members m WHERE m.group_id=g.id) FROM groups g ORDER BY g.is_all DESC, g.name")
             .fetch_all(&st.db)
             .await?
@@ -109,7 +126,9 @@ fn event_json(e: &EventRow, u: &CurrentUser) -> Value {
         "spots_left": if e.capacity > 0 { Some((e.capacity - e.going).max(0)) } else { None },
         "my_signup": e.my_status.as_ref().map(|s| json!({"status": s, "need_ride": e.my_need_ride == Some(1), "offer_drive": e.my_offer_drive == Some(1), "attended": e.my_attended})),
         "groups": e.groups.clone().unwrap_or_default(),
-        "can_manage": can_manage(u, e.created_by),
+        "can_manage": can_manage(u, e.created_by, Act::Update),
+        "can_cancel": can_manage(u, e.created_by, Act::Delete),
+        "can_see_signups": can_see_signups(u, e.created_by),
     })
 }
 
@@ -123,6 +142,7 @@ async fn list_events(
     u: CurrentUser,
     Query(q): Query<ListQuery>,
 ) -> AppResult<Json<Value>> {
+    require(&u, Page::Events, Act::View)?;
     let visibility = "(e.created_by = $1 OR EXISTS (SELECT 1 FROM event_groups eg JOIN groups g ON g.id = eg.group_id
         WHERE eg.event_id = e.id AND (g.is_all = 1 OR EXISTS (SELECT 1 FROM group_members gm WHERE gm.group_id = g.id AND gm.user_id = $2))))";
     let sql = match q.scope.as_deref() {
@@ -234,7 +254,7 @@ async fn create_event(
     u: CurrentUser,
     Json(req): Json<EventIn>,
 ) -> AppResult<Json<Value>> {
-    if !u.has("leader") {
+    if !u.can(Page::Events, Act::Create) {
         return Err(forbidden(u.lang, ErrorKey::OnlyOrganiserCanCreate));
     }
     let (at, dl) = validate(&req, u.lang)?;
@@ -304,7 +324,7 @@ async fn update_event(
     Json(req): Json<EventIn>,
 ) -> AppResult<Json<Value>> {
     let e = load_event(&st, &u, id).await?;
-    if !can_manage(&u, e.created_by) {
+    if !can_manage(&u, e.created_by, Act::Update) {
         return Err(forbidden(u.lang, ErrorKey::OnlyOrganiserCanEdit));
     }
     let (at, dl) = validate(&req, u.lang)?;
@@ -376,7 +396,7 @@ async fn cancel_event(
     Path(id): Path<i64>,
 ) -> AppResult<Json<Value>> {
     let e = load_event(&st, &u, id).await?;
-    if !can_manage(&u, e.created_by) {
+    if !can_manage(&u, e.created_by, Act::Delete) {
         return Err(forbidden(u.lang, ErrorKey::OnlyOrganiserCanCancel));
     }
     sqlx::query("UPDATE events SET status='cancelled' WHERE id=$1")
@@ -423,7 +443,7 @@ async fn finish_event(
     Path(id): Path<i64>,
 ) -> AppResult<Json<Value>> {
     let e = load_event(&st, &u, id).await?;
-    if !can_manage(&u, e.created_by) {
+    if !can_manage(&u, e.created_by, Act::Update) {
         return Err(forbidden(u.lang, ErrorKey::OnlyOrganiserCanPerformAction));
     }
     sqlx::query("UPDATE events SET status='finished' WHERE id=$1")
@@ -463,7 +483,7 @@ async fn signup(
     {
         return Err(bad(u.lang, ErrorKey::SignupClosed));
     }
-    if req.offer_drive.unwrap_or(false) && !u.has("driver") {
+    if req.offer_drive.unwrap_or(false) && !u.can(Page::Drive, Act::Create) {
         return Err(bad(u.lang, ErrorKey::DriverRegistrationRequired));
     }
     let already_going = e.my_status.as_deref() == Some("going");
@@ -578,7 +598,7 @@ async fn list_signups(
     Path(id): Path<i64>,
 ) -> AppResult<Json<Value>> {
     let e = load_event(&st, &u, id).await?;
-    if !can_manage(&u, e.created_by) {
+    if !can_see_signups(&u, e.created_by) {
         return Err(forbidden(u.lang, ErrorKey::OnlyOrganiserCanViewSignups));
     }
     let rows: Vec<(i64, i64, String, String, i64, i64, i64, Option<i64>, Option<String>)> = sqlx::query_as(
@@ -608,7 +628,7 @@ async fn mark_attendance(
     Json(req): Json<AttendanceIn>,
 ) -> AppResult<Json<Value>> {
     let e = load_event(&st, &u, id).await?;
-    if !can_manage(&u, e.created_by) {
+    if !can_manage(&u, e.created_by, Act::Update) {
         return Err(forbidden(
             u.lang,
             ErrorKey::OnlyOrganiserCanRecordAttendance,
