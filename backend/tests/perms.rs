@@ -521,7 +521,14 @@ async fn admin_settings_rates_crud_permissions_and_audit() {
     let admin = login(&st, "admin@example.org").await;
 
     // Member cannot view or update rates
-    let get_forbidden = call(&app, Method::GET, "/api/admin/settings/rates", Some(&member), None).await;
+    let get_forbidden = call(
+        &app,
+        Method::GET,
+        "/api/admin/settings/rates",
+        Some(&member),
+        None,
+    )
+    .await;
     assert_eq!(get_forbidden.status, StatusCode::FORBIDDEN);
 
     let put_forbidden = call(
@@ -534,11 +541,19 @@ async fn admin_settings_rates_crud_permissions_and_audit() {
                 { "vehicle_type": "standard", "rate_cents_per_km": 40 }
             ]
         })),
-    ).await;
+    )
+    .await;
     assert_eq!(put_forbidden.status, StatusCode::FORBIDDEN);
 
     // Admin can view rates
-    let get_ok = call(&app, Method::GET, "/api/admin/settings/rates", Some(&admin), None).await;
+    let get_ok = call(
+        &app,
+        Method::GET,
+        "/api/admin/settings/rates",
+        Some(&admin),
+        None,
+    )
+    .await;
     assert_eq!(get_ok.status, StatusCode::OK);
     assert!(get_ok.json["rates"].is_array());
 
@@ -554,14 +569,25 @@ async fn admin_settings_rates_crud_permissions_and_audit() {
                 { "vehicle_type": "other", "rate_cents_per_km": 65 }
             ]
         })),
-    ).await;
+    )
+    .await;
     assert_eq!(put_ok.status, StatusCode::OK);
 
     // Verify rates were updated
-    let get_after = call(&app, Method::GET, "/api/admin/settings/rates", Some(&admin), None).await;
+    let get_after = call(
+        &app,
+        Method::GET,
+        "/api/admin/settings/rates",
+        Some(&admin),
+        None,
+    )
+    .await;
     assert_eq!(get_after.status, StatusCode::OK);
     let rates = get_after.json["rates"].as_array().unwrap();
-    let std_rate = rates.iter().find(|r| r["vehicle_type"] == "standard").unwrap();
+    let std_rate = rates
+        .iter()
+        .find(|r| r["vehicle_type"] == "standard")
+        .unwrap();
     assert_eq!(std_rate["rate_cents_per_km"], 45);
 
     // Negative rates rejected
@@ -575,7 +601,8 @@ async fn admin_settings_rates_crud_permissions_and_audit() {
                 { "vehicle_type": "standard", "rate_cents_per_km": -10 }
             ]
         })),
-    ).await;
+    )
+    .await;
     assert_eq!(bad_rate.status, StatusCode::BAD_REQUEST);
 }
 
@@ -587,7 +614,14 @@ async fn admin_settings_system_retention_crud_permissions_and_audit() {
     let admin_id = user_id(&st, "admin@example.org").await;
 
     // 1. Regular member cannot view or update system settings
-    let get_forbidden = call(&app, Method::GET, "/api/admin/settings/system", Some(&member), None).await;
+    let get_forbidden = call(
+        &app,
+        Method::GET,
+        "/api/admin/settings/system",
+        Some(&member),
+        None,
+    )
+    .await;
     assert_eq!(get_forbidden.status, StatusCode::FORBIDDEN);
 
     let put_forbidden = call(
@@ -600,11 +634,19 @@ async fn admin_settings_system_retention_crud_permissions_and_audit() {
             "chat_retention_days": 90,
             "max_live_drivers": 15
         })),
-    ).await;
+    )
+    .await;
     assert_eq!(put_forbidden.status, StatusCode::FORBIDDEN);
 
     // 2. Admin views initial defaults
-    let get_init = call(&app, Method::GET, "/api/admin/settings/system", Some(&admin), None).await;
+    let get_init = call(
+        &app,
+        Method::GET,
+        "/api/admin/settings/system",
+        Some(&admin),
+        None,
+    )
+    .await;
     assert_eq!(get_init.status, StatusCode::OK);
     assert_eq!(get_init.json["audit_retention_days"], 730);
     assert_eq!(get_init.json["chat_retention_days"], 180);
@@ -621,7 +663,8 @@ async fn admin_settings_system_retention_crud_permissions_and_audit() {
             "chat_retention_days": 90,
             "max_live_drivers": 15
         })),
-    ).await;
+    )
+    .await;
     assert_eq!(bad_audit.status, StatusCode::BAD_REQUEST);
 
     let bad_chat = call(
@@ -634,7 +677,8 @@ async fn admin_settings_system_retention_crud_permissions_and_audit() {
             "chat_retention_days": 2, // too small (< 7)
             "max_live_drivers": 15
         })),
-    ).await;
+    )
+    .await;
     assert_eq!(bad_chat.status, StatusCode::BAD_REQUEST);
 
     let bad_drivers = call(
@@ -647,7 +691,8 @@ async fn admin_settings_system_retention_crud_permissions_and_audit() {
             "chat_retention_days": 90,
             "max_live_drivers": 0 // too small (< 1)
         })),
-    ).await;
+    )
+    .await;
     assert_eq!(bad_drivers.status, StatusCode::BAD_REQUEST);
 
     // 4. Admin updates settings successfully
@@ -661,11 +706,19 @@ async fn admin_settings_system_retention_crud_permissions_and_audit() {
             "chat_retention_days": 90,
             "max_live_drivers": 15
         })),
-    ).await;
+    )
+    .await;
     assert_eq!(put_ok.status, StatusCode::OK);
 
     // 5. Verify updated values
-    let get_updated = call(&app, Method::GET, "/api/admin/settings/system", Some(&admin), None).await;
+    let get_updated = call(
+        &app,
+        Method::GET,
+        "/api/admin/settings/system",
+        Some(&admin),
+        None,
+    )
+    .await;
     assert_eq!(get_updated.status, StatusCode::OK);
     assert_eq!(get_updated.json["audit_retention_days"], 365);
     assert_eq!(get_updated.json["chat_retention_days"], 90);
@@ -716,12 +769,19 @@ async fn admin_settings_system_retention_crud_permissions_and_audit() {
         .fetch_optional(&st.db)
         .await
         .unwrap();
-    assert!(remaining_old.is_none(), "Entry older than 365 days must be purged by dynamic retention");
+    assert!(
+        remaining_old.is_none(),
+        "Entry older than 365 days must be purged by dynamic retention"
+    );
 
     let remaining_new: Option<i64> = sqlx::query_scalar("SELECT id FROM audit_logs WHERE id=$1")
         .bind(new_id)
         .fetch_optional(&st.db)
         .await
         .unwrap();
-    assert_eq!(remaining_new, Some(new_id), "Entry within 365 days must be preserved");
+    assert_eq!(
+        remaining_new,
+        Some(new_id),
+        "Entry within 365 days must be preserved"
+    );
 }

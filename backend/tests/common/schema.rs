@@ -11,7 +11,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use tokio::sync::OnceCell;
 
 /// Schemas this old belong to finished runs, never to one in progress.
-const STALE_AFTER_SECS: u64 = 3600;
+const STALE_AFTER_SECS: u64 = 300;
 const LABEL: &str = "grace-ride test schema, created ";
 
 static CLEANED: OnceCell<()> = OnceCell::const_new();

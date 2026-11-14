@@ -262,7 +262,14 @@ async fn logout_all_revokes_every_session() {
         StatusCode::OK
     );
 
-    let logout_res = call(&app, Method::POST, "/api/auth/logout-all", Some(&cookie1), None).await;
+    let logout_res = call(
+        &app,
+        Method::POST,
+        "/api/auth/logout-all",
+        Some(&cookie1),
+        None,
+    )
+    .await;
     assert_eq!(logout_res.status, StatusCode::OK);
 
     assert_eq!(
@@ -830,9 +837,30 @@ async fn ride_readiness_and_delay_workflow() {
     )
     .await;
     let id = r.json["id"].as_i64().unwrap();
-    call(&app, Method::POST, &format!("/api/rides/{id}/claim"), Some(&driver), None).await;
-    call(&app, Method::POST, &format!("/api/rides/{id}/respond"), Some(&passenger), Some(json!({ "accept": true }))).await;
-    call(&app, Method::POST, &format!("/api/rides/{id}/approve"), Some(&transport), None).await;
+    call(
+        &app,
+        Method::POST,
+        &format!("/api/rides/{id}/claim"),
+        Some(&driver),
+        None,
+    )
+    .await;
+    call(
+        &app,
+        Method::POST,
+        &format!("/api/rides/{id}/respond"),
+        Some(&passenger),
+        Some(json!({ "accept": true })),
+    )
+    .await;
+    call(
+        &app,
+        Method::POST,
+        &format!("/api/rides/{id}/approve"),
+        Some(&transport),
+        None,
+    )
+    .await;
 
     // 2. Passenger indicates running 5m late
     let res = call(
@@ -845,7 +873,14 @@ async fn ride_readiness_and_delay_workflow() {
     .await;
     assert_eq!(res.status, StatusCode::OK);
 
-    let ride = call(&app, Method::GET, &format!("/api/rides/{id}"), Some(&driver), None).await;
+    let ride = call(
+        &app,
+        Method::GET,
+        &format!("/api/rides/{id}"),
+        Some(&driver),
+        None,
+    )
+    .await;
     assert_eq!(ride.json["readiness_status"], "delayed_5m");
 
     // 3. Driver reports 10m traffic delay
@@ -859,7 +894,14 @@ async fn ride_readiness_and_delay_workflow() {
     .await;
     assert_eq!(res.status, StatusCode::OK);
 
-    let ride = call(&app, Method::GET, &format!("/api/rides/{id}"), Some(&passenger), None).await;
+    let ride = call(
+        &app,
+        Method::GET,
+        &format!("/api/rides/{id}"),
+        Some(&passenger),
+        None,
+    )
+    .await;
     assert_eq!(ride.json["delay_minutes"], 10);
 
     // 4. Driver arrives at gate
@@ -873,7 +915,14 @@ async fn ride_readiness_and_delay_workflow() {
     .await;
     assert_eq!(res.status, StatusCode::OK);
 
-    let ride = call(&app, Method::GET, &format!("/api/rides/{id}"), Some(&passenger), None).await;
+    let ride = call(
+        &app,
+        Method::GET,
+        &format!("/api/rides/{id}"),
+        Some(&passenger),
+        None,
+    )
+    .await;
     assert!(ride.json["arrived_at_gate_at"].is_string());
 
     // 5. Passenger confirms unable to attend (e.g. sick)
@@ -887,7 +936,14 @@ async fn ride_readiness_and_delay_workflow() {
     .await;
     assert_eq!(res.status, StatusCode::OK);
 
-    let ride = call(&app, Method::GET, &format!("/api/rides/{id}"), Some(&passenger), None).await;
+    let ride = call(
+        &app,
+        Method::GET,
+        &format!("/api/rides/{id}"),
+        Some(&passenger),
+        None,
+    )
+    .await;
     assert_eq!(ride.json["status"], "cancelled");
     assert_eq!(ride.json["readiness_status"], "unable_to_join");
 
@@ -921,7 +977,14 @@ async fn ride_readiness_and_delay_workflow() {
     .await;
     assert_eq!(res.status, StatusCode::OK);
 
-    let d_profile = call(&app, Method::GET, "/api/driver/profile", Some(&driver), None).await;
+    let d_profile = call(
+        &app,
+        Method::GET,
+        "/api/driver/profile",
+        Some(&driver),
+        None,
+    )
+    .await;
     assert_eq!(d_profile.json["gate_wait_mins"], 8);
 }
 

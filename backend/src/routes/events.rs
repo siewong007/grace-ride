@@ -162,7 +162,11 @@ async fn list_events(
             .await?;
         let more = rows.len() as i64 > limit;
         rows.truncate(limit as usize);
-        let next_before = if more { rows.last().map(|e| e.starts_at.clone()) } else { None };
+        let next_before = if more {
+            rows.last().map(|e| e.starts_at.clone())
+        } else {
+            None
+        };
         return Ok(Json(json!({
             "items": rows.iter().map(|e| event_json(e, &u)).collect::<Vec<_>>(),
             "next_before": next_before,

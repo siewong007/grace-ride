@@ -59,4 +59,5 @@ export default {
   unlock: '解锁',
   unlocking: '解锁中...',
   lockNow: '锁定屏幕',
+  logout: '登出',
 };

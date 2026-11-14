@@ -169,10 +169,23 @@ async fn list_users(
             conds.join(" AND "),
             n + 1
         );
-        let mut query = sqlx::query_as::<_, (i64, String, String, String, String, String, String, i64, Option<String>)>(&sql)
-            .bind(&like)
-            .bind(&like)
-            .bind(&like);
+        let mut query = sqlx::query_as::<
+            _,
+            (
+                i64,
+                String,
+                String,
+                String,
+                String,
+                String,
+                String,
+                i64,
+                Option<String>,
+            ),
+        >(&sql)
+        .bind(&like)
+        .bind(&like)
+        .bind(&like);
         if let Some(r) = &q.role {
             query = query.bind(r);
         }
@@ -189,7 +202,11 @@ async fn list_users(
                 }
             })
             .collect();
-        let total_pages = if total == 0 { 1 } else { (total + limit - 1) / limit };
+        let total_pages = if total == 0 {
+            1
+        } else {
+            (total + limit - 1) / limit
+        };
         return Ok(Json(json!({
             "items": out,
             "total": total,
@@ -898,22 +915,24 @@ async fn audit_export(
     let until = day(&q.to)?
         .and_then(|d| d.succ_opt())
         .map(|d| d.to_string());
-    let like = q
-        .q
-        .as_deref()
-        .map(str::trim)
-        .filter(|s| !s.is_empty())
-        .map(|s| {
-            format!(
-                "%{}%",
-                s.replace('\\', "\\\\")
-                    .replace('%', "\\%")
-                    .replace('_', "\\_")
-            )
-        });
+    let like =
+        q.q.as_deref()
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+            .map(|s| {
+                format!(
+                    "%{}%",
+                    s.replace('\\', "\\\\")
+                        .replace('%', "\\%")
+                        .replace('_', "\\_")
+                )
+            });
     let action = q.action.filter(|a| !a.is_empty());
     let entity = q.entity.filter(|e| !e.is_empty());
-    let limit = q.limit.unwrap_or(AUDIT_EXPORT_MAX).clamp(1, AUDIT_EXPORT_MAX);
+    let limit = q
+        .limit
+        .unwrap_or(AUDIT_EXPORT_MAX)
+        .clamp(1, AUDIT_EXPORT_MAX);
 
     let pool = st.db.clone();
     let stream = async_stream::stream! {
@@ -966,7 +985,10 @@ async fn audit_export(
         }
     };
 
-    let filename = format!("audit_export_{}.csv", &now().replace([':', '-'], "").replace('T', "_")[..15]);
+    let filename = format!(
+        "audit_export_{}.csv",
+        &now().replace([':', '-'], "").replace('T', "_")[..15]
+    );
     Response::builder()
         .status(StatusCode::OK)
         .header(header::CONTENT_TYPE, "text/csv; charset=utf-8")
@@ -1046,7 +1068,10 @@ async fn update_reimbursement_rates(
         .bind(&now_str)
         .execute(&mut *tx)
         .await?;
-        details.push(format!("{}:{}c", entry.vehicle_type, entry.rate_cents_per_km));
+        details.push(format!(
+            "{}:{}c",
+            entry.vehicle_type, entry.rate_cents_per_km
+        ));
     }
     tx.commit().await?;
 
@@ -1071,10 +1096,7 @@ struct UpdateSystemSettingsIn {
     max_live_drivers: i64,
 }
 
-async fn get_system_settings(
-    State(st): State<AppState>,
-    u: CurrentUser,
-) -> AppResult<Json<Value>> {
+async fn get_system_settings(State(st): State<AppState>, u: CurrentUser) -> AppResult<Json<Value>> {
     require(&u, Page::AdminSettings, Act::View)?;
     let rows: Vec<(String, String)> = sqlx::query_as(
         "SELECT key, value FROM system_settings WHERE key IN ('audit_retention_days', 'chat_retention_days', 'max_live_drivers')",

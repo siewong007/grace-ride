@@ -22,6 +22,8 @@ export interface Me {
   badges_opt_out: boolean;
   readiness_prompt_mins?: number;
   gate_wait_mins?: number;
+  auto_lock_mins?: number;
+  backup_codes_count?: number;
   privileged: boolean;
   unread: number;
   groups: { id: number; name: string }[];

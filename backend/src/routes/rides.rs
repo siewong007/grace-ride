@@ -613,7 +613,10 @@ async fn post_readiness(
     if req.status == "unable_to_join" {
         if matches!(r.status.as_str(), "confirmed" | "in_progress") {
             set_status(&st, id, &["confirmed", "in_progress"], "cancelled", u.lang).await?;
-            let reason = req.notes.clone().unwrap_or_else(|| "乘客行前告知无法出席".into());
+            let reason = req
+                .notes
+                .clone()
+                .unwrap_or_else(|| "乘客行前告知无法出席".into());
             sqlx::query("UPDATE rides SET readiness_status='unable_to_join', readiness_updated_at=$1, attention_reason=$2, completed_at=COALESCE(completed_at, $1) WHERE id=$3")
                 .bind(&timestamp)
                 .bind(format!("乘客无法出席：{reason}"))
@@ -640,12 +643,23 @@ async fn post_readiness(
                         &st.db,
                         t,
                         &format!("系统：{} 告知无法出席，已取消接送安排。", r.p_name),
-                        &format!("System: {} notified unable to attend; pickup cancelled.", r.p_name),
+                        &format!(
+                            "System: {} notified unable to attend; pickup cancelled.",
+                            r.p_name
+                        ),
                     )
                     .await;
                 }
             }
-            audit(&st.db, Some(u.id), "ride.unable_to_join", "ride", Some(id), &reason).await;
+            audit(
+                &st.db,
+                Some(u.id),
+                "ride.unable_to_join",
+                "ride",
+                Some(id),
+                &reason,
+            )
+            .await;
         }
     } else if req.status == "delayed_5m" || req.status == "delayed_10m" {
         let mins = if req.status == "delayed_5m" { 5 } else { 10 };
@@ -662,7 +676,10 @@ async fn post_readiness(
                 ("乘客需稍等", "Passenger running late"),
                 (
                     &format!("{} 告知需稍等约 {} 分钟，请留意。", r.p_name, mins),
-                    &format!("{} notified they need about {} more minutes.", r.p_name, mins),
+                    &format!(
+                        "{} notified they need about {} more minutes.",
+                        r.p_name, mins
+                    ),
                 ),
                 "/drive",
             )
@@ -672,18 +689,31 @@ async fn post_readiness(
                     &st.db,
                     t,
                     &format!("系统：{} 告知需稍候约 {} 分钟。", r.p_name, mins),
-                    &format!("System: {} notified they need ~{} more minutes.", r.p_name, mins),
+                    &format!(
+                        "System: {} notified they need ~{} more minutes.",
+                        r.p_name, mins
+                    ),
                 )
                 .await;
             }
         }
-        audit(&st.db, Some(u.id), "ride.delayed", "ride", Some(id), &format!("{mins}m")).await;
+        audit(
+            &st.db,
+            Some(u.id),
+            "ride.delayed",
+            "ride",
+            Some(id),
+            &format!("{mins}m"),
+        )
+        .await;
     } else if req.status == "ready" {
-        sqlx::query("UPDATE rides SET readiness_status='ready', readiness_updated_at=$1 WHERE id=$2")
-            .bind(&timestamp)
-            .bind(id)
-            .execute(&st.db)
-            .await?;
+        sqlx::query(
+            "UPDATE rides SET readiness_status='ready', readiness_updated_at=$1 WHERE id=$2",
+        )
+        .bind(&timestamp)
+        .bind(id)
+        .execute(&st.db)
+        .await?;
         if let Some(d) = r.driver_id {
             notify(
                 &st.db,
@@ -759,11 +789,22 @@ async fn post_driver_delay(
             &st.db,
             t,
             &format!("系统：司机预计推迟约 {} 分钟到达。", mins),
-            &format!("System: Driver estimated to arrive ~{} mins later than planned.", mins),
+            &format!(
+                "System: Driver estimated to arrive ~{} mins later than planned.",
+                mins
+            ),
         )
         .await;
     }
-    audit(&st.db, Some(u.id), "ride.driver_delay", "ride", Some(id), &format!("{mins}m {note}")).await;
+    audit(
+        &st.db,
+        Some(u.id),
+        "ride.driver_delay",
+        "ride",
+        Some(id),
+        &format!("{mins}m {note}"),
+    )
+    .await;
     Ok(Json(json!({"ok": true, "delay_minutes": mins})))
 }
 
@@ -797,7 +838,10 @@ async fn post_arrived_gate(
         ("司机已到达门前", "Driver arrived at your gate"),
         (
             &format!("司机 {} 已到达您的大门外（{}），请出门上车。", u.name, veh),
-            &format!("Driver {} has arrived outside your gate ({}). Please come out to board.", u.name, veh),
+            &format!(
+                "Driver {} has arrived outside your gate ({}). Please come out to board.",
+                u.name, veh
+            ),
         ),
         &format!("/rides/{id}"),
     )
@@ -808,11 +852,22 @@ async fn post_arrived_gate(
             &st.db,
             t,
             &format!("系统：司机已到达 {} 的上车地点门前。", r.p_name),
-            &format!("System: Driver has arrived outside {}'s pickup location.", r.p_name),
+            &format!(
+                "System: Driver has arrived outside {}'s pickup location.",
+                r.p_name
+            ),
         )
         .await;
     }
-    audit(&st.db, Some(u.id), "ride.arrived_gate", "ride", Some(id), "").await;
+    audit(
+        &st.db,
+        Some(u.id),
+        "ride.arrived_gate",
+        "ride",
+        Some(id),
+        "",
+    )
+    .await;
     Ok(Json(json!({"ok": true, "arrived_at_gate_at": timestamp})))
 }
 
@@ -1509,11 +1564,12 @@ async fn driver_route(State(st): State<AppState>, u: CurrentUser) -> AppResult<J
 
 async fn get_driver_profile(State(st): State<AppState>, u: CurrentUser) -> AppResult<Json<Value>> {
     require(&u, Page::Drive, Act::View)?;
-    let (carpool, spare, wait): (i64, i64, Option<i64>) =
-        sqlx::query_as("SELECT carpool_enabled, spare_seats, gate_wait_mins FROM users WHERE id=$1")
-            .bind(u.id)
-            .fetch_one(&st.db)
-            .await?;
+    let (carpool, spare, wait): (i64, i64, Option<i64>) = sqlx::query_as(
+        "SELECT carpool_enabled, spare_seats, gate_wait_mins FROM users WHERE id=$1",
+    )
+    .bind(u.id)
+    .fetch_one(&st.db)
+    .await?;
     let areas: Vec<(i64,)> = sqlx::query_as("SELECT area_id FROM driver_areas WHERE user_id=$1")
         .bind(u.id)
         .fetch_all(&st.db)
@@ -2207,10 +2263,7 @@ async fn admin_rides(
     }
 
     if q.page.is_some() || q.limit.is_some() {
-        let count_sql = format!(
-            "SELECT COUNT(*) FROM rides r WHERE {}",
-            conds.join(" AND ")
-        );
+        let count_sql = format!("SELECT COUNT(*) FROM rides r WHERE {}", conds.join(" AND "));
         let mut count_query = sqlx::query_as::<_, (i64,)>(&count_sql);
         if let Some(d) = &q.date {
             count_query = count_query.bind(d);
@@ -2238,7 +2291,11 @@ async fn admin_rides(
         }
         query = query.bind(limit).bind(offset);
         let rows = query.fetch_all(&st.db).await?;
-        let total_pages = if total == 0 { 1 } else { (total + limit - 1) / limit };
+        let total_pages = if total == 0 {
+            1
+        } else {
+            (total + limit - 1) / limit
+        };
 
         return Ok(Json(json!({
             "items": rows.iter().map(|r| ride_json(r, &u)).collect::<Vec<_>>(),

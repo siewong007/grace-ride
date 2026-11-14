@@ -897,14 +897,22 @@ async fn totp_verify(
                     .bind(&u.session_id)
                     .execute(&st.db)
                     .await?;
-                audit(&st.db, Some(u.id), "totp.verify", "user", Some(u.id), "totp").await;
+                audit(
+                    &st.db,
+                    Some(u.id),
+                    "totp.verify",
+                    "user",
+                    Some(u.id),
+                    "totp",
+                )
+                .await;
                 return Ok(Json(json!({ "ok": true, "method": "totp" })));
             }
         }
     }
 
     // 2. Check if single-use backup recovery code (8 characters ignoring hyphens/spaces)
-    let norm = clean.replace('-', "").replace(' ', "").to_uppercase();
+    let norm = clean.replace(['-', ' '], "").to_uppercase();
     if norm.len() == 8 {
         let code_hash = crate::auth::hash_token(&norm);
         let mut codes: Vec<String> = backup_codes_json
@@ -914,8 +922,8 @@ async fn totp_verify(
 
         if let Some(pos) = codes.iter().position(|h| h == &code_hash) {
             codes.remove(pos);
-            let updated = serde_json::to_string(&codes)
-                .map_err(|e| AppError::Other(anyhow::anyhow!(e)))?;
+            let updated =
+                serde_json::to_string(&codes).map_err(|e| AppError::Other(anyhow::anyhow!(e)))?;
             sqlx::query("UPDATE users SET totp_backup_codes=$1 WHERE id=$2")
                 .bind(&updated)
                 .bind(u.id)
@@ -942,7 +950,15 @@ async fn totp_verify(
         }
     }
 
-    audit(&st.db, Some(u.id), "totp.failed", "user", Some(u.id), "verify").await;
+    audit(
+        &st.db,
+        Some(u.id),
+        "totp.failed",
+        "user",
+        Some(u.id),
+        "verify",
+    )
+    .await;
     Err(bad(u.lang, ErrorKey::InvalidCode))
 }
 

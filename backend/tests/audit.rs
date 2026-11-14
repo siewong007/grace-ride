@@ -583,13 +583,10 @@ async fn audit_log_pages_through_every_entry_and_filters() {
 #[tokio::test]
 async fn audit_retention_purges_entries_past_retention_days() {
     let (_app, st) = setup().await;
-    let old_ts = (chrono::Local::now()
-        - chrono::Duration::days(st.cfg.audit_retention_days + 1))
-    .format("%Y-%m-%dT%H:%M:%S")
-    .to_string();
-    let new_ts = chrono::Local::now()
+    let old_ts = (chrono::Local::now() - chrono::Duration::days(st.cfg.audit_retention_days + 1))
         .format("%Y-%m-%dT%H:%M:%S")
         .to_string();
+    let new_ts = chrono::Local::now().format("%Y-%m-%dT%H:%M:%S").to_string();
 
     let (old_id,): (i64,) = sqlx::query_as(
         "INSERT INTO audit_logs (actor_id, action, entity, entity_id, detail, created_at)
@@ -617,14 +614,21 @@ async fn audit_retention_purges_entries_past_retention_days() {
         .fetch_optional(&st.db)
         .await
         .unwrap();
-    assert!(remaining_old.is_none(), "Old audit entry should be purged by retention job");
+    assert!(
+        remaining_old.is_none(),
+        "Old audit entry should be purged by retention job"
+    );
 
     let remaining_new: Option<i64> = sqlx::query_scalar("SELECT id FROM audit_logs WHERE id=$1")
         .bind(new_id)
         .fetch_optional(&st.db)
         .await
         .unwrap();
-    assert_eq!(remaining_new, Some(new_id), "Recent audit entry must be retained");
+    assert_eq!(
+        remaining_new,
+        Some(new_id),
+        "Recent audit entry must be retained"
+    );
 }
 
 #[tokio::test]
@@ -656,22 +660,30 @@ async fn audit_stream_export_csv_with_filters_and_utf8_bom() {
     .unwrap();
 
     // 1. Members without admin_audit cannot stream export.
-    let (m_status, _, _) = call_raw(&app, Method::GET, "/api/admin/audit/export", Some(&member)).await;
+    let (m_status, _, _) =
+        call_raw(&app, Method::GET, "/api/admin/audit/export", Some(&member)).await;
     assert_eq!(m_status, StatusCode::FORBIDDEN);
 
     // 2. Admin streams full export.
-    let (status, headers, body) = call_raw(&app, Method::GET, "/api/admin/audit/export", Some(&admin)).await;
+    let (status, headers, body) =
+        call_raw(&app, Method::GET, "/api/admin/audit/export", Some(&admin)).await;
     assert_eq!(status, StatusCode::OK);
     assert_eq!(
         headers.get("content-type").unwrap().to_str().unwrap(),
         "text/csv; charset=utf-8"
     );
-    assert!(
-        headers.get("content-disposition").unwrap().to_str().unwrap().starts_with("attachment; filename=\"audit_export_")
-    );
+    assert!(headers
+        .get("content-disposition")
+        .unwrap()
+        .to_str()
+        .unwrap()
+        .starts_with("attachment; filename=\"audit_export_"));
 
     // Verify UTF-8 BOM is present.
-    assert!(body.starts_with('\u{FEFF}'), "CSV export must begin with UTF-8 BOM");
+    assert!(
+        body.starts_with('\u{FEFF}'),
+        "CSV export must begin with UTF-8 BOM"
+    );
     assert!(body.contains("ID,Timestamp,Actor ID,Actor,Action,Entity,Entity ID,Detail"));
     assert!(body.contains("stream.test_event"));
     assert!(body.contains("system.routine"));

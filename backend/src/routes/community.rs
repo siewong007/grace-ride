@@ -157,20 +157,21 @@ async fn list_notifications(
         } else {
             "SELECT id, title, body, link, read_at, created_at FROM notifications WHERE user_id=$1 ORDER BY id DESC LIMIT $2"
         };
-        let mut rows: Vec<(i64, String, String, String, Option<String>, String)> = if let Some(b) = q.before {
-            sqlx::query_as(sql)
-                .bind(u.id)
-                .bind(b)
-                .bind(limit + 1)
-                .fetch_all(&st.db)
-                .await?
-        } else {
-            sqlx::query_as(sql)
-                .bind(u.id)
-                .bind(limit + 1)
-                .fetch_all(&st.db)
-                .await?
-        };
+        let mut rows: Vec<(i64, String, String, String, Option<String>, String)> =
+            if let Some(b) = q.before {
+                sqlx::query_as(sql)
+                    .bind(u.id)
+                    .bind(b)
+                    .bind(limit + 1)
+                    .fetch_all(&st.db)
+                    .await?
+            } else {
+                sqlx::query_as(sql)
+                    .bind(u.id)
+                    .bind(limit + 1)
+                    .fetch_all(&st.db)
+                    .await?
+            };
         let more = rows.len() as i64 > limit;
         rows.truncate(limit as usize);
         let next_before = if more { rows.last().map(|r| r.0) } else { None };
@@ -620,15 +621,20 @@ async fn list_reimbursements(
                 let rows = sqlx::query_as::<_, ReimbRow>(&format!("{REIMB_SELECT} ORDER BY CASE r.status WHEN 'pending' THEN 0 ELSE 1 END, r.id DESC LIMIT 200"))
                     .fetch_all(&st.db)
                     .await?;
-                Ok(Json(json!(rows.iter().map(|r| reimb_json(r, &u)).collect::<Vec<_>>())))
+                Ok(Json(json!(rows
+                    .iter()
+                    .map(|r| reimb_json(r, &u))
+                    .collect::<Vec<_>>())))
             }
         }
         Some("payout") => {
             require(&u, Page::AdminReimbPay, Act::View)?;
             if is_paginated {
-                let total: (i64,) = sqlx::query_as("SELECT COUNT(*) FROM reimbursements r WHERE r.status IN ('approved','paid')")
-                    .fetch_one(&st.db)
-                    .await?;
+                let total: (i64,) = sqlx::query_as(
+                    "SELECT COUNT(*) FROM reimbursements r WHERE r.status IN ('approved','paid')",
+                )
+                .fetch_one(&st.db)
+                .await?;
                 let rows = sqlx::query_as::<_, ReimbRow>(&format!(
                     "{REIMB_SELECT} WHERE r.status IN ('approved','paid') ORDER BY CASE r.status WHEN 'approved' THEN 0 ELSE 1 END, r.id DESC LIMIT $1 OFFSET $2"
                 ))
@@ -648,16 +654,20 @@ async fn list_reimbursements(
                 let rows = sqlx::query_as::<_, ReimbRow>(&format!("{REIMB_SELECT} WHERE r.status IN ('approved','paid') ORDER BY CASE r.status WHEN 'approved' THEN 0 ELSE 1 END, r.id DESC LIMIT 200"))
                     .fetch_all(&st.db)
                     .await?;
-                Ok(Json(json!(rows.iter().map(|r| reimb_json(r, &u)).collect::<Vec<_>>())))
+                Ok(Json(json!(rows
+                    .iter()
+                    .map(|r| reimb_json(r, &u))
+                    .collect::<Vec<_>>())))
             }
         }
         _ => {
             require(&u, Page::Reimbursements, Act::View)?;
             if is_paginated {
-                let total: (i64,) = sqlx::query_as("SELECT COUNT(*) FROM reimbursements r WHERE r.user_id=$1")
-                    .bind(u.id)
-                    .fetch_one(&st.db)
-                    .await?;
+                let total: (i64,) =
+                    sqlx::query_as("SELECT COUNT(*) FROM reimbursements r WHERE r.user_id=$1")
+                        .bind(u.id)
+                        .fetch_one(&st.db)
+                        .await?;
                 let rows = sqlx::query_as::<_, ReimbRow>(&format!(
                     "{REIMB_SELECT} WHERE r.user_id=$1 ORDER BY r.id DESC LIMIT $2 OFFSET $3"
                 ))
@@ -681,7 +691,10 @@ async fn list_reimbursements(
                 .bind(u.id)
                 .fetch_all(&st.db)
                 .await?;
-                Ok(Json(json!(rows.iter().map(|r| reimb_json(r, &u)).collect::<Vec<_>>())))
+                Ok(Json(json!(rows
+                    .iter()
+                    .map(|r| reimb_json(r, &u))
+                    .collect::<Vec<_>>())))
             }
         }
     }

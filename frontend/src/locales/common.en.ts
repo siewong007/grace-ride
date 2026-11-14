@@ -59,4 +59,5 @@ export default {
   unlock: 'Unlock',
   unlocking: 'Unlocking...',
   lockNow: 'Lock screen',
+  logout: 'Log out',
 };

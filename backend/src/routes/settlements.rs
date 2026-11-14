@@ -431,7 +431,11 @@ async fn list_mine_organised(
         .fetch_all(&st.db)
         .await?;
 
-        let total_pages = if total == 0 { 1 } else { (total + limit - 1) / limit };
+        let total_pages = if total == 0 {
+            1
+        } else {
+            (total + limit - 1) / limit
+        };
         return Ok(Json(json!({
             "items": rows.into_iter().map(|(id, t, et, s, total, conf, n)| json!({
                 "id": id, "title": t, "event_title": et, "status": s, "total_cents": total, "confirmed": conf, "count": n,

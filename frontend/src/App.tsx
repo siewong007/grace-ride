@@ -6,6 +6,7 @@ import { EmptyState, Page, Spinner } from './components/ui';
 import type { Act, PageKey } from './perms';
 import { useTranslation } from 'react-i18next';
 import { hideSplash } from './splash';
+import { AutoLockProvider } from './components/AutoLock';
 import Login from './pages/Login';
 import Home from './pages/Home';
 import TermsPage from './components/Terms';
@@ -75,7 +76,7 @@ function RequireAuth({ children }: { children: JSX.Element }) {
   const loc = useLocation();
   if (loading) return <Spinner />;
   if (!me) return <Navigate to="/login" state={{ from: loc.pathname }} replace />;
-  return children;
+  return <AutoLockProvider>{children}</AutoLockProvider>;
 }
 
 export default function App() {

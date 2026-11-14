@@ -1,6 +1,7 @@
 import React, {
   createContext,
   FormEvent,
+  forwardRef,
   ReactNode,
   useCallback,
   useContext,
@@ -45,7 +46,7 @@ export interface ButtonProps extends React.ButtonHTMLAttributes<HTMLButtonElemen
 /**
  * Standard button primitive with variants, loading state, icon support, and link routing.
  */
-export function Button({
+export const Button = forwardRef<HTMLButtonElement, ButtonProps>(function Button({
   variant = 'secondary',
   size = 'md',
   block = false,
@@ -57,7 +58,7 @@ export function Button({
   className = '',
   children,
   ...rest
-}: ButtonProps) {
+}: ButtonProps, ref) {
   const classes = [
     'btn',
     variant !== 'secondary' ? variant : '',
@@ -84,6 +85,7 @@ export function Button({
 
   return (
     <button
+      ref={ref}
       type={type}
       className={classes}
       disabled={disabled || loading}
@@ -93,7 +95,7 @@ export function Button({
       {content}
     </button>
   );
-}
+});
 
 export interface IconButtonProps extends React.ButtonHTMLAttributes<HTMLButtonElement> {
   label: string;
