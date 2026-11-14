@@ -42,8 +42,20 @@ fn ts_in(minutes: i64) -> String {
 }
 
 async fn ride_reminders(db: &PgPool) -> anyhow::Result<()> {
-    let due: Vec<(i64, i64, Option<i64>, String, String, String, String, Option<i64>)> = sqlx::query_as(
-        "SELECT r.id, r.passenger_id, r.driver_id, r.pickup_at, a.name, p.name, COALESCE(d.name,''), p.readiness_prompt_mins
+    let due: Vec<(
+        i64,
+        i64,
+        Option<i64>,
+        String,
+        String,
+        String,
+        String,
+        Option<i64>,
+        i64,
+        String,
+    )> = sqlx::query_as(
+        "SELECT r.id, r.passenger_id, r.driver_id, r.pickup_at, a.name, p.name, COALESCE(d.name,''), p.readiness_prompt_mins,
+                r.is_proxy, r.rider_name
          FROM rides r JOIN areas a ON a.id=r.pickup_area_id JOIN users p ON p.id=r.passenger_id LEFT JOIN users d ON d.id=r.driver_id
          WHERE r.status='confirmed' AND r.reminder_sent=0 AND r.pickup_at <= $1 AND r.pickup_at >= $2",
     )
@@ -51,27 +63,42 @@ async fn ride_reminders(db: &PgPool) -> anyhow::Result<()> {
     .bind(ts_in(-10))
     .fetch_all(db)
     .await?;
-    for (id, passenger, driver, at, area, pname, dname, _prompt_mins) in due {
+    for (id, passenger, driver, at, area, pname, dname, _prompt_mins, is_proxy, rider_name) in due {
         let time = at.get(11..16).unwrap_or(&at);
+        let rider_disp = if is_proxy == 1 && !rider_name.is_empty() {
+            rider_name.clone()
+        } else {
+            "您".to_string()
+        };
+        let rider_disp_en = if is_proxy == 1 && !rider_name.is_empty() {
+            rider_name.clone()
+        } else {
+            "you".to_string()
+        };
         notify(
             db,
             passenger,
             ("接送提醒", "Ride reminder"),
             (
-                &format!("司机 {dname} 将于 {time} 到 {area} 接您。请确认您是否准备就绪或告知需稍候/无法出行。"),
-                &format!("Driver {dname} will pick you up at {area} at {time}. Please tap to confirm if you are ready, running late, or unable to join."),
+                &format!("司机 {dname} 将于 {time} 到 {area} 接 {rider_disp}。请确认长辈/乘车人是否准备就绪或告知需稍候/无法出行。"),
+                &format!("Driver {dname} will pick up {rider_disp_en} at {area} at {time}. Please tap to confirm readiness, delay, or inability to join."),
             ),
             &format!("/rides/{id}?action=readiness"),
         )
         .await;
         if let Some(d) = driver {
+            let driver_target = if is_proxy == 1 && !rider_name.is_empty() {
+                format!("{rider_name} (由 {pname} 代订)")
+            } else {
+                pname.clone()
+            };
             notify(
                 db,
                 d,
                 ("接送提醒", "Ride reminder"),
                 (
-                    &format!("{time} 接载 {pname}（{area}）。出发时请按「开始行程」。"),
-                    &format!("{time} pick up {pname} ({area}). Tap \"Start trip\" when departing."),
+                    &format!("{time} 接载 {driver_target}（{area}）。出发时请按「开始行程」。"),
+                    &format!("{time} pick up {driver_target} ({area}). Tap \"Start trip\" when departing."),
                 ),
                 &format!("/rides/{id}"),
             )

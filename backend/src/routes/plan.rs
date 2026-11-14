@@ -105,7 +105,9 @@ async fn load_event(st: &AppState, u: &CurrentUser, id: i64) -> AppResult<EventR
 
 async fn plan_rides(st: &AppState, event: i64) -> AppResult<Vec<PlanRide>> {
     Ok(sqlx::query_as(
-        "SELECT r.id, r.passenger_id, p.name AS p_name, r.seats, r.pickup_area_id AS area_id,
+        "SELECT r.id, r.passenger_id,
+                CASE WHEN r.is_proxy = 1 AND r.rider_name != '' THEN r.rider_name || ' (' || p.name || ' 代订)' ELSE p.name END AS p_name,
+                r.seats, r.pickup_area_id AS area_id,
                 a.name AS area_name, r.pickup_at, r.pickup_address, r.assistance, r.notes,
                 r.status, r.driver_id, r.trip_id
          FROM rides r JOIN users p ON p.id = r.passenger_id JOIN areas a ON a.id = r.pickup_area_id

@@ -28,6 +28,15 @@ export interface Ride {
   readiness_updated_at?: string | null;
   delay_minutes?: number;
   arrived_at_gate_at?: string | null;
+  is_proxy?: boolean;
+  proxy?: {
+    is_proxy: boolean;
+    rider_name: string;
+    rider_phone: string | null;
+    rider_relationship: string;
+    booker_name: string;
+    booker_phone: string | null;
+  } | null;
   viewer: { is_passenger: boolean; is_driver: boolean; is_staff: boolean };
   driver_load?: { seats_used: number; capacity: number };
   passenger_conflicts?: { id: number; pickup_at: string }[];
@@ -51,9 +60,15 @@ export default function RideCard({
   const ft = useFormatT();
   const { t } = useTranslation('rideCard');
   const person =
-    perspective === 'passenger' ? ride.driver?.name
-    : perspective === 'driver' ? ride.passenger.name
-    : `${ride.passenger.name} → ${ride.driver?.name ?? t('noDriver')}`;
+    perspective === 'passenger'
+      ? ride.is_proxy && ride.proxy
+        ? `${ride.proxy.rider_name} (${t('proxyLabel')}) · ${ride.driver?.name ?? t('noDriver')}`
+        : ride.driver?.name
+      : perspective === 'driver'
+        ? ride.is_proxy && ride.proxy
+          ? `${ride.proxy.rider_name} (${t('proxyBookedBy', { name: ride.proxy.booker_name })})`
+          : ride.passenger.name
+        : `${ride.passenger.name} → ${ride.driver?.name ?? t('noDriver')}`;
 
   return (
     <Link to={to ?? `/rides/${ride.id}`} className="item ride-card">

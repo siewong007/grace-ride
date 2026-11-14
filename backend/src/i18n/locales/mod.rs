@@ -96,6 +96,7 @@ pub fn render(lang: Lang, key: &ErrorKey) -> String {
         | ErrorKey::SeatsRange
         | ErrorKey::AddressAndDestinationRequired
         | ErrorKey::PickupAreaRequired
+        | ErrorKey::RiderNameRequired
         | ErrorKey::CannotViewEvent
         | ErrorKey::DriverCannotClaimOwnRide
         | ErrorKey::CannotPickOwnRide
@@ -291,6 +292,7 @@ mod tests {
             ErrorKey::SeatsRange,
             ErrorKey::AddressAndDestinationRequired,
             ErrorKey::PickupAreaRequired,
+            ErrorKey::RiderNameRequired,
             ErrorKey::CannotViewEvent,
             ErrorKey::DriverCannotClaimOwnRide,
             ErrorKey::CannotPickOwnRide,

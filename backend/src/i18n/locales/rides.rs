@@ -11,6 +11,7 @@ pub fn render(lang: Lang, key: &ErrorKey) -> String {
         ErrorKey::SeatsRange => pair(lang, "乘车人数需为 1–6 位", "Seats must be between 1 and 6"),
         ErrorKey::AddressAndDestinationRequired => pair(lang, "请填写上车地址及目的地", "Please enter pickup address and destination"),
         ErrorKey::PickupAreaRequired => pair(lang, "请选择接送地区", "Please choose a pickup area"),
+        ErrorKey::RiderNameRequired => pair(lang, "代订时必须填写实际乘车人姓名", "Rider name is required when booking for others"),
         ErrorKey::CannotViewEvent => pair(lang, "您无法查看此活动", "You cannot view this event"),
         ErrorKey::DriverCannotClaimOwnRide => pair(lang, "不能接送自己", "You cannot claim your own ride"),
         ErrorKey::CannotPickOwnRide => pair(lang, "不能选择自己的接送报名", "You cannot pick your own ride request"),

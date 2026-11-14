@@ -4,4 +4,6 @@ export default {
   noDriver: 'No driver yet',
   needsAttention: 'Needs attention',
   seats: 'seats',
+  proxyLabel: 'Proxy',
+  proxyBookedBy: 'Booked by {name}',
 };

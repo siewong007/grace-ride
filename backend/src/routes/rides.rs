@@ -5,10 +5,10 @@
 
 use axum::{
     extract::{Path, Query, State},
-    routing::{get, post},
+    routing::{delete, get, post},
     Json, Router,
 };
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 
 use crate::auth::CurrentUser;
@@ -24,6 +24,11 @@ pub fn router() -> Router<AppState> {
     Router::new()
         .route("/areas", get(list_areas))
         .route("/places", get(search_places))
+        .route(
+            "/proxy-riders",
+            get(list_proxy_riders).post(create_proxy_rider),
+        )
+        .route("/proxy-riders/{id}", delete(delete_proxy_rider))
         .route("/rides", get(my_rides).post(create_ride))
         .route("/rides/{id}", get(get_ride))
         .route("/rides/{id}/cancel", post(cancel_ride))
@@ -108,6 +113,10 @@ pub struct RideRow {
     pub readiness_updated_at: Option<String>,
     pub delay_minutes: Option<i64>,
     pub arrived_at_gate_at: Option<String>,
+    pub is_proxy: i64,
+    pub rider_name: String,
+    pub rider_phone: String,
+    pub rider_relationship: String,
 }
 
 const RIDE_SELECT: &str = "SELECT r.id, r.passenger_id, r.driver_id, r.event_id, r.trip_id, r.pickup_at, r.pickup_area_id,
@@ -115,7 +124,8 @@ const RIDE_SELECT: &str = "SELECT r.id, r.passenger_id, r.driver_id, r.event_id,
     r.started_at, r.picked_up_at, r.completed_at, r.distance_km, r.reimbursement_amount_cents, r.created_at, r.updated_at,
     a.name AS area_name, p.name AS p_name, p.phone AS p_phone, d.name AS d_name, d.phone AS d_phone,
     v.model AS v_model, v.color AS v_color, v.plate AS v_plate, v.vehicle_type AS v_type, e.title AS event_title,
-    r.readiness_status, r.readiness_updated_at, r.delay_minutes, r.arrived_at_gate_at
+    r.readiness_status, r.readiness_updated_at, r.delay_minutes, r.arrived_at_gate_at,
+    r.is_proxy, r.rider_name, r.rider_phone, r.rider_relationship
     FROM rides r
     JOIN areas a ON a.id = r.pickup_area_id
     JOIN users p ON p.id = r.passenger_id
@@ -141,6 +151,20 @@ pub fn ride_json(r: &RideRow, u: &CurrentUser) -> Value {
     let staff = u.can(Page::AdminRides, Act::View);
     let approved = matches!(r.status.as_str(), "confirmed" | "in_progress");
     let show_address = is_passenger || staff || (is_driver && approved);
+    let show_contact = is_passenger || staff || (is_driver && approved);
+    let is_proxy = r.is_proxy == 1;
+    let proxy = if is_proxy {
+        Some(json!({
+            "is_proxy": true,
+            "rider_name": r.rider_name,
+            "rider_phone": if show_contact { Some(r.rider_phone.clone()) } else { None },
+            "rider_relationship": r.rider_relationship,
+            "booker_name": r.p_name,
+            "booker_phone": if show_contact { Some(r.p_phone.clone()) } else { None },
+        }))
+    } else {
+        None
+    };
     let driver = r.driver_id.map(|id| {
         json!({
             "id": id,
@@ -172,10 +196,16 @@ pub fn ride_json(r: &RideRow, u: &CurrentUser) -> Value {
         "readiness_updated_at": r.readiness_updated_at,
         "delay_minutes": r.delay_minutes.unwrap_or(0),
         "arrived_at_gate_at": r.arrived_at_gate_at,
+        "is_proxy": is_proxy,
+        "proxy": proxy,
         "passenger": {
             "id": r.passenger_id,
-            "name": r.p_name,
-            "phone": if is_passenger || staff || (is_driver && approved) { Some(r.p_phone.clone()) } else { None },
+            "name": if is_proxy && !r.rider_name.is_empty() {
+                format!("{} (由 {} 代订)", r.rider_name, r.p_name)
+            } else {
+                r.p_name.clone()
+            },
+            "phone": if show_contact { Some(r.p_phone.clone()) } else { None },
         },
         "driver": driver,
         "needs_attention": r.needs_attention == 1,
@@ -257,6 +287,11 @@ struct CreateRide {
     assistance: Option<String>,
     notes: Option<String>,
     event_id: Option<i64>,
+    is_proxy: Option<bool>,
+    rider_name: Option<String>,
+    rider_phone: Option<String>,
+    rider_relationship: Option<String>,
+    save_proxy_rider: Option<bool>,
 }
 
 async fn create_ride(
@@ -286,9 +321,34 @@ async fn create_ride(
             return Err(forbidden(u.lang, ErrorKey::CannotViewEvent));
         }
     }
+
+    let is_proxy = req.is_proxy.unwrap_or(false)
+        || req
+            .rider_name
+            .as_ref()
+            .map(|s| !s.trim().is_empty())
+            .unwrap_or(false);
+    let rider_name = req
+        .rider_name
+        .map(|s| s.trim().to_string())
+        .unwrap_or_default();
+    let rider_phone = req
+        .rider_phone
+        .map(|s| s.trim().to_string())
+        .unwrap_or_default();
+    let rider_relationship = req
+        .rider_relationship
+        .map(|s| s.trim().to_string())
+        .unwrap_or_default();
+
+    if is_proxy && rider_name.is_empty() {
+        return Err(bad(u.lang, ErrorKey::RiderNameRequired));
+    }
+    let is_proxy_int = if is_proxy { 1i64 } else { 0i64 };
+
     let (id,): (i64,) = sqlx::query_as(
-        "INSERT INTO rides (passenger_id, event_id, pickup_at, pickup_area_id, pickup_address, destination, seats, assistance, notes, created_at, updated_at)
-         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11) RETURNING id",
+        "INSERT INTO rides (passenger_id, event_id, pickup_at, pickup_area_id, pickup_address, destination, seats, assistance, notes, is_proxy, rider_name, rider_phone, rider_relationship, created_at, updated_at)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15) RETURNING id",
     )
     .bind(u.id)
     .bind(req.event_id)
@@ -298,11 +358,40 @@ async fn create_ride(
     .bind(req.destination.trim())
     .bind(seats)
     .bind(req.assistance.unwrap_or_default())
-    .bind(req.notes.unwrap_or_default())
+    .bind(req.notes.as_deref().unwrap_or_default())
+    .bind(is_proxy_int)
+    .bind(&rider_name)
+    .bind(&rider_phone)
+    .bind(&rider_relationship)
     .bind(now())
     .bind(now())
     .fetch_one(&st.db)
     .await?;
+
+    if is_proxy && req.save_proxy_rider.unwrap_or(false) && !rider_name.is_empty() {
+        let exists: Option<(i64,)> =
+            sqlx::query_as("SELECT id FROM proxy_riders WHERE user_id=$1 AND name=$2")
+                .bind(u.id)
+                .bind(&rider_name)
+                .fetch_optional(&st.db)
+                .await?;
+        if exists.is_none() {
+            let _ = sqlx::query(
+                "INSERT INTO proxy_riders (user_id, name, phone, relationship, notes, created_at, updated_at)
+                 VALUES ($1,$2,$3,$4,$5,$6,$7)",
+            )
+            .bind(u.id)
+            .bind(&rider_name)
+            .bind(&rider_phone)
+            .bind(&rider_relationship)
+            .bind(req.notes.as_deref().unwrap_or_default())
+            .bind(now())
+            .bind(now())
+            .execute(&st.db)
+            .await;
+        }
+    }
+
     audit(&st.db, Some(u.id), "ride.create", "ride", Some(id), &at).await;
 
     // Let drivers who serve that area know there's a new request.
@@ -315,7 +404,12 @@ async fn create_ride(
     .fetch_all(&st.db)
     .await?;
     for (d,) in drivers {
-        let when = format!("{} · {}", at.replace('T', " "), seats);
+        let rider_label = if is_proxy && !rider_name.is_empty() {
+            format!("{} ({} 代订)", rider_name, u.name)
+        } else {
+            u.name.clone()
+        };
+        let when = format!("{} · {} · {} 位", at.replace('T', " "), rider_label, seats);
         notify(
             &st.db,
             d,
@@ -610,6 +704,12 @@ async fn post_readiness(
     }
 
     let timestamp = now();
+    let rider_disp = if r.is_proxy == 1 && !r.rider_name.is_empty() {
+        format!("{}（由 {} 代订）", r.rider_name, r.p_name)
+    } else {
+        r.p_name.clone()
+    };
+
     if req.status == "unable_to_join" {
         if matches!(r.status.as_str(), "confirmed" | "in_progress") {
             set_status(&st, id, &["confirmed", "in_progress"], "cancelled", u.lang).await?;
@@ -631,8 +731,8 @@ async fn post_readiness(
                     d,
                     ("乘客告知无法出席", "Passenger unable to attend"),
                     (
-                        &format!("{} 告知今天无法出席，已从您的行程中移除该站。", r.p_name),
-                        &format!("{} notified they cannot join today; this stop was removed from your route.", r.p_name),
+                        &format!("{} 告知今天无法出席，已从您的行程中移除该站。", rider_disp),
+                        &format!("{} notified they cannot join today; this stop was removed from your route.", rider_disp),
                     ),
                     "/drive",
                 )
@@ -642,10 +742,10 @@ async fn post_readiness(
                     system_message(
                         &st.db,
                         t,
-                        &format!("系统：{} 告知无法出席，已取消接送安排。", r.p_name),
+                        &format!("系统：{} 告知无法出席，已取消接送安排。", rider_disp),
                         &format!(
                             "System: {} notified unable to attend; pickup cancelled.",
-                            r.p_name
+                            rider_disp
                         ),
                     )
                     .await;
@@ -675,10 +775,10 @@ async fn post_readiness(
                 d,
                 ("乘客需稍等", "Passenger running late"),
                 (
-                    &format!("{} 告知需稍等约 {} 分钟，请留意。", r.p_name, mins),
+                    &format!("{} 告知需稍等约 {} 分钟，请留意。", rider_disp, mins),
                     &format!(
                         "{} notified they need about {} more minutes.",
-                        r.p_name, mins
+                        rider_disp, mins
                     ),
                 ),
                 "/drive",
@@ -688,10 +788,10 @@ async fn post_readiness(
                 system_message(
                     &st.db,
                     t,
-                    &format!("系统：{} 告知需稍候约 {} 分钟。", r.p_name, mins),
+                    &format!("系统：{} 告知需稍候约 {} 分钟。", rider_disp, mins),
                     &format!(
                         "System: {} notified they need ~{} more minutes.",
-                        r.p_name, mins
+                        rider_disp, mins
                     ),
                 )
                 .await;
@@ -720,8 +820,8 @@ async fn post_readiness(
                 d,
                 ("乘客已准备就绪", "Passenger is ready"),
                 (
-                    &format!("{} 已准备就绪！", r.p_name),
-                    &format!("{} is ready for pickup!", r.p_name),
+                    &format!("{} 已准备就绪！", rider_disp),
+                    &format!("{} is ready for pickup!", rider_disp),
                 ),
                 "/drive",
             )
@@ -730,8 +830,8 @@ async fn post_readiness(
                 system_message(
                     &st.db,
                     t,
-                    &format!("系统：{} 已准备好出发。", r.p_name),
-                    &format!("System: {} is ready to depart.", r.p_name),
+                    &format!("系统：{} 已准备好出发。", rider_disp),
+                    &format!("System: {} is ready to depart.", rider_disp),
                 )
                 .await;
             }
@@ -832,29 +932,48 @@ async fn post_arrived_gate(
         r.v_model.clone().unwrap_or_default(),
         r.v_plate.clone().unwrap_or_default()
     );
+    let (msg_zh, msg_en) = if r.is_proxy == 1 && !r.rider_name.is_empty() {
+        (
+            format!(
+                "司机 {} 已到达大门外（{}），请通知 {} 出门上车。",
+                u.name, veh, r.rider_name
+            ),
+            format!(
+                "Driver {} has arrived outside ({}). Please notify {} to come out to board.",
+                u.name, veh, r.rider_name
+            ),
+        )
+    } else {
+        (
+            format!("司机 {} 已到达您的大门外（{}），请出门上车。", u.name, veh),
+            format!(
+                "Driver {} has arrived outside your gate ({}). Please come out to board.",
+                u.name, veh
+            ),
+        )
+    };
     notify(
         &st.db,
         r.passenger_id,
         ("司机已到达门前", "Driver arrived at your gate"),
-        (
-            &format!("司机 {} 已到达您的大门外（{}），请出门上车。", u.name, veh),
-            &format!(
-                "Driver {} has arrived outside your gate ({}). Please come out to board.",
-                u.name, veh
-            ),
-        ),
+        (&msg_zh, &msg_en),
         &format!("/rides/{id}"),
     )
     .await;
 
     if let Some(t) = r.trip_id {
+        let rider_disp = if r.is_proxy == 1 && !r.rider_name.is_empty() {
+            format!("{}（由 {} 代订）", r.rider_name, r.p_name)
+        } else {
+            r.p_name.clone()
+        };
         system_message(
             &st.db,
             t,
-            &format!("系统：司机已到达 {} 的上车地点门前。", r.p_name),
+            &format!("系统：司机已到达 {} 的上车地点门前。", rider_disp),
             &format!(
                 "System: Driver has arrived outside {}'s pickup location.",
-                r.p_name
+                rider_disp
             ),
         )
         .await;
@@ -948,19 +1067,31 @@ async fn driver_claim(
     if res.rows_affected() == 0 {
         return Err(conflict(u.lang, ErrorKey::RidePickedByAnotherDriver));
     }
+    let target_zh = if r.is_proxy == 1 && !r.rider_name.is_empty() {
+        format!("长辈/组员 {}", r.rider_name)
+    } else {
+        "您".to_string()
+    };
+    let target_en = if r.is_proxy == 1 && !r.rider_name.is_empty() {
+        format!("rider {}", r.rider_name)
+    } else {
+        "you".to_string()
+    };
     notify(
         &st.db,
         r.passenger_id,
-        ("有司机愿意接送您", "A driver offered to take you"),
+        ("有司机愿意接送", "A driver offered to take you"),
         (
             &format!(
-                "{} 邀请接送您（{}），请查看并确认。",
+                "{} 邀请接送 {}（{}），请查看并确认。",
                 u.name,
+                target_zh,
                 r.pickup_at.replace('T', " ")
             ),
             &format!(
-                "{} offered to drive you ({}), please review and confirm.",
+                "{} offered to drive {} ({}), please review and confirm.",
                 u.name,
+                target_en,
                 r.pickup_at.replace('T', " ")
             ),
         ),
@@ -1112,10 +1243,15 @@ async fn announce_confirmed(st: &AppState, r: &RideRow, trip: i64, reassigned: b
     )
     .await;
     if let Some(d) = r.driver_id {
+        let p_desc = if r.is_proxy == 1 && !r.rider_name.is_empty() {
+            format!("{}（由 {} 代订）", r.rider_name, r.p_name)
+        } else {
+            r.p_name.clone()
+        };
         let line = format!(
             "{} · {} · {}",
             r.pickup_at.replace('T', " "),
-            r.p_name,
+            p_desc,
             r.area_name
         );
         notify(
@@ -1127,17 +1263,22 @@ async fn announce_confirmed(st: &AppState, r: &RideRow, trip: i64, reassigned: b
         )
         .await;
     }
+    let rider_chat_desc = if r.is_proxy == 1 && !r.rider_name.is_empty() {
+        format!("{}（由 {} 代订）", r.rider_name, r.p_name)
+    } else {
+        r.p_name.clone()
+    };
     system_message(
         &st.db,
         trip,
         &format!(
             "{} 已加入本趟群聊（{}）。",
-            r.p_name,
+            rider_chat_desc,
             r.pickup_at.replace('T', " ")
         ),
         &format!(
             "{} joined this trip's group chat ({}).",
-            r.p_name,
+            rider_chat_desc,
             r.pickup_at.replace('T', " ")
         ),
     )
@@ -2363,4 +2504,87 @@ async fn admin_drivers(
             "vehicle": model.map(|m| json!({"model": m, "plate": plate, "seats": seats})), "areas": areas.unwrap_or_default(),
         }))
         .collect::<Vec<_>>())))
+}
+
+// ---------------- Frequent Proxy Riders ----------------
+
+#[derive(sqlx::FromRow, Serialize, Deserialize)]
+struct ProxyRiderRow {
+    id: i64,
+    user_id: i64,
+    name: String,
+    phone: String,
+    relationship: String,
+    notes: String,
+    created_at: String,
+    updated_at: String,
+}
+
+#[derive(Deserialize)]
+struct CreateProxyRiderReq {
+    name: String,
+    #[serde(default)]
+    phone: Option<String>,
+    #[serde(default)]
+    relationship: Option<String>,
+    #[serde(default)]
+    notes: Option<String>,
+}
+
+async fn list_proxy_riders(State(st): State<AppState>, u: CurrentUser) -> AppResult<Json<Value>> {
+    let rows: Vec<ProxyRiderRow> = sqlx::query_as(
+        "SELECT id, user_id, name, phone, relationship, notes, created_at, updated_at
+         FROM proxy_riders WHERE user_id=$1 ORDER BY name",
+    )
+    .bind(u.id)
+    .fetch_all(&st.db)
+    .await?;
+    Ok(Json(json!(rows)))
+}
+
+async fn create_proxy_rider(
+    State(st): State<AppState>,
+    u: CurrentUser,
+    Json(req): Json<CreateProxyRiderReq>,
+) -> AppResult<Json<Value>> {
+    let name = req.name.trim();
+    if name.is_empty() {
+        return Err(bad(u.lang, ErrorKey::RiderNameRequired));
+    }
+    let phone = req.phone.map(|s| s.trim().to_string()).unwrap_or_default();
+    let relationship = req
+        .relationship
+        .map(|s| s.trim().to_string())
+        .unwrap_or_default();
+    let notes = req.notes.map(|s| s.trim().to_string()).unwrap_or_default();
+    let (id,): (i64,) = sqlx::query_as(
+        "INSERT INTO proxy_riders (user_id, name, phone, relationship, notes, created_at, updated_at)
+         VALUES ($1,$2,$3,$4,$5,$6,$7) RETURNING id",
+    )
+    .bind(u.id)
+    .bind(name)
+    .bind(phone)
+    .bind(relationship)
+    .bind(notes)
+    .bind(now())
+    .bind(now())
+    .fetch_one(&st.db)
+    .await?;
+    Ok(Json(json!({ "id": id, "ok": true })))
+}
+
+async fn delete_proxy_rider(
+    State(st): State<AppState>,
+    u: CurrentUser,
+    Path(id): Path<i64>,
+) -> AppResult<Json<Value>> {
+    let res = sqlx::query("DELETE FROM proxy_riders WHERE id=$1 AND user_id=$2")
+        .bind(id)
+        .bind(u.id)
+        .execute(&st.db)
+        .await?;
+    if res.rows_affected() == 0 {
+        return Err(not_found(u.lang));
+    }
+    Ok(Json(json!({ "ok": true })))
 }
