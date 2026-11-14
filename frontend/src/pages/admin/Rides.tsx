@@ -55,9 +55,16 @@ export default function AdminRides() {
     filterKeys: ['status', 'date', 'attention'],
   });
 
+  const apiQuery = new URLSearchParams(queryString);
+  apiQuery.set('page', String(page));
+  apiQuery.set('limit', String(pageSize));
+  const attention = filters.attention === 'true' ? 'true' : '';
+  if (!attention) apiQuery.delete('attention');
+
   const { data, error, loading } = useApi<AdminRidesData | Ride[]>(
-    `/admin/rides?${queryString}`,
+    `/admin/rides?${apiQuery}`,
     20000,
+    { latestOnly: true },
   );
 
   const [initialLoadComplete, setInitialLoadComplete] = useState(false);
@@ -175,7 +182,7 @@ export default function AdminRides() {
               sort={sort}
               onSortChange={setSort}
               filters={filterDefs}
-              filterValues={filters}
+              filterValues={{ ...filters, attention }}
               onFilterChange={setFilter}
               onClearFilters={clearFilters}
               emptyContent={loading ? <CardSkeleton count={4} /> : <EmptyState title={t('rides.none')} />}

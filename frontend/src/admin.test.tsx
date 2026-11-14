@@ -164,8 +164,14 @@ const mockApiMap: Record<string, unknown> = {
   '/admin/rides?date=2026-11-12': mockTodayRides,
   '/admin/rides?attention=true': mockAttention,
   '/admin/rides?status=pending_approval': mockApprovals,
-  '/admin/rides?': mockTodayRides,
-  '/admin/rides?page=1&limit=50': mockTodayRides,
+  '/admin/rides?': [],
+  '/admin/rides?page=1&limit=50': {
+    items: mockTodayRides,
+    total: mockTodayRides.length,
+    page: 1,
+    page_size: 50,
+    total_pages: 1,
+  },
   '/admin/live': mockLive,
   '/admin/users?': mockUsers,
   '/admin/users?page=1&limit=50': { items: mockUsers, total: 52, page: 1, page_size: 50, total_pages: 2 },
@@ -263,6 +269,17 @@ describe('Admin Rides', () => {
     expect(
       screen.getByRole('button', { name: /sort by pickup time/i }),
     ).toBeInTheDocument();
+    expect(screen.getByText(/Brother Barnabas/)).toBeInTheDocument();
+  });
+
+  it('ignores legacy non-true attention values and requests paginated rows', () => {
+    render(
+      <MemoryRouter initialEntries={['/admin/rides?attention=1']}>
+        <AdminRides />
+      </MemoryRouter>,
+    );
+
+    expect(screen.getByLabelText(/only needs attention/i)).not.toBeChecked();
     expect(screen.getByText(/Brother Barnabas/)).toBeInTheDocument();
   });
 });
