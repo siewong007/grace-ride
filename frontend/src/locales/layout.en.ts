@@ -47,4 +47,12 @@ export default {
   groupSystem: 'System',
   waitingCount: '{count} waiting',
   adminSheetTitle: 'Admin',
+  jumpButton: 'Search',
+  jumpTitle: 'Go to',
+  jumpPlaceholder: 'Search pages, guides and help requests',
+  jumpPages: 'Pages',
+  jumpGuides: 'Guides',
+  jumpRequests: 'Help requests',
+  jumpNone: 'Nothing matches. Try another word.',
+  jumpCount: '{count} results',
 };

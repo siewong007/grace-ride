@@ -28,27 +28,30 @@ import {
   useToast,
 } from '../components/ui';
 
-const APP_PAGES = [
-  { label: 'None', value: '' },
-  { label: 'Home', value: '/' },
-  { label: 'Rides (My rides)', value: '/rides' },
-  { label: 'Request a ride', value: '/rides/new' },
-  { label: 'Drive schedule', value: '/drive' },
-  { label: 'Events', value: '/events' },
-  { label: 'Cost splits', value: '/settlements' },
-  { label: 'Reimbursements', value: '/reimbursements' },
-  { label: 'My Report', value: '/report' },
-  { label: 'Profile / Account Security', value: '/me' },
-  { label: 'Admin Dashboard', value: '/admin' },
-  { label: 'Admin Ride Management', value: '/admin/rides' },
-  { label: 'Admin Live Map', value: '/admin/live' },
-  { label: 'Admin Announcements', value: '/admin/announcements' },
-  { label: 'Admin Reimbursement Review', value: '/admin/reimbursements' },
-  { label: 'Admin Member Reports', value: '/admin/reports' },
-  { label: 'Admin Members & Invites', value: '/admin/members' },
-  { label: 'Admin Roles & Permissions', value: '/admin/roles' },
-  { label: 'Admin Settings (Groups & Areas)', value: '/admin/settings' },
-  { label: 'Admin Audit Log', value: '/admin/audit' },
+/** Pages a guide step can open; labels come from the navigation so they match what people see. */
+const APP_PAGES: { key: string; value: string }[] = [
+  { key: '', value: '' },
+  { key: 'home', value: '/' },
+  { key: 'myRides', value: '/rides' },
+  { key: 'newRide', value: '/rides/new' },
+  { key: 'drive', value: '/drive' },
+  { key: 'events', value: '/events' },
+  { key: 'myCosts', value: '/costs' },
+  { key: 'settlements', value: '/settlements' },
+  { key: 'reimbursements', value: '/reimbursements' },
+  { key: 'myReport', value: '/report' },
+  { key: 'help', value: '/help' },
+  { key: 'profile', value: '/me' },
+  { key: 'dashboard', value: '/admin' },
+  { key: 'adminRides', value: '/admin/rides' },
+  { key: 'liveMap', value: '/admin/live' },
+  { key: 'announcements', value: '/admin/announcements' },
+  { key: 'reimbReview', value: '/admin/reimbursements' },
+  { key: 'reports', value: '/admin/reports' },
+  { key: 'members', value: '/admin/members' },
+  { key: 'roles', value: '/admin/roles' },
+  { key: 'settings', value: '/admin/settings' },
+  { key: 'audit', value: '/admin/audit' },
 ];
 
 const emptyStep = (): GuideStep => ({
@@ -70,6 +73,7 @@ function slugify(text: string): string {
 export default function HelpGuideEditor() {
   const { t } = useTranslation('help');
   const { t: tc } = useTranslation();
+  const { t: tl } = useTranslation('layout');
   const { slug } = useParams();
   const nav = useNavigate();
   const toast = useToast();
@@ -595,7 +599,7 @@ export default function HelpGuideEditor() {
                         >
                           {APP_PAGES.map((p) => (
                             <option key={p.value} value={p.value}>
-                              {p.label} {p.value ? `(${p.value})` : ''}
+                              {p.key ? `${tl(p.key)} (${p.value})` : t('noLink')}
                             </option>
                           ))}
                           <option value="custom">{t('customPath', 'Custom path…')}</option>

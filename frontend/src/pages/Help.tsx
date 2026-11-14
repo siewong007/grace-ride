@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
 import {
+  ArrowUpDown,
   BookOpen,
   ChevronDown,
   ChevronRight,
@@ -15,6 +16,7 @@ import { useAuth } from '../auth';
 import { canAnyAdminPage } from '../perms';
 import { Ride } from '../components/RideCard';
 import HelpComposer from '../components/HelpComposer';
+import GuideArranger from '../components/GuideArranger';
 import HelpDetail from './HelpDetail';
 import { GuideStep, GuideSummary, usePick } from './HelpGuides';
 import {
@@ -113,6 +115,7 @@ export default function Help() {
 
   // Audience filter for guides
   const [guideAudienceFilter, setGuideAudienceFilter] = useState<'all' | 'member' | 'staff'>('all');
+  const [arranging, setArranging] = useState(false);
 
   // Responsive desktop detection for 2-pane inbox
   const [isDesktop, setIsDesktop] = useState(
@@ -193,7 +196,11 @@ export default function Help() {
     isHelpDesk && !viewAsMember ? `/help/counts?all=${allStaffScope}` : null,
     10000,
   );
-  const counts = countsApi.data ?? { open: 0, answered: 0, closed: 0 };
+  const counts = {
+    open: countsApi.data?.open ?? 0,
+    answered: countsApi.data?.answered ?? 0,
+    closed: countsApi.data?.closed ?? 0,
+  };
   const totalCounts = counts.open + counts.answered + counts.closed;
 
   // Auto-select first ticket in 2-pane mode on desktop
@@ -785,6 +792,16 @@ export default function Help() {
                       </button>
                     </div>
                   )}
+                  {isEditor && !arranging && guides.length > 1 && (
+                    <Button
+                      variant="secondary"
+                      size="sm"
+                      icon={<ArrowUpDown size={16} />}
+                      onClick={() => setArranging(true)}
+                    >
+                      {t('arrangeTitle')}
+                    </Button>
+                  )}
                   {isEditor && (
                     <Button
                       variant="secondary"
@@ -798,7 +815,15 @@ export default function Help() {
                 </div>
               </div>
 
-              {guidesApi.loading ? (
+              {arranging ? (
+                <GuideArranger
+                  guides={guides}
+                  onDone={(saved) => {
+                    setArranging(false);
+                    if (saved) guidesApi.reload();
+                  }}
+                />
+              ) : guidesApi.loading ? (
                 <CardSkeleton count={3} />
               ) : !displayedGuides.length ? (
                 <EmptyState title={t('guideNone')} />

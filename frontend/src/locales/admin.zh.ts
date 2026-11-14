@@ -44,8 +44,10 @@ export default {
       review: '审核',
       open: '打开',
       answer: '回复',
-      today: '今日：{total} 个行程，{confirmed} 个已确认',
-      live: '{live} 位司机正在路上',
+      today: '今日：{count} 个行程，{confirmed} 个已确认',
+      today_one: '今日：{count} 个行程，{confirmed} 个已确认',
+      live: '{count} 位司机正在路上',
+      live_one: '{count} 位司机正在路上',
     },
   },
   rides: {

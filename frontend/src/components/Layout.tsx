@@ -1,8 +1,8 @@
-import { ReactNode, useEffect, useMemo, useRef, useState } from 'react';
+import { ReactNode, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Link, NavLink, Navigate, Outlet, useLocation } from 'react-router-dom';
 import {
   ArrowLeft, Bell, Calendar, Car, CarFront, ClipboardList, Clock, FileBarChart, HandCoins, HeartHandshake, Home, KeyRound,
-  LayoutDashboard, LayoutGrid, LifeBuoy, MapPinned, Megaphone, Receipt, ScrollText, Settings, ShieldAlert, User, Users, Wallet, BarChart3, WifiOff,
+  LayoutDashboard, LayoutGrid, LifeBuoy, Search, MapPinned, Megaphone, Receipt, ScrollText, Settings, ShieldAlert, User, Users, Wallet, BarChart3, WifiOff,
 } from 'lucide-react';
 import { useApi } from '../api';
 import { useAuth } from '../auth';
@@ -11,6 +11,7 @@ import { GuideHeaderActionContext, PageChromeContext } from './PageChrome';
 import { TermsGate } from './Terms';
 import { Avatar, IconButton, Modal, Notice } from './ui';
 import { GuideRunnerProvider, PageHeaderGuideButton } from './GuideRunner';
+import QuickJump, { useQuickJumpShortcut } from './QuickJump';
 import { useTranslation } from 'react-i18next';
 
 interface NavItem {
@@ -78,6 +79,9 @@ export default function Layout() {
   const [isOffline, setIsOffline] = useState(typeof navigator !== 'undefined' ? !navigator.onLine : false);
   const chrome = useMemo(() => ({ setBack, setHeadingVisible }), []);
   const [adminSheet, setAdminSheet] = useState(false);
+  const [jumpOpen, setJumpOpen] = useState(false);
+  const openJump = useCallback(() => setJumpOpen(true), []);
+  useQuickJumpShortcut(openJump);
   // Badge counts for staff who can see the dashboard; the same numbers the admin home shows.
   const counts = useApi<AdminCounts>(
     me && me.status !== 'pending' && can('admin_dashboard') ? '/admin/dashboard' : null,
@@ -275,6 +279,13 @@ export default function Layout() {
           </div>
 
           <div className="topbar-actions row nowrap">
+            {!pending && (
+              <button type="button" className="btn sm secondary topbar-jump hide-phone" onClick={openJump}>
+                <Search size={16} aria-hidden="true" />
+                <span>{t('jumpButton')}</span>
+                <kbd aria-hidden="true">{/Mac|iPhone|iPad/.test(navigator.platform) ? '⌘K' : 'Ctrl K'}</kbd>
+              </button>
+            )}
             {!pending && can('help') && (
               <IconButton
                 to="/help"
@@ -372,6 +383,14 @@ export default function Layout() {
         </NavLink>
       </nav>
 
+      {jumpOpen && !pending && (
+        <QuickJump
+          pages={[...member, ...service, ...staff, profileTab].filter(
+            (p, i, all) => all.findIndex((x) => x.to === p.to) === i,
+          )}
+          onClose={() => setJumpOpen(false)}
+        />
+      )}
       {adminSheet && (
         <Modal title={t('adminSheetTitle')} onClose={() => setAdminSheet(false)} size="sm">
           <div className="stack">

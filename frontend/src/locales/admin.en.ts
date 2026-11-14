@@ -44,8 +44,10 @@ export default {
       review: 'Review',
       open: 'Open',
       answer: 'Answer',
-      today: 'Today: {total} rides, {confirmed} confirmed',
-      live: '{live} drivers out now',
+      today: 'Today: {count} rides, {confirmed} confirmed',
+      today_one: 'Today: {count} ride, {confirmed} confirmed',
+      live: '{count} drivers out now',
+      live_one: '{count} driver out now',
     },
   },
   rides: {

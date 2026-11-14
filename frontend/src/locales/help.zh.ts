@@ -183,4 +183,12 @@ export default {
   staffReplyPrefix: '↳ 职员：',
   untitledStep: '未命名步骤',
   guideEditPage: '编辑指南',
+  arrangeTitle: '调整顺序',
+  arrangeHint: '按希望大家看到的顺序排列指南。会员只会看到会员指南，并按此顺序显示。',
+  arrangeUp: '将 {title} 上移',
+  arrangeDown: '将 {title} 下移',
+  arrangeSave: '保存顺序',
+  arrangeCancel: '取消',
+  arrangeSaved: '指南顺序已保存',
+  noLink: '不链接',
 };

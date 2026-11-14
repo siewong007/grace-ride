@@ -183,4 +183,12 @@ export default {
   staffReplyPrefix: '↳ Staff:',
   untitledStep: 'Untitled step',
   guideEditPage: 'Edit guide',
+  arrangeTitle: 'Arrange',
+  arrangeHint: 'Put guides in the order people should see them. Members only see member guides, in this order.',
+  arrangeUp: 'Move {title} up',
+  arrangeDown: 'Move {title} down',
+  arrangeSave: 'Save order',
+  arrangeCancel: 'Cancel',
+  arrangeSaved: 'Guide order saved',
+  noLink: 'No link',
 };

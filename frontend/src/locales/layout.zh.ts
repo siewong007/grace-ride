@@ -47,4 +47,12 @@ export default {
   groupSystem: '系统',
   waitingCount: '{count} 项待处理',
   adminSheetTitle: '管理',
+  jumpButton: '搜索',
+  jumpTitle: '前往',
+  jumpPlaceholder: '搜索页面、指南和求助',
+  jumpPages: '页面',
+  jumpGuides: '指南',
+  jumpRequests: '求助',
+  jumpNone: '没有匹配的结果，换个词试试。',
+  jumpCount: '{count} 个结果',
 };

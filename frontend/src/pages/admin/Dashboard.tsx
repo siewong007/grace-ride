@@ -180,8 +180,8 @@ export default function Dashboard() {
   return (
     <Page>
       <PageHeader
-        title={`${fmtDay(`${d.today}T00:00`, ft)} ${t('dashboard.title')}`}
-        subtitle={t('dashboard.desc')}
+        title={t('dashboard.title')}
+        subtitle={`${fmtDay(`${d.today}T00:00`, ft)} · ${t('dashboard.desc')}`}
         actions={
           <Link className="btn" to="/admin/live">
             {t('dashboard.liveMap', { live: d.live_drivers, max: d.max_live_drivers })}
@@ -219,10 +219,10 @@ export default function Dashboard() {
       {/* Today at a glance: numbers that are not actions, in one line. */}
       <p className="muted work-queue-today">
         <Link to={`/admin/rides?date=${d.today}`}>
-          {t('dashboard.q.today', { total: d.today_total, confirmed: d.today_confirmed })}
+          {t('dashboard.q.today', { count: d.today_total, confirmed: d.today_confirmed })}
         </Link>
         {' · '}
-        <Link to="/admin/live">{t('dashboard.q.live', { live: d.live_drivers })}</Link>
+        <Link to="/admin/live">{t('dashboard.q.live', { count: d.live_drivers })}</Link>
       </p>
 
       {/* Two-column layout on desktop */}
