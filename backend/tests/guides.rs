@@ -150,9 +150,14 @@ async fn guides_are_staff_only() {
         let cookie = login(&st, email).await;
         let r = call(&app, Method::GET, "/api/help/guides", Some(&cookie), None).await;
         assert_eq!(r.status, StatusCode::OK, "{email} should list guides");
-        assert_eq!(r.json.as_array().unwrap().len(), 1);
-        assert_eq!(r.json[0]["slug"], "published-guide");
-        assert_eq!(r.json[0]["step_count"], 1);
+        let published = r
+            .json
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|g| g["slug"] == "published-guide")
+            .expect("published-guide should be listed");
+        assert_eq!(published["step_count"], 1);
         let r = call(
             &app,
             Method::GET,
@@ -182,7 +187,9 @@ async fn drafts_hidden_from_non_editors() {
         None,
     )
     .await;
-    assert_eq!(r.json.as_array().unwrap().len(), 1);
+    let slugs: Vec<&str> = r.json.as_array().unwrap().iter().map(|g| g["slug"].as_str().unwrap()).collect();
+    assert!(slugs.contains(&"live-guide"));
+    assert!(!slugs.contains(&"draft-guide"));
     let r = call(
         &app,
         Method::GET,
@@ -203,7 +210,9 @@ async fn drafts_hidden_from_non_editors() {
         None,
     )
     .await;
-    assert_eq!(r.json.as_array().unwrap().len(), 2);
+    let slugs: Vec<&str> = r.json.as_array().unwrap().iter().map(|g| g["slug"].as_str().unwrap()).collect();
+    assert!(slugs.contains(&"draft-guide"));
+    assert!(slugs.contains(&"live-guide"));
     let r = call(
         &app,
         Method::GET,
@@ -305,4 +314,37 @@ async fn guide_validation() {
     b["steps"] = json!([{"title_en": "", "title_zh": "", "body_en": "", "body_zh": "", "link": ""}]);
     let r = call(&app, Method::POST, "/api/help/guides", Some(&transport), Some(b)).await;
     assert_eq!(r.json["code"], "GUIDE_STEP_INVALID");
+}
+
+#[tokio::test]
+async fn starter_guides_are_seeded() {
+    let (app, st) = setup().await;
+    let transport = login(&st, "transport@example.org").await;
+    let r = call(&app, Method::GET, "/api/help/guides", Some(&transport), None).await;
+    assert_eq!(r.status, StatusCode::OK);
+    let slugs: Vec<&str> = r
+        .json
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|g| g["slug"].as_str().unwrap())
+        .collect();
+    for expected in [
+        "plan-transport",
+        "review-reimbursements",
+        "send-announcement",
+        "manage-members",
+        "work-help-desk",
+        "audit-settings",
+    ] {
+        assert!(slugs.contains(&expected), "missing seeded guide {expected}");
+    }
+    // Every seeded guide has steps, and every step has a bilingual title.
+    for g in r.json.as_array().unwrap() {
+        assert!(
+            g["step_count"].as_i64().unwrap() >= 2,
+            "guide {} too thin",
+            g["slug"]
+        );
+    }
 }

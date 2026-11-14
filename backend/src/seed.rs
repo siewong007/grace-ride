@@ -255,6 +255,133 @@ async fn insert_reference_data(db: &PgPool) -> anyhow::Result<()> {
     sqlx::query("INSERT INTO groups (name, description, is_all, demo_batch) VALUES ('全体会员', '所有获批准的会员', 1, NULL) ON CONFLICT (name) DO NOTHING").execute(db).await?;
     sqlx::query("INSERT INTO groups (name, description, demo_batch) VALUES ('青年团契', 'PJ State CMC 青年团契', NULL) ON CONFLICT (name) DO NOTHING").execute(db).await?;
     sqlx::query("INSERT INTO groups (name, description, demo_batch) VALUES ('运动兴趣小组', '羽球、保龄球、皮划艇与散步', NULL) ON CONFLICT (name) DO NOTHING").execute(db).await?;
+
+    // Starter admin workflow guides — reference content, editable in-app by
+    // help-centre staff. ON CONFLICT keeps operator edits on re-deploys.
+    let guides: [(&str, &str, &str, &str, &str, serde_json::Value); 6] = [
+        (
+            "plan-transport",
+            "为活动安排交通",
+            "Plan transport for an event",
+            "从报名到当天实况，完整走一遍交通安排流程。",
+            "Walk through arranging rides for an event, from sign-ups to the live map.",
+            json!([
+                {"title_en": "Find the event", "title_zh": "找到活动",
+                 "body_en": "Open Events and pick the service or activity that needs transport.",
+                 "body_zh": "打开「活动」页，选择需要安排交通的聚会或活动。",
+                 "link": "/events"},
+                {"title_en": "Open the planning board", "title_zh": "打开交通规划板",
+                 "body_en": "From the event, open Plan transport. Review demand by area, auto-arrange or assign drivers manually, then save.",
+                 "body_zh": "在活动里进入「规划交通」。按区域查看需求，自动编排或手动指派司机后保存。",
+                 "link": ""},
+                {"title_en": "Watch it run on the day", "title_zh": "当天跟踪",
+                 "body_en": "On the day, use the live map to follow drivers sharing GPS and react to delays.",
+                 "body_zh": "活动当天通过实时地图查看共享位置的司机，及时处理延误。",
+                 "link": "/admin/live"}
+            ]),
+        ),
+        (
+            "review-reimbursements",
+            "审核与支付报销",
+            "Review and pay reimbursements",
+            "交通组先审核，财务再记录付款。",
+            "Transport reviews claims first; finance records the payout.",
+            json!([
+                {"title_en": "Review the queue", "title_zh": "审核队列",
+                 "body_en": "Open the reimbursement review page. Check the claim and receipt, then approve, return or reject.",
+                 "body_zh": "打开报销审核页。核对申请与收据，然后批准、退回或拒绝。",
+                 "link": "/admin/reimbursements"},
+                {"title_en": "Record the payout", "title_zh": "记录付款",
+                 "body_en": "Approved claims move to the payment queue. After transferring, record the payout with the reference.",
+                 "body_zh": "已批准的申请进入付款队列。转账后记录付款及凭据编号。",
+                 "link": "/admin/reimbursements"}
+            ]),
+        ),
+        (
+            "send-announcement",
+            "发布通知",
+            "Send an announcement",
+            "向全体或指定群体发送重要通知。",
+            "Send an important notice to everyone or a chosen group.",
+            json!([
+                {"title_en": "Compose it", "title_zh": "撰写通知",
+                 "body_en": "Open Announcements, write a bilingual title and body, and choose the audience.",
+                 "body_zh": "打开「通知」，填写中英文标题与内容，并选择接收群体。",
+                 "link": "/admin/announcements"},
+                {"title_en": "Members get notified", "title_zh": "会员收到通知",
+                 "body_en": "Members see it under Notifications with a badge; urgent notices can also trigger reminders.",
+                 "body_zh": "会员会在「通知」页看到并显示角标；重要通知还会触发提醒。",
+                 "link": "/notifications"}
+            ]),
+        ),
+        (
+            "manage-members",
+            "管理会员与邀请",
+            "Manage members and invites",
+            "审批新会员、发放邀请、处理账号找回。",
+            "Approve members, hand out invites and handle account recovery.",
+            json!([
+                {"title_en": "The directory", "title_zh": "会员名录",
+                 "body_en": "Open Members to see everyone with contact details. Approve pending applicants, disable or restore accounts, and set groups.",
+                 "body_zh": "打开「会员」查看名录与联系方式。审批待定申请人、停用或恢复账号、调整群体。",
+                 "link": "/admin/members"},
+                {"title_en": "Invites and recovery", "title_zh": "邀请与找回",
+                 "body_en": "Create single-use invite links for new members, and approve or reject recovery requests from the same area.",
+                 "body_zh": "为新会员创建一次性邀请链接；账号找回申请也在同一处审批。",
+                 "link": "/admin/members"}
+            ]),
+        ),
+        (
+            "work-help-desk",
+            "处理帮助中心求助",
+            "Work the help desk",
+            "跟进会员在帮助中心提出的问题。",
+            "Follow up on questions members raise in the help centre.",
+            json!([
+                {"title_en": "See every request", "title_zh": "查看全部求助",
+                 "body_en": "Open the Help centre and switch to All requests. Open status means the member is waiting.",
+                 "body_zh": "打开「帮助中心」并切换到「全部求助」。open 状态表示会员仍在等待。",
+                 "link": "/help"},
+                {"title_en": "Reply and close", "title_zh": "回复并结案",
+                 "body_en": "Reply in the ticket thread, then close it once resolved. Closed tickets stay readable.",
+                 "body_zh": "在对话中回复会员，问题解决后结案。已结案的求助仍可查看。",
+                 "link": "/help"}
+            ]),
+        ),
+        (
+            "audit-settings",
+            "审计与设置",
+            "Audit and settings",
+            "查看操作记录、调整系统设置。",
+            "Review the action log and adjust system settings.",
+            json!([
+                {"title_en": "The audit log", "title_zh": "审计日志",
+                 "body_en": "Open Audit to see who did what, with filters and CSV export. Retention follows the configured window.",
+                 "body_zh": "打开「审计」查看操作记录，可筛选并导出 CSV。保存期限按配置执行。",
+                 "link": "/admin/audit"},
+                {"title_en": "Settings", "title_zh": "系统设置",
+                 "body_en": "Settings holds groups, areas and app-wide configuration such as reimbursement rates.",
+                 "body_zh": "「设置」管理群体、区域及全局配置（如报销费率）。",
+                 "link": "/admin/settings"}
+            ]),
+        ),
+    ];
+    for (i, (slug, tzh, ten, szh, sen, steps)) in guides.iter().enumerate() {
+        sqlx::query(
+            "INSERT INTO guide_workflows (slug, title_zh, title_en, summary_zh, summary_en, steps, sort_order, published, updated_at)
+             VALUES ($1,$2,$3,$4,$5,$6::jsonb,$7,TRUE,$8) ON CONFLICT (slug) DO NOTHING",
+        )
+        .bind(slug)
+        .bind(tzh)
+        .bind(ten)
+        .bind(szh)
+        .bind(sen)
+        .bind(steps.to_string())
+        .bind(i as i32)
+        .bind(now_kl())
+        .execute(db)
+        .await?;
+    }
     Ok(())
 }
 
