@@ -236,3 +236,79 @@ pub fn today_kl() -> NaiveDate {
     let offset = FixedOffset::east_opt(KL_OFFSET_SECS).expect("UTC+8 is a valid offset");
     Utc::now().with_timezone(&offset).date_naive()
 }
+
+/// Build an `ORDER BY` body from an allow-list of `(client_key, SQL expression)`.
+/// Unknown keys use `default`; any direction other than `desc` sorts ascending.
+/// `tiebreak` keeps paginated results stable when the sort value repeats.
+pub fn order_by(
+    sort: Option<&str>,
+    dir: Option<&str>,
+    allowed: &[(&str, &str)],
+    default: &str,
+    tiebreak: &str,
+) -> String {
+    let Some((_, column)) = sort
+        .map(str::trim)
+        .and_then(|key| allowed.iter().find(|(name, _)| *name == key))
+    else {
+        return default.to_string();
+    };
+    let direction = if dir
+        .map(str::trim)
+        .is_some_and(|d| d.eq_ignore_ascii_case("desc"))
+    {
+        "DESC"
+    } else {
+        "ASC"
+    };
+    format!("{column} {direction} NULLS LAST, {tiebreak}")
+}
+
+#[cfg(test)]
+mod order_by_tests {
+    use super::order_by;
+
+    const ALLOWED: &[(&str, &str)] = &[("name", "u.name"), ("created", "u.created_at")];
+
+    #[test]
+    fn uses_allow_listed_column_and_direction() {
+        assert_eq!(
+            order_by(
+                Some("name"),
+                Some("desc"),
+                ALLOWED,
+                "u.name ASC",
+                "u.id ASC"
+            ),
+            "u.name DESC NULLS LAST, u.id ASC"
+        );
+        assert_eq!(
+            order_by(Some("name"), None, ALLOWED, "u.name ASC", "u.id ASC"),
+            "u.name ASC NULLS LAST, u.id ASC"
+        );
+    }
+
+    #[test]
+    fn falls_back_for_unknown_sort_and_direction() {
+        assert_eq!(
+            order_by(
+                Some("name; DROP TABLE users"),
+                Some("desc"),
+                ALLOWED,
+                "u.name ASC, u.id ASC",
+                "u.id ASC"
+            ),
+            "u.name ASC, u.id ASC"
+        );
+        assert_eq!(
+            order_by(
+                Some("created"),
+                Some("sideways"),
+                ALLOWED,
+                "u.name ASC",
+                "u.id ASC"
+            ),
+            "u.created_at ASC NULLS LAST, u.id ASC"
+        );
+    }
+}
