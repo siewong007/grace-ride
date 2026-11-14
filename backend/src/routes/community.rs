@@ -1160,122 +1160,115 @@ fn reimb_json(r: &ReimbRow, u: &CurrentUser) -> Value {
 #[derive(Deserialize)]
 struct ReimbQuery {
     scope: Option<String>, // mine | review | payout
+    q: Option<String>,
+    status: Option<String>,
+    sort: Option<String>,
+    dir: Option<String>,
     page: Option<i64>,
     limit: Option<i64>,
 }
+
+const REIMB_SORTS: &[(&str, &str)] = &[
+    ("created_at", "r.created_at"),
+    ("amount_cents", "r.amount_cents"),
+    ("applicant", "u.name"),
+    (
+        "status",
+        "CASE r.status WHEN 'pending' THEN 0 WHEN 'returned' THEN 1 WHEN 'approved' THEN 2 WHEN 'paid' THEN 3 ELSE 4 END",
+    ),
+    ("id", "r.id"),
+];
 
 async fn list_reimbursements(
     State(st): State<AppState>,
     u: CurrentUser,
     Query(q): Query<ReimbQuery>,
 ) -> AppResult<Json<Value>> {
-    let is_paginated = q.page.is_some() || q.limit.is_some();
-    let page_val = q.page.unwrap_or(1).max(1);
-    let limit_val = q.limit.unwrap_or(25).clamp(1, 100);
-    let offset = (page_val - 1) * limit_val;
+    let (permission, scope_filter, default_order, unpaginated_limit) = match q.scope.as_deref() {
+        Some("review") => (
+            Page::AdminReimbReview,
+            "TRUE",
+            "CASE r.status WHEN 'pending' THEN 0 ELSE 1 END, r.id DESC",
+            200,
+        ),
+        Some("payout") => (
+            Page::AdminReimbPay,
+            "r.status IN ('approved','paid')",
+            "CASE r.status WHEN 'approved' THEN 0 ELSE 1 END, r.id DESC",
+            200,
+        ),
+        _ => (Page::Reimbursements, "r.user_id = $1", "r.id DESC", 100),
+    };
+    require(&u, permission, Act::View)?;
 
-    match q.scope.as_deref() {
-        Some("review") => {
-            require(&u, Page::AdminReimbReview, Act::View)?;
-            if is_paginated {
-                let total: (i64,) = sqlx::query_as("SELECT COUNT(*) FROM reimbursements r")
-                    .fetch_one(&st.db)
-                    .await?;
-                let rows = sqlx::query_as::<_, ReimbRow>(&format!(
-                    "{REIMB_SELECT} ORDER BY CASE r.status WHEN 'pending' THEN 0 ELSE 1 END, r.id DESC LIMIT $1 OFFSET $2"
-                ))
-                .bind(limit_val)
-                .bind(offset)
-                .fetch_all(&st.db)
-                .await?;
-                let total_pages = ((total.0 as f64) / (limit_val as f64)).ceil() as i64;
-                Ok(Json(json!({
-                    "items": rows.iter().map(|r| reimb_json(r, &u)).collect::<Vec<_>>(),
-                    "total": total.0,
-                    "page": page_val,
-                    "page_size": limit_val,
-                    "total_pages": total_pages.max(1),
-                })))
-            } else {
-                let rows = sqlx::query_as::<_, ReimbRow>(&format!("{REIMB_SELECT} ORDER BY CASE r.status WHEN 'pending' THEN 0 ELSE 1 END, r.id DESC LIMIT 200"))
-                    .fetch_all(&st.db)
-                    .await?;
-                Ok(Json(json!(rows
-                    .iter()
-                    .map(|r| reimb_json(r, &u))
-                    .collect::<Vec<_>>())))
-            }
-        }
-        Some("payout") => {
-            require(&u, Page::AdminReimbPay, Act::View)?;
-            if is_paginated {
-                let total: (i64,) = sqlx::query_as(
-                    "SELECT COUNT(*) FROM reimbursements r WHERE r.status IN ('approved','paid')",
-                )
+    let is_paginated = q.page.is_some() || q.limit.is_some();
+    let page = q.page.unwrap_or(1).max(1);
+    let limit = if is_paginated {
+        q.limit.unwrap_or(25).clamp(1, 100)
+    } else {
+        unpaginated_limit
+    };
+    let offset = (page - 1).saturating_mul(limit);
+    let order = crate::util::order_by(
+        q.sort.as_deref(),
+        q.dir.as_deref(),
+        REIMB_SORTS,
+        default_order,
+        "r.id DESC",
+    );
+    let search =
+        q.q.as_deref()
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+            .map(like_pattern);
+    let status = q.status.as_deref().map(str::trim).filter(|s| !s.is_empty());
+    let finance = u.can(Page::AdminReimbPay, Act::View);
+    // Payee-name matches follow the same per-claim visibility as reimb_json.
+    let where_sql = format!(
+        "WHERE {scope_filter}
+         AND ($3::text IS NULL OR u.name ILIKE $3 OR r.description ILIKE $3
+              OR (($2 OR r.user_id = $1) AND r.payee_name ILIKE $3))
+         AND ($4::text IS NULL OR r.status = $4)"
+    );
+    let total = if is_paginated {
+        let count_sql = format!(
+            "SELECT COUNT(*) FROM reimbursements r JOIN users u ON u.id=r.user_id {where_sql}"
+        );
+        Some(
+            sqlx::query_scalar::<_, i64>(&count_sql)
+                .bind(u.id)
+                .bind(finance)
+                .bind(search.as_deref())
+                .bind(status)
                 .fetch_one(&st.db)
-                .await?;
-                let rows = sqlx::query_as::<_, ReimbRow>(&format!(
-                    "{REIMB_SELECT} WHERE r.status IN ('approved','paid') ORDER BY CASE r.status WHEN 'approved' THEN 0 ELSE 1 END, r.id DESC LIMIT $1 OFFSET $2"
-                ))
-                .bind(limit_val)
-                .bind(offset)
-                .fetch_all(&st.db)
-                .await?;
-                let total_pages = ((total.0 as f64) / (limit_val as f64)).ceil() as i64;
-                Ok(Json(json!({
-                    "items": rows.iter().map(|r| reimb_json(r, &u)).collect::<Vec<_>>(),
-                    "total": total.0,
-                    "page": page_val,
-                    "page_size": limit_val,
-                    "total_pages": total_pages.max(1),
-                })))
-            } else {
-                let rows = sqlx::query_as::<_, ReimbRow>(&format!("{REIMB_SELECT} WHERE r.status IN ('approved','paid') ORDER BY CASE r.status WHEN 'approved' THEN 0 ELSE 1 END, r.id DESC LIMIT 200"))
-                    .fetch_all(&st.db)
-                    .await?;
-                Ok(Json(json!(rows
-                    .iter()
-                    .map(|r| reimb_json(r, &u))
-                    .collect::<Vec<_>>())))
-            }
-        }
-        _ => {
-            require(&u, Page::Reimbursements, Act::View)?;
-            if is_paginated {
-                let total: (i64,) =
-                    sqlx::query_as("SELECT COUNT(*) FROM reimbursements r WHERE r.user_id=$1")
-                        .bind(u.id)
-                        .fetch_one(&st.db)
-                        .await?;
-                let rows = sqlx::query_as::<_, ReimbRow>(&format!(
-                    "{REIMB_SELECT} WHERE r.user_id=$1 ORDER BY r.id DESC LIMIT $2 OFFSET $3"
-                ))
-                .bind(u.id)
-                .bind(limit_val)
-                .bind(offset)
-                .fetch_all(&st.db)
-                .await?;
-                let total_pages = ((total.0 as f64) / (limit_val as f64)).ceil() as i64;
-                Ok(Json(json!({
-                    "items": rows.iter().map(|r| reimb_json(r, &u)).collect::<Vec<_>>(),
-                    "total": total.0,
-                    "page": page_val,
-                    "page_size": limit_val,
-                    "total_pages": total_pages.max(1),
-                })))
-            } else {
-                let rows = sqlx::query_as::<_, ReimbRow>(&format!(
-                    "{REIMB_SELECT} WHERE r.user_id=$1 ORDER BY r.id DESC LIMIT 100"
-                ))
-                .bind(u.id)
-                .fetch_all(&st.db)
-                .await?;
-                Ok(Json(json!(rows
-                    .iter()
-                    .map(|r| reimb_json(r, &u))
-                    .collect::<Vec<_>>())))
-            }
-        }
+                .await?,
+        )
+    } else {
+        None
+    };
+
+    let sql = format!("{REIMB_SELECT} {where_sql} ORDER BY {order} LIMIT $5 OFFSET $6");
+    let rows = sqlx::query_as::<_, ReimbRow>(&sql)
+        .bind(u.id)
+        .bind(finance)
+        .bind(search.as_deref())
+        .bind(status)
+        .bind(limit)
+        .bind(offset)
+        .fetch_all(&st.db)
+        .await?;
+    let items = rows.iter().map(|r| reimb_json(r, &u)).collect::<Vec<_>>();
+    if let Some(total) = total {
+        let total_pages = ((total as f64) / (limit as f64)).ceil() as i64;
+        Ok(Json(json!({
+            "items": items,
+            "total": total,
+            "page": page,
+            "page_size": limit,
+            "total_pages": total_pages.max(1),
+        })))
+    } else {
+        Ok(Json(json!(items)))
     }
 }
 
