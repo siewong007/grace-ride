@@ -27,6 +27,8 @@ For an event, transport staff can use the planning board to review passengers an
 - Substitute-transport claims go through transport review and manual finance payout recording. Completed volunteer rides can generate rate-based reimbursement records. These records do not transfer money.
 - Members review notifications, help threads and monthly reports; staff uses dashboards, reports, audit and settings according to permissions.
 
+Help-centre staff also maintain the Admin guide tab: database-managed, bilingual workflow walkthroughs whose steps link straight into the admin pages (/help → Admin guide).
+
 ## Development and documentation
 
 1. Inspect the working tree and preserve unrelated edits. Read the canonical document for the module being changed and the relevant source/tests.
