@@ -1,11 +1,11 @@
-import { ComponentType, lazy, ReactNode, Suspense, useEffect } from 'react';
+import { ComponentType, lazy, ReactNode, Suspense, useEffect, useLayoutEffect } from 'react';
 import { Navigate, Route, Routes, useLocation } from 'react-router-dom';
 import { useAuth } from './auth';
 import Layout from './components/Layout';
 import { EmptyState, Page, Spinner } from './components/ui';
 import type { Act, PageKey } from './perms';
 import { useTranslation } from 'react-i18next';
-import { hideSplash } from './splash';
+import { hideSplash, holdSplash } from './splash';
 import { AutoLockProvider } from './components/AutoLock';
 import Login from './pages/Login';
 import Home from './pages/Home';
@@ -50,7 +50,14 @@ const PlanTransport = lazy(() => import('./pages/admin/PlanTransport'));
 const AdminRoles = lazy(() => import('./pages/admin/Roles'));
 
 /** Wrap a lazily-loaded page so only the content area shows a spinner while it loads. */
-const page = (el: ReactNode) => <Suspense fallback={<div className="page-loading"><Spinner /></div>}>{el}</Suspense>;
+const page = (el: ReactNode) => <Suspense fallback={<PageLoading />}>{el}</Suspense>;
+
+/** Suspense fallback for a lazy page. On first load it keeps the boot splash up instead, so the
+ *  splash hands straight over to the page rather than flashing a second loading mark. */
+function PageLoading() {
+  useLayoutEffect(() => holdSplash(), []);
+  return <div className="page-loading"><Spinner /></div>;
+}
 
 type Need = PageKey | [PageKey, Act];
 

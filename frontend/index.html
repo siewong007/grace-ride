@@ -14,8 +14,10 @@
          Pure HTML + CSS so it paints before any JavaScript; src/splash.ts fades it out.
          Jost comes from the app stylesheet (@fontsource/jost) once it loads. The real space in the
          wordmark keeps it readable as "Grace Ride"; word-spacing narrows Jost's 0.3em space to the kit's 0.125em gap. */
-      #splash{position:fixed;inset:0;z-index:2000;overflow:auto;background:#FFFFFF;color:#474A4F;font-family:Jost,'Century Gothic',Futura,'Segoe UI',sans-serif;transition:opacity .3s ease}
-      #splash.is-done{opacity:0;pointer-events:none}
+      #splash{position:fixed;inset:0;z-index:2000;overflow:auto;background:#FFFFFF;color:#474A4F;font-family:Jost,'Century Gothic',Futura,'Segoe UI',sans-serif;transition:opacity .5s cubic-bezier(.4,0,.2,1),visibility 0s linear .5s}
+      #splash.is-done{opacity:0;visibility:hidden;pointer-events:none}
+      #splash .screen{transition:transform .5s cubic-bezier(.4,0,.2,1)}
+      #splash.is-done .screen{transform:scale(.97)}
       #splash .screen{min-height:100%;box-sizing:border-box;padding:calc(56px + env(safe-area-inset-top,0px)) 32px calc(48px + env(safe-area-inset-bottom,0px));display:flex;flex-direction:column;align-items:center;justify-content:space-between}
       #splash .middle{display:flex;flex-direction:column;align-items:center;gap:16px}
       #splash svg{display:block;overflow:visible}

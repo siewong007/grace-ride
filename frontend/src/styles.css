@@ -892,6 +892,9 @@ p.empty-title { font-weight: 400; color: var(--muted); }
   gap: var(--space-3);
 }
 .spinner { display: grid; place-items: center; margin: var(--space-10) auto; }
+/* Fade the loading mark in after a beat, so quick loads never flash it. */
+.spinner { animation: spinner-in .3s .2s cubic-bezier(.4, 0, .2, 1) both; }
+@keyframes spinner-in { from { opacity: 0; } to { opacity: 1; } }
 @keyframes spin { to { transform: rotate(360deg); } }
 
 /* Animated loading mark, from the logo kit's animation/grace-ride-loading-mark.svg. */
@@ -990,6 +993,9 @@ main:focus { outline: none; }
 
 /* Route-level loading placeholder (lazy-loaded pages). */
 .page-loading { min-height: 40vh; display: grid; place-items: center; }
+/* Pages ease in when they mount instead of snapping in after a loading state. */
+.page-container { animation: page-in .28s cubic-bezier(.2, .8, .2, 1) backwards; }
+@keyframes page-in { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: none; } }
 
 /* ---------- Phase 7: Rider Core Flows ---------- */
 

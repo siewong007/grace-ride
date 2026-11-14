@@ -16,7 +16,7 @@ import '@fontsource/jost/latin-700.css';
 import './styles.css';
 
 // App normally hides the boot splash once auth resolves; never leave it covering a stuck or crashed load.
-window.setTimeout(hideSplash, 10_000);
+window.setTimeout(() => hideSplash(true), 10_000);
 
 ReactDOM.createRoot(document.getElementById('root')!).render(
   <React.StrictMode>
