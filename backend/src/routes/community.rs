@@ -32,6 +32,8 @@ pub fn router() -> Router<AppState> {
         .route("/help/{id}", get(get_ticket))
         .route("/help/{id}/replies", post(reply_ticket))
         .route("/help/{id}/close", post(close_ticket))
+        .route("/help/guides", get(list_guides))
+        .route("/help/guides/{key}", get(get_guide))
         .route(
             "/reimbursements",
             get(list_reimbursements).post(create_reimbursement),
@@ -534,6 +536,78 @@ async fn close_ticket(
     )
     .await;
     Ok(Json(json!({"ok": true})))
+}
+
+// ---------------- Admin workflow guides ----------------
+
+/// The in-app manual is readable by anyone who can see any staff page and
+/// written by help-centre staff only (see CRUD handlers below).
+fn any_admin_page(u: &CurrentUser) -> bool {
+    crate::perms::CATALOG
+        .iter()
+        .any(|d| d.page.area() != crate::perms::Area::Member && u.can(d.page, Act::View))
+}
+
+#[derive(Deserialize)]
+struct GuideQuery {
+    include_drafts: Option<bool>,
+}
+
+async fn list_guides(
+    State(st): State<AppState>,
+    u: CurrentUser,
+    Query(q): Query<GuideQuery>,
+) -> AppResult<Json<Value>> {
+    if !any_admin_page(&u) {
+        return Err(forbidden(u.lang, ErrorKey::Forbidden));
+    }
+    let with_drafts = q.include_drafts.unwrap_or(false) && u.can(Page::AdminHelp, Act::Update);
+    let rows: Vec<(i64, String, String, String, String, String, bool, i64)> = sqlx::query_as(
+        "SELECT id, slug, title_en, title_zh, summary_en, summary_zh, published, jsonb_array_length(steps)::bigint
+         FROM guide_workflows WHERE ($1 OR published) ORDER BY sort_order, id",
+    )
+    .bind(with_drafts)
+    .fetch_all(&st.db)
+    .await?;
+    Ok(Json(Value::Array(
+        rows.into_iter()
+            .map(|(id, slug, ten, tzh, sen, szh, published, n)| {
+                json!({
+                    "id": id, "slug": slug, "title_en": ten, "title_zh": tzh,
+                    "summary_en": sen, "summary_zh": szh, "published": published,
+                    "step_count": n,
+                })
+            })
+            .collect(),
+    )))
+}
+
+async fn get_guide(
+    State(st): State<AppState>,
+    u: CurrentUser,
+    Path(slug): Path<String>,
+) -> AppResult<Json<Value>> {
+    if !any_admin_page(&u) {
+        return Err(forbidden(u.lang, ErrorKey::Forbidden));
+    }
+    let row: Option<(i64, String, String, String, String, String, bool, String)> =
+        sqlx::query_as(
+            "SELECT id, slug, title_en, title_zh, summary_en, summary_zh, published, steps::text
+             FROM guide_workflows WHERE slug=$1",
+        )
+        .bind(&slug)
+        .fetch_optional(&st.db)
+        .await?;
+    let (id, slug, ten, tzh, sen, szh, published, steps) = row.ok_or(not_found(u.lang))?;
+    if !published && !u.can(Page::AdminHelp, Act::Update) {
+        // Drafts stay invisible to non-editors; 404 avoids leaking existence.
+        return Err(not_found(u.lang));
+    }
+    let steps: Value = serde_json::from_str(&steps).unwrap_or(json!([]));
+    Ok(Json(json!({
+        "id": id, "slug": slug, "title_en": ten, "title_zh": tzh,
+        "summary_en": sen, "summary_zh": szh, "published": published, "steps": steps,
+    })))
 }
 
 // ---------------- Grab reimbursements ----------------
