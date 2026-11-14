@@ -2,9 +2,8 @@ import { ComponentType, lazy, ReactNode, Suspense, useEffect, useLayoutEffect } 
 import { Navigate, Route, Routes, useLocation } from 'react-router-dom';
 import { useAuth } from './auth';
 import Layout from './components/Layout';
-import { EmptyState, Page, Spinner } from './components/ui';
+import { NoAccess, Page, Spinner } from './components/ui';
 import type { Act, PageKey } from './perms';
-import { useTranslation } from 'react-i18next';
 import { hideSplash, holdSplash } from './splash';
 import { AutoLockProvider } from './components/AutoLock';
 import Login from './pages/Login';
@@ -66,14 +65,13 @@ type Need = PageKey | [PageKey, Act];
  *  enforces the same rule; this saves a member from opening a page that can't load. */
 function Gate({ any, children }: { any: Need[]; children: ReactNode }) {
   const { me, can } = useAuth();
-  const { t } = useTranslation();
   const allowed = any.some((n) => (typeof n === 'string' ? can(n) : can(n[0], n[1])));
   if (allowed) return <>{children}</>;
   // Staff permissions stay off until the member signs in with a passkey or 2FA.
   const needsMfa = !!me?.privileged && !me.mfa_ok;
   return (
     <Page>
-      <EmptyState title={t('noAccess.title')} description={needsMfa ? t('noAccess.mfa') : t('noAccess.body')} />
+      <NoAccess mfa={needsMfa} />
     </Page>
   );
 }

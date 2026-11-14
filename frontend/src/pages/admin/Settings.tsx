@@ -7,6 +7,7 @@ import {
   Card,
   CardSkeleton,
   EmptyState,
+  NoAccess,
   ErrorBox,
   Field,
   Modal,
@@ -42,7 +43,7 @@ export default function Settings() {
   if (!groups && !areas && !rates) {
     return (
       <Page>
-        <EmptyState title={t('settings.noPermission')} />
+        <NoAccess />
       </Page>
     );
   }

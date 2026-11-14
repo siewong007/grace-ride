@@ -48,6 +48,7 @@ export default function AdminRides() {
     setSort,
     setFilter,
     clearFilters,
+    hasFilters,
     queryString,
   } = useTableParams({
     defaultPageSize: 50,
@@ -185,7 +186,12 @@ export default function AdminRides() {
               filterValues={{ ...filters, attention }}
               onFilterChange={setFilter}
               onClearFilters={clearFilters}
-              emptyContent={loading ? <CardSkeleton count={4} /> : <EmptyState title={t('rides.none')} />}
+              emptyContent={loading ? <CardSkeleton count={4} /> : (
+                <EmptyState
+                  title={t('rides.none')}
+                  action={hasFilters ? <Button variant="secondary" onClick={clearFilters}>{t('rides.clearFilters')}</Button> : undefined}
+                />
+              )}
             />
             {!loading && rides.length > 0 && (
               <Pagination

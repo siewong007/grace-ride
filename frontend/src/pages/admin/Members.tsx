@@ -11,6 +11,7 @@ import {
   Card,
   CardSkeleton,
   EmptyState,
+  NoAccess,
   ErrorBox,
   Field,
   Modal,
@@ -95,7 +96,7 @@ export default function Members() {
   if (!tab) {
     return (
       <Page>
-        <EmptyState title={t('members.noPermission')} />
+        <NoAccess />
       </Page>
     );
   }
@@ -143,6 +144,7 @@ function MemberList() {
     setSort,
     setFilter,
     clearFilters,
+    hasFilters,
     queryString,
   } = useTableParams({
     defaultPageSize: 50,
@@ -289,7 +291,12 @@ function MemberList() {
                 {t('common:exportCsv', 'Export CSV')}
               </Button>
             ) : undefined}
-            emptyContent={loading ? <CardSkeleton count={4} /> : <EmptyState title={t('members.none')} />}
+            emptyContent={loading ? <CardSkeleton count={4} /> : (
+                <EmptyState
+                  title={t('members.none')}
+                  action={hasFilters ? <Button variant="secondary" onClick={clearFilters}>{t('common:clearFilters')}</Button> : undefined}
+                />
+              )}
           />
         )}
         {!loading && users.length > 0 && (

@@ -25,6 +25,7 @@ import {
   Info,
   Paperclip,
   X,
+  Lock,
 } from 'lucide-react';
 import { uploadFile } from '../api';
 import { observeElementRect, useVirtualizer } from '@tanstack/react-virtual';
@@ -531,6 +532,26 @@ export function EmptyState({
       {children}
       {action && <div className="empty-action">{action}</div>}
     </div>
+  );
+}
+
+/**
+ * One message for every page the viewer may not open, with a way back. The route guard
+ * uses it too; `mfa` explains that staff pages wait for a passkey or 2FA sign-in.
+ */
+export function NoAccess({ mfa = false }: { mfa?: boolean }) {
+  const { t } = useTranslation();
+  return (
+    <EmptyState
+      icon={<Lock size={28} />}
+      title={t('noAccess.title')}
+      description={mfa ? t('noAccess.mfa') : t('noAccess.body')}
+      action={
+        <Link className="btn secondary" to="/">
+          {t('noAccessHome')}
+        </Link>
+      }
+    />
   );
 }
 

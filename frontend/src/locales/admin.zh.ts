@@ -70,6 +70,7 @@ export default {
     drivers: '位司机出车中',
     driversList: '出车司机',
     none: '目前没有进行中的行程',
+    noneDesc: '司机开始行程后就会显示在这里。',
     trips: '{count} 项行程',
     trips_one: '{count} 项行程',
     updated: '更新',
@@ -194,6 +195,7 @@ export default {
     exportBatchDuitNow: '导出 DuitNow / 银行批量付款 CSV',
     noPermission: '需要交通组或财务权限。',
     none: '没有记录',
+    noneDesc: '新的 Grab 报销申请会显示在这里等待审核。',
     applicant: '申请人',
     amount: '金额',
     description: '说明',
@@ -244,6 +246,7 @@ export default {
     preview: '会员端预览',
     published: '已发布',
     empty: '暂无发布的公告',
+    emptyDesc: '用表单发布一则公告，它会显示在每个人首页的最上方。',
   },
   audit: {
     title: '操作记录',

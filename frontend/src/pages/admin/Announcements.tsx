@@ -141,7 +141,7 @@ export default function Announcements() {
             {loading ? (
               <CardSkeleton count={2} />
             ) : !data?.length ? (
-              <EmptyState title={t('announcements.empty')} />
+              <EmptyState title={t('announcements.empty')} description={can('admin_announcements', 'create') ? t('announcements.emptyDesc') : undefined} />
             ) : (
               <div className="list">
                 {data.map((a) => (

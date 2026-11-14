@@ -178,4 +178,7 @@ export default {
   delayed5mBtnProxy: '{name} 稍慢 5-10 分钟',
   unableToJoinBtnProxy: '{name} 今天无法出行 (跳过该站)',
   driverArrivedGateNoticeProxy: '司机已到达大门外！请提醒 {name} 出门上车。',
+  nextApproval: '已批准。下一项待审批的行程 →',
+  noMoreApprovals: '已批准。没有其他待审批的行程了。',
+  backToQueue: '回到管理首页',
 };

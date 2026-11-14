@@ -94,7 +94,7 @@ export default function AdminLive() {
           {loading ? (
             <CardSkeleton count={3} />
           ) : !data?.drivers.length ? (
-            <EmptyState title={t('live.none')} />
+            <EmptyState title={t('live.none')} description={t('live.noneDesc')} />
           ) : (
             <div className="list">
               {data.drivers.map((d) => {

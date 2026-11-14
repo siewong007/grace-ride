@@ -65,4 +65,6 @@ export default {
   unlocking: '解锁中...',
   lockNow: '锁定屏幕',
   logout: '登出',
+  clearFilters: '清除筛选',
+  noAccessHome: '回到首页',
 };

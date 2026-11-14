@@ -9,6 +9,7 @@ import {
   Card,
   CardSkeleton,
   EmptyState,
+  NoAccess,
   ErrorBox,
   Field,
   Modal,
@@ -49,7 +50,7 @@ export default function AdminReimbursements() {
   if (!canReview && !canPay) {
     return (
       <Page>
-        <EmptyState title={t('reimb.noPermission')} />
+        <NoAccess />
       </Page>
     );
   }
@@ -99,6 +100,7 @@ function List({ scope }: { scope: 'review' | 'payout' }) {
     setSort,
     setFilter,
     clearFilters,
+    hasFilters,
     queryString,
   } = useTableParams({
     defaultPageSize: 25,
@@ -274,7 +276,13 @@ function List({ scope }: { scope: 'review' | 'payout' }) {
               filterValues={filters}
               onFilterChange={setFilter}
               onClearFilters={clearFilters}
-              emptyContent={loading ? <CardSkeleton count={3} /> : <EmptyState title={t('reimb.none')} />}
+              emptyContent={loading ? <CardSkeleton count={3} /> : (
+                <EmptyState
+                  title={t('reimb.none')}
+                  description={hasFilters ? undefined : t('reimb.noneDesc')}
+                  action={hasFilters ? <Button variant="secondary" onClick={clearFilters}>{t('common:clearFilters')}</Button> : undefined}
+                />
+              )}
             />
             {!loading && items.length > 0 && (
               <Pagination

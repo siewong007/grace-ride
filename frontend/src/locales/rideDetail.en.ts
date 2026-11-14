@@ -178,4 +178,7 @@ export default {
   delayed5mBtnProxy: '{name} needs 5-10 more mins',
   unableToJoinBtnProxy: '{name} cannot travel today (skip stop)',
   driverArrivedGateNoticeProxy: 'Driver has arrived outside the gate! Please inform {name} to board.',
+  nextApproval: 'Approved. Next ride waiting for approval →',
+  noMoreApprovals: 'Approved. No more rides are waiting for approval.',
+  backToQueue: 'Back to the admin home',
 };

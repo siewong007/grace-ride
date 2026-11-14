@@ -70,6 +70,7 @@ export default {
     drivers: 'drivers out',
     driversList: 'Drivers out',
     none: 'No trips in progress',
+    noneDesc: 'Drivers appear here as soon as they start a trip.',
     trips: '{count} trips',
     trips_one: '{count} trip',
     updated: 'updated',
@@ -194,6 +195,7 @@ export default {
     exportBatchDuitNow: 'Export DuitNow / Bank batch CSV',
     noPermission: 'Transport or finance privileges required.',
     none: 'No records',
+    noneDesc: 'New Grab claims show up here for review.',
     applicant: 'Applicant',
     amount: 'Amount',
     description: 'Description',
@@ -244,6 +246,7 @@ export default {
     preview: 'Member preview',
     published: 'Published',
     empty: 'No announcements published yet',
+    emptyDesc: 'Write one with the form. It appears at the top of everyone’s home page.',
   },
   audit: {
     title: 'Audit log',

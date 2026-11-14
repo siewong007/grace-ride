@@ -65,4 +65,6 @@ export default {
   unlocking: 'Unlocking...',
   lockNow: 'Lock screen',
   logout: 'Log out',
+  clearFilters: 'Clear filters',
+  noAccessHome: 'Go to home',
 };

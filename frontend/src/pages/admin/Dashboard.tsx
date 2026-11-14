@@ -10,6 +10,7 @@ import {
   CardSkeleton,
   EmptyState,
   ErrorBox,
+  NoAccess,
   Page,
   PageHeader,
   StatusPill,
@@ -90,9 +91,7 @@ export default function Dashboard() {
   if (!isStaff) {
     return (
       <Page>
-        <EmptyState
-          title={t('dashboard.noPermission')}
-        />
+        <NoAccess />
       </Page>
     );
   }

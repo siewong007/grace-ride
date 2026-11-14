@@ -21,7 +21,7 @@ import {
   Share2,
 } from 'lucide-react';
 import { downloadIcs } from '../calendar';
-import { del, post, useApi } from '../api';
+import { api, del, post, useApi } from '../api';
 import { useAuth } from '../auth';
 import Chat from '../components/Chat';
 import LiveMap, { MapPoint } from '../components/LiveMap';
@@ -1008,6 +1008,16 @@ function StaffActions({ ride: r, reload }: { ride: Ride; reload: () => void }) {
   const drivers = useApi<DriverOpt[]>(modal === 'reassign' ? '/admin/drivers' : null);
   const [driverId, setDriverId] = useState('');
   const open = !['completed', 'cancelled', 'no_show', 'alt_transport', 'in_progress'].includes(r.status);
+  // After an approval: the next ride still waiting (null when the queue is empty), so staff can keep going.
+  const [nextApproval, setNextApproval] = useState<number | null | undefined>(undefined);
+  useEffect(() => setNextApproval(undefined), [r.id]);
+  const approve = () =>
+    run(async () => {
+      await post(`/rides/${r.id}/approve`);
+      const waiting = await api<Ride[]>('/admin/rides?status=pending_approval').catch(() => null);
+      if (waiting) setNextApproval(waiting.find((x) => x.id !== r.id)?.id ?? null);
+      reload();
+    }, t('respondedAccepted'));
 
   const handleStaffNoShow = async () => {
     const ok = await confirm({
@@ -1033,9 +1043,20 @@ function StaffActions({ ride: r, reload }: { ride: Ride; reload: () => void }) {
         </Notice>
       )}
       {r.assistance && <Notice tone="info">{t('assistanceLabel', { assistance: r.assistance })}</Notice>}
+      {nextApproval !== undefined && (
+        <Notice tone="success" icon={<CheckCircle2 size={16} />}>
+          {nextApproval ? (
+            <Link to={`/admin/rides/${nextApproval}`}>{t('nextApproval')}</Link>
+          ) : (
+            <span>
+              {t('noMoreApprovals')} <Link to="/admin">{t('backToQueue')}</Link>
+            </span>
+          )}
+        </Notice>
+      )}
       <div className="btn-row">
         {edit && r.status === 'pending_approval' && (
-          <Button variant="primary" disabled={busy} onClick={() => run(() => post(`/rides/${r.id}/approve`).then(reload), t('respondedAccepted'))}>
+          <Button variant="primary" disabled={busy} onClick={approve}>
             {t('approve')}
           </Button>
         )}

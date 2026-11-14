@@ -11,7 +11,7 @@ import {
   Field,
   Page,
   PageHeader,
-  Spinner,
+  CardSkeleton,
   Stat,
 } from '../../components/ui';
 import { EVENT_KIND, fmtDateTime, rm, useFormatT } from '../../format';
@@ -290,7 +290,7 @@ export default function AdminReports() {
         <ErrorBox error={error} />
 
         {loading ? (
-          <Spinner />
+          <CardSkeleton count={3} />
         ) : !r ? (
           <EmptyState title={t('reports.none')} />
         ) : (
