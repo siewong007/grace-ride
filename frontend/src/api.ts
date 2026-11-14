@@ -103,32 +103,46 @@ if (typeof window !== 'undefined') {
   });
 }
 
-/** Fetch JSON for a path; re-fetch on `reload()` and optionally poll every `pollMs`. */
-export function useApi<T>(path: string | null, pollMs?: number) {
+/** Fetch JSON for a path; re-fetch on `reload()` and optionally poll every `pollMs`.
+ *  `latestOnly` ignores responses for requests superseded by a newer path or reload. */
+export function useApi<T>(
+  path: string | null,
+  pollMs?: number,
+  options: { latestOnly?: boolean } = {},
+) {
   const [data, setData] = useState<T | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(Boolean(path));
   const pathRef = useRef(path);
+  const requestId = useRef(0);
+  const latestOnly = options.latestOnly ?? false;
   pathRef.current = path;
 
   const reload = useCallback(async () => {
-    if (!pathRef.current) {
+    const currentRequest = ++requestId.current;
+    const requestPath = pathRef.current;
+    const isCurrent = () =>
+      !latestOnly || (requestId.current === currentRequest && pathRef.current === requestPath);
+    if (!requestPath) {
       setLoading(false);
       return;
     }
     try {
-      const d = await api<T>(pathRef.current);
-      setData(d);
-      setError(null);
+      const d = await api<T>(requestPath);
+      if (isCurrent()) {
+        setData(d);
+        setError(null);
+      }
     } catch (e) {
-      setError((e as Error).message);
+      if (isCurrent()) setError((e as Error).message);
     } finally {
-      setLoading(false);
+      if (isCurrent()) setLoading(false);
     }
-  }, []);
+  }, [latestOnly]);
 
   useEffect(() => {
     if (!path) {
+      if (latestOnly) requestId.current++;
       setLoading(false);
       setData(null);
       setError(null);
@@ -145,8 +159,9 @@ export function useApi<T>(path: string | null, pollMs?: number) {
     return () => {
       clearInterval(t);
       unsub();
+      if (latestOnly) requestId.current++;
     };
-  }, [path, pollMs, reload]);
+  }, [path, pollMs, reload, latestOnly]);
 
   return { data, error, loading, reload, setData };
 }
