@@ -1,4 +1,4 @@
-import { useParams } from 'react-router-dom';
+import { Link, useParams } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
 import { useApi } from '../api';
 import {
@@ -31,7 +31,7 @@ export default function HelpGuideDetail() {
         <PageHeader
           title={pick(g.title_zh, g.title_en)}
           subtitle={pick(g.summary_zh, g.summary_en)}
-          back="/help"
+          back="/help?tab=guides"
           actions={!g.published ? <Pill tone="warning">{t('guideDraft')}</Pill> : undefined}
         />
         <Card className="stack">
@@ -44,9 +44,9 @@ export default function HelpGuideDetail() {
                 <div className="stack-xs">
                   <div className="muted pre-wrap">{pick(s.body_zh, s.body_en)}</div>
                   {s.link && (
-                    <a className="btn sm secondary" href={s.link}>
+                    <Link className="btn sm secondary" to={s.link}>
                       {t('guideOpen')}
-                    </a>
+                    </Link>
                   )}
                 </div>
               )}

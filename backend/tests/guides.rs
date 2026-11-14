@@ -1,4 +1,4 @@
-//! Admin workflow guide API: staff-only reads, editor-only writes.
+//! Member and staff workflow guide API: editor-only writes.
 
 #[path = "common/schema.rs"]
 mod schema;
@@ -123,7 +123,7 @@ async fn seed_guide(st: &AppState, slug: &str, published: bool, steps: &str) -> 
 }
 
 #[tokio::test]
-async fn guides_are_staff_only() {
+async fn guides_are_visible_by_audience() {
     let (app, st) = setup().await;
     seed_guide(
         &st,
@@ -132,9 +132,17 @@ async fn guides_are_staff_only() {
         r#"[{"title_en":"Step","title_zh":"步骤","body_en":"","body_zh":"","link":"/admin"}]"#,
     )
     .await;
+    sqlx::query("UPDATE guide_workflows SET audience='member' WHERE slug='published-guide'")
+        .execute(&st.db)
+        .await
+        .unwrap();
+    seed_guide(&st, "staff-guide", true, "[]").await;
     let member = login(&st, "member@example.org").await;
     let r = call(&app, Method::GET, "/api/help/guides", Some(&member), None).await;
-    assert_eq!(r.status, StatusCode::FORBIDDEN);
+    assert_eq!(r.status, StatusCode::OK);
+    let guides = r.json.as_array().unwrap();
+    assert!(guides.iter().any(|g| g["slug"] == "published-guide"));
+    assert!(!guides.iter().any(|g| g["slug"] == "staff-guide"));
     let r = call(
         &app,
         Method::GET,
@@ -143,7 +151,17 @@ async fn guides_are_staff_only() {
         None,
     )
     .await;
-    assert_eq!(r.status, StatusCode::FORBIDDEN);
+    assert_eq!(r.status, StatusCode::OK);
+    assert_eq!(r.json["audience"], "member");
+    let r = call(
+        &app,
+        Method::GET,
+        "/api/help/guides/staff-guide",
+        Some(&member),
+        None,
+    )
+    .await;
+    assert_eq!(r.status, StatusCode::NOT_FOUND);
 
     // transport (admin_help) and finance (admin_reimb_pay) both hold staff pages.
     for email in ["transport@example.org", "finance@example.org"] {
@@ -158,6 +176,13 @@ async fn guides_are_staff_only() {
             .find(|g| g["slug"] == "published-guide")
             .expect("published-guide should be listed");
         assert_eq!(published["step_count"], 1);
+        assert_eq!(published["audience"], "member");
+        assert!(r
+            .json
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|g| g["slug"] == "staff-guide"));
         let r = call(
             &app,
             Method::GET,
@@ -168,6 +193,7 @@ async fn guides_are_staff_only() {
         .await;
         assert_eq!(r.status, StatusCode::OK);
         assert_eq!(r.json["steps"][0]["link"], "/admin");
+        assert_eq!(r.json["audience"], "member");
     }
 }
 
@@ -283,6 +309,15 @@ async fn guide_crud_is_editor_only_and_audited() {
     .await;
     assert_eq!(r.status, StatusCode::OK, "{}", r.json);
     let id = r.json["id"].as_i64().unwrap();
+    let denied = call(
+        &app,
+        Method::PUT,
+        &format!("/api/help/guides/{id}"),
+        Some(&member),
+        Some(guide_body()),
+    )
+    .await;
+    assert_eq!(denied.status, StatusCode::FORBIDDEN);
     let r = call(
         &app,
         Method::GET,
@@ -404,6 +439,18 @@ async fn guide_validation() {
     )
     .await;
     assert_eq!(r.json["code"], "GUIDE_STEP_INVALID");
+
+    let mut b = guide_body();
+    b["audience"] = json!("everyone");
+    let r = call(
+        &app,
+        Method::POST,
+        "/api/help/guides",
+        Some(&transport),
+        Some(b),
+    )
+    .await;
+    assert_eq!(r.json["code"], "GUIDE_AUDIENCE_INVALID");
 }
 
 #[tokio::test]
@@ -436,12 +483,125 @@ async fn starter_guides_are_seeded() {
     ] {
         assert!(slugs.contains(&expected), "missing seeded guide {expected}");
     }
-    // Every seeded guide has steps, and every step has a bilingual title.
+    // Every seeded guide has at least one titled step.
     for g in r.json.as_array().unwrap() {
         assert!(
-            g["step_count"].as_i64().unwrap() >= 2,
-            "guide {} too thin",
+            g["step_count"].as_i64().unwrap() >= 1,
+            "guide {} has no steps",
             g["slug"]
         );
+    }
+}
+
+fn route_matches(pattern: &str, path: &str) -> bool {
+    let pattern: Vec<_> = pattern.trim_matches('/').split('/').collect();
+    let path: Vec<_> = path.trim_matches('/').split('/').collect();
+    pattern.len() == path.len()
+        && pattern
+            .iter()
+            .zip(path.iter())
+            .all(|(a, b)| a.starts_with(':') || a == b)
+}
+
+#[tokio::test]
+async fn seeded_guide_coverage_and_links_match_app_routes() {
+    let (_app, st) = setup().await;
+    let expected = [
+        ("plan-transport", "staff"),
+        ("review-reimbursements", "staff"),
+        ("send-announcement", "staff"),
+        ("manage-members", "staff"),
+        ("work-help-desk", "staff"),
+        ("audit-settings", "staff"),
+        ("getting-started", "member"),
+        ("request-a-ride", "member"),
+        ("track-your-ride", "member"),
+        ("volunteer-driving", "member"),
+        ("join-events", "member"),
+        ("organise-an-event", "member"),
+        ("split-activity-costs", "member"),
+        ("pay-your-share", "member"),
+        ("claim-reimbursement", "member"),
+        ("ask-for-help", "member"),
+        ("notifications-and-report", "member"),
+        ("admin-dashboard", "staff"),
+        ("manage-rides", "staff"),
+        ("live-map", "staff"),
+        ("manage-any-event", "staff"),
+        ("pay-reimbursements", "staff"),
+        ("view-all-bills", "staff"),
+        ("staff-reports", "staff"),
+        ("invites", "staff"),
+        ("account-recovery", "staff"),
+        ("roles-and-permissions", "staff"),
+        ("groups-areas-rates", "staff"),
+        ("edit-help-guides", "staff"),
+    ];
+    let rows: Vec<(String, String, String)> =
+        sqlx::query_as("SELECT slug, audience, steps::text FROM guide_workflows ORDER BY slug")
+            .fetch_all(&st.db)
+            .await
+            .unwrap();
+    let routes = [
+        "/",
+        "/login",
+        "/terms",
+        "/invite/:token",
+        "/rides",
+        "/rides/new",
+        "/rides/:id",
+        "/drive",
+        "/events",
+        "/events/new",
+        "/events/:id",
+        "/events/:id/edit",
+        "/events/:eventId/settle",
+        "/settlements",
+        "/settlements/:id",
+        "/costs",
+        "/reimbursements",
+        "/reimbursements/new",
+        "/reimbursements/:id",
+        "/help",
+        "/help/:id",
+        "/help/guides/:slug",
+        "/notifications",
+        "/report",
+        "/me",
+        "/admin",
+        "/admin/rides",
+        "/admin/rides/:id",
+        "/admin/live",
+        "/admin/members",
+        "/admin/settings",
+        "/admin/reimbursements",
+        "/admin/announcements",
+        "/admin/audit",
+        "/admin/reports",
+        "/admin/roles",
+        "/admin/events/:id/plan",
+    ];
+    for (slug, audience) in expected {
+        let (_, actual_audience, steps) = rows
+            .iter()
+            .find(|(actual, _, _)| actual == slug)
+            .unwrap_or_else(|| panic!("missing seeded guide {slug}"));
+        assert_eq!(actual_audience, audience, "wrong audience for {slug}");
+        let steps: Value = serde_json::from_str(steps).unwrap();
+        for step in steps.as_array().unwrap() {
+            let link = step["link"].as_str().unwrap_or("");
+            if link.is_empty() {
+                continue;
+            }
+            assert!(
+                !link.starts_with("/admin") || audience == "staff",
+                "member guide {slug} links to {link}"
+            );
+            let path = link.split('?').next().unwrap();
+            assert!(
+                routes.iter().any(|route| route_matches(route, path)),
+                "unknown route {link} in {slug}"
+            );
+        }
     }
 }

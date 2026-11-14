@@ -178,7 +178,7 @@ function GroupMembers({
   const { data: current } = useApi<{ id: number; name: string }[]>(
     `/admin/groups/${group.id}/members`,
   );
-  const { data: all } = useApi<{ id: number; name: string; status: string }[]>(
+  const { data: all } = useApi<{ id: number; name: string; status?: string }[]>(
     '/admin/users',
   );
   const [sel, setSel] = useState<number[] | null>(null);
@@ -215,7 +215,7 @@ function GroupMembers({
       />
       <div className="stack-sm group-members-list">
         {all
-          ?.filter((u) => u.status === 'active' && u.name.includes(q))
+          ?.filter((u) => (u.status == null || u.status === 'active') && u.name.includes(q))
           .map((u) => (
             <label
               key={u.id}
@@ -231,7 +231,7 @@ function GroupMembers({
           ))}
       </div>
       <ErrorBox error={error} />
-      <Button variant="primary" block disabled={busy} onClick={save}>
+      <Button variant="primary" block disabled={busy || !all || !current} onClick={save}>
         {t('settings.save')}
       </Button>
     </Modal>

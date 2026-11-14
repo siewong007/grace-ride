@@ -46,10 +46,8 @@ export default function AdminRides() {
   if (status) q.set('status', status);
   if (date) q.set('date', date);
   if (attention) q.set('attention', 'true');
-  if (page > 1 || pageSize !== 50) {
-    q.set('page', String(page));
-    q.set('limit', String(pageSize));
-  }
+  q.set('page', String(page));
+  q.set('limit', String(pageSize));
 
   const { data, error, loading } = useApi<AdminRidesData | Ride[]>(`/admin/rides?${q}`, 20000);
 

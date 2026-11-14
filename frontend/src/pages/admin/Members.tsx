@@ -11,6 +11,7 @@ import {
   CardSkeleton,
   EmptyState,
   ErrorBox,
+  Field,
   Modal,
   Page,
   PageHeader,
@@ -146,7 +147,7 @@ function MemberList() {
     setParams(p, { replace: true });
   };
 
-  const pagingQs = page > 1 || pageSize !== 50 ? `&page=${page}&limit=${pageSize}` : '';
+  const pagingQs = `&page=${page}&limit=${pageSize}`;
   const { data, loading, reload } = useApi<PaginatedUsers | User[]>(
     `/admin/users?q=${encodeURIComponent(q)}${pagingQs}`,
   );
@@ -340,6 +341,7 @@ function MemberFormModal({
   const [roles, setRoles] = useState<string[]>(
     mode === 'edit' ? user.roles : [],
   );
+  const [status, setStatus] = useState(mode === 'approve' ? 'active' : user.status);
 
   const initialGroups = user.groups ? user.groups.split('、') : [];
   const [gids, setGids] = useState<number[] | null>(
@@ -370,8 +372,8 @@ function MemberFormModal({
       () =>
         put(`/admin/users/${user.id}`, {
           roles,
-          status: 'active',
-          group_ids: selectedG,
+          status,
+          ...(groups ? { group_ids: selectedG } : {}),
         }).then(onSuccess),
       mode === 'approve'
         ? t('members.memberApproved')
@@ -387,6 +389,15 @@ function MemberFormModal({
     <Modal title={modalTitle} onClose={onClose}>
       <div className="stack-sm">
         <p className="muted small">{user.email}</p>
+
+        {mode === 'edit' && (
+          <Field label={t('members.status')}>
+            <select className="input" value={status} onChange={(e) => setStatus(e.target.value)}>
+              <option value="active">{t('members.active')}</option>
+              <option value="disabled">{t('members.disabled')}</option>
+            </select>
+          </Field>
+        )}
 
         <div>
           <strong className="small">{t('members.role')}</strong>
@@ -450,9 +461,13 @@ function Invites() {
   const [link, setLink] = useState<string | null>(null);
   const { busy, error, run } = useAction();
 
-  const copy = (s: string) => {
-    navigator.clipboard?.writeText(s);
-    toast.success(t('members.copied'));
+  const copy = async (s: string) => {
+    try {
+      await navigator.clipboard.writeText(s);
+      toast.success(t('members.copied'));
+    } catch {
+      // Clipboard access is unavailable outside secure browser contexts.
+    }
   };
 
   const submit = (e: FormEvent) => {
@@ -467,7 +482,7 @@ function Invites() {
   const revoke = async (invite: InviteItem) => {
     const ok = await confirm({
       title: t('members.revoke'),
-      body: t('members.deleteGroupConfirm', { name: invite.email || t('members.openInvite') }),
+      body: t('members.revokeInviteConfirm', { email: invite.email || t('members.openInvite') }),
       confirmLabel: t('members.revoke'),
       tone: 'danger',
     });

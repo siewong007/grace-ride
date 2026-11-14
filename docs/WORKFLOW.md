@@ -27,7 +27,9 @@ For an event, transport staff can use the planning board to review passengers an
 - Substitute-transport claims go through transport review and manual finance payout recording. Completed volunteer rides can generate rate-based reimbursement records. These records do not transfer money.
 - Members review notifications, help threads and monthly reports; staff uses dashboards, reports, audit and settings according to permissions.
 
-Help-centre staff also maintain the Admin guide tab: database-managed, bilingual workflow walkthroughs whose steps link straight into the admin pages (/help → Admin guide).
+The Help centre has a Guides tab for everyone. Members see published member guides, while staff who can access any staff page see both member and staff guides. Help editors set each guide's audience and publication state (/help → Guides).
+
+Only a superadmin can grant or remove the superadmin role. The last active superadmin cannot be demoted or disabled, and role changes require MFA. Recovery of a privileged account requires approval from two different admins.
 
 ## Development and documentation
 

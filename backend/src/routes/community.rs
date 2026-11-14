@@ -561,23 +561,23 @@ async fn list_guides(
     u: CurrentUser,
     Query(q): Query<GuideQuery>,
 ) -> AppResult<Json<Value>> {
-    if !any_admin_page(&u) {
-        return Err(forbidden(u.lang, ErrorKey::Forbidden));
-    }
+    require(&u, Page::Help, Act::View)?;
+    let staff = any_admin_page(&u);
     let with_drafts = q.include_drafts.unwrap_or(false) && u.can(Page::AdminHelp, Act::Update);
-    let rows: Vec<(i64, String, String, String, String, String, bool, i64)> = sqlx::query_as(
-        "SELECT id, slug, title_en, title_zh, summary_en, summary_zh, published, jsonb_array_length(steps)::bigint
-         FROM guide_workflows WHERE ($1 OR published) ORDER BY sort_order, id",
+    let rows: Vec<(i64, String, String, String, String, String, bool, String, i64)> = sqlx::query_as(
+        "SELECT id, slug, title_en, title_zh, summary_en, summary_zh, published, audience, jsonb_array_length(steps)::bigint
+         FROM guide_workflows WHERE ($1 OR published) AND ($2 OR audience='member') ORDER BY sort_order, id",
     )
     .bind(with_drafts)
+    .bind(staff)
     .fetch_all(&st.db)
     .await?;
     Ok(Json(Value::Array(
         rows.into_iter()
-            .map(|(id, slug, ten, tzh, sen, szh, published, n)| {
+            .map(|(id, slug, ten, tzh, sen, szh, published, audience, n)| {
                 json!({
                     "id": id, "slug": slug, "title_en": ten, "title_zh": tzh,
-                    "summary_en": sen, "summary_zh": szh, "published": published,
+                    "summary_en": sen, "summary_zh": szh, "published": published, "audience": audience,
                     "step_count": n,
                 })
             })
@@ -590,25 +590,24 @@ async fn get_guide(
     u: CurrentUser,
     Path(slug): Path<String>,
 ) -> AppResult<Json<Value>> {
-    if !any_admin_page(&u) {
-        return Err(forbidden(u.lang, ErrorKey::Forbidden));
-    }
-    let row: Option<(i64, String, String, String, String, String, bool, String)> = sqlx::query_as(
-        "SELECT id, slug, title_en, title_zh, summary_en, summary_zh, published, steps::text
-             FROM guide_workflows WHERE slug=$1",
+    require(&u, Page::Help, Act::View)?;
+    let staff = any_admin_page(&u);
+    let can_edit = u.can(Page::AdminHelp, Act::Update);
+    let row: Option<(i64, String, String, String, String, String, bool, String, String)> = sqlx::query_as(
+        "SELECT id, slug, title_en, title_zh, summary_en, summary_zh, published, audience, steps::text
+             FROM guide_workflows WHERE slug=$1 AND ($2 OR published) AND ($3 OR audience='member')",
     )
     .bind(&slug)
+    .bind(can_edit)
+    .bind(staff)
     .fetch_optional(&st.db)
     .await?;
-    let (id, slug, ten, tzh, sen, szh, published, steps) = row.ok_or(not_found(u.lang))?;
-    if !published && !u.can(Page::AdminHelp, Act::Update) {
-        // Drafts stay invisible to non-editors; 404 avoids leaking existence.
-        return Err(not_found(u.lang));
-    }
+    let (id, slug, ten, tzh, sen, szh, published, audience, steps) =
+        row.ok_or(not_found(u.lang))?;
     let steps: Value = serde_json::from_str(&steps).unwrap_or(json!([]));
     Ok(Json(json!({
         "id": id, "slug": slug, "title_en": ten, "title_zh": tzh,
-        "summary_en": sen, "summary_zh": szh, "published": published, "steps": steps,
+        "summary_en": sen, "summary_zh": szh, "published": published, "audience": audience, "steps": steps,
     })))
 }
 
@@ -629,8 +628,14 @@ struct GuideIn {
     summary_en: Option<String>,
     summary_zh: Option<String>,
     published: Option<bool>,
+    #[serde(default = "default_guide_audience")]
+    audience: String,
     #[serde(default)]
     steps: Vec<GuideStepIn>,
+}
+
+fn default_guide_audience() -> String {
+    "staff".into()
 }
 
 fn trim_opt(v: &Option<String>) -> &str {
@@ -646,7 +651,7 @@ fn trim_opt(v: &Option<String>) -> &str {
 fn validate_guide(
     req: &GuideIn,
     lang: crate::i18n::Lang,
-) -> AppResult<(String, String, String, String, String, bool, String)> {
+) -> AppResult<(String, String, String, String, String, bool, String, String)> {
     let (title_en, title_zh) = (trim_opt(&req.title_en), trim_opt(&req.title_zh));
     if title_en.is_empty() && title_zh.is_empty() {
         return Err(bad(lang, ErrorKey::GuideTitleRequired));
@@ -660,6 +665,9 @@ fn validate_guide(
             .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-');
     if !ok_slug {
         return Err(bad(lang, ErrorKey::GuideSlugRequired));
+    }
+    if !matches!(req.audience.as_str(), "member" | "staff") {
+        return Err(bad(lang, ErrorKey::GuideAudienceInvalid));
     }
     if req.steps.len() > 30 {
         return Err(bad(lang, ErrorKey::GuideStepInvalid));
@@ -690,6 +698,7 @@ fn validate_guide(
         trim_opt(&req.summary_en).to_string(),
         trim_opt(&req.summary_zh).to_string(),
         req.published.unwrap_or(true),
+        req.audience.clone(),
         Value::Array(steps).to_string(),
     ))
 }
@@ -700,7 +709,7 @@ async fn create_guide(
     Json(req): Json<GuideIn>,
 ) -> AppResult<Json<Value>> {
     require(&u, Page::AdminHelp, Act::Update)?;
-    let (slug, ten, tzh, sen, szh, published, steps) = validate_guide(&req, u.lang)?;
+    let (slug, ten, tzh, sen, szh, published, audience, steps) = validate_guide(&req, u.lang)?;
     let dup: Option<(i64,)> = sqlx::query_as("SELECT id FROM guide_workflows WHERE slug=$1")
         .bind(&slug)
         .fetch_optional(&st.db)
@@ -709,8 +718,8 @@ async fn create_guide(
         return Err(bad(u.lang, ErrorKey::GuideSlugExists));
     }
     let (id,): (i64,) = sqlx::query_as(
-        "INSERT INTO guide_workflows (slug, title_en, title_zh, summary_en, summary_zh, published, steps, updated_at, updated_by)
-         VALUES ($1,$2,$3,$4,$5,$6,$7::jsonb,$8,$9) RETURNING id",
+        "INSERT INTO guide_workflows (slug, title_en, title_zh, summary_en, summary_zh, published, audience, steps, updated_at, updated_by)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8::jsonb,$9,$10) RETURNING id",
     )
     .bind(&slug)
     .bind(&ten)
@@ -718,6 +727,7 @@ async fn create_guide(
     .bind(&sen)
     .bind(&szh)
     .bind(published)
+    .bind(&audience)
     .bind(&steps)
     .bind(now())
     .bind(u.id)
@@ -742,7 +752,7 @@ async fn update_guide(
     Json(req): Json<GuideIn>,
 ) -> AppResult<Json<Value>> {
     require(&u, Page::AdminHelp, Act::Update)?;
-    let (slug, ten, tzh, sen, szh, published, steps) = validate_guide(&req, u.lang)?;
+    let (slug, ten, tzh, sen, szh, published, audience, steps) = validate_guide(&req, u.lang)?;
     let dup: Option<(i64,)> =
         sqlx::query_as("SELECT id FROM guide_workflows WHERE slug=$1 AND id<>$2")
             .bind(&slug)
@@ -754,7 +764,7 @@ async fn update_guide(
     }
     let n = sqlx::query(
         "UPDATE guide_workflows SET slug=$1, title_en=$2, title_zh=$3, summary_en=$4, summary_zh=$5,
-                published=$6, steps=$7::jsonb, updated_at=$8, updated_by=$9 WHERE id=$10",
+                published=$6, audience=$7, steps=$8::jsonb, updated_at=$9, updated_by=$10 WHERE id=$11",
     )
     .bind(&slug)
     .bind(&ten)
@@ -762,6 +772,7 @@ async fn update_guide(
     .bind(&sen)
     .bind(&szh)
     .bind(published)
+    .bind(&audience)
     .bind(&steps)
     .bind(now())
     .bind(u.id)
@@ -1160,8 +1171,8 @@ async fn review_reimbursement(
     if status != "approved" && note.trim().is_empty() {
         return Err(bad(u.lang, ErrorKey::ReasonRequired));
     }
-    sqlx::query(
-        "UPDATE reimbursements SET status=$1, review_note=$2, reviewed_by=$3, updated_at=$4 WHERE id=$5",
+    let changed = sqlx::query(
+        "UPDATE reimbursements SET status=$1, review_note=$2, reviewed_by=$3, updated_at=$4 WHERE id=$5 AND status='pending'",
     )
     .bind(status)
     .bind(&note)
@@ -1169,7 +1180,11 @@ async fn review_reimbursement(
     .bind(now())
     .bind(id)
     .execute(&st.db)
-    .await?;
+    .await?
+    .rows_affected();
+    if changed == 0 {
+        return Err(conflict(u.lang, ErrorKey::ReimbAlreadyReviewed));
+    }
     let title = match status {
         "approved" => ("报销申请已批准", "Reimbursement approved"),
         "returned" => ("报销申请需补资料", "Reimbursement needs more info"),

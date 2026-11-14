@@ -2384,12 +2384,28 @@ async fn staff_alt_transport(
     let note = req
         .reason
         .unwrap_or_else(|| "已批准使用 Grab 替代交通".into());
-    sqlx::query("UPDATE rides SET driver_id=NULL, needs_attention=0, attention_reason=$1, approved_by=$2 WHERE id=$3")
+    sqlx::query("UPDATE rides SET driver_id=NULL, trip_id=NULL, needs_attention=0, attention_reason=$1, approved_by=$2 WHERE id=$3")
         .bind(&note)
         .bind(u.id)
         .bind(id)
         .execute(&st.db)
         .await?;
+    if let Some(driver_id) = r.driver_id {
+        notify(
+            &st.db,
+            driver_id,
+            (
+                "接送已改为替代交通",
+                "Ride changed to alternative transport",
+            ),
+            (
+                &format!("{note}。此行程已从你的安排中移除。"),
+                &format!("{note}. This ride has been removed from your assignments."),
+            ),
+            "/drive",
+        )
+        .await;
+    }
     notify(
         &st.db,
         r.passenger_id,
@@ -2420,6 +2436,8 @@ struct AdminRidesQuery {
     date: Option<String>,
     status: Option<String>,
     attention: Option<bool>,
+    sort: Option<String>,
+    dir: Option<String>,
     page: Option<i64>,
     limit: Option<i64>,
 }
@@ -2445,6 +2463,17 @@ async fn admin_rides(
             "(r.needs_attention = 1 OR (r.status='pending_driver' AND r.pickup_at::timestamp - LOCALTIMESTAMP < interval '1 day'))".to_string(),
         );
     }
+    let order = crate::util::order_by(
+        q.sort.as_deref(),
+        q.dir.as_deref(),
+        &[
+            ("pickup_at", "r.pickup_at"),
+            ("status", "r.status"),
+            ("id", "r.id"),
+        ],
+        "r.pickup_at ASC, r.id ASC",
+        "r.id ASC",
+    );
 
     if q.page.is_some() || q.limit.is_some() {
         let count_sql = format!("SELECT COUNT(*) FROM rides r WHERE {}", conds.join(" AND "));
@@ -2462,7 +2491,7 @@ async fn admin_rides(
         let offset = (page - 1) * limit;
 
         let sql = format!(
-            "{RIDE_SELECT} WHERE {} ORDER BY r.pickup_at LIMIT ${n} OFFSET ${}",
+            "{RIDE_SELECT} WHERE {} ORDER BY {order} LIMIT ${n} OFFSET ${}",
             conds.join(" AND "),
             n + 1
         );
@@ -2491,7 +2520,7 @@ async fn admin_rides(
     }
 
     let sql = format!(
-        "{RIDE_SELECT} WHERE {} ORDER BY r.pickup_at LIMIT 300",
+        "{RIDE_SELECT} WHERE {} ORDER BY {order} LIMIT 300",
         conds.join(" AND ")
     );
     let mut query = sqlx::query_as::<_, RideRow>(&sql);
@@ -2510,6 +2539,15 @@ async fn admin_rides(
 
 async fn admin_live(State(st): State<AppState>, u: CurrentUser) -> AppResult<Json<Value>> {
     require(&u, Page::AdminLive, Act::View)?;
+    let max_live_drivers = sqlx::query_scalar::<_, String>(
+        "SELECT value FROM system_settings WHERE key='max_live_drivers'",
+    )
+    .fetch_optional(&st.db)
+    .await
+    .ok()
+    .flatten()
+    .and_then(|value| value.parse::<i64>().ok())
+    .unwrap_or(st.cfg.max_live_drivers);
     let rows: Vec<(i64, String, Option<f64>, Option<f64>, Option<String>, i64, String)> = sqlx::query_as(
         "SELECT d.id, d.name, l.lat, l.lng, l.updated_at, COUNT(r.id), MIN(r.pickup_at)
          FROM rides r JOIN users d ON d.id = r.driver_id LEFT JOIN driver_locations l ON l.driver_id = d.id
@@ -2518,7 +2556,7 @@ async fn admin_live(State(st): State<AppState>, u: CurrentUser) -> AppResult<Jso
     .fetch_all(&st.db)
     .await?;
     Ok(Json(json!({
-        "max": st.cfg.max_live_drivers,
+        "max": max_live_drivers,
         "drivers": rows.into_iter().map(|(id, name, lat, lng, at, n, first)| json!({
             "driver_id": id, "name": name, "lat": lat, "lng": lng, "updated_at": at, "rides": n, "first_pickup": first,
         })).collect::<Vec<_>>(),

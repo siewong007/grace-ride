@@ -197,6 +197,8 @@ export default function Dashboard() {
           </div>
           {today.loading ? (
             <CardSkeleton count={3} />
+          ) : today.error ? (
+            <ErrorBox error={today.error} />
           ) : !today.data?.length ? (
             <EmptyState title={t('dashboard.noTodayRides')} />
           ) : (
@@ -219,6 +221,8 @@ export default function Dashboard() {
             </h3>
             {approvals.loading ? (
               <CardSkeleton count={2} />
+            ) : approvals.error ? (
+              <ErrorBox error={approvals.error} />
             ) : !approvals.data?.length ? (
               <EmptyState title={t('dashboard.noPending')} />
             ) : (
@@ -245,6 +249,8 @@ export default function Dashboard() {
             <h3>{t('dashboard.followUp')}</h3>
             {attention.loading ? (
               <CardSkeleton count={2} />
+            ) : attention.error ? (
+              <ErrorBox error={attention.error} />
             ) : !attention.data?.length ? (
               <EmptyState title={t('dashboard.noFollowUp')} />
             ) : (
@@ -283,6 +289,8 @@ export default function Dashboard() {
               </div>
               {recentAudit.loading ? (
                 <CardSkeleton count={2} />
+              ) : recentAudit.error ? (
+                <ErrorBox error={recentAudit.error} />
               ) : !recentAudit.data?.items?.length ? (
                 <EmptyState title={t('dashboard.noAudit')} />
               ) : (

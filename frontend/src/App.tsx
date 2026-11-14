@@ -3,7 +3,6 @@ import { Navigate, Route, Routes, useLocation } from 'react-router-dom';
 import { useAuth } from './auth';
 import Layout from './components/Layout';
 import { EmptyState, Page, Spinner } from './components/ui';
-import { ADMIN_PAGES } from './perms';
 import type { Act, PageKey } from './perms';
 import { useTranslation } from 'react-i18next';
 import { hideSplash } from './splash';
@@ -113,7 +112,7 @@ export default function App() {
         <Route path="reimbursements/:id" element={page(<ReimbursementDetail />)} />
         <Route path="help" element={gated(<Help />, 'help', 'admin_help')} />
         <Route path="help/:id" element={page(<HelpDetail />)} />
-        <Route path="help/guides/:slug" element={gated(<HelpGuideDetail />, ...ADMIN_PAGES)} />
+        <Route path="help/guides/:slug" element={gated(<HelpGuideDetail />, 'help')} />
         <Route path="report" element={gated(<Report />, 'report')} />
         <Route path="notifications" element={page(<Notifications />)} />
         <Route path="me" element={page(<Profile />)} />

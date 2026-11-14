@@ -1,4 +1,5 @@
 export default {
+  actions: 'Actions',
   dashboard: {
     title: 'Ride overview',
     desc: 'Approve ride requests, coordinate events, and handle changes promptly.',
@@ -72,6 +73,9 @@ export default {
     search: 'Search name, email or phone',
     none: 'No members',
     edit: 'Edit',
+    status: 'Account status',
+    active: 'Active',
+    disabled: 'Disabled',
     role: 'Role',
     member: 'Member',
     group: 'Group',
@@ -90,6 +94,7 @@ export default {
     copy: 'Copy',
     copied: 'Invite link copied to clipboard',
     revoke: 'Revoke',
+    revokeInviteConfirm: 'Revoke the invite for {email}?',
     revoked: 'Revoked',
     used: 'Used',
     expired: 'Expired',
@@ -262,6 +267,8 @@ export default {
     retentionPolicy: 'Retention: {count} days',
     copyJson: 'Copy JSON',
     copied: 'Copied!',
+    exportFailed: 'CSV export failed. Please try again.',
+    copyFailed: 'Could not copy the audit entry.',
     categories: {
       security: 'Security & Auth',
       rides: 'Rides & Transport',
@@ -284,6 +291,9 @@ export default {
       invite: 'Invitation',
       announcement: 'Announcement',
       recovery: 'Account recovery',
+      guide_workflow: 'Help guide',
+      reimbursement_rates: 'Reimbursement rates',
+      system_settings: 'System settings',
     },
   },
   reports: {

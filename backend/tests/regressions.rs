@@ -358,6 +358,7 @@ async fn replacement_recovery_link_invalidates_previous_link() {
     let (app, st) = setup().await;
     let admin = login(&st, "admin@example.org").await;
 
+    let mut links = Vec::new();
     for _ in 0..2 {
         let requested = call(
             &app,
@@ -368,16 +369,12 @@ async fn replacement_recovery_link_invalidates_previous_link() {
         )
         .await;
         assert_eq!(requested.status, StatusCode::OK, "{}", requested.json);
-    }
-    let rids: Vec<(i64,)> = sqlx::query_as(
-        "SELECT id FROM recovery_requests WHERE email='member@example.org' ORDER BY id",
-    )
-    .fetch_all(&st.db)
-    .await
-    .unwrap();
-
-    let mut links = Vec::new();
-    for (rid,) in rids {
+        let (rid,): (i64,) = sqlx::query_as(
+            "SELECT id FROM recovery_requests WHERE email='member@example.org' AND status='pending' ORDER BY id DESC LIMIT 1",
+        )
+        .fetch_one(&st.db)
+        .await
+        .unwrap();
         let approved = call(
             &app,
             Method::POST,
@@ -430,6 +427,224 @@ async fn replacement_recovery_link_invalidates_previous_link() {
     )
     .await;
     assert_eq!(reused.status, StatusCode::BAD_REQUEST, "{}", reused.json);
+}
+
+#[tokio::test]
+async fn concurrent_recovery_approve_and_reject_only_resolve_once() {
+    let (app, st) = setup().await;
+    let admin = login(&st, "admin@example.org").await;
+    let requested = call(
+        &app,
+        Method::POST,
+        "/api/auth/recovery-request",
+        None,
+        Some(json!({"email": "member@example.org", "reason": "lost phone"})),
+    )
+    .await;
+    assert_eq!(requested.status, StatusCode::OK);
+    let (id,): (i64,) = sqlx::query_as(
+        "SELECT id FROM recovery_requests WHERE email='member@example.org' ORDER BY id DESC LIMIT 1",
+    )
+    .fetch_one(&st.db)
+    .await
+    .unwrap();
+
+    let mut lock = st.db.begin().await.unwrap();
+    sqlx::query("SELECT id FROM recovery_requests WHERE id=$1 FOR UPDATE")
+        .bind(id)
+        .fetch_one(&mut *lock)
+        .await
+        .unwrap();
+    let app1 = app.clone();
+    let app2 = app.clone();
+    let c1 = admin.clone();
+    let c2 = admin;
+    let approve = tokio::spawn(async move {
+        call(
+            &app1,
+            Method::POST,
+            &format!("/api/admin/recovery/{id}/approve"),
+            Some(&c1),
+            None,
+        )
+        .await
+    });
+    let reject = tokio::spawn(async move {
+        call(
+            &app2,
+            Method::POST,
+            &format!("/api/admin/recovery/{id}/reject"),
+            Some(&c2),
+            None,
+        )
+        .await
+    });
+    tokio::time::sleep(std::time::Duration::from_millis(250)).await;
+    lock.rollback().await.unwrap();
+    let (approved, rejected) = tokio::join!(approve, reject);
+    let (approved, rejected) = (approved.unwrap(), rejected.unwrap());
+    assert_eq!(
+        [approved.status, rejected.status]
+            .iter()
+            .filter(|status| **status == StatusCode::OK)
+            .count(),
+        1,
+        "only one recovery decision can succeed: {} {}",
+        approved.json,
+        rejected.json,
+    );
+    assert_eq!(
+        [approved.status, rejected.status]
+            .iter()
+            .filter(|status| **status == StatusCode::CONFLICT)
+            .count(),
+        1
+    );
+}
+
+#[tokio::test]
+async fn concurrent_reimbursement_reviews_only_update_once() {
+    let (app, st) = setup().await;
+    let claimant = login(&st, "member@example.org").await;
+    let transport = login(&st, "transport@example.org").await;
+    let receipt = upload_png(&app, &claimant).await;
+    let claim = call(
+        &app,
+        Method::POST,
+        "/api/reimbursements",
+        Some(&claimant),
+        Some(json!({
+            "ride_id": null, "amount_cents": 2850, "description": "Concurrent review",
+            "receipt_file_id": receipt, "payee_name": "陈法拉", "payee_phone": "012-300 0006"
+        })),
+    )
+    .await;
+    assert_eq!(claim.status, StatusCode::OK, "{}", claim.json);
+    let id = claim.json["id"].as_i64().unwrap();
+
+    let mut lock = st.db.begin().await.unwrap();
+    sqlx::query("SELECT id FROM reimbursements WHERE id=$1 FOR UPDATE")
+        .bind(id)
+        .fetch_one(&mut *lock)
+        .await
+        .unwrap();
+    let app1 = app.clone();
+    let app2 = app.clone();
+    let c1 = transport.clone();
+    let c2 = transport;
+    let review = |app: axum::Router, cookie: String| async move {
+        call(
+            &app,
+            Method::POST,
+            &format!("/api/reimbursements/{id}/review"),
+            Some(&cookie),
+            Some(json!({"action":"approve", "note":""})),
+        )
+        .await
+    };
+    let first = tokio::spawn(review(app1, c1));
+    let second = tokio::spawn(review(app2, c2));
+    tokio::time::sleep(std::time::Duration::from_millis(250)).await;
+    lock.rollback().await.unwrap();
+    let (a, b) = tokio::join!(first, second);
+    let (a, b) = (a.unwrap(), b.unwrap());
+    assert_eq!(
+        [a.status, b.status]
+            .iter()
+            .filter(|status| **status == StatusCode::OK)
+            .count(),
+        1
+    );
+    assert_eq!(
+        [a.status, b.status]
+            .iter()
+            .filter(|status| **status == StatusCode::CONFLICT)
+            .count(),
+        1
+    );
+}
+
+#[tokio::test]
+async fn user_edits_preserve_disabled_status_and_unchanged_groups() {
+    let (app, st) = setup().await;
+    let admin = login(&st, "admin@example.org").await;
+    let (id, roles): (i64, String) =
+        sqlx::query_as("SELECT id, roles FROM users WHERE email='member@example.org'")
+            .fetch_one(&st.db)
+            .await
+            .unwrap();
+    let groups_before: Vec<i64> =
+        sqlx::query_scalar("SELECT group_id FROM group_members WHERE user_id=$1 ORDER BY group_id")
+            .bind(id)
+            .fetch_all(&st.db)
+            .await
+            .unwrap();
+
+    let edited = call(
+        &app,
+        Method::PUT,
+        &format!("/api/admin/users/{id}"),
+        Some(&admin),
+        Some(json!({"roles": roles.split(',').filter(|r| !r.is_empty()).collect::<Vec<_>>(), "status":"active"})),
+    )
+    .await;
+    assert_eq!(edited.status, StatusCode::OK, "{}", edited.json);
+    let groups_after: Vec<i64> =
+        sqlx::query_scalar("SELECT group_id FROM group_members WHERE user_id=$1 ORDER BY group_id")
+            .bind(id)
+            .fetch_all(&st.db)
+            .await
+            .unwrap();
+    assert_eq!(
+        groups_after, groups_before,
+        "omitted group_ids must leave groups unchanged"
+    );
+
+    sqlx::query("UPDATE users SET status='disabled' WHERE id=$1")
+        .bind(id)
+        .execute(&st.db)
+        .await
+        .unwrap();
+    let edited = call(
+        &app,
+        Method::PUT,
+        &format!("/api/admin/users/{id}"),
+        Some(&admin),
+        Some(json!({"roles": roles.split(',').filter(|r| !r.is_empty()).collect::<Vec<_>>(), "status":"disabled"})),
+    )
+    .await;
+    assert_eq!(edited.status, StatusCode::OK, "{}", edited.json);
+    let (status,): (String,) = sqlx::query_as("SELECT status FROM users WHERE id=$1")
+        .bind(id)
+        .fetch_one(&st.db)
+        .await
+        .unwrap();
+    assert_eq!(status, "disabled");
+}
+
+#[tokio::test]
+async fn duplicate_group_rename_returns_group_name_exists() {
+    let (app, st) = setup().await;
+    let admin = login(&st, "admin@example.org").await;
+    let (id,): (i64,) = sqlx::query_as("SELECT id FROM groups ORDER BY id LIMIT 1")
+        .fetch_one(&st.db)
+        .await
+        .unwrap();
+    let (existing,): (String,) = sqlx::query_as("SELECT name FROM groups WHERE id<>$1 LIMIT 1")
+        .bind(id)
+        .fetch_one(&st.db)
+        .await
+        .unwrap();
+    let renamed = call(
+        &app,
+        Method::PUT,
+        &format!("/api/admin/groups/{id}"),
+        Some(&admin),
+        Some(json!({"name": existing, "description": "duplicate"})),
+    )
+    .await;
+    assert_eq!(renamed.status, StatusCode::BAD_REQUEST);
+    assert_eq!(renamed.json["code"], "GROUP_NAME_EXISTS");
 }
 
 #[tokio::test]

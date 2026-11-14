@@ -258,13 +258,14 @@ async fn insert_reference_data(db: &PgPool) -> anyhow::Result<()> {
 
     // Starter admin workflow guides — reference content, editable in-app by
     // help-centre staff. ON CONFLICT keeps operator edits on re-deploys.
-    let guides: [(&str, &str, &str, &str, &str, serde_json::Value); 6] = [
+    let guides: Vec<(&str, &str, &str, &str, &str, &str, serde_json::Value)> = vec![
         (
             "plan-transport",
             "为活动安排交通",
             "Plan transport for an event",
             "从报名到当天实况，完整走一遍交通安排流程。",
             "Walk through arranging rides for an event, from sign-ups to the live map.",
+            "staff",
             json!([
                 {"title_en": "Find the event", "title_zh": "找到活动",
                  "body_en": "Open Events and pick the service or activity that needs transport.",
@@ -286,6 +287,7 @@ async fn insert_reference_data(db: &PgPool) -> anyhow::Result<()> {
             "Review and pay reimbursements",
             "交通组先审核，财务再记录付款。",
             "Transport reviews claims first; finance records the payout.",
+            "staff",
             json!([
                 {"title_en": "Review the queue", "title_zh": "审核队列",
                  "body_en": "Open the reimbursement review page. Check the claim and receipt, then approve, return or reject.",
@@ -303,6 +305,7 @@ async fn insert_reference_data(db: &PgPool) -> anyhow::Result<()> {
             "Send an announcement",
             "向全体或指定群体发送重要通知。",
             "Send an important notice to everyone or a chosen group.",
+            "staff",
             json!([
                 {"title_en": "Compose it", "title_zh": "撰写通知",
                  "body_en": "Open Announcements, write a bilingual title and body, and choose the audience.",
@@ -320,6 +323,7 @@ async fn insert_reference_data(db: &PgPool) -> anyhow::Result<()> {
             "Manage members and invites",
             "审批新会员、发放邀请、处理账号找回。",
             "Approve members, hand out invites and handle account recovery.",
+            "staff",
             json!([
                 {"title_en": "The directory", "title_zh": "会员名录",
                  "body_en": "Open Members to see everyone with contact details. Approve pending applicants, disable or restore accounts, and set groups.",
@@ -337,6 +341,7 @@ async fn insert_reference_data(db: &PgPool) -> anyhow::Result<()> {
             "Work the help desk",
             "跟进会员在帮助中心提出的问题。",
             "Follow up on questions members raise in the help centre.",
+            "staff",
             json!([
                 {"title_en": "See every request", "title_zh": "查看全部求助",
                  "body_en": "Open the Help centre and switch to All requests. Open status means the member is waiting.",
@@ -354,6 +359,7 @@ async fn insert_reference_data(db: &PgPool) -> anyhow::Result<()> {
             "Audit and settings",
             "查看操作记录、调整系统设置。",
             "Review the action log and adjust system settings.",
+            "staff",
             json!([
                 {"title_en": "The audit log", "title_zh": "审计日志",
                  "body_en": "Open Audit to see who did what, with filters and CSV export. Retention follows the configured window.",
@@ -365,17 +371,290 @@ async fn insert_reference_data(db: &PgPool) -> anyhow::Result<()> {
                  "link": "/admin/settings"}
             ]),
         ),
+        (
+            "getting-started",
+            "开始使用",
+            "Getting started",
+            "从邀请注册到保护账号与找回账号。",
+            "Accept an invitation, set up your account and recover access.",
+            "member",
+            json!([
+                {"title_en":"Accept your invite","title_zh":"接受邀请","body_en":"Open your invitation, register a passkey, sign in and accept the terms.","body_zh":"打开邀请链接、登记通行密钥、登录并接受条款。","link":"/invite/example"},
+                {"title_en":"Set up and recover your account","title_zh":"设置及找回账号","body_en":"Check your profile and language, add a passkey and configure 2FA. If you lose access, request recovery and wait for staff approval.","body_zh":"检查个人资料和语言，添加通行密钥并设置双重验证；若无法登录，请申请找回并等待职员审批。","link":"/me"}
+            ]),
+        ),
+        (
+            "request-a-ride",
+            "申请接送",
+            "Request a ride",
+            "为自己或代他人申请接送，也可关联活动。",
+            "Request a ride for yourself or someone else, and link it to an event.",
+            "member",
+            json!([
+                {"title_en":"Create a ride request","title_zh":"新增接送申请","body_en":"Choose pickup, destination and time. Enter the proxy rider's details when requesting for someone else.","body_zh":"填写上车点、目的地和时间；代他人申请时填写代乘者资料。","link":"/rides/new"},
+                {"title_en":"Link an event","title_zh":"关联活动","body_en":"Select the related event so organisers can coordinate transport.","body_zh":"选择相关活动，方便负责人统筹交通。","link":"/events"}
+            ]),
+        ),
+        (
+            "track-your-ride",
+            "跟进行程",
+            "Track your ride",
+            "回应司机安排、查看准备状态、分享位置、聊天或取消。",
+            "Respond to a driver, check readiness, share location, chat or cancel.",
+            "member",
+            json!([
+                {"title_en":"Respond and get ready","title_zh":"回应并准备","body_en":"Open your ride to accept or decline the driver and confirm your readiness.","body_zh":"打开行程接受或拒绝司机安排，并确认已准备好。","link":"/rides"},
+                {"title_en":"Coordinate or cancel","title_zh":"联系或取消","body_en":"Share your location when asked, use ride chat for updates and cancel promptly if plans change.","body_zh":"按需要分享位置，用行程聊天更新情况；计划有变时尽早取消。","link":"/rides/:id"}
+            ]),
+        ),
+        (
+            "volunteer-driving",
+            "义务驾驶",
+            "Volunteer driving",
+            "登记司机资料、接单并完成行程。",
+            "Set up your driver profile, claim rides and complete trips.",
+            "member",
+            json!([
+                {"title_en":"Set up and claim","title_zh":"设置资料并接单","body_en":"Add your vehicle and available seats in Profile, then choose a ride in Drive. Confirm any reassignment before setting off.","body_zh":"在个人资料填写车辆和座位，再到「驾驶」选择行程；重新指派后须先确认。","link":"/drive"},
+                {"title_en":"Complete or withdraw","title_zh":"完成或退出","body_en":"Start the trip, mark pickup and complete it. Report delays, gate issues or no-shows in chat; withdraw early if unable to drive.","body_zh":"开始行程、标记接载并完成；延误、门禁或乘客未到请在聊天说明，无法驾驶时尽早退出。","link":"/rides/:id"}
+            ]),
+        ),
+        (
+            "join-events",
+            "参加活动",
+            "Join events",
+            "报名活动、提供驾驶协助、候补或退出。",
+            "Sign up for events, offer to drive, join a waitlist or withdraw.",
+            "member",
+            json!([
+                {"title_en":"Browse and sign up","title_zh":"浏览并报名","body_en":"Browse upcoming events and open one to sign up or offer to drive.","body_zh":"浏览即将举行的活动，打开活动报名或表示愿意驾驶。","link":"/events"},
+                {"title_en":"Manage your place","title_zh":"管理报名","body_en":"Check signup or waitlist status and withdraw if plans change.","body_zh":"查看报名或候补状态；计划有变时退出活动。","link":"/events/:id"}
+            ]),
+        ),
+        (
+            "organise-an-event",
+            "筹办活动",
+            "Organise an event",
+            "负责人管理活动、报名、出席和结束流程。",
+            "Create and manage events, signups, attendance and completion.",
+            "member",
+            json!([
+                {"title_en":"Create and manage signups","title_zh":"新增活动并管理报名","body_en":"Organisers create or edit events, review signups and driver offers.","body_zh":"活动负责人新增或编辑活动，并查看报名及驾驶意向。","link":"/events/new"},
+                {"title_en":"Record attendance and finish","title_zh":"记录出席并结束","body_en":"Record attendance, manage signups, cancel when needed or mark the event finished.","body_zh":"记录出席、管理报名；需要时取消活动或标记完成。","link":"/events/:id"}
+            ]),
+        ),
+        (
+            "split-activity-costs",
+            "分摊活动费用",
+            "Split activity costs",
+            "负责人建立账单、发布、核实付款并结账。",
+            "Create, publish and close an activity bill.",
+            "member",
+            json!([
+                {"title_en":"Create the bill","title_zh":"建立账单","body_en":"From an event, list expenses, choose participants and calculate each share.","body_zh":"从活动建立账单、列出费用、选择参与者并计算分摊。","link":"/events/:id/settle"},
+                {"title_en":"Publish and close","title_zh":"发布并结账","body_en":"Review and publish the split, verify submitted payments and close the bill when settled.","body_zh":"核对并发布分摊，确认付款资料并在结清后关闭账单。","link":"/settlements"}
+            ]),
+        ),
+        (
+            "pay-your-share",
+            "缴付分摊费用",
+            "Pay your share",
+            "查看应缴费用并提交付款证明。",
+            "Review what you owe and submit payment proof.",
+            "member",
+            json!([
+                {"title_en":"Review your costs","title_zh":"查看应缴费用","body_en":"Open My costs to see published bills and your amount due.","body_zh":"打开「我的费用」查看已发布账单和应缴金额。","link":"/costs"},
+                {"title_en":"Submit payment proof","title_zh":"提交付款证明","body_en":"Open the bill, upload transfer proof and wait for the organiser to verify it.","body_zh":"打开账单并上传转账证明，等待负责人核实。","link":"/settlements/:id"}
+            ]),
+        ),
+        (
+            "claim-reimbursement",
+            "申请报销",
+            "Claim reimbursement",
+            "提交 Grab 车费申请并按要求补交资料。",
+            "Submit a Grab fare claim and resubmit returned details.",
+            "member",
+            json!([
+                {"title_en":"Submit a claim","title_zh":"提交申请","body_en":"Choose an eligible ride, enter payee details and attach the receipt.","body_zh":"选择符合条件的行程，填写收款资料并附上收据。","link":"/reimbursements/new"},
+                {"title_en":"Resubmit a returned claim","title_zh":"补资料重新提交","body_en":"Read the staff note, correct the details and submit the returned claim again.","body_zh":"阅读职员备注、修正资料后重新提交退回的申请。","link":"/reimbursements"}
+            ]),
+        ),
+        (
+            "ask-for-help",
+            "寻求协助",
+            "Ask for help",
+            "提交问题、回复职员并在解决后结案。",
+            "Open a help ticket, reply to staff and close it when resolved.",
+            "member",
+            json!([
+                {"title_en":"Open a request","title_zh":"提交求助","body_en":"Describe your question clearly and include the related ride when relevant.","body_zh":"清楚说明问题；若与行程有关，请关联行程。","link":"/help"},
+                {"title_en":"Follow up and close","title_zh":"跟进并结案","body_en":"Reply in the ticket thread and mark it resolved once you have the answer.","body_zh":"在求助对话中回复；问题解决后标记为已解决。","link":"/help/:id"}
+            ]),
+        ),
+        (
+            "notifications-and-report",
+            "通知与报告",
+            "Notifications and reports",
+            "查看通知、首页动态和每月报告。",
+            "Read notifications, the home feed and monthly reports.",
+            "member",
+            json!([
+                {"title_en":"Read notifications","title_zh":"查看通知","body_en":"Open Notifications to read announcements and updates addressed to you.","body_zh":"打开「通知」阅读发给你的公告和更新。","link":"/notifications"},
+                {"title_en":"Check the home feed and report","title_zh":"查看首页动态与报告","body_en":"The home page shows current activity; reports summarise your monthly rides and participation.","body_zh":"首页显示近期动态；报告汇总每月行程和参与情况。","link":"/report"}
+            ]),
+        ),
+        (
+            "admin-dashboard",
+            "管理仪表板",
+            "Admin dashboard",
+            "查看待处理工作并进入管理功能。",
+            "Review pending work and open staff tools.",
+            "staff",
+            json!([
+                {"title_en":"Review the dashboard","title_zh":"查看仪表板","body_en":"The dashboard highlights queues and recent activity. Open each section to take action.","body_zh":"仪表板显示待处理队列和近期动态；进入各区处理事项。","link":"/admin"}
+            ]),
+        ),
+        (
+            "manage-rides",
+            "管理接送",
+            "Manage rides",
+            "审核申请、退回、重新指派及处理特殊情况。",
+            "Review requests, reassign drivers and handle exceptions.",
+            "staff",
+            json!([
+                {"title_en":"Review and assign","title_zh":"审核与指派","body_en":"Approve or return requests, assign or reassign drivers and arrange alternative transport when needed.","body_zh":"批准或退回申请，指派或重新指派司机；需要时安排替代交通。","link":"/admin/rides"},
+                {"title_en":"Resolve changes","title_zh":"处理变更","body_en":"Record no-shows and cancellations on the ride detail page.","body_zh":"在行程详情记录乘客未到和取消。","link":"/admin/rides/:id"}
+            ]),
+        ),
+        (
+            "live-map",
+            "实时地图",
+            "Live map",
+            "监看正在进行的接送并处理延误。",
+            "Monitor active rides and respond to delays.",
+            "staff",
+            json!([
+                {"title_en":"Monitor active drivers","title_zh":"监看行驶中的司机","body_en":"See active drivers sharing their location and their current trips.","body_zh":"查看正在分享位置的司机及其行程。","link":"/admin/live"}
+            ]),
+        ),
+        (
+            "manage-any-event",
+            "管理活动",
+            "Manage any event",
+            "职员查看和处理任何活动。",
+            "Review and manage events across the organisation.",
+            "staff",
+            json!([
+                {"title_en":"Review events","title_zh":"查看活动","body_en":"With event permissions, review details, signups and attendance across events.","body_zh":"拥有活动权限的职员可查看各活动详情、报名和出席。","link":"/events"},
+                {"title_en":"Edit or finish","title_zh":"编辑或结束","body_en":"Update or cancel an event, record attendance or mark it finished.","body_zh":"更新或取消活动、记录出席或标记完成。","link":"/events/:id"}
+            ]),
+        ),
+        (
+            "pay-reimbursements",
+            "支付报销",
+            "Pay reimbursements",
+            "财务记录已批准申请的付款。",
+            "Record finance payouts for approved claims.",
+            "staff",
+            json!([
+                {"title_en":"Open the payment queue","title_zh":"打开付款队列","body_en":"Review approved claims waiting for payment.","body_zh":"查看等待付款的已批准申请。","link":"/admin/reimbursements"},
+                {"title_en":"Record the transfer","title_zh":"记录转账","body_en":"After paying, record the reference and confirm the payout.","body_zh":"转账后记录参考编号并确认付款。","link":"/admin/reimbursements"}
+            ]),
+        ),
+        (
+            "view-all-bills",
+            "查看所有账单",
+            "View all bills",
+            "财务查看活动账单和付款状态。",
+            "Review activity bills and payment status.",
+            "staff",
+            json!([
+                {"title_en":"Review bills","title_zh":"查看账单","body_en":"Finance staff with bill access can review published settlements and outstanding payment status.","body_zh":"拥有账单权限的财务职员可查看已发布分摊及未付款状态。","link":"/settlements"}
+            ]),
+        ),
+        (
+            "staff-reports",
+            "职员报告",
+            "Staff reports",
+            "查看管理报告并按需筛选。",
+            "Review staff reports and available filters.",
+            "staff",
+            json!([
+                {"title_en":"Open reports","title_zh":"打开报告","body_en":"Review organisation-wide activity and export available summaries.","body_zh":"查看全体活动，并导出可用摘要。","link":"/admin/reports"}
+            ]),
+        ),
+        (
+            "invites",
+            "邀请会员",
+            "Invites",
+            "创建、分享和撤销会员邀请。",
+            "Create, share and revoke member invitations.",
+            "staff",
+            json!([
+                {"title_en":"Create an invite","title_zh":"创建邀请","body_en":"Set invite details and share the generated link with the intended member.","body_zh":"填写邀请资料后，把生成链接交给指定会员。","link":"/admin/members"},
+                {"title_en":"Revoke an invite","title_zh":"撤销邀请","body_en":"Revoke unused invites when they should no longer be accepted.","body_zh":"不再使用的邀请应及时撤销。","link":"/admin/members"}
+            ]),
+        ),
+        (
+            "account-recovery",
+            "账号找回",
+            "Account recovery",
+            "审核账号找回请求并遵守双管理员规则。",
+            "Review recovery requests under the two-admin rule.",
+            "staff",
+            json!([
+                {"title_en":"Review the request","title_zh":"审核申请","body_en":"Verify the member's identity before approving or rejecting a recovery request.","body_zh":"批准或拒绝找回申请前，先核实会员身份。","link":"/admin/members"},
+                {"title_en":"Get a second approval","title_zh":"取得第二位管理员批准","body_en":"Two different admins must approve the same request. Approval supersedes the member's other pending requests.","body_zh":"同一申请须由两位不同管理员批准；批准后该会员其他待处理申请会被取代。","link":"/admin/members"}
+            ]),
+        ),
+        (
+            "roles-and-permissions",
+            "角色与权限",
+            "Roles and permissions",
+            "管理角色并了解超级管理员保护规则。",
+            "Manage roles and understand superadmin safeguards.",
+            "staff",
+            json!([
+                {"title_en":"Edit roles","title_zh":"编辑角色","body_en":"Grant only necessary permissions. Some system-role permissions are locked.","body_zh":"仅授予必要权限；部分系统角色权限不可修改。","link":"/admin/roles"},
+                {"title_en":"Superadmin safeguards","title_zh":"超级管理员保护规则","body_en":"Only a superadmin can grant or remove superadmin. The last superadmin cannot be removed or disabled, and role changes require MFA.","body_zh":"只有超级管理员可授予或移除超级管理员权限；最后一位超级管理员不可被移除或停用，角色变更须通过双重验证。","link":"/admin/roles"}
+            ]),
+        ),
+        (
+            "groups-areas-rates",
+            "群组、区域与费率",
+            "Groups, areas and rates",
+            "在设置中维护群组、服务区域和报销费率。",
+            "Maintain groups, service areas and reimbursement rates.",
+            "staff",
+            json!([
+                {"title_en":"Maintain groups and areas","title_zh":"维护群组和区域","body_en":"Manage the groups and areas used by member access and ride requests.","body_zh":"管理会员权限和接送申请所用的群组与区域。","link":"/admin/settings"},
+                {"title_en":"Update rates","title_zh":"更新费率","body_en":"Review reimbursement rates before saving; changes affect future claims.","body_zh":"保存前核对报销费率；变更会影响之后的申请。","link":"/admin/settings"}
+            ]),
+        ),
+        (
+            "edit-help-guides",
+            "编辑帮助指南",
+            "Edit help guides",
+            "编辑指南并选择会员或职员可见范围。",
+            "Edit guides and choose whether members or staff can see them.",
+            "staff",
+            json!([
+                {"title_en":"Open Guides","title_zh":"打开指南","body_en":"In Help, choose Guides. Help editors can add, edit, publish or delete workflows.","body_zh":"在「帮助中心」选择「指南」；帮助编辑者可新增、编辑、发布或删除指南。","link":"/help?tab=guides"},
+                {"title_en":"Set audience and links","title_zh":"设置对象与链接","body_en":"Choose Members or Staff. Members see published member guides; staff can see both audiences. Step links must be internal app routes.","body_zh":"选择「会员」或「职员」。会员只看已发布的会员指南；职员可查看两类指南。步骤链接须使用应用内路径。","link":"/help?tab=guides"}
+            ]),
+        ),
     ];
-    for (i, (slug, tzh, ten, szh, sen, steps)) in guides.iter().enumerate() {
+    for (i, (slug, tzh, ten, szh, sen, audience, steps)) in guides.iter().enumerate() {
         sqlx::query(
-            "INSERT INTO guide_workflows (slug, title_zh, title_en, summary_zh, summary_en, steps, sort_order, published, updated_at)
-             VALUES ($1,$2,$3,$4,$5,$6::jsonb,$7,TRUE,$8) ON CONFLICT (slug) DO NOTHING",
+            "INSERT INTO guide_workflows (slug, title_zh, title_en, summary_zh, summary_en, audience, steps, sort_order, published, updated_at)
+             VALUES ($1,$2,$3,$4,$5,$6,$7::jsonb,$8,TRUE,$9) ON CONFLICT (slug) DO NOTHING",
         )
         .bind(slug)
         .bind(tzh)
         .bind(ten)
         .bind(szh)
         .bind(sen)
+        .bind(audience)
         .bind(steps.to_string())
         .bind(i as i32)
         .bind(now_kl())

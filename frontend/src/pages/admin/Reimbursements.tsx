@@ -87,7 +87,7 @@ function List({ scope }: { scope: 'review' | 'payout' }) {
   const [params, setParams] = useSearchParams();
   const page = Math.max(1, Number(params.get('page') ?? '1') || 1);
   const pageSize = Number(params.get('limit') ?? '25') || 25;
-  const pagingQs = page > 1 || pageSize !== 25 ? `&page=${page}&limit=${pageSize}` : '';
+  const pagingQs = `&page=${page}&limit=${pageSize}`;
   const { data, error, loading, reload } = useApi<PaginatedReimbursements | Reimb[]>(
     `/reimbursements?scope=${scope}${pagingQs}`,
   );
@@ -165,7 +165,7 @@ function List({ scope }: { scope: 'review' | 'payout' }) {
     },
     {
       key: 'action',
-      header: 'Actions',
+      header: t('actions'),
       render: (r) => (
         <>
           {canAct &&

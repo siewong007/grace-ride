@@ -27,6 +27,11 @@ pub fn render(lang: Lang, key: &ErrorKey) -> String {
             "请至少填写一种语言的指南标题",
             "Enter the guide title in at least one language",
         ),
+        ErrorKey::GuideAudienceInvalid => pair(
+            lang,
+            "指南对象只支持会员或职员",
+            "Guide audience must be member or staff",
+        ),
         ErrorKey::GuideSlugRequired => pair(
             lang,
             "请填写有效的 slug（小写字母、数字、连字符）",

@@ -1,4 +1,5 @@
 export default {
+  actions: '操作',
   dashboard: {
     title: '接送总览',
     desc: '审批接送报名、协调活动，并及时处理变动。',
@@ -72,6 +73,9 @@ export default {
     search: '搜索姓名、电邮或电话',
     none: '没有会员',
     edit: '编辑',
+    status: '账号状态',
+    active: '启用',
+    disabled: '停用',
     role: '职务',
     member: '会员',
     group: '群体',
@@ -90,6 +94,7 @@ export default {
     copy: '复制',
     copied: '邀请连结已复制到剪贴板',
     revoke: '撤销',
+    revokeInviteConfirm: '撤销发给 {email} 的邀请？',
     revoked: '已撤销',
     used: '已使用',
     expired: '已失效',
@@ -262,6 +267,8 @@ export default {
     retentionPolicy: '保存期：{count} 天',
     copyJson: '复制 JSON',
     copied: '已复制！',
+    exportFailed: 'CSV 导出失败，请重试。',
+    copyFailed: '无法复制该审计记录。',
     categories: {
       security: '安全与身份验证',
       rides: '接送与交通',
@@ -284,6 +291,9 @@ export default {
       invite: '邀请',
       announcement: '公告',
       recovery: '账号恢复',
+      guide_workflow: '帮助指南',
+      reimbursement_rates: '报销费率',
+      system_settings: '系统设置',
     },
   },
   reports: {

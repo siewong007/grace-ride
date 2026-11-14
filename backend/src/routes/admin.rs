@@ -15,11 +15,18 @@ use serde::Deserialize;
 use serde_json::{json, Value};
 
 use crate::auth::{hash_token, CurrentUser};
-use crate::error::{bad, forbidden, not_found, AppError, AppResult};
+use crate::error::{bad, conflict, forbidden, not_found, AppError, AppResult};
 use crate::i18n::ErrorKey;
 use crate::perms::{self, parse_roles, Act, Page};
 use crate::state::AppState;
 use crate::util::{audit, in_days, minutes_ago, now, random_token, require, require_one};
+
+fn escape_like(value: &str) -> String {
+    value
+        .replace('\\', "\\\\")
+        .replace('%', "\\%")
+        .replace('_', "\\_")
+}
 
 pub fn router() -> Router<AppState> {
     Router::new()
@@ -115,6 +122,8 @@ async fn dashboard(State(st): State<AppState>, u: CurrentUser) -> AppResult<Json
 struct UserQuery {
     q: Option<String>,
     role: Option<String>,
+    sort: Option<String>,
+    dir: Option<String>,
     page: Option<i64>,
     limit: Option<i64>,
 }
@@ -140,10 +149,26 @@ async fn list_users(
             ],
         )?;
     }
-    let like = format!("%{}%", q.q.unwrap_or_default().trim());
+    let like = format!(
+        "%{}%",
+        escape_like(q.q.as_deref().unwrap_or_default().trim())
+    );
+    let order = crate::util::order_by(
+        q.sort.as_deref(),
+        q.dir.as_deref(),
+        &[
+            ("name", "u.name"),
+            ("email", "u.email"),
+            ("status", "u.status"),
+            ("created_at", "u.created_at"),
+        ],
+        "u.name ASC, u.id ASC",
+        "u.id ASC",
+    );
 
     if q.page.is_some() || q.limit.is_some() {
-        let mut conds = vec!["(u.name LIKE $1 OR u.email LIKE $2 OR u.phone LIKE $3)".to_string()];
+        let mut conds =
+            vec!["(u.name ILIKE $1 OR u.email ILIKE $2 OR u.phone ILIKE $3)".to_string()];
         if q.role.is_some() {
             conds.push("(',' || u.roles || ',') LIKE ('%,' || $4 || ',%')".to_string());
         }
@@ -165,7 +190,7 @@ async fn list_users(
         let sql = format!(
             "SELECT u.id, u.name, u.email, u.phone, u.roles, u.status, u.created_at, (SELECT COUNT(*) FROM passkeys p WHERE p.user_id=u.id),
                 (SELECT string_agg(g.name, '、') FROM group_members gm JOIN groups g ON g.id=gm.group_id WHERE gm.user_id=u.id)
-             FROM users u WHERE {} ORDER BY u.name LIMIT ${n} OFFSET ${}",
+             FROM users u WHERE {} ORDER BY {order} LIMIT ${n} OFFSET ${}",
             conds.join(" AND "),
             n + 1
         );
@@ -217,9 +242,11 @@ async fn list_users(
     }
 
     let rows: Vec<(i64, String, String, String, String, String, String, i64, Option<String>)> = sqlx::query_as(
-        "SELECT u.id, u.name, u.email, u.phone, u.roles, u.status, u.created_at, (SELECT COUNT(*) FROM passkeys p WHERE p.user_id=u.id),
-            (SELECT string_agg(g.name, '、') FROM group_members gm JOIN groups g ON g.id=gm.group_id WHERE gm.user_id=u.id)
-         FROM users u WHERE (u.name LIKE $1 OR u.email LIKE $2 OR u.phone LIKE $3) ORDER BY u.name LIMIT 500",
+        &format!(
+            "SELECT u.id, u.name, u.email, u.phone, u.roles, u.status, u.created_at, (SELECT COUNT(*) FROM passkeys p WHERE p.user_id=u.id),
+                (SELECT string_agg(g.name, '、') FROM group_members gm JOIN groups g ON g.id=gm.group_id WHERE gm.user_id=u.id)
+             FROM users u WHERE (u.name ILIKE $1 OR u.email ILIKE $2 OR u.phone ILIKE $3) ORDER BY {order} LIMIT 500"
+        ),
     )
     .bind(&like)
     .bind(&like)
@@ -258,10 +285,19 @@ async fn update_user(
     if !matches!(req.status.as_str(), "active" | "disabled") {
         return Err(bad(u.lang, ErrorKey::InvalidStatus));
     }
+    let mut tx = st.db.begin().await?;
+    // Lock active superadmins in a stable order so concurrent edits cannot each
+    // observe themselves as the last one and demote both accounts.
+    let active_superadmins: Vec<i64> = sqlx::query_scalar(
+        "SELECT id FROM users WHERE status='active' AND $1=ANY(string_to_array(roles, ',')) ORDER BY id FOR UPDATE",
+    )
+    .bind(perms::SUPERADMIN_ROLE)
+    .fetch_all(&mut *tx)
+    .await?;
     let (old_roles, old_status): (String, String) =
-        sqlx::query_as("SELECT roles, status FROM users WHERE id=$1")
+        sqlx::query_as("SELECT roles, status FROM users WHERE id=$1 FOR UPDATE")
             .bind(id)
-            .fetch_optional(&st.db)
+            .fetch_optional(&mut *tx)
             .await?
             .ok_or(not_found(u.lang))?;
     let sorted = |mut v: Vec<String>| {
@@ -281,18 +317,13 @@ async fn update_user(
     {
         return Err(forbidden(u.lang, ErrorKey::SuperadminOnly));
     }
-    if was_super && !stays_super {
-        let (others,): (i64,) = sqlx::query_as(
-            "SELECT COUNT(*) FROM users WHERE id <> $1 AND status = 'active'
-             AND $2 = ANY(string_to_array(roles, ','))",
-        )
-        .bind(id)
-        .bind(perms::SUPERADMIN_ROLE)
-        .fetch_one(&st.db)
-        .await?;
-        if others == 0 {
-            return Err(bad(u.lang, ErrorKey::LastSuperadmin));
-        }
+    if was_super
+        && !stays_super
+        && active_superadmins
+            .iter()
+            .all(|superadmin_id| *superadmin_id == id)
+    {
+        return Err(bad(u.lang, ErrorKey::LastSuperadmin));
     }
     if roles_changed {
         // Giving or taking a role decides what a member may do, which is the same
@@ -300,7 +331,7 @@ async fn update_user(
         require(&u, Page::AdminRoles, Act::Update)?;
         let (known,): (i64,) = sqlx::query_as("SELECT COUNT(*) FROM roles WHERE key = ANY($1)")
             .bind(&new_roles)
-            .fetch_one(&st.db)
+            .fetch_one(&mut *tx)
             .await?;
         if known != new_roles.len() as i64 {
             return Err(bad(u.lang, ErrorKey::UnknownRole));
@@ -332,25 +363,34 @@ async fn update_user(
         .bind(&roles)
         .bind(&req.status)
         .bind(id)
-        .execute(&st.db)
+        .execute(&mut *tx)
         .await?;
     if req.status == "disabled" {
         sqlx::query("DELETE FROM sessions WHERE user_id=$1")
             .bind(id)
-            .execute(&st.db)
+            .execute(&mut *tx)
             .await?;
     }
     let mut groups_note = String::new();
     if let Some(mut gids) = req.group_ids {
+        gids.sort_unstable();
+        gids.dedup();
+        let (known,): (i64,) = sqlx::query_as("SELECT COUNT(*) FROM groups WHERE id=ANY($1)")
+            .bind(&gids)
+            .fetch_one(&mut *tx)
+            .await?;
+        if known != gids.len() as i64 {
+            return Err(bad(u.lang, ErrorKey::InvalidAction));
+        }
         let old: Vec<i64> = sqlx::query_scalar(
             "SELECT group_id FROM group_members WHERE user_id=$1 ORDER BY group_id",
         )
         .bind(id)
-        .fetch_all(&st.db)
+        .fetch_all(&mut *tx)
         .await?;
         sqlx::query("DELETE FROM group_members WHERE user_id=$1")
             .bind(id)
-            .execute(&st.db)
+            .execute(&mut *tx)
             .await?;
         for g in &gids {
             sqlx::query("INSERT INTO group_members (group_id, user_id) VALUES ($1,$2) ON CONFLICT DO NOTHING")
@@ -359,12 +399,11 @@ async fn update_user(
                 .execute(&st.db)
                 .await?;
         }
-        gids.sort();
-        gids.dedup();
         if gids != old {
             groups_note = format!("; groups {old:?} → {gids:?}");
         }
     }
+    tx.commit().await?;
     audit(
         &st.db,
         Some(u.id),
@@ -453,13 +492,19 @@ async fn create_group(
     if req.name.trim().is_empty() {
         return Err(bad(u.lang, ErrorKey::GroupNameRequired));
     }
-    let (id,): (i64,) =
+    let result =
         sqlx::query_as("INSERT INTO groups (name, description) VALUES ($1,$2) RETURNING id")
             .bind(req.name.trim())
             .bind(req.description.unwrap_or_default())
             .fetch_one(&st.db)
-            .await
-            .map_err(|_| bad(u.lang, ErrorKey::GroupNameExists))?;
+            .await;
+    let (id,): (i64,) = match result {
+        Ok(row) => row,
+        Err(sqlx::Error::Database(e)) if e.is_unique_violation() => {
+            return Err(bad(u.lang, ErrorKey::GroupNameExists));
+        }
+        Err(e) => return Err(e.into()),
+    };
     audit(
         &st.db,
         Some(u.id),
@@ -479,12 +524,23 @@ async fn update_group(
     Json(req): Json<GroupIn>,
 ) -> AppResult<Json<Value>> {
     require(&u, Page::AdminGroups, Act::Update)?;
-    sqlx::query("UPDATE groups SET name=$1, description=$2 WHERE id=$3")
+    if req.name.trim().is_empty() {
+        return Err(bad(u.lang, ErrorKey::GroupNameRequired));
+    }
+    let result = sqlx::query("UPDATE groups SET name=$1, description=$2 WHERE id=$3")
         .bind(req.name.trim())
         .bind(req.description.unwrap_or_default())
         .bind(id)
         .execute(&st.db)
-        .await?;
+        .await;
+    match result {
+        Ok(result) if result.rows_affected() == 0 => return Err(not_found(u.lang)),
+        Ok(_) => {}
+        Err(sqlx::Error::Database(e)) if e.is_unique_violation() => {
+            return Err(bad(u.lang, ErrorKey::GroupNameExists));
+        }
+        Err(e) => return Err(e.into()),
+    }
     audit(
         &st.db,
         Some(u.id),
@@ -548,6 +604,13 @@ async fn set_group_members(
 ) -> AppResult<Json<Value>> {
     require(&u, Page::AdminGroups, Act::Update)?;
     let mut tx = st.db.begin().await?;
+    let exists: Option<i64> = sqlx::query_scalar("SELECT id FROM groups WHERE id=$1 FOR KEY SHARE")
+        .bind(id)
+        .fetch_optional(&mut *tx)
+        .await?;
+    if exists.is_none() {
+        return Err(not_found(u.lang));
+    }
     let old: Vec<i64> = sqlx::query_scalar("SELECT user_id FROM group_members WHERE group_id=$1")
         .bind(id)
         .fetch_all(&mut *tx)
@@ -607,12 +670,17 @@ async fn create_area(
     if req.name.trim().is_empty() {
         return Err(bad(u.lang, ErrorKey::AreaNameRequired));
     }
-    let (id,): (i64,) =
-        sqlx::query_as("INSERT INTO areas (name, active) VALUES ($1, 1) RETURNING id")
-            .bind(req.name.trim())
-            .fetch_one(&st.db)
-            .await
-            .map_err(|_| bad(u.lang, ErrorKey::AreaExists))?;
+    let result = sqlx::query_as("INSERT INTO areas (name, active) VALUES ($1, 1) RETURNING id")
+        .bind(req.name.trim())
+        .fetch_one(&st.db)
+        .await;
+    let (id,): (i64,) = match result {
+        Ok(row) => row,
+        Err(sqlx::Error::Database(e)) if e.is_unique_violation() => {
+            return Err(bad(u.lang, ErrorKey::AreaExists));
+        }
+        Err(e) => return Err(e.into()),
+    };
     audit(
         &st.db,
         Some(u.id),
@@ -632,12 +700,23 @@ async fn update_area(
     Json(req): Json<AreaIn>,
 ) -> AppResult<Json<Value>> {
     require(&u, Page::AdminAreas, Act::Update)?;
-    sqlx::query("UPDATE areas SET name=$1, active=$2 WHERE id=$3")
+    if req.name.trim().is_empty() {
+        return Err(bad(u.lang, ErrorKey::AreaNameRequired));
+    }
+    let result = sqlx::query("UPDATE areas SET name=$1, active=$2 WHERE id=$3")
         .bind(req.name.trim())
         .bind(req.active.unwrap_or(true) as i64)
         .bind(id)
         .execute(&st.db)
-        .await?;
+        .await;
+    match result {
+        Ok(result) if result.rows_affected() == 0 => return Err(not_found(u.lang)),
+        Ok(_) => {}
+        Err(sqlx::Error::Database(e)) if e.is_unique_violation() => {
+            return Err(bad(u.lang, ErrorKey::AreaExists));
+        }
+        Err(e) => return Err(e.into()),
+    }
     audit(
         &st.db,
         Some(u.id),
@@ -675,37 +754,56 @@ async fn approve_recovery(
     Path(id): Path<i64>,
 ) -> AppResult<Json<Value>> {
     require(&u, Page::AdminRecovery, Act::Update)?;
-    let (email, status, resolved_by): (String, String, Option<i64>) =
-        sqlx::query_as("SELECT email, status, resolved_by FROM recovery_requests WHERE id=$1")
-            .bind(id)
-            .fetch_optional(&st.db)
-            .await?
-            .ok_or(not_found(u.lang))?;
-    if !matches!(status.as_str(), "pending" | "awaiting_second") {
-        return Err(bad(u.lang, ErrorKey::RequestAlreadyHandled));
-    }
-    let (uid, roles): (i64, String) = sqlx::query_as("SELECT id, roles FROM users WHERE email=$1")
-        .bind(&email)
-        .fetch_optional(&st.db)
+    let mut tx = st.db.begin().await?;
+    let email: String = sqlx::query_scalar("SELECT email FROM recovery_requests WHERE id=$1")
+        .bind(id)
+        .fetch_optional(&mut *tx)
         .await?
         .ok_or(not_found(u.lang))?;
+    let uid: i64 = sqlx::query_scalar("SELECT id FROM users WHERE email=$1 FOR UPDATE")
+        .bind(&email)
+        .fetch_optional(&mut *tx)
+        .await?
+        .ok_or(not_found(u.lang))?;
+    let (locked_email, status, resolved_by): (String, String, Option<i64>) = sqlx::query_as(
+        "SELECT email, status, resolved_by FROM recovery_requests WHERE id=$1 FOR UPDATE",
+    )
+    .bind(id)
+    .fetch_optional(&mut *tx)
+    .await?
+    .ok_or(not_found(u.lang))?;
+    if locked_email != email {
+        return Err(conflict(u.lang, ErrorKey::RequestAlreadyHandled));
+    }
+    if !matches!(status.as_str(), "pending" | "awaiting_second") {
+        return Err(conflict(u.lang, ErrorKey::RequestAlreadyHandled));
+    }
+    let roles: String = sqlx::query_scalar("SELECT roles FROM users WHERE id=$1")
+        .bind(uid)
+        .fetch_one(&mut *tx)
+        .await?;
     // Recovering a privileged account needs two different admins: the first
     // only flags the request, the second confirms and receives the link.
     if status == "pending" && perms::is_privileged(&st.db, &roles).await? {
-        sqlx::query(
-            "UPDATE recovery_requests SET status='awaiting_second', resolved_by=$1 WHERE id=$2",
+        let changed = sqlx::query(
+            "UPDATE recovery_requests SET status='awaiting_second', resolved_by=$1 WHERE id=$2 AND status IN ('pending','awaiting_second')",
         )
         .bind(u.id)
         .bind(id)
-        .execute(&st.db)
-        .await?;
+        .execute(&mut *tx)
+        .await?
+        .rows_affected();
+        if changed == 0 {
+            return Err(conflict(u.lang, ErrorKey::RequestAlreadyHandled));
+        }
+        tx.commit().await?;
         audit(
             &st.db,
             Some(u.id),
             "recovery.await_second",
-            "user",
-            Some(uid),
-            &email,
+            "recovery",
+            Some(id),
+            format!("user_id={uid}; email={email}"),
         )
         .await;
         return Ok(Json(json!({"awaiting_second": true})));
@@ -715,13 +813,7 @@ async fn approve_recovery(
     }
     // Only the hash is stored (see `routes::auth::INVITE_BY_TOKEN`); the link is returned once.
     let token = random_token(32);
-    let mut tx = st.db.begin().await?;
-    // Serialize link replacement per account. Issuing a second recovery link must
-    // retire the first immediately, even if two admins approve simultaneously.
-    let _: (i64,) = sqlx::query_as("SELECT id FROM users WHERE id=$1 FOR UPDATE")
-        .bind(uid)
-        .fetch_one(&mut *tx)
-        .await?;
+    // The account row was locked above, so link replacement is serialized per user.
     sqlx::query(
         "UPDATE invites SET expires_at=$1 WHERE kind='recovery' AND user_id=$2 AND used_at IS NULL",
     )
@@ -738,8 +830,16 @@ async fn approve_recovery(
         .bind(now())
         .execute(&mut *tx)
         .await?;
-    sqlx::query("UPDATE recovery_requests SET status='approved', resolved_by=$1 WHERE id=$2")
+    let changed = sqlx::query("UPDATE recovery_requests SET status='approved', resolved_by=$1 WHERE id=$2 AND status IN ('pending','awaiting_second')")
         .bind(u.id)
+        .bind(id)
+        .execute(&mut *tx)
+        .await?;
+    if changed.rows_affected() == 0 {
+        return Err(conflict(u.lang, ErrorKey::RequestAlreadyHandled));
+    }
+    sqlx::query("UPDATE recovery_requests SET status='superseded' WHERE email=$1 AND id<>$2 AND status IN ('pending','awaiting_second')")
+        .bind(&email)
         .bind(id)
         .execute(&mut *tx)
         .await?;
@@ -762,9 +862,9 @@ async fn approve_recovery(
         &st.db,
         Some(u.id),
         "recovery.approve",
-        "user",
-        Some(uid),
-        &email,
+        "recovery",
+        Some(id),
+        format!("user_id={uid}; email={email}"),
     )
     .await;
     Ok(Json(
@@ -778,14 +878,42 @@ async fn reject_recovery(
     Path(id): Path<i64>,
 ) -> AppResult<Json<Value>> {
     require(&u, Page::AdminRecovery, Act::Update)?;
-    sqlx::query("UPDATE recovery_requests SET status='rejected', resolved_by=$1 WHERE id=$2 AND status IN ('pending','awaiting_second')").bind(u.id).bind(id).execute(&st.db).await?;
+    let mut tx = st.db.begin().await?;
+    let email: String = sqlx::query_scalar("SELECT email FROM recovery_requests WHERE id=$1")
+        .bind(id)
+        .fetch_optional(&mut *tx)
+        .await?
+        .ok_or(not_found(u.lang))?;
+    let user_id: Option<i64> = sqlx::query_scalar("SELECT id FROM users WHERE email=$1 FOR UPDATE")
+        .bind(&email)
+        .fetch_optional(&mut *tx)
+        .await?;
+    let status: String =
+        sqlx::query_scalar("SELECT status FROM recovery_requests WHERE id=$1 FOR UPDATE")
+            .bind(id)
+            .fetch_optional(&mut *tx)
+            .await?
+            .ok_or(not_found(u.lang))?;
+    if !matches!(status.as_str(), "pending" | "awaiting_second") {
+        return Err(conflict(u.lang, ErrorKey::RequestAlreadyHandled));
+    }
+    let changed = sqlx::query("UPDATE recovery_requests SET status='rejected', resolved_by=$1 WHERE id=$2 AND status IN ('pending','awaiting_second')")
+        .bind(u.id)
+        .bind(id)
+        .execute(&mut *tx)
+        .await?
+        .rows_affected();
+    if changed == 0 {
+        return Err(conflict(u.lang, ErrorKey::RequestAlreadyHandled));
+    }
+    tx.commit().await?;
     audit(
         &st.db,
         Some(u.id),
         "recovery.reject",
         "recovery",
         Some(id),
-        "",
+        format!("user_id={user_id:?}; email={email}"),
     )
     .await;
     Ok(Json(json!({"ok": true})))
@@ -838,14 +966,7 @@ async fn audit_log(
         q.q.as_deref()
             .map(str::trim)
             .filter(|s| !s.is_empty())
-            .map(|s| {
-                format!(
-                    "%{}%",
-                    s.replace('\\', "\\\\")
-                        .replace('%', "\\%")
-                        .replace('_', "\\_")
-                )
-            });
+            .map(|s| format!("%{}%", escape_like(s)));
     let action = q.action.filter(|a| !a.is_empty());
     let entity = q.entity.filter(|e| !e.is_empty());
     let limit = q.limit.unwrap_or(AUDIT_PAGE).clamp(1, AUDIT_PAGE_MAX);
@@ -957,14 +1078,7 @@ async fn audit_export(
         q.q.as_deref()
             .map(str::trim)
             .filter(|s| !s.is_empty())
-            .map(|s| {
-                format!(
-                    "%{}%",
-                    s.replace('\\', "\\\\")
-                        .replace('%', "\\%")
-                        .replace('_', "\\_")
-                )
-            });
+            .map(|s| format!("%{}%", escape_like(s)));
     let action = q.action.filter(|a| !a.is_empty());
     let entity = q.entity.filter(|e| !e.is_empty());
     let limit = q

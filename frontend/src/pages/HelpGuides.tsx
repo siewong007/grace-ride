@@ -4,6 +4,7 @@ import { useTranslation } from 'react-i18next';
 import { ArrowDown, ArrowUp, BookOpen, Pencil, Plus, Trash2 } from 'lucide-react';
 import { del, post, put, useApi } from '../api';
 import { useAuth } from '../auth';
+import { canAnyAdminPage } from '../perms';
 import {
   Button,
   Card,
@@ -32,6 +33,7 @@ export interface GuideSummary {
   summary_en: string;
   summary_zh: string;
   published: boolean;
+  audience: 'member' | 'staff';
   step_count: number;
 }
 
@@ -58,6 +60,7 @@ function GuideForm({ guide, onDone }: { guide: GuideDetailData | null; onDone: (
     summary_en: guide?.summary_en ?? '',
     summary_zh: guide?.summary_zh ?? '',
     published: guide?.published ?? true,
+    audience: guide?.audience ?? 'staff',
     steps: guide?.steps ?? [emptyStep()],
   });
 
@@ -110,6 +113,13 @@ function GuideForm({ guide, onDone }: { guide: GuideDetailData | null; onDone: (
         />
         {t('guidePublishedLabel')}
       </label>
+      <Field label={t('guideAudience')}>
+        <select className="input" value={f.audience} onChange={(e) => setF({ ...f, audience: e.target.value as 'member' | 'staff' })}>
+          <option value="member">{t('audienceMembers')}</option>
+          <option value="staff">{t('audienceStaff')}</option>
+        </select>
+      </Field>
+      <Pill tone="info">{f.audience === 'member' ? t('audienceMembers') : t('audienceStaff')}</Pill>
 
       {f.steps.map((s, i) => (
         <div key={i} className="card stack-xs">
@@ -142,7 +152,7 @@ function GuideForm({ guide, onDone }: { guide: GuideDetailData | null; onDone: (
             </Field>
           </div>
           <Field label={t('guideStepLink')}>
-            <input className="input" value={s.link} placeholder="/admin/plan" onChange={(e) => setStep(i, { link: e.target.value })} />
+            <input className="input" value={s.link} placeholder="/admin/rides" onChange={(e) => setStep(i, { link: e.target.value })} />
           </Field>
         </div>
       ))}
@@ -166,13 +176,15 @@ export default function HelpGuides() {
   const pick = usePick();
   const { can } = useAuth();
   const isEditor = can('admin_help', 'update');
+  const isStaff = canAnyAdminPage(can);
   const { data, error, loading, reload } = useApi<GuideSummary[]>(
     `/help/guides${isEditor ? '?include_drafts=true' : ''}`,
   );
   // Editing loads the full guide (steps); creating passes null.
   const [editSlug, setEditSlug] = useState<string | null>(null);
   const [creating, setCreating] = useState(false);
-  const { data: editing } = useApi<GuideDetailData>(editSlug ? `/help/guides/${editSlug}` : null);
+  const { data: editing, error: editError } = useApi<GuideDetailData>(editSlug ? `/help/guides/${editSlug}` : null);
+  const [audienceFilter, setAudienceFilter] = useState<'all' | 'member' | 'staff'>('all');
   const { busy, error: actErr, run } = useAction();
 
   const remove = (g: GuideSummary) => {
@@ -187,7 +199,7 @@ export default function HelpGuides() {
     return (
       <div className="stack">
         {/* Wait for the guide to load before showing the form. */}
-        {editSlug && !editing ? <Spinner /> : (
+        {editSlug && !editing && editError ? <div className="stack"><ErrorBox error={editError} /><Button variant="secondary" onClick={() => setEditSlug(null)}>{t('guideCancel')}</Button></div> : editSlug && !editing ? <Spinner /> : (
           <GuideForm
             key={editSlug ?? 'new'}
             guide={editSlug ? editing : null}
@@ -215,14 +227,28 @@ export default function HelpGuides() {
         }
       />
       <ErrorBox error={error} />
+      {isStaff && (
+        <Field label={t('guideAudienceFilter')}>
+          <select className="input" value={audienceFilter} onChange={(e) => setAudienceFilter(e.target.value as typeof audienceFilter)}>
+            <option value="all">{t('audienceAll')}</option>
+            <option value="member">{t('audienceMembers')}</option>
+            <option value="staff">{t('audienceStaff')}</option>
+          </select>
+        </Field>
+      )}
       {loading ? (
         <Spinner />
       ) : !data?.length ? (
         <EmptyState title={t('guideNone')} />
       ) : (
         <Card className="stack">
-          <div className="list">
-            {data.map((g) => (
+          <div className="stack">
+            {(['member', 'staff'] as const).filter((audience) => isStaff ? audienceFilter === 'all' || audienceFilter === audience : audience === 'member').map((audience) => {
+              const guides = (data ?? []).filter((guide) => guide.audience === audience);
+              return <section key={audience} className="stack">
+                {isStaff && <h3>{t(audience === 'member' ? 'guideMembersHeading' : 'guideStaffHeading')}</h3>}
+                {!guides.length ? <div className="muted">{t('guideNone')}</div> : <div className="list">
+            {guides.map((g) => (
               <div key={g.id} className="item">
                 <Link to={`/help/guides/${g.slug}`} className="grow min-w-0">
                   <div className="bold ellipsis">
@@ -253,6 +279,9 @@ export default function HelpGuides() {
                 )}
               </div>
             ))}
+                </div>}
+              </section>;
+            })}
           </div>
           <ErrorBox error={actErr} />
         </Card>

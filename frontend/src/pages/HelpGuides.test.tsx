@@ -47,17 +47,21 @@ beforeEach(() => {
   mocks.guides = [
     {
       id: 1, slug: 'plan-transport', title_en: 'Plan transport', title_zh: '',
-      summary_en: 'Walk through it', summary_zh: '', published: true, step_count: 3,
+      summary_en: 'Walk through it', summary_zh: '', published: true, audience: 'staff', step_count: 3,
     },
     {
       id: 2, slug: 'draft-one', title_en: 'Draft guide', title_zh: '',
-      summary_en: '', summary_zh: '', published: false, step_count: 1,
+      summary_en: '', summary_zh: '', published: false, audience: 'staff', step_count: 1,
+    },
+    {
+      id: 3, slug: 'getting-started', title_en: 'Getting started', title_zh: '',
+      summary_en: 'Set up your account', summary_zh: '', published: true, audience: 'member', step_count: 2,
     },
   ];
 });
 
-describe('Help admin guide tab', () => {
-  it('hides the tab from plain members', () => {
+describe('Help guides tab', () => {
+  it('shows members only their guides', async () => {
     mocks.allowed.add('help.view');
     mocks.allowed.add('help.create');
     render(
@@ -65,9 +69,11 @@ describe('Help admin guide tab', () => {
         <Help />
       </MemoryRouter>,
     );
-    expect(screen.queryByRole('tab', { name: 'Admin guide' })).toBeNull();
-    // The member ask form is still there.
+    expect(screen.getByRole('tab', { name: 'Guides' })).toBeTruthy();
     expect(screen.getByText('Ask a question')).toBeTruthy();
+    fireEvent.click(screen.getByRole('tab', { name: 'Guides' }));
+    expect(await screen.findByText('Getting started')).toBeTruthy();
+    expect(screen.queryByText('Plan transport')).toBeNull();
   });
 
   it('shows the tab to staff and lists guides when opened', async () => {
@@ -78,11 +84,23 @@ describe('Help admin guide tab', () => {
         <Help />
       </MemoryRouter>,
     );
-    fireEvent.click(screen.getByRole('tab', { name: 'Admin guide' }));
+    fireEvent.click(screen.getByRole('tab', { name: 'Guides' }));
     expect(await screen.findByText('Plan transport')).toBeTruthy();
+    expect(screen.getByText('For members')).toBeTruthy();
+    expect(screen.getByText('For staff')).toBeTruthy();
     expect(screen.getByText(/3 steps/)).toBeTruthy();
     // Drafts only render for editors; this user cannot update.
     expect(screen.queryByText('Draft guide')).toBeNull();
+  });
+
+  it('filters the staff list by audience', async () => {
+    mocks.allowed.add('help.view');
+    mocks.allowed.add('admin_help.view');
+    render(<MemoryRouter><Help /></MemoryRouter>);
+    fireEvent.click(screen.getByRole('tab', { name: 'Guides' }));
+    fireEvent.change(screen.getByLabelText('Show guides for'), { target: { value: 'member' } });
+    expect(await screen.findByText('Getting started')).toBeTruthy();
+    expect(screen.queryByText('Plan transport')).toBeNull();
   });
 });
 
@@ -98,6 +116,7 @@ describe('HelpGuideDetail', () => {
       summary_en: 'Walk through it',
       summary_zh: '',
       published: false,
+      audience: 'staff' as const,
       steps: [
         { title_en: 'Find the event', title_zh: '', body_en: 'Open Events', body_zh: '', link: '/events' },
         { title_en: 'Watch it run', title_zh: '', body_en: '', body_zh: '', link: '' },
@@ -129,12 +148,13 @@ describe('GuideForm editor', () => {
         <Help />
       </MemoryRouter>,
     );
-    fireEvent.click(screen.getByRole('tab', { name: 'Admin guide' }));
+    fireEvent.click(screen.getByRole('tab', { name: 'Guides' }));
     fireEvent.click(await screen.findByRole('button', { name: 'New guide' }));
     fireEvent.change(screen.getByLabelText('Slug (lowercase letters, numbers, dashes)'), {
       target: { value: 'test-guide' },
     });
     fireEvent.change(screen.getByLabelText('Title (English)'), { target: { value: 'Test' } });
+    fireEvent.change(screen.getByLabelText('Audience'), { target: { value: 'member' } });
     fireEvent.click(screen.getByRole('button', { name: 'Add step' }));
     fireEvent.change(screen.getAllByLabelText('Step title (English)')[0], { target: { value: 'One' } });
     fireEvent.click(screen.getByRole('button', { name: 'Save' }));
@@ -144,6 +164,7 @@ describe('GuideForm editor', () => {
         expect.objectContaining({
           slug: 'test-guide',
           title_en: 'Test',
+          audience: 'member',
           steps: expect.arrayContaining([expect.objectContaining({ title_en: 'One' })]),
         }),
       ),
@@ -157,7 +178,7 @@ describe('GuideForm editor', () => {
         <Help />
       </MemoryRouter>,
     );
-    fireEvent.click(screen.getByRole('tab', { name: 'Admin guide' }));
+    fireEvent.click(screen.getByRole('tab', { name: 'Guides' }));
     await screen.findByText('Plan transport');
     expect(screen.queryByRole('button', { name: 'New guide' })).toBeNull();
     expect(screen.queryByRole('button', { name: 'Edit' })).toBeNull();

@@ -56,6 +56,9 @@ const ENTITIES = [
   'invite',
   'announcement',
   'recovery',
+  'guide_workflow',
+  'reimbursement_rates',
+  'system_settings',
 ];
 
 const SECURITY_ACTIONS = [
@@ -99,6 +102,7 @@ const ACTION_CATEGORIES = [
       'login.passkey',
       'login.dev',
       'login.failed',
+      'password.failed',
       'logout',
       'passkey.register',
       'passkey.delete',
@@ -107,8 +111,16 @@ const ACTION_CATEGORIES = [
       'totp.failed',
       'password.set',
       'recovery.request',
+      'recovery.use',
       'recovery.approve',
       'recovery.reject',
+      'recovery.await_second',
+      'invite.accept',
+      'terms.accept',
+      'totp.backup_code_used',
+      'totp.backup_codes_regenerated',
+      'totp.verify',
+      'logout.all',
     ],
   },
   {
@@ -118,12 +130,18 @@ const ACTION_CATEGORIES = [
       'ride.claim',
       'ride.driver_confirm',
       'ride.driver_withdraw',
-      'ride.passenger_confirm',
+      'ride.passenger_accept',
       'ride.passenger_decline',
+      'ride.ready',
       'ride.approve',
       'ride.reassign',
+      'ride.plan_assign',
       'ride.alt_transport',
       'ride.return',
+      'ride.delayed',
+      'ride.driver_delay',
+      'ride.arrived_gate',
+      'ride.unable_to_join',
       'ride.start',
       'ride.pickup',
       'ride.no_show',
@@ -132,12 +150,14 @@ const ACTION_CATEGORIES = [
       'ride.escalate',
       'location.share',
       'location.stop',
+      'driver.profile_update',
     ],
   },
   {
     category: 'events',
     actions: [
       'event.create',
+      'events.create',
       'event.update',
       'event.cancel',
       'event.finish',
@@ -152,6 +172,7 @@ const ACTION_CATEGORIES = [
     actions: [
       'reimbursement.create',
       'reimbursement.resubmit',
+      'reimbursement.review',
       'reimbursement.approve',
       'reimbursement.reject',
       'reimbursement.pay',
@@ -161,7 +182,9 @@ const ACTION_CATEGORIES = [
       'settlement.close',
       'settlement.delete',
       'share.proof',
-      'share.verify',
+      'share.confirm',
+      'share.needs_info',
+      'settlement.revise',
     ],
   },
   {
@@ -171,12 +194,16 @@ const ACTION_CATEGORIES = [
       'role.create',
       'role.update',
       'role.delete',
+      'role.bootstrap',
+      'admin_roles.update',
       'group.create',
       'group.update',
       'group.delete',
       'group.members',
       'area.create',
       'area.update',
+      'settings.rates',
+      'settings.system',
       'announcement.create',
       'announcement.delete',
       'invite.create',
@@ -184,6 +211,12 @@ const ACTION_CATEGORIES = [
       'help.create',
       'help.reply',
       'help.close',
+      'guide.create',
+      'guide.update',
+      'guide.delete',
+      'profile.update',
+      'file.upload',
+      'report.delete',
     ],
   },
 ];
@@ -318,7 +351,7 @@ export default function Audit() {
   const filters = new URLSearchParams();
   for (const k of FILTERS) {
     const v = params.get(k);
-    if (v) filters.set(k, v);
+    if (v && !(k === 'entity_id' && !/^\d+$/.test(v))) filters.set(k, v);
   }
   const query = filters.toString();
 
@@ -381,6 +414,23 @@ export default function Audit() {
           else p.delete(k);
           // The id only makes sense with the object it belongs to.
           if (k === 'entity' && !v) p.delete('entity_id');
+          return p;
+        },
+        { replace: true },
+      );
+    },
+    [setParams],
+  );
+
+  const setMany = useCallback(
+    (values: Record<string, string>) => {
+      setParams(
+        (prev) => {
+          const p = new URLSearchParams(prev);
+          for (const [key, value] of Object.entries(values)) {
+            if (value) p.set(key, value);
+            else p.delete(key);
+          }
           return p;
         },
         { replace: true },
@@ -473,6 +523,7 @@ export default function Audit() {
       URL.revokeObjectURL(url);
     } catch (e) {
       console.error('Failed to stream export audit logs', e);
+      setError(t('audit.exportFailed'));
     } finally {
       setIsStreaming(false);
     }
@@ -540,11 +591,15 @@ export default function Audit() {
     doc.save(`grace-ride-audit-${dateStr}.pdf`);
   };
 
-  const handleCopyJson = () => {
+  const handleCopyJson = async () => {
     if (!selectedItem) return;
-    navigator.clipboard.writeText(JSON.stringify(selectedItem, null, 2));
-    setCopied(true);
-    setTimeout(() => setCopied(false), 2000);
+    try {
+      await navigator.clipboard.writeText(JSON.stringify(selectedItem, null, 2));
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
+    } catch {
+      setError(t('audit.copyFailed'));
+    }
   };
 
   const selectedTargetUrl = selectedItem ? getObjectLink(selectedItem.entity, selectedItem.entity_id) : null;
@@ -602,8 +657,7 @@ export default function Audit() {
               type="button"
               className="table-filter-link"
               onClick={() => {
-                set('entity', a.entity);
-                if (a.entity_id != null) set('entity_id', String(a.entity_id));
+                setMany({ entity: a.entity, entity_id: a.entity_id == null ? '' : String(a.entity_id) });
               }}
               title={t('audit.filterByObject')}
             >
@@ -724,8 +778,11 @@ export default function Audit() {
             type="text"
             placeholder={t('audit.entityId')}
             style={{ width: '100px' }}
-            value={entityId}
-            onChange={(e) => set('entity_id', e.target.value.trim())}
+            value={/^\d+$/.test(entityId) ? entityId : ''}
+            onChange={(e) => {
+              const value = e.target.value.trim();
+              if (!value || /^\d+$/.test(value)) set('entity_id', value);
+            }}
             aria-label={t('audit.entityId')}
           />
         )}
@@ -945,10 +1002,7 @@ export default function Audit() {
                   variant="ghost"
                   size="sm"
                   onClick={() => {
-                    set('entity', selectedItem.entity);
-                    if (selectedItem.entity_id != null) {
-                      set('entity_id', String(selectedItem.entity_id));
-                    }
+                    setMany({ entity: selectedItem.entity, entity_id: selectedItem.entity_id == null ? '' : String(selectedItem.entity_id) });
                     setSelectedItem(null);
                   }}
                 >
