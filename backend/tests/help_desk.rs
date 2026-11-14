@@ -408,3 +408,39 @@ async fn guide_feedback_and_reorder() {
     );
     assert!(pb < pa);
 }
+
+#[tokio::test]
+async fn dashboard_reports_queue_wait_times() {
+    let (app, st) = setup().await;
+    let member = login(&st, "member@example.org").await;
+    let staff = login(&st, "transport@example.org").await;
+    let r = call(
+        &app,
+        Method::GET,
+        "/api/admin/dashboard",
+        Some(&staff),
+        None,
+    )
+    .await;
+    assert_eq!(r.status, StatusCode::OK);
+    assert!(r.json["oldest_help_at"].is_null());
+    call(
+        &app,
+        Method::POST,
+        "/api/help",
+        Some(&member),
+        Some(json!({"subject":"Late","body":"Still waiting"})),
+    )
+    .await;
+    let r = call(
+        &app,
+        Method::GET,
+        "/api/admin/dashboard",
+        Some(&staff),
+        None,
+    )
+    .await;
+    assert!(r.json["oldest_help_at"].is_string());
+    assert!(r.json.get("oldest_approval_at").is_some());
+    assert!(r.json.get("next_no_driver_at").is_some());
+}

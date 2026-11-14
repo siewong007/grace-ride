@@ -101,6 +101,18 @@ async fn dashboard(State(st): State<AppState>, u: CurrentUser) -> AppResult<Json
     )
     .fetch_one(&st.db)
     .await?;
+    // How long the oldest item in each queue has waited, for the work queue on the admin home.
+    let (oldest_approval_at, next_no_driver_at): (Option<String>, Option<String>) = sqlx::query_as(
+        "SELECT (SELECT MIN(created_at) FROM rides WHERE status='pending_approval'),
+                (SELECT MIN(pickup_at) FROM rides WHERE status='pending_driver' AND pickup_at >= $1)",
+    )
+    .bind(&today)
+    .fetch_one(&st.db)
+    .await?;
+    let (oldest_help_at,): (Option<String>,) =
+        sqlx::query_as("SELECT MIN(updated_at) FROM help_tickets WHERE status='open'")
+            .fetch_one(&st.db)
+            .await?;
     let max_live_drivers: i64 = sqlx::query_scalar::<_, String>(
         "SELECT value FROM system_settings WHERE key='max_live_drivers'",
     )
@@ -115,6 +127,8 @@ async fn dashboard(State(st): State<AppState>, u: CurrentUser) -> AppResult<Json
         "pending_approval": pending_approval, "no_driver": no_driver, "needs_attention": attention,
         "live_drivers": live, "max_live_drivers": max_live_drivers, "open_help": open_help,
         "pending_reimbursements": pending_reimb, "members": members, "pending_recovery": recovery,
+        "oldest_approval_at": oldest_approval_at, "next_no_driver_at": next_no_driver_at,
+        "oldest_help_at": oldest_help_at,
     })))
 }
 

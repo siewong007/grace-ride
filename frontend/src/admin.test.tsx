@@ -236,7 +236,7 @@ vi.mock('./api', () => ({
 }));
 
 describe('Admin Dashboard', () => {
-  it('renders 8 stat tiles and two-column layout with today rides and pending approvals', () => {
+  it('lists waiting work most urgent first, each row linking to its filtered list', () => {
     render(
       <MemoryRouter>
         <Dashboard />
@@ -244,16 +244,22 @@ describe('Admin Dashboard', () => {
     );
 
     expect(screen.getByText('Ride overview', { exact: false })).toBeInTheDocument();
-    expect(screen.getByText('Rides today')).toBeInTheDocument();
-    expect(screen.getByText('Confirmed today')).toBeInTheDocument();
-    expect(screen.getAllByText(/pending approval/i).length).toBeGreaterThanOrEqual(1);
-    expect(screen.getByText('No driver found')).toBeInTheDocument();
-    expect(screen.getByText('Needs attention')).toBeInTheDocument();
-    expect(screen.getByText('Drivers out')).toBeInTheDocument();
-    expect(screen.getByText('Help requests unanswered')).toBeInTheDocument();
-    expect(screen.getByText('Reimbursements pending')).toBeInTheDocument();
+    expect(screen.getByRole('heading', { name: 'Needs you now' })).toBeInTheDocument();
+    const rows = screen.getAllByRole('listitem').filter((li) => li.classList.contains('work-queue-row'));
+    expect(rows.map((r) => within(r).getByText(/Rides|requests|Reimbursements/).textContent)).toEqual([
+      'Rides without a driver',
+      'Rides to approve',
+      'Rides needing follow-up',
+      'Help requests waiting',
+      'Reimbursements to review',
+      'Account recovery requests',
+    ]);
+    expect(within(rows[0]).getByRole('link')).toHaveAttribute('href', '/admin/rides?status=pending_driver');
+    expect(within(rows[5]).getByRole('link')).toHaveAttribute('href', '/admin/members?tab=recovery');
+    expect(screen.getByText('Today: 5 rides, 4 confirmed')).toBeInTheDocument();
+    expect(screen.getByText('3 drivers out now')).toBeInTheDocument();
 
-    // Two-column layout elements
+    // Detail lists stay below the queue.
     expect(screen.getByText('Today’s rides')).toBeInTheDocument();
     expect(screen.getByText('Needs follow-up')).toBeInTheDocument();
   });

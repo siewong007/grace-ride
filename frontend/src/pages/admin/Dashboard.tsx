@@ -1,4 +1,5 @@
-import { AlertTriangle } from 'lucide-react';
+import { ReactNode } from 'react';
+import { AlertTriangle, CarFront, CheckCircle2, ClipboardCheck, HeartHandshake, KeyRound, LifeBuoy } from 'lucide-react';
 import { Link, useNavigate } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
 import { useApi } from '../../api';
@@ -11,13 +12,11 @@ import {
   ErrorBox,
   Page,
   PageHeader,
-  Spinner,
-  Stat,
   StatusPill,
   TableColumn,
   UniversalTable,
 } from '../../components/ui';
-import { fmtDay, fmtTime, RIDE_STATUS, todayStr, useFormatT } from '../../format';
+import { fmtAgo, fmtDay, fmtTime, RIDE_STATUS, todayStr, useFormatT } from '../../format';
 
 interface Dash {
   today: string;
@@ -33,6 +32,21 @@ interface Dash {
   pending_reimbursements: number;
   members: number;
   pending_recovery: number;
+  oldest_approval_at: string | null;
+  next_no_driver_at: string | null;
+  oldest_help_at: string | null;
+}
+
+/** One line of the work queue: how many things wait, where, and the one action that clears them. */
+interface QueueRow {
+  key: string;
+  count: number;
+  icon: ReactNode;
+  tone: 'warn' | 'bad';
+  title: string;
+  meta?: string;
+  to: string;
+  action: string;
 }
 
 export default function Dashboard() {
@@ -83,7 +97,46 @@ export default function Dashboard() {
   }
 
   if (error) return <Page><ErrorBox error={error} /></Page>;
-  if (!d) return <Page><Spinner /></Page>;
+  if (!d) return <Page><CardSkeleton count={3} /></Page>;
+
+  // Ordered by urgency: a pickup with no driver beats everything else.
+  const queue: QueueRow[] = [
+    {
+      key: 'noDriver', count: rides ? d.no_driver : 0, icon: <CarFront size={20} />, tone: 'bad' as const,
+      title: t('dashboard.q.noDriver'),
+      meta: d.next_no_driver_at
+        ? t('dashboard.q.nextPickup', { when: `${fmtDay(d.next_no_driver_at, ft)} ${fmtTime(d.next_no_driver_at, ft)}` })
+        : undefined,
+      to: '/admin/rides?status=pending_driver', action: t('dashboard.q.assign'),
+    },
+    {
+      key: 'approve', count: rides ? d.pending_approval : 0, icon: <ClipboardCheck size={20} />, tone: 'warn' as const,
+      title: t('dashboard.q.approve'),
+      meta: d.oldest_approval_at ? t('dashboard.q.oldest', { ago: fmtAgo(d.oldest_approval_at, ft) }) : undefined,
+      to: '/admin/rides?status=pending_approval', action: t('dashboard.q.review'),
+    },
+    {
+      key: 'attention', count: rides ? d.needs_attention : 0, icon: <AlertTriangle size={20} />, tone: 'bad' as const,
+      title: t('dashboard.q.attention'),
+      to: '/admin/rides?attention=true', action: t('dashboard.q.open'),
+    },
+    {
+      key: 'help', count: can('admin_help') ? d.open_help : 0, icon: <LifeBuoy size={20} />, tone: 'warn' as const,
+      title: t('dashboard.q.help'),
+      meta: d.oldest_help_at ? t('dashboard.q.oldest', { ago: fmtAgo(d.oldest_help_at, ft) }) : undefined,
+      to: '/help', action: t('dashboard.q.answer'),
+    },
+    {
+      key: 'reimb', count: can('admin_reimb_review') ? d.pending_reimbursements : 0, icon: <HeartHandshake size={20} />, tone: 'warn' as const,
+      title: t('dashboard.q.reimb'),
+      to: '/admin/reimbursements', action: t('dashboard.q.review'),
+    },
+    {
+      key: 'recovery', count: can('admin_recovery') ? d.pending_recovery : 0, icon: <KeyRound size={20} />, tone: 'warn' as const,
+      title: t('dashboard.q.recovery'),
+      to: '/admin/members?tab=recovery', action: t('dashboard.q.open'),
+    },
+  ].filter((r) => r.count > 0);
 
   const columns: TableColumn<Ride>[] = [
     {
@@ -136,54 +189,41 @@ export default function Dashboard() {
         }
       />
 
-      {/* Key numbers: one block split by hairlines; each links to its filtered list */}
-      <div className="stat-strip">
-        <Stat
-          label={t('dashboard.todayArranged')}
-          value={d.today_total}
-          to={`/admin/rides?date=${d.today}`}
-        />
-        <Stat
-          label={t('dashboard.todayConfirmed')}
-          value={d.today_confirmed}
-          to={`/admin/rides?date=${d.today}&status=confirmed`}
-        />
-        <Stat
-          label={t('dashboard.pendingApproval')}
-          value={d.pending_approval}
-          tone={d.pending_approval > 0 ? 'warn' : 'normal'}
-          to="/admin/rides?status=pending_approval"
-        />
-        <Stat
-          label={t('dashboard.noDriver')}
-          value={d.no_driver}
-          tone={d.no_driver > 0 ? 'warn' : 'normal'}
-          to="/admin/rides?status=pending_driver"
-        />
-        <Stat
-          label={t('dashboard.needsAttention')}
-          value={d.needs_attention}
-          tone={d.needs_attention > 0 ? 'bad' : 'normal'}
-          to="/admin/rides?attention=true"
-        />
-        <Stat
-          label={t('dashboard.liveDrivers')}
-          value={d.live_drivers}
-          to="/admin/live"
-        />
-        <Stat
-          label={t('dashboard.openHelp')}
-          value={d.open_help}
-          tone={d.open_help > 0 ? 'warn' : 'normal'}
-          to="/help"
-        />
-        <Stat
-          label={t('dashboard.pendingReimb')}
-          value={d.pending_reimbursements}
-          tone={d.pending_reimbursements > 0 ? 'warn' : 'normal'}
-          to="/admin/reimbursements"
-        />
-      </div>
+      {/* Work queue: what is waiting on staff, most urgent first; each row goes to the filtered list. */}
+      <Card className="stack work-queue">
+        <h2>{t('dashboard.q.title')}</h2>
+        {queue.length === 0 ? (
+          <div className="row nowrap work-queue-clear">
+            <CheckCircle2 size={20} aria-hidden="true" />
+            <span>{t('dashboard.q.allClear')}</span>
+          </div>
+        ) : (
+          <ul className="list work-queue-list">
+            {queue.map((r) => (
+              <li key={r.key} className="item work-queue-row">
+                <span className={`work-queue-icon ${r.tone}`} aria-hidden="true">{r.icon}</span>
+                <span className="work-queue-count">{r.count}</span>
+                <div className="grow min-w-0">
+                  <div className="bold">{r.title}</div>
+                  {r.meta && <div className="muted small">{r.meta}</div>}
+                </div>
+                <Link className="btn sm" to={r.to} aria-label={`${r.action}: ${r.title} (${r.count})`}>
+                  {r.action}
+                </Link>
+              </li>
+            ))}
+          </ul>
+        )}
+      </Card>
+
+      {/* Today at a glance: numbers that are not actions, in one line. */}
+      <p className="muted work-queue-today">
+        <Link to={`/admin/rides?date=${d.today}`}>
+          {t('dashboard.q.today', { total: d.today_total, confirmed: d.today_confirmed })}
+        </Link>
+        {' · '}
+        <Link to="/admin/live">{t('dashboard.q.live', { live: d.live_drivers })}</Link>
+      </p>
 
       {/* Two-column layout on desktop */}
       <div className="split">
@@ -272,12 +312,6 @@ export default function Dashboard() {
               </div>
             )}
           </Card>
-
-          {d.pending_recovery > 0 && (
-            <Link className="notice" to="/admin/members">
-              {t('dashboard.recovery', { count: d.pending_recovery })} →
-            </Link>
-          )}
 
           {auditPerm && (
             <Card className="stack">

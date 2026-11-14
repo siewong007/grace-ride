@@ -40,4 +40,11 @@ export default {
   pendingNotice: '管理员核对资料后才会分配职务与群体。在此之前你可以更新个人资料和通行密钥。',
   mainNav: '主选单',
   bottomNav: '底部选单',
+  groupOps: '运营',
+  groupPeople: '人员',
+  groupMoney: '财务',
+  groupContent: '内容',
+  groupSystem: '系统',
+  waitingCount: '{count} 项待处理',
+  adminSheetTitle: '管理',
 };

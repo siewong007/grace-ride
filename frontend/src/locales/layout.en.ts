@@ -40,4 +40,11 @@ export default {
   pendingNotice: 'An admin will assign your role and group after checking your profile. Until then you can update your details and passkey.',
   mainNav: 'Main navigation',
   bottomNav: 'Bottom navigation',
+  groupOps: 'Operations',
+  groupPeople: 'People',
+  groupMoney: 'Money',
+  groupContent: 'Content',
+  groupSystem: 'System',
+  waitingCount: '{count} waiting',
+  adminSheetTitle: 'Admin',
 };
