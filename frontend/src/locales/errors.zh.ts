@@ -182,6 +182,7 @@ export default {
     "TITLE_AND_CONTENT_REQUIRED": "请填写标题及内容",
     "GUIDE_TITLE_REQUIRED": "请至少填写一种语言的指南标题",
     "GUIDE_AUDIENCE_INVALID": "指南对象只支持会员或职员",
+    "HELP_ATTACHMENT_INVALID": "只能附上您自己上传的图片",
     "GUIDE_SLUG_REQUIRED": "请填写有效的 slug（小写字母、数字、连字符）",
     "GUIDE_SLUG_EXISTS": "该 slug 已被使用",
     "GUIDE_LINK_INVALID": "步骤链接必须是应用内路径（以 / 开头）",

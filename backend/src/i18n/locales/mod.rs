@@ -188,6 +188,7 @@ pub fn render(lang: Lang, key: &ErrorKey) -> String {
         | ErrorKey::TitleAndContentRequired
         | ErrorKey::GuideTitleRequired
         | ErrorKey::GuideAudienceInvalid
+        | ErrorKey::HelpAttachmentInvalid
         | ErrorKey::GuideSlugRequired
         | ErrorKey::GuideSlugExists
         | ErrorKey::GuideLinkInvalid
@@ -403,6 +404,7 @@ mod tests {
             ErrorKey::TitleAndContentRequired,
             ErrorKey::GuideTitleRequired,
             ErrorKey::GuideAudienceInvalid,
+            ErrorKey::HelpAttachmentInvalid,
             ErrorKey::GuideSlugRequired,
             ErrorKey::GuideSlugExists,
             ErrorKey::GuideLinkInvalid,

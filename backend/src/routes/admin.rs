@@ -109,6 +109,11 @@ async fn dashboard(State(st): State<AppState>, u: CurrentUser) -> AppResult<Json
     .bind(&today)
     .fetch_one(&st.db)
     .await?;
+    let (help_claimed_by_me,): (i64,) =
+        sqlx::query_as("SELECT COUNT(*) FROM help_tickets WHERE status='open' AND assignee_id=$1")
+            .bind(u.id)
+            .fetch_one(&st.db)
+            .await?;
     let (oldest_help_at,): (Option<String>,) =
         sqlx::query_as("SELECT MIN(updated_at) FROM help_tickets WHERE status='open'")
             .fetch_one(&st.db)
@@ -128,7 +133,7 @@ async fn dashboard(State(st): State<AppState>, u: CurrentUser) -> AppResult<Json
         "live_drivers": live, "max_live_drivers": max_live_drivers, "open_help": open_help,
         "pending_reimbursements": pending_reimb, "members": members, "pending_recovery": recovery,
         "oldest_approval_at": oldest_approval_at, "next_no_driver_at": next_no_driver_at,
-        "oldest_help_at": oldest_help_at,
+        "oldest_help_at": oldest_help_at, "help_claimed_by_me": help_claimed_by_me,
     })))
 }
 

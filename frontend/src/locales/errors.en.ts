@@ -182,6 +182,7 @@ export default {
     "TITLE_AND_CONTENT_REQUIRED": "Please enter both a title and content",
     "GUIDE_TITLE_REQUIRED": "Enter the guide title in at least one language",
     "GUIDE_AUDIENCE_INVALID": "Guide audience must be member or staff",
+    "HELP_ATTACHMENT_INVALID": "Attach a photo you uploaded yourself",
     "GUIDE_SLUG_REQUIRED": "Enter a valid slug (lowercase letters, numbers, dashes)",
     "GUIDE_SLUG_EXISTS": "That slug is already in use",
     "GUIDE_LINK_INVALID": "A step link must be an in-app path starting with /",

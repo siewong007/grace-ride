@@ -32,6 +32,11 @@ pub fn render(lang: Lang, key: &ErrorKey) -> String {
             "指南对象只支持会员或职员",
             "Guide audience must be member or staff",
         ),
+        ErrorKey::HelpAttachmentInvalid => pair(
+            lang,
+            "只能附上您自己上传的图片",
+            "Attach a photo you uploaded yourself",
+        ),
         ErrorKey::GuideSlugRequired => pair(
             lang,
             "请填写有效的 slug（小写字母、数字、连字符）",

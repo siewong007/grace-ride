@@ -444,3 +444,213 @@ async fn dashboard_reports_queue_wait_times() {
     assert!(r.json.get("oldest_approval_at").is_some());
     assert!(r.json.get("next_no_driver_at").is_some());
 }
+
+async fn seed_image(st: &AppState, owner: i64, mime: &str) -> i64 {
+    let (id,): (i64,) = sqlx::query_as(
+        "INSERT INTO files (owner_id, stored_name, mime, created_at) VALUES ($1, 'x', $2, $3) RETURNING id",
+    )
+    .bind(owner)
+    .bind(mime)
+    .bind(grace_ride::util::now())
+    .fetch_one(&st.db)
+    .await
+    .unwrap();
+    id
+}
+
+#[tokio::test]
+async fn staff_claim_and_release_requests() {
+    let (app, st) = setup().await;
+    let member = login(&st, "member@example.org").await;
+    let staff = login(&st, "transport@example.org").await;
+    let admin = login(&st, "admin@example.org").await;
+    let r = call(
+        &app,
+        Method::POST,
+        "/api/help",
+        Some(&member),
+        Some(json!({"subject":"Late","body":"Still waiting"})),
+    )
+    .await;
+    let id = r.json["id"].as_i64().unwrap();
+    call(
+        &app,
+        Method::POST,
+        "/api/help",
+        Some(&member),
+        Some(json!({"subject":"Other","body":"x"})),
+    )
+    .await;
+
+    let r = call(
+        &app,
+        Method::POST,
+        &format!("/api/help/{id}/claim"),
+        Some(&member),
+        Some(json!({"claim":true})),
+    )
+    .await;
+    assert_eq!(r.status, StatusCode::FORBIDDEN);
+    let r = call(
+        &app,
+        Method::POST,
+        &format!("/api/help/{id}/claim"),
+        Some(&staff),
+        Some(json!({"claim":true})),
+    )
+    .await;
+    assert_eq!(r.status, StatusCode::OK);
+
+    let r = call(
+        &app,
+        Method::GET,
+        "/api/help?all=true&assigned=me",
+        Some(&staff),
+        None,
+    )
+    .await;
+    let rows = r.json.as_array().unwrap();
+    assert_eq!(rows.len(), 1);
+    assert_eq!(rows[0]["id"], id);
+    assert!(rows[0]["assignee_name"].is_string());
+    let r = call(
+        &app,
+        Method::GET,
+        "/api/help/counts?all=true&assigned=me",
+        Some(&staff),
+        None,
+    )
+    .await;
+    assert_eq!(r.json["open"], 1);
+    let r = call(
+        &app,
+        Method::GET,
+        "/api/admin/dashboard",
+        Some(&staff),
+        None,
+    )
+    .await;
+    assert_eq!(r.json["help_claimed_by_me"], 1);
+
+    // Someone else's claim is not theirs to release.
+    let r = call(
+        &app,
+        Method::POST,
+        &format!("/api/help/{id}/claim"),
+        Some(&admin),
+        Some(json!({"claim":false})),
+    )
+    .await;
+    assert_eq!(r.json["changed"], false);
+    let r = call(
+        &app,
+        Method::POST,
+        &format!("/api/help/{id}/claim"),
+        Some(&staff),
+        Some(json!({"claim":false})),
+    )
+    .await;
+    assert_eq!(r.json["changed"], true);
+    let r = call(
+        &app,
+        Method::GET,
+        &format!("/api/help/{id}"),
+        Some(&staff),
+        None,
+    )
+    .await;
+    assert!(r.json["assignee_id"].is_null());
+    let r = call(
+        &app,
+        Method::POST,
+        "/api/help/999999/claim",
+        Some(&staff),
+        Some(json!({"claim":true})),
+    )
+    .await;
+    assert_eq!(r.status, StatusCode::NOT_FOUND);
+}
+
+#[tokio::test]
+async fn photos_attach_only_from_own_uploads() {
+    let (app, st) = setup().await;
+    let member = login(&st, "member@example.org").await;
+    let staff = login(&st, "transport@example.org").await;
+    let mid = user_id(&st, "member@example.org").await;
+    let other = user_id(&st, "amina@example.org").await;
+    let mine = seed_image(&st, mid, "image/png").await;
+    let theirs = seed_image(&st, other, "image/png").await;
+    let pdf = seed_image(&st, mid, "application/pdf").await;
+
+    let r = call(
+        &app,
+        Method::POST,
+        "/api/help",
+        Some(&member),
+        Some(json!({"subject":"Here","body":"I'm at the gate","file_id":theirs})),
+    )
+    .await;
+    assert_eq!(r.status, StatusCode::BAD_REQUEST);
+    assert_eq!(r.json["code"], "HELP_ATTACHMENT_INVALID");
+    let r = call(
+        &app,
+        Method::POST,
+        "/api/help",
+        Some(&member),
+        Some(json!({"subject":"Here","body":"x","file_id":pdf})),
+    )
+    .await;
+    assert_eq!(r.status, StatusCode::BAD_REQUEST);
+    let r = call(
+        &app,
+        Method::POST,
+        "/api/help",
+        Some(&member),
+        Some(json!({"subject":"Here","body":"I'm at the gate","file_id":mine})),
+    )
+    .await;
+    assert_eq!(r.status, StatusCode::OK);
+    let id = r.json["id"].as_i64().unwrap();
+
+    // A photo alone is a valid reply.
+    let mine2 = seed_image(&st, mid, "image/jpeg").await;
+    let r = call(
+        &app,
+        Method::POST,
+        &format!("/api/help/{id}/replies"),
+        Some(&member),
+        Some(json!({"file_id":mine2})),
+    )
+    .await;
+    assert_eq!(r.status, StatusCode::OK);
+    let r = call(
+        &app,
+        Method::POST,
+        &format!("/api/help/{id}/replies"),
+        Some(&member),
+        Some(json!({"body":"  "})),
+    )
+    .await;
+    assert_eq!(r.status, StatusCode::BAD_REQUEST);
+
+    let r = call(
+        &app,
+        Method::GET,
+        &format!("/api/help/{id}"),
+        Some(&staff),
+        None,
+    )
+    .await;
+    let replies = r.json["replies"].as_array().unwrap();
+    assert_eq!(replies[0]["file_id"], mine);
+    assert_eq!(replies[1]["file_id"], mine2);
+
+    // Staff pass the access check (the stored bytes don't exist in tests, so 404);
+    // an unrelated member is refused outright.
+    let path = format!("/api/files/{mine}");
+    let r = call(&app, Method::GET, &path, Some(&staff), None).await;
+    assert_eq!(r.status, StatusCode::NOT_FOUND);
+    let amina = login(&st, "amina@example.org").await;
+    let r = call(&app, Method::GET, &path, Some(&amina), None).await;
+    assert_eq!(r.status, StatusCode::FORBIDDEN);
+}

@@ -33,6 +33,7 @@ pub fn router() -> Router<AppState> {
         .route("/help/{id}/replies", post(reply_ticket))
         .route("/help/{id}/close", post(close_ticket))
         .route("/help/{id}/reopen", post(reopen_ticket))
+        .route("/help/{id}/claim", post(claim_ticket))
         .route("/help/counts", get(ticket_counts))
         .route("/help/members", get(help_members))
         .route("/help/guides/reorder", post(reorder_guides))
@@ -321,6 +322,22 @@ struct HelpQuery {
     all: Option<bool>,
     status: Option<String>,
     q: Option<String>,
+    /// "me": only requests this staff member has claimed.
+    assigned: Option<String>,
+}
+
+/// A photo on a help message must be an image the sender uploaded themselves,
+/// so nobody can surface someone else's file by naming its id.
+async fn check_attachment(st: &AppState, u: &CurrentUser, file_id: Option<i64>) -> AppResult<()> {
+    let Some(fid) = file_id else { return Ok(()) };
+    let ok: Option<(i64,)> =
+        sqlx::query_as("SELECT id FROM files WHERE id=$1 AND owner_id=$2 AND mime LIKE 'image/%'")
+            .bind(fid)
+            .bind(u.id)
+            .fetch_optional(&st.db)
+            .await?;
+    ok.map(|_| ())
+        .ok_or(bad(u.lang, ErrorKey::HelpAttachmentInvalid))
 }
 
 /// Escape LIKE wildcards so a search term is matched literally.
@@ -354,11 +371,27 @@ async fn list_tickets(
             .map(str::trim)
             .filter(|s| !s.is_empty())
             .map(like_pattern);
+    let mine_only = all && q.assigned.as_deref() == Some("me");
     #[allow(clippy::type_complexity)]
-    let rows: Vec<(i64, String, String, Option<i64>, i64, String, String, String, Option<String>, Option<bool>, Option<String>)> = sqlx::query_as(
+    let rows: Vec<(
+        i64,
+        String,
+        String,
+        Option<i64>,
+        i64,
+        String,
+        String,
+        String,
+        Option<String>,
+        Option<bool>,
+        Option<String>,
+        Option<i64>,
+        Option<String>,
+    )> = sqlx::query_as(
         "SELECT t.id, t.subject, t.status, t.ride_id, t.user_id, u.name, t.created_at, t.updated_at,
-                lr.body, lr.staff, lr.created_at
+                lr.body, lr.staff, lr.created_at, t.assignee_id, a.name
          FROM help_tickets t JOIN users u ON u.id=t.user_id
+         LEFT JOIN users a ON a.id=t.assignee_id
          LEFT JOIN LATERAL (
              SELECT LEFT(r.body, 160) AS body, (r.user_id <> t.user_id) AS staff, r.created_at
              FROM help_replies r WHERE r.ticket_id=t.id ORDER BY r.id DESC LIMIT 1
@@ -366,21 +399,24 @@ async fn list_tickets(
          WHERE ($1 OR t.user_id=$2)
            AND ($3::text IS NULL OR t.status=$3)
            AND ($4::text IS NULL OR t.subject ILIKE $4 ESCAPE '\\' OR u.name ILIKE $4 ESCAPE '\\')
+           AND (NOT $5 OR t.assignee_id=$2)
          ORDER BY CASE t.status WHEN 'open' THEN 0 WHEN 'answered' THEN 1 ELSE 2 END, t.updated_at DESC LIMIT 200",
     )
     .bind(all)
     .bind(u.id)
     .bind(status)
     .bind(search)
+    .bind(mine_only)
     .fetch_all(&st.db)
     .await?;
     Ok(Json(json!(rows
         .into_iter()
         .map(
-            |(id, s, status, r, uid, name, c, upd, body, staff, at)| json!({
+            |(id, s, status, r, uid, name, c, upd, body, staff, at, aid, aname)| json!({
                 "id": id, "subject": s, "status": status, "ride_id": r, "user_id": uid,
                 "user_name": name, "created_at": c, "updated_at": upd,
                 "last_body": body, "last_staff": staff, "last_at": at,
+                "assignee_id": aid, "assignee_name": aname,
             })
         )
         .collect::<Vec<_>>())))
@@ -389,6 +425,7 @@ async fn list_tickets(
 #[derive(Deserialize)]
 struct CountsQuery {
     all: Option<bool>,
+    assigned: Option<String>,
 }
 
 async fn ticket_counts(
@@ -400,11 +437,14 @@ async fn ticket_counts(
     if !all {
         require(&u, Page::Help, Act::View)?;
     }
+    let mine_only = all && q.assigned.as_deref() == Some("me");
     let rows: Vec<(String, i64)> = sqlx::query_as(
-        "SELECT status, COUNT(*)::bigint FROM help_tickets WHERE ($1 OR user_id=$2) GROUP BY status",
+        "SELECT status, COUNT(*)::bigint FROM help_tickets
+         WHERE ($1 OR user_id=$2) AND (NOT $3 OR assignee_id=$2) GROUP BY status",
     )
     .bind(all)
     .bind(u.id)
+    .bind(mine_only)
     .fetch_all(&st.db)
     .await?;
     let get = |k: &str| rows.iter().find(|(s, _)| s == k).map_or(0, |(_, n)| *n);
@@ -445,6 +485,8 @@ struct TicketIn {
     ride_id: Option<i64>,
     /// Staff only: raise the request on behalf of this member.
     for_user_id: Option<i64>,
+    /// Optional photo (an image this user uploaded).
+    file_id: Option<i64>,
 }
 
 async fn create_ticket(
@@ -462,6 +504,7 @@ async fn create_ticket(
         return Err(bad(u.lang, ErrorKey::QuestionAndDetailsRequired));
     }
     let owner_id = on_behalf.unwrap_or(u.id);
+    check_attachment(&st, &u, req.file_id).await?;
     if on_behalf.is_some() {
         let exists: Option<(i64,)> = sqlx::query_as("SELECT id FROM users WHERE id=$1")
             .bind(owner_id)
@@ -495,11 +538,12 @@ async fn create_ticket(
         .fetch_one(&st.db)
         .await?;
     sqlx::query(
-        "INSERT INTO help_replies (ticket_id, user_id, body, created_at) VALUES ($1,$2,$3,$4)",
+        "INSERT INTO help_replies (ticket_id, user_id, body, file_id, created_at) VALUES ($1,$2,$3,$4,$5)",
     )
     .bind(id)
     .bind(u.id)
     .bind(req.body.trim())
+    .bind(req.file_id)
     .bind(now())
     .execute(&st.db)
     .await?;
@@ -567,11 +611,18 @@ async fn get_ticket(
     Path(id): Path<i64>,
 ) -> AppResult<Json<Value>> {
     let (owner, subject, status, ride) = ticket_owner(&st, &u, id, Act::View).await?;
-    let replies: Vec<(i64, i64, String, String, String)> = sqlx::query_as(
-        "SELECT r.id, r.user_id, u.name, r.body, r.created_at FROM help_replies r JOIN users u ON u.id=r.user_id WHERE r.ticket_id=$1 ORDER BY r.id",
+    #[allow(clippy::type_complexity)]
+    let replies: Vec<(i64, i64, String, String, String, Option<i64>)> = sqlx::query_as(
+        "SELECT r.id, r.user_id, u.name, r.body, r.created_at, r.file_id FROM help_replies r JOIN users u ON u.id=r.user_id WHERE r.ticket_id=$1 ORDER BY r.id",
     )
     .bind(id)
     .fetch_all(&st.db)
+    .await?;
+    let (assignee_id, assignee_name): (Option<i64>, Option<String>) = sqlx::query_as(
+        "SELECT t.assignee_id, a.name FROM help_tickets t LEFT JOIN users a ON a.id=t.assignee_id WHERE t.id=$1",
+    )
+    .bind(id)
+    .fetch_one(&st.db)
     .await?;
     let member = if u.can(Page::AdminHelp, Act::View) {
         let m: Option<(String, String)> =
@@ -592,13 +643,16 @@ async fn get_ticket(
     };
     Ok(Json(json!({
         "id": id, "subject": subject, "status": status, "ride_id": ride, "user_id": owner, "member": member,
-        "replies": replies.into_iter().map(|(rid, uid, name, body, at)| json!({"id": rid, "user_id": uid, "name": name, "body": body, "created_at": at, "staff": uid != owner})).collect::<Vec<_>>(),
+        "assignee_id": assignee_id, "assignee_name": assignee_name,
+        "replies": replies.into_iter().map(|(rid, uid, name, body, at, fid)| json!({"id": rid, "user_id": uid, "name": name, "body": body, "created_at": at, "staff": uid != owner, "file_id": fid})).collect::<Vec<_>>(),
     })))
 }
 
 #[derive(Deserialize)]
 struct ReplyIn {
+    #[serde(default)]
     body: String,
+    file_id: Option<i64>,
 }
 
 async fn reply_ticket(
@@ -614,15 +668,18 @@ async fn reply_ticket(
     if status == "closed" {
         return Err(bad(u.lang, ErrorKey::RequestAlreadyClosed));
     }
-    if req.body.trim().is_empty() {
+    // A photo on its own is a reply too ("this is where I'm waiting").
+    if req.body.trim().is_empty() && req.file_id.is_none() {
         return Err(bad(u.lang, ErrorKey::ReplyContentRequired));
     }
+    check_attachment(&st, &u, req.file_id).await?;
     sqlx::query(
-        "INSERT INTO help_replies (ticket_id, user_id, body, created_at) VALUES ($1,$2,$3,$4)",
+        "INSERT INTO help_replies (ticket_id, user_id, body, file_id, created_at) VALUES ($1,$2,$3,$4,$5)",
     )
     .bind(id)
     .bind(u.id)
     .bind(req.body.trim())
+    .bind(req.file_id)
     .bind(now())
     .execute(&st.db)
     .await?;
@@ -684,6 +741,10 @@ async fn close_ticket(
         .bind(id)
         .execute(&st.db)
         .await?;
+    // No notification for a resolve, but the member's open tab should update straight away.
+    if owner != u.id {
+        crate::stream::publish(owner, "notify");
+    }
     audit(
         &st.db,
         Some(u.id),
@@ -746,6 +807,59 @@ async fn reopen_ticket(
     )
     .await;
     Ok(Json(json!({"ok": true})))
+}
+
+#[derive(Deserialize)]
+struct ClaimIn {
+    /// true: take the request; false: hand it back to the queue.
+    claim: bool,
+}
+
+/// A help-desk member takes a request so others know it is being handled.
+/// Releasing only clears the caller's own claim.
+async fn claim_ticket(
+    State(st): State<AppState>,
+    u: CurrentUser,
+    Path(id): Path<i64>,
+    Json(req): Json<ClaimIn>,
+) -> AppResult<Json<Value>> {
+    require(&u, Page::AdminHelp, Act::Update)?;
+    let exists: Option<(i64,)> = sqlx::query_as("SELECT id FROM help_tickets WHERE id=$1")
+        .bind(id)
+        .fetch_optional(&st.db)
+        .await?;
+    exists.ok_or(not_found(u.lang))?;
+    let n = if req.claim {
+        sqlx::query("UPDATE help_tickets SET assignee_id=$1 WHERE id=$2")
+            .bind(u.id)
+            .bind(id)
+            .execute(&st.db)
+            .await?
+            .rows_affected()
+    } else {
+        sqlx::query("UPDATE help_tickets SET assignee_id=NULL WHERE id=$1 AND assignee_id=$2")
+            .bind(id)
+            .bind(u.id)
+            .execute(&st.db)
+            .await?
+            .rows_affected()
+    };
+    if n > 0 {
+        audit(
+            &st.db,
+            Some(u.id),
+            if req.claim {
+                "help.claim"
+            } else {
+                "help.release"
+            },
+            "help_ticket",
+            Some(id),
+            "",
+        )
+        .await;
+    }
+    Ok(Json(json!({"ok": true, "changed": n > 0})))
 }
 
 // ---------------- Admin workflow guides ----------------

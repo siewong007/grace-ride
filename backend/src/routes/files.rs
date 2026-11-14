@@ -162,6 +162,19 @@ pub async fn can_access_file(st: &AppState, u: &CurrentUser, file_id: i64) -> Ap
     if proof > 0 {
         return Ok(true);
     }
+    // Help request photos: the request's member and 帮助台 staff.
+    let (help,): (i64,) = sqlx::query_as(
+        "SELECT COUNT(*) FROM help_replies r JOIN help_tickets t ON t.id=r.ticket_id
+         WHERE r.file_id=$1 AND (t.user_id=$2 OR $3)",
+    )
+    .bind(file_id)
+    .bind(u.id)
+    .bind(u.can(Page::AdminHelp, Act::View))
+    .fetch_one(&st.db)
+    .await?;
+    if help > 0 {
+        return Ok(true);
+    }
     // Grab reimbursement receipts: claimant, 报销审核 (交通组), 报销付款 (finance).
     let (reimb,): (i64,) = sqlx::query_as(
         "SELECT COUNT(*) FROM reimbursements WHERE receipt_file_id=$1 AND ($2 OR $3)",
