@@ -141,8 +141,9 @@ export function useApi<T>(
   }, [latestOnly]);
 
   useEffect(() => {
+    const requests = requestId;
     if (!path) {
-      if (latestOnly) requestId.current++;
+      if (latestOnly) requests.current++;
       setLoading(false);
       setData(null);
       setError(null);
@@ -159,7 +160,7 @@ export function useApi<T>(
     return () => {
       clearInterval(t);
       unsub();
-      if (latestOnly) requestId.current++;
+      if (latestOnly) requests.current++;
     };
   }, [path, pollMs, reload, latestOnly]);
 
