@@ -178,6 +178,8 @@ export default {
     description: '说明',
     submitted: '提交',
     status: '状态',
+    search: '搜索申请人、收款人或说明',
+    allStatus: '全部状态',
     reviewBtn: '审核',
     payBtn: '付款',
     receipt: '收据',

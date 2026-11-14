@@ -378,6 +378,9 @@ describe('Admin Reimbursements', () => {
 
     expect(screen.getByRole('heading', { level: 1, name: /reimbursement review/i })).toBeInTheDocument();
     expect(screen.getByText(/transport team: verify receipts/i)).toBeInTheDocument();
+    expect(
+      screen.getByPlaceholderText('Search applicant, payee or description'),
+    ).toBeInTheDocument();
     expect(screen.getByText('Sister Phoebe')).toBeInTheDocument();
   });
 });

@@ -18,10 +18,12 @@ import {
   ReceiptLink,
   StatusPill,
   TableColumn,
+  TableFilter,
   Tabs,
   UniversalTable,
   useAction,
 } from '../../components/ui';
+import { useTableParams } from '../../components/tableState';
 import { exportToCsv, fmtDateTime, fmtDay, REIMB_STATUS, rm, todayStr, useFormatT } from '../../format';
 import type { Reimb } from '../Reimbursements';
 
@@ -57,9 +59,12 @@ export default function AdminReimbursements() {
     p.set('tab', nextTab);
     p.delete('page');
     p.delete('limit');
+    p.delete('q');
+    p.delete('status');
+    p.delete('sort');
+    p.delete('dir');
     setParams(p, { replace: true });
   };
-
 
   return (
     <Page>
@@ -84,18 +89,53 @@ function List({ scope }: { scope: 'review' | 'payout' }) {
   const ft = useFormatT();
   const { can } = useAuth();
   const canAct = can(scope === 'review' ? 'admin_reimb_review' : 'admin_reimb_pay', 'update');
-  const [params, setParams] = useSearchParams();
-  const page = Math.max(1, Number(params.get('page') ?? '1') || 1);
-  const pageSize = Number(params.get('limit') ?? '25') || 25;
-  const pagingQs = `&page=${page}&limit=${pageSize}`;
+  const {
+    page,
+    pageSize,
+    sort,
+    filters,
+    setPage,
+    setPageSize,
+    setSort,
+    setFilter,
+    clearFilters,
+    queryString,
+  } = useTableParams({
+    defaultPageSize: 25,
+    filterKeys: ['q', 'status'],
+  });
+  const scopeQs = `scope=${scope}${queryString ? `&${queryString}` : ''}`;
   const { data, error, loading, reload } = useApi<PaginatedReimbursements | Reimb[]>(
-    `/reimbursements?scope=${scope}${pagingQs}`,
+    `/reimbursements?${scopeQs}`,
   );
+  const [initialLoadComplete, setInitialLoadComplete] = useState(false);
+  if (!loading && !initialLoadComplete) setInitialLoadComplete(true);
+
   const [open, setOpen] = useState<Reimb | null>(null);
 
   const items = Array.isArray(data) ? data : data?.items ?? [];
   const total = Array.isArray(data) ? data.length : data?.total ?? 0;
   const totalPages = Array.isArray(data) ? 1 : data?.total_pages ?? 1;
+
+  const statusOptions = Object.keys(REIMB_STATUS)
+    .filter((k) => scope === 'review' || k === 'approved' || k === 'paid')
+    .map((k) => ({ value: k, label: ft(REIMB_STATUS[k].label) }));
+
+  const filterDefs: TableFilter[] = [
+    {
+      type: 'text',
+      key: 'q',
+      label: t('reimb.search'),
+      placeholder: t('reimb.search'),
+    },
+    {
+      type: 'select',
+      key: 'status',
+      label: t('reimb.status'),
+      allLabel: t('reimb.allStatus'),
+      options: statusOptions,
+    },
+  ];
 
   const handleExport = () => {
     if (scope === 'payout') {
@@ -129,11 +169,15 @@ function List({ scope }: { scope: 'review' | 'payout' }) {
     {
       key: 'applicant',
       header: t('reimb.applicant'),
+      sortable: true,
+      sortKey: 'applicant',
       render: (r) => <div className="bold">{r.user.name}</div>,
     },
     {
       key: 'amount',
       header: t('reimb.amount'),
+      sortable: true,
+      sortKey: 'amount_cents',
       render: (r) => <div className="mono bold">{rm(r.amount_cents)}</div>,
     },
     {
@@ -154,13 +198,17 @@ function List({ scope }: { scope: 'review' | 'payout' }) {
       ),
     },
     {
-      key: 'submitted',
+      key: 'created_at',
       header: t('reimb.submitted'),
+      sortable: true,
+      sortKey: 'created_at',
       render: (r) => fmtDay(r.created_at, ft),
     },
     {
       key: 'status',
       header: t('reimb.status'),
+      sortable: true,
+      sortKey: 'status',
       render: (r) => <StatusPill map={REIMB_STATUS} status={r.status} />,
     },
     {
@@ -207,40 +255,36 @@ function List({ scope }: { scope: 'review' | 'payout' }) {
 
       <ErrorBox error={error} />
 
-      {loading ? (
-        <CardSkeleton count={3} />
-      ) : !items.length ? (
-        <EmptyState title={t('reimb.none')} />
-      ) : (
-        <Card>
-
-
-          <UniversalTable
-            columns={columns}
-            items={items}
-            itemKey={(r) => r.id}
-          />
-          <Pagination
-            page={page}
-            totalPages={totalPages}
-            total={total}
-            pageSize={pageSize}
-            onPageChange={(p) => {
-              const next = new URLSearchParams(params);
-              if (p > 1) next.set('page', String(p));
-              else next.delete('page');
-              setParams(next, { replace: true });
-            }}
-            onPageSizeChange={(sz) => {
-              const next = new URLSearchParams(params);
-              if (sz !== 25) next.set('limit', String(sz));
-              else next.delete('limit');
-              next.delete('page');
-              setParams(next, { replace: true });
-            }}
-          />
-        </Card>
-      )}
+      <Card>
+        {loading && !initialLoadComplete ? (
+          <CardSkeleton count={3} />
+        ) : (
+          <>
+            <UniversalTable
+              columns={columns}
+              items={loading ? [] : items}
+              itemKey={(r) => r.id}
+              sort={sort}
+              onSortChange={setSort}
+              filters={filterDefs}
+              filterValues={filters}
+              onFilterChange={setFilter}
+              onClearFilters={clearFilters}
+              emptyContent={loading ? <CardSkeleton count={3} /> : <EmptyState title={t('reimb.none')} />}
+            />
+            {!loading && items.length > 0 && (
+              <Pagination
+                page={page}
+                totalPages={totalPages}
+                total={total}
+                pageSize={pageSize}
+                onPageChange={setPage}
+                onPageSizeChange={setPageSize}
+              />
+            )}
+          </>
+        )}
+      </Card>
 
       {open && scope === 'review' && (
         <ReviewModal
