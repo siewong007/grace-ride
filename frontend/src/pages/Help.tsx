@@ -19,6 +19,8 @@ import {
 } from '../components/ui';
 import { fmtAgo, HELP_STATUS, useFormatT } from '../format';
 import { useTranslation } from 'react-i18next';
+import HelpGuides from './HelpGuides';
+import { canAnyAdminPage } from '../perms';
 
 interface TicketSummary {
   id: number;
@@ -53,6 +55,9 @@ export default function Help() {
   const { can } = useAuth();
   // Help-desk staff see every request; members see their own.
   const isStaff = can('admin_help');
+  // The admin guide is for anyone who can see a staff page, not just help desk.
+  const showGuide = canAnyAdminPage(can);
+  const [view, setView] = useState<'requests' | 'guide'>('requests');
   const [params] = useSearchParams();
   const rideId = params.get('ride');
   const [all, setAll] = useState(isStaff);
@@ -77,7 +82,21 @@ export default function Help() {
       <div className="stack">
         <PageHeader title={t('title')} subtitle={t('desc')} />
 
-        <div className="split">
+        {showGuide && (
+          <Tabs
+            value={view}
+            onChange={(v) => setView(v as 'requests' | 'guide')}
+            items={[
+              { value: 'requests', label: t('requestsTab') },
+              { value: 'guide', label: t('guideTab') },
+            ]}
+          />
+        )}
+
+        {view === 'guide' ? (
+          <HelpGuides />
+        ) : (
+          <div className="split">
           {can('help', 'create') && (
             <form className="card stack" onSubmit={submit}>
               <h3>{t('ask')}</h3>
@@ -150,6 +169,7 @@ export default function Help() {
             )}
           </div>
         </div>
+        )}
       </div>
     </Page>
   );
