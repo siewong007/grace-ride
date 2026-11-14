@@ -19,9 +19,9 @@ async fn admin_users_sort_uses_allow_listed_fields() {
     let root = login(&st, "superadmin@example.org").await;
 
     for (name, email) in [
-        ("AAA Sort", "aaa-sort@example.org"),
-        ("BBB Sort", "bbb-sort@example.org"),
-        ("CCC Sort", "ccc-sort@example.org"),
+        ("AAA Sort", "aaa@example.org"),
+        ("BBB Sort", "bbb@example.org"),
+        ("CCC Sort", "ccc@example.org"),
     ] {
         sqlx::query("INSERT INTO users (name, email, webauthn_uuid) VALUES ($1,$2,$3)")
             .bind(name)
@@ -64,4 +64,26 @@ async fn admin_users_sort_uses_allow_listed_fields() {
     .await;
     assert_eq!(injected.status, StatusCode::OK, "{}", injected.json);
     assert_eq!(names(&injected.json), ["AAA Sort", "BBB Sort", "CCC Sort"]);
+
+    let wildcard = call(
+        &app,
+        Method::GET,
+        "/api/admin/users?q=Sort%25&page=1&limit=50&sort=name&dir=asc",
+        Some(&root),
+        None,
+    )
+    .await;
+    assert_eq!(wildcard.status, StatusCode::OK, "{}", wildcard.json);
+    assert_eq!(wildcard.json["total"], 3);
+
+    let case_sensitive = call(
+        &app,
+        Method::GET,
+        "/api/admin/users?q=sort&page=1&limit=50&sort=name&dir=asc",
+        Some(&root),
+        None,
+    )
+    .await;
+    assert_eq!(case_sensitive.status, StatusCode::OK, "{}", case_sensitive.json);
+    assert_eq!(case_sensitive.json["total"], 0);
 }

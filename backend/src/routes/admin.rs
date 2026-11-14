@@ -149,10 +149,7 @@ async fn list_users(
             ],
         )?;
     }
-    let like = format!(
-        "%{}%",
-        escape_like(q.q.as_deref().unwrap_or_default().trim())
-    );
+    let like = format!("%{}%", q.q.as_deref().unwrap_or_default().trim());
     let order = crate::util::order_by(
         q.sort.as_deref(),
         q.dir.as_deref(),
@@ -168,7 +165,7 @@ async fn list_users(
 
     if q.page.is_some() || q.limit.is_some() {
         let mut conds =
-            vec!["(u.name ILIKE $1 OR u.email ILIKE $2 OR u.phone ILIKE $3)".to_string()];
+            vec!["(u.name LIKE $1 OR u.email LIKE $2 OR u.phone LIKE $3)".to_string()];
         if q.role.is_some() {
             conds.push("(',' || u.roles || ',') LIKE ('%,' || $4 || ',%')".to_string());
         }
@@ -245,7 +242,7 @@ async fn list_users(
         &format!(
             "SELECT u.id, u.name, u.email, u.phone, u.roles, u.status, u.created_at, (SELECT COUNT(*) FROM passkeys p WHERE p.user_id=u.id),
                 (SELECT string_agg(g.name, '、') FROM group_members gm JOIN groups g ON g.id=gm.group_id WHERE gm.user_id=u.id)
-             FROM users u WHERE (u.name ILIKE $1 OR u.email ILIKE $2 OR u.phone ILIKE $3) ORDER BY {order} LIMIT 500"
+             FROM users u WHERE (u.name LIKE $1 OR u.email LIKE $2 OR u.phone LIKE $3) ORDER BY {order} LIMIT 500"
         ),
     )
     .bind(&like)
