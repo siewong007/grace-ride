@@ -2468,7 +2468,12 @@ async fn admin_rides(
         q.dir.as_deref(),
         &[
             ("pickup_at", "r.pickup_at"),
-            ("passenger", "p.name"),
+            (
+                "passenger",
+                // Match the passenger name returned by ride_json.
+                "CASE WHEN r.is_proxy = 1 AND r.rider_name <> '' \
+                 THEN r.rider_name || ' (由 ' || p.name || ' 代订)' ELSE p.name END",
+            ),
             ("area", "a.name"),
             ("driver", "d.name"),
             ("status", "r.status"),

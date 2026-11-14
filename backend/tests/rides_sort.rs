@@ -27,6 +27,14 @@ async fn admin_rides_sort_uses_allow_listed_fields() {
         .await
         .unwrap();
 
+    // This rider sorts after the other passengers, while the booker sorts first.
+    let proxy_ride =
+        sqlx::query("UPDATE rides SET is_proxy = 1, rider_name = 'Zoe' WHERE id = 20004")
+            .execute(&st.db)
+            .await
+            .unwrap();
+    assert_eq!(proxy_ride.rows_affected(), 1);
+
     let desc = call(
         &app,
         Method::GET,
