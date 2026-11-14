@@ -1,8 +1,9 @@
 import { beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { fireEvent, render, screen } from '@testing-library/react';
-import { MemoryRouter } from 'react-router-dom';
+import { MemoryRouter, Route, Routes } from 'react-router-dom';
 import i18n from '../i18n';
 import Help from './Help';
+import HelpGuideDetail from './HelpGuideDetail';
 
 beforeAll(async () => {
   await i18n.changeLanguage('en');
@@ -24,13 +25,15 @@ vi.mock('../auth', () => ({
 vi.mock('../api', () => ({
   useApi: (path: string | null) => {
     let data: unknown = [];
-    if (path?.startsWith('/help/guides')) {
+    if (path === '/help/guides' || path?.startsWith('/help/guides?')) {
       // Mirror the server: the list hides drafts unless include_drafts=true.
-      // Detail paths are returned whole (Tasks 6–7 reuse mocks.guides).
       data =
         path === '/help/guides'
           ? (mocks.guides as { published?: boolean }[]).filter((g) => g.published)
           : mocks.guides;
+    } else if (path?.startsWith('/help/guides/')) {
+      // Detail fetch: Tasks 6–7 reuse mocks.guides as the detail object.
+      data = (mocks.guides as unknown[])[0];
     }
     return { data: path === null ? null : data, loading: false, error: null, reload: vi.fn() };
   },
@@ -80,5 +83,38 @@ describe('Help admin guide tab', () => {
     expect(screen.getByText(/3 steps/)).toBeTruthy();
     // Drafts only render for editors; this user cannot update.
     expect(screen.queryByText('Draft guide')).toBeNull();
+  });
+});
+
+describe('HelpGuideDetail', () => {
+  it('renders numbered steps with deep links and a draft pill', async () => {
+    mocks.allowed.add('admin_help.view');
+    mocks.allowed.add('admin_help.update');
+    const detail = {
+      id: 1,
+      slug: 'plan-transport',
+      title_en: 'Plan transport',
+      title_zh: '安排交通',
+      summary_en: 'Walk through it',
+      summary_zh: '',
+      published: false,
+      steps: [
+        { title_en: 'Find the event', title_zh: '找到活动', body_en: 'Open Events', body_zh: '打开活动页', link: '/events' },
+        { title_en: 'Watch it run', title_zh: '当天跟踪', body_en: '', body_zh: '', link: '' },
+      ],
+    };
+    // useApi returns mocks.guides for any /help/guides path; reuse it as the detail object.
+    mocks.guides = [detail as unknown as never];
+    render(
+      <MemoryRouter initialEntries={['/help/guides/plan-transport']}>
+        <Routes>
+          <Route path="/help/guides/:slug" element={<HelpGuideDetail />} />
+        </Routes>
+      </MemoryRouter>,
+    );
+    expect(await screen.findByText('1. Find the event')).toBeTruthy();
+    expect(screen.getByText('2. Watch it run')).toBeTruthy();
+    expect(screen.getByRole('link', { name: 'Open →' })).toHaveProperty('href', expect.stringContaining('/events'));
+    expect(screen.getByText('Draft')).toBeTruthy();
   });
 });
