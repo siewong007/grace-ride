@@ -40,6 +40,7 @@ async fn setup() -> (Router, AppState) {
         trust_proxy: false,
         chat_retention_days: 180,
         audit_retention_days: 730,
+        session_timeout_mins: 15,
         json_logs: false,
         google_client_id: None,
         google_client_secret: None,
@@ -295,6 +296,7 @@ async fn totp_backup_codes_and_auto_lock_flow() {
     let me = call(&app, Method::GET, "/api/auth/me", Some(&cookie), None).await;
     assert_eq!(me.status, StatusCode::OK);
     assert_eq!(me.json["auto_lock_mins"], 0);
+    assert_eq!(me.json["session_timeout_mins"], 15);
     assert_eq!(me.json["backup_codes_count"], 0);
 
     // 2. Set auto_lock_mins
@@ -989,6 +991,185 @@ async fn ride_readiness_and_delay_workflow() {
 }
 
 #[tokio::test]
+async fn proxy_booking_and_frequent_riders_workflow() {
+    let (app, st) = setup().await;
+    let passenger = login(&st, "member@example.org").await;
+    let driver = login(&st, "driver@example.org").await;
+    let transport = login(&st, "transport@example.org").await;
+
+    // 1. Saved proxy riders CRUD
+    let r = call(
+        &app,
+        Method::POST,
+        "/api/proxy-riders",
+        Some(&passenger),
+        Some(json!({
+            "name": "陈妈妈",
+            "phone": "012-3456789",
+            "relationship": "parent",
+            "notes": "需拐杖协助",
+        })),
+    )
+    .await;
+    assert_eq!(r.status, StatusCode::OK);
+    let saved_rider_id = r.json["id"].as_i64().unwrap();
+
+    let list = call(
+        &app,
+        Method::GET,
+        "/api/proxy-riders",
+        Some(&passenger),
+        None,
+    )
+    .await;
+    assert_eq!(list.status, StatusCode::OK);
+    assert_eq!(list.json.as_array().unwrap().len(), 1);
+    assert_eq!(list.json[0]["name"], "陈妈妈");
+    assert_eq!(list.json[0]["phone"], "012-3456789");
+
+    // 2. Create proxy ride
+    let when = (chrono::Local::now() + chrono::Duration::minutes(90))
+        .format("%Y-%m-%dT%H:%M")
+        .to_string();
+    let create_res = call(
+        &app,
+        Method::POST,
+        "/api/rides",
+        Some(&passenger),
+        Some(json!({
+            "pickup_at": when,
+            "pickup_area_id": 1,
+            "pickup_address": "123 Persiaran Utama",
+            "destination": "PJ State CMC",
+            "seats": 1,
+            "is_proxy": true,
+            "rider_name": "陈妈妈",
+            "rider_phone": "012-3456789",
+            "rider_relationship": "parent",
+        })),
+    )
+    .await;
+    assert_eq!(create_res.status, StatusCode::OK);
+    let ride_id = create_res.json["id"].as_i64().unwrap();
+
+    // 3. Driver sees request with masked address and phone
+    let drv_view = call(
+        &app,
+        Method::GET,
+        &format!("/api/rides/{ride_id}"),
+        Some(&driver),
+        None,
+    )
+    .await;
+    assert_eq!(drv_view.status, StatusCode::OK);
+    assert!(drv_view.json["pickup_address"].is_null());
+    assert_eq!(drv_view.json["is_proxy"], true);
+    assert_eq!(drv_view.json["proxy"]["rider_name"], "陈妈妈");
+    assert_eq!(drv_view.json["proxy"]["rider_relationship"], "parent");
+    assert!(drv_view.json["proxy"]["rider_phone"].is_null()); // masked until approved
+
+    // 4. Driver claims ride
+    let claim = call(
+        &app,
+        Method::POST,
+        &format!("/api/rides/{ride_id}/claim"),
+        Some(&driver),
+        None,
+    )
+    .await;
+    assert_eq!(claim.status, StatusCode::OK);
+
+    // 5. Passenger accepts
+    let resp = call(
+        &app,
+        Method::POST,
+        &format!("/api/rides/{ride_id}/respond"),
+        Some(&passenger),
+        Some(json!({ "accept": true })),
+    )
+    .await;
+    assert_eq!(resp.status, StatusCode::OK);
+
+    // 6. Transport staff approves
+    let appr = call(
+        &app,
+        Method::POST,
+        &format!("/api/rides/{ride_id}/approve"),
+        Some(&transport),
+        None,
+    )
+    .await;
+    assert_eq!(appr.status, StatusCode::OK);
+
+    // 7. Approved driver now has unmasked address and rider phone
+    let drv_view2 = call(
+        &app,
+        Method::GET,
+        &format!("/api/rides/{ride_id}"),
+        Some(&driver),
+        None,
+    )
+    .await;
+    assert_eq!(drv_view2.status, StatusCode::OK);
+    assert_eq!(drv_view2.json["pickup_address"], "123 Persiaran Utama");
+    assert_eq!(drv_view2.json["proxy"]["rider_phone"], "012-3456789");
+    assert!(!drv_view2.json["proxy"]["booker_phone"].is_null());
+
+    // 8. Driver arrives at gate -> passenger receives notification mentioning rider name
+    let arr = call(
+        &app,
+        Method::POST,
+        &format!("/api/rides/{ride_id}/arrived-gate"),
+        Some(&driver),
+        None,
+    )
+    .await;
+    assert_eq!(arr.status, StatusCode::OK);
+
+    let notifs = call(
+        &app,
+        Method::GET,
+        "/api/notifications",
+        Some(&passenger),
+        None,
+    )
+    .await;
+    assert_eq!(notifs.status, StatusCode::OK);
+    let items = notifs.json["items"]
+        .as_array()
+        .or_else(|| notifs.json.as_array())
+        .unwrap();
+    let gate_msg = items
+        .iter()
+        .find(|n| n["body"].as_str().unwrap_or("").contains("陈妈妈"));
+    assert!(
+        gate_msg.is_some(),
+        "Notification should mention rider name '陈妈妈'"
+    );
+
+    // 9. Delete proxy rider
+    let del = call(
+        &app,
+        Method::DELETE,
+        &format!("/api/proxy-riders/{saved_rider_id}"),
+        Some(&passenger),
+        None,
+    )
+    .await;
+    assert_eq!(del.status, StatusCode::OK);
+
+    let list2 = call(
+        &app,
+        Method::GET,
+        "/api/proxy-riders",
+        Some(&passenger),
+        None,
+    )
+    .await;
+    assert_eq!(list2.json.as_array().unwrap().len(), 0);
+}
+
+#[tokio::test]
 async fn reminder_job_notifies_passenger_and_driver() {
     let (_app, st) = setup().await;
     let soon = (chrono::Local::now() + chrono::Duration::minutes(30))
@@ -1029,6 +1210,7 @@ fn production_config_rejects_dev_mode_and_plain_http() {
         trust_proxy: true,
         chat_retention_days: 180,
         audit_retention_days: 730,
+        session_timeout_mins: 15,
         json_logs: true,
         google_client_id: None,
         google_client_secret: None,

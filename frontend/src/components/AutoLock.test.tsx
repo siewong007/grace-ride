@@ -3,7 +3,7 @@ import { fireEvent, render, screen, act } from '@testing-library/react';
 import { MemoryRouter } from 'react-router-dom';
 import { AutoLockProvider, useAutoLock } from './AutoLock';
 
-const mockMe = {
+let currentMe = {
   id: 1,
   name: 'Grace Member',
   email: 'grace@example.com',
@@ -18,11 +18,14 @@ const mockMe = {
   mfa_ok: true,
   unread: 0,
   auto_lock_mins: 15,
+  session_timeout_mins: 15,
 };
+
+const defaultMockMe = { ...currentMe };
 
 vi.mock('../auth', () => ({
   useAuth: () => ({
-    me: mockMe,
+    me: currentMe,
     can: () => true,
     refresh: vi.fn(),
   }),
@@ -46,6 +49,7 @@ describe('AutoLockProvider', () => {
   beforeEach(() => {
     vi.useFakeTimers();
     localStorage.clear();
+    currentMe = { ...defaultMockMe };
   });
 
   afterEach(() => {
@@ -143,5 +147,57 @@ describe('AutoLockProvider', () => {
     });
 
     expect(screen.getByTestId('status')).toHaveTextContent('locked');
+  });
+
+  it('falls back to organization session_timeout_mins when auto_lock_mins is 0', () => {
+    currentMe = {
+      ...defaultMockMe,
+      auto_lock_mins: 0,
+      session_timeout_mins: 10,
+    };
+
+    render(
+      <MemoryRouter>
+        <AutoLockProvider>
+          <TestConsumer />
+        </AutoLockProvider>
+      </MemoryRouter>
+    );
+
+    expect(screen.getByTestId('status')).toHaveTextContent('unlocked');
+
+    // Advance 10 minutes + 5 seconds
+    act(() => {
+      vi.advanceTimersByTime(10 * 60 * 1000 + 5000);
+    });
+
+    expect(screen.getByTestId('status')).toHaveTextContent('locked');
+    expect(screen.getByRole('dialog')).toBeInTheDocument();
+  });
+
+  it('does not lock when auto_lock_mins is -1 (disabled)', () => {
+    currentMe = {
+      ...defaultMockMe,
+      auto_lock_mins: -1,
+      session_timeout_mins: 10,
+    };
+
+    render(
+      <MemoryRouter>
+        <AutoLockProvider>
+          <TestConsumer />
+        </AutoLockProvider>
+      </MemoryRouter>
+    );
+
+    expect(screen.getByTestId('status')).toHaveTextContent('unlocked');
+
+    // Advance 30 minutes
+    act(() => {
+      vi.advanceTimersByTime(30 * 60 * 1000);
+    });
+
+    expect(screen.getByTestId('status')).toHaveTextContent('unlocked');
+    expect(screen.queryByRole('dialog')).toBeNull();
   });
 });

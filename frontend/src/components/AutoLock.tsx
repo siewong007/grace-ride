@@ -28,8 +28,13 @@ export function AutoLockProvider({ children }: { children: ReactNode }) {
   const lastActiveRef = useRef<number>(Date.now());
   const unlockBtnRef = useRef<HTMLButtonElement>(null);
 
-  // User timeout preference in minutes: prioritize user profile, fallback to localStorage
-  const timeoutMins = me?.auto_lock_mins ?? (parseInt(localStorage.getItem('gr_autolock_mins') || '0', 10) || 0);
+  // Inactivity timeout in minutes:
+  // 1. If user set auto_lock_mins > 0: user's custom duration
+  // 2. If user set auto_lock_mins === -1: user explicitly disabled auto-lock
+  // 3. Otherwise: fallback to organization's configured default session_timeout_mins (fallback 15)
+  const defaultTimeout = me?.session_timeout_mins ?? 15;
+  const userPref = me?.auto_lock_mins ?? (parseInt(localStorage.getItem('gr_autolock_mins') || '0', 10) || 0);
+  const timeoutMins = userPref > 0 ? userPref : userPref === -1 ? 0 : defaultTimeout;
 
   const lock = useCallback(() => {
     setIsLocked(true);

@@ -1094,12 +1094,14 @@ struct UpdateSystemSettingsIn {
     audit_retention_days: i64,
     chat_retention_days: i64,
     max_live_drivers: i64,
+    session_timeout_mins: Option<i64>,
+    auto_lock_mins: Option<i64>,
 }
 
 async fn get_system_settings(State(st): State<AppState>, u: CurrentUser) -> AppResult<Json<Value>> {
     require(&u, Page::AdminSettings, Act::View)?;
     let rows: Vec<(String, String)> = sqlx::query_as(
-        "SELECT key, value FROM system_settings WHERE key IN ('audit_retention_days', 'chat_retention_days', 'max_live_drivers')",
+        "SELECT key, value FROM system_settings WHERE key IN ('audit_retention_days', 'chat_retention_days', 'max_live_drivers', 'session_timeout_mins')",
     )
     .fetch_all(&st.db)
     .await?;
@@ -1107,6 +1109,7 @@ async fn get_system_settings(State(st): State<AppState>, u: CurrentUser) -> AppR
     let mut audit_days = st.cfg.audit_retention_days;
     let mut chat_days = st.cfg.chat_retention_days;
     let mut max_drivers = st.cfg.max_live_drivers;
+    let mut session_timeout = st.cfg.session_timeout_mins;
 
     for (k, v) in rows {
         if let Ok(n) = v.parse::<i64>() {
@@ -1114,6 +1117,7 @@ async fn get_system_settings(State(st): State<AppState>, u: CurrentUser) -> AppR
                 "audit_retention_days" => audit_days = n,
                 "chat_retention_days" => chat_days = n,
                 "max_live_drivers" => max_drivers = n,
+                "session_timeout_mins" => session_timeout = n,
                 _ => {}
             }
         }
@@ -1123,6 +1127,8 @@ async fn get_system_settings(State(st): State<AppState>, u: CurrentUser) -> AppR
         "audit_retention_days": audit_days,
         "chat_retention_days": chat_days,
         "max_live_drivers": max_drivers,
+        "session_timeout_mins": session_timeout,
+        "auto_lock_mins": session_timeout,
     })))
 }
 
@@ -1133,6 +1139,11 @@ async fn update_system_settings(
 ) -> AppResult<Json<Value>> {
     require(&u, Page::AdminSettings, Act::Update)?;
 
+    let session_timeout = req
+        .session_timeout_mins
+        .or(req.auto_lock_mins)
+        .unwrap_or(15);
+
     if !(30..=3650).contains(&req.audit_retention_days) {
         return Err(bad(u.lang, ErrorKey::InvalidAction));
     }
@@ -1140,6 +1151,9 @@ async fn update_system_settings(
         return Err(bad(u.lang, ErrorKey::InvalidAction));
     }
     if !(1..=100).contains(&req.max_live_drivers) {
+        return Err(bad(u.lang, ErrorKey::InvalidAction));
+    }
+    if !(0..=1440).contains(&session_timeout) {
         return Err(bad(u.lang, ErrorKey::InvalidAction));
     }
 
@@ -1150,6 +1164,7 @@ async fn update_system_settings(
         ("audit_retention_days", req.audit_retention_days.to_string()),
         ("chat_retention_days", req.chat_retention_days.to_string()),
         ("max_live_drivers", req.max_live_drivers.to_string()),
+        ("session_timeout_mins", session_timeout.to_string()),
     ] {
         sqlx::query(
             "INSERT INTO system_settings (key, value, updated_at, updated_by)
@@ -1167,8 +1182,8 @@ async fn update_system_settings(
     tx.commit().await?;
 
     let detail = format!(
-        "audit_retention_days: {}d, chat_retention_days: {}d, max_live_drivers: {}",
-        req.audit_retention_days, req.chat_retention_days, req.max_live_drivers
+        "audit_retention_days: {}d, chat_retention_days: {}d, max_live_drivers: {}, session_timeout_mins: {}m",
+        req.audit_retention_days, req.chat_retention_days, req.max_live_drivers, session_timeout
     );
     audit(
         &st.db,

@@ -215,7 +215,8 @@ export default function Profile() {
                       await run(() => put('/me', { auto_lock_mins: val }).then(refresh), t('saved'));
                     }}
                   >
-                    <option value={0}>{t('autoLockNever')}</option>
+                    <option value={0}>{t('autoLockDefault', { mins: me.session_timeout_mins ?? 15 })}</option>
+                    <option value={-1}>{t('autoLockNever')}</option>
                     <option value={15}>{t('autoLock15m')}</option>
                     <option value={30}>{t('autoLock30m')}</option>
                     <option value={60}>{t('autoLock60m')}</option>

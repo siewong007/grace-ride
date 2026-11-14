@@ -61,6 +61,7 @@ export default {
   groups: 'Groups',
   autoLock: 'Inactivity auto-lock',
   autoLockDesc: 'Automatically lock the screen after period of inactivity.',
+  autoLockDefault: 'System default ({mins}m)',
   autoLockNever: 'Never (Disabled)',
   autoLock15m: '15 minutes',
   autoLock30m: '30 minutes',

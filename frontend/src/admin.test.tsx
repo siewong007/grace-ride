@@ -176,7 +176,7 @@ const mockApiMap: Record<string, unknown> = {
   '/admin/recovery': [],
   '/admin/audit': mockAudit,
   '/admin/audit?limit=5': { items: mockAudit },
-  '/admin/settings/system': { audit_retention_days: 730, chat_retention_days: 180, max_live_drivers: 10 },
+  '/admin/settings/system': { audit_retention_days: 730, chat_retention_days: 180, max_live_drivers: 10, session_timeout_mins: 15 },
 };
 
 vi.mock('./auth', () => ({
@@ -323,6 +323,7 @@ describe('Admin Settings', () => {
     expect(screen.getByText('Ride areas')).toBeInTheDocument();
     expect(screen.getByText('Data retention & system limits')).toBeInTheDocument();
     expect(screen.getByText('Audit log retention (days)')).toBeInTheDocument();
+    expect(screen.getByText('Session auto-lock (minutes)')).toBeInTheDocument();
     expect(screen.getByText('Leaders')).toBeInTheDocument();
     expect(screen.getByText('Petaling Jaya')).toBeInTheDocument();
   });

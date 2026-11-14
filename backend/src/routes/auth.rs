@@ -257,6 +257,12 @@ async fn me(State(st): State<AppState>, u: CurrentUser) -> AppResult<Json<Value>
             .await?;
     let role_names: serde_json::Map<String, Value> =
         custom.into_iter().map(|(k, n)| (k, json!(n))).collect();
+    let session_timeout: i64 =
+        sqlx::query_scalar("SELECT value FROM system_settings WHERE key = 'session_timeout_mins'")
+            .fetch_optional(&st.db)
+            .await?
+            .and_then(|v: String| v.parse::<i64>().ok())
+            .unwrap_or(st.cfg.session_timeout_mins);
     Ok(Json(json!({
         "id": u.id, "name": u.name, "email": u.email, "phone": row.0, "photo_file_id": row.1,
         "status": u.status,
@@ -269,7 +275,7 @@ async fn me(State(st): State<AppState>, u: CurrentUser) -> AppResult<Json<Value>
         "has_password": row.3.is_some(), "passkey_count": passkeys.0,
         "badges_opt_out": row.4 == 1, "carpool_enabled": row.5 == 1, "spare_seats": row.6,
         "readiness_prompt_mins": row.8.unwrap_or(45), "gate_wait_mins": row.9.unwrap_or(5),
-        "auto_lock_mins": row.10.unwrap_or(0), "backup_codes_count": backup_codes_count,
+        "auto_lock_mins": row.10.unwrap_or(0), "session_timeout_mins": session_timeout, "backup_codes_count": backup_codes_count,
         "terms_accepted": row.7.is_some(),
         "privileged": u.perms.privileged(), "unread": unread.0,
         "groups": groups.into_iter().map(|(id, name)| json!({"id": id, "name": name})).collect::<Vec<_>>(),

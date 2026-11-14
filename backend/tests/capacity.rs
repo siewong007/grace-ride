@@ -33,6 +33,7 @@ async fn setup_capacity() -> (Router, AppState) {
         trust_proxy: false,
         chat_retention_days: 180,
         audit_retention_days: 730,
+        session_timeout_mins: 15,
         json_logs: false,
         google_client_id: None,
         google_client_secret: None,

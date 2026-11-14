@@ -29,6 +29,8 @@ pub struct Config {
     pub chat_retention_days: i64,
     /// Days to keep audit log entries.
     pub audit_retention_days: i64,
+    /// Default inactivity timeout in minutes before auto-locking member session (0 = disabled).
+    pub session_timeout_mins: i64,
     /// Emit JSON logs (for log shippers).
     pub json_logs: bool,
     /// Google OAuth client id (empty ⇒ Google sign-in is disabled).
@@ -63,6 +65,7 @@ impl Config {
             trust_proxy: env("TRUST_PROXY", "false") == "true",
             chat_retention_days: num("CHAT_RETENTION_DAYS", 180)?,
             audit_retention_days: num("AUDIT_RETENTION_DAYS", 730)?,
+            session_timeout_mins: num("SESSION_TIMEOUT_MINS", 15)?,
             json_logs: env("LOG_FORMAT", "text") == "json",
             google_client_id: {
                 let v = env("GOOGLE_CLIENT_ID", "");

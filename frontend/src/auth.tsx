@@ -23,6 +23,7 @@ export interface Me {
   readiness_prompt_mins?: number;
   gate_wait_mins?: number;
   auto_lock_mins?: number;
+  session_timeout_mins?: number;
   backup_codes_count?: number;
   privileged: boolean;
   unread: number;

@@ -651,6 +651,7 @@ async fn admin_settings_system_retention_crud_permissions_and_audit() {
     assert_eq!(get_init.json["audit_retention_days"], 730);
     assert_eq!(get_init.json["chat_retention_days"], 180);
     assert_eq!(get_init.json["max_live_drivers"], 10);
+    assert_eq!(get_init.json["session_timeout_mins"], 15);
 
     // 3. Validation bounds rejected
     let bad_audit = call(
@@ -661,11 +662,27 @@ async fn admin_settings_system_retention_crud_permissions_and_audit() {
         Some(json!({
             "audit_retention_days": 10, // too small (< 30)
             "chat_retention_days": 90,
-            "max_live_drivers": 15
+            "max_live_drivers": 15,
+            "session_timeout_mins": 15
         })),
     )
     .await;
     assert_eq!(bad_audit.status, StatusCode::BAD_REQUEST);
+
+    let bad_timeout = call(
+        &app,
+        Method::PUT,
+        "/api/admin/settings/system",
+        Some(&admin),
+        Some(json!({
+            "audit_retention_days": 365,
+            "chat_retention_days": 90,
+            "max_live_drivers": 15,
+            "session_timeout_mins": -5 // negative
+        })),
+    )
+    .await;
+    assert_eq!(bad_timeout.status, StatusCode::BAD_REQUEST);
 
     let bad_chat = call(
         &app,
@@ -704,7 +721,8 @@ async fn admin_settings_system_retention_crud_permissions_and_audit() {
         Some(json!({
             "audit_retention_days": 365,
             "chat_retention_days": 90,
-            "max_live_drivers": 15
+            "max_live_drivers": 15,
+            "session_timeout_mins": 30
         })),
     )
     .await;
@@ -723,6 +741,7 @@ async fn admin_settings_system_retention_crud_permissions_and_audit() {
     assert_eq!(get_updated.json["audit_retention_days"], 365);
     assert_eq!(get_updated.json["chat_retention_days"], 90);
     assert_eq!(get_updated.json["max_live_drivers"], 15);
+    assert_eq!(get_updated.json["session_timeout_mins"], 30);
 
     // 6. Verify audit log entry
     let audit_row: (Option<i64>, String, String) = sqlx::query_as(
@@ -735,6 +754,7 @@ async fn admin_settings_system_retention_crud_permissions_and_audit() {
     assert_eq!(audit_row.1, "settings.system");
     assert!(audit_row.2.contains("audit_retention_days: 365d"));
     assert!(audit_row.2.contains("max_live_drivers: 15"));
+    assert!(audit_row.2.contains("session_timeout_mins: 30m"));
 
     // 7. Verify housekeeping retention uses the dynamic 365 days
     let old_ts = (chrono::Local::now() - chrono::Duration::days(366))

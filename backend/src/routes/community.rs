@@ -78,7 +78,7 @@ async fn update_profile(
         }
     }
     if let Some(m) = req.auto_lock_mins {
-        if !(0..=1440).contains(&m) {
+        if !(-1..=1440).contains(&m) {
             return Err(bad(u.lang, ErrorKey::InvalidAction));
         }
     }

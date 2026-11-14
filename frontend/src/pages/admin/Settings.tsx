@@ -442,6 +442,7 @@ interface SystemSettingsResponse {
   audit_retention_days: number;
   chat_retention_days: number;
   max_live_drivers: number;
+  session_timeout_mins: number;
 }
 
 function SystemRetentionSettings() {
@@ -452,6 +453,7 @@ function SystemRetentionSettings() {
   const [auditDays, setAuditDays] = useState<string>('');
   const [chatDays, setChatDays] = useState<string>('');
   const [maxDrivers, setMaxDrivers] = useState<string>('');
+  const [sessionTimeout, setSessionTimeout] = useState<string>('');
   const [initialized, setInitialized] = useState(false);
   const { busy, error, run } = useAction();
 
@@ -460,6 +462,7 @@ function SystemRetentionSettings() {
       setAuditDays(String(data.audit_retention_days));
       setChatDays(String(data.chat_retention_days));
       setMaxDrivers(String(data.max_live_drivers));
+      setSessionTimeout(String(data.session_timeout_mins ?? 15));
       setInitialized(true);
     }
   }, [data, initialized]);
@@ -469,6 +472,7 @@ function SystemRetentionSettings() {
     const auditNum = Math.max(30, Math.min(3650, parseInt(auditDays, 10) || 730));
     const chatNum = Math.max(7, Math.min(3650, parseInt(chatDays, 10) || 180));
     const driversNum = Math.max(1, Math.min(100, parseInt(maxDrivers, 10) || 10));
+    const timeoutNum = Math.max(0, Math.min(1440, parseInt(sessionTimeout, 10) ?? 15));
 
     run(
       () =>
@@ -476,6 +480,7 @@ function SystemRetentionSettings() {
           audit_retention_days: auditNum,
           chat_retention_days: chatNum,
           max_live_drivers: driversNum,
+          session_timeout_mins: timeoutNum,
         }).then(reload),
       t('settings.systemSaved'),
     );
@@ -492,7 +497,7 @@ function SystemRetentionSettings() {
         <CardSkeleton count={2} />
       ) : (
         <form onSubmit={save} className="stack">
-          <div className="grid cols-3">
+          <div className="grid cols-4">
             <Field
               label={t('settings.auditRetention')}
               hint={t('settings.auditRetentionHint')}
@@ -540,6 +545,23 @@ function SystemRetentionSettings() {
                 value={maxDrivers}
                 disabled={!canUpdate || busy}
                 onChange={(e) => setMaxDrivers(e.target.value)}
+                required
+              />
+            </Field>
+
+            <Field
+              label={t('settings.sessionTimeout')}
+              hint={t('settings.sessionTimeoutHint')}
+            >
+              <input
+                className="input"
+                type="number"
+                min="0"
+                max="1440"
+                step="1"
+                value={sessionTimeout}
+                disabled={!canUpdate || busy}
+                onChange={(e) => setSessionTimeout(e.target.value)}
                 required
               />
             </Field>

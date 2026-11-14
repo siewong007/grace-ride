@@ -155,6 +155,8 @@ export default {
     chatRetentionHint: 'Trip coordination messages retained before purge (7–3650 days).',
     maxLiveDrivers: 'Max live drivers',
     maxLiveDriversHint: 'Concurrent drivers broadcasting live GPS locations (1–100).',
+    sessionTimeout: 'Session auto-lock (minutes)',
+    sessionTimeoutHint: 'Inactivity duration before member screen automatically locks (0–1440 mins; 0 = disabled).',
     saveSystem: 'Save system settings',
     systemSaved: 'System retention settings updated',
   },

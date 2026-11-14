@@ -61,6 +61,7 @@ export default {
   groups: '群体',
   autoLock: '闲置自动锁定',
   autoLockDesc: '长时间无操作后自动锁定屏幕，以保护个人资料与隐私。',
+  autoLockDefault: '系统默认（{mins} 分钟）',
   autoLockNever: '从不（停用）',
   autoLock15m: '15 分钟',
   autoLock30m: '30 分钟',

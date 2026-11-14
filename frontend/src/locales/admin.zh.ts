@@ -155,6 +155,8 @@ export default {
     chatRetentionHint: '行程沟通消息自动清理前的保存天数（7–3650 天）。',
     maxLiveDrivers: '最大实时追踪司机数',
     maxLiveDriversHint: '同一时间允许开启 GPS 实时位置共享的司机上限（1–100）。',
+    sessionTimeout: '会话自动锁定（分钟）',
+    sessionTimeoutHint: '成员无操作自动锁定屏幕的等待时间（0–1440 分钟；0 为禁用）。',
     saveSystem: '保存系统设置',
     systemSaved: '系统保存期限与限制已更新',
   },
