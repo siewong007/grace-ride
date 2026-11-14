@@ -260,6 +260,9 @@ describe('Admin Rides', () => {
     expect(options.slice(1).sort()).toEqual(Object.keys(RIDE_STATUS).sort());
     expect(screen.getByRole('option', { name: /all statuses/i })).toBeInTheDocument();
     expect(screen.getByLabelText(/only needs attention/i)).toBeInTheDocument();
+    expect(
+      screen.getByRole('button', { name: /sort by pickup time/i }),
+    ).toBeInTheDocument();
     expect(screen.getByText(/Brother Barnabas/)).toBeInTheDocument();
   });
 });

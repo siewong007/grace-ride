@@ -1,4 +1,5 @@
-import { useNavigate, useSearchParams } from 'react-router-dom';
+import { useState } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
 import { Download, AlertTriangle } from 'lucide-react';
 import { useApi } from '../../api';
@@ -14,8 +15,10 @@ import {
   Pagination,
   UniversalTable,
   TableColumn,
+  TableFilter,
   StatusPill,
 } from '../../components/ui';
+import { useTableParams } from '../../components/tableState';
 import { exportToCsv, fmtDay, RIDE_STATUS, todayStr, useFormatT } from '../../format';
 
 // Every status a ride can have. The API filters on the exact status, so these must be real
@@ -33,43 +36,51 @@ interface AdminRidesData {
 export default function AdminRides() {
   const { t } = useTranslation('admin');
   const ft = useFormatT();
-  const [params, setParams] = useSearchParams();
   const nav = useNavigate();
 
-  const status = params.get('status') ?? '';
-  const date = params.get('date') ?? '';
-  const attention = params.get('attention') === 'true';
-  const page = Math.max(1, Number(params.get('page') ?? '1') || 1);
-  const pageSize = Number(params.get('limit') ?? '50') || 50;
+  const {
+    page,
+    pageSize,
+    sort,
+    filters,
+    setPage,
+    setPageSize,
+    setSort,
+    setFilter,
+    clearFilters,
+    queryString,
+  } = useTableParams({
+    defaultPageSize: 50,
+    defaultSort: { key: 'pickup_at', dir: 'asc' },
+    filterKeys: ['status', 'date', 'attention'],
+  });
 
-  const q = new URLSearchParams();
-  if (status) q.set('status', status);
-  if (date) q.set('date', date);
-  if (attention) q.set('attention', 'true');
-  q.set('page', String(page));
-  q.set('limit', String(pageSize));
+  const { data, error, loading } = useApi<AdminRidesData | Ride[]>(
+    `/admin/rides?${queryString}`,
+    20000,
+  );
 
-  const { data, error, loading } = useApi<AdminRidesData | Ride[]>(`/admin/rides?${q}`, 20000);
+  const [initialLoadComplete, setInitialLoadComplete] = useState(false);
+  if (!loading && !initialLoadComplete) setInitialLoadComplete(true);
 
   const rides = Array.isArray(data) ? data : data?.items ?? [];
   const total = Array.isArray(data) ? data.length : data?.total ?? 0;
   const totalPages = Array.isArray(data) ? 1 : data?.total_pages ?? 1;
 
-  const set = (k: string, v: string) => {
-    const p = new URLSearchParams(params);
-    if (v) p.set(k, v);
-    else p.delete(k);
-    if (k !== 'page' && k !== 'limit') {
-      p.delete('page');
-    }
-    setParams(p, { replace: true });
-  };
-
-  const clearFilters = () => {
-    setParams(new URLSearchParams(), { replace: true });
-  };
-
-  const hasFilters = Boolean(status || date || attention);
+  const filterDefs: TableFilter[] = [
+    {
+      type: 'select',
+      key: 'status',
+      label: t('rides.status'),
+      allLabel: t('rides.allStatus'),
+      options: FILTER_STATUSES.map((k) => ({
+        value: k,
+        label: ft(RIDE_STATUS[k].label),
+      })),
+    },
+    { type: 'date', key: 'date', label: t('rides.date') },
+    { type: 'checkbox', key: 'attention', label: t('rides.onlyAttention') },
+  ];
 
   const handleExport = () => {
     const headers = ['ID', 'Date/Time', 'Area', 'Destination', 'Passenger', 'Driver', 'Seats', 'Status'];
@@ -88,8 +99,10 @@ export default function AdminRides() {
 
   const columns: TableColumn<Ride>[] = [
     {
-      key: 'pickupTime',
+      key: 'pickup_at',
       header: t('dashboard.pickupTime'),
+      sortable: true,
+      sortKey: 'pickup_at',
       render: (r) => (
         <>
           {fmtDay(r.pickup_at, ft).split(' ')[0]} {r.pickup_at.slice(11, 16)}
@@ -99,21 +112,29 @@ export default function AdminRides() {
     {
       key: 'passenger',
       header: t('dashboard.passenger'),
+      sortable: true,
+      sortKey: 'passenger',
       render: (r) => `${r.passenger.name}${r.seats > 1 ? ` (${r.seats})` : ''}`,
     },
     {
       key: 'area',
       header: t('dashboard.area'),
+      sortable: true,
+      sortKey: 'area',
       render: (r) => r.area.name,
     },
     {
       key: 'driver',
       header: t('dashboard.driver'),
+      sortable: true,
+      sortKey: 'driver',
       render: (r) => r.driver?.name ?? <span className="muted">—</span>,
     },
     {
       key: 'status',
       header: t('dashboard.status'),
+      sortable: true,
+      sortKey: 'status',
       render: (r) => (
         <>
           <StatusPill map={RIDE_STATUS} status={r.status} />
@@ -139,69 +160,36 @@ export default function AdminRides() {
         }
       />
 
-      {/* Filters: status menu, date, attention toggle, clear */}
-      <div className="admin-filters-bar">
-          <select
-            className="input admin-input-compact"
-            value={status}
-            onChange={(e) => set('status', e.target.value)}
-            aria-label={t('rides.status')}
-          >
-            <option value="">{t('rides.allStatus')}</option>
-            {FILTER_STATUSES.map((k) => (
-              <option key={k} value={k}>{ft(RIDE_STATUS[k].label)}</option>
-            ))}
-          </select>
-          <input
-            className="input admin-input-compact"
-            type="date"
-            value={date}
-            onChange={(e) => set('date', e.target.value)}
-            aria-label={t('rides.date')}
-          />
-          <label className={`check ${attention ? 'on' : ''}`}>
-            <input
-              type="checkbox"
-              checked={attention}
-              onChange={(e) => set('attention', e.target.checked ? 'true' : '')}
-            />
-            {t('rides.onlyAttention')}
-          </label>
-          {hasFilters && (
-            <Button variant="ghost" size="sm" onClick={clearFilters}>
-              {t('rides.clearFilters')}
-            </Button>
-          )}
-      </div>
-
       <ErrorBox error={error} />
 
       <Card>
-        {loading ? (
+        {loading && !initialLoadComplete ? (
           <CardSkeleton count={4} />
-        ) : !rides.length ? (
-          <EmptyState title={t('rides.none')} />
         ) : (
           <>
             <UniversalTable
               columns={columns}
-              items={rides}
+              items={loading ? [] : rides}
               onRowClick={(r) => nav(`/admin/rides/${r.id}`)}
               itemKey={(r) => r.id}
+              sort={sort}
+              onSortChange={setSort}
+              filters={filterDefs}
+              filterValues={filters}
+              onFilterChange={setFilter}
+              onClearFilters={clearFilters}
+              emptyContent={loading ? <CardSkeleton count={4} /> : <EmptyState title={t('rides.none')} />}
             />
-            <Pagination
-              page={page}
-              totalPages={totalPages}
-              total={total}
-              pageSize={pageSize}
-              onPageChange={(p) => set('page', String(p))}
-              onPageSizeChange={(sz) => {
-                const p = new URLSearchParams(params);
-                p.set('limit', String(sz));
-                p.delete('page');
-                setParams(p, { replace: true });
-              }}
-            />
+            {!loading && rides.length > 0 && (
+              <Pagination
+                page={page}
+                totalPages={totalPages}
+                total={total}
+                pageSize={pageSize}
+                onPageChange={setPage}
+                onPageSizeChange={setPageSize}
+              />
+            )}
           </>
         )}
       </Card>
