@@ -194,7 +194,11 @@ vi.mock('./auth', () => ({
   useAuth: () => ({
     me: { id: 1, name: 'Admin Paul', email: 'paul@grace.org', mfa_ok: true },
     // Holds every permission, in a passkey / 2FA session.
-    can: () => true,
+    can: (permission: string) => permission === 'admin_reimb_review'
+      ? mockPermissions.review
+      : permission === 'admin_reimb_pay'
+        ? mockPermissions.pay
+        : true,
     refresh: vi.fn(),
   }),
 }));
@@ -212,15 +216,20 @@ const mockAuditOlder = [
   },
 ];
 const mockApi = vi.hoisted(() => vi.fn());
+const mockApiPaths = vi.hoisted(() => [] as string[]);
+const mockPermissions = vi.hoisted(() => ({ review: true, pay: true }));
 
 vi.mock('./api', () => ({
   api: mockApi,
-  useApi: (path: string | null) => ({
-    data: path ? mockApiMap[path] ?? null : null,
-    loading: Boolean(path?.startsWith('/admin/users?q=') && !mockApiMap[path]),
-    error: null,
-    reload: vi.fn(),
-  }),
+  useApi: (path: string | null) => {
+    if (path) mockApiPaths.push(path);
+    return {
+      data: path ? mockApiMap[path] ?? null : null,
+      loading: Boolean(path?.startsWith('/admin/users?q=') && !mockApiMap[path]),
+      error: null,
+      reload: vi.fn(),
+    };
+  },
   post: vi.fn().mockResolvedValue({ id: 101, url: 'https://grace.org/inv/abc' }),
   put: vi.fn().mockResolvedValue({ ok: true }),
   del: vi.fn().mockResolvedValue({ ok: true }),
@@ -387,6 +396,9 @@ describe('Admin Settings', () => {
 
 describe('Admin Reimbursements', () => {
   it('renders tabs and role-specific notice', () => {
+    mockApiPaths.length = 0;
+    mockPermissions.review = true;
+    mockPermissions.pay = true;
     render(
       <MemoryRouter>
         <AdminReimbursements />
@@ -399,6 +411,22 @@ describe('Admin Reimbursements', () => {
       screen.getByPlaceholderText('Search applicant, payee or description'),
     ).toBeInTheDocument();
     expect(screen.getByText('Sister Phoebe')).toBeInTheDocument();
+    expect(mockApiPaths).toContain('/reimbursements?scope=review&page=1&limit=25');
+  });
+
+  it('does not offer payee search to review-only users', () => {
+    mockApiPaths.length = 0;
+    mockPermissions.review = true;
+    mockPermissions.pay = false;
+    render(
+      <MemoryRouter>
+        <AdminReimbursements />
+      </MemoryRouter>
+    );
+
+    expect(screen.getByPlaceholderText('Search applicant or description')).toBeInTheDocument();
+    expect(mockApiPaths).toContain('/reimbursements?scope=review&page=1&limit=25');
+    mockPermissions.pay = true;
   });
 });
 

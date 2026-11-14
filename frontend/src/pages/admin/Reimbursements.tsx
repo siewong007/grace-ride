@@ -104,9 +104,13 @@ function List({ scope }: { scope: 'review' | 'payout' }) {
     defaultPageSize: 25,
     filterKeys: ['q', 'status'],
   });
-  const scopeQs = `scope=${scope}${queryString ? `&${queryString}` : ''}`;
+  const apiQuery = new URLSearchParams(`scope=${scope}${queryString ? `&${queryString}` : ''}`);
+  apiQuery.set('page', String(page));
+  apiQuery.set('limit', String(pageSize));
   const { data, error, loading, reload } = useApi<PaginatedReimbursements | Reimb[]>(
-    `/reimbursements?${scopeQs}`,
+    `/reimbursements?${apiQuery}`,
+    undefined,
+    { latestOnly: true },
   );
   const [initialLoadComplete, setInitialLoadComplete] = useState(false);
   if (!loading && !initialLoadComplete) setInitialLoadComplete(true);
@@ -125,8 +129,8 @@ function List({ scope }: { scope: 'review' | 'payout' }) {
     {
       type: 'text',
       key: 'q',
-      label: t('reimb.search'),
-      placeholder: t('reimb.search'),
+      label: t(can('admin_reimb_pay') ? 'reimb.search' : 'reimb.searchWithoutPayee'),
+      placeholder: t(can('admin_reimb_pay') ? 'reimb.search' : 'reimb.searchWithoutPayee'),
     },
     {
       type: 'select',

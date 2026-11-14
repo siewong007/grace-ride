@@ -179,6 +179,7 @@ export default {
     submitted: 'Submitted',
     status: 'Status',
     search: 'Search applicant, payee or description',
+    searchWithoutPayee: 'Search applicant or description',
     allStatus: 'All statuses',
     reviewBtn: 'Review',
     payBtn: 'Pay',
