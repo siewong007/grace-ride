@@ -103,4 +103,9 @@ export default {
   delayPlus5: '+5m Delayed',
   delayPlus10: '+10m Traffic',
   delayToast: 'Notified passenger of ~{mins} min delay',
+  proxyBadge: 'Proxy · {rel}',
+  proxyDefaultRel: 'Rider',
+  bookedBy: 'Booked by {name}',
+  callRider: 'Call rider ({name})',
+  callBooker: 'Call booker ({name})',
 };

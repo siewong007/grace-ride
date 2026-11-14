@@ -1,8 +1,10 @@
 # Security model
 
+Reviewed against source on 14 November 2026. See [Features](FEATURES.md) for scope and [Testing](TESTING.md) for verification limits.
+
 ## What we protect
 
-Home addresses, phone numbers, live GPS, payment receipts and bank/TNG details of about 1,000 church members, many of them elderly. The likely threats are account takeover, a curious insider browsing data they don't need, cross-site attacks against a logged-in member, and a leaked backup. Malaysian PDPA (2024 amendment) applies.
+Home addresses, phone numbers, live GPS, payment receipts and bank/TNG details of about 1,000 church members, many of them elderly. The likely threats are account takeover, a curious insider browsing data they don't need, cross-site attacks against a logged-in member, and a leaked backup. The church must obtain review of applicable Malaysian privacy obligations and approve its notice and retention policy before launch.
 
 ## Controls
 
@@ -26,11 +28,17 @@ Home addresses, phone numbers, live GPS, payment receipts and bank/TNG details o
 | **Retention** | Trip chats purged after `CHAT_RETENTION_DAYS` (180). Read notifications after 90 days. GPS on trip end. | `jobs.rs` |
 | **Config safety** | Startup refuses `DEV_MODE` on a non-localhost URL, and refuses plain http outside localhost. | `state.rs` |
 | **Container** | Non-root user, read-only root filesystem, all capabilities dropped, `no-new-privileges`, memory limit. | `Dockerfile`, `docker-compose.yml` |
-| **Supply chain** | `cargo audit` and `npm audit` in CI, plus weekly Dependabot. Lockfiles enforced (`--locked`, `npm ci`). Production deploys only after CI passes for that commit (`deploy.yml` runs on CI's `workflow_run`). | `.github/` |
+| **Supply chain** | `cargo audit` and `npm audit` in CI, plus weekly Dependabot. Lockfiles enforced (`--locked`, `npm ci`). Automatic deployment follows successful CI for the pushed commit; `deploy.yml` also exposes explicit manual dispatch. | `.github/` |
+
+## Auto-lock and backup codes
+
+Profile supports hashed, single-use TOTP backup codes; recovery clears them. The organization default `session_timeout_mins` and member `auto_lock_mins` drive the React `AutoLockProvider`. Positive member values override the default; `-1` disables auto-lock and `0` uses the organization default. The current Unlock button only clears local UI state. This is a screen overlay, not reauthentication or server-side idle expiration; API session validity remains controlled by the session extractor and expiration timestamp.
+
+Source: `frontend/src/components/AutoLock.tsx`, `backend/src/auth.rs`, `backend/src/routes/auth.rs`, migrations 0010 and 0012.
 
 ## Accepted risks / known gaps
 
-- **RUSTSEC-2023-0071 (`rsa`)** is ignored. It reaches `Cargo.lock` only through sqlx's unused MySQL driver and is never compiled (`cargo tree -i rsa --target all` is empty).
+- **Dependency exceptions:** CI currently ignores `RUSTSEC-2023-0071` and `RUSTSEC-2026-0459`. Inspect `.github/workflows/ci.yml` and the Cargo audit configuration when reviewing a release; this documentation audit did not rerun the dependency scan or verify current advisory applicability.
 - **`style-src 'unsafe-inline'`** is needed by Leaflet's marker markup. Script injection is still blocked.
 - **In-memory rate limiter** resets on restart and is per instance. The per-account lockout is in the database, so it survives restarts.
 - **The data at rest is not encrypted by the app.** Use an encrypted disk/volume on the host and encrypt backups (`scripts/backup.sh` output contains personal data).
@@ -41,7 +49,7 @@ Home addresses, phone numbers, live GPS, payment receipts and bank/TNG details o
 - [ ] PDPA privacy notice and data-retention periods approved by the church (`CHAT_RETENTION_DAYS`, `AUDIT_RETENTION_DAYS`)
 - [ ] Encrypted volume and off-site encrypted backups, and a test restore (`scripts/restore.sh`)
 - [ ] At least two admins with passkeys, so recovery never depends on one person
-- [ ] Run `make lint test audit` and an external TLS scan (e.g. SSL Labs) of the live domain
+- [ ] Run the full checks in [Testing](TESTING.md) and an external TLS scan (e.g. SSL Labs) of the live domain
 
 ## Reporting a vulnerability
 

@@ -325,33 +325,79 @@ function Details({ ride: r }: { ride: Ride }) {
   const { t } = useTranslation('rideDetail');
   const ft = useFormatT();
 
-  const kvItems: KeyValueItem[] = [
-    {
+  const kvItems: KeyValueItem[] = [];
+
+  if (r.is_proxy && r.proxy) {
+    kvItems.push({
+      label: t('proxyRider'),
+      value: (
+        <span>
+          <strong className="bold">{r.proxy.rider_name}</strong>
+          {r.proxy.rider_phone ? (
+            <>
+              {' '}
+              · <a href={`tel:${r.proxy.rider_phone}`}>{r.proxy.rider_phone}</a>
+            </>
+          ) : (
+            <span className="small muted"> ({t('proxyNoPhone')})</span>
+          )}
+        </span>
+      ),
+    });
+    if (r.proxy.rider_relationship) {
+      kvItems.push({
+        label: t('proxyRelationship'),
+        value: r.proxy.rider_relationship,
+      });
+    }
+    kvItems.push({
+      label: t('proxyBooker'),
+      value: (
+        <span>
+          {r.proxy.booker_name}
+          {r.proxy.booker_phone && (
+            <>
+              {' '}
+              · <a href={`tel:${r.proxy.booker_phone}`}>{r.proxy.booker_phone}</a>
+            </>
+          )}
+        </span>
+      ),
+    });
+  } else {
+    kvItems.push({
       label: t('passenger'),
       value: (
         <span>
           {r.passenger.name}
           {r.passenger.phone && !r.viewer.is_passenger && (
-            <> · <a href={`tel:${r.passenger.phone}`}>{r.passenger.phone}</a></>
+            <>
+              {' '}
+              · <a href={`tel:${r.passenger.phone}`}>{r.passenger.phone}</a>
+            </>
           )}
         </span>
       ),
-    },
+    });
+  }
+
+  kvItems.push(
     { label: t('pickupArea'), value: r.area.name },
     {
       label: t('pickupAddress'),
-      value: r.pickup_address ? (
-        <span>{r.pickup_address}</span>
-      ) : (
-        <div className="row between nowrap">
-          <span className="muted">{t('pickupAddressLocked')}</span>
-          <Lock size={14} className="muted" aria-hidden="true" />
-        </div>
-      ),
+      value:
+        r.pickup_address ? (
+          <span>{r.pickup_address}</span>
+        ) : (
+          <div className="row between nowrap">
+            <span className="muted">{t('pickupAddressLocked')}</span>
+            <Lock size={14} className="muted" aria-hidden="true" />
+          </div>
+        ),
     },
     { label: t('destination'), value: r.destination },
     { label: t('people'), value: t('seatCount', { count: r.seats }) },
-  ];
+  );
 
   if (r.assistance) {
     kvItems.push({ label: t('assistance'), value: r.assistance });

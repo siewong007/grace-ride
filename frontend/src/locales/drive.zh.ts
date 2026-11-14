@@ -103,4 +103,9 @@ export default {
   delayPlus5: '+5分 稍迟',
   delayPlus10: '+10分 堵车',
   delayToast: '已通知乘客预计延误 {mins} 分钟',
+  proxyBadge: '代订 · {rel}',
+  proxyDefaultRel: '长辈/组员',
+  bookedBy: '由 {name} 代订',
+  callRider: '致电长辈 ({name})',
+  callBooker: '致电代订人 ({name})',
 };

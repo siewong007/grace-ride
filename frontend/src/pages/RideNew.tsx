@@ -8,6 +8,8 @@ import {
   Lock,
   Minus,
   Plus,
+  User,
+  Users,
   X,
 } from 'lucide-react';
 import { post, useApi } from '../api';
@@ -31,6 +33,14 @@ interface Area {
   active: boolean;
 }
 
+interface ProxyRider {
+  id: number;
+  name: string;
+  phone: string;
+  relationship: string;
+  notes: string;
+}
+
 export default function RideNew() {
   const { t } = useTranslation('rideNew');
   const nav = useNavigate();
@@ -40,6 +50,13 @@ export default function RideNew() {
   const { data: event } = useApi<{ id: number; title: string; starts_at: string; location: string }>(
     eventId ? `/events/${eventId}` : null,
   );
+  const { data: frequentRiders } = useApi<ProxyRider[]>('/proxy-riders');
+
+  const [isProxy, setIsProxy] = useState(false);
+  const [riderName, setRiderName] = useState('');
+  const [riderPhone, setRiderPhone] = useState('');
+  const [riderRelationship, setRiderRelationship] = useState('parent');
+  const [saveProxyRider, setSaveProxyRider] = useState(false);
 
   const [date, setDate] = useState('');
   const [time, setTime] = useState('');
@@ -86,6 +103,13 @@ export default function RideNew() {
     );
   };
 
+  const selectFrequentRider = (fr: ProxyRider) => {
+    setRiderName(fr.name);
+    if (fr.phone) setRiderPhone(fr.phone);
+    if (fr.relationship) setRiderRelationship(fr.relationship);
+    if (fr.notes && !notes) setNotes(fr.notes);
+  };
+
   const submit = (e: FormEvent) => {
     e.preventDefault();
 
@@ -95,6 +119,7 @@ export default function RideNew() {
       area: validateField('area', area),
       address: validateField('address', address),
       destination: validateField('destination', destination),
+      riderName: isProxy && !riderName.trim() ? t('fieldRequired') : '',
     };
 
     setTouched({
@@ -103,12 +128,18 @@ export default function RideNew() {
       area: true,
       address: true,
       destination: true,
+      riderName: isProxy,
     });
     setErrors(newErrors);
 
-    const firstErrKey = ['date', 'time', 'area', 'address', 'destination'].find(
-      (k) => newErrors[k],
-    );
+    const firstErrKey = [
+      isProxy ? 'riderName' : '',
+      'date',
+      'time',
+      'area',
+      'address',
+      'destination',
+    ].find((k) => k && newErrors[k]);
 
     if (firstErrKey) {
       const el = document.getElementById(`field-${firstErrKey}`);
@@ -133,6 +164,11 @@ export default function RideNew() {
         assistance: combinedAssistance,
         notes,
         event_id: eventId ? Number(eventId) : undefined,
+        is_proxy: isProxy,
+        rider_name: isProxy ? riderName.trim() : undefined,
+        rider_phone: isProxy ? riderPhone.trim() : undefined,
+        rider_relationship: isProxy ? riderRelationship : undefined,
+        save_proxy_rider: isProxy ? saveProxyRider : false,
       });
       nav(`/rides/${r.id}`, { replace: true });
     }, t('submitted'));
@@ -164,6 +200,131 @@ export default function RideNew() {
         )}
 
         <form onSubmit={submit} noValidate className="stack">
+          {/* Section 0: Who is this ride for? */}
+          <section className="form-section stack">
+            <h3>{t('riderTypeSection')}</h3>
+            <div className="segmented-control" role="tablist">
+              <button
+                type="button"
+                className={`segmented-item ${!isProxy ? 'active' : ''}`}
+                onClick={() => setIsProxy(false)}
+              >
+                <User size={16} aria-hidden="true" />
+                <span>{t('forMyself')}</span>
+              </button>
+              <button
+                type="button"
+                className={`segmented-item ${isProxy ? 'active' : ''}`}
+                onClick={() => setIsProxy(true)}
+              >
+                <Users size={16} aria-hidden="true" />
+                <span>{t('forOther')}</span>
+              </button>
+            </div>
+
+            {isProxy && (
+              <div
+                className="card inset stack gap-md"
+                style={{
+                  background: 'var(--surface-2)',
+                  padding: 'var(--space-3)',
+                  borderRadius: 'var(--radius)',
+                }}
+              >
+                {frequentRiders && frequentRiders.length > 0 && (
+                  <div className="stack gap-xs">
+                    <label className="small muted bold">{t('frequentRiders')}</label>
+                    <div className="row wrap gap-xs">
+                      {frequentRiders.map((fr) => (
+                        <button
+                          key={fr.id}
+                          type="button"
+                          className={`chip ${riderName === fr.name ? 'active' : ''}`}
+                          onClick={() => selectFrequentRider(fr)}
+                        >
+                          👵 {fr.name} {fr.relationship ? `(${fr.relationship})` : ''}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                )}
+
+                <div className="form-grid two">
+                  <div>
+                    <Field label={t('riderName')}>
+                      <input
+                        id="field-riderName"
+                        className="input"
+                        type="text"
+                        required
+                        value={riderName}
+                        placeholder={t('riderNamePlaceholder')}
+                        onChange={(e) => {
+                          setRiderName(e.target.value);
+                          if (touched.riderName) {
+                            setErrors((cur) => ({
+                              ...cur,
+                              riderName: e.target.value.trim() ? '' : t('fieldRequired'),
+                            }));
+                          }
+                        }}
+                        onBlur={() => {
+                          setTouched((cur) => ({ ...cur, riderName: true }));
+                          setErrors((cur) => ({
+                            ...cur,
+                            riderName: riderName.trim() ? '' : t('fieldRequired'),
+                          }));
+                        }}
+                        aria-invalid={touched.riderName && !!errors.riderName}
+                      />
+                    </Field>
+                    {touched.riderName && errors.riderName && (
+                      <div className="field-error-msg" role="alert">
+                        {errors.riderName}
+                      </div>
+                    )}
+                  </div>
+
+                  <div>
+                    <Field label={t('relationship')}>
+                      <select
+                        className="input select"
+                        value={riderRelationship}
+                        onChange={(e) => setRiderRelationship(e.target.value)}
+                      >
+                        <option value="parent">{t('relParent')}</option>
+                        <option value="cell_member">{t('relCellMember')}</option>
+                        <option value="spouse">{t('relSpouse')}</option>
+                        <option value="friend">{t('relFriend')}</option>
+                        <option value="other">{t('relOther')}</option>
+                      </select>
+                    </Field>
+                  </div>
+                </div>
+
+                <Field label={t('riderPhone')} hint={t('riderPhoneHint')}>
+                  <input
+                    id="field-riderPhone"
+                    className="input"
+                    type="tel"
+                    value={riderPhone}
+                    placeholder={t('riderPhonePlaceholder')}
+                    onChange={(e) => setRiderPhone(e.target.value)}
+                  />
+                </Field>
+
+                <label className="row gap-xs items-center small">
+                  <input
+                    type="checkbox"
+                    checked={saveProxyRider}
+                    onChange={(e) => setSaveProxyRider(e.target.checked)}
+                  />
+                  <span>{t('saveFrequentRider')}</span>
+                </label>
+              </div>
+            )}
+          </section>
+
           {/* Section 1: When */}
           <section className="form-section stack">
             <h3>{t('whenSection')}</h3>
