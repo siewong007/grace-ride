@@ -768,13 +768,21 @@ function PassengerActions({ ride: r, reload }: { ride: Ride; reload: () => void 
 
           {r.arrived_at_gate_at ? (
             <Notice tone="success" icon={<AlertCircle size={18} />}>
-              <span className="bold">{t('driverArrivedGateNotice')}</span>
+              <span className="bold">
+                {r.is_proxy && r.proxy
+                  ? t('driverArrivedGateNoticeProxy', { name: r.proxy.rider_name })
+                  : t('driverArrivedGateNotice')}
+              </span>
             </Notice>
           ) : null}
 
           <div className="stack-sm">
-            <h3 className="no-margin">{t('readinessTitle')}</h3>
-            <p className="small muted no-margin">{t('readinessPrompt')}</p>
+            <h3 className="no-margin">
+              {r.is_proxy && r.proxy ? t('readinessTitleProxy') : t('readinessTitle')}
+            </h3>
+            <p className="small muted no-margin">
+              {r.is_proxy && r.proxy ? t('readinessPromptProxy') : t('readinessPrompt')}
+            </p>
 
             {r.readiness_status === 'ready' && (
               <Notice tone="success">{t('readyConfirmed')}</Notice>
@@ -790,7 +798,9 @@ function PassengerActions({ ride: r, reload }: { ride: Ride; reload: () => void 
                 disabled={busy}
                 onClick={() => run(() => post(`/rides/${r.id}/readiness`, { status: 'ready' }).then(reload), t('readyConfirmed'))}
               >
-                {t('readyBtn')}
+                {r.is_proxy && r.proxy
+                  ? t('readyBtnProxy', { name: r.proxy.rider_name })
+                  : t('readyBtn')}
               </Button>
               <Button
                 variant="secondary"
@@ -798,7 +808,9 @@ function PassengerActions({ ride: r, reload }: { ride: Ride; reload: () => void 
                 disabled={busy}
                 onClick={() => run(() => post(`/rides/${r.id}/readiness`, { status: 'delayed_5m' }).then(reload), t('delayedConfirmed'))}
               >
-                {t('delayed5mBtn')}
+                {r.is_proxy && r.proxy
+                  ? t('delayed5mBtnProxy', { name: r.proxy.rider_name })
+                  : t('delayed5mBtn')}
               </Button>
               <Button
                 variant="ghost"
@@ -817,7 +829,9 @@ function PassengerActions({ ride: r, reload }: { ride: Ride; reload: () => void 
                   }
                 }}
               >
-                {t('unableToJoinBtn')}
+                {r.is_proxy && r.proxy
+                  ? t('unableToJoinBtnProxy', { name: r.proxy.rider_name })
+                  : t('unableToJoinBtn')}
               </Button>
             </div>
           </div>

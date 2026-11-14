@@ -6,9 +6,10 @@ import {
 } from 'lucide-react';
 import { useAuth } from '../auth';
 import { LogoMark, Wordmark } from './Brand';
-import { PageChromeContext } from './PageChrome';
+import { GuideHeaderActionContext, PageChromeContext } from './PageChrome';
 import { TermsGate } from './Terms';
 import { Avatar, IconButton, Notice } from './ui';
+import { GuideRunnerProvider, PageHeaderGuideButton } from './GuideRunner';
 import { useTranslation } from 'react-i18next';
 
 interface NavItem {
@@ -30,6 +31,10 @@ function getPageTitle(pathname: string, t: (key: string) => string): string {
   if (pathname === '/costs') return t('myCosts');
   if (pathname === '/reimbursements') return t('reimbursements');
   if (pathname === '/report') return t('myReport');
+  if (pathname === '/help/guides/new') return t('guideNew');
+  if (pathname.includes('/help/guides/') && pathname.endsWith('/edit')) return t('guideEdit');
+  if (pathname.startsWith('/help/guides/')) return t('guideDetail');
+  if (pathname.startsWith('/help/')) return t('ticketDetail');
   if (pathname === '/help') return t('help');
   if (pathname === '/drive') return t('drive');
   if (pathname === '/settlements') return t('settlements');
@@ -200,6 +205,15 @@ export default function Layout() {
           </div>
 
           <div className="topbar-actions row nowrap">
+            {!pending && can('help') && (
+              <IconButton
+                to="/help"
+                icon={<LifeBuoy size={20} />}
+                label={t('help')}
+                variant="ghost"
+                className="topbar-help hide-tablet-up"
+              />
+            )}
             {!pending && (
               <IconButton
                 to="/notifications"
@@ -244,7 +258,11 @@ export default function Layout() {
         )}
         <main className="main" id="main">
           <PageChromeContext.Provider value={chrome}>
-            <Outlet />
+            <GuideRunnerProvider>
+              <GuideHeaderActionContext.Provider value={<PageHeaderGuideButton />}>
+                <Outlet />
+              </GuideHeaderActionContext.Provider>
+            </GuideRunnerProvider>
           </PageChromeContext.Provider>
         </main>
       </div>

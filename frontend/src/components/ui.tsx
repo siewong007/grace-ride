@@ -30,7 +30,7 @@ import { uploadFile } from '../api';
 import { observeElementRect, useVirtualizer } from '@tanstack/react-virtual';
 import { Tone } from '../format';
 import { LoadingMark } from './Brand';
-import { usePageChrome } from './PageChrome';
+import { GuideHeaderActionContext, usePageChrome } from './PageChrome';
 import { useTranslation } from 'react-i18next';
 
 // ==========================================
@@ -207,6 +207,7 @@ export function PageHeader({ title, subtitle, back, actions, className = '' }: P
   const { t } = useTranslation();
   const headingRef = useRef<HTMLHeadingElement>(null);
   const inFrame = usePageChrome(headingRef, back);
+  const guideHeaderAction = useContext(GuideHeaderActionContext);
   return (
     <div className={`page-head ${className}`.trim()}>
       <div className="row nowrap page-head-title">
@@ -220,7 +221,12 @@ export function PageHeader({ title, subtitle, back, actions, className = '' }: P
           {subtitle && <p className="muted">{subtitle}</p>}
         </div>
       </div>
-      {actions && <div className="btn-row page-head-actions">{actions}</div>}
+      {(actions || guideHeaderAction) && (
+        <div className="btn-row page-head-actions">
+          {guideHeaderAction}
+          {actions}
+        </div>
+      )}
     </div>
   );
 }

@@ -186,7 +186,21 @@ function Schedule() {
                       </div>
                       <div>
                         <Link to={`/rides/${r.id}`} className="driver-trip-title">
-                          <span>{r.passenger.name}</span>
+                          {r.is_proxy && r.proxy ? (
+                            <span className="row gap-xs items-center wrap">
+                              <span className="bold">{r.proxy.rider_name}</span>
+                              <Pill tone="info">
+                                {t('proxyBadge', {
+                                  rel: r.proxy.rider_relationship || t('proxyDefaultRel'),
+                                })}
+                              </Pill>
+                              <span className="muted small">
+                                ({t('bookedBy', { name: r.proxy.booker_name })})
+                              </span>
+                            </span>
+                          ) : (
+                            <span>{r.passenger.name}</span>
+                          )}
                           <span className="muted small">· {t('seatCount', { count: r.seats })}</span>
                         </Link>
                         <div className="driver-trip-route">
@@ -281,11 +295,28 @@ function Schedule() {
                       </Button>
                     )}
 
-                    {r.passenger.phone && (
-                      <a className="btn secondary" href={`tel:${r.passenger.phone}`}>
-                        <Phone size={14} aria-hidden="true" />
-                        <span>{t('call')}</span>
-                      </a>
+                    {r.is_proxy && r.proxy ? (
+                      <div className="row wrap gap-xs">
+                        {r.proxy.rider_phone && (
+                          <a className="btn secondary sm" href={`tel:${r.proxy.rider_phone}`}>
+                            <Phone size={14} aria-hidden="true" />
+                            <span>{t('callRider', { name: r.proxy.rider_name })}</span>
+                          </a>
+                        )}
+                        {r.proxy.booker_phone && (
+                          <a className="btn secondary sm" href={`tel:${r.proxy.booker_phone}`}>
+                            <Phone size={14} aria-hidden="true" />
+                            <span>{t('callBooker', { name: r.proxy.booker_name })}</span>
+                          </a>
+                        )}
+                      </div>
+                    ) : (
+                      r.passenger.phone && (
+                        <a className="btn secondary" href={`tel:${r.passenger.phone}`}>
+                          <Phone size={14} aria-hidden="true" />
+                          <span>{t('call')}</span>
+                        </a>
+                      )
                     )}
 
                     {r.status === 'in_progress' && !r.picked_up_at && (
@@ -463,7 +494,21 @@ function Requests() {
 
               <div className="driver-request-route">
                 <span className="muted">{t('passenger')} </span>
-                <span className="bold">{r.passenger.name}</span>
+                {r.is_proxy && r.proxy ? (
+                  <>
+                    <span className="bold">{r.proxy.rider_name}</span>{' '}
+                    <Pill tone="info">
+                      {t('proxyBadge', {
+                        rel: r.proxy.rider_relationship || t('proxyDefaultRel'),
+                      })}
+                    </Pill>{' '}
+                    <span className="small muted">
+                      ({t('bookedBy', { name: r.proxy.booker_name })})
+                    </span>
+                  </>
+                ) : (
+                  <span className="bold">{r.passenger.name}</span>
+                )}
                 <span> → {r.destination}</span>
               </div>
 

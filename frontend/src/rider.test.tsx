@@ -57,7 +57,21 @@ const mockApiData: Record<string, unknown> = {
     },
   ],
   '/areas': [{ id: 1, name: 'Petaling Jaya', active: true }],
+  '/proxy-riders': [{ id: 1, name: 'Sister Chen', phone: '012-3456789', relationship: 'parent', notes: 'Need cane' }],
   '/rides/42': mockRide,
+  '/rides/43': {
+    ...mockRide,
+    id: 43,
+    is_proxy: true,
+    proxy: {
+      is_proxy: true,
+      rider_name: 'Sister Chen',
+      rider_phone: '012-3456789',
+      rider_relationship: 'parent',
+      booker_name: 'Grace Member',
+      booker_phone: '+60123456789',
+    },
+  },
   '/rides/42/location': { sharing: false },
 };
 
@@ -175,6 +189,20 @@ describe('RideNew page', () => {
     expect(wheelchairChip).toHaveAttribute('aria-pressed', 'true');
   });
 
+  it('allows toggling proxy booking mode in RideNew', () => {
+    render(
+      <MemoryRouter>
+        <RideNew />
+      </MemoryRouter>
+    );
+
+    const forOtherBtn = screen.getByRole('button', { name: /book for family/i });
+    expect(forOtherBtn).toBeInTheDocument();
+    fireEvent.click(forOtherBtn);
+
+    expect(screen.getByPlaceholderText(/Sister Chen/i)).toBeInTheDocument();
+  });
+
   it('validates fields and shows error on empty submission', () => {
     render(
       <MemoryRouter>
@@ -204,5 +232,44 @@ describe('RideDetail page', () => {
     expect(screen.getByText(/status timeline/i)).toBeInTheDocument();
     expect(screen.getAllByText('David Driver').length).toBeGreaterThan(0);
     expect(screen.getAllByText('Grace Community Church').length).toBeGreaterThan(0);
+  });
+
+  it('renders proxy booking information and personalized readiness check', () => {
+    render(
+      <MemoryRouter initialEntries={['/rides/43']}>
+        <Routes>
+          <Route path="/rides/:id" element={<RideDetail />} />
+        </Routes>
+      </MemoryRouter>
+    );
+
+    expect(screen.getByText('Sister Chen')).toBeInTheDocument();
+    expect(screen.getByText(/Grace Member/)).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /Sister Chen is ready/i })).toBeInTheDocument();
+  });
+
+  it('renders proxy badge in RideCard', () => {
+    const mockProxyRide: Ride = {
+      ...mockRide,
+      id: 43,
+      is_proxy: true,
+      proxy: {
+        is_proxy: true,
+        rider_name: 'Sister Chen',
+        rider_phone: '012-3456789',
+        rider_relationship: 'parent',
+        booker_name: 'Grace Member',
+        booker_phone: '+60123456789',
+      },
+    };
+
+    render(
+      <MemoryRouter>
+        <RideCard ride={mockProxyRide} perspective="passenger" />
+      </MemoryRouter>
+    );
+
+    expect(screen.getByText(/Sister Chen/i)).toBeInTheDocument();
+    expect(screen.getByText(/Proxy/i)).toBeInTheDocument();
   });
 });

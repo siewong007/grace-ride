@@ -4,7 +4,7 @@ export default {
   shareStatus: { unpaid: 'Unpaid', pending: 'Awaiting check', confirmed: 'Confirmed', needs_info: 'Info needed' },
   reimbStatus: { pending: 'Pending approval', returned: 'Returned for info', rejected: 'Not approved', approved: 'Approved · Awaiting payment', paid: 'Paid' },
   settlementStatus: { draft: 'Draft', published: 'Collecting', closed: 'Settled & archived' },
-  helpStatus: { open: 'In progress', answered: 'Replied', closed: 'Closed' },
+  helpStatus: { open: 'Waiting for help centre', answered: 'Replied — waiting for you', closed: 'Resolved' },
   role: { member: 'Member', superadmin: 'Super admin', admin: 'Admin', transport: 'Transport', finance: 'Finance', leader: 'Event leader', driver: 'Volunteer driver' },
   weekday: ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'],
   period: { am: 'am', pm: 'pm', evening: 'pm' },

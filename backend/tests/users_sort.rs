@@ -84,6 +84,11 @@ async fn admin_users_sort_uses_allow_listed_fields() {
         None,
     )
     .await;
-    assert_eq!(case_sensitive.status, StatusCode::OK, "{}", case_sensitive.json);
+    assert_eq!(
+        case_sensitive.status,
+        StatusCode::OK,
+        "{}",
+        case_sensitive.json
+    );
     assert_eq!(case_sensitive.json["total"], 0);
 }

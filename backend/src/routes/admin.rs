@@ -164,8 +164,7 @@ async fn list_users(
     );
 
     if q.page.is_some() || q.limit.is_some() {
-        let mut conds =
-            vec!["(u.name LIKE $1 OR u.email LIKE $2 OR u.phone LIKE $3)".to_string()];
+        let mut conds = vec!["(u.name LIKE $1 OR u.email LIKE $2 OR u.phone LIKE $3)".to_string()];
         if q.role.is_some() {
             conds.push("(',' || u.roles || ',') LIKE ('%,' || $4 || ',%')".to_string());
         }

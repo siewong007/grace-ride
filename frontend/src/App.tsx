@@ -33,6 +33,7 @@ const ReimbursementForm = named(() => import('./pages/Reimbursements'), 'Reimbur
 const Help = lazy(() => import('./pages/Help'));
 const HelpDetail = named(() => import('./pages/Help'), 'HelpDetail');
 const HelpGuideDetail = lazy(() => import('./pages/HelpGuideDetail'));
+const HelpGuideEditor = lazy(() => import('./pages/HelpGuideEditor'));
 const Report = lazy(() => import('./pages/Report'));
 const Notifications = lazy(() => import('./pages/Notifications'));
 const Profile = lazy(() => import('./pages/Profile'));
@@ -119,6 +120,8 @@ export default function App() {
         <Route path="reimbursements/:id" element={page(<ReimbursementDetail />)} />
         <Route path="help" element={gated(<Help />, 'help', 'admin_help')} />
         <Route path="help/:id" element={page(<HelpDetail />)} />
+        <Route path="help/guides/new" element={gated(<HelpGuideEditor />, ['admin_help', 'update'])} />
+        <Route path="help/guides/:slug/edit" element={gated(<HelpGuideEditor />, ['admin_help', 'update'])} />
         <Route path="help/guides/:slug" element={gated(<HelpGuideDetail />, 'help')} />
         <Route path="report" element={gated(<Report />, 'report')} />
         <Route path="notifications" element={page(<Notifications />)} />

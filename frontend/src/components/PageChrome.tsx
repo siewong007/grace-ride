@@ -1,7 +1,7 @@
 // Lets a page talk to the app frame (Layout): where "back" goes, and whether the page's own
 // heading is on screen. The top bar shows the page title only once that heading scrolls away,
 // so a page never shows its title twice.
-import { createContext, RefObject, useContext, useEffect } from 'react';
+import { createContext, ReactNode, RefObject, useContext, useEffect } from 'react';
 
 export interface PageChrome {
   setBack: (to: string | null) => void;
@@ -9,6 +9,7 @@ export interface PageChrome {
 }
 
 export const PageChromeContext = createContext<PageChrome | null>(null);
+export const GuideHeaderActionContext = createContext<ReactNode | null>(null);
 
 /** Height of the sticky top bar; a heading under it counts as scrolled away. */
 const TOPBAR_OFFSET = 72;
