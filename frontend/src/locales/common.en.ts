@@ -54,4 +54,9 @@ export default {
     mfa: 'Sign in with a passkey or two-factor authentication (2FA) to use staff pages.',
   },
   offlineNotice: 'You are currently offline. Actions and location updates will resume when reconnected.',
+  sessionLocked: 'Session Locked',
+  sessionLockedDesc: 'Your session was locked due to inactivity to protect privacy and sensitive data.',
+  unlock: 'Unlock',
+  unlocking: 'Unlocking...',
+  lockNow: 'Lock screen',
 };

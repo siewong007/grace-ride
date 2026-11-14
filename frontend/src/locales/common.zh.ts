@@ -54,4 +54,9 @@ export default {
     mfa: '请使用通行密钥或双重验证（2FA）登录后，再使用管理页面。',
   },
   offlineNotice: '当前处于离线状态。网络恢复后将自动同步数据与位置。',
+  sessionLocked: '会话已锁定',
+  sessionLockedDesc: '为保护个人隐私与数据安全，长时间无操作已自动锁定屏幕。',
+  unlock: '解锁',
+  unlocking: '解锁中...',
+  lockNow: '锁定屏幕',
 };
