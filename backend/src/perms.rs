@@ -26,9 +26,14 @@ use sqlx::PgPool;
 /// Held by every active member without being listed in `users.roles`.
 pub const MEMBER_ROLE: &str = "member";
 pub const ADMIN_ROLE: &str = "admin";
-/// Built-in roles, created on first start. They can be edited but not deleted.
+/// Holds every permission, always. It is the one role that cannot be edited, so
+/// whatever else an administrator configures, somebody can still put it right.
+pub const SUPERADMIN_ROLE: &str = "superadmin";
+/// Built-in roles, created on first start. They can be edited (all but `superadmin`)
+/// and never deleted.
 pub const SYSTEM_ROLES: &[&str] = &[
     MEMBER_ROLE,
+    SUPERADMIN_ROLE,
     ADMIN_ROLE,
     "transport",
     "finance",
@@ -267,6 +272,7 @@ pub fn defaults(role: &str) -> Vec<Perm> {
     use Act::*;
     use Page::*;
     let pages: &[(Page, &[Act])] = match role {
+        SUPERADMIN_ROLE => return all().collect(),
         "member" => &[
             (Rides, &[View, Create, Update, Delete]),
             (Events, &[View]),
@@ -318,16 +324,51 @@ pub fn defaults(role: &str) -> Vec<Perm> {
     pages.iter().flat_map(|(p, a)| grid(*p, a)).collect()
 }
 
-/// Permissions a built-in role can never lose, so the app cannot be left with nobody
-/// able to manage roles and members.
+/// Permissions a role can never lose. Only `superadmin` has any: it keeps all of them,
+/// including ones added by later releases (start-up grants every locked permission),
+/// so the app cannot be left with nobody able to manage roles and members.
 pub fn locked(role: &str) -> Vec<Perm> {
-    use Act::*;
-    if role != ADMIN_ROLE {
-        return Vec::new();
+    if role == SUPERADMIN_ROLE {
+        all().collect()
+    } else {
+        Vec::new()
     }
-    grid(Page::AdminRoles, &[View, Create, Update, Delete])
-        .chain(grid(Page::AdminMembers, &[View, Update]))
-        .collect()
+}
+
+/// Whether these role keys include the super admin role.
+pub fn is_superadmin(roles: &[String]) -> bool {
+    roles.iter().any(|r| r == SUPERADMIN_ROLE)
+}
+
+/// Start-up, after seeding: there is always one active super admin. If nobody holds
+/// the role (a database from before it existed, or a first run), it goes to the
+/// original administrator: `preferred_email` when that account is an active admin,
+/// otherwise the longest-standing active admin. Returns who was promoted.
+pub async fn ensure_superadmin(
+    db: &PgPool,
+    preferred_email: Option<&str>,
+) -> sqlx::Result<Option<(i64, String)>> {
+    let holds = |role: &str| format!("'{role}' = ANY(string_to_array(roles, ','))");
+    let existing: Option<(i64,)> = sqlx::query_as(&format!(
+        "SELECT id FROM users WHERE status = 'active' AND {} LIMIT 1",
+        holds(SUPERADMIN_ROLE)
+    ))
+    .fetch_optional(db)
+    .await?;
+    if existing.is_some() {
+        return Ok(None);
+    }
+    let promoted: Option<(i64, String)> = sqlx::query_as(&format!(
+        "UPDATE users SET roles = '{SUPERADMIN_ROLE},' || roles
+         WHERE id = (SELECT id FROM users WHERE status = 'active' AND {}
+                     ORDER BY (email = $1) DESC, id LIMIT 1)
+         RETURNING id, email",
+        holds(ADMIN_ROLE)
+    ))
+    .bind(preferred_email.unwrap_or_default())
+    .fetch_optional(db)
+    .await?;
+    Ok(promoted)
 }
 
 /// Role keys as stored in `users.roles`.

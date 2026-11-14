@@ -165,6 +165,28 @@ async fn event_owner(st: &AppState, lang: Lang, event_id: i64) -> AppResult<(i64
         .ok_or(not_found(lang))
 }
 
+/// Only members recorded as attended may be charged. Publish and later revisions use
+/// the same gate, otherwise a published bill could silently add an absent member.
+async fn ensure_all_attended(
+    st: &AppState,
+    lang: Lang,
+    event_id: i64,
+    user_ids: Vec<i64>,
+) -> AppResult<()> {
+    let (not_attended,): (i64,) = sqlx::query_as(
+        "SELECT COUNT(*) FROM unnest($2::BIGINT[]) AS u(user_id) WHERE NOT EXISTS
+            (SELECT 1 FROM event_signups es WHERE es.event_id=$1 AND es.user_id=u.user_id AND es.attended=1)",
+    )
+    .bind(event_id)
+    .bind(user_ids)
+    .fetch_one(&st.db)
+    .await?;
+    if not_attended > 0 {
+        return Err(bad(lang, ErrorKey::UnattendedMembers(not_attended)));
+    }
+    Ok(())
+}
+
 async fn write_body(
     st: &AppState,
     sid: i64,
@@ -485,6 +507,15 @@ async fn update(
             .clone()
             .filter(|r| !r.trim().is_empty())
             .ok_or_else(|| bad(u.lang, ErrorKey::RevisionReasonRequired))?;
+        // A revision must obey the same attendance rule as publishing: never charge
+        // someone who was not recorded as attending the event.
+        ensure_all_attended(
+            &st,
+            u.lang,
+            s.event_id,
+            shares.iter().map(|s| s.0).collect(),
+        )
+        .await?;
         // 发布后若改金额，必须保留旧版并通知
         let snap = snapshot(&st, &s).await?;
         sqlx::query("INSERT INTO settlement_revisions (settlement_id, version, snapshot, reason, created_by, created_at) VALUES ($1,$2,$3,$4,$5,$6)")
@@ -632,28 +663,24 @@ async fn publish(
         return Err(bad(u.lang, ErrorKey::PayeeDetailsRequired));
     }
     // 分摊前检查出席: only members whose attendance is confirmed may be charged.
-    let (not_attended,): (i64,) = sqlx::query_as(
-        "SELECT COUNT(*) FROM settlement_shares sh WHERE sh.settlement_id=$1 AND NOT EXISTS
-            (SELECT 1 FROM event_signups es WHERE es.event_id=$2 AND es.user_id=sh.user_id AND es.attended=1)",
-    )
-    .bind(id)
-    .bind(s.event_id)
-    .fetch_one(&st.db)
-    .await?;
-    if not_attended > 0 {
-        return Err(bad(u.lang, ErrorKey::UnattendedMembers(not_attended)));
-    }
-    sqlx::query("UPDATE settlements SET status='published', updated_at=$1 WHERE id=$2")
-        .bind(now())
-        .bind(id)
-        .execute(&st.db)
-        .await?;
     let shares: Vec<(i64, i64)> = sqlx::query_as(
         "SELECT user_id, amount_cents FROM settlement_shares WHERE settlement_id=$1",
     )
     .bind(id)
     .fetch_all(&st.db)
     .await?;
+    ensure_all_attended(
+        &st,
+        u.lang,
+        s.event_id,
+        shares.iter().map(|s| s.0).collect(),
+    )
+    .await?;
+    sqlx::query("UPDATE settlements SET status='published', updated_at=$1 WHERE id=$2")
+        .bind(now())
+        .bind(id)
+        .execute(&st.db)
+        .await?;
     for (uid, amt) in shares {
         if uid != u.id && amt > 0 {
             let due_zh = s
@@ -764,7 +791,7 @@ async fn my_shares(State(st): State<AppState>, u: CurrentUser) -> AppResult<Json
         "SELECT sh.id, s.id, s.title, e.title, sh.amount_cents, sh.status, s.payee_name, s.payee_account, s.due_date, sh.note, sh.txn_ref, sh.proof_file_id
          FROM settlement_shares sh JOIN settlements s ON s.id=sh.settlement_id JOIN events e ON e.id=s.event_id
          WHERE sh.user_id=$1 AND s.status IN ('published','closed') AND s.created_by != $2
-         ORDER BY CASE sh.status WHEN 'confirmed' THEN 1 ELSE 0 END, s.id DESC LIMIT 100",
+         ORDER BY CASE sh.status WHEN 'confirmed' THEN 1 ELSE 0 END, s.id DESC",
     )
     .bind(u.id)
     .bind(u.id)
@@ -789,11 +816,18 @@ async fn submit_proof(
     Path(id): Path<i64>,
     Json(req): Json<ProofIn>,
 ) -> AppResult<Json<Value>> {
+    // Serialise receipt/reference checks. Without a lock two submissions can both
+    // pass the duplicate check before either writes, accepting the same proof twice.
+    let mut tx = st.db.begin().await?;
+    sqlx::query("SELECT pg_advisory_xact_lock(hashtextextended('grace_ride_settlement_proof', 0))")
+        .execute(&mut *tx)
+        .await?;
+
     let row: Option<(i64, i64, String, String, i64, String)> = sqlx::query_as(
         "SELECT sh.user_id, s.id, sh.status, s.status, s.created_by, s.title FROM settlement_shares sh JOIN settlements s ON s.id=sh.settlement_id WHERE sh.id=$1",
     )
     .bind(id)
-    .fetch_optional(&st.db)
+    .fetch_optional(&mut *tx)
     .await?;
     let (owner, sid, status, s_status, payee, title) = row.ok_or(not_found(u.lang))?;
     if owner != u.id {
@@ -805,7 +839,7 @@ async fn submit_proof(
     }
     let (fowner,): (i64,) = sqlx::query_as("SELECT owner_id FROM files WHERE id=$1")
         .bind(req.proof_file_id)
-        .fetch_optional(&st.db)
+        .fetch_optional(&mut *tx)
         .await?
         .ok_or_else(|| bad(u.lang, ErrorKey::UploadReceiptFirst))?;
     if fowner != u.id {
@@ -816,12 +850,13 @@ async fn submit_proof(
         return Err(bad(u.lang, ErrorKey::TxnRefRequired));
     }
     // Duplicate screenshot / reference protection.
-    let (dup,): (i64,) = sqlx::query_as("SELECT COUNT(*) FROM settlement_shares WHERE id != $1 AND (txn_ref = $2 OR proof_file_id = $3)")
-        .bind(id)
-        .bind(txn)
-        .bind(req.proof_file_id)
-        .fetch_one(&st.db)
-        .await?;
+    let (dup,): (i64,) =
+        sqlx::query_as("SELECT COUNT(*) FROM settlement_shares WHERE id != $1 AND (txn_ref = $2 OR proof_file_id = $3)")
+            .bind(id)
+            .bind(txn)
+            .bind(req.proof_file_id)
+            .fetch_one(&mut *tx)
+            .await?;
     if dup > 0 {
         return Err(bad(u.lang, ErrorKey::DuplicateTxnOrProof));
     }
@@ -831,8 +866,9 @@ async fn submit_proof(
         .bind(req.paid_date)
         .bind(now())
         .bind(id)
-        .execute(&st.db)
+        .execute(&mut *tx)
         .await?;
+    tx.commit().await?;
     let by = format!("{} · {}", u.name, title);
     notify(
         &st.db,
@@ -866,15 +902,23 @@ async fn verify(
     Path(id): Path<i64>,
     Json(req): Json<VerifyIn>,
 ) -> AppResult<Json<Value>> {
-    let row: Option<(i64, i64, i64, String, i64)> = sqlx::query_as(
-        "SELECT sh.user_id, s.id, s.created_by, s.title, sh.amount_cents FROM settlement_shares sh JOIN settlements s ON s.id=sh.settlement_id WHERE sh.id=$1",
+    let row: Option<(i64, i64, i64, String, i64, String)> = sqlx::query_as(
+        "SELECT sh.user_id, s.id, s.created_by, s.title, sh.amount_cents, s.status FROM settlement_shares sh JOIN settlements s ON s.id=sh.settlement_id WHERE sh.id=$1",
     )
     .bind(id)
     .fetch_optional(&st.db)
     .await?;
-    let (member, _sid, payee, title, amt) = row.ok_or(not_found(u.lang))?;
+    let (member, _sid, payee, title, amt, s_status) = row.ok_or(not_found(u.lang))?;
     if payee != u.id || !u.can(Page::Settlements, Act::Update) {
         return Err(forbidden(u.lang, ErrorKey::OnlyPayeeCanVerify));
+    }
+    // A closed bill is final: confirming, asking for more info, or resetting a share
+    // must not mutate payment state after the organiser has closed it.
+    if s_status == "closed" {
+        return Err(bad(u.lang, ErrorKey::BillClosedCannotEdit));
+    }
+    if s_status != "published" {
+        return Err(bad(u.lang, ErrorKey::ProofNotNeededNow));
     }
     let note = req.note.unwrap_or_default();
     let (status, zh_msg, en_msg) = match req.action.as_str() {

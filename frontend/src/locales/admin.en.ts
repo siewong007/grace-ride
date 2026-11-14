@@ -343,7 +343,7 @@ export default {
     description: 'What it is for (optional)',
     page: 'Page',
     readOnly: 'You can view roles but not change them.',
-    lockedHint: 'The admin role always keeps member and role management, so nobody can be locked out.',
+    fixedHint: "The super admin always holds every permission on every page, including ones added later. It cannot be edited or deleted, only a super admin can give it to someone, and one active super admin always remains.",
     save: 'Save permissions',
     create: 'Create role',
     saved: 'Permissions saved',

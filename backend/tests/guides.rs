@@ -187,7 +187,13 @@ async fn drafts_hidden_from_non_editors() {
         None,
     )
     .await;
-    let slugs: Vec<&str> = r.json.as_array().unwrap().iter().map(|g| g["slug"].as_str().unwrap()).collect();
+    let slugs: Vec<&str> = r
+        .json
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|g| g["slug"].as_str().unwrap())
+        .collect();
     assert!(slugs.contains(&"live-guide"));
     assert!(!slugs.contains(&"draft-guide"));
     let r = call(
@@ -210,7 +216,13 @@ async fn drafts_hidden_from_non_editors() {
         None,
     )
     .await;
-    let slugs: Vec<&str> = r.json.as_array().unwrap().iter().map(|g| g["slug"].as_str().unwrap()).collect();
+    let slugs: Vec<&str> = r
+        .json
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|g| g["slug"].as_str().unwrap())
+        .collect();
     assert!(slugs.contains(&"draft-guide"));
     assert!(slugs.contains(&"live-guide"));
     let r = call(
@@ -249,15 +261,36 @@ async fn guide_crud_is_editor_only_and_audited() {
 
     // Non-editors cannot write.
     for cookie in [&member, &finance] {
-        let r = call(&app, Method::POST, "/api/help/guides", Some(cookie), Some(guide_body())).await;
+        let r = call(
+            &app,
+            Method::POST,
+            "/api/help/guides",
+            Some(cookie),
+            Some(guide_body()),
+        )
+        .await;
         assert_eq!(r.status, StatusCode::FORBIDDEN);
     }
 
     // Create → round-trip → audit row.
-    let r = call(&app, Method::POST, "/api/help/guides", Some(&transport), Some(guide_body())).await;
+    let r = call(
+        &app,
+        Method::POST,
+        "/api/help/guides",
+        Some(&transport),
+        Some(guide_body()),
+    )
+    .await;
     assert_eq!(r.status, StatusCode::OK, "{}", r.json);
     let id = r.json["id"].as_i64().unwrap();
-    let r = call(&app, Method::GET, "/api/help/guides/new-guide", Some(&transport), None).await;
+    let r = call(
+        &app,
+        Method::GET,
+        "/api/help/guides/new-guide",
+        Some(&transport),
+        None,
+    )
+    .await;
     assert_eq!(r.json["steps"][0]["link"], "/admin/plan");
     assert_eq!(r.json["steps"].as_array().unwrap().len(), 2);
     let (n,): (i64,) = sqlx::query_as(
@@ -272,13 +305,34 @@ async fn guide_crud_is_editor_only_and_audited() {
     // Update.
     let mut edited = guide_body();
     edited["summary_en"] = json!("Edited");
-    let r = call(&app, Method::PUT, &format!("/api/help/guides/{id}"), Some(&transport), Some(edited)).await;
+    let r = call(
+        &app,
+        Method::PUT,
+        &format!("/api/help/guides/{id}"),
+        Some(&transport),
+        Some(edited),
+    )
+    .await;
     assert_eq!(r.status, StatusCode::OK);
 
     // Delete → then gone.
-    let r = call(&app, Method::DELETE, &format!("/api/help/guides/{id}"), Some(&transport), None).await;
+    let r = call(
+        &app,
+        Method::DELETE,
+        &format!("/api/help/guides/{id}"),
+        Some(&transport),
+        None,
+    )
+    .await;
     assert_eq!(r.status, StatusCode::OK);
-    let r = call(&app, Method::GET, "/api/help/guides/new-guide", Some(&transport), None).await;
+    let r = call(
+        &app,
+        Method::GET,
+        "/api/help/guides/new-guide",
+        Some(&transport),
+        None,
+    )
+    .await;
     assert_eq!(r.status, StatusCode::NOT_FOUND);
 }
 
@@ -291,28 +345,64 @@ async fn guide_validation() {
     let mut b = guide_body();
     b["title_en"] = json!(""); // no title in either language
     b["title_zh"] = json!("");
-    let r = call(&app, Method::POST, "/api/help/guides", Some(&transport), Some(b)).await;
+    let r = call(
+        &app,
+        Method::POST,
+        "/api/help/guides",
+        Some(&transport),
+        Some(b),
+    )
+    .await;
     assert_eq!(r.status, StatusCode::BAD_REQUEST);
     assert_eq!(r.json["code"], "GUIDE_TITLE_REQUIRED");
 
     let mut b = guide_body();
     b["slug"] = json!("Bad Slug!"); // not url-safe
-    let r = call(&app, Method::POST, "/api/help/guides", Some(&transport), Some(b)).await;
+    let r = call(
+        &app,
+        Method::POST,
+        "/api/help/guides",
+        Some(&transport),
+        Some(b),
+    )
+    .await;
     assert_eq!(r.json["code"], "GUIDE_SLUG_REQUIRED");
 
     let mut b = guide_body();
     b["slug"] = json!("taken"); // unique conflict
-    let r = call(&app, Method::POST, "/api/help/guides", Some(&transport), Some(b)).await;
+    let r = call(
+        &app,
+        Method::POST,
+        "/api/help/guides",
+        Some(&transport),
+        Some(b),
+    )
+    .await;
     assert_eq!(r.json["code"], "GUIDE_SLUG_EXISTS");
 
     let mut b = guide_body();
     b["steps"][0]["link"] = json!("https://evil.example"); // external link
-    let r = call(&app, Method::POST, "/api/help/guides", Some(&transport), Some(b)).await;
+    let r = call(
+        &app,
+        Method::POST,
+        "/api/help/guides",
+        Some(&transport),
+        Some(b),
+    )
+    .await;
     assert_eq!(r.json["code"], "GUIDE_LINK_INVALID");
 
     let mut b = guide_body();
-    b["steps"] = json!([{"title_en": "", "title_zh": "", "body_en": "", "body_zh": "", "link": ""}]);
-    let r = call(&app, Method::POST, "/api/help/guides", Some(&transport), Some(b)).await;
+    b["steps"] =
+        json!([{"title_en": "", "title_zh": "", "body_en": "", "body_zh": "", "link": ""}]);
+    let r = call(
+        &app,
+        Method::POST,
+        "/api/help/guides",
+        Some(&transport),
+        Some(b),
+    )
+    .await;
     assert_eq!(r.json["code"], "GUIDE_STEP_INVALID");
 }
 
@@ -320,7 +410,14 @@ async fn guide_validation() {
 async fn starter_guides_are_seeded() {
     let (app, st) = setup().await;
     let transport = login(&st, "transport@example.org").await;
-    let r = call(&app, Method::GET, "/api/help/guides", Some(&transport), None).await;
+    let r = call(
+        &app,
+        Method::GET,
+        "/api/help/guides",
+        Some(&transport),
+        None,
+    )
+    .await;
     assert_eq!(r.status, StatusCode::OK);
     let slugs: Vec<&str> = r
         .json

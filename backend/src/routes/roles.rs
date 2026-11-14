@@ -15,7 +15,7 @@ use crate::auth::CurrentUser;
 use crate::error::{bad, forbidden, not_found, AppResult};
 use crate::i18n::ErrorKey;
 use crate::perms::{
-    self, Act, Page, Perm, PermSet, ADMIN_ROLE, CATALOG, MEMBER_ROLE, SYSTEM_ROLES,
+    self, Act, Page, Perm, PermSet, ADMIN_ROLE, CATALOG, MEMBER_ROLE, SUPERADMIN_ROLE, SYSTEM_ROLES,
 };
 use crate::state::AppState;
 use crate::util::{audit, require, require_one, Lang};
@@ -78,6 +78,7 @@ async fn list(State(st): State<AppState>, u: CurrentUser) -> AppResult<Json<Valu
         .fetch_one(&st.db)
         .await?;
 
+    let caller_super = perms::is_superadmin(&u.roles);
     let out: Vec<Value> = roles
         .into_iter()
         .map(|(key, name, description, is_system, _)| {
@@ -101,6 +102,11 @@ async fn list(State(st): State<AppState>, u: CurrentUser) -> AppResult<Json<Valu
                 "system": is_system == 1,
                 // Held by every active member; it is not handed out one by one.
                 "implicit": key == MEMBER_ROLE,
+                // Always holds every permission; nothing about it can be changed.
+                "fixed": key == SUPERADMIN_ROLE,
+                // Can the caller give this role to a member? Only a super admin hands
+                // out the super admin role.
+                "assignable": key != MEMBER_ROLE && (key != SUPERADMIN_ROLE || caller_super),
                 "permissions": set.keys(),
                 "locked": perms::locked(&key).into_iter().map(Perm::key).collect::<Vec<_>>(),
                 "members": members,
@@ -268,7 +274,8 @@ async fn update(
             .await?
             .ok_or(not_found(u.lang))?;
     let set = parse_permissions(u.lang, &req.permissions)?;
-    if perms::locked(&key).into_iter().any(|p| !set.contains(p)) {
+    // The super admin role is fixed: it holds every permission and nothing else is stored.
+    if key == SUPERADMIN_ROLE || perms::locked(&key).into_iter().any(|p| !set.contains(p)) {
         return Err(bad(u.lang, ErrorKey::RolePermissionLocked));
     }
     guard_own_access(&st, &u, &key, Some(&set)).await?;

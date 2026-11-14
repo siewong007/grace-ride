@@ -60,6 +60,21 @@ pub async fn init(cfg: Config) -> anyhow::Result<AppState> {
     // Built-in roles and their default permissions must exist before anyone signs in.
     perms::sync(&db).await?;
     seed::run(&db, &cfg).await?;
+    // There is always one super admin: on a first run, or on a database from before
+    // the role existed, the original administrator becomes it.
+    let first_admin = std::env::var("ADMIN_EMAIL").ok();
+    if let Some((id, email)) = perms::ensure_superadmin(&db, first_admin.as_deref()).await? {
+        tracing::warn!("No super admin existed; {email} now holds the role.");
+        util::audit(
+            &db,
+            None,
+            "role.bootstrap",
+            "user",
+            Some(id),
+            "superadmin given to the original administrator at start-up",
+        )
+        .await;
+    }
     let webauthn = Arc::new(build_webauthn(&cfg.public_url)?);
     Ok(AppState {
         db,

@@ -270,7 +270,30 @@ async fn update_user(
         v
     };
     let new_roles = sorted(parse_roles(&req.roles.join(",")));
-    let roles_changed = new_roles != sorted(parse_roles(&old_roles));
+    let old_parsed = parse_roles(&old_roles);
+    let roles_changed = new_roles != sorted(old_parsed.clone());
+    // The super admin role, and the account of anyone holding it, is changed only by a
+    // super admin; and the last active one can be neither demoted nor disabled.
+    let was_super = perms::is_superadmin(&old_parsed) && old_status == "active";
+    let stays_super = perms::is_superadmin(&new_roles) && req.status == "active";
+    if (perms::is_superadmin(&old_parsed) || perms::is_superadmin(&new_roles))
+        && !perms::is_superadmin(&u.roles)
+    {
+        return Err(forbidden(u.lang, ErrorKey::SuperadminOnly));
+    }
+    if was_super && !stays_super {
+        let (others,): (i64,) = sqlx::query_as(
+            "SELECT COUNT(*) FROM users WHERE id <> $1 AND status = 'active'
+             AND $2 = ANY(string_to_array(roles, ','))",
+        )
+        .bind(id)
+        .bind(perms::SUPERADMIN_ROLE)
+        .fetch_one(&st.db)
+        .await?;
+        if others == 0 {
+            return Err(bad(u.lang, ErrorKey::LastSuperadmin));
+        }
+    }
     if roles_changed {
         // Giving or taking a role decides what a member may do, which is the same
         // authority as editing the roles themselves.

@@ -29,9 +29,11 @@ export default {
     "ROLE_NAME_REQUIRED": "请填写角色名称（最多 40 个字）",
     "ROLE_NAME_EXISTS": "角色名称已存在",
     "INVALID_PERMISSION": "权限项目无效，请刷新后重试",
-    "ROLE_PERMISSION_LOCKED": "管理员角色必须保留成员与角色管理权限",
+    "ROLE_PERMISSION_LOCKED": "超级管理员角色固定拥有全部权限，不能修改",
     "SYSTEM_ROLE_CANNOT_BE_DELETED": "内置角色不能删除，可改为调整其权限",
-    "CANNOT_REMOVE_OWN_ROLE_ACCESS": "不能移除自己管理角色的权限"
+    "CANNOT_REMOVE_OWN_ROLE_ACCESS": "不能移除自己管理角色的权限",
+    "SUPERADMIN_ONLY": "只有超级管理员可以授予超级管理员角色或变更其账号",
+    "LAST_SUPERADMIN": "必须保留至少一位启用中的超级管理员"
   },
   "auth": {
     "INVALID_CREDENTIALS": "电邮或密码不正确",

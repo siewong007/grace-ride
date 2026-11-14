@@ -534,24 +534,39 @@ async fn signup(
     if !can_see_event(&st, &u, id).await? {
         return Err(forbidden(u.lang, ErrorKey::EventNotOpenToGroup));
     }
-    let e = load_event(&st, &u, id).await?;
-    if e.status != "published" {
-        return Err(bad(u.lang, ErrorKey::EventNotOpen));
-    }
-    let n = now()[..16].to_string();
-    if e.signup_deadline
-        .as_deref()
-        .map(|d| d < n.as_str())
-        .unwrap_or(false)
-        || e.starts_at < n
-    {
-        return Err(bad(u.lang, ErrorKey::SignupClosed));
-    }
     if req.offer_drive.unwrap_or(false) && !u.can(Page::Drive, Act::Create) {
         return Err(bad(u.lang, ErrorKey::DriverRegistrationRequired));
     }
-    let already_going = e.my_status.as_deref() == Some("going");
-    let status = if already_going || e.capacity == 0 || e.going < e.capacity {
+    // Lock the event row while counting seats and inserting the signup. Concurrent
+    // signups then queue behind each other and the last seat cannot be handed out twice.
+    let mut tx = st.db.begin().await?;
+    let (capacity, status_now, deadline, starts_at): (i64, String, Option<String>, String) =
+        sqlx::query_as(
+            "SELECT capacity, status, signup_deadline, starts_at FROM events WHERE id=$1 FOR UPDATE",
+        )
+        .bind(id)
+        .fetch_one(&mut *tx)
+        .await?;
+    if status_now != "published" {
+        return Err(bad(u.lang, ErrorKey::EventNotOpen));
+    }
+    let n = now()[..16].to_string();
+    if deadline.as_deref().map(|d| d < n.as_str()).unwrap_or(false) || starts_at < n {
+        return Err(bad(u.lang, ErrorKey::SignupClosed));
+    }
+    let (going,): (i64,) =
+        sqlx::query_as("SELECT COUNT(*) FROM event_signups WHERE event_id=$1 AND status='going'")
+            .bind(id)
+            .fetch_one(&mut *tx)
+            .await?;
+    let mine: Option<(String,)> =
+        sqlx::query_as("SELECT status FROM event_signups WHERE event_id=$1 AND user_id=$2")
+            .bind(id)
+            .bind(u.id)
+            .fetch_optional(&mut *tx)
+            .await?;
+    let already_going = mine.as_ref().is_some_and(|(s,)| s == "going");
+    let status = if already_going || capacity == 0 || going < capacity {
         "going"
     } else {
         "waitlist"
@@ -567,8 +582,9 @@ async fn signup(
     .bind(req.offer_drive.unwrap_or(false) as i64)
     .bind(req.offer_seats.unwrap_or(0))
     .bind(now())
-    .execute(&st.db)
+    .execute(&mut *tx)
     .await?;
+    tx.commit().await?;
     audit(
         &st.db,
         Some(u.id),

@@ -29,8 +29,20 @@ const data = {
       permissions: ['rides.view', 'rides.create', 'report.view'], locked: [], members: 40,
     },
     {
+      key: 'superadmin', name: '', description: '', system: true, implicit: false, fixed: true,
+      permissions: ['rides.view', 'rides.create', 'rides.update', 'rides.delete', 'report.view',
+        'admin_announcements.view', 'admin_announcements.create', 'admin_announcements.delete',
+        'admin_reimb_pay.view', 'admin_reimb_pay.update',
+        'admin_roles.view', 'admin_roles.create', 'admin_roles.update', 'admin_roles.delete'],
+      locked: ['rides.view', 'rides.create', 'rides.update', 'rides.delete', 'report.view',
+        'admin_announcements.view', 'admin_announcements.create', 'admin_announcements.delete',
+        'admin_reimb_pay.view', 'admin_reimb_pay.update',
+        'admin_roles.view', 'admin_roles.create', 'admin_roles.update', 'admin_roles.delete'],
+      members: 1,
+    },
+    {
       key: 'admin', name: '', description: '', system: true, implicit: false,
-      permissions: ['admin_roles.view', 'admin_roles.update'], locked: ['admin_roles.update'], members: 2,
+      permissions: ['admin_roles.view', 'admin_roles.update'], locked: [], members: 2,
     },
     {
       key: 'c_1', name: 'Welcome team', description: 'Posts notices', system: false, implicit: false,
@@ -102,13 +114,25 @@ describe('Roles & permissions', () => {
     expect([...body.permissions].sort()).toEqual(['admin_announcements.create', 'admin_announcements.view']);
   });
 
-  it('keeps the admin role’s locked permissions ticked and built-in roles undeletable', () => {
+  it('shows the super admin as fixed: everything ticked, nothing to change', () => {
+    show();
+    fireEvent.click(screen.getByRole('button', { name: /^super admin/i }));
+    expect(screen.getByText(/always holds every permission on every page/i)).toBeInTheDocument();
+    const boxes = screen.getAllByRole('checkbox');
+    expect(boxes).toHaveLength(14);
+    for (const box of boxes) {
+      expect(box).toBeChecked();
+      expect(box).toBeDisabled();
+    }
+    expect(screen.queryByRole('button', { name: /save permissions/i })).toBeNull();
+    expect(screen.queryByRole('button', { name: /delete role/i })).toBeNull();
+  });
+
+  it('lets every permission of the admin role be changed, but not the role deleted', () => {
     show();
     fireEvent.click(screen.getByRole('button', { name: /^admin/i }));
-    const locked = screen.getByRole('checkbox', { name: 'Roles & permissions · Update' });
-    expect(locked).toBeChecked();
-    expect(locked).toBeDisabled();
-    expect(screen.getByRole('checkbox', { name: 'Roles & permissions · View' })).toBeEnabled();
+    expect(screen.getByRole('checkbox', { name: 'Roles & permissions · Update' })).toBeEnabled();
+    expect(screen.getByRole('button', { name: /save permissions/i })).toBeInTheDocument();
     expect(screen.queryByRole('button', { name: /delete role/i })).toBeNull();
   });
 

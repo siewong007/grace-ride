@@ -13,11 +13,10 @@ import {
   Spinner,
   Stat,
   StatusPill,
+  TableColumn,
+  UniversalTable,
 } from '../../components/ui';
 import { fmtDay, fmtTime, RIDE_STATUS, todayStr, useFormatT } from '../../format';
-import { RideTable } from './RideTable';
-
-export { RideTable };
 
 interface Dash {
   today: string;
@@ -84,6 +83,45 @@ export default function Dashboard() {
 
   if (error) return <Page><ErrorBox error={error} /></Page>;
   if (!d) return <Page><Spinner /></Page>;
+
+  const columns: TableColumn<Ride>[] = [
+    {
+      key: 'pickupTime',
+      header: t('dashboard.pickupTime'),
+      render: (r) => (
+        <>
+          {fmtDay(r.pickup_at, ft).split(' ')[0]} {r.pickup_at.slice(11, 16)}
+        </>
+      ),
+    },
+    {
+      key: 'passenger',
+      header: t('dashboard.passenger'),
+      render: (r) => `${r.passenger.name}${r.seats > 1 ? ` (${r.seats})` : ''}`,
+    },
+    {
+      key: 'area',
+      header: t('dashboard.area'),
+      render: (r) => r.area.name,
+    },
+    {
+      key: 'driver',
+      header: t('dashboard.driver'),
+      render: (r) => r.driver?.name ?? <span className="muted">—</span>,
+    },
+    {
+      key: 'status',
+      header: t('dashboard.status'),
+      render: (r) => (
+        <>
+          <StatusPill map={RIDE_STATUS} status={r.status} />
+          {r.needs_attention && (
+            <AlertTriangle size={14} aria-hidden="true" className="pill-icon warn" />
+          )}
+        </>
+      ),
+    },
+  ];
 
   return (
     <Page>
@@ -161,9 +199,11 @@ export default function Dashboard() {
           ) : !today.data?.length ? (
             <EmptyState title={t('dashboard.noTodayRides')} />
           ) : (
-            <RideTable
-              rides={today.data}
-              onOpen={(id) => nav(`/admin/rides/${id}`)}
+            <UniversalTable
+              columns={columns}
+              items={today.data ?? []}
+              onRowClick={(r) => nav(`/admin/rides/${r.id}`)}
+              itemKey={(r) => r.id}
             />
           )}
         </Card>

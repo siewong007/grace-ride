@@ -119,8 +119,11 @@ interface PaginatedUsers {
 function MemberList() {
   const { t } = useTranslation('admin');
   const ft = useFormatT();
-  const { can } = useAuth();
+  const { can, me } = useAuth();
   const canEdit = can('admin_members', 'update');
+  // A super admin's account is changed only by another super admin (the server enforces it).
+  const isSuper = !!me?.roles?.includes('superadmin');
+  const editable = (u: User) => isSuper || !u.roles.includes('superadmin');
   const { names } = useRoleOptions();
   const [params, setParams] = useSearchParams();
   const q = params.get('q') ?? '';
@@ -195,71 +198,86 @@ function MemberList() {
         ) : !users.length ? (
           <EmptyState title={t('members.none')} />
         ) : (
-          <div className="table-wrap">
-            <table className="table responsive sticky-header">
-              <thead>
-                <tr>
-                  <th>{t('members.name')}</th>
-                  <th>{t('members.email')}</th>
-                  <th>{t('members.role')}</th>
-                  <th>{t('members.group')}</th>
-                  <th>{t('members.passkey')}</th>
-                  {canEdit && <th>{t('members.actions')}</th>}
-                </tr>
-              </thead>
-              <tbody>
-                {users.map((u) => (
-                  <tr key={u.id}>
-                    <td data-label={t('members.name')} className="bold">
-                      <div className="row nowrap">
-                        <Avatar name={u.name} size="sm" />
-                        <span>{u.name}</span>
-                      </div>
-                    </td>
-                    <td data-label={t('members.email')}>{u.email}</td>
-                    <td data-label={t('members.role')}>
-                      <div className="chips">
-                        {u.roles.length > 0 ? (
-                          u.roles.map((r) => (
-                            <Pill key={r} tone="blue">
-                              {roleLabel(r, ft, names)}
-                            </Pill>
-                          ))
-                        ) : (
-                          <Pill tone="gray">{t('members.member')}</Pill>
-                        )}
-                      </div>
-                    </td>
-                    <td data-label={t('members.group')} className="small">
-                      {u.groups || <span className="muted">—</span>}
-                    </td>
-                    <td data-label={t('members.passkey')} className="mono">
-                      {u.passkeys}
-                    </td>
-                    {canEdit && <td data-label={t('members.actions')}>
-                      {u.status === 'pending' ? (
-                        <Button
-                          variant="primary"
-                          size="sm"
-                          onClick={() => setModalUser({ user: u, mode: 'approve' })}
-                        >
-                          {t('members.approveMember')}
-                        </Button>
-                      ) : (
-                        <Button
-                          variant="secondary"
-                          size="sm"
-                          onClick={() => setModalUser({ user: u, mode: 'edit' })}
-                        >
-                          {t('members.edit')}
-                        </Button>
-                      )}
-                    </td>}
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
+          {const columns: TableColumn<User>[] = [
+            {
+              key: 'name',
+              header: t('members.name'),
+              render: (u) => (
+                <div className="row nowrap">
+                  <Avatar name={u.name} size="sm" />
+                  <span>{u.name}</span>
+                </div>
+              ),
+            },
+            {
+              key: 'email',
+              header: t('members.email'),
+              render: (u) => u.email,
+            },
+            {
+              key: 'role',
+              header: t('members.role'),
+              render: (u) => (
+                <div className="chips">
+                  {u.roles.length > 0 ? (
+                    u.roles.map((r) => (
+                      <Pill key={r} tone="blue">
+                        {roleLabel(r, ft, names)}
+                      </Pill>
+                    ))
+                  ) : (
+                    <Pill tone="gray">{t('members.member')}</Pill>
+                  )}
+                </div>
+              ),
+            },
+            {
+              key: 'group',
+              header: t('members.group'),
+              render: (u) => u.groups || <span className="muted">—</span>,
+              cellClassName: 'small',
+            },
+            {
+              key: 'passkey',
+              header: t('members.passkey'),
+              render: (u) => u.passkeys,
+              cellClassName: 'mono',
+            },
+          ];
+          if (canEdit) {
+            columns.push({
+              key: 'actions',
+              header: t('members.actions'),
+              render: (u) =>
+                !editable(u) ? null : (
+                  <>
+                    {u.status === 'pending' ? (
+                      <Button
+                        variant="primary"
+                        size="sm"
+                        onClick={() => setModalUser({ user: u, mode: 'approve' })}
+                      >
+                        {t('members.approveMember')}
+                      </Button>
+                    ) : (
+                      <Button
+                        variant="secondary"
+                        size="sm"
+                        onClick={() => setModalUser({ user: u, mode: 'edit' })}
+                      >
+                        {t('members.edit')}
+                      </Button>
+                    )}
+                  </>
+                ),
+            });
+          }
+
+          <UniversalTable
+            columns={columns}
+            items={users}
+            itemKey={(u) => u.id}
+          />}
         )}
         {users.length > 0 && (
           <Pagination

@@ -5,7 +5,7 @@ export default {
   reimbStatus: { pending: '待审批', returned: '退回补资料', rejected: '未获批准', approved: '已批准 · 待付款', paid: '已付款' },
   settlementStatus: { draft: '草稿', published: '收款中', closed: '已结清归档' },
   helpStatus: { open: '处理中', answered: '已回复', closed: '已结案' },
-  role: { member: '会员', admin: '管理员', transport: '交通组', finance: '财务', leader: '活动负责人', driver: '志愿司机' },
+  role: { member: '会员', superadmin: '超级管理员', admin: '管理员', transport: '交通组', finance: '财务', leader: '活动负责人', driver: '志愿司机' },
   weekday: ['周日', '周一', '周二', '周三', '周四', '周五', '周六'],
   period: { am: '上午', pm: '下午', evening: '晚上' },
   clock: '{period} {time}',

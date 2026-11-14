@@ -33,8 +33,8 @@ pub fn render(lang: Lang, key: &ErrorKey) -> String {
         ),
         ErrorKey::RolePermissionLocked => pair(
             lang,
-            "管理员角色必须保留成员与角色管理权限",
-            "The admin role must keep member and role management",
+            "超级管理员角色固定拥有全部权限，不能修改",
+            "The super admin role always holds every permission and cannot be changed",
         ),
         ErrorKey::SystemRoleCannotBeDeleted => pair(
             lang,
@@ -45,6 +45,16 @@ pub fn render(lang: Lang, key: &ErrorKey) -> String {
             lang,
             "不能移除自己管理角色的权限",
             "You cannot remove your own right to manage roles",
+        ),
+        ErrorKey::SuperadminOnly => pair(
+            lang,
+            "只有超级管理员可以授予超级管理员角色或变更其账号",
+            "Only a super admin can give the super admin role or change a super admin's account",
+        ),
+        ErrorKey::LastSuperadmin => pair(
+            lang,
+            "必须保留至少一位启用中的超级管理员",
+            "There must always be one active super admin",
         ),
         ErrorKey::SecondAdminRequired => pair(
             lang,

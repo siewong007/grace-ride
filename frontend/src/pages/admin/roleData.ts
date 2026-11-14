@@ -10,6 +10,10 @@ export interface RoleDef {
   system: boolean;
   /** Held by every active member; not handed out one by one. */
   implicit: boolean;
+  /** The super admin role: always every permission, never editable. */
+  fixed?: boolean;
+  /** May the signed-in member give this role to someone? */
+  assignable?: boolean;
   permissions: string[];
   /** Permissions this role can never lose. */
   locked: string[];
@@ -34,7 +38,7 @@ const BUILT_IN = ['admin', 'transport', 'finance', 'leader', 'driver'];
 export function useRoleOptions(enabled = true) {
   const { data, reload } = useApi<RolesResponse>(enabled ? '/admin/roles' : null);
   return useMemo(() => {
-    const assignable = data ? data.roles.filter((r) => !r.implicit).map((r) => r.key) : BUILT_IN;
+    const assignable = data ? data.roles.filter((r) => r.assignable ?? !r.implicit).map((r) => r.key) : BUILT_IN;
     const names: Record<string, string> = {};
     for (const r of data?.roles ?? []) if (r.name) names[r.key] = r.name;
     return { assignable, names, reload };

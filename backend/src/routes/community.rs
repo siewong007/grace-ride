@@ -593,14 +593,13 @@ async fn get_guide(
     if !any_admin_page(&u) {
         return Err(forbidden(u.lang, ErrorKey::Forbidden));
     }
-    let row: Option<(i64, String, String, String, String, String, bool, String)> =
-        sqlx::query_as(
-            "SELECT id, slug, title_en, title_zh, summary_en, summary_zh, published, steps::text
+    let row: Option<(i64, String, String, String, String, String, bool, String)> = sqlx::query_as(
+        "SELECT id, slug, title_en, title_zh, summary_en, summary_zh, published, steps::text
              FROM guide_workflows WHERE slug=$1",
-        )
-        .bind(&slug)
-        .fetch_optional(&st.db)
-        .await?;
+    )
+    .bind(&slug)
+    .fetch_optional(&st.db)
+    .await?;
     let (id, slug, ten, tzh, sen, szh, published, steps) = row.ok_or(not_found(u.lang))?;
     if !published && !u.can(Page::AdminHelp, Act::Update) {
         // Drafts stay invisible to non-editors; 404 avoids leaking existence.
@@ -635,7 +634,10 @@ struct GuideIn {
 }
 
 fn trim_opt(v: &Option<String>) -> &str {
-    v.as_deref().map(str::trim).filter(|s| !s.is_empty()).unwrap_or("")
+    v.as_deref()
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .unwrap_or("")
 }
 
 /// Normalise + validate a guide payload; returns columns ready to bind,

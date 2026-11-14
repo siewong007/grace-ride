@@ -1269,6 +1269,115 @@ export function BackToTop({ className = '' }: { className?: string }) {
 }
 
 // ==========================================
+// Universal Table Component
+// ==========================================
+
+export interface TableColumn<T = unknown> {
+  /** Stable key for the column, used as the cell key. */
+  key: string;
+  /** Header label for the column. */
+  header: ReactNode;
+  /** Renders the cell contents for a single row. */
+  render: (item: T, rowIndex: number) => ReactNode;
+  /** Label shown for this column on narrow (stacked) screens; falls back to `header`. */
+  dataLabel?: string;
+  /** Extra class name applied to the header cell. */
+  headerClassName?: string;
+  /** Extra class name applied to the cell. */
+  cellClassName?: string;
+}
+
+export interface UniversalTableProps<T> {
+  /** Column definitions. */
+  columns: TableColumn<T>[];
+  /** Row data to render. */
+  items: T[];
+  /** When provided, rows become clickable and this is called with the row data. */
+  onRowClick?: (item: T, rowIndex: number) => void;
+  /** Stable key selector for each row. Defaults to the array index. */
+  itemKey?: (item: T, index: number) => string | number;
+  /** Content rendered when `items` is empty. */
+  emptyContent?: ReactNode;
+  /** Optional callback; returns true for a row that spans all columns (e.g. a group header). */
+  isSectionRow?: (item: T, index: number) => boolean;
+  /** Extra class name applied to the wrapping element. */
+  className?: string;
+}
+
+function defaultDataLabel<T>(col: TableColumn<T>): string {
+  return typeof col.header === 'string' ? (col.dataLabel ?? col.header) : '';
+}
+
+export function UniversalTable<T>({
+  columns,
+  items,
+  onRowClick,
+  itemKey,
+  emptyContent,
+  isSectionRow,
+  className = '',
+}: UniversalTableProps<T>) {
+  const tableClassName = onRowClick
+    ? 'table responsive sticky-header row-clickable'
+    : 'table responsive sticky-header';
+
+  return (
+    <div className={`table-wrap${className ? ` ${className}` : ''}`}>
+      <table className={tableClassName}>
+        <thead>
+          <tr>
+            {columns.map((col) => (
+              <th key={col.key} scope="col" className={col.headerClassName}>
+                {col.header}
+              </th>
+            ))}
+          </tr>
+        </thead>
+        <tbody>
+          {items.map((item, rowIndex) => {
+            const key = itemKey ? itemKey(item, rowIndex) : rowIndex;
+            const isSection = isSectionRow?.(item, rowIndex) ?? false;
+            return (
+              <tr
+                key={key}
+                className={onRowClick ? 'clickable' : ''}
+                tabIndex={onRowClick ? 0 : undefined}
+                onClick={() => onRowClick?.(item, rowIndex)}
+                onKeyDown={(e) => {
+                  if (onRowClick && (e.key === 'Enter' || e.key === ' ')) {
+                    e.preventDefault();
+                    onRowClick?.(item, rowIndex);
+                  }
+                }}
+              >
+                {isSection ? (
+                  <td key={`section-${key}`} colSpan={columns.length}>
+                    {columns[0]?.render?.(item, rowIndex)}
+                  </td>
+                ) : (
+                  columns.map((col) => (
+                    <td
+                      key={col.key}
+                      data-label={defaultDataLabel(col)}
+                      className={col.cellClassName}
+                    >
+                      {col.render(item, rowIndex)}
+                    </td>
+                  ))
+                )}
+              </tr>
+            );
+          })}
+        </tbody>
+      </table>
+
+      {items.length === 0 && emptyContent != null && <div>{emptyContent}</div>}
+    </div>
+  );
+}
+
+export default UniversalTable;
+
 // Virtualized List Component (TanStack Virtual)
 // ==========================================
 

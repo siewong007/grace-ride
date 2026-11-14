@@ -84,6 +84,7 @@ export const HELP_STATUS: Record<string, StatusMap> = {
 
 export const ROLE_LABEL: Record<string, string> = {
   member: 'format:role.member',
+  superadmin: 'format:role.superadmin',
   admin: 'format:role.admin',
   transport: 'format:role.transport',
   finance: 'format:role.finance',

@@ -114,7 +114,8 @@ function RoleEditor({
   const confirm = useConfirm();
   const { busy, error, run } = useAction();
   const isNew = role.key === NEW;
-  const editable = isNew ? can('admin_roles', 'create') : can('admin_roles', 'update');
+  // The super admin role is fixed: it always holds everything, so there is nothing to edit.
+  const editable = !role.fixed && (isNew ? can('admin_roles', 'create') : can('admin_roles', 'update'));
 
   const [name, setName] = useState(role.name);
   const [description, setDescription] = useState(role.description);
@@ -172,7 +173,8 @@ function RoleEditor({
       </div>
 
       {role.implicit && <Notice tone="info">{t('roles.everyoneHint')}</Notice>}
-      {!editable && <Notice tone="info">{t('roles.readOnly')}</Notice>}
+      {role.fixed && <Notice tone="info" icon={<ShieldCheck size={18} />}>{t('roles.fixedHint')}</Notice>}
+      {!editable && !role.fixed && <Notice tone="info">{t('roles.readOnly')}</Notice>}
 
       {!role.system && (
         <div className="form-grid two">
@@ -238,7 +240,6 @@ function RoleEditor({
                                 <input
                                   type="checkbox"
                                   aria-label={`${pageName} · ${t(`roles.act.${a}`)}`}
-                                  title={locked ? t('roles.lockedHint') : undefined}
                                   checked={granted.has(key)}
                                   disabled={!editable || locked}
                                   onChange={() => toggle(key)}
@@ -258,11 +259,6 @@ function RoleEditor({
         </table>
       </div>
 
-      {role.locked.length > 0 && (
-        <p className="muted tiny row nowrap">
-          <ShieldCheck size={14} aria-hidden="true" /> {t('roles.lockedHint')}
-        </p>
-      )}
       <ErrorBox error={error} />
 
       {editable && (

@@ -93,6 +93,7 @@ async fn role_list_carries_the_catalog_and_built_in_roles() {
 
     for key in [
         "member",
+        "superadmin",
         "admin",
         "transport",
         "finance",
@@ -103,10 +104,9 @@ async fn role_list_carries_the_catalog_and_built_in_roles() {
     }
     assert_eq!(role(&list.json, "member")["implicit"], true);
     assert!(perms_of(role(&list.json, "driver")).contains(&"drive.create".to_string()));
-    assert!(role(&list.json, "admin")["locked"]
-        .as_array()
-        .unwrap()
-        .contains(&json!("admin_roles.update")));
+    // Only the super admin role is fixed; admin is as editable as any other.
+    assert_eq!(role(&list.json, "admin")["locked"], json!([]));
+    assert_eq!(role(&list.json, "admin")["fixed"], false);
 
     // Members cannot read the role list; neither can staff without the permission.
     let member = login(&st, "member@example.org").await;
@@ -303,14 +303,13 @@ async fn role_edits_are_validated_and_built_ins_are_protected() {
         assert_eq!(r.json["code"], "INVALID_PERMISSION");
     }
 
-    // The admin role keeps member and role management.
+    // An admin cannot take role management away from the role they hold themselves…
     let list = call(&app, Method::GET, "/api/admin/roles", Some(&admin), None).await;
     let mut without = perms_of(role(&list.json, "admin"));
     without.retain(|p| p != "admin_roles.update");
-    let r = put("admin", json!({ "permissions": without })).await;
-    assert_eq!(r.status, StatusCode::BAD_REQUEST, "{}", r.json);
-    assert_eq!(r.json["code"], "ROLE_PERMISSION_LOCKED");
-
+    let r = put("admin", json!({ "permissions": without.clone() })).await;
+    assert_eq!(r.status, StatusCode::FORBIDDEN, "{}", r.json);
+    assert_eq!(r.json["code"], "CANNOT_REMOVE_OWN_ROLE_ACCESS");
     // Built-in roles cannot be deleted; custom ones need a unique name.
     let r = call(
         &app,
@@ -352,6 +351,21 @@ async fn role_edits_are_validated_and_built_ins_are_protected() {
     .await;
     assert_eq!(r.status, StatusCode::BAD_REQUEST, "{}", r.json);
     assert_eq!(r.json["code"], "UNKNOWN_ROLE");
+
+    // …but the admin role is not fixed: a super admin may reshape it freely.
+    let root = login(&st, "superadmin@example.org").await;
+    let r = call(
+        &app,
+        Method::PUT,
+        "/api/admin/roles/admin",
+        Some(&root),
+        Some(json!({ "permissions": without })),
+    )
+    .await;
+    assert_eq!(r.status, StatusCode::OK, "{}", r.json);
+    let me = call(&app, Method::GET, "/api/auth/me", Some(&admin), None).await;
+    assert!(!has(&me.json, "admin_roles.update"));
+    assert!(has(&me.json, "admin_roles.view"));
 }
 
 #[tokio::test]
@@ -804,4 +818,220 @@ async fn admin_settings_system_retention_crud_permissions_and_audit() {
         Some(new_id),
         "Entry within 365 days must be preserved"
     );
+}
+
+// ---------------- Super admin: the one fixed role ----------------
+
+#[tokio::test]
+async fn superadmin_holds_every_permission_and_cannot_be_edited() {
+    let (app, st) = setup().await;
+    let root = login(&st, "superadmin@example.org").await;
+
+    let list = call(&app, Method::GET, "/api/admin/roles", Some(&root), None).await;
+    assert_eq!(list.status, StatusCode::OK, "{}", list.json);
+    let everything: Vec<String> = list.json["catalog"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .flat_map(|p| {
+            let page = p["page"].as_str().unwrap().to_string();
+            p["actions"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .map(move |a| format!("{page}.{}", a.as_str().unwrap()))
+        })
+        .collect();
+    let role_def = role(&list.json, "superadmin");
+    assert_eq!(role_def["fixed"], true);
+    assert_eq!(perms_of(role_def), everything);
+    assert_eq!(role_def["locked"], json!(everything));
+
+    // Every page, finance included, in one account.
+    let me = call(&app, Method::GET, "/api/auth/me", Some(&root), None).await;
+    assert_eq!(me.json["permissions"], json!(everything));
+    for path in [
+        "/api/reimbursements?scope=payout",
+        "/api/admin/dashboard",
+        "/api/admin/audit",
+        "/api/settlements",
+    ] {
+        let r = call(&app, Method::GET, path, Some(&root), None).await;
+        assert_eq!(r.status, StatusCode::OK, "{path}: {}", r.json);
+    }
+
+    // Nobody edits or deletes the role, the super admin included.
+    let mut fewer = everything.clone();
+    fewer.retain(|p| p != "admin_bills.view");
+    for body in [
+        json!({ "permissions": fewer }),
+        json!({ "permissions": everything }),
+    ] {
+        let r = call(
+            &app,
+            Method::PUT,
+            "/api/admin/roles/superadmin",
+            Some(&root),
+            Some(body),
+        )
+        .await;
+        assert_eq!(r.status, StatusCode::BAD_REQUEST, "{}", r.json);
+        assert_eq!(r.json["code"], "ROLE_PERMISSION_LOCKED");
+    }
+    let r = call(
+        &app,
+        Method::DELETE,
+        "/api/admin/roles/superadmin",
+        Some(&root),
+        None,
+    )
+    .await;
+    assert_eq!(r.json["code"], "SYSTEM_ROLE_CANNOT_BE_DELETED");
+}
+
+#[tokio::test]
+async fn only_a_superadmin_hands_out_superadmin_and_one_always_remains() {
+    let (app, st) = setup().await;
+    let admin = login(&st, "admin@example.org").await;
+    let root = login(&st, "superadmin@example.org").await;
+    let admin_id = user_id(&st, "admin@example.org").await;
+    let root_id = user_id(&st, "superadmin@example.org").await;
+    let leader_id = user_id(&st, "enci@example.org").await;
+    let put = |cookie: String, id: i64, body: Value| {
+        let app = app.clone();
+        async move {
+            call(
+                &app,
+                Method::PUT,
+                &format!("/api/admin/users/{id}"),
+                Some(&cookie),
+                Some(body),
+            )
+            .await
+        }
+    };
+
+    // An admin sees the role but is not offered it, and cannot give it to anyone.
+    let list = call(&app, Method::GET, "/api/admin/roles", Some(&admin), None).await;
+    assert_eq!(role(&list.json, "superadmin")["assignable"], false);
+    assert_eq!(role(&list.json, "leader")["assignable"], true);
+    for target in [leader_id, admin_id] {
+        let r = put(
+            admin.clone(),
+            target,
+            json!({"roles": ["superadmin"], "status": "active"}),
+        )
+        .await;
+        assert_eq!(r.status, StatusCode::FORBIDDEN, "{}", r.json);
+        assert_eq!(r.json["code"], "SUPERADMIN_ONLY");
+    }
+    // Nor can an admin demote or disable the super admin.
+    for body in [
+        json!({"roles": [], "status": "active"}),
+        json!({"roles": ["superadmin"], "status": "disabled"}),
+    ] {
+        let r = put(admin.clone(), root_id, body).await;
+        assert_eq!(r.status, StatusCode::FORBIDDEN, "{}", r.json);
+        assert_eq!(r.json["code"], "SUPERADMIN_ONLY");
+    }
+
+    // The only super admin cannot step down…
+    let r = put(
+        root.clone(),
+        root_id,
+        json!({"roles": ["admin"], "status": "active"}),
+    )
+    .await;
+    assert_eq!(r.status, StatusCode::BAD_REQUEST, "{}", r.json);
+    assert_eq!(r.json["code"], "LAST_SUPERADMIN");
+
+    // …until they have made another, who can then be removed again.
+    let list = call(&app, Method::GET, "/api/admin/roles", Some(&root), None).await;
+    assert_eq!(role(&list.json, "superadmin")["assignable"], true);
+    let r = put(
+        root.clone(),
+        admin_id,
+        json!({"roles": ["admin", "superadmin"], "status": "active"}),
+    )
+    .await;
+    assert_eq!(r.status, StatusCode::OK, "{}", r.json);
+    let r = put(
+        root.clone(),
+        root_id,
+        json!({"roles": ["admin"], "status": "active"}),
+    )
+    .await;
+    assert_eq!(r.status, StatusCode::OK, "{}", r.json);
+    // admin@ is now the last one.
+    let r = put(
+        admin.clone(),
+        admin_id,
+        json!({"roles": ["admin"], "status": "active"}),
+    )
+    .await;
+    assert_eq!(r.json["code"], "LAST_SUPERADMIN");
+}
+
+#[tokio::test]
+async fn startup_gives_superadmin_to_the_original_administrator_when_nobody_holds_it() {
+    let (_app, st) = setup().await;
+    let holders = || async {
+        sqlx::query_as::<_, (String,)>(
+            "SELECT email FROM users WHERE status='active'
+             AND 'superadmin' = ANY(string_to_array(roles, ',')) ORDER BY id",
+        )
+        .fetch_all(&st.db)
+        .await
+        .unwrap()
+        .into_iter()
+        .map(|r| r.0)
+        .collect::<Vec<_>>()
+    };
+    // With one in place, start-up changes nothing.
+    assert_eq!(holders().await, ["superadmin@example.org"]);
+    assert_eq!(
+        grace_ride::perms::ensure_superadmin(&st.db, None)
+            .await
+            .unwrap(),
+        None
+    );
+
+    // A database from before the role existed: nobody holds it.
+    sqlx::query("UPDATE users SET roles='' WHERE email='superadmin@example.org'")
+        .execute(&st.db)
+        .await
+        .unwrap();
+    let promoted = grace_ride::perms::ensure_superadmin(&st.db, None)
+        .await
+        .unwrap();
+    assert_eq!(promoted.map(|p| p.1).as_deref(), Some("admin@example.org"));
+    assert_eq!(holders().await, ["admin@example.org"]);
+    let (roles,): (String,) =
+        sqlx::query_as("SELECT roles FROM users WHERE email='admin@example.org'")
+            .fetch_one(&st.db)
+            .await
+            .unwrap();
+    assert_eq!(roles, "superadmin,admin");
+
+    // ADMIN_EMAIL names the original administrator when there are several admins.
+    sqlx::query("UPDATE users SET roles='admin' WHERE email IN ('admin@example.org', 'transport@example.org')")
+        .execute(&st.db)
+        .await
+        .unwrap();
+    let promoted = grace_ride::perms::ensure_superadmin(&st.db, Some("transport@example.org"))
+        .await
+        .unwrap();
+    assert_eq!(
+        promoted.map(|p| p.1).as_deref(),
+        Some("transport@example.org")
+    );
+    // Only someone who is already an admin is ever promoted.
+    sqlx::query("UPDATE users SET roles='admin' WHERE email='transport@example.org'")
+        .execute(&st.db)
+        .await
+        .unwrap();
+    let promoted = grace_ride::perms::ensure_superadmin(&st.db, Some("member@example.org"))
+        .await
+        .unwrap();
+    assert_eq!(promoted.map(|p| p.1).as_deref(), Some("admin@example.org"));
 }

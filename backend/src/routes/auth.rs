@@ -887,7 +887,7 @@ async fn totp_verify(
     .fetch_optional(&st.db)
     .await?;
 
-    let Some((secret, backup_codes_json)) = row else {
+    let Some((secret, _backup_codes)) = row else {
         return Err(bad(u.lang, ErrorKey::TwoFactorNotConfigured));
     };
 
@@ -918,42 +918,65 @@ async fn totp_verify(
     }
 
     // 2. Check if single-use backup recovery code (8 characters ignoring hyphens/spaces)
+    // Consume the code atomically: the UPDATE only takes effect while the hash is still
+    // present in the array, so two concurrent requests with the same code cannot both
+    // succeed. PostgreSQL serializes row-level UPDATEs; the loser re-reads the row once
+    // it gets the lock, finds the code already removed, affects 0 rows and gets an error
+    // instead of HTTP 200.
     let norm = clean.replace(['-', ' '], "").to_uppercase();
     if norm.len() == 8 {
         let code_hash = crate::auth::hash_token(&norm);
-        let mut codes: Vec<String> = backup_codes_json
-            .as_deref()
-            .and_then(|s| serde_json::from_str(s).ok())
-            .unwrap_or_default();
+        let consumed: Option<(String,)> = sqlx::query_as(
+            "UPDATE users
+             SET totp_backup_codes = (
+                 SELECT COALESCE(jsonb_agg(elem ORDER BY seq), '[]'::jsonb)::text
+                 FROM jsonb_array_elements_text(totp_backup_codes::jsonb)
+                      WITH ORDINALITY AS t(elem, seq)
+                 WHERE elem <> $2
+             )
+             WHERE id = $1 AND totp_backup_codes::jsonb ? $2
+             RETURNING totp_backup_codes",
+        )
+        .bind(u.id)
+        .bind(&code_hash)
+        .fetch_optional(&st.db)
+        .await?;
 
-        if let Some(pos) = codes.iter().position(|h| h == &code_hash) {
-            codes.remove(pos);
-            let updated =
-                serde_json::to_string(&codes).map_err(|e| AppError::Other(anyhow::anyhow!(e)))?;
-            sqlx::query("UPDATE users SET totp_backup_codes=$1 WHERE id=$2")
-                .bind(&updated)
-                .bind(u.id)
-                .execute(&st.db)
-                .await?;
-            sqlx::query("UPDATE sessions SET mfa_ok=1 WHERE token=$1")
-                .bind(&u.session_id)
-                .execute(&st.db)
-                .await?;
+        let Some((remaining_json,)) = consumed else {
             audit(
                 &st.db,
                 Some(u.id),
                 "totp.backup_code_used",
                 "user",
                 Some(u.id),
-                format!("remaining: {}", codes.len()),
+                "already used",
             )
             .await;
-            return Ok(Json(json!({
-                "ok": true,
-                "method": "backup_code",
-                "remaining_backup_codes": codes.len()
-            })));
-        }
+            return Err(bad(u.lang, ErrorKey::InvalidCode));
+        };
+
+        let remaining: usize = serde_json::from_str::<Vec<String>>(&remaining_json)
+            .map(|v| v.len())
+            .unwrap_or(0);
+
+        sqlx::query("UPDATE sessions SET mfa_ok=1 WHERE token=$1")
+            .bind(&u.session_id)
+            .execute(&st.db)
+            .await?;
+        audit(
+            &st.db,
+            Some(u.id),
+            "totp.backup_code_used",
+            "user",
+            Some(u.id),
+            format!("remaining: {remaining}"),
+        )
+        .await;
+        return Ok(Json(json!({
+            "ok": true,
+            "method": "backup_code",
+            "remaining_backup_codes": remaining
+        })));
     }
 
     audit(

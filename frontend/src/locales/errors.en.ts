@@ -29,9 +29,11 @@ export default {
     "ROLE_NAME_REQUIRED": "Please enter a role name (up to 40 characters)",
     "ROLE_NAME_EXISTS": "This role name already exists",
     "INVALID_PERMISSION": "Unknown permission; please reload and try again",
-    "ROLE_PERMISSION_LOCKED": "The admin role must keep member and role management",
+    "ROLE_PERMISSION_LOCKED": "The super admin role always holds every permission and cannot be changed",
     "SYSTEM_ROLE_CANNOT_BE_DELETED": "Built-in roles cannot be deleted; change their permissions instead",
-    "CANNOT_REMOVE_OWN_ROLE_ACCESS": "You cannot remove your own right to manage roles"
+    "CANNOT_REMOVE_OWN_ROLE_ACCESS": "You cannot remove your own right to manage roles",
+    "SUPERADMIN_ONLY": "Only a super admin can give the super admin role or change a super admin's account",
+    "LAST_SUPERADMIN": "There must always be one active super admin"
   },
   "auth": {
     "INVALID_CREDENTIALS": "Incorrect email or password",

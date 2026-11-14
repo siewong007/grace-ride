@@ -5,7 +5,7 @@ export default {
   reimbStatus: { pending: 'Pending approval', returned: 'Returned for info', rejected: 'Not approved', approved: 'Approved · Awaiting payment', paid: 'Paid' },
   settlementStatus: { draft: 'Draft', published: 'Collecting', closed: 'Settled & archived' },
   helpStatus: { open: 'In progress', answered: 'Replied', closed: 'Closed' },
-  role: { member: 'Member', admin: 'Admin', transport: 'Transport', finance: 'Finance', leader: 'Event leader', driver: 'Volunteer driver' },
+  role: { member: 'Member', superadmin: 'Super admin', admin: 'Admin', transport: 'Transport', finance: 'Finance', leader: 'Event leader', driver: 'Volunteer driver' },
   weekday: ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'],
   period: { am: 'am', pm: 'pm', evening: 'pm' },
   // Word order differs: "10:00 am" in English, "上午 10:00" in Chinese.

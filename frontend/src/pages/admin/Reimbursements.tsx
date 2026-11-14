@@ -17,7 +17,9 @@ import {
   Pagination,
   ReceiptLink,
   StatusPill,
+  TableColumn,
   Tabs,
+  UniversalTable,
   useAction,
 } from '../../components/ui';
 import { exportToCsv, fmtDateTime, fmtDay, REIMB_STATUS, rm, todayStr, useFormatT } from '../../format';
@@ -144,69 +146,77 @@ function List({ scope }: { scope: 'review' | 'payout' }) {
         <EmptyState title={t('reimb.none')} />
       ) : (
         <Card>
-          <div className="table-wrap">
-            <table className="table responsive sticky-header">
-              <thead>
-                <tr>
-                  <th>{t('reimb.applicant')}</th>
-                  <th>{t('reimb.amount')}</th>
-                  <th>{t('reimb.description')}</th>
-                  <th>{t('reimb.submitted')}</th>
-                  <th>{t('reimb.status')}</th>
-                  <th></th>
-                </tr>
-              </thead>
-              <tbody>
-                {items.map((r) => (
-                  <tr key={r.id}>
-                    <td data-label={t('reimb.applicant')} className="bold">
-                      {r.user.name}
-                    </td>
-                    <td data-label={t('reimb.amount')} className="mono bold">
-                      {rm(r.amount_cents)}
-                    </td>
-                    <td data-label={t('reimb.description')} className="small">
-                      {r.description}
-                      {r.ride_id && (
-                        <>
-                          {' · '}
-                          <Link to={`/admin/rides/${r.ride_id}`}>
-                            {t('reimb.rideLink')}
-                          </Link>
-                        </>
-                      )}
-                    </td>
-                    <td data-label={t('reimb.submitted')}>
-                      {fmtDay(r.created_at, ft)}
-                    </td>
-                    <td data-label={t('reimb.status')}>
-                      <StatusPill map={REIMB_STATUS} status={r.status} />
-                    </td>
-                    <td>
-                      {canAct &&
-                      ((scope === 'review' && r.status === 'pending') ||
-                        (scope === 'payout' && r.status === 'approved')) ? (
-                        <Button
-                          variant="primary"
-                          size="sm"
-                          onClick={() => setOpen(r)}
-                        >
-                          {scope === 'review'
-                            ? t('reimb.reviewBtn')
-                            : t('reimb.payBtn')}
-                        </Button>
-                      ) : (
-                        <ReceiptLink
-                          id={r.receipt_file_id}
-                          label={t('reimb.receipt')}
-                        />
-                      )}
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
+          {const columns: TableColumn<Reimb>[] = [
+            {
+              key: 'applicant',
+              header: t('reimb.applicant'),
+              render: (r) => <div className="bold">{r.user.name}</div>,
+            },
+            {
+              key: 'amount',
+              header: t('reimb.amount'),
+              render: (r) => <div className="mono bold">{rm(r.amount_cents)}</div>,
+            },
+            {
+              key: 'description',
+              header: t('reimb.description'),
+              render: (r) => (
+                <div className="small">
+                  {r.description}
+                  {r.ride_id && (
+                    <>
+                      {' · '}
+                      <Link to={`/admin/rides/${r.ride_id}`}>
+                        {t('reimb.rideLink')}
+                      </Link>
+                    </>
+                  )}
+                </div>
+              ),
+            },
+            {
+              key: 'submitted',
+              header: t('reimb.submitted'),
+              render: (r) => fmtDay(r.created_at, ft),
+            },
+            {
+              key: 'status',
+              header: t('reimb.status'),
+              render: (r) => <StatusPill map={REIMB_STATUS} status={r.status} />,
+            },
+            {
+              key: 'action',
+              header: 'Actions',
+              render: (r) => (
+                <>
+                  {canAct &&
+                  ((scope === 'review' && r.status === 'pending') ||
+                    (scope === 'payout' && r.status === 'approved')) ? (
+                    <Button
+                      variant="primary"
+                      size="sm"
+                      onClick={() => setOpen(r)}
+                    >
+                      {scope === 'review'
+                        ? t('reimb.reviewBtn')
+                        : t('reimb.payBtn')}
+                    </Button>
+                  ) : (
+                    <ReceiptLink
+                      id={r.receipt_file_id}
+                      label={t('reimb.receipt')}
+                    />
+                  )}
+                </>
+              ),
+            },
+          ];
+
+          <UniversalTable
+            columns={columns}
+            items={items}
+            itemKey={(r) => r.id}
+          />}
           <Pagination
             page={page}
             totalPages={totalPages}

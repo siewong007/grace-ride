@@ -36,6 +36,8 @@ pub enum ErrorKey {
     RolePermissionLocked,
     SystemRoleCannotBeDeleted,
     CannotRemoveOwnRoleAccess,
+    SuperadminOnly,
+    LastSuperadmin,
 
     // === Auth ===
     InvalidCredentials,
@@ -270,6 +272,8 @@ impl ErrorKey {
             Self::RolePermissionLocked => "ROLE_PERMISSION_LOCKED",
             Self::SystemRoleCannotBeDeleted => "SYSTEM_ROLE_CANNOT_BE_DELETED",
             Self::CannotRemoveOwnRoleAccess => "CANNOT_REMOVE_OWN_ROLE_ACCESS",
+            Self::SuperadminOnly => "SUPERADMIN_ONLY",
+            Self::LastSuperadmin => "LAST_SUPERADMIN",
 
             Self::InvalidCredentials => "INVALID_CREDENTIALS",
             Self::VerificationExpired => "VERIFICATION_EXPIRED",

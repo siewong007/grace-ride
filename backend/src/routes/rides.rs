@@ -698,6 +698,14 @@ async fn post_readiness(
     if !is_passenger && !is_admin {
         return Err(forbidden(u.lang, ErrorKey::OnlyPassengerCanRespond));
     }
+
+    // Trip-progress updates (readiness / delay / gate arrival) only apply while the ride
+    // is active. A completed or otherwise terminal ride must not accept new updates,
+    // otherwise misleading notifications go out after the trip is done.
+    if !matches!(r.status.as_str(), "confirmed" | "in_progress") {
+        return Err(conflict(u.lang, ErrorKey::TripAlreadyCompleted));
+    }
+
     let valid_statuses = ["ready", "delayed_5m", "delayed_10m", "unable_to_join"];
     if !valid_statuses.contains(&req.status.as_str()) {
         return Err(bad(u.lang, ErrorKey::InvalidStatus));
@@ -861,6 +869,14 @@ async fn post_driver_delay(
     if !is_driver && !is_admin {
         return Err(forbidden(u.lang, ErrorKey::NotRideDriver));
     }
+
+    // Trip-progress updates (readiness / delay / gate arrival) only apply while the ride
+    // is active. A completed or otherwise terminal ride must not accept new updates,
+    // otherwise misleading notifications go out after the trip is done.
+    if !matches!(r.status.as_str(), "confirmed" | "in_progress") {
+        return Err(conflict(u.lang, ErrorKey::TripAlreadyCompleted));
+    }
+
     if req.delay_minutes < 0 || req.delay_minutes > 120 {
         return Err(bad(u.lang, ErrorKey::InvalidAction));
     }
@@ -919,6 +935,14 @@ async fn post_arrived_gate(
     if !is_driver && !is_admin {
         return Err(forbidden(u.lang, ErrorKey::NotRideDriver));
     }
+
+    // Trip-progress updates (readiness / delay / gate arrival) only apply while the ride
+    // is active. A completed or otherwise terminal ride must not accept new updates,
+    // otherwise misleading notifications go out after the trip is done.
+    if !matches!(r.status.as_str(), "confirmed" | "in_progress") {
+        return Err(conflict(u.lang, ErrorKey::TripAlreadyCompleted));
+    }
+
     let timestamp = now();
     sqlx::query("UPDATE rides SET arrived_at_gate_at=$1 WHERE id=$2")
         .bind(&timestamp)
@@ -993,8 +1017,8 @@ async fn post_arrived_gate(
 // ---------------- Driver ----------------
 
 /// Seats the driver already holds within ±60 min of `at`, and their seat capacity.
-async fn driver_load(
-    st: &AppState,
+async fn driver_load_on(
+    conn: &mut sqlx::PgConnection,
     driver: i64,
     at: &str,
     exclude: Option<i64>,
@@ -1006,13 +1030,13 @@ async fn driver_load(
     .bind(driver)
     .bind(exclude.unwrap_or(-1))
     .bind(at)
-    .fetch_one(&st.db)
+    .fetch_one(&mut *conn)
     .await?;
     let row: Option<(i64, i64, Option<i64>)> = sqlx::query_as(
         "SELECT u.carpool_enabled, u.spare_seats, v.seats FROM users u LEFT JOIN vehicles v ON v.user_id=u.id WHERE u.id=$1",
     )
     .bind(driver)
-    .fetch_optional(&st.db)
+    .fetch_optional(&mut *conn)
     .await?;
     let (carpool, spare, vseats) = row.unwrap_or((0, 1, None));
     let cap = seat_capacity(spare, vseats);
@@ -1025,6 +1049,16 @@ async fn driver_load(
         cap
     };
     Ok((load, cap))
+}
+
+async fn driver_load(
+    st: &AppState,
+    driver: i64,
+    at: &str,
+    exclude: Option<i64>,
+) -> AppResult<(i64, i64)> {
+    let mut conn = st.db.acquire().await?;
+    driver_load_on(&mut conn, driver, at, exclude).await
 }
 
 /// Passenger seats a driver offers: their spare seats, never more than the car holds
@@ -1046,14 +1080,22 @@ async fn driver_claim(
     if r.passenger_id == u.id {
         return Err(bad(u.lang, ErrorKey::CannotPickOwnRide));
     }
+    // Lock the driver's row for the whole capacity check + claim. Two concurrent claims
+    // for different rides by the same driver then serialise; the second sees the first
+    // booking in `load` and is rejected instead of overbooking the car.
+    let mut tx = st.db.begin().await?;
+    sqlx::query("SELECT id FROM users WHERE id=$1 FOR UPDATE")
+        .bind(u.id)
+        .fetch_optional(&mut *tx)
+        .await?;
     let has_vehicle: Option<(i64,)> = sqlx::query_as("SELECT seats FROM vehicles WHERE user_id=$1")
         .bind(u.id)
-        .fetch_optional(&st.db)
+        .fetch_optional(&mut *tx)
         .await?;
     if has_vehicle.is_none() {
         return Err(bad(u.lang, ErrorKey::FillVehicleDetailsFirst));
     }
-    let (load, cap) = driver_load(&st, u.id, &r.pickup_at, Some(id)).await?;
+    let (load, cap) = driver_load_on(&mut tx, u.id, &r.pickup_at, Some(id)).await?;
     if load + r.seats > cap {
         return Err(bad(u.lang, ErrorKey::NotEnoughSeatsSlot { load, cap }));
     }
@@ -1062,11 +1104,12 @@ async fn driver_claim(
         .bind(u.id)
         .bind(now())
         .bind(id)
-        .execute(&st.db)
+        .execute(&mut *tx)
         .await?;
     if res.rows_affected() == 0 {
         return Err(conflict(u.lang, ErrorKey::RidePickedByAnotherDriver));
     }
+    tx.commit().await?;
     let target_zh = if r.is_proxy == 1 && !r.rider_name.is_empty() {
         format!("长辈/组员 {}", r.rider_name)
     } else {

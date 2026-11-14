@@ -68,4 +68,4 @@ export const ADMIN_PAGES: PageKey[] = [
 export const canAnyAdminPage = (can: Can): boolean => ADMIN_PAGES.some((p) => can(p));
 
 /** Built-in roles are named by the app; anything else carries its own name. */
-export const SYSTEM_ROLES = ['member', 'admin', 'transport', 'finance', 'leader', 'driver'];
+export const SYSTEM_ROLES = ['member', 'superadmin', 'admin', 'transport', 'finance', 'leader', 'driver'];

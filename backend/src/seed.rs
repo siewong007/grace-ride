@@ -489,8 +489,18 @@ async fn seed_core(db: &PgPool) -> anyhow::Result<()> {
     let pw = hash_password(DEMO_PASSWORD).map_err(|e| anyhow::anyhow!("{e}"))?;
     let today = today_kl();
 
-    // --- core demo users (ids 1..=13) ---
+    // --- core demo users (ids 1..=14) ---
     let core = [
+        // Holds every permission. Kept apart from 管理员 Grace so the demo also shows
+        // what a plain admin cannot do (finance stays separate).
+        (
+            14,
+            "超级管理员",
+            "superadmin@example.org",
+            "012-300 0016",
+            "superadmin",
+            "active",
+        ),
         (
             1,
             "管理员 Grace",

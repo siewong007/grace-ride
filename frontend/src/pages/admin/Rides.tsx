@@ -1,6 +1,6 @@
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
-import { Download } from 'lucide-react';
+import { Download, AlertTriangle } from 'lucide-react';
 import { useApi } from '../../api';
 import { Ride } from '../../components/RideCard';
 import {
@@ -12,9 +12,9 @@ import {
   Page,
   PageHeader,
   Pagination,
+  UniversalTable,
 } from '../../components/ui';
 import { exportToCsv, RIDE_STATUS, todayStr, useFormatT } from '../../format';
-import { RideTable } from './RideTable';
 
 // Every status a ride can have. The API filters on the exact status, so these must be real
 // values ("requested" / "matched" were not, and always returned nothing).
@@ -86,6 +86,45 @@ export default function AdminRides() {
     exportToCsv(`grace-ride-admin-rides-${todayStr()}`, headers, rows);
   };
 
+  const columns: TableColumn<Ride>[] = [
+    {
+      key: 'pickupTime',
+      header: t('dashboard.pickupTime'),
+      render: (r) => (
+        <>
+          {fmtDay(r.pickup_at, ft).split(' ')[0]} {r.pickup_at.slice(11, 16)}
+        </>
+      ),
+    },
+    {
+      key: 'passenger',
+      header: t('dashboard.passenger'),
+      render: (r) => `${r.passenger.name}${r.seats > 1 ? ` (${r.seats})` : ''}`,
+    },
+    {
+      key: 'area',
+      header: t('dashboard.area'),
+      render: (r) => r.area.name,
+    },
+    {
+      key: 'driver',
+      header: t('dashboard.driver'),
+      render: (r) => r.driver?.name ?? <span className="muted">—</span>,
+    },
+    {
+      key: 'status',
+      header: t('dashboard.status'),
+      render: (r) => (
+        <>
+          <StatusPill map={RIDE_STATUS} status={r.status} />
+          {r.needs_attention && (
+            <AlertTriangle size={14} aria-hidden="true" className="pill-icon warn" />
+          )}
+        </>
+      ),
+    },
+  ];
+
   return (
     <Page>
       <PageHeader
@@ -144,7 +183,12 @@ export default function AdminRides() {
           <EmptyState title={t('rides.none')} />
         ) : (
           <>
-            <RideTable rides={rides} onOpen={(id) => nav(`/admin/rides/${id}`)} />
+            <UniversalTable
+              columns={columns}
+              items={rides}
+              onRowClick={(r) => nav(`/admin/rides/${r.id}`)}
+              itemKey={(r) => r.id}
+            />
             <Pagination
               page={page}
               totalPages={totalPages}

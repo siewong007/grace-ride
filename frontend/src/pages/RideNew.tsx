@@ -105,7 +105,10 @@ export default function RideNew() {
 
   const selectFrequentRider = (fr: ProxyRider) => {
     setRiderName(fr.name);
-    if (fr.phone) setRiderPhone(fr.phone);
+    // Always sync the phone from the selected rider: a rider with none must clear the
+    // field (and stop us from contacting the previous rider). Relationship/notes only
+    // update when the rider actually supplies them.
+    setRiderPhone(fr.phone);
     if (fr.relationship) setRiderRelationship(fr.relationship);
     if (fr.notes && !notes) setNotes(fr.notes);
   };

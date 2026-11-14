@@ -402,6 +402,88 @@ async fn totp_backup_codes_and_auto_lock_flow() {
 }
 
 #[tokio::test]
+async fn totp_backup_code_concurrent_use_one_wins() {
+    let (app, st) = setup().await;
+    let cookie = login(&st, "member@example.org").await;
+
+    let setup_res = call(
+        &app,
+        Method::POST,
+        "/api/auth/totp/setup",
+        Some(&cookie),
+        None,
+    )
+    .await;
+    assert_eq!(setup_res.status, StatusCode::OK);
+    let secret = setup_res.json["secret"].as_str().unwrap();
+    let code = totp_code(secret, "member@example.org");
+
+    let enable_res = call(
+        &app,
+        Method::POST,
+        "/api/auth/totp/enable",
+        Some(&cookie),
+        Some(json!({ "code": code })),
+    )
+    .await;
+    assert_eq!(enable_res.status, StatusCode::OK);
+    let codes = enable_res.json["backup_codes"]
+        .as_array()
+        .expect("backup_codes array");
+    assert_eq!(codes.len(), 8);
+
+    let first_code = codes[0].as_str().unwrap();
+
+    // Two concurrent sessions from the same account race to consume the same single-use
+    // code. PostgreSQL serialises the UPDATEs on the same users row, so only one can
+    // consume it. The loser re-reads after the row lock and finds the code gone.
+    let app1 = app.clone();
+    let app2 = app.clone();
+    let cookie1 = cookie.clone();
+    let cookie2 = cookie.clone();
+    let path = "/api/auth/totp/verify";
+    let (verify1, verify2) = tokio::join!(
+        call(
+            &app1,
+            Method::POST,
+            path,
+            Some(&cookie1),
+            Some(json!({ "code": first_code }))
+        ),
+        call(
+            &app2,
+            Method::POST,
+            path,
+            Some(&cookie2),
+            Some(json!({ "code": first_code }))
+        ),
+    );
+
+    let ok = [verify1.status, verify2.status]
+        .iter()
+        .filter(|s| **s == StatusCode::OK)
+        .count();
+    let bad = [verify1.status, verify2.status]
+        .iter()
+        .filter(|s| **s == StatusCode::BAD_REQUEST)
+        .count();
+    assert_eq!(
+        ok, 1,
+        "exactly one session can authenticate with a single-use code: {:?}, {:?}",
+        verify1.status, verify2.status
+    );
+    assert_eq!(
+        bad, 1,
+        "the losing request must be rejected, not both accepted: {:?}, {:?}",
+        verify1.json, verify2.json
+    );
+
+    // The account still has 7 codes left and is still signed in.
+    let me = call(&app, Method::GET, "/api/auth/me", Some(&cookie), None).await;
+    assert_eq!(me.json["backup_codes_count"], 7);
+}
+
+#[tokio::test]
 async fn password_login_is_disabled() {
     let (app, _) = setup().await;
     // Password login stays off in every mode; passkeys / invites are the only path.
@@ -988,6 +1070,102 @@ async fn ride_readiness_and_delay_workflow() {
     )
     .await;
     assert_eq!(d_profile.json["gate_wait_mins"], 8);
+}
+
+#[tokio::test]
+async fn ride_trip_progress_updates_rejected_after_complete() {
+    let (app, st) = setup().await;
+    let passenger = login(&st, "member@example.org").await;
+    let driver = login(&st, "driver@example.org").await;
+    let transport = login(&st, "transport@example.org").await;
+
+    let r = call(
+        &app,
+        Method::POST,
+        "/api/rides",
+        Some(&passenger),
+        Some(json!({
+            "pickup_at": tomorrow("08:15"), "pickup_area_id": 2, "pickup_address": "SS2 PJ",
+            "destination": "教会", "seats": 1,
+        })),
+    )
+    .await;
+    let id = r.json["id"].as_i64().unwrap();
+
+    call(
+        &app,
+        Method::POST,
+        &format!("/api/rides/{id}/claim"),
+        Some(&driver),
+        None,
+    )
+    .await;
+    call(
+        &app,
+        Method::POST,
+        &format!("/api/rides/{id}/respond"),
+        Some(&passenger),
+        Some(json!({ "accept": true })),
+    )
+    .await;
+    call(
+        &app,
+        Method::POST,
+        &format!("/api/rides/{id}/approve"),
+        Some(&transport),
+        None,
+    )
+    .await;
+    call(
+        &app,
+        Method::POST,
+        &format!("/api/rides/{id}/start"),
+        Some(&driver),
+        None,
+    )
+    .await;
+
+    let complete = call(
+        &app,
+        Method::POST,
+        &format!("/api/rides/{id}/complete"),
+        Some(&driver),
+        None,
+    )
+    .await;
+    assert_eq!(complete.status, StatusCode::OK);
+
+    // Once the ride is completed, these trip-progress updates must be rejected so no
+    // misleading notifications are sent for a trip that has already ended.
+    let readiness = call(
+        &app,
+        Method::POST,
+        &format!("/api/rides/{id}/readiness"),
+        Some(&passenger),
+        Some(json!({ "status": "ready" })),
+    )
+    .await;
+    assert_eq!(readiness.status, StatusCode::CONFLICT);
+
+    let delay = call(
+        &app,
+        Method::POST,
+        &format!("/api/rides/{id}/driver-delay"),
+        Some(&driver),
+        Some(json!({ "delay_minutes": 10 })),
+    )
+    .await;
+    assert_eq!(delay.status, StatusCode::CONFLICT);
+
+    let arrived = call(
+        &app,
+        Method::POST,
+        &format!("/api/rides/{id}/arrived-gate"),
+        Some(&driver),
+        None,
+    )
+    .await;
+    assert_eq!(arrived.status, StatusCode::CONFLICT);
 }
 
 #[tokio::test]
