@@ -102,7 +102,26 @@ async fn update_profile(
     .bind(u.id)
     .execute(&st.db)
     .await?;
-    audit(&st.db, Some(u.id), "profile.update", "user", Some(u.id), "").await;
+    // Which fields were sent, not their values: the log is read by staff.
+    let changed: Vec<&str> = [
+        ("name", req.name.is_some()),
+        ("phone", req.phone.is_some()),
+        ("photo", req.photo_file_id.is_some()),
+        ("badges_opt_out", req.badges_opt_out.is_some()),
+        ("lang", req.lang.is_some()),
+    ]
+    .into_iter()
+    .filter_map(|(k, sent)| sent.then_some(k))
+    .collect();
+    audit(
+        &st.db,
+        Some(u.id),
+        "profile.update",
+        "user",
+        Some(u.id),
+        changed.join(", "),
+    )
+    .await;
     Ok(Json(json!({"ok": true})))
 }
 
@@ -213,19 +232,22 @@ async fn delete_announcement(
     Path(id): Path<i64>,
 ) -> AppResult<Json<Value>> {
     require(&u, Page::AdminAnnouncements, Act::Delete)?;
-    sqlx::query("DELETE FROM announcements WHERE id=$1")
-        .bind(id)
-        .execute(&st.db)
-        .await?;
-    audit(
-        &st.db,
-        Some(u.id),
-        "announcement.delete",
-        "announcement",
-        Some(id),
-        "",
-    )
-    .await;
+    let gone: Option<(String,)> =
+        sqlx::query_as("DELETE FROM announcements WHERE id=$1 RETURNING title")
+            .bind(id)
+            .fetch_optional(&st.db)
+            .await?;
+    if let Some((title,)) = gone {
+        audit(
+            &st.db,
+            Some(u.id),
+            "announcement.delete",
+            "announcement",
+            Some(id),
+            title,
+        )
+        .await;
+    }
     Ok(Json(json!({"ok": true})))
 }
 
@@ -310,6 +332,15 @@ async fn create_ticket(
             &format!("{} · {}", u.name, req.subject.trim()),
         ),
         &format!("/help/{id}"),
+    )
+    .await;
+    audit(
+        &st.db,
+        Some(u.id),
+        "help.create",
+        "help_ticket",
+        Some(id),
+        req.subject.trim(),
     )
     .await;
     Ok(Json(json!({"id": id})))
@@ -409,6 +440,20 @@ async fn reply_ticket(
         )
         .await;
     }
+    // The reply text stays in the ticket; the log records who answered and when.
+    audit(
+        &st.db,
+        Some(u.id),
+        "help.reply",
+        "help_ticket",
+        Some(id),
+        if u.id == owner {
+            "by member"
+        } else {
+            "by staff"
+        },
+    )
+    .await;
     Ok(Json(json!({"ok": true})))
 }
 
@@ -669,7 +714,7 @@ async fn resubmit_reimbursement(
         "reimbursement.resubmit",
         "reimbursement",
         Some(id),
-        "",
+        fmt_rm(req.amount_cents),
     )
     .await;
     Ok(Json(json!({"ok": true})))

@@ -1,4 +1,4 @@
-import { beforeAll, describe, expect, it, vi } from 'vitest';
+import { beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { RIDE_STATUS } from './format';
 import { MemoryRouter } from 'react-router-dom';
@@ -186,7 +186,22 @@ vi.mock('./auth', () => ({
   }),
 }));
 
+// The audit log is read a page at a time: the first page says an older one follows.
+const mockAuditOlder = [
+  {
+    id: 55,
+    actor: null,
+    action: 'ride.escalate',
+    entity: 'ride',
+    entity_id: 4,
+    detail: 'no driver 12h before pickup',
+    created_at: '2026-11-19T08:00:00',
+  },
+];
+const mockApi = vi.hoisted(() => vi.fn());
+
 vi.mock('./api', () => ({
+  api: mockApi,
   useApi: (path: string | null) => ({
     data: path ? mockApiMap[path] ?? null : null,
     loading: false,
@@ -324,7 +339,16 @@ describe('Admin Reimbursements', () => {
 });
 
 describe('Admin Audit', () => {
-  it('renders audit search box and logs table with monospace timestamps', () => {
+  beforeEach(() => {
+    mockApi.mockReset();
+    mockApi.mockImplementation(async (path: string) =>
+      path.includes('before=101')
+        ? { items: mockAuditOlder, next_before: null }
+        : { items: mockAudit, next_before: 101 },
+    );
+  });
+
+  it('renders audit search box and logs table with monospace timestamps', async () => {
     render(
       <MemoryRouter>
         <Audit />
@@ -333,7 +357,53 @@ describe('Admin Audit', () => {
 
     expect(screen.getByRole('heading', { level: 1, name: /audit log/i })).toBeInTheDocument();
     expect(screen.getByLabelText(/search audit log/i)).toBeInTheDocument();
-    expect(screen.getByText('Admin Paul')).toBeInTheDocument();
+    expect(await screen.findByText('Admin Paul')).toBeInTheDocument();
     expect(screen.getByText('ride.reassign')).toBeInTheDocument();
+    expect(mockApi).toHaveBeenCalledWith('/admin/audit');
+  });
+
+  it('loads older entries below the ones already shown until the log ends', async () => {
+    render(
+      <MemoryRouter>
+        <Audit />
+      </MemoryRouter>
+    );
+
+    fireEvent.click(await screen.findByRole('button', { name: /load older entries/i }));
+    expect(await screen.findByText('ride.escalate')).toBeInTheDocument();
+    expect(mockApi).toHaveBeenLastCalledWith('/admin/audit?before=101');
+    // The first page stays, the entry with no actor reads "System", and the button goes.
+    expect(screen.getByText('ride.reassign')).toBeInTheDocument();
+    expect(screen.getByText('System')).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /load older entries/i })).not.toBeInTheDocument();
+    expect(screen.getByText(/entries shown: 2\. that is all of them/i)).toBeInTheDocument();
+  });
+
+  it('sends the filters to the server and keeps the object a link asked for', async () => {
+    render(
+      <MemoryRouter initialEntries={['/admin/audit?entity=ride&entity_id=5']}>
+        <Audit />
+      </MemoryRouter>
+    );
+
+    await screen.findByText('Admin Paul');
+    expect(mockApi).toHaveBeenLastCalledWith('/admin/audit?entity=ride&entity_id=5');
+    expect(screen.getByText('Ride #5')).toBeInTheDocument();
+
+    fireEvent.change(screen.getByLabelText('From'), { target: { value: '2026-11-01' } });
+    await waitFor(() =>
+      expect(mockApi).toHaveBeenLastCalledWith('/admin/audit?entity=ride&entity_id=5&from=2026-11-01'),
+    );
+
+    fireEvent.change(screen.getByLabelText(/search audit log/i), { target: { value: 'reassign' } });
+    await waitFor(() =>
+      expect(mockApi).toHaveBeenLastCalledWith(
+        '/admin/audit?q=reassign&entity=ride&entity_id=5&from=2026-11-01',
+      ),
+    );
+
+    fireEvent.click(screen.getByRole('button', { name: /clear filters/i }));
+    await waitFor(() => expect(mockApi).toHaveBeenLastCalledWith('/admin/audit'));
+    expect(screen.getByLabelText(/search audit log/i)).toHaveValue('');
   });
 });

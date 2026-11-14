@@ -16,7 +16,7 @@ use crate::error::{bad, forbidden, not_found, too_many_requests, AppError, AppRe
 use crate::i18n::ErrorKey;
 use crate::perms::{Act, Page};
 use crate::state::AppState;
-use crate::util::{in_hours, now};
+use crate::util::{audit, in_hours, now};
 
 pub fn router() -> Router<AppState> {
     Router::new()
@@ -103,6 +103,15 @@ async fn upload(
             .bind(now())
             .fetch_one(&st.db)
             .await?;
+        audit(
+            &st.db,
+            Some(u.id),
+            "file.upload",
+            "file",
+            Some(id),
+            format!("{mime}, {} bytes", data.len()),
+        )
+        .await;
         return Ok(Json(json!({ "id": id, "mime": mime, "name": original })));
     }
     Err(bad(u.lang, ErrorKey::NoFileReceived))

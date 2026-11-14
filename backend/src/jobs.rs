@@ -11,7 +11,7 @@ use sqlx::PgPool;
 
 use crate::perms::{Act, Page};
 use crate::state::Config;
-use crate::util::{notify, notify_perm, now};
+use crate::util::{audit, notify, notify_perm, now};
 
 pub fn spawn(db: PgPool, cfg: Config) {
     tokio::spawn(async move {
@@ -137,6 +137,15 @@ async fn escalate_unmatched(db: &PgPool) -> anyhow::Result<()> {
             .bind(id)
             .execute(db)
             .await?;
+        audit(
+            db,
+            None,
+            "ride.escalate",
+            "ride",
+            Some(id),
+            "no driver 12h before pickup",
+        )
+        .await;
         notify_perm(
             db,
             Page::AdminRides,

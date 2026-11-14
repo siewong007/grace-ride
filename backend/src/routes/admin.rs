@@ -6,6 +6,7 @@ use axum::{
     routing::{delete, get, post, put},
     Json, Router,
 };
+use chrono::NaiveDate;
 use serde::Deserialize;
 use serde_json::{json, Value};
 
@@ -217,17 +218,29 @@ async fn update_user(
             .execute(&st.db)
             .await?;
     }
-    if let Some(gids) = req.group_ids {
+    let mut groups_note = String::new();
+    if let Some(mut gids) = req.group_ids {
+        let old: Vec<i64> = sqlx::query_scalar(
+            "SELECT group_id FROM group_members WHERE user_id=$1 ORDER BY group_id",
+        )
+        .bind(id)
+        .fetch_all(&st.db)
+        .await?;
         sqlx::query("DELETE FROM group_members WHERE user_id=$1")
             .bind(id)
             .execute(&st.db)
             .await?;
-        for g in gids {
+        for g in &gids {
             sqlx::query("INSERT INTO group_members (group_id, user_id) VALUES ($1,$2) ON CONFLICT DO NOTHING")
                 .bind(g)
                 .bind(id)
                 .execute(&st.db)
                 .await?;
+        }
+        gids.sort();
+        gids.dedup();
+        if gids != old {
+            groups_note = format!("; groups {old:?} → {gids:?}");
         }
     }
     audit(
@@ -237,7 +250,7 @@ async fn update_user(
         "user",
         Some(id),
         format!(
-            "roles {old_roles} → {roles}; status {old_status} → {}",
+            "roles {old_roles} → {roles}; status {old_status} → {}{groups_note}",
             req.status
         ),
     )
@@ -376,11 +389,11 @@ async fn delete_group(
     if is_all == 1 {
         return Err(bad(u.lang, ErrorKey::CannotDeleteAllMembersGroup));
     }
-    sqlx::query("DELETE FROM groups WHERE id=$1")
+    let (name,): (String,) = sqlx::query_as("DELETE FROM groups WHERE id=$1 RETURNING name")
         .bind(id)
-        .execute(&st.db)
+        .fetch_one(&st.db)
         .await?;
-    audit(&st.db, Some(u.id), "group.delete", "group", Some(id), "").await;
+    audit(&st.db, Some(u.id), "group.delete", "group", Some(id), name).await;
     Ok(Json(json!({"ok": true})))
 }
 
@@ -413,6 +426,10 @@ async fn set_group_members(
 ) -> AppResult<Json<Value>> {
     require(&u, Page::AdminGroups, Act::Update)?;
     let mut tx = st.db.begin().await?;
+    let old: Vec<i64> = sqlx::query_scalar("SELECT user_id FROM group_members WHERE group_id=$1")
+        .bind(id)
+        .fetch_all(&mut *tx)
+        .await?;
     sqlx::query("DELETE FROM group_members WHERE group_id=$1")
         .bind(id)
         .execute(&mut *tx)
@@ -427,13 +444,27 @@ async fn set_group_members(
         .await?;
     }
     tx.commit().await?;
+    let added: Vec<i64> = req
+        .user_ids
+        .iter()
+        .copied()
+        .filter(|x| !old.contains(x))
+        .collect();
+    let removed: Vec<i64> = old
+        .iter()
+        .copied()
+        .filter(|x| !req.user_ids.contains(x))
+        .collect();
     audit(
         &st.db,
         Some(u.id),
         "group.members",
         "group",
         Some(id),
-        format!("{} members", req.user_ids.len()),
+        format!(
+            "{} members; added {added:?}; removed {removed:?}",
+            req.user_ids.len()
+        ),
     )
     .await;
     Ok(Json(json!({"ok": true})))
@@ -491,7 +522,15 @@ async fn update_area(
         "area.update",
         "area",
         Some(id),
-        req.name.trim(),
+        format!(
+            "{}; {}",
+            req.name.trim(),
+            if req.active.unwrap_or(true) {
+                "active"
+            } else {
+                "inactive"
+            }
+        ),
     )
     .await;
     Ok(Json(json!({"ok": true})))
@@ -619,26 +658,84 @@ async fn reject_recovery(
 struct AuditQuery {
     entity: Option<String>,
     entity_id: Option<i64>,
+    /// Text to find in the actor's name, the action, the object or the detail.
+    q: Option<String>,
+    /// First and last day to include, `YYYY-MM-DD`.
+    from: Option<String>,
+    to: Option<String>,
+    /// Entries older than this id: the `next_before` of the previous page.
+    before: Option<i64>,
+    limit: Option<i64>,
 }
 
-/// 管理员可查看谁在何时修改了安排。
+/// Entries per page of the audit log unless the caller asks for fewer or more.
+const AUDIT_PAGE: i64 = 100;
+const AUDIT_PAGE_MAX: i64 = 200;
+
+/// 管理员可查看谁在何时修改了安排。 Newest first, one page at a time: `next_before` is
+/// the cursor for the next page and is null on the last one, so the whole retained log
+/// can be read, not just its newest entries.
 async fn audit_log(
     State(st): State<AppState>,
     u: CurrentUser,
     Query(q): Query<AuditQuery>,
 ) -> AppResult<Json<Value>> {
     require(&u, Page::AdminAudit, Act::View)?;
-    let rows: Vec<(i64, Option<String>, String, String, Option<i64>, String, String)> = sqlx::query_as(
+    let day = |s: &Option<String>| -> AppResult<Option<NaiveDate>> {
+        match s.as_deref().map(str::trim).filter(|s| !s.is_empty()) {
+            None => Ok(None),
+            Some(s) => NaiveDate::parse_from_str(s, "%Y-%m-%d")
+                .map(Some)
+                .map_err(|_| bad(u.lang, ErrorKey::InvalidDate)),
+        }
+    };
+    // `created_at` is ISO text, so a date bounds it as a plain string comparison.
+    let from = day(&q.from)?.map(|d| d.to_string());
+    let until = day(&q.to)?
+        .and_then(|d| d.succ_opt())
+        .map(|d| d.to_string());
+    // The search text is matched literally: `%` and `_` are not wildcards.
+    let like =
+        q.q.as_deref()
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+            .map(|s| {
+                format!(
+                    "%{}%",
+                    s.replace('\\', "\\\\")
+                        .replace('%', "\\%")
+                        .replace('_', "\\_")
+                )
+            });
+    let entity = q.entity.filter(|e| !e.is_empty());
+    let limit = q.limit.unwrap_or(AUDIT_PAGE).clamp(1, AUDIT_PAGE_MAX);
+    // One row more than the page shows whether another page follows.
+    let mut rows: Vec<(i64, Option<String>, String, String, Option<i64>, String, String)> = sqlx::query_as(
         "SELECT a.id, u.name, a.action, a.entity, a.entity_id, a.detail, a.created_at FROM audit_logs a LEFT JOIN users u ON u.id=a.actor_id
-         WHERE ($1 IS NULL OR a.entity = $2) AND ($3 IS NULL OR a.entity_id = $4) ORDER BY a.id DESC LIMIT 300",
+         WHERE ($1::text IS NULL OR a.entity = $1)
+           AND ($2::bigint IS NULL OR a.entity_id = $2)
+           AND ($3::text IS NULL OR a.action ILIKE $3 OR a.entity ILIKE $3 OR a.detail ILIKE $3 OR u.name ILIKE $3)
+           AND ($4::text IS NULL OR a.created_at >= $4)
+           AND ($5::text IS NULL OR a.created_at < $5)
+           AND ($6::bigint IS NULL OR a.id < $6)
+         ORDER BY a.id DESC LIMIT $7",
     )
-    .bind(&q.entity)
-    .bind(&q.entity)
+    .bind(&entity)
     .bind(q.entity_id)
-    .bind(q.entity_id)
+    .bind(&like)
+    .bind(&from)
+    .bind(&until)
+    .bind(q.before)
+    .bind(limit + 1)
     .fetch_all(&st.db)
     .await?;
-    Ok(Json(json!(rows.into_iter().map(|(id, actor, action, entity, eid, detail, at)| json!({
-        "id": id, "actor": actor, "action": action, "entity": entity, "entity_id": eid, "detail": detail, "created_at": at,
-    })).collect::<Vec<_>>())))
+    let more = rows.len() as i64 > limit;
+    rows.truncate(limit as usize);
+    let next_before = rows.last().filter(|_| more).map(|r| r.0);
+    Ok(Json(json!({
+        "items": rows.into_iter().map(|(id, actor, action, entity, eid, detail, at)| json!({
+            "id": id, "actor": actor, "action": action, "entity": entity, "entity_id": eid, "detail": detail, "created_at": at,
+        })).collect::<Vec<_>>(),
+        "next_before": next_before,
+    })))
 }

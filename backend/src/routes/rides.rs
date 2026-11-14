@@ -16,7 +16,8 @@ use crate::error::{bad, conflict, forbidden, not_found, AppResult};
 use crate::perms::{self, Act, Page, Perm};
 use crate::state::AppState;
 use crate::util::{
-    audit, norm_dt, notify, notify_perm, notify_trip, now, require, system_message, ErrorKey, Lang,
+    audit, fmt_rm, norm_dt, notify, notify_perm, notify_trip, now, require, system_message,
+    ErrorKey, Lang,
 };
 
 pub fn router() -> Router<AppState> {
@@ -1107,7 +1108,18 @@ async fn complete(
             .await;
         }
     }
-    audit(&st.db, Some(u.id), "ride.complete", "ride", Some(id), "").await;
+    audit(
+        &st.db,
+        Some(u.id),
+        "ride.complete",
+        "ride",
+        Some(id),
+        match distance_km {
+            Some(km) => format!("{km} km; reimbursement {}", fmt_rm(reimbursement_cents)),
+            None => String::new(),
+        },
+    )
+    .await;
     Ok(Json(json!({"ok": true})))
 }
 
@@ -1278,6 +1290,12 @@ async fn put_driver_profile(
         .execute(&mut *tx)
         .await?;
     }
+    let mut detail = format!(
+        "carpool {}; spare seats {}; areas {:?}",
+        if req.carpool_enabled { "on" } else { "off" },
+        req.spare_seats,
+        req.area_ids
+    );
     if let Some(v) = req.vehicle {
         if v.model.trim().is_empty() || v.plate.trim().is_empty() {
             return Err(bad(u.lang, ErrorKey::VehicleModelAndPlateRequired));
@@ -1294,11 +1312,27 @@ async fn put_driver_profile(
         .bind(v.color.trim())
         .bind(v.plate.trim().to_uppercase())
         .bind(v.seats)
-        .bind(v.vehicle_type)
+        .bind(&v.vehicle_type)
         .execute(&mut *tx)
         .await?;
+        detail.push_str(&format!(
+            "; vehicle {} {} ({}, {} seats)",
+            v.plate.trim().to_uppercase(),
+            v.model.trim(),
+            v.vehicle_type,
+            v.seats
+        ));
     }
     tx.commit().await?;
+    audit(
+        &st.db,
+        Some(u.id),
+        "driver.profile_update",
+        "user",
+        Some(u.id),
+        detail,
+    )
+    .await;
     Ok(Json(json!({"ok": true})))
 }
 
@@ -1345,10 +1379,23 @@ async fn post_location(
 }
 
 async fn stop_location(State(st): State<AppState>, u: CurrentUser) -> AppResult<Json<Value>> {
-    sqlx::query("DELETE FROM driver_locations WHERE driver_id=$1")
+    let stopped = sqlx::query("DELETE FROM driver_locations WHERE driver_id=$1")
         .bind(u.id)
         .execute(&st.db)
-        .await?;
+        .await?
+        .rows_affected();
+    // Position updates themselves are never logged; switching sharing off is.
+    if stopped > 0 {
+        audit(
+            &st.db,
+            Some(u.id),
+            "location.stop",
+            "user",
+            Some(u.id),
+            "driver",
+        )
+        .await;
+    }
     Ok(Json(json!({"ok": true})))
 }
 
@@ -1428,16 +1475,30 @@ async fn post_passenger_location(
         clear_passenger_location(&st, id).await?;
         return Ok(Json(json!({"ok": false, "sharing": false})));
     }
-    sqlx::query(
+    // `xmax = 0` is true only for a newly inserted row: the first position of this ride.
+    let (first,): (bool,) = sqlx::query_as(
         "INSERT INTO passenger_locations (ride_id, lat, lng, updated_at) VALUES ($1,$2,$3,$4)
-         ON CONFLICT(ride_id) DO UPDATE SET lat=excluded.lat, lng=excluded.lng, updated_at=excluded.updated_at",
+         ON CONFLICT(ride_id) DO UPDATE SET lat=excluded.lat, lng=excluded.lng, updated_at=excluded.updated_at
+         RETURNING (xmax = 0)",
     )
     .bind(id)
     .bind(req.lat)
     .bind(req.lng)
     .bind(now())
-    .execute(&st.db)
+    .fetch_one(&st.db)
     .await?;
+    // The passenger opting in is logged once; the positions that follow are not.
+    if first {
+        audit(
+            &st.db,
+            Some(u.id),
+            "location.share",
+            "ride",
+            Some(id),
+            "passenger",
+        )
+        .await;
+    }
     Ok(Json(json!({"ok": true, "sharing": true})))
 }
 
@@ -1450,7 +1511,22 @@ async fn stop_passenger_location(
     if r.passenger_id != u.id {
         return Err(forbidden(u.lang, ErrorKey::NotRidePassenger));
     }
-    clear_passenger_location(&st, id).await?;
+    let stopped = sqlx::query("DELETE FROM passenger_locations WHERE ride_id=$1")
+        .bind(id)
+        .execute(&st.db)
+        .await?
+        .rows_affected();
+    if stopped > 0 {
+        audit(
+            &st.db,
+            Some(u.id),
+            "location.stop",
+            "ride",
+            Some(id),
+            "passenger",
+        )
+        .await;
+    }
     Ok(Json(json!({"ok": true})))
 }
 

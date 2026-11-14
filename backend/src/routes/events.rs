@@ -368,7 +368,26 @@ async fn update_event(
         )
         .await?;
     }
-    audit(&st.db, Some(u.id), "event.update", "event", Some(id), "").await;
+    let mut detail = req.title.trim().to_string();
+    if at != e.starts_at {
+        detail.push_str(&format!("; time {} → {at}", e.starts_at));
+    }
+    if req.location.trim() != e.location {
+        detail.push_str(&format!(
+            "; location {} → {}",
+            e.location,
+            req.location.trim()
+        ));
+    }
+    audit(
+        &st.db,
+        Some(u.id),
+        "event.update",
+        "event",
+        Some(id),
+        detail,
+    )
+    .await;
     Ok(Json(json!({"ok": true})))
 }
 
@@ -419,6 +438,15 @@ async fn cancel_event(
     .await?;
     for (rid, d) in rides {
         sqlx::query("UPDATE rides SET status='cancelled', attention_reason='活动已取消', updated_at=$1 WHERE id=$2").bind(now()).bind(rid).execute(&st.db).await?;
+        audit(
+            &st.db,
+            Some(u.id),
+            "ride.cancel",
+            "ride",
+            Some(rid),
+            format!("event {id} cancelled"),
+        )
+        .await;
         if let Some(d) = d {
             notify(
                 &st.db,
@@ -433,7 +461,15 @@ async fn cancel_event(
             .await;
         }
     }
-    audit(&st.db, Some(u.id), "event.cancel", "event", Some(id), "").await;
+    audit(
+        &st.db,
+        Some(u.id),
+        "event.cancel",
+        "event",
+        Some(id),
+        &e.title,
+    )
+    .await;
     Ok(Json(json!({"ok": true})))
 }
 
@@ -511,7 +547,19 @@ async fn signup(
         "event.signup",
         "event",
         Some(id),
-        status,
+        format!(
+            "{status}{}{}",
+            if req.need_ride.unwrap_or(false) {
+                "; needs a ride"
+            } else {
+                ""
+            },
+            if req.offer_drive.unwrap_or(false) {
+                "; offers to drive"
+            } else {
+                ""
+            },
+        ),
     )
     .await;
     Ok(Json(json!({"ok": true, "status": status})))
@@ -540,6 +588,16 @@ async fn withdraw(
                 .bind(sid)
                 .execute(&st.db)
                 .await?;
+            // No actor: the seat passes on automatically when someone withdraws.
+            audit(
+                &st.db,
+                None,
+                "event.waitlist_promote",
+                "event",
+                Some(id),
+                format!("user {uid} waitlist → going"),
+            )
+            .await;
             let zh = format!("您已获得「{}」的名额", e.title);
             let en = format!("You now have a spot in \"{}\"", e.title);
             notify(
@@ -561,6 +619,15 @@ async fn withdraw(
     .await?;
     for (rid, d) in rides {
         sqlx::query("UPDATE rides SET status='cancelled', attention_reason='乘客取消活动报名', updated_at=$1 WHERE id=$2").bind(now()).bind(rid).execute(&st.db).await?;
+        audit(
+            &st.db,
+            Some(u.id),
+            "ride.cancel",
+            "ride",
+            Some(rid),
+            format!("withdrew from event {id}"),
+        )
+        .await;
         if let Some(d) = d {
             let body = format!("{} · {}", u.name, e.title);
             notify(

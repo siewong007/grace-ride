@@ -285,7 +285,7 @@ async fn create(
         "settlement.create",
         "settlement",
         Some(sid),
-        "",
+        req.title.trim(),
     )
     .await;
     Ok(Json(json!({"id": sid})))
@@ -548,6 +548,15 @@ async fn delete_draft(
         .bind(id)
         .execute(&st.db)
         .await?;
+    audit(
+        &st.db,
+        Some(u.id),
+        "settlement.delete",
+        "settlement",
+        Some(id),
+        format!("draft: {}", s.title),
+    )
+    .await;
     Ok(Json(json!({"ok": true})))
 }
 
