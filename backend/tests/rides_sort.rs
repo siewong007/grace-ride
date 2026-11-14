@@ -17,6 +17,16 @@ async fn admin_rides_sort_uses_allow_listed_fields() {
     let (app, st) = setup().await;
     let root = login(&st, "superadmin@example.org").await;
 
+    // Give the seeded rides names whose order is independent of database locale.
+    sqlx::query("UPDATE users SET name = 'User ' || lpad(id::text, 20, '0')")
+        .execute(&st.db)
+        .await
+        .unwrap();
+    sqlx::query("UPDATE areas SET name = 'Area ' || lpad(id::text, 20, '0')")
+        .execute(&st.db)
+        .await
+        .unwrap();
+
     let desc = call(
         &app,
         Method::GET,
@@ -41,6 +51,36 @@ async fn admin_rides_sort_uses_allow_listed_fields() {
     let times = pickup_times(&asc.json);
     assert!(times.windows(2).all(|w| w[0] <= w[1]), "{times:?}");
 
+    for (sort, field) in [
+        ("passenger", "/passenger/name"),
+        ("area", "/area/name"),
+        ("driver", "/driver/name"),
+        ("status", "/status"),
+    ] {
+        let sorted = call(
+            &app,
+            Method::GET,
+            &format!("/api/admin/rides?page=1&limit=200&sort={sort}&dir=asc"),
+            Some(&root),
+            None,
+        )
+        .await;
+        assert_eq!(sorted.status, StatusCode::OK, "{}", sorted.json);
+        let values: Vec<_> = sorted.json["items"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|ride| {
+                let value = ride.pointer(field).and_then(serde_json::Value::as_str);
+                (value.is_none(), value)
+            })
+            .collect();
+        assert!(
+            values.windows(2).all(|w| w[0] <= w[1]),
+            "{sort}: {values:?}"
+        );
+    }
+
     let injected = call(
         &app,
         Method::GET,
@@ -50,6 +90,16 @@ async fn admin_rides_sort_uses_allow_listed_fields() {
     )
     .await;
     assert_eq!(injected.status, StatusCode::OK, "{}", injected.json);
-    let times = pickup_times(&injected.json);
-    assert!(times.windows(2).all(|w| w[0] <= w[1]), "{times:?}");
+    assert_eq!(pickup_times(&injected.json), pickup_times(&asc.json));
+
+    let unsupported = call(
+        &app,
+        Method::GET,
+        "/api/admin/rides?page=1&limit=200&sort=id&dir=desc",
+        Some(&root),
+        None,
+    )
+    .await;
+    assert_eq!(unsupported.status, StatusCode::OK, "{}", unsupported.json);
+    assert_eq!(pickup_times(&unsupported.json), pickup_times(&asc.json));
 }

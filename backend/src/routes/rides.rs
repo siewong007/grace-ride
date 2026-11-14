@@ -2468,8 +2468,10 @@ async fn admin_rides(
         q.dir.as_deref(),
         &[
             ("pickup_at", "r.pickup_at"),
+            ("passenger", "p.name"),
+            ("area", "a.name"),
+            ("driver", "d.name"),
             ("status", "r.status"),
-            ("id", "r.id"),
         ],
         "r.pickup_at ASC, r.id ASC",
         "r.id ASC",
