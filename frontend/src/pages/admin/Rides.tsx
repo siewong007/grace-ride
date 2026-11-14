@@ -13,8 +13,10 @@ import {
   PageHeader,
   Pagination,
   UniversalTable,
+  TableColumn,
+  StatusPill,
 } from '../../components/ui';
-import { exportToCsv, RIDE_STATUS, todayStr, useFormatT } from '../../format';
+import { exportToCsv, fmtDay, RIDE_STATUS, todayStr, useFormatT } from '../../format';
 
 // Every status a ride can have. The API filters on the exact status, so these must be real
 // values ("requested" / "matched" were not, and always returned nothing).

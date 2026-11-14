@@ -1248,6 +1248,14 @@ async fn invite_accept(
 
     let uid = if kind == "recovery" {
         let id = rec_user.ok_or_else(|| bad(lang, ErrorKey::RecoveryLinkInvalid))?;
+        // A recovery link signs in as the member. Once one is used, no sibling
+        // recovery link may remain live (e.g. one issued before a replacement).
+        sqlx::query("UPDATE invites SET expires_at=$1 WHERE kind='recovery' AND user_id=$2 AND id<>$3 AND used_at IS NULL")
+            .bind(minutes_ago(1))
+            .bind(id)
+            .bind(inv_id)
+            .execute(&st.db)
+            .await?;
         sqlx::query(
             "UPDATE users SET terms_accepted_at=COALESCE(terms_accepted_at, $1) WHERE id=$2",
         )

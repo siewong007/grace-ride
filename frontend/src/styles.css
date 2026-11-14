@@ -2045,3 +2045,16 @@ main:focus { outline: none; }
 }
 
 
+
+/* Audit fields must wrap independently of their labels and action links. */
+.audit-page .page-head-actions, .audit-page .admin-filters-bar > * { min-width: 0; }
+.audit-page .admin-filters-bar > .row { max-width: 100%; }
+.audit-entry-time { display: grid; gap: var(--space-1); }
+.audit-page .admin-filters-bar .row { flex-wrap: wrap; }
+.audit-entry { display: grid; gap: var(--space-4); }
+.audit-entry-row { display: grid; grid-template-columns: 72px minmax(0, 1fr); gap: var(--space-3); align-items: start; }
+.audit-entry-row > :last-child { min-width: 0; overflow-wrap: anywhere; }
+.audit-entry-row .pill { white-space: normal; overflow-wrap: anywhere; }
+@media (max-width: 479px) {
+  .audit-entry-row { grid-template-columns: minmax(0, 1fr); gap: var(--space-1); }
+}

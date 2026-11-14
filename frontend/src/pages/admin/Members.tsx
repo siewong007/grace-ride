@@ -17,6 +17,8 @@ import {
   Pagination,
   Pill,
   Tabs,
+  TableColumn,
+  UniversalTable,
   useAction,
   useConfirm,
   useToast,
@@ -92,6 +94,7 @@ export default function Members() {
       </Page>
     );
   }
+
 
   return (
     <Page>
@@ -176,6 +179,81 @@ function MemberList() {
     exportToCsv(`grace-ride-members-${todayStr()}`, headers, rows);
   };
 
+  const columns: TableColumn<User>[] = [
+    {
+      key: 'name',
+      header: t('members.name'),
+      render: (u) => (
+        <div className="row nowrap">
+          <Avatar name={u.name} size="sm" />
+          <span>{u.name}</span>
+        </div>
+      ),
+    },
+    {
+      key: 'email',
+      header: t('members.email'),
+      render: (u) => u.email,
+    },
+    {
+      key: 'role',
+      header: t('members.role'),
+      render: (u) => (
+        <div className="chips">
+          {u.roles.length > 0 ? (
+            u.roles.map((r) => (
+              <Pill key={r} tone="blue">
+                {roleLabel(r, ft, names)}
+              </Pill>
+            ))
+          ) : (
+            <Pill tone="gray">{t('members.member')}</Pill>
+          )}
+        </div>
+      ),
+    },
+    {
+      key: 'group',
+      header: t('members.group'),
+      render: (u) => u.groups || <span className="muted">—</span>,
+      cellClassName: 'small',
+    },
+    {
+      key: 'passkey',
+      header: t('members.passkey'),
+      render: (u) => u.passkeys,
+      cellClassName: 'mono',
+    },
+  ];
+  if (canEdit) {
+    columns.push({
+      key: 'actions',
+      header: t('members.actions'),
+      render: (u) =>
+        !editable(u) ? null : (
+          <>
+            {u.status === 'pending' ? (
+              <Button
+                variant="primary"
+                size="sm"
+                onClick={() => setModalUser({ user: u, mode: 'approve' })}
+              >
+                {t('members.approveMember')}
+              </Button>
+            ) : (
+              <Button
+                variant="secondary"
+                size="sm"
+                onClick={() => setModalUser({ user: u, mode: 'edit' })}
+              >
+                {t('members.edit')}
+              </Button>
+            )}
+          </>
+        ),
+    });
+  }
+
   return (
     <div className="stack">
       <div className="row between nowrap gap-sm">
@@ -198,86 +276,13 @@ function MemberList() {
         ) : !users.length ? (
           <EmptyState title={t('members.none')} />
         ) : (
-          {const columns: TableColumn<User>[] = [
-            {
-              key: 'name',
-              header: t('members.name'),
-              render: (u) => (
-                <div className="row nowrap">
-                  <Avatar name={u.name} size="sm" />
-                  <span>{u.name}</span>
-                </div>
-              ),
-            },
-            {
-              key: 'email',
-              header: t('members.email'),
-              render: (u) => u.email,
-            },
-            {
-              key: 'role',
-              header: t('members.role'),
-              render: (u) => (
-                <div className="chips">
-                  {u.roles.length > 0 ? (
-                    u.roles.map((r) => (
-                      <Pill key={r} tone="blue">
-                        {roleLabel(r, ft, names)}
-                      </Pill>
-                    ))
-                  ) : (
-                    <Pill tone="gray">{t('members.member')}</Pill>
-                  )}
-                </div>
-              ),
-            },
-            {
-              key: 'group',
-              header: t('members.group'),
-              render: (u) => u.groups || <span className="muted">—</span>,
-              cellClassName: 'small',
-            },
-            {
-              key: 'passkey',
-              header: t('members.passkey'),
-              render: (u) => u.passkeys,
-              cellClassName: 'mono',
-            },
-          ];
-          if (canEdit) {
-            columns.push({
-              key: 'actions',
-              header: t('members.actions'),
-              render: (u) =>
-                !editable(u) ? null : (
-                  <>
-                    {u.status === 'pending' ? (
-                      <Button
-                        variant="primary"
-                        size="sm"
-                        onClick={() => setModalUser({ user: u, mode: 'approve' })}
-                      >
-                        {t('members.approveMember')}
-                      </Button>
-                    ) : (
-                      <Button
-                        variant="secondary"
-                        size="sm"
-                        onClick={() => setModalUser({ user: u, mode: 'edit' })}
-                      >
-                        {t('members.edit')}
-                      </Button>
-                    )}
-                  </>
-                ),
-            });
-          }
+
 
           <UniversalTable
             columns={columns}
             items={users}
             itemKey={(u) => u.id}
-          />}
+          />
         )}
         {users.length > 0 && (
           <Pagination

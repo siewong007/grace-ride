@@ -19,7 +19,7 @@ use crate::error::{bad, forbidden, not_found, AppError, AppResult};
 use crate::i18n::ErrorKey;
 use crate::perms::{self, parse_roles, Act, Page};
 use crate::state::AppState;
-use crate::util::{audit, in_days, now, random_token, require, require_one};
+use crate::util::{audit, in_days, minutes_ago, now, random_token, require, require_one};
 
 pub fn router() -> Router<AppState> {
     Router::new()
@@ -715,6 +715,20 @@ async fn approve_recovery(
     }
     // Only the hash is stored (see `routes::auth::INVITE_BY_TOKEN`); the link is returned once.
     let token = random_token(32);
+    let mut tx = st.db.begin().await?;
+    // Serialize link replacement per account. Issuing a second recovery link must
+    // retire the first immediately, even if two admins approve simultaneously.
+    let _: (i64,) = sqlx::query_as("SELECT id FROM users WHERE id=$1 FOR UPDATE")
+        .bind(uid)
+        .fetch_one(&mut *tx)
+        .await?;
+    sqlx::query(
+        "UPDATE invites SET expires_at=$1 WHERE kind='recovery' AND user_id=$2 AND used_at IS NULL",
+    )
+    .bind(minutes_ago(1))
+    .bind(uid)
+    .execute(&mut *tx)
+    .await?;
     sqlx::query("INSERT INTO invites (token, kind, email, user_id, created_by, expires_at, created_at) VALUES ($1, 'recovery', $2, $3, $4, $5, $6)")
         .bind(hash_token(&token))
         .bind(&email)
@@ -722,27 +736,28 @@ async fn approve_recovery(
         .bind(u.id)
         .bind(in_days(1))
         .bind(now())
-        .execute(&st.db)
+        .execute(&mut *tx)
         .await?;
     sqlx::query("UPDATE recovery_requests SET status='approved', resolved_by=$1 WHERE id=$2")
         .bind(u.id)
         .bind(id)
-        .execute(&st.db)
+        .execute(&mut *tx)
         .await?;
     // The old phone is presumed lost: revoke its sessions, passkeys and authenticator.
     // The member registers a new passkey with the one-time link.
     sqlx::query("DELETE FROM sessions WHERE user_id=$1")
         .bind(uid)
-        .execute(&st.db)
+        .execute(&mut *tx)
         .await?;
     sqlx::query("DELETE FROM passkeys WHERE user_id=$1")
         .bind(uid)
-        .execute(&st.db)
+        .execute(&mut *tx)
         .await?;
     sqlx::query("UPDATE users SET totp_enabled=0, totp_secret=NULL, totp_last_step=0, totp_backup_codes=NULL WHERE id=$1")
         .bind(uid)
-        .execute(&st.db)
+        .execute(&mut *tx)
         .await?;
+    tx.commit().await?;
     audit(
         &st.db,
         Some(u.id),

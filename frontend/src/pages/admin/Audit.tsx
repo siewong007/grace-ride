@@ -16,6 +16,8 @@ import {
   PageHeader,
   Pill,
   Stat,
+  TableColumn,
+  UniversalTable,
   useInfiniteScroll,
 } from '../../components/ui';
 import { fmtDateTime, useFormatT } from '../../format';
@@ -550,13 +552,109 @@ export default function Audit() {
   const escalationCount = items.filter((a) => a.action === 'ride.escalate').length;
   const isSecurityActive = q === 'failed';
 
+  const columns: TableColumn<AuditItem>[] = [
+    {
+      key: 'time',
+      header: t('audit.time'),
+      render: (a) => <span className="mono small">{fmtDateTime(a.created_at, ft)}</span>,
+    },
+    {
+      key: 'actor',
+      header: t('audit.actor'),
+      render: (a) =>
+        a.actor ? (
+          <button
+            type="button"
+            className="table-filter-link"
+            onClick={() => set('q', a.actor!)}
+            title={t('audit.filterByActor')}
+          >
+            {highlightText(a.actor, search)}
+          </button>
+        ) : (
+          t('audit.system')
+        ),
+    },
+    {
+      key: 'action',
+      header: t('audit.action'),
+      render: (a) => (
+        <button
+          type="button"
+          className="table-filter-link mono"
+          onClick={() => set('action', a.action)}
+          title={t('audit.filterByAction')}
+        >
+          <Pill tone={getActionTone(a.action)}>
+            {highlightText(a.action, search)}
+          </Pill>
+        </button>
+      ),
+    },
+    {
+      key: 'object',
+      header: t('audit.object'),
+      render: (a) => {
+        const targetUrl = getObjectLink(a.entity, a.entity_id);
+        return (
+          <div className="row gap-xs" style={{ display: 'inline-flex', alignItems: 'center' }}>
+            <button
+              type="button"
+              className="table-filter-link"
+              onClick={() => {
+                set('entity', a.entity);
+                if (a.entity_id != null) set('entity_id', String(a.entity_id));
+              }}
+              title={t('audit.filterByObject')}
+            >
+              {highlightText(`${a.entity}${a.entity_id != null ? ` #${a.entity_id}` : ''}`, search)}
+            </button>
+            {targetUrl && (
+              <Link
+                to={targetUrl}
+                title={t('audit.viewObject')}
+                aria-label={`${t('audit.viewObject')} ${a.entity} #${a.entity_id}`}
+                style={{ color: 'var(--muted)', display: 'inline-flex' }}
+              >
+                <ExternalLink size={12} />
+              </Link>
+            )}
+          </div>
+        );
+      },
+    },
+    {
+      key: 'detail',
+      header: t('audit.detail'),
+      render: (a) => highlightText(a.detail, search),
+    },
+    {
+      key: 'viewDetail',
+      header: t('audit.viewDetail'),
+      render: (a) => (
+        <Button
+          variant="ghost"
+          size="sm"
+          icon={<Eye size={16} />}
+          onClick={() => {
+            setSelectedItem(a);
+            setCopied(false);
+          }}
+          aria-label={`${t('audit.viewDetail')} #${a.id}`}
+        >
+          {t('audit.viewDetail')}
+        </Button>
+      ),
+    },
+  ];
+
   return (
-    <Page>
+    <Page className="audit-page">
       <PageHeader
         title={t('audit.title')}
         subtitle={t('audit.desc')}
         actions={
-          <div className="row nowrap gap-xs">
+          <div className="row gap-xs">
             <Button
               variant="ghost"
               size="sm"
@@ -671,7 +769,7 @@ export default function Audit() {
             onChange={(e) => set('to', e.target.value)}
           />
         </label>
-        <div className="row nowrap gap-xs">
+        <div className="row gap-xs">
           <Button
             variant="ghost"
             size="sm"
@@ -740,100 +838,13 @@ export default function Audit() {
       ) : (
         <>
           <Card>
-            <div className="table-wrap">
-              <table className="table responsive sticky-header">
-                <thead>
-                  <tr>
-                    <th>{t('audit.time')}</th>
-                    <th>{t('audit.actor')}</th>
-                    <th>{t('audit.action')}</th>
-                    <th>{t('audit.object')}</th>
-                    <th>{t('audit.detail')}</th>
-                    <th style={{ width: '80px' }}>{t('audit.viewDetail')}</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {items.map((a) => {
-                    const targetUrl = getObjectLink(a.entity, a.entity_id);
-                    return (
-                      <tr key={a.id}>
-                        <td data-label={t('audit.time')} className="mono small">
-                          {fmtDateTime(a.created_at, ft)}
-                        </td>
-                        <td data-label={t('audit.actor')}>
-                          {a.actor ? (
-                            <button
-                              type="button"
-                              className="table-filter-link"
-                              onClick={() => set('q', a.actor!)}
-                              title={t('audit.filterByActor')}
-                            >
-                              {highlightText(a.actor, search)}
-                            </button>
-                          ) : (
-                            t('audit.system')
-                          )}
-                        </td>
-                        <td data-label={t('audit.action')} className="mono small">
-                          <button
-                            type="button"
-                            className="table-filter-link mono"
-                            onClick={() => set('action', a.action)}
-                            title={t('audit.filterByAction')}
-                          >
-                            <Pill tone={getActionTone(a.action)}>
-                              {highlightText(a.action, search)}
-                            </Pill>
-                          </button>
-                        </td>
-                        <td data-label={t('audit.object')} className="small">
-                          <div className="row nowrap gap-xs" style={{ display: 'inline-flex', alignItems: 'center' }}>
-                            <button
-                              type="button"
-                              className="table-filter-link"
-                              onClick={() => {
-                                set('entity', a.entity);
-                                if (a.entity_id != null) set('entity_id', String(a.entity_id));
-                              }}
-                              title={t('audit.filterByObject')}
-                            >
-                              {highlightText(`${a.entity}${a.entity_id != null ? ` #${a.entity_id}` : ''}`, search)}
-                            </button>
-                            {targetUrl && (
-                              <Link
-                                to={targetUrl}
-                                title={t('audit.viewObject')}
-                                aria-label={`${t('audit.viewObject')} ${a.entity} #${a.entity_id}`}
-                                style={{ color: 'var(--muted)', display: 'inline-flex' }}
-                              >
-                                <ExternalLink size={12} />
-                              </Link>
-                            )}
-                          </div>
-                        </td>
-                        <td data-label={t('audit.detail')} className="small">
-                          {highlightText(a.detail, search)}
-                        </td>
-                        <td data-label={t('audit.viewDetail')}>
-                          <Button
-                            variant="ghost"
-                            size="sm"
-                            icon={<Eye size={16} />}
-                            onClick={() => {
-                              setSelectedItem(a);
-                              setCopied(false);
-                            }}
-                            aria-label={`${t('audit.viewDetail')} #${a.id}`}
-                          >
-                            {t('audit.viewDetail')}
-                          </Button>
-                        </td>
-                      </tr>
-                    );
-                  })}
-                </tbody>
-              </table>
-            </div>
+
+
+            <UniversalTable
+              columns={columns}
+              items={items}
+              itemKey={(a) => a.id}
+            />
           </Card>
 
           <div className="row between">
@@ -870,14 +881,14 @@ export default function Audit() {
             </div>
           }
         >
-          <div className="flow-sm">
-            <div className="row between small">
+          <div className="audit-entry">
+            <div className="audit-entry-row small">
               <span className="muted">{t('audit.time')}</span>
-              <span className="mono">{fmtDateTime(selectedItem.created_at, ft)} ({selectedItem.created_at})</span>
+              <div className="audit-entry-time"><span>{fmtDateTime(selectedItem.created_at, ft)}</span><span className="mono muted small">{selectedItem.created_at}</span></div>
             </div>
-            <div className="row between small">
+            <div className="audit-entry-row small">
               <span className="muted">{t('audit.actor')}</span>
-              <div className="row nowrap gap-xs">
+              <div className="row gap-xs">
                 <span>{selectedItem.actor ?? t('audit.system')}</span>
                 {selectedItem.actor && (
                   <Button
@@ -905,9 +916,9 @@ export default function Audit() {
                 )}
               </div>
             </div>
-            <div className="row between small">
+            <div className="audit-entry-row small">
               <span className="muted">{t('audit.action')}</span>
-              <div className="row nowrap gap-xs">
+              <div className="row gap-xs">
                 <Pill tone={getActionTone(selectedItem.action)}>
                   {selectedItem.action}
                 </Pill>
@@ -923,9 +934,9 @@ export default function Audit() {
                 </Button>
               </div>
             </div>
-            <div className="row between small">
+            <div className="audit-entry-row small">
               <span className="muted">{t('audit.object')}</span>
-              <div className="row nowrap gap-xs" style={{ alignItems: 'center' }}>
+              <div className="row gap-xs" style={{ alignItems: 'center' }}>
                 <span>
                   {entityLabel(selectedItem.entity)}
                   {selectedItem.entity_id != null ? ` #${selectedItem.entity_id}` : ''}

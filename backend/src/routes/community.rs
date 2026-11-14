@@ -9,7 +9,7 @@ use serde::Deserialize;
 use serde_json::{json, Value};
 
 use crate::auth::CurrentUser;
-use crate::error::{bad, forbidden, not_found, AppResult};
+use crate::error::{bad, conflict, forbidden, not_found, AppResult};
 use crate::i18n::ErrorKey;
 use crate::perms::{Act, Page};
 use crate::state::AppState;
@@ -1239,7 +1239,10 @@ async fn pay_reimbursement(
     if req.paid_ref.trim().len() < 4 {
         return Err(bad(u.lang, ErrorKey::TxnRefRequired));
     }
-    sqlx::query("UPDATE reimbursements SET status='paid', payee_verified=1, paid_ref=$1, paid_by=$2, paid_at=$3, updated_at=$4 WHERE id=$5")
+    // The status check above and this update are separate statements, so a second
+    // finance admin can pass the check before the first commit. Transitioning from
+    // 'approved' in the update itself makes exactly one payout win.
+    let paid = sqlx::query("UPDATE reimbursements SET status='paid', payee_verified=1, paid_ref=$1, paid_by=$2, paid_at=$3, updated_at=$4 WHERE id=$5 AND status='approved'")
         .bind(req.paid_ref.trim())
         .bind(u.id)
         .bind(now())
@@ -1247,6 +1250,9 @@ async fn pay_reimbursement(
         .bind(id)
         .execute(&st.db)
         .await?;
+    if paid.rows_affected() == 0 {
+        return Err(conflict(u.lang, ErrorKey::ReimbursementProcessed));
+    }
     notify(
         &st.db,
         r.user_id,
@@ -1288,6 +1294,25 @@ struct ReportQuery {
     r#type: Option<String>,
     /// "monthly" | "quarterly" | "yearly" — report period granularity (default: monthly)
     range: Option<String>,
+}
+
+/// Parse `YYYY-MM` without slicing by byte offset: a 7-byte non-ASCII string used
+/// to panic the handler when a slice landed inside a multi-byte character.
+fn parse_report_month(raw: &str) -> Option<(i32, u32)> {
+    let b = raw.as_bytes();
+    if b.len() != 7
+        || b[4] != b'-'
+        || !b[..4].iter().all(u8::is_ascii_digit)
+        || !b[5..].iter().all(u8::is_ascii_digit)
+    {
+        return None;
+    }
+    let year: i32 = raw[..4].parse().ok()?;
+    let month: u32 = raw[5..7].parse().ok()?;
+    if !(1..=9999).contains(&year) || !(1..=12).contains(&month) {
+        return None;
+    }
+    Some((year, month))
 }
 
 pub async fn compute_badges(st: &AppState, user_id: i64, lang: Lang) -> AppResult<Vec<Value>> {
@@ -1388,30 +1413,34 @@ async fn monthly_report(
     let rtype = q.r#type.as_deref().unwrap_or("all");
     let range = q.range.as_deref().unwrap_or("monthly");
     let month = q.month.unwrap_or_else(|| now()[..7].to_string());
-    if month.len() != 7 {
-        return Err(bad(u.lang, ErrorKey::MonthFormatInvalid));
-    }
+    let (y, m) =
+        parse_report_month(&month).ok_or_else(|| bad(u.lang, ErrorKey::MonthFormatInvalid))?;
 
-    // Compute period bounds from month (YYYY-MM) and range
-    let y: i32 = month[..4].parse().unwrap_or(0);
-    let m: i32 = month[5..7].parse().unwrap_or(1);
+    // Period bounds are half-open: `start <= pickup_at < end`. The end is the first
+    // day *after* the period, so the selected month/quarter/year is fully included.
     let (start, end): (String, String) = match range {
         "quarterly" => {
-            let q = ((m - 1) / 3) + 1;
-            let start_m = (q - 1) * 3 + 1;
-            let end_m = start_m + 2;
-            let end_y = if end_m > 12 { y + 1 } else { y };
-            let end_m = if end_m > 12 { end_m - 12 } else { end_m };
+            let quarter = (m - 1) / 3;
+            let start_m = quarter * 3 + 1;
+            let end_m = start_m + 3;
+            let (end_y, end_m) = if end_m > 12 {
+                (y + 1, end_m - 12)
+            } else {
+                (y, end_m)
+            };
             (
                 format!("{:04}-{:02}-01", y, start_m),
                 format!("{:04}-{:02}-01", end_y, end_m),
             )
         }
-        "yearly" => (format!("{:04}-01-01", y), format!("{:04}-12-01", y)),
-        _ => (
-            format!("{:04}-{:02}-01", y, m),
-            format!("{:04}-{:02}-01", y, m),
-        ),
+        "yearly" => (format!("{:04}-01-01", y), format!("{:04}-01-01", y + 1)),
+        _ => {
+            let (end_y, end_m) = if m == 12 { (y + 1, 1) } else { (y, m + 1) };
+            (
+                format!("{:04}-{:02}-01", y, m),
+                format!("{:04}-{:02}-01", end_y, end_m),
+            )
+        }
     };
 
     let (name,): (String,) = sqlx::query_as("SELECT name FROM users WHERE id=$1")
@@ -1420,30 +1449,33 @@ async fn monthly_report(
         .await?
         .ok_or(not_found(u.lang))?;
 
-    let side_filter = match rtype {
-        "driver" => "r.driver_id=$1 AND".to_string(),
-        "passenger" => "r.passenger_id=$1 AND".to_string(),
-        _ => "(r.driver_id=$1 OR r.passenger_id=$1) AND".to_string(),
+    // `rides_driven` is the target's own driving, never a ride they merely took as a
+    // passenger. The type filter narrows which side of the report is populated.
+    let (driven,): (i64,) = if rtype == "passenger" {
+        (0,)
+    } else {
+        sqlx::query_as(
+            "SELECT COUNT(*) FROM rides r WHERE r.driver_id=$1 AND r.status='completed' AND r.pickup_at >= $2 AND r.pickup_at < $3",
+        )
+        .bind(target)
+        .bind(&start)
+        .bind(&end)
+        .fetch_one(&st.db)
+        .await?
     };
 
-    let (driven,): (i64,) = sqlx::query_as(&format!(
-        "SELECT COUNT(*) FROM rides r WHERE {} r.status='completed' AND r.pickup_at >= $2 AND r.pickup_at < $3",
-        side_filter
-    ))
-    .bind(target)
-    .bind(&start)
-    .bind(&end)
-    .fetch_one(&st.db)
-    .await?;
-
-    let (received,): (i64,) = sqlx::query_as(
-        "SELECT COUNT(*) FROM rides r WHERE r.passenger_id=$1 AND r.status='completed' AND r.pickup_at >= $2 AND r.pickup_at < $3",
-    )
-    .bind(target)
-    .bind(&start)
-    .bind(&end)
-    .fetch_one(&st.db)
-    .await?;
+    let (received,): (i64,) = if rtype == "driver" {
+        (0,)
+    } else {
+        sqlx::query_as(
+            "SELECT COUNT(*) FROM rides r WHERE r.passenger_id=$1 AND r.status='completed' AND r.pickup_at >= $2 AND r.pickup_at < $3",
+        )
+        .bind(target)
+        .bind(&start)
+        .bind(&end)
+        .fetch_one(&st.db)
+        .await?
+    };
 
     let (dist_total, reimb_total): (Option<i64>, i64) = sqlx::query_as(
         "SELECT COALESCE(SUM(r.distance_km),0)::BIGINT, COALESCE(SUM(r.reimbursement_amount_cents),0)::BIGINT FROM rides r WHERE r.driver_id=$1 AND r.status='completed' AND r.pickup_at >= $2 AND r.pickup_at < $3",

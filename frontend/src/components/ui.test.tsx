@@ -22,6 +22,8 @@ import {
   useConfirm,
   VirtualList,
   BackToTop,
+  TableColumn,
+  UniversalTable,
 } from './ui';
 
 describe('Button primitive', () => {
@@ -410,3 +412,77 @@ describe('VirtualList primitive', () => {
     expect(screen.getByText('Alpha')).toBeInTheDocument();
   });
 });
+
+describe('UniversalTable component', () => {
+  interface User {
+    id: number;
+    name: string;
+  }
+
+  const users: User[] = [
+    { id: 1, name: 'Ana' },
+    { id: 2, name: 'Bo' },
+  ];
+
+  const columns: TableColumn<User>[] = [
+    {
+      key: 'name',
+      header: 'Name',
+      render: (u) => <span data-testid="name-cell">{u.name}</span>,
+    },
+  ];
+
+  it('renders header and body rows', () => {
+    render(<UniversalTable columns={columns} items={users} itemKey={(u) => u.id} />);
+    const headers = screen.getAllByRole('columnheader');
+    expect(headers).toHaveLength(1);
+    expect(headers[0]).toHaveTextContent('Name');
+
+    const cells = screen.getAllByTestId('name-cell');
+    expect(cells).toHaveLength(2);
+    expect(cells[0]).toHaveTextContent('Ana');
+    expect(cells[1]).toHaveTextContent('Bo');
+  });
+
+  it('adds data-label to cells in responsive stacked mode', () => {
+    render(<UniversalTable columns={columns} items={users} itemKey={(u) => u.id} />);
+    const dataLabels = screen
+      .getAllByRole('cell')
+      .map((cell) => cell.getAttribute('data-label'));
+    expect(dataLabels).toEqual(['Name', 'Name']);
+  });
+
+  it('renders empty content when items is empty', () => {
+    const emptyContent = <p data-testid="empty">No rows</p>;
+    render(
+      <UniversalTable
+        columns={columns}
+        items={[]}
+        emptyContent={emptyContent}
+        itemKey={(u) => u.id}
+      />,
+    );
+    expect(screen.getByTestId('empty')).toHaveTextContent('No rows');
+  });
+
+  it('calls onRowClick with the item when a row is clicked', () => {
+    const onRowClick = vi.fn();
+    render(
+      <UniversalTable columns={columns} items={users} onRowClick={onRowClick} itemKey={(u) => u.id} />,
+    );
+    const firstRow = screen.getAllByRole('row')[1];
+    fireEvent.click(firstRow);
+    expect(onRowClick).toHaveBeenCalledWith(users[0], 0);
+  });
+
+  it('is keyboard accessible when rows are clickable', () => {
+    const onRowClick = vi.fn();
+    render(
+      <UniversalTable columns={columns} items={users} onRowClick={onRowClick} itemKey={(u) => u.id} />,
+    );
+    const rows = screen.getAllByRole('row');
+    fireEvent.keyDown(rows[1], { key: 'Enter' });
+    expect(onRowClick).toHaveBeenCalledWith(users[0], 0);
+  });
+});
+

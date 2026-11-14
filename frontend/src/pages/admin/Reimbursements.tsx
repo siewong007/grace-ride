@@ -60,6 +60,7 @@ export default function AdminReimbursements() {
     setParams(p, { replace: true });
   };
 
+
   return (
     <Page>
       <PageHeader title={t('reimb.title')} subtitle={t('reimb.desc')} />
@@ -124,6 +125,72 @@ function List({ scope }: { scope: 'review' | 'payout' }) {
     exportToCsv(`grace-ride-reimbursements-${scope}-${todayStr()}`, headers, rows);
   };
 
+  const columns: TableColumn<Reimb>[] = [
+    {
+      key: 'applicant',
+      header: t('reimb.applicant'),
+      render: (r) => <div className="bold">{r.user.name}</div>,
+    },
+    {
+      key: 'amount',
+      header: t('reimb.amount'),
+      render: (r) => <div className="mono bold">{rm(r.amount_cents)}</div>,
+    },
+    {
+      key: 'description',
+      header: t('reimb.description'),
+      render: (r) => (
+        <div className="small">
+          {r.description}
+          {r.ride_id && (
+            <>
+              {' · '}
+              <Link to={`/admin/rides/${r.ride_id}`}>
+                {t('reimb.rideLink')}
+              </Link>
+            </>
+          )}
+        </div>
+      ),
+    },
+    {
+      key: 'submitted',
+      header: t('reimb.submitted'),
+      render: (r) => fmtDay(r.created_at, ft),
+    },
+    {
+      key: 'status',
+      header: t('reimb.status'),
+      render: (r) => <StatusPill map={REIMB_STATUS} status={r.status} />,
+    },
+    {
+      key: 'action',
+      header: 'Actions',
+      render: (r) => (
+        <>
+          {canAct &&
+          ((scope === 'review' && r.status === 'pending') ||
+            (scope === 'payout' && r.status === 'approved')) ? (
+            <Button
+              variant="primary"
+              size="sm"
+              onClick={() => setOpen(r)}
+            >
+              {scope === 'review'
+                ? t('reimb.reviewBtn')
+                : t('reimb.payBtn')}
+            </Button>
+          ) : (
+            <ReceiptLink
+              id={r.receipt_file_id}
+              label={t('reimb.receipt')}
+            />
+          )}
+        </>
+      ),
+    },
+  ];
+
   return (
     <div className="stack">
       {/* Clear section notices for role separation */}
@@ -146,77 +213,13 @@ function List({ scope }: { scope: 'review' | 'payout' }) {
         <EmptyState title={t('reimb.none')} />
       ) : (
         <Card>
-          {const columns: TableColumn<Reimb>[] = [
-            {
-              key: 'applicant',
-              header: t('reimb.applicant'),
-              render: (r) => <div className="bold">{r.user.name}</div>,
-            },
-            {
-              key: 'amount',
-              header: t('reimb.amount'),
-              render: (r) => <div className="mono bold">{rm(r.amount_cents)}</div>,
-            },
-            {
-              key: 'description',
-              header: t('reimb.description'),
-              render: (r) => (
-                <div className="small">
-                  {r.description}
-                  {r.ride_id && (
-                    <>
-                      {' · '}
-                      <Link to={`/admin/rides/${r.ride_id}`}>
-                        {t('reimb.rideLink')}
-                      </Link>
-                    </>
-                  )}
-                </div>
-              ),
-            },
-            {
-              key: 'submitted',
-              header: t('reimb.submitted'),
-              render: (r) => fmtDay(r.created_at, ft),
-            },
-            {
-              key: 'status',
-              header: t('reimb.status'),
-              render: (r) => <StatusPill map={REIMB_STATUS} status={r.status} />,
-            },
-            {
-              key: 'action',
-              header: 'Actions',
-              render: (r) => (
-                <>
-                  {canAct &&
-                  ((scope === 'review' && r.status === 'pending') ||
-                    (scope === 'payout' && r.status === 'approved')) ? (
-                    <Button
-                      variant="primary"
-                      size="sm"
-                      onClick={() => setOpen(r)}
-                    >
-                      {scope === 'review'
-                        ? t('reimb.reviewBtn')
-                        : t('reimb.payBtn')}
-                    </Button>
-                  ) : (
-                    <ReceiptLink
-                      id={r.receipt_file_id}
-                      label={t('reimb.receipt')}
-                    />
-                  )}
-                </>
-              ),
-            },
-          ];
+
 
           <UniversalTable
             columns={columns}
             items={items}
             itemKey={(r) => r.id}
-          />}
+          />
           <Pagination
             page={page}
             totalPages={totalPages}
