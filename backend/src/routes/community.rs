@@ -32,8 +32,11 @@ pub fn router() -> Router<AppState> {
         .route("/help/{id}", get(get_ticket))
         .route("/help/{id}/replies", post(reply_ticket))
         .route("/help/{id}/close", post(close_ticket))
-        .route("/help/guides", get(list_guides))
-        .route("/help/guides/{key}", get(get_guide))
+        .route("/help/guides", get(list_guides).post(create_guide))
+        .route(
+            "/help/guides/{key}",
+            get(get_guide).put(update_guide).delete(delete_guide),
+        )
         .route(
             "/reimbursements",
             get(list_reimbursements).post(create_reimbursement),
@@ -608,6 +611,201 @@ async fn get_guide(
         "id": id, "slug": slug, "title_en": ten, "title_zh": tzh,
         "summary_en": sen, "summary_zh": szh, "published": published, "steps": steps,
     })))
+}
+
+#[derive(Deserialize)]
+struct GuideStepIn {
+    title_en: Option<String>,
+    title_zh: Option<String>,
+    body_en: Option<String>,
+    body_zh: Option<String>,
+    link: Option<String>,
+}
+
+#[derive(Deserialize)]
+struct GuideIn {
+    slug: String,
+    title_en: Option<String>,
+    title_zh: Option<String>,
+    summary_en: Option<String>,
+    summary_zh: Option<String>,
+    published: Option<bool>,
+    #[serde(default)]
+    steps: Vec<GuideStepIn>,
+}
+
+fn trim_opt(v: &Option<String>) -> &str {
+    v.as_deref().map(str::trim).filter(|s| !s.is_empty()).unwrap_or("")
+}
+
+/// Normalise + validate a guide payload; returns columns ready to bind,
+/// with steps serialised to JSON text (sqlx has no json feature).
+#[allow(clippy::type_complexity)]
+fn validate_guide(
+    req: &GuideIn,
+    lang: crate::i18n::Lang,
+) -> AppResult<(String, String, String, String, String, bool, String)> {
+    let (title_en, title_zh) = (trim_opt(&req.title_en), trim_opt(&req.title_zh));
+    if title_en.is_empty() && title_zh.is_empty() {
+        return Err(bad(lang, ErrorKey::GuideTitleRequired));
+    }
+    let slug = req.slug.trim().to_lowercase();
+    let ok_slug = !slug.is_empty()
+        && !slug.starts_with('-')
+        && !slug.ends_with('-')
+        && slug
+            .chars()
+            .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-');
+    if !ok_slug {
+        return Err(bad(lang, ErrorKey::GuideSlugRequired));
+    }
+    if req.steps.len() > 30 {
+        return Err(bad(lang, ErrorKey::GuideStepInvalid));
+    }
+    let mut steps: Vec<Value> = Vec::new();
+    for s in &req.steps {
+        let (ten, tzh) = (trim_opt(&s.title_en), trim_opt(&s.title_zh));
+        if ten.is_empty() && tzh.is_empty() {
+            return Err(bad(lang, ErrorKey::GuideStepInvalid));
+        }
+        let link = s.link.as_deref().map(str::trim).filter(|l| !l.is_empty());
+        if let Some(l) = link {
+            // Internal app paths only: must start with '/', no protocol-relative URLs.
+            if !l.starts_with('/') || l.starts_with("//") || l.contains(':') {
+                return Err(bad(lang, ErrorKey::GuideLinkInvalid));
+            }
+        }
+        steps.push(json!({
+            "title_en": ten, "title_zh": tzh,
+            "body_en": trim_opt(&s.body_en), "body_zh": trim_opt(&s.body_zh),
+            "link": link.unwrap_or(""),
+        }));
+    }
+    Ok((
+        slug.to_string(),
+        title_en.to_string(),
+        title_zh.to_string(),
+        trim_opt(&req.summary_en).to_string(),
+        trim_opt(&req.summary_zh).to_string(),
+        req.published.unwrap_or(true),
+        Value::Array(steps).to_string(),
+    ))
+}
+
+async fn create_guide(
+    State(st): State<AppState>,
+    u: CurrentUser,
+    Json(req): Json<GuideIn>,
+) -> AppResult<Json<Value>> {
+    require(&u, Page::AdminHelp, Act::Update)?;
+    let (slug, ten, tzh, sen, szh, published, steps) = validate_guide(&req, u.lang)?;
+    let dup: Option<(i64,)> = sqlx::query_as("SELECT id FROM guide_workflows WHERE slug=$1")
+        .bind(&slug)
+        .fetch_optional(&st.db)
+        .await?;
+    if dup.is_some() {
+        return Err(bad(u.lang, ErrorKey::GuideSlugExists));
+    }
+    let (id,): (i64,) = sqlx::query_as(
+        "INSERT INTO guide_workflows (slug, title_en, title_zh, summary_en, summary_zh, published, steps, updated_at, updated_by)
+         VALUES ($1,$2,$3,$4,$5,$6,$7::jsonb,$8,$9) RETURNING id",
+    )
+    .bind(&slug)
+    .bind(&ten)
+    .bind(&tzh)
+    .bind(&sen)
+    .bind(&szh)
+    .bind(published)
+    .bind(&steps)
+    .bind(now())
+    .bind(u.id)
+    .fetch_one(&st.db)
+    .await?;
+    audit(
+        &st.db,
+        Some(u.id),
+        "guide.create",
+        "guide_workflow",
+        Some(id),
+        &slug,
+    )
+    .await;
+    Ok(Json(json!({ "id": id })))
+}
+
+async fn update_guide(
+    State(st): State<AppState>,
+    u: CurrentUser,
+    Path(key): Path<i64>,
+    Json(req): Json<GuideIn>,
+) -> AppResult<Json<Value>> {
+    require(&u, Page::AdminHelp, Act::Update)?;
+    let (slug, ten, tzh, sen, szh, published, steps) = validate_guide(&req, u.lang)?;
+    let dup: Option<(i64,)> =
+        sqlx::query_as("SELECT id FROM guide_workflows WHERE slug=$1 AND id<>$2")
+            .bind(&slug)
+            .bind(key)
+            .fetch_optional(&st.db)
+            .await?;
+    if dup.is_some() {
+        return Err(bad(u.lang, ErrorKey::GuideSlugExists));
+    }
+    let n = sqlx::query(
+        "UPDATE guide_workflows SET slug=$1, title_en=$2, title_zh=$3, summary_en=$4, summary_zh=$5,
+                published=$6, steps=$7::jsonb, updated_at=$8, updated_by=$9 WHERE id=$10",
+    )
+    .bind(&slug)
+    .bind(&ten)
+    .bind(&tzh)
+    .bind(&sen)
+    .bind(&szh)
+    .bind(published)
+    .bind(&steps)
+    .bind(now())
+    .bind(u.id)
+    .bind(key)
+    .execute(&st.db)
+    .await?
+    .rows_affected();
+    if n == 0 {
+        return Err(not_found(u.lang));
+    }
+    audit(
+        &st.db,
+        Some(u.id),
+        "guide.update",
+        "guide_workflow",
+        Some(key),
+        &slug,
+    )
+    .await;
+    Ok(Json(json!({ "ok": true })))
+}
+
+async fn delete_guide(
+    State(st): State<AppState>,
+    u: CurrentUser,
+    Path(key): Path<i64>,
+) -> AppResult<Json<Value>> {
+    require(&u, Page::AdminHelp, Act::Update)?;
+    let n = sqlx::query("DELETE FROM guide_workflows WHERE id=$1")
+        .bind(key)
+        .execute(&st.db)
+        .await?
+        .rows_affected();
+    if n == 0 {
+        return Err(not_found(u.lang));
+    }
+    audit(
+        &st.db,
+        Some(u.id),
+        "guide.delete",
+        "guide_workflow",
+        Some(key),
+        "",
+    )
+    .await;
+    Ok(Json(json!({ "ok": true })))
 }
 
 // ---------------- Grab reimbursements ----------------

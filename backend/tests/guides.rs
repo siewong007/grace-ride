@@ -14,7 +14,7 @@ use grace_ride::{
     state::{AppState, Config},
 };
 use http_body_util::BodyExt;
-use serde_json::Value;
+use serde_json::{json, Value};
 use tower::ServiceExt;
 
 const ORIGIN: &str = "http://localhost:5173";
@@ -214,4 +214,95 @@ async fn drafts_hidden_from_non_editors() {
     .await;
     assert_eq!(r.status, StatusCode::OK);
     assert_eq!(r.json["published"], false);
+}
+
+fn guide_body() -> Value {
+    json!({
+        "slug": "new-guide",
+        "title_en": "New guide",
+        "title_zh": "新指南",
+        "summary_en": "Summary",
+        "summary_zh": "摘要",
+        "published": true,
+        "steps": [
+            {"title_en": "First", "title_zh": "第一步", "body_en": "Do it", "body_zh": "这样做", "link": "/admin/plan"},
+            {"title_en": "Second", "title_zh": "第二步", "body_en": "", "body_zh": "", "link": ""}
+        ]
+    })
+}
+
+#[tokio::test]
+async fn guide_crud_is_editor_only_and_audited() {
+    let (app, st) = setup().await;
+    let member = login(&st, "member@example.org").await;
+    let finance = login(&st, "finance@example.org").await; // staff pages, no admin_help update
+    let transport = login(&st, "transport@example.org").await; // admin_help update
+
+    // Non-editors cannot write.
+    for cookie in [&member, &finance] {
+        let r = call(&app, Method::POST, "/api/help/guides", Some(cookie), Some(guide_body())).await;
+        assert_eq!(r.status, StatusCode::FORBIDDEN);
+    }
+
+    // Create → round-trip → audit row.
+    let r = call(&app, Method::POST, "/api/help/guides", Some(&transport), Some(guide_body())).await;
+    assert_eq!(r.status, StatusCode::OK, "{}", r.json);
+    let id = r.json["id"].as_i64().unwrap();
+    let r = call(&app, Method::GET, "/api/help/guides/new-guide", Some(&transport), None).await;
+    assert_eq!(r.json["steps"][0]["link"], "/admin/plan");
+    assert_eq!(r.json["steps"].as_array().unwrap().len(), 2);
+    let (n,): (i64,) = sqlx::query_as(
+        "SELECT COUNT(*) FROM audit_logs WHERE action='guide.create' AND entity='guide_workflow' AND entity_id=$1",
+    )
+    .bind(id)
+    .fetch_one(&st.db)
+    .await
+    .unwrap();
+    assert_eq!(n, 1);
+
+    // Update.
+    let mut edited = guide_body();
+    edited["summary_en"] = json!("Edited");
+    let r = call(&app, Method::PUT, &format!("/api/help/guides/{id}"), Some(&transport), Some(edited)).await;
+    assert_eq!(r.status, StatusCode::OK);
+
+    // Delete → then gone.
+    let r = call(&app, Method::DELETE, &format!("/api/help/guides/{id}"), Some(&transport), None).await;
+    assert_eq!(r.status, StatusCode::OK);
+    let r = call(&app, Method::GET, "/api/help/guides/new-guide", Some(&transport), None).await;
+    assert_eq!(r.status, StatusCode::NOT_FOUND);
+}
+
+#[tokio::test]
+async fn guide_validation() {
+    let (app, st) = setup().await;
+    let transport = login(&st, "transport@example.org").await;
+    seed_guide(&st, "taken", true, "[]").await;
+
+    let mut b = guide_body();
+    b["title_en"] = json!(""); // no title in either language
+    b["title_zh"] = json!("");
+    let r = call(&app, Method::POST, "/api/help/guides", Some(&transport), Some(b)).await;
+    assert_eq!(r.status, StatusCode::BAD_REQUEST);
+    assert_eq!(r.json["code"], "GUIDE_TITLE_REQUIRED");
+
+    let mut b = guide_body();
+    b["slug"] = json!("Bad Slug!"); // not url-safe
+    let r = call(&app, Method::POST, "/api/help/guides", Some(&transport), Some(b)).await;
+    assert_eq!(r.json["code"], "GUIDE_SLUG_REQUIRED");
+
+    let mut b = guide_body();
+    b["slug"] = json!("taken"); // unique conflict
+    let r = call(&app, Method::POST, "/api/help/guides", Some(&transport), Some(b)).await;
+    assert_eq!(r.json["code"], "GUIDE_SLUG_EXISTS");
+
+    let mut b = guide_body();
+    b["steps"][0]["link"] = json!("https://evil.example"); // external link
+    let r = call(&app, Method::POST, "/api/help/guides", Some(&transport), Some(b)).await;
+    assert_eq!(r.json["code"], "GUIDE_LINK_INVALID");
+
+    let mut b = guide_body();
+    b["steps"] = json!([{"title_en": "", "title_zh": "", "body_en": "", "body_zh": "", "link": ""}]);
+    let r = call(&app, Method::POST, "/api/help/guides", Some(&transport), Some(b)).await;
+    assert_eq!(r.json["code"], "GUIDE_STEP_INVALID");
 }

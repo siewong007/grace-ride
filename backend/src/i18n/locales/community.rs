@@ -22,6 +22,27 @@ pub fn render(lang: Lang, key: &ErrorKey) -> String {
             "请填写标题及内容",
             "Please enter both a title and content",
         ),
+        ErrorKey::GuideTitleRequired => pair(
+            lang,
+            "请至少填写一种语言的指南标题",
+            "Enter the guide title in at least one language",
+        ),
+        ErrorKey::GuideSlugRequired => pair(
+            lang,
+            "请填写有效的 slug（小写字母、数字、连字符）",
+            "Enter a valid slug (lowercase letters, numbers, dashes)",
+        ),
+        ErrorKey::GuideSlugExists => pair(lang, "该 slug 已被使用", "That slug is already in use"),
+        ErrorKey::GuideLinkInvalid => pair(
+            lang,
+            "步骤链接必须是应用内路径（以 / 开头）",
+            "A step link must be an in-app path starting with /",
+        ),
+        ErrorKey::GuideStepInvalid => pair(
+            lang,
+            "每个步骤至少填写一种语言的标题；最多 30 个步骤",
+            "Every step needs a title in at least one language; 30 steps max",
+        ),
         ErrorKey::OnlyLinkOwnRides => pair(
             lang,
             "只能关联自己的接送",

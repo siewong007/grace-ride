@@ -184,6 +184,11 @@ pub fn render(lang: Lang, key: &ErrorKey) -> String {
         | ErrorKey::ReplyContentRequired
         | ErrorKey::LanguageInvalid
         | ErrorKey::TitleAndContentRequired
+        | ErrorKey::GuideTitleRequired
+        | ErrorKey::GuideSlugRequired
+        | ErrorKey::GuideSlugExists
+        | ErrorKey::GuideLinkInvalid
+        | ErrorKey::GuideStepInvalid
         | ErrorKey::OnlyLinkOwnRides
         | ErrorKey::AmountRangeRM001to500
         | ErrorKey::PayeeNameAndPhoneRequired
@@ -391,6 +396,11 @@ mod tests {
             ErrorKey::ReplyContentRequired,
             ErrorKey::LanguageInvalid,
             ErrorKey::TitleAndContentRequired,
+            ErrorKey::GuideTitleRequired,
+            ErrorKey::GuideSlugRequired,
+            ErrorKey::GuideSlugExists,
+            ErrorKey::GuideLinkInvalid,
+            ErrorKey::GuideStepInvalid,
             ErrorKey::OnlyLinkOwnRides,
             ErrorKey::AmountRangeRM001to500,
             ErrorKey::PayeeNameAndPhoneRequired,
