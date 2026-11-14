@@ -168,6 +168,9 @@ test.beforeEach(async ({ page }) => {
     if (url.includes('/api/me/shares')) {
       return route.fulfill({ status: 200, json: [] });
     }
+    if (url.includes('/api/help/guides')) {
+      return route.fulfill({ status: 200, json: [] });
+    }
 
     return route.fulfill({ status: 200, json: {} });
   });

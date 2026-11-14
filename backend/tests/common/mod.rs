@@ -153,7 +153,7 @@ pub async fn login(st: &AppState, email: &str) -> String {
 pub fn tomorrow(hhmm: &str) -> String {
     format!(
         "{}T{hhmm}",
-        (chrono::Local::now() + chrono::Duration::days(1)).format("%Y-%m-%d")
+        (grace_ride::util::today_kl() + chrono::Duration::days(1)).format("%Y-%m-%d")
     )
 }
 
