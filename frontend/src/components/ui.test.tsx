@@ -612,7 +612,10 @@ describe('UniversalTable component', () => {
         key: 'status',
         label: 'Status',
         allLabel: 'All statuses',
-        options: [{ value: 'active', label: 'Active' }],
+        options: [
+          { value: '', label: 'Any status' },
+          { value: 'active', label: 'Active' },
+        ],
       },
       { type: 'date', key: 'date', label: 'Date' },
       { type: 'checkbox', key: 'attention', label: 'Only attention' },
@@ -630,6 +633,10 @@ describe('UniversalTable component', () => {
       />,
     );
     expect(screen.getByRole('textbox', { name: 'Search' })).toHaveValue('ana');
+    expect(screen.getAllByRole('option').map((option) => option.textContent)).toEqual([
+      'All statuses',
+      'Active',
+    ]);
     fireEvent.change(screen.getByRole('combobox', { name: 'Status' }), {
       target: { value: 'active' },
     });
@@ -638,6 +645,31 @@ describe('UniversalTable component', () => {
     expect(onFilterChange).toHaveBeenCalledWith('attention', 'true');
     fireEvent.click(screen.getByRole('button', { name: 'Clear filters' }));
     expect(onClearFilters).toHaveBeenCalled();
+  });
+
+  it('keeps a select filter empty until its first option is chosen', async () => {
+    const onFilterChange = vi.fn();
+    const user = userEvent.setup();
+    render(
+      <UniversalTable
+        columns={columns}
+        items={users}
+        itemKey={(u) => u.id}
+        filters={[
+          {
+            type: 'select',
+            key: 'status',
+            label: 'Status',
+            options: [{ value: 'active', label: 'Active' }],
+          },
+        ]}
+        onFilterChange={onFilterChange}
+      />,
+    );
+    const filter = screen.getByRole('combobox', { name: 'Status' });
+    expect(filter).toHaveValue('');
+    await user.selectOptions(filter, 'active');
+    expect(onFilterChange).toHaveBeenCalledWith('status', 'active');
   });
 
   it('keeps the toolbar visible when there are no rows', () => {
@@ -703,6 +735,21 @@ describe('UniversalTable component', () => {
       'Bo',
       'Cy',
     ]);
+  });
+
+  it('preserves colons in sort keys selected on mobile', async () => {
+    const onSortChange = vi.fn();
+    const user = userEvent.setup();
+    render(
+      <UniversalTable
+        columns={[{ ...sortableColumns[0], sortKey: 'ride:pickup' }]}
+        items={sortableUsers}
+        onSortChange={onSortChange}
+        itemKey={(u) => u.id}
+      />,
+    );
+    await user.selectOptions(screen.getByRole('combobox', { name: 'Sort by' }), 'ride:pickup:desc');
+    expect(onSortChange).toHaveBeenCalledWith({ key: 'ride:pickup', dir: 'desc' });
   });
 });
 

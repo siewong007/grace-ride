@@ -1461,10 +1461,12 @@ export function UniversalTable<T>({
               aria-label={f.label}
               onChange={(e) => onFilterChange?.(f.key, e.target.value)}
             >
-              {f.allLabel != null && <option value="">{f.allLabel}</option>}
+              {!f.options.some((o) => o.value === '') && (
+                <option value="">{f.allLabel ?? f.label}</option>
+              )}
               {f.options.map((o) => (
                 <option key={o.value} value={o.value}>
-                  {o.label}
+                  {o.value === '' ? (f.allLabel ?? o.label) : o.label}
                 </option>
               ))}
             </select>
@@ -1519,7 +1521,9 @@ export function UniversalTable<T>({
                 onSortChange?.(null);
                 return;
               }
-              const [key, dir] = raw.split(':');
+              const separator = raw.lastIndexOf(':');
+              const key = raw.slice(0, separator);
+              const dir = raw.slice(separator + 1);
               const next: TableSort = { key, dir: dir === 'desc' ? 'desc' : 'asc' };
               if (!controlled) setLocalSort(next);
               onSortChange?.(next);
