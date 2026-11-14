@@ -1,4 +1,5 @@
 import { FormEvent, useEffect, useState } from 'react';
+import PhotoAttach from './PhotoAttach';
 import { useNavigate, Link } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
 import { BookOpen, User, X } from 'lucide-react';
@@ -45,6 +46,7 @@ export default function HelpComposer({
   const [subject, setSubject] = useState(initialSubject);
   const [body, setBody] = useState('');
   const [rideId, setRideId] = useState<number | null>(initialRideId);
+  const [photo, setPhoto] = useState<number | null>(null);
 
   // Staff on-behalf creation
   const [onBehalf, setOnBehalf] = useState(false);
@@ -114,6 +116,7 @@ export default function HelpComposer({
         body: string;
         ride_id?: number;
         for_user_id?: number;
+        file_id?: number;
       } = {
         subject: subject.trim(),
         body: body.trim(),
@@ -121,6 +124,7 @@ export default function HelpComposer({
       if (rideId != null) {
         payload.ride_id = Number(rideId);
       }
+      if (photo != null) payload.file_id = photo;
       if (isStaffEditor && onBehalf && selectedMember) {
         payload.for_user_id = selectedMember.id;
       }
@@ -252,6 +256,7 @@ export default function HelpComposer({
             placeholder={t('bodyPlaceholder')}
           />
         </Field>
+        <PhotoAttach fileId={photo} onChange={setPhoto} disabled={busy} />
 
         {recentRides.length > 0 && (
           <Field label={t('linkedRideLabel')}>

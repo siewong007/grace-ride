@@ -44,6 +44,7 @@ export default {
       review: 'Review',
       open: 'Open',
       answer: 'Answer',
+      claimedByYou: '{count} claimed by you',
       today: 'Today: {count} rides, {confirmed} confirmed',
       today_one: 'Today: {count} ride, {confirmed} confirmed',
       live: '{count} drivers out now',

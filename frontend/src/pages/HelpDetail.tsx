@@ -1,10 +1,11 @@
 import { FormEvent, useEffect, useRef, useState } from 'react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
-import { BookOpen, CheckCircle, ExternalLink, HelpCircle, Phone, RefreshCw, Send } from 'lucide-react';
+import { BookOpen, CheckCircle, ExternalLink, Hand, HelpCircle, Phone, RefreshCw, Send } from 'lucide-react';
 import { post, useApi } from '../api';
 import { useAuth } from '../auth';
 import { GuideSummary, usePick } from './HelpGuides';
+import PhotoAttach, { MessagePhoto } from '../components/PhotoAttach';
 import {
   Button,
   Card,
@@ -26,6 +27,7 @@ interface Reply {
   body: string;
   staff: boolean;
   created_at: string;
+  file_id?: number | null;
 }
 
 interface TicketMember {
@@ -42,6 +44,8 @@ export interface TicketDetailData {
   user_id: number;
   replies: Reply[];
   member?: TicketMember;
+  assignee_id?: number | null;
+  assignee_name?: string | null;
 }
 
 function renderMessageBody(text: string) {
@@ -79,11 +83,13 @@ export default function HelpDetail({
   const id = propTicketId ?? Number(params.id);
   const isStaff = can('admin_help', 'view');
   const canUpdate = can('help', 'update') || can('admin_help', 'update');
+  const canClaim = can('admin_help', 'update');
 
   const { data: tk, error, reload, loading } = useApi<TicketDetailData>(id ? `/help/${id}` : null, 15000);
   const guidesApi = useApi<GuideSummary[]>(isStaff ? '/help/guides' : null);
 
   const [body, setBody] = useState('');
+  const [photo, setPhoto] = useState<number | null>(null);
   const [optimisticReplies, setOptimisticReplies] = useState<Reply[]>([]);
   const [sendErr, setSendErr] = useState<string | null>(null);
   const [guidePickerOpen, setGuidePickerOpen] = useState(false);
@@ -138,7 +144,8 @@ export default function HelpDetail({
   const handleSend = async (e?: FormEvent) => {
     if (e) e.preventDefault();
     const trimmed = body.trim();
-    if (!trimmed || busy) return;
+    const fileId = photo;
+    if ((!trimmed && !fileId) || busy) return;
 
     const tempReply: Reply = {
       id: Date.now(),
@@ -147,20 +154,23 @@ export default function HelpDetail({
       body: trimmed,
       staff: !!isStaff,
       created_at: new Date().toISOString(),
+      file_id: fileId,
     };
 
     setOptimisticReplies((prev) => [...prev, tempReply]);
     setBody('');
+    setPhoto(null);
     setSendErr(null);
 
     try {
-      await post(`/help/${tk.id}/replies`, { body: trimmed });
+      await post(`/help/${tk.id}/replies`, { body: trimmed, file_id: fileId });
       reload();
       onStatusChange?.();
     } catch (x) {
       // Rollback optimistic reply on failure
       setOptimisticReplies((prev) => prev.filter((r) => r.id !== tempReply.id));
       setBody(trimmed);
+      setPhoto(fileId);
       setSendErr((x as Error).message);
     }
   };
@@ -185,6 +195,16 @@ export default function HelpDetail({
     run(async () => {
       await post(`/help/${tk.id}/reopen`);
       toast(t('reopenedDone', 'Request reopened'));
+      reload();
+      onStatusChange?.();
+    });
+  };
+
+  const claimedByMe = tk.assignee_id != null && tk.assignee_id === me?.id;
+  const handleClaim = (claim: boolean) => {
+    run(async () => {
+      await post(`/help/${tk.id}/claim`, { claim });
+      toast(claim ? t('claimDone') : t('releaseDone'));
       reload();
       onStatusChange?.();
     });
@@ -217,6 +237,22 @@ export default function HelpDetail({
         actions={
           <div className="row nowrap gap-sm align-center">
             <StatusPill map={isOwner ? HELP_STATUS : HELP_STATUS_STAFF} status={tk.status} />
+            {isStaff && !isOwner && tk.assignee_name && (
+              <span className="muted small">
+                {claimedByMe ? t('claimedByYou') : t('claimedBy', { name: tk.assignee_name })}
+              </span>
+            )}
+            {canClaim && !isOwner && !isResolved && (
+              <Button
+                variant="secondary"
+                size="sm"
+                onClick={() => handleClaim(!claimedByMe)}
+                disabled={busy}
+                icon={<Hand size={14} />}
+              >
+                {claimedByMe ? t('release') : tk.assignee_id ? t('takeOver') : t('claim')}
+              </Button>
+            )}
             {isResolved && (
               <Button
                 variant="secondary"
@@ -276,7 +312,8 @@ export default function HelpDetail({
                         {r.name}
                         {r.staff && ` · ${t('staffTag')}`}
                       </div>
-                      <div className="pre-wrap">{renderMessageBody(r.body)}</div>
+                      {r.body && <div className="pre-wrap">{renderMessageBody(r.body)}</div>}
+                      {r.file_id && <MessagePhoto fileId={r.file_id} />}
                       <div className="at">{fmtTime(r.created_at, ft)}</div>
                     </div>
                   </div>
@@ -379,11 +416,13 @@ export default function HelpDetail({
                   rows={3}
                 />
 
+                <PhotoAttach fileId={photo} onChange={setPhoto} disabled={busy} />
+
                 <div className="btn-row">
                   <Button
                     variant="primary"
                     type="submit"
-                    disabled={busy || !body.trim()}
+                    disabled={busy || (!body.trim() && !photo)}
                     loading={busy}
                     icon={<Send size={16} />}
                   >

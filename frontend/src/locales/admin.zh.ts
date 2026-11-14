@@ -44,6 +44,7 @@ export default {
       review: '审核',
       open: '打开',
       answer: '回复',
+      claimedByYou: '其中 {count} 项由您认领',
       today: '今日：{count} 个行程，{confirmed} 个已确认',
       today_one: '今日：{count} 个行程，{confirmed} 个已确认',
       live: '{count} 位司机正在路上',

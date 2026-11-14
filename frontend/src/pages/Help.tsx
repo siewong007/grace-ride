@@ -45,6 +45,8 @@ export interface TicketSummary {
   last_body?: string | null;
   last_staff?: boolean | null;
   last_at?: string | null;
+  assignee_id?: number | null;
+  assignee_name?: string | null;
 }
 
 interface TicketCounts {
@@ -89,7 +91,7 @@ export default function Help() {
   const ft = useFormatT();
   const pick = usePick();
   const nav = useNavigate();
-  const { can } = useAuth();
+  const { me, can } = useAuth();
   const [params] = useSearchParams();
 
   const isHelpDesk = can('admin_help', 'view') || can('admin_help', 'update');
@@ -185,7 +187,7 @@ export default function Help() {
   const staffSearchParam = inboxQuery.trim() ? `&q=${encodeURIComponent(inboxQuery.trim())}` : '';
   const staffRequestsApi = useApi<TicketSummary[]>(
     isHelpDesk && !viewAsMember
-      ? `/help?all=${allStaffScope}${staffStatusParam}${staffSearchParam}`
+      ? `/help?all=true${allStaffScope ? '' : '&assigned=me'}${staffStatusParam}${staffSearchParam}`
       : null,
     10000,
   );
@@ -193,7 +195,7 @@ export default function Help() {
 
   // 5. Staff counts
   const countsApi = useApi<TicketCounts>(
-    isHelpDesk && !viewAsMember ? `/help/counts?all=${allStaffScope}` : null,
+    isHelpDesk && !viewAsMember ? `/help/counts?all=true${allStaffScope ? '' : '&assigned=me'}` : null,
     10000,
   );
   const counts = {
@@ -479,7 +481,7 @@ export default function Help() {
                         className={`segmented-item ${!allStaffScope ? 'active' : ''}`}
                         onClick={() => setAllStaffScope(false)}
                       >
-                        {t('mine')}
+                        {t('claimedByMeFilter')}
                       </button>
                     </div>
                     {isEditor && (
@@ -569,6 +571,11 @@ export default function Help() {
                                 )}
                                 <div className="help-row-status">
                                   <StatusPill map={HELP_STATUS_STAFF} status={tk.status} />
+                              {tk.assignee_name && (
+                                <span className="muted tiny help-row-claim">
+                                  {tk.assignee_id === me?.id ? t('claimedByYou') : t('claimedBy', { name: tk.assignee_name })}
+                                </span>
+                              )}
                                 </div>
                               </div>
                             </button>
@@ -619,6 +626,11 @@ export default function Help() {
                               )}
                               <div className="help-row-status">
                                 <StatusPill map={HELP_STATUS_STAFF} status={tk.status} />
+                              {tk.assignee_name && (
+                                <span className="muted tiny help-row-claim">
+                                  {tk.assignee_id === me?.id ? t('claimedByYou') : t('claimedBy', { name: tk.assignee_name })}
+                                </span>
+                              )}
                               </div>
                             </div>
                           </Link>

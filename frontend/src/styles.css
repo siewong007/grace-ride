@@ -2299,3 +2299,10 @@ main:focus { outline: none; }
   /* Long staff labels wrap rather than cut off beside a waiting count. */
   .sidebar-label { white-space: normal; overflow: visible; line-height: 1.25; }
 }
+
+/* Help photos */
+.help-photo-link { display: block; margin-top: var(--space-1); }
+.help-photo { display: block; max-width: min(260px, 100%); max-height: 240px; border-radius: var(--radius); object-fit: cover; }
+.photo-attach-chip { border: 1px solid var(--border); border-radius: var(--radius); padding: 2px 4px 2px 2px; }
+.photo-attach-thumb { width: 40px; height: 40px; object-fit: cover; border-radius: 6px; }
+.help-row-claim { margin-left: var(--space-2); }

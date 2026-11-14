@@ -35,6 +35,7 @@ interface Dash {
   oldest_approval_at: string | null;
   next_no_driver_at: string | null;
   oldest_help_at: string | null;
+  help_claimed_by_me?: number;
 }
 
 /** One line of the work queue: how many things wait, where, and the one action that clears them. */
@@ -123,7 +124,10 @@ export default function Dashboard() {
     {
       key: 'help', count: can('admin_help') ? d.open_help : 0, icon: <LifeBuoy size={20} />, tone: 'warn' as const,
       title: t('dashboard.q.help'),
-      meta: d.oldest_help_at ? t('dashboard.q.oldest', { ago: fmtAgo(d.oldest_help_at, ft) }) : undefined,
+      meta: [
+        d.oldest_help_at ? t('dashboard.q.oldest', { ago: fmtAgo(d.oldest_help_at, ft) }) : '',
+        d.help_claimed_by_me ? t('dashboard.q.claimedByYou', { count: d.help_claimed_by_me }) : '',
+      ].filter(Boolean).join(' · ') || undefined,
       to: '/help', action: t('dashboard.q.answer'),
     },
     {
