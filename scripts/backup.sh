@@ -16,7 +16,11 @@ umask 077
 
 : "${DATABASE_URL:?set DATABASE_URL (postgres://user:pass@host/dbname)}"
 
-pg_dump --format=custom --no-owner --file "$DEST/db.dump" "$DATABASE_URL"
+pg_dump_args=(--format=custom --no-owner --file "$DEST/db.dump")
+if [[ -n "${BACKUP_SCHEMA:-}" ]]; then
+  pg_dump_args+=(--schema "$BACKUP_SCHEMA")
+fi
+pg_dump "${pg_dump_args[@]}" "$DATABASE_URL"
 test -s "$DEST/db.dump" || { echo "pg_dump produced an empty file" >&2; exit 1; }
 pg_restore --list "$DEST/db.dump" >/dev/null || { echo "dump sanity check failed" >&2; exit 1; }
 tar -C "$DATA_DIR" -czf "$DEST/uploads.tar.gz" uploads

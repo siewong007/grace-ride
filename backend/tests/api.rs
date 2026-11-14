@@ -2301,6 +2301,15 @@ async fn disaster_recovery_backup_restore_drill() {
     let pg_bin = std::env::var("PATH").unwrap_or_default();
     let out = Command::new("bash")
         .env("DATABASE_URL", &database_url)
+        .env(
+            "BACKUP_SCHEMA",
+            st.cfg
+                .database_url
+                .split("options[search_path]=")
+                .nth(1)
+                .and_then(|search_path| search_path.split(',').next())
+                .expect("test database schema"),
+        )
         .env("PATH", format!("/workspace/pgsql/bin:{pg_bin}"))
         .current_dir(&repo)
         .arg("./scripts/backup.sh")
