@@ -353,6 +353,7 @@ async fn logout(
         .bind(&u.session_id)
         .execute(&st.db)
         .await?;
+    audit(&st.db, Some(u.id), "logout", "user", Some(u.id), "").await;
     Ok((clear_cookies(jar), Json(json!({"ok": true}))))
 }
 
@@ -477,17 +478,36 @@ async fn decoy_key(st: &AppState) -> AppResult<Vec<u8>> {
     hex::decode(key).map_err(|e| AppError::Other(anyhow::anyhow!("decoy key: {e}")))
 }
 
+/// Believable credential ids for an email, derived only from the email and the key.
+///
+/// The generator gives about one email in six no credentials at all. A real challenge
+/// always lists at least one, so an empty list would mark the email as not a passkey
+/// member. Such emails are derived again (same email, same key, next round) until there
+/// is one; emails that got credentials on the first try keep exactly those ids.
+fn decoy_credential_ids(key: &[u8], email: &str) -> AppResult<Vec<CredentialID>> {
+    let fail = |e| AppError::Other(anyhow::anyhow!("webauthn: {e:?}"));
+    let generator =
+        WebauthnFakeCredentialGenerator::<FakePasskeyDistribution>::new(key).map_err(fail)?;
+    let name = email.to_lowercase();
+    for round in 0..=u8::MAX {
+        let mut input = name.as_bytes().to_vec();
+        if round > 0 {
+            input.extend([0, round]);
+        }
+        let ids = generator.generate(&input).map_err(fail)?;
+        if !ids.is_empty() {
+            return Ok(ids);
+        }
+    }
+    Err(AppError::Other(anyhow::anyhow!("no decoy credentials")))
+}
+
 /// Sign-in options for an email with no passkey. Same shape as a real challenge, with
 /// credential ids derived from the email under a secret key: the same email always gets
 /// the same ids, with the count and lengths real devices produce. No browser holds them,
 /// so the sign-in fails the way a wrong device would.
 async fn decoy_challenge(st: &AppState, email: &str) -> AppResult<Value> {
-    let generator =
-        WebauthnFakeCredentialGenerator::<FakePasskeyDistribution>::new(&decoy_key(st).await?)
-            .map_err(|e| AppError::Other(anyhow::anyhow!("webauthn: {e:?}")))?;
-    let ids = generator
-        .generate(email.to_lowercase().as_bytes())
-        .map_err(|e| AppError::Other(anyhow::anyhow!("webauthn: {e:?}")))?;
+    let ids = decoy_credential_ids(&decoy_key(st).await?, email)?;
     let rp_id = url::Url::parse(&st.cfg.public_url)
         .ok()
         .and_then(|u| u.host_str().map(str::to_string))
@@ -536,6 +556,7 @@ struct LoginFinish {
 
 async fn passkey_login_finish(
     State(st): State<AppState>,
+    peer: Option<axum::Extension<ConnectInfo<SocketAddr>>>,
     jar: CookieJar,
     headers: HeaderMap,
     Json(req): Json<LoginFinish>,
@@ -548,15 +569,37 @@ async fn passkey_login_finish(
     );
     // A decoy challenge has no stored state. Answer exactly as a wrong passkey would,
     // so finishing a decoy doesn't reveal that the email has no account.
-    let (uid, state_json) = take_challenge(&st, &req.challenge_id, "auth", lang)
-        .await
-        .map_err(|_| bad(lang, ErrorKey::PasskeyFailed))?;
+    // Failed sign-ins are recorded with no actor: nobody has proved who they are.
+    let ip = crate::security::client_ip(&headers, peer.map(|p| p.0 .0), st.cfg.trust_proxy);
+    let Ok((uid, state_json)) = take_challenge(&st, &req.challenge_id, "auth", lang).await else {
+        audit(
+            &st.db,
+            None,
+            "login.failed",
+            "user",
+            None,
+            format!("unknown or expired sign-in challenge; from {ip}"),
+        )
+        .await;
+        return Err(bad(lang, ErrorKey::PasskeyFailed));
+    };
     let auth_state: PasskeyAuthentication =
         serde_json::from_str(&state_json).map_err(anyhow::Error::from)?;
-    let res = st
+    let Ok(res) = st
         .webauthn
         .finish_passkey_authentication(&req.credential, &auth_state)
-        .map_err(|_| bad(lang, ErrorKey::PasskeyFailed))?;
+    else {
+        audit(
+            &st.db,
+            None,
+            "login.failed",
+            "user",
+            Some(uid),
+            format!("passkey rejected; from {ip}"),
+        )
+        .await;
+        return Err(bad(lang, ErrorKey::PasskeyFailed));
+    };
     // Update stored credential counters if needed.
     let rows: Vec<(i64, String)> =
         sqlx::query_as("SELECT id, passkey FROM passkeys WHERE user_id=$1")
@@ -638,13 +681,16 @@ async fn passkey_register_finish(
             )
         })?;
     let cred_id = serde_json::to_string(pk.cred_id()).map_err(anyhow::Error::from)?;
+    let label = req
+        .label
+        .unwrap_or_else(|| t(u.lang, "我的设备", "My device").into());
     sqlx::query(
         "INSERT INTO passkeys (user_id, cred_id, passkey, label, created_at) VALUES ($1,$2,$3,$4,$5)",
     )
     .bind(u.id)
     .bind(cred_id)
     .bind(serde_json::to_string(&pk).map_err(anyhow::Error::from)?)
-    .bind(req.label.unwrap_or_else(|| t(u.lang, "我的设备", "My device").into()))
+    .bind(&label)
     .bind(now())
     .execute(&st.db)
     .await?;
@@ -659,7 +705,7 @@ async fn passkey_register_finish(
         "passkey.register",
         "user",
         Some(u.id),
-        "",
+        &label,
     )
     .await;
     Ok(Json(json!({ "ok": true })))
@@ -684,20 +730,23 @@ async fn delete_passkey(
     Path(id): Path<i64>,
 ) -> AppResult<Json<Value>> {
     require_recent_sign_in(&st, &u).await?;
-    sqlx::query("DELETE FROM passkeys WHERE id=$1 AND user_id=$2")
-        .bind(id)
-        .bind(u.id)
-        .execute(&st.db)
-        .await?;
-    audit(
-        &st.db,
-        Some(u.id),
-        "passkey.delete",
-        "user",
-        Some(u.id),
-        format!("passkey {id}"),
-    )
-    .await;
+    let gone: Option<(String,)> =
+        sqlx::query_as("DELETE FROM passkeys WHERE id=$1 AND user_id=$2 RETURNING label")
+            .bind(id)
+            .bind(u.id)
+            .fetch_optional(&st.db)
+            .await?;
+    if let Some((label,)) = gone {
+        audit(
+            &st.db,
+            Some(u.id),
+            "passkey.delete",
+            "user",
+            Some(u.id),
+            format!("passkey {id} ({label})"),
+        )
+        .await;
+    }
     Ok(Json(json!({ "ok": true })))
 }
 
@@ -720,6 +769,7 @@ async fn totp_setup(State(st): State<AppState>, u: CurrentUser) -> AppResult<Jso
         .execute(&st.db)
         .await?;
     let totp = totp_for(&secret, &u.email, u.lang)?;
+    audit(&st.db, Some(u.id), "totp.setup", "user", Some(u.id), "").await;
     Ok(Json(json!({ "secret": secret, "url": totp.get_url() })))
 }
 
@@ -737,17 +787,11 @@ async fn totp_enable(
         .bind(u.id)
         .fetch_one(&st.db)
         .await?;
-    verify_totp(
-        &st,
-        u.id,
-        secret
-            .as_deref()
-            .ok_or_else(|| bad(u.lang, ErrorKey::StartSetupFirst))?,
-        &u.email,
-        &req.code,
-        u.lang,
-    )
-    .await?;
+    let secret = secret.ok_or_else(|| bad(u.lang, ErrorKey::StartSetupFirst))?;
+    if let Err(e) = verify_totp(&st, u.id, &secret, &u.email, &req.code, u.lang).await {
+        audit(&st.db, Some(u.id), "totp.failed", "user", Some(u.id), "").await;
+        return Err(e);
+    }
     sqlx::query("UPDATE users SET totp_enabled=1 WHERE id=$1")
         .bind(u.id)
         .execute(&st.db)
@@ -780,6 +824,15 @@ async fn set_password(
         .await?;
     if let Some(h) = hash {
         if !verify_password(req.current.as_deref().unwrap_or(""), &h) {
+            audit(
+                &st.db,
+                Some(u.id),
+                "password.failed",
+                "user",
+                Some(u.id),
+                "current password incorrect",
+            )
+            .await;
             return Err(bad(u.lang, ErrorKey::CurrentPasswordIncorrect));
         }
     }
@@ -809,13 +862,23 @@ async fn recovery_request(
         .bind(req.email.trim())
         .fetch_optional(&st.db)
         .await?;
-    if exists.is_some() {
+    if let Some((uid,)) = exists {
         sqlx::query("INSERT INTO recovery_requests (email, reason, created_at) VALUES ($1,$2,$3)")
             .bind(req.email.trim())
             .bind(req.reason.chars().take(500).collect::<String>())
             .bind(now())
             .execute(&st.db)
             .await?;
+        // No actor: the request comes from someone who cannot sign in.
+        audit(
+            &st.db,
+            None,
+            "recovery.request",
+            "user",
+            Some(uid),
+            req.email.trim(),
+        )
+        .await;
         notify_perm(
             &st.db,
             Page::AdminRecovery,
@@ -1005,4 +1068,35 @@ async fn invite_accept(
     )
     .await;
     Ok((jar, Json(json!({ "ok": true, "kind": kind }))))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn decoy_ids_are_never_empty_and_stay_the_same() {
+        let key = [7u8; 32];
+        let raw = WebauthnFakeCredentialGenerator::<FakePasskeyDistribution>::new(&key).unwrap();
+        let mut filled_in = 0;
+        for i in 0..200 {
+            let email = format!("Person{i}@Example.org");
+            let ids = decoy_credential_ids(&key, &email).unwrap();
+            assert!(!ids.is_empty(), "{email}");
+            // Same email (in any letter case) and key: same ids, on every call.
+            assert_eq!(
+                ids,
+                decoy_credential_ids(&key, &email.to_lowercase()).unwrap()
+            );
+            // Emails the library already gave credentials keep exactly those.
+            let first_try = raw.generate(email.to_lowercase().as_bytes()).unwrap();
+            if first_try.is_empty() {
+                filled_in += 1;
+            } else {
+                assert_eq!(ids, first_try, "{email}");
+            }
+        }
+        // About one in six needs the extra round; the sample must include some.
+        assert!(filled_in > 0);
+    }
 }

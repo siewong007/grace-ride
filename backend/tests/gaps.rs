@@ -201,6 +201,11 @@ async fn passkey_login_start_does_not_reveal_who_is_a_member() {
         }
         assert_ne!(pk["challenge"], real_pk["challenge"]);
         drop(opts);
+        // A real challenge always lists a credential; an empty decoy would stand out.
+        assert!(
+            !pk["allowCredentials"].as_array().unwrap().is_empty(),
+            "{email}"
+        );
 
         // The same email always gets the same credential ids (a changing list would give it away).
         let again = start(email).await;
