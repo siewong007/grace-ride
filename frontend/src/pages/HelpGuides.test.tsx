@@ -378,7 +378,7 @@ describe('HelpGuideDetail', () => {
     expect(await screen.findByText('Find the event')).toBeInTheDocument();
     expect(screen.getByText('Assign driver')).toBeInTheDocument();
     expect(screen.getByRole('link', { name: /open/i })).toHaveAttribute('href', '/events');
-    expect(screen.getByText('Was this step helpful?')).toBeInTheDocument();
+    expect(screen.getByText('Did this guide help?')).toBeInTheDocument();
     expect(screen.getByText('Start walkthrough')).toBeInTheDocument();
   });
 });
@@ -399,7 +399,7 @@ describe('HelpGuideEditor', () => {
     );
 
     expect(await screen.findByRole('heading', { level: 1, name: 'New guide' })).toBeInTheDocument();
-    expect(screen.getByRole('heading', { level: 3, name: 'Live Preview' })).toBeInTheDocument();
+    expect(screen.getByRole('heading', { level: 3, name: 'Live preview' })).toBeInTheDocument();
 
     const titleInput = screen.getByPlaceholderText('e.g. Plan transport for an event');
     fireEvent.change(titleInput, { target: { value: 'New Test Guide' } });

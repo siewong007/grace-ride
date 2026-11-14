@@ -17,7 +17,7 @@ import {
   useAction,
   useToast,
 } from '../components/ui';
-import { fmtDay, fmtTime, HELP_STATUS, useFormatT } from '../format';
+import { fmtDay, fmtTime, HELP_STATUS, HELP_STATUS_STAFF, useFormatT } from '../format';
 
 interface Reply {
   id: number;
@@ -216,7 +216,7 @@ export default function HelpDetail({
         back={isTwoPane ? undefined : '/help'}
         actions={
           <div className="row nowrap gap-sm align-center">
-            <StatusPill map={HELP_STATUS} status={tk.status} />
+            <StatusPill map={isOwner ? HELP_STATUS : HELP_STATUS_STAFF} status={tk.status} />
             {isResolved && (
               <Button
                 variant="secondary"
@@ -232,7 +232,7 @@ export default function HelpDetail({
         }
       />
 
-      <div className="help-detail-layout">
+      <div className={`help-detail-layout ${isTwoPane ? 'is-pane' : ''}`}>
         <div className="help-detail-thread stack">
           {/* Turn status indicator */}
           <div className="help-turn-bar">

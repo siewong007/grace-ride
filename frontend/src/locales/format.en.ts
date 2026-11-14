@@ -5,6 +5,8 @@ export default {
   reimbStatus: { pending: 'Pending approval', returned: 'Returned for info', rejected: 'Not approved', approved: 'Approved · Awaiting payment', paid: 'Paid' },
   settlementStatus: { draft: 'Draft', published: 'Collecting', closed: 'Settled & archived' },
   helpStatus: { open: 'Waiting for help centre', answered: 'Replied — waiting for you', closed: 'Resolved' },
+  // The same statuses as the help desk sees them.
+  helpStatusStaff: { open: 'Needs reply', answered: 'Waiting for member', closed: 'Resolved' },
   role: { member: 'Member', superadmin: 'Super admin', admin: 'Admin', transport: 'Transport', finance: 'Finance', leader: 'Event leader', driver: 'Volunteer driver' },
   weekday: ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'],
   period: { am: 'am', pm: 'pm', evening: 'pm' },

@@ -100,6 +100,15 @@ export default function HelpGuideEditor() {
   const [autoSlug, setAutoSlug] = useState(isNew);
   const [isDirty, setIsDirty] = useState(false);
   const [checklistOpen, setChecklistOpen] = useState(false);
+  // Steps whose link is being typed by hand ("Custom path…" chosen in the picker).
+  const [customLinks, setCustomLinks] = useState<Set<number>>(new Set());
+  const setCustom = (idx: number, on: boolean) =>
+    setCustomLinks((prev) => {
+      const next = new Set(prev);
+      if (on) next.add(idx);
+      else next.delete(idx);
+      return next;
+    });
 
   // Populate from fetched guide
   useEffect(() => {
@@ -156,6 +165,7 @@ export default function HelpGuideEditor() {
   };
 
   const moveStep = (idx: number, delta: -1 | 1) => {
+    setCustomLinks(new Set());
     setIsDirty(true);
     setF((prev) => {
       const steps = [...prev.steps];
@@ -166,6 +176,7 @@ export default function HelpGuideEditor() {
   };
 
   const removeStep = (idx: number) => {
+    setCustomLinks(new Set());
     setIsDirty(true);
     setF((prev) => ({
       ...prev,
@@ -271,7 +282,7 @@ export default function HelpGuideEditor() {
     <Page width="wide">
       <form onSubmit={handleSubmit} className="stack">
         <PageHeader
-          title={isNew ? t('guideNew') : t('guideEdit')}
+          title={isNew ? t('guideNew') : t('guideEditPage')}
           back="/help?tab=guides"
           actions={
             <div className="btn-row nowrap align-center">
@@ -368,11 +379,13 @@ export default function HelpGuideEditor() {
                 />
               </Field>
 
-              <Field label={t('guideAudience')}>
-                <div className="segmented-control">
+              <div className="field">
+                <span id="guide-audience-label">{t('guideAudience')}</span>
+                <div className="segmented-control" role="group" aria-labelledby="guide-audience-label">
                   <button
                     type="button"
                     className={`segmented-item ${f.audience === 'member' ? 'active' : ''}`}
+                    aria-pressed={f.audience === 'member'}
                     onClick={() => {
                       setIsDirty(true);
                       setF({ ...f, audience: 'member' });
@@ -383,6 +396,7 @@ export default function HelpGuideEditor() {
                   <button
                     type="button"
                     className={`segmented-item ${f.audience === 'staff' ? 'active' : ''}`}
+                    aria-pressed={f.audience === 'staff'}
                     onClick={() => {
                       setIsDirty(true);
                       setF({ ...f, audience: 'staff' });
@@ -391,7 +405,7 @@ export default function HelpGuideEditor() {
                     {t('audienceStaff')}
                   </button>
                 </div>
-              </Field>
+              </div>
 
               {/* Language Switch for Content Fields */}
               <div className="stack-xs" style={{ marginTop: 'var(--space-2)' }}>
@@ -484,10 +498,10 @@ export default function HelpGuideEditor() {
                 {f.steps.map((s, idx) => (
                   <div key={idx} className="card tight stack-xs" style={{ background: 'var(--surface-2)' }}>
                     <div className="row between nowrap">
-                      <span className="bold small">
-                        {idx + 1}. {formLang === 'en' ? s.title_en || '(Untitled)' : s.title_zh || '(Untitled)'}
+                      <span className="bold small ellipsis">
+                        {idx + 1}. {(formLang === 'en' ? s.title_en : s.title_zh) || t('untitledStep')}
                       </span>
-                      <div className="btn-row nowrap">
+                      <div className="row nowrap gap-xs">
                         <Button
                           variant="ghost"
                           size="sm"
@@ -568,12 +582,15 @@ export default function HelpGuideEditor() {
                       <div className="stack-xs">
                         <select
                           className="input"
-                          value={APP_PAGES.some((p) => p.value === s.link) ? s.link : 'custom'}
+                          value={
+                            !customLinks.has(idx) && APP_PAGES.some((p) => p.value === s.link)
+                              ? s.link
+                              : 'custom'
+                          }
                           onChange={(e) => {
                             const val = e.target.value;
-                            if (val !== 'custom') {
-                              setStep(idx, { link: val });
-                            }
+                            setCustom(idx, val === 'custom');
+                            if (val !== 'custom') setStep(idx, { link: val });
                           }}
                         >
                           {APP_PAGES.map((p) => (
@@ -584,9 +601,10 @@ export default function HelpGuideEditor() {
                           <option value="custom">{t('customPath', 'Custom path…')}</option>
                         </select>
 
-                        {(!APP_PAGES.some((p) => p.value === s.link) || s.link.includes('?')) && (
+                        {(customLinks.has(idx) || !APP_PAGES.some((p) => p.value === s.link)) && (
                           <input
                             className="input"
+                            aria-label={t('customPath', 'Custom path…')}
                             value={s.link}
                             placeholder="/admin/rides"
                             onChange={(e) => setStep(idx, { link: e.target.value })}

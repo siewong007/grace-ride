@@ -25,7 +25,7 @@ const staffGuide = {
 async function mockApi(page: Page, audience: 'member' | 'staff') {
   const permissions = audience === 'member'
     ? ['help.view', 'events.view']
-    : ['help.view', 'events.view', 'admin_dashboard.view', 'admin_help.update', 'admin_audit.view'];
+    : ['help.view', 'events.view', 'admin_dashboard.view', 'admin_help.view', 'admin_help.update', 'admin_audit.view'];
   await page.route('**/api/**', async (route) => {
     const url = new URL(route.request().url());
     const path = url.pathname;
@@ -79,15 +79,15 @@ test('member sees only member guides and a staff guide is not found', async ({ p
 test('staff sees both audiences, can edit audience and follows guide links in app', async ({ page }) => {
   await mockApi(page, 'staff');
   await page.goto('/help?tab=guides');
-  await expect(page.getByRole('heading', { name: 'For members' })).toBeVisible();
-  await expect(page.getByRole('heading', { name: 'For staff' })).toBeVisible();
-  await expect(page.getByText('Staff only')).toBeVisible();
-  await page.getByLabel('Show guides for').selectOption('member');
-  await expect(page.getByText('Staff only')).toHaveCount(0);
-  await page.getByRole('button', { name: 'New guide' }).click();
-  await expect(page.getByLabel('Audience')).toBeVisible();
-  await page.getByLabel('Audience').selectOption('member');
-  await expect(page.getByLabel('Audience')).toHaveValue('member');
+  await expect(page.getByRole('link', { name: /Getting started/ })).toBeVisible();
+  await expect(page.getByRole('link', { name: /Staff only/ })).toBeVisible();
+  await page.getByRole('button', { name: 'Members' }).click();
+  await expect(page.getByRole('link', { name: /Staff only/ })).toHaveCount(0);
+  await page.getByRole('link', { name: 'New guide' }).click();
+  await expect(page).toHaveURL(/\/help\/guides\/new$/);
+  const audience = page.getByRole('group', { name: 'Audience' });
+  await audience.getByRole('button', { name: 'Staff' }).click();
+  await expect(audience.getByRole('button', { name: 'Staff' })).toHaveAttribute('aria-pressed', 'true');
   await page.goto('/help/guides/getting-started');
   await page.getByRole('link', { name: 'Open →' }).click();
   await expect(page).toHaveURL(/\/events$/);

@@ -12,6 +12,7 @@ import {
 } from 'lucide-react';
 import { useApi } from '../api';
 import { useAuth } from '../auth';
+import { canAnyAdminPage } from '../perms';
 import { Ride } from '../components/RideCard';
 import HelpComposer from '../components/HelpComposer';
 import HelpDetail from './HelpDetail';
@@ -26,7 +27,7 @@ import {
   Pill,
   StatusPill,
 } from '../components/ui';
-import { fmtAgo, fmtTime, HELP_STATUS, RIDE_STATUS, todayStr, useFormatT } from '../format';
+import { fmtAgo, fmtTime, HELP_STATUS, HELP_STATUS_STAFF, RIDE_STATUS, todayStr, useFormatT } from '../format';
 
 export { HelpDetail };
 
@@ -89,7 +90,8 @@ export default function Help() {
   const { can } = useAuth();
   const [params] = useSearchParams();
 
-  const isStaff = can('admin_help', 'view');
+  const isHelpDesk = can('admin_help', 'view') || can('admin_help', 'update');
+  const isStaff = isHelpDesk || canAnyAdminPage(can);
   const isEditor = can('admin_help', 'update');
 
   // Search input & ref
@@ -159,11 +161,11 @@ export default function Help() {
   const guidesApi = useApi<(GuideSummary & { steps?: GuideStep[] })[]>(
     `/help/guides?full=true${isStaff ? '&include_drafts=true' : ''}`,
   );
-  const guides = guidesApi.data ?? [];
+  const guides = useMemo(() => guidesApi.data ?? [], [guidesApi.data]);
 
   // 2. Member's own requests
   const ownRequestsApi = useApi<TicketSummary[]>('/help', 10000);
-  const ownRequests = ownRequestsApi.data ?? [];
+  const ownRequests = useMemo(() => ownRequestsApi.data ?? [], [ownRequestsApi.data]);
 
   // 3. Member's upcoming rides
   const ridesApi = useApi<Ride[]>(can('rides') ? '/rides' : null, 30000);
@@ -179,16 +181,16 @@ export default function Help() {
   const staffStatusParam = staffFilter === 'all' ? '' : `&status=${staffFilter}`;
   const staffSearchParam = inboxQuery.trim() ? `&q=${encodeURIComponent(inboxQuery.trim())}` : '';
   const staffRequestsApi = useApi<TicketSummary[]>(
-    isStaff && !viewAsMember
+    isHelpDesk && !viewAsMember
       ? `/help?all=${allStaffScope}${staffStatusParam}${staffSearchParam}`
       : null,
     10000,
   );
-  const staffRequests = staffRequestsApi.data ?? [];
+  const staffRequests = useMemo(() => staffRequestsApi.data ?? [], [staffRequestsApi.data]);
 
   // 5. Staff counts
   const countsApi = useApi<TicketCounts>(
-    isStaff && !viewAsMember ? `/help/counts?all=${allStaffScope}` : null,
+    isHelpDesk && !viewAsMember ? `/help/counts?all=${allStaffScope}` : null,
     10000,
   );
   const counts = countsApi.data ?? { open: 0, answered: 0, closed: 0 };
@@ -196,10 +198,10 @@ export default function Help() {
 
   // Auto-select first ticket in 2-pane mode on desktop
   useEffect(() => {
-    if (isDesktop && isStaff && !viewAsMember && staffRequests.length > 0 && selectedTicketId === null) {
+    if (isDesktop && isHelpDesk && !viewAsMember && staffRequests.length > 0 && selectedTicketId === null) {
       setSelectedTicketId(staffRequests[0].id);
     }
-  }, [isDesktop, isStaff, viewAsMember, staffRequests, selectedTicketId]);
+  }, [isDesktop, isHelpDesk, viewAsMember, staffRequests, selectedTicketId]);
 
   // Answered tickets waiting for member
   const waitingForYou = ownRequests.filter((r) => r.status === 'answered');
@@ -294,10 +296,10 @@ export default function Help() {
         {/* Header with title and staff view toggle */}
         <div className="row between nowrap page-head-title">
           <div>
-            <h1>{isStaff && !viewAsMember ? t('title') : t('howCanWeHelp')}</h1>
+            <h1>{isHelpDesk && !viewAsMember ? t('title') : t('howCanWeHelp')}</h1>
             <p className="muted">{t('desc')}</p>
           </div>
-          {isStaff && (
+          {isHelpDesk && (
             <div className="btn-row nowrap">
               <Button
                 variant="secondary"
@@ -435,8 +437,10 @@ export default function Help() {
                               <div className="muted tiny ellipsis">
                                 <HighlightMatch text={snippet} query={searchQuery} />
                               </div>
+                              <div className="help-row-status">
+                                <StatusPill map={HELP_STATUS} status={tk.status} />
+                              </div>
                             </div>
-                            <StatusPill map={HELP_STATUS} status={tk.status} />
                           </Link>
                         ))}
                       </div>
@@ -450,7 +454,7 @@ export default function Help() {
           /* Normal Content Mode */
           <div className="stack">
             {/* STAFF INBOX (Section 3) */}
-            {isStaff && !viewAsMember && (
+            {isHelpDesk && !viewAsMember && (
               <section className="stack">
                 <div className="row between nowrap">
                   <h2>{t('inboxTitle')}</h2>
@@ -552,12 +556,14 @@ export default function Help() {
                                 <div className="small ellipsis">{tk.subject}</div>
                                 {tk.last_body && (
                                   <div className="muted tiny ellipsis">
-                                    {tk.last_staff ? '↳ Staff: ' : ''}
+                                    {tk.last_staff ? `${t('staffReplyPrefix')} ` : ''}
                                     {tk.last_body}
                                   </div>
                                 )}
+                                <div className="help-row-status">
+                                  <StatusPill map={HELP_STATUS_STAFF} status={tk.status} />
+                                </div>
                               </div>
-                              <StatusPill map={HELP_STATUS} status={tk.status} />
                             </button>
                           ))}
                         </div>
@@ -604,8 +610,10 @@ export default function Help() {
                               {tk.last_body && (
                                 <div className="muted tiny ellipsis">{tk.last_body}</div>
                               )}
+                              <div className="help-row-status">
+                                <StatusPill map={HELP_STATUS_STAFF} status={tk.status} />
+                              </div>
                             </div>
-                            <StatusPill map={HELP_STATUS} status={tk.status} />
                           </Link>
                         ))}
                       </div>
@@ -640,8 +648,10 @@ export default function Help() {
                             <div className="grow min-w-0">
                               <div className="bold ellipsis">{tk.subject}</div>
                               <div className="muted tiny">{fmtAgo(tk.updated_at, ft)}</div>
+                              <div className="help-row-status">
+                                <StatusPill map={HELP_STATUS} status={tk.status} />
+                              </div>
                             </div>
-                            <StatusPill map={HELP_STATUS} status={tk.status} />
                           </Link>
                         ))
                       )}
@@ -652,7 +662,7 @@ export default function Help() {
             )}
 
             {/* MEMBER HOME EXPERIENCE */}
-            {(!isStaff || viewAsMember) && (
+            {(!isHelpDesk || viewAsMember) && (
               <div className="stack">
                 {/* Active Ride Today Banner */}
                 {todayRide && (
@@ -849,7 +859,7 @@ export default function Help() {
             </section>
 
             {/* MY REQUESTS SECTION (shown to members or in viewAsMember mode) */}
-            {(!isStaff || viewAsMember) && (
+            {(!isHelpDesk || viewAsMember) && (
               <section className="stack">
                 <div className="row between nowrap">
                   <h2>{t('myRequests')}</h2>
@@ -884,12 +894,14 @@ export default function Help() {
                         <Link key={tk.id} to={`/help/${tk.id}`} className="item">
                           <div className="grow min-w-0">
                             <div className="bold ellipsis">{tk.subject}</div>
-                            <div className="muted tiny">
+                            <div className="muted tiny ellipsis">
                               {tk.last_body ? `${tk.last_body} · ` : ''}
                               {fmtAgo(tk.updated_at, ft)}
                             </div>
+                            <div className="help-row-status">
+                              <StatusPill map={HELP_STATUS} status={tk.status} />
+                            </div>
                           </div>
-                          <StatusPill map={HELP_STATUS} status={tk.status} />
                         </Link>
                       ))}
                     </div>
@@ -909,7 +921,7 @@ export default function Help() {
             guides={guides}
             onCreated={(newId) => {
               ownRequestsApi.reload();
-              if (isStaff) staffRequestsApi.reload();
+              if (isHelpDesk) staffRequestsApi.reload();
               nav(`/help/${newId}`);
             }}
           />

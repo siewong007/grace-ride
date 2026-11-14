@@ -82,6 +82,13 @@ export const HELP_STATUS: Record<string, StatusMap> = {
   closed: { label: 'format:helpStatus.closed', tone: 'gray' },
 };
 
+/** Help request statuses worded for the help desk ("Needs reply" rather than "Waiting for help centre"). */
+export const HELP_STATUS_STAFF: Record<string, StatusMap> = {
+  open: { label: 'format:helpStatusStaff.open', tone: 'amber' },
+  answered: { label: 'format:helpStatusStaff.answered', tone: 'blue' },
+  closed: { label: 'format:helpStatusStaff.closed', tone: 'gray' },
+};
+
 export const ROLE_LABEL: Record<string, string> = {
   member: 'format:role.member',
   superadmin: 'format:role.superadmin',
