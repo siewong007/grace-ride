@@ -41,5 +41,31 @@ export type PageKey =
 
 export type Can = (page: PageKey, act?: Act) => boolean;
 
+/** Staff pages (the non-member areas). Mirrors backend `any_admin_page`. */
+export const ADMIN_PAGES: PageKey[] = [
+  'admin_dashboard',
+  'admin_rides',
+  'admin_live',
+  'admin_plan',
+  'admin_events',
+  'admin_reimb_review',
+  'admin_announcements',
+  'admin_help',
+  'admin_reports',
+  'admin_reimb_pay',
+  'admin_bills',
+  'admin_members',
+  'admin_invites',
+  'admin_recovery',
+  'admin_groups',
+  'admin_areas',
+  'admin_roles',
+  'admin_audit',
+  'admin_settings',
+];
+
+/** Can the user see any staff page? Gates the admin guide tab and route. */
+export const canAnyAdminPage = (can: Can): boolean => ADMIN_PAGES.some((p) => can(p));
+
 /** Built-in roles are named by the app; anything else carries its own name. */
 export const SYSTEM_ROLES = ['member', 'admin', 'transport', 'finance', 'leader', 'driver'];
