@@ -352,6 +352,26 @@ Files: `pages/admin/*.tsx`.
 
 ---
 
+## Phase 12: Scalable Data Presentation, Pagination & Infinite Scroll
+
+1. **Interaction Models by Page Type:**
+   - **Numbered Table Pagination** (`<Pagination />`): Used on administrative and financial tables (`/admin/rides`, `/admin/members`, `/admin/reimbursements`, `/settlements`, `/reimbursements`).
+     - Features: Range counter (`Showing 1–25 of 148 records`), Jump to Page input for `totalPages > 5`, smart ellipses, per-page page size selector (25/50/100).
+     - State: Two-way synchronization with URL query parameters via `useSearchParams` (`?page=2&limit=50`), supporting shareable deep links and browser Back/Forward navigation.
+     - Accessibility: Invisible `.sr-only` live region with `aria-live="polite"` announcing page transitions without screen reader interruption.
+   - **Automated Infinite Scroll Streams** (`<InfiniteSentinel />` & `useInfiniteScroll`): Used on reverse-chronological and activity feeds (`/notifications`, `/rides?scope=past`, `/events?scope=past`, `/admin/audit`).
+     - Architecture: Pure `IntersectionObserver` observing sentinels with zero window/scroll event listeners.
+     - Accessible feedback: `role="status"` and `aria-live="polite"` inform screen readers when loading additional records or when reaching the end of records.
+   - **Progressive History Loading**: Used in `/costs` for settled expense shares (`done.slice(0, showCount)` with a "Show more" button) to prevent runaway list rendering on mobile.
+2. **Accessible Navigation Enhancements:**
+   - **`<BackToTop />` Button**: Floating action pill on all long feeds that unmounts when near the top of the viewport and smoothly scrolls window to top, respecting `prefers-reduced-motion`.
+3. **Data Export:**
+   - **`exportToCsv()` Utility**: One-click RFC 4180-compliant CSV export on Admin Rides, Admin Members, and Admin Reimbursements for church accounting and reporting.
+4. **List Virtualization (`<VirtualList />`):**
+   - High-throughput DOM node recycling via `@tanstack/react-virtual` for streams with over 200 elements, including headless SSR/test fallback layout support.
+
+---
+
 ## Verification (for each phase and at the end)
 
 - From `frontend/`, run `npm run lint && npm run test && npm run build && npm run test:e2e`. All must pass.

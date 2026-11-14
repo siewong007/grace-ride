@@ -77,5 +77,6 @@ export default {
     items: '费用项目',
     shares: '分摊明细',
     history: '历史',
+    shareWhatsApp: '分享至 WhatsApp',
   },
 };

@@ -2,7 +2,7 @@ import { ReactNode, useEffect, useMemo, useRef, useState } from 'react';
 import { Link, NavLink, Navigate, Outlet, useLocation } from 'react-router-dom';
 import {
   ArrowLeft, Bell, Calendar, Car, CarFront, ClipboardList, Clock, FileBarChart, HandCoins, HeartHandshake, Home, KeyRound,
-  LayoutDashboard, LifeBuoy, MapPinned, Megaphone, Receipt, ScrollText, Settings, ShieldAlert, User, Users, Wallet, BarChart3,
+  LayoutDashboard, LifeBuoy, MapPinned, Megaphone, Receipt, ScrollText, Settings, ShieldAlert, User, Users, Wallet, BarChart3, WifiOff,
 } from 'lucide-react';
 import { useAuth } from '../auth';
 import { LogoMark, Wordmark } from './Brand';
@@ -58,7 +58,19 @@ export default function Layout() {
   // Set by the page's PageHeader: its back target, and whether its heading is on screen.
   const [back, setBack] = useState<string | null>(null);
   const [headingVisible, setHeadingVisible] = useState(false);
+  const [isOffline, setIsOffline] = useState(typeof navigator !== 'undefined' ? !navigator.onLine : false);
   const chrome = useMemo(() => ({ setBack, setHeadingVisible }), []);
+
+  useEffect(() => {
+    const onOnline = () => setIsOffline(false);
+    const onOffline = () => setIsOffline(true);
+    window.addEventListener('online', onOnline);
+    window.addEventListener('offline', onOffline);
+    return () => {
+      window.removeEventListener('online', onOnline);
+      window.removeEventListener('offline', onOffline);
+    };
+  }, []);
 
   useEffect(() => {
     const el = sentinelRef.current;
@@ -111,7 +123,7 @@ export default function Layout() {
       show: can('admin_members') || can('admin_invites') || can('admin_recovery'),
     },
     { to: '/admin/roles', label: t('roles'), icon: <KeyRound size={sz} />, show: can('admin_roles') },
-    { to: '/admin/settings', label: t('settings'), icon: <Settings size={sz} />, show: can('admin_groups') || can('admin_areas') },
+    { to: '/admin/settings', label: t('settings'), icon: <Settings size={sz} />, show: can('admin_groups') || can('admin_areas') || can('admin_settings') },
     { to: '/admin/audit', label: t('audit'), icon: <ScrollText size={sz} />, show: can('admin_audit') },
   ]);
 
@@ -220,6 +232,13 @@ export default function Layout() {
           <div className="shell-notice-container">
             <Notice tone="info" icon={<ShieldAlert size={20} />}>
               {t('adminNotice')}
+            </Notice>
+          </div>
+        )}
+        {isOffline && (
+          <div className="shell-notice-container" role="status" aria-live="polite">
+            <Notice tone="warning" icon={<WifiOff size={20} />}>
+              {tc('offlineNotice')}
             </Notice>
           </div>
         )}

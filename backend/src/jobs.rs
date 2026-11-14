@@ -42,8 +42,8 @@ fn ts_in(minutes: i64) -> String {
 }
 
 async fn ride_reminders(db: &PgPool) -> anyhow::Result<()> {
-    let due: Vec<(i64, i64, Option<i64>, String, String, String, String)> = sqlx::query_as(
-        "SELECT r.id, r.passenger_id, r.driver_id, r.pickup_at, a.name, p.name, COALESCE(d.name,'')
+    let due: Vec<(i64, i64, Option<i64>, String, String, String, String, Option<i64>)> = sqlx::query_as(
+        "SELECT r.id, r.passenger_id, r.driver_id, r.pickup_at, a.name, p.name, COALESCE(d.name,''), p.readiness_prompt_mins
          FROM rides r JOIN areas a ON a.id=r.pickup_area_id JOIN users p ON p.id=r.passenger_id LEFT JOIN users d ON d.id=r.driver_id
          WHERE r.status='confirmed' AND r.reminder_sent=0 AND r.pickup_at <= $1 AND r.pickup_at >= $2",
     )
@@ -51,17 +51,17 @@ async fn ride_reminders(db: &PgPool) -> anyhow::Result<()> {
     .bind(ts_in(-10))
     .fetch_all(db)
     .await?;
-    for (id, passenger, driver, at, area, pname, dname) in due {
+    for (id, passenger, driver, at, area, pname, dname, _prompt_mins) in due {
         let time = at.get(11..16).unwrap_or(&at);
         notify(
             db,
             passenger,
             ("接送提醒", "Ride reminder"),
             (
-                &format!("司机 {dname} 将于 {time} 到 {area} 接您。"),
-                &format!("Driver {dname} will pick you up at {area} at {time}."),
+                &format!("司机 {dname} 将于 {time} 到 {area} 接您。请确认您是否准备就绪或告知需稍候/无法出行。"),
+                &format!("Driver {dname} will pick you up at {area} at {time}. Please tap to confirm if you are ready, running late, or unable to join."),
             ),
-            &format!("/rides/{id}"),
+            &format!("/rides/{id}?action=readiness"),
         )
         .await;
         if let Some(d) = driver {
@@ -183,15 +183,34 @@ async fn housekeeping(db: &PgPool, cfg: &Config) -> anyhow::Result<()> {
     sqlx::query("DELETE FROM passenger_locations WHERE ride_id NOT IN (SELECT id FROM rides WHERE status='in_progress' AND picked_up_at IS NULL)")
         .execute(db)
         .await?;
+
+    let rows: Vec<(String, String)> = sqlx::query_as(
+        "SELECT key, value FROM system_settings WHERE key IN ('audit_retention_days', 'chat_retention_days')",
+    )
+    .fetch_all(db)
+    .await
+    .unwrap_or_default();
+    let mut audit_days = cfg.audit_retention_days;
+    let mut chat_days = cfg.chat_retention_days;
+    for (k, v) in rows {
+        if let Ok(n) = v.parse::<i64>() {
+            if k == "audit_retention_days" && (30..=3650).contains(&n) {
+                audit_days = n;
+            } else if k == "chat_retention_days" && (7..=3650).contains(&n) {
+                chat_days = n;
+            }
+        }
+    }
+
     sqlx::query(
         "DELETE FROM ride_messages WHERE created_at < $1
          AND trip_id NOT IN (SELECT trip_id FROM rides WHERE trip_id IS NOT NULL AND status IN ('confirmed','in_progress'))",
     )
-    .bind(ts_in(-cfg.chat_retention_days * 24 * 60))
+    .bind(ts_in(-chat_days * 24 * 60))
     .execute(db)
     .await?;
     sqlx::query("DELETE FROM audit_logs WHERE created_at < $1")
-        .bind(ts_in(-cfg.audit_retention_days * 24 * 60))
+        .bind(ts_in(-audit_days * 24 * 60))
         .execute(db)
         .await?;
     // Geocoded addresses: re-looked-up monthly; "not found" retried after a day.

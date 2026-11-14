@@ -3,7 +3,7 @@
 //! the organiser confirms receipt ("上传收据 ≠ 自动证明收到钱").
 
 use axum::{
-    extract::{Path, State},
+    extract::{Path, Query, State},
     routing::{get, post},
     Json, Router,
 };
@@ -378,7 +378,17 @@ async fn get_one(
     Ok(Json(v))
 }
 
-async fn list_mine_organised(State(st): State<AppState>, u: CurrentUser) -> AppResult<Json<Value>> {
+#[derive(Deserialize)]
+struct SettlementListQuery {
+    page: Option<i64>,
+    limit: Option<i64>,
+}
+
+async fn list_mine_organised(
+    State(st): State<AppState>,
+    u: CurrentUser,
+    Query(q): Query<SettlementListQuery>,
+) -> AppResult<Json<Value>> {
     // 费用分摊 lists the bills a member organised; 账单查阅 (finance) lists every bill.
     let own = u.can(Page::Settlements, Act::View);
     let finance = u.can(Page::AdminBills, Act::View);
@@ -391,6 +401,48 @@ async fn list_mine_organised(State(st): State<AppState>, u: CurrentUser) -> AppR
             ],
         )?;
     }
+
+    if q.page.is_some() || q.limit.is_some() {
+        let (total,): (i64,) = sqlx::query_as(
+            "SELECT COUNT(*) FROM settlements s WHERE (s.created_by=$1 AND $2) OR $3",
+        )
+        .bind(u.id)
+        .bind(own)
+        .bind(finance)
+        .fetch_one(&st.db)
+        .await?;
+
+        let page = q.page.unwrap_or(1).max(1);
+        let limit = q.limit.unwrap_or(25).clamp(1, 100);
+        let offset = (page - 1) * limit;
+
+        let rows: Vec<(i64, String, String, String, i64, i64, i64)> = sqlx::query_as(
+            "SELECT s.id, s.title, e.title, s.status,
+                (SELECT COALESCE(SUM(amount_cents),0)::BIGINT FROM settlement_shares WHERE settlement_id=s.id),
+                (SELECT COUNT(*) FROM settlement_shares WHERE settlement_id=s.id AND status='confirmed'),
+                (SELECT COUNT(*) FROM settlement_shares WHERE settlement_id=s.id)
+             FROM settlements s JOIN events e ON e.id=s.event_id WHERE (s.created_by=$1 AND $2) OR $3 ORDER BY s.id DESC LIMIT $4 OFFSET $5",
+        )
+        .bind(u.id)
+        .bind(own)
+        .bind(finance)
+        .bind(limit)
+        .bind(offset)
+        .fetch_all(&st.db)
+        .await?;
+
+        let total_pages = if total == 0 { 1 } else { (total + limit - 1) / limit };
+        return Ok(Json(json!({
+            "items": rows.into_iter().map(|(id, t, et, s, total, conf, n)| json!({
+                "id": id, "title": t, "event_title": et, "status": s, "total_cents": total, "confirmed": conf, "count": n,
+            })).collect::<Vec<_>>(),
+            "total": total,
+            "page": page,
+            "page_size": limit,
+            "total_pages": total_pages,
+        })));
+    }
+
     let rows: Vec<(i64, String, String, String, i64, i64, i64)> = sqlx::query_as(
         "SELECT s.id, s.title, e.title, s.status,
             (SELECT COALESCE(SUM(amount_cents),0)::BIGINT FROM settlement_shares WHERE settlement_id=s.id),

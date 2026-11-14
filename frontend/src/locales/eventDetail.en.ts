@@ -43,4 +43,7 @@ export default {
   manageDesc: 'Organiser tools for check-in and settlements',
   full: 'Full',
   signedUpSuccess: 'Successfully signed up',
+  addToCalendar: 'Add to calendar',
+  shareWhatsApp: 'Share via WhatsApp',
+  shareEventText: 'Grace Ride Event: {title}\nTime: {time}\nLocation: {location}',
 };

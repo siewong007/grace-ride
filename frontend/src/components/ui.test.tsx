@@ -8,15 +8,20 @@ import {
   Card,
   ConfirmProvider,
   EmptyState,
+  Field,
   IconButton,
+  InfiniteSentinel,
   KeyValue,
   Modal,
   Page,
+  Pagination,
   Pill,
   Skeleton,
   Stat,
   Tabs,
   useConfirm,
+  VirtualList,
+  BackToTop,
 } from './ui';
 
 describe('Button primitive', () => {
@@ -249,6 +254,24 @@ describe('Other UI primitives', () => {
     expect(screen.getByText('Church')).toBeInTheDocument();
   });
 
+  it('renders Field with label, hint and error', () => {
+    const { rerender } = render(
+      <Field label="Phone number" hint="Shown after approval">
+        <input type="tel" />
+      </Field>,
+    );
+    expect(screen.getByText('Phone number')).toBeInTheDocument();
+    expect(screen.getByText('Shown after approval')).toBeInTheDocument();
+
+    rerender(
+      <Field label="Phone number" error="Invalid phone format">
+        <input type="tel" />
+      </Field>,
+    );
+    expect(screen.getByRole('alert')).toHaveTextContent('Invalid phone format');
+    expect(screen.queryByText('Shown after approval')).not.toBeInTheDocument();
+  });
+
   it('renders EmptyState with title and action', () => {
     render(
       <EmptyState
@@ -265,5 +288,125 @@ describe('Other UI primitives', () => {
   it('renders Skeleton placeholders', () => {
     const { container } = render(<Skeleton lines={2} />);
     expect(container.querySelectorAll('.skeleton')).toHaveLength(2);
+  });
+});
+
+describe('Pagination component', () => {
+  it('renders page buttons and marks current page', () => {
+    const onPage = vi.fn();
+    render(<Pagination page={2} totalPages={5} onPageChange={onPage} />);
+    const page2 = screen.getByRole('button', { name: /Page 2/ });
+    expect(page2).toHaveAttribute('aria-current', 'page');
+    expect(page2).toHaveClass('active');
+  });
+
+  it('navigates next and previous', async () => {
+    const onPage = vi.fn();
+    render(<Pagination page={2} totalPages={5} onPageChange={onPage} />);
+    const prev = screen.getByRole('button', { name: /Previous/ });
+    const next = screen.getByRole('button', { name: /Next/ });
+
+    fireEvent.click(prev);
+    expect(onPage).toHaveBeenCalledWith(1);
+
+    fireEvent.click(next);
+    expect(onPage).toHaveBeenCalledWith(3);
+  });
+
+  it('disables previous on first page and next on last page', () => {
+    const { rerender } = render(<Pagination page={1} totalPages={3} onPageChange={vi.fn()} />);
+    expect(screen.getByRole('button', { name: /Previous/ })).toBeDisabled();
+    expect(screen.getByRole('button', { name: /Next/ })).not.toBeDisabled();
+
+    rerender(<Pagination page={3} totalPages={3} onPageChange={vi.fn()} />);
+    expect(screen.getByRole('button', { name: /Previous/ })).not.toBeDisabled();
+    expect(screen.getByRole('button', { name: /Next/ })).toBeDisabled();
+  });
+
+  it('triggers page size change', () => {
+    const onPageSize = vi.fn();
+    render(
+      <Pagination
+        page={1}
+        totalPages={10}
+        total={250}
+        pageSize={25}
+        onPageChange={vi.fn()}
+        onPageSizeChange={onPageSize}
+      />,
+    );
+    const select = screen.getByRole('combobox');
+    fireEvent.change(select, { target: { value: '50' } });
+    expect(onPageSize).toHaveBeenCalledWith(50);
+  });
+
+  it('renders range counter showing records from and to', () => {
+    render(
+      <Pagination
+        page={2}
+        totalPages={10}
+        total={250}
+        pageSize={25}
+        onPageChange={vi.fn()}
+      />,
+    );
+    expect(screen.getByText(/Showing 26–50 of 250 records/i)).toBeInTheDocument();
+  });
+
+  it('supports jump to page input when totalPages > 5', () => {
+    const onPage = vi.fn();
+    render(
+      <Pagination
+        page={1}
+        totalPages={12}
+        total={300}
+        pageSize={25}
+        onPageChange={onPage}
+      />,
+    );
+
+    const jumpInput = screen.getByRole('spinbutton', { name: /Go to/i });
+    fireEvent.change(jumpInput, { target: { value: '7' } });
+    const goBtn = screen.getByRole('button', { name: /Go/i });
+    fireEvent.click(goBtn);
+
+    expect(onPage).toHaveBeenCalledWith(7);
+  });
+});
+
+describe('BackToTop primitive', () => {
+  it('renders sentinel element for zero scroll-listener visibility', () => {
+    const { container } = render(<BackToTop />);
+    expect(container.querySelector('.back-to-top-sentinel')).toBeInTheDocument();
+  });
+});
+
+describe('InfiniteSentinel primitive', () => {
+  it('renders loading state when loading is true', () => {
+    render(<InfiniteSentinel loading={true} hasMore={true} />);
+    expect(screen.getByText(/Loading more/i)).toBeInTheDocument();
+  });
+
+  it('renders end-of-list message when hasMore is false and not loading', () => {
+    render(<InfiniteSentinel loading={false} hasMore={false} />);
+    expect(screen.getByText(/No more records/i)).toBeInTheDocument();
+  });
+});
+
+describe('VirtualList primitive', () => {
+  it('renders virtual list container and items', () => {
+    const items = ['Alpha', 'Beta', 'Gamma'];
+    render(
+      <VirtualList
+        items={items}
+        height={300}
+        estimateSize={50}
+        renderItem={(item) => <div data-testid="virtual-row">{item}</div>}
+      />,
+    );
+
+    const rows = screen.getAllByTestId('virtual-row');
+    expect(rows.length).toBeGreaterThan(0);
+    expect(screen.getByText('Alpha')).toBeInTheDocument();
   });
 });

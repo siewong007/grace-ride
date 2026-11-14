@@ -133,6 +133,10 @@ struct Cached {
 }
 
 impl RoutingState {
+    pub async fn invalidate(&self, driver: i64, trip: i64) {
+        self.routes.lock().await.remove(&(driver, trip));
+    }
+
     /// Nominatim allows at most one request per second.
     async fn wait_geocoder_slot(&self) {
         let mut last = self.geocoder_gate.lock().await;

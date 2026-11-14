@@ -345,7 +345,7 @@ export default function AdminReports() {
                 {r.events.length > 0 ? (
                   <div className="list">
                     {r.events.map((e) => (
-                      <Link key={e.id} to={`/rides/${e.id}`} className="item">
+                      <Link key={e.id} to={`/events/${e.id}`} className="item">
                         <span className="grow min-w-0 ellipsis">{e.title}</span>
                         <span className="muted small">{fmtDateTime(e.starts_at, ft)}</span>
                       </Link>

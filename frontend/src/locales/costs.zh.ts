@@ -19,4 +19,5 @@ export default {
   paidDate: '付款日期',
   privacy: '收据仅让您本人、收款者与获授权财务查看。请遮盖不必要的账号资料。',
   receiptModal: '上传收据 · {amount}',
+  showMore: '显示更多（剩余 {count} 条）',
 };

@@ -51,6 +51,7 @@ pub fn router() -> Router<AppState> {
         .route("/auth/dev-users", get(dev_users))
         .route("/auth/dev-login", post(dev_login))
         .route("/auth/logout", post(logout))
+        .route("/auth/logout-all", post(logout_all))
         .route("/auth/terms", post(accept_terms))
         .route("/auth/passkey/login/start", post(passkey_login_start))
         .route("/auth/passkey/login/finish", post(passkey_login_finish))
@@ -63,6 +64,11 @@ pub fn router() -> Router<AppState> {
         .route("/auth/passkeys/{id}", delete(delete_passkey))
         .route("/auth/totp/setup", post(totp_setup))
         .route("/auth/totp/enable", post(totp_enable))
+        .route("/auth/totp/verify", post(totp_verify))
+        .route(
+            "/auth/totp/backup-codes/regenerate",
+            post(totp_regenerate_backup_codes),
+        )
         .route("/auth/password", post(set_password))
         .route("/auth/recovery-request", post(recovery_request))
         .route("/invites/{token}", get(invite_preview))
@@ -202,12 +208,31 @@ fn clear_cookies(jar: CookieJar) -> CookieJar {
 }
 
 async fn me(State(st): State<AppState>, u: CurrentUser) -> AppResult<Json<Value>> {
-    let row: (String, Option<i64>, i64, Option<String>, i64, i64, i64, Option<String>) = sqlx::query_as(
-        "SELECT phone, photo_file_id, totp_enabled, password_hash, badges_opt_out, carpool_enabled, spare_seats, terms_accepted_at FROM users WHERE id=$1",
+    let row: (
+        String,
+        Option<i64>,
+        i64,
+        Option<String>,
+        i64,
+        i64,
+        i64,
+        Option<String>,
+        Option<i64>,
+        Option<i64>,
+        Option<i64>,
+        Option<String>,
+    ) = sqlx::query_as(
+        "SELECT phone, photo_file_id, totp_enabled, password_hash, badges_opt_out, carpool_enabled, spare_seats, terms_accepted_at, readiness_prompt_mins, gate_wait_mins, auto_lock_mins, totp_backup_codes FROM users WHERE id=$1",
     )
     .bind(u.id)
     .fetch_one(&st.db)
     .await?;
+    let backup_codes_count = row
+        .11
+        .as_deref()
+        .and_then(|s| serde_json::from_str::<Vec<String>>(s).ok())
+        .map(|v| v.len())
+        .unwrap_or(0);
     let passkeys: (i64,) = sqlx::query_as("SELECT COUNT(*) FROM passkeys WHERE user_id=$1")
         .bind(u.id)
         .fetch_one(&st.db)
@@ -243,6 +268,8 @@ async fn me(State(st): State<AppState>, u: CurrentUser) -> AppResult<Json<Value>
         "mfa_ok": u.mfa_ok, "totp_enabled": row.2 == 1,
         "has_password": row.3.is_some(), "passkey_count": passkeys.0,
         "badges_opt_out": row.4 == 1, "carpool_enabled": row.5 == 1, "spare_seats": row.6,
+        "readiness_prompt_mins": row.8.unwrap_or(45), "gate_wait_mins": row.9.unwrap_or(5),
+        "auto_lock_mins": row.10.unwrap_or(0), "backup_codes_count": backup_codes_count,
         "terms_accepted": row.7.is_some(),
         "privileged": u.perms.privileged(), "unread": unread.0,
         "groups": groups.into_iter().map(|(id, name)| json!({"id": id, "name": name})).collect::<Vec<_>>(),
@@ -354,6 +381,19 @@ async fn logout(
         .execute(&st.db)
         .await?;
     audit(&st.db, Some(u.id), "logout", "user", Some(u.id), "").await;
+    Ok((clear_cookies(jar), Json(json!({"ok": true}))))
+}
+
+async fn logout_all(
+    State(st): State<AppState>,
+    jar: CookieJar,
+    u: CurrentUser,
+) -> AppResult<(CookieJar, Json<Value>)> {
+    sqlx::query("DELETE FROM sessions WHERE user_id=$1")
+        .bind(u.id)
+        .execute(&st.db)
+        .await?;
+    audit(&st.db, Some(u.id), "logout.all", "user", Some(u.id), "").await;
     Ok((clear_cookies(jar), Json(json!({"ok": true}))))
 }
 
@@ -778,6 +818,27 @@ struct CodeReq {
     code: String,
 }
 
+fn generate_backup_codes() -> (Vec<String>, Vec<String>) {
+    use rand::Rng;
+    const CHARSET: &[u8] = b"ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
+    let mut rng = rand::thread_rng();
+    let mut plain = Vec::with_capacity(8);
+    let mut hashed = Vec::with_capacity(8);
+    for _ in 0..8 {
+        let p1: String = (0..4)
+            .map(|_| CHARSET[rng.gen_range(0..CHARSET.len())] as char)
+            .collect();
+        let p2: String = (0..4)
+            .map(|_| CHARSET[rng.gen_range(0..CHARSET.len())] as char)
+            .collect();
+        let code = format!("{p1}-{p2}");
+        let norm = format!("{p1}{p2}");
+        hashed.push(crate::auth::hash_token(&norm));
+        plain.push(code);
+    }
+    (plain, hashed)
+}
+
 async fn totp_enable(
     State(st): State<AppState>,
     u: CurrentUser,
@@ -792,7 +853,11 @@ async fn totp_enable(
         audit(&st.db, Some(u.id), "totp.failed", "user", Some(u.id), "").await;
         return Err(e);
     }
-    sqlx::query("UPDATE users SET totp_enabled=1 WHERE id=$1")
+    let (plain_codes, hashed_codes) = generate_backup_codes();
+    let backup_json =
+        serde_json::to_string(&hashed_codes).map_err(|e| AppError::Other(anyhow::anyhow!(e)))?;
+    sqlx::query("UPDATE users SET totp_enabled=1, totp_backup_codes=$1 WHERE id=$2")
+        .bind(&backup_json)
         .bind(u.id)
         .execute(&st.db)
         .await?;
@@ -801,7 +866,116 @@ async fn totp_enable(
         .execute(&st.db)
         .await?;
     audit(&st.db, Some(u.id), "totp.enable", "user", Some(u.id), "").await;
-    Ok(Json(json!({ "ok": true })))
+    Ok(Json(json!({ "ok": true, "backup_codes": plain_codes })))
+}
+
+async fn totp_verify(
+    State(st): State<AppState>,
+    u: CurrentUser,
+    Json(req): Json<CodeReq>,
+) -> AppResult<Json<Value>> {
+    let row: Option<(Option<String>, Option<String>)> = sqlx::query_as(
+        "SELECT totp_secret, totp_backup_codes FROM users WHERE id=$1 AND totp_enabled=1",
+    )
+    .bind(u.id)
+    .fetch_optional(&st.db)
+    .await?;
+
+    let Some((secret, backup_codes_json)) = row else {
+        return Err(bad(u.lang, ErrorKey::TwoFactorNotConfigured));
+    };
+
+    let clean = req.code.trim();
+    // 1. Check if 6 digits TOTP
+    if clean.len() == 6 && clean.chars().all(|c| c.is_ascii_digit()) {
+        if let Some(sec) = secret {
+            if verify_totp(&st, u.id, &sec, &u.email, clean, u.lang)
+                .await
+                .is_ok()
+            {
+                sqlx::query("UPDATE sessions SET mfa_ok=1 WHERE token=$1")
+                    .bind(&u.session_id)
+                    .execute(&st.db)
+                    .await?;
+                audit(&st.db, Some(u.id), "totp.verify", "user", Some(u.id), "totp").await;
+                return Ok(Json(json!({ "ok": true, "method": "totp" })));
+            }
+        }
+    }
+
+    // 2. Check if single-use backup recovery code (8 characters ignoring hyphens/spaces)
+    let norm = clean.replace('-', "").replace(' ', "").to_uppercase();
+    if norm.len() == 8 {
+        let code_hash = crate::auth::hash_token(&norm);
+        let mut codes: Vec<String> = backup_codes_json
+            .as_deref()
+            .and_then(|s| serde_json::from_str(s).ok())
+            .unwrap_or_default();
+
+        if let Some(pos) = codes.iter().position(|h| h == &code_hash) {
+            codes.remove(pos);
+            let updated = serde_json::to_string(&codes)
+                .map_err(|e| AppError::Other(anyhow::anyhow!(e)))?;
+            sqlx::query("UPDATE users SET totp_backup_codes=$1 WHERE id=$2")
+                .bind(&updated)
+                .bind(u.id)
+                .execute(&st.db)
+                .await?;
+            sqlx::query("UPDATE sessions SET mfa_ok=1 WHERE token=$1")
+                .bind(&u.session_id)
+                .execute(&st.db)
+                .await?;
+            audit(
+                &st.db,
+                Some(u.id),
+                "totp.backup_code_used",
+                "user",
+                Some(u.id),
+                format!("remaining: {}", codes.len()),
+            )
+            .await;
+            return Ok(Json(json!({
+                "ok": true,
+                "method": "backup_code",
+                "remaining_backup_codes": codes.len()
+            })));
+        }
+    }
+
+    audit(&st.db, Some(u.id), "totp.failed", "user", Some(u.id), "verify").await;
+    Err(bad(u.lang, ErrorKey::InvalidCode))
+}
+
+async fn totp_regenerate_backup_codes(
+    State(st): State<AppState>,
+    u: CurrentUser,
+) -> AppResult<Json<Value>> {
+    require_recent_sign_in(&st, &u).await?;
+    let (enabled,): (i64,) = sqlx::query_as("SELECT totp_enabled FROM users WHERE id=$1")
+        .bind(u.id)
+        .fetch_one(&st.db)
+        .await?;
+    if enabled != 1 {
+        return Err(bad(u.lang, ErrorKey::TwoFactorNotConfigured));
+    }
+    let (plain_codes, hashed_codes) = generate_backup_codes();
+    let backup_json =
+        serde_json::to_string(&hashed_codes).map_err(|e| AppError::Other(anyhow::anyhow!(e)))?;
+    sqlx::query("UPDATE users SET totp_backup_codes=$1 WHERE id=$2")
+        .bind(&backup_json)
+        .bind(u.id)
+        .execute(&st.db)
+        .await?;
+    audit(
+        &st.db,
+        Some(u.id),
+        "totp.backup_codes_regenerated",
+        "user",
+        Some(u.id),
+        "",
+    )
+    .await;
+    Ok(Json(json!({ "ok": true, "backup_codes": plain_codes })))
 }
 
 #[derive(Deserialize)]

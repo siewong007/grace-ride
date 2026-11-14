@@ -10,6 +10,7 @@ export default {
   submit: '提交',
   submitted: '已提交，管理员会尽快跟进',
   urgent: '紧急情况请直接致电司机或交通组。',
+  callTransport: '致电交通组（03-7957 3888）',
   allHelp: '全部求助',
   mine: '我的',
   none: '没有求助记录',

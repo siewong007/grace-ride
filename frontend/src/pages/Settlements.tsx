@@ -1,6 +1,7 @@
 import { FormEvent, useEffect, useMemo, useState } from 'react';
-import { Link, useNavigate, useParams } from 'react-router-dom';
-import { Trash2 } from 'lucide-react';
+import { Link, useNavigate, useParams, useSearchParams } from 'react-router-dom';
+import { Share2, Trash2 } from 'lucide-react';
+import { useAuth } from '../auth';
 import { del, post, put, useApi } from '../api';
 import {
   Button,
@@ -13,6 +14,7 @@ import {
   Modal,
   Page,
   PageHeader,
+  Pagination,
   Spinner,
   StatusPill,
   useAction,
@@ -50,20 +52,42 @@ interface Settlement {
   items: { id: number; label: string; amount_cents: number; receipt_file_id: number | null }[];
   shares: ShareRow[];
   can_manage: boolean;
+  can_delete?: boolean;
   participant_count?: number;
+}
+
+interface SettlementSummary {
+  id: number;
+  title: string;
+  event_title: string;
+  status: string;
+  total_cents: number;
+  confirmed: number;
+  count: number;
+}
+
+interface PaginatedSettlements {
+  items: SettlementSummary[];
+  total: number;
+  page: number;
+  page_size: number;
+  total_pages: number;
 }
 
 export default function Settlements() {
   const { t } = useTranslation('settlements');
-  const { data, error, loading } = useApi<{
-    id: number;
-    title: string;
-    event_title: string;
-    status: string;
-    total_cents: number;
-    confirmed: number;
-    count: number;
-  }[]>('/settlements');
+  const { can } = useAuth();
+  const [params, setParams] = useSearchParams();
+  const page = Math.max(1, Number(params.get('page') ?? '1') || 1);
+  const pageSize = Number(params.get('limit') ?? '25') || 25;
+  const pagingQs = page > 1 || pageSize !== 25 ? `?page=${page}&limit=${pageSize}` : '';
+  const { data, error, loading } = useApi<PaginatedSettlements | SettlementSummary[]>(
+    `/settlements${pagingQs}`,
+  );
+
+  const items = Array.isArray(data) ? data : data?.items ?? [];
+  const total = Array.isArray(data) ? data.length : data?.total ?? 0;
+  const totalPages = Array.isArray(data) ? 1 : data?.total_pages ?? 1;
 
   return (
     <Page width="medium">
@@ -72,9 +96,11 @@ export default function Settlements() {
           title={t('title')}
           subtitle={t('desc')}
           actions={
-            <Button variant="secondary" to="/events?scope=managing">
-              {t('fromEvent')}
-            </Button>
+            can('settlements', 'create') ? (
+              <Button variant="secondary" to="/events?scope=managing">
+                {t('fromEvent')}
+              </Button>
+            ) : undefined
           }
         />
 
@@ -82,25 +108,46 @@ export default function Settlements() {
 
         {loading ? (
           <Spinner />
-        ) : !data?.length ? (
+        ) : !items.length ? (
           <EmptyState title={t('none')} />
         ) : (
-          <div className="list list-ruled">
-            {data.map((s) => (
-              <Link key={s.id} to={`/settlements/${s.id}`} className="item money-row">
-                <div className="grow min-w-0">
-                  <div className="bold ellipsis">{s.title}</div>
-                  <div className="muted small ellipsis">
-                    {s.event_title} · {t('confirmedCount', { confirmed: s.confirmed, count: s.count })}
+          <>
+            <div className="list list-ruled">
+              {items.map((s) => (
+                <Link key={s.id} to={`/settlements/${s.id}`} className="item money-row">
+                  <div className="grow min-w-0">
+                    <div className="bold ellipsis">{s.title}</div>
+                    <div className="muted small ellipsis">
+                      {s.event_title} · {t('confirmedCount', { confirmed: s.confirmed, count: s.count })}
+                    </div>
                   </div>
-                </div>
-                <div className="money-row-side">
-                  <span className="money">{rm(s.total_cents)}</span>
-                  <StatusPill map={SETTLEMENT_STATUS} status={s.status} />
-                </div>
-              </Link>
-            ))}
-          </div>
+                  <div className="money-row-side">
+                    <span className="money">{rm(s.total_cents)}</span>
+                    <StatusPill map={SETTLEMENT_STATUS} status={s.status} />
+                  </div>
+                </Link>
+              ))}
+            </div>
+            <Pagination
+              page={page}
+              totalPages={totalPages}
+              total={total}
+              pageSize={pageSize}
+              onPageChange={(p) => {
+                const next = new URLSearchParams(params);
+                if (p > 1) next.set('page', String(p));
+                else next.delete('page');
+                setParams(next, { replace: true });
+              }}
+              onPageSizeChange={(sz) => {
+                const next = new URLSearchParams(params);
+                if (sz !== 25) next.set('limit', String(sz));
+                else next.delete('limit');
+                next.delete('page');
+                setParams(next, { replace: true });
+              }}
+            />
+          </>
         )}
       </div>
     </Page>
@@ -124,6 +171,7 @@ interface Revision {
 export function SettlementForm() {
   const { t } = useTranslation('settlements');
   const ft = useFormatT();
+  const { can } = useAuth();
   const { eventId, id } = useParams();
   const nav = useNavigate();
   const { data: existing, reload } = useApi<Settlement>(id ? `/settlements/${id}` : null);
@@ -410,7 +458,7 @@ export function SettlementForm() {
 
         {id && existing && (
           <div className="btn-row">
-            {existing.status === 'draft' && (
+            {existing.status === 'draft' && (existing.can_delete ?? can('settlements', 'delete')) && (
               <Button
                 variant="danger"
                 disabled={busy}
@@ -533,6 +581,17 @@ export function SettlementDetail() {
           actions={
             <div className="row nowrap gap-sm">
               <StatusPill map={SETTLEMENT_STATUS} status={s.status} />
+              <Button
+                variant="ghost"
+                size="sm"
+                icon={<Share2 size={16} />}
+                onClick={() => {
+                  const text = `${s.title}\n${t('settlementDetail.event')}: ${s.event.title}\n${t('settlementDetail.total')}: ${rm(s.total_cents)}\n${t('settlementDetail.payee')}: ${s.payee_name} (${s.payee_account})`;
+                  window.open(`https://wa.me/?text=${encodeURIComponent(text)}`, '_blank', 'noopener,noreferrer');
+                }}
+              >
+                {t('settlementDetail.shareWhatsApp')}
+              </Button>
               {canEdit && (
                 <Button variant="secondary" to={`/settlements/${s.id}/edit`}>
                   {t('settlementDetail.edit')}

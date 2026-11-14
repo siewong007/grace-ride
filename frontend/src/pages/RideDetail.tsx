@@ -3,6 +3,7 @@ import { Link, useNavigate, useParams } from 'react-router-dom';
 import {
   AlertCircle,
   AlertTriangle,
+  Calendar,
   CheckCircle2,
   ChevronDown,
   ChevronUp,
@@ -17,7 +18,9 @@ import {
   MoreHorizontal,
   Navigation,
   Phone,
+  Share2,
 } from 'lucide-react';
+import { downloadIcs } from '../calendar';
 import { del, post, useApi } from '../api';
 import { useAuth } from '../auth';
 import Chat from '../components/Chat';
@@ -376,6 +379,50 @@ function Details({ ride: r }: { ride: Ride }) {
       {r.pickup_address && (r.viewer.is_driver || r.viewer.is_staff) && (
         <NavButtonGroup address={r.pickup_address} />
       )}
+
+      {['confirmed', 'in_progress', 'completed'].includes(r.status) && (
+        <div className="btn-row">
+          <Button
+            variant="ghost"
+            size="sm"
+            icon={<Calendar size={16} />}
+            onClick={() => {
+              const d = r.driver;
+              downloadIcs(
+                {
+                  title: `Grace Ride: ${r.destination}`,
+                  description: `Driver: ${d?.name ?? ''} (${[d?.vehicle?.color, d?.vehicle?.model, d?.vehicle?.plate].filter(Boolean).join(' ')})\nPickup: ${r.pickup_address || r.area.name}`,
+                  location: r.pickup_address || r.area.name,
+                  startsAt: r.pickup_at,
+                  durationMinutes: 60,
+                },
+                `GraceRide-${r.id}.ics`,
+              );
+            }}
+          >
+            {t('addToCalendar')}
+          </Button>
+          <Button
+            variant="ghost"
+            size="sm"
+            icon={<Share2 size={16} />}
+            onClick={() => {
+              const d = r.driver;
+              const text = t('shareRideText', {
+                time: fmtDateTime(r.pickup_at, ft),
+                pickup: r.pickup_address || r.area.name,
+                dest: r.destination,
+                driver: d
+                  ? `${d.name} (${[d.vehicle?.color, d.vehicle?.model, d.vehicle?.plate].filter(Boolean).join(' ')})`
+                  : '—',
+              });
+              window.open(`https://wa.me/?text=${encodeURIComponent(text)}`, '_blank', 'noopener,noreferrer');
+            }}
+          >
+            {t('shareWhatsApp')}
+          </Button>
+        </div>
+      )}
     </Card>
   );
 }
@@ -612,6 +659,8 @@ function PassengerShareLocation({ rideId, sharing, onChange }: { rideId: number;
 
 function PassengerActions({ ride: r, reload }: { ride: Ride; reload: () => void }) {
   const { t } = useTranslation('rideDetail');
+  const auth = useAuth();
+  const can = auth?.can ?? (() => true);
   const confirm = useConfirm();
   const { busy, error, run } = useAction();
   const nav = useNavigate();
@@ -632,7 +681,7 @@ function PassengerActions({ ride: r, reload }: { ride: Ride; reload: () => void 
 
   return (
     <Card className="stack">
-      {r.status === 'pending_passenger' && r.driver && (
+      {r.status === 'pending_passenger' && r.driver && can('rides', 'update') && (
         <div className="stack">
           <h2>{t('driverInvite')}</h2>
           <p>{t('driverInviteDesc', { name: r.driver.name })}</p>
@@ -661,8 +710,75 @@ function PassengerActions({ ride: r, reload }: { ride: Ride; reload: () => void 
           <Trans t={t as TFunction} i18nKey="altTransportNotice" components={{ receipt: <Link to={`/reimbursements/new?ride=${r.id}`} /> }} />
         </Notice>
       )}
+
+      {/* Passenger Readiness & Delay Notification Block */}
+      {(r.status === 'confirmed' || (r.status === 'in_progress' && !r.picked_up_at)) && can('rides', 'update') && (
+        <div className="stack-sm">
+          {r.delay_minutes && r.delay_minutes > 0 ? (
+            <Notice tone="warning" icon={<Clock size={18} />}>
+              <span>{t('driverDelayNotice', { mins: r.delay_minutes })}</span>
+            </Notice>
+          ) : null}
+
+          {r.arrived_at_gate_at ? (
+            <Notice tone="success" icon={<AlertCircle size={18} />}>
+              <span className="bold">{t('driverArrivedGateNotice')}</span>
+            </Notice>
+          ) : null}
+
+          <div className="stack-sm">
+            <h3 className="no-margin">{t('readinessTitle')}</h3>
+            <p className="small muted no-margin">{t('readinessPrompt')}</p>
+
+            {r.readiness_status === 'ready' && (
+              <Notice tone="success">{t('readyConfirmed')}</Notice>
+            )}
+            {(r.readiness_status === 'delayed_5m' || r.readiness_status === 'delayed_10m') && (
+              <Notice tone="warning">{t('delayedConfirmed')}</Notice>
+            )}
+
+            <div className="btn-row">
+              <Button
+                variant={r.readiness_status === 'ready' ? 'secondary' : 'primary'}
+                size="sm"
+                disabled={busy}
+                onClick={() => run(() => post(`/rides/${r.id}/readiness`, { status: 'ready' }).then(reload), t('readyConfirmed'))}
+              >
+                {t('readyBtn')}
+              </Button>
+              <Button
+                variant="secondary"
+                size="sm"
+                disabled={busy}
+                onClick={() => run(() => post(`/rides/${r.id}/readiness`, { status: 'delayed_5m' }).then(reload), t('delayedConfirmed'))}
+              >
+                {t('delayed5mBtn')}
+              </Button>
+              <Button
+                variant="ghost"
+                size="sm"
+                className="text-danger"
+                disabled={busy}
+                onClick={async () => {
+                  const ok = await confirm({
+                    title: t('confirmUnableTitle'),
+                    body: t('confirmUnableBody'),
+                    confirmLabel: t('confirmUnableBtn'),
+                    tone: 'danger',
+                  });
+                  if (ok) {
+                    await run(() => post(`/rides/${r.id}/readiness`, { status: 'unable_to_join' }).then(reload));
+                  }
+                }}
+              >
+                {t('unableToJoinBtn')}
+              </Button>
+            </div>
+          </div>
+        </div>
+      )}
       <ErrorBox error={error} />
-      {cancellable && (
+      {cancellable && can('rides', 'delete') && (
         <Button variant="danger" onClick={() => setCancel(true)}>
           {t('cancelRide')}
         </Button>
@@ -703,6 +819,15 @@ function DriverActions({ ride: r, reload }: { ride: Ride; reload: () => void }) 
   return (
     <Card className="stack">
       <h2>{t('driverActions')}</h2>
+
+      {/* Passenger readiness status notice for driver */}
+      {r.readiness_status === 'ready' && (
+        <Notice tone="success">{t('readyConfirmed')}</Notice>
+      )}
+      {(r.readiness_status === 'delayed_5m' || r.readiness_status === 'delayed_10m') && (
+        <Notice tone="warning">{t('delayedConfirmed')}</Notice>
+      )}
+
       {r.status === 'pending_driver' && (
         <>
           <p className="muted">{t('driverClaimDesc')}</p>
@@ -730,6 +855,15 @@ function DriverActions({ ride: r, reload }: { ride: Ride; reload: () => void }) 
             </Button>
           )}
           {!r.picked_up_at && (
+            <Button
+              variant="secondary"
+              disabled={busy}
+              onClick={() => run(() => post(`/rides/${r.id}/arrived-gate`).then(reload), t('arrivedGateSent'))}
+            >
+              {t('arrivedGateBtn')}
+            </Button>
+          )}
+          {!r.picked_up_at && (
             <Button variant="danger" disabled={busy} onClick={handleNoShow}>
               {t('noShowBtn')}
             </Button>
@@ -737,6 +871,39 @@ function DriverActions({ ride: r, reload }: { ride: Ride; reload: () => void }) 
           <Button variant="secondary" className="btn accent" disabled={busy} onClick={() => act('complete', t('respondedCompleted'))}>
             {t('completedTrip')}
           </Button>
+        </div>
+      )}
+
+      {/* Driver Delay Broadcast Buttons */}
+      {(r.status === 'confirmed' || (r.status === 'in_progress' && !r.picked_up_at)) && r.viewer.is_driver && (
+        <div className="stack-sm">
+          <span className="small muted">{t('driverDelayBtn')}:</span>
+          <div className="btn-row">
+            <Button
+              variant="ghost"
+              size="sm"
+              disabled={busy}
+              onClick={() => run(() => post(`/rides/${r.id}/driver-delay`, { delay_minutes: 5 }).then(reload), t('driverDelaySent', { mins: 5 }))}
+            >
+              {t('driverDelay5m')}
+            </Button>
+            <Button
+              variant="ghost"
+              size="sm"
+              disabled={busy}
+              onClick={() => run(() => post(`/rides/${r.id}/driver-delay`, { delay_minutes: 10 }).then(reload), t('driverDelaySent', { mins: 10 }))}
+            >
+              {t('driverDelay10m')}
+            </Button>
+            <Button
+              variant="ghost"
+              size="sm"
+              disabled={busy}
+              onClick={() => run(() => post(`/rides/${r.id}/driver-delay`, { delay_minutes: 15 }).then(reload), t('driverDelaySent', { mins: 15 }))}
+            >
+              {t('driverDelay15m')}
+            </Button>
+          </div>
         </div>
       )}
       {['pending_passenger', 'pending_approval', 'pending_driver_confirm', 'confirmed'].includes(r.status) && r.viewer.is_driver && (
@@ -770,7 +937,8 @@ interface DriverOpt {
 
 function StaffActions({ ride: r, reload }: { ride: Ride; reload: () => void }) {
   const { t } = useTranslation('rideDetail');
-  const { can } = useAuth();
+  const auth = useAuth();
+  const can = auth?.can ?? (() => true);
   // Staff who may only view rides get the summary without the buttons.
   const edit = can('admin_rides', 'update');
   const cancel = can('admin_rides', 'delete');

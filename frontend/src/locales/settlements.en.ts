@@ -77,5 +77,6 @@ export default {
     items: 'Expense items',
     shares: 'Shares',
     history: 'History',
+    shareWhatsApp: 'Share via WhatsApp',
   },
 };

@@ -2,7 +2,9 @@ import { useState } from 'react';
 import { Link } from 'react-router-dom';
 import { Copy, Upload } from 'lucide-react';
 import { post, useApi } from '../api';
+import { useAuth } from '../auth';
 import {
+  BackToTop,
   Button,
   Card,
   EmptyState,
@@ -38,11 +40,15 @@ interface Share {
 export default function Costs() {
   const { t } = useTranslation('costs');
   const ft = useFormatT();
+  const { can } = useAuth();
   const { data, error, loading, reload } = useApi<Share[]>('/me/shares');
   const toast = useToast();
   const [paying, setPaying] = useState<Share | null>(null);
+  const [showCount, setShowCount] = useState(10);
   const owing = data?.filter((s) => s.status !== 'confirmed') ?? [];
   const done = data?.filter((s) => s.status === 'confirmed') ?? [];
+  const visibleDone = done.slice(0, showCount);
+  const hasMoreDone = done.length > showCount;
 
   const copyAccount = (share: Share) => {
     navigator.clipboard?.writeText(share.payee_account);
@@ -95,7 +101,7 @@ export default function Costs() {
 
                   {s.status === 'pending' ? (
                     <div className="notice info small">{t('pending', { ref: s.txn_ref })}</div>
-                  ) : (
+                  ) : can('costs', 'update') ? (
                     <Button
                       variant="primary"
                       block
@@ -104,7 +110,7 @@ export default function Costs() {
                     >
                       {t('uploadReceipt')}
                     </Button>
-                  )}
+                  ) : null}
 
                   <Link className="small center" to={`/settlements/${s.settlement_id}`}>
                     {t('viewBill')}
@@ -119,9 +125,10 @@ export default function Costs() {
               <section>
                 <div className="section-head">
                   <h2>{t('paid')}</h2>
+                  <span className="muted small">({done.length})</span>
                 </div>
                 <div className="list list-ruled">
-                  {done.map((s) => (
+                  {visibleDone.map((s) => (
                     <Link key={s.id} to={`/settlements/${s.settlement_id}`} className="item">
                       <div className="grow min-w-0">
                         <div className="bold ellipsis">{s.title}</div>
@@ -134,6 +141,16 @@ export default function Costs() {
                     </Link>
                   ))}
                 </div>
+                {hasMoreDone && (
+                  <div className="center pt-sm">
+                    <Button
+                      variant="secondary"
+                      onClick={() => setShowCount((c) => c + 15)}
+                    >
+                      {t('showMore', { count: done.length - showCount })}
+                    </Button>
+                  </div>
+                )}
               </section>
             )}
           </>
@@ -150,6 +167,7 @@ export default function Costs() {
           />
         )}
       </div>
+      <BackToTop />
     </Page>
   );
 }
@@ -171,7 +189,7 @@ function ProofModal({
 
   const submit = () => {
     run(async () => {
-      await post(`/me/shares/${share.id}/pay`, { proof_file_id: file, txn_ref: txn, paid_date: date });
+      await post(`/shares/${share.id}/proof`, { proof_file_id: file, txn_ref: txn, paid_date: date });
       onDone();
     }, t('submitted'));
   };

@@ -6,6 +6,7 @@ import { useParams } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
 import { Accessibility, Car, History, RotateCcw, Send, Sparkles, UserRound } from 'lucide-react';
 import { ApiError, post, useApi } from '../../api';
+import { useAuth } from '../../auth';
 import {
   Button,
   Card,
@@ -42,6 +43,8 @@ export default function PlanTransport() {
   const ft = useFormatT();
   const toast = useToast();
   const confirm = useConfirm();
+  const { can } = useAuth();
+  const canUpdate = can('admin_plan', 'update');
   const { data, error, loading, reload } = useApi<Plan>(`/admin/events/${id}/plan`);
   const [draft, setDraft] = useState<Draft>({});
   const [busy, setBusy] = useState(false);
@@ -86,7 +89,10 @@ export default function PlanTransport() {
   }
 
   const plan = data;
-  const assign = (rideId: number, driverId: number | null) => setDraft((d) => ({ ...d, [rideId]: driverId }));
+  const assign = (rideId: number, driverId: number | null) => {
+    if (!canUpdate) return;
+    setDraft((d) => ({ ...d, [rideId]: driverId }));
+  };
   const loads = new Map(plan.drivers.map((d) => [d.id, driverLoad(plan, draft, d)]));
   const anyOver = plan.drivers.some((d) => loads.get(d.id)!.over);
   const unassigned = plan.rides.filter((r) => draft[r.id] == null);
@@ -96,12 +102,13 @@ export default function PlanTransport() {
   const onDrop = (target: number | null) => (e: DragEvent) => {
     e.preventDefault();
     setDropTarget(null);
+    if (!canUpdate) return;
     const rideId = Number(e.dataTransfer.getData(DRAG_TYPE));
     if (rideId) assign(rideId, target);
   };
   const dropProps = (key: string, target: number | null) => ({
     onDragOver: (e: DragEvent) => {
-      if (e.dataTransfer.types.includes(DRAG_TYPE)) {
+      if (canUpdate && e.dataTransfer.types.includes(DRAG_TYPE)) {
         e.preventDefault();
         setDropTarget(key);
       }
@@ -111,6 +118,7 @@ export default function PlanTransport() {
   });
 
   const autoArrange = async () => {
+    if (!canUpdate) return;
     setArranging(true);
     try {
       const res = await post<ArrangeResult>(`/admin/events/${plan.event.id}/plan/arrange`, {
@@ -182,6 +190,7 @@ export default function PlanTransport() {
       changed={(draft[r.id] ?? null) !== r.driver_id}
       reason={reasons[r.id]?.driver_id === draft[r.id] ? reasons[r.id] : undefined}
       noRoom={draft[r.id] == null && noRoom.has(r.id)}
+      canUpdate={canUpdate}
     />
   );
 
@@ -296,6 +305,7 @@ function PassengerCard({
   changed,
   reason,
   noRoom,
+  canUpdate = true,
 }: {
   ride: PlanRide;
   plan: Plan;
@@ -304,6 +314,7 @@ function PassengerCard({
   changed: boolean;
   reason?: Reason;
   noRoom?: boolean;
+  canUpdate?: boolean;
 }) {
   const { t } = useTranslation('plan');
   const ft = useFormatT();
@@ -313,8 +324,9 @@ function PassengerCard({
   return (
     <article
       className={`plan-passenger ${changed ? 'is-changed' : ''}`}
-      draggable
+      draggable={canUpdate}
       onDragStart={(e) => {
+        if (!canUpdate) return;
         e.dataTransfer.setData(DRAG_TYPE, String(r.id));
         e.dataTransfer.effectAllowed = 'move';
       }}
@@ -363,6 +375,7 @@ function PassengerCard({
         id={selectId}
         className="input plan-select"
         value={current ?? ''}
+        disabled={!canUpdate}
         onChange={(e) => onAssign(e.target.value ? Number(e.target.value) : null)}
       >
         <option value="">{t('noDriver')}</option>

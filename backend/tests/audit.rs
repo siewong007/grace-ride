@@ -549,7 +549,12 @@ async fn audit_log_pages_through_every_entry_and_filters() {
         .unwrap();
     let by_actor = get(format!("&q={}", urlencode(&name))).await;
     assert_eq!(count(by_actor), 7);
+    assert_eq!(count(get(format!("&actor_id={aid}")).await), 7);
+    assert_eq!(count(get("&actor_id=999999".into()).await), 0);
     assert_eq!(count(get("&entity_id=4".into()).await), 1);
+    assert_eq!(count(get("&action=widget.turn".into()).await), 7);
+    assert_eq!(count(get("&action=widget.finish".into()).await), 1);
+    assert_eq!(count(get("&action=widget.unknown".into()).await), 0);
 
     // Dates include both ends.
     let day = |offset: i64| {
@@ -573,4 +578,126 @@ async fn audit_log_pages_through_every_entry_and_filters() {
     .await;
     assert_eq!(bad.status, StatusCode::BAD_REQUEST, "{}", bad.json);
     assert_eq!(bad.json["code"], "INVALID_DATE");
+}
+
+#[tokio::test]
+async fn audit_retention_purges_entries_past_retention_days() {
+    let (_app, st) = setup().await;
+    let old_ts = (chrono::Local::now()
+        - chrono::Duration::days(st.cfg.audit_retention_days + 1))
+    .format("%Y-%m-%dT%H:%M:%S")
+    .to_string();
+    let new_ts = chrono::Local::now()
+        .format("%Y-%m-%dT%H:%M:%S")
+        .to_string();
+
+    let (old_id,): (i64,) = sqlx::query_as(
+        "INSERT INTO audit_logs (actor_id, action, entity, entity_id, detail, created_at)
+         VALUES (NULL, 'test.old', 'test', NULL, 'past retention', $1) RETURNING id",
+    )
+    .bind(&old_ts)
+    .fetch_one(&st.db)
+    .await
+    .unwrap();
+
+    let (new_id,): (i64,) = sqlx::query_as(
+        "INSERT INTO audit_logs (actor_id, action, entity, entity_id, detail, created_at)
+         VALUES (NULL, 'test.new', 'test', NULL, 'within retention', $1) RETURNING id",
+    )
+    .bind(&new_ts)
+    .fetch_one(&st.db)
+    .await
+    .unwrap();
+
+    // Run housekeeping job once.
+    jobs::run_once(&st.db, &st.cfg).await.unwrap();
+
+    let remaining_old: Option<i64> = sqlx::query_scalar("SELECT id FROM audit_logs WHERE id=$1")
+        .bind(old_id)
+        .fetch_optional(&st.db)
+        .await
+        .unwrap();
+    assert!(remaining_old.is_none(), "Old audit entry should be purged by retention job");
+
+    let remaining_new: Option<i64> = sqlx::query_scalar("SELECT id FROM audit_logs WHERE id=$1")
+        .bind(new_id)
+        .fetch_optional(&st.db)
+        .await
+        .unwrap();
+    assert_eq!(remaining_new, Some(new_id), "Recent audit entry must be retained");
+}
+
+#[tokio::test]
+async fn audit_stream_export_csv_with_filters_and_utf8_bom() {
+    let (app, st) = setup().await;
+    let admin = login(&st, "admin@example.org").await;
+    let member = login(&st, "member@example.org").await;
+    let admin_uid = user_id(&st, "admin@example.org").await;
+
+    // Insert known audit logs including Chinese text and formula-like characters.
+    let now_str = chrono::Local::now().format("%Y-%m-%dT%H:%M:%S").to_string();
+    sqlx::query(
+        "INSERT INTO audit_logs (actor_id, action, entity, entity_id, detail, created_at)
+         VALUES ($1, 'stream.test_event', 'test', 101, '教会活动 =1+1 formula test', $2)",
+    )
+    .bind(admin_uid)
+    .bind(&now_str)
+    .execute(&st.db)
+    .await
+    .unwrap();
+
+    sqlx::query(
+        "INSERT INTO audit_logs (actor_id, action, entity, entity_id, detail, created_at)
+         VALUES (NULL, 'system.routine', 'system', NULL, 'Routine cleanup', $1)",
+    )
+    .bind(&now_str)
+    .execute(&st.db)
+    .await
+    .unwrap();
+
+    // 1. Members without admin_audit cannot stream export.
+    let (m_status, _, _) = call_raw(&app, Method::GET, "/api/admin/audit/export", Some(&member)).await;
+    assert_eq!(m_status, StatusCode::FORBIDDEN);
+
+    // 2. Admin streams full export.
+    let (status, headers, body) = call_raw(&app, Method::GET, "/api/admin/audit/export", Some(&admin)).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(
+        headers.get("content-type").unwrap().to_str().unwrap(),
+        "text/csv; charset=utf-8"
+    );
+    assert!(
+        headers.get("content-disposition").unwrap().to_str().unwrap().starts_with("attachment; filename=\"audit_export_")
+    );
+
+    // Verify UTF-8 BOM is present.
+    assert!(body.starts_with('\u{FEFF}'), "CSV export must begin with UTF-8 BOM");
+    assert!(body.contains("ID,Timestamp,Actor ID,Actor,Action,Entity,Entity ID,Detail"));
+    assert!(body.contains("stream.test_event"));
+    assert!(body.contains("system.routine"));
+    assert!(body.contains("教会活动"));
+
+    // 3. Admin streams filtered by action.
+    let (f_status, _, f_body) = call_raw(
+        &app,
+        Method::GET,
+        "/api/admin/audit/export?action=stream.test_event",
+        Some(&admin),
+    )
+    .await;
+    assert_eq!(f_status, StatusCode::OK);
+    assert!(f_body.contains("stream.test_event"));
+    assert!(!f_body.contains("system.routine"));
+
+    // 4. Admin streams filtered by actor_id.
+    let (a_status, _, a_body) = call_raw(
+        &app,
+        Method::GET,
+        &format!("/api/admin/audit/export?actor_id={admin_uid}"),
+        Some(&admin),
+    )
+    .await;
+    assert_eq!(a_status, StatusCode::OK);
+    assert!(a_body.contains("stream.test_event"));
+    assert!(!a_body.contains("system.routine"));
 }

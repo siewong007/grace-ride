@@ -135,6 +135,8 @@ fn event_json(e: &EventRow, u: &CurrentUser) -> Value {
 #[derive(Deserialize)]
 struct ListQuery {
     scope: Option<String>, // upcoming | past | managing
+    before: Option<String>,
+    limit: Option<i64>,
 }
 
 async fn list_events(
@@ -145,12 +147,34 @@ async fn list_events(
     require(&u, Page::Events, Act::View)?;
     let visibility = "(e.created_by = $1 OR EXISTS (SELECT 1 FROM event_groups eg JOIN groups g ON g.id = eg.group_id
         WHERE eg.event_id = e.id AND (g.is_all = 1 OR EXISTS (SELECT 1 FROM group_members gm WHERE gm.group_id = g.id AND gm.user_id = $2))))";
+    let now_str = now()[..16].to_string();
+
+    if q.scope.as_deref() == Some("past") && (q.before.is_some() || q.limit.is_some()) {
+        let limit = q.limit.unwrap_or(25).clamp(1, 100);
+        let cutoff = q.before.as_ref().unwrap_or(&now_str);
+        let sql = format!("{EVENT_SELECT} WHERE {visibility} AND e.starts_at < $3 ORDER BY e.starts_at DESC LIMIT $4");
+        let mut rows = sqlx::query_as::<_, EventRow>(&sql)
+            .bind(u.id)
+            .bind(u.id)
+            .bind(cutoff)
+            .bind(limit + 1)
+            .fetch_all(&st.db)
+            .await?;
+        let more = rows.len() as i64 > limit;
+        rows.truncate(limit as usize);
+        let next_before = if more { rows.last().map(|e| e.starts_at.clone()) } else { None };
+        return Ok(Json(json!({
+            "items": rows.iter().map(|e| event_json(e, &u)).collect::<Vec<_>>(),
+            "next_before": next_before,
+        })));
+    }
+
     let sql = match q.scope.as_deref() {
         Some("past") => format!("{EVENT_SELECT} WHERE {visibility} AND (e.starts_at < $3 OR e.status='finished') ORDER BY e.starts_at DESC LIMIT 50"),
         Some("managing") => format!("{EVENT_SELECT} WHERE e.created_by = $1 ORDER BY e.starts_at DESC LIMIT 100"),
         _ => format!("{EVENT_SELECT} WHERE {visibility} AND e.starts_at >= $3 AND e.status = 'published' ORDER BY e.starts_at LIMIT 100"),
     };
-    let cutoff = now()[..16].to_string();
+    let cutoff = now_str;
     let rows = if q.scope.as_deref() == Some("managing") {
         sqlx::query_as::<_, EventRow>(&sql)
             .bind(u.id)

@@ -10,6 +10,7 @@ export default {
   submit: 'Submit',
   submitted: 'Submitted, an admin will follow up shortly',
   urgent: 'For emergencies, please call the driver or transport team directly.',
+  callTransport: 'Call transport team (03-7957 3888)',
   allHelp: 'All requests',
   mine: 'Mine',
   none: 'No help requests',

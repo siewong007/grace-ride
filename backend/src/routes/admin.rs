@@ -2,11 +2,15 @@
 //! Roles themselves are edited in `routes::roles`.
 
 use axum::{
+    body::Body,
     extract::{Path, Query, State},
+    http::{header, StatusCode},
+    response::Response,
     routing::{delete, get, post, put},
     Json, Router,
 };
 use chrono::NaiveDate;
+use futures_util::StreamExt;
 use serde::Deserialize;
 use serde_json::{json, Value};
 
@@ -36,6 +40,15 @@ pub fn router() -> Router<AppState> {
         .route("/admin/recovery/{id}/approve", post(approve_recovery))
         .route("/admin/recovery/{id}/reject", post(reject_recovery))
         .route("/admin/audit", get(audit_log))
+        .route("/admin/audit/export", get(audit_export))
+        .route(
+            "/admin/settings/rates",
+            get(get_reimbursement_rates).put(update_reimbursement_rates),
+        )
+        .route(
+            "/admin/settings/system",
+            get(get_system_settings).put(update_system_settings),
+        )
 }
 
 async fn dashboard(State(st): State<AppState>, u: CurrentUser) -> AppResult<Json<Value>> {
@@ -81,10 +94,19 @@ async fn dashboard(State(st): State<AppState>, u: CurrentUser) -> AppResult<Json
     )
     .fetch_one(&st.db)
     .await?;
+    let max_live_drivers: i64 = sqlx::query_scalar::<_, String>(
+        "SELECT value FROM system_settings WHERE key='max_live_drivers'",
+    )
+    .fetch_optional(&st.db)
+    .await
+    .ok()
+    .flatten()
+    .and_then(|s| s.parse::<i64>().ok())
+    .unwrap_or(st.cfg.max_live_drivers);
     Ok(Json(json!({
         "today": today, "today_total": today_total, "today_confirmed": today_confirmed, "today_changes": today_changes,
         "pending_approval": pending_approval, "no_driver": no_driver, "needs_attention": attention,
-        "live_drivers": live, "max_live_drivers": st.cfg.max_live_drivers, "open_help": open_help,
+        "live_drivers": live, "max_live_drivers": max_live_drivers, "open_help": open_help,
         "pending_reimbursements": pending_reimb, "members": members, "pending_recovery": recovery,
     })))
 }
@@ -93,6 +115,8 @@ async fn dashboard(State(st): State<AppState>, u: CurrentUser) -> AppResult<Json
 struct UserQuery {
     q: Option<String>,
     role: Option<String>,
+    page: Option<i64>,
+    limit: Option<i64>,
 }
 
 /// Member directory for 成员 · view only (会员资料不会成为任何人都能浏览的公开通讯录).
@@ -117,6 +141,64 @@ async fn list_users(
         )?;
     }
     let like = format!("%{}%", q.q.unwrap_or_default().trim());
+
+    if q.page.is_some() || q.limit.is_some() {
+        let mut conds = vec!["(u.name LIKE $1 OR u.email LIKE $2 OR u.phone LIKE $3)".to_string()];
+        if q.role.is_some() {
+            conds.push("(',' || u.roles || ',') LIKE ('%,' || $4 || ',%')".to_string());
+        }
+        let count_sql = format!("SELECT COUNT(*) FROM users u WHERE {}", conds.join(" AND "));
+        let mut count_query = sqlx::query_as::<_, (i64,)>(&count_sql)
+            .bind(&like)
+            .bind(&like)
+            .bind(&like);
+        if let Some(r) = &q.role {
+            count_query = count_query.bind(r);
+        }
+        let (total,) = count_query.fetch_one(&st.db).await?;
+
+        let page = q.page.unwrap_or(1).max(1);
+        let limit = q.limit.unwrap_or(50).clamp(1, 200);
+        let offset = (page - 1) * limit;
+
+        let n = if q.role.is_some() { 5 } else { 4 };
+        let sql = format!(
+            "SELECT u.id, u.name, u.email, u.phone, u.roles, u.status, u.created_at, (SELECT COUNT(*) FROM passkeys p WHERE p.user_id=u.id),
+                (SELECT string_agg(g.name, '、') FROM group_members gm JOIN groups g ON g.id=gm.group_id WHERE gm.user_id=u.id)
+             FROM users u WHERE {} ORDER BY u.name LIMIT ${n} OFFSET ${}",
+            conds.join(" AND "),
+            n + 1
+        );
+        let mut query = sqlx::query_as::<_, (i64, String, String, String, String, String, String, i64, Option<String>)>(&sql)
+            .bind(&like)
+            .bind(&like)
+            .bind(&like);
+        if let Some(r) = &q.role {
+            query = query.bind(r);
+        }
+        query = query.bind(limit).bind(offset);
+        let rows = query.fetch_all(&st.db).await?;
+        let out: Vec<Value> = rows
+            .into_iter()
+            .map(|(id, name, email, phone, roles, status, created, pk, groups)| {
+                if staff {
+                    json!({"id": id, "name": name, "email": email, "phone": phone, "roles": parse_roles(&roles), "status": status,
+                           "created_at": created, "passkeys": pk, "groups": groups.unwrap_or_default()})
+                } else {
+                    json!({"id": id, "name": name})
+                }
+            })
+            .collect();
+        let total_pages = if total == 0 { 1 } else { (total + limit - 1) / limit };
+        return Ok(Json(json!({
+            "items": out,
+            "total": total,
+            "page": page,
+            "page_size": limit,
+            "total_pages": total_pages,
+        })));
+    }
+
     let rows: Vec<(i64, String, String, String, String, String, String, i64, Option<String>)> = sqlx::query_as(
         "SELECT u.id, u.name, u.email, u.phone, u.roles, u.status, u.created_at, (SELECT COUNT(*) FROM passkeys p WHERE p.user_id=u.id),
             (SELECT string_agg(g.name, '、') FROM group_members gm JOIN groups g ON g.id=gm.group_id WHERE gm.user_id=u.id)
@@ -617,7 +699,7 @@ async fn approve_recovery(
         .bind(uid)
         .execute(&st.db)
         .await?;
-    sqlx::query("UPDATE users SET totp_enabled=0, totp_secret=NULL, totp_last_step=0 WHERE id=$1")
+    sqlx::query("UPDATE users SET totp_enabled=0, totp_secret=NULL, totp_last_step=0, totp_backup_codes=NULL WHERE id=$1")
         .bind(uid)
         .execute(&st.db)
         .await?;
@@ -658,6 +740,8 @@ async fn reject_recovery(
 struct AuditQuery {
     entity: Option<String>,
     entity_id: Option<i64>,
+    action: Option<String>,
+    actor_id: Option<i64>,
     /// Text to find in the actor's name, the action, the object or the detail.
     q: Option<String>,
     /// First and last day to include, `YYYY-MM-DD`.
@@ -707,18 +791,21 @@ async fn audit_log(
                         .replace('_', "\\_")
                 )
             });
+    let action = q.action.filter(|a| !a.is_empty());
     let entity = q.entity.filter(|e| !e.is_empty());
     let limit = q.limit.unwrap_or(AUDIT_PAGE).clamp(1, AUDIT_PAGE_MAX);
     // One row more than the page shows whether another page follows.
-    let mut rows: Vec<(i64, Option<String>, String, String, Option<i64>, String, String)> = sqlx::query_as(
-        "SELECT a.id, u.name, a.action, a.entity, a.entity_id, a.detail, a.created_at FROM audit_logs a LEFT JOIN users u ON u.id=a.actor_id
+    let mut rows: Vec<(i64, Option<i64>, Option<String>, String, String, Option<i64>, String, String)> = sqlx::query_as(
+        "SELECT a.id, a.actor_id, u.name, a.action, a.entity, a.entity_id, a.detail, a.created_at FROM audit_logs a LEFT JOIN users u ON u.id=a.actor_id
          WHERE ($1::text IS NULL OR a.entity = $1)
            AND ($2::bigint IS NULL OR a.entity_id = $2)
            AND ($3::text IS NULL OR a.action ILIKE $3 OR a.entity ILIKE $3 OR a.detail ILIKE $3 OR u.name ILIKE $3)
            AND ($4::text IS NULL OR a.created_at >= $4)
            AND ($5::text IS NULL OR a.created_at < $5)
            AND ($6::bigint IS NULL OR a.id < $6)
-         ORDER BY a.id DESC LIMIT $7",
+           AND ($7::text IS NULL OR a.action = $7)
+           AND ($8::bigint IS NULL OR a.actor_id = $8)
+         ORDER BY a.id DESC LIMIT $9",
     )
     .bind(&entity)
     .bind(q.entity_id)
@@ -726,16 +813,350 @@ async fn audit_log(
     .bind(&from)
     .bind(&until)
     .bind(q.before)
+    .bind(&action)
+    .bind(q.actor_id)
     .bind(limit + 1)
     .fetch_all(&st.db)
     .await?;
     let more = rows.len() as i64 > limit;
     rows.truncate(limit as usize);
     let next_before = rows.last().filter(|_| more).map(|r| r.0);
+    let retention_days: i64 = sqlx::query_scalar::<_, String>(
+        "SELECT value FROM system_settings WHERE key='audit_retention_days'",
+    )
+    .fetch_optional(&st.db)
+    .await
+    .ok()
+    .flatten()
+    .and_then(|s| s.parse::<i64>().ok())
+    .unwrap_or(st.cfg.audit_retention_days);
+
     Ok(Json(json!({
-        "items": rows.into_iter().map(|(id, actor, action, entity, eid, detail, at)| json!({
-            "id": id, "actor": actor, "action": action, "entity": entity, "entity_id": eid, "detail": detail, "created_at": at,
+        "items": rows.into_iter().map(|(id, aid, actor, action, entity, eid, detail, at)| json!({
+            "id": id, "actor_id": aid, "actor": actor, "action": action, "entity": entity, "entity_id": eid, "detail": detail, "created_at": at,
         })).collect::<Vec<_>>(),
         "next_before": next_before,
+        "retention_days": retention_days,
     })))
+}
+
+#[derive(Deserialize)]
+struct AuditExportQuery {
+    entity: Option<String>,
+    entity_id: Option<i64>,
+    action: Option<String>,
+    actor_id: Option<i64>,
+    q: Option<String>,
+    from: Option<String>,
+    to: Option<String>,
+    limit: Option<i64>,
+}
+
+fn escape_csv_field(s: &str) -> String {
+    // Prefix single quote on formula triggers (=, +, -, @, \t, \r) to prevent spreadsheet injection.
+    let sanitized = if s.starts_with('=')
+        || s.starts_with('+')
+        || s.starts_with('-')
+        || s.starts_with('@')
+        || s.starts_with('\t')
+        || s.starts_with('\r')
+    {
+        format!("'{s}")
+    } else {
+        s.to_string()
+    };
+
+    if sanitized.contains('"')
+        || sanitized.contains(',')
+        || sanitized.contains('\n')
+        || sanitized.contains('\r')
+    {
+        format!("\"{}\"", sanitized.replace('"', "\"\""))
+    } else {
+        sanitized
+    }
+}
+
+const AUDIT_EXPORT_MAX: i64 = 50_000;
+
+/// Stream audit logs directly to client as CSV without buffering the full dataset in memory.
+async fn audit_export(
+    State(st): State<AppState>,
+    u: CurrentUser,
+    Query(q): Query<AuditExportQuery>,
+) -> AppResult<Response> {
+    require(&u, Page::AdminAudit, Act::View)?;
+    let day = |s: &Option<String>| -> AppResult<Option<NaiveDate>> {
+        match s.as_deref().map(str::trim).filter(|s| !s.is_empty()) {
+            None => Ok(None),
+            Some(s) => NaiveDate::parse_from_str(s, "%Y-%m-%d")
+                .map(Some)
+                .map_err(|_| bad(u.lang, ErrorKey::InvalidDate)),
+        }
+    };
+    let from = day(&q.from)?.map(|d| d.to_string());
+    let until = day(&q.to)?
+        .and_then(|d| d.succ_opt())
+        .map(|d| d.to_string());
+    let like = q
+        .q
+        .as_deref()
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .map(|s| {
+            format!(
+                "%{}%",
+                s.replace('\\', "\\\\")
+                    .replace('%', "\\%")
+                    .replace('_', "\\_")
+            )
+        });
+    let action = q.action.filter(|a| !a.is_empty());
+    let entity = q.entity.filter(|e| !e.is_empty());
+    let limit = q.limit.unwrap_or(AUDIT_EXPORT_MAX).clamp(1, AUDIT_EXPORT_MAX);
+
+    let pool = st.db.clone();
+    let stream = async_stream::stream! {
+        // UTF-8 BOM so Excel and spreadsheet viewers recognize UTF-8 encoding (CJK text).
+        yield Ok::<String, std::io::Error>("\u{FEFF}ID,Timestamp,Actor ID,Actor,Action,Entity,Entity ID,Detail\r\n".to_string());
+
+        let mut rows = sqlx::query_as::<_, (i64, Option<i64>, Option<String>, String, String, Option<i64>, String, String)>(
+            "SELECT a.id, a.actor_id, u.name, a.action, a.entity, a.entity_id, a.detail, a.created_at \
+             FROM audit_logs a LEFT JOIN users u ON u.id=a.actor_id \
+             WHERE ($1::text IS NULL OR a.entity = $1) \
+               AND ($2::bigint IS NULL OR a.entity_id = $2) \
+               AND ($3::text IS NULL OR a.action ILIKE $3 OR a.entity ILIKE $3 OR a.detail ILIKE $3 OR u.name ILIKE $3) \
+               AND ($4::text IS NULL OR a.created_at >= $4) \
+               AND ($5::text IS NULL OR a.created_at < $5) \
+               AND ($6::text IS NULL OR a.action = $6) \
+               AND ($7::bigint IS NULL OR a.actor_id = $7) \
+             ORDER BY a.id DESC LIMIT $8",
+        )
+        .bind(&entity)
+        .bind(q.entity_id)
+        .bind(&like)
+        .bind(&from)
+        .bind(&until)
+        .bind(&action)
+        .bind(q.actor_id)
+        .bind(limit)
+        .fetch(&pool);
+
+        while let Some(row) = rows.next().await {
+            match row {
+                Ok((id, aid, actor, act, ent, eid, detail, at)) => {
+                    let line = format!(
+                        "{},{},{},{},{},{},{},{}\r\n",
+                        id,
+                        at,
+                        aid.map(|v| v.to_string()).unwrap_or_default(),
+                        escape_csv_field(&actor.unwrap_or_else(|| "System".to_string())),
+                        escape_csv_field(&act),
+                        escape_csv_field(&ent),
+                        eid.map(|v| v.to_string()).unwrap_or_default(),
+                        escape_csv_field(&detail),
+                    );
+                    yield Ok(line);
+                }
+                Err(e) => {
+                    yield Err(std::io::Error::other(e));
+                    break;
+                }
+            }
+        }
+    };
+
+    let filename = format!("audit_export_{}.csv", &now().replace([':', '-'], "").replace('T', "_")[..15]);
+    Response::builder()
+        .status(StatusCode::OK)
+        .header(header::CONTENT_TYPE, "text/csv; charset=utf-8")
+        .header(
+            header::CONTENT_DISPOSITION,
+            format!("attachment; filename=\"{filename}\""),
+        )
+        .header(header::CACHE_CONTROL, "no-cache, no-store, must-revalidate")
+        .body(Body::from_stream(stream))
+        .map_err(|e| AppError::Other(anyhow::anyhow!(e)))
+}
+
+#[derive(Deserialize)]
+struct UpdateRatesIn {
+    rates: Vec<RateEntryIn>,
+}
+
+#[derive(Deserialize)]
+struct RateEntryIn {
+    vehicle_type: String,
+    rate_cents_per_km: i64,
+}
+
+async fn get_reimbursement_rates(
+    State(st): State<AppState>,
+    u: CurrentUser,
+) -> AppResult<Json<Value>> {
+    require(&u, Page::AdminSettings, Act::View)?;
+    let rows: Vec<(String, i64, String)> = sqlx::query_as(
+        "SELECT vehicle_type, rate_cents_per_km, updated_at FROM reimbursement_rates ORDER BY vehicle_type ASC",
+    )
+    .fetch_all(&st.db)
+    .await?;
+
+    let items: Vec<Value> = rows
+        .into_iter()
+        .map(|(vehicle_type, rate_cents_per_km, updated_at)| {
+            json!({
+                "vehicle_type": vehicle_type,
+                "rate_cents_per_km": rate_cents_per_km,
+                "updated_at": updated_at,
+            })
+        })
+        .collect();
+
+    Ok(Json(json!({ "rates": items })))
+}
+
+async fn update_reimbursement_rates(
+    State(st): State<AppState>,
+    u: CurrentUser,
+    Json(req): Json<UpdateRatesIn>,
+) -> AppResult<Json<Value>> {
+    require(&u, Page::AdminSettings, Act::Update)?;
+    if req.rates.is_empty() {
+        return Err(bad(u.lang, ErrorKey::InvalidAction));
+    }
+
+    let mut tx = st.db.begin().await?;
+    let mut details = Vec::new();
+    let now_str = now();
+    for entry in &req.rates {
+        if entry.rate_cents_per_km < 0 {
+            return Err(bad(u.lang, ErrorKey::InvalidAction));
+        }
+        if entry.vehicle_type != "standard" && entry.vehicle_type != "other" {
+            return Err(bad(u.lang, ErrorKey::InvalidAction));
+        }
+        sqlx::query(
+            "INSERT INTO reimbursement_rates (vehicle_type, rate_cents_per_km, updated_at)
+             VALUES ($1, $2, $3)
+             ON CONFLICT (vehicle_type) DO UPDATE
+             SET rate_cents_per_km = EXCLUDED.rate_cents_per_km, updated_at = EXCLUDED.updated_at",
+        )
+        .bind(&entry.vehicle_type)
+        .bind(entry.rate_cents_per_km)
+        .bind(&now_str)
+        .execute(&mut *tx)
+        .await?;
+        details.push(format!("{}:{}c", entry.vehicle_type, entry.rate_cents_per_km));
+    }
+    tx.commit().await?;
+
+    let detail_str = details.join(", ");
+    audit(
+        &st.db,
+        Some(u.id),
+        "settings.rates",
+        "reimbursement_rates",
+        None,
+        &detail_str,
+    )
+    .await;
+
+    Ok(Json(json!({ "ok": true })))
+}
+
+#[derive(Deserialize)]
+struct UpdateSystemSettingsIn {
+    audit_retention_days: i64,
+    chat_retention_days: i64,
+    max_live_drivers: i64,
+}
+
+async fn get_system_settings(
+    State(st): State<AppState>,
+    u: CurrentUser,
+) -> AppResult<Json<Value>> {
+    require(&u, Page::AdminSettings, Act::View)?;
+    let rows: Vec<(String, String)> = sqlx::query_as(
+        "SELECT key, value FROM system_settings WHERE key IN ('audit_retention_days', 'chat_retention_days', 'max_live_drivers')",
+    )
+    .fetch_all(&st.db)
+    .await?;
+
+    let mut audit_days = st.cfg.audit_retention_days;
+    let mut chat_days = st.cfg.chat_retention_days;
+    let mut max_drivers = st.cfg.max_live_drivers;
+
+    for (k, v) in rows {
+        if let Ok(n) = v.parse::<i64>() {
+            match k.as_str() {
+                "audit_retention_days" => audit_days = n,
+                "chat_retention_days" => chat_days = n,
+                "max_live_drivers" => max_drivers = n,
+                _ => {}
+            }
+        }
+    }
+
+    Ok(Json(json!({
+        "audit_retention_days": audit_days,
+        "chat_retention_days": chat_days,
+        "max_live_drivers": max_drivers,
+    })))
+}
+
+async fn update_system_settings(
+    State(st): State<AppState>,
+    u: CurrentUser,
+    Json(req): Json<UpdateSystemSettingsIn>,
+) -> AppResult<Json<Value>> {
+    require(&u, Page::AdminSettings, Act::Update)?;
+
+    if !(30..=3650).contains(&req.audit_retention_days) {
+        return Err(bad(u.lang, ErrorKey::InvalidAction));
+    }
+    if !(7..=3650).contains(&req.chat_retention_days) {
+        return Err(bad(u.lang, ErrorKey::InvalidAction));
+    }
+    if !(1..=100).contains(&req.max_live_drivers) {
+        return Err(bad(u.lang, ErrorKey::InvalidAction));
+    }
+
+    let now_str = now();
+    let mut tx = st.db.begin().await?;
+
+    for (k, v) in [
+        ("audit_retention_days", req.audit_retention_days.to_string()),
+        ("chat_retention_days", req.chat_retention_days.to_string()),
+        ("max_live_drivers", req.max_live_drivers.to_string()),
+    ] {
+        sqlx::query(
+            "INSERT INTO system_settings (key, value, updated_at, updated_by)
+             VALUES ($1, $2, $3, $4)
+             ON CONFLICT (key) DO UPDATE
+             SET value = EXCLUDED.value, updated_at = EXCLUDED.updated_at, updated_by = EXCLUDED.updated_by",
+        )
+        .bind(k)
+        .bind(&v)
+        .bind(&now_str)
+        .bind(u.id)
+        .execute(&mut *tx)
+        .await?;
+    }
+    tx.commit().await?;
+
+    let detail = format!(
+        "audit_retention_days: {}d, chat_retention_days: {}d, max_live_drivers: {}",
+        req.audit_retention_days, req.chat_retention_days, req.max_live_drivers
+    );
+    audit(
+        &st.db,
+        Some(u.id),
+        "settings.system",
+        "system_settings",
+        None,
+        &detail,
+    )
+    .await;
+
+    Ok(Json(json!({ "ok": true })))
 }

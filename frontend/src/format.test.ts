@@ -1,5 +1,5 @@
-import { describe, expect, it } from 'vitest';
-import { parseLocal, RIDE_STATUS, REIMB_STATUS } from './format';
+import { describe, expect, it, vi } from 'vitest';
+import { exportToCsv, parseLocal, RIDE_STATUS, REIMB_STATUS } from './format';
 
 describe('parseLocal', () => {
   it('parses ISO local timestamps', () => {
@@ -25,5 +25,22 @@ describe('status maps', () => {
     expect(RIDE_STATUS.no_show.tone).toBe('red');
     expect(REIMB_STATUS.rejected.tone).toBe('red');
     expect(REIMB_STATUS.paid.tone).toBe('green');
+  });
+});
+
+describe('exportToCsv', () => {
+  it('creates and clicks a download link with CSV data', () => {
+    if (typeof URL.createObjectURL !== 'function') {
+      URL.createObjectURL = vi.fn().mockReturnValue('blob:test');
+    }
+    if (typeof URL.revokeObjectURL !== 'function') {
+      URL.revokeObjectURL = vi.fn();
+    }
+    const clickSpy = vi.spyOn(HTMLAnchorElement.prototype, 'click').mockImplementation(() => {});
+
+    exportToCsv('test-export', ['Name', 'Role'], [['Alice', 'Driver'], ['Bob', 'Rider']]);
+
+    expect(clickSpy).toHaveBeenCalled();
+    clickSpy.mockRestore();
   });
 });

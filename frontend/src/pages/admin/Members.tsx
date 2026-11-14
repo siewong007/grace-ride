@@ -1,5 +1,7 @@
 import { FormEvent, useState } from 'react';
+import { useSearchParams } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
+import { Download } from 'lucide-react';
 import { del, post, put, useApi } from '../../api';
 import { useAuth } from '../../auth';
 import {
@@ -12,13 +14,14 @@ import {
   Modal,
   Page,
   PageHeader,
+  Pagination,
   Pill,
   Tabs,
   useAction,
   useConfirm,
   useToast,
 } from '../../components/ui';
-import { fmtAgo, roleLabel, useFormatT } from '../../format';
+import { exportToCsv, fmtAgo, roleLabel, todayStr, useFormatT } from '../../format';
 import { useRoleOptions } from './roleData';
 
 interface User {
@@ -68,8 +71,19 @@ export default function Members() {
     { value: 'invites' as Tab, label: t('members.invitesTab'), show: can('admin_invites') },
     { value: 'recovery' as Tab, label: t('members.recoveryTab'), show: can('admin_recovery') },
   ].filter((x) => x.show);
-  const [picked, setTab] = useState<Tab>('members');
-  const tab = tabs.some((x) => x.value === picked) ? picked : tabs[0]?.value;
+  const [params, setParams] = useSearchParams();
+  const currentTab = params.get('tab') as Tab;
+  const tab = tabs.some((x) => x.value === currentTab) ? currentTab : tabs[0]?.value;
+
+  const handleTabChange = (nextTab: Tab) => {
+    const p = new URLSearchParams(params);
+    if (nextTab !== 'members') p.set('tab', nextTab);
+    else p.delete('tab');
+    p.delete('page');
+    p.delete('limit');
+    p.delete('q');
+    setParams(p, { replace: true });
+  };
 
   if (!tab) {
     return (
@@ -84,7 +98,7 @@ export default function Members() {
       <PageHeader title={t('members.title')} subtitle={t('members.desc')} />
       <Tabs
         value={tab}
-        onChange={(v) => setTab(v as Tab)}
+        onChange={(v) => handleTabChange(v as Tab)}
         items={tabs.map(({ value, label }) => ({ value, label }))}
       />
       {tab === 'members' && <MemberList />}
@@ -94,34 +108,91 @@ export default function Members() {
   );
 }
 
+interface PaginatedUsers {
+  items: User[];
+  total: number;
+  page: number;
+  page_size: number;
+  total_pages: number;
+}
+
 function MemberList() {
   const { t } = useTranslation('admin');
   const ft = useFormatT();
   const { can } = useAuth();
   const canEdit = can('admin_members', 'update');
   const { names } = useRoleOptions();
-  const [q, setQ] = useState('');
-  const { data, loading, reload } = useApi<User[]>(
-    `/admin/users?q=${encodeURIComponent(q)}`,
+  const [params, setParams] = useSearchParams();
+  const q = params.get('q') ?? '';
+  const page = Math.max(1, Number(params.get('page') ?? '1') || 1);
+  const pageSize = Number(params.get('limit') ?? '50') || 50;
+
+  const setParam = (k: string, v: string) => {
+    const p = new URLSearchParams(params);
+    if (v && (k !== 'page' || v !== '1') && (k !== 'limit' || v !== '50')) {
+      p.set(k, v);
+    } else {
+      p.delete(k);
+    }
+    if (k !== 'page') {
+      p.delete('page');
+    }
+    setParams(p, { replace: true });
+  };
+
+  const pagingQs = page > 1 || pageSize !== 50 ? `&page=${page}&limit=${pageSize}` : '';
+  const { data, loading, reload } = useApi<PaginatedUsers | User[]>(
+    `/admin/users?q=${encodeURIComponent(q)}${pagingQs}`,
   );
   const [modalUser, setModalUser] = useState<{
     user: User;
     mode: 'edit' | 'approve';
   } | null>(null);
 
+  const users = Array.isArray(data) ? data : data?.items ?? [];
+  const total = Array.isArray(data) ? data.length : data?.total ?? 0;
+  const totalPages = Array.isArray(data) ? 1 : data?.total_pages ?? 1;
+
+  const handleSearch = (v: string) => {
+    setParam('q', v);
+  };
+
+  const handleExport = () => {
+    const headers = ['ID', 'Name', 'Email', 'Phone', 'Roles', 'Status', 'Passkeys', 'Groups', 'Joined'];
+    const rows = users.map((u) => [
+      u.id,
+      u.name,
+      u.email,
+      u.phone,
+      u.roles.join('; '),
+      u.status,
+      u.passkeys,
+      u.groups,
+      u.created_at,
+    ]);
+    exportToCsv(`grace-ride-members-${todayStr()}`, headers, rows);
+  };
+
   return (
     <div className="stack">
-      <input
-        className="input"
-        placeholder={t('members.search')}
-        value={q}
-        onChange={(e) => setQ(e.target.value)}
-      />
+      <div className="row between nowrap gap-sm">
+        <input
+          className="input grow"
+          placeholder={t('members.search')}
+          value={q}
+          onChange={(e) => handleSearch(e.target.value)}
+        />
+        {users.length > 0 && (
+          <Button variant="secondary" size="sm" onClick={handleExport} icon={<Download size={16} />}>
+            {t('common:exportCsv', 'Export CSV')}
+          </Button>
+        )}
+      </div>
 
       <Card>
         {loading ? (
           <CardSkeleton count={4} />
-        ) : !data?.length ? (
+        ) : !users.length ? (
           <EmptyState title={t('members.none')} />
         ) : (
           <div className="table-wrap">
@@ -137,7 +208,7 @@ function MemberList() {
                 </tr>
               </thead>
               <tbody>
-                {data.map((u) => (
+                {users.map((u) => (
                   <tr key={u.id}>
                     <td data-label={t('members.name')} className="bold">
                       <div className="row nowrap">
@@ -189,6 +260,22 @@ function MemberList() {
               </tbody>
             </table>
           </div>
+        )}
+        {users.length > 0 && (
+          <Pagination
+            page={page}
+            totalPages={totalPages}
+            total={total}
+            pageSize={pageSize}
+            onPageChange={(p) => setParam('page', String(p))}
+            onPageSizeChange={(sz) => {
+              const p = new URLSearchParams(params);
+              if (sz !== 50) p.set('limit', String(sz));
+              else p.delete('limit');
+              p.delete('page');
+              setParams(p, { replace: true });
+            }}
+          />
         )}
       </Card>
 

@@ -1,11 +1,14 @@
 import { useState } from 'react';
 import { Link, useParams } from 'react-router-dom';
 import {
+  Calendar,
   CarFront,
   Edit2,
   Plus,
   Route,
+  Share2,
 } from 'lucide-react';
+import { downloadIcs } from '../calendar';
 import { post, useApi } from '../api';
 import { useAuth } from '../auth';
 import {
@@ -147,6 +150,42 @@ export default function EventDetail() {
               )}
 
               <KeyValue items={kvItems} />
+
+              <div className="btn-row">
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  icon={<Calendar size={16} />}
+                  onClick={() =>
+                    downloadIcs(
+                      {
+                        title: e.title,
+                        description: e.description,
+                        location: e.location,
+                        startsAt: e.starts_at,
+                      },
+                      `${e.title}.ics`,
+                    )
+                  }
+                >
+                  {t('addToCalendar')}
+                </Button>
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  icon={<Share2 size={16} />}
+                  onClick={() => {
+                    const text = t('shareEventText', {
+                      title: e.title,
+                      time: fmtDateTime(e.starts_at, ft),
+                      location: e.location,
+                    });
+                    window.open(`https://wa.me/?text=${encodeURIComponent(text)}`, '_blank', 'noopener,noreferrer');
+                  }}
+                >
+                  {t('shareWhatsApp')}
+                </Button>
+              </div>
             </Card>
 
             {/* Signup Card */}
@@ -288,9 +327,11 @@ export default function EventDetail() {
                     {t('viewSettlement')}
                   </Button>
                 ) : (
-                  <Button variant="primary" block to={`/events/${e.id}/settle`}>
-                    {t('createSettlement')}
-                  </Button>
+                  can('settlements', 'create') && (
+                    <Button variant="primary" block to={`/events/${e.id}/settle`}>
+                      {t('createSettlement')}
+                    </Button>
+                  )
                 )}
 
                 {open && (

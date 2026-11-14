@@ -1,4 +1,4 @@
-import { useEffect, useRef } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { AlertTriangle, Flag, MapPin, Navigation } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
@@ -104,6 +104,13 @@ export function DriverRouteCard({ refreshKey }: { refreshKey?: string }) {
   const { t } = useTranslation('drive');
   const ft = useFormatT();
   const { data, reload } = useApi<{ route: TripRoute | null }>('/driver/route', 20000);
+  const [cachedRoute, setCachedRoute] = useState<TripRoute | null>(null);
+
+  useEffect(() => {
+    if (data?.route) {
+      setCachedRoute(data.route);
+    }
+  }, [data]);
 
   // Refresh when the schedule changes (pickup recorded, trip started, …).
   const first = useRef(true);
@@ -115,7 +122,7 @@ export function DriverRouteCard({ refreshKey }: { refreshKey?: string }) {
     reload();
   }, [refreshKey]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  const route = data?.route;
+  const route = data?.route ?? cachedRoute;
   if (!route) return null;
   // A single planned pickup is already fully covered by its ride card (address, Google/Waze,
   // warnings). The route block earns its place for several stops, or once the trip is live.

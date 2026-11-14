@@ -98,6 +98,26 @@ pub async fn call_with(
     }
 }
 
+pub async fn call_raw(
+    app: &Router,
+    method: Method,
+    path: &str,
+    cookie: Option<&str>,
+) -> (StatusCode, HeaderMap, String) {
+    let mut b = Request::builder().method(method).uri(path);
+    if let Some(c) = cookie {
+        b = b.header(header::COOKIE, c);
+    }
+    b = b.header(header::ORIGIN, ORIGIN);
+    let req = b.body(Body::empty()).unwrap();
+    let res = app.clone().oneshot(req).await.unwrap();
+    let status = res.status();
+    let headers = res.headers().clone();
+    let bytes = res.into_body().collect().await.unwrap().to_bytes();
+    let body = String::from_utf8_lossy(&bytes).to_string();
+    (status, headers, body)
+}
+
 /// Mint a hashed session. `mfa_ok` controls privileged MFA for staff roles.
 pub async fn login_mfa(st: &AppState, email: &str, mfa_ok: bool) -> String {
     let (id,): (i64,) = sqlx::query_as("SELECT id FROM users WHERE email=$1 AND status='active'")

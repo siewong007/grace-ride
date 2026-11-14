@@ -28,6 +28,9 @@ pub fn router() -> Router<AppState> {
         .route("/rides/{id}", get(get_ride))
         .route("/rides/{id}/cancel", post(cancel_ride))
         .route("/rides/{id}/respond", post(passenger_respond))
+        .route("/rides/{id}/readiness", post(post_readiness))
+        .route("/rides/{id}/driver-delay", post(post_driver_delay))
+        .route("/rides/{id}/arrived-gate", post(post_arrived_gate))
         .route("/rides/{id}/claim", post(driver_claim))
         .route("/rides/{id}/withdraw", post(driver_withdraw))
         .route(
@@ -101,13 +104,18 @@ pub struct RideRow {
     pub distance_km: Option<i64>,
     pub reimbursement_amount_cents: Option<i64>,
     pub event_title: Option<String>,
+    pub readiness_status: Option<String>,
+    pub readiness_updated_at: Option<String>,
+    pub delay_minutes: Option<i64>,
+    pub arrived_at_gate_at: Option<String>,
 }
 
 const RIDE_SELECT: &str = "SELECT r.id, r.passenger_id, r.driver_id, r.event_id, r.trip_id, r.pickup_at, r.pickup_area_id,
     r.pickup_address, r.destination, r.seats, r.assistance, r.notes, r.status, r.needs_attention, r.attention_reason,
     r.started_at, r.picked_up_at, r.completed_at, r.distance_km, r.reimbursement_amount_cents, r.created_at, r.updated_at,
     a.name AS area_name, p.name AS p_name, p.phone AS p_phone, d.name AS d_name, d.phone AS d_phone,
-    v.model AS v_model, v.color AS v_color, v.plate AS v_plate, v.vehicle_type AS v_type, e.title AS event_title
+    v.model AS v_model, v.color AS v_color, v.plate AS v_plate, v.vehicle_type AS v_type, e.title AS event_title,
+    r.readiness_status, r.readiness_updated_at, r.delay_minutes, r.arrived_at_gate_at
     FROM rides r
     JOIN areas a ON a.id = r.pickup_area_id
     JOIN users p ON p.id = r.passenger_id
@@ -160,6 +168,10 @@ pub fn ride_json(r: &RideRow, u: &CurrentUser) -> Value {
         "trip_id": r.trip_id,
         "distance_km": r.distance_km,
         "reimbursement_amount_cents": r.reimbursement_amount_cents,
+        "readiness_status": r.readiness_status.as_deref().unwrap_or("unconfirmed"),
+        "readiness_updated_at": r.readiness_updated_at,
+        "delay_minutes": r.delay_minutes.unwrap_or(0),
+        "arrived_at_gate_at": r.arrived_at_gate_at,
         "passenger": {
             "id": r.passenger_id,
             "name": r.p_name,
@@ -319,6 +331,8 @@ async fn create_ride(
 #[derive(Deserialize)]
 struct MineQuery {
     scope: Option<String>, // upcoming | past
+    before: Option<String>,
+    limit: Option<i64>,
 }
 
 async fn my_rides(
@@ -328,6 +342,40 @@ async fn my_rides(
 ) -> AppResult<Json<Value>> {
     require(&u, Page::Rides, Act::View)?;
     let past = q.scope.as_deref() == Some("past");
+    if past && (q.before.is_some() || q.limit.is_some()) {
+        let limit = q.limit.unwrap_or(30).clamp(1, 100);
+        let mut conds = vec![
+            "r.passenger_id=$1".to_string(),
+            "r.status IN ('completed','cancelled','no_show','alt_transport')".to_string(),
+        ];
+        let mut n = 2;
+        if q.before.is_some() {
+            conds.push(format!("r.pickup_at < ${n}"));
+            n += 1;
+        }
+        let sql = format!(
+            "{RIDE_SELECT} WHERE {} ORDER BY r.pickup_at DESC, r.id DESC LIMIT ${n}",
+            conds.join(" AND ")
+        );
+        let mut query = sqlx::query_as::<_, RideRow>(&sql).bind(u.id);
+        if let Some(b) = &q.before {
+            query = query.bind(b);
+        }
+        query = query.bind(limit + 1);
+        let mut rows = query.fetch_all(&st.db).await?;
+        let more = rows.len() as i64 > limit;
+        rows.truncate(limit as usize);
+        let next_before = if more {
+            rows.last().map(|r| r.pickup_at.clone())
+        } else {
+            None
+        };
+        return Ok(Json(json!({
+            "items": rows.iter().map(|r| ride_json(r, &u)).collect::<Vec<_>>(),
+            "next_before": next_before,
+        })));
+    }
+
     let sql = if past {
         format!("{RIDE_SELECT} WHERE r.passenger_id=$1 AND r.status IN ('completed','cancelled','no_show','alt_transport') ORDER BY r.pickup_at DESC LIMIT 50")
     } else {
@@ -535,6 +583,237 @@ async fn passenger_respond(
     )
     .await;
     Ok(Json(json!({"ok": true})))
+}
+
+#[derive(Deserialize)]
+struct ReadinessReq {
+    status: String,
+    #[serde(default)]
+    notes: Option<String>,
+}
+
+async fn post_readiness(
+    State(st): State<AppState>,
+    u: CurrentUser,
+    Path(id): Path<i64>,
+    Json(req): Json<ReadinessReq>,
+) -> AppResult<Json<Value>> {
+    let r = load_ride(&st, u.lang, id).await?;
+    let is_passenger = r.passenger_id == u.id;
+    let is_admin = u.can(Page::AdminRides, Act::Update);
+    if !is_passenger && !is_admin {
+        return Err(forbidden(u.lang, ErrorKey::OnlyPassengerCanRespond));
+    }
+    let valid_statuses = ["ready", "delayed_5m", "delayed_10m", "unable_to_join"];
+    if !valid_statuses.contains(&req.status.as_str()) {
+        return Err(bad(u.lang, ErrorKey::InvalidStatus));
+    }
+
+    let timestamp = now();
+    if req.status == "unable_to_join" {
+        if matches!(r.status.as_str(), "confirmed" | "in_progress") {
+            set_status(&st, id, &["confirmed", "in_progress"], "cancelled", u.lang).await?;
+            let reason = req.notes.clone().unwrap_or_else(|| "乘客行前告知无法出席".into());
+            sqlx::query("UPDATE rides SET readiness_status='unable_to_join', readiness_updated_at=$1, attention_reason=$2, completed_at=COALESCE(completed_at, $1) WHERE id=$3")
+                .bind(&timestamp)
+                .bind(format!("乘客无法出席：{reason}"))
+                .bind(id)
+                .execute(&st.db)
+                .await?;
+            clear_passenger_location(&st, id).await?;
+            if let Some(d) = r.driver_id {
+                clear_location_if_idle(&st, d).await?;
+                notify(
+                    &st.db,
+                    d,
+                    ("乘客告知无法出席", "Passenger unable to attend"),
+                    (
+                        &format!("{} 告知今天无法出席，已从您的行程中移除该站。", r.p_name),
+                        &format!("{} notified they cannot join today; this stop was removed from your route.", r.p_name),
+                    ),
+                    "/drive",
+                )
+                .await;
+                if let Some(t) = r.trip_id {
+                    st.routing.invalidate(d, t).await;
+                    system_message(
+                        &st.db,
+                        t,
+                        &format!("系统：{} 告知无法出席，已取消接送安排。", r.p_name),
+                        &format!("System: {} notified unable to attend; pickup cancelled.", r.p_name),
+                    )
+                    .await;
+                }
+            }
+            audit(&st.db, Some(u.id), "ride.unable_to_join", "ride", Some(id), &reason).await;
+        }
+    } else if req.status == "delayed_5m" || req.status == "delayed_10m" {
+        let mins = if req.status == "delayed_5m" { 5 } else { 10 };
+        sqlx::query("UPDATE rides SET readiness_status=$1, readiness_updated_at=$2 WHERE id=$3")
+            .bind(&req.status)
+            .bind(&timestamp)
+            .bind(id)
+            .execute(&st.db)
+            .await?;
+        if let Some(d) = r.driver_id {
+            notify(
+                &st.db,
+                d,
+                ("乘客需稍等", "Passenger running late"),
+                (
+                    &format!("{} 告知需稍等约 {} 分钟，请留意。", r.p_name, mins),
+                    &format!("{} notified they need about {} more minutes.", r.p_name, mins),
+                ),
+                "/drive",
+            )
+            .await;
+            if let Some(t) = r.trip_id {
+                system_message(
+                    &st.db,
+                    t,
+                    &format!("系统：{} 告知需稍候约 {} 分钟。", r.p_name, mins),
+                    &format!("System: {} notified they need ~{} more minutes.", r.p_name, mins),
+                )
+                .await;
+            }
+        }
+        audit(&st.db, Some(u.id), "ride.delayed", "ride", Some(id), &format!("{mins}m")).await;
+    } else if req.status == "ready" {
+        sqlx::query("UPDATE rides SET readiness_status='ready', readiness_updated_at=$1 WHERE id=$2")
+            .bind(&timestamp)
+            .bind(id)
+            .execute(&st.db)
+            .await?;
+        if let Some(d) = r.driver_id {
+            notify(
+                &st.db,
+                d,
+                ("乘客已准备就绪", "Passenger is ready"),
+                (
+                    &format!("{} 已准备就绪！", r.p_name),
+                    &format!("{} is ready for pickup!", r.p_name),
+                ),
+                "/drive",
+            )
+            .await;
+            if let Some(t) = r.trip_id {
+                system_message(
+                    &st.db,
+                    t,
+                    &format!("系统：{} 已准备好出发。", r.p_name),
+                    &format!("System: {} is ready to depart.", r.p_name),
+                )
+                .await;
+            }
+        }
+        audit(&st.db, Some(u.id), "ride.ready", "ride", Some(id), "").await;
+    }
+
+    Ok(Json(json!({"ok": true, "status": req.status})))
+}
+
+#[derive(Deserialize)]
+struct DriverDelayReq {
+    delay_minutes: i64,
+    #[serde(default)]
+    reason: Option<String>,
+}
+
+async fn post_driver_delay(
+    State(st): State<AppState>,
+    u: CurrentUser,
+    Path(id): Path<i64>,
+    Json(req): Json<DriverDelayReq>,
+) -> AppResult<Json<Value>> {
+    let r = load_ride(&st, u.lang, id).await?;
+    let is_driver = r.driver_id == Some(u.id);
+    let is_admin = u.can(Page::AdminRides, Act::Update);
+    if !is_driver && !is_admin {
+        return Err(forbidden(u.lang, ErrorKey::NotRideDriver));
+    }
+    if req.delay_minutes < 0 || req.delay_minutes > 120 {
+        return Err(bad(u.lang, ErrorKey::InvalidAction));
+    }
+    sqlx::query("UPDATE rides SET delay_minutes=$1 WHERE id=$2")
+        .bind(req.delay_minutes)
+        .bind(id)
+        .execute(&st.db)
+        .await?;
+
+    let mins = req.delay_minutes;
+    let note = req.reason.unwrap_or_default();
+    notify(
+        &st.db,
+        r.passenger_id,
+        ("司机稍有延误", "Driver slightly delayed"),
+        (
+            &format!("司机 {} 因路况稍有延误，预计推迟约 {} 分钟到达。车到门前时会再次通知您，请在屋内稍候。", u.name, mins),
+            &format!("Driver {} is delayed by ~{} mins due to road conditions. We will notify you when outside, please wait indoors.", u.name, mins),
+        ),
+        &format!("/rides/{id}"),
+    )
+    .await;
+
+    if let Some(t) = r.trip_id {
+        system_message(
+            &st.db,
+            t,
+            &format!("系统：司机预计推迟约 {} 分钟到达。", mins),
+            &format!("System: Driver estimated to arrive ~{} mins later than planned.", mins),
+        )
+        .await;
+    }
+    audit(&st.db, Some(u.id), "ride.driver_delay", "ride", Some(id), &format!("{mins}m {note}")).await;
+    Ok(Json(json!({"ok": true, "delay_minutes": mins})))
+}
+
+async fn post_arrived_gate(
+    State(st): State<AppState>,
+    u: CurrentUser,
+    Path(id): Path<i64>,
+) -> AppResult<Json<Value>> {
+    let r = load_ride(&st, u.lang, id).await?;
+    let is_driver = r.driver_id == Some(u.id);
+    let is_admin = u.can(Page::AdminRides, Act::Update);
+    if !is_driver && !is_admin {
+        return Err(forbidden(u.lang, ErrorKey::NotRideDriver));
+    }
+    let timestamp = now();
+    sqlx::query("UPDATE rides SET arrived_at_gate_at=$1 WHERE id=$2")
+        .bind(&timestamp)
+        .bind(id)
+        .execute(&st.db)
+        .await?;
+
+    let veh = format!(
+        "{} {} · {}",
+        r.v_color.clone().unwrap_or_default(),
+        r.v_model.clone().unwrap_or_default(),
+        r.v_plate.clone().unwrap_or_default()
+    );
+    notify(
+        &st.db,
+        r.passenger_id,
+        ("司机已到达门前", "Driver arrived at your gate"),
+        (
+            &format!("司机 {} 已到达您的大门外（{}），请出门上车。", u.name, veh),
+            &format!("Driver {} has arrived outside your gate ({}). Please come out to board.", u.name, veh),
+        ),
+        &format!("/rides/{id}"),
+    )
+    .await;
+
+    if let Some(t) = r.trip_id {
+        system_message(
+            &st.db,
+            t,
+            &format!("系统：司机已到达 {} 的上车地点门前。", r.p_name),
+            &format!("System: Driver has arrived outside {}'s pickup location.", r.p_name),
+        )
+        .await;
+    }
+    audit(&st.db, Some(u.id), "ride.arrived_gate", "ride", Some(id), "").await;
+    Ok(Json(json!({"ok": true, "arrived_at_gate_at": timestamp})))
 }
 
 // ---------------- Driver ----------------
@@ -816,6 +1095,7 @@ async fn driver_confirm_assignment(
     u: CurrentUser,
     Path(id): Path<i64>,
 ) -> AppResult<Json<Value>> {
+    require(&u, Page::Drive, Act::Update)?;
     let r = load_ride(&st, u.lang, id).await?;
     if r.driver_id != Some(u.id) {
         return Err(forbidden(u.lang, ErrorKey::NotRideDriver));
@@ -845,6 +1125,7 @@ async fn start_ride(
     u: CurrentUser,
     Path(id): Path<i64>,
 ) -> AppResult<Json<Value>> {
+    require(&u, Page::Drive, Act::Update)?;
     let r = load_ride(&st, u.lang, id).await?;
     if r.driver_id != Some(u.id) {
         return Err(forbidden(u.lang, ErrorKey::NotRideDriver));
@@ -856,12 +1137,22 @@ async fn start_ride(
     .bind(u.id)
     .fetch_one(&st.db)
     .await?;
-    if live >= st.cfg.max_live_drivers {
+    let max_live_drivers: i64 = sqlx::query_scalar::<_, String>(
+        "SELECT value FROM system_settings WHERE key='max_live_drivers'",
+    )
+    .fetch_optional(&st.db)
+    .await
+    .ok()
+    .flatten()
+    .and_then(|s| s.parse::<i64>().ok())
+    .filter(|n| (1..=100).contains(n))
+    .unwrap_or(st.cfg.max_live_drivers);
+    if live >= max_live_drivers {
         return Err(conflict(
             u.lang,
             ErrorKey::MaxLiveDriversReached {
                 live,
-                limit: st.cfg.max_live_drivers,
+                limit: max_live_drivers,
             },
         ));
     }
@@ -933,6 +1224,7 @@ async fn pickup(
     u: CurrentUser,
     Path(id): Path<i64>,
 ) -> AppResult<Json<Value>> {
+    require(&u, Page::Drive, Act::Update)?;
     let r = load_ride(&st, u.lang, id).await?;
     if r.driver_id != Some(u.id) {
         return Err(forbidden(u.lang, ErrorKey::NotRideDriver));
@@ -1041,6 +1333,7 @@ async fn complete(
     u: CurrentUser,
     Path(id): Path<i64>,
 ) -> AppResult<Json<Value>> {
+    require(&u, Page::Drive, Act::Update)?;
     let r = load_ride(&st, u.lang, id).await?;
     if r.driver_id != Some(u.id) {
         return Err(forbidden(u.lang, ErrorKey::NotRideDriver));
@@ -1189,6 +1482,7 @@ async fn driver_schedule(
     u: CurrentUser,
     Query(q): Query<RangeQuery>,
 ) -> AppResult<Json<Value>> {
+    require(&u, Page::Drive, Act::View)?;
     let from = q.from.unwrap_or_else(|| now()[..10].to_string());
     let to = q.to.unwrap_or_else(|| from.clone());
     let rows = sqlx::query_as::<_, RideRow>(&format!(
@@ -1214,8 +1508,9 @@ async fn driver_route(State(st): State<AppState>, u: CurrentUser) -> AppResult<J
 }
 
 async fn get_driver_profile(State(st): State<AppState>, u: CurrentUser) -> AppResult<Json<Value>> {
-    let (carpool, spare): (i64, i64) =
-        sqlx::query_as("SELECT carpool_enabled, spare_seats FROM users WHERE id=$1")
+    require(&u, Page::Drive, Act::View)?;
+    let (carpool, spare, wait): (i64, i64, Option<i64>) =
+        sqlx::query_as("SELECT carpool_enabled, spare_seats, gate_wait_mins FROM users WHERE id=$1")
             .bind(u.id)
             .fetch_one(&st.db)
             .await?;
@@ -1232,6 +1527,7 @@ async fn get_driver_profile(State(st): State<AppState>, u: CurrentUser) -> AppRe
     Ok(Json(json!({
         "carpool_enabled": carpool == 1,
         "spare_seats": spare,
+        "gate_wait_mins": wait.unwrap_or(5),
         "area_ids": areas.into_iter().map(|a| a.0).collect::<Vec<_>>(),
         "vehicle": v.map(|(m, c, p, s, t)| json!({"model": m, "color": c, "plate": p, "seats": s, "type": t})),
     })))
@@ -1257,6 +1553,7 @@ struct DriverProfileIn {
     spare_seats: i64,
     area_ids: Vec<i64>,
     vehicle: Option<VehicleIn>,
+    gate_wait_mins: Option<i64>,
 }
 
 async fn put_driver_profile(
@@ -1277,6 +1574,14 @@ async fn put_driver_profile(
         .bind(u.id)
         .execute(&mut *tx)
         .await?;
+    if let Some(wait) = req.gate_wait_mins {
+        let wait = wait.clamp(1, 30);
+        sqlx::query("UPDATE users SET gate_wait_mins=$1 WHERE id=$2")
+            .bind(wait)
+            .bind(u.id)
+            .execute(&mut *tx)
+            .await?;
+    }
     sqlx::query("DELETE FROM driver_areas WHERE user_id=$1")
         .bind(u.id)
         .execute(&mut *tx)
@@ -1875,6 +2180,8 @@ struct AdminRidesQuery {
     date: Option<String>,
     status: Option<String>,
     attention: Option<bool>,
+    page: Option<i64>,
+    limit: Option<i64>,
 }
 
 async fn admin_rides(
@@ -1891,12 +2198,57 @@ async fn admin_rides(
     }
     if q.status.is_some() {
         conds.push(format!("r.status = ${n}"));
+        n += 1;
     }
     if q.attention.unwrap_or(false) {
         conds.push(
             "(r.needs_attention = 1 OR (r.status='pending_driver' AND r.pickup_at::timestamp - LOCALTIMESTAMP < interval '1 day'))".to_string(),
         );
     }
+
+    if q.page.is_some() || q.limit.is_some() {
+        let count_sql = format!(
+            "SELECT COUNT(*) FROM rides r WHERE {}",
+            conds.join(" AND ")
+        );
+        let mut count_query = sqlx::query_as::<_, (i64,)>(&count_sql);
+        if let Some(d) = &q.date {
+            count_query = count_query.bind(d);
+        }
+        if let Some(s) = &q.status {
+            count_query = count_query.bind(s);
+        }
+        let (total,) = count_query.fetch_one(&st.db).await?;
+
+        let page = q.page.unwrap_or(1).max(1);
+        let limit = q.limit.unwrap_or(50).clamp(1, 200);
+        let offset = (page - 1) * limit;
+
+        let sql = format!(
+            "{RIDE_SELECT} WHERE {} ORDER BY r.pickup_at LIMIT ${n} OFFSET ${}",
+            conds.join(" AND "),
+            n + 1
+        );
+        let mut query = sqlx::query_as::<_, RideRow>(&sql);
+        if let Some(d) = &q.date {
+            query = query.bind(d);
+        }
+        if let Some(s) = &q.status {
+            query = query.bind(s);
+        }
+        query = query.bind(limit).bind(offset);
+        let rows = query.fetch_all(&st.db).await?;
+        let total_pages = if total == 0 { 1 } else { (total + limit - 1) / limit };
+
+        return Ok(Json(json!({
+            "items": rows.iter().map(|r| ride_json(r, &u)).collect::<Vec<_>>(),
+            "total": total,
+            "page": page,
+            "page_size": limit,
+            "total_pages": total_pages,
+        })));
+    }
+
     let sql = format!(
         "{RIDE_SELECT} WHERE {} ORDER BY r.pickup_at LIMIT 300",
         conds.join(" AND ")

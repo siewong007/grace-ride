@@ -48,6 +48,7 @@ interface Area {
 interface Profile {
   carpool_enabled: boolean;
   spare_seats: number;
+  gate_wait_mins?: number;
   area_ids: number[];
   vehicle: {
     model: string;
@@ -93,7 +94,9 @@ export default function Drive() {
 function Schedule() {
   const { t } = useTranslation('drive');
   const ft = useFormatT();
+  const toast = useToast();
   const confirm = useConfirm();
+  const { can } = useAuth();
   const [range, setRange] = useState<'day' | 'week'>('day');
   const [withdrawRide, setWithdrawRide] = useState<Ride | null>(null);
 
@@ -202,7 +205,15 @@ function Schedule() {
                         </div>
                       </div>
                     </div>
-                    <StatusPill map={RIDE_STATUS} status={r.status} />
+                    <div className="row nowrap gap-xs">
+                      {r.readiness_status === 'ready' && (
+                        <Pill tone="success">{t('passengerReady')}</Pill>
+                      )}
+                      {(r.readiness_status === 'delayed_5m' || r.readiness_status === 'delayed_10m') && (
+                        <Pill tone="warning">{t('passengerDelayed')}</Pill>
+                      )}
+                      <StatusPill map={RIDE_STATUS} status={r.status} />
+                    </div>
                   </div>
 
                   {r.assistance && (
@@ -279,6 +290,47 @@ function Schedule() {
 
                     {r.status === 'in_progress' && !r.picked_up_at && (
                       <Button
+                        variant="secondary"
+                        size="sm"
+                        disabled={busy}
+                        onClick={async () => {
+                          await run(() => post(`/rides/${r.id}/arrived-gate`).then(reload));
+                          toast.success(t('arrivedGateSent'));
+                        }}
+                      >
+                        {t('arrivedGate')}
+                      </Button>
+                    )}
+
+                    {(r.status === 'confirmed' || (r.status === 'in_progress' && !r.picked_up_at)) && (
+                      <div className="btn-row">
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          disabled={busy}
+                          onClick={async () => {
+                            await run(() => post(`/rides/${r.id}/driver-delay`, { delay_minutes: 5 }).then(reload));
+                            toast.success(t('delayToast', { mins: 5 }));
+                          }}
+                        >
+                          {t('delayPlus5')}
+                        </Button>
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          disabled={busy}
+                          onClick={async () => {
+                            await run(() => post(`/rides/${r.id}/driver-delay`, { delay_minutes: 10 }).then(reload));
+                            toast.success(t('delayToast', { mins: 10 }));
+                          }}
+                        >
+                          {t('delayPlus10')}
+                        </Button>
+                      </div>
+                    )}
+
+                    {r.status === 'in_progress' && !r.picked_up_at && (
+                      <Button
                         variant="danger"
                         size="sm"
                         disabled={busy}
@@ -288,7 +340,7 @@ function Schedule() {
                       </Button>
                     )}
 
-                    {(r.status === 'confirmed' || r.status === 'pending_driver_confirm') && (
+                    {(r.status === 'confirmed' || r.status === 'pending_driver_confirm') && can('drive', 'delete') && (
                       <Button
                         variant="ghost"
                         size="sm"
@@ -330,6 +382,7 @@ function Requests() {
   const { t } = useTranslation('drive');
   const ft = useFormatT();
   const toast = useToast();
+  const { can } = useAuth();
   const { data: areas } = useApi<Area[]>('/areas');
   const [area, setArea] = useState<string>('mine');
   const [date, setDate] = useState('');
@@ -426,14 +479,16 @@ function Requests() {
                 <span>{t('pickupAddressLocked')}</span>
               </div>
 
-              <Button
-                variant="primary"
-                block
-                disabled={busy}
-                onClick={() => claim(r.id)}
-              >
-                {t('offerToDrive')}
-              </Button>
+              {can('drive', 'create') && (
+                <Button
+                  variant="primary"
+                  block
+                  disabled={busy}
+                  onClick={() => claim(r.id)}
+                >
+                  {t('offerToDrive')}
+                </Button>
+              )}
             </div>
           ))}
         </div>
@@ -444,6 +499,7 @@ function Requests() {
 
 function Settings() {
   const { t } = useTranslation('drive');
+  const { can } = useAuth();
   const { data: areas } = useApi<Area[]>('/areas');
   const { data: profile, loading } = useApi<Profile>('/driver/profile');
   const [p, setP] = useState<Profile | null>(null);
@@ -455,6 +511,7 @@ function Settings() {
       const initial: Profile = {
         carpool_enabled: !!profile.carpool_enabled,
         spare_seats: Number(profile.spare_seats) || 1,
+        gate_wait_mins: Number(profile.gate_wait_mins) || 5,
         area_ids: Array.isArray(profile.area_ids)
           ? [...profile.area_ids].sort((a, b) => a - b)
           : [],
@@ -510,6 +567,7 @@ function Settings() {
         put('/driver/profile', {
           ...p,
           spare_seats: Number(p.spare_seats),
+          gate_wait_mins: Number(p.gate_wait_mins || 5),
           vehicle: { ...v, seats: Number(v.seats) },
         }),
       t('settingsSaved'),
@@ -588,6 +646,18 @@ function Settings() {
                   }
                 />
               </div>
+            </Field>
+            <Field label={t('gateWaitMins')} hint={t('gateWaitMinsHint')}>
+              <select
+                className="input"
+                value={p.gate_wait_mins ?? 5}
+                onChange={(e) => setP({ ...p, gate_wait_mins: Number(e.target.value) })}
+              >
+                <option value={3}>{t('mins3')}</option>
+                <option value={5}>{t('mins5')}</option>
+                <option value={8}>{t('mins8')}</option>
+                <option value={10}>{t('mins10')}</option>
+              </select>
             </Field>
           </Card>
         </div>
@@ -690,13 +760,15 @@ function Settings() {
           <Link to="/report" className="btn secondary">
             {t('badges')}
           </Link>
-          <Button
-            variant="primary"
-            type="submit"
-            disabled={busy || !isDirty}
-          >
-            {t('saveSettings')}
-          </Button>
+          {can('drive', 'update') && (
+            <Button
+              variant="primary"
+              type="submit"
+              disabled={busy || !isDirty}
+            >
+              {t('saveSettings')}
+            </Button>
+          )}
         </div>
       </div>
     </form>

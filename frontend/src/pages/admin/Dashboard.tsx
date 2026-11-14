@@ -59,6 +59,18 @@ export default function Dashboard() {
     rides ? '/admin/rides?status=pending_approval' : null,
     20000,
   );
+  const auditPerm = can('admin_audit');
+  const recentAudit = useApi<{
+    items: {
+      id: number;
+      actor: string | null;
+      action: string;
+      entity: string;
+      entity_id: number | null;
+      detail: string;
+      created_at: string;
+    }[];
+  }>(auditPerm ? '/admin/audit?limit=5' : null, 20000);
 
   if (!isStaff) {
     return (
@@ -218,6 +230,40 @@ export default function Dashboard() {
             <Link className="notice" to="/admin/members">
               {t('dashboard.recovery', { count: d.pending_recovery })} →
             </Link>
+          )}
+
+          {auditPerm && (
+            <Card className="stack">
+              <div className="row between">
+                <h3>{t('dashboard.recentAudit')}</h3>
+                <Link to="/admin/audit" className="small muted">
+                  {t('dashboard.viewAllAudit')}
+                </Link>
+              </div>
+              {recentAudit.loading ? (
+                <CardSkeleton count={2} />
+              ) : !recentAudit.data?.items?.length ? (
+                <EmptyState title={t('dashboard.noAudit')} />
+              ) : (
+                <div className="list">
+                  {recentAudit.data.items.slice(0, 5).map((a) => (
+                    <div key={a.id} className="item">
+                      <div className="grow">
+                        <div className="bold small">
+                          {a.actor ?? t('audit.system')} · {a.action}
+                        </div>
+                        <div className="muted tiny">
+                          {a.entity}{a.entity_id != null && ` #${a.entity_id}`} {a.detail && `· ${a.detail}`}
+                        </div>
+                      </div>
+                      <span className="tiny mono muted">
+                        {fmtTime(a.created_at, ft)}
+                      </span>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </Card>
           )}
         </div>
       </div>

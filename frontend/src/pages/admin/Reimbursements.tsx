@@ -1,6 +1,7 @@
 import { useState } from 'react';
-import { Link } from 'react-router-dom';
+import { Link, useSearchParams } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
+import { Download } from 'lucide-react';
 import { post, useApi } from '../../api';
 import { useAuth } from '../../auth';
 import {
@@ -13,22 +14,33 @@ import {
   Modal,
   Page,
   PageHeader,
+  Pagination,
   ReceiptLink,
   StatusPill,
   Tabs,
   useAction,
 } from '../../components/ui';
-import { fmtDateTime, fmtDay, REIMB_STATUS, rm, useFormatT } from '../../format';
+import { exportToCsv, fmtDateTime, fmtDay, REIMB_STATUS, rm, todayStr, useFormatT } from '../../format';
 import type { Reimb } from '../Reimbursements';
+
+interface PaginatedReimbursements {
+  items: Reimb[];
+  total: number;
+  page: number;
+  page_size: number;
+  total_pages: number;
+}
 
 export default function AdminReimbursements() {
   const { t } = useTranslation('admin');
   const { can } = useAuth();
+  const [params, setParams] = useSearchParams();
   const canReview = can('admin_reimb_review');
   const canPay = can('admin_reimb_pay');
-  const [tab, setTab] = useState<'review' | 'payout'>(
-    canReview ? 'review' : 'payout',
-  );
+  const tabParam = params.get('tab') as 'review' | 'payout';
+  const tab = (tabParam === 'review' && canReview) || (tabParam === 'payout' && canPay)
+    ? tabParam
+    : canReview ? 'review' : 'payout';
 
   if (!canReview && !canPay) {
     return (
@@ -38,13 +50,21 @@ export default function AdminReimbursements() {
     );
   }
 
+  const handleTabChange = (nextTab: 'review' | 'payout') => {
+    const p = new URLSearchParams(params);
+    p.set('tab', nextTab);
+    p.delete('page');
+    p.delete('limit');
+    setParams(p, { replace: true });
+  };
+
   return (
     <Page>
       <PageHeader title={t('reimb.title')} subtitle={t('reimb.desc')} />
       {canReview && canPay && (
         <Tabs
           value={tab}
-          onChange={(v) => setTab(v as 'review' | 'payout')}
+          onChange={(v) => handleTabChange(v as 'review' | 'payout')}
           items={[
             { value: 'review', label: t('reimb.review') },
             { value: 'payout', label: t('reimb.payout') },
@@ -61,23 +81,66 @@ function List({ scope }: { scope: 'review' | 'payout' }) {
   const ft = useFormatT();
   const { can } = useAuth();
   const canAct = can(scope === 'review' ? 'admin_reimb_review' : 'admin_reimb_pay', 'update');
-  const { data, error, loading, reload } = useApi<Reimb[]>(
-    `/reimbursements?scope=${scope}`,
+  const [params, setParams] = useSearchParams();
+  const page = Math.max(1, Number(params.get('page') ?? '1') || 1);
+  const pageSize = Number(params.get('limit') ?? '25') || 25;
+  const pagingQs = page > 1 || pageSize !== 25 ? `&page=${page}&limit=${pageSize}` : '';
+  const { data, error, loading, reload } = useApi<PaginatedReimbursements | Reimb[]>(
+    `/reimbursements?scope=${scope}${pagingQs}`,
   );
   const [open, setOpen] = useState<Reimb | null>(null);
+
+  const items = Array.isArray(data) ? data : data?.items ?? [];
+  const total = Array.isArray(data) ? data.length : data?.total ?? 0;
+  const totalPages = Array.isArray(data) ? 1 : data?.total_pages ?? 1;
+
+  const handleExport = () => {
+    if (scope === 'payout') {
+      const headers = ['Claim ID', 'Payee Name', 'DuitNow / Account', 'Amount (MYR)', 'Applicant', 'Description', 'Status'];
+      const rows = items.map((r) => [
+        r.id,
+        r.payee_name || r.user.name,
+        r.payee_phone || '',
+        (r.amount_cents / 100).toFixed(2),
+        r.user.name,
+        r.description,
+        r.status,
+      ]);
+      exportToCsv(`grace-ride-duitnow-batch-${todayStr()}`, headers, rows);
+      return;
+    }
+    const headers = ['ID', 'Applicant', 'Amount (cents)', 'Description', 'Ride ID', 'Status', 'Submitted At'];
+    const rows = items.map((r) => [
+      r.id,
+      r.user.name,
+      r.amount_cents,
+      r.description,
+      r.ride_id ?? '',
+      r.status,
+      r.created_at,
+    ]);
+    exportToCsv(`grace-ride-reimbursements-${scope}-${todayStr()}`, headers, rows);
+  };
 
   return (
     <div className="stack">
       {/* Clear section notices for role separation */}
-      <div className="notice info">
-        {scope === 'payout' ? t('reimb.financeNotice') : t('reimb.transportNotice')}
+      <div className="row between nowrap gap-sm">
+        <div className="notice info grow">
+          {scope === 'payout' ? t('reimb.financeNotice') : t('reimb.transportNotice')}
+        </div>
+        {items.length > 0 && (
+          <Button variant="secondary" size="sm" onClick={handleExport} icon={<Download size={16} />}>
+            {scope === 'payout' ? t('reimb.exportBatchDuitNow') : t('common:exportCsv', 'Export CSV')}
+          </Button>
+        )}
       </div>
 
       <ErrorBox error={error} />
 
       {loading ? (
         <CardSkeleton count={3} />
-      ) : !data?.length ? (
+      ) : !items.length ? (
         <EmptyState title={t('reimb.none')} />
       ) : (
         <Card>
@@ -94,7 +157,7 @@ function List({ scope }: { scope: 'review' | 'payout' }) {
                 </tr>
               </thead>
               <tbody>
-                {data.map((r) => (
+                {items.map((r) => (
                   <tr key={r.id}>
                     <td data-label={t('reimb.applicant')} className="bold">
                       {r.user.name}
@@ -144,6 +207,25 @@ function List({ scope }: { scope: 'review' | 'payout' }) {
               </tbody>
             </table>
           </div>
+          <Pagination
+            page={page}
+            totalPages={totalPages}
+            total={total}
+            pageSize={pageSize}
+            onPageChange={(p) => {
+              const next = new URLSearchParams(params);
+              if (p > 1) next.set('page', String(p));
+              else next.delete('page');
+              setParams(next, { replace: true });
+            }}
+            onPageSizeChange={(sz) => {
+              const next = new URLSearchParams(params);
+              if (sz !== 25) next.set('limit', String(sz));
+              else next.delete('limit');
+              next.delete('page');
+              setParams(next, { replace: true });
+            }}
+          />
         </Card>
       )}
 

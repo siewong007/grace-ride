@@ -20,6 +20,8 @@ export interface Me {
   has_password: boolean;
   passkey_count: number;
   badges_opt_out: boolean;
+  readiness_prompt_mins?: number;
+  gate_wait_mins?: number;
   privileged: boolean;
   unread: number;
   groups: { id: number; name: string }[];

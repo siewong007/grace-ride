@@ -1,6 +1,6 @@
 import { FormEvent, useState } from 'react';
 import { Link, useNavigate, useParams, useSearchParams } from 'react-router-dom';
-import { Send } from 'lucide-react';
+import { Phone, Send } from 'lucide-react';
 import { post, useApi } from '../api';
 import { useAuth } from '../auth';
 import {
@@ -78,33 +78,41 @@ export default function Help() {
         <PageHeader title={t('title')} subtitle={t('desc')} />
 
         <div className="split">
-          <form className="card stack" onSubmit={submit}>
-            <h3>{t('ask')}</h3>
-            {rideId && <Pill tone="info">{t('relatedRide', { rideId })}</Pill>}
-            <Field label={t('subject')}>
-              <input
-                className="input"
-                required
-                value={f.subject}
-                onChange={(e) => setF({ ...f, subject: e.target.value })}
-              />
-            </Field>
-            <Field label={t('body')}>
-              <textarea
-                className="input"
-                required
-                value={f.body}
-                onChange={(e) => setF({ ...f, body: e.target.value })}
-                placeholder={t('bodyPlaceholder')}
-                rows={4}
-              />
-            </Field>
-            <ErrorBox error={actErr} />
-            <Button variant="primary" block type="submit" loading={busy}>
-              {t('submit')}
-            </Button>
-            <p className="muted small">{t('urgent')}</p>
-          </form>
+          {can('help', 'create') && (
+            <form className="card stack" onSubmit={submit}>
+              <h3>{t('ask')}</h3>
+              {rideId && <Pill tone="info">{t('relatedRide', { rideId })}</Pill>}
+              <Field label={t('subject')}>
+                <input
+                  className="input"
+                  required
+                  value={f.subject}
+                  onChange={(e) => setF({ ...f, subject: e.target.value })}
+                />
+              </Field>
+              <Field label={t('body')}>
+                <textarea
+                  className="input"
+                  required
+                  value={f.body}
+                  onChange={(e) => setF({ ...f, body: e.target.value })}
+                  placeholder={t('bodyPlaceholder')}
+                  rows={4}
+                />
+              </Field>
+              <ErrorBox error={actErr} />
+              <Button variant="primary" block type="submit" loading={busy}>
+                {t('submit')}
+              </Button>
+              <div className="stack-xs">
+                <p className="muted small">{t('urgent')}</p>
+                <a className="btn sm secondary" href="tel:+60379573888">
+                  <Phone size={14} aria-hidden="true" />
+                  <span>{t('callTransport')}</span>
+                </a>
+              </div>
+            </form>
+          )}
 
           <div className="stack">
             {isStaff && (
@@ -151,9 +159,11 @@ export function HelpDetail() {
   const { t } = useTranslation('help');
   const ft = useFormatT();
   const { id } = useParams();
+  const { can } = useAuth();
   const { data: tk, error, reload } = useApi<TicketDetailData>(`/help/${id}`, 15000);
   const [body, setBody] = useState('');
   const { busy, error: actErr, run } = useAction();
+  const canUpdate = can('help', 'update') || can('admin_help', 'update');
 
   if (error) return <ErrorBox error={error} />;
   if (!tk) return <Spinner />;
@@ -162,7 +172,7 @@ export function HelpDetail() {
     e.preventDefault();
     if (!body.trim()) return;
     run(async () => {
-      await post(`/help/${tk.id}/reply`, { body });
+      await post(`/help/${tk.id}/replies`, { body });
       setBody('');
       reload();
     });
@@ -208,34 +218,36 @@ export function HelpDetail() {
           </div>
 
           {tk.status !== 'closed' ? (
-            <form onSubmit={sendReply} className="stack-sm">
-              <textarea
-                className="input"
-                value={body}
-                onChange={(e) => setBody(e.target.value)}
-                placeholder={t('reply')}
-                rows={3}
-              />
-              <div className="btn-row">
-                <Button
-                  variant="primary"
-                  type="submit"
-                  disabled={busy || !body.trim()}
-                  loading={busy}
-                  icon={<Send size={16} />}
-                >
-                  {t('send')}
-                </Button>
-                <Button
-                  variant="secondary"
-                  type="button"
-                  disabled={busy}
-                  onClick={closeTicket}
-                >
-                  {t('resolved')}
-                </Button>
-              </div>
-            </form>
+            canUpdate ? (
+              <form onSubmit={sendReply} className="stack-sm">
+                <textarea
+                  className="input"
+                  value={body}
+                  onChange={(e) => setBody(e.target.value)}
+                  placeholder={t('reply')}
+                  rows={3}
+                />
+                <div className="btn-row">
+                  <Button
+                    variant="primary"
+                    type="submit"
+                    disabled={busy || !body.trim()}
+                    loading={busy}
+                    icon={<Send size={16} />}
+                  >
+                    {t('send')}
+                  </Button>
+                  <Button
+                    variant="secondary"
+                    type="button"
+                    disabled={busy}
+                    onClick={closeTicket}
+                  >
+                    {t('resolved')}
+                  </Button>
+                </div>
+              </form>
+            ) : null
           ) : (
             <div className="notice ok small">{t('statusClosed')}</div>
           )}

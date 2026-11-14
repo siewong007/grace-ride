@@ -54,6 +54,7 @@ pub fn render(lang: Lang, key: &ErrorKey) -> String {
         | ErrorKey::CodeAlreadyUsed
         | ErrorKey::Invalid2FaSecret
         | ErrorKey::TwoFactorAlreadyEnabled
+        | ErrorKey::TwoFactorNotConfigured
         | ErrorKey::StartSetupFirst
         | ErrorKey::PasswordTooShort
         | ErrorKey::CurrentPasswordIncorrect
@@ -248,6 +249,7 @@ mod tests {
             ErrorKey::CodeAlreadyUsed,
             ErrorKey::Invalid2FaSecret,
             ErrorKey::TwoFactorAlreadyEnabled,
+            ErrorKey::TwoFactorNotConfigured,
             ErrorKey::StartSetupFirst,
             ErrorKey::PasswordTooShort,
             ErrorKey::CurrentPasswordIncorrect,

@@ -24,6 +24,10 @@ export interface Ride {
   picked_up_at: string | null;
   completed_at: string | null;
   updated_at: string;
+  readiness_status?: 'unconfirmed' | 'ready' | 'delayed_5m' | 'delayed_10m' | 'unable_to_join';
+  readiness_updated_at?: string | null;
+  delay_minutes?: number;
+  arrived_at_gate_at?: string | null;
   viewer: { is_passenger: boolean; is_driver: boolean; is_staff: boolean };
   driver_load?: { seats_used: number; capacity: number };
   passenger_conflicts?: { id: number; pickup_at: string }[];

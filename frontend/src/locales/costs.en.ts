@@ -19,4 +19,5 @@ export default {
   paidDate: 'Payment date',
   privacy: 'The receipt is visible only to you, the payee and authorised finance staff. Mask unnecessary account details.',
   receiptModal: 'Upload receipt · {amount}',
+  showMore: 'Show more ({count} remaining)',
 };

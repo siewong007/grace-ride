@@ -27,6 +27,7 @@ export default function Profile() {
   const nav = useNavigate();
   const passkeys = useApi<{ id: number; label: string; created_at: string; last_used: string | null }[]>('/auth/passkeys');
   const [f, setF] = useState({ name: me?.name ?? '', phone: me?.phone ?? '', photo: null as number | null, optOut: me?.badges_opt_out ?? false });
+  const [readinessPrompt, setReadinessPrompt] = useState(me?.readiness_prompt_mins ?? 45);
   const [totp, setTotp] = useState<{ secret: string; url: string } | null>(null);
   const { busy, error, run } = useAction();
   if (!me) return null;
@@ -54,7 +55,7 @@ export default function Profile() {
             className="stack"
             onSubmit={(e) => {
               e.preventDefault();
-              run(() => put('/me', { name: f.name, phone: f.phone, photo_file_id: f.photo, badges_opt_out: f.optOut }).then(refresh), t('saved'));
+              run(() => put('/me', { name: f.name, phone: f.phone, photo_file_id: f.photo, badges_opt_out: f.optOut, readiness_prompt_mins: readinessPrompt }).then(refresh), t('saved'));
             }}
           >
             <Field label={t('name')}>
@@ -62,6 +63,14 @@ export default function Profile() {
             </Field>
             <Field label={t('phone')} hint={t('phoneHint')}>
               <input className="input" type="tel" value={f.phone} onChange={(e) => setF({ ...f, phone: e.target.value })} />
+            </Field>
+            <Field label={t('readinessPromptLabel')} hint={t('readinessPromptHint')}>
+              <select className="input" value={readinessPrompt} onChange={(e) => setReadinessPrompt(Number(e.target.value))}>
+                <option value={30}>{t('mins30')}</option>
+                <option value={45}>{t('mins45')}</option>
+                <option value={60}>{t('mins60')}</option>
+                <option value={0}>{t('promptDisabled')}</option>
+              </select>
             </Field>
             <FileInput label={t('photo')} accept="image/*" value={f.photo} onChange={(id) => setF({ ...f, photo: id })} />
             <label className={`check ${f.optOut ? 'on' : ''}`}>
@@ -184,13 +193,33 @@ export default function Profile() {
             </div>
           )}
 
-          <div>
+          <div className="btn-row">
             <Button
               variant="secondary"
               onClick={() => run(async () => { await post('/auth/logout'); await refresh(); nav('/login'); })}
             >
               <LogOut size={18} />
               {t('logout')}
+            </Button>
+            <Button
+              variant="ghost"
+              onClick={async () => {
+                const ok = await confirm({
+                  title: t('logoutAll'),
+                  body: t('logoutAllConfirm'),
+                  confirmLabel: t('logoutAll'),
+                  tone: 'danger',
+                });
+                if (ok) {
+                  run(async () => {
+                    await post('/auth/logout-all');
+                    await refresh();
+                    nav('/login');
+                  });
+                }
+              }}
+            >
+              {t('logoutAll')}
             </Button>
           </div>
         </Card>

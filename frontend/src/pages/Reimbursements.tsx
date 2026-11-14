@@ -11,6 +11,7 @@ import {
   FileInput,
   Page,
   PageHeader,
+  Pagination,
   ReceiptLink,
   Spinner,
   StatusPill,
@@ -38,10 +39,27 @@ export interface Reimb {
   created_at: string;
 }
 
+export interface PaginatedReimbursements {
+  items: Reimb[];
+  total: number;
+  page: number;
+  page_size: number;
+  total_pages: number;
+}
+
 export default function Reimbursements() {
   const { t } = useTranslation('reimbursements');
   const ft = useFormatT();
-  const { data, error, loading } = useApi<Reimb[]>('/reimbursements');
+  const { can } = useAuth();
+  const [params, setParams] = useSearchParams();
+  const page = Math.max(1, Number(params.get('page') ?? '1') || 1);
+  const pageSize = Number(params.get('limit') ?? '25') || 25;
+  const pagingQs = page > 1 || pageSize !== 25 ? `?page=${page}&limit=${pageSize}` : '';
+  const { data, error, loading } = useApi<PaginatedReimbursements | Reimb[]>(`/reimbursements${pagingQs}`);
+
+  const items = Array.isArray(data) ? data : data?.items ?? [];
+  const total = Array.isArray(data) ? data.length : data?.total ?? 0;
+  const totalPages = Array.isArray(data) ? 1 : data?.total_pages ?? 1;
 
   return (
     <Page width="medium">
@@ -50,9 +68,11 @@ export default function Reimbursements() {
           title={t('title')}
           subtitle={t('note')}
           actions={
-            <Button variant="primary" to="/reimbursements/new" icon={<Plus size={20} />}>
-              {t('apply')}
-            </Button>
+            can('reimbursements', 'create') ? (
+              <Button variant="primary" to="/reimbursements/new" icon={<Plus size={20} />}>
+                {t('apply')}
+              </Button>
+            ) : undefined
           }
         />
 
@@ -60,7 +80,7 @@ export default function Reimbursements() {
 
         {loading ? (
           <Spinner />
-        ) : !data?.length ? (
+        ) : !items.length ? (
           <div className="stack">
             <p className="muted">{t('none')}</p>
             {/* How it works: only useful before the first request. */}
@@ -72,23 +92,44 @@ export default function Reimbursements() {
             </ol>
           </div>
         ) : (
-          <div className="list">
-            {data.map((r) => (
-              <Link key={r.id} to={`/reimbursements/${r.id}`} className="item money-row">
-                <div className="grow min-w-0">
-                  <div className="bold ellipsis">{r.description || t('noneDesc')}</div>
-                  <div className="muted small">
-                    {fmtDay(r.created_at, ft)}
-                    {r.ride_at && ` · ${t('ridePrefix', { time: fmtDateTime(r.ride_at, ft) })}`}
+          <>
+            <div className="list">
+              {items.map((r) => (
+                <Link key={r.id} to={`/reimbursements/${r.id}`} className="item money-row">
+                  <div className="grow min-w-0">
+                    <div className="bold ellipsis">{r.description || t('noneDesc')}</div>
+                    <div className="muted small">
+                      {fmtDay(r.created_at, ft)}
+                      {r.ride_at && ` · ${t('ridePrefix', { time: fmtDateTime(r.ride_at, ft) })}`}
+                    </div>
                   </div>
-                </div>
-                <div className="money-row-side">
-                  <span className="money">{rm(r.amount_cents)}</span>
-                  <StatusPill map={REIMB_STATUS} status={r.status} />
-                </div>
-              </Link>
-            ))}
-          </div>
+                  <div className="money-row-side">
+                    <span className="money">{rm(r.amount_cents)}</span>
+                    <StatusPill map={REIMB_STATUS} status={r.status} />
+                  </div>
+                </Link>
+              ))}
+            </div>
+            <Pagination
+              page={page}
+              totalPages={totalPages}
+              total={total}
+              pageSize={pageSize}
+              onPageChange={(p) => {
+                const next = new URLSearchParams(params);
+                if (p > 1) next.set('page', String(p));
+                else next.delete('page');
+                setParams(next, { replace: true });
+              }}
+              onPageSizeChange={(sz) => {
+                const next = new URLSearchParams(params);
+                if (sz !== 25) next.set('limit', String(sz));
+                else next.delete('limit');
+                next.delete('page');
+                setParams(next, { replace: true });
+              }}
+            />
+          </>
         )}
       </div>
     </Page>
@@ -254,6 +295,7 @@ export function ReimbursementForm() {
 export function ReimbursementDetail() {
   const { t } = useTranslation('reimbursements');
   const ft = useFormatT();
+  const { can } = useAuth();
   const { id } = useParams();
   const { data: r, error } = useApi<Reimb>(`/reimbursements/${id}`);
 
@@ -379,7 +421,7 @@ export function ReimbursementDetail() {
           </dl>
 
           <ReceiptLink id={r.receipt_file_id} />
-          {r.status === 'returned' && (
+          {r.status === 'returned' && can('reimbursements', 'update') && (
             <Button variant="primary" block to={`/reimbursements/new?edit=${r.id}`}>
               {t('resubmit')}
             </Button>

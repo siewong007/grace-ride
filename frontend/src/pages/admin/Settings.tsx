@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { FormEvent, useEffect, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { del, post, put, useApi } from '../../api';
 import { useAuth } from '../../auth';
@@ -34,11 +34,12 @@ interface Area {
 export default function Settings() {
   const { t } = useTranslation('admin');
   const { can } = useAuth();
-  // Groups and areas are separate permissions; each half shows for whoever holds it.
+  // Groups, areas, and rates settings are separate permissions; each section shows for whoever holds it.
   const groups = can('admin_groups');
   const areas = can('admin_areas');
+  const rates = can('admin_settings');
 
-  if (!groups && !areas) {
+  if (!groups && !areas && !rates) {
     return (
       <Page>
         <EmptyState title={t('settings.noPermission')} />
@@ -49,9 +50,15 @@ export default function Settings() {
   return (
     <Page>
       <PageHeader title={t('settings.title')} subtitle={t('settings.desc')} />
-      <div className="split">
-        {groups && <Groups />}
-        {areas && <Areas />}
+      <div className="stack gap-lg">
+        {(groups || areas) && (
+          <div className="split">
+            {groups && <Groups />}
+            {areas && <Areas />}
+          </div>
+        )}
+        {rates && <ReimbursementRates />}
+        {rates && <SystemRetentionSettings />}
       </div>
     </Page>
   );
@@ -327,6 +334,227 @@ function Areas() {
             {t('settings.saveArea')}
           </Button>
         </Modal>
+      )}
+    </Card>
+  );
+}
+
+interface RateEntry {
+  vehicle_type: string;
+  rate_cents_per_km: number;
+  updated_at: string;
+}
+
+interface RatesResponse {
+  rates: RateEntry[];
+}
+
+function ReimbursementRates() {
+  const { t } = useTranslation('admin');
+  const { can } = useAuth();
+  const canUpdate = can('admin_settings', 'update');
+  const { data, loading, reload } = useApi<RatesResponse>('/admin/settings/rates');
+  const [standardRate, setStandardRate] = useState<string>('');
+  const [otherRate, setOtherRate] = useState<string>('');
+  const [initialized, setInitialized] = useState(false);
+  const { busy, error, run } = useAction();
+
+  useEffect(() => {
+    if (data?.rates && !initialized) {
+      const std = data.rates.find((r) => r.vehicle_type === 'standard');
+      const oth = data.rates.find((r) => r.vehicle_type === 'other');
+      if (std) setStandardRate(String(std.rate_cents_per_km));
+      if (oth) setOtherRate(String(oth.rate_cents_per_km));
+      setInitialized(true);
+    }
+  }, [data, initialized]);
+
+  const save = (e: FormEvent) => {
+    e.preventDefault();
+    const stdNum = Math.max(0, parseInt(standardRate, 10) || 0);
+    const othNum = Math.max(0, parseInt(otherRate, 10) || 0);
+    run(
+      () =>
+        put('/admin/settings/rates', {
+          rates: [
+            { vehicle_type: 'standard', rate_cents_per_km: stdNum },
+            { vehicle_type: 'other', rate_cents_per_km: othNum },
+          ],
+        }).then(reload),
+      t('settings.ratesSaved'),
+    );
+  };
+
+  return (
+    <Card className="stack">
+      <div>
+        <h3>{t('settings.ratesTitle')}</h3>
+        <p className="muted small">{t('settings.ratesDesc')}</p>
+      </div>
+
+      {loading && !initialized ? (
+        <CardSkeleton count={2} />
+      ) : (
+        <form onSubmit={save} className="stack">
+          <div className="grid cols-2">
+            <Field label={t('settings.rateStandard')}>
+              <input
+                className="input"
+                type="number"
+                min="0"
+                step="1"
+                value={standardRate}
+                disabled={!canUpdate || busy}
+                onChange={(e) => setStandardRate(e.target.value)}
+                required
+              />
+            </Field>
+            <Field label={t('settings.rateOther')}>
+              <input
+                className="input"
+                type="number"
+                min="0"
+                step="1"
+                value={otherRate}
+                disabled={!canUpdate || busy}
+                onChange={(e) => setOtherRate(e.target.value)}
+                required
+              />
+            </Field>
+          </div>
+
+          <ErrorBox error={error} />
+
+          {canUpdate && (
+            <div className="btn-row">
+              <Button variant="primary" type="submit" disabled={busy} loading={busy}>
+                {t('settings.saveRates')}
+              </Button>
+            </div>
+          )}
+        </form>
+      )}
+    </Card>
+  );
+}
+
+interface SystemSettingsResponse {
+  audit_retention_days: number;
+  chat_retention_days: number;
+  max_live_drivers: number;
+}
+
+function SystemRetentionSettings() {
+  const { t } = useTranslation('admin');
+  const { can } = useAuth();
+  const canUpdate = can('admin_settings', 'update');
+  const { data, loading, reload } = useApi<SystemSettingsResponse>('/admin/settings/system');
+  const [auditDays, setAuditDays] = useState<string>('');
+  const [chatDays, setChatDays] = useState<string>('');
+  const [maxDrivers, setMaxDrivers] = useState<string>('');
+  const [initialized, setInitialized] = useState(false);
+  const { busy, error, run } = useAction();
+
+  useEffect(() => {
+    if (data && !initialized) {
+      setAuditDays(String(data.audit_retention_days));
+      setChatDays(String(data.chat_retention_days));
+      setMaxDrivers(String(data.max_live_drivers));
+      setInitialized(true);
+    }
+  }, [data, initialized]);
+
+  const save = (e: FormEvent) => {
+    e.preventDefault();
+    const auditNum = Math.max(30, Math.min(3650, parseInt(auditDays, 10) || 730));
+    const chatNum = Math.max(7, Math.min(3650, parseInt(chatDays, 10) || 180));
+    const driversNum = Math.max(1, Math.min(100, parseInt(maxDrivers, 10) || 10));
+
+    run(
+      () =>
+        put('/admin/settings/system', {
+          audit_retention_days: auditNum,
+          chat_retention_days: chatNum,
+          max_live_drivers: driversNum,
+        }).then(reload),
+      t('settings.systemSaved'),
+    );
+  };
+
+  return (
+    <Card className="stack">
+      <div>
+        <h3>{t('settings.systemTitle')}</h3>
+        <p className="muted small">{t('settings.systemDesc')}</p>
+      </div>
+
+      {loading && !initialized ? (
+        <CardSkeleton count={2} />
+      ) : (
+        <form onSubmit={save} className="stack">
+          <div className="grid cols-3">
+            <Field
+              label={t('settings.auditRetention')}
+              hint={t('settings.auditRetentionHint')}
+            >
+              <input
+                className="input"
+                type="number"
+                min="30"
+                max="3650"
+                step="1"
+                value={auditDays}
+                disabled={!canUpdate || busy}
+                onChange={(e) => setAuditDays(e.target.value)}
+                required
+              />
+            </Field>
+
+            <Field
+              label={t('settings.chatRetention')}
+              hint={t('settings.chatRetentionHint')}
+            >
+              <input
+                className="input"
+                type="number"
+                min="7"
+                max="3650"
+                step="1"
+                value={chatDays}
+                disabled={!canUpdate || busy}
+                onChange={(e) => setChatDays(e.target.value)}
+                required
+              />
+            </Field>
+
+            <Field
+              label={t('settings.maxLiveDrivers')}
+              hint={t('settings.maxLiveDriversHint')}
+            >
+              <input
+                className="input"
+                type="number"
+                min="1"
+                max="100"
+                step="1"
+                value={maxDrivers}
+                disabled={!canUpdate || busy}
+                onChange={(e) => setMaxDrivers(e.target.value)}
+                required
+              />
+            </Field>
+          </div>
+
+          <ErrorBox error={error} />
+
+          {canUpdate && (
+            <div className="btn-row">
+              <Button variant="primary" type="submit" disabled={busy} loading={busy}>
+                {t('settings.saveSystem')}
+              </Button>
+            </div>
+          )}
+        </form>
       )}
     </Card>
   );

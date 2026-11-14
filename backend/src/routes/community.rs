@@ -57,6 +57,8 @@ struct ProfileIn {
     photo_file_id: Option<i64>,
     badges_opt_out: Option<bool>,
     lang: Option<String>,
+    readiness_prompt_mins: Option<i64>,
+    auto_lock_mins: Option<i64>,
 }
 
 async fn update_profile(
@@ -75,6 +77,11 @@ async fn update_profile(
             return Err(bad(u.lang, ErrorKey::LanguageInvalid));
         }
     }
+    if let Some(m) = req.auto_lock_mins {
+        if !(0..=1440).contains(&m) {
+            return Err(bad(u.lang, ErrorKey::InvalidAction));
+        }
+    }
     if let Some(f) = req.photo_file_id {
         let (owner,): (i64,) = sqlx::query_as("SELECT owner_id FROM files WHERE id=$1")
             .bind(f)
@@ -91,14 +98,18 @@ async fn update_profile(
             phone=COALESCE($2, phone),
             photo_file_id=COALESCE($3, photo_file_id),
             badges_opt_out=COALESCE($4, badges_opt_out),
-            lang=COALESCE($5, lang)
-         WHERE id=$6",
+            lang=COALESCE($5, lang),
+            readiness_prompt_mins=COALESCE($6, readiness_prompt_mins),
+            auto_lock_mins=COALESCE($7, auto_lock_mins)
+         WHERE id=$8",
     )
     .bind(req.name.as_deref().map(str::trim))
     .bind(req.phone.as_deref().map(str::trim))
     .bind(req.photo_file_id)
     .bind(req.badges_opt_out.map(|b| b as i64))
     .bind(req.lang.as_deref())
+    .bind(req.readiness_prompt_mins)
+    .bind(req.auto_lock_mins)
     .bind(u.id)
     .execute(&st.db)
     .await?;
@@ -109,6 +120,7 @@ async fn update_profile(
         ("photo", req.photo_file_id.is_some()),
         ("badges_opt_out", req.badges_opt_out.is_some()),
         ("lang", req.lang.is_some()),
+        ("auto_lock", req.auto_lock_mins.is_some()),
     ]
     .into_iter()
     .filter_map(|(k, sent)| sent.then_some(k))
@@ -127,7 +139,47 @@ async fn update_profile(
 
 // ---------------- Notifications ----------------
 
-async fn list_notifications(State(st): State<AppState>, u: CurrentUser) -> AppResult<Json<Value>> {
+#[derive(Deserialize)]
+struct NotifQuery {
+    before: Option<i64>,
+    limit: Option<i64>,
+}
+
+async fn list_notifications(
+    State(st): State<AppState>,
+    u: CurrentUser,
+    Query(q): Query<NotifQuery>,
+) -> AppResult<Json<Value>> {
+    let limit = q.limit.unwrap_or(30).clamp(1, 100);
+    if q.before.is_some() || q.limit.is_some() {
+        let sql = if q.before.is_some() {
+            "SELECT id, title, body, link, read_at, created_at FROM notifications WHERE user_id=$1 AND id < $2 ORDER BY id DESC LIMIT $3"
+        } else {
+            "SELECT id, title, body, link, read_at, created_at FROM notifications WHERE user_id=$1 ORDER BY id DESC LIMIT $2"
+        };
+        let mut rows: Vec<(i64, String, String, String, Option<String>, String)> = if let Some(b) = q.before {
+            sqlx::query_as(sql)
+                .bind(u.id)
+                .bind(b)
+                .bind(limit + 1)
+                .fetch_all(&st.db)
+                .await?
+        } else {
+            sqlx::query_as(sql)
+                .bind(u.id)
+                .bind(limit + 1)
+                .fetch_all(&st.db)
+                .await?
+        };
+        let more = rows.len() as i64 > limit;
+        rows.truncate(limit as usize);
+        let next_before = if more { rows.last().map(|r| r.0) } else { None };
+        return Ok(Json(json!({
+            "items": rows.into_iter().map(|(id, t, b, l, r, c)| json!({"id": id, "title": t, "body": b, "link": l, "read": r.is_some(), "created_at": c})).collect::<Vec<_>>(),
+            "next_before": next_before
+        })));
+    }
+
     let rows: Vec<(i64, String, String, String, Option<String>, String)> = sqlx::query_as(
         "SELECT id, title, body, link, read_at, created_at FROM notifications WHERE user_id=$1 ORDER BY id DESC LIMIT 100",
     )
@@ -528,6 +580,8 @@ fn reimb_json(r: &ReimbRow, u: &CurrentUser) -> Value {
 #[derive(Deserialize)]
 struct ReimbQuery {
     scope: Option<String>, // mine | review | payout
+    page: Option<i64>,
+    limit: Option<i64>,
 }
 
 async fn list_reimbursements(
@@ -535,33 +589,102 @@ async fn list_reimbursements(
     u: CurrentUser,
     Query(q): Query<ReimbQuery>,
 ) -> AppResult<Json<Value>> {
-    let rows = match q.scope.as_deref() {
+    let is_paginated = q.page.is_some() || q.limit.is_some();
+    let page_val = q.page.unwrap_or(1).max(1);
+    let limit_val = q.limit.unwrap_or(25).clamp(1, 100);
+    let offset = (page_val - 1) * limit_val;
+
+    match q.scope.as_deref() {
         Some("review") => {
             require(&u, Page::AdminReimbReview, Act::View)?;
-            sqlx::query_as::<_, ReimbRow>(&format!("{REIMB_SELECT} ORDER BY CASE r.status WHEN 'pending' THEN 0 ELSE 1 END, r.id DESC LIMIT 200"))
+            if is_paginated {
+                let total: (i64,) = sqlx::query_as("SELECT COUNT(*) FROM reimbursements r")
+                    .fetch_one(&st.db)
+                    .await?;
+                let rows = sqlx::query_as::<_, ReimbRow>(&format!(
+                    "{REIMB_SELECT} ORDER BY CASE r.status WHEN 'pending' THEN 0 ELSE 1 END, r.id DESC LIMIT $1 OFFSET $2"
+                ))
+                .bind(limit_val)
+                .bind(offset)
                 .fetch_all(&st.db)
-                .await?
+                .await?;
+                let total_pages = ((total.0 as f64) / (limit_val as f64)).ceil() as i64;
+                Ok(Json(json!({
+                    "items": rows.iter().map(|r| reimb_json(r, &u)).collect::<Vec<_>>(),
+                    "total": total.0,
+                    "page": page_val,
+                    "page_size": limit_val,
+                    "total_pages": total_pages.max(1),
+                })))
+            } else {
+                let rows = sqlx::query_as::<_, ReimbRow>(&format!("{REIMB_SELECT} ORDER BY CASE r.status WHEN 'pending' THEN 0 ELSE 1 END, r.id DESC LIMIT 200"))
+                    .fetch_all(&st.db)
+                    .await?;
+                Ok(Json(json!(rows.iter().map(|r| reimb_json(r, &u)).collect::<Vec<_>>())))
+            }
         }
         Some("payout") => {
             require(&u, Page::AdminReimbPay, Act::View)?;
-            sqlx::query_as::<_, ReimbRow>(&format!("{REIMB_SELECT} WHERE r.status IN ('approved','paid') ORDER BY CASE r.status WHEN 'approved' THEN 0 ELSE 1 END, r.id DESC LIMIT 200"))
+            if is_paginated {
+                let total: (i64,) = sqlx::query_as("SELECT COUNT(*) FROM reimbursements r WHERE r.status IN ('approved','paid')")
+                    .fetch_one(&st.db)
+                    .await?;
+                let rows = sqlx::query_as::<_, ReimbRow>(&format!(
+                    "{REIMB_SELECT} WHERE r.status IN ('approved','paid') ORDER BY CASE r.status WHEN 'approved' THEN 0 ELSE 1 END, r.id DESC LIMIT $1 OFFSET $2"
+                ))
+                .bind(limit_val)
+                .bind(offset)
                 .fetch_all(&st.db)
-                .await?
+                .await?;
+                let total_pages = ((total.0 as f64) / (limit_val as f64)).ceil() as i64;
+                Ok(Json(json!({
+                    "items": rows.iter().map(|r| reimb_json(r, &u)).collect::<Vec<_>>(),
+                    "total": total.0,
+                    "page": page_val,
+                    "page_size": limit_val,
+                    "total_pages": total_pages.max(1),
+                })))
+            } else {
+                let rows = sqlx::query_as::<_, ReimbRow>(&format!("{REIMB_SELECT} WHERE r.status IN ('approved','paid') ORDER BY CASE r.status WHEN 'approved' THEN 0 ELSE 1 END, r.id DESC LIMIT 200"))
+                    .fetch_all(&st.db)
+                    .await?;
+                Ok(Json(json!(rows.iter().map(|r| reimb_json(r, &u)).collect::<Vec<_>>())))
+            }
         }
         _ => {
             require(&u, Page::Reimbursements, Act::View)?;
-            sqlx::query_as::<_, ReimbRow>(&format!(
-                "{REIMB_SELECT} WHERE r.user_id=$1 ORDER BY r.id DESC LIMIT 100"
-            ))
-            .bind(u.id)
-            .fetch_all(&st.db)
-            .await?
+            if is_paginated {
+                let total: (i64,) = sqlx::query_as("SELECT COUNT(*) FROM reimbursements r WHERE r.user_id=$1")
+                    .bind(u.id)
+                    .fetch_one(&st.db)
+                    .await?;
+                let rows = sqlx::query_as::<_, ReimbRow>(&format!(
+                    "{REIMB_SELECT} WHERE r.user_id=$1 ORDER BY r.id DESC LIMIT $2 OFFSET $3"
+                ))
+                .bind(u.id)
+                .bind(limit_val)
+                .bind(offset)
+                .fetch_all(&st.db)
+                .await?;
+                let total_pages = ((total.0 as f64) / (limit_val as f64)).ceil() as i64;
+                Ok(Json(json!({
+                    "items": rows.iter().map(|r| reimb_json(r, &u)).collect::<Vec<_>>(),
+                    "total": total.0,
+                    "page": page_val,
+                    "page_size": limit_val,
+                    "total_pages": total_pages.max(1),
+                })))
+            } else {
+                let rows = sqlx::query_as::<_, ReimbRow>(&format!(
+                    "{REIMB_SELECT} WHERE r.user_id=$1 ORDER BY r.id DESC LIMIT 100"
+                ))
+                .bind(u.id)
+                .fetch_all(&st.db)
+                .await?;
+                Ok(Json(json!(rows.iter().map(|r| reimb_json(r, &u)).collect::<Vec<_>>())))
+            }
         }
-    };
-    Ok(Json(json!(rows
-        .iter()
-        .map(|r| reimb_json(r, &u))
-        .collect::<Vec<_>>())))
+    }
 }
 
 async fn load_reimb(st: &AppState, lang: Lang, id: i64) -> AppResult<ReimbRow> {

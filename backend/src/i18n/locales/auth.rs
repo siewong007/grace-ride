@@ -11,6 +11,7 @@ pub fn render(lang: Lang, key: &ErrorKey) -> String {
         ErrorKey::CodeAlreadyUsed => pair(lang, "此验证码已使用，请等待下一组数字", "This code has already been used; please wait for the next one"),
         ErrorKey::Invalid2FaSecret => pair(lang, "2FA 密钥无效", "Invalid 2FA secret"),
         ErrorKey::TwoFactorAlreadyEnabled => pair(lang, "2FA 已开启。如需更换验证器，请通过管理员的账号恢复程序。", "2FA is already on. To change your authenticator, contact an admin for account recovery."),
+        ErrorKey::TwoFactorNotConfigured => pair(lang, "尚未设置双重验证（2FA）", "Two-factor authentication (2FA) is not configured"),
         ErrorKey::StartSetupFirst => pair(lang, "请先开始设置", "Please start setup first"),
         ErrorKey::PasswordTooShort => pair(lang, "密码至少需要 10 个字符", "Password must be at least 10 characters"),
         ErrorKey::CurrentPasswordIncorrect => pair(lang, "目前密码不正确", "Current password is incorrect"),

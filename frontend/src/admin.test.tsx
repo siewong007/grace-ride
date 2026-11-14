@@ -175,6 +175,8 @@ const mockApiMap: Record<string, unknown> = {
   '/admin/invites': [],
   '/admin/recovery': [],
   '/admin/audit': mockAudit,
+  '/admin/audit?limit=5': { items: mockAudit },
+  '/admin/settings/system': { audit_retention_days: 730, chat_retention_days: 180, max_live_drivers: 10 },
 };
 
 vi.mock('./auth', () => ({
@@ -319,6 +321,8 @@ describe('Admin Settings', () => {
     expect(screen.getByRole('heading', { level: 1, name: /groups & areas/i })).toBeInTheDocument();
     expect(screen.getByText('Member groups')).toBeInTheDocument();
     expect(screen.getByText('Ride areas')).toBeInTheDocument();
+    expect(screen.getByText('Data retention & system limits')).toBeInTheDocument();
+    expect(screen.getByText('Audit log retention (days)')).toBeInTheDocument();
     expect(screen.getByText('Leaders')).toBeInTheDocument();
     expect(screen.getByText('Petaling Jaya')).toBeInTheDocument();
   });
@@ -358,7 +362,7 @@ describe('Admin Audit', () => {
     expect(screen.getByRole('heading', { level: 1, name: /audit log/i })).toBeInTheDocument();
     expect(screen.getByLabelText(/search audit log/i)).toBeInTheDocument();
     expect(await screen.findByText('Admin Paul')).toBeInTheDocument();
-    expect(screen.getByText('ride.reassign')).toBeInTheDocument();
+    expect(screen.getAllByText('ride.reassign').length).toBeGreaterThanOrEqual(1);
     expect(mockApi).toHaveBeenCalledWith('/admin/audit');
   });
 
@@ -373,7 +377,7 @@ describe('Admin Audit', () => {
     expect(await screen.findByText('ride.escalate')).toBeInTheDocument();
     expect(mockApi).toHaveBeenLastCalledWith('/admin/audit?before=101');
     // The first page stays, the entry with no actor reads "System", and the button goes.
-    expect(screen.getByText('ride.reassign')).toBeInTheDocument();
+    expect(screen.getAllByText('ride.reassign').length).toBeGreaterThanOrEqual(1);
     expect(screen.getByText('System')).toBeInTheDocument();
     expect(screen.queryByRole('button', { name: /load older entries/i })).not.toBeInTheDocument();
     expect(screen.getByText(/entries shown: 2\. that is all of them/i)).toBeInTheDocument();
@@ -405,5 +409,95 @@ describe('Admin Audit', () => {
     fireEvent.click(screen.getByRole('button', { name: /clear filters/i }));
     await waitFor(() => expect(mockApi).toHaveBeenLastCalledWith('/admin/audit'));
     expect(screen.getByLabelText(/search audit log/i)).toHaveValue('');
+  });
+
+  it('exports audit log to CSV and PDF', async () => {
+    const createObjectURL = vi.fn().mockReturnValue('blob:mock');
+    const revokeObjectURL = vi.fn();
+    window.URL.createObjectURL = createObjectURL;
+    window.URL.revokeObjectURL = revokeObjectURL;
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      blob: async () => new Blob(['ID,Timestamp\n1,2026-11-20']),
+    });
+    global.fetch = fetchMock;
+
+    render(
+      <MemoryRouter>
+        <Audit />
+      </MemoryRouter>
+    );
+
+    await screen.findByText('Admin Paul');
+    const streamCsvBtn = screen.getByRole('button', { name: /stream all/i });
+    const exportCsvBtn = screen.getByRole('button', { name: /export csv/i });
+    const exportPdfBtn = screen.getByRole('button', { name: /export pdf/i });
+    expect(streamCsvBtn).toBeEnabled();
+    expect(exportCsvBtn).toBeEnabled();
+    expect(exportPdfBtn).toBeEnabled();
+
+    fireEvent.click(exportCsvBtn);
+    expect(createObjectURL).toHaveBeenCalled();
+
+    fireEvent.click(streamCsvBtn);
+    await waitFor(() => {
+      expect(fetchMock).toHaveBeenCalledWith(
+        expect.stringContaining('/api/admin/audit/export'),
+        expect.objectContaining({ credentials: 'same-origin' })
+      );
+    });
+  });
+
+  it('opens and closes entry detail modal when viewing entry details', async () => {
+    render(
+      <MemoryRouter>
+        <Audit />
+      </MemoryRouter>
+    );
+
+    await screen.findByText('Admin Paul');
+    const viewBtn = screen.getByRole('button', { name: new RegExp('view details #\\d+', 'i') });
+    fireEvent.click(viewBtn);
+
+    expect(await screen.findByRole('heading', { level: 2, name: new RegExp('audit entry #\\d+', 'i') })).toBeInTheDocument();
+    expect(screen.getAllByText('Reassigned from Silas to Luke').length).toBeGreaterThanOrEqual(2);
+
+    fireEvent.click(screen.getAllByRole('button', { name: /close/i })[0]);
+    await waitFor(() => {
+      expect(screen.queryByRole('heading', { level: 2, name: new RegExp('audit entry #\\d+', 'i') })).not.toBeInTheDocument();
+    });
+  });
+
+  it('filters by action and actor on quick link click', async () => {
+    render(
+      <MemoryRouter>
+        <Audit />
+      </MemoryRouter>
+    );
+
+    await screen.findByText('Admin Paul');
+    fireEvent.click(screen.getByTitle('Filter by action'));
+    await waitFor(() => {
+      expect(mockApi).toHaveBeenLastCalledWith('/admin/audit?action=ride.reassign');
+    });
+
+    fireEvent.click(screen.getByTitle('Filter by actor'));
+    await waitFor(() => {
+      expect(mockApi).toHaveBeenLastCalledWith('/admin/audit?q=Admin+Paul&action=ride.reassign');
+    });
+  });
+
+  it('applies quick date presets when clicked', async () => {
+    render(
+      <MemoryRouter>
+        <Audit />
+      </MemoryRouter>
+    );
+
+    await screen.findByText('Admin Paul');
+    fireEvent.click(screen.getByRole('button', { name: /today/i }));
+    await waitFor(() => {
+      expect(mockApi).toHaveBeenLastCalledWith(expect.stringMatching(/\/admin\/audit\?from=\d{4}-\d{2}-\d{2}&to=\d{4}-\d{2}-\d{2}/));
+    });
   });
 });

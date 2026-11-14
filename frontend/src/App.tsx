@@ -95,7 +95,7 @@ export default function App() {
         <Route path="rides" element={gated(<Rides />, 'rides')} />
         <Route path="rides/new" element={gated(<RideNew />, ['rides', 'create'])} />
         <Route path="rides/:id" element={page(<RideDetail />)} />
-        <Route path="drive" element={page(<Drive />)} />
+        <Route path="drive" element={gated(<Drive />, 'drive')} />
         <Route path="events" element={gated(<Events />, 'events')} />
         <Route path="events/new" element={gated(<EventForm />, ['events', 'create'])} />
         <Route path="events/:id" element={gated(<EventDetail />, 'events', 'admin_events')} />
@@ -106,20 +106,20 @@ export default function App() {
         <Route path="settlements/:id/edit" element={gated(<SettlementForm />, ['settlements', 'update'])} />
         <Route path="costs" element={gated(<Costs />, 'costs')} />
         <Route path="reimbursements" element={gated(<Reimbursements />, 'reimbursements')} />
-        <Route path="reimbursements/new" element={gated(<ReimbursementForm />, ['reimbursements', 'create'])} />
+        <Route path="reimbursements/new" element={gated(<ReimbursementForm />, ['reimbursements', 'create'], ['reimbursements', 'update'])} />
         <Route path="reimbursements/:id" element={page(<ReimbursementDetail />)} />
         <Route path="help" element={gated(<Help />, 'help', 'admin_help')} />
         <Route path="help/:id" element={page(<HelpDetail />)} />
         <Route path="report" element={gated(<Report />, 'report')} />
         <Route path="notifications" element={page(<Notifications />)} />
         <Route path="me" element={page(<Profile />)} />
-        <Route path="admin" element={page(<AdminDashboard />)} />
+        <Route path="admin" element={gated(<AdminDashboard />, 'admin_dashboard')} />
         <Route path="admin/rides" element={gated(<AdminRides />, 'admin_rides')} />
         <Route path="admin/rides/:id" element={gated(<RideDetail />, 'admin_rides')} />
         <Route path="admin/live" element={gated(<AdminLive />, 'admin_live')} />
-        <Route path="admin/members" element={page(<AdminMembers />)} />
-        <Route path="admin/settings" element={page(<AdminSettings />)} />
-        <Route path="admin/reimbursements" element={page(<AdminReimbursements />)} />
+        <Route path="admin/members" element={gated(<AdminMembers />, 'admin_members', 'admin_invites', 'admin_recovery')} />
+        <Route path="admin/settings" element={gated(<AdminSettings />, 'admin_groups', 'admin_areas', 'admin_settings')} />
+        <Route path="admin/reimbursements" element={gated(<AdminReimbursements />, 'admin_reimb_review', 'admin_reimb_pay')} />
         <Route path="admin/announcements" element={gated(<AdminAnnouncements />, 'admin_announcements')} />
         <Route path="admin/audit" element={gated(<AdminAudit />, 'admin_audit')} />
         <Route path="admin/reports" element={gated(<AdminReports />, 'admin_reports')} />

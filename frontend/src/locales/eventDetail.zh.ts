@@ -43,4 +43,7 @@ export default {
   manageDesc: '主办人签到与结算工具',
   full: '已满额',
   signedUpSuccess: '报名成功',
+  addToCalendar: '加入日历',
+  shareWhatsApp: '分享至 WhatsApp',
+  shareEventText: '恩典同行活动：{title}\n时间：{time}\n地点：{location}',
 };

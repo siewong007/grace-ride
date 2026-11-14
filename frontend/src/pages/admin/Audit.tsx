@@ -1,21 +1,28 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
-import { useSearchParams } from 'react-router-dom';
+import { ReactNode, useCallback, useEffect, useRef, useState } from 'react';
+import { Link, useSearchParams } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
+import { Check, Copy, Download, ExternalLink, Eye, FileText, ShieldAlert } from 'lucide-react';
+import jsPDF from 'jspdf';
 import { api } from '../../api';
 import {
+  BackToTop,
   Button,
   Card,
   CardSkeleton,
   EmptyState,
   ErrorBox,
+  Modal,
   Page,
   PageHeader,
   Pill,
+  Stat,
+  useInfiniteScroll,
 } from '../../components/ui';
 import { fmtDateTime, useFormatT } from '../../format';
 
 interface AuditItem {
   id: number;
+  actor_id?: number | null;
   actor: string | null;
   action: string;
   entity: string;
@@ -28,6 +35,7 @@ interface AuditItem {
 interface AuditPage {
   items: AuditItem[];
   next_before: number | null;
+  retention_days?: number;
 }
 
 // What an entry can be about, as the server names it in `entity`.
@@ -48,8 +56,244 @@ const ENTITIES = [
   'recovery',
 ];
 
+const SECURITY_ACTIONS = [
+  'login.failed',
+  'totp.failed',
+  'password.failed',
+  'recovery.reject',
+];
+
+const WARNING_ACTIONS = [
+  'ride.escalate',
+  'ride.no_show',
+  'ride.return',
+  'ride.cancel',
+  'group.delete',
+  'role.delete',
+  'invite.revoke',
+];
+
+const INFO_ACTIONS = [
+  'role.create',
+  'role.update',
+  'recovery.approve',
+  'recovery.await_second',
+  'reimbursement.pay',
+  'settlement.publish',
+];
+
+const getActionTone = (act: string): 'danger' | 'warning' | 'info' | 'neutral' => {
+  if (SECURITY_ACTIONS.includes(act)) return 'danger';
+  if (WARNING_ACTIONS.includes(act)) return 'warning';
+  if (INFO_ACTIONS.includes(act)) return 'info';
+  return 'neutral';
+};
+
+/** Predefined action groups for quick filtering. */
+const ACTION_CATEGORIES = [
+  {
+    category: 'security',
+    actions: [
+      'login.passkey',
+      'login.dev',
+      'login.failed',
+      'logout',
+      'passkey.register',
+      'passkey.delete',
+      'totp.setup',
+      'totp.enable',
+      'totp.failed',
+      'password.set',
+      'recovery.request',
+      'recovery.approve',
+      'recovery.reject',
+    ],
+  },
+  {
+    category: 'rides',
+    actions: [
+      'ride.create',
+      'ride.claim',
+      'ride.driver_confirm',
+      'ride.driver_withdraw',
+      'ride.passenger_confirm',
+      'ride.passenger_decline',
+      'ride.approve',
+      'ride.reassign',
+      'ride.alt_transport',
+      'ride.return',
+      'ride.start',
+      'ride.pickup',
+      'ride.no_show',
+      'ride.complete',
+      'ride.cancel',
+      'ride.escalate',
+      'location.share',
+      'location.stop',
+    ],
+  },
+  {
+    category: 'events',
+    actions: [
+      'event.create',
+      'event.update',
+      'event.cancel',
+      'event.finish',
+      'event.signup',
+      'event.withdraw',
+      'event.attendance',
+      'event.waitlist_promote',
+    ],
+  },
+  {
+    category: 'finance',
+    actions: [
+      'reimbursement.create',
+      'reimbursement.resubmit',
+      'reimbursement.approve',
+      'reimbursement.reject',
+      'reimbursement.pay',
+      'settlement.create',
+      'settlement.edit_draft',
+      'settlement.publish',
+      'settlement.close',
+      'settlement.delete',
+      'share.proof',
+      'share.verify',
+    ],
+  },
+  {
+    category: 'admin',
+    actions: [
+      'user.update',
+      'role.create',
+      'role.update',
+      'role.delete',
+      'group.create',
+      'group.update',
+      'group.delete',
+      'group.members',
+      'area.create',
+      'area.update',
+      'announcement.create',
+      'announcement.delete',
+      'invite.create',
+      'invite.revoke',
+      'help.create',
+      'help.reply',
+      'help.close',
+    ],
+  },
+];
+
 /** The filters the server understands; anything else in the address is ignored. */
-const FILTERS = ['q', 'entity', 'entity_id', 'from', 'to'];
+const FILTERS = ['q', 'entity', 'entity_id', 'action', 'actor_id', 'from', 'to'];
+
+const formatIsoDate = (d: Date) => {
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, '0');
+  const day = String(d.getDate()).padStart(2, '0');
+  return `${y}-${m}-${day}`;
+};
+
+const getDayOffset = (days: number) => {
+  const d = new Date();
+  d.setDate(d.getDate() + days);
+  return formatIsoDate(d);
+};
+
+const getFirstOfThisMonth = () => {
+  const d = new Date();
+  d.setDate(1);
+  return formatIsoDate(d);
+};
+
+export const getObjectLink = (entity: string, id: number | null): string | null => {
+  if (id == null) return null;
+  switch (entity) {
+    case 'ride':
+      return `/admin/rides/${id}`;
+    case 'event':
+      return `/events/${id}`;
+    case 'user':
+      return `/admin/members`;
+    case 'help_ticket':
+      return `/help/${id}`;
+    case 'settlement':
+      return `/settlements/${id}`;
+    case 'reimbursement':
+      return `/admin/reimbursements`;
+    case 'group':
+    case 'area':
+      return `/admin/settings`;
+    case 'role':
+      return `/admin/roles`;
+    case 'announcement':
+      return `/admin/announcements`;
+    default:
+      return null;
+  }
+};
+
+function highlightText(text: string, query: string): ReactNode {
+  if (!query.trim()) return text;
+  const qLower = query.trim().toLowerCase();
+  const textLower = text.toLowerCase();
+  const idx = textLower.indexOf(qLower);
+  if (idx === -1) return text;
+  const before = text.slice(0, idx);
+  const match = text.slice(idx, idx + query.trim().length);
+  const after = text.slice(idx + query.trim().length);
+  return (
+    <>
+      {before}
+      <mark className="search-hit">{match}</mark>
+      {highlightText(after, query)}
+    </>
+  );
+}
+
+function DetailDiff({ detail }: { detail: string }) {
+  const parts = detail.split(';').map((p) => p.trim()).filter(Boolean);
+  const diffs = parts.map((part) => {
+    const m = part.match(/^(.*?)(?:\s*(?:→|->)\s*)(.*)$/);
+    if (m) {
+      return { from: m[1], to: m[2], isDiff: true };
+    }
+    return { raw: part, isDiff: false };
+  });
+
+  const hasDiff = diffs.some((d) => d.isDiff);
+  if (!hasDiff) {
+    return (
+      <pre className="mono small" style={{ margin: 0, whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}>
+        {detail || '-'}
+      </pre>
+    );
+  }
+
+  return (
+    <div className="flow-xs">
+      {diffs.map((d, i) =>
+        d.isDiff ? (
+          <div key={i} className="row nowrap between small" style={{ padding: '4px 0', borderBottom: '1px solid var(--border)' }}>
+            <span className="mono" style={{ textDecoration: 'line-through', opacity: 0.7 }}>
+              {d.from}
+            </span>
+            <span style={{ margin: '0 8px' }}>→</span>
+            <span className="mono font-bold" style={{ color: 'var(--primary)' }}>
+              {d.to}
+            </span>
+          </div>
+        ) : (
+          <div key={i} className="small mono muted">
+            {d.raw}
+          </div>
+        ),
+      )}
+    </div>
+  );
+}
 
 export default function Audit() {
   const { t } = useTranslation('admin');
@@ -59,9 +303,15 @@ export default function Audit() {
   const q = params.get('q') ?? '';
   const entity = params.get('entity') ?? '';
   const entityId = params.get('entity_id') ?? '';
+  const action = params.get('action') ?? '';
+  const actorId = params.get('actor_id') ?? '';
   const from = params.get('from') ?? '';
   const to = params.get('to') ?? '';
   const [search, setSearch] = useState(q);
+
+  const [selectedItem, setSelectedItem] = useState<AuditItem | null>(null);
+  const [copied, setCopied] = useState(false);
+  const [isStreaming, setIsStreaming] = useState(false);
 
   const filters = new URLSearchParams();
   for (const k of FILTERS) {
@@ -72,6 +322,7 @@ export default function Audit() {
 
   const [items, setItems] = useState<AuditItem[]>([]);
   const [next, setNext] = useState<number | null>(null);
+  const [retentionDays, setRetentionDays] = useState<number | null>(null);
   const [loading, setLoading] = useState(true);
   const [loadingMore, setLoadingMore] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -91,6 +342,7 @@ export default function Audit() {
         if (mine !== latest.current) return;
         setItems((prev) => (before == null ? page.items : [...prev, ...page.items]));
         setNext(page.next_before);
+        if (page.retention_days != null) setRetentionDays(page.retention_days);
         setError(null);
       } catch (e) {
         if (mine === latest.current) setError((e as Error).message);
@@ -108,6 +360,16 @@ export default function Audit() {
     load(null);
   }, [load]);
 
+  const { sentinelRef } = useInfiniteScroll({
+    hasMore: next != null,
+    loading: loadingMore || loading,
+    onLoadMore: () => {
+      if (next != null && !loadingMore && !loading) {
+        load(next);
+      }
+    },
+  });
+
   const set = useCallback(
     (k: string, v: string) => {
       setParams(
@@ -116,7 +378,7 @@ export default function Audit() {
           if (v) p.set(k, v);
           else p.delete(k);
           // The id only makes sense with the object it belongs to.
-          if (k === 'entity') p.delete('entity_id');
+          if (k === 'entity' && !v) p.delete('entity_id');
           return p;
         },
         { replace: true },
@@ -124,6 +386,18 @@ export default function Audit() {
     },
     [setParams],
   );
+
+  const setDates = (fromDate: string, toDate: string) => {
+    setParams(
+      (prev) => {
+        const p = new URLSearchParams(prev);
+        p.set('from', fromDate);
+        p.set('to', toDate);
+        return p;
+      },
+      { replace: true },
+    );
+  };
 
   // Search as the admin types, once they pause.
   useEffect(() => {
@@ -143,9 +417,186 @@ export default function Audit() {
   const entities = entity && !ENTITIES.includes(entity) ? [...ENTITIES, entity] : ENTITIES;
   const entityLabel = (k: string) => t(`audit.entities.${k}`, { defaultValue: k });
 
+  const escapeCsv = (v: unknown): string => {
+    const s = String(v ?? '');
+    if (/[",\n\r]/.test(s)) return `"${s.replace(/"/g, '""')}"`;
+    return s;
+  };
+
+  const exportCsv = () => {
+    if (!items.length) return;
+    const lines: string[] = [];
+    lines.push('Grace Ride — Audit Log Export');
+    lines.push(`Generated,${new Date().toISOString()}`);
+    if (query) lines.push(`Filters,${escapeCsv(query)}`);
+    lines.push('');
+    lines.push('ID,Time,Actor,Action,Entity,Entity ID,Detail');
+    for (const a of items) {
+      lines.push(
+        [
+          a.id,
+          a.created_at,
+          escapeCsv(a.actor ?? t('audit.system')),
+          escapeCsv(a.action),
+          escapeCsv(a.entity),
+          a.entity_id ?? '',
+          escapeCsv(a.detail),
+        ].join(','),
+      );
+    }
+    const blob = new Blob([lines.join('\n')], { type: 'text/csv;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    const dateStr = new Date().toISOString().slice(0, 10);
+    a.download = `grace-ride-audit-${dateStr}.csv`;
+    a.click();
+    URL.revokeObjectURL(url);
+  };
+
+  const exportStreamCsv = async () => {
+    try {
+      setIsStreaming(true);
+      const res = await fetch(`/api/admin/audit/export?${query}`, {
+        credentials: 'same-origin',
+      });
+      if (!res.ok) throw new Error('Stream export failed');
+      const blob = await res.blob();
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      const dateStr = new Date().toISOString().slice(0, 10);
+      a.download = `grace-ride-audit-full-${dateStr}.csv`;
+      a.click();
+      URL.revokeObjectURL(url);
+    } catch (e) {
+      console.error('Failed to stream export audit logs', e);
+    } finally {
+      setIsStreaming(false);
+    }
+  };
+
+  const exportPdf = () => {
+    if (!items.length) return;
+    const doc = new jsPDF();
+    const pageW = doc.internal.pageSize.getWidth();
+    const pageH = doc.internal.pageSize.getHeight();
+    let y = 20;
+
+    doc.setFontSize(18);
+    doc.text(t('audit.pdfTitle'), 20, y);
+    y += 9;
+    doc.setFontSize(10);
+    doc.text(t('audit.pdfGenerated', { time: new Date().toLocaleString() }), 20, y);
+    y += 6;
+    if (query) {
+      doc.text(t('audit.pdfFilters', { filters: query }), 20, y);
+      y += 6;
+    }
+    y += 4;
+
+    doc.setFontSize(9);
+    doc.setFillColor(245, 245, 245);
+    doc.rect(15, y, pageW - 30, 8, 'F');
+    doc.setFont('helvetica', 'bold');
+    doc.text(t('audit.time'), 18, y + 5.5);
+    doc.text(t('audit.actor'), 55, y + 5.5);
+    doc.text(t('audit.action'), 90, y + 5.5);
+    doc.text(t('audit.object'), 130, y + 5.5);
+    doc.text(t('audit.detail'), 160, y + 5.5);
+    y += 10;
+    doc.setFont('helvetica', 'normal');
+
+    for (const a of items) {
+      if (y > pageH - 20) {
+        doc.addPage();
+        y = 20;
+        doc.setFont('helvetica', 'bold');
+        doc.text(t('audit.time'), 18, y);
+        doc.text(t('audit.actor'), 55, y);
+        doc.text(t('audit.action'), 90, y);
+        doc.text(t('audit.object'), 130, y);
+        doc.text(t('audit.detail'), 160, y);
+        y += 8;
+        doc.setFont('helvetica', 'normal');
+      }
+      const timeStr = a.created_at.replace('T', ' ').slice(0, 19);
+      const actorStr = doc.splitTextToSize(a.actor ?? t('audit.system'), 32)[0] || '';
+      const actionStr = doc.splitTextToSize(a.action, 38)[0] || '';
+      const objStr = `${a.entity}${a.entity_id != null ? ` #${a.entity_id}` : ''}`;
+      const detailStr = doc.splitTextToSize(a.detail, pageW - 175)[0] || '';
+
+      doc.text(timeStr, 18, y);
+      doc.text(actorStr, 55, y);
+      doc.text(actionStr, 90, y);
+      doc.text(objStr, 130, y);
+      doc.text(detailStr, 160, y);
+      y += 7;
+    }
+
+    const dateStr = new Date().toISOString().slice(0, 10);
+    doc.save(`grace-ride-audit-${dateStr}.pdf`);
+  };
+
+  const handleCopyJson = () => {
+    if (!selectedItem) return;
+    navigator.clipboard.writeText(JSON.stringify(selectedItem, null, 2));
+    setCopied(true);
+    setTimeout(() => setCopied(false), 2000);
+  };
+
+  const selectedTargetUrl = selectedItem ? getObjectLink(selectedItem.entity, selectedItem.entity_id) : null;
+  const securityCount = items.filter((a) => SECURITY_ACTIONS.includes(a.action)).length;
+  const escalationCount = items.filter((a) => a.action === 'ride.escalate').length;
+  const isSecurityActive = q === 'failed';
+
   return (
     <Page>
-      <PageHeader title={t('audit.title')} subtitle={t('audit.desc')} />
+      <PageHeader
+        title={t('audit.title')}
+        subtitle={t('audit.desc')}
+        actions={
+          <div className="row nowrap gap-xs">
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={exportStreamCsv}
+              loading={isStreaming}
+              icon={<Download size={16} />}
+              title={t('audit.exportStreamCsvDesc')}
+            >
+              {t('audit.exportStreamCsv')}
+            </Button>
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={exportCsv}
+              disabled={!items.length}
+              icon={<FileText size={16} />}
+            >
+              {t('audit.exportCsv')}
+            </Button>
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={exportPdf}
+              disabled={!items.length}
+              icon={<Download size={16} />}
+            >
+              {t('audit.exportPdf')}
+            </Button>
+          </div>
+        }
+      />
+
+      <div className="stat-strip" style={{ marginBottom: 'var(--space-3)' }}>
+        <Stat label={t('audit.statsShown')} value={items.length} />
+        <Stat label={t('audit.statsSecurity')} value={securityCount} />
+        <Stat label={t('audit.statsEscalations')} value={escalationCount} />
+        {retentionDays != null && (
+          <Stat label={t('settings.auditRetention')} value={`${retentionDays}d`} />
+        )}
+      </div>
 
       <div className="admin-filters-bar">
         <input
@@ -169,7 +620,37 @@ export default function Audit() {
             </option>
           ))}
         </select>
-        {/* Two dates side by side need their names shown, not only announced. */}
+        {entity && (
+          <input
+            className="input admin-input-compact"
+            type="text"
+            placeholder={t('audit.entityId')}
+            style={{ width: '100px' }}
+            value={entityId}
+            onChange={(e) => set('entity_id', e.target.value.trim())}
+            aria-label={t('audit.entityId')}
+          />
+        )}
+        <select
+          className="input admin-input-compact"
+          value={action}
+          onChange={(e) => set('action', e.target.value)}
+          aria-label={t('audit.action')}
+        >
+          <option value="">{t('audit.allActions')}</option>
+          {ACTION_CATEGORIES.map((cat) => (
+            <optgroup key={cat.category} label={t(`audit.categories.${cat.category}`, { defaultValue: cat.category })}>
+              {cat.actions.map((act) => (
+                <option key={act} value={act}>
+                  {act}
+                </option>
+              ))}
+            </optgroup>
+          ))}
+          {action && !ACTION_CATEGORIES.some((c) => c.actions.includes(action)) && (
+            <option value={action}>{action}</option>
+          )}
+        </select>
         <label className="row nowrap small muted">
           {t('audit.from')}
           <input
@@ -190,9 +671,57 @@ export default function Audit() {
             onChange={(e) => set('to', e.target.value)}
           />
         </label>
+        <div className="row nowrap gap-xs">
+          <Button
+            variant="ghost"
+            size="sm"
+            onClick={() => setDates(getDayOffset(0), getDayOffset(0))}
+          >
+            {t('audit.today')}
+          </Button>
+          <Button
+            variant="ghost"
+            size="sm"
+            onClick={() => setDates(getDayOffset(-1), getDayOffset(-1))}
+          >
+            {t('audit.yesterday')}
+          </Button>
+          <Button
+            variant="ghost"
+            size="sm"
+            onClick={() => setDates(getDayOffset(-6), getDayOffset(0))}
+          >
+            {t('audit.last7Days')}
+          </Button>
+          <Button
+            variant="ghost"
+            size="sm"
+            onClick={() => setDates(getFirstOfThisMonth(), getDayOffset(0))}
+          >
+            {t('audit.thisMonth')}
+          </Button>
+        </div>
+        <Button
+          variant={isSecurityActive ? 'primary' : 'ghost'}
+          size="sm"
+          onClick={() => set('q', isSecurityActive ? '' : 'failed')}
+          icon={<ShieldAlert size={14} />}
+        >
+          {t('audit.securityOnly')}
+        </Button>
         {entity && entityId && (
           <Pill>
             {entityLabel(entity)} #{entityId}
+          </Pill>
+        )}
+        {action && (
+          <Pill>
+            {action}
+          </Pill>
+        )}
+        {actorId && (
+          <Pill>
+            {t('audit.actorId')}: #{actorId}
           </Pill>
         )}
         {hasFilters && (
@@ -220,27 +749,88 @@ export default function Audit() {
                     <th>{t('audit.action')}</th>
                     <th>{t('audit.object')}</th>
                     <th>{t('audit.detail')}</th>
+                    <th style={{ width: '80px' }}>{t('audit.viewDetail')}</th>
                   </tr>
                 </thead>
                 <tbody>
-                  {items.map((a) => (
-                    <tr key={a.id}>
-                      <td data-label={t('audit.time')} className="mono small">
-                        {fmtDateTime(a.created_at, ft)}
-                      </td>
-                      <td data-label={t('audit.actor')}>{a.actor ?? t('audit.system')}</td>
-                      <td data-label={t('audit.action')} className="mono small">
-                        {a.action}
-                      </td>
-                      <td data-label={t('audit.object')} className="small">
-                        {a.entity}
-                        {a.entity_id != null && ` #${a.entity_id}`}
-                      </td>
-                      <td data-label={t('audit.detail')} className="small">
-                        {a.detail}
-                      </td>
-                    </tr>
-                  ))}
+                  {items.map((a) => {
+                    const targetUrl = getObjectLink(a.entity, a.entity_id);
+                    return (
+                      <tr key={a.id}>
+                        <td data-label={t('audit.time')} className="mono small">
+                          {fmtDateTime(a.created_at, ft)}
+                        </td>
+                        <td data-label={t('audit.actor')}>
+                          {a.actor ? (
+                            <button
+                              type="button"
+                              className="table-filter-link"
+                              onClick={() => set('q', a.actor!)}
+                              title={t('audit.filterByActor')}
+                            >
+                              {highlightText(a.actor, search)}
+                            </button>
+                          ) : (
+                            t('audit.system')
+                          )}
+                        </td>
+                        <td data-label={t('audit.action')} className="mono small">
+                          <button
+                            type="button"
+                            className="table-filter-link mono"
+                            onClick={() => set('action', a.action)}
+                            title={t('audit.filterByAction')}
+                          >
+                            <Pill tone={getActionTone(a.action)}>
+                              {highlightText(a.action, search)}
+                            </Pill>
+                          </button>
+                        </td>
+                        <td data-label={t('audit.object')} className="small">
+                          <div className="row nowrap gap-xs" style={{ display: 'inline-flex', alignItems: 'center' }}>
+                            <button
+                              type="button"
+                              className="table-filter-link"
+                              onClick={() => {
+                                set('entity', a.entity);
+                                if (a.entity_id != null) set('entity_id', String(a.entity_id));
+                              }}
+                              title={t('audit.filterByObject')}
+                            >
+                              {highlightText(`${a.entity}${a.entity_id != null ? ` #${a.entity_id}` : ''}`, search)}
+                            </button>
+                            {targetUrl && (
+                              <Link
+                                to={targetUrl}
+                                title={t('audit.viewObject')}
+                                aria-label={`${t('audit.viewObject')} ${a.entity} #${a.entity_id}`}
+                                style={{ color: 'var(--muted)', display: 'inline-flex' }}
+                              >
+                                <ExternalLink size={12} />
+                              </Link>
+                            )}
+                          </div>
+                        </td>
+                        <td data-label={t('audit.detail')} className="small">
+                          {highlightText(a.detail, search)}
+                        </td>
+                        <td data-label={t('audit.viewDetail')}>
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            icon={<Eye size={16} />}
+                            onClick={() => {
+                              setSelectedItem(a);
+                              setCopied(false);
+                            }}
+                            aria-label={`${t('audit.viewDetail')} #${a.id}`}
+                          >
+                            {t('audit.viewDetail')}
+                          </Button>
+                        </td>
+                      </tr>
+                    );
+                  })}
                 </tbody>
               </table>
             </div>
@@ -256,8 +846,121 @@ export default function Audit() {
               </Button>
             )}
           </div>
+          <div ref={sentinelRef} className="infinite-sentinel" aria-hidden="true" />
         </>
       )}
+
+      {selectedItem && (
+        <Modal
+          title={t('audit.entryDetail', { id: selectedItem.id })}
+          onClose={() => setSelectedItem(null)}
+          footer={
+            <div className="row between" style={{ width: '100%' }}>
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={handleCopyJson}
+                icon={copied ? <Check size={16} /> : <Copy size={16} />}
+              >
+                {copied ? t('audit.copied') : t('audit.copyJson')}
+              </Button>
+              <Button variant="secondary" onClick={() => setSelectedItem(null)}>
+                {t('common:close', { defaultValue: 'Close' })}
+              </Button>
+            </div>
+          }
+        >
+          <div className="flow-sm">
+            <div className="row between small">
+              <span className="muted">{t('audit.time')}</span>
+              <span className="mono">{fmtDateTime(selectedItem.created_at, ft)} ({selectedItem.created_at})</span>
+            </div>
+            <div className="row between small">
+              <span className="muted">{t('audit.actor')}</span>
+              <div className="row nowrap gap-xs">
+                <span>{selectedItem.actor ?? t('audit.system')}</span>
+                {selectedItem.actor && (
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    onClick={() => {
+                      set('q', selectedItem.actor!);
+                      setSelectedItem(null);
+                    }}
+                  >
+                    {t('audit.filterByActor')}
+                  </Button>
+                )}
+                {selectedItem.actor_id != null && (
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    onClick={() => {
+                      set('actor_id', String(selectedItem.actor_id));
+                      setSelectedItem(null);
+                    }}
+                  >
+                    {t('audit.actorId')}: #{selectedItem.actor_id}
+                  </Button>
+                )}
+              </div>
+            </div>
+            <div className="row between small">
+              <span className="muted">{t('audit.action')}</span>
+              <div className="row nowrap gap-xs">
+                <Pill tone={getActionTone(selectedItem.action)}>
+                  {selectedItem.action}
+                </Pill>
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  onClick={() => {
+                    set('action', selectedItem.action);
+                    setSelectedItem(null);
+                  }}
+                >
+                  {t('audit.filterByAction')}
+                </Button>
+              </div>
+            </div>
+            <div className="row between small">
+              <span className="muted">{t('audit.object')}</span>
+              <div className="row nowrap gap-xs" style={{ alignItems: 'center' }}>
+                <span>
+                  {entityLabel(selectedItem.entity)}
+                  {selectedItem.entity_id != null ? ` #${selectedItem.entity_id}` : ''}
+                </span>
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  onClick={() => {
+                    set('entity', selectedItem.entity);
+                    if (selectedItem.entity_id != null) {
+                      set('entity_id', String(selectedItem.entity_id));
+                    }
+                    setSelectedItem(null);
+                  }}
+                >
+                  {t('audit.filterByObject')}
+                </Button>
+                {selectedTargetUrl && (
+                  <Link to={selectedTargetUrl} className="btn ghost sm" onClick={() => setSelectedItem(null)}>
+                    <ExternalLink size={14} />
+                    {t('audit.viewObject')}
+                  </Link>
+                )}
+              </div>
+            </div>
+            <div className="flow-xs">
+              <span className="muted small">{t('audit.detail')}</span>
+              <Card style={{ maxHeight: 240, overflowY: 'auto', background: 'var(--surface-2)' }}>
+                <DetailDiff detail={selectedItem.detail} />
+              </Card>
+            </div>
+          </div>
+        </Modal>
+      )}
+      <BackToTop />
     </Page>
   );
 }

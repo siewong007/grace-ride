@@ -79,6 +79,25 @@ pending_driver ──claim──▶ pending_passenger ──accept──▶ pend
 
 Every transition is a single conditional `UPDATE … WHERE status IN (…)`. The event plan board (`routes/plan.rs`) applies a whole batch in one transaction, each row re-checking the status and driver the board showed, so a stale board changes nothing. Its Auto-arrange (`src/arrange.rs`) only suggests: it fills passengers without a driver (pinned ones stay), within seats and the one-booking rule, preferring nearby carmates (straight-line distance from `geocode_cache`, or the pickup area when an address isn't located yet), drivers who serve the area (specialists first) and previous drivers, then improves with moves and swaps. Two drivers claiming the same request cannot both win, and a stale screen gets `409`.
 
+## Data Pagination & Streams Architecture
+
+To prevent silent data truncation when church records exceed hardcoded SQL limits as congregations grow:
+
+1. **Numbered Table Pagination** (`/admin/rides`, `/admin/members`, `/admin/reimbursements`, `/settlements`):
+   - **Backend API**: Endpoints accept `page` (1-based) and `limit` query parameters. When provided, endpoints return a metadata envelope `{ items, total, page, page_size, total_pages }`. When omitted, legacy plain arrays `Vec<Value>` are returned to preserve 100% backward compatibility with legacy consumers and unit test fixtures.
+   - **Frontend `<Pagination />`**: Includes dynamic record range counters (`Showing 1–25 of 148 records`), Jump-to-Page quick input for `totalPages > 5`, screen reader announcements via `.sr-only` `aria-live="polite"`, smart ellipses, and clean URL state synchronization (`useSearchParams`) that preserves browser Back/Forward navigation.
+
+2. **Keyset Cursor Infinite Streams** (`/notifications`, `/rides?scope=past`, `/events?scope=past`, `/admin/audit`):
+   - **Backend API**: Cursor-based using `before` timestamp or ID, returning `{ items, next_before }` to eliminate `OFFSET` penalties on large datasets and prevent row skipping when new items arrive concurrently.
+   - **Frontend `<InfiniteSentinel />` & `<BackToTop />`**: Uses pure `IntersectionObserver` sentinels with zero scroll event listeners, guaranteeing 60fps scrolling and zero idle CPU usage. Includes an accessible `<BackToTop />` floating pill that unmounts when near the top of the viewport.
+   - **Virtualization Support**: Heavy or dense feeds can render via `<VirtualList />` leveraging `@tanstack/react-virtual` with dynamic measurement and SSR/test fallback support.
+
+3. **Composite Database Indexes** (`backend/migrations/0007_keyset_pagination_indexes.sql`):
+   - Composite B-Tree indexes on `rides(pickup_at DESC, id DESC)`, `notifications(user_id, id DESC)`, `events(starts_at DESC, id DESC)`, `audit_logs(id DESC)`, and `reimbursements(user_id, id DESC)` / `reimbursements(status, id DESC)` for fast range scans in both SQLite and PostgreSQL.
+
+4. **Data Export**:
+   - Tabular views include a one-click client-side CSV export (`exportToCsv`) with RFC 4180 escaping for church finance and committee recordkeeping.
+
 ## Roadmap (not built yet)
 
 1. **Web Push notifications** (VAPID). Today, notifications appear only when the app is open.

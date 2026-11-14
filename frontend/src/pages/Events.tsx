@@ -1,17 +1,20 @@
-import { useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { Plus } from 'lucide-react';
-import { useApi } from '../api';
+import { api, useApi } from '../api';
 import { useAuth } from '../auth';
 import {
+  BackToTop,
   Button,
   CardSkeleton,
   EmptyState,
   ErrorBox,
+  InfiniteSentinel,
   Page,
   PageHeader,
   Pill,
   Tabs,
+  useInfiniteScroll,
 } from '../components/ui';
 import { EVENT_KIND, fmtDateTime, useFormatT } from '../format';
 import { useTranslation } from 'react-i18next';
@@ -38,12 +41,68 @@ export interface EventItem {
   can_cancel?: boolean;
 }
 
+interface EventsPage {
+  items: EventItem[];
+  next_before: string | null;
+}
+
 export default function Events() {
   const { t } = useTranslation('events');
   const ft = useFormatT();
   const { can } = useAuth();
   const [scope, setScope] = useState<'upcoming' | 'past' | 'managing'>('upcoming');
-  const { data, error, loading } = useApi<EventItem[]>(`/events?scope=${scope}`);
+  const upcomingOrManaging = useApi<EventItem[]>(scope !== 'past' ? `/events?scope=${scope}` : null);
+
+  const [pastEvents, setPastEvents] = useState<EventItem[]>([]);
+  const [nextPast, setNextPast] = useState<string | null>(null);
+  const [loadingPast, setLoadingPast] = useState(false);
+  const [loadingMore, setLoadingMore] = useState(false);
+  const [pastError, setPastError] = useState<string | null>(null);
+  const latestPast = useRef(0);
+
+  const loadPast = useCallback(async (before: string | null) => {
+    const mine = ++latestPast.current;
+    if (before == null) setLoadingPast(true);
+    else setLoadingMore(true);
+    try {
+      const qs = before != null ? `&before=${encodeURIComponent(before)}&limit=25` : '';
+      const res = await api<EventsPage | EventItem[]>(`/events?scope=past${qs}`);
+      if (mine !== latestPast.current) return;
+      const newItems = Array.isArray(res) ? res : res.items;
+      const nb = Array.isArray(res) ? null : res.next_before;
+      setPastEvents((prev) => (before == null ? newItems : [...prev, ...newItems]));
+      setNextPast(nb);
+      setPastError(null);
+    } catch (e) {
+      if (mine === latestPast.current) setPastError((e as Error).message);
+    } finally {
+      if (mine === latestPast.current) {
+        setLoadingPast(false);
+        setLoadingMore(false);
+      }
+    }
+  }, []);
+
+  useEffect(() => {
+    if (scope === 'past') {
+      loadPast(null);
+    }
+  }, [scope, loadPast]);
+
+  const { sentinelRef } = useInfiniteScroll({
+    hasMore: nextPast != null,
+    loading: loadingMore || loadingPast,
+    onLoadMore: () => {
+      if (nextPast != null && !loadingMore && !loadingPast) {
+        loadPast(nextPast);
+      }
+    },
+    disabled: scope !== 'past',
+  });
+
+  const activeEvents = scope === 'past' ? pastEvents : upcomingOrManaging.data ?? [];
+  const loading = scope === 'past' ? loadingPast : upcomingOrManaging.loading;
+  const error = scope === 'past' ? pastError : upcomingOrManaging.error;
 
   return (
     <Page width="medium">
@@ -74,7 +133,7 @@ export default function Events() {
 
         {loading ? (
           <CardSkeleton count={3} />
-        ) : !data?.length ? (
+        ) : !activeEvents.length ? (
           <EmptyState
             title={t('none')}
             action={
@@ -87,7 +146,7 @@ export default function Events() {
           />
         ) : (
           <div className="list event-list">
-            {data.map((e) => {
+            {activeEvents.map((e) => {
               const d = new Date(e.starts_at);
               const monthName = d.toLocaleDateString(undefined, { month: 'short' });
               const dayNum = d.getDate();
@@ -127,9 +186,18 @@ export default function Events() {
                 </Link>
               );
             })}
+            {scope === 'past' && (
+              <InfiniteSentinel
+                hasMore={nextPast != null}
+                loading={loadingMore}
+                sentinelRef={sentinelRef}
+                empty={!pastEvents.length}
+              />
+            )}
           </div>
         )}
       </div>
+      <BackToTop />
     </Page>
   );
 }

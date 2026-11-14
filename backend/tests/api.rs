@@ -134,6 +134,23 @@ fn tomorrow(hhmm: &str) -> String {
     )
 }
 
+fn totp_code(secret_b32: &str, email: &str) -> String {
+    use totp_rs::{Algorithm, Secret, TOTP};
+    let totp = TOTP::new(
+        Algorithm::SHA1,
+        6,
+        1,
+        30,
+        Secret::Encoded(secret_b32.to_string())
+            .to_bytes()
+            .expect("secret bytes"),
+        Some("Grace Ride".to_string()),
+        email.to_string(),
+    )
+    .expect("totp");
+    totp.generate_current().expect("code")
+}
+
 #[tokio::test]
 async fn health_headers_and_unknown_api() {
     let (app, _) = setup().await;
@@ -224,6 +241,155 @@ async fn session_tokens_are_stored_hashed() {
             .status,
         StatusCode::UNAUTHORIZED
     );
+}
+
+#[tokio::test]
+async fn logout_all_revokes_every_session() {
+    let (app, st) = setup().await;
+    let cookie1 = login(&st, "member@example.org").await;
+    let cookie2 = login(&st, "member@example.org").await;
+
+    assert_eq!(
+        call(&app, Method::GET, "/api/auth/me", Some(&cookie1), None)
+            .await
+            .status,
+        StatusCode::OK
+    );
+    assert_eq!(
+        call(&app, Method::GET, "/api/auth/me", Some(&cookie2), None)
+            .await
+            .status,
+        StatusCode::OK
+    );
+
+    let logout_res = call(&app, Method::POST, "/api/auth/logout-all", Some(&cookie1), None).await;
+    assert_eq!(logout_res.status, StatusCode::OK);
+
+    assert_eq!(
+        call(&app, Method::GET, "/api/auth/me", Some(&cookie1), None)
+            .await
+            .status,
+        StatusCode::UNAUTHORIZED
+    );
+    assert_eq!(
+        call(&app, Method::GET, "/api/auth/me", Some(&cookie2), None)
+            .await
+            .status,
+        StatusCode::UNAUTHORIZED
+    );
+}
+
+#[tokio::test]
+async fn totp_backup_codes_and_auto_lock_flow() {
+    let (app, st) = setup().await;
+    let cookie = login(&st, "member@example.org").await;
+
+    // 1. Initial /auth/me
+    let me = call(&app, Method::GET, "/api/auth/me", Some(&cookie), None).await;
+    assert_eq!(me.status, StatusCode::OK);
+    assert_eq!(me.json["auto_lock_mins"], 0);
+    assert_eq!(me.json["backup_codes_count"], 0);
+
+    // 2. Set auto_lock_mins
+    let put_me = call(
+        &app,
+        Method::PUT,
+        "/api/me",
+        Some(&cookie),
+        Some(json!({ "auto_lock_mins": 30 })),
+    )
+    .await;
+    assert_eq!(put_me.status, StatusCode::OK);
+
+    let me_after = call(&app, Method::GET, "/api/auth/me", Some(&cookie), None).await;
+    assert_eq!(me_after.json["auto_lock_mins"], 30);
+
+    // 3. Setup TOTP
+    let setup_res = call(
+        &app,
+        Method::POST,
+        "/api/auth/totp/setup",
+        Some(&cookie),
+        None,
+    )
+    .await;
+    assert_eq!(setup_res.status, StatusCode::OK);
+    let secret = setup_res.json["secret"].as_str().unwrap();
+    let code = totp_code(secret, "member@example.org");
+
+    // 4. Enable TOTP -> receives 8 backup codes
+    let enable_res = call(
+        &app,
+        Method::POST,
+        "/api/auth/totp/enable",
+        Some(&cookie),
+        Some(json!({ "code": code })),
+    )
+    .await;
+    assert_eq!(enable_res.status, StatusCode::OK);
+    let codes = enable_res.json["backup_codes"]
+        .as_array()
+        .expect("backup_codes array");
+    assert_eq!(codes.len(), 8);
+
+    let me_totp = call(&app, Method::GET, "/api/auth/me", Some(&cookie), None).await;
+    assert_eq!(me_totp.json["totp_enabled"], true);
+    assert_eq!(me_totp.json["backup_codes_count"], 8);
+
+    // 5. Invalid verify code fails
+    let bad_verify = call(
+        &app,
+        Method::POST,
+        "/api/auth/totp/verify",
+        Some(&cookie),
+        Some(json!({ "code": "INVALID" })),
+    )
+    .await;
+    assert_eq!(bad_verify.status, StatusCode::BAD_REQUEST);
+
+    // 6. Use one backup recovery code to verify/elevate session
+    let first_code = codes[0].as_str().unwrap();
+    let verify_res = call(
+        &app,
+        Method::POST,
+        "/api/auth/totp/verify",
+        Some(&cookie),
+        Some(json!({ "code": first_code })),
+    )
+    .await;
+    assert_eq!(verify_res.status, StatusCode::OK);
+    assert_eq!(verify_res.json["method"], "backup_code");
+    assert_eq!(verify_res.json["remaining_backup_codes"], 7);
+
+    let me_after_use = call(&app, Method::GET, "/api/auth/me", Some(&cookie), None).await;
+    assert_eq!(me_after_use.json["backup_codes_count"], 7);
+
+    // 7. Reusing the same single-use backup code fails
+    let reuse_res = call(
+        &app,
+        Method::POST,
+        "/api/auth/totp/verify",
+        Some(&cookie),
+        Some(json!({ "code": first_code })),
+    )
+    .await;
+    assert_eq!(reuse_res.status, StatusCode::BAD_REQUEST);
+
+    // 8. Regenerating backup codes
+    let regen_res = call(
+        &app,
+        Method::POST,
+        "/api/auth/totp/backup-codes/regenerate",
+        Some(&cookie),
+        None,
+    )
+    .await;
+    assert_eq!(regen_res.status, StatusCode::OK);
+    let new_codes = regen_res.json["backup_codes"].as_array().unwrap();
+    assert_eq!(new_codes.len(), 8);
+
+    let me_after_regen = call(&app, Method::GET, "/api/auth/me", Some(&cookie), None).await;
+    assert_eq!(me_after_regen.json["backup_codes_count"], 8);
 }
 
 #[tokio::test]
@@ -639,6 +805,124 @@ async fn settlement_custom_split_must_match_total() {
         .status,
         StatusCode::FORBIDDEN
     );
+}
+
+#[tokio::test]
+async fn ride_readiness_and_delay_workflow() {
+    let (app, st) = setup().await;
+    let passenger = login(&st, "member@example.org").await;
+    let driver = login(&st, "driver@example.org").await;
+    let transport = login(&st, "transport@example.org").await;
+
+    // 1. Create and confirm ride
+    let r = call(
+        &app,
+        Method::POST,
+        "/api/rides",
+        Some(&passenger),
+        Some(json!({
+            "pickup_at": tomorrow("08:15"),
+            "pickup_area_id": 2,
+            "pickup_address": "SS2 PJ",
+            "destination": "教会",
+            "seats": 1
+        })),
+    )
+    .await;
+    let id = r.json["id"].as_i64().unwrap();
+    call(&app, Method::POST, &format!("/api/rides/{id}/claim"), Some(&driver), None).await;
+    call(&app, Method::POST, &format!("/api/rides/{id}/respond"), Some(&passenger), Some(json!({ "accept": true }))).await;
+    call(&app, Method::POST, &format!("/api/rides/{id}/approve"), Some(&transport), None).await;
+
+    // 2. Passenger indicates running 5m late
+    let res = call(
+        &app,
+        Method::POST,
+        &format!("/api/rides/{id}/readiness"),
+        Some(&passenger),
+        Some(json!({ "status": "delayed_5m" })),
+    )
+    .await;
+    assert_eq!(res.status, StatusCode::OK);
+
+    let ride = call(&app, Method::GET, &format!("/api/rides/{id}"), Some(&driver), None).await;
+    assert_eq!(ride.json["readiness_status"], "delayed_5m");
+
+    // 3. Driver reports 10m traffic delay
+    let res = call(
+        &app,
+        Method::POST,
+        &format!("/api/rides/{id}/driver-delay"),
+        Some(&driver),
+        Some(json!({ "delay_minutes": 10 })),
+    )
+    .await;
+    assert_eq!(res.status, StatusCode::OK);
+
+    let ride = call(&app, Method::GET, &format!("/api/rides/{id}"), Some(&passenger), None).await;
+    assert_eq!(ride.json["delay_minutes"], 10);
+
+    // 4. Driver arrives at gate
+    let res = call(
+        &app,
+        Method::POST,
+        &format!("/api/rides/{id}/arrived-gate"),
+        Some(&driver),
+        None,
+    )
+    .await;
+    assert_eq!(res.status, StatusCode::OK);
+
+    let ride = call(&app, Method::GET, &format!("/api/rides/{id}"), Some(&passenger), None).await;
+    assert!(ride.json["arrived_at_gate_at"].is_string());
+
+    // 5. Passenger confirms unable to attend (e.g. sick)
+    let res = call(
+        &app,
+        Method::POST,
+        &format!("/api/rides/{id}/readiness"),
+        Some(&passenger),
+        Some(json!({ "status": "unable_to_join", "notes": "woke up with fever" })),
+    )
+    .await;
+    assert_eq!(res.status, StatusCode::OK);
+
+    let ride = call(&app, Method::GET, &format!("/api/rides/{id}"), Some(&passenger), None).await;
+    assert_eq!(ride.json["status"], "cancelled");
+    assert_eq!(ride.json["readiness_status"], "unable_to_join");
+
+    // 6. User profile readiness preference
+    let res = call(
+        &app,
+        Method::PUT,
+        "/api/me",
+        Some(&passenger),
+        Some(json!({ "readiness_prompt_mins": 30 })),
+    )
+    .await;
+    assert_eq!(res.status, StatusCode::OK);
+
+    let auth_me = call(&app, Method::GET, "/api/auth/me", Some(&passenger), None).await;
+    assert_eq!(auth_me.json["readiness_prompt_mins"], 30);
+
+    // 7. Driver profile gate wait tolerance
+    let res = call(
+        &app,
+        Method::PUT,
+        "/api/driver/profile",
+        Some(&driver),
+        Some(json!({
+            "spare_seats": 2,
+            "carpool_enabled": true,
+            "area_ids": [1, 2],
+            "gate_wait_mins": 8
+        })),
+    )
+    .await;
+    assert_eq!(res.status, StatusCode::OK);
+
+    let d_profile = call(&app, Method::GET, "/api/driver/profile", Some(&driver), None).await;
+    assert_eq!(d_profile.json["gate_wait_mins"], 8);
 }
 
 #[tokio::test]
