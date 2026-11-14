@@ -38,6 +38,6 @@ beforeEach(() => {
 it('always requests the paginated members response shape', async () => {
   render(<MemoryRouter><Members /></MemoryRouter>);
   await waitFor(() => {
-    expect(mocks.paths.some((path) => path.includes('/admin/users?q=&page=1&limit=50'))).toBe(true);
+    expect(mocks.paths.some((path) => path.includes('/admin/users?') && path.includes('page=1') && path.includes('limit=50'))).toBe(true);
   });
 });

@@ -89,7 +89,7 @@ const mockUsers = [
   {
     id: 2,
     name: 'Member Timothy',
-    email: 'timothy@grace.org',
+    email: 'member@grace.org',
     phone: '+6022222222',
     roles: [],
     status: 'pending',
@@ -167,8 +167,9 @@ const mockApiMap: Record<string, unknown> = {
   '/admin/rides?': mockTodayRides,
   '/admin/rides?page=1&limit=50': mockTodayRides,
   '/admin/live': mockLive,
-  '/admin/users?q=': mockUsers,
-  '/admin/users?q=&page=1&limit=50': { items: mockUsers, total: mockUsers.length, page: 1, page_size: 50, total_pages: 1 },
+  '/admin/users?': mockUsers,
+  '/admin/users?page=1&limit=50': { items: mockUsers, total: 52, page: 1, page_size: 50, total_pages: 2 },
+  '/admin/users?sort=email&dir=asc&page=1&limit=50': { items: [mockUsers[1], mockUsers[0]], total: 52, page: 1, page_size: 50, total_pages: 2 },
   '/groups': mockGroups,
   '/areas': mockAreas,
   '/announcements': mockAnnouncements,
@@ -210,7 +211,7 @@ vi.mock('./api', () => ({
   api: mockApi,
   useApi: (path: string | null) => ({
     data: path ? mockApiMap[path] ?? null : null,
-    loading: false,
+    loading: Boolean(path?.startsWith('/admin/users?q=') && !mockApiMap[path]),
     error: null,
     reload: vi.fn(),
   }),
@@ -289,6 +290,7 @@ describe('Admin Members', () => {
     expect(screen.getByRole('heading', { level: 1, name: /members & invites/i })).toBeInTheDocument();
     expect(screen.getByText('Admin Paul')).toBeInTheDocument();
     expect(screen.getByText('Member Timothy')).toBeInTheDocument();
+    expect(screen.getByRole('navigation', { name: 'Page 1' })).toBeInTheDocument();
 
     // Trigger edit modal
     const editBtn = screen.getByRole('button', { name: /^edit$/i });
@@ -297,6 +299,36 @@ describe('Admin Members', () => {
     await waitFor(() => {
       expect(screen.getByText('Edit member Admin Paul')).toBeInTheDocument();
     });
+  });
+
+  it('shows the server results when sorting by email with default pagination', () => {
+    render(
+      <MemoryRouter>
+        <Members />
+      </MemoryRouter>
+    );
+
+    fireEvent.click(screen.getByRole('button', { name: /sort by email/i }));
+
+    const [, firstMember] = screen.getAllByRole('row');
+    expect(firstMember).toHaveTextContent('Member Timothy');
+  });
+
+  it('keeps the focused search field mounted while the member list refetches', () => {
+    render(
+      <MemoryRouter>
+        <Members />
+      </MemoryRouter>
+    );
+
+    const search = screen.getByRole('textbox', { name: /search name, email or phone/i });
+    search.focus();
+    fireEvent.change(search, { target: { value: 'T' } });
+    expect(search).toHaveFocus();
+
+    fireEvent.change(search, { target: { value: 'Ti' } });
+    expect(search).toHaveValue('Ti');
+    expect(screen.getByRole('button', { name: /clear filters/i })).toBeInTheDocument();
   });
 });
 

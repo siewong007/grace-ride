@@ -4,6 +4,7 @@ import { useTranslation } from 'react-i18next';
 import { Download } from 'lucide-react';
 import { del, post, put, useApi } from '../../api';
 import { useAuth } from '../../auth';
+import { useTableParams } from '../../components/tableState';
 import {
   Avatar,
   Button,
@@ -19,6 +20,7 @@ import {
   Pill,
   Tabs,
   TableColumn,
+  TableFilter,
   UniversalTable,
   useAction,
   useConfirm,
@@ -85,6 +87,8 @@ export default function Members() {
     p.delete('page');
     p.delete('limit');
     p.delete('q');
+    p.delete('sort');
+    p.delete('dir');
     setParams(p, { replace: true });
   };
 
@@ -129,28 +133,33 @@ function MemberList() {
   const isSuper = !!me?.roles?.includes('superadmin');
   const editable = (u: User) => isSuper || !u.roles.includes('superadmin');
   const { names } = useRoleOptions();
-  const [params, setParams] = useSearchParams();
-  const q = params.get('q') ?? '';
-  const page = Math.max(1, Number(params.get('page') ?? '1') || 1);
-  const pageSize = Number(params.get('limit') ?? '50') || 50;
+  const {
+    page,
+    pageSize,
+    sort,
+    filters,
+    setPage,
+    setPageSize,
+    setSort,
+    setFilter,
+    clearFilters,
+    queryString,
+  } = useTableParams({
+    defaultPageSize: 50,
+    defaultSort: { key: 'name', dir: 'asc' },
+    filterKeys: ['q'],
+  });
 
-  const setParam = (k: string, v: string) => {
-    const p = new URLSearchParams(params);
-    if (v && (k !== 'page' || v !== '1') && (k !== 'limit' || v !== '50')) {
-      p.set(k, v);
-    } else {
-      p.delete(k);
-    }
-    if (k !== 'page') {
-      p.delete('page');
-    }
-    setParams(p, { replace: true });
-  };
-
-  const pagingQs = `&page=${page}&limit=${pageSize}`;
+  // The API requires explicit pagination parameters to return totals.
+  const apiQuery = new URLSearchParams(queryString);
+  apiQuery.set('page', String(page));
+  apiQuery.set('limit', String(pageSize));
   const { data, loading, reload } = useApi<PaginatedUsers | User[]>(
-    `/admin/users?q=${encodeURIComponent(q)}${pagingQs}`,
+    `/admin/users?${apiQuery}`,
   );
+  const [initialLoadComplete, setInitialLoadComplete] = useState(false);
+  if (!loading && !initialLoadComplete) setInitialLoadComplete(true);
+
   const [modalUser, setModalUser] = useState<{
     user: User;
     mode: 'edit' | 'approve';
@@ -160,9 +169,9 @@ function MemberList() {
   const total = Array.isArray(data) ? data.length : data?.total ?? 0;
   const totalPages = Array.isArray(data) ? 1 : data?.total_pages ?? 1;
 
-  const handleSearch = (v: string) => {
-    setParam('q', v);
-  };
+  const filterDefs: TableFilter[] = [
+    { type: 'text', key: 'q', label: t('members.search') },
+  ];
 
   const handleExport = () => {
     const headers = ['ID', 'Name', 'Email', 'Phone', 'Roles', 'Status', 'Passkeys', 'Groups', 'Joined'];
@@ -184,6 +193,7 @@ function MemberList() {
     {
       key: 'name',
       header: t('members.name'),
+      sortable: true,
       render: (u) => (
         <div className="row nowrap">
           <Avatar name={u.name} size="sm" />
@@ -194,6 +204,7 @@ function MemberList() {
     {
       key: 'email',
       header: t('members.email'),
+      sortable: true,
       render: (u) => u.email,
     },
     {
@@ -257,48 +268,36 @@ function MemberList() {
 
   return (
     <div className="stack">
-      <div className="row between nowrap gap-sm">
-        <input
-          className="input grow"
-          placeholder={t('members.search')}
-          value={q}
-          onChange={(e) => handleSearch(e.target.value)}
-        />
-        {users.length > 0 && (
-          <Button variant="secondary" size="sm" onClick={handleExport} icon={<Download size={16} />}>
-            {t('common:exportCsv', 'Export CSV')}
-          </Button>
-        )}
-      </div>
-
       <Card>
-        {loading ? (
+        {loading && !initialLoadComplete ? (
           <CardSkeleton count={4} />
-        ) : !users.length ? (
-          <EmptyState title={t('members.none')} />
         ) : (
-
-
           <UniversalTable
             columns={columns}
-            items={users}
+            items={loading ? [] : users}
             itemKey={(u) => u.id}
+            sort={sort}
+            onSortChange={setSort}
+            filters={filterDefs}
+            filterValues={filters}
+            onFilterChange={setFilter}
+            onClearFilters={clearFilters}
+            toolbarActions={!loading && users.length > 0 ? (
+              <Button variant="secondary" size="sm" onClick={handleExport} icon={<Download size={16} />}>
+                {t('common:exportCsv', 'Export CSV')}
+              </Button>
+            ) : undefined}
+            emptyContent={loading ? <CardSkeleton count={4} /> : <EmptyState title={t('members.none')} />}
           />
         )}
-        {users.length > 0 && (
+        {!loading && users.length > 0 && (
           <Pagination
             page={page}
             totalPages={totalPages}
             total={total}
             pageSize={pageSize}
-            onPageChange={(p) => setParam('page', String(p))}
-            onPageSizeChange={(sz) => {
-              const p = new URLSearchParams(params);
-              if (sz !== 50) p.set('limit', String(sz));
-              else p.delete('limit');
-              p.delete('page');
-              setParams(p, { replace: true });
-            }}
+            onPageChange={setPage}
+            onPageSizeChange={setPageSize}
           />
         )}
       </Card>
