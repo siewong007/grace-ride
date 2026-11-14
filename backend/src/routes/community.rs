@@ -32,6 +32,11 @@ pub fn router() -> Router<AppState> {
         .route("/help/{id}", get(get_ticket))
         .route("/help/{id}/replies", post(reply_ticket))
         .route("/help/{id}/close", post(close_ticket))
+        .route("/help/{id}/reopen", post(reopen_ticket))
+        .route("/help/counts", get(ticket_counts))
+        .route("/help/members", get(help_members))
+        .route("/help/guides/reorder", post(reorder_guides))
+        .route("/help/guides/{id}/feedback", post(guide_feedback))
         .route("/help/guides", get(list_guides).post(create_guide))
         .route(
             "/help/guides/{key}",
@@ -314,6 +319,21 @@ async fn delete_announcement(
 #[derive(Deserialize)]
 struct HelpQuery {
     all: Option<bool>,
+    status: Option<String>,
+    q: Option<String>,
+}
+
+/// Escape LIKE wildcards so a search term is matched literally.
+fn like_pattern(q: &str) -> String {
+    let esc: String = q
+        .trim()
+        .chars()
+        .flat_map(|c| match c {
+            '%' | '_' | '\\' => vec!['\\', c],
+            _ => vec![c],
+        })
+        .collect();
+    format!("%{esc}%")
 }
 
 async fn list_tickets(
@@ -325,15 +345,97 @@ async fn list_tickets(
     if !all {
         require(&u, Page::Help, Act::View)?;
     }
-    let rows: Vec<(i64, String, String, Option<i64>, String, String, String)> = sqlx::query_as(
-        "SELECT t.id, t.subject, t.status, t.ride_id, u.name, t.created_at, t.updated_at FROM help_tickets t JOIN users u ON u.id=t.user_id
-         WHERE ($1 OR t.user_id=$2) ORDER BY CASE t.status WHEN 'open' THEN 0 WHEN 'answered' THEN 1 ELSE 2 END, t.updated_at DESC LIMIT 200",
+    let status = q
+        .status
+        .as_deref()
+        .filter(|s| matches!(*s, "open" | "answered" | "closed"));
+    let search =
+        q.q.as_deref()
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+            .map(like_pattern);
+    #[allow(clippy::type_complexity)]
+    let rows: Vec<(i64, String, String, Option<i64>, i64, String, String, String, Option<String>, Option<bool>, Option<String>)> = sqlx::query_as(
+        "SELECT t.id, t.subject, t.status, t.ride_id, t.user_id, u.name, t.created_at, t.updated_at,
+                lr.body, lr.staff, lr.created_at
+         FROM help_tickets t JOIN users u ON u.id=t.user_id
+         LEFT JOIN LATERAL (
+             SELECT LEFT(r.body, 160) AS body, (r.user_id <> t.user_id) AS staff, r.created_at
+             FROM help_replies r WHERE r.ticket_id=t.id ORDER BY r.id DESC LIMIT 1
+         ) lr ON TRUE
+         WHERE ($1 OR t.user_id=$2)
+           AND ($3::text IS NULL OR t.status=$3)
+           AND ($4::text IS NULL OR t.subject ILIKE $4 ESCAPE '\\' OR u.name ILIKE $4 ESCAPE '\\')
+         ORDER BY CASE t.status WHEN 'open' THEN 0 WHEN 'answered' THEN 1 ELSE 2 END, t.updated_at DESC LIMIT 200",
+    )
+    .bind(all)
+    .bind(u.id)
+    .bind(status)
+    .bind(search)
+    .fetch_all(&st.db)
+    .await?;
+    Ok(Json(json!(rows
+        .into_iter()
+        .map(
+            |(id, s, status, r, uid, name, c, upd, body, staff, at)| json!({
+                "id": id, "subject": s, "status": status, "ride_id": r, "user_id": uid,
+                "user_name": name, "created_at": c, "updated_at": upd,
+                "last_body": body, "last_staff": staff, "last_at": at,
+            })
+        )
+        .collect::<Vec<_>>())))
+}
+
+#[derive(Deserialize)]
+struct CountsQuery {
+    all: Option<bool>,
+}
+
+async fn ticket_counts(
+    State(st): State<AppState>,
+    u: CurrentUser,
+    Query(q): Query<CountsQuery>,
+) -> AppResult<Json<Value>> {
+    let all = q.all.unwrap_or(false) && u.can(Page::AdminHelp, Act::View);
+    if !all {
+        require(&u, Page::Help, Act::View)?;
+    }
+    let rows: Vec<(String, i64)> = sqlx::query_as(
+        "SELECT status, COUNT(*)::bigint FROM help_tickets WHERE ($1 OR user_id=$2) GROUP BY status",
     )
     .bind(all)
     .bind(u.id)
     .fetch_all(&st.db)
     .await?;
-    Ok(Json(json!(rows.into_iter().map(|(id, s, status, r, name, c, upd)| json!({"id": id, "subject": s, "status": status, "ride_id": r, "user_name": name, "created_at": c, "updated_at": upd})).collect::<Vec<_>>())))
+    let get = |k: &str| rows.iter().find(|(s, _)| s == k).map_or(0, |(_, n)| *n);
+    Ok(Json(
+        json!({"open": get("open"), "answered": get("answered"), "closed": get("closed")}),
+    ))
+}
+
+#[derive(Deserialize)]
+struct MemberQuery {
+    q: Option<String>,
+}
+
+/// Member picker for staff raising a request on someone's behalf: id and name only.
+async fn help_members(
+    State(st): State<AppState>,
+    u: CurrentUser,
+    Query(q): Query<MemberQuery>,
+) -> AppResult<Json<Value>> {
+    require(&u, Page::AdminHelp, Act::Update)?;
+    let search = like_pattern(q.q.as_deref().unwrap_or(""));
+    let rows: Vec<(i64, String)> = sqlx::query_as(
+        "SELECT id, name FROM users WHERE name ILIKE $1 ESCAPE '\\' ORDER BY name LIMIT 20",
+    )
+    .bind(search)
+    .fetch_all(&st.db)
+    .await?;
+    Ok(Json(json!(rows
+        .into_iter()
+        .map(|(id, name)| json!({"id": id, "name": name}))
+        .collect::<Vec<_>>())))
 }
 
 #[derive(Deserialize)]
@@ -341,6 +443,8 @@ struct TicketIn {
     subject: String,
     body: String,
     ride_id: Option<i64>,
+    /// Staff only: raise the request on behalf of this member.
+    for_user_id: Option<i64>,
 }
 
 async fn create_ticket(
@@ -348,9 +452,22 @@ async fn create_ticket(
     u: CurrentUser,
     Json(req): Json<TicketIn>,
 ) -> AppResult<Json<Value>> {
-    require(&u, Page::Help, Act::Create)?;
+    let on_behalf = req.for_user_id.filter(|id| *id != u.id);
+    if on_behalf.is_some() {
+        require(&u, Page::AdminHelp, Act::Update)?;
+    } else {
+        require(&u, Page::Help, Act::Create)?;
+    }
     if req.subject.trim().is_empty() || req.body.trim().is_empty() {
         return Err(bad(u.lang, ErrorKey::QuestionAndDetailsRequired));
+    }
+    let owner_id = on_behalf.unwrap_or(u.id);
+    if on_behalf.is_some() {
+        let exists: Option<(i64,)> = sqlx::query_as("SELECT id FROM users WHERE id=$1")
+            .bind(owner_id)
+            .fetch_optional(&st.db)
+            .await?;
+        exists.ok_or(not_found(u.lang))?;
     }
     if let Some(r) = req.ride_id {
         let (p, d): (i64, Option<i64>) =
@@ -359,14 +476,20 @@ async fn create_ticket(
                 .fetch_optional(&st.db)
                 .await?
                 .ok_or(not_found(u.lang))?;
-        if p != u.id && d != Some(u.id) {
+        if p != owner_id && d != Some(owner_id) {
             return Err(forbidden(u.lang, ErrorKey::OnlyLinkOwnRides));
         }
     }
-    let (id,): (i64,) = sqlx::query_as("INSERT INTO help_tickets (user_id, ride_id, subject, created_at, updated_at) VALUES ($1,$2,$3,$4,$5) RETURNING id")
-        .bind(u.id)
+    let status = if on_behalf.is_some() {
+        "answered"
+    } else {
+        "open"
+    };
+    let (id,): (i64,) = sqlx::query_as("INSERT INTO help_tickets (user_id, ride_id, subject, status, created_at, updated_at) VALUES ($1,$2,$3,$4,$5,$6) RETURNING id")
+        .bind(owner_id)
         .bind(req.ride_id)
         .bind(req.subject.trim())
+        .bind(status)
         .bind(now())
         .bind(now())
         .fetch_one(&st.db)
@@ -380,25 +503,40 @@ async fn create_ticket(
     .bind(now())
     .execute(&st.db)
     .await?;
-    notify_perm(
-        &st.db,
-        Page::AdminHelp,
-        Act::Update,
-        ("帮助中心：新的求助", "Help center: new request"),
-        (
-            &format!("{} · {}", u.name, req.subject.trim()),
-            &format!("{} · {}", u.name, req.subject.trim()),
-        ),
-        &format!("/help/{id}"),
-    )
-    .await;
+    if on_behalf.is_some() {
+        notify(
+            &st.db,
+            owner_id,
+            ("帮助中心已回复", "Help center has replied"),
+            (req.subject.trim(), req.subject.trim()),
+            &format!("/help/{id}"),
+        )
+        .await;
+    } else {
+        notify_perm(
+            &st.db,
+            Page::AdminHelp,
+            Act::Update,
+            ("帮助中心：新的求助", "Help center: new request"),
+            (
+                &format!("{} · {}", u.name, req.subject.trim()),
+                &format!("{} · {}", u.name, req.subject.trim()),
+            ),
+            &format!("/help/{id}"),
+        )
+        .await;
+    }
     audit(
         &st.db,
         Some(u.id),
         "help.create",
         "help_ticket",
         Some(id),
-        req.subject.trim(),
+        &if on_behalf.is_some() {
+            format!("{} (for user {owner_id})", req.subject.trim())
+        } else {
+            req.subject.trim().to_string()
+        },
     )
     .await;
     Ok(Json(json!({"id": id})))
@@ -435,8 +573,25 @@ async fn get_ticket(
     .bind(id)
     .fetch_all(&st.db)
     .await?;
+    let member = if u.can(Page::AdminHelp, Act::View) {
+        let m: Option<(String, String)> =
+            sqlx::query_as("SELECT name, phone FROM users WHERE id=$1")
+                .bind(owner)
+                .fetch_optional(&st.db)
+                .await?;
+        let others: Vec<(i64,)> = sqlx::query_as(
+            "SELECT id FROM help_tickets WHERE user_id=$1 AND id<>$2 AND status<>'closed' ORDER BY updated_at DESC LIMIT 10",
+        )
+        .bind(owner)
+        .bind(id)
+        .fetch_all(&st.db)
+        .await?;
+        m.map(|(name, phone)| json!({"name": name, "phone": phone, "other_open": others.into_iter().map(|(i,)| i).collect::<Vec<_>>()}))
+    } else {
+        None
+    };
     Ok(Json(json!({
-        "id": id, "subject": subject, "status": status, "ride_id": ride, "user_id": owner,
+        "id": id, "subject": subject, "status": status, "ride_id": ride, "user_id": owner, "member": member,
         "replies": replies.into_iter().map(|(rid, uid, name, body, at)| json!({"id": rid, "user_id": uid, "name": name, "body": body, "created_at": at, "staff": uid != owner})).collect::<Vec<_>>(),
     })))
 }
@@ -541,6 +696,58 @@ async fn close_ticket(
     Ok(Json(json!({"ok": true})))
 }
 
+async fn reopen_ticket(
+    State(st): State<AppState>,
+    u: CurrentUser,
+    Path(id): Path<i64>,
+) -> AppResult<Json<Value>> {
+    let (owner, subject, status, _) = ticket_owner(&st, &u, id, Act::Update).await?;
+    if owner == u.id && !u.can(Page::AdminHelp, Act::Update) {
+        require(&u, Page::Help, Act::Update)?;
+    }
+    if status != "closed" {
+        return Ok(Json(json!({"ok": true})));
+    }
+    sqlx::query("UPDATE help_tickets SET status='open', updated_at=$1 WHERE id=$2")
+        .bind(now())
+        .bind(id)
+        .execute(&st.db)
+        .await?;
+    if u.id == owner {
+        notify_perm(
+            &st.db,
+            Page::AdminHelp,
+            Act::Update,
+            ("帮助中心：请求已重新打开", "Help center: request reopened"),
+            (&subject, &subject),
+            &format!("/help/{id}"),
+        )
+        .await;
+    } else {
+        notify(
+            &st.db,
+            owner,
+            (
+                "帮助中心已重新打开你的请求",
+                "Help center reopened your request",
+            ),
+            (&subject, &subject),
+            &format!("/help/{id}"),
+        )
+        .await;
+    }
+    audit(
+        &st.db,
+        Some(u.id),
+        "help.reopen",
+        "help_ticket",
+        Some(id),
+        "",
+    )
+    .await;
+    Ok(Json(json!({"ok": true})))
+}
+
 // ---------------- Admin workflow guides ----------------
 
 /// The in-app manual is readable by anyone who can see any staff page and
@@ -554,6 +761,8 @@ fn any_admin_page(u: &CurrentUser) -> bool {
 #[derive(Deserialize)]
 struct GuideQuery {
     include_drafts: Option<bool>,
+    /// Also return each guide's steps (for in-browser search).
+    full: Option<bool>,
 }
 
 async fn list_guides(
@@ -564,9 +773,17 @@ async fn list_guides(
     require(&u, Page::Help, Act::View)?;
     let staff = any_admin_page(&u);
     let with_drafts = q.include_drafts.unwrap_or(false) && u.can(Page::AdminHelp, Act::Update);
-    let rows: Vec<(i64, String, String, String, String, String, bool, String, i64)> = sqlx::query_as(
-        "SELECT id, slug, title_en, title_zh, summary_en, summary_zh, published, audience, jsonb_array_length(steps)::bigint
-         FROM guide_workflows WHERE ($1 OR published) AND ($2 OR audience='member') ORDER BY sort_order, id",
+    let can_edit = u.can(Page::AdminHelp, Act::Update);
+    let full = q.full.unwrap_or(false);
+    #[allow(clippy::type_complexity)]
+    let rows: Vec<(i64, String, String, String, String, String, bool, String, i64, i32, String, i64, i64)> = sqlx::query_as(
+        "SELECT g.id, g.slug, g.title_en, g.title_zh, g.summary_en, g.summary_zh, g.published, g.audience,
+                jsonb_array_length(g.steps)::bigint, g.sort_order, g.steps::text,
+                COUNT(f.user_id) FILTER (WHERE f.helpful)::bigint,
+                COUNT(f.user_id) FILTER (WHERE NOT f.helpful)::bigint
+         FROM guide_workflows g LEFT JOIN guide_feedback f ON f.guide_id=g.id
+         WHERE ($1 OR g.published) AND ($2 OR g.audience='member')
+         GROUP BY g.id ORDER BY g.sort_order, g.id",
     )
     .bind(with_drafts)
     .bind(staff)
@@ -574,15 +791,92 @@ async fn list_guides(
     .await?;
     Ok(Json(Value::Array(
         rows.into_iter()
-            .map(|(id, slug, ten, tzh, sen, szh, published, audience, n)| {
-                json!({
+            .map(|(id, slug, ten, tzh, sen, szh, published, audience, n, sort, steps, yes, no)| {
+                let mut v = json!({
                     "id": id, "slug": slug, "title_en": ten, "title_zh": tzh,
                     "summary_en": sen, "summary_zh": szh, "published": published, "audience": audience,
-                    "step_count": n,
-                })
+                    "step_count": n, "sort_order": sort,
+                });
+                if full {
+                    v["steps"] = serde_json::from_str(&steps).unwrap_or(json!([]));
+                }
+                if can_edit {
+                    v["helpful_yes"] = json!(yes);
+                    v["helpful_no"] = json!(no);
+                }
+                v
             })
             .collect(),
     )))
+}
+
+#[derive(Deserialize)]
+struct FeedbackIn {
+    helpful: bool,
+}
+
+/// One vote per user per guide; voting again replaces the earlier answer.
+async fn guide_feedback(
+    State(st): State<AppState>,
+    u: CurrentUser,
+    Path(id): Path<i64>,
+    Json(req): Json<FeedbackIn>,
+) -> AppResult<Json<Value>> {
+    require(&u, Page::Help, Act::View)?;
+    let staff = any_admin_page(&u);
+    let can_edit = u.can(Page::AdminHelp, Act::Update);
+    let visible: Option<(i64,)> = sqlx::query_as(
+        "SELECT id FROM guide_workflows WHERE id=$1 AND ($2 OR published) AND ($3 OR audience='member')",
+    )
+    .bind(id)
+    .bind(can_edit)
+    .bind(staff)
+    .fetch_optional(&st.db)
+    .await?;
+    visible.ok_or(not_found(u.lang))?;
+    sqlx::query(
+        "INSERT INTO guide_feedback (guide_id, user_id, helpful, created_at) VALUES ($1,$2,$3,$4)
+         ON CONFLICT (guide_id, user_id) DO UPDATE SET helpful=EXCLUDED.helpful, created_at=EXCLUDED.created_at",
+    )
+    .bind(id)
+    .bind(u.id)
+    .bind(req.helpful)
+    .bind(now())
+    .execute(&st.db)
+    .await?;
+    Ok(Json(json!({"ok": true})))
+}
+
+#[derive(Deserialize)]
+struct ReorderIn {
+    ids: Vec<i64>,
+}
+
+async fn reorder_guides(
+    State(st): State<AppState>,
+    u: CurrentUser,
+    Json(req): Json<ReorderIn>,
+) -> AppResult<Json<Value>> {
+    require(&u, Page::AdminHelp, Act::Update)?;
+    let mut tx = st.db.begin().await?;
+    for (i, id) in req.ids.iter().enumerate() {
+        sqlx::query("UPDATE guide_workflows SET sort_order=$1 WHERE id=$2")
+            .bind(i as i32)
+            .bind(id)
+            .execute(&mut *tx)
+            .await?;
+    }
+    tx.commit().await?;
+    audit(
+        &st.db,
+        Some(u.id),
+        "guide.reorder",
+        "guide_workflow",
+        None,
+        "",
+    )
+    .await;
+    Ok(Json(json!({"ok": true})))
 }
 
 async fn get_guide(
