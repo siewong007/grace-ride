@@ -29,6 +29,13 @@ pub enum ErrorKey {
     RequestAlreadyHandled,
     EmailInvalid,
     EmailAlreadyMember,
+    UnknownRole,
+    RoleNameRequired,
+    RoleNameExists,
+    InvalidPermission,
+    RolePermissionLocked,
+    SystemRoleCannotBeDeleted,
+    CannotRemoveOwnRoleAccess,
 
     // === Auth ===
     InvalidCredentials,
@@ -249,6 +256,13 @@ impl ErrorKey {
             Self::RequestAlreadyHandled => "REQUEST_ALREADY_HANDLED",
             Self::EmailInvalid => "EMAIL_INVALID",
             Self::EmailAlreadyMember => "EMAIL_ALREADY_MEMBER",
+            Self::UnknownRole => "UNKNOWN_ROLE",
+            Self::RoleNameRequired => "ROLE_NAME_REQUIRED",
+            Self::RoleNameExists => "ROLE_NAME_EXISTS",
+            Self::InvalidPermission => "INVALID_PERMISSION",
+            Self::RolePermissionLocked => "ROLE_PERMISSION_LOCKED",
+            Self::SystemRoleCannotBeDeleted => "SYSTEM_ROLE_CANNOT_BE_DELETED",
+            Self::CannotRemoveOwnRoleAccess => "CANNOT_REMOVE_OWN_ROLE_ACCESS",
 
             Self::InvalidCredentials => "INVALID_CREDENTIALS",
             Self::VerificationExpired => "VERIFICATION_EXPIRED",

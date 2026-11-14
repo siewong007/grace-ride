@@ -147,6 +147,10 @@ const mockTicket = {
   ],
 };
 
+const today = new Date();
+const localMonth = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}`;
+const localDay = `${localMonth}-${String(today.getDate()).padStart(2, '0')}`;
+
 const mockNotifs = [
   {
     id: 1,
@@ -154,7 +158,8 @@ const mockNotifs = [
     body: 'Your ride to Sunday Service is confirmed',
     link: '/rides/42',
     read: false,
-    created_at: `${new Date().toISOString().slice(0, 10)}T09:00:00`,
+    // Local date: toISOString() is UTC and names yesterday before 08:00 in UTC+8.
+    created_at: `${localDay}T09:00:00`,
   },
   {
     id: 2,
@@ -203,14 +208,13 @@ const mockApiMap: Record<string, unknown> = {
   '/help': [{ id: 3, subject: 'Driver arrived early', user_name: 'Grace Member', status: 'in_progress', updated_at: '2026-11-12T14:16:00' }],
   '/help/3': mockTicket,
   '/notifications': mockNotifs,
-  '/reports/monthly?month=2026-11': mockReport,
+  [`/reports/monthly?month=${localMonth}&range=monthly&type=all`]: mockReport,
 };
 
 vi.mock('./auth', () => ({
   useAuth: () => ({
     me: { id: 2, name: 'Grace Member', email: 'member@example.org', phone: '+60123456789' },
-    has: (role: string) => role === 'leader' || role === 'driver' || role === 'admin',
-    isStaff: true,
+    can: () => true,
     refresh: vi.fn(),
   }),
 }));

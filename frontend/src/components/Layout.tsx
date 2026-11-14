@@ -1,8 +1,8 @@
 import { ReactNode, useEffect, useMemo, useRef, useState } from 'react';
 import { Link, NavLink, Navigate, Outlet, useLocation } from 'react-router-dom';
 import {
-  ArrowLeft, Bell, Calendar, Car, CarFront, ClipboardList, Clock, HandCoins, HeartHandshake, Home, LayoutDashboard,
-  LifeBuoy, MapPinned, Megaphone, Receipt, ScrollText, Settings, ShieldAlert, User, Users, Wallet, BarChart3,
+  ArrowLeft, Bell, Calendar, Car, CarFront, ClipboardList, Clock, FileBarChart, HandCoins, HeartHandshake, Home, KeyRound,
+  LayoutDashboard, LifeBuoy, MapPinned, Megaphone, Receipt, ScrollText, Settings, ShieldAlert, User, Users, Wallet, BarChart3,
 } from 'lucide-react';
 import { useAuth } from '../auth';
 import { LogoMark, Wordmark } from './Brand';
@@ -40,6 +40,8 @@ function getPageTitle(pathname: string, t: (key: string) => string): string {
   if (pathname === '/admin/announcements') return t('announcements');
   if (pathname === '/admin/reimbursements') return t('reimbReview');
   if (pathname === '/admin/members') return t('members');
+  if (pathname === '/admin/roles') return t('roles');
+  if (pathname === '/admin/reports') return t('reports');
   if (pathname === '/admin/settings') return t('settings');
   if (pathname === '/admin/audit') return t('audit');
   if (pathname === '/admin') return t('dashboard');
@@ -49,7 +51,7 @@ function getPageTitle(pathname: string, t: (key: string) => string): string {
 export default function Layout() {
   const { t } = useTranslation('layout');
   const { t: tc } = useTranslation();
-  const { me, has, isStaff } = useAuth();
+  const { me, can } = useAuth();
   const loc = useLocation();
   const [scrolled, setScrolled] = useState(false);
   const sentinelRef = useRef<HTMLDivElement>(null);
@@ -77,47 +79,52 @@ export default function Layout() {
   if (pending && loc.pathname !== '/me') return <Navigate to="/me" replace />;
   const sz = 20;
 
-  const member: NavItem[] = pending ? [] : [
-    { to: '/', label: t('home'), icon: <Home size={sz} />, end: true },
-    { to: '/rides', label: t('myRides'), icon: <Car size={sz} /> },
-    { to: '/events', label: t('events'), icon: <Calendar size={sz} /> },
-    { to: '/costs', label: t('myCosts'), icon: <Wallet size={sz} /> },
-    { to: '/reimbursements', label: t('reimbursements'), icon: <Receipt size={sz} /> },
-    { to: '/report', label: t('myReport'), icon: <BarChart3 size={sz} /> },
-    { to: '/help', label: t('help'), icon: <LifeBuoy size={sz} /> },
-  ];
-  const driver: NavItem[] = has('driver') ? [{ to: '/drive', label: t('drive'), icon: <CarFront size={sz} /> }] : [];
-  const leader: NavItem[] = has('leader') ? [{ to: '/settlements', label: t('settlements'), icon: <HandCoins size={sz} /> }] : [];
-  const staff: NavItem[] = [];
-  if (isStaff) {
-    staff.push(
-      { to: '/admin', label: t('dashboard'), icon: <LayoutDashboard size={sz} />, end: true },
-      { to: '/admin/rides', label: t('adminRides'), icon: <ClipboardList size={sz} /> },
-      { to: '/admin/live', label: t('liveMap'), icon: <MapPinned size={sz} /> },
-      { to: '/admin/announcements', label: t('announcements'), icon: <Megaphone size={sz} /> },
-    );
-  }
-  if ((has('transport') || has('finance')) && me.mfa_ok) {
-    staff.push({ to: '/admin/reimbursements', label: t('reimbReview'), icon: <HeartHandshake size={sz} /> });
-  }
-  if (has('admin') && me.mfa_ok) {
-    staff.push(
-      { to: '/admin/members', label: t('members'), icon: <Users size={sz} /> },
-      { to: '/admin/settings', label: t('settings'), icon: <Settings size={sz} /> },
-    );
-  }
-  if (isStaff) staff.push({ to: '/admin/audit', label: t('audit'), icon: <ScrollText size={sz} /> });
+  // Each link shows only when the member may open that page; the server enforces the same.
+  const links = (items: (NavItem & { show: boolean })[]): NavItem[] =>
+    items.filter((n) => n.show && !pending).map(({ to, label, icon, end }) => ({ to, label, icon, end }));
 
+  const member = links([
+    { to: '/', label: t('home'), icon: <Home size={sz} />, end: true, show: true },
+    { to: '/rides', label: t('myRides'), icon: <Car size={sz} />, show: can('rides') },
+    { to: '/events', label: t('events'), icon: <Calendar size={sz} />, show: can('events') },
+    { to: '/costs', label: t('myCosts'), icon: <Wallet size={sz} />, show: can('costs') },
+    { to: '/reimbursements', label: t('reimbursements'), icon: <Receipt size={sz} />, show: can('reimbursements') },
+    { to: '/report', label: t('myReport'), icon: <BarChart3 size={sz} />, show: can('report') },
+    { to: '/help', label: t('help'), icon: <LifeBuoy size={sz} />, show: can('help') },
+  ]);
+  const service = links([
+    { to: '/drive', label: t('drive'), icon: <CarFront size={sz} />, show: can('drive') },
+    { to: '/settlements', label: t('settlements'), icon: <HandCoins size={sz} />, show: can('settlements') || can('admin_bills') },
+  ]);
+  const staff = links([
+    { to: '/admin', label: t('dashboard'), icon: <LayoutDashboard size={sz} />, end: true, show: can('admin_dashboard') },
+    { to: '/admin/rides', label: t('adminRides'), icon: <ClipboardList size={sz} />, show: can('admin_rides') },
+    { to: '/admin/live', label: t('liveMap'), icon: <MapPinned size={sz} />, show: can('admin_live') },
+    { to: '/admin/announcements', label: t('announcements'), icon: <Megaphone size={sz} />, show: can('admin_announcements') },
+    {
+      to: '/admin/reimbursements', label: t('reimbReview'), icon: <HeartHandshake size={sz} />,
+      show: can('admin_reimb_review') || can('admin_reimb_pay'),
+    },
+    { to: '/admin/reports', label: t('reports'), icon: <FileBarChart size={sz} />, show: can('admin_reports') },
+    {
+      to: '/admin/members', label: t('members'), icon: <Users size={sz} />,
+      show: can('admin_members') || can('admin_invites') || can('admin_recovery'),
+    },
+    { to: '/admin/roles', label: t('roles'), icon: <KeyRound size={sz} />, show: can('admin_roles') },
+    { to: '/admin/settings', label: t('settings'), icon: <Settings size={sz} />, show: can('admin_groups') || can('admin_areas') },
+    { to: '/admin/audit', label: t('audit'), icon: <ScrollText size={sz} />, show: can('admin_audit') },
+  ]);
+
+  const profileTab: NavItem = { to: '/me', label: t('profile'), icon: <User size={sz} /> };
+  const tab = (to: string) => [...member, ...service, ...staff].filter((n) => n.to === to);
+  // Phone tab bar: home, rides, then driving for drivers, events, and the dashboard for
+  // staff who don't drive. Five at most, profile always last.
   const bottom: NavItem[] = pending
-    ? [{ to: '/me', label: t('profile'), icon: <User size={sz} /> }]
+    ? [profileTab]
     : [
-        member[0],
-        member[1],
-        ...(has('driver') ? driver : []),
-        member[2],
-        ...(isStaff && !has('driver') ? [staff[0]] : []),
-        { to: '/me', label: t('profile'), icon: <User size={sz} /> },
-      ].slice(0, 5);
+        ...[...tab('/'), ...tab('/rides'), ...tab('/drive'), ...tab('/events'), ...(can('drive') ? [] : tab('/admin'))].slice(0, 4),
+        profileTab,
+      ];
 
   const sidebarLink = (n: NavItem) => (
     <NavLink
@@ -148,9 +155,8 @@ export default function Layout() {
         </Link>
         {member.length > 0 && <div className="section-label">{t('sectionMember')}</div>}
         {member.map(sidebarLink)}
-        {(driver.length > 0 || leader.length > 0) && <div className="section-label">{t('sectionService')}</div>}
-        {driver.map(sidebarLink)}
-        {leader.map(sidebarLink)}
+        {service.length > 0 && <div className="section-label">{t('sectionService')}</div>}
+        {service.map(sidebarLink)}
         {staff.length > 0 && <div className="section-label">{t('sectionAdmin')}</div>}
         {staff.map(sidebarLink)}
         <div className="spacer" />

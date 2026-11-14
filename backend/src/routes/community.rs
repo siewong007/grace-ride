@@ -11,9 +11,10 @@ use serde_json::{json, Value};
 use crate::auth::CurrentUser;
 use crate::error::{bad, forbidden, not_found, AppResult};
 use crate::i18n::ErrorKey;
+use crate::perms::{Act, Page};
 use crate::state::AppState;
 use crate::util::{
-    audit, check_name, check_phone, fmt_rm, notify, notify_roles, now, require_any, t, Lang,
+    audit, check_name, check_phone, fmt_rm, notify, notify_perm, now, require, require_one, t, Lang,
 };
 
 pub fn router() -> Router<AppState> {
@@ -166,7 +167,7 @@ async fn create_announcement(
     u: CurrentUser,
     Json(req): Json<AnnIn>,
 ) -> AppResult<Json<Value>> {
-    require_any(&u, &["transport", "admin"])?;
+    require(&u, Page::AdminAnnouncements, Act::Create)?;
     if req.title.trim().is_empty() || req.body.trim().is_empty() {
         return Err(bad(u.lang, ErrorKey::TitleAndContentRequired));
     }
@@ -211,7 +212,7 @@ async fn delete_announcement(
     u: CurrentUser,
     Path(id): Path<i64>,
 ) -> AppResult<Json<Value>> {
-    require_any(&u, &["transport", "admin"])?;
+    require(&u, Page::AdminAnnouncements, Act::Delete)?;
     sqlx::query("DELETE FROM announcements WHERE id=$1")
         .bind(id)
         .execute(&st.db)
@@ -240,7 +241,10 @@ async fn list_tickets(
     u: CurrentUser,
     Query(q): Query<HelpQuery>,
 ) -> AppResult<Json<Value>> {
-    let all = q.all.unwrap_or(false) && u.is_staff();
+    let all = q.all.unwrap_or(false) && u.can(Page::AdminHelp, Act::View);
+    if !all {
+        require(&u, Page::Help, Act::View)?;
+    }
     let rows: Vec<(i64, String, String, Option<i64>, String, String, String)> = sqlx::query_as(
         "SELECT t.id, t.subject, t.status, t.ride_id, u.name, t.created_at, t.updated_at FROM help_tickets t JOIN users u ON u.id=t.user_id
          WHERE ($1 OR t.user_id=$2) ORDER BY CASE t.status WHEN 'open' THEN 0 WHEN 'answered' THEN 1 ELSE 2 END, t.updated_at DESC LIMIT 200",
@@ -264,6 +268,7 @@ async fn create_ticket(
     u: CurrentUser,
     Json(req): Json<TicketIn>,
 ) -> AppResult<Json<Value>> {
+    require(&u, Page::Help, Act::Create)?;
     if req.subject.trim().is_empty() || req.body.trim().is_empty() {
         return Err(bad(u.lang, ErrorKey::QuestionAndDetailsRequired));
     }
@@ -295,9 +300,10 @@ async fn create_ticket(
     .bind(now())
     .execute(&st.db)
     .await?;
-    notify_roles(
+    notify_perm(
         &st.db,
-        &["transport", "admin"],
+        Page::AdminHelp,
+        Act::Update,
         ("帮助中心：新的求助", "Help center: new request"),
         (
             &format!("{} · {}", u.name, req.subject.trim()),
@@ -309,10 +315,12 @@ async fn create_ticket(
     Ok(Json(json!({"id": id})))
 }
 
+/// Load a help request for its owner, or for 帮助台 staff who may do `staff_act` on it.
 async fn ticket_owner(
     st: &AppState,
     u: &CurrentUser,
     id: i64,
+    staff_act: Act,
 ) -> AppResult<(i64, String, String, Option<i64>)> {
     let row: (i64, String, String, Option<i64>) =
         sqlx::query_as("SELECT user_id, subject, status, ride_id FROM help_tickets WHERE id=$1")
@@ -320,7 +328,7 @@ async fn ticket_owner(
             .fetch_optional(&st.db)
             .await?
             .ok_or(not_found(u.lang))?;
-    if row.0 != u.id && !u.is_staff() {
+    if row.0 != u.id && !u.can(Page::AdminHelp, staff_act) {
         return Err(forbidden(u.lang, ErrorKey::Forbidden));
     }
     Ok(row)
@@ -331,7 +339,7 @@ async fn get_ticket(
     u: CurrentUser,
     Path(id): Path<i64>,
 ) -> AppResult<Json<Value>> {
-    let (owner, subject, status, ride) = ticket_owner(&st, &u, id).await?;
+    let (owner, subject, status, ride) = ticket_owner(&st, &u, id, Act::View).await?;
     let replies: Vec<(i64, i64, String, String, String)> = sqlx::query_as(
         "SELECT r.id, r.user_id, u.name, r.body, r.created_at FROM help_replies r JOIN users u ON u.id=r.user_id WHERE r.ticket_id=$1 ORDER BY r.id",
     )
@@ -355,7 +363,10 @@ async fn reply_ticket(
     Path(id): Path<i64>,
     Json(req): Json<ReplyIn>,
 ) -> AppResult<Json<Value>> {
-    let (owner, subject, status, _) = ticket_owner(&st, &u, id).await?;
+    let (owner, subject, status, _) = ticket_owner(&st, &u, id, Act::Update).await?;
+    if owner == u.id && !u.can(Page::AdminHelp, Act::Update) {
+        require(&u, Page::Help, Act::Update)?;
+    }
     if status == "closed" {
         return Err(bad(u.lang, ErrorKey::RequestAlreadyClosed));
     }
@@ -379,9 +390,10 @@ async fn reply_ticket(
         .execute(&st.db)
         .await?;
     if u.id == owner {
-        notify_roles(
+        notify_perm(
             &st.db,
-            &["transport", "admin"],
+            Page::AdminHelp,
+            Act::Update,
             ("帮助中心：会员回复", "Help center: member reply"),
             (&subject, &subject),
             &format!("/help/{id}"),
@@ -405,7 +417,10 @@ async fn close_ticket(
     u: CurrentUser,
     Path(id): Path<i64>,
 ) -> AppResult<Json<Value>> {
-    ticket_owner(&st, &u, id).await?;
+    let (owner, ..) = ticket_owner(&st, &u, id, Act::Update).await?;
+    if owner == u.id && !u.can(Page::AdminHelp, Act::Update) {
+        require(&u, Page::Help, Act::Update)?;
+    }
     sqlx::query("UPDATE help_tickets SET status='closed', updated_at=$1 WHERE id=$2")
         .bind(now())
         .bind(id)
@@ -452,7 +467,7 @@ const REIMB_SELECT: &str = "SELECT r.id, r.user_id, u.name AS user_name, r.ride_
     FROM reimbursements r JOIN users u ON u.id=r.user_id LEFT JOIN rides rd ON rd.id=r.ride_id LEFT JOIN users rv ON rv.id=r.reviewed_by";
 
 fn reimb_json(r: &ReimbRow, u: &CurrentUser) -> Value {
-    let finance = u.has("finance") && u.mfa_ok;
+    let finance = u.can(Page::AdminReimbPay, Act::View);
     let own = r.user_id == u.id;
     json!({
         "id": r.id, "user": {"id": r.user_id, "name": r.user_name}, "ride_id": r.ride_id, "ride_at": r.ride_at,
@@ -477,18 +492,19 @@ async fn list_reimbursements(
 ) -> AppResult<Json<Value>> {
     let rows = match q.scope.as_deref() {
         Some("review") => {
-            require_any(&u, &["transport"])?;
+            require(&u, Page::AdminReimbReview, Act::View)?;
             sqlx::query_as::<_, ReimbRow>(&format!("{REIMB_SELECT} ORDER BY CASE r.status WHEN 'pending' THEN 0 ELSE 1 END, r.id DESC LIMIT 200"))
                 .fetch_all(&st.db)
                 .await?
         }
         Some("payout") => {
-            require_any(&u, &["finance"])?;
+            require(&u, Page::AdminReimbPay, Act::View)?;
             sqlx::query_as::<_, ReimbRow>(&format!("{REIMB_SELECT} WHERE r.status IN ('approved','paid') ORDER BY CASE r.status WHEN 'approved' THEN 0 ELSE 1 END, r.id DESC LIMIT 200"))
                 .fetch_all(&st.db)
                 .await?
         }
         _ => {
+            require(&u, Page::Reimbursements, Act::View)?;
             sqlx::query_as::<_, ReimbRow>(&format!(
                 "{REIMB_SELECT} WHERE r.user_id=$1 ORDER BY r.id DESC LIMIT 100"
             ))
@@ -517,8 +533,14 @@ async fn get_reimbursement(
     Path(id): Path<i64>,
 ) -> AppResult<Json<Value>> {
     let r = load_reimb(&st, u.lang, id).await?;
-    if r.user_id != u.id && !u.is_staff() && !(u.has("finance") && u.mfa_ok) {
-        return Err(forbidden(u.lang, ErrorKey::Forbidden));
+    if r.user_id != u.id {
+        require_one(
+            &u,
+            &[
+                (Page::AdminReimbReview, Act::View),
+                (Page::AdminReimbPay, Act::View),
+            ],
+        )?;
     }
     Ok(Json(reimb_json(&r, &u)))
 }
@@ -566,6 +588,7 @@ async fn create_reimbursement(
     u: CurrentUser,
     Json(req): Json<ReimbIn>,
 ) -> AppResult<Json<Value>> {
+    require(&u, Page::Reimbursements, Act::Create)?;
     validate_reimb(&st, &u, &req).await?;
     let (id,): (i64,) = sqlx::query_as(
         "INSERT INTO reimbursements (user_id, ride_id, amount_cents, description, receipt_file_id, payee_name, payee_phone, created_at, updated_at) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9) RETURNING id",
@@ -581,9 +604,10 @@ async fn create_reimbursement(
     .bind(now())
     .fetch_one(&st.db)
     .await?;
-    notify_roles(
+    notify_perm(
         &st.db,
-        &["transport"],
+        Page::AdminReimbReview,
+        Act::Update,
         ("新的 Grab 报销申请", "New Grab reimbursement request"),
         (
             &format!("{} · {}", u.name, fmt_rm(req.amount_cents)),
@@ -614,6 +638,7 @@ async fn resubmit_reimbursement(
     if r.user_id != u.id || r.status != "returned" {
         return Err(bad(u.lang, ErrorKey::OnlyReturnedReimbCanBeResubmitted));
     }
+    require(&u, Page::Reimbursements, Act::Update)?;
     validate_reimb(&st, &u, &req).await?;
     sqlx::query("UPDATE reimbursements SET ride_id=$1, amount_cents=$2, description=$3, receipt_file_id=$4, payee_name=$5, payee_phone=$6, status='pending', payee_verified=0, updated_at=$7 WHERE id=$8")
         .bind(req.ride_id)
@@ -626,9 +651,10 @@ async fn resubmit_reimbursement(
         .bind(id)
         .execute(&st.db)
         .await?;
-    notify_roles(
+    notify_perm(
         &st.db,
-        &["transport"],
+        Page::AdminReimbReview,
+        Act::Update,
         ("报销申请已补资料", "Reimbursement updated and resubmitted"),
         (
             &format!("{} · {}", u.name, fmt_rm(req.amount_cents)),
@@ -661,7 +687,7 @@ async fn review_reimbursement(
     Path(id): Path<i64>,
     Json(req): Json<ReviewIn>,
 ) -> AppResult<Json<Value>> {
-    require_any(&u, &["transport"])?;
+    require(&u, Page::AdminReimbReview, Act::Update)?;
     let r = load_reimb(&st, u.lang, id).await?;
     if r.status != "pending" {
         return Err(bad(u.lang, ErrorKey::ReimbAlreadyReviewed));
@@ -706,9 +732,10 @@ async fn review_reimbursement(
     )
     .await;
     if status == "approved" {
-        notify_roles(
+        notify_perm(
             &st.db,
-            &["finance"],
+            Page::AdminReimbPay,
+            Act::Update,
             ("有报销待付款", "Reimbursement awaiting payment"),
             (
                 &format!("{} · {}", r.user_name, fmt_rm(r.amount_cents)),
@@ -743,7 +770,7 @@ async fn pay_reimbursement(
     Path(id): Path<i64>,
     Json(req): Json<PayIn>,
 ) -> AppResult<Json<Value>> {
-    require_any(&u, &["finance"])?;
+    require(&u, Page::AdminReimbPay, Act::Update)?;
     let r = load_reimb(&st, u.lang, id).await?;
     if r.status != "approved" {
         return Err(bad(u.lang, ErrorKey::OnlyApprovedReimbCanBePaid));
@@ -899,7 +926,9 @@ async fn monthly_report(
 ) -> AppResult<Json<Value>> {
     let target = q.user_id.unwrap_or(u.id);
     if target != u.id {
-        require_any(&u, &["admin"])?;
+        require(&u, Page::AdminReports, Act::View)?;
+    } else {
+        require(&u, Page::Report, Act::View)?;
     }
     let rtype = q.r#type.as_deref().unwrap_or("all");
     let range = q.range.as_deref().unwrap_or("monthly");
@@ -918,10 +947,16 @@ async fn monthly_report(
             let end_m = start_m + 2;
             let end_y = if end_m > 12 { y + 1 } else { y };
             let end_m = if end_m > 12 { end_m - 12 } else { end_m };
-            (format!("{:04}-{:02}-01", y, start_m), format!("{:04}-{:02}-01", end_y, end_m))
+            (
+                format!("{:04}-{:02}-01", y, start_m),
+                format!("{:04}-{:02}-01", end_y, end_m),
+            )
         }
         "yearly" => (format!("{:04}-01-01", y), format!("{:04}-12-01", y)),
-        _ => (format!("{:04}-{:02}-01", y, m), format!("{:04}-{:02}-01", y, m)),
+        _ => (
+            format!("{:04}-{:02}-01", y, m),
+            format!("{:04}-{:02}-01", y, m),
+        ),
     };
 
     let (name,): (String,) = sqlx::query_as("SELECT name FROM users WHERE id=$1")

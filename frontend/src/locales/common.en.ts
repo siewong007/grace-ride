@@ -32,4 +32,9 @@ export default {
   uploaded: '✓ Uploaded {name}',
   chooseFile: 'Choose image or PDF',
   viewReceipt: 'View receipt',
+  noAccess: {
+    title: "You don't have access to this page",
+    body: 'Ask an administrator if you need it for your role.',
+    mfa: 'Sign in with a passkey or two-factor authentication (2FA) to use staff pages.',
+  },
 };

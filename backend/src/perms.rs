@@ -378,12 +378,13 @@ pub async fn sync(db: &PgPool) -> sqlx::Result<()> {
     .execute(&mut *tx)
     .await?;
 
-    let known: HashSet<String> = sqlx::query_as::<_, (String,)>("SELECT permission FROM permission_catalog")
-        .fetch_all(&mut *tx)
-        .await?
-        .into_iter()
-        .map(|r| r.0)
-        .collect();
+    let known: HashSet<String> =
+        sqlx::query_as::<_, (String,)>("SELECT permission FROM permission_catalog")
+            .fetch_all(&mut *tx)
+            .await?
+            .into_iter()
+            .map(|r| r.0)
+            .collect();
     let fresh: HashSet<Perm> = all().filter(|p| !known.contains(&p.key())).collect();
 
     let (mut grant_roles, mut grant_perms) = (Vec::new(), Vec::new());
@@ -474,7 +475,9 @@ mod tests {
     #[test]
     fn usable_keys_hide_staff_permissions_without_mfa() {
         let set = PermSet(defaults("admin").into_iter().collect());
-        assert!(set.usable_keys(true).contains(&"admin_roles.update".to_string()));
+        assert!(set
+            .usable_keys(true)
+            .contains(&"admin_roles.update".to_string()));
         let weak = set.usable_keys(false);
         assert!(weak.contains(&"events.create".to_string()));
         assert!(weak.iter().all(|k| !k.starts_with("admin_")));

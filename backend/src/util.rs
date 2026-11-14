@@ -192,39 +192,6 @@ pub async fn system_message(db: &PgPool, trip_id: i64, zh_body: &str, en_body: &
     notify_trip(db, trip_id).await;
 }
 
-/// Notify every active member whose `roles` contain any of the given role keys.
-pub async fn notify_roles(
-    db: &PgPool,
-    roles: &[&str],
-    title: (&str, &str),
-    body: (&str, &str),
-    link: &str,
-) {
-    if roles.is_empty() {
-        return;
-    }
-    let sql = format!(
-        "SELECT id FROM users WHERE status='active' AND roles IS NOT NULL AND roles != '' AND roles = ANY($1::text[])"
-    );
-    let ids: Vec<(i64,)> = sqlx::query_as(&sql)
-        .bind(roles)
-        .fetch_all(db)
-        .await
-        .unwrap_or_default();
-    for (id,) in ids {
-        notify(db, id, title, body, link).await;
-    }
-}
-
-/// Require the member to hold any of the given role keys (e.g. `require_any(&u, &["admin"])`).
-pub fn require_any(u: &CurrentUser, roles: &[&str]) -> AppResult<()> {
-    if roles.iter().any(|r| u.roles.iter().any(|ur| ur == *r)) {
-        Ok(())
-    } else {
-        Err(forbidden(u.lang, ErrorKey::NoPermission))
-    }
-}
-
 /// Refuse unless the member may do `act` on `page`. A member who holds the permission
 /// but signed in without a passkey / 2FA is told to sign in properly instead.
 pub fn require(u: &CurrentUser, page: Page, act: Act) -> AppResult<()> {

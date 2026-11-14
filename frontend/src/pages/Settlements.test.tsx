@@ -4,7 +4,7 @@ import { MemoryRouter, Route, Routes } from 'react-router-dom';
 import { SettlementForm, SettlementDetail } from './Settlements';
 
 vi.mock('../auth', () => ({
-  useAuth: () => ({ me: { id: 1 }, has: () => false }),
+  useAuth: () => ({ me: { id: 1 }, can: () => false }),
 }));
 
 const mockApiData: Record<string, unknown> = {

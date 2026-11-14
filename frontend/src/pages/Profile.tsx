@@ -5,7 +5,7 @@ import { del, post, put, useApi } from '../api';
 import { useAuth } from '../auth';
 import { DisplayPreferences } from '../components/AppChrome';
 import { Button, Card, ErrorBox, Field, FileInput, Modal, Notice, PageHeader, Pill, useAction, useConfirm } from '../components/ui';
-import { fmtAgo, ROLE_LABEL, useFormatT } from '../format';
+import { fmtAgo, roleLabel, useFormatT } from '../format';
 import { passkeySupported, registerPasskey } from '../webauthn';
 import { useTranslation } from 'react-i18next';
 
@@ -23,7 +23,7 @@ export default function Profile() {
   const { t } = useTranslation('profile');
   const ft = useFormatT();
   const confirm = useConfirm();
-  const { me, refresh, has } = useAuth();
+  const { me, refresh, can } = useAuth();
   const nav = useNavigate();
   const passkeys = useApi<{ id: number; label: string; created_at: string; last_used: string | null }[]>('/auth/passkeys');
   const [f, setF] = useState({ name: me?.name ?? '', phone: me?.phone ?? '', photo: null as number | null, optOut: me?.badges_opt_out ?? false });
@@ -159,7 +159,7 @@ export default function Profile() {
               <Pill tone={me.status === 'pending' ? 'warning' : 'success'}>
                 {me.status === 'pending' ? t('pending') : t('member')}
               </Pill>
-              {me.roles.map((r) => <Pill key={r} tone="primary">{ft(ROLE_LABEL[r])}</Pill>)}
+              {me.roles.map((r) => <Pill key={r} tone="primary">{roleLabel(r, ft, me.role_names)}</Pill>)}
               {me.groups.map((g) => <Pill key={g.id}>{g.name}</Pill>)}
             </div>
           </div>
@@ -170,14 +170,15 @@ export default function Profile() {
             <div className="stack-sm hide-tablet-up">
               <div className="bold small">{t('roles')}</div>
               <nav className="list profile-links" aria-label={t('roles')}>
-                <ProfileLink to="/costs">{t('myCosts')}</ProfileLink>
-                <ProfileLink to="/reimbursements">{t('myReimb')}</ProfileLink>
-                <ProfileLink to="/report">{t('myReport')}</ProfileLink>
-                <ProfileLink to="/help">{t('myHelp')}</ProfileLink>
-                {has('leader') && <ProfileLink to="/settlements">{t('settlements')}</ProfileLink>}
-                {me.mfa_ok && (has('transport') || has('admin')) && <ProfileLink to="/admin">{t('dashboard')}</ProfileLink>}
-                {me.mfa_ok && (has('transport') || has('finance')) && <ProfileLink to="/admin/reimbursements">{t('reimbReview')}</ProfileLink>}
-                {me.mfa_ok && has('admin') && <ProfileLink to="/admin/members">{t('members')}</ProfileLink>}
+                {can('costs') && <ProfileLink to="/costs">{t('myCosts')}</ProfileLink>}
+                {can('reimbursements') && <ProfileLink to="/reimbursements">{t('myReimb')}</ProfileLink>}
+                {can('report') && <ProfileLink to="/report">{t('myReport')}</ProfileLink>}
+                {can('help') && <ProfileLink to="/help">{t('myHelp')}</ProfileLink>}
+                {(can('settlements') || can('admin_bills')) && <ProfileLink to="/settlements">{t('settlements')}</ProfileLink>}
+                {can('admin_dashboard') && <ProfileLink to="/admin">{t('dashboard')}</ProfileLink>}
+                {(can('admin_reimb_review') || can('admin_reimb_pay')) && <ProfileLink to="/admin/reimbursements">{t('reimbReview')}</ProfileLink>}
+                {(can('admin_members') || can('admin_invites') || can('admin_recovery')) && <ProfileLink to="/admin/members">{t('members')}</ProfileLink>}
+                {can('admin_roles') && <ProfileLink to="/admin/roles">{t('rolesPage')}</ProfileLink>}
               </nav>
               <div className="divider" />
             </div>

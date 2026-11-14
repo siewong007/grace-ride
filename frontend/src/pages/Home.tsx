@@ -51,13 +51,14 @@ function Section({ title, more, children }: { title: ReactNode; more?: { to: str
 export default function Home() {
   const { t } = useTranslation(['home', 'events']);
   const ft = useFormatT();
-  const { me, has, isStaff } = useAuth();
-  const rides = useApi<Ride[]>('/rides', 30000);
-  const events = useApi<EventItem[]>('/events');
-  const shares = useApi<Share[]>('/me/shares');
+  const { me, can } = useAuth();
+  // Each block loads only when the member may open the page it belongs to.
+  const rides = useApi<Ride[]>(can('rides') ? '/rides' : null, 30000);
+  const events = useApi<EventItem[]>(can('events') ? '/events' : null);
+  const shares = useApi<Share[]>(can('costs') ? '/me/shares' : null);
   const ann = useApi<Announcement[]>('/announcements');
   const today = todayStr();
-  const driving = useApi<Ride[]>(has('driver') ? `/driver/schedule?from=${today}&to=${today}` : null);
+  const driving = useApi<Ride[]>(can('drive') ? `/driver/schedule?from=${today}&to=${today}` : null);
 
   const next = rides.data?.[0];
   const otherRides = (rides.data ?? []).slice(next ? 1 : 0, 4);
@@ -74,10 +75,12 @@ export default function Home() {
             <p className="muted">{formattedToday}</p>
           </div>
           <div className="btn-row page-head-actions">
-            <Button variant="primary" to="/rides/new" icon={<CalendarPlus size={20} />}>
-              {t('signupRide')}
-            </Button>
-            {isStaff && <Link className="btn hide-mobile" to="/admin">{t('dashboard')}</Link>}
+            {can('rides', 'create') && (
+              <Button variant="primary" to="/rides/new" icon={<CalendarPlus size={20} />}>
+                {t('signupRide')}
+              </Button>
+            )}
+            {can('admin_dashboard') && <Link className="btn hide-mobile" to="/admin">{t('dashboard')}</Link>}
           </div>
         </div>
 
@@ -91,7 +94,7 @@ export default function Home() {
         )}
 
         {/* Today's driving (drivers only) */}
-        {has('driver') && (
+        {can('drive') && (
           <Section title={t('driveSchedule')} more={{ to: '/drive', label: t('all') }}>
             {driving.loading ? (
               <ListSkeleton count={2} />

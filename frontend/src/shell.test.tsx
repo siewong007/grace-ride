@@ -30,8 +30,8 @@ const mockMe = {
 vi.mock('./auth', () => ({
   useAuth: () => ({
     me: mockMe,
-    has: (role: string) => role === 'member',
-    isStaff: false,
+    can: (page: string, act = 'view') =>
+      ['rides', 'costs', 'reimbursements', 'help', 'report'].includes(page) || (page === 'events' && act === 'view'),
     refresh: vi.fn(),
   }),
 }));

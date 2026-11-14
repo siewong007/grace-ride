@@ -180,8 +180,8 @@ const mockApiMap: Record<string, unknown> = {
 vi.mock('./auth', () => ({
   useAuth: () => ({
     me: { id: 1, name: 'Admin Paul', email: 'paul@grace.org', mfa_ok: true },
-    has: (role: string) => role === 'admin' || role === 'transport' || role === 'finance',
-    isStaff: true,
+    // Holds every permission, in a passkey / 2FA session.
+    can: () => true,
     refresh: vi.fn(),
   }),
 }));

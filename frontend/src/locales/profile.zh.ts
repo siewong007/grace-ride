@@ -12,6 +12,7 @@ export default {
   dashboard: '交通总览',
   reimbReview: '报销审核',
   members: '会员与邀请',
+  rolesPage: '角色与权限',
   optOut: '不参与感谢徽章',
   save: '保存',
   saved: '资料已更新',

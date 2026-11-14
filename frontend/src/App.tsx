@@ -2,7 +2,9 @@ import { ComponentType, lazy, ReactNode, Suspense, useEffect } from 'react';
 import { Navigate, Route, Routes, useLocation } from 'react-router-dom';
 import { useAuth } from './auth';
 import Layout from './components/Layout';
-import { Spinner } from './components/ui';
+import { EmptyState, Page, Spinner } from './components/ui';
+import type { Act, PageKey } from './perms';
+import { useTranslation } from 'react-i18next';
 import { hideSplash } from './splash';
 import Login from './pages/Login';
 import Home from './pages/Home';
@@ -43,9 +45,30 @@ const AdminAnnouncements = lazy(() => import('./pages/admin/Announcements'));
 const AdminAudit = lazy(() => import('./pages/admin/Audit'));
 const AdminReports = lazy(() => import('./pages/admin/Reports'));
 const PlanTransport = lazy(() => import('./pages/admin/PlanTransport'));
+const AdminRoles = lazy(() => import('./pages/admin/Roles'));
 
 /** Wrap a lazily-loaded page so only the content area shows a spinner while it loads. */
 const page = (el: ReactNode) => <Suspense fallback={<div className="page-loading"><Spinner /></div>}>{el}</Suspense>;
+
+type Need = PageKey | [PageKey, Act];
+
+/** Show the page only to members who hold one of the listed permissions. The API
+ *  enforces the same rule; this saves a member from opening a page that can't load. */
+function Gate({ any, children }: { any: Need[]; children: ReactNode }) {
+  const { me, can } = useAuth();
+  const { t } = useTranslation();
+  const allowed = any.some((n) => (typeof n === 'string' ? can(n) : can(n[0], n[1])));
+  if (allowed) return <>{children}</>;
+  // Staff permissions stay off until the member signs in with a passkey or 2FA.
+  const needsMfa = !!me?.privileged && !me.mfa_ok;
+  return (
+    <Page>
+      <EmptyState title={t('noAccess.title')} description={needsMfa ? t('noAccess.mfa') : t('noAccess.body')} />
+    </Page>
+  );
+}
+
+const gated = (el: ReactNode, ...any: Need[]) => page(<Gate any={any}>{el}</Gate>);
 
 function RequireAuth({ children }: { children: JSX.Element }) {
   const { me, loading } = useAuth();
@@ -69,38 +92,39 @@ export default function App() {
       <Route path="/invite/:token" element={page(<Invite />)} />
       <Route element={<RequireAuth><Layout /></RequireAuth>}>
         <Route index element={<Home />} />
-        <Route path="rides" element={page(<Rides />)} />
-        <Route path="rides/new" element={page(<RideNew />)} />
+        <Route path="rides" element={gated(<Rides />, 'rides')} />
+        <Route path="rides/new" element={gated(<RideNew />, ['rides', 'create'])} />
         <Route path="rides/:id" element={page(<RideDetail />)} />
         <Route path="drive" element={page(<Drive />)} />
-        <Route path="events" element={page(<Events />)} />
-        <Route path="events/new" element={page(<EventForm />)} />
-        <Route path="events/:id" element={page(<EventDetail />)} />
-        <Route path="events/:id/edit" element={page(<EventForm />)} />
-        <Route path="events/:eventId/settle" element={page(<SettlementForm />)} />
-        <Route path="settlements" element={page(<Settlements />)} />
+        <Route path="events" element={gated(<Events />, 'events')} />
+        <Route path="events/new" element={gated(<EventForm />, ['events', 'create'])} />
+        <Route path="events/:id" element={gated(<EventDetail />, 'events', 'admin_events')} />
+        <Route path="events/:id/edit" element={gated(<EventForm />, ['events', 'update'], ['admin_events', 'update'])} />
+        <Route path="events/:eventId/settle" element={gated(<SettlementForm />, ['settlements', 'create'])} />
+        <Route path="settlements" element={gated(<Settlements />, 'settlements', 'admin_bills')} />
         <Route path="settlements/:id" element={page(<SettlementDetail />)} />
-        <Route path="settlements/:id/edit" element={page(<SettlementForm />)} />
-        <Route path="costs" element={page(<Costs />)} />
-        <Route path="reimbursements" element={page(<Reimbursements />)} />
-        <Route path="reimbursements/new" element={page(<ReimbursementForm />)} />
+        <Route path="settlements/:id/edit" element={gated(<SettlementForm />, ['settlements', 'update'])} />
+        <Route path="costs" element={gated(<Costs />, 'costs')} />
+        <Route path="reimbursements" element={gated(<Reimbursements />, 'reimbursements')} />
+        <Route path="reimbursements/new" element={gated(<ReimbursementForm />, ['reimbursements', 'create'])} />
         <Route path="reimbursements/:id" element={page(<ReimbursementDetail />)} />
-        <Route path="help" element={page(<Help />)} />
+        <Route path="help" element={gated(<Help />, 'help', 'admin_help')} />
         <Route path="help/:id" element={page(<HelpDetail />)} />
-        <Route path="report" element={page(<Report />)} />
+        <Route path="report" element={gated(<Report />, 'report')} />
         <Route path="notifications" element={page(<Notifications />)} />
         <Route path="me" element={page(<Profile />)} />
         <Route path="admin" element={page(<AdminDashboard />)} />
-        <Route path="admin/rides" element={page(<AdminRides />)} />
-        <Route path="admin/rides/:id" element={page(<RideDetail />)} />
-        <Route path="admin/live" element={page(<AdminLive />)} />
+        <Route path="admin/rides" element={gated(<AdminRides />, 'admin_rides')} />
+        <Route path="admin/rides/:id" element={gated(<RideDetail />, 'admin_rides')} />
+        <Route path="admin/live" element={gated(<AdminLive />, 'admin_live')} />
         <Route path="admin/members" element={page(<AdminMembers />)} />
         <Route path="admin/settings" element={page(<AdminSettings />)} />
         <Route path="admin/reimbursements" element={page(<AdminReimbursements />)} />
-        <Route path="admin/announcements" element={page(<AdminAnnouncements />)} />
-        <Route path="admin/audit" element={page(<AdminAudit />)} />
-        <Route path="admin/reports" element={page(<AdminReports />)} />
-        <Route path="admin/events/:id/plan" element={page(<PlanTransport />)} />
+        <Route path="admin/announcements" element={gated(<AdminAnnouncements />, 'admin_announcements')} />
+        <Route path="admin/audit" element={gated(<AdminAudit />, 'admin_audit')} />
+        <Route path="admin/reports" element={gated(<AdminReports />, 'admin_reports')} />
+        <Route path="admin/roles" element={gated(<AdminRoles />, 'admin_roles')} />
+        <Route path="admin/events/:id/plan" element={gated(<PlanTransport />, 'admin_plan')} />
       </Route>
       <Route path="*" element={page(<NotFound />)} />
     </Routes>

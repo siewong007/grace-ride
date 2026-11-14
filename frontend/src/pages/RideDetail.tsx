@@ -19,6 +19,7 @@ import {
   Phone,
 } from 'lucide-react';
 import { del, post, useApi } from '../api';
+import { useAuth } from '../auth';
 import Chat from '../components/Chat';
 import LiveMap, { MapPoint } from '../components/LiveMap';
 import { Ride } from '../components/RideCard';
@@ -769,6 +770,10 @@ interface DriverOpt {
 
 function StaffActions({ ride: r, reload }: { ride: Ride; reload: () => void }) {
   const { t } = useTranslation('rideDetail');
+  const { can } = useAuth();
+  // Staff who may only view rides get the summary without the buttons.
+  const edit = can('admin_rides', 'update');
+  const cancel = can('admin_rides', 'delete');
   const confirm = useConfirm();
   const { busy, error, run } = useAction();
   const [modal, setModal] = useState<'reassign' | 'return' | 'alt' | 'cancel' | null>(null);
@@ -801,18 +806,18 @@ function StaffActions({ ride: r, reload }: { ride: Ride; reload: () => void }) {
       )}
       {r.assistance && <Notice tone="info">{t('assistanceLabel', { assistance: r.assistance })}</Notice>}
       <div className="btn-row">
-        {r.status === 'pending_approval' && (
+        {edit && r.status === 'pending_approval' && (
           <Button variant="primary" disabled={busy} onClick={() => run(() => post(`/rides/${r.id}/approve`).then(reload), t('respondedAccepted'))}>
             {t('approve')}
           </Button>
         )}
-        {open && <Button variant="secondary" onClick={() => setModal('reassign')}>{t('reassign')}</Button>}
-        {['pending_approval', 'pending_passenger', 'pending_driver_confirm'].includes(r.status) && (
+        {edit && open && <Button variant="secondary" onClick={() => setModal('reassign')}>{t('reassign')}</Button>}
+        {edit && ['pending_approval', 'pending_passenger', 'pending_driver_confirm'].includes(r.status) && (
           <Button variant="secondary" onClick={() => setModal('return')}>{t('retur')}</Button>
         )}
-        {open && <Button variant="secondary" onClick={() => setModal('alt')}>{t('altTransport')}</Button>}
-        {open && <Button variant="danger" onClick={() => setModal('cancel')}>{t('cancel')}</Button>}
-        {r.status === 'in_progress' && (
+        {edit && open && <Button variant="secondary" onClick={() => setModal('alt')}>{t('altTransport')}</Button>}
+        {cancel && open && <Button variant="danger" onClick={() => setModal('cancel')}>{t('cancel')}</Button>}
+        {edit && r.status === 'in_progress' && (
           <Button variant="danger" disabled={busy} onClick={handleStaffNoShow}>{t('noShow')}</Button>
         )}
       </div>

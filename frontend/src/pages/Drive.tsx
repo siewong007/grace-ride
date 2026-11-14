@@ -60,10 +60,10 @@ interface Profile {
 
 export default function Drive() {
   const { t } = useTranslation('drive');
-  const { has } = useAuth();
+  const { can } = useAuth();
   const [tab, setTab] = useState<'schedule' | 'requests' | 'settings'>('schedule');
 
-  if (!has('driver')) {
+  if (!can('drive')) {
     return (
       <Page>
         <EmptyState title={t('notDriverTitle')} description={t('notDriver')} />

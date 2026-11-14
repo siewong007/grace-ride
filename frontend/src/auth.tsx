@@ -1,7 +1,6 @@
-import { createContext, ReactNode, useCallback, useContext, useEffect, useState } from 'react';
+import { createContext, ReactNode, useCallback, useContext, useEffect, useMemo, useState } from 'react';
 import { api, subscribe } from './api';
-
-export type Role = 'admin' | 'transport' | 'finance' | 'leader' | 'driver';
+import type { Act, Can, PageKey } from './perms';
 
 export interface Me {
   id: number;
@@ -9,7 +8,11 @@ export interface Me {
   email: string;
   phone: string;
   photo_file_id: number | null;
-  roles: Role[];
+  /** Role keys. Built-in ones are named by the app, custom ones by `role_names`. */
+  roles: string[];
+  role_names: Record<string, string>;
+  /** What this session may do, as '<page>.<action>'. Staff permissions are absent until `mfa_ok`. */
+  permissions: string[];
   status: 'active' | 'pending' | 'disabled';
   terms_accepted: boolean;
   mfa_ok: boolean;
@@ -27,8 +30,8 @@ interface AuthCtx {
   me: Me | null;
   loading: boolean;
   refresh: () => Promise<void>;
-  has: (r: Role) => boolean;
-  isStaff: boolean;
+  /** May the member do `act` (default: view) on `page`? */
+  can: Can;
 }
 
 const Ctx = createContext<AuthCtx>(null as unknown as AuthCtx);
@@ -68,12 +71,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     });
   }, [meId, refresh]);
 
-  // Mirrors the server: admins also act as transport lead and event lead (not finance / driver).
-  const has = (r: Role) =>
-    !!me && (me.roles.includes(r) || ((r === 'transport' || r === 'leader') && me.roles.includes('admin')));
-  const isStaff = !!me && me.mfa_ok && (has('transport') || has('admin'));
+  const granted = useMemo(() => new Set(me?.permissions ?? []), [me?.permissions]);
+  const can = useCallback((page: PageKey, act: Act = 'view') => granted.has(`${page}.${act}`), [granted]);
 
-  return <Ctx.Provider value={{ me, loading, refresh, has, isStaff }}>{children}</Ctx.Provider>;
+  return <Ctx.Provider value={{ me, loading, refresh, can }}>{children}</Ctx.Provider>;
 }
 
 export const useAuth = () => useContext(Ctx);

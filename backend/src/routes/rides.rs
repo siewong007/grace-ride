@@ -13,10 +13,10 @@ use serde_json::{json, Value};
 
 use crate::auth::CurrentUser;
 use crate::error::{bad, conflict, forbidden, not_found, AppResult};
+use crate::perms::{self, Act, Page, Perm};
 use crate::state::AppState;
 use crate::util::{
-    audit, norm_dt, notify, notify_roles, notify_trip, now, require_any, system_message, ErrorKey,
-    Lang,
+    audit, norm_dt, notify, notify_perm, notify_trip, now, require, system_message, ErrorKey, Lang,
 };
 
 pub fn router() -> Router<AppState> {
@@ -129,7 +129,7 @@ pub async fn load_ride(st: &AppState, lang: Lang, id: i64) -> AppResult<RideRow>
 pub fn ride_json(r: &RideRow, u: &CurrentUser) -> Value {
     let is_passenger = r.passenger_id == u.id;
     let is_driver = r.driver_id == Some(u.id);
-    let staff = u.is_staff();
+    let staff = u.can(Page::AdminRides, Act::View);
     let approved = matches!(r.status.as_str(), "confirmed" | "in_progress");
     let show_address = is_passenger || staff || (is_driver && approved);
     let driver = r.driver_id.map(|id| {
@@ -181,8 +181,8 @@ pub fn ride_json(r: &RideRow, u: &CurrentUser) -> Value {
 fn can_view(r: &RideRow, u: &CurrentUser) -> bool {
     r.passenger_id == u.id
         || r.driver_id == Some(u.id)
-        || u.is_staff()
-        || (u.has("driver") && r.status == "pending_driver")
+        || u.can(Page::AdminRides, Act::View)
+        || (u.can(Page::Drive, Act::View) && r.status == "pending_driver")
 }
 
 async fn set_status(st: &AppState, id: i64, from: &[&str], to: &str, lang: Lang) -> AppResult<()> {
@@ -251,6 +251,7 @@ async fn create_ride(
     u: CurrentUser,
     Json(req): Json<CreateRide>,
 ) -> AppResult<Json<Value>> {
+    require(&u, Page::Rides, Act::Create)?;
     let at = norm_dt(&req.pickup_at).ok_or_else(|| bad(u.lang, ErrorKey::InvalidPickupTime))?;
     if at.as_str() < &now()[..16] {
         return Err(bad(u.lang, ErrorKey::PickupTimeInPast));
@@ -324,6 +325,7 @@ async fn my_rides(
     u: CurrentUser,
     Query(q): Query<MineQuery>,
 ) -> AppResult<Json<Value>> {
+    require(&u, Page::Rides, Act::View)?;
     let past = q.scope.as_deref() == Some("past");
     let sql = if past {
         format!("{RIDE_SELECT} WHERE r.passenger_id=$1 AND r.status IN ('completed','cancelled','no_show','alt_transport') ORDER BY r.pickup_at DESC LIMIT 50")
@@ -350,7 +352,7 @@ async fn get_ride(
         return Err(forbidden(u.lang, ErrorKey::CannotViewRide));
     }
     let mut v = ride_json(&r, &u);
-    if u.is_staff() {
+    if u.can(Page::AdminRides, Act::View) {
         if let Some(d) = r.driver_id {
             let (load, cap) = driver_load(&st, d, &r.pickup_at, Some(r.id)).await?;
             v["driver_load"] = json!({ "seats_used": load, "capacity": cap });
@@ -385,7 +387,8 @@ async fn cancel_ride(
     body: Option<Json<ReasonReq>>,
 ) -> AppResult<Json<Value>> {
     let r = load_ride(&st, u.lang, id).await?;
-    if r.passenger_id != u.id && !u.is_staff() {
+    let own = r.passenger_id == u.id && u.can(Page::Rides, Act::Delete);
+    if !own && !u.can(Page::AdminRides, Act::Delete) {
         return Err(forbidden(u.lang, ErrorKey::OnlyPassengerOrStaffCanCancel));
     }
     let reason = body.and_then(|b| b.0.reason).unwrap_or_default();
@@ -438,9 +441,10 @@ async fn cancel_ride(
     }
     if r.status == "confirmed" {
         let line = format!("{} · {}", r.p_name, r.pickup_at.replace('T', " "));
-        notify_roles(
+        notify_perm(
             &st.db,
-            &["transport"],
+            Page::AdminRides,
+            Act::Update,
             ("已确认的接送被取消", "A confirmed ride was cancelled"),
             (&line, &line),
             &format!("/admin/rides/{id}"),
@@ -467,6 +471,7 @@ async fn passenger_respond(
     if r.passenger_id != u.id {
         return Err(forbidden(u.lang, ErrorKey::OnlyPassengerCanRespond));
     }
+    require(&u, Page::Rides, Act::Update)?;
     if req.accept {
         set_status(&st, id, &["pending_passenger"], "pending_approval", u.lang).await?;
         let line = format!(
@@ -475,9 +480,10 @@ async fn passenger_respond(
             r.d_name.clone().unwrap_or_default(),
             r.pickup_at.replace('T', " ")
         );
-        notify_roles(
+        notify_perm(
             &st.db,
-            &["transport"],
+            Page::AdminRides,
+            Act::Update,
             ("接送待审批", "Ride awaiting approval"),
             (&line, &line),
             &format!("/admin/rides/{id}"),
@@ -579,7 +585,7 @@ async fn driver_claim(
     u: CurrentUser,
     Path(id): Path<i64>,
 ) -> AppResult<Json<Value>> {
-    if !u.has("driver") {
+    if !u.can(Page::Drive, Act::Create) {
         return Err(forbidden(u.lang, ErrorKey::OnlyVolunteerDriversCanChoose));
     }
     let r = load_ride(&st, u.lang, id).await?;
@@ -641,6 +647,7 @@ async fn driver_withdraw(
     if r.driver_id != Some(u.id) {
         return Err(forbidden(u.lang, ErrorKey::NotRideDriver));
     }
+    require(&u, Page::Drive, Act::Delete)?;
     let was_confirmed = matches!(r.status.as_str(), "confirmed" | "pending_driver_confirm");
     set_status(
         &st,
@@ -679,9 +686,10 @@ async fn driver_withdraw(
         r.pickup_at.replace('T', " "),
         reason
     );
-    notify_roles(
+    notify_perm(
         &st.db,
-        &["transport"],
+        Page::AdminRides,
+        Act::Update,
         ("需要重新安排司机", "Driver needs reassignment"),
         (&line, &line),
         &format!("/admin/rides/{id}"),
@@ -980,7 +988,7 @@ async fn no_show(
     Path(id): Path<i64>,
 ) -> AppResult<Json<Value>> {
     let r = load_ride(&st, u.lang, id).await?;
-    if r.driver_id != Some(u.id) && !u.is_staff() {
+    if r.driver_id != Some(u.id) && !u.can(Page::AdminRides, Act::Update) {
         return Err(forbidden(u.lang, ErrorKey::NotRideDriver));
     }
     set_status(&st, id, &["in_progress", "confirmed"], "no_show", u.lang).await?;
@@ -1005,9 +1013,10 @@ async fn no_show(
     )
     .await;
     let line = format!("{} · {}", r.p_name, r.pickup_at.replace('T', " "));
-    notify_roles(
+    notify_perm(
         &st.db,
-        &["transport"],
+        Page::AdminRides,
+        Act::Update,
         ("乘客未到场", "Passenger no-show"),
         (&line, &line),
         &format!("/admin/rides/{id}"),
@@ -1114,7 +1123,7 @@ async fn driver_requests(
     u: CurrentUser,
     Query(q): Query<RequestsQuery>,
 ) -> AppResult<Json<Value>> {
-    if !u.has("driver") {
+    if !u.can(Page::Drive, Act::View) {
         return Err(forbidden(u.lang, ErrorKey::OnlyVolunteerDriversCanView));
     }
     let mut conds = vec![
@@ -1202,11 +1211,12 @@ async fn get_driver_profile(State(st): State<AppState>, u: CurrentUser) -> AppRe
         .bind(u.id)
         .fetch_all(&st.db)
         .await?;
-    let v: Option<(String, String, String, i64, String)> =
-        sqlx::query_as("SELECT model, color, plate, seats, vehicle_type FROM vehicles WHERE user_id=$1")
-            .bind(u.id)
-            .fetch_optional(&st.db)
-            .await?;
+    let v: Option<(String, String, String, i64, String)> = sqlx::query_as(
+        "SELECT model, color, plate, seats, vehicle_type FROM vehicles WHERE user_id=$1",
+    )
+    .bind(u.id)
+    .fetch_optional(&st.db)
+    .await?;
     Ok(Json(json!({
         "carpool_enabled": carpool == 1,
         "spare_seats": spare,
@@ -1242,7 +1252,7 @@ async fn put_driver_profile(
     u: CurrentUser,
     Json(req): Json<DriverProfileIn>,
 ) -> AppResult<Json<Value>> {
-    if !u.has("driver") {
+    if !u.can(Page::Drive, Act::Update) {
         return Err(forbidden(u.lang, ErrorKey::OnlyVolunteerDriversCanSet));
     }
     if !(1..=7).contains(&req.spare_seats) {
@@ -1348,7 +1358,7 @@ async fn ride_location(
     Path(id): Path<i64>,
 ) -> AppResult<Json<Value>> {
     let r = load_ride(&st, u.lang, id).await?;
-    if r.passenger_id != u.id && r.driver_id != Some(u.id) && !u.is_staff() {
+    if r.passenger_id != u.id && r.driver_id != Some(u.id) && !u.can(Page::AdminRides, Act::View) {
         return Err(forbidden(u.lang, ErrorKey::CannotViewLocation));
     }
     if r.status != "in_progress" {
@@ -1380,7 +1390,7 @@ async fn ride_location(
     // Distance and ETA to this passenger (or to the destination once aboard).
     if let (true, Some(driver)) = (out["sharing"] == true, r.driver_id) {
         let trip = r.trip_id.unwrap_or(r.id);
-        let full_view = r.driver_id == Some(u.id) || u.is_staff();
+        let full_view = r.driver_id == Some(u.id) || u.can(Page::AdminRides, Act::View);
         if let Ok(Some(route)) = crate::routing::driver_route(&st, driver, Some(trip)).await {
             if let Some(eta) =
                 crate::routing::ride_eta(&route, id, r.picked_up_at.is_some(), full_view)
@@ -1459,7 +1469,7 @@ async fn chat_access(st: &AppState, u: &CurrentUser, ride_id: i64) -> AppResult<
     let is_member = members
         .iter()
         .any(|(p, d, s)| (*p == u.id && s != "cancelled") || *d == Some(u.id));
-    if !is_member && !u.is_staff() {
+    if !is_member && !u.can(Page::AdminRides, Act::View) {
         return Err(forbidden(u.lang, ErrorKey::OnlyTripMembersCanViewChat));
     }
     let open = members
@@ -1541,7 +1551,7 @@ async fn staff_approve(
     u: CurrentUser,
     Path(id): Path<i64>,
 ) -> AppResult<Json<Value>> {
-    require_any(&u, &["transport"])?;
+    require(&u, Page::AdminRides, Act::Update)?;
     let r = load_ride(&st, u.lang, id).await?;
     let d = r
         .driver_id
@@ -1570,7 +1580,7 @@ async fn staff_return(
     Path(id): Path<i64>,
     Json(req): Json<ReasonReq>,
 ) -> AppResult<Json<Value>> {
-    require_any(&u, &["transport"])?;
+    require(&u, Page::AdminRides, Act::Update)?;
     let r = load_ride(&st, u.lang, id).await?;
     set_status(
         &st,
@@ -1627,15 +1637,17 @@ async fn staff_reassign(
     Path(id): Path<i64>,
     Json(req): Json<ReassignReq>,
 ) -> AppResult<Json<Value>> {
-    require_any(&u, &["transport"])?;
+    require(&u, Page::AdminRides, Act::Update)?;
     let r = load_ride(&st, u.lang, id).await?;
-    let (roles,): (String,) =
-        sqlx::query_as("SELECT roles FROM users WHERE id=$1 AND status='active'")
-            .bind(req.driver_id)
-            .fetch_optional(&st.db)
-            .await?
-            .ok_or_else(|| bad(u.lang, ErrorKey::DriverNotFound))?;
-    if !roles.split(',').any(|r| r == "driver") {
+    let (can_drive,): (bool,) = sqlx::query_as(&format!(
+        "SELECT {} FROM users u WHERE u.id=$1 AND u.status='active'",
+        perms::sql_holds("u", Perm(Page::Drive, Act::Create))
+    ))
+    .bind(req.driver_id)
+    .fetch_optional(&st.db)
+    .await?
+    .ok_or_else(|| bad(u.lang, ErrorKey::DriverNotFound))?;
+    if !can_drive {
         return Err(bad(u.lang, ErrorKey::MemberNotVolunteerDriver));
     }
     if req.driver_id == r.passenger_id {
@@ -1732,7 +1744,7 @@ async fn staff_alt_transport(
     Path(id): Path<i64>,
     Json(req): Json<ReasonReq>,
 ) -> AppResult<Json<Value>> {
-    require_any(&u, &["transport"])?;
+    require(&u, Page::AdminRides, Act::Update)?;
     let r = load_ride(&st, u.lang, id).await?;
     set_status(
         &st,
@@ -1794,7 +1806,7 @@ async fn admin_rides(
     u: CurrentUser,
     Query(q): Query<AdminRidesQuery>,
 ) -> AppResult<Json<Value>> {
-    require_any(&u, &["transport"])?;
+    require(&u, Page::AdminRides, Act::View)?;
     let mut conds = vec!["1=1".to_string()];
     let mut n = 1;
     if q.date.is_some() {
@@ -1828,7 +1840,7 @@ async fn admin_rides(
 }
 
 async fn admin_live(State(st): State<AppState>, u: CurrentUser) -> AppResult<Json<Value>> {
-    require_any(&u, &["transport"])?;
+    require(&u, Page::AdminLive, Act::View)?;
     let rows: Vec<(i64, String, Option<f64>, Option<f64>, Option<String>, i64, String)> = sqlx::query_as(
         "SELECT d.id, d.name, l.lat, l.lng, l.updated_at, COUNT(r.id), MIN(r.pickup_at)
          FROM rides r JOIN users d ON d.id = r.driver_id LEFT JOIN driver_locations l ON l.driver_id = d.id
@@ -1849,19 +1861,19 @@ async fn admin_drivers(
     u: CurrentUser,
     Query(q): Query<AfterQuery>,
 ) -> AppResult<Json<Value>> {
-    require_any(&u, &["transport"])?;
+    require(&u, Page::AdminRides, Act::View)?;
     let _ = q;
-    let rows: Vec<(i64, String, String, i64, i64, Option<String>, Option<String>, Option<i64>, Option<String>)> = sqlx::query_as(
-        "SELECT u.id, u.name, u.roles, u.carpool_enabled, u.spare_seats, v.model, v.plate, v.seats,
+    let rows: Vec<(i64, String, i64, i64, Option<String>, Option<String>, Option<i64>, Option<String>)> = sqlx::query_as(&format!(
+        "SELECT u.id, u.name, u.carpool_enabled, u.spare_seats, v.model, v.plate, v.seats,
                 (SELECT string_agg(a.name, ', ') FROM driver_areas da JOIN areas a ON a.id = da.area_id WHERE da.user_id = u.id)
-         FROM users u LEFT JOIN vehicles v ON v.user_id = u.id WHERE u.status='active' ORDER BY u.name",
-    )
+         FROM users u LEFT JOIN vehicles v ON v.user_id = u.id WHERE {} ORDER BY u.name",
+        perms::sql_holds("u", Perm(Page::Drive, Act::Create))
+    ))
     .fetch_all(&st.db)
     .await?;
     Ok(Json(json!(rows
         .into_iter()
-        .filter(|r| r.2.split(',').any(|x| x == "driver"))
-        .map(|(id, name, _, carpool, spare, model, plate, seats, areas)| json!({
+        .map(|(id, name, carpool, spare, model, plate, seats, areas)| json!({
             "id": id, "name": name, "carpool_enabled": carpool == 1, "spare_seats": spare,
             "vehicle": model.map(|m| json!({"model": m, "plate": plate, "seats": seats})), "areas": areas.unwrap_or_default(),
         }))

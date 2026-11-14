@@ -44,7 +44,8 @@ backend/
   src/main.rs       config, logging, graceful shutdown, `healthcheck` subcommand
   src/state.rs      Config (validated at startup) + AppState
   src/security.rs   headers, Origin guard, rate limiter, client IP
-  src/auth.rs       session extractor (hashed tokens), role model
+  src/auth.rs       session extractor (hashed tokens); loads the member's permissions
+  src/perms.rs      permission catalog (page × view/create/update/delete), built-in role defaults
   src/jobs.rs       reminders, unmatched-ride escalation, retention
   src/routes/*.rs   one module per domain
   migrations/       0001_init.sql ONLY — single consolidated schema (see note below)

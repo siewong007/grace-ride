@@ -83,12 +83,19 @@ export const HELP_STATUS: Record<string, StatusMap> = {
 };
 
 export const ROLE_LABEL: Record<string, string> = {
+  member: 'format:role.member',
   admin: 'format:role.admin',
   transport: 'format:role.transport',
   finance: 'format:role.finance',
   leader: 'format:role.leader',
   driver: 'format:role.driver',
 };
+
+/** Built-in roles are named by the app in the reader's language; custom roles carry
+ *  the name their administrator typed (`names`: role key → name). */
+export function roleLabel(key: string, ft: (k: string) => string, names?: Record<string, string>): string {
+  return ROLE_LABEL[key] ? ft(ROLE_LABEL[key]) : names?.[key] || key;
+}
 
 const WEEKDAY = ['format:weekday.0', 'format:weekday.1', 'format:weekday.2', 'format:weekday.3', 'format:weekday.4', 'format:weekday.5', 'format:weekday.6'];
 

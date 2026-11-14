@@ -14,8 +14,8 @@ export default {
     "TOO_MANY_REQUESTS": "请求过于频繁，请稍后再试"
   },
   "admin": {
-    "CANNOT_DISABLE_SELF": "不能停用自己或移除自己的管理员权限",
-    "CANNOT_GRANT_SELF_FINANCE": "不能自行授予财务职务，请由另一位管理员操作",
+    "CANNOT_DISABLE_SELF": "不能停用自己或移除自己管理角色的权限",
+    "CANNOT_GRANT_SELF_FINANCE": "不能自行授予财务权限，请由另一位管理员操作",
     "SECOND_ADMIN_REQUIRED": "恢复管理职务账号需要另一位管理员确认",
     "CANNOT_DELETE_ALL_MEMBERS_GROUP": "不能删除“全体会员”群体",
     "GROUP_NAME_REQUIRED": "请填写群体名称",
@@ -24,7 +24,14 @@ export default {
     "AREA_EXISTS": "地区已存在",
     "REQUEST_ALREADY_HANDLED": "此申请已处理",
     "EMAIL_INVALID": "电邮格式不正确",
-    "EMAIL_ALREADY_MEMBER": "此电邮已是会员"
+    "EMAIL_ALREADY_MEMBER": "此电邮已是会员",
+    "UNKNOWN_ROLE": "所选角色已不存在，请刷新后重试",
+    "ROLE_NAME_REQUIRED": "请填写角色名称（最多 40 个字）",
+    "ROLE_NAME_EXISTS": "角色名称已存在",
+    "INVALID_PERMISSION": "权限项目无效，请刷新后重试",
+    "ROLE_PERMISSION_LOCKED": "管理员角色必须保留成员与角色管理权限",
+    "SYSTEM_ROLE_CANNOT_BE_DELETED": "内置角色不能删除，可改为调整其权限",
+    "CANNOT_REMOVE_OWN_ROLE_ACCESS": "不能移除自己管理角色的权限"
   },
   "auth": {
     "INVALID_CREDENTIALS": "电邮或密码不正确",

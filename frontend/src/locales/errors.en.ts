@@ -14,8 +14,8 @@ export default {
     "TOO_MANY_REQUESTS": "Too many requests; please try again later"
   },
   "admin": {
-    "CANNOT_DISABLE_SELF": "You cannot disable yourself or remove your own admin role",
-    "CANNOT_GRANT_SELF_FINANCE": "You cannot grant yourself the finance role; another admin must do it",
+    "CANNOT_DISABLE_SELF": "You cannot disable yourself or remove your own right to manage roles",
+    "CANNOT_GRANT_SELF_FINANCE": "You cannot grant yourself finance permissions; another admin must do it",
     "SECOND_ADMIN_REQUIRED": "Recovering a privileged account requires a second, different admin to confirm",
     "CANNOT_DELETE_ALL_MEMBERS_GROUP": "The \"All members\" group cannot be deleted",
     "GROUP_NAME_REQUIRED": "Please enter a group name",
@@ -24,7 +24,14 @@ export default {
     "AREA_EXISTS": "This area already exists",
     "REQUEST_ALREADY_HANDLED": "This request has already been handled",
     "EMAIL_INVALID": "Invalid email address",
-    "EMAIL_ALREADY_MEMBER": "This email is already a member"
+    "EMAIL_ALREADY_MEMBER": "This email is already a member",
+    "UNKNOWN_ROLE": "A selected role no longer exists; please reload and try again",
+    "ROLE_NAME_REQUIRED": "Please enter a role name (up to 40 characters)",
+    "ROLE_NAME_EXISTS": "This role name already exists",
+    "INVALID_PERMISSION": "Unknown permission; please reload and try again",
+    "ROLE_PERMISSION_LOCKED": "The admin role must keep member and role management",
+    "SYSTEM_ROLE_CANNOT_BE_DELETED": "Built-in roles cannot be deleted; change their permissions instead",
+    "CANNOT_REMOVE_OWN_ROLE_ACCESS": "You cannot remove your own right to manage roles"
   },
   "auth": {
     "INVALID_CREDENTIALS": "Incorrect email or password",

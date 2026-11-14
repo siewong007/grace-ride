@@ -87,8 +87,8 @@ const mockApiMap: Record<string, unknown> = {
 vi.mock('./auth', () => ({
   useAuth: () => ({
     me: { id: 1, name: 'Driver Alice', email: 'alice@example.org' },
-    has: (role: string) => role === 'driver',
-    isStaff: false,
+    can: (page: string, act = 'view') =>
+      ['rides', 'drive', 'costs', 'reimbursements', 'help', 'report'].includes(page) || (page === 'events' && act === 'view'),
     refresh: vi.fn(),
   }),
 }));

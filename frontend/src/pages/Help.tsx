@@ -50,7 +50,9 @@ interface TicketDetailData {
 export default function Help() {
   const { t } = useTranslation('help');
   const ft = useFormatT();
-  const { isStaff } = useAuth();
+  const { can } = useAuth();
+  // Help-desk staff see every request; members see their own.
+  const isStaff = can('admin_help');
   const [params] = useSearchParams();
   const rideId = params.get('ride');
   const [all, setAll] = useState(isStaff);

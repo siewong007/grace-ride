@@ -2,7 +2,6 @@ import { FormEvent, useEffect, useMemo, useState } from 'react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
 import { Trash2 } from 'lucide-react';
 import { del, post, put, useApi } from '../api';
-import { useAuth } from '../auth';
 import {
   Button,
   Card,
@@ -513,13 +512,12 @@ export function SettlementForm() {
 
 export function SettlementDetail() {
   const { t } = useTranslation('settlements');
-  const { has, me } = useAuth();
   const { id } = useParams();
   const { data: s, error } = useApi<Settlement>(id ? `/settlements/${id}` : null);
   if (error) return <ErrorBox error={error} />;
   if (!s) return <Spinner />;
 
-  const canEdit = s.can_manage || has('admin') || me?.id === s.created_by.id;
+  const canEdit = s.can_manage;
   const paidCents = s.shares
     .filter((x) => x.status === 'confirmed')
     .reduce((sum, x) => sum + x.amount_cents, 0);

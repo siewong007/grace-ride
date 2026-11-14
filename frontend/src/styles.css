@@ -1815,3 +1815,27 @@ main:focus { outline: none; }
 .ride-driver-actions { width: 100%; }
 .ride-driver-actions > * { flex: 1 1 0; }
 .terms-scroll .terms-title { font-size: var(--fs-lg); }
+
+/* ---------- Roles & permissions (page × action matrix) ---------- */
+.roles-layout { display: grid; gap: var(--space-4); grid-template-columns: minmax(0, 1fr); align-items: start; }
+@media (min-width: 1024px) { .roles-layout { grid-template-columns: 280px minmax(0, 1fr); } }
+.role-item { width: 100%; min-height: var(--tap); padding: var(--space-3) var(--space-2); border: 0; border-bottom: 1px solid var(--border); border-radius: var(--radius-sm); background: none; text-align: left; cursor: pointer; font: inherit; }
+.role-item:hover { background: var(--surface-2); }
+.role-item.on { background: var(--primary-soft); }
+.role-item-sub { display: block; }
+.perm-matrix th:not(:first-child), .perm-matrix td { text-align: center; width: 76px; }
+.perm-matrix input[type='checkbox'] { width: 22px; height: 22px; accent-color: var(--primary); cursor: pointer; }
+.perm-matrix input[type='checkbox']:disabled { cursor: not-allowed; }
+.perm-matrix .perm-page { white-space: normal; min-width: 220px; font-weight: 400; color: var(--text); }
+.perm-page-btn { padding: 0; border: 0; background: none; font: inherit; font-weight: 600; color: var(--text); cursor: pointer; text-align: left; }
+.perm-page-btn:disabled { cursor: default; }
+.perm-area th { background: var(--surface-2); color: var(--text); white-space: normal; text-align: left; }
+.perm-area-hint { margin-left: var(--space-2); font-weight: 400; }
+/* Phones: keep all four actions on screen instead of scrolling the matrix sideways. */
+@media (max-width: 640px) {
+  .perm-matrix { table-layout: fixed; width: 100%; }
+  .perm-matrix th:not(:first-child), .perm-matrix td { width: 46px; padding-left: 0; padding-right: 0; }
+  .perm-matrix thead th { font-size: var(--fs-xs); white-space: normal; }
+  .perm-matrix .perm-page { min-width: 0; }
+  .perm-area-hint { display: block; margin-left: 0; }
+}

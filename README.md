@@ -48,8 +48,8 @@ To reset the demo data, drop and recreate the `grace_ride_dev` database and rest
 
 | Spec (page) | Where it lives |
 |---|---|
-| 三种角色、只看相关资料 (3, 13) | Roles `admin/transport/finance/leader/driver` in `backend/src/auth.rs`. Every route projects data by viewer (`ride_json`, `reimb_json`, settlement views). |
-| 邀请制、通行密钥、2FA、账号恢复 (12, 27) | `routes/auth.rs`: invite links, WebAuthn passkeys, TOTP, admin-reviewed one-time recovery link. Privileged roles must use a passkey or 2FA (`require_any`). |
+| 三种角色、只看相关资料 (3, 13) | Editable roles made of per-page view/create/update/delete permissions (`backend/src/perms.rs`, managed at `/admin/roles`); the built-in ones are `member/admin/transport/finance/leader/driver`. Every route projects data by viewer (`ride_json`, `reimb_json`, settlement views). |
+| 邀请制、通行密钥、2FA、账号恢复 (12, 27) | `routes/auth.rs`: invite links, WebAuthn passkeys, TOTP, admin-reviewed one-time recovery link. Accounts with any staff permission must use a passkey or 2FA (`util::require`). |
 | 乘客报名 → 司机选择 → 乘客接受 → 交通组批准 (4, 16, 28, 36) | `routes/rides.rs`. The atomic claim stops two drivers taking the same request. Seat capacity and carpool rules are enforced. The address is hidden until approval. |
 | 司机地区、共乘、空余座位 (17) | Driver settings (`/drive`, 司机设置) and `driver_load` |
 | 临时变动 (8, 29) | Driver withdraw → 交通组 reassign → new driver confirms → passenger notified. Also cancel, no-show, 退回, and the 没人接单 → Grab 替代 path. |

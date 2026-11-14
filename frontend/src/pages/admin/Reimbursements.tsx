@@ -23,9 +23,9 @@ import type { Reimb } from '../Reimbursements';
 
 export default function AdminReimbursements() {
   const { t } = useTranslation('admin');
-  const { has, me } = useAuth();
-  const canReview = has('transport') && me?.mfa_ok;
-  const canPay = has('finance') && me?.mfa_ok;
+  const { can } = useAuth();
+  const canReview = can('admin_reimb_review');
+  const canPay = can('admin_reimb_pay');
   const [tab, setTab] = useState<'review' | 'payout'>(
     canReview ? 'review' : 'payout',
   );
@@ -59,6 +59,8 @@ export default function AdminReimbursements() {
 function List({ scope }: { scope: 'review' | 'payout' }) {
   const { t } = useTranslation('admin');
   const ft = useFormatT();
+  const { can } = useAuth();
+  const canAct = can(scope === 'review' ? 'admin_reimb_review' : 'admin_reimb_pay', 'update');
   const { data, error, loading, reload } = useApi<Reimb[]>(
     `/reimbursements?scope=${scope}`,
   );
@@ -118,8 +120,9 @@ function List({ scope }: { scope: 'review' | 'payout' }) {
                       <StatusPill map={REIMB_STATUS} status={r.status} />
                     </td>
                     <td>
-                      {(scope === 'review' && r.status === 'pending') ||
-                      (scope === 'payout' && r.status === 'approved') ? (
+                      {canAct &&
+                      ((scope === 'review' && r.status === 'pending') ||
+                        (scope === 'payout' && r.status === 'approved')) ? (
                         <Button
                           variant="primary"
                           size="sm"

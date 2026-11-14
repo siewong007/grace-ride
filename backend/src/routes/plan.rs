@@ -25,9 +25,9 @@ use serde_json::{json, Value};
 use crate::arrange::{arrange, Car, Rider};
 use crate::auth::CurrentUser;
 use crate::error::{bad, conflict, not_found, AppResult};
+use crate::perms::{self, Act, Page, Perm};
 use crate::routes::rides::seat_capacity;
 use crate::state::AppState;
-use crate::perms::{self, Act, Page, Perm};
 use crate::util::{audit, notify, now, require, system_message, ErrorKey};
 
 pub fn router() -> Router<AppState> {
@@ -120,7 +120,18 @@ async fn plan_rides(st: &AppState, event: i64) -> AppResult<Vec<PlanRide>> {
 
 /// Active members who may take rides (接送 · create) and have a vehicle on file.
 async fn plan_drivers(st: &AppState) -> AppResult<Vec<PlanDriver>> {
-    Ok(sqlx::query_as::<_, (i64, String, i64, i64, Option<String>, Option<String>, Option<i64>)>(&format!(
+    Ok(sqlx::query_as::<
+        _,
+        (
+            i64,
+            String,
+            i64,
+            i64,
+            Option<String>,
+            Option<String>,
+            Option<i64>,
+        ),
+    >(&format!(
         "SELECT u.id, u.name, u.carpool_enabled, u.spare_seats, v.model, v.plate, v.seats
          FROM users u JOIN vehicles v ON v.user_id = u.id WHERE {} ORDER BY u.name",
         perms::sql_holds("u", Perm(Page::Drive, Act::Create))
@@ -128,15 +139,17 @@ async fn plan_drivers(st: &AppState) -> AppResult<Vec<PlanDriver>> {
     .fetch_all(&st.db)
     .await?
     .into_iter()
-    .map(|(id, name, carpool_enabled, spare_seats, v_model, v_plate, v_seats)| PlanDriver {
-        id,
-        name,
-        carpool_enabled,
-        spare_seats,
-        v_model,
-        v_plate,
-        v_seats,
-    })
+    .map(
+        |(id, name, carpool_enabled, spare_seats, v_model, v_plate, v_seats)| PlanDriver {
+            id,
+            name,
+            carpool_enabled,
+            spare_seats,
+            v_model,
+            v_plate,
+            v_seats,
+        },
+    )
     .collect())
 }
 

@@ -34,12 +34,14 @@ export interface EventItem {
   my_signup: { status: string; need_ride: boolean; offer_drive: boolean; attended: number | null } | null;
   groups: string;
   can_manage: boolean;
+  /** May cancel it (the events page's delete permission). */
+  can_cancel?: boolean;
 }
 
 export default function Events() {
   const { t } = useTranslation('events');
   const ft = useFormatT();
-  const { has } = useAuth();
+  const { can } = useAuth();
   const [scope, setScope] = useState<'upcoming' | 'past' | 'managing'>('upcoming');
   const { data, error, loading } = useApi<EventItem[]>(`/events?scope=${scope}`);
 
@@ -50,7 +52,7 @@ export default function Events() {
           title={t('title')}
           subtitle={t('desc')}
           actions={
-            has('leader') ? (
+            can('events', 'create') ? (
               <Button variant="primary" to="/events/new" icon={<Plus size={20} />}>
                 {t('create')}
               </Button>
@@ -64,7 +66,7 @@ export default function Events() {
           items={[
             { value: 'upcoming', label: t('upcoming') },
             { value: 'past', label: t('past') },
-            ...(has('leader') ? [{ value: 'managing', label: t('managing') }] : []),
+            ...(can('events', 'create') ? [{ value: 'managing', label: t('managing') }] : []),
           ]}
         />
 
@@ -76,7 +78,7 @@ export default function Events() {
           <EmptyState
             title={t('none')}
             action={
-              has('leader') ? (
+              can('events', 'create') ? (
                 <Button variant="primary" to="/events/new" icon={<Plus size={18} />}>
                   {t('create')}
                 </Button>

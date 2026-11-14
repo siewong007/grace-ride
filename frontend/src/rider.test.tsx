@@ -64,8 +64,7 @@ const mockApiData: Record<string, unknown> = {
 vi.mock('./auth', () => ({
   useAuth: () => ({
     me: { id: 1, name: 'Grace Member', email: 'member@example.org', groups: [{ id: 10, name: 'Youth' }] },
-    has: (role: string) => role === 'driver',
-    isStaff: true,
+    can: () => true,
   }),
 }));
 

@@ -12,6 +12,7 @@ export default {
   dashboard: 'Transport dashboard',
   reimbReview: 'Reimbursement review',
   members: 'Members & invites',
+  rolesPage: 'Roles & permissions',
   optOut: 'Opt out of thank-you badges',
   save: 'Save',
   saved: 'Profile updated',

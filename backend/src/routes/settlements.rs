@@ -359,10 +359,8 @@ async fn get_one(
     let mut v = snapshot(&st, &s).await?;
     let organiser = s.created_by == u.id || u.can(Page::AdminBills, Act::View);
     if organiser {
-        v["can_manage"] =
-            json!(s.created_by == u.id && u.can(Page::Settlements, Act::Update));
-        v["can_delete"] =
-            json!(s.created_by == u.id && u.can(Page::Settlements, Act::Delete));
+        v["can_manage"] = json!(s.created_by == u.id && u.can(Page::Settlements, Act::Update));
+        v["can_delete"] = json!(s.created_by == u.id && u.can(Page::Settlements, Act::Delete));
         return Ok(Json(v));
     }
     // Participants see the bill and only their own share.

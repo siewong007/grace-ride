@@ -18,7 +18,8 @@ import {
   useConfirm,
   useToast,
 } from '../../components/ui';
-import { fmtAgo, ROLE_LABEL, useFormatT } from '../../format';
+import { fmtAgo, roleLabel, useFormatT } from '../../format';
+import { useRoleOptions } from './roleData';
 
 interface User {
   id: number;
@@ -57,14 +58,20 @@ interface RecoveryItem {
   created_at: string;
 }
 
-const ROLES = ['admin', 'transport', 'finance', 'leader', 'driver'];
-
 export default function Members() {
   const { t } = useTranslation('admin');
-  const { has, me } = useAuth();
-  const [tab, setTab] = useState<'members' | 'invites' | 'recovery'>('members');
+  const { can } = useAuth();
+  // Each tab is its own page permission; a member sees the ones they hold.
+  type Tab = 'members' | 'invites' | 'recovery';
+  const tabs = [
+    { value: 'members' as Tab, label: t('members.membersTab'), show: can('admin_members') },
+    { value: 'invites' as Tab, label: t('members.invitesTab'), show: can('admin_invites') },
+    { value: 'recovery' as Tab, label: t('members.recoveryTab'), show: can('admin_recovery') },
+  ].filter((x) => x.show);
+  const [picked, setTab] = useState<Tab>('members');
+  const tab = tabs.some((x) => x.value === picked) ? picked : tabs[0]?.value;
 
-  if (!has('admin') || !me?.mfa_ok) {
+  if (!tab) {
     return (
       <Page>
         <EmptyState title={t('members.noPermission')} />
@@ -77,12 +84,8 @@ export default function Members() {
       <PageHeader title={t('members.title')} subtitle={t('members.desc')} />
       <Tabs
         value={tab}
-        onChange={(v) => setTab(v as 'members' | 'invites' | 'recovery')}
-        items={[
-          { value: 'members', label: t('members.membersTab') },
-          { value: 'invites', label: t('members.invitesTab') },
-          { value: 'recovery', label: t('members.recoveryTab') },
-        ]}
+        onChange={(v) => setTab(v as Tab)}
+        items={tabs.map(({ value, label }) => ({ value, label }))}
       />
       {tab === 'members' && <MemberList />}
       {tab === 'invites' && <Invites />}
@@ -94,6 +97,9 @@ export default function Members() {
 function MemberList() {
   const { t } = useTranslation('admin');
   const ft = useFormatT();
+  const { can } = useAuth();
+  const canEdit = can('admin_members', 'update');
+  const { names } = useRoleOptions();
   const [q, setQ] = useState('');
   const { data, loading, reload } = useApi<User[]>(
     `/admin/users?q=${encodeURIComponent(q)}`,
@@ -127,7 +133,7 @@ function MemberList() {
                   <th>{t('members.role')}</th>
                   <th>{t('members.group')}</th>
                   <th>{t('members.passkey')}</th>
-                  <th>{t('members.actions')}</th>
+                  {canEdit && <th>{t('members.actions')}</th>}
                 </tr>
               </thead>
               <tbody>
@@ -145,7 +151,7 @@ function MemberList() {
                         {u.roles.length > 0 ? (
                           u.roles.map((r) => (
                             <Pill key={r} tone="blue">
-                              {ft(ROLE_LABEL[r] ?? r)}
+                              {roleLabel(r, ft, names)}
                             </Pill>
                           ))
                         ) : (
@@ -159,7 +165,7 @@ function MemberList() {
                     <td data-label={t('members.passkey')} className="mono">
                       {u.passkeys}
                     </td>
-                    <td data-label={t('members.actions')}>
+                    {canEdit && <td data-label={t('members.actions')}>
                       {u.status === 'pending' ? (
                         <Button
                           variant="primary"
@@ -177,7 +183,7 @@ function MemberList() {
                           {t('members.edit')}
                         </Button>
                       )}
-                    </td>
+                    </td>}
                   </tr>
                 ))}
               </tbody>
@@ -215,6 +221,10 @@ function MemberFormModal({
 }) {
   const { t } = useTranslation('admin');
   const ft = useFormatT();
+  const { can } = useAuth();
+  // Giving and taking roles decides what a member may do: it needs the roles page's update permission.
+  const canAssign = can('admin_roles', 'update');
+  const { assignable, names } = useRoleOptions();
   const { data: groups } = useApi<Group[]>('/groups');
 
   const [roles, setRoles] = useState<string[]>(
@@ -271,19 +281,21 @@ function MemberFormModal({
         <div>
           <strong className="small">{t('members.role')}</strong>
           <div className="chips">
-            {ROLES.map((r) => (
+            {(canAssign ? assignable : roles).map((r) => (
               <button
                 key={r}
                 type="button"
                 role="checkbox"
                 aria-checked={roles.includes(r)}
+                disabled={!canAssign}
                 className={`chip ${roles.includes(r) ? 'on' : ''}`}
                 onClick={() => toggleRole(r)}
               >
-                {ft(ROLE_LABEL[r] ?? r)}
+                {roleLabel(r, ft, names)}
               </button>
             ))}
           </div>
+          {!canAssign && <p className="muted tiny">{t('members.rolesReadOnly')}</p>}
         </div>
 
         <div>
@@ -323,6 +335,7 @@ function Invites() {
   const ft = useFormatT();
   const toast = useToast();
   const confirm = useConfirm();
+  const { can } = useAuth();
   const { data, loading, reload } = useApi<InviteItem[]>('/admin/invites');
   const [link, setLink] = useState<string | null>(null);
   const { busy, error, run } = useAction();
@@ -358,9 +371,11 @@ function Invites() {
       <form className="card stack" onSubmit={submit}>
         <p className="muted small">{t('members.inviteHint')}</p>
         <ErrorBox error={error} />
-        <Button variant="primary" disabled={busy} type="submit">
-          {t('members.createInvite')}
-        </Button>
+        {can('admin_invites', 'create') && (
+          <Button variant="primary" disabled={busy} type="submit">
+            {t('members.createInvite')}
+          </Button>
+        )}
         {link && (
           <div className="notice ok stack-sm">
             <span>{t('members.inviteLink')}</span>
@@ -396,7 +411,7 @@ function Invites() {
                     )}
                   </div>
                   <div className="muted tiny">
-                    {i.roles.map((r: string) => ft(ROLE_LABEL[r] ?? r)).join('、') ||
+                    {i.roles.map((r: string) => roleLabel(r, ft)).join('、') ||
                       t('members.member')}{' '}
                     · {fmtAgo(i.created_at, ft)}
                   </div>
@@ -409,13 +424,11 @@ function Invites() {
                         {t('members.copy')}
                       </Button>
                     )}
-                    <Button
-                      variant="danger"
-                      size="sm"
-                      onClick={() => revoke(i)}
-                    >
-                      {t('members.revoke')}
-                    </Button>
+                    {can('admin_invites', 'delete') && (
+                      <Button variant="danger" size="sm" onClick={() => revoke(i)}>
+                        {t('members.revoke')}
+                      </Button>
+                    )}
                   </div>
                 ) : (
                   <Pill tone={i.status === 'used' ? 'green' : 'gray'}>
@@ -434,6 +447,8 @@ function Invites() {
 function Recovery() {
   const { t } = useTranslation('admin');
   const ft = useFormatT();
+  const { can } = useAuth();
+  const canDecide = can('admin_recovery', 'update');
   const { data, loading, reload } = useApi<RecoveryItem[]>('/admin/recovery');
   const [link, setLink] = useState<string | null>(null);
   const { busy, error, run } = useAction();
@@ -474,7 +489,7 @@ function Recovery() {
                     <Button
                       variant="primary"
                       size="sm"
-                      disabled={busy || !r.name}
+                      disabled={busy || !r.name || !canDecide}
                       onClick={() =>
                         run(async () => {
                           const x = await post<{
@@ -493,7 +508,7 @@ function Recovery() {
                     <Button
                       variant="secondary"
                       size="sm"
-                      disabled={busy}
+                      disabled={busy || !canDecide}
                       onClick={() =>
                         run(() =>
                           post(`/admin/recovery/${r.id}/reject`).then(reload),

@@ -31,7 +31,7 @@ export default function Announcements() {
   const { t } = useTranslation('admin');
   const ft = useFormatT();
   const confirm = useConfirm();
-  const { me } = useAuth();
+  const { me, can } = useAuth();
 
   const { data, loading, reload } = useApi<AnnouncementItem[]>('/announcements');
   const [f, setF] = useState({
@@ -75,7 +75,7 @@ export default function Announcements() {
 
       <div className="split">
         {/* Creation form */}
-        <form className="card stack" onSubmit={submit}>
+        {can('admin_announcements', 'create') && <form className="card stack" onSubmit={submit}>
           <Field label={t('announcements.titleLabel')}>
             <input
               className="input"
@@ -113,7 +113,7 @@ export default function Announcements() {
           <Button variant="primary" disabled={busy} type="submit">
             {t('announcements.add')}
           </Button>
-        </form>
+        </form>}
 
         <div className="stack">
           {/* What members will see */}
@@ -156,9 +156,11 @@ export default function Announcements() {
                         {t('announcements.by', { by: a.by, ago: fmtAgo(a.created_at, ft) })}
                       </span>
                     </div>
-                    <Button variant="ghost" size="sm" className="text-danger" onClick={() => remove(a)}>
-                      {t('announcements.delete')}
-                    </Button>
+                    {can('admin_announcements', 'delete') && (
+                      <Button variant="ghost" size="sm" className="text-danger" onClick={() => remove(a)}>
+                        {t('announcements.delete')}
+                      </Button>
+                    )}
                   </div>
                 ))}
               </div>

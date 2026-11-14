@@ -57,6 +57,8 @@ pub async fn connect_db(url: &str) -> anyhow::Result<PgPool> {
 pub async fn init(cfg: Config) -> anyhow::Result<AppState> {
     std::fs::create_dir_all(&cfg.upload_dir)?;
     let db = connect_db(&cfg.database_url).await?;
+    // Built-in roles and their default permissions must exist before anyone signs in.
+    perms::sync(&db).await?;
     seed::run(&db, &cfg).await?;
     let webauthn = Arc::new(build_webauthn(&cfg.public_url)?);
     Ok(AppState {

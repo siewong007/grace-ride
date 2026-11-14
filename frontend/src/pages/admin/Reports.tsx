@@ -56,17 +56,8 @@ interface MonthReport {
 export default function AdminReports() {
   const { t } = useTranslation('admin');
   const ft = useFormatT();
-  const { has, me } = useAuth();
-
-  if (!has('admin') && !has('transport')) {
-    return (
-      <Page>
-        <EmptyState title={t('reports.noPermission')} />
-      </Page>
-    );
-  }
-
-  const [members, setMembers] = useState<Member[]>([]);
+  // The route only renders this page for members who may view member reports.
+  const { me } = useAuth();
   const [selectedId, setSelectedId] = useState<number | null>(me?.id ?? null);
   const [month, setMonth] = useState(
     `${new Date().getFullYear()}-${String(new Date().getMonth() + 1).padStart(2, '0')}`,
@@ -75,9 +66,8 @@ export default function AdminReports() {
   const [type, setType] = useState<'all' | 'driver' | 'passenger'>('all');
   const [y, m] = month.split('-').map(Number);
 
-  const { data: membersData } = useApi<Member[]>(
-    '/admin/users?q=&limit=500',
-  );
+  const { data: membersData } = useApi<Member[]>('/admin/users?q=');
+  const members = membersData ?? [];
 
   const params = new URLSearchParams({
     month,
@@ -88,10 +78,6 @@ export default function AdminReports() {
   const { data: r, error, loading } = useApi<MonthReport>(
     `/reports/monthly?${params.toString()}`,
   );
-
-  if (membersData && members.length === 0) {
-    setMembers(membersData);
-  }
 
   const fileBase = `grace-ride-admin-report-${range}-${month}-${selectedId ?? 'self'}`;
 

@@ -20,6 +20,8 @@ export default {
   reimbReview: 'Reimbursement review',
   members: 'Members & invites',
   settings: 'Groups & areas',
+  roles: 'Roles & permissions',
+  reports: 'Member reports',
   audit: 'Audit log',
   profile: 'Profile',
   notifications: 'Notifications',

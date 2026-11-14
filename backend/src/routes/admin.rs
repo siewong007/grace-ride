@@ -1,4 +1,5 @@
-//! 管理员: dashboard, members & roles, invitations, groups, areas, recovery approvals, audit log.
+//! 管理员: dashboard, members, invitations, groups, areas, recovery approvals, audit log.
+//! Roles themselves are edited in `routes::roles`.
 
 use axum::{
     extract::{Path, Query, State},
@@ -9,11 +10,11 @@ use serde::Deserialize;
 use serde_json::{json, Value};
 
 use crate::auth::{hash_token, CurrentUser};
-use crate::perms::{self, parse_roles};
 use crate::error::{bad, forbidden, not_found, AppError, AppResult};
 use crate::i18n::ErrorKey;
+use crate::perms::{self, parse_roles, Act, Page};
 use crate::state::AppState;
-use crate::util::{audit, in_days, now, random_token, require_any};
+use crate::util::{audit, in_days, now, random_token, require, require_one};
 
 pub fn router() -> Router<AppState> {
     Router::new()
@@ -37,7 +38,7 @@ pub fn router() -> Router<AppState> {
 }
 
 async fn dashboard(State(st): State<AppState>, u: CurrentUser) -> AppResult<Json<Value>> {
-    require_any(&u, &["transport"])?;
+    require(&u, Page::AdminDashboard, Act::View)?;
     let today = now()[..10].to_string();
     let count = |sql: &'static str| {
         let db = st.db.clone();
@@ -93,16 +94,26 @@ struct UserQuery {
     role: Option<String>,
 }
 
-/// Member directory for staff only (会员资料不会成为任何人都能浏览的公开通讯录).
-/// Leaders may search names (no contact details) to record walk-in attendance.
+/// Member directory for 成员 · view only (会员资料不会成为任何人都能浏览的公开通讯录).
+/// Whoever records attendance, fills a group or opens member reports may search names
+/// (no contact details) to pick a member.
 async fn list_users(
     State(st): State<AppState>,
     u: CurrentUser,
     Query(q): Query<UserQuery>,
 ) -> AppResult<Json<Value>> {
-    let staff = require_any(&u, &["admin", "transport"]).is_ok();
-    if !staff && !u.has("leader") {
-        return Err(forbidden(u.lang, ErrorKey::NoPermission));
+    let staff = u.can(Page::AdminMembers, Act::View);
+    if !staff {
+        require_one(
+            &u,
+            &[
+                (Page::AdminMembers, Act::View),
+                (Page::Events, Act::Update),
+                (Page::AdminEvents, Act::Update),
+                (Page::AdminGroups, Act::Update),
+                (Page::AdminReports, Act::View),
+            ],
+        )?;
     }
     let like = format!("%{}%", q.q.unwrap_or_default().trim());
     let rows: Vec<(i64, String, String, String, String, String, String, i64, Option<String>)> = sqlx::query_as(
@@ -143,7 +154,7 @@ async fn update_user(
     Path(id): Path<i64>,
     Json(req): Json<UserUpdate>,
 ) -> AppResult<Json<Value>> {
-    require_any(&u, &["admin"])?;
+    require(&u, Page::AdminMembers, Act::Update)?;
     if !matches!(req.status.as_str(), "active" | "disabled") {
         return Err(bad(u.lang, ErrorKey::InvalidStatus));
     }
@@ -153,19 +164,47 @@ async fn update_user(
             .fetch_optional(&st.db)
             .await?
             .ok_or(not_found(u.lang))?;
-    let new_roles = parse_roles(&req.roles.join(","));
-    if id == u.id {
-        if req.status != "active" || !new_roles.iter().any(|r| r == "admin") {
-            return Err(bad(u.lang, ErrorKey::CannotDisableSelf));
-        }
-        // Finance sees every receipt and payment record, so an admin cannot
-        // grant it to themselves; another admin must decide.
-        let already_finance = parse_roles(&old_roles).iter().any(|r| r == "finance");
-        if !already_finance && new_roles.iter().any(|r| r == "finance") {
-            return Err(forbidden(u.lang, ErrorKey::CannotGrantSelfFinance));
+    let sorted = |mut v: Vec<String>| {
+        v.sort();
+        v.dedup();
+        v
+    };
+    let new_roles = sorted(parse_roles(&req.roles.join(",")));
+    let roles_changed = new_roles != sorted(parse_roles(&old_roles));
+    if roles_changed {
+        // Giving or taking a role decides what a member may do, which is the same
+        // authority as editing the roles themselves.
+        require(&u, Page::AdminRoles, Act::Update)?;
+        let (known,): (i64,) = sqlx::query_as("SELECT COUNT(*) FROM roles WHERE key = ANY($1)")
+            .bind(&new_roles)
+            .fetch_one(&st.db)
+            .await?;
+        if known != new_roles.len() as i64 {
+            return Err(bad(u.lang, ErrorKey::UnknownRole));
         }
     }
-    let roles = new_roles.join(",");
+    if id == u.id {
+        if req.status != "active" {
+            return Err(bad(u.lang, ErrorKey::CannotDisableSelf));
+        }
+        if roles_changed {
+            let after = perms::for_roles(&st.db, &new_roles).await?;
+            // Nobody removes their own right to manage roles, so someone always holds it.
+            if !after.has(Page::AdminRoles, Act::Update) {
+                return Err(bad(u.lang, ErrorKey::CannotDisableSelf));
+            }
+            // Finance sees every receipt and payment record, so nobody grants it to
+            // themselves; another administrator must decide.
+            if after.new_finance(&u.perms) {
+                return Err(forbidden(u.lang, ErrorKey::CannotGrantSelfFinance));
+            }
+        }
+    }
+    let roles = if roles_changed {
+        new_roles.join(",")
+    } else {
+        old_roles.clone()
+    };
     sqlx::query("UPDATE users SET roles=$1, status=$2 WHERE id=$3")
         .bind(&roles)
         .bind(&req.status)
@@ -207,7 +246,7 @@ async fn update_user(
 }
 
 async fn create_invite(State(st): State<AppState>, u: CurrentUser) -> AppResult<Json<Value>> {
-    require_any(&u, &["admin"])?;
+    require(&u, Page::AdminInvites, Act::Create)?;
     // The invited person types their own name and email. The link carries neither.
     let token = random_token(32);
     let (id,): (i64,) = sqlx::query_as("INSERT INTO invites (token, kind, email, name, roles, group_ids, created_by, expires_at, created_at) VALUES ($1, 'invite', '', '', '', '[]', $2,$3,$4) RETURNING id")
@@ -232,7 +271,7 @@ async fn create_invite(State(st): State<AppState>, u: CurrentUser) -> AppResult<
 }
 
 async fn list_invites(State(st): State<AppState>, u: CurrentUser) -> AppResult<Json<Value>> {
-    require_any(&u, &["admin"])?;
+    require(&u, Page::AdminInvites, Act::View)?;
     let rows: Vec<(i64, String, String, String, String, String, String, Option<String>, String)> = sqlx::query_as(
         "SELECT id, token, kind, email, name, roles, expires_at, used_at, created_at FROM invites ORDER BY id DESC LIMIT 200",
     )
@@ -254,7 +293,7 @@ async fn revoke_invite(
     u: CurrentUser,
     Path(id): Path<i64>,
 ) -> AppResult<Json<Value>> {
-    require_any(&u, &["admin"])?;
+    require(&u, Page::AdminInvites, Act::Delete)?;
     sqlx::query("UPDATE invites SET expires_at=$1 WHERE id=$2 AND used_at IS NULL")
         .bind(now())
         .bind(id)
@@ -275,7 +314,7 @@ async fn create_group(
     u: CurrentUser,
     Json(req): Json<GroupIn>,
 ) -> AppResult<Json<Value>> {
-    require_any(&u, &["admin"])?;
+    require(&u, Page::AdminGroups, Act::Create)?;
     if req.name.trim().is_empty() {
         return Err(bad(u.lang, ErrorKey::GroupNameRequired));
     }
@@ -304,7 +343,7 @@ async fn update_group(
     Path(id): Path<i64>,
     Json(req): Json<GroupIn>,
 ) -> AppResult<Json<Value>> {
-    require_any(&u, &["admin"])?;
+    require(&u, Page::AdminGroups, Act::Update)?;
     sqlx::query("UPDATE groups SET name=$1, description=$2 WHERE id=$3")
         .bind(req.name.trim())
         .bind(req.description.unwrap_or_default())
@@ -328,7 +367,7 @@ async fn delete_group(
     u: CurrentUser,
     Path(id): Path<i64>,
 ) -> AppResult<Json<Value>> {
-    require_any(&u, &["admin"])?;
+    require(&u, Page::AdminGroups, Act::Delete)?;
     let (is_all,): (i64,) = sqlx::query_as("SELECT is_all FROM groups WHERE id=$1")
         .bind(id)
         .fetch_optional(&st.db)
@@ -350,7 +389,7 @@ async fn group_members(
     u: CurrentUser,
     Path(id): Path<i64>,
 ) -> AppResult<Json<Value>> {
-    require_any(&u, &["admin"])?;
+    require(&u, Page::AdminGroups, Act::View)?;
     let rows: Vec<(i64, String)> = sqlx::query_as("SELECT u.id, u.name FROM group_members m JOIN users u ON u.id=m.user_id WHERE m.group_id=$1 ORDER BY u.name")
         .bind(id)
         .fetch_all(&st.db)
@@ -372,7 +411,7 @@ async fn set_group_members(
     Path(id): Path<i64>,
     Json(req): Json<MembersIn>,
 ) -> AppResult<Json<Value>> {
-    require_any(&u, &["admin"])?;
+    require(&u, Page::AdminGroups, Act::Update)?;
     let mut tx = st.db.begin().await?;
     sqlx::query("DELETE FROM group_members WHERE group_id=$1")
         .bind(id)
@@ -411,7 +450,7 @@ async fn create_area(
     u: CurrentUser,
     Json(req): Json<AreaIn>,
 ) -> AppResult<Json<Value>> {
-    require_any(&u, &["transport"])?;
+    require(&u, Page::AdminAreas, Act::Create)?;
     if req.name.trim().is_empty() {
         return Err(bad(u.lang, ErrorKey::AreaNameRequired));
     }
@@ -439,7 +478,7 @@ async fn update_area(
     Path(id): Path<i64>,
     Json(req): Json<AreaIn>,
 ) -> AppResult<Json<Value>> {
-    require_any(&u, &["transport"])?;
+    require(&u, Page::AdminAreas, Act::Update)?;
     sqlx::query("UPDATE areas SET name=$1, active=$2 WHERE id=$3")
         .bind(req.name.trim())
         .bind(req.active.unwrap_or(true) as i64)
@@ -459,7 +498,7 @@ async fn update_area(
 }
 
 async fn list_recovery(State(st): State<AppState>, u: CurrentUser) -> AppResult<Json<Value>> {
-    require_any(&u, &["admin"])?;
+    require(&u, Page::AdminRecovery, Act::View)?;
     let rows: Vec<(i64, String, String, String, String, Option<String>)> = sqlx::query_as(
         "SELECT r.id, r.email, r.reason, r.status, r.created_at, u.name FROM recovery_requests r LEFT JOIN users u ON u.email = r.email ORDER BY r.status IN ('pending','awaiting_second') DESC, r.id DESC LIMIT 100",
     )
@@ -474,7 +513,7 @@ async fn approve_recovery(
     u: CurrentUser,
     Path(id): Path<i64>,
 ) -> AppResult<Json<Value>> {
-    require_any(&u, &["admin"])?;
+    require(&u, Page::AdminRecovery, Act::Update)?;
     let (email, status, resolved_by): (String, String, Option<i64>) =
         sqlx::query_as("SELECT email, status, resolved_by FROM recovery_requests WHERE id=$1")
             .bind(id)
@@ -562,7 +601,7 @@ async fn reject_recovery(
     u: CurrentUser,
     Path(id): Path<i64>,
 ) -> AppResult<Json<Value>> {
-    require_any(&u, &["admin"])?;
+    require(&u, Page::AdminRecovery, Act::Update)?;
     sqlx::query("UPDATE recovery_requests SET status='rejected', resolved_by=$1 WHERE id=$2 AND status IN ('pending','awaiting_second')").bind(u.id).bind(id).execute(&st.db).await?;
     audit(
         &st.db,
@@ -588,7 +627,7 @@ async fn audit_log(
     u: CurrentUser,
     Query(q): Query<AuditQuery>,
 ) -> AppResult<Json<Value>> {
-    require_any(&u, &["admin", "transport"])?;
+    require(&u, Page::AdminAudit, Act::View)?;
     let rows: Vec<(i64, Option<String>, String, String, Option<i64>, String, String)> = sqlx::query_as(
         "SELECT a.id, u.name, a.action, a.entity, a.entity_id, a.detail, a.created_at FROM audit_logs a LEFT JOIN users u ON u.id=a.actor_id
          WHERE ($1 IS NULL OR a.entity = $2) AND ($3 IS NULL OR a.entity_id = $4) ORDER BY a.id DESC LIMIT 300",

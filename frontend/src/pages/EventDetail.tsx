@@ -50,9 +50,9 @@ export default function EventDetail() {
   const { t } = useTranslation('eventDetail');
   const ft = useFormatT();
   const { id } = useParams();
-  const { has, isStaff: staff } = useAuth();
-  // Planning the whole event's transport is for the transport team (the server checks too).
-  const isStaff = staff && has('transport');
+  const { can } = useAuth();
+  // Planning the whole event's transport needs its own permission (the server checks too).
+  const isStaff = can('admin_plan');
   const { data: e, error, reload } = useApi<EventFull>(id ? `/events/${id}` : null);
   const { busy, error: actErr, run } = useAction();
   const confirm = useConfirm();
@@ -203,7 +203,7 @@ export default function EventDetail() {
                     </Button>
                   )}
 
-                  {has('driver') && (
+                  {can('drive', 'create') && (
                     <Button variant="ghost" block to="/drive">
                       {t('offerDrive')}
                     </Button>
@@ -302,7 +302,7 @@ export default function EventDetail() {
                     >
                       {t('finish')}
                     </Button>
-                    <Button
+                    {(e.can_cancel ?? true) && <Button
                       variant="danger"
                       disabled={busy}
                       onClick={async () => {
@@ -316,7 +316,7 @@ export default function EventDetail() {
                       }}
                     >
                       {t('cancelEvent')}
-                    </Button>
+                    </Button>}
                   </div>
                 )}
               </Card>

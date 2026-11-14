@@ -20,6 +20,8 @@ export default {
   reimbReview: '报销审核',
   members: '会员与邀请',
   settings: '群体与地区',
+  roles: '角色与权限',
+  reports: '会员报告',
   audit: '操作记录',
   profile: '我的',
   notifications: '通知',

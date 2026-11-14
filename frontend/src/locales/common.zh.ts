@@ -32,4 +32,9 @@ export default {
   uploaded: '✓ 已上传 {name}',
   chooseFile: '选择图片或 PDF',
   viewReceipt: '查看收据',
+  noAccess: {
+    title: '您没有此页面的权限',
+    body: '如因职务需要，请联系管理员开通。',
+    mfa: '请使用通行密钥或双重验证（2FA）登录后，再使用管理页面。',
+  },
 };

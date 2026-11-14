@@ -40,7 +40,14 @@ pub fn render(lang: Lang, key: &ErrorKey) -> String {
         | ErrorKey::AreaExists
         | ErrorKey::RequestAlreadyHandled
         | ErrorKey::EmailInvalid
-        | ErrorKey::EmailAlreadyMember => admin::render(lang, key),
+        | ErrorKey::EmailAlreadyMember
+        | ErrorKey::UnknownRole
+        | ErrorKey::RoleNameRequired
+        | ErrorKey::RoleNameExists
+        | ErrorKey::InvalidPermission
+        | ErrorKey::RolePermissionLocked
+        | ErrorKey::SystemRoleCannotBeDeleted
+        | ErrorKey::CannotRemoveOwnRoleAccess => admin::render(lang, key),
         ErrorKey::InvalidCredentials
         | ErrorKey::VerificationExpired
         | ErrorKey::InvalidCode
@@ -228,6 +235,13 @@ mod tests {
             ErrorKey::RequestAlreadyHandled,
             ErrorKey::EmailInvalid,
             ErrorKey::EmailAlreadyMember,
+            ErrorKey::UnknownRole,
+            ErrorKey::RoleNameRequired,
+            ErrorKey::RoleNameExists,
+            ErrorKey::InvalidPermission,
+            ErrorKey::RolePermissionLocked,
+            ErrorKey::SystemRoleCannotBeDeleted,
+            ErrorKey::CannotRemoveOwnRoleAccess,
             ErrorKey::InvalidCredentials,
             ErrorKey::VerificationExpired,
             ErrorKey::InvalidCode,

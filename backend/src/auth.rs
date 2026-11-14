@@ -50,18 +50,6 @@ impl CurrentUser {
     pub fn can(&self, page: Page, act: Act) -> bool {
         self.perms.has(page, act) && (self.mfa_ok || !page.sensitive())
     }
-
-    /// Holds the given role key (e.g. `"driver"`, `"leader"`, `"finance"`).
-    pub fn has(&self, role: &str) -> bool {
-        self.roles.iter().any(|r| r == role)
-    }
-
-    /// Whether this member holds a staff role (admin / transport / finance).
-    pub fn is_staff(&self) -> bool {
-        self.roles
-            .iter()
-            .any(|r| matches!(r.as_str(), "admin" | "transport" | "finance"))
-    }
 }
 
 impl FromRequestParts<AppState> for CurrentUser {
@@ -94,7 +82,17 @@ impl FromRequestParts<AppState> for CurrentUser {
 
         // Permissions are read with the session on every request, so a change to a role
         // or to a member's roles applies to their very next call.
-        type Row = (i64, String, String, String, String, i64, String, String, String);
+        type Row = (
+            i64,
+            String,
+            String,
+            String,
+            String,
+            i64,
+            String,
+            String,
+            String,
+        );
         let row: Option<Row> = sqlx::query_as(
             "SELECT u.id, u.name, u.email, u.roles, u.status, s.mfa_ok, s.expires_at, u.lang,
                     COALESCE((SELECT string_agg(rp.permission, ',') FROM role_permissions rp

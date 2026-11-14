@@ -33,9 +33,12 @@ interface Area {
 
 export default function Settings() {
   const { t } = useTranslation('admin');
-  const { has, me } = useAuth();
+  const { can } = useAuth();
+  // Groups and areas are separate permissions; each half shows for whoever holds it.
+  const groups = can('admin_groups');
+  const areas = can('admin_areas');
 
-  if (!has('admin') || !me?.mfa_ok) {
+  if (!groups && !areas) {
     return (
       <Page>
         <EmptyState title={t('settings.noPermission')} />
@@ -47,8 +50,8 @@ export default function Settings() {
     <Page>
       <PageHeader title={t('settings.title')} subtitle={t('settings.desc')} />
       <div className="split">
-        <Groups />
-        <Areas />
+        {groups && <Groups />}
+        {areas && <Areas />}
       </div>
     </Page>
   );
@@ -57,6 +60,7 @@ export default function Settings() {
 function Groups() {
   const { t } = useTranslation('admin');
   const confirm = useConfirm();
+  const { can } = useAuth();
   const { data, loading, reload } = useApi<Group[]>('/groups');
   const [name, setName] = useState('');
   const [members, setMembers] = useState<Group | null>(null);
@@ -99,20 +103,16 @@ function Groups() {
               </div>
               {!g.is_all && (
                 <div className="btn-row">
-                  <Button
-                    variant="secondary"
-                    size="sm"
-                    onClick={() => setMembers(g)}
-                  >
-                    {t('settings.membersBtn')}
-                  </Button>
-                  <Button
-                    variant="danger"
-                    size="sm"
-                    onClick={() => removeGroup(g)}
-                  >
-                    {t('settings.delete')}
-                  </Button>
+                  {can('admin_groups', 'update') && (
+                    <Button variant="secondary" size="sm" onClick={() => setMembers(g)}>
+                      {t('settings.membersBtn')}
+                    </Button>
+                  )}
+                  {can('admin_groups', 'delete') && (
+                    <Button variant="danger" size="sm" onClick={() => removeGroup(g)}>
+                      {t('settings.delete')}
+                    </Button>
+                  )}
                 </div>
               )}
             </div>
@@ -120,7 +120,7 @@ function Groups() {
         </div>
       )}
 
-      <form
+      {can('admin_groups', 'create') && <form
         className="row nowrap"
         onSubmit={(e) => {
           e.preventDefault();
@@ -144,7 +144,7 @@ function Groups() {
         <Button variant="primary" disabled={busy} type="submit">
           {t('settings.addGroup')}
         </Button>
-      </form>
+      </form>}
 
       <ErrorBox error={error} />
       {members && (
@@ -233,6 +233,7 @@ function GroupMembers({
 
 function Areas() {
   const { t } = useTranslation('admin');
+  const { can } = useAuth();
   const { data, loading, reload } = useApi<Area[]>('/areas');
   const [name, setName] = useState('');
   const [edit, setEdit] = useState<Area | null>(null);
@@ -252,6 +253,7 @@ function Areas() {
               key={a.id}
               type="button"
               className={`chip ${a.active ? 'on' : ''}`}
+              disabled={!can('admin_areas', 'update')}
               onClick={() => setEdit(a)}
             >
               <span>{a.name}</span>
@@ -263,7 +265,7 @@ function Areas() {
         </div>
       )}
 
-      <form
+      {can('admin_areas', 'create') && <form
         className="row nowrap"
         onSubmit={(e) => {
           e.preventDefault();
@@ -287,7 +289,7 @@ function Areas() {
         <Button variant="primary" disabled={busy} type="submit">
           {t('settings.addArea')}
         </Button>
-      </form>
+      </form>}
 
       <ErrorBox error={error} />
 

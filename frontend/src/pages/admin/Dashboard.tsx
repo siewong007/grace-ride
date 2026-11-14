@@ -38,7 +38,9 @@ interface Dash {
 export default function Dashboard() {
   const { t } = useTranslation('admin');
   const ft = useFormatT();
-  const { isStaff } = useAuth();
+  const { can } = useAuth();
+  const isStaff = can('admin_dashboard');
+  const rides = can('admin_rides');
   const nav = useNavigate();
 
   const { data: d, error } = useApi<Dash>(
@@ -46,15 +48,15 @@ export default function Dashboard() {
     20000,
   );
   const today = useApi<Ride[]>(
-    isStaff ? `/admin/rides?date=${todayStr()}` : null,
+    rides ? `/admin/rides?date=${todayStr()}` : null,
     20000,
   );
   const attention = useApi<Ride[]>(
-    isStaff ? '/admin/rides?attention=true' : null,
+    rides ? '/admin/rides?attention=true' : null,
     20000,
   );
   const approvals = useApi<Ride[]>(
-    isStaff ? '/admin/rides?status=pending_approval' : null,
+    rides ? '/admin/rides?status=pending_approval' : null,
     20000,
   );
 
