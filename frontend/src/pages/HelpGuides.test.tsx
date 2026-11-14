@@ -1,5 +1,5 @@
 import { beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
-import { fireEvent, render, screen } from '@testing-library/react';
+import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { MemoryRouter, Route, Routes } from 'react-router-dom';
 import i18n from '../i18n';
 import Help from './Help';
@@ -46,11 +46,11 @@ beforeEach(() => {
   mocks.allowed.clear();
   mocks.guides = [
     {
-      id: 1, slug: 'plan-transport', title_en: 'Plan transport', title_zh: '安排交通',
+      id: 1, slug: 'plan-transport', title_en: 'Plan transport', title_zh: '',
       summary_en: 'Walk through it', summary_zh: '', published: true, step_count: 3,
     },
     {
-      id: 2, slug: 'draft-one', title_en: 'Draft guide', title_zh: '草稿',
+      id: 2, slug: 'draft-one', title_en: 'Draft guide', title_zh: '',
       summary_en: '', summary_zh: '', published: false, step_count: 1,
     },
   ];
@@ -94,13 +94,13 @@ describe('HelpGuideDetail', () => {
       id: 1,
       slug: 'plan-transport',
       title_en: 'Plan transport',
-      title_zh: '安排交通',
+      title_zh: '',
       summary_en: 'Walk through it',
       summary_zh: '',
       published: false,
       steps: [
-        { title_en: 'Find the event', title_zh: '找到活动', body_en: 'Open Events', body_zh: '打开活动页', link: '/events' },
-        { title_en: 'Watch it run', title_zh: '当天跟踪', body_en: '', body_zh: '', link: '' },
+        { title_en: 'Find the event', title_zh: '', body_en: 'Open Events', body_zh: '', link: '/events' },
+        { title_en: 'Watch it run', title_zh: '', body_en: '', body_zh: '', link: '' },
       ],
     };
     // useApi returns mocks.guides for any /help/guides path; reuse it as the detail object.
@@ -116,5 +116,50 @@ describe('HelpGuideDetail', () => {
     expect(screen.getByText('2. Watch it run')).toBeTruthy();
     expect(screen.getByRole('link', { name: 'Open →' })).toHaveProperty('href', expect.stringContaining('/events'));
     expect(screen.getByText('Draft')).toBeTruthy();
+  });
+});
+
+describe('GuideForm editor', () => {
+  it('creates a guide through the API with steps', async () => {
+    mocks.allowed.add('admin_help.view');
+    mocks.allowed.add('admin_help.update');
+    const { post } = await import('../api');
+    render(
+      <MemoryRouter>
+        <Help />
+      </MemoryRouter>,
+    );
+    fireEvent.click(screen.getByRole('tab', { name: 'Admin guide' }));
+    fireEvent.click(await screen.findByRole('button', { name: 'New guide' }));
+    fireEvent.change(screen.getByLabelText('Slug (lowercase letters, numbers, dashes)'), {
+      target: { value: 'test-guide' },
+    });
+    fireEvent.change(screen.getByLabelText('Title (English)'), { target: { value: 'Test' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Add step' }));
+    fireEvent.change(screen.getAllByLabelText('Step title (English)')[0], { target: { value: 'One' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Save' }));
+    await waitFor(() =>
+      expect(post).toHaveBeenCalledWith(
+        '/help/guides',
+        expect.objectContaining({
+          slug: 'test-guide',
+          title_en: 'Test',
+          steps: expect.arrayContaining([expect.objectContaining({ title_en: 'One' })]),
+        }),
+      ),
+    );
+  });
+
+  it('hides editor controls from non-editors', async () => {
+    mocks.allowed.add('admin_help.view'); // staff reader, not editor
+    render(
+      <MemoryRouter>
+        <Help />
+      </MemoryRouter>,
+    );
+    fireEvent.click(screen.getByRole('tab', { name: 'Admin guide' }));
+    await screen.findByText('Plan transport');
+    expect(screen.queryByRole('button', { name: 'New guide' })).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Edit' })).toBeNull();
   });
 });
