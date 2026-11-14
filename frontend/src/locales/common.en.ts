@@ -48,6 +48,11 @@ export default {
   },
   backToTop: 'Back to top',
   exportCsv: 'Export CSV',
+  table: {
+    clearFilters: 'Clear filters',
+    sortBy: 'Sort by',
+    defaultOrder: 'Default order',
+  },
   noAccess: {
     title: "You don't have access to this page",
     body: 'Ask an administrator if you need it for your role.',

@@ -16,9 +16,12 @@ import {
   AlertCircle,
   ArrowLeft,
   ArrowUp,
+  ArrowUpDown,
   CheckCircle2,
+  ChevronDown,
   ChevronLeft,
   ChevronRight,
+  ChevronUp,
   Info,
   Paperclip,
   X,
@@ -1272,6 +1275,25 @@ export function BackToTop({ className = '' }: { className?: string }) {
 // Universal Table Component
 // ==========================================
 
+export type SortDirection = 'asc' | 'desc';
+
+export interface TableSort {
+  key: string;
+  dir: SortDirection;
+}
+
+export type TableFilter =
+  | { type: 'text'; key: string; label: string; placeholder?: string }
+  | {
+      type: 'select';
+      key: string;
+      label: string;
+      allLabel?: string;
+      options: { value: string; label: string }[];
+    }
+  | { type: 'date'; key: string; label: string }
+  | { type: 'checkbox'; key: string; label: string };
+
 export interface TableColumn<T = unknown> {
   /** Stable key for the column, used as the cell key. */
   key: string;
@@ -1285,6 +1307,14 @@ export interface TableColumn<T = unknown> {
   headerClassName?: string;
   /** Extra class name applied to the cell. */
   cellClassName?: string;
+  /** Enables the header sort control. */
+  sortable?: boolean;
+  /** Field used in sort state / server query; defaults to `key`. */
+  sortKey?: string;
+  /** Required for local sorting when the table is uncontrolled. */
+  sortValue?: (item: T) => string | number | null | undefined;
+  /** Accessible/mobile-sort label when `header` is not a string. */
+  sortLabel?: string;
 }
 
 export interface UniversalTableProps<T> {
@@ -1302,10 +1332,49 @@ export interface UniversalTableProps<T> {
   isSectionRow?: (item: T, index: number) => boolean;
   /** Extra class name applied to the wrapping element. */
   className?: string;
+  /** Controlled sort. When set, the table does not reorder `items`. */
+  sort?: TableSort | null;
+  /** Initial local sort when uncontrolled. */
+  defaultSort?: TableSort | null;
+  onSortChange?: (sort: TableSort | null) => void;
+  /** Declarative filter toolbar. */
+  filters?: TableFilter[];
+  filterValues?: Record<string, string>;
+  onFilterChange?: (key: string, value: string) => void;
+  onClearFilters?: () => void;
+  clearFiltersLabel?: string;
+  toolbarActions?: ReactNode;
 }
 
-function defaultDataLabel<T>(col: TableColumn<T>): string {
-  return typeof col.header === 'string' ? (col.dataLabel ?? col.header) : '';
+function columnSortKey<T>(col: TableColumn<T>): string {
+  return col.sortKey ?? col.key;
+}
+
+function defaultDataLabel<T>(col: TableColumn<T>): string | undefined {
+  return col.dataLabel ?? (typeof col.header === 'string' ? col.header : undefined);
+}
+
+function sortLabel<T>(col: TableColumn<T>): string {
+  return col.sortLabel ?? (typeof col.header === 'string' ? col.header : col.key);
+}
+
+function compareValues(a: unknown, b: unknown): number {
+  if (typeof a === 'number' && typeof b === 'number') return a - b;
+  return String(a).localeCompare(String(b), undefined, {
+    numeric: true,
+    sensitivity: 'base',
+  });
+}
+
+function isInteractive(target: EventTarget | null): boolean {
+  return (
+    target instanceof Element &&
+    Boolean(
+      target.closest(
+        'a,button,input,select,textarea,[role="button"],[data-row-click-ignore]',
+      ),
+    )
+  );
 }
 
 export function UniversalTable<T>({
@@ -1316,60 +1385,261 @@ export function UniversalTable<T>({
   emptyContent,
   isSectionRow,
   className = '',
+  sort,
+  defaultSort = null,
+  onSortChange,
+  filters,
+  filterValues,
+  onFilterChange,
+  onClearFilters,
+  clearFiltersLabel,
+  toolbarActions,
 }: UniversalTableProps<T>) {
+  const { t } = useTranslation('common');
+  const [localSort, setLocalSort] = useState<TableSort | null>(defaultSort);
+  const controlled = sort !== undefined;
+  const activeSort = controlled ? sort : localSort;
+  const sortableColumns = columns.filter((col) => col.sortable);
+
+  const rows = useMemo(() => {
+    if (controlled || !activeSort) return items;
+    const col = columns.find((c) => columnSortKey(c) === activeSort.key);
+    if (!col?.sortValue) return items;
+    const direction = activeSort.dir === 'asc' ? 1 : -1;
+    return items
+      .map((item, index) => ({ item, index }))
+      .sort((a, b) => {
+        const av = col.sortValue?.(a.item);
+        const bv = col.sortValue?.(b.item);
+        // Nulls always sort last, whichever direction is active.
+        if (av == null && bv == null) return a.index - b.index;
+        if (av == null) return 1;
+        if (bv == null) return -1;
+        const cmp = compareValues(av, bv);
+        if (cmp === 0) return a.index - b.index;
+        return cmp * direction;
+      })
+      .map(({ item }) => item);
+  }, [activeSort, columns, controlled, items]);
+
+  const changeSort = (col: TableColumn<T>) => {
+    const key = columnSortKey(col);
+    const next: TableSort = {
+      key,
+      dir: activeSort?.key === key && activeSort.dir === 'asc' ? 'desc' : 'asc',
+    };
+    if (!controlled) setLocalSort(next);
+    onSortChange?.(next);
+  };
+
+  const filtersList = filters ?? [];
+  const values = filterValues ?? {};
+  const hasActiveFilters = filtersList.some((f) => (values[f.key] ?? '') !== '');
+
+  const renderFilter = (f: TableFilter) => {
+    const value = values[f.key] ?? '';
+    switch (f.type) {
+      case 'text':
+        return (
+          <div key={f.key} className="table-filter">
+            <input
+              className="input admin-input-compact"
+              type="text"
+              value={value}
+              placeholder={f.placeholder ?? f.label}
+              aria-label={f.label}
+              onChange={(e) => onFilterChange?.(f.key, e.target.value)}
+            />
+          </div>
+        );
+      case 'select':
+        return (
+          <div key={f.key} className="table-filter">
+            <select
+              className="input admin-input-compact"
+              value={value}
+              aria-label={f.label}
+              onChange={(e) => onFilterChange?.(f.key, e.target.value)}
+            >
+              {f.allLabel != null && <option value="">{f.allLabel}</option>}
+              {f.options.map((o) => (
+                <option key={o.value} value={o.value}>
+                  {o.label}
+                </option>
+              ))}
+            </select>
+          </div>
+        );
+      case 'date':
+        return (
+          <div key={f.key} className="table-filter">
+            <input
+              className="input admin-input-compact"
+              type="date"
+              value={value}
+              aria-label={f.label}
+              onChange={(e) => onFilterChange?.(f.key, e.target.value)}
+            />
+          </div>
+        );
+      case 'checkbox':
+        return (
+          <div key={f.key} className="table-filter">
+            <label className={`check ${value === 'true' ? 'on' : ''}`}>
+              <input
+                type="checkbox"
+                checked={value === 'true'}
+                aria-label={f.label}
+                onChange={(e) => onFilterChange?.(f.key, e.target.checked ? 'true' : '')}
+              />
+              {f.label}
+            </label>
+          </div>
+        );
+    }
+  };
+
   const tableClassName = onRowClick
     ? 'table responsive sticky-header row-clickable'
     : 'table responsive sticky-header';
 
   return (
-    <div className={`table-wrap${className ? ` ${className}` : ''}`}>
-      <table className={tableClassName}>
-        <thead>
-          <tr>
-            {columns.map((col) => (
-              <th key={col.key} scope="col" className={col.headerClassName}>
-                {col.header}
-              </th>
-            ))}
-          </tr>
-        </thead>
-        <tbody>
-          {items.map((item, rowIndex) => {
-            const key = itemKey ? itemKey(item, rowIndex) : rowIndex;
-            const isSection = isSectionRow?.(item, rowIndex) ?? false;
-            return (
-              <tr
-                key={key}
-                className={onRowClick ? 'clickable' : ''}
-                tabIndex={onRowClick ? 0 : undefined}
-                onClick={() => onRowClick?.(item, rowIndex)}
-                onKeyDown={(e) => {
-                  if (onRowClick && (e.key === 'Enter' || e.key === ' ')) {
-                    e.preventDefault();
+    <div className={`table-block${className ? ` ${className}` : ''}`}>
+      {sortableColumns.length > 0 && (
+        <label className="table-mobile-sort">
+          <span>{t('table.sortBy')}</span>
+          <select
+            className="input admin-input-compact"
+            value={activeSort ? `${activeSort.key}:${activeSort.dir}` : ''}
+            aria-label={t('table.sortBy')}
+            onChange={(e) => {
+              const raw = e.target.value;
+              if (!raw) {
+                if (!controlled) setLocalSort(defaultSort);
+                onSortChange?.(null);
+                return;
+              }
+              const [key, dir] = raw.split(':');
+              const next: TableSort = { key, dir: dir === 'desc' ? 'desc' : 'asc' };
+              if (!controlled) setLocalSort(next);
+              onSortChange?.(next);
+            }}
+          >
+            <option value="">{t('table.defaultOrder')}</option>
+            {sortableColumns.map((col) => {
+              const key = columnSortKey(col);
+              const label = sortLabel(col);
+              return (
+                <optgroup key={key} label={label}>
+                  <option value={`${key}:asc`}>{label} ↑</option>
+                  <option value={`${key}:desc`}>{label} ↓</option>
+                </optgroup>
+              );
+            })}
+          </select>
+        </label>
+      )}
+
+      {(filtersList.length > 0 || toolbarActions) && (
+        <div className="table-toolbar">
+          {filtersList.map(renderFilter)}
+          {hasActiveFilters && onClearFilters && (
+            <Button variant="ghost" size="sm" onClick={onClearFilters}>
+              {clearFiltersLabel ?? t('table.clearFilters')}
+            </Button>
+          )}
+          {toolbarActions && <div className="table-toolbar-actions">{toolbarActions}</div>}
+        </div>
+      )}
+
+      <div className="table-wrap">
+        <table className={tableClassName}>
+          <thead>
+            <tr>
+              {columns.map((col) => {
+                const sorted = col.sortable && activeSort?.key === columnSortKey(col);
+                const direction = sorted ? activeSort?.dir : undefined;
+                return (
+                  <th
+                    key={col.key}
+                    scope="col"
+                    className={col.headerClassName}
+                    aria-sort={
+                      col.sortable
+                        ? sorted
+                          ? direction === 'asc'
+                            ? 'ascending'
+                            : 'descending'
+                          : 'none'
+                        : undefined
+                    }
+                  >
+                    {col.sortable ? (
+                      <button
+                        type="button"
+                        className="th-sort"
+                        onClick={() => changeSort(col)}
+                        aria-label={`${t('table.sortBy')} ${sortLabel(col)}`}
+                      >
+                        <span>{col.header}</span>
+                        {direction === 'asc' ? (
+                          <ChevronUp size={14} aria-hidden="true" />
+                        ) : direction === 'desc' ? (
+                          <ChevronDown size={14} aria-hidden="true" />
+                        ) : (
+                          <ArrowUpDown size={14} aria-hidden="true" className="sort-indicator" />
+                        )}
+                      </button>
+                    ) : (
+                      col.header
+                    )}
+                  </th>
+                );
+              })}
+            </tr>
+          </thead>
+          <tbody>
+            {rows.map((item, rowIndex) => {
+              const key = itemKey ? itemKey(item, rowIndex) : rowIndex;
+              const isSection = isSectionRow?.(item, rowIndex) ?? false;
+              return (
+                <tr
+                  key={key}
+                  className={onRowClick ? 'clickable' : ''}
+                  tabIndex={onRowClick ? 0 : undefined}
+                  onClick={(e) => {
+                    if (isInteractive(e.target)) return;
                     onRowClick?.(item, rowIndex);
-                  }
-                }}
-              >
-                {isSection ? (
-                  <td key={`section-${key}`} colSpan={columns.length}>
-                    {columns[0]?.render?.(item, rowIndex)}
-                  </td>
-                ) : (
-                  columns.map((col) => (
-                    <td
-                      key={col.key}
-                      data-label={defaultDataLabel(col)}
-                      className={col.cellClassName}
-                    >
-                      {col.render(item, rowIndex)}
+                  }}
+                  onKeyDown={(e) => {
+                    if (e.target !== e.currentTarget) return;
+                    if (onRowClick && (e.key === 'Enter' || e.key === ' ')) {
+                      e.preventDefault();
+                      onRowClick?.(item, rowIndex);
+                    }
+                  }}
+                >
+                  {isSection ? (
+                    <td key={`section-${key}`} colSpan={columns.length}>
+                      {columns[0]?.render?.(item, rowIndex)}
                     </td>
-                  ))
-                )}
-              </tr>
-            );
-          })}
-        </tbody>
-      </table>
+                  ) : (
+                    columns.map((col) => (
+                      <td
+                        key={col.key}
+                        data-label={defaultDataLabel(col)}
+                        className={col.cellClassName}
+                      >
+                        {col.render(item, rowIndex)}
+                      </td>
+                    ))
+                  )}
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+      </div>
 
       {items.length === 0 && emptyContent != null && <div>{emptyContent}</div>}
     </div>

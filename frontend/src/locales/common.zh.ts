@@ -48,6 +48,11 @@ export default {
   },
   backToTop: '回到顶部',
   exportCsv: '导出 CSV',
+  table: {
+    clearFilters: '清除筛选',
+    sortBy: '排序',
+    defaultOrder: '默认排序',
+  },
   noAccess: {
     title: '您没有此页面的权限',
     body: '如因职务需要，请联系管理员开通。',

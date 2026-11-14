@@ -3,6 +3,7 @@ import { describe, expect, it, vi } from 'vitest';
 import { fireEvent, render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { MemoryRouter } from 'react-router-dom';
+import '../i18n';
 import {
   Button,
   Card,
@@ -23,6 +24,7 @@ import {
   VirtualList,
   BackToTop,
   TableColumn,
+  TableFilter,
   UniversalTable,
 } from './ui';
 
@@ -452,6 +454,25 @@ describe('UniversalTable component', () => {
     expect(dataLabels).toEqual(['Name', 'Name']);
   });
 
+  it('uses explicit mobile labels for JSX headers and omits missing labels', () => {
+    render(
+      <UniversalTable
+        columns={[
+          { ...columns[0], header: <span>Name</span>, dataLabel: 'Name' },
+          { key: 'actions', header: <span>Actions</span>, render: () => 'Edit' },
+        ]}
+        items={users}
+        itemKey={(u) => u.id}
+      />,
+    );
+    expect(screen.getAllByRole('cell').map((cell) => cell.getAttribute('data-label'))).toEqual([
+      'Name',
+      null,
+      'Name',
+      null,
+    ]);
+  });
+
   it('renders empty content when items is empty', () => {
     const emptyContent = <p data-testid="empty">No rows</p>;
     render(
@@ -483,6 +504,205 @@ describe('UniversalTable component', () => {
     const rows = screen.getAllByRole('row');
     fireEvent.keyDown(rows[1], { key: 'Enter' });
     expect(onRowClick).toHaveBeenCalledWith(users[0], 0);
+  });
+
+  interface SortableUser {
+    id: number;
+    name: string;
+    age: number | null;
+  }
+
+  const sortableUsers: SortableUser[] = [
+    { id: 1, name: 'Bo', age: 2 },
+    { id: 2, name: 'Ana', age: null },
+    { id: 3, name: 'Cy', age: 1 },
+  ];
+
+  const sortableColumns: TableColumn<SortableUser>[] = [
+    {
+      key: 'name',
+      header: 'Name',
+      sortable: true,
+      sortValue: (u) => u.name,
+      render: (u) => <span data-testid="sort-name">{u.name}</span>,
+    },
+    {
+      key: 'age',
+      header: 'Age',
+      sortable: true,
+      sortValue: (u) => u.age,
+      render: (u) => <span data-testid="sort-age">{u.age ?? 'none'}</span>,
+    },
+  ];
+
+  it('sorts locally and toggles direction', () => {
+    render(
+      <UniversalTable
+        columns={sortableColumns}
+        items={sortableUsers}
+        defaultSort={{ key: 'name', dir: 'asc' }}
+        itemKey={(u) => u.id}
+      />,
+    );
+    expect(screen.getAllByTestId('sort-name').map((n) => n.textContent)).toEqual([
+      'Ana',
+      'Bo',
+      'Cy',
+    ]);
+    const header = screen.getAllByRole('columnheader')[0];
+    expect(header).toHaveAttribute('aria-sort', 'ascending');
+    fireEvent.click(screen.getByRole('button', { name: /name/i }));
+    expect(screen.getAllByTestId('sort-name').map((n) => n.textContent)).toEqual([
+      'Cy',
+      'Bo',
+      'Ana',
+    ]);
+    expect(header).toHaveAttribute('aria-sort', 'descending');
+  });
+
+  it('keeps null values last in both directions', () => {
+    render(
+      <UniversalTable
+        columns={sortableColumns}
+        items={sortableUsers}
+        defaultSort={{ key: 'age', dir: 'desc' }}
+        itemKey={(u) => u.id}
+      />,
+    );
+    expect(screen.getAllByTestId('sort-age').map((n) => n.textContent)).toEqual([
+      '2',
+      '1',
+      'none',
+    ]);
+    fireEvent.click(screen.getByRole('button', { name: /age/i }));
+    expect(screen.getAllByTestId('sort-age').map((n) => n.textContent)).toEqual([
+      '1',
+      '2',
+      'none',
+    ]);
+  });
+
+  it('does not reorder controlled rows and emits the next sort', () => {
+    const onSortChange = vi.fn();
+    render(
+      <UniversalTable
+        columns={sortableColumns}
+        items={sortableUsers}
+        sort={{ key: 'name', dir: 'asc' }}
+        onSortChange={onSortChange}
+        itemKey={(u) => u.id}
+      />,
+    );
+    expect(screen.getAllByTestId('sort-name').map((n) => n.textContent)).toEqual([
+      'Bo',
+      'Ana',
+      'Cy',
+    ]);
+    fireEvent.click(screen.getByRole('button', { name: /name/i }));
+    expect(onSortChange).toHaveBeenCalledWith({ key: 'name', dir: 'desc' });
+  });
+
+  it('renders a declarative filter toolbar and clear action', () => {
+    const onFilterChange = vi.fn();
+    const onClearFilters = vi.fn();
+    const filters: TableFilter[] = [
+      { type: 'text', key: 'q', label: 'Search' },
+      {
+        type: 'select',
+        key: 'status',
+        label: 'Status',
+        allLabel: 'All statuses',
+        options: [{ value: 'active', label: 'Active' }],
+      },
+      { type: 'date', key: 'date', label: 'Date' },
+      { type: 'checkbox', key: 'attention', label: 'Only attention' },
+    ];
+    render(
+      <UniversalTable
+        columns={columns}
+        items={users}
+        itemKey={(u) => u.id}
+        filters={filters}
+        filterValues={{ q: 'ana' }}
+        onFilterChange={onFilterChange}
+        onClearFilters={onClearFilters}
+        clearFiltersLabel="Clear filters"
+      />,
+    );
+    expect(screen.getByRole('textbox', { name: 'Search' })).toHaveValue('ana');
+    fireEvent.change(screen.getByRole('combobox', { name: 'Status' }), {
+      target: { value: 'active' },
+    });
+    expect(onFilterChange).toHaveBeenCalledWith('status', 'active');
+    fireEvent.click(screen.getByLabelText('Only attention'));
+    expect(onFilterChange).toHaveBeenCalledWith('attention', 'true');
+    fireEvent.click(screen.getByRole('button', { name: 'Clear filters' }));
+    expect(onClearFilters).toHaveBeenCalled();
+  });
+
+  it('keeps the toolbar visible when there are no rows', () => {
+    render(
+      <UniversalTable
+        columns={columns}
+        items={[]}
+        itemKey={(u) => u.id}
+        filters={[{ type: 'text', key: 'q', label: 'Search' }]}
+        filterValues={{}}
+        emptyContent={<p data-testid="empty">No rows</p>}
+      />,
+    );
+    expect(screen.getByRole('textbox', { name: 'Search' })).toBeInTheDocument();
+    expect(screen.getByTestId('empty')).toBeInTheDocument();
+  });
+
+  it('does not fire row clicks from interactive children', () => {
+    const onRowClick = vi.fn();
+    const actionColumns: TableColumn<User>[] = [
+      {
+        key: 'action',
+        header: 'Action',
+        render: () => <button type="button">Edit</button>,
+      },
+    ];
+    render(
+      <UniversalTable
+        columns={actionColumns}
+        items={users}
+        onRowClick={onRowClick}
+        itemKey={(u) => u.id}
+      />,
+    );
+    fireEvent.click(screen.getAllByRole('button', { name: 'Edit' })[0]);
+    expect(onRowClick).not.toHaveBeenCalled();
+  });
+
+  it('changes the local sort on mobile and restores the default order', () => {
+    const onSortChange = vi.fn();
+    render(
+      <UniversalTable
+        columns={sortableColumns}
+        items={sortableUsers}
+        defaultSort={{ key: 'name', dir: 'asc' }}
+        onSortChange={onSortChange}
+        itemKey={(u) => u.id}
+      />,
+    );
+    const control = screen.getByRole('combobox', { name: 'Sort by' });
+    fireEvent.change(control, { target: { value: 'name:desc' } });
+    expect(onSortChange).toHaveBeenLastCalledWith({ key: 'name', dir: 'desc' });
+    expect(screen.getAllByTestId('sort-name').map((n) => n.textContent)).toEqual([
+      'Cy',
+      'Bo',
+      'Ana',
+    ]);
+
+    fireEvent.change(control, { target: { value: '' } });
+    expect(onSortChange).toHaveBeenLastCalledWith(null);
+    expect(screen.getAllByTestId('sort-name').map((n) => n.textContent)).toEqual([
+      'Ana',
+      'Bo',
+      'Cy',
+    ]);
   });
 });
 

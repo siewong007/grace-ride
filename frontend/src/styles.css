@@ -1717,6 +1717,33 @@ main:focus { outline: none; }
   max-width: 220px;
 }
 
+.table-block { display: flex; flex-direction: column; gap: var(--space-3); }
+.table-toolbar { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-3); }
+.table-filter { display: flex; align-items: center; min-width: 0; }
+.table-toolbar-actions { margin-left: auto; display: flex; align-items: center; gap: var(--space-2); }
+.th-sort {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  padding: 0;
+  border: 0;
+  background: none;
+  color: inherit;
+  font: inherit;
+  font-weight: 600;
+  cursor: pointer;
+}
+.th-sort:hover { color: var(--text); }
+.th-sort:focus-visible { outline: 3px solid var(--primary); outline-offset: 2px; border-radius: var(--radius-sm); }
+.sort-indicator { opacity: 0.45; }
+.table-mobile-sort { display: none; }
+
+@media (max-width: 767px) {
+  .table-mobile-sort { display: flex; align-items: center; gap: var(--space-2); }
+  .table-mobile-sort > span { color: var(--muted); font-size: var(--fs-sm); }
+  .table-mobile-sort .input { flex: 1; max-width: none; }
+}
+
 .table-filter-link {
   background: none;
   border: none;
