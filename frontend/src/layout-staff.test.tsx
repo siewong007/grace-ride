@@ -171,10 +171,15 @@ describe('Staff navigation', () => {
     }
   });
 
-  it('summarises waiting work under the page heading when counts exist', () => {
+  it('names the page for assistive tech and keeps waiting counts on badges only', () => {
     granted = [...transportGranted];
-    openAdminMenu('/admin/menu');
+    const { page } = openAdminMenu('/admin/menu');
     const heading = screen.getByRole('heading', { name: 'Admin' });
-    expect(heading.nextElementSibling).toHaveTextContent('10 waiting');
+    expect(heading).toHaveClass('sr-only');
+    expect(page.querySelector('.profile-identity')).toBeNull();
+    expect(within(page).queryByText('10 waiting')).not.toBeInTheDocument();
+    expect(within(page).getByRole('link', { name: /Ride management/ })).toHaveAccessibleName(/3 waiting/);
+    const bottom = screen.getByRole('navigation', { name: 'Bottom navigation' });
+    expect(within(bottom).getByRole('link', { name: /Admin/ })).toHaveAccessibleName(/10 waiting/);
   });
 });
