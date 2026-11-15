@@ -31,6 +31,11 @@ interface AuditItem {
   entity_id: number | null;
   entity_name?: string | null;
   detail: string;
+  attendance?: {
+    member_id: number;
+    member_name: string | null;
+    status: 'attended' | 'absent' | 'cleared';
+  } | null;
   created_at: string;
 }
 
@@ -476,6 +481,12 @@ export default function Audit() {
     const name = item.entity_name?.trim();
     return name ? `${type}${id} · ${name}` : `${type}${id}`;
   };
+  const detailLabel = ({ detail, attendance }: AuditItem) => {
+    if (!attendance) return detail;
+    const member = attendance.member_name?.trim() ||
+      t('audit.attendance.member', { id: attendance.member_id });
+    return t(`audit.attendance.${attendance.status}`, { member });
+  };
 
   const escapeCsv = (v: unknown): string => {
     const s = String(v ?? '');
@@ -678,7 +689,7 @@ export default function Audit() {
     {
       key: 'detail',
       header: t('audit.detail'),
-      render: (a) => highlightText(a.detail, search),
+      render: (a) => highlightText(detailLabel(a), search),
     },
     {
       key: 'viewDetail',
@@ -959,7 +970,9 @@ export default function Audit() {
             <div className="flow-xs">
               <span className="muted small">{t('audit.detail')}</span>
               <Card style={{ maxHeight: 240, overflowY: 'auto', background: 'var(--surface-2)' }}>
-                <DetailDiff detail={selectedItem.detail} />
+                {selectedItem.attendance
+                  ? <span className="small">{detailLabel(selectedItem)}</span>
+                  : <DetailDiff detail={selectedItem.detail} />}
               </Card>
             </div>
           </div>

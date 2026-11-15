@@ -63,3 +63,27 @@ it('keeps the audit log ID separate from the affected record and omits filter an
   expect(details.queryByRole('button', { name: /filter by|actor ID|copy JSON/i })).not.toBeInTheDocument();
   expect(details.getByRole('link', { name: 'Open object' })).toHaveAttribute('href', '/events/11');
 });
+
+it('shows readable attendance changes in the audit table and details', async () => {
+  const event = {
+    actor: 'Organiser', action: 'event.attendance', entity: 'event', entity_id: 6,
+    created_at: '2026-11-14T10:00:00',
+  };
+  mocks.api.mockResolvedValue({
+    items: [
+      { ...event, id: 42, detail: 'user 9 = Some(true)', attendance: { member_id: 9, member_name: 'Mei Tan', status: 'attended' } },
+      { ...event, id: 41, detail: 'user 9 = Some(false)', attendance: { member_id: 9, member_name: 'Mei Tan', status: 'absent' } },
+      { ...event, id: 40, detail: 'user 10 = None', attendance: { member_id: 10, member_name: null, status: 'cleared' } },
+    ],
+    next_before: null,
+  });
+  render(<MemoryRouter><Audit /></MemoryRouter>);
+
+  expect(await screen.findByText('Marked Mei Tan as attended')).toBeVisible();
+  expect(screen.getByText('Marked Mei Tan as absent')).toBeVisible();
+  expect(screen.getByText('Cleared attendance for Member #10')).toBeVisible();
+  fireEvent.click(screen.getByRole('button', { name: 'View details #42' }));
+  const details = within(await screen.findByRole('dialog'));
+  expect(details.getByText('Marked Mei Tan as attended')).toBeVisible();
+  expect(details.queryByText('user 9 = Some(true)')).not.toBeInTheDocument();
+});

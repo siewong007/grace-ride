@@ -258,6 +258,12 @@ export default {
     system: '系统',
     object: '对象',
     detail: '详情',
+    attendance: {
+      member: '会员 #{id}',
+      attended: '将{member}标记为出席',
+      absent: '将{member}标记为缺席',
+      cleared: '已清除{member}的出席记录',
+    },
     search: '搜索操作记录…',
     allObjects: '全部对象',
     from: '起始日期',

@@ -519,6 +519,48 @@ async fn audit_log_identifies_the_target_even_when_the_actor_is_someone_else() {
 }
 
 #[tokio::test]
+async fn audit_log_resolves_the_member_and_status_in_existing_attendance_entries() {
+    let (app, st) = setup().await;
+    let admin = login(&st, "admin@example.org").await;
+    let member_id = user_id(&st, "member@example.org").await;
+    let (member_name,): (String,) = sqlx::query_as("SELECT name FROM users WHERE id = $1")
+        .bind(member_id)
+        .fetch_one(&st.db)
+        .await
+        .unwrap();
+    for detail in [
+        format!("user {member_id} = Some(true)"),
+        format!("user {member_id} = Some(false)"),
+        "user 999999 = None".into(),
+    ] {
+        grace_ride::util::audit(&st.db, None, "event.attendance", "event", Some(6), detail).await;
+    }
+    let res = call(
+        &app,
+        Method::GET,
+        "/api/admin/audit?action=event.attendance",
+        Some(&admin),
+        None,
+    )
+    .await;
+    assert_eq!(res.status, StatusCode::OK, "{}", res.json);
+    let items = res.json["items"].as_array().unwrap();
+    assert_eq!(items.len(), 3);
+    assert_eq!(
+        items[0]["attendance"],
+        json!({"member_id": 999999, "member_name": null, "status": "cleared"})
+    );
+    assert_eq!(
+        items[1]["attendance"],
+        json!({"member_id": member_id, "member_name": member_name, "status": "absent"})
+    );
+    assert_eq!(
+        items[2]["attendance"],
+        json!({"member_id": member_id, "member_name": member_name, "status": "attended"})
+    );
+}
+
+#[tokio::test]
 async fn audit_log_pages_through_every_entry_and_filters() {
     let (app, st) = setup().await;
     let admin = login(&st, "admin@example.org").await;

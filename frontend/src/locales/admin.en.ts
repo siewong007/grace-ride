@@ -258,6 +258,12 @@ export default {
     system: 'System',
     object: 'Object',
     detail: 'Detail',
+    attendance: {
+      member: 'Member #{id}',
+      attended: 'Marked {member} as attended',
+      absent: 'Marked {member} as absent',
+      cleared: 'Cleared attendance for {member}',
+    },
     search: 'Search audit log…',
     allObjects: 'All objects',
     from: 'From',

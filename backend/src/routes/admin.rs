@@ -1,6 +1,8 @@
 //! 管理员: dashboard, members, invitations, groups, areas, recovery approvals, audit log.
 //! Roles themselves are edited in `routes::roles`.
 
+use std::collections::HashMap;
+
 use axum::{
     body::Body,
     extract::{Path, Query, State},
@@ -954,6 +956,20 @@ struct AuditQuery {
 const AUDIT_PAGE: i64 = 100;
 const AUDIT_PAGE_MAX: i64 = 200;
 
+fn audit_attendance(action: &str, detail: &str) -> Option<(i64, &'static str)> {
+    if action != "event.attendance" {
+        return None;
+    }
+    let (member, value) = detail.strip_prefix("user ")?.split_once(" = ")?;
+    let status = match value {
+        "Some(true)" => "attended",
+        "Some(false)" => "absent",
+        "None" => "cleared",
+        _ => return None,
+    };
+    Some((member.parse().ok()?, status))
+}
+
 /// 管理员可查看谁在何时修改了安排。 Newest first, one page at a time: `next_before` is
 /// the cursor for the next page and is null on the last one, so the whole retained log
 /// can be read, not just its newest entries.
@@ -1026,6 +1042,21 @@ async fn audit_log(
     let more = rows.len() as i64 > limit;
     rows.truncate(limit as usize);
     let next_before = rows.last().filter(|_| more).map(|r| r.0);
+    let attendance: Vec<_> = rows
+        .iter()
+        .map(|(_, _, _, action, _, _, _, detail, _)| audit_attendance(action, detail))
+        .collect();
+    let member_ids: Vec<_> = attendance.iter().flatten().map(|(id, _)| *id).collect();
+    let member_names: HashMap<i64, String> = if member_ids.is_empty() {
+        HashMap::new()
+    } else {
+        sqlx::query_as("SELECT id, name FROM users WHERE id = ANY($1)")
+            .bind(&member_ids)
+            .fetch_all(&st.db)
+            .await?
+            .into_iter()
+            .collect()
+    };
     let retention_days: i64 = sqlx::query_scalar::<_, String>(
         "SELECT value FROM system_settings WHERE key='audit_retention_days'",
     )
@@ -1037,10 +1068,15 @@ async fn audit_log(
     .unwrap_or(st.cfg.audit_retention_days);
 
     Ok(Json(json!({
-        "items": rows.into_iter().map(|(id, aid, actor, action, entity, eid, name, detail, at)| json!({
-            "id": id, "actor_id": aid, "actor": actor, "action": action, "entity": entity, "entity_id": eid,
-            "entity_name": name, "detail": detail, "created_at": at,
-        })).collect::<Vec<_>>(),
+        "items": rows.into_iter().zip(attendance).map(|((id, aid, actor, action, entity, eid, name, detail, at), attendance)| {
+            let attendance = attendance.map(|(member_id, status)| json!({
+                "member_id": member_id, "member_name": member_names.get(&member_id), "status": status,
+            }));
+            json!({
+                "id": id, "actor_id": aid, "actor": actor, "action": action, "entity": entity, "entity_id": eid,
+                "entity_name": name, "detail": detail, "attendance": attendance, "created_at": at,
+            })
+        }).collect::<Vec<_>>(),
         "next_before": next_before,
         "retention_days": retention_days,
     })))
