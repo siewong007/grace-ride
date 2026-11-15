@@ -635,6 +635,7 @@ textarea.input { min-height: 96px; resize: vertical; }
 .section-head[aria-expanded="true"] .section-chevron { transform: rotate(180deg); }
 .section-chevron { flex-shrink: 0; transition: transform 0.2s ease; }
 .section-body { padding: 0 var(--space-4) var(--space-4); }
+.section-body[hidden] { display: none; }
 
 @media (max-width: 767px) {
   .section-head { min-height: 64px; }
