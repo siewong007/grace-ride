@@ -355,6 +355,17 @@ export function Modal({
     const originalOverflow = document.body.style.overflow;
     document.body.style.overflow = 'hidden';
 
+    const backdrop = modalRef.current?.parentElement;
+    if (backdrop) {
+      const index = Array.from(document.querySelectorAll('.modal-bg')).indexOf(backdrop);
+      if (index > 0) backdrop.style.zIndex = String(100 + index * 10);
+    }
+
+    const isTopModal = () => {
+      const all = document.querySelectorAll('.modal-bg');
+      return !!backdrop && all[all.length - 1] === backdrop;
+    };
+
     const focusable = modalRef.current?.querySelectorAll<HTMLElement>(
       'button, [href], input, select, textarea, [tabindex]:not([tabindex="-1"])',
     );
@@ -365,6 +376,7 @@ export function Modal({
     }
 
     const onKeyDown = (e: KeyboardEvent) => {
+      if (!isTopModal()) return;
       if (e.key === 'Escape') {
         e.preventDefault();
         onClose();
@@ -390,10 +402,10 @@ export function Modal({
       }
     };
 
-    window.addEventListener('keydown', onKeyDown);
+    window.addEventListener('keydown', onKeyDown, true);
     return () => {
       document.body.style.overflow = originalOverflow;
-      window.removeEventListener('keydown', onKeyDown);
+      window.removeEventListener('keydown', onKeyDown, true);
       previousActiveElement.current?.focus();
     };
   }, [onClose]);
