@@ -1575,7 +1575,7 @@ pub async fn seed_edge(db: &PgPool) -> anyhow::Result<()> {
             12i64,
             "已结算",
             "finished",
-            format!("{}T12:00", &(today - Duration::days(30)).to_string()),
+            format!("{}T12:00", today - Duration::days(30)),
         ),
         (
             9002,
@@ -1587,7 +1587,7 @@ pub async fn seed_edge(db: &PgPool) -> anyhow::Result<()> {
             8,
             "已退款",
             "cancelled",
-            format!("{}T12:00", &sat.to_string()),
+            format!("{}T12:00", sat),
         ),
         (
             9003,
@@ -1599,7 +1599,7 @@ pub async fn seed_edge(db: &PgPool) -> anyhow::Result<()> {
             2,
             "免费",
             "published",
-            format!("{}T12:00", &sun.to_string()),
+            format!("{}T12:00", sun),
         ),
         (
             9004,
@@ -1611,7 +1611,7 @@ pub async fn seed_edge(db: &PgPool) -> anyhow::Result<()> {
             12,
             "场租平均分摊",
             "published",
-            format!("{}T12:00", &fri.to_string()),
+            format!("{}T12:00", fri),
         ),
         (
             9005,
@@ -1623,7 +1623,7 @@ pub async fn seed_edge(db: &PgPool) -> anyhow::Result<()> {
             0,
             "免费",
             "published",
-            format!("{}T12:00", &sun.to_string()),
+            format!("{}T12:00", sun),
         ),
         (
             9006,
@@ -1635,7 +1635,7 @@ pub async fn seed_edge(db: &PgPool) -> anyhow::Result<()> {
             20,
             "自备",
             "published",
-            format!("{}T12:00", &fri.to_string()),
+            format!("{}T12:00", fri),
         ),
     ];
     for (eid, title, kind, desc, at, loc, cap, cost, status, deadline) in edge_events {
@@ -2070,7 +2070,7 @@ pub async fn seed_edge(db: &PgPool) -> anyhow::Result<()> {
     // --- live locations and shared-trip chat ---
     for (driver_id, lat, lng) in [
         (90003i64, 3.1390f64, 101.6133f64),
-        (90006, 3.1400, 101.6100),
+        (90006, 3.1405, 101.6100),
     ] {
         sqlx::query(
             "INSERT INTO driver_locations (driver_id, lat, lng, heading, demo_batch, updated_at)
