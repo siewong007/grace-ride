@@ -58,7 +58,7 @@ export default function Costs() {
   return (
     <Page width="medium">
       <div className="stack">
-        <PageHeader title={t('title')} subtitle={t('desc')} />
+        <PageHeader title={t('title')} subtitle={t('desc')} back="/me" />
 
         <ErrorBox error={error} />
 

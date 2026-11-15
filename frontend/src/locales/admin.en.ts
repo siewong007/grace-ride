@@ -1,3 +1,5 @@
+import actionLabels from './auditActions.en';
+
 export default {
   actions: 'Actions',
   dashboard: {
@@ -259,7 +261,7 @@ export default {
     object: 'Object',
     detail: 'Detail',
     attendance: {
-      member: 'Member #{id}',
+      member: 'an unknown member',
       attended: 'Marked {member} as attended',
       absent: 'Marked {member} as absent',
       cleared: 'Cleared attendance for {member}',
@@ -325,6 +327,7 @@ export default {
       reimbursement_rates: 'Reimbursement rates',
       system_settings: 'System settings',
     },
+    actionLabels,
   },
   reports: {
     title: 'Member reports',

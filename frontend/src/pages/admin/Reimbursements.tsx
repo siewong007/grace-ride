@@ -69,7 +69,7 @@ export default function AdminReimbursements() {
 
   return (
     <Page>
-      <PageHeader title={t('reimb.title')} subtitle={t('reimb.desc')} />
+      <PageHeader title={t('reimb.title')} subtitle={t('reimb.desc')} back="/admin" />
       {canReview && canPay && (
         <Tabs
           value={tab}

@@ -202,7 +202,7 @@ export default function RideNew() {
           </Notice>
         )}
 
-        <form onSubmit={submit} noValidate className="stack">
+        <form onSubmit={submit} noValidate className="stack ride-new-form">
           {/* Section 0: Who is this ride for? */}
           <section className="form-section stack">
             <h3>{t('riderTypeSection')}</h3>
@@ -411,9 +411,9 @@ export default function RideNew() {
                   id="field-address"
                   label={t('address')}
                   hint={
-                    <span className="row nowrap">
+                    <span className="row nowrap min-w-0">
                       <Lock size={12} aria-hidden="true" />
-                      <span>{t('addressHint')}</span>
+                      <span className="min-w-0">{t('addressHint')}</span>
                     </span>
                   }
                   required

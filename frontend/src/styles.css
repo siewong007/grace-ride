@@ -17,6 +17,11 @@
   --primary: #1F5DB4;
   --primary-hover: #194E9C;
   --primary-ink: #FFFFFF;
+  /* Filled buttons. Dark mode keeps links on --primary (a light blue) and uses these
+     so the main button stays a solid fill instead of a pale one that looks disabled. */
+  --btn-bg: var(--primary);
+  --btn-ink: var(--primary-ink);
+  --btn-hover: var(--primary-hover);
   --primary-soft: #EEF3FB;
   --accent: var(--primary);
   --accent-ink: var(--primary-ink);
@@ -112,6 +117,9 @@
     --primary-hover: #9ABDF3;
     --primary-ink: #0B1730;
     --primary-soft: #1A2A44;
+    --btn-bg: var(--brand-blue);
+    --btn-ink: #FFFFFF;
+    --btn-hover: #2B6EC4;
     --success: #6CC18D;
     --success-soft: #16261D;
     --warning: #E5B454;
@@ -137,6 +145,9 @@
   --primary: #7AA7EE;
   --primary-hover: #9ABDF3;
   --primary-ink: #0B1730;
+  --btn-bg: var(--brand-blue);
+  --btn-ink: #FFFFFF;
+  --btn-hover: #2B6EC4;
   --primary-soft: #1A2A44;
   --success: #6CC18D;
   --success-soft: #16261D;
@@ -346,7 +357,7 @@ button, input, select, textarea { font: inherit; color: inherit; }
 .row.between { justify-content: space-between; }
 .row.nowrap { flex-wrap: nowrap; }
 .grow { flex: 1; min-width: 0; }
-.grid { display: grid; gap: var(--space-4); grid-template-columns: 1fr; }
+.grid { display: grid; gap: var(--space-4); grid-template-columns: minmax(0, 1fr); }
 @media (min-width: 768px) {
   .grid.cols-2 { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .grid.cols-3 { grid-template-columns: repeat(2, minmax(0, 1fr)); }
@@ -363,6 +374,23 @@ button, input, select, textarea { font: inherit; color: inherit; }
 }
 .page-head { display: flex; align-items: flex-end; justify-content: space-between; gap: var(--space-3); flex-wrap: wrap; margin-bottom: var(--space-2); }
 .page-head p { color: var(--muted); margin-top: var(--space-1); }
+/* A nowrap row shrinks Chinese to one character (every character is a break). Keep a real width. */
+.page-head-title { flex: 1 1 12rem; min-width: min(100%, 12rem); align-items: flex-start; }
+.page-head-text { min-width: min(100%, 10rem); flex: 1 1 auto; }
+.page-head h1 { overflow-wrap: break-word; }
+@media (max-width: 767px) {
+  .page-head { align-items: flex-start; margin-bottom: 0; gap: var(--space-2); }
+  .page-head h1 { font-size: var(--fs-xl); line-height: 1.25; }
+  .page-head p {
+    margin-top: 2px;
+    display: -webkit-box;
+    -webkit-line-clamp: 1;
+    -webkit-box-orient: vertical;
+    overflow: hidden;
+  }
+  .page-container { gap: var(--space-3); }
+  .home { gap: var(--space-5); }
+}
 .muted { color: var(--muted); }
 .small { font-size: var(--fs-sm); }
 .tiny { font-size: var(--fs-xs); }
@@ -424,9 +452,9 @@ button, input, select, textarea { font: inherit; color: inherit; }
   width: 16px; height: 16px; border: 2px solid currentColor; border-top-color: transparent;
   border-radius: 50%; animation: spin 0.8s linear infinite; display: inline-block;
 }
-.btn.primary { background: var(--primary); color: var(--primary-ink); border-color: var(--primary); }
-.btn.primary:hover { background: var(--primary-hover); border-color: var(--primary-hover); filter: none; }
-.btn.accent { background: var(--primary); color: var(--primary-ink); border-color: var(--primary); }
+.btn.primary { background: var(--btn-bg); color: var(--btn-ink); border-color: var(--btn-bg); }
+.btn.primary:hover { background: var(--btn-hover); border-color: var(--btn-hover); filter: none; }
+.btn.accent { background: var(--btn-bg); color: var(--btn-ink); border-color: var(--btn-bg); }
 .btn.danger { background: transparent; color: var(--danger); border-color: var(--border); }
 .btn.danger:hover { background: var(--danger-soft); }
 .btn.ghost { background: transparent; border-color: transparent; color: var(--primary); }
@@ -670,6 +698,7 @@ table.table { width: 100%; border-collapse: collapse; font-size: var(--fs-md); }
   .table.responsive td::before { content: attr(data-label); color: var(--muted); font-size: var(--fs-sm); }
   .table.responsive td:empty { display: none; }
 }
+.table-compact > .item { align-items: flex-start; }
 
 /* ---------- Progress / status flow ---------- */
 .flow { display: flex; gap: var(--space-1); }
@@ -706,8 +735,11 @@ table.table { width: 100%; border-collapse: collapse; font-size: var(--fs-md); }
   padding: var(--space-5) var(--space-4) 0;
 }
 .modal > .sheet-handle,
-.modal > .row.between,
+.modal > .modal-head,
 .modal > .modal-footer { flex: none; }
+.modal-head { display: flex; align-items: flex-start; justify-content: space-between; gap: var(--space-2); }
+.modal-head h2 { font-size: var(--fs-xl); overflow-wrap: anywhere; }
+.modal-close { flex: none; }
 .modal-body {
   flex: 1 1 auto; min-height: 0; overflow-y: auto; overscroll-behavior: contain;
   padding-bottom: calc(var(--space-5) + env(safe-area-inset-bottom, 0px));
@@ -1197,17 +1229,20 @@ main:focus { outline: none; }
   margin-top: var(--space-4);
 }
 @media (max-width: 639px) {
+  /* Fixed, not sticky: a sticky bar covers the last fields and they cannot scroll clear of it. */
+  .ride-new-form { padding-bottom: 8rem; }
   .ride-new-submit-bar {
-    position: sticky;
+    position: fixed;
+    left: 0;
+    right: 0;
     bottom: calc(var(--nav-h) + env(safe-area-inset-bottom, 0px));
     background: var(--bg);
     padding: var(--space-3) var(--space-4);
     border-top: 1px solid var(--border);
-    z-index: 20;
-    margin-left: calc(-1 * var(--space-4));
-    margin-right: calc(-1 * var(--space-4));
-    margin-top: var(--space-3);
+    z-index: 25;
+    margin: 0;
   }
+  .form-section + .form-section { padding-top: var(--space-3); }
 }
 
 /* Vertical status timeline in RideDetail */
@@ -1531,16 +1566,20 @@ main:focus { outline: none; }
   flex-wrap: wrap;
   align-items: center;
   gap: var(--space-2);
-  margin-top: var(--space-2);
-  padding-top: var(--space-3);
-  border-top: 1px solid var(--border-soft);
+  order: 1;
 }
+.driver-trip-assistance { order: 2; }
+.driver-trip-card > .nav-buttons-group { order: 3; }
 
 .driver-trip-primary-btn {
   flex: 1 1 200px;
 }
 .btn.driver-trip-withdraw { margin-left: auto; color: var(--muted); }
 .btn.driver-trip-withdraw:hover { color: var(--danger); }
+@media (max-width: 767px) {
+  .drive-schedule-body { display: flex; flex-direction: column; }
+  .drive-trips-slot { order: -1; }
+}
 .driver-filters { display: flex; flex-wrap: wrap; gap: var(--space-2); align-items: center; }
 .driver-filters > select { flex: 1 1 180px; width: auto; }
 .driver-filters > .driver-date-input { flex: 1 1 160px; width: auto; }
@@ -2223,11 +2262,38 @@ main:focus { outline: none; }
   background: var(--surface-2);
   border: 1px solid var(--border);
 }
+.help-inbox-bar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-2);
+}
+.help-inbox-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2);
+  min-width: 0;
+  max-width: 100%;
+}
+.help-inbox-actions .segmented-control { min-width: 0; max-width: 100%; }
+@media (max-width: 767px) {
+  .help-inbox-actions { width: 100%; }
+  .help-inbox-actions > .btn { flex: 1 1 auto; }
+  .help-inbox-actions .segmented-item { white-space: normal; text-align: center; }
+}
 .help-two-pane {
   display: grid;
-  grid-template-columns: minmax(300px, 360px) minmax(0, 1fr);
-  gap: var(--space-5);
+  grid-template-columns: minmax(0, 1fr);
+  gap: var(--space-4);
   align-items: start;
+}
+@media (min-width: 900px) {
+  .help-two-pane {
+    grid-template-columns: minmax(240px, 360px) minmax(0, 1fr);
+    gap: var(--space-5);
+  }
 }
 
 /* Guide Stepper */

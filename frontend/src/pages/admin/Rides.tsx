@@ -52,7 +52,8 @@ export default function AdminRides() {
     queryString,
   } = useTableParams({
     defaultPageSize: 50,
-    defaultSort: { key: 'pickup_at', dir: 'asc' },
+    // No column sort: the server lists upcoming rides first, then recent past rides.
+    defaultSort: null,
     filterKeys: ['status', 'date', 'attention'],
   });
 
@@ -159,6 +160,7 @@ export default function AdminRides() {
       <PageHeader
         title={t('rides.title')}
         subtitle={t('rides.desc')}
+        back="/admin"
         actions={
           rides.length > 0 ? (
             <Button variant="secondary" size="sm" onClick={handleExport} icon={<Download size={16} />}>
@@ -180,6 +182,23 @@ export default function AdminRides() {
               items={loading ? [] : rides}
               onRowClick={(r) => nav(`/admin/rides/${r.id}`)}
               itemKey={(r) => r.id}
+              compactRow={(r) => (
+                <>
+                  <div className="grow min-w-0">
+                    <div className="bold ellipsis">
+                      {r.passenger.name}
+                      {r.seats > 1 ? ` (${r.seats})` : ''}
+                    </div>
+                    <div className="muted small ellipsis">
+                      {fmtDay(r.pickup_at, ft).split(' ')[0]} {r.pickup_at.slice(11, 16)}
+                      {' · '}
+                      {r.area.name} → {r.destination}
+                    </div>
+                    <div className="muted tiny ellipsis">{r.driver?.name ?? '—'}</div>
+                  </div>
+                  <StatusPill map={RIDE_STATUS} status={r.status} />
+                </>
+              )}
               sort={sort}
               onSortChange={setSort}
               filters={filterDefs}

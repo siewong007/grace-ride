@@ -213,6 +213,7 @@ export default function Report() {
         <PageHeader
           title={t('title', { month: periodLabel() })}
           subtitle={t('desc')}
+          back="/me"
           actions={
             <>
               <input

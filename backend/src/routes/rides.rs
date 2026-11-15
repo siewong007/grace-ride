@@ -2463,6 +2463,14 @@ async fn admin_rides(
             "(r.needs_attention = 1 OR (r.status='pending_driver' AND r.pickup_at::timestamp - LOCALTIMESTAMP < interval '1 day'))".to_string(),
         );
     }
+    let today = crate::util::today_kl().format("%Y-%m-%d").to_string();
+    // No sort chosen: upcoming and today first (soonest first), then past rides newest first.
+    // `today` is YYYY-MM-DD from our own clock, so it is safe to interpolate.
+    let default_order = format!(
+        "(substr(r.pickup_at, 1, 10) < '{today}'), \
+         CASE WHEN substr(r.pickup_at, 1, 10) < '{today}' THEN NULL ELSE r.pickup_at END ASC, \
+         r.pickup_at DESC, r.id ASC"
+    );
     let order = crate::util::order_by(
         q.sort.as_deref(),
         q.dir.as_deref(),
@@ -2478,7 +2486,7 @@ async fn admin_rides(
             ("driver", "d.name"),
             ("status", "r.status"),
         ],
-        "r.pickup_at ASC, r.id ASC",
+        &default_order,
         "r.id ASC",
     );
 

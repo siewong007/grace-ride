@@ -217,7 +217,7 @@ export function PageHeader({ title, subtitle, back, actions, className = '' }: P
             <ArrowLeft size={20} />
           </Link>
         )}
-        <div>
+        <div className="page-head-text">
           <h1 ref={headingRef}>{title}</h1>
           {subtitle && <p className="muted">{subtitle}</p>}
         </div>
@@ -477,12 +477,12 @@ export function Modal({
         tabIndex={-1}
       >
         <div className="sheet-handle hide-tablet-up" aria-hidden="true" />
-        <div className="row between">
-          <div>
+        <div className="modal-head">
+          <div className="grow">
             <h2 id={titleId}>{title}</h2>
             {description && <p id={descId} className="muted small">{description}</p>}
           </div>
-          <button className="btn ghost sm" onClick={onClose} aria-label={t('close') || 'Close'}>
+          <button type="button" className="icon-btn modal-close" onClick={onClose} aria-label={t('close') || 'Close'}>
             <X size={20} aria-hidden="true" />
           </button>
         </div>
@@ -1435,6 +1435,11 @@ export interface UniversalTableProps<T> {
   onClearFilters?: () => void;
   clearFiltersLabel?: string;
   toolbarActions?: ReactNode;
+  /**
+   * Phone layout: one compact row per record instead of a stacked card of every column.
+   * Desktop keeps the table. Omit it and phones keep the stacked table.
+   */
+  compactRow?: (item: T, index: number) => ReactNode;
 }
 
 function columnSortKey<T>(col: TableColumn<T>): string {
@@ -1455,6 +1460,20 @@ function compareValues(a: unknown, b: unknown): number {
     numeric: true,
     sensitivity: 'base',
   });
+}
+
+/** True on a phone-width window. Starts false so tests (no matchMedia) keep the table. */
+function useNarrowScreen(): boolean {
+  const [narrow, setNarrow] = useState(false);
+  useEffect(() => {
+    if (typeof window.matchMedia !== 'function') return;
+    const mq = window.matchMedia('(max-width: 767px)');
+    const apply = () => setNarrow(mq.matches);
+    apply();
+    mq.addEventListener?.('change', apply);
+    return () => mq.removeEventListener?.('change', apply);
+  }, []);
+  return narrow;
 }
 
 function isInteractive(target: EventTarget | null): boolean {
@@ -1485,8 +1504,11 @@ export function UniversalTable<T>({
   onClearFilters,
   clearFiltersLabel,
   toolbarActions,
+  compactRow,
 }: UniversalTableProps<T>) {
   const { t } = useTranslation('common');
+  const narrow = useNarrowScreen();
+  const showCompact = narrow && !!compactRow && items.length > 0;
   const [localSort, setLocalSort] = useState<TableSort | null>(defaultSort);
   const controlled = sort !== undefined;
   const activeSort = controlled ? sort : localSort;
@@ -1647,6 +1669,31 @@ export function UniversalTable<T>({
         </div>
       )}
 
+      {showCompact ? (
+        <div className="list table-compact">
+          {rows.map((item, rowIndex) => {
+            const key = itemKey ? itemKey(item, rowIndex) : rowIndex;
+            const body = compactRow?.(item, rowIndex);
+            if (onRowClick) {
+              return (
+                <button
+                  key={key}
+                  type="button"
+                  className="item"
+                  onClick={() => onRowClick(item, rowIndex)}
+                >
+                  {body}
+                </button>
+              );
+            }
+            return (
+              <div key={key} className="item">
+                {body}
+              </div>
+            );
+          })}
+        </div>
+      ) : (
       <div className="table-wrap">
         <table className={tableClassName}>
           <thead>
@@ -1735,6 +1782,7 @@ export function UniversalTable<T>({
           </tbody>
         </table>
       </div>
+      )}
 
       {items.length === 0 && emptyContent != null && <div>{emptyContent}</div>}
     </div>

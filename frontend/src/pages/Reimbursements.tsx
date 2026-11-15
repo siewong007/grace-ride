@@ -67,6 +67,7 @@ export default function Reimbursements() {
         <PageHeader
           title={t('title')}
           subtitle={t('note')}
+          back="/me"
           actions={
             can('reimbursements', 'create') ? (
               <Button variant="primary" to="/reimbursements/new" icon={<Plus size={20} />}>

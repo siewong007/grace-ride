@@ -2,6 +2,7 @@ mod common;
 
 use axum::http::{Method, StatusCode};
 use common::*;
+use grace_ride::util::today_kl;
 
 fn pickup_times(body: &serde_json::Value) -> Vec<String> {
     body["items"]
@@ -89,6 +90,31 @@ async fn admin_rides_sort_uses_allow_listed_fields() {
         );
     }
 
+    let natural = call(
+        &app,
+        Method::GET,
+        "/api/admin/rides?page=1&limit=200",
+        Some(&root),
+        None,
+    )
+    .await;
+    assert_eq!(natural.status, StatusCode::OK, "{}", natural.json);
+    let times = pickup_times(&natural.json);
+    let today = today_kl().format("%Y-%m-%d").to_string();
+    let upcoming: Vec<_> = times
+        .iter()
+        .take_while(|stamp| stamp.len() >= 10 && &stamp[..10] >= today.as_str())
+        .cloned()
+        .collect();
+    let past: Vec<_> = times.iter().skip(upcoming.len()).cloned().collect();
+    assert!(
+        past.iter().all(|stamp| stamp.len() >= 10 && &stamp[..10] < today.as_str()),
+        "a past ride is mixed into upcoming: {times:?}"
+    );
+    assert!(upcoming.windows(2).all(|w| w[0] <= w[1]), "{upcoming:?}");
+    assert!(past.windows(2).all(|w| w[0] >= w[1]), "{past:?}");
+
+    // An unknown sort is ignored and falls back to that same order, not to raw SQL.
     let injected = call(
         &app,
         Method::GET,
@@ -98,7 +124,7 @@ async fn admin_rides_sort_uses_allow_listed_fields() {
     )
     .await;
     assert_eq!(injected.status, StatusCode::OK, "{}", injected.json);
-    assert_eq!(pickup_times(&injected.json), pickup_times(&asc.json));
+    assert_eq!(pickup_times(&injected.json), times);
 
     let unsupported = call(
         &app,
@@ -109,5 +135,5 @@ async fn admin_rides_sort_uses_allow_listed_fields() {
     )
     .await;
     assert_eq!(unsupported.status, StatusCode::OK, "{}", unsupported.json);
-    assert_eq!(pickup_times(&unsupported.json), pickup_times(&asc.json));
+    assert_eq!(pickup_times(&unsupported.json), times);
 }

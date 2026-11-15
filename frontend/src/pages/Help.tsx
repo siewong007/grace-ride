@@ -26,6 +26,7 @@ import {
   EmptyState,
   ListSkeleton,
   Page,
+  PageHeader,
   Pill,
   StatusPill,
 } from '../components/ui';
@@ -302,14 +303,12 @@ export default function Help() {
   return (
     <Page width="wide">
       <div className="stack">
-        {/* Header with title and staff view toggle */}
-        <div className="row between nowrap page-head-title">
-          <div>
-            <h1>{isHelpDesk && !viewAsMember ? t('title') : t('howCanWeHelp')}</h1>
-            <p className="muted">{t('desc')}</p>
-          </div>
-          {isHelpDesk && (
-            <div className="btn-row nowrap">
+        <PageHeader
+          title={isHelpDesk && !viewAsMember ? t('title') : t('howCanWeHelp')}
+          subtitle={t('desc')}
+          back={isHelpDesk && !viewAsMember ? (can('admin_dashboard') ? '/admin' : '/') : '/me'}
+          actions={
+            isHelpDesk ? (
               <Button
                 variant="secondary"
                 size="sm"
@@ -317,9 +316,9 @@ export default function Help() {
               >
                 {viewAsMember ? t('exitViewAsMember') : t('viewAsMember')}
               </Button>
-            </div>
-          )}
-        </div>
+            ) : undefined
+          }
+        />
 
         {/* Global Search Bar (press / to focus) */}
         <div className="help-search-box">
@@ -465,9 +464,9 @@ export default function Help() {
             {/* STAFF INBOX (Section 3) */}
             {isHelpDesk && !viewAsMember && (
               <section className="stack">
-                <div className="row between nowrap">
+                <div className="help-inbox-bar">
                   <h2>{t('inboxTitle')}</h2>
-                  <div className="row nowrap gap-sm">
+                  <div className="help-inbox-actions">
                     <div className="segmented-control">
                       <button
                         type="button"
@@ -776,9 +775,9 @@ export default function Help() {
 
             {/* GUIDES SECTION */}
             <section id="guides-section" className="stack">
-              <div className="row between nowrap">
+              <div className="help-inbox-bar">
                 <h2>{t('guideTab')}</h2>
-                <div className="row nowrap gap-sm">
+                <div className="help-inbox-actions">
                   {isStaff && (
                     <div className="segmented-control">
                       <button
@@ -850,12 +849,12 @@ export default function Help() {
                       <Link
                         key={g.id}
                         to={`/help/guides/${g.slug}`}
-                        className="card link stack-xs"
+                        className="card link stack-xs min-w-0"
                       >
-                        <div className="row between nowrap">
-                          <div className="bold ellipsis row nowrap gap-xs">
+                        <div className="row between nowrap min-w-0">
+                          <div className="row nowrap gap-xs min-w-0">
                             <BookOpen size={16} aria-hidden="true" />
-                            <span>{pick(g.title_zh, g.title_en)}</span>
+                            <span className="bold ellipsis min-w-0">{pick(g.title_zh, g.title_en)}</span>
                           </div>
                           {!g.published && (
                             <Pill tone="warning">{t('guideDraft')}</Pill>
@@ -898,7 +897,7 @@ export default function Help() {
             {/* MY REQUESTS SECTION (shown to members or in viewAsMember mode) */}
             {(!isHelpDesk || viewAsMember) && (
               <section className="stack">
-                <div className="row between nowrap">
+                <div className="help-inbox-bar">
                   <h2>{t('myRequests')}</h2>
                   <Button
                     variant="secondary"

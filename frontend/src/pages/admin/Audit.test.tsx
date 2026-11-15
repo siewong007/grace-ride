@@ -53,7 +53,9 @@ it('keeps the audit log ID separate from the affected record and omits filter an
   });
   render(<MemoryRouter><Audit /></MemoryRouter>);
 
-  expect(await screen.findByRole('button', { name: 'Event #11 · Sunday Lunch' })).toBeVisible();
+  fireEvent.click(await screen.findByRole('button', { name: 'Sunday Lunch' }));
+  await waitFor(() => expect(mocks.api).toHaveBeenLastCalledWith('/admin/audit?entity=event&entity_id=11'));
+  expect(screen.queryByRole('textbox', { name: 'Object ID' })).not.toBeInTheDocument();
   fireEvent.click(screen.getByRole('button', { name: 'View details #11' }));
   const details = within(await screen.findByRole('dialog', { name: 'Audit entry details' }));
   expect(details.getByText('Log ID')).toBeVisible();
@@ -74,6 +76,7 @@ it('shows readable attendance changes in the audit table and details', async () 
       { ...event, id: 42, detail: 'user 9 = Some(true)', attendance: { member_id: 9, member_name: 'Mei Tan', status: 'attended' } },
       { ...event, id: 41, detail: 'user 9 = Some(false)', attendance: { member_id: 9, member_name: 'Mei Tan', status: 'absent' } },
       { ...event, id: 40, detail: 'user 10 = None', attendance: { member_id: 10, member_name: null, status: 'cleared' } },
+      { ...event, id: 39, action: 'login.passkey', entity: 'user', entity_id: 9, entity_name: 'Mei Tan', detail: '' },
     ],
     next_before: null,
   });
@@ -81,9 +84,12 @@ it('shows readable attendance changes in the audit table and details', async () 
 
   expect(await screen.findByText('Marked Mei Tan as attended')).toBeVisible();
   expect(screen.getByText('Marked Mei Tan as absent')).toBeVisible();
-  expect(screen.getByText('Cleared attendance for Member #10')).toBeVisible();
+  expect(screen.getByText('Cleared attendance for an unknown member')).toBeVisible();
+  expect(screen.getAllByRole('button', { name: 'Event' })).toHaveLength(3);
+  expect(screen.getByRole('button', { name: 'Mei Tan' })).toBeVisible();
   fireEvent.click(screen.getByRole('button', { name: 'View details #42' }));
   const details = within(await screen.findByRole('dialog'));
   expect(details.getByText('Marked Mei Tan as attended')).toBeVisible();
+  expect(details.getByText('Event')).toBeVisible();
   expect(details.queryByText('user 9 = Some(true)')).not.toBeInTheDocument();
 });

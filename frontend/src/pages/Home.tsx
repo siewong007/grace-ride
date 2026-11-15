@@ -89,12 +89,12 @@ export default function Home() {
           <CardSkeleton count={1} />
         ) : next ? (
           <NextRide ride={next} />
-        ) : (
+        ) : can('drive') && (driving.loading || (driving.data?.length ?? 0) > 0) ? null : (
           <EmptyState icon={<CalendarPlus size={32} />} title={t('noRide')} />
         )}
 
-        {/* Today's driving (drivers only) */}
-        {can('drive') && (
+        {/* Today's driving (drivers only). Hidden when it would only repeat the empty state above. */}
+        {can('drive') && (driving.loading || (driving.data?.length ?? 0) > 0 || !!next) && (
           <Section title={t('driveSchedule')} more={{ to: '/drive', label: t('all') }}>
             {driving.loading ? (
               <ListSkeleton count={2} />
@@ -111,9 +111,9 @@ export default function Home() {
                   </Link>
                 ))}
               </div>
-            ) : (
+            ) : rides.loading || next ? (
               <p className="muted">{t('noDriveToday')}</p>
-            )}
+            ) : null}
           </Section>
         )}
 

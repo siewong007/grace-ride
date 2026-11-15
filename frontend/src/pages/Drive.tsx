@@ -63,6 +63,7 @@ export default function Drive() {
   const { t } = useTranslation('drive');
   const { can } = useAuth();
   const [tab, setTab] = useState<'schedule' | 'requests' | 'settings'>('schedule');
+  const requests = useApi<Ride[]>(can('drive') ? '/driver/requests?mine_areas=true' : null);
 
   if (!can('drive')) {
     return (
@@ -80,7 +81,7 @@ export default function Drive() {
         onChange={(v) => setTab(v as 'schedule' | 'requests' | 'settings')}
         items={[
           { value: 'schedule', label: t('schedule') },
-          { value: 'requests', label: t('requests') },
+          { value: 'requests', label: t('requests'), count: requests.data?.length },
           { value: 'settings', label: t('settings') },
         ]}
       />
@@ -161,11 +162,15 @@ function Schedule() {
       </div>
 
       {active && <ShareLocation />}
+      <div className="drive-schedule-body stack">
+      <div className="drive-route-slot">
       <DriverRouteCard
         refreshKey={data?.map((r) => `${r.id}:${r.status}:${r.picked_up_at ?? ''}`).join(',')}
       />
+      </div>
       <ErrorBox error={error ?? actErr} />
 
+      <div className="drive-trips-slot stack">
       {loading ? (
         <CardSkeleton count={2} />
       ) : !data?.length ? (
@@ -336,7 +341,7 @@ function Schedule() {
                     {(r.status === 'confirmed' || (r.status === 'in_progress' && !r.picked_up_at)) && (
                       <div className="btn-row">
                         <Button
-                          variant="ghost"
+                          variant="secondary"
                           size="sm"
                           disabled={busy}
                           onClick={async () => {
@@ -347,7 +352,7 @@ function Schedule() {
                           {t('delayPlus5')}
                         </Button>
                         <Button
-                          variant="ghost"
+                          variant="secondary"
                           size="sm"
                           disabled={busy}
                           onClick={async () => {
@@ -389,6 +394,8 @@ function Schedule() {
           </div>
         ))
       )}
+      </div>
+      </div>
 
       {withdrawRide && (
         <ReasonModal

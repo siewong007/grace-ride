@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { Link, useNavigate, useParams } from 'react-router-dom';
+import { Link, useLocation, useNavigate, useParams } from 'react-router-dom';
 import {
   AlertCircle,
   AlertTriangle,
@@ -68,6 +68,7 @@ import type { TFunction } from 'i18next';
 
 export default function RideDetail() {
   const { t } = useTranslation('rideDetail');
+  const loc = useLocation();
   const ft = useFormatT();
   const { id } = useParams();
   const chatRef = useRef<HTMLDivElement>(null);
@@ -90,7 +91,7 @@ export default function RideDetail() {
         <PageHeader
           title={fmtDateTime(r.pickup_at, ft)}
           subtitle={`${r.area.name} → ${r.destination}`}
-          back="/rides"
+          back={loc.pathname.startsWith('/admin/') ? '/admin/rides' : '/rides'}
           actions={<StatusPill map={RIDE_STATUS} status={r.status} />}
         />
 
@@ -940,7 +941,7 @@ function DriverActions({ ride: r, reload }: { ride: Ride; reload: () => void }) 
           <span className="small muted">{t('driverDelayBtn')}:</span>
           <div className="btn-row">
             <Button
-              variant="ghost"
+              variant="secondary"
               size="sm"
               disabled={busy}
               onClick={() => run(() => post(`/rides/${r.id}/driver-delay`, { delay_minutes: 5 }).then(reload), t('driverDelaySent', { mins: 5 }))}
@@ -948,7 +949,7 @@ function DriverActions({ ride: r, reload }: { ride: Ride; reload: () => void }) 
               {t('driverDelay5m')}
             </Button>
             <Button
-              variant="ghost"
+              variant="secondary"
               size="sm"
               disabled={busy}
               onClick={() => run(() => post(`/rides/${r.id}/driver-delay`, { delay_minutes: 10 }).then(reload), t('driverDelaySent', { mins: 10 }))}
@@ -956,7 +957,7 @@ function DriverActions({ ride: r, reload }: { ride: Ride; reload: () => void }) 
               {t('driverDelay10m')}
             </Button>
             <Button
-              variant="ghost"
+              variant="secondary"
               size="sm"
               disabled={busy}
               onClick={() => run(() => post(`/rides/${r.id}/driver-delay`, { delay_minutes: 15 }).then(reload), t('driverDelaySent', { mins: 15 }))}

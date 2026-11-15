@@ -1,3 +1,5 @@
+import actionLabels from './auditActions.zh';
+
 export default {
   actions: '操作',
   dashboard: {
@@ -259,7 +261,7 @@ export default {
     object: '对象',
     detail: '详情',
     attendance: {
-      member: '会员 #{id}',
+      member: '未知会员',
       attended: '将{member}标记为出席',
       absent: '将{member}标记为缺席',
       cleared: '已清除{member}的出席记录',
@@ -325,6 +327,7 @@ export default {
       reimbursement_rates: '报销费率',
       system_settings: '系统设置',
     },
+    actionLabels,
   },
   reports: {
     title: '会员报告',

@@ -57,6 +57,7 @@ export default function Roles() {
       <PageHeader
         title={t('roles.title')}
         subtitle={t('roles.desc')}
+        back="/admin"
         actions={
           can('admin_roles', 'create') ? (
             <Button variant="primary" icon={<Plus size={18} />} onClick={() => setPicked(NEW)}>

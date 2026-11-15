@@ -50,7 +50,7 @@ export default function Settings() {
 
   return (
     <Page>
-      <PageHeader title={t('settings.title')} subtitle={t('settings.desc')} />
+      <PageHeader title={t('settings.title')} subtitle={t('settings.desc')} back="/admin" />
       <div className="stack gap-lg">
         {(groups || areas) && (
           <div className="split">

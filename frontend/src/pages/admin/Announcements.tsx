@@ -71,6 +71,7 @@ export default function Announcements() {
       <PageHeader
         title={t('announcements.title')}
         subtitle={t('announcements.desc')}
+        back="/admin"
       />
 
       <div className="split">

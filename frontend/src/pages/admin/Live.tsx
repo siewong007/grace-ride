@@ -60,6 +60,7 @@ export default function AdminLive() {
       <PageHeader
         title={t('live.title')}
         subtitle={t('live.desc')}
+        back="/admin"
         actions={
           <Pill tone="teal">
             {data?.drivers.length ?? 0} / {data?.max ?? 10} {t('live.drivers')}

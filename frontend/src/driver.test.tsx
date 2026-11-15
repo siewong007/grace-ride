@@ -138,7 +138,7 @@ describe('Drive page - Available requests tab', () => {
     );
 
     // Switch to requests tab
-    const requestsTab = screen.getByRole('tab', { name: /^requests$/i });
+    const requestsTab = screen.getByRole('tab', { name: /requests/i });
     fireEvent.click(requestsTab);
 
     await waitFor(() => {

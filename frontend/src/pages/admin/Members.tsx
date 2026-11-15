@@ -104,7 +104,7 @@ export default function Members() {
 
   return (
     <Page>
-      <PageHeader title={t('members.title')} subtitle={t('members.desc')} />
+      <PageHeader title={t('members.title')} subtitle={t('members.desc')} back="/admin" />
       <Tabs
         value={tab}
         onChange={(v) => handleTabChange(v as Tab)}
@@ -280,6 +280,40 @@ function MemberList() {
             columns={columns}
             items={loading ? [] : users}
             itemKey={(u) => u.id}
+            compactRow={(u) => (
+              <>
+                <Avatar name={u.name} size="sm" />
+                <div className="grow min-w-0">
+                  <div className="bold ellipsis">{u.name}</div>
+                  <div className="muted small ellipsis">{u.email}</div>
+                  <div className="muted tiny ellipsis">
+                    {u.roles.length > 0
+                      ? u.roles.map((r) => roleLabel(r, ft, names)).join(' · ')
+                      : t('members.member')}
+                    {u.groups ? ` · ${u.groups}` : ''}
+                  </div>
+                </div>
+                {canEdit && editable(u) && (
+                  u.status === 'pending' ? (
+                    <Button
+                      variant="primary"
+                      size="sm"
+                      onClick={() => setModalUser({ user: u, mode: 'approve' })}
+                    >
+                      {t('members.approveMember')}
+                    </Button>
+                  ) : (
+                    <Button
+                      variant="secondary"
+                      size="sm"
+                      onClick={() => setModalUser({ user: u, mode: 'edit' })}
+                    >
+                      {t('members.edit')}
+                    </Button>
+                  )
+                )}
+              </>
+            )}
             sort={sort}
             onSortChange={setSort}
             filters={filterDefs}

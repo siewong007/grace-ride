@@ -221,6 +221,7 @@ export default function AdminReports() {
         <PageHeader
           title={t('reports.title')}
           subtitle={t('reports.desc')}
+          back="/admin"
           actions={
             <>
               <input

@@ -20,6 +20,7 @@ import {
   UniversalTable,
   useInfiniteScroll,
 } from '../../components/ui';
+import { auditActionLabel } from '../../auditLabel';
 import { fmtDateTime, useFormatT } from '../../format';
 
 interface AuditItem {
@@ -38,6 +39,8 @@ interface AuditItem {
   } | null;
   created_at: string;
 }
+
+const showObjectId = (entity: string) => entity !== 'event' && entity !== 'user';
 
 /** One page of the log, newest first. `next_before` is null on the last page. */
 interface AuditPage {
@@ -417,8 +420,6 @@ export default function Audit() {
           const p = new URLSearchParams(prev);
           if (v) p.set(k, v);
           else p.delete(k);
-          // The id only makes sense with the object it belongs to.
-          if (k === 'entity' && !v) p.delete('entity_id');
           return p;
         },
         { replace: true },
@@ -477,14 +478,17 @@ export default function Audit() {
   });
   const objectLabel = (item: AuditItem) => {
     const type = entityLabel(item.entity);
-    const id = item.entity_id != null ? ` #${item.entity_id}` : '';
     const name = item.entity_name?.trim();
+    if (!showObjectId(item.entity)) return name || type;
+    const id = item.entity_id != null ? ` #${item.entity_id}` : '';
     return name ? `${type}${id} · ${name}` : `${type}${id}`;
   };
+  const filteredObject = items.find((item) =>
+    item.entity === entity && String(item.entity_id) === entityId,
+  );
   const detailLabel = ({ detail, attendance }: AuditItem) => {
     if (!attendance) return detail;
-    const member = attendance.member_name?.trim() ||
-      t('audit.attendance.member', { id: attendance.member_id });
+    const member = attendance.member_name?.trim() || t('audit.attendance.member');
     return t(`audit.attendance.${attendance.status}`, { member });
   };
 
@@ -649,7 +653,7 @@ export default function Audit() {
           title={t('audit.filterByAction')}
         >
           <Pill tone={getActionTone(a.action)}>
-            {highlightText(a.action, search)}
+            {highlightText(auditActionLabel(a.action, t), search)}
           </Pill>
         </button>
       ),
@@ -713,6 +717,7 @@ export default function Audit() {
       <PageHeader
         title={t('audit.title')}
         subtitle={t('audit.desc')}
+        back="/admin"
         actions={
           <div className="row gap-xs">
             <Button
@@ -768,7 +773,7 @@ export default function Audit() {
         <select
           className="input admin-input-compact"
           value={entity}
-          onChange={(e) => set('entity', e.target.value)}
+          onChange={(e) => setMany({ entity: e.target.value, entity_id: '' })}
           aria-label={t('audit.object')}
         >
           <option value="">{t('audit.allObjects')}</option>
@@ -778,7 +783,7 @@ export default function Audit() {
             </option>
           ))}
         </select>
-        {entity && (
+        {entity && showObjectId(entity) && (
           <input
             className="input admin-input-compact"
             type="text"
@@ -872,7 +877,9 @@ export default function Audit() {
         </Button>
         {entity && entityId && (
           <Pill>
-            {entityLabel(entity)} #{entityId}
+            {showObjectId(entity)
+              ? `${entityLabel(entity)} #${entityId}`
+              : filteredObject?.entity_name?.trim() || entityLabel(entity)}
           </Pill>
         )}
         {action && (
