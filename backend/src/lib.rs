@@ -49,8 +49,59 @@ pub const MAX_JSON_BODY: usize = 128 * 1024;
 pub async fn connect_db(url: &str) -> anyhow::Result<PgPool> {
     let opts = PgConnectOptions::from_str(url)?;
     let db = PgPool::connect_with(opts).await?;
+    // The folder holds one script. A database that still records 0002–0016, or
+    // an older checksum of this file, drops that history first. The script is
+    // idempotent, so re-running it keeps existing rows.
+    clear_replaced_migration_history(&db).await?;
     sqlx::migrate!("./migrations").run(&db).await?;
     Ok(db)
+}
+
+async fn clear_replaced_migration_history(db: &PgPool) -> anyhow::Result<()> {
+    let ready: bool = sqlx::query_scalar(
+        "SELECT EXISTS (
+            SELECT 1 FROM information_schema.tables
+            WHERE table_schema = current_schema() AND table_name = '_sqlx_migrations'
+        )",
+    )
+    .fetch_one(db)
+    .await?;
+    if !ready {
+        return Ok(());
+    }
+    let applied: Vec<(i64, Vec<u8>)> =
+        sqlx::query_as("SELECT version, checksum FROM _sqlx_migrations ORDER BY version")
+            .fetch_all(db)
+            .await?;
+    let migrator = sqlx::migrate!("./migrations");
+    if history_matches(&applied, &migrator) {
+        return Ok(());
+    }
+    if !applied.is_empty() {
+        tracing::warn!(
+            "Clearing {} migration history row(s); the schema script will be recorded as the only version",
+            applied.len()
+        );
+    }
+    sqlx::query("DELETE FROM _sqlx_migrations")
+        .execute(db)
+        .await?;
+    Ok(())
+}
+
+fn history_matches(applied: &[(i64, Vec<u8>)], migrator: &sqlx::migrate::Migrator) -> bool {
+    let mut current = migrator
+        .iter()
+        .filter(|migration| !migration.migration_type.is_down_migration());
+    for (version, checksum) in applied {
+        match current.next() {
+            Some(migration)
+                if migration.version == *version
+                    && migration.checksum.as_ref() == checksum.as_slice() => {}
+            _ => return false,
+        }
+    }
+    current.next().is_none()
 }
 
 /// Build shared state: database, migrations, first-run data, WebAuthn.

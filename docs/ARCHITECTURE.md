@@ -29,7 +29,7 @@ The generic Compose stack includes Caddy. The AIC deployment uses host Caddy and
 | `backend/src/arrange.rs`, `routing.rs` | Staff planning suggestions and geocoding/route computation |
 | `backend/src/jobs.rs`, `stream.rs` | Recurring work and SSE notifications |
 | `backend/src/i18n/`, `error.rs`, `util.rs` | Localized messages, errors, shared audit/notification helpers |
-| `backend/migrations/` | Ordered PostgreSQL schema migrations |
+| `backend/migrations/0001_init.sql` | The PostgreSQL schema (one script) |
 | `frontend/src/App.tsx`, `auth.tsx`, `perms.ts` | Routes, authentication and client permission gates |
 | `frontend/src/pages/`, `components/` | Member/staff pages and shared UI, maps/chat/auto-lock |
 | `frontend/src/styles.css`, `prefs.ts`, `locales/` | Design tokens, display preferences and Chinese/English strings |
@@ -46,9 +46,9 @@ The generic Compose stack includes Caddy. The AIC deployment uses host Caddy and
 
 ## Storage and migrations
 
-SQLx applies all migrations at startup (`lib.rs::connect_db`). The current sequence is `0001_init.sql` through `0012_session_timeout_setting.sql`: base schema, passenger locations, geocode cache, app secrets, permissions, reimbursement, pagination indexes, readiness/delay, system settings, backup codes/auto-lock, proxy booking and session-timeout setting.
+SQLx applies `backend/migrations/0001_init.sql` at startup (`lib.rs::connect_db`). That file is the whole schema: tables, constraints, indexes, reimbursement rates, and system settings. Demo members stay in `seed::run`.
 
-Keep applied migrations immutable and add new numbered migrations. Do not follow the old instruction to rewrite `0001` or reset an existing database. Uploads and PostgreSQL data are separate persistent stores and both must be included in recovery planning.
+A database that still has the old numbered history (`0002` through `0016`), or a checksum that does not match this file, has `_sqlx_migrations` cleared and then this script runs. The script is idempotent, so existing rows stay. Do not put `DROP COLUMN`, `TRUNCATE`, or an unguarded `DELETE` in it: a checksum change re-runs the whole file. Uploads and PostgreSQL data are separate persistent stores and both must be included in recovery planning.
 
 ## Ride states
 

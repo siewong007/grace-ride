@@ -42,6 +42,7 @@ Install the matching Playwright Chromium browser if missing (`npx playwright ins
 | Audit behavior, filtering, retention and export | `backend/tests/audit.rs` | Audit-specific integration coverage |
 | Planning and routing | `backend/tests/plan.rs`, `backend/tests/routing.rs` | Plan validation and routing behavior |
 | Capacity | `backend/tests/capacity.rs`, `scripts/capacity_baseline.sh` | Synthetic thousand-member fixture, configured live-driver cap and reminder timing; not proof of sustained production throughput or rejection of an actual eleventh live driver |
+| Remaining handler branches | `backend/tests/flows.rs` | One HTTP case for each auth, ride, event, settlement, community, file, admin, and plan branch the suites above do not already assert. Keys no handler constructs are listed in that file. Race-only codes stay in the suite that can force them |
 | UI components and pages | `frontend/src/**/*.test.ts*` | Vitest/Testing Library, including permissions, auto-lock, locales and formatting |
 | Browser smoke | `frontend/e2e/smoke.spec.ts` | Mocked API, public/login/routing checks |
 | Visual/accessibility | `frontend/e2e/visual.spec.ts` and snapshots | Mocked API, selected pages at mobile/desktop sizes, themes and axe checks; not whole-product accessibility certification |

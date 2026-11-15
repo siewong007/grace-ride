@@ -486,7 +486,7 @@ describe('Admin Audit', () => {
 
     await screen.findByText('Admin Paul');
     expect(mockApi).toHaveBeenLastCalledWith('/admin/audit?entity=ride&entity_id=5');
-    expect(screen.getByText('Ride #5')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Ride #5' })).toBeInTheDocument();
 
     fireEvent.change(screen.getByLabelText('From'), { target: { value: '2026-11-01' } });
     await waitFor(() =>
@@ -553,12 +553,12 @@ describe('Admin Audit', () => {
     const viewBtn = screen.getByRole('button', { name: new RegExp('view details #\\d+', 'i') });
     fireEvent.click(viewBtn);
 
-    expect(await screen.findByRole('heading', { level: 2, name: new RegExp('audit entry #\\d+', 'i') })).toBeInTheDocument();
+    expect(await screen.findByRole('dialog', { name: 'Audit entry details' })).toBeInTheDocument();
     expect(screen.getAllByText('Reassigned from Silas to Luke').length).toBeGreaterThanOrEqual(2);
 
     fireEvent.click(screen.getAllByRole('button', { name: /close/i })[0]);
     await waitFor(() => {
-      expect(screen.queryByRole('heading', { level: 2, name: new RegExp('audit entry #\\d+', 'i') })).not.toBeInTheDocument();
+      expect(screen.queryByRole('dialog', { name: 'Audit entry details' })).not.toBeInTheDocument();
     });
   });
 

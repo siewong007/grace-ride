@@ -10,7 +10,7 @@ use axum::{
 };
 use grace_ride::{
     auth::{hash_token, SESSION_COOKIE},
-    init, router,
+    init, router, seed,
     state::{AppState, Config},
 };
 use http_body_util::BodyExt;
@@ -53,6 +53,16 @@ pub async fn setup() -> (Router, AppState) {
     cfg.validate().unwrap();
     let state = init(cfg).await.unwrap();
     (router(state.clone()), state)
+}
+
+/// Seed the edge-case fixtures (`EDGE_BATCH`) into a fresh test DB.
+///
+/// Opt-in: call this when a test needs disabled/no-pw/TOTP users, every ride
+/// status, all reimbursement/settlement statuses, help tickets, notifications,
+/// proxy riders, etc. Users use stable IDs 90001..=90010; look them up by
+/// stable email (e.g. `edgemember@example.org`, `edgestaff@example.org`).
+pub async fn seed_edge(st: &AppState) {
+    seed::seed_edge(&st.db).await.expect("seed_edge");
 }
 
 pub async fn call(

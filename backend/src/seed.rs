@@ -36,7 +36,7 @@ const PRNG_SEED: u64 = 0x6772_6163_655f_7365;
 const GENERATED_MEMBER_ID_BASE: i64 = 10001;
 const GENERATED_EVENT_ID_BASE: i64 = 1001;
 const GENERATED_RIDE_ID_BASE: i64 = 30001;
-const SIMULATED_TOTP_SECRET: &str = "MFRGGZDF73DGXYP3";
+pub const SIMULATED_TOTP_SECRET: &str = "MFRGGZDF73DGXYP3";
 const LEGACY_DEMO_EMAILS: &[&str] = &[
     "admin@example.org",
     "transport@example.org",
@@ -1292,6 +1292,1419 @@ async fn seed_core(db: &PgPool) -> anyhow::Result<()> {
     Ok(())
 }
 
+/// Edge / edge-case fixtures stamped with `EDGE_BATCH`.
+///
+/// Idempotent and safe to call alongside `seed_core` (or on its own). Stable
+/// ids use reserved ranges that never collide with the core demo
+/// (users 1..=14, events 1..=7, rides 20001..=20009) or the generated scale
+/// range (users 10001..=60000).
+///
+/// Look up edge users in tests by these stable emails:
+///   edgestaff@example.org   (admin,transport,finance)
+///   edgeadmin@example.org   (admin)
+///   edgetransport@example.org (transport,driver)
+///   edgefinance@example.org (finance, TOTP)
+///   edgedriver@example.org  (driver, no vehicle)
+///   edgecarpool@example.org (driver, carpool, spare_seats=8)
+///   edgemember@example.org  (plain active member)
+///   edgenopw@example.org    (active, no password_hash - passkey/OAuth only)
+///   edgedisabled@example.org (disabled member)
+///   edgeen@example.org      (lang='en', terms not accepted)
+pub async fn seed_edge(db: &PgPool) -> anyhow::Result<()> {
+    insert_reference_data(db).await?;
+    ensure_demo_batches(db).await?;
+    let pw = hash_password(DEMO_PASSWORD).map_err(|e| anyhow::anyhow!("{e}"))?;
+    let now = now_kl();
+    let today = today_kl();
+    let kl = |d: NaiveDate, h: i32, m: i32| format!("{}T{:02}:{:02}", d, h, m);
+    let future = kl(today + Duration::days(2), 9, 0);
+    let past = kl(today - Duration::days(5), 9, 0);
+    let sat = next_weekday(today, Weekday::Sat);
+    let sun = next_weekday(today, Weekday::Sun);
+    let fri = next_weekday(today, Weekday::Fri);
+
+    // --- edge users (ids 90001..=90010) ---
+    // (id, name, email, phone, roles, status, lang, terms_accepted_at, spare_seats, carpool_enabled, totp, passkey)
+    let edge_users = [
+        (
+            90001i64,
+            "Edge Staff",
+            "edgestaff@example.org",
+            "012-300 9001",
+            "admin,transport,finance",
+            "active",
+            "zh",
+            Some(&now),
+            8,
+            1,
+            false,
+            false,
+        ),
+        (
+            90002,
+            "Edge Admin",
+            "edgeadmin@example.org",
+            "012-300 9002",
+            "admin",
+            "active",
+            "zh",
+            Some(&now),
+            1,
+            0,
+            false,
+            false,
+        ),
+        (
+            90003,
+            "Edge Transport",
+            "edgetransport@example.org",
+            "012-300 9003",
+            "transport,driver",
+            "active",
+            "zh",
+            Some(&now),
+            2,
+            1,
+            false,
+            false,
+        ),
+        (
+            90004,
+            "Edge Finance",
+            "edgefinance@example.org",
+            "012-300 9004",
+            "finance",
+            "active",
+            "zh",
+            Some(&now),
+            1,
+            0,
+            true,
+            false,
+        ),
+        (
+            90005,
+            "Edge Driver",
+            "edgedriver@example.org",
+            "012-300 9005",
+            "driver",
+            "active",
+            "zh",
+            Some(&now),
+            1,
+            0,
+            false,
+            false,
+        ),
+        (
+            90006,
+            "Edge Carpool",
+            "edgecarpool@example.org",
+            "012-300 9006",
+            "driver",
+            "active",
+            "zh",
+            Some(&now),
+            8,
+            1,
+            false,
+            false,
+        ),
+        (
+            90007,
+            "Edge Member",
+            "edgemember@example.org",
+            "012-300 9007",
+            "",
+            "active",
+            "zh",
+            Some(&now),
+            1,
+            0,
+            false,
+            false,
+        ),
+        (
+            90008,
+            "Edge NoPw",
+            "edgenopw@example.org",
+            "012-300 9008",
+            "",
+            "active",
+            "zh",
+            None,
+            1,
+            0,
+            false,
+            false,
+        ),
+        (
+            90009,
+            "Edge Disabled",
+            "edgedisabled@example.org",
+            "012-300 9009",
+            "",
+            "disabled",
+            "zh",
+            Some(&now),
+            1,
+            0,
+            false,
+            false,
+        ),
+        (
+            90010,
+            "Edge EN",
+            "edgeen@example.org",
+            "012-3456789012345678",
+            "",
+            "active",
+            "en",
+            None,
+            1,
+            0,
+            false,
+            false,
+        ),
+    ];
+    for (id, name, email, phone, roles, status, lang, terms, spare, carpool, totp, _passkey) in
+        edge_users
+    {
+        insert_member(
+            db,
+            &mut Rng::new(),
+            id,
+            name,
+            email,
+            phone,
+            roles,
+            status,
+            EDGE_BATCH,
+            &pw,
+            totp,
+            false,
+        )
+        .await;
+        let terms_sql = match terms {
+            Some(t) => format!("terms_accepted_at = '{t}'"),
+            None => "terms_accepted_at = NULL".to_string(),
+        };
+        let sql = format!(
+            "UPDATE users SET spare_seats={spare}, carpool_enabled={carpool}, lang='{lang}', {terms_sql} WHERE id={id}"
+        );
+        sqlx::query(&sql).execute(db).await?;
+        if totp {
+            sqlx::query("UPDATE users SET totp_secret=$1, totp_enabled=1 WHERE id=$2")
+                .bind(SIMULATED_TOTP_SECRET)
+                .bind(id)
+                .execute(db)
+                .await?;
+        }
+    }
+    // edgenopw: active user with no password hash (passkey / OAuth-only edge case).
+    sqlx::query("UPDATE users SET password_hash = NULL WHERE id = 90008")
+        .execute(db)
+        .await?;
+
+    // --- edge vehicles ---
+    let edge_vehicles = [
+        (90003i64, "Toyota Innova", "白色", "EDG 1001", 7),
+        (90006, "Honda Odyssey", "灰色", "EDG 1003", 7),
+    ];
+    for (uid, model, color, plate, seats) in edge_vehicles {
+        sqlx::query(
+            "INSERT INTO vehicles (user_id, model, color, plate, seats, demo_batch, vehicle_type)
+             VALUES ($1,$2,$3,$4,$5,$6,'standard')
+             ON CONFLICT(user_id) DO UPDATE SET model=excluded.model, color=excluded.color,
+             plate=excluded.plate, seats=excluded.seats, vehicle_type=excluded.vehicle_type,
+             demo_batch=excluded.demo_batch",
+        )
+        .bind(uid)
+        .bind(model)
+        .bind(color)
+        .bind(plate)
+        .bind(seats)
+        .bind(EDGE_BATCH)
+        .execute(db)
+        .await?;
+    }
+
+    // --- edge driver areas ---
+    for (uid, area) in [
+        (90003i64, 1i64),
+        (90003i64, 5i64),
+        (90006i64, 2i64),
+        (90006i64, 7i64),
+    ] {
+        let _ = sqlx::query_as::<_, (i64,)>(
+            "INSERT INTO driver_areas (user_id, area_id, demo_batch) VALUES ($1,$2,$3) RETURNING user_id",
+        )
+        .bind(uid)
+        .bind(area)
+        .bind(EDGE_BATCH)
+        .fetch_optional(db)
+        .await?;
+    }
+
+    // --- edge group memberships ---
+    for (uid, gid) in [
+        (90007i64, 1i64),
+        (90007i64, 2i64),
+        (90009i64, 3i64),
+        (90010i64, 1i64),
+    ] {
+        let _ = sqlx::query_as::<_, (i64,)>(
+            "INSERT INTO group_members (group_id, user_id, demo_batch) VALUES ($1,$2,$3) ON CONFLICT (group_id, user_id) DO NOTHING RETURNING group_id",
+        )
+        .bind(gid)
+        .bind(uid)
+        .bind(EDGE_BATCH)
+        .fetch_optional(db)
+        .await?;
+    }
+
+    // --- edge events (ids 9001..=9006) ---
+    let edge_events = [
+        (
+            9001i64,
+            "过去羽毛球",
+            "badminton",
+            "三十天前的已结束活动",
+            kl(today - Duration::days(30), 19, 30),
+            "PJ 室内羽球馆",
+            12i64,
+            "已结算",
+            "finished",
+            format!("{}T12:00", &(today - Duration::days(30)).to_string()),
+        ),
+        (
+            9002,
+            "已取消保龄球",
+            "bowling",
+            "组织者取消的活动",
+            kl(sat, 14, 0),
+            "Sunway Pyramid 保龄球馆",
+            8,
+            "已退款",
+            "cancelled",
+            format!("{}T12:00", &sat.to_string()),
+        ),
+        (
+            9003,
+            "满员徒步",
+            "walk",
+            "名额已满，用于候补测试",
+            kl(sun, 8, 0),
+            "Taman Jaya 公园入口",
+            2,
+            "免费",
+            "published",
+            format!("{}T12:00", &sun.to_string()),
+        ),
+        (
+            9004,
+            "周末羽球",
+            "badminton",
+            "即将举行的标准活动",
+            kl(fri, 19, 30),
+            "PJ 室内羽球馆",
+            12,
+            "场租平均分摊",
+            "published",
+            format!("{}T12:00", &fri.to_string()),
+        ),
+        (
+            9005,
+            "免费公园散步",
+            "walk",
+            "零费用活动，不限名额",
+            kl(sun, 7, 0),
+            "社区中心礼堂",
+            0,
+            "免费",
+            "published",
+            format!("{}T12:00", &sun.to_string()),
+        ),
+        (
+            9006,
+            "无群体活动",
+            "other",
+            "不关联任何群体",
+            kl(fri, 18, 30),
+            "PJ State CMC 教会",
+            20,
+            "自备",
+            "published",
+            format!("{}T12:00", &fri.to_string()),
+        ),
+    ];
+    for (eid, title, kind, desc, at, loc, cap, cost, status, deadline) in edge_events {
+        sqlx::query_as::<_, (i64,)>(
+            "INSERT INTO events (id, title, kind, description, starts_at, location, capacity, cost_note, created_by, signup_deadline, status, demo_batch)
+             VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)
+             ON CONFLICT (id) DO UPDATE SET title=excluded.title, kind=excluded.kind,
+             description=excluded.description, starts_at=excluded.starts_at, location=excluded.location,
+             capacity=excluded.capacity, cost_note=excluded.cost_note, status=excluded.status,
+             signup_deadline=excluded.signup_deadline, demo_batch=excluded.demo_batch
+             RETURNING id",
+        )
+        .bind(eid)
+        .bind(title)
+        .bind(kind)
+        .bind(desc)
+        .bind(&at)
+        .bind(loc)
+        .bind(cap)
+        .bind(cost)
+        .bind(90001i64)
+        .bind(&deadline)
+        .bind(status)
+        .bind(EDGE_BATCH)
+        .fetch_one(db)
+        .await?;
+    }
+    for (eid, gid) in [(9001i64, 2i64), (9002, 3), (9003, 1), (9004, 2), (9004, 3)] {
+        // 9006 deliberately has no groups (edge case).
+        sqlx::query(
+            "INSERT INTO event_groups (event_id, group_id, demo_batch) VALUES ($1,$2,$3) ON CONFLICT DO NOTHING",
+        )
+        .bind(eid)
+        .bind(gid)
+        .bind(EDGE_BATCH)
+        .execute(db)
+        .await?;
+    }
+
+    // --- edge event signups ---
+    let edge_signups = [
+        // 9003 full: two going, one waitlist.
+        (9003i64, 90007i64, "going", 0i64, 0, 0, None::<i64>),
+        (9003, 90001, "going", 0, 0, 0, None),
+        (9003, 90005, "waitlist", 0, 0, 0, None),
+        // 9004 upcoming: member needs ride, driver offers drive, one cancelled.
+        (9004, 90007, "going", 1, 0, 0, None),
+        (9004, 90005, "going", 0, 1, 2, None),
+        (9004, 90010, "cancelled", 0, 0, 0, None),
+        // 9001 finished: attended mix, including a disabled user.
+        (9001, 90007, "going", 0, 0, 0, Some(1)),
+        (9001, 90009, "going", 0, 0, 0, Some(0)),
+        (9005, 90010, "going", 0, 0, 0, None),
+    ];
+    for (eid, uid, status, need_ride, offer_drive, offer_seats, attended) in edge_signups {
+        sqlx::query(
+            "INSERT INTO event_signups (event_id, user_id, status, need_ride, offer_drive, offer_seats, attended, demo_batch)
+             VALUES ($1,$2,$3,$4,$5,$6,$7,$8)
+             ON CONFLICT(event_id,user_id) DO UPDATE SET status=excluded.status,
+             need_ride=excluded.need_ride, offer_drive=excluded.offer_drive,
+             offer_seats=excluded.offer_seats, attended=excluded.attended,
+             demo_batch=excluded.demo_batch",
+        )
+        .bind(eid)
+        .bind(uid)
+        .bind(status)
+        .bind(need_ride)
+        .bind(offer_drive)
+        .bind(offer_seats)
+        .bind(attended)
+        .bind(EDGE_BATCH)
+        .execute(db)
+        .await?;
+    }
+
+    // --- edge rides (ids 80001..=80010), every status + proxy / assistance / attention ---
+    let edge_rides = [
+        (
+            80001i64,
+            90007i64,
+            None::<i64>,
+            None::<i64>,
+            &future,
+            1i64,
+            "12 Jalan Demo",
+            "PJ 室内羽球馆",
+            1i64,
+            "",
+            "",
+            "pending_driver",
+            0i64,
+            "",
+            None::<i64>,
+            None::<i64>,
+            None::<String>,
+            None::<String>,
+            None::<String>,
+            0i64,
+            None::<i64>,
+            None::<i64>,
+            0i64,
+            "",
+            "",
+            "",
+        ),
+        (
+            80002,
+            90007,
+            Some(90005i64),
+            None,
+            &future,
+            1,
+            "No 45, Jalan PJ Selamat 1",
+            "Sunway Pyramid 保龄球馆",
+            2,
+            "wheelchair",
+            "",
+            "pending_passenger",
+            0,
+            "",
+            None,
+            None,
+            None,
+            None,
+            None,
+            0,
+            None,
+            None,
+            0,
+            "",
+            "",
+            "",
+        ),
+        (
+            80003,
+            90010,
+            Some(90006i64),
+            Some(9004i64),
+            &future,
+            1,
+            "Taman Demo, Jalan SS2/38, SS2",
+            "社区中心礼堂",
+            3,
+            "",
+            "proxy booking for elder",
+            "pending_approval",
+            0,
+            "",
+            None,
+            None,
+            None,
+            None,
+            None,
+            0,
+            None,
+            None,
+            1i64,
+            "Edge Elder",
+            "012-300 9011",
+            "parent",
+        ),
+        (
+            80004,
+            90007,
+            Some(90003i64),
+            Some(9004i64),
+            &future,
+            1,
+            "Lot 123, Jalan Kelana Jaya 1",
+            "社区中心礼堂",
+            1,
+            "",
+            "",
+            "confirmed",
+            0,
+            "",
+            Some(90001i64),
+            Some(5001i64),
+            None,
+            None,
+            None,
+            0,
+            None,
+            None,
+            0i64,
+            "",
+            "",
+            "",
+        ),
+        (
+            80005,
+            90007,
+            Some(90003i64),
+            None,
+            &future,
+            1,
+            "Pangsiran Demo, Kelana Jaya",
+            "图书馆入口",
+            1,
+            "",
+            "",
+            "in_progress",
+            0,
+            "",
+            Some(90001i64),
+            Some(5001i64),
+            Some(future.clone()),
+            None,
+            None,
+            0,
+            None,
+            None,
+            0,
+            "",
+            "",
+            "",
+        ),
+        (
+            80006,
+            90007,
+            Some(90003i64),
+            None,
+            &past,
+            1,
+            "No 88, Jalan SS2/72, SS2",
+            "宵夜团契",
+            1,
+            "",
+            "",
+            "completed",
+            0,
+            "",
+            Some(90001i64),
+            Some(5002i64),
+            Some(past.clone()),
+            Some(past.clone()),
+            Some(past.clone()),
+            0,
+            Some(10i64),
+            Some(3000i64),
+            0,
+            "",
+            "",
+            "",
+        ),
+        (
+            80007,
+            90009,
+            None::<i64>,
+            None,
+            &future,
+            1,
+            "18 Jalan Demo Utara, Kelana Jaya",
+            "诊所入口",
+            1,
+            "",
+            "",
+            "cancelled",
+            0,
+            "",
+            None,
+            None,
+            None,
+            None,
+            None,
+            0,
+            None,
+            None,
+            0,
+            "",
+            "",
+            "",
+        ),
+        (
+            80008,
+            90007,
+            Some(90005i64),
+            None,
+            &future,
+            1,
+            "4 Jalan SS2/80, SS2",
+            "北门入口",
+            1,
+            "",
+            "driver waited 15 minutes",
+            "no_show",
+            0,
+            "driver waited 15 min, passenger absent",
+            None,
+            None,
+            None,
+            None,
+            None,
+            0,
+            None,
+            None,
+            0,
+            "",
+            "",
+            "",
+        ),
+        (
+            80009,
+            90007,
+            Some(90006i64),
+            None,
+            &future,
+            1,
+            "No 15, Jalan PJ Selamat 3",
+            "图书馆入口",
+            2,
+            "",
+            "took alternative transport",
+            "alt_transport",
+            0,
+            "passenger took Grab instead",
+            None,
+            None,
+            None,
+            None,
+            None,
+            0,
+            None,
+            None,
+            0,
+            "",
+            "",
+            "",
+        ),
+        (
+            80010,
+            90010,
+            Some(90003i64),
+            None,
+            &future,
+            1,
+            "No 201, Jalan SS2/102, SS2",
+            "PJ State CMC 教会",
+            1,
+            "",
+            "",
+            "pending_driver",
+            1,
+            "needs attention",
+            None,
+            None,
+            None,
+            None,
+            None,
+            0,
+            None,
+            None,
+            0,
+            "",
+            "",
+            "",
+        ),
+    ];
+    for (
+        id,
+        passenger_id,
+        driver_id,
+        event_id,
+        pickup_at,
+        pickup_area_id,
+        pickup_address,
+        destination,
+        seats,
+        assistance,
+        notes,
+        status,
+        needs_attention,
+        attention_reason,
+        approved_by,
+        trip_id,
+        started_at,
+        picked_up_at,
+        completed_at,
+        reminder_sent,
+        distance_km,
+        reimbursement_amount_cents,
+        is_proxy,
+        rider_name,
+        rider_phone,
+        rider_relationship,
+    ) in edge_rides
+    {
+        sqlx::query(
+            "INSERT INTO rides (id, passenger_id, driver_id, event_id, pickup_at, pickup_area_id,
+             pickup_address, destination, seats, assistance, notes, status, needs_attention,
+             attention_reason, approved_by, trip_id, started_at, picked_up_at, completed_at,
+             reminder_sent, demo_batch, created_at, updated_at, distance_km,
+             reimbursement_amount_cents, is_proxy, rider_name, rider_phone, rider_relationship)
+             VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26,$27,$28,$29)
+             ON CONFLICT (id) DO UPDATE SET passenger_id=excluded.passenger_id,
+             driver_id=excluded.driver_id, status=excluded.status, needs_attention=excluded.needs_attention,
+             demo_batch=excluded.demo_batch, updated_at=excluded.updated_at",
+        )
+        .bind(id)
+        .bind(passenger_id)
+        .bind(driver_id)
+        .bind(event_id)
+        .bind(pickup_at)
+        .bind(pickup_area_id)
+        .bind(pickup_address)
+        .bind(destination)
+        .bind(seats)
+        .bind(assistance)
+        .bind(notes)
+        .bind(status)
+        .bind(needs_attention)
+        .bind(attention_reason)
+        .bind(approved_by)
+        .bind(trip_id)
+        .bind(started_at)
+        .bind(picked_up_at)
+        .bind(completed_at)
+        .bind(reminder_sent)
+        .bind(EDGE_BATCH)
+        .bind(&now)
+        .bind(&now)
+        .bind(distance_km)
+        .bind(reimbursement_amount_cents.unwrap_or(0))
+        .bind(is_proxy)
+        .bind(rider_name)
+        .bind(rider_phone)
+        .bind(rider_relationship)
+        .execute(db)
+        .await?;
+    }
+
+    // --- live locations and shared-trip chat ---
+    for (driver_id, lat, lng) in [
+        (90003i64, 3.1390f64, 101.6133f64),
+        (90006, 3.1400, 101.6100),
+    ] {
+        sqlx::query(
+            "INSERT INTO driver_locations (driver_id, lat, lng, heading, demo_batch, updated_at)
+             VALUES ($1,$2,$3,$4,$5,$6) ON CONFLICT(driver_id) DO UPDATE SET lat=excluded.lat,
+             lng=excluded.lng, heading=excluded.heading, updated_at=excluded.updated_at",
+        )
+        .bind(driver_id)
+        .bind(lat)
+        .bind(lng)
+        .bind(None::<f64>)
+        .bind(EDGE_BATCH)
+        .bind(&now)
+        .execute(db)
+        .await?;
+    }
+    // passenger location for the in-progress ride.
+    sqlx::query(
+        "INSERT INTO passenger_locations (ride_id, lat, lng, updated_at)
+         VALUES ($1,$2,$3,$4) ON CONFLICT(ride_id) DO UPDATE SET lat=excluded.lat,
+         lng=excluded.lng, updated_at=excluded.updated_at",
+    )
+    .bind(80005i64)
+    .bind(3.1395f64)
+    .bind(101.6130f64)
+    .bind(&now)
+    .execute(db)
+    .await?;
+    for (trip_id, user_id, body) in [
+        (5001i64, Some(90003i64), "On the way, be there in 5 min."),
+        (5001, Some(90007i64), "Thanks, see you at the gate."),
+    ] {
+        sqlx::query(
+            "INSERT INTO ride_messages (trip_id, user_id, body, demo_batch, created_at)
+             VALUES ($1,$2,$3,$4,$5)",
+        )
+        .bind(trip_id)
+        .bind(user_id)
+        .bind(body)
+        .bind(EDGE_BATCH)
+        .bind(&now)
+        .execute(db)
+        .await?;
+    }
+
+    // --- files used as reimbursement / settlement receipts ---
+    let edge_files = [
+        (
+            20001i64,
+            90007i64,
+            "receipt_jan.png",
+            "image/png",
+            "January receipt",
+            12345i64,
+        ),
+        (
+            20002,
+            90007,
+            "receipt_feb.png",
+            "image/png",
+            "February receipt",
+            23456,
+        ),
+    ];
+    for (id, owner_id, stored_name, mime, original_name, size) in edge_files {
+        sqlx::query(
+            "INSERT INTO files (id, owner_id, stored_name, mime, original_name, size, demo_batch, created_at)
+             VALUES ($1,$2,$3,$4,$5,$6,$7,$8) ON CONFLICT (id) DO NOTHING",
+        )
+        .bind(id)
+        .bind(owner_id)
+        .bind(stored_name)
+        .bind(mime)
+        .bind(original_name)
+        .bind(size)
+        .bind(EDGE_BATCH)
+        .bind(&now)
+        .execute(db)
+        .await?;
+    }
+
+    // --- reimbursements (ids 70001..=70006), all five statuses ---
+    let edge_reimbursements = [
+        (
+            70001i64,
+            90007i64,
+            Some(80006i64),
+            1000i64,
+            "Grab fare January",
+            20001i64,
+            "Edge Member",
+            "012-300 9007",
+            "pending",
+            "",
+            None::<i64>,
+            0i64,
+            "",
+            None::<i64>,
+            None::<&str>,
+        ),
+        (
+            70002,
+            90007,
+            None,
+            3000,
+            "Grab fare February",
+            20001,
+            "Edge Member",
+            "012-300 9007",
+            "approved",
+            "Looks good",
+            Some(90001i64),
+            0,
+            "",
+            None,
+            None,
+        ),
+        (
+            70003,
+            90007,
+            None,
+            2000,
+            "Grab fare March",
+            20002,
+            "Edge Member",
+            "012-300 9007",
+            "returned",
+            "Wrong payee name",
+            None,
+            0,
+            "",
+            None,
+            None,
+        ),
+        (
+            70004,
+            90007,
+            None,
+            1500,
+            "Grab fare April",
+            20002,
+            "Edge Member",
+            "012-300 9007",
+            "rejected",
+            "Ineligible route",
+            None,
+            0,
+            "",
+            None,
+            None,
+        ),
+        (
+            70005,
+            90007,
+            None,
+            5000,
+            "Grab fare May",
+            20001,
+            "Edge Member",
+            "012-300 9007",
+            "paid",
+            "Paid via DuitNow",
+            Some(90001i64),
+            1,
+            "DNT-2026-05",
+            Some(90001i64),
+            Some("2026-05-01T10:00"),
+        ),
+        (
+            70006,
+            90005,
+            None,
+            800,
+            "Short trip",
+            20001,
+            "Edge Driver",
+            "012-300 9005",
+            "pending",
+            "",
+            None,
+            0,
+            "",
+            None,
+            None,
+        ),
+    ];
+    for (
+        id,
+        user_id,
+        ride_id,
+        amount_cents,
+        description,
+        receipt_file_id,
+        payee_name,
+        payee_phone,
+        status,
+        review_note,
+        reviewed_by,
+        payee_verified,
+        paid_ref,
+        paid_by,
+        paid_at,
+    ) in edge_reimbursements
+    {
+        sqlx::query(
+            "INSERT INTO reimbursements (id, user_id, ride_id, amount_cents, description, receipt_file_id,
+             payee_name, payee_phone, status, review_note, reviewed_by, payee_verified, paid_ref, paid_by,
+             paid_at, demo_batch, created_at, updated_at)
+             VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18)
+             ON CONFLICT (id) DO UPDATE SET status=excluded.status, amount_cents=excluded.amount_cents,
+             demo_batch=excluded.demo_batch, updated_at=excluded.updated_at",
+        )
+        .bind(id)
+        .bind(user_id)
+        .bind(ride_id)
+        .bind(amount_cents)
+        .bind(description)
+        .bind(receipt_file_id)
+        .bind(payee_name)
+        .bind(payee_phone)
+        .bind(status)
+        .bind(review_note)
+        .bind(reviewed_by)
+        .bind(payee_verified)
+        .bind(paid_ref)
+        .bind(paid_by)
+        .bind(paid_at)
+        .bind(EDGE_BATCH)
+        .bind(&now)
+        .bind(&now)
+        .execute(db)
+        .await?;
+    }
+
+    // --- settlements (ids 60001..=60003) + items + shares + a revision ---
+    let edge_settlements = [
+        (
+            60001i64,
+            9004i64,
+            90001i64,
+            "Badminton split",
+            "equal",
+            0i64,
+            "",
+            "",
+            "2026-12-10",
+            "draft",
+            1i64,
+        ),
+        (
+            60002,
+            9004,
+            90001,
+            "Badminton split published",
+            "equal",
+            0,
+            "",
+            "",
+            "2026-12-10",
+            "published",
+            1,
+        ),
+        (
+            60003,
+            9001i64,
+            90001,
+            "Past event settlement",
+            "custom",
+            500,
+            "Organiser",
+            "DNT-PAST",
+            "2026-11-01",
+            "closed",
+            1,
+        ),
+    ];
+    for (
+        id,
+        event_id,
+        created_by,
+        title,
+        split_mode,
+        subsidy_cents,
+        payee_name,
+        payee_account,
+        due_date,
+        status,
+        version,
+    ) in edge_settlements
+    {
+        sqlx::query(
+            "INSERT INTO settlements (id, event_id, created_by, title, split_mode, subsidy_cents,
+             payee_name, payee_account, due_date, status, version, demo_batch, created_at, updated_at)
+             VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)
+             ON CONFLICT (id) DO UPDATE SET status=excluded.status, version=excluded.version,
+             demo_batch=excluded.demo_batch, updated_at=excluded.updated_at",
+        )
+        .bind(id)
+        .bind(event_id)
+        .bind(created_by)
+        .bind(title)
+        .bind(split_mode)
+        .bind(subsidy_cents)
+        .bind(payee_name)
+        .bind(payee_account)
+        .bind(due_date)
+        .bind(status)
+        .bind(version)
+        .bind(EDGE_BATCH)
+        .bind(&now)
+        .bind(&now)
+        .execute(db)
+        .await?;
+    }
+    let edge_items = [
+        (61001i64, 60001i64, "Court fee", 1200i64, None::<i64>),
+        (61002, 60001, "Shuttlecocks", 180, None),
+        (61003, 60002, "Court fee", 1200, None),
+        (61004, 60003, "Court fee", 1200, None),
+        (61005, 60003, "Drinks", 200, None),
+    ];
+    for (id, settlement_id, label, amount_cents, receipt_file_id) in edge_items {
+        sqlx::query(
+            "INSERT INTO settlement_items (id, settlement_id, label, amount_cents, receipt_file_id, demo_batch)
+             VALUES ($1,$2,$3,$4,$5,$6) ON CONFLICT (id) DO NOTHING",
+        )
+        .bind(id)
+        .bind(settlement_id)
+        .bind(label)
+        .bind(amount_cents)
+        .bind(receipt_file_id)
+        .bind(EDGE_BATCH)
+        .execute(db)
+        .await?;
+    }
+    let edge_shares = [
+        (
+            62001i64,
+            60001i64,
+            90007i64,
+            600i64,
+            "unpaid",
+            None::<i64>,
+            "",
+            None::<&str>,
+        ),
+        (62002, 60001, 90001, 600, "confirmed", None, "", None),
+        (62003, 60002, 90007, 600, "pending", None, "", None),
+        (62004, 60003, 90007, 800, "needs_info", None, "", None),
+        (62005, 60003, 90001, 150, "unpaid", None, "", None),
+    ];
+    for (id, settlement_id, user_id, amount_cents, status, proof_file_id, txn_ref, paid_date) in
+        edge_shares
+    {
+        sqlx::query(
+            "INSERT INTO settlement_shares (id, settlement_id, user_id, amount_cents, status, proof_file_id, txn_ref, paid_date, demo_batch, updated_at)
+             VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10) ON CONFLICT (id) DO NOTHING",
+        )
+        .bind(id)
+        .bind(settlement_id)
+        .bind(user_id)
+        .bind(amount_cents)
+        .bind(status)
+        .bind(proof_file_id)
+        .bind(txn_ref)
+        .bind(paid_date)
+        .bind(EDGE_BATCH)
+        .bind(&now)
+        .execute(db)
+        .await?;
+    }
+    sqlx::query(
+        "INSERT INTO settlement_revisions (id, settlement_id, version, snapshot, reason, created_by, demo_batch, created_at)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8) ON CONFLICT (id) DO NOTHING",
+    )
+    .bind(63001i64)
+    .bind(60001i64)
+    .bind(1i64)
+    .bind("initial draft")
+    .bind("created by staff")
+    .bind(90001i64)
+    .bind(EDGE_BATCH)
+    .bind(&now)
+    .execute(db)
+    .await?;
+
+    // --- help tickets (ids 50001..=50004) + replies ---
+    let edge_tickets = [
+        (
+            50001i64,
+            90007i64,
+            None::<i64>,
+            "Cannot book a ride",
+            "open",
+            None::<i64>,
+        ),
+        (
+            50002,
+            90007,
+            None,
+            "Payment not reflected",
+            "answered",
+            Some(90001i64),
+        ),
+        (
+            50003,
+            90005,
+            Some(80001i64),
+            "Driver never arrived",
+            "closed",
+            Some(90001i64),
+        ),
+        (
+            50004,
+            90010,
+            None,
+            "Language preference not saved",
+            "open",
+            None,
+        ),
+    ];
+    for (id, user_id, ride_id, subject, status, assignee_id) in edge_tickets {
+        let inserted: (i64,) = sqlx::query_as(
+            "INSERT INTO help_tickets (id, user_id, ride_id, subject, status, assignee_id, demo_batch, created_at, updated_at)
+             VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9) RETURNING id",
+        )
+        .bind(id)
+        .bind(user_id)
+        .bind(ride_id)
+        .bind(subject)
+        .bind(status)
+        .bind(assignee_id)
+        .bind(EDGE_BATCH)
+        .bind(&now)
+        .bind(&now)
+        .fetch_one(db)
+        .await?;
+        tracing::debug!("inserted help_ticket id={} requested={}", inserted.0, id);
+    }
+    let edge_replies = [
+        (50001i64, 50001i64, "We are looking into the booking issue."),
+        (50002, 50002, "Please upload the receipt again."),
+    ];
+    for (id, ticket_id, body) in edge_replies {
+        sqlx::query(
+            "INSERT INTO help_replies (id, ticket_id, user_id, body, demo_batch, created_at)
+             VALUES ($1,$2,$3,$4,$5,$6) ON CONFLICT (id) DO NOTHING",
+        )
+        .bind(id)
+        .bind(ticket_id)
+        .bind(90001i64)
+        .bind(body)
+        .bind(EDGE_BATCH)
+        .bind(&now)
+        .execute(db)
+        .await?;
+    }
+
+    // --- notifications (read / unread edge) ---
+    let edge_notifications = [
+        (
+            40001i64,
+            90007i64,
+            "Ride confirmed",
+            "Your ride has been confirmed.",
+            "/rides/80004",
+            Some(&now),
+        ),
+        (
+            40002,
+            90007,
+            "Settlement published",
+            "Please review your share.",
+            "/settlements/60002",
+            None::<&String>,
+        ),
+        (
+            40003,
+            90001,
+            "New help ticket",
+            "A member needs assistance.",
+            "/admin/help",
+            None,
+        ),
+        (
+            40004,
+            90010,
+            "Welcome to Grace Ride",
+            "Explore upcoming events and request a ride.",
+            "/",
+            None,
+        ),
+    ];
+    for (id, user_id, title, body, link, read_at) in edge_notifications {
+        sqlx::query(
+            "INSERT INTO notifications (id, user_id, title, body, link, read_at, demo_batch, created_at)
+             VALUES ($1,$2,$3,$4,$5,$6,$7,$8) ON CONFLICT (id) DO NOTHING",
+        )
+        .bind(id)
+        .bind(user_id)
+        .bind(title)
+        .bind(body)
+        .bind(link)
+        .bind(read_at)
+        .bind(EDGE_BATCH)
+        .bind(&now)
+        .execute(db)
+        .await?;
+    }
+
+    // --- announcements ---
+    let edge_announcements = [
+        (
+            30001i64,
+            "System maintenance",
+            "Maintenance on Sunday night.",
+            1i64,
+            90001i64,
+        ),
+        (
+            30002,
+            "New dashboard",
+            "Check out the new ride dashboard.",
+            0i64,
+            90001i64,
+        ),
+    ];
+    for (id, title, body, pinned, created_by) in edge_announcements {
+        sqlx::query(
+            "INSERT INTO announcements (id, title, body, pinned, created_by, demo_batch, created_at)
+             VALUES ($1,$2,$3,$4,$5,$6,$7) ON CONFLICT (id) DO NOTHING",
+        )
+        .bind(id)
+        .bind(title)
+        .bind(body)
+        .bind(pinned)
+        .bind(created_by)
+        .bind(EDGE_BATCH)
+        .bind(&now)
+        .execute(db)
+        .await?;
+    }
+
+    // --- audit logs ---
+    let edge_audit = [
+        (
+            10001i64,
+            Some(90001i64),
+            "role.update",
+            "user",
+            Some(90007i64),
+            "granted driver role",
+        ),
+        (
+            10002,
+            Some(90001i64),
+            "settlement.publish",
+            "settlement",
+            Some(60002i64),
+            "published badminton split",
+        ),
+        (
+            10003,
+            None::<i64>,
+            "ride.cancel",
+            "ride",
+            Some(80007i64),
+            "cancelled by system",
+        ),
+    ];
+    for (id, actor_id, action, entity, entity_id, detail) in edge_audit {
+        sqlx::query(
+            "INSERT INTO audit_logs (id, actor_id, action, entity, entity_id, detail, demo_batch, created_at)
+             VALUES ($1,$2,$3,$4,$5,$6,$7,$8) ON CONFLICT (id) DO NOTHING",
+        )
+        .bind(id)
+        .bind(actor_id)
+        .bind(action)
+        .bind(entity)
+        .bind(entity_id)
+        .bind(detail)
+        .bind(EDGE_BATCH)
+        .bind(&now)
+        .execute(db)
+        .await?;
+    }
+
+    // --- proxy riders ---
+    sqlx::query(
+        "INSERT INTO proxy_riders (id, user_id, name, phone, relationship, notes, created_at, updated_at)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8) ON CONFLICT (id) DO NOTHING",
+    )
+    .bind(11001i64)
+    .bind(90007i64)
+    .bind("Edge Elder")
+    .bind("012-300 9011")
+    .bind("parent")
+    .bind("Elderly parent, needs wheelchair assistance")
+    .bind(&now)
+    .bind(&now)
+    .execute(db)
+    .await?;
+
+    // --- an edge guide workflow + feedback ---
+    sqlx::query(
+        "INSERT INTO guide_workflows (id, slug, title_zh, title_en, summary_zh, summary_en, audience, steps, sort_order, published, updated_at)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8::jsonb,$9,TRUE,$10) ON CONFLICT (id) DO NOTHING",
+    )
+    .bind(90001i64)
+    .bind("edge-guide-member")
+    .bind("边缘指南")
+    .bind("Edge guide")
+    .bind("用于测试的边缘用例指南")
+    .bind("Edge-case guide used for testing")
+    .bind("member")
+    .bind("[]")
+    .bind(1i32)
+    .bind(&now)
+    .execute(db)
+    .await?;
+    sqlx::query(
+        "INSERT INTO guide_feedback (guide_id, user_id, helpful, created_at)
+         VALUES ($1,$2,$3,$4) ON CONFLICT (guide_id, user_id) DO NOTHING",
+    )
+    .bind(90001i64)
+    .bind(90007i64)
+    .bind(true)
+    .bind(&now)
+    .execute(db)
+    .await?;
+
+    sync_identity_sequences(db).await?;
+    tracing::info!("Edge-case fixtures seeded ({} batches)", EDGE_BATCH);
+    Ok(())
+}
 /// Align each IDENTITY sequence with MAX(id) after seed inserts with fixed ids.
 async fn sync_identity_sequences(db: &PgPool) -> anyhow::Result<()> {
     for table in [

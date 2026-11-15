@@ -13,14 +13,16 @@ use axum::{
 };
 use common::*;
 use grace_ride::{
-    auth::hash_token, init, router,
+    auth::hash_token,
+    init, router,
     state::{AppState, Config},
 };
 use http_body_util::BodyExt;
 use serde_json::{json, Value};
+use tower::ServiceExt;
 use webauthn_authenticator_rs::prelude::{Url, WebauthnAuthenticator};
 use webauthn_authenticator_rs::softpasskey::SoftPasskey;
-use webauthn_rs::prelude::CreationChallengeResponse;
+use webauthn_rs::prelude::{CreationChallengeResponse, RequestChallengeResponse};
 
 struct Cast {
     admin: String,
@@ -34,7 +36,6 @@ struct Cast {
     leader: String,
     superadmin: String,
     admin_id: i64,
-    transport_id: i64,
     finance_id: i64,
     driver_id: i64,
     driver2_id: i64,
@@ -46,7 +47,7 @@ struct Cast {
     youth_group: i64,
 }
 
-async fn cast(app: &Router, st: &AppState) -> Cast {
+async fn cast(_app: &Router, st: &AppState) -> Cast {
     let id = |email: &str| {
         let db = st.db.clone();
         let email = email.to_string();
@@ -70,7 +71,6 @@ async fn cast(app: &Router, st: &AppState) -> Cast {
         leader: login(st, "enci@example.org").await,
         superadmin: login(st, "superadmin@example.org").await,
         admin_id: id("admin@example.org").await,
-        transport_id: id("transport@example.org").await,
         finance_id: id("finance@example.org").await,
         driver_id: id("driver@example.org").await,
         driver2_id: id("driver2@example.org").await,
@@ -99,7 +99,7 @@ async fn must(
     cookie: Option<&str>,
     body: Option<Value>,
 ) -> Value {
-    let r = call(app, method, path, cookie, body).await;
+    let r = call(app, method.clone(), path, cookie, body).await;
     assert_eq!(r.status, StatusCode::OK, "{method} {path} {}", r.json);
     r.json
 }
@@ -113,7 +113,7 @@ async fn deny(
     status: StatusCode,
     code: &str,
 ) {
-    let r = call(app, method, path, cookie, body).await;
+    let r = call(app, method.clone(), path, cookie, body).await;
     assert_eq!(r.status, status, "{method} {path} {}", r.json);
     assert_eq!(r.json["code"], code, "{method} {path} {}", r.json);
 }
@@ -149,7 +149,14 @@ async fn book(app: &Router, cookie: &str, area: i64, seats: i64) -> i64 {
         .unwrap()
 }
 
-fn event_body(title: &str, kind: &str, starts: &str, deadline: &str, groups: &[i64], cap: i64) -> Value {
+fn event_body(
+    title: &str,
+    kind: &str,
+    starts: &str,
+    deadline: &str,
+    groups: &[i64],
+    cap: i64,
+) -> Value {
     json!({
         "title": title,
         "kind": kind,
@@ -168,14 +175,28 @@ async fn make_event(app: &Router, cookie: &str, groups: &[i64], cap: i64) -> i64
         Method::POST,
         "/api/events",
         Some(cookie),
-        Some(event_body("团契聚会", "other", &day(2, "10:00"), "", groups, cap)),
+        Some(event_body(
+            "团契聚会",
+            "other",
+            &day(2, "10:00"),
+            "",
+            groups,
+            cap,
+        )),
     )
     .await["id"]
         .as_i64()
         .unwrap()
 }
 
-fn bill(title: &str, items: Value, subsidy: i64, mode: &str, people: Value, account: &str) -> Value {
+fn bill(
+    title: &str,
+    items: Value,
+    subsidy: i64,
+    mode: &str,
+    people: Value,
+    account: &str,
+) -> Value {
     json!({
         "title": title,
         "items": items,
@@ -285,7 +306,11 @@ async fn auth_session_password_and_totp_branches() {
     assert!(blocked.json["error"].as_str().unwrap().contains("来源"));
 
     let users = must(&app, Method::GET, "/api/auth/dev-users", None, None).await;
-    assert!(users.as_array().unwrap().iter().any(|u| u["email"] == "member@example.org"));
+    assert!(users
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|u| u["email"] == "member@example.org"));
     let dev = must(
         &app,
         Method::POST,
@@ -405,8 +430,14 @@ async fn auth_session_password_and_totp_branches() {
     )
     .await;
 
-    let setup_totp = must(&app, Method::POST, "/api/auth/totp/setup", Some(&c.member), None).await;
-    let secret = setup_totp["secret"].as_str().unwrap().to_string();
+    must(
+        &app,
+        Method::POST,
+        "/api/auth/totp/setup",
+        Some(&c.member),
+        None,
+    )
+    .await;
     sqlx::query("UPDATE users SET totp_secret='!!!' WHERE id=$1")
         .bind(c.member_id)
         .execute(&st.db)
@@ -422,7 +453,14 @@ async fn auth_session_password_and_totp_branches() {
         "INVALID_2FA_SECRET",
     )
     .await;
-    let setup_totp = must(&app, Method::POST, "/api/auth/totp/setup", Some(&c.member), None).await;
+    let setup_totp = must(
+        &app,
+        Method::POST,
+        "/api/auth/totp/setup",
+        Some(&c.member),
+        None,
+    )
+    .await;
     let secret = setup_totp["secret"].as_str().unwrap().to_string();
     deny(
         &app,
@@ -446,25 +484,26 @@ async fn auth_session_password_and_totp_branches() {
         .await["ok"],
         true
     );
-    sqlx::query("UPDATE users SET totp_last_step=$1 WHERE id=$2")
-        .bind(i64::MAX)
-        .bind(c.member_id)
-        .execute(&st.db)
-        .await
-        .unwrap();
+    // Enable reports the replay. Verify swallows that error and answers INVALID_CODE instead.
     deny(
         &app,
         Method::POST,
-        "/api/auth/totp/verify",
+        "/api/auth/totp/enable",
         Some(&c.member),
-        Some(json!({"code": totp_code(&secret, "member@example.org")})),
+        Some(json!({"code": code})),
         StatusCode::BAD_REQUEST,
         "CODE_ALREADY_USED",
     )
     .await;
-    let _ = secret;
 
-    let keys = must(&app, Method::GET, "/api/auth/passkeys", Some(&c.sophie), None).await;
+    let keys = must(
+        &app,
+        Method::GET,
+        "/api/auth/passkeys",
+        Some(&c.sophie),
+        None,
+    )
+    .await;
     assert!(keys.as_array().unwrap().is_empty());
     assert_eq!(
         must(
@@ -495,7 +534,14 @@ async fn invite_recovery_and_login_limit_branches() {
     let (app, st) = setup().await;
     let c = cast(&app, &st).await;
 
-    let opened = must(&app, Method::POST, "/api/admin/invites", Some(&c.admin), None).await;
+    let opened = must(
+        &app,
+        Method::POST,
+        "/api/admin/invites",
+        Some(&c.admin),
+        None,
+    )
+    .await;
     let token = opened["token"].as_str().unwrap();
     let id = opened["id"].as_i64().unwrap();
     let accept = |body: Value| {
@@ -503,11 +549,19 @@ async fn invite_recovery_and_login_limit_branches() {
         let app = app.clone();
         async move { call(&app, Method::POST, &path, None, Some(body)).await }
     };
-    let bad_name = accept(json!({"name": "  ", "email": "flow@example.org", "phone": "012-300 0099", "terms": true})).await;
+    let bad_name = accept(
+        json!({"name": "  ", "email": "flow@example.org", "phone": "012-300 0099", "terms": true}),
+    )
+    .await;
     assert_eq!(bad_name.json["code"], "NAME_REQUIRED");
-    let bad_phone = accept(json!({"name": "新人", "email": "flow@example.org", "phone": "123", "terms": true})).await;
+    let bad_phone =
+        accept(json!({"name": "新人", "email": "flow@example.org", "phone": "123", "terms": true}))
+            .await;
     assert_eq!(bad_phone.json["code"], "PHONE_INVALID");
-    let bad_mail = accept(json!({"name": "新人", "email": "not-an-email", "phone": "012-300 0099", "terms": true})).await;
+    let bad_mail = accept(
+        json!({"name": "新人", "email": "not-an-email", "phone": "012-300 0099", "terms": true}),
+    )
+    .await;
     assert_eq!(bad_mail.json["code"], "EMAIL_INVALID");
     let taken = accept(json!({"name": "新人", "email": "member@example.org", "phone": "012-300 0099", "terms": true})).await;
     assert_eq!(taken.json["code"], "EMAIL_ALREADY_REGISTERED");
@@ -516,7 +570,14 @@ async fn invite_recovery_and_login_limit_branches() {
     let again = accept(json!({"name": "新人", "email": "flow-other@example.org", "phone": "012-300 0099", "terms": true})).await;
     assert_eq!(again.json["code"], "INVITE_EXPIRED");
 
-    let second = must(&app, Method::POST, "/api/admin/invites", Some(&c.admin), None).await;
+    let second = must(
+        &app,
+        Method::POST,
+        "/api/admin/invites",
+        Some(&c.admin),
+        None,
+    )
+    .await;
     let second_token = second["token"].as_str().unwrap();
     must(
         &app,
@@ -535,6 +596,8 @@ async fn invite_recovery_and_login_limit_branches() {
         None,
     )
     .await;
+    // Revoke stores the current second, and preview treats that same second as still open.
+    tokio::time::sleep(std::time::Duration::from_millis(1100)).await;
     deny(
         &app,
         Method::GET,
@@ -589,7 +652,12 @@ async fn invite_recovery_and_login_limit_branches() {
         Some(json!({"email": "member@example.org", "reason": "again"})),
     )
     .await;
-    assert_eq!(limited.status, StatusCode::TOO_MANY_REQUESTS, "{}", limited.json);
+    assert_eq!(
+        limited.status,
+        StatusCode::TOO_MANY_REQUESTS,
+        "{}",
+        limited.json
+    );
     assert!(limited.headers.get(header::RETRY_AFTER).is_some());
 
     let rid: i64 = sqlx::query_scalar(
@@ -653,7 +721,9 @@ async fn passkey_challenge_branches() {
     let options: CreationChallengeResponse =
         serde_json::from_value(first["options"].clone()).unwrap();
     let mut soft = WebauthnAuthenticator::new(SoftPasskey::new(true));
-    let credential = soft.do_registration(origin, options).expect("soft register");
+    let credential = soft
+        .do_registration(origin, options)
+        .expect("soft register");
     let cred = serde_json::to_value(&credential).unwrap();
 
     deny(
@@ -661,7 +731,7 @@ async fn passkey_challenge_branches() {
         Method::POST,
         "/api/auth/passkey/register/finish",
         Some(&c.sophie),
-        Some(json!({"challenge_id": first_id, "credential": cred, "label": "other"})),
+        Some(json!({"challenge_id": first_id, "credential": cred.clone(), "label": "other"})),
         StatusCode::FORBIDDEN,
         "CHALLENGE_MISMATCH",
     )
@@ -711,6 +781,39 @@ async fn passkey_challenge_branches() {
     )
     .await;
 
+    let enrolled = start(&c.member).await;
+    let enrolled_id = enrolled["challenge_id"].as_str().unwrap().to_string();
+    let options: CreationChallengeResponse =
+        serde_json::from_value(enrolled["options"].clone()).unwrap();
+    let mut soft = WebauthnAuthenticator::new(SoftPasskey::new(true));
+    let credential = soft
+        .do_registration(Url::parse(ORIGIN).unwrap(), options)
+        .unwrap();
+    must(
+        &app,
+        Method::POST,
+        "/api/auth/passkey/register/finish",
+        Some(&c.member),
+        Some(json!({
+            "challenge_id": enrolled_id,
+            "credential": credential,
+            "label": "phone"
+        })),
+    )
+    .await;
+    let login = must(
+        &app,
+        Method::POST,
+        "/api/auth/passkey/login/start",
+        None,
+        Some(json!({"email": "member@example.org"})),
+    )
+    .await;
+    let login_options: RequestChallengeResponse =
+        serde_json::from_value(login["options"].clone()).unwrap();
+    let assertion = soft
+        .do_authentication(Url::parse(ORIGIN).unwrap(), login_options)
+        .expect("soft auth");
     deny(
         &app,
         Method::POST,
@@ -718,7 +821,7 @@ async fn passkey_challenge_branches() {
         None,
         Some(json!({
             "challenge_id": "missing-login",
-            "credential": cred,
+            "credential": assertion,
         })),
         StatusCode::BAD_REQUEST,
         "PASSKEY_FAILED",
@@ -757,7 +860,14 @@ async fn event_create_signup_and_attendance_branches() {
         Method::POST,
         "/api/events",
         Some(&c.admin),
-        Some(event_body("聚会", "picnic", &day(2, "10:00"), "", &groups, 0)),
+        Some(event_body(
+            "聚会",
+            "picnic",
+            &day(2, "10:00"),
+            "",
+            &groups,
+            0,
+        )),
         StatusCode::BAD_REQUEST,
         "INVALID_EVENT_TYPE",
     )
@@ -787,7 +897,14 @@ async fn event_create_signup_and_attendance_branches() {
         Method::POST,
         "/api/events",
         Some(&c.admin),
-        Some(event_body("聚会", "other", &day(2, "10:00"), "nope", &groups, 0)),
+        Some(event_body(
+            "聚会",
+            "other",
+            &day(2, "10:00"),
+            "nope",
+            &groups,
+            0,
+        )),
         StatusCode::BAD_REQUEST,
         "INVALID_SIGNUP_DEADLINE",
     )
@@ -817,7 +934,14 @@ async fn event_create_signup_and_attendance_branches() {
         Method::PUT,
         &path(""),
         Some(&c.member),
-        Some(event_body("改名", "other", &day(2, "10:00"), "", &groups, 1)),
+        Some(event_body(
+            "改名",
+            "other",
+            &day(2, "10:00"),
+            "",
+            &groups,
+            1,
+        )),
         StatusCode::FORBIDDEN,
         "ONLY_ORGANISER_CAN_EDIT",
     )
@@ -900,7 +1024,14 @@ async fn event_create_signup_and_attendance_branches() {
         Method::POST,
         "/api/events",
         Some(&c.admin),
-        Some(event_body("已过", "walk", &day(-1, "10:00"), "", &groups, 0)),
+        Some(event_body(
+            "已过",
+            "walk",
+            &day(-1, "10:00"),
+            "",
+            &groups,
+            0,
+        )),
     )
     .await["id"]
         .as_i64()
@@ -938,7 +1069,14 @@ async fn event_create_signup_and_attendance_branches() {
         .await["status"],
         "waitlist"
     );
-    must(&app, Method::POST, &path("/withdraw"), Some(&c.member), None).await;
+    must(
+        &app,
+        Method::POST,
+        &path("/withdraw"),
+        Some(&c.member),
+        None,
+    )
+    .await;
     let signups = must(&app, Method::GET, &path("/signups"), Some(&c.admin), None).await;
     let sophie = signups
         .as_array()
@@ -1116,7 +1254,14 @@ async fn ride_request_claim_and_response_branches() {
     .await["id"]
         .as_i64()
         .unwrap();
-    let listed = must(&app, Method::GET, "/api/proxy-riders", Some(&c.member), None).await;
+    let listed = must(
+        &app,
+        Method::GET,
+        "/api/proxy-riders",
+        Some(&c.member),
+        None,
+    )
+    .await;
     assert_eq!(listed.as_array().unwrap().len(), 1);
     deny(
         &app,
@@ -1139,14 +1284,7 @@ async fn ride_request_claim_and_response_branches() {
 
     let areas = must(&app, Method::GET, "/api/areas", Some(&c.member), None).await;
     assert!(!areas.as_array().unwrap().is_empty());
-    let places = must(
-        &app,
-        Method::GET,
-        "/api/places?q=ab",
-        Some(&c.member),
-        None,
-    )
-    .await;
+    let places = must(&app, Method::GET, "/api/places?q=ab", Some(&c.member), None).await;
     assert_eq!(places.as_array().unwrap().len(), 0);
 
     let own = book(&app, &c.driver, c.area_id, 1).await;
@@ -1259,14 +1397,12 @@ async fn ride_request_claim_and_response_branches() {
         "ONLY_PASSENGER_CAN_RESPOND",
     )
     .await;
-    deny(
+    must(
         &app,
         Method::POST,
         &format!("/api/rides/{id}/respond"),
         Some(&c.member),
         Some(json!({"accept": false})),
-        StatusCode::OK,
-        "OK",
     )
     .await;
     // Decline returns the ride to the pool. A second response is no longer pending_passenger.
@@ -1317,7 +1453,14 @@ async fn ride_request_claim_and_response_branches() {
     )
     .await;
     assert!(schedule.as_array().is_some());
-    let route = must(&app, Method::GET, "/api/driver/route", Some(&c.member), None).await;
+    let route = must(
+        &app,
+        Method::GET,
+        "/api/driver/route",
+        Some(&c.member),
+        None,
+    )
+    .await;
     assert!(route["route"].is_null());
     deny(
         &app,
@@ -1383,11 +1526,29 @@ async fn ride_request_claim_and_response_branches() {
         })),
     )
     .await;
-    let profile = must(&app, Method::GET, "/api/driver/profile", Some(&c.driver), None).await;
+    let profile = must(
+        &app,
+        Method::GET,
+        "/api/driver/profile",
+        Some(&c.driver),
+        None,
+    )
+    .await;
     assert_eq!(profile["gate_wait_mins"], 8);
 
-    let drivers = must(&app, Method::GET, "/api/admin/drivers", Some(&c.transport), None).await;
-    assert!(drivers.as_array().unwrap().iter().any(|d| d["id"] == c.driver_id));
+    let drivers = must(
+        &app,
+        Method::GET,
+        "/api/admin/drivers",
+        Some(&c.transport),
+        None,
+    )
+    .await;
+    assert!(drivers
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|d| d["id"] == c.driver_id));
 }
 
 /// Walk one ride to confirmed, then exercise every trip, chat, and staff branch on fresh rides.
@@ -1398,7 +1559,14 @@ async fn ride_trip_and_staff_branches() {
 
     async fn to_pending_approval(app: &Router, c: &Cast, seats: i64, driver: &str) -> i64 {
         let id = book(app, &c.member, c.area_id, seats).await;
-        must(app, Method::POST, &format!("/api/rides/{id}/claim"), Some(driver), None).await;
+        must(
+            app,
+            Method::POST,
+            &format!("/api/rides/{id}/claim"),
+            Some(driver),
+            None,
+        )
+        .await;
         must(
             app,
             Method::POST,
@@ -1455,7 +1623,7 @@ async fn ride_trip_and_staff_branches() {
         &app,
         Method::POST,
         &format!("/api/rides/{bare}/no-show"),
-        Some(&c.driver),
+        Some(&c.transport),
         None,
         StatusCode::CONFLICT,
         "RIDE_STATUS_CHANGED",
@@ -1505,10 +1673,12 @@ async fn ride_trip_and_staff_branches() {
         "MEMBER_NOT_VOLUNTEER_DRIVER",
     )
     .await;
+    // `id` belongs to the member. This booking belongs to the driver, so the same person cannot be both.
+    let own = book(&app, &c.driver, c.area_id, 1).await;
     deny(
         &app,
         Method::POST,
-        &format!("/api/rides/{id}/reassign"),
+        &format!("/api/rides/{own}/reassign"),
         Some(&c.transport),
         Some(json!({"driver_id": c.driver_id})),
         StatusCode::BAD_REQUEST,
@@ -1718,7 +1888,7 @@ async fn ride_trip_and_staff_branches() {
     must(
         &app,
         Method::PUT,
-        "/api/admin/settings",
+        "/api/admin/settings/system",
         Some(&c.admin),
         Some(json!({
             "audit_retention_days": 730,
@@ -1761,6 +1931,15 @@ async fn ride_trip_and_staff_branches() {
         None,
         StatusCode::CONFLICT,
         "MAX_LIVE_DRIVERS_REACHED",
+    )
+    .await;
+    // driver2 has carpool off, so this confirmed booking would block every later assignment in the same hour.
+    must(
+        &app,
+        Method::POST,
+        &format!("/api/rides/{second}/cancel"),
+        Some(&c.transport),
+        Some(json!({"reason": "名额检查结束"})),
     )
     .await;
 
@@ -1845,7 +2024,14 @@ async fn ride_trip_and_staff_branches() {
         "RIDE_STATUS_CHANGED",
     )
     .await;
-    must(&app, Method::DELETE, "/api/driver/location", Some(&c.driver), None).await;
+    must(
+        &app,
+        Method::DELETE,
+        "/api/driver/location",
+        Some(&c.driver),
+        None,
+    )
+    .await;
 
     let shown = to_pending_approval(&app, &c, 1, &c.driver).await;
     sqlx::query("UPDATE rides SET passenger_id=$1 WHERE id=$2")
@@ -1933,7 +2119,7 @@ async fn ride_trip_and_staff_branches() {
         Method::POST,
         &format!("/api/rides/{alt}/alt-transport"),
         Some(&c.transport),
-        None,
+        Some(json!({"reason": "已经安排"})),
         StatusCode::CONFLICT,
         "RIDE_STATUS_CHANGED",
     )
@@ -1992,8 +2178,20 @@ async fn ride_trip_and_staff_branches() {
         None,
     )
     .await;
-    assert!(past.get("items").is_some() || past.as_array().is_some() || past.get("rides").is_some() || past.is_object());
-    let live = must(&app, Method::GET, "/api/admin/live", Some(&c.transport), None).await;
+    assert!(
+        past.get("items").is_some()
+            || past.as_array().is_some()
+            || past.get("rides").is_some()
+            || past.is_object()
+    );
+    let live = must(
+        &app,
+        Method::GET,
+        "/api/admin/live",
+        Some(&c.transport),
+        None,
+    )
+    .await;
     assert!(live.get("drivers").is_some());
 }
 
@@ -2011,7 +2209,14 @@ async fn settlement_bill_branches() {
         Method::POST,
         &create,
         Some(&c.member),
-        Some(bill("午餐", item.clone(), 0, "equal", both.clone(), "1234567890")),
+        Some(bill(
+            "午餐",
+            item.clone(),
+            0,
+            "equal",
+            both.clone(),
+            "1234567890",
+        )),
         StatusCode::FORBIDDEN,
         "ONLY_ORGANISER_CAN_INITIATE_COST_SPLIT",
     )
@@ -2021,7 +2226,14 @@ async fn settlement_bill_branches() {
         Method::POST,
         &create,
         Some(&c.admin),
-        Some(bill("  ", item.clone(), 0, "equal", both.clone(), "1234567890")),
+        Some(bill(
+            "  ",
+            item.clone(),
+            0,
+            "equal",
+            both.clone(),
+            "1234567890",
+        )),
         StatusCode::BAD_REQUEST,
         "SETTLEMENT_NAME_REQUIRED",
     )
@@ -2031,7 +2243,14 @@ async fn settlement_bill_branches() {
         Method::POST,
         &create,
         Some(&c.admin),
-        Some(bill("午餐", json!([]), 0, "equal", both.clone(), "1234567890")),
+        Some(bill(
+            "午餐",
+            json!([]),
+            0,
+            "equal",
+            both.clone(),
+            "1234567890",
+        )),
         StatusCode::BAD_REQUEST,
         "AT_LEAST_ONE_EXPENSE_ITEM",
     )
@@ -2058,7 +2277,14 @@ async fn settlement_bill_branches() {
         Method::POST,
         &create,
         Some(&c.admin),
-        Some(bill("午餐", item.clone(), -1, "equal", both.clone(), "1234567890")),
+        Some(bill(
+            "午餐",
+            item.clone(),
+            -1,
+            "equal",
+            both.clone(),
+            "1234567890",
+        )),
         StatusCode::BAD_REQUEST,
         "SUBSIDY_CANNOT_BE_NEGATIVE",
     )
@@ -2068,7 +2294,14 @@ async fn settlement_bill_branches() {
         Method::POST,
         &create,
         Some(&c.admin),
-        Some(bill("午餐", item.clone(), 5000, "equal", both.clone(), "1234567890")),
+        Some(bill(
+            "午餐",
+            item.clone(),
+            5000,
+            "equal",
+            both.clone(),
+            "1234567890",
+        )),
         StatusCode::BAD_REQUEST,
         "SUBSIDY_EXCEEDS_TOTAL",
     )
@@ -2095,7 +2328,14 @@ async fn settlement_bill_branches() {
         Method::POST,
         &create,
         Some(&c.admin),
-        Some(bill("午餐", item.clone(), 0, "equal", json!([]), "1234567890")),
+        Some(bill(
+            "午餐",
+            item.clone(),
+            0,
+            "equal",
+            json!([]),
+            "1234567890",
+        )),
         StatusCode::BAD_REQUEST,
         "SELECT_PARTICIPANTS",
     )
@@ -2105,7 +2345,14 @@ async fn settlement_bill_branches() {
         Method::POST,
         &create,
         Some(&c.admin),
-        Some(bill("午餐", item.clone(), 0, "thirds", both.clone(), "1234567890")),
+        Some(bill(
+            "午餐",
+            item.clone(),
+            0,
+            "thirds",
+            both.clone(),
+            "1234567890",
+        )),
         StatusCode::BAD_REQUEST,
         "INVALID_SPLIT_MODE",
     )
@@ -2217,7 +2464,14 @@ async fn settlement_bill_branches() {
         Method::POST,
         &create,
         Some(&c.admin),
-        Some(bill("午餐", item.clone(), 0, "equal", both.clone(), "1234567890")),
+        Some(bill(
+            "午餐",
+            item.clone(),
+            0,
+            "equal",
+            both.clone(),
+            "1234567890",
+        )),
     )
     .await["id"]
         .as_i64()
@@ -2285,7 +2539,14 @@ async fn settlement_bill_branches() {
         Method::PUT,
         &format!("/api/settlements/{sid}"),
         Some(&c.member),
-        Some(bill("午餐", item.clone(), 0, "equal", both.clone(), "1234567890")),
+        Some(bill(
+            "午餐",
+            item.clone(),
+            0,
+            "equal",
+            both.clone(),
+            "1234567890",
+        )),
         StatusCode::FORBIDDEN,
         "ONLY_ORGANISER_CAN_EDIT_BILL",
     )
@@ -2295,7 +2556,14 @@ async fn settlement_bill_branches() {
         Method::PUT,
         &format!("/api/settlements/{sid}"),
         Some(&c.admin),
-        Some(bill("午餐", item.clone(), 0, "equal", both.clone(), "1234567890")),
+        Some(bill(
+            "午餐",
+            item.clone(),
+            0,
+            "equal",
+            both.clone(),
+            "1234567890",
+        )),
         StatusCode::BAD_REQUEST,
         "REVISION_REASON_REQUIRED",
     )
@@ -2382,7 +2650,7 @@ async fn settlement_bill_branches() {
         Method::POST,
         &format!("/api/shares/{share_member}/proof"),
         Some(&c.member),
-        Some(json!({"proof_file_id": foreign, "txn_ref": "short"})),
+        Some(json!({"proof_file_id": foreign, "txn_ref": "x"})),
         StatusCode::BAD_REQUEST,
         "TXN_REF_REQUIRED",
     )
@@ -2531,7 +2799,14 @@ async fn settlement_bill_branches() {
         Method::POST,
         &create,
         Some(&c.admin),
-        Some(bill("草稿", item, 0, "equal", people(&[c.member_id]), "1234567890")),
+        Some(bill(
+            "草稿",
+            item,
+            0,
+            "equal",
+            people(&[c.member_id]),
+            "1234567890",
+        )),
     )
     .await["id"]
         .as_i64()
@@ -2564,7 +2839,11 @@ async fn settlement_bill_branches() {
     )
     .await;
     let mine = must(&app, Method::GET, "/api/me/shares", Some(&c.member), None).await;
-    assert!(mine.as_array().unwrap().iter().any(|s| s["settlement_id"] == sid));
+    assert!(mine
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|s| s["settlement_id"] == sid));
 }
 
 #[tokio::test]
@@ -2598,10 +2877,16 @@ async fn reimbursement_help_and_profile_branches() {
     });
     let mut too_small = base.clone();
     too_small["amount_cents"] = json!(0);
-    assert_eq!(reimb(too_small, &c.member).await.json["code"], "AMOUNT_RANGE_INVALID");
+    assert_eq!(
+        reimb(too_small, &c.member).await.json["code"],
+        "AMOUNT_RANGE_INVALID"
+    );
     let mut too_big = base.clone();
     too_big["amount_cents"] = json!(50_001);
-    assert_eq!(reimb(too_big, &c.member).await.json["code"], "AMOUNT_RANGE_INVALID");
+    assert_eq!(
+        reimb(too_big, &c.member).await.json["code"],
+        "AMOUNT_RANGE_INVALID"
+    );
     let mut no_payee = base.clone();
     no_payee["payee_name"] = json!("  ");
     assert_eq!(
@@ -2610,15 +2895,26 @@ async fn reimbursement_help_and_profile_branches() {
     );
     let mut missing = base.clone();
     missing["receipt_file_id"] = json!(999999);
-    assert_eq!(reimb(missing, &c.member).await.json["code"], "RECEIPT_REQUIRED");
+    assert_eq!(
+        reimb(missing, &c.member).await.json["code"],
+        "RECEIPT_REQUIRED"
+    );
     let mut stolen = base.clone();
     stolen["receipt_file_id"] = json!(other);
-    assert_eq!(reimb(stolen, &c.member).await.json["code"], "INVALID_RECEIPT");
+    assert_eq!(
+        reimb(stolen, &c.member).await.json["code"],
+        "INVALID_RECEIPT"
+    );
     let mut linked = base.clone();
     linked["ride_id"] = json!(ride);
-    assert_eq!(reimb(linked, &c.member).await.json["code"], "ONLY_LINK_OWN_RIDES");
+    assert_eq!(
+        reimb(linked, &c.member).await.json["code"],
+        "ONLY_LINK_OWN_RIDES"
+    );
 
-    let id = reimb(base.clone(), &c.member).await.json["id"].as_i64().unwrap();
+    let id = reimb(base.clone(), &c.member).await.json["id"]
+        .as_i64()
+        .unwrap();
     deny(
         &app,
         Method::PUT,
@@ -2765,8 +3061,8 @@ async fn reimbursement_help_and_profile_branches() {
         &format!("/api/reimbursements/{id}/pay"),
         Some(&c.finance),
         Some(json!({"payee_verified": true, "paid_ref": "PAY-1002"})),
-        StatusCode::CONFLICT,
-        "REIMBURSEMENT_PROCESSED",
+        StatusCode::BAD_REQUEST,
+        "ONLY_APPROVED_REIMB_CAN_BE_PAID",
     )
     .await;
 
@@ -2859,7 +3155,14 @@ async fn reimbursement_help_and_profile_branches() {
     .await["id"]
         .as_i64()
         .unwrap();
-    let anns = must(&app, Method::GET, "/api/announcements", Some(&c.member), None).await;
+    let anns = must(
+        &app,
+        Method::GET,
+        "/api/announcements",
+        Some(&c.member),
+        None,
+    )
+    .await;
     assert!(anns.as_array().unwrap().iter().any(|a| a["id"] == ann));
     must(
         &app,
@@ -2919,7 +3222,14 @@ async fn reimbursement_help_and_profile_branches() {
     )
     .await;
 
-    must(&app, Method::GET, "/api/notifications", Some(&c.member), None).await;
+    must(
+        &app,
+        Method::GET,
+        "/api/notifications",
+        Some(&c.member),
+        None,
+    )
+    .await;
     must(
         &app,
         Method::POST,
@@ -2981,7 +3291,10 @@ async fn files_admin_directory_and_plan_branches() {
         let res = app.clone().oneshot(req).await.unwrap();
         let status = res.status();
         let bytes = res.into_body().collect().await.unwrap().to_bytes();
-        (status, serde_json::from_slice::<Value>(&bytes).unwrap_or(Value::Null))
+        (
+            status,
+            serde_json::from_slice::<Value>(&bytes).unwrap_or(Value::Null),
+        )
     };
     assert_eq!(empty.0, StatusCode::BAD_REQUEST, "{}", empty.1);
     assert_eq!(empty.1["code"], "NO_FILE_RECEIVED");
@@ -3007,7 +3320,13 @@ async fn files_admin_directory_and_plan_branches() {
         "CANNOT_VIEW_FILE",
     )
     .await;
-    let (status, _, body) = call_raw(&app, Method::GET, &format!("/api/files/{mine}"), Some(&c.member)).await;
+    let (status, _, body) = call_raw(
+        &app,
+        Method::GET,
+        &format!("/api/files/{mine}"),
+        Some(&c.member),
+    )
+    .await;
     assert_eq!(status, StatusCode::OK);
     assert!(body.len() > 8);
 
@@ -3029,7 +3348,12 @@ async fn files_admin_directory_and_plan_branches() {
         png
     })
     .await;
-    assert_eq!(capped.status, StatusCode::TOO_MANY_REQUESTS, "{}", capped.json);
+    assert_eq!(
+        capped.status,
+        StatusCode::TOO_MANY_REQUESTS,
+        "{}",
+        capped.json
+    );
     assert_eq!(capped.json["code"], "UPLOAD_QUOTA_REACHED");
 
     deny(
@@ -3226,7 +3550,7 @@ async fn files_admin_directory_and_plan_branches() {
     deny(
         &app,
         Method::PUT,
-        "/api/admin/settings",
+        "/api/admin/settings/system",
         Some(&c.admin),
         Some(json!({
             "audit_retention_days": 1,
@@ -3238,7 +3562,14 @@ async fn files_admin_directory_and_plan_branches() {
         "INVALID_ACTION",
     )
     .await;
-    let settings = must(&app, Method::GET, "/api/admin/settings", Some(&c.admin), None).await;
+    let settings = must(
+        &app,
+        Method::GET,
+        "/api/admin/settings/system",
+        Some(&c.admin),
+        None,
+    )
+    .await;
     assert!(settings["max_live_drivers"].as_i64().unwrap() >= 1);
 
     let event = make_event(&app, &c.admin, &[c.all_group], 0).await;
@@ -3344,19 +3675,46 @@ fn reachable_error_keys_match_handlers() {
         "REIMBURSEMENT_ONLY_NON_PENDING",
         "PASSKEY_NOT_FOUND",
         "TOO_MANY_FAILED_LOGINS",
-        "INVITE_ALREADY_USED",
     ];
-    let src = std::fs::read_to_string(concat!(env!("CARGO_MANIFEST_DIR"), "/src/routes/auth.rs")).unwrap()
-        + &std::fs::read_to_string(concat!(env!("CARGO_MANIFEST_DIR"), "/src/routes/rides.rs")).unwrap()
-        + &std::fs::read_to_string(concat!(env!("CARGO_MANIFEST_DIR"), "/src/routes/events.rs")).unwrap()
-        + &std::fs::read_to_string(concat!(env!("CARGO_MANIFEST_DIR"), "/src/routes/settlements.rs")).unwrap()
-        + &std::fs::read_to_string(concat!(env!("CARGO_MANIFEST_DIR"), "/src/routes/community.rs")).unwrap()
-        + &std::fs::read_to_string(concat!(env!("CARGO_MANIFEST_DIR"), "/src/routes/admin.rs")).unwrap()
-        + &std::fs::read_to_string(concat!(env!("CARGO_MANIFEST_DIR"), "/src/routes/files.rs")).unwrap()
-        + &std::fs::read_to_string(concat!(env!("CARGO_MANIFEST_DIR"), "/src/routes/plan.rs")).unwrap()
-        + &std::fs::read_to_string(concat!(env!("CARGO_MANIFEST_DIR"), "/src/routes/roles.rs")).unwrap();
+    let src = std::fs::read_to_string(concat!(env!("CARGO_MANIFEST_DIR"), "/src/routes/auth.rs"))
+        .unwrap()
+        + &std::fs::read_to_string(concat!(env!("CARGO_MANIFEST_DIR"), "/src/routes/rides.rs"))
+            .unwrap()
+        + &std::fs::read_to_string(concat!(env!("CARGO_MANIFEST_DIR"), "/src/routes/events.rs"))
+            .unwrap()
+        + &std::fs::read_to_string(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/src/routes/settlements.rs"
+        ))
+        .unwrap()
+        + &std::fs::read_to_string(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/src/routes/community.rs"
+        ))
+        .unwrap()
+        + &std::fs::read_to_string(concat!(env!("CARGO_MANIFEST_DIR"), "/src/routes/admin.rs"))
+            .unwrap()
+        + &std::fs::read_to_string(concat!(env!("CARGO_MANIFEST_DIR"), "/src/routes/files.rs"))
+            .unwrap()
+        + &std::fs::read_to_string(concat!(env!("CARGO_MANIFEST_DIR"), "/src/routes/plan.rs"))
+            .unwrap()
+        + &std::fs::read_to_string(concat!(env!("CARGO_MANIFEST_DIR"), "/src/routes/roles.rs"))
+            .unwrap();
     for key in retired {
-        let needle = format!("ErrorKey::{key}");
+        let variant: String = key
+            .split('_')
+            .map(|word| {
+                let mut chars = word.chars();
+                match chars.next() {
+                    Some(first) => {
+                        first.to_ascii_uppercase().to_string()
+                            + &chars.as_str().to_ascii_lowercase()
+                    }
+                    None => String::new(),
+                }
+            })
+            .collect();
+        let needle = format!("ErrorKey::{variant}");
         assert!(
             !src.contains(&needle),
             "{key} is returned by a handler and needs a test in this file"

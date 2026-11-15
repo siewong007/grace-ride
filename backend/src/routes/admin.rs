@@ -986,8 +986,22 @@ async fn audit_log(
     let entity = q.entity.filter(|e| !e.is_empty());
     let limit = q.limit.unwrap_or(AUDIT_PAGE).clamp(1, AUDIT_PAGE_MAX);
     // One row more than the page shows whether another page follows.
-    let mut rows: Vec<(i64, Option<i64>, Option<String>, String, String, Option<i64>, String, String)> = sqlx::query_as(
-        "SELECT a.id, a.actor_id, u.name, a.action, a.entity, a.entity_id, a.detail, a.created_at FROM audit_logs a LEFT JOIN users u ON u.id=a.actor_id
+    let mut rows: Vec<(i64, Option<i64>, Option<String>, String, String, Option<i64>, Option<String>, String, String)> = sqlx::query_as(
+        "SELECT a.id, a.actor_id, u.name, a.action, a.entity, a.entity_id,
+                CASE a.entity
+                    WHEN 'user' THEN (SELECT name FROM users WHERE id = a.entity_id)
+                    WHEN 'ride' THEN (SELECT p.name FROM rides r JOIN users p ON p.id = r.passenger_id WHERE r.id = a.entity_id)
+                    WHEN 'event' THEN (SELECT title FROM events WHERE id = a.entity_id)
+                    WHEN 'group' THEN CASE WHEN a.action = 'group.delete' THEN a.detail
+                                           ELSE (SELECT name FROM groups WHERE id = a.entity_id) END
+                    WHEN 'area' THEN (SELECT name FROM areas WHERE id = a.entity_id)
+                    WHEN 'settlement' THEN (SELECT title FROM settlements WHERE id = a.entity_id)
+                    WHEN 'settlement_share' THEN (SELECT p.name FROM settlement_shares s JOIN users p ON p.id = s.user_id WHERE s.id = a.entity_id)
+                    WHEN 'reimbursement' THEN (SELECT p.name FROM reimbursements r JOIN users p ON p.id = r.user_id WHERE r.id = a.entity_id)
+                    WHEN 'announcement' THEN (SELECT title FROM announcements WHERE id = a.entity_id)
+                END,
+                a.detail, a.created_at
+         FROM audit_logs a LEFT JOIN users u ON u.id=a.actor_id
          WHERE ($1::text IS NULL OR a.entity = $1)
            AND ($2::bigint IS NULL OR a.entity_id = $2)
            AND ($3::text IS NULL OR a.action ILIKE $3 OR a.entity ILIKE $3 OR a.detail ILIKE $3 OR u.name ILIKE $3)
@@ -1023,8 +1037,9 @@ async fn audit_log(
     .unwrap_or(st.cfg.audit_retention_days);
 
     Ok(Json(json!({
-        "items": rows.into_iter().map(|(id, aid, actor, action, entity, eid, detail, at)| json!({
-            "id": id, "actor_id": aid, "actor": actor, "action": action, "entity": entity, "entity_id": eid, "detail": detail, "created_at": at,
+        "items": rows.into_iter().map(|(id, aid, actor, action, entity, eid, name, detail, at)| json!({
+            "id": id, "actor_id": aid, "actor": actor, "action": action, "entity": entity, "entity_id": eid,
+            "entity_name": name, "detail": detail, "created_at": at,
         })).collect::<Vec<_>>(),
         "next_before": next_before,
         "retention_days": retention_days,

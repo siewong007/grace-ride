@@ -481,6 +481,44 @@ async fn location_sharing_is_logged_when_it_starts_and_stops_only() {
 }
 
 #[tokio::test]
+async fn audit_log_identifies_the_target_even_when_the_actor_is_someone_else() {
+    let (app, st) = setup().await;
+    let admin = login(&st, "admin@example.org").await;
+    let admin_id = user_id(&st, "admin@example.org").await;
+    let member_id = user_id(&st, "member@example.org").await;
+    let member_name: String = sqlx::query_scalar("SELECT name FROM users WHERE id=$1")
+        .bind(member_id)
+        .fetch_one(&st.db)
+        .await
+        .unwrap();
+    for (entity, target) in [("user", member_id), ("event", -1)] {
+        grace_ride::util::audit(
+            &st.db,
+            Some(admin_id),
+            "audit.test",
+            entity,
+            Some(target),
+            "",
+        )
+        .await;
+    }
+
+    let res = call(
+        &app,
+        Method::GET,
+        "/api/admin/audit?action=audit.test",
+        Some(&admin),
+        None,
+    )
+    .await;
+    assert_eq!(res.status, StatusCode::OK, "{}", res.json);
+    let items = res.json["items"].as_array().unwrap();
+    assert_eq!(items.len(), 2);
+    assert_eq!(items[0]["entity_name"], serde_json::Value::Null);
+    assert_eq!(items[1]["entity_name"], member_name);
+}
+
+#[tokio::test]
 async fn audit_log_pages_through_every_entry_and_filters() {
     let (app, st) = setup().await;
     let admin = login(&st, "admin@example.org").await;

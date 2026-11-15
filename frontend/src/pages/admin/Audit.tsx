@@ -1,7 +1,7 @@
 import { ReactNode, useCallback, useEffect, useRef, useState } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
-import { Check, Copy, Download, ExternalLink, Eye, FileText, ShieldAlert } from 'lucide-react';
+import { Download, ExternalLink, Eye, FileText, ShieldAlert } from 'lucide-react';
 import jsPDF from 'jspdf';
 import { api } from '../../api';
 import {
@@ -29,6 +29,7 @@ interface AuditItem {
   action: string;
   entity: string;
   entity_id: number | null;
+  entity_name?: string | null;
   detail: string;
   created_at: string;
 }
@@ -345,7 +346,6 @@ export default function Audit() {
   const [search, setSearch] = useState(q);
 
   const [selectedItem, setSelectedItem] = useState<AuditItem | null>(null);
-  const [copied, setCopied] = useState(false);
   const [isStreaming, setIsStreaming] = useState(false);
 
   const filters = new URLSearchParams();
@@ -467,7 +467,15 @@ export default function Audit() {
   const hasFilters = Boolean(query);
   // A link may name an object this list doesn't know; keep it selectable.
   const entities = entity && !ENTITIES.includes(entity) ? [...ENTITIES, entity] : ENTITIES;
-  const entityLabel = (k: string) => t(`audit.entities.${k}`, { defaultValue: k });
+  const entityLabel = (k: string) => t(`audit.entities.${k}`, {
+    defaultValue: (k.charAt(0).toUpperCase() + k.slice(1)).replace(/[_-]+/g, ' '),
+  });
+  const objectLabel = (item: AuditItem) => {
+    const type = entityLabel(item.entity);
+    const id = item.entity_id != null ? ` #${item.entity_id}` : '';
+    const name = item.entity_name?.trim();
+    return name ? `${type}${id} · ${name}` : `${type}${id}`;
+  };
 
   const escapeCsv = (v: unknown): string => {
     const s = String(v ?? '');
@@ -591,17 +599,6 @@ export default function Audit() {
     doc.save(`grace-ride-audit-${dateStr}.pdf`);
   };
 
-  const handleCopyJson = async () => {
-    if (!selectedItem) return;
-    try {
-      await navigator.clipboard.writeText(JSON.stringify(selectedItem, null, 2));
-      setCopied(true);
-      setTimeout(() => setCopied(false), 2000);
-    } catch {
-      setError(t('audit.copyFailed'));
-    }
-  };
-
   const selectedTargetUrl = selectedItem ? getObjectLink(selectedItem.entity, selectedItem.entity_id) : null;
   const securityCount = items.filter((a) => SECURITY_ACTIONS.includes(a.action)).length;
   const escalationCount = items.filter((a) => a.action === 'ride.escalate').length;
@@ -651,6 +648,7 @@ export default function Audit() {
       header: t('audit.object'),
       render: (a) => {
         const targetUrl = getObjectLink(a.entity, a.entity_id);
+        const label = objectLabel(a);
         return (
           <div className="row gap-xs" style={{ display: 'inline-flex', alignItems: 'center' }}>
             <button
@@ -661,13 +659,13 @@ export default function Audit() {
               }}
               title={t('audit.filterByObject')}
             >
-              {highlightText(`${a.entity}${a.entity_id != null ? ` #${a.entity_id}` : ''}`, search)}
+              {highlightText(label, search)}
             </button>
             {targetUrl && (
               <Link
                 to={targetUrl}
                 title={t('audit.viewObject')}
-                aria-label={`${t('audit.viewObject')} ${a.entity} #${a.entity_id}`}
+                aria-label={`${t('audit.viewObject')} ${label}`}
                 style={{ color: 'var(--muted)', display: 'inline-flex' }}
               >
                 <ExternalLink size={12} />
@@ -690,10 +688,7 @@ export default function Audit() {
           variant="ghost"
           size="sm"
           icon={<Eye size={16} />}
-          onClick={() => {
-            setSelectedItem(a);
-            setCopied(false);
-          }}
+          onClick={() => setSelectedItem(a)}
           aria-label={`${t('audit.viewDetail')} #${a.id}`}
         >
           {t('audit.viewDetail')}
@@ -920,58 +915,26 @@ export default function Audit() {
 
       {selectedItem && (
         <Modal
-          title={t('audit.entryDetail', { id: selectedItem.id })}
+          title={t('audit.entryDetail')}
           onClose={() => setSelectedItem(null)}
           footer={
-            <div className="row between" style={{ width: '100%' }}>
-              <Button
-                variant="ghost"
-                size="sm"
-                onClick={handleCopyJson}
-                icon={copied ? <Check size={16} /> : <Copy size={16} />}
-              >
-                {copied ? t('audit.copied') : t('audit.copyJson')}
-              </Button>
-              <Button variant="secondary" onClick={() => setSelectedItem(null)}>
-                {t('common:close', { defaultValue: 'Close' })}
-              </Button>
-            </div>
+            <Button variant="secondary" style={{ marginInlineStart: 'auto' }} onClick={() => setSelectedItem(null)}>
+              {t('common:close', { defaultValue: 'Close' })}
+            </Button>
           }
         >
           <div className="audit-entry">
+            <div className="audit-entry-row small">
+              <span className="muted">{t('audit.logId')}</span>
+              <span>#{selectedItem.id}</span>
+            </div>
             <div className="audit-entry-row small">
               <span className="muted">{t('audit.time')}</span>
               <div className="audit-entry-time"><span>{fmtDateTime(selectedItem.created_at, ft)}</span><span className="mono muted small">{selectedItem.created_at}</span></div>
             </div>
             <div className="audit-entry-row small">
               <span className="muted">{t('audit.actor')}</span>
-              <div className="row gap-xs">
-                <span>{selectedItem.actor ?? t('audit.system')}</span>
-                {selectedItem.actor && (
-                  <Button
-                    variant="ghost"
-                    size="sm"
-                    onClick={() => {
-                      set('q', selectedItem.actor!);
-                      setSelectedItem(null);
-                    }}
-                  >
-                    {t('audit.filterByActor')}
-                  </Button>
-                )}
-                {selectedItem.actor_id != null && (
-                  <Button
-                    variant="ghost"
-                    size="sm"
-                    onClick={() => {
-                      set('actor_id', String(selectedItem.actor_id));
-                      setSelectedItem(null);
-                    }}
-                  >
-                    {t('audit.actorId')}: #{selectedItem.actor_id}
-                  </Button>
-                )}
-              </div>
+              <span>{selectedItem.actor ?? t('audit.system')}</span>
             </div>
             <div className="audit-entry-row small">
               <span className="muted">{t('audit.action')}</span>
@@ -979,35 +942,12 @@ export default function Audit() {
                 <Pill tone={getActionTone(selectedItem.action)}>
                   {selectedItem.action}
                 </Pill>
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  onClick={() => {
-                    set('action', selectedItem.action);
-                    setSelectedItem(null);
-                  }}
-                >
-                  {t('audit.filterByAction')}
-                </Button>
               </div>
             </div>
             <div className="audit-entry-row small">
               <span className="muted">{t('audit.object')}</span>
               <div className="row gap-xs" style={{ alignItems: 'center' }}>
-                <span>
-                  {entityLabel(selectedItem.entity)}
-                  {selectedItem.entity_id != null ? ` #${selectedItem.entity_id}` : ''}
-                </span>
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  onClick={() => {
-                    setMany({ entity: selectedItem.entity, entity_id: selectedItem.entity_id == null ? '' : String(selectedItem.entity_id) });
-                    setSelectedItem(null);
-                  }}
-                >
-                  {t('audit.filterByObject')}
-                </Button>
+                <span>{selectedItem.entity_name?.trim() || objectLabel(selectedItem)}</span>
                 {selectedTargetUrl && (
                   <Link to={selectedTargetUrl} className="btn ghost sm" onClick={() => setSelectedItem(null)}>
                     <ExternalLink size={14} />
