@@ -11,7 +11,7 @@ import React, {
   useRef,
   useState,
 } from 'react';
-import { Link } from 'react-router-dom';
+import { Link, NavLink } from 'react-router-dom';
 import {
   AlertCircle,
   ArrowLeft,
@@ -317,6 +317,58 @@ export function Tabs({ value, onChange, items, ariaLabel, className = '' }: Tabs
         );
       })}
     </div>
+  );
+}
+
+
+// ==========================================
+// Sheet link (profile list and admin sheet rows)
+// ==========================================
+
+/** A list row used by the profile page and the phone admin sheet: icon, label, optional badge, chevron. */
+export function SheetLink({
+  to,
+  end,
+  icon,
+  label,
+  badge,
+  chevron = true,
+  onClick,
+  'aria-haspopup': ariaHasPopup,
+}: {
+  to?: string;
+  end?: boolean;
+  icon: ReactNode;
+  label: ReactNode;
+  badge?: ReactNode;
+  chevron?: boolean;
+  onClick?: () => void;
+  'aria-haspopup'?: React.AriaAttributes['aria-haspopup'];
+}) {
+  const body = (
+    <>
+      <span className="sidebar-icon">{icon}</span>
+      <span className="grow">{label}</span>
+      {badge}
+      {chevron ? <ChevronRight size={18} className="muted sheet-link-chevron" aria-hidden="true" /> : null}
+    </>
+  );
+  if (to) {
+    return (
+      <NavLink
+        to={to}
+        end={end}
+        className={({ isActive }) => `item admin-sheet-link${isActive ? ' active' : ''}`}
+        onClick={onClick}
+      >
+        {body}
+      </NavLink>
+    );
+  }
+  return (
+    <button type="button" className="item admin-sheet-link" aria-haspopup={ariaHasPopup} onClick={onClick}>
+      {body}
+    </button>
   );
 }
 

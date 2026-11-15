@@ -9,7 +9,7 @@ import { useAuth } from '../auth';
 import { LogoMark, Wordmark } from './Brand';
 import { GuideHeaderActionContext, PageChromeContext } from './PageChrome';
 import { TermsGate } from './Terms';
-import { Avatar, IconButton, Modal, Notice } from './ui';
+import { Avatar, IconButton, Modal, Notice, SheetLink } from './ui';
 import { GuideRunnerProvider, PageHeaderGuideButton } from './GuideRunner';
 import QuickJump, { useQuickJumpShortcut } from './QuickJump';
 import { useTranslation } from 'react-i18next';
@@ -392,24 +392,27 @@ export default function Layout() {
         />
       )}
       {adminSheet && (
-        <Modal title={t('adminSheetTitle')} onClose={() => setAdminSheet(false)} size="sm">
+        <Modal
+          title={t('adminSheetTitle')}
+          description={staffWaiting ? t('waitingCount', { count: staffWaiting }) : undefined}
+          onClose={() => setAdminSheet(false)}
+          size="sm"
+        >
           <div className="stack">
             {staffGroups.map((g) => (
               <section key={g.key} className="stack-xs" aria-label={g.label}>
                 <div className="section-label">{g.label}</div>
                 <div className="list">
                   {g.items.map((n) => (
-                    <NavLink
+                    <SheetLink
                       key={n.to}
                       to={n.to}
                       end={n.end}
-                      className={({ isActive }) => `item admin-sheet-link ${isActive ? 'active' : ''}`}
+                      icon={n.icon}
+                      label={n.label}
+                      badge={badge(n.badge)}
                       onClick={() => setAdminSheet(false)}
-                    >
-                      <span className="sidebar-icon">{n.icon}</span>
-                      <span className="grow">{n.label}</span>
-                      {badge(n.badge)}
-                    </NavLink>
+                    />
                   ))}
                 </div>
               </section>
