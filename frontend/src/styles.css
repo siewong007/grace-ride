@@ -2297,7 +2297,7 @@ main:focus { outline: none; }
 
 
 
-/* Waiting counts on staff nav links (sidebar, phone Admin tab and its sheet). */
+/* Waiting counts on staff nav links (sidebar, phone Admin tab and admin menu). */
 .nav-badge {
   min-width: 20px; height: 20px; padding: 0 6px; border-radius: var(--radius-pill);
   background: var(--danger); color: var(--bg); font-size: var(--fs-sm); font-weight: 700; line-height: 20px;
