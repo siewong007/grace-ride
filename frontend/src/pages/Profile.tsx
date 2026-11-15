@@ -1,79 +1,59 @@
 import { ReactNode, useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import {
-  ChevronDown,
+  BarChart3,
   ChevronRight,
-  ChevronUp,
   Copy,
   Fingerprint,
   KeyRound,
+  LifeBuoy,
   Lock,
   LogOut,
+  Receipt,
   RefreshCw,
   Shield,
   Sliders,
   User,
+  Wallet,
 } from 'lucide-react';
 import { del, post, put, useApi } from '../api';
 import { useAuth } from '../auth';
 import { useAutoLock } from '../components/AutoLock';
 import { DisplayPreferences } from '../components/AppChrome';
-import { Avatar, Button, Card, ErrorBox, Field, FileInput, Modal, Pill, useAction, useConfirm } from '../components/ui';
+import { Avatar, Button, ErrorBox, Field, FileInput, Modal, Pill, useAction, useConfirm } from '../components/ui';
 import { fmtAgo, roleLabel, useFormatT } from '../format';
 import { passkeySupported, registerPasskey } from '../webauthn';
 import { useTranslation } from 'react-i18next';
 
 type SectionKey = 'personal' | 'preferences' | 'security';
 
-/** A row in the Related pages list: label and a chevron. */
-function ProfileLink({ to, children }: { to: string; children: ReactNode }) {
+/** A row in the profile sheet list: icon, label, and a chevron. */
+function SheetRow({
+  icon,
+  label,
+  onClick,
+}: {
+  icon: ReactNode;
+  label: string;
+  onClick: () => void;
+}) {
   return (
-    <Link to={to} className="item profile-link">
-      <span className="grow">{children}</span>
+    <button type="button" className="item admin-sheet-link" aria-haspopup="dialog" onClick={onClick}>
+      <span className="sidebar-icon">{icon}</span>
+      <span className="grow">{label}</span>
       <ChevronRight size={18} className="muted" aria-hidden="true" />
-    </Link>
+    </button>
   );
 }
 
-/** One accordion section. Content stays mounted but hidden when collapsed. */
-function Section({
-  key,
-  isOpen,
-  onToggle,
-  label,
-  icon,
-  children,
-}: {
-  key: SectionKey;
-  isOpen: boolean;
-  onToggle: () => void;
-  label: string;
-  icon: ReactNode;
-  children: ReactNode;
-}) {
+/** A navigation row with the same look as the admin sheet links. */
+function ProfileLink({ to, icon, children }: { to: string; icon: ReactNode; children: ReactNode }) {
   return (
-    <Card className="stack section">
-      <button
-        type="button"
-        className="section-head"
-        aria-expanded={isOpen}
-        aria-controls={`profile-${key}`}
-        onClick={onToggle}
-      >
-        <span className="section-icon" aria-hidden>
-          {icon}
-        </span>
-        <span className="section-label">{label}</span>
-        {isOpen ? (
-          <ChevronUp size={16} className="section-chevron muted" aria-hidden="true" />
-        ) : (
-          <ChevronDown size={16} className="section-chevron muted" aria-hidden="true" />
-        )}
-      </button>
-      <div id={`profile-${key}`} hidden={!isOpen} className="section-body stack">
-        {children}
-      </div>
-    </Card>
+    <Link to={to} className="item admin-sheet-link">
+      <span className="sidebar-icon">{icon}</span>
+      <span className="grow">{children}</span>
+      <ChevronRight size={18} className="muted" aria-hidden="true" />
+    </Link>
   );
 }
 
@@ -86,7 +66,6 @@ export default function Profile() {
   const { lock } = useAutoLock();
   const passkeys = useApi<{ id: number; label: string; created_at: string; last_used: string | null }[]>('/auth/passkeys');
   const [open, setOpen] = useState<SectionKey | null>(null);
-  const toggle = (key: SectionKey) => setOpen(open === key ? null : key);
   const [f, setF] = useState({
     name: me?.name ?? '',
     phone: me?.phone ?? '',
@@ -104,6 +83,7 @@ export default function Profile() {
   const isPending = me.status === 'pending';
   const isAdmin = me.privileged;
   const roleText = isPending ? t('pending') : isAdmin ? t('administrator') : t('member');
+  const iconSz = 20;
 
   const savePersonal = () => put('/me', { name: f.name, phone: f.phone, photo_file_id: f.photo }).then(refresh);
   const savePreferences = () =>
@@ -132,6 +112,19 @@ export default function Profile() {
     }
   };
 
+  const related = [
+    can('costs') && { to: '/costs', label: t('myCosts'), icon: <Wallet size={iconSz} /> },
+    can('reimbursements') && { to: '/reimbursements', label: t('myReimb'), icon: <Receipt size={iconSz} /> },
+    can('report') && { to: '/report', label: t('myReport'), icon: <BarChart3 size={iconSz} /> },
+    can('help') && { to: '/help', label: t('myHelp'), icon: <LifeBuoy size={iconSz} /> },
+  ].filter(Boolean) as { to: string; label: string; icon: ReactNode }[];
+
+  const sheetTitle: Record<SectionKey, string> = {
+    personal: t('personalInfo'),
+    preferences: t('preferences'),
+    security: t('security'),
+  };
+
   return (
     <div className="stack profile-page">
       <div className="profile-identity">
@@ -144,258 +137,263 @@ export default function Profile() {
         </div>
       </div>
 
-      <Section
-        key="personal"
-        isOpen={open === 'personal'}
-        onToggle={() => toggle('personal')}
-        label={t('personalInfo')}
-        icon={<User size={20} aria-hidden="true" />}
-      >
-        <form className="stack" onSubmit={(e) => {
-          e.preventDefault();
-          run(savePersonal, t('saved'));
-        }}>
-          <Field label={t('name')}>
-            <input className="input" required value={f.name} onChange={(e) => setF({ ...f, name: e.target.value })} />
-          </Field>
-          <Field label={t('phone')} hint={t('phoneHint')}>
-            <input className="input" type="tel" value={f.phone} onChange={(e) => setF({ ...f, phone: e.target.value })} />
-          </Field>
-          <FileInput label={t('photo')} accept="image/*" value={f.photo} onChange={(id) => setF({ ...f, photo: id })} />
-          <div className="btn-row">
-            <Button variant="primary" type="submit" loading={busy}>
-              {t('save')}
-            </Button>
+      <div className="stack">
+        <section className="stack-xs" aria-label={t('account')}>
+          <div className="section-label">{t('account')}</div>
+          <div className="list">
+            <SheetRow icon={<User size={iconSz} />} label={t('personalInfo')} onClick={() => setOpen('personal')} />
+            <SheetRow icon={<Sliders size={iconSz} />} label={t('preferences')} onClick={() => setOpen('preferences')} />
+            <SheetRow icon={<Shield size={iconSz} />} label={t('security')} onClick={() => setOpen('security')} />
           </div>
-        </form>
+        </section>
 
-        <div className="divider" />
-        <div className="stack-sm">
-          <div className="row between break-all">
-            <strong>{t('email')}</strong>
-            <span className="muted">{me.email}</span>
-          </div>
-          <div className="bold small">{t('status')}</div>
-          <div className="row wrap gap-sm">
-            <Pill tone={isPending ? 'warning' : 'success'}>
-              {isPending ? t('pending') : t('member')}
-            </Pill>
-            {me.roles.map((r) => (
-              <Pill key={r} tone="primary">
-                {roleLabel(r, ft, me.role_names)}
-              </Pill>
-            ))}
-            {me.groups.map((g) => (
-              <Pill key={g.id}>{g.name}</Pill>
-            ))}
-          </div>
-        </div>
-
-        {!isPending && (
-          <>
-            <div className="divider" />
-            <div className="stack-sm">
-              <div className="bold small">{t('relatedPages')}</div>
-              <nav className="list profile-links" aria-label={t('relatedPages')}>
-                {can('costs') && <ProfileLink to="/costs">{t('myCosts')}</ProfileLink>}
-                {can('reimbursements') && <ProfileLink to="/reimbursements">{t('myReimb')}</ProfileLink>}
-                {can('report') && <ProfileLink to="/report">{t('myReport')}</ProfileLink>}
-                {can('help') && <ProfileLink to="/help">{t('myHelp')}</ProfileLink>}
-              </nav>
-            </div>
-          </>
-        )}
-      </Section>
-
-      <Section
-        key="preferences"
-        isOpen={open === 'preferences'}
-        onToggle={() => toggle('preferences')}
-        label={t('preferences')}
-        icon={<Sliders size={20} aria-hidden="true" />}
-      >
-        <div className="stack-sm">
-          <div className="bold">{t('readinessPromptLabel')}</div>
-          <p className="muted small">{t('readinessPromptHint')}</p>
-          <select
-            className="input"
-            value={readinessPrompt}
-            onChange={(e) => setReadinessPrompt(Number(e.target.value))}
-          >
-            <option value={30}>{t('mins30')}</option>
-            <option value={45}>{t('mins45')}</option>
-            <option value={60}>{t('mins60')}</option>
-            <option value={0}>{t('promptDisabled')}</option>
-          </select>
-        </div>
-        <div className="divider" />
-        <label className={`check ${f.optOut ? 'on' : ''}`}>
-          <input type="checkbox" checked={f.optOut} onChange={(e) => setF({ ...f, optOut: e.target.checked })} /> {t('optOut')}
-        </label>
-        <div className="divider" />
-        <DisplayPreferences />
-        <div className="btn-row">
-          <Button variant="primary" onClick={() => run(savePreferences, t('saved'))} loading={busy}>
-            {t('save')}
-          </Button>
-        </div>
-      </Section>
-
-      <Section
-        key="security"
-        isOpen={open === 'security'}
-        onToggle={() => toggle('security')}
-        label={t('security')}
-        icon={<Shield size={20} aria-hidden="true" />}
-      >
-        <div className="stack-sm">
-          <div className="bold">{t('passkeys')}</div>
-          {passkeys.data?.length ? (
-            <div className="passkey-list stack-sm">
-              {passkeys.data.map((p) => (
-                <div key={p.id} className="passkey-row row between">
-                  <div>
-                    <div className="bold">{p.label}</div>
-                    <div className="muted tiny">
-                      {t('passkeyLabel', { date: fmtAgo(p.created_at, ft) })}
-                      {p.last_used && ` · ${t('lastUsed', { date: fmtAgo(p.last_used, ft) })}`}
-                    </div>
-                  </div>
-                  <Button
-                    variant="danger"
-                    size="sm"
-                    onClick={async () => {
-                      const ok = await confirm({
-                        title: t('remove'),
-                        body: t('removeConfirm'),
-                        confirmLabel: t('remove'),
-                        tone: 'danger',
-                      });
-                      if (ok) run(() => del(`/auth/passkeys/${p.id}`).then(passkeys.reload).then(refresh), t('removed'));
-                    }}
-                  >
-                    {t('remove')}
-                  </Button>
-                </div>
+        {!isPending && related.length > 0 && (
+          <section className="stack-xs" aria-label={t('relatedPages')}>
+            <div className="section-label">{t('relatedPages')}</div>
+            <div className="list">
+              {related.map((n) => (
+                <ProfileLink key={n.to} to={n.to} icon={n.icon}>
+                  {n.label}
+                </ProfileLink>
               ))}
             </div>
-          ) : (
-            <p className="muted">{t('none')}</p>
-          )}
-          <Button
-            variant="primary"
-            disabled={busy || !passkeySupported()}
-            onClick={() => run(() => registerPasskey(navigator.platform || t('myPhone')).then(passkeys.reload).then(refresh), t('addPasskeyDone'))}
-          >
-            <Fingerprint size={18} />
-            {t('addPasskey')}
-          </Button>
-        </div>
+          </section>
+        )}
+      </div>
 
-        {me.status !== 'pending' && (
-          <>
-            <div className="divider" />
-            <div className="stack-sm">
-              <div className="row between">
-                <strong>{t('totp')}</strong>
-                <Pill tone={me.totp_enabled ? 'success' : 'neutral'}>
-                  {me.totp_enabled ? t('totpEnabled') : t('totpDisabled')}
-                </Pill>
-              </div>
-              <p className="muted small">{t('totpNote')}</p>
-              {!me.totp_enabled ? (
-                <Button
-                  variant="secondary"
-                  disabled={busy}
-                  onClick={() => run(async () => setTotp(await post('/auth/totp/setup')))}
-                >
-                  {t('setupTotp')}
-                </Button>
-              ) : (
+      <div className="list">
+        <button type="button" className="item admin-sheet-link" onClick={handleLogout}>
+          <span className="sidebar-icon">
+            <LogOut size={iconSz} aria-hidden="true" />
+          </span>
+          <span className="grow">{t('logout')}</span>
+        </button>
+      </div>
+
+      {open && (
+        <Modal title={sheetTitle[open]} onClose={() => setOpen(null)} size="sm">
+          {open === 'personal' && (
+            <div className="stack">
+              <form className="stack" onSubmit={(e) => {
+                e.preventDefault();
+                run(savePersonal, t('saved'));
+              }}>
+                <Field label={t('name')}>
+                  <input className="input" required value={f.name} onChange={(e) => setF({ ...f, name: e.target.value })} />
+                </Field>
+                <Field label={t('phone')} hint={t('phoneHint')}>
+                  <input className="input" type="tel" value={f.phone} onChange={(e) => setF({ ...f, phone: e.target.value })} />
+                </Field>
+                <FileInput label={t('photo')} accept="image/*" value={f.photo} onChange={(id) => setF({ ...f, photo: id })} />
                 <div className="btn-row">
-                  <Button
-                    variant="secondary"
-                    size="sm"
-                    disabled={busy}
-                    onClick={async () => {
-                      const ok = await confirm({
-                        title: t('regenBackupCodes'),
-                        body: t('regenBackupCodesConfirm'),
-                        confirmLabel: t('regenBackupCodes'),
-                        tone: 'warning',
-                      });
-                      if (ok) {
-                        run(async () => {
-                          const res = await post<{ ok: boolean; backup_codes: string[] }>(
-                            '/auth/totp/backup-codes/regenerate',
-                          );
-                          setShowBackupCodes(res.backup_codes);
-                          await refresh();
-                        }, t('regenBackupCodesDone'));
-                      }
-                    }}
-                  >
-                    <RefreshCw size={16} />
-                    {t('regenBackupCodes')}
+                  <Button variant="primary" type="submit" loading={busy}>
+                    {t('save')}
                   </Button>
-                  {me.privileged && !me.mfa_ok && (
-                    <Button variant="primary" size="sm" onClick={() => setShowVerify2fa(true)}>
-                      <KeyRound size={16} />
-                      {t('verify2fa')}
-                    </Button>
-                  )}
                 </div>
-              )}
-            </div>
+              </form>
 
-            <div className="divider" />
-            <div className="stack-sm">
-              <div className="bold">{t('autoLock')}</div>
-              <p className="muted small">{t('autoLockDesc')}</p>
-              <div className="row wrap gap-sm">
+              <div className="divider" />
+              <div className="stack-sm">
+                <div className="row between break-all">
+                  <strong>{t('email')}</strong>
+                  <span className="muted">{me.email}</span>
+                </div>
+                <div className="bold small">{t('status')}</div>
+                <div className="row wrap gap-sm">
+                  <Pill tone={isPending ? 'warning' : 'success'}>
+                    {isPending ? t('pending') : t('member')}
+                  </Pill>
+                  {me.roles.map((r) => (
+                    <Pill key={r} tone="primary">
+                      {roleLabel(r, ft, me.role_names)}
+                    </Pill>
+                  ))}
+                  {me.groups.map((g) => (
+                    <Pill key={g.id}>{g.name}</Pill>
+                  ))}
+                </div>
+              </div>
+              <ErrorBox error={error} />
+            </div>
+          )}
+
+          {open === 'preferences' && (
+            <div className="stack">
+              <div className="stack-sm">
+                <div className="bold">{t('readinessPromptLabel')}</div>
+                <p className="muted small">{t('readinessPromptHint')}</p>
                 <select
                   className="input"
-                  style={{ maxWidth: 220 }}
-                  value={autoLockMins}
-                  onChange={async (e) => {
-                    const val = Number(e.target.value);
-                    setAutoLockMins(val);
-                    localStorage.setItem('gr_autolock_mins', String(val));
-                    await run(() => put('/me', { auto_lock_mins: val }).then(refresh), t('saved'));
-                  }}
+                  value={readinessPrompt}
+                  onChange={(e) => setReadinessPrompt(Number(e.target.value))}
                 >
-                  <option value={0}>{t('autoLockDefault', { mins: me.session_timeout_mins ?? 15 })}</option>
-                  <option value={-1}>{t('autoLockNever')}</option>
-                  <option value={15}>{t('autoLock15m')}</option>
-                  <option value={30}>{t('autoLock30m')}</option>
-                  <option value={60}>{t('autoLock60m')}</option>
+                  <option value={30}>{t('mins30')}</option>
+                  <option value={45}>{t('mins45')}</option>
+                  <option value={60}>{t('mins60')}</option>
+                  <option value={0}>{t('promptDisabled')}</option>
                 </select>
-                <Button variant="ghost" size="sm" onClick={lock}>
-                  <Lock size={16} />
-                  {t('lockNow')}
+              </div>
+              <div className="divider" />
+              <label className={`check ${f.optOut ? 'on' : ''}`}>
+                <input type="checkbox" checked={f.optOut} onChange={(e) => setF({ ...f, optOut: e.target.checked })} /> {t('optOut')}
+              </label>
+              <div className="divider" />
+              <DisplayPreferences />
+              <div className="btn-row">
+                <Button variant="primary" onClick={() => run(savePreferences, t('saved'))} loading={busy}>
+                  {t('save')}
                 </Button>
               </div>
+              <ErrorBox error={error} />
             </div>
+          )}
 
-            <div className="divider" />
-            <div className="stack-sm">
-              <Button variant="ghost" onClick={handleLogoutAll}>
-                <LogOut size={16} />
-                {t('logoutAll')}
-              </Button>
+          {open === 'security' && (
+            <div className="stack">
+              <div className="stack-sm">
+                <div className="bold">{t('passkeys')}</div>
+                {passkeys.data?.length ? (
+                  <div className="passkey-list stack-sm">
+                    {passkeys.data.map((p) => (
+                      <div key={p.id} className="passkey-row row between">
+                        <div>
+                          <div className="bold">{p.label}</div>
+                          <div className="muted tiny">
+                            {t('passkeyLabel', { date: fmtAgo(p.created_at, ft) })}
+                            {p.last_used && ` · ${t('lastUsed', { date: fmtAgo(p.last_used, ft) })}`}
+                          </div>
+                        </div>
+                        <Button
+                          variant="danger"
+                          size="sm"
+                          onClick={async () => {
+                            const ok = await confirm({
+                              title: t('remove'),
+                              body: t('removeConfirm'),
+                              confirmLabel: t('remove'),
+                              tone: 'danger',
+                            });
+                            if (ok) run(() => del(`/auth/passkeys/${p.id}`).then(passkeys.reload).then(refresh), t('removed'));
+                          }}
+                        >
+                          {t('remove')}
+                        </Button>
+                      </div>
+                    ))}
+                  </div>
+                ) : (
+                  <p className="muted">{t('none')}</p>
+                )}
+                <Button
+                  variant="primary"
+                  disabled={busy || !passkeySupported()}
+                  onClick={() => run(() => registerPasskey(navigator.platform || t('myPhone')).then(passkeys.reload).then(refresh), t('addPasskeyDone'))}
+                >
+                  <Fingerprint size={18} />
+                  {t('addPasskey')}
+                </Button>
+              </div>
+
+              {me.status !== 'pending' && (
+                <>
+                  <div className="divider" />
+                  <div className="stack-sm">
+                    <div className="row between">
+                      <strong>{t('totp')}</strong>
+                      <Pill tone={me.totp_enabled ? 'success' : 'neutral'}>
+                        {me.totp_enabled ? t('totpEnabled') : t('totpDisabled')}
+                      </Pill>
+                    </div>
+                    <p className="muted small">{t('totpNote')}</p>
+                    {!me.totp_enabled ? (
+                      <Button
+                        variant="secondary"
+                        disabled={busy}
+                        onClick={() => run(async () => setTotp(await post('/auth/totp/setup')))}
+                      >
+                        {t('setupTotp')}
+                      </Button>
+                    ) : (
+                      <div className="btn-row">
+                        <Button
+                          variant="secondary"
+                          size="sm"
+                          disabled={busy}
+                          onClick={async () => {
+                            const ok = await confirm({
+                              title: t('regenBackupCodes'),
+                              body: t('regenBackupCodesConfirm'),
+                              confirmLabel: t('regenBackupCodes'),
+                              tone: 'warning',
+                            });
+                            if (ok) {
+                              run(async () => {
+                                const res = await post<{ ok: boolean; backup_codes: string[] }>(
+                                  '/auth/totp/backup-codes/regenerate',
+                                );
+                                setShowBackupCodes(res.backup_codes);
+                                await refresh();
+                              }, t('regenBackupCodesDone'));
+                            }
+                          }}
+                        >
+                          <RefreshCw size={16} />
+                          {t('regenBackupCodes')}
+                        </Button>
+                        {me.privileged && !me.mfa_ok && (
+                          <Button variant="primary" size="sm" onClick={() => setShowVerify2fa(true)}>
+                            <KeyRound size={16} />
+                            {t('verify2fa')}
+                          </Button>
+                        )}
+                      </div>
+                    )}
+                  </div>
+
+                  <div className="divider" />
+                  <div className="stack-sm">
+                    <div className="bold">{t('autoLock')}</div>
+                    <p className="muted small">{t('autoLockDesc')}</p>
+                    <div className="row wrap gap-sm">
+                      <select
+                        className="input"
+                        style={{ maxWidth: 220 }}
+                        value={autoLockMins}
+                        onChange={async (e) => {
+                          const val = Number(e.target.value);
+                          setAutoLockMins(val);
+                          localStorage.setItem('gr_autolock_mins', String(val));
+                          await run(() => put('/me', { auto_lock_mins: val }).then(refresh), t('saved'));
+                        }}
+                      >
+                        <option value={0}>{t('autoLockDefault', { mins: me.session_timeout_mins ?? 15 })}</option>
+                        <option value={-1}>{t('autoLockNever')}</option>
+                        <option value={15}>{t('autoLock15m')}</option>
+                        <option value={30}>{t('autoLock30m')}</option>
+                        <option value={60}>{t('autoLock60m')}</option>
+                      </select>
+                      <Button variant="ghost" size="sm" onClick={lock}>
+                        <Lock size={16} />
+                        {t('lockNow')}
+                      </Button>
+                    </div>
+                  </div>
+
+                  <div className="divider" />
+                  <div className="stack-sm">
+                    <Button variant="ghost" onClick={handleLogoutAll}>
+                      <LogOut size={16} />
+                      {t('logoutAll')}
+                    </Button>
+                  </div>
+                </>
+              )}
+
+              <ErrorBox error={error} />
             </div>
-          </>
-        )}
-
-        <ErrorBox error={error} />
-      </Section>
-
-      <div className="btn-row">
-        <Button variant="secondary" onClick={handleLogout}>
-          <LogOut size={18} />
-          {t('logout')}
-        </Button>
-      </div>
+          )}
+        </Modal>
+      )}
 
       {totp && (
         <TotpModal
@@ -489,7 +487,6 @@ function TotpModal({
       setCopied(true);
       setTimeout(() => setCopied(false), 2000);
     };
-
     return (
       <Modal title={t('backupCodesTitle')} onClose={onDone}>
         <p className="muted small">{t('backupCodesDesc')}</p>

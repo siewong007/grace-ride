@@ -271,7 +271,7 @@ button, input, select, textarea { font: inherit; color: inherit; }
     padding: var(--space-4) var(--space-2); background: var(--bg); border-right: 1px solid var(--border);
   }
   .sidebar-brand { display: grid; place-items: center; margin-bottom: var(--space-4); }
-  .sidebar-brand-text, .section-label { display: none; }
+  .sidebar-brand-text, .sidebar .section-label { display: none; }
   .sidebar-link {
     position: relative;
     display: flex; flex-direction: column; align-items: center; justify-content: center;
@@ -323,7 +323,7 @@ button, input, select, textarea { font: inherit; color: inherit; }
   .sidebar-brand { display: flex; align-items: center; gap: var(--space-2); place-items: initial; padding: 0 var(--space-2) var(--space-3); font-weight: 700; font-size: var(--fs-lg); }
   .sidebar-brand-text { display: inline; color: var(--text); }
   .sidebar-brand-text small { display: block; font-size: var(--fs-sm); color: var(--muted); font-weight: 500; }
-  .section-label { display: block; padding: var(--space-4) var(--space-2) var(--space-1); font-size: var(--fs-sm); color: var(--muted); font-weight: 600; }
+  .sidebar .section-label { display: block; padding: var(--space-4) var(--space-2) var(--space-1); }
   .sidebar-link {
     flex-direction: row; justify-content: flex-start; gap: var(--space-3);
     min-height: 40px; padding: var(--space-2); font-size: var(--fs-md); text-align: left;
@@ -581,6 +581,16 @@ textarea.input { min-height: 96px; resize: vertical; }
 }
 .preview-text { color: var(--text); font-size: var(--fs-sm); }
 
+/* Group headings: used in the sidebar, admin sheet, profile list and jump list.
+   The tablet icon rail hides only the sidebar's labels; everywhere else they stay visible. */
+.section-label {
+  display: block;
+  font-size: var(--fs-sm);
+  color: var(--muted);
+  font-weight: 600;
+  padding: var(--space-2) var(--space-2) var(--space-1);
+}
+
 /* ---------- Compact profile ---------- */
 .profile-page { display: flex; flex-direction: column; gap: var(--space-4); }
 @media (min-width: 768px) {
@@ -608,47 +618,12 @@ textarea.input { min-height: 96px; resize: vertical; }
 .profile-identity .stack-sm { gap: var(--space-1); }
 .profile-identity .avatar.lg { width: 64px; height: 64px; font-size: var(--fs-2xl); }
 
-.section { gap: 0; }
-.section-head {
-  width: 100%;
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: var(--space-2);
-  padding: var(--space-3) var(--space-4);
-  background: transparent;
-  border: 0;
-  border-radius: var(--radius-sm);
-  text-align: left;
-  font-size: var(--fs-md);
-  font-weight: 600;
-  color: var(--text);
-  cursor: pointer;
-  min-height: 48px;
-}
-.section-head:hover { background: var(--surface-2); }
-.section-head:focus-visible {
-  outline: 3px solid var(--primary);
-  outline-offset: 2px;
-  border-radius: var(--radius-sm);
-}
-.section-head[aria-expanded="true"] .section-chevron { transform: rotate(180deg); }
-.section-chevron { flex-shrink: 0; transition: transform 0.2s ease; }
-.section-body { padding: 0 var(--space-4) var(--space-4); }
-.section-body[hidden] { display: none; }
-
-@media (max-width: 767px) {
-  .section-head { min-height: 64px; }
-}
-
 .passkey-list { width: 100%; }
 .passkey-row {
   padding: var(--space-3) 0;
   border-bottom: 1px solid var(--border);
 }
 .passkey-row:last-child { border-bottom: none; }
-.profile-links > .profile-link { color: var(--text); text-decoration: none; min-height: var(--tap); padding-block: var(--space-2); }
-.profile-links > .profile-link:hover { color: var(--primary); }
 .auth-header-row { margin-bottom: var(--space-2); }
 .lang-toggle { gap: var(--space-1); font-weight: 600; margin-left: auto; }
 
@@ -2316,8 +2291,10 @@ main:focus { outline: none; }
 .bottom-tab { background: none; border: 0; font: inherit; cursor: pointer; }
 .bottom-tab-icon { position: relative; }
 .bottom-tab-icon .nav-badge { position: absolute; top: -6px; left: 14px; min-width: 16px; height: 16px; line-height: 16px; padding: 0 4px; font-size: .6875rem; border: 2px solid var(--bg); box-sizing: content-box; }
-.admin-sheet-link { gap: var(--space-3); align-items: center; }
+.admin-sheet-link { gap: var(--space-3); align-items: center; text-decoration: none; color: inherit; }
 .admin-sheet-link.active { background: var(--surface-2); font-weight: 700; }
+.list > button.item.admin-sheet-link { padding-inline: 0; }
+.list > .item.admin-sheet-link { min-height: var(--tap); }
 @media (min-width: 768px) and (max-width: 1199px) {
   /* Icon rail: the count sits on the icon's corner. */
   .sidebar-link .nav-badge { position: absolute; top: 2px; right: 6px; min-width: 16px; height: 16px; line-height: 16px; padding: 0 4px; font-size: .6875rem; }

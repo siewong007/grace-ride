@@ -76,6 +76,7 @@ const profileStrings: Record<string, string> = {
   personalInfo: 'Personal details',
   preferences: 'Preferences',
   security: 'Account security',
+  account: 'Account',
   relatedPages: 'Related pages',
   myCosts: 'My costs',
   myReimb: 'My reimbursements',
@@ -126,8 +127,22 @@ vi.mock('../components/ui', () => ({
   FileInput: ({ label }: { label: string }) => (
     <label data-testid="fileinput">{label}</label>
   ),
-  Modal: ({ children }: { children?: React.ReactNode; onClose?: () => void }) => (
-    <div data-testid="modal">{children}</div>
+  Modal: ({
+    children,
+    title,
+    onClose,
+  }: {
+    children?: React.ReactNode;
+    title?: string;
+    onClose?: () => void;
+  }) => (
+    <div data-testid="modal" role="dialog" aria-label={title}>
+      <h2>{title}</h2>
+      <button type="button" aria-label="Close" onClick={onClose}>
+        Close
+      </button>
+      {children}
+    </div>
   ),
   Pill: ({ children, tone }: { children?: React.ReactNode; tone?: string }) => (
     <span data-testid={`pill-${tone}`}>{children}</span>
@@ -171,50 +186,35 @@ describe('Profile compact layout', () => {
     expect(screen.getAllByText('Pending approval').length).toBeGreaterThan(0);
   });
 
-  it('starts with all sections closed and opens only one at a time', () => {
+  it('lists section rows and opens one section sheet at a time', () => {
     renderProfile(baseMe);
-    expect(screen.getByRole('button', { name: /Personal details/i })).toHaveAttribute(
-      'aria-expanded',
-      'false',
-    );
-    expect(screen.getByRole('button', { name: /Preferences/i })).toHaveAttribute(
-      'aria-expanded',
-      'false',
-    );
-    expect(screen.getByRole('button', { name: /Account security/i })).toHaveAttribute(
-      'aria-expanded',
-      'false',
-    );
+    expect(screen.getByRole('button', { name: /Personal details/i })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /Preferences/i })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /Account security/i })).toBeInTheDocument();
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
 
     fireEvent.click(screen.getByRole('button', { name: /Preferences/i }));
-    expect(screen.getByRole('button', { name: /Preferences/i })).toHaveAttribute(
-      'aria-expanded',
-      'true',
-    );
-    expect(screen.getByRole('button', { name: /Personal details/i })).toHaveAttribute(
-      'aria-expanded',
-      'false',
-    );
+    expect(screen.getByRole('dialog', { name: /Preferences/i })).toBeInTheDocument();
+    expect(screen.queryByRole('dialog', { name: /Personal details/i })).not.toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Close' }));
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
 
     fireEvent.click(screen.getByRole('button', { name: /Personal details/i }));
-    expect(screen.getByRole('button', { name: /Personal details/i })).toHaveAttribute(
-      'aria-expanded',
-      'true',
-    );
-    expect(screen.getByRole('button', { name: /Preferences/i })).toHaveAttribute(
-      'aria-expanded',
-      'false',
-    );
+    expect(screen.getByRole('dialog', { name: /Personal details/i })).toBeInTheDocument();
+    expect(screen.queryByRole('dialog', { name: /Preferences/i })).not.toBeInTheDocument();
   });
 
-  it('retains edits when a section is closed and reopened', () => {
+  it('retains edits when a section sheet is closed and reopened', () => {
     renderProfile(baseMe);
     fireEvent.click(screen.getByRole('button', { name: /Personal details/i }));
     const nameInput = screen.getByLabelText('Name');
     fireEvent.change(nameInput, { target: { value: 'Edited Name' } });
     expect(nameInput).toHaveValue('Edited Name');
 
-    fireEvent.click(screen.getByRole('button', { name: /Preferences/i }));
+    fireEvent.click(screen.getByRole('button', { name: 'Close' }));
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+
     fireEvent.click(screen.getByRole('button', { name: /Personal details/i }));
     expect(screen.getByLabelText('Name')).toHaveValue('Edited Name');
   });

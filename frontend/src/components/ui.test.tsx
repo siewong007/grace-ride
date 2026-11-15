@@ -169,6 +169,38 @@ describe('Modal primitive', () => {
     // Focus returns to the trigger
     expect(document.activeElement).toBe(trigger);
   });
+
+  it('Escape closes only the topmost of stacked modals', () => {
+    function Stacked() {
+      const [outer, setOuter] = useState(true);
+      const [inner, setInner] = useState(true);
+      return (
+        <>
+          {outer && (
+            <Modal title="Outer" onClose={() => setOuter(false)}>
+              <p>Outer content</p>
+            </Modal>
+          )}
+          {inner && (
+            <Modal title="Inner" onClose={() => setInner(false)}>
+              <p>Inner content</p>
+            </Modal>
+          )}
+        </>
+      );
+    }
+
+    render(<Stacked />);
+    expect(screen.getByRole('dialog', { name: 'Outer' })).toBeInTheDocument();
+    expect(screen.getByRole('dialog', { name: 'Inner' })).toBeInTheDocument();
+
+    fireEvent.keyDown(window, { key: 'Escape' });
+    expect(screen.queryByRole('dialog', { name: 'Inner' })).not.toBeInTheDocument();
+    expect(screen.getByRole('dialog', { name: 'Outer' })).toBeInTheDocument();
+
+    fireEvent.keyDown(window, { key: 'Escape' });
+    expect(screen.queryByRole('dialog', { name: 'Outer' })).not.toBeInTheDocument();
+  });
 });
 
 describe('ConfirmDialog & useConfirm()', () => {
