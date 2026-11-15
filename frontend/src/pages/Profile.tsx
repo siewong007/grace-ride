@@ -1,8 +1,7 @@
 import { ReactNode, useState } from 'react';
-import { Link, useNavigate } from 'react-router-dom';
+import { useNavigate } from 'react-router-dom';
 import {
   BarChart3,
-  ChevronRight,
   Copy,
   Fingerprint,
   KeyRound,
@@ -20,42 +19,12 @@ import { del, post, put, useApi } from '../api';
 import { useAuth } from '../auth';
 import { useAutoLock } from '../components/AutoLock';
 import { DisplayPreferences } from '../components/AppChrome';
-import { Avatar, Button, ErrorBox, Field, FileInput, Modal, Pill, useAction, useConfirm } from '../components/ui';
+import { Avatar, Button, ErrorBox, Field, FileInput, Modal, Pill, SheetLink, useAction, useConfirm } from '../components/ui';
 import { fmtAgo, roleLabel, useFormatT } from '../format';
 import { passkeySupported, registerPasskey } from '../webauthn';
 import { useTranslation } from 'react-i18next';
 
 type SectionKey = 'personal' | 'preferences' | 'security';
-
-/** A row in the profile sheet list: icon, label, and a chevron. */
-function SheetRow({
-  icon,
-  label,
-  onClick,
-}: {
-  icon: ReactNode;
-  label: string;
-  onClick: () => void;
-}) {
-  return (
-    <button type="button" className="item admin-sheet-link" aria-haspopup="dialog" onClick={onClick}>
-      <span className="sidebar-icon">{icon}</span>
-      <span className="grow">{label}</span>
-      <ChevronRight size={18} className="muted" aria-hidden="true" />
-    </button>
-  );
-}
-
-/** A navigation row with the same look as the admin sheet links. */
-function ProfileLink({ to, icon, children }: { to: string; icon: ReactNode; children: ReactNode }) {
-  return (
-    <Link to={to} className="item admin-sheet-link">
-      <span className="sidebar-icon">{icon}</span>
-      <span className="grow">{children}</span>
-      <ChevronRight size={18} className="muted" aria-hidden="true" />
-    </Link>
-  );
-}
 
 export default function Profile() {
   const { t } = useTranslation('profile');
@@ -141,9 +110,9 @@ export default function Profile() {
         <section className="stack-xs" aria-label={t('account')}>
           <div className="section-label">{t('account')}</div>
           <div className="list">
-            <SheetRow icon={<User size={iconSz} />} label={t('personalInfo')} onClick={() => setOpen('personal')} />
-            <SheetRow icon={<Sliders size={iconSz} />} label={t('preferences')} onClick={() => setOpen('preferences')} />
-            <SheetRow icon={<Shield size={iconSz} />} label={t('security')} onClick={() => setOpen('security')} />
+            <SheetLink icon={<User size={iconSz} />} label={t('personalInfo')} aria-haspopup="dialog" onClick={() => setOpen('personal')} />
+            <SheetLink icon={<Sliders size={iconSz} />} label={t('preferences')} aria-haspopup="dialog" onClick={() => setOpen('preferences')} />
+            <SheetLink icon={<Shield size={iconSz} />} label={t('security')} aria-haspopup="dialog" onClick={() => setOpen('security')} />
           </div>
         </section>
 
@@ -152,9 +121,7 @@ export default function Profile() {
             <div className="section-label">{t('relatedPages')}</div>
             <div className="list">
               {related.map((n) => (
-                <ProfileLink key={n.to} to={n.to} icon={n.icon}>
-                  {n.label}
-                </ProfileLink>
+                <SheetLink key={n.to} to={n.to} icon={n.icon} label={n.label} />
               ))}
             </div>
           </section>
@@ -162,12 +129,12 @@ export default function Profile() {
       </div>
 
       <div className="list">
-        <button type="button" className="item admin-sheet-link" onClick={handleLogout}>
-          <span className="sidebar-icon">
-            <LogOut size={iconSz} aria-hidden="true" />
-          </span>
-          <span className="grow">{t('logout')}</span>
-        </button>
+        <SheetLink
+          icon={<LogOut size={iconSz} aria-hidden="true" />}
+          label={t('logout')}
+          chevron={false}
+          onClick={handleLogout}
+        />
       </div>
 
       {open && (

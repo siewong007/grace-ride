@@ -1,18 +1,18 @@
 import { ReactNode, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Link, NavLink, Navigate, Outlet, useLocation } from 'react-router-dom';
 import {
-  ArrowLeft, Bell, Calendar, Car, CarFront, ClipboardList, Clock, FileBarChart, HandCoins, HeartHandshake, Home, KeyRound,
-  LayoutDashboard, LayoutGrid, LifeBuoy, Search, MapPinned, Megaphone, Receipt, ScrollText, Settings, ShieldAlert, User, Users, Wallet, BarChart3, WifiOff,
+  ArrowLeft, Bell, Calendar, Car, CarFront, Clock, HandCoins, Home,
+  LayoutGrid, LifeBuoy, Search, Receipt, ShieldAlert, User, Wallet, BarChart3, WifiOff,
 } from 'lucide-react';
-import { useApi } from '../api';
 import { useAuth } from '../auth';
 import { LogoMark, Wordmark } from './Brand';
 import { GuideHeaderActionContext, PageChromeContext } from './PageChrome';
 import { TermsGate } from './Terms';
-import { Avatar, IconButton, Modal, Notice } from './ui';
+import { Avatar, IconButton, Notice } from './ui';
 import { GuideRunnerProvider, PageHeaderGuideButton } from './GuideRunner';
 import QuickJump, { useQuickJumpShortcut } from './QuickJump';
 import { useTranslation } from 'react-i18next';
+import { useStaffNav, waitingBadge } from '../staffNav';
 
 interface NavItem {
   to: string;
@@ -21,15 +21,6 @@ interface NavItem {
   end?: boolean;
   /** Items waiting on staff at this page (shown as a count). */
   badge?: number;
-}
-
-/** The waiting counts the nav badges read; a subset of /admin/dashboard. */
-interface AdminCounts {
-  pending_approval: number;
-  no_driver: number;
-  open_help: number;
-  pending_reimbursements: number;
-  pending_recovery: number;
 }
 
 function getPageTitle(pathname: string, t: (key: string) => string): string {
@@ -53,6 +44,7 @@ function getPageTitle(pathname: string, t: (key: string) => string): string {
   if (pathname === '/settlements') return t('settlements');
   if (pathname === '/notifications') return t('notifications');
   if (pathname === '/me') return t('profile');
+  if (pathname === '/admin/menu') return t('adminSheetTitle');
   if (pathname === '/admin/rides') return t('adminRides');
   if (pathname === '/admin/live') return t('liveMap');
   if (pathname === '/admin/announcements') return t('announcements');
@@ -78,15 +70,10 @@ export default function Layout() {
   const [headingVisible, setHeadingVisible] = useState(false);
   const [isOffline, setIsOffline] = useState(typeof navigator !== 'undefined' ? !navigator.onLine : false);
   const chrome = useMemo(() => ({ setBack, setHeadingVisible }), []);
-  const [adminSheet, setAdminSheet] = useState(false);
   const [jumpOpen, setJumpOpen] = useState(false);
   const openJump = useCallback(() => setJumpOpen(true), []);
   useQuickJumpShortcut(openJump);
-  // Badge counts for staff who can see the dashboard; the same numbers the admin home shows.
-  const counts = useApi<AdminCounts>(
-    me && me.status !== 'pending' && can('admin_dashboard') ? '/admin/dashboard' : null,
-    60000,
-  ).data;
+  const { staffGroups, staff, staffWaiting, helpDesk } = useStaffNav();
 
   useEffect(() => {
     const onOnline = () => setIsOffline(false);
@@ -121,8 +108,6 @@ export default function Layout() {
   // Each link shows only when the member may open that page; the server enforces the same.
   const links = (items: (NavItem & { show: boolean })[]): NavItem[] =>
     items.filter((n) => n.show && !pending).map(({ to, label, icon, end, badge }) => ({ to, label, icon, end, badge }));
-  const helpDesk = can('admin_help');
-
   const member = links([
     { to: '/', label: t('home'), icon: <Home size={sz} />, end: true, show: true },
     { to: '/rides', label: t('myRides'), icon: <Car size={sz} />, show: can('rides') },
@@ -137,80 +122,16 @@ export default function Layout() {
     { to: '/drive', label: t('drive'), icon: <CarFront size={sz} />, show: can('drive') },
     { to: '/settlements', label: t('settlements'), icon: <HandCoins size={sz} />, show: can('settlements') || can('admin_bills') },
   ]);
-  // Staff pages grouped by the job they serve, so ten links read as five short lists.
-  const staffGroups = [
-    {
-      key: 'ops',
-      label: t('groupOps'),
-      items: links([
-        { to: '/admin', label: t('dashboard'), icon: <LayoutDashboard size={sz} />, end: true, show: can('admin_dashboard') },
-        {
-          to: '/admin/rides', label: t('adminRides'), icon: <ClipboardList size={sz} />, show: can('admin_rides'),
-          badge: counts ? counts.pending_approval + counts.no_driver : 0,
-        },
-        { to: '/admin/live', label: t('liveMap'), icon: <MapPinned size={sz} />, show: can('admin_live') },
-      ]),
-    },
-    {
-      key: 'people',
-      label: t('groupPeople'),
-      items: links([
-        {
-          to: '/admin/members', label: t('members'), icon: <Users size={sz} />,
-          show: can('admin_members') || can('admin_invites') || can('admin_recovery'),
-          badge: can('admin_recovery') ? counts?.pending_recovery : 0,
-        },
-        { to: '/admin/roles', label: t('roles'), icon: <KeyRound size={sz} />, show: can('admin_roles') },
-      ]),
-    },
-    {
-      key: 'money',
-      label: t('groupMoney'),
-      items: links([
-        {
-          to: '/admin/reimbursements', label: t('reimbReview'), icon: <HeartHandshake size={sz} />,
-          show: can('admin_reimb_review') || can('admin_reimb_pay'),
-          badge: can('admin_reimb_review') ? counts?.pending_reimbursements : 0,
-        },
-        { to: '/admin/reports', label: t('reports'), icon: <FileBarChart size={sz} />, show: can('admin_reports') },
-      ]),
-    },
-    {
-      key: 'content',
-      label: t('groupContent'),
-      items: links([
-        { to: '/admin/announcements', label: t('announcements'), icon: <Megaphone size={sz} />, show: can('admin_announcements') },
-        { to: '/help', label: t('helpDesk'), icon: <LifeBuoy size={sz} />, show: helpDesk, badge: counts?.open_help },
-      ]),
-    },
-    {
-      key: 'system',
-      label: t('groupSystem'),
-      items: links([
-        { to: '/admin/settings', label: t('settings'), icon: <Settings size={sz} />, show: can('admin_groups') || can('admin_areas') || can('admin_settings') },
-        { to: '/admin/audit', label: t('audit'), icon: <ScrollText size={sz} />, show: can('admin_audit') },
-      ]),
-    },
-  ].filter((g) => g.items.length > 0);
-  const staff = staffGroups.flatMap((g) => g.items);
-  const staffWaiting = staff.reduce((n, i) => n + (i.badge ?? 0), 0);
-
   const profileTab: NavItem = { to: '/me', label: t('profile'), icon: <User size={sz} /> };
   const tab = (to: string) => [...member, ...service].filter((n) => n.to === to);
   // Phone tab bar: home, rides, then driving for drivers, events. Staff give up the last of
-  // those for an Admin tab that opens every staff page. Five at most, profile always last.
+  // those for an Admin tab that opens the staff menu. Five at most, profile always last.
   const showAdminTab = !pending && staff.length > 0;
   const bottom: NavItem[] = pending
     ? []
     : [...tab('/'), ...tab('/rides'), ...tab('/drive'), ...tab('/events')].slice(0, showAdminTab ? 3 : 4);
   const onAdminPage = loc.pathname.startsWith('/admin') || (helpDesk && loc.pathname.startsWith('/help'));
-  const badge = (n?: number) =>
-    n ? (
-      <>
-        <span className="nav-badge" aria-hidden="true">{n > 99 ? '99+' : n}</span>
-        <span className="sr-only">{t('waitingCount', { count: n })}</span>
-      </>
-    ) : null;
+  const badge = (n?: number) => waitingBadge(n, t('waitingCount', { count: n ?? 0 }));
 
   const sidebarLink = (n: NavItem) => (
     <NavLink
@@ -361,18 +282,16 @@ export default function Layout() {
           </NavLink>
         ))}
         {showAdminTab && (
-          <button
-            type="button"
+          <NavLink
+            to="/admin/menu"
             className={`bottom-tab ${onAdminPage ? 'active' : ''}`}
-            aria-haspopup="dialog"
-            onClick={() => setAdminSheet(true)}
           >
             <span className="bottom-tab-icon">
               <LayoutGrid size={sz} />
               {badge(staffWaiting)}
             </span>
             <span className="bottom-tab-label">{t('sectionAdmin')}</span>
-          </button>
+          </NavLink>
         )}
         <NavLink
           to={profileTab.to}
@@ -390,32 +309,6 @@ export default function Layout() {
           )}
           onClose={() => setJumpOpen(false)}
         />
-      )}
-      {adminSheet && (
-        <Modal title={t('adminSheetTitle')} onClose={() => setAdminSheet(false)} size="sm">
-          <div className="stack">
-            {staffGroups.map((g) => (
-              <section key={g.key} className="stack-xs" aria-label={g.label}>
-                <div className="section-label">{g.label}</div>
-                <div className="list">
-                  {g.items.map((n) => (
-                    <NavLink
-                      key={n.to}
-                      to={n.to}
-                      end={n.end}
-                      className={({ isActive }) => `item admin-sheet-link ${isActive ? 'active' : ''}`}
-                      onClick={() => setAdminSheet(false)}
-                    >
-                      <span className="sidebar-icon">{n.icon}</span>
-                      <span className="grow">{n.label}</span>
-                      {badge(n.badge)}
-                    </NavLink>
-                  ))}
-                </div>
-              </section>
-            ))}
-          </div>
-        </Modal>
       )}
     </div>
   );

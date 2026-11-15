@@ -149,6 +149,32 @@ vi.mock('../components/ui', () => ({
   ),
   useAction: () => ({ busy: false, error: null, run: (fn: () => Promise<unknown>) => fn() }),
   useConfirm: () => confirmMock,
+  SheetLink: ({
+    to,
+    icon,
+    label,
+    onClick,
+    ...rest
+  }: {
+    to?: string;
+    icon?: React.ReactNode;
+    label?: React.ReactNode;
+    onClick?: () => void;
+    [k: string]: unknown;
+  }) => {
+    const content = (
+      <>
+        {icon}
+        {label}
+      </>
+    );
+    if (to) return <a href={to}>{content}</a>;
+    return (
+      <button type="button" onClick={onClick} {...rest}>
+        {content}
+      </button>
+    );
+  },
 }));
 
 beforeEach(() => {

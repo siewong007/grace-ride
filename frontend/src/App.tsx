@@ -4,6 +4,7 @@ import { useAuth } from './auth';
 import Layout from './components/Layout';
 import { NoAccess, Page, Spinner } from './components/ui';
 import type { Act, PageKey } from './perms';
+import { ADMIN_MENU_PERMS } from './staffNav';
 import { hideSplash, holdSplash } from './splash';
 import { AutoLockProvider } from './components/AutoLock';
 import Login from './pages/Login';
@@ -48,6 +49,7 @@ const AdminAudit = lazy(() => import('./pages/admin/Audit'));
 const AdminReports = lazy(() => import('./pages/admin/Reports'));
 const PlanTransport = lazy(() => import('./pages/admin/PlanTransport'));
 const AdminRoles = lazy(() => import('./pages/admin/Roles'));
+const AdminMenu = lazy(() => import('./pages/admin/Menu'));
 
 /** Wrap a lazily-loaded page so only the content area shows a spinner while it loads. */
 const page = (el: ReactNode) => <Suspense fallback={<PageLoading />}>{el}</Suspense>;
@@ -124,6 +126,7 @@ export default function App() {
         <Route path="report" element={gated(<Report />, 'report')} />
         <Route path="notifications" element={page(<Notifications />)} />
         <Route path="me" element={page(<Profile />)} />
+        <Route path="admin/menu" element={gated(<AdminMenu />, ...ADMIN_MENU_PERMS)} />
         <Route path="admin" element={gated(<AdminDashboard />, 'admin_dashboard')} />
         <Route path="admin/rides" element={gated(<AdminRides />, 'admin_rides')} />
         <Route path="admin/rides/:id" element={gated(<RideDetail />, 'admin_rides')} />
