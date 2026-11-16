@@ -2189,7 +2189,8 @@ async fn activity_events_group_scoped_signup_waitlist() {
         Method::POST,
         "/api/events/1/signup",
         Some(&member),
-        Some(json!({ "need_ride": true, "offer_drive": false })),
+        // In both of the event's groups, so they say which one they come as.
+        Some(json!({ "need_ride": true, "offer_drive": false, "as_group_id": 2 })),
     )
     .await;
     assert_eq!(r.status, StatusCode::OK, "{}", r.json);
