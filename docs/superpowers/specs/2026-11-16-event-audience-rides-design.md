@@ -235,6 +235,11 @@ what decision 1 rules out.
   Add a dashboard counter for "event rides with no in-group driver" 24 hours before
   pickup.
 
+**Not built yet (17 November 2026):**
+- the dashboard counter for event rides with no in-group driver 24 hours before pickup;
+- per-group headcounts in reports (the data is recorded in `as_group_id`);
+- a live map on the visitor page (it links to the driver's position in maps instead).
+
 **To revisit:**
 - Visitors who come often may later want "convert to member" from a pass.
 - Per-group cost splits in settlements.
