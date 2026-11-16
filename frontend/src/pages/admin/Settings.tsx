@@ -127,7 +127,7 @@ function Groups() {
                 </div>
               </div>
               {!g.is_all && !g.is_visitor && (
-                <div className="btn-row">
+                <div className="group-actions">
                   {can('admin_groups', 'update') && (
                     <Button variant="ghost" size="sm" onClick={() => setEditing(g)}>
                       {t('settings.edit')}

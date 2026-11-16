@@ -2494,3 +2494,7 @@ main:focus { outline: none; }
 .visit-facts dt { display: inline-flex; align-items: center; gap: var(--space-2); color: var(--muted); }
 .visit-facts dd { margin: 0; text-align: end; font-weight: 600; overflow-wrap: anywhere; }
 .visit-ready > .btn { flex: 1 1 0; }
+.group-actions { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: var(--space-1); flex: 0 0 auto; }
+.group-actions > .btn { width: auto; flex: 0 0 auto; }
+.group-row { flex-wrap: wrap; }
+.group-row > .grow { flex: 1 1 10rem; min-width: 10rem; }
