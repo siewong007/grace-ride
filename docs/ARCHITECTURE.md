@@ -48,9 +48,14 @@ The generic Compose stack includes Caddy. The AIC deployment uses host Caddy and
 
 ## Storage and migrations
 
-SQLx applies `backend/migrations/0001_init.sql` at startup (`lib.rs::connect_db`). That file is the whole schema: tables, constraints, indexes, reimbursement rates, and system settings. Demo members stay in `seed::run`.
+SQLx applies the files in `backend/migrations/` at startup (`lib.rs::connect_db`).
 
-A database that still has the old numbered history (`0002` through `0016`), or a checksum that does not match this file, has `_sqlx_migrations` cleared and then this script runs. The script is idempotent, so existing rows stay. Do not put `DROP COLUMN`, `TRUNCATE`, or an unguarded `DELETE` in it: a checksum change re-runs the whole file. Uploads and PostgreSQL data are separate persistent stores and both must be included in recovery planning.
+- `0001_init.sql` is the consolidated schema of November 2026 and is **frozen**: a test (`the_initial_schema_is_frozen`) fails if it changes, because an edited file no longer matches the history on existing databases.
+- Every schema change since is a new numbered file (`0002_constraints_indexes.sql`, …) that runs once. A database whose history is the start of the shipped files keeps it, and sqlx applies the rest.
+- Only a history that doesn't match (the pre-November 2026 numbered files, which reused versions 0002–0016 with other contents) is cleared, so every file runs again. Write migrations to be repeatable (`IF NOT EXISTS`, guarded changes) so that path stays safe, and never `DROP COLUMN`, `TRUNCATE` or run an unguarded `DELETE`.
+- New `CHECK` rules go in `NOT VALID` and are then validated; if existing rows break one, the migration logs a warning and leaves it unvalidated (new rows are still checked) instead of failing the deploy. List those with `SELECT conrelid::regclass, conname FROM pg_constraint WHERE NOT convalidated;`.
+
+Conventions (see `0001_init.sql`): times are local Asia/Kuala_Lumpur text `YYYY-MM-DDTHH:MM[:SS]`, money is integer cents, most flags are `BIGINT` 0/1 (checked since 0002), and role lists are comma-separated on `users.roles`. Demo members stay in `seed::run`. Uploads and PostgreSQL data are separate persistent stores and both must be included in recovery planning.
 
 ## Ride states
 

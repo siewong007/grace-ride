@@ -511,7 +511,7 @@ async fn a_visitor_link_is_one_time_and_closes_with_the_journey() {
 
     // The background sweep closes links whose time has run out.
     sqlx::query(
-        "UPDATE visitor_passes SET valid_until='2000-01-01T00:00:00' WHERE closed_at IS NULL",
+        "UPDATE visitor_passes SET valid_from='2000-01-01T00:00:00', valid_until='2000-01-01T12:00:00' WHERE closed_at IS NULL",
     )
     .execute(&st.db)
     .await

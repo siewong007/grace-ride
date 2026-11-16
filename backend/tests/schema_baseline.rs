@@ -1,5 +1,7 @@
-//! The database has one schema script. A history that still lists the old
-//! numbered migrations is cleared, the script runs again, and existing rows stay.
+//! Migrations: `0001_init.sql` is frozen and later changes are new numbered files.
+//! - A history that is the start of this build's files is kept; new files run once.
+//! - A history from the old numbered files (other contents under the same versions)
+//!   is cleared, the scripts run again, and existing rows stay.
 
 mod common;
 
@@ -15,13 +17,18 @@ async fn stale_migration_history_replays_the_schema_without_losing_rows() {
         .unwrap();
     sqlx::query(
         "INSERT INTO _sqlx_migrations (version, description, success, checksum, execution_time)
-         VALUES (2, 'passenger_locations', true, $1, 0),
-                (16, 'help_claim_attach', true, $1, 0)",
+         VALUES (16, 'help_claim_attach', true, $1, 0)",
     )
     .bind(vec![9u8; 8])
     .execute(&db)
     .await
     .unwrap();
+    // The old 0002 had other contents under the same version.
+    sqlx::query("UPDATE _sqlx_migrations SET checksum = $1, description = 'passenger_locations' WHERE version = 2")
+        .bind(vec![9u8; 8])
+        .execute(&db)
+        .await
+        .unwrap();
     sqlx::query("UPDATE _sqlx_migrations SET checksum = $1 WHERE version = 1")
         .bind(vec![1u8; 8])
         .execute(&db)
@@ -35,7 +42,7 @@ async fn stale_migration_history_replays_the_schema_without_losing_rows() {
             .fetch_all(&db)
             .await
             .unwrap();
-    assert_eq!(versions, vec![1]);
+    assert_eq!(versions, vec![1, 2]);
     let kept: Option<(String,)> = sqlx::query_as("SELECT name FROM areas WHERE name = '历史区'")
         .fetch_optional(&db)
         .await
@@ -74,5 +81,170 @@ async fn stale_migration_history_replays_the_schema_without_losing_rows() {
             .fetch_all(&db)
             .await
             .unwrap();
-    assert_eq!(versions, vec![1]);
+    assert_eq!(versions, vec![1, 2]);
 }
+
+/// A database that has run 0001 only (every database before 2026-11-17) keeps its
+/// history and gains 0002 on the next start, without clearing anything.
+#[tokio::test]
+async fn new_migration_files_run_once_after_the_frozen_schema() {
+    let url = common::fresh_db().await;
+    let db = connect_db(&url).await.expect("schema");
+    sqlx::query("DELETE FROM _sqlx_migrations WHERE version > 1")
+        .execute(&db)
+        .await
+        .unwrap();
+    let first_run: Vec<u8> =
+        sqlx::query_scalar("SELECT checksum FROM _sqlx_migrations WHERE version = 1")
+            .fetch_one(&db)
+            .await
+            .unwrap();
+    let installed_on: String =
+        sqlx::query_scalar("SELECT installed_on::text FROM _sqlx_migrations WHERE version = 1")
+            .fetch_one(&db)
+            .await
+            .unwrap();
+    db.close().await;
+
+    let db = connect_db(&url).await.expect("upgrade");
+    let versions: Vec<i64> =
+        sqlx::query_scalar("SELECT version FROM _sqlx_migrations ORDER BY version")
+            .fetch_all(&db)
+            .await
+            .unwrap();
+    assert_eq!(versions, vec![1, 2]);
+    // 0001 was left alone (same row), not cleared and replayed.
+    let (checksum, installed): (Vec<u8>, String) = sqlx::query_as(
+        "SELECT checksum, installed_on::text FROM _sqlx_migrations WHERE version = 1",
+    )
+    .fetch_one(&db)
+    .await
+    .unwrap();
+    assert_eq!((checksum, installed), (first_run, installed_on));
+    // 0002's rules are in force.
+    let bad = sqlx::query("INSERT INTO groups (name, is_all) VALUES ('坏数据', 5)")
+        .execute(&db)
+        .await;
+    assert!(bad.is_err(), "a flag must be 0 or 1");
+}
+
+/// An existing row that breaks a new rule must not stop a deploy: the rule still
+/// guards new rows, and is left unvalidated for someone to review.
+#[tokio::test]
+async fn an_old_bad_row_leaves_the_rule_unvalidated_instead_of_failing() {
+    let url = common::fresh_db().await;
+    let db = connect_db(&url).await.expect("schema");
+    sqlx::query("ALTER TABLE groups DROP CONSTRAINT chk_groups_is_all")
+        .execute(&db)
+        .await
+        .unwrap();
+    sqlx::query("INSERT INTO groups (name, is_all) VALUES ('旧数据', 2)")
+        .execute(&db)
+        .await
+        .unwrap();
+    sqlx::query("DELETE FROM _sqlx_migrations WHERE version > 1")
+        .execute(&db)
+        .await
+        .unwrap();
+    db.close().await;
+
+    let db = connect_db(&url)
+        .await
+        .expect("a bad old row must not fail the migration");
+    let validated: bool = sqlx::query_scalar(
+        "SELECT convalidated FROM pg_constraint WHERE conname = 'chk_groups_is_all' AND conrelid = 'groups'::regclass",
+    )
+    .fetch_one(&db)
+    .await
+    .unwrap();
+    assert!(!validated, "left for review");
+    let bad = sqlx::query("INSERT INTO groups (name, is_all) VALUES ('新数据', 3)")
+        .execute(&db)
+        .await;
+    assert!(bad.is_err(), "new rows are still checked");
+}
+
+/// `0001_init.sql` must not change: an edited file no longer matches the history on
+/// existing databases. Put schema changes in a new numbered file.
+#[test]
+fn the_initial_schema_is_frozen() {
+    use sha2::{Digest, Sha256};
+    let sql = std::fs::read(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/migrations/0001_init.sql"
+    ))
+    .unwrap();
+    assert_eq!(
+        hex::encode(Sha256::digest(&sql)),
+        "d3e06f39dd6bdebae1fe06f8010268b3192ef5f4804bf7c52641f60fabbed87d",
+        "0001_init.sql changed; add a new migration file instead"
+    );
+}
+
+/// Upgrading a database full of demo and edge-case rows to 0002 validates every new
+/// rule against that data: none of them is left unvalidated.
+#[tokio::test]
+async fn the_new_rules_hold_for_existing_seeded_data() {
+    let (_app, st) = common::setup().await;
+    common::seed_edge(&st).await;
+    // Undo 0002 as if this database had only ever run 0001, then upgrade it.
+    let added: Vec<(String, String)> = sqlx::query_as(
+        "SELECT conrelid::regclass::text, conname FROM pg_constraint
+         WHERE connamespace = current_schema()::regnamespace AND conname = ANY($1)",
+    )
+    .bind(RULES_0002)
+    .fetch_all(&st.db)
+    .await
+    .unwrap();
+    assert_eq!(added.len(), RULES_0002.len(), "0002 added every rule");
+    for (table, name) in &added {
+        sqlx::query(&format!("ALTER TABLE {table} DROP CONSTRAINT {name}"))
+            .execute(&st.db)
+            .await
+            .unwrap();
+    }
+    sqlx::query("DELETE FROM _sqlx_migrations WHERE version > 1")
+        .execute(&st.db)
+        .await
+        .unwrap();
+    let url = st.cfg.database_url.clone();
+    let db = connect_db(&url).await.expect("upgrade");
+    let unvalidated: Vec<String> = sqlx::query_scalar(
+        "SELECT conname::text FROM pg_constraint
+         WHERE connamespace = current_schema()::regnamespace AND conname = ANY($1) AND NOT convalidated",
+    )
+    .bind(RULES_0002)
+    .fetch_all(&db)
+    .await
+    .unwrap();
+    assert!(unvalidated.is_empty(), "seeded rows break {unvalidated:?}");
+}
+
+const RULES_0002: &[&str] = &[
+    "chk_users_status",
+    "chk_recovery_requests_status",
+    "chk_invites_kind",
+    "chk_auth_challenges_kind",
+    "chk_events_status",
+    "chk_event_signups_status",
+    "chk_event_signups_attended",
+    "chk_event_signups_offer_seats",
+    "chk_settlements_status",
+    "chk_settlements_split_mode",
+    "chk_settlement_shares_status",
+    "chk_visitor_passes_window",
+    "chk_sessions_mfa_ok",
+    "chk_areas_active",
+    "chk_groups_is_all",
+    "chk_groups_is_visitor",
+    "chk_groups_not_own_parent",
+    "chk_events_reminder_sent",
+    "chk_event_signups_need_ride",
+    "chk_event_signups_offer_drive",
+    "chk_rides_needs_attention",
+    "chk_rides_reminder_sent",
+    "chk_rides_is_proxy",
+    "chk_rides_delay_minutes",
+    "chk_announcements_pinned",
+    "chk_reimbursements_payee_verified",
+];

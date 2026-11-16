@@ -50,9 +50,10 @@ pub const MAX_JSON_BODY: usize = 128 * 1024;
 pub async fn connect_db(url: &str) -> anyhow::Result<PgPool> {
     let opts = PgConnectOptions::from_str(url)?;
     let db = PgPool::connect_with(opts).await?;
-    // The folder holds one script. A database that still records 0002–0016, or
-    // an older checksum of this file, drops that history first. The script is
-    // idempotent, so re-running it keeps existing rows.
+    // `0001_init.sql` is frozen; every change since is a new numbered file that runs
+    // once. Only a database whose history doesn't match (the pre-November 2026
+    // numbered files, which reused versions 0002–0016 with other contents) has its
+    // history cleared so the scripts run again; they are written to be repeatable.
     clear_replaced_migration_history(&db).await?;
     sqlx::migrate!("./migrations").run(&db).await?;
     Ok(db)
@@ -75,7 +76,8 @@ async fn clear_replaced_migration_history(db: &PgPool) -> anyhow::Result<()> {
             .fetch_all(db)
             .await?;
     let migrator = sqlx::migrate!("./migrations");
-    if history_matches(&applied, &migrator) {
+    // What has run is the start of what this build ships: sqlx applies the rest.
+    if history_is_prefix(&applied, &migrator) {
         return Ok(());
     }
     if !applied.is_empty() {
@@ -90,19 +92,19 @@ async fn clear_replaced_migration_history(db: &PgPool) -> anyhow::Result<()> {
     Ok(())
 }
 
-fn history_matches(applied: &[(i64, Vec<u8>)], migrator: &sqlx::migrate::Migrator) -> bool {
+/// Is every applied migration, in order, the same file (version and checksum) as the
+/// start of this build's migrations? New files after them are fine: they run next.
+/// Before 2026-11-17 this required an exact match, so adding a second file would have
+/// wiped the history and re-run every script on each later addition.
+fn history_is_prefix(applied: &[(i64, Vec<u8>)], migrator: &sqlx::migrate::Migrator) -> bool {
     let mut current = migrator
         .iter()
         .filter(|migration| !migration.migration_type.is_down_migration());
-    for (version, checksum) in applied {
-        match current.next() {
-            Some(migration)
-                if migration.version == *version
-                    && migration.checksum.as_ref() == checksum.as_slice() => {}
-            _ => return false,
-        }
-    }
-    current.next().is_none()
+    applied.iter().all(|(version, checksum)| {
+        current.next().is_some_and(|migration| {
+            migration.version == *version && migration.checksum.as_ref() == checksum.as_slice()
+        })
+    })
 }
 
 /// Build shared state: database, migrations, first-run data, WebAuthn.
