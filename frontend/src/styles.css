@@ -1201,6 +1201,8 @@ main:focus { outline: none; }
 .home-next-link:focus-visible::after { outline: 2px solid var(--primary); outline-offset: 2px; }
 .home-next:hover .home-next-link { text-decoration: underline; }
 .home-next-above { position: relative; z-index: 1; }
+/* With nothing below it, the driver row needs no closing divider. */
+.home-next-driver:last-child { border-bottom: 0; padding-bottom: 0; margin-bottom: 0; }
 .home-ready-row { display: grid; grid-template-columns: 1fr 1fr; gap: var(--space-2); }
 .home-ready-row > .btn { min-width: 0; white-space: normal; }
 .home-cant { align-self: flex-start; }

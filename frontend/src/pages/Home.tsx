@@ -85,7 +85,11 @@ export default function Home() {
 
   // Coming up: the member's other rides and the events they are going to, in date order.
   const comingUp = [
-    ...myRides.slice(1).map((r) => ({ kind: 'ride' as const, at: r.pickup_at, ride: r })),
+    // Rides already listed under "Needs you" are not repeated here.
+    ...myRides
+      .slice(1)
+      .filter((r) => !awaitingReply.includes(r))
+      .map((r) => ({ kind: 'ride' as const, at: r.pickup_at, ride: r })),
     ...(events.data ?? [])
       .filter((e) => e.my_signup?.status === 'going')
       .map((e) => ({ kind: 'event' as const, at: e.starts_at, event: e })),
