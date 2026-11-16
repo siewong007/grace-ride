@@ -1,10 +1,19 @@
 import { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
-import { Check, CheckCircle2, ExternalLink, ThumbsDown, ThumbsUp } from 'lucide-react';
+import { Check, CheckCircle2, ChevronRight, ThumbsDown, ThumbsUp } from 'lucide-react';
 import { GuideStep } from '../pages/HelpGuides';
 import { Button, useAction, useToast } from './ui';
 import { post } from '../api';
+
+/** The app page a step links to, named as the menu names it ("My rides", "Events"). */
+const PAGE_LABELS: [string, string][] = [
+  ['/rides', 'myRides'], ['/events', 'events'], ['/costs', 'myCosts'], ['/reimbursements', 'reimbursements'],
+  ['/report', 'myReport'], ['/help', 'help'], ['/drive', 'drive'], ['/settlements', 'settlements'], ['/me', 'profile'],
+  ['/admin/live', 'liveMap'], ['/admin/rides', 'adminRides'], ['/admin/reimbursements', 'reimbReview'],
+  ['/admin/members', 'members'], ['/admin/settings', 'settings'], ['/admin/audit', 'audit'], ['/admin', 'dashboard'],
+];
+const pageKey = (link: string) => PAGE_LABELS.find(([p]) => link === p || link.startsWith(`${p}/`) || link.startsWith(`${p}?`))?.[1];
 
 interface GuideStepsProps {
   steps: GuideStep[];
@@ -26,6 +35,7 @@ export default function GuideSteps({
   onContactUs,
 }: GuideStepsProps) {
   const { t, i18n } = useTranslation('help');
+  const { t: tl } = useTranslation('layout');
   const activeLang = lang || (i18n.language.startsWith('zh') ? 'zh' : 'en');
   const pick = (zh: string, en: string) => (activeLang === 'zh' ? zh || en : en || zh);
   const toast = useToast();
@@ -108,10 +118,7 @@ export default function GuideSteps({
       {/* Overall Progress Bar */}
       {total > 0 && (
         <div className="stack-xs" style={{ marginBottom: 'var(--space-3)' }}>
-          <div className="row between nowrap tiny muted">
-            <span>{t('guideProgress', { done: doneCount, total })}</span>
-            <span>{progressPct}%</span>
-          </div>
+          <span className="tiny muted">{t('guideProgress', { done: doneCount, total })}</span>
           <div className="guide-progress-bar">
             <div className="guide-progress-fill" style={{ width: `${progressPct}%` }} />
           </div>
@@ -166,11 +173,11 @@ export default function GuideSteps({
                   <div style={{ marginTop: 'var(--space-2)' }}>
                     <Link
                       to={s.link}
-                      className="btn sm secondary row nowrap gap-xs"
+                      className="guide-step-link"
                       onClick={() => markStepDone(idx)}
                     >
-                      <ExternalLink size={14} />
-                      <span>{t('guideOpen', 'Open this page')}</span>
+                      <span>{pageKey(s.link) ? t('goToPage', { page: tl(pageKey(s.link)!) }) : t('guideOpen', 'Open this page')}</span>
+                      <ChevronRight size={16} aria-hidden="true" />
                     </Link>
                   </div>
                 )}

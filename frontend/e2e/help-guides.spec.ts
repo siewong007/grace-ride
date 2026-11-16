@@ -89,7 +89,7 @@ test('staff sees both audiences, can edit audience and follows guide links in ap
   await audience.getByRole('button', { name: 'Staff' }).click();
   await expect(audience.getByRole('button', { name: 'Staff' })).toHaveAttribute('aria-pressed', 'true');
   await page.goto('/help/guides/getting-started');
-  await page.getByRole('link', { name: 'Open →' }).click();
+  await page.getByRole('link', { name: 'Go to Events' }).click();
   await expect(page).toHaveURL(/\/events$/);
   await expect(page.getByRole('heading', { name: /events/i })).toBeVisible();
 });

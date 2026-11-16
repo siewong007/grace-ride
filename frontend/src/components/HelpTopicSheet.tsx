@@ -42,6 +42,7 @@ export default function HelpTopicSheet({
   topic,
   rides,
   rideId = null,
+  initialText = '',
   guideSlugs,
   onClose,
   onSent,
@@ -49,6 +50,8 @@ export default function HelpTopicSheet({
   topic: TopicKey;
   rides: Ride[];
   rideId?: number | null;
+  /** What they already typed (say, a search that found nothing). */
+  initialText?: string;
   /** Published member guides, so a topic links only to a guide that exists. */
   guideSlugs: Set<string>;
   onClose: () => void;
@@ -64,7 +67,7 @@ export default function HelpTopicSheet({
   const upcoming = rides.filter((r) => !ENDED.includes(r.status)).slice(0, 3);
   const choices = ride && !upcoming.some((r) => r.id === ride.id) ? [ride, ...upcoming] : upcoming;
   const [linked, setLinked] = useState<number | null>(def?.rideTopic || topic === 'ride' ? ride?.id ?? null : null);
-  const [body, setBody] = useState('');
+  const [body, setBody] = useState(initialText);
   const [photo, setPhoto] = useState<number | null>(null);
   const [missing, setMissing] = useState(false);
   // "Something else" and a ride question go straight to the message.

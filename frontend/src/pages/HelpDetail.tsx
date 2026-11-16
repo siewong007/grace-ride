@@ -18,7 +18,7 @@ import {
   useAction,
   useToast,
 } from '../components/ui';
-import { fmtDay, fmtTime, HELP_STATUS, HELP_STATUS_STAFF, useFormatT } from '../format';
+import { fmtDateTime, fmtDay, fmtTime, HELP_STATUS_STAFF, useFormatT } from '../format';
 
 interface Reply {
   id: number;
@@ -87,6 +87,10 @@ export default function HelpDetail({
 
   const { data: tk, error, reload, loading } = useApi<TicketDetailData>(id ? `/help/${id}` : null, 15000);
   const guidesApi = useApi<GuideSummary[]>(isStaff ? '/help/guides' : null);
+  // Members see the ride by its date rather than its number.
+  const rideApi = useApi<{ pickup_at: string; destination: string }>(
+    !isStaff && tk?.ride_id ? `/rides/${tk.ride_id}` : null,
+  );
 
   const [body, setBody] = useState('');
   const [photo, setPhoto] = useState<number | null>(null);
@@ -226,17 +230,21 @@ export default function HelpDetail({
           tk.ride_id ? (
             <Link
               to={isStaff ? `/admin/rides/${tk.ride_id}` : `/rides/${tk.ride_id}`}
-              className="row nowrap gap-xs bold small"
+              className="row nowrap gap-xs small"
             >
-              <ExternalLink size={14} />
-              <span>{t('viewRide')} #{tk.ride_id}</span>
+              <ExternalLink size={14} aria-hidden="true" />
+              <span>
+                {rideApi.data?.pickup_at
+                  ? t('hub.aboutRide', { when: fmtDateTime(rideApi.data.pickup_at, ft) })
+                  : isStaff ? `${t('viewRide')} #${tk.ride_id}` : t('hub.aboutYourRide')}
+              </span>
             </Link>
           ) : undefined
         }
         back={isTwoPane ? undefined : '/help'}
         actions={
           <div className="row nowrap gap-sm align-center">
-            <StatusPill map={isOwner ? HELP_STATUS : HELP_STATUS_STAFF} status={tk.status} />
+            {!isOwner && <StatusPill map={HELP_STATUS_STAFF} status={tk.status} />}
             {isStaff && !isOwner && tk.assignee_name && (
               <span className="muted small">
                 {claimedByMe ? t('claimedByYou') : t('claimedBy', { name: tk.assignee_name })}
@@ -253,7 +261,7 @@ export default function HelpDetail({
                 {claimedByMe ? t('release') : tk.assignee_id ? t('takeOver') : t('claim')}
               </Button>
             )}
-            {isResolved && (
+            {isResolved && !isOwner && (
               <Button
                 variant="secondary"
                 size="sm"
@@ -271,6 +279,7 @@ export default function HelpDetail({
       <div className={`help-detail-layout ${isTwoPane ? 'is-pane' : ''}`}>
         <div className="help-detail-thread stack">
           {/* Turn status indicator */}
+          {(!isOwner || (!isResolved && !isAnswered)) && (
           <div className="help-turn-bar">
             {isResolved ? (
               <span className="muted small">{t('statusResolvedDesc', 'Resolved')}</span>
@@ -279,11 +288,13 @@ export default function HelpDetail({
                 {isOwner ? t('turnStaffReplied', 'Help centre replied — waiting for you') : t('turnWaitingMember', 'Replied to member')}
               </span>
             ) : (
-              <span className="tone-amber bold small">
-                {t('turnWaitingStaff', 'Waiting for help centre')}
+              <span className="small">
+                <span className="tone-amber bold">{t('turnWaitingStaff', 'Waiting for help centre')}</span>
+                {isOwner && <span className="muted"> · {t('hub.notifyNote')}</span>}
               </span>
             )}
           </div>
+          )}
 
           <Card className="stack help-thread-card">
             {/* Chat discussion log */}
@@ -308,10 +319,12 @@ export default function HelpDetail({
                       </div>
                     )}
                     <div className={`bubble ${isMine ? 'mine' : ''}`}>
-                      <div className="who">
-                        {r.name}
-                        {r.staff && ` · ${t('staffTag')}`}
-                      </div>
+                      {!isMine && (
+                        <div className="who">
+                          {r.name}
+                          {r.staff && ` · ${t('staffTag')}`}
+                        </div>
+                      )}
                       {r.body && <div className="pre-wrap">{renderMessageBody(r.body)}</div>}
                       {r.file_id && <MessagePhoto fileId={r.file_id} />}
                       <div className="at">{fmtTime(r.created_at, ft)}</div>
@@ -350,7 +363,7 @@ export default function HelpDetail({
             {/* Resolved banner */}
             {isResolved && (
               <div className="row between nowrap notice ok small">
-                <span>{t('statusClosed')}</span>
+                <span>{isOwner ? t('hub.resolvedBanner') : t('statusClosed')}</span>
                 <Button variant="ghost" size="sm" onClick={handleReopen} disabled={busy}>
                   {t('reopen', 'Reopen')}
                 </Button>
@@ -406,38 +419,41 @@ export default function HelpDetail({
                   </div>
                 )}
 
-                <textarea
-                  ref={textareaRef}
-                  className="input help-reply-textarea"
-                  value={body}
-                  onChange={(e) => setBody(e.target.value)}
-                  onKeyDown={handleKeyDown}
-                  placeholder={t('reply')}
-                  rows={3}
-                />
-
-                <PhotoAttach fileId={photo} onChange={setPhoto} disabled={busy} />
+                <div className="help-reply-bar">
+                  <textarea
+                    ref={textareaRef}
+                    className="help-reply-input"
+                    value={body}
+                    onChange={(e) => {
+                      setBody(e.target.value);
+                      // Grow with the message, up to about six lines.
+                      e.target.style.height = 'auto';
+                      e.target.style.height = `${Math.min(e.target.scrollHeight, 160)}px`;
+                    }}
+                    onKeyDown={handleKeyDown}
+                    placeholder={t('reply')}
+                    aria-label={t('reply')}
+                    rows={1}
+                  />
+                  <button
+                    type="submit"
+                    className="help-send"
+                    disabled={busy || (!body.trim() && !photo)}
+                    aria-label={t('send')}
+                  >
+                    <Send size={18} aria-hidden="true" />
+                  </button>
+                </div>
+                <div className="row between help-reply-tools">
+                  <PhotoAttach fileId={photo} onChange={setPhoto} disabled={busy} />
+                  {!isAnswered && !isStaff && (
+                    <button type="button" className="link-btn small" disabled={busy} onClick={handleResolve}>
+                      {t('hub.markResolved')}
+                    </button>
+                  )}
+                </div>
 
                 <div className="btn-row">
-                  <Button
-                    variant="primary"
-                    type="submit"
-                    disabled={busy || (!body.trim() && !photo)}
-                    loading={busy}
-                    icon={<Send size={16} />}
-                  >
-                    {t('send')}
-                  </Button>
-                  {!isAnswered && !isStaff && (
-                    <Button
-                      variant="secondary"
-                      type="button"
-                      disabled={busy}
-                      onClick={handleResolve}
-                    >
-                      {t('resolved')}
-                    </Button>
-                  )}
                   {isStaff && (
                     <Button
                       variant="secondary"

@@ -203,7 +203,7 @@ describe('In-browser search', () => {
     const searchInput = screen.getByPlaceholderText(/search guides & requests/i);
     fireEvent.change(searchInput, { target: { value: 'account' } });
 
-    expect(await screen.findByRole('heading', { level: 2, name: 'Search results' })).toBeInTheDocument();
+    expect(await screen.findByRole('heading', { level: 2, name: 'Guides' })).toBeInTheDocument();
     expect(screen.getByText('Getting started')).toBeInTheDocument();
     expect(screen.getByText(/set up your church ride/i)).toBeInTheDocument();
   });
@@ -221,7 +221,10 @@ describe('In-browser search', () => {
     fireEvent.change(searchInput, { target: { value: 'nonexistenttermxyz' } });
 
     expect(await screen.findByText(/no results for "nonexistenttermxyz"/i)).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: 'Contact us' })).toBeInTheDocument();
+    // The way out starts the message with what they searched for.
+    fireEvent.click(screen.getByRole('button', { name: /can’t find it\? message us/i }));
+    const dialog = await screen.findByRole('dialog');
+    expect(within(dialog).getByLabelText(/what’s happening/i)).toHaveValue('nonexistenttermxyz');
   });
 });
 
@@ -345,7 +348,7 @@ describe('Request thread: "Did this solve it?" and reopen', () => {
     );
 
     await waitFor(() => {
-      expect(screen.getAllByText('Resolved').length).toBeGreaterThan(0);
+      expect(screen.getByText(/^Resolved\./)).toBeInTheDocument();
     });
     const reopenBtns = screen.getAllByRole('button', { name: 'Reopen' });
     expect(reopenBtns.length).toBeGreaterThan(0);
@@ -388,7 +391,7 @@ describe('HelpGuideDetail', () => {
 
     expect(await screen.findByText('Find the event')).toBeInTheDocument();
     expect(screen.getByText('Assign driver')).toBeInTheDocument();
-    expect(screen.getByRole('link', { name: /open/i })).toHaveAttribute('href', '/events');
+    expect(screen.getByRole('link', { name: /go to events/i })).toHaveAttribute('href', '/events');
     expect(screen.getByText('Did this guide help?')).toBeInTheDocument();
     expect(screen.getByText('Start walkthrough')).toBeInTheDocument();
   });

@@ -6,6 +6,7 @@ import {
   BookOpen,
   ChevronDown,
   ChevronRight,
+  MessageCircle,
   Plus,
   Search,
   X,
@@ -16,7 +17,7 @@ import { canAnyAdminPage } from '../perms';
 import { Ride } from '../components/RideCard';
 import HelpComposer from '../components/HelpComposer';
 import HelpHome from '../components/HelpHome';
-import HelpTopicSheet, { TopicKey } from '../components/HelpTopicSheet';
+import HelpTopicSheet, { TOPICS, TopicKey } from '../components/HelpTopicSheet';
 import GuideArranger from '../components/GuideArranger';
 import HelpDetail from './HelpDetail';
 import { GuideStep, GuideSummary, usePick } from './HelpGuides';
@@ -105,7 +106,7 @@ export default function Help() {
   const [searchQuery, setSearchQuery] = useState('');
 
   // Member topic sheet (answer first, then ask)
-  const [topic, setTopic] = useState<{ key: TopicKey; rideId: number | null } | null>(null);
+  const [topic, setTopic] = useState<{ key: TopicKey; rideId: number | null; text?: string } | null>(null);
 
   // Composer modal state
   const [composerOpen, setComposerOpen] = useState(false);
@@ -276,6 +277,13 @@ export default function Help() {
     };
   }, [searchQuery, guides, ownRequests, pick]);
 
+  const memberView = !isHelpDesk || viewAsMember;
+  // Members can find a help topic by searching for it ("late", "visitor", "pay"...).
+  const q = searchQuery.trim().toLowerCase();
+  const matchedTopics = q
+    ? TOPICS.filter((x) => x.key !== 'driverOffer' && t(`hub.topic.${x.key}`).toLowerCase().includes(q))
+    : [];
+
   const openComposer = (subj = '', rId: number | null = null) => {
     setComposerSubject(subj);
     setComposerRideId(rId);
@@ -339,114 +347,97 @@ export default function Help() {
             : ''}
         </div>
 
-        {/* Search Results Mode */}
+        {/* Search Results Mode: topics, guides, steps and requests as one list of rows */}
         {searchQuery.trim() && searchResults ? (
-          <div className="stack">
-            <h2>{t('searchResults')}</h2>
-            {searchResults.total === 0 ? (
-              <EmptyState
-                title={t('searchNoResults', { q: searchQuery })}
-                description={t('searchNoResultsDesc')}
-                action={
-                  <Button
-                    variant="primary"
-                    onClick={() => openComposer(searchQuery)}
-                  >
-                    {t('contactUs')}
-                  </Button>
-                }
-              />
-            ) : (
-              <div className="stack">
-                {searchResults.guides.length > 0 && (
-                  <section className="stack-xs">
-                    <h3>{t('searchGroupGuides')} ({searchResults.guides.length})</h3>
-                    <Card className="stack">
-                      <div className="list">
-                        {searchResults.guides.map(({ guide: g, snippet }) => (
-                          <Link
-                            key={g.id}
-                            to={`/help/guides/${g.slug}`}
-                            className="item"
-                          >
-                            <div className="grow min-w-0">
-                              <div className="bold ellipsis">
-                                <HighlightMatch
-                                  text={pick(g.title_zh, g.title_en)}
-                                  query={searchQuery}
-                                />
-                              </div>
-                              <div className="muted tiny ellipsis">
-                                <HighlightMatch text={snippet} query={searchQuery} />
-                              </div>
-                            </div>
-                            <span className="muted tiny">
-                              {t('guideSteps', { count: g.step_count })}
-                            </span>
-                          </Link>
-                        ))}
-                      </div>
-                    </Card>
-                  </section>
-                )}
-
-                {searchResults.steps.length > 0 && (
-                  <section className="stack-xs">
-                    <h3>{t('searchGroupSteps')} ({searchResults.steps.length})</h3>
-                    <Card className="stack">
-                      <div className="list">
-                        {searchResults.steps.map(({ guide: g, stepIndex, title, body }) => (
-                          <Link
-                            key={`${g.id}-${stepIndex}`}
-                            to={`/help/guides/${g.slug}#step-${stepIndex}`}
-                            className="item"
-                          >
-                            <div className="grow min-w-0">
-                              <div className="bold ellipsis">
-                                <span className="muted">{pick(g.title_zh, g.title_en)} · </span>
-                                <span>{t('stepNumber', { n: stepIndex + 1 })}: </span>
-                                <HighlightMatch text={title} query={searchQuery} />
-                              </div>
-                              {body && (
-                                <div className="muted tiny ellipsis">
-                                  <HighlightMatch text={body} query={searchQuery} />
-                                </div>
-                              )}
-                            </div>
-                            <ChevronRight size={16} className="muted" />
-                          </Link>
-                        ))}
-                      </div>
-                    </Card>
-                  </section>
-                )}
-
-                {searchResults.requests.length > 0 && (
-                  <section className="stack-xs">
-                    <h3>{t('searchGroupRequests')} ({searchResults.requests.length})</h3>
-                    <Card className="stack">
-                      <div className="list">
-                        {searchResults.requests.map(({ ticket: tk, snippet }) => (
-                          <Link key={tk.id} to={`/help/${tk.id}`} className="item">
-                            <div className="grow min-w-0">
-                              <div className="bold ellipsis">
-                                <HighlightMatch text={tk.subject} query={searchQuery} />
-                              </div>
-                              <div className="muted tiny ellipsis">
-                                <HighlightMatch text={snippet} query={searchQuery} />
-                              </div>
-                              <div className="help-row-status">
-                                <StatusPill map={HELP_STATUS} status={tk.status} />
-                              </div>
-                            </div>
-                          </Link>
-                        ))}
-                      </div>
-                    </Card>
-                  </section>
-                )}
-              </div>
+          <div className="help-home help-search-results">
+            {memberView && matchedTopics.length > 0 && (
+              <section className="help-block">
+                <h2 className="help-label">{t('hub.getHelpWith')}</h2>
+                <div className="help-rows">
+                  {matchedTopics.map((x) => (
+                    <button key={x.key} type="button" className="help-row" onClick={() => setTopic({ key: x.key, rideId: null })}>
+                      <span className="help-row-icon" aria-hidden="true">{x.icon}</span>
+                      <span className="grow"><HighlightMatch text={t(`hub.topic.${x.key}`)} query={searchQuery} /></span>
+                      <ChevronRight size={18} className="muted" aria-hidden="true" />
+                    </button>
+                  ))}
+                </div>
+              </section>
             )}
+
+            {searchResults.guides.length > 0 && (
+              <section className="help-block">
+                <h2 className="help-label">{t('searchGroupGuides')}</h2>
+                <div className="help-rows">
+                  {searchResults.guides.map(({ guide: g, snippet }) => (
+                    <Link key={g.id} to={`/help/guides/${g.slug}`} className="help-row">
+                      <span className="help-row-icon" aria-hidden="true"><BookOpen size={18} /></span>
+                      <span className="grow min-w-0">
+                        <span className="block clamp-2"><HighlightMatch text={pick(g.title_zh, g.title_en)} query={searchQuery} /></span>
+                        <span className="muted small block clamp-2"><HighlightMatch text={snippet} query={searchQuery} /></span>
+                      </span>
+                      <ChevronRight size={18} className="muted" aria-hidden="true" />
+                    </Link>
+                  ))}
+                </div>
+              </section>
+            )}
+
+            {searchResults.steps.length > 0 && (
+              <section className="help-block">
+                <h2 className="help-label">{t('searchGroupSteps')}</h2>
+                <div className="help-rows">
+                  {searchResults.steps.map(({ guide: g, stepIndex, title, body }) => (
+                    <Link key={`${g.id}-${stepIndex}`} to={`/help/guides/${g.slug}#step-${stepIndex}`} className="help-row">
+                      <span className="help-step-no" aria-hidden="true">{stepIndex + 1}</span>
+                      <span className="grow min-w-0">
+                        <span className="block clamp-2"><HighlightMatch text={title} query={searchQuery} /></span>
+                        <span className="muted small block clamp-2">
+                          {pick(g.title_zh, g.title_en)}
+                          {body ? ' · ' : ''}
+                          {body && <HighlightMatch text={body} query={searchQuery} />}
+                        </span>
+                      </span>
+                      <ChevronRight size={18} className="muted" aria-hidden="true" />
+                    </Link>
+                  ))}
+                </div>
+              </section>
+            )}
+
+            {searchResults.requests.length > 0 && (
+              <section className="help-block">
+                <h2 className="help-label">{t('searchGroupRequests')}</h2>
+                <div className="help-rows">
+                  {searchResults.requests.map(({ ticket: tk, snippet }) => (
+                    <Link key={tk.id} to={`/help/${tk.id}`} className="help-row">
+                      <span className="grow min-w-0">
+                        <span className="block clamp-2"><HighlightMatch text={tk.subject} query={searchQuery} /></span>
+                        <span className="muted small block clamp-2"><HighlightMatch text={snippet} query={searchQuery} /></span>
+                      </span>
+                      <StatusPill map={HELP_STATUS} status={tk.status} />
+                    </Link>
+                  ))}
+                </div>
+              </section>
+            )}
+
+            {searchResults.total === 0 && !(memberView && matchedTopics.length) && (
+              <p className="muted">{t('searchNoResults', { q: searchQuery })}</p>
+            )}
+            {/* Always a way out: ask, with what they searched for already written. */}
+            <button
+              type="button"
+              className="help-row help-ask-row"
+              onClick={() => (memberView ? setTopic({ key: 'other', rideId: null, text: searchQuery.trim() }) : openComposer(searchQuery))}
+            >
+              <span className="help-row-icon" aria-hidden="true"><MessageCircle size={18} /></span>
+              <span className="grow">
+                <span className="block bold">{t('hub.cantFind')}</span>
+                <span className="muted small block">{t('hub.cantFindDesc')}</span>
+              </span>
+              <ChevronRight size={18} className="muted" aria-hidden="true" />
+            </button>
           </div>
         ) : (
           /* Normal Content Mode */
@@ -810,6 +801,7 @@ export default function Help() {
           <HelpTopicSheet
             topic={topic.key}
             rideId={topic.rideId}
+            initialText={topic.text}
             rides={memberRides}
             guideSlugs={new Set(displayedGuides.filter((g) => g.published).map((g) => g.slug))}
             onClose={() => setTopic(null)}
