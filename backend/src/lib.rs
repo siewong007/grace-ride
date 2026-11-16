@@ -6,6 +6,7 @@
 #![allow(clippy::type_complexity)]
 
 pub mod arrange;
+pub mod audience;
 pub mod auth;
 pub mod error;
 pub mod i18n;

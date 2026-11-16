@@ -42,6 +42,14 @@ pub struct CurrentUser {
     /// SHA-256 of the session token (the primary key in `sessions`).
     #[serde(skip)]
     pub session_id: String,
+    /// The member's groups plus every group above them. An event for any of these is
+    /// one they may see and join (`crate::audience`).
+    #[serde(skip)]
+    pub group_scope: Vec<i64>,
+    /// The member's groups plus every group below them. As a driver they may take event
+    /// rides whose group is one of these.
+    #[serde(skip)]
+    pub drive_scope: Vec<i64>,
 }
 
 impl CurrentUser {
@@ -116,6 +124,11 @@ impl FromRequestParts<AppState> for CurrentUser {
             PermSet::default()
         };
         let privileged = perms.privileged();
+        let (group_scope, drive_scope) = if status == "active" {
+            crate::audience::group_scopes(&state.db, id).await?
+        } else {
+            (Vec::new(), Vec::new())
+        };
         Ok(CurrentUser {
             id,
             name,
@@ -133,6 +146,8 @@ impl FromRequestParts<AppState> for CurrentUser {
             },
             lang: Lang::from_code(&lang),
             session_id,
+            group_scope,
+            drive_scope,
         })
     }
 }

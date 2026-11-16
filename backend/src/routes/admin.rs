@@ -21,7 +21,7 @@ use crate::error::{bad, conflict, forbidden, not_found, AppError, AppResult};
 use crate::i18n::ErrorKey;
 use crate::perms::{self, parse_roles, Act, Page};
 use crate::state::AppState;
-use crate::util::{audit, in_days, minutes_ago, now, random_token, require, require_one};
+use crate::util::{audit, in_days, minutes_ago, now, random_token, require, require_one, Lang};
 
 fn escape_like(value: &str) -> String {
     value
@@ -498,6 +498,33 @@ async fn revoke_invite(
 struct GroupIn {
     name: String,
     description: Option<String>,
+    /// The group this one is part of. Missing: unchanged (create: none). `null`: none.
+    #[serde(default, deserialize_with = "present")]
+    parent_id: Option<Option<i64>>,
+}
+
+/// Tells a JSON `null` (`Some(None)`) apart from a missing field (`None`).
+fn present<'de, D: serde::Deserializer<'de>>(d: D) -> Result<Option<Option<i64>>, D::Error> {
+    Ok(Some(Option::deserialize(d)?))
+}
+
+/// A parent must be an ordinary group (not 全体会员 or visitors), keep the tree free of
+/// loops, and leave it at most three levels deep.
+async fn check_parent(st: &AppState, lang: Lang, group: i64, parent: Option<i64>) -> AppResult<()> {
+    let Some(p) = parent else { return Ok(()) };
+    let special: Option<(i64, i64)> = sqlx::query_as("SELECT is_all, is_visitor FROM groups WHERE id=$1")
+        .bind(p)
+        .fetch_optional(&st.db)
+        .await?;
+    let mine: Option<(i64, i64)> = sqlx::query_as("SELECT is_all, is_visitor FROM groups WHERE id=$1")
+        .bind(group)
+        .fetch_optional(&st.db)
+        .await?;
+    let plain = |g: Option<(i64, i64)>| g.is_none_or(|(a, v)| a == 0 && v == 0);
+    if special.is_none() || !plain(special) || !plain(mine) || !crate::audience::parent_ok(&st.db, group, p).await? {
+        return Err(bad(lang, ErrorKey::InvalidParentGroup));
+    }
+    Ok(())
 }
 
 async fn create_group(
@@ -509,10 +536,14 @@ async fn create_group(
     if req.name.trim().is_empty() {
         return Err(bad(u.lang, ErrorKey::GroupNameRequired));
     }
+    let parent = req.parent_id.flatten();
+    // 0 is never a group id: a new group has no children and cannot be its own ancestor.
+    check_parent(&st, u.lang, 0, parent).await?;
     let result =
-        sqlx::query_as("INSERT INTO groups (name, description) VALUES ($1,$2) RETURNING id")
+        sqlx::query_as("INSERT INTO groups (name, description, parent_id) VALUES ($1,$2,$3) RETURNING id")
             .bind(req.name.trim())
             .bind(req.description.unwrap_or_default())
+            .bind(parent)
             .fetch_one(&st.db)
             .await;
     let (id,): (i64,) = match result {
@@ -544,10 +575,17 @@ async fn update_group(
     if req.name.trim().is_empty() {
         return Err(bad(u.lang, ErrorKey::GroupNameRequired));
     }
-    let result = sqlx::query("UPDATE groups SET name=$1, description=$2 WHERE id=$3")
+    if let Some(parent) = req.parent_id {
+        check_parent(&st, u.lang, id, parent).await?;
+    }
+    let result = sqlx::query(
+        "UPDATE groups SET name=$1, description=$2, parent_id = CASE WHEN $4 THEN $5 ELSE parent_id END WHERE id=$3",
+    )
         .bind(req.name.trim())
         .bind(req.description.unwrap_or_default())
         .bind(id)
+        .bind(req.parent_id.is_some())
+        .bind(req.parent_id.flatten())
         .execute(&st.db)
         .await;
     match result {

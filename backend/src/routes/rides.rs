@@ -117,7 +117,18 @@ pub struct RideRow {
     pub rider_name: String,
     pub rider_phone: String,
     pub rider_relationship: String,
+    /// The group the rider joined the event as (visitors: the visitor group).
+    pub as_group_id: Option<i64>,
+    pub as_group_name: Option<String>,
+    /// The group drivers are matched on: `as_group_id`, or the host's group for a visitor.
+    pub match_group_id: Option<i64>,
+    pub event_created_by: Option<i64>,
+    pub event_is_all: bool,
+    pub event_group_ids: Vec<i64>,
 }
+
+/// The group a ride's driver must serve (see `crate::audience::drives_for`).
+const MATCH_GROUP_SQL: &str = "COALESCE((SELECT vp.host_group_id FROM visitor_passes vp WHERE vp.ride_id = r.id ORDER BY vp.id DESC LIMIT 1), r.as_group_id)";
 
 const RIDE_SELECT: &str = "SELECT r.id, r.passenger_id, r.driver_id, r.event_id, r.trip_id, r.pickup_at, r.pickup_area_id,
     r.pickup_address, r.destination, r.seats, r.assistance, r.notes, r.status, r.needs_attention, r.attention_reason,
@@ -125,13 +136,19 @@ const RIDE_SELECT: &str = "SELECT r.id, r.passenger_id, r.driver_id, r.event_id,
     a.name AS area_name, p.name AS p_name, p.phone AS p_phone, d.name AS d_name, d.phone AS d_phone,
     v.model AS v_model, v.color AS v_color, v.plate AS v_plate, v.vehicle_type AS v_type, e.title AS event_title,
     r.readiness_status, r.readiness_updated_at, r.delay_minutes, r.arrived_at_gate_at,
-    r.is_proxy, r.rider_name, r.rider_phone, r.rider_relationship
+    r.is_proxy, r.rider_name, r.rider_phone, r.rider_relationship,
+    r.as_group_id, ag.name AS as_group_name,
+    COALESCE((SELECT vp.host_group_id FROM visitor_passes vp WHERE vp.ride_id = r.id ORDER BY vp.id DESC LIMIT 1), r.as_group_id) AS match_group_id,
+    e.created_by AS event_created_by,
+    COALESCE((SELECT bool_or(g.is_all = 1) FROM event_groups eg JOIN groups g ON g.id = eg.group_id WHERE eg.event_id = r.event_id), false) AS event_is_all,
+    COALESCE((SELECT array_agg(eg.group_id) FROM event_groups eg WHERE eg.event_id = r.event_id), '{}'::BIGINT[]) AS event_group_ids
     FROM rides r
     JOIN areas a ON a.id = r.pickup_area_id
     JOIN users p ON p.id = r.passenger_id
     LEFT JOIN users d ON d.id = r.driver_id
     LEFT JOIN vehicles v ON v.user_id = r.driver_id
-    LEFT JOIN events e ON e.id = r.event_id";
+    LEFT JOIN events e ON e.id = r.event_id
+    LEFT JOIN groups ag ON ag.id = r.as_group_id";
 
 pub async fn load_ride(st: &AppState, lang: Lang, id: i64) -> AppResult<RideRow> {
     sqlx::query_as::<_, RideRow>(&format!("{RIDE_SELECT} WHERE r.id = $1"))
@@ -188,7 +205,19 @@ pub fn ride_json(r: &RideRow, u: &CurrentUser) -> Value {
         "seats": r.seats,
         "assistance": r.assistance,
         "notes": r.notes,
-        "event": r.event_id.map(|id| json!({"id": id, "title": r.event_title})),
+        // Someone who may not see the event (an admin-assigned driver from outside its
+        // groups, say) learns only that it is a church event.
+        "event": r.event_id.map(|id| {
+            let sees = is_passenger
+                || staff
+                || crate::audience::sees_event(u, r.event_created_by.unwrap_or(0), r.event_is_all, &r.event_group_ids);
+            if sees {
+                json!({"id": id, "title": r.event_title})
+            } else {
+                json!({"id": null, "title": null, "private": true})
+            }
+        }),
+        "as_group": r.as_group_id.map(|id| json!({"id": id, "name": r.as_group_name})),
         "trip_id": r.trip_id,
         "distance_km": r.distance_km,
         "reimbursement_amount_cents": r.reimbursement_amount_cents,
@@ -225,7 +254,9 @@ fn can_view(r: &RideRow, u: &CurrentUser) -> bool {
     r.passenger_id == u.id
         || r.driver_id == Some(u.id)
         || u.can(Page::AdminRides, Act::View)
-        || (u.can(Page::Drive, Act::View) && r.status == "pending_driver")
+        || (u.can(Page::Drive, Act::View)
+            && r.status == "pending_driver"
+            && crate::audience::drives_for(u, r.match_group_id))
 }
 
 async fn set_status(st: &AppState, id: i64, from: &[&str], to: &str, lang: Lang) -> AppResult<()> {
@@ -316,10 +347,24 @@ async fn create_ride(
         .fetch_optional(&st.db)
         .await?;
     area.ok_or_else(|| bad(u.lang, ErrorKey::PickupAreaRequired))?;
+    let mut as_group: Option<i64> = None;
     if let Some(eid) = req.event_id {
         if !crate::routes::events::can_see_event(&st, &u, eid).await? {
             return Err(forbidden(u.lang, ErrorKey::CannotViewEvent));
         }
+        // A ride to an event goes with a place at it, and carries the group the member
+        // joined as so the right drivers are asked.
+        let signup: Option<(Option<i64>,)> = sqlx::query_as(
+            "SELECT as_group_id FROM event_signups WHERE event_id=$1 AND user_id=$2 AND status='going'",
+        )
+        .bind(eid)
+        .bind(u.id)
+        .fetch_optional(&st.db)
+        .await?;
+        let Some((g,)) = signup else {
+            return Err(bad(u.lang, ErrorKey::EventRideNeedsSignup));
+        };
+        as_group = g;
     }
 
     let is_proxy = req.is_proxy.unwrap_or(false)
@@ -347,8 +392,8 @@ async fn create_ride(
     let is_proxy_int = if is_proxy { 1i64 } else { 0i64 };
 
     let (id,): (i64,) = sqlx::query_as(
-        "INSERT INTO rides (passenger_id, event_id, pickup_at, pickup_area_id, pickup_address, destination, seats, assistance, notes, is_proxy, rider_name, rider_phone, rider_relationship, created_at, updated_at)
-         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15) RETURNING id",
+        "INSERT INTO rides (passenger_id, event_id, pickup_at, pickup_area_id, pickup_address, destination, seats, assistance, notes, is_proxy, rider_name, rider_phone, rider_relationship, created_at, updated_at, as_group_id)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16) RETURNING id",
     )
     .bind(u.id)
     .bind(req.event_id)
@@ -365,6 +410,7 @@ async fn create_ride(
     .bind(&rider_relationship)
     .bind(now())
     .bind(now())
+    .bind(as_group)
     .fetch_one(&st.db)
     .await?;
 
@@ -393,23 +439,43 @@ async fn create_ride(
     }
 
     audit(&st.db, Some(u.id), "ride.create", "ride", Some(id), &at).await;
+    let rider_label = if is_proxy && !rider_name.is_empty() {
+        format!("{} ({} 代订)", rider_name, u.name)
+    } else {
+        u.name.clone()
+    };
+    notify_area_drivers(&st, req.pickup_area_id, as_group, u.id, &at, &rider_label, seats).await?;
+    Ok(Json(json!({ "id": id })))
+}
 
-    // Let drivers who serve that area know there's a new request.
+/// Let drivers who serve the area know there's a new request. For an event ride matched
+/// to a group, only drivers in that group or a group above it are told.
+pub(crate) async fn notify_area_drivers(
+    st: &AppState,
+    area: i64,
+    match_group: Option<i64>,
+    passenger: i64,
+    at: &str,
+    rider_label: &str,
+    seats: i64,
+) -> AppResult<()> {
     let drivers: Vec<(i64,)> = sqlx::query_as(
-        "SELECT da.user_id FROM driver_areas da JOIN users u ON u.id = da.user_id
-         WHERE da.area_id=$1 AND u.status='active' AND u.id != $2",
+        "WITH RECURSIVE up AS (
+             SELECT $3::BIGINT AS id WHERE $3::BIGINT IS NOT NULL
+             UNION
+             SELECT g.parent_id FROM groups g JOIN up ON g.id = up.id WHERE g.parent_id IS NOT NULL
+         )
+         SELECT da.user_id FROM driver_areas da JOIN users u ON u.id = da.user_id
+         WHERE da.area_id=$1 AND u.status='active' AND u.id != $2
+           AND ($3::BIGINT IS NULL OR u.id IN (SELECT gm.user_id FROM group_members gm WHERE gm.group_id IN (SELECT id FROM up)))",
     )
-    .bind(req.pickup_area_id)
-    .bind(u.id)
+    .bind(area)
+    .bind(passenger)
+    .bind(match_group)
     .fetch_all(&st.db)
     .await?;
+    let when = format!("{} · {} · {} 位", at.replace('T', " "), rider_label, seats);
     for (d,) in drivers {
-        let rider_label = if is_proxy && !rider_name.is_empty() {
-            format!("{} ({} 代订)", rider_name, u.name)
-        } else {
-            u.name.clone()
-        };
-        let when = format!("{} · {} · {} 位", at.replace('T', " "), rider_label, seats);
         notify(
             &st.db,
             d,
@@ -419,7 +485,7 @@ async fn create_ride(
         )
         .await;
     }
-    Ok(Json(json!({ "id": id })))
+    Ok(())
 }
 
 #[derive(Deserialize)]
@@ -1088,6 +1154,9 @@ async fn driver_claim(
     if r.passenger_id == u.id {
         return Err(bad(u.lang, ErrorKey::CannotPickOwnRide));
     }
+    if !crate::audience::drives_for(&u, r.match_group_id) {
+        return Err(forbidden(u.lang, ErrorKey::DriverOutsideGroup));
+    }
     // Lock the driver's row for the whole capacity check + claim. Two concurrent claims
     // for different rides by the same driver then serialise; the second sees the first
     // booking in `load` and is rejected instead of overbooking the car.
@@ -1682,8 +1751,10 @@ async fn driver_requests(
         "r.status='pending_driver'".to_string(),
         "r.passenger_id != $1".to_string(),
         "r.pickup_at >= $2".to_string(),
+        // Event rides go only to drivers from the rider's group or a group above it.
+        format!("({MATCH_GROUP_SQL} IS NULL OR {MATCH_GROUP_SQL} = ANY($3))"),
     ];
-    let mut n = 3;
+    let mut n = 4;
     if q.area_id.is_some() {
         conds.push(format!("r.pickup_area_id = ${n}"));
         n += 1;
@@ -1702,7 +1773,8 @@ async fn driver_requests(
     );
     let mut query = sqlx::query_as::<_, RideRow>(&sql)
         .bind(u.id)
-        .bind(now()[..16].to_string());
+        .bind(now()[..16].to_string())
+        .bind(&u.drive_scope);
     if let Some(a) = q.area_id {
         query = query.bind(a);
     } else if q.mine_areas.unwrap_or(false) {
@@ -2281,6 +2353,21 @@ async fn staff_reassign(
     }
     if req.driver_id == r.passenger_id {
         return Err(bad(u.lang, ErrorKey::DriverCannotBePassenger));
+    }
+    // Transport staff may go outside the rider's group; that is recorded.
+    if let Some(g) = r.match_group_id {
+        let (_, scope) = crate::audience::group_scopes(&st.db, req.driver_id).await?;
+        if !scope.contains(&g) {
+            audit(
+                &st.db,
+                Some(u.id),
+                "ride.assign_outside_group",
+                "ride",
+                Some(id),
+                format!("driver {} is outside group {g}", req.driver_id),
+            )
+            .await;
+        }
     }
     let (load, cap) = driver_load(&st, req.driver_id, &r.pickup_at, Some(id)).await?;
     if load + r.seats > cap {

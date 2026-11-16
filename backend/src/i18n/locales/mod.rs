@@ -91,7 +91,18 @@ pub fn render(lang: Lang, key: &ErrorKey) -> String {
         | ErrorKey::OnlyOrganiserCanPerformAction
         | ErrorKey::OnlyOrganiserCanViewSignups
         | ErrorKey::OnlyOrganiserCanRecordAttendance
-        | ErrorKey::EventNotOpenToGroup => events::render(lang, key),
+        | ErrorKey::EventNotOpenToGroup
+        | ErrorKey::JoinAsRequired
+        | ErrorKey::JoinAsNotAllowed
+        | ErrorKey::InvalidParentGroup
+        | ErrorKey::EventRideNeedsSignup
+        | ErrorKey::DriverOutsideGroup
+        | ErrorKey::VisitorLinkInvalid
+        | ErrorKey::VisitorNotOpenYet
+        | ErrorKey::VisitorLinkUsed
+        | ErrorKey::VisitorJourneyEnded
+        | ErrorKey::VisitorNameRequired
+        | ErrorKey::OnlyGoingCanInviteVisitor => events::render(lang, key),
         ErrorKey::PickupTimeRequired
         | ErrorKey::InvalidPickupTime
         | ErrorKey::PickupTimeInPast
@@ -297,6 +308,17 @@ mod tests {
             ErrorKey::OnlyOrganiserCanViewSignups,
             ErrorKey::OnlyOrganiserCanRecordAttendance,
             ErrorKey::EventNotOpenToGroup,
+            ErrorKey::JoinAsRequired,
+            ErrorKey::JoinAsNotAllowed,
+            ErrorKey::InvalidParentGroup,
+            ErrorKey::EventRideNeedsSignup,
+            ErrorKey::DriverOutsideGroup,
+            ErrorKey::VisitorLinkInvalid,
+            ErrorKey::VisitorNotOpenYet,
+            ErrorKey::VisitorLinkUsed,
+            ErrorKey::VisitorJourneyEnded,
+            ErrorKey::VisitorNameRequired,
+            ErrorKey::OnlyGoingCanInviteVisitor,
             ErrorKey::PickupTimeRequired,
             ErrorKey::InvalidPickupTime,
             ErrorKey::PickupTimeInPast,
