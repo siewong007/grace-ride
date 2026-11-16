@@ -202,6 +202,11 @@ const mockApiMap: Record<string, unknown> = {
   '/events?scope=managing': [mockEvent],
   '/events/10': mockEvent,
   '/events/10/signups': mockSignups,
+  '/events/11': {
+    ...mockEvent, id: 11, my_signup: null, can_manage: false,
+    join_as: [{ id: 2, name: 'Youth' }, { id: 3, name: 'Sports' }],
+  },
+  '/events/11/signups': [],
   '/me/shares': [mockShare],
   '/rides': [
     {
@@ -272,6 +277,25 @@ describe('EventDetail page', () => {
     expect(screen.getByRole('button', { name: /withdraw/i })).toBeInTheDocument();
     expect(screen.getByRole('link', { name: /need a ride/i })).toBeInTheDocument();
     expect(screen.getByText(/manage event/i)).toBeInTheDocument();
+  });
+
+  it('asks a member in two of the event groups which one they join as', async () => {
+    const user = userEvent.setup();
+    render(
+      <MemoryRouter initialEntries={['/events/11']}>
+        <Routes>
+          <Route path="/events/:id" element={<EventDetail />} />
+        </Routes>
+      </MemoryRouter>
+    );
+    // No ride before signing up: the server needs a "going" signup first.
+    expect(screen.queryByRole('link', { name: /need a ride/i })).not.toBeInTheDocument();
+    await user.click(screen.getByRole('button', { name: /sign up/i }));
+    expect(screen.getByRole('alert')).toHaveTextContent(/choose which group/i);
+    expect(post).not.toHaveBeenCalledWith('/events/11/signup', expect.anything());
+    await user.click(screen.getByRole('radio', { name: 'Sports' }));
+    await user.click(screen.getByRole('button', { name: /sign up/i }));
+    expect(post).toHaveBeenCalledWith('/events/11/signup', { as_group_id: 3 });
   });
 });
 

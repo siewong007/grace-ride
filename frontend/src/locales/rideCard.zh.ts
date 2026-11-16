@@ -1,4 +1,5 @@
 export default {
+  churchEvent: '教会活动',
   driver: '司机 {name}',
   passenger: '乘客 {name}',
   noDriver: '未有司机',

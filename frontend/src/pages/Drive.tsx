@@ -492,7 +492,7 @@ function Requests() {
             <div key={r.id} className="driver-request-card">
               <div className="driver-request-card-head">
                 <span className="driver-request-area">{r.area.name}</span>
-                {r.event && <Pill tone="blue">{r.event.title}</Pill>}
+                {r.event && <Pill tone="blue">{r.event.title ?? t('churchEvent', { ns: 'rideCard' })}</Pill>}
               </div>
 
               <div className="driver-request-meta">

@@ -5,6 +5,7 @@ import { Button, ErrorBox, Field, Page, PageHeader, useAction } from '../compone
 import { EVENT_KIND, useFormatT } from '../format';
 import { useTranslation } from 'react-i18next';
 import { AddressInput } from '../components/AddressInput';
+import { ordinary, treeOrder, withDescendants } from '../groupTree';
 
 interface Group {
   id: number;
@@ -12,6 +13,8 @@ interface Group {
   description: string;
   is_all: boolean;
   member_count: number;
+  parent_id: number | null;
+  is_visitor: boolean;
 }
 
 interface ExistingEvent {
@@ -25,6 +28,7 @@ interface ExistingEvent {
   cost_note: string;
   signup_deadline: string | null;
   group_ids: number[];
+  as_group_ids: number[];
 }
 
 export default function EventForm() {
@@ -45,7 +49,9 @@ export default function EventForm() {
     cost_note: '',
     deadline: '',
     group_ids: [] as number[],
+    as_group_ids: [] as number[],
   });
+  const [narrow, setNarrow] = useState(false);
   const { busy, error, run } = useAction();
 
   useEffect(() => {
@@ -62,7 +68,9 @@ export default function EventForm() {
       cost_note: existing.cost_note,
       deadline: existing.signup_deadline ?? '',
       group_ids: existing.group_ids,
+      as_group_ids: existing.as_group_ids ?? [],
     });
+    setNarrow((existing.as_group_ids ?? []).length > 0);
   }, [existing]);
 
   const set = (k: keyof typeof f) => (e: { target: { value: string } }) =>
@@ -74,6 +82,18 @@ export default function EventForm() {
       group_ids: f.group_ids.includes(g)
         ? f.group_ids.filter((x) => x !== g)
         : [...f.group_ids, g],
+    });
+
+  const all = ordinary(groups ?? []);
+  // "Joining as" can be any group the audience reaches: the chosen groups and every group
+  // below them, or every group when the event is for all members.
+  const forEveryone = all.some((g) => g.is_all && f.group_ids.includes(g.id));
+  const reach = new Set<number>(forEveryone ? all.map((g) => g.id) : f.group_ids.flatMap((id) => [...withDescendants(all, id)]));
+  const joinable = treeOrder(all.filter((g) => reach.has(g.id) && !g.is_all)).map((x) => x.group);
+  const toggleJoin = (g: number) =>
+    setF({
+      ...f,
+      as_group_ids: f.as_group_ids.includes(g) ? f.as_group_ids.filter((x) => x !== g) : [...f.as_group_ids, g],
     });
 
   const submit = (e: FormEvent) => {
@@ -88,6 +108,8 @@ export default function EventForm() {
       cost_note: f.cost_note,
       signup_deadline: f.deadline || null,
       group_ids: f.group_ids,
+      // Empty: people choose from the audience groups and their sub-groups.
+      as_group_ids: narrow ? f.as_group_ids.filter((g) => joinable.some((j) => j.id === g)) : [],
     };
     run(async () => {
       if (id) {
@@ -198,7 +220,7 @@ export default function EventForm() {
             <strong>{t('groups')}</strong>
             <p className="muted small">{t('groupsHint')}</p>
             <div className="grid cols-3">
-              {groups?.map((g) => (
+              {treeOrder(all).map(({ group: g, depth }) => (
                 <label key={g.id} className={`check ${f.group_ids.includes(g.id) ? 'on' : ''}`}>
                   <input
                     type="checkbox"
@@ -206,6 +228,7 @@ export default function EventForm() {
                     onChange={() => toggle(g.id)}
                   />
                   <span>
+                    {depth > 0 && <span className="muted" aria-hidden="true">{'↳ '.repeat(depth)}</span>}
                     {g.name}
                     {!g.is_all && <span className="muted tiny"> · {g.member_count} {t('peopleCount')}</span>}
                   </span>
@@ -213,6 +236,27 @@ export default function EventForm() {
               ))}
             </div>
           </div>
+
+          {joinable.length > 1 && (
+            <div className="stack-sm">
+              <strong>{t('joinAs')}</strong>
+              <p className="muted small">{t('joinAsHint')}</p>
+              <label className="row nowrap small">
+                <input type="checkbox" checked={narrow} onChange={(e) => setNarrow(e.target.checked)} />
+                <span>{t('joinAsNarrow')}</span>
+              </label>
+              {narrow && (
+                <div className="grid cols-3">
+                  {joinable.map((g) => (
+                    <label key={g.id} className={`check ${f.as_group_ids.includes(g.id) ? 'on' : ''}`}>
+                      <input type="checkbox" checked={f.as_group_ids.includes(g.id)} onChange={() => toggleJoin(g.id)} />
+                      <span>{g.name}</span>
+                    </label>
+                  ))}
+                </div>
+              )}
+            </div>
+          )}
 
           <ErrorBox error={error} />
           <Button variant="primary" block type="submit" loading={busy} size="lg">

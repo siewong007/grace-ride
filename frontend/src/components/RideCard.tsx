@@ -14,7 +14,8 @@ export interface Ride {
   seats: number;
   assistance: string;
   notes: string;
-  event: { id: number; title: string } | null;
+  /** `private`: the viewer may not see this event, so it has no id or title. */
+  event: { id: number | null; title: string | null; private?: boolean } | null;
   trip_id: number | null;
   passenger: { id: number; name: string; phone: string | null };
   driver: { id: number; name: string; phone: string | null; vehicle: { model: string; color: string; plate: string } | null } | null;
@@ -83,7 +84,7 @@ export default function RideCard({
           {ride.pickup_address === null && <Lock size={14} aria-hidden="true" />}
           <span>{ride.area.name}</span>
           {ride.seats > 1 && <span>· {ride.seats} {t('seats')}</span>}
-          {ride.event && <span>· {ride.event.title}</span>}
+          {ride.event && <span>· {ride.event.title ?? t('churchEvent')}</span>}
         </div>
         {ride.needs_attention && (
           <div className="small row nowrap ride-card-attention">

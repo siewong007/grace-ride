@@ -33,6 +33,8 @@ import { useTranslation } from 'react-i18next';
 
 interface EventFull extends EventItem {
   group_ids: number[];
+  /** Groups this member may join as (best match first). */
+  join_as?: { id: number; name: string }[];
   my_ride: { id: number; status: string } | null;
   settlement: { id: number; status: string } | null;
 }
@@ -47,6 +49,7 @@ interface Signup {
   offer_seats: number;
   attended: number | null;
   ride_status: string | null;
+  as_group?: string | null;
 }
 
 export default function EventDetail() {
@@ -60,6 +63,8 @@ export default function EventDetail() {
   const { busy, error: actErr, run } = useAction();
   const confirm = useConfirm();
   const [walkIn, setWalkIn] = useState(false);
+  const [joinAs, setJoinAs] = useState<number | null>(null);
+  const [joinAsMissing, setJoinAsMissing] = useState(false);
   const { data: signups, reload: reloadS } = useApi<Signup[]>(id ? `/events/${id}/signups` : null);
 
   if (error) return <ErrorBox error={error} />;
@@ -74,9 +79,19 @@ export default function EventDetail() {
   const mark = (uid: number, attended: boolean | null) =>
     run(() => post(`/events/${e.id}/attendance`, { user_id: uid, attended }).then(reloadS));
 
+  // Members in more than one of the event's groups say which one they come as.
+  const choices = e.join_as ?? [];
+  const mustChoose = choices.length > 1;
+  const myGroup = (e.my_signup as { as_group?: { name: string } | null } | null)?.as_group?.name;
+  const going = signed && e.my_signup!.status === 'going';
+
   const handleSignup = () => {
+    if (mustChoose && joinAs == null) {
+      setJoinAsMissing(true);
+      return;
+    }
     run(async () => {
-      await post(`/events/${e.id}/signup`, {});
+      await post(`/events/${e.id}/signup`, mustChoose ? { as_group_id: joinAs } : {});
       reload();
     }, t('signedUpSuccess'));
   };
@@ -199,7 +214,32 @@ export default function EventDetail() {
                 )}
               </div>
 
+              {signed && myGroup && <p className="small">{t('joiningAsName', { name: myGroup })}</p>}
               <p className="muted small">{t('signupNote')}</p>
+
+              {open && !signed && mustChoose && (
+                <fieldset className="join-as stack-sm">
+                  <legend className="bold small">{t('joinAsLegend')}</legend>
+                  <div className="chips">
+                    {choices.map((g) => (
+                      <label key={g.id} className={`chip ${joinAs === g.id ? 'on' : ''}`}>
+                        <input
+                          type="radio"
+                          name="join-as"
+                          className="sr-only"
+                          checked={joinAs === g.id}
+                          onChange={() => {
+                            setJoinAs(g.id);
+                            setJoinAsMissing(false);
+                          }}
+                        />
+                        {g.name}
+                      </label>
+                    ))}
+                  </div>
+                  {joinAsMissing && <span className="field-error" role="alert">{t('joinAsRequired')}</span>}
+                </fieldset>
+              )}
 
               {/* Single Clear CTA */}
               {open && !signed && (
@@ -228,7 +268,9 @@ export default function EventDetail() {
               {/* Need a ride & Offer to drive triggers */}
               {open && (
                 <div className="stack-sm">
-                  {e.my_ride ? (
+                  {!e.my_ride && !going ? (
+                    <p className="muted small">{t('signUpForRide')}</p>
+                  ) : e.my_ride ? (
                     <Link to={`/rides/${e.my_ride.id}`} className="row between card flat tight link">
                       <span className="row nowrap gap-sm">
                         <CarFront size={16} aria-hidden="true" />
@@ -287,6 +329,7 @@ export default function EventDetail() {
                             )}
                             {s.need_ride && s.offer_drive ? ' ' : ''}
                             {s.offer_drive && t('offersSeats', { n: s.offer_seats })}
+                            {s.as_group && <>{(s.need_ride || s.offer_drive) ? ' · ' : ''}{t('joiningAsName', { name: s.as_group })}</>}
                           </div>
                         </div>
                         <div className="chips">

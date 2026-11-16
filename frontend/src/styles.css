@@ -2477,3 +2477,10 @@ main:focus { outline: none; }
 .photo-attach-chip { border: 1px solid var(--border); border-radius: var(--radius); padding: 2px 4px 2px 2px; }
 .photo-attach-thumb { width: 40px; height: 40px; object-fit: cover; border-radius: 6px; }
 .help-row-claim { margin-left: var(--space-2); }
+
+/* Admin groups: sub-groups are indented under the group they belong to. */
+.group-add { flex-wrap: wrap; }
+.group-add > .input { flex: 1 1 12rem; min-width: 0; }
+.join-as { border: none; padding: 0; margin: 0; min-width: 0; }
+.join-as .chip { cursor: pointer; display: inline-flex; align-items: center; }
+.join-as .chip:has(input:focus-visible) { outline: 2px solid var(--primary); outline-offset: 2px; }

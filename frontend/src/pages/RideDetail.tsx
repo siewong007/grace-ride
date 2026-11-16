@@ -429,7 +429,8 @@ function Details({ ride: r }: { ride: Ride }) {
   if (r.event) {
     kvItems.push({
       label: t('event'),
-      value: <Link to={`/events/${r.event.id}`}>{r.event.title}</Link>,
+      // Someone outside the event's groups learns only that it is a church event.
+      value: r.event.id != null ? <Link to={`/events/${r.event.id}`}>{r.event.title}</Link> : t('churchEvent', { ns: 'rideCard' }),
     });
   }
   if (r.picked_up_at) {

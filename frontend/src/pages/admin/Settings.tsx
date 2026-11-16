@@ -2,6 +2,7 @@ import { FormEvent, useEffect, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { del, post, put, useApi } from '../../api';
 import { useAuth } from '../../auth';
+import { ordinary, treeOrder, withDescendants } from '../../groupTree';
 import {
   Button,
   Card,
@@ -24,6 +25,14 @@ interface Group {
   description: string;
   is_all: boolean;
   member_count: number;
+  parent_id: number | null;
+  is_visitor: boolean;
+}
+
+/** Groups `group` may be part of: ordinary groups outside its own branch. */
+function parentChoices(all: Group[], group?: Group): Group[] {
+  const own = group ? withDescendants(all, group.id) : new Set<number>();
+  return ordinary(all).filter((g) => !g.is_all && !own.has(g.id));
 }
 
 interface Area {
@@ -71,7 +80,10 @@ function Groups() {
   const { can } = useAuth();
   const { data, loading, reload } = useApi<Group[]>('/groups');
   const [name, setName] = useState('');
+  const [parent, setParent] = useState('');
   const [members, setMembers] = useState<Group | null>(null);
+  const [editing, setEditing] = useState<Group | null>(null);
+  const byId = new Map((data ?? []).map((g) => [g.id, g]));
   const { busy, error, run } = useAction();
 
   const removeGroup = async (g: Group) => {
@@ -95,22 +107,32 @@ function Groups() {
         <EmptyState title={t('settings.emptyGroups')} />
       ) : (
         <div className="list">
-          {data.map((g) => (
-            <div key={g.id} className="item">
+          {treeOrder(data).map(({ group: g, depth }) => (
+            <div key={g.id} className="item group-row" style={{ paddingInlineStart: depth ? `${depth * 1.25}rem` : undefined }}>
               <div className="grow">
                 <div className="bold">
+                  {depth > 0 && <span className="muted" aria-hidden="true">↳ </span>}
                   {g.name}{' '}
                   {g.is_all && <Pill tone="blue">{t('settings.allMembers')}</Pill>}
+                  {g.is_visitor && <Pill tone="neutral">{t('settings.visitorPill')}</Pill>}
                 </div>
                 <div className="muted tiny">
                   {g.is_all
                     ? t('settings.allDesc')
-                    : t('settings.memberCount', { count: g.member_count })}
-                  {g.description && ` · ${g.description}`}
+                    : g.is_visitor
+                      ? t('settings.visitorDesc')
+                      : t('settings.memberCount', { count: g.member_count })}
+                  {g.parent_id != null && byId.get(g.parent_id) && ` · ${t('settings.partOfName', { name: byId.get(g.parent_id)!.name })}`}
+                  {g.description && !g.is_visitor && ` · ${g.description}`}
                 </div>
               </div>
-              {!g.is_all && (
+              {!g.is_all && !g.is_visitor && (
                 <div className="btn-row">
+                  {can('admin_groups', 'update') && (
+                    <Button variant="ghost" size="sm" onClick={() => setEditing(g)}>
+                      {t('settings.edit')}
+                    </Button>
+                  )}
                   {can('admin_groups', 'update') && (
                     <Button variant="secondary" size="sm" onClick={() => setMembers(g)}>
                       {t('settings.membersBtn')}
@@ -129,13 +151,14 @@ function Groups() {
       )}
 
       {can('admin_groups', 'create') && <form
-        className="row nowrap"
+        className="row group-add"
         onSubmit={(e) => {
           e.preventDefault();
           run(
             () =>
-              post('/admin/groups', { name }).then(() => {
+              post('/admin/groups', { name, parent_id: parent ? Number(parent) : null }).then(() => {
                 setName('');
+                setParent('');
                 reload();
               }),
             t('settings.added'),
@@ -145,16 +168,34 @@ function Groups() {
         <input
           className="input grow"
           placeholder={t('settings.groupNamePlaceholder')}
+          aria-label={t('settings.groupName')}
           value={name}
           onChange={(e) => setName(e.target.value)}
           required
         />
+        <select className="input" value={parent} onChange={(e) => setParent(e.target.value)} aria-label={t('settings.partOf')}>
+          <option value="">{t('settings.topLevel')}</option>
+          {parentChoices(data ?? []).map((g) => (
+            <option key={g.id} value={g.id}>{t('settings.partOfName', { name: g.name })}</option>
+          ))}
+        </select>
         <Button variant="primary" disabled={busy} type="submit">
           {t('settings.addGroup')}
         </Button>
       </form>}
 
       <ErrorBox error={error} />
+      {editing && (
+        <GroupEdit
+          group={editing}
+          choices={parentChoices(data ?? [], editing)}
+          onClose={() => setEditing(null)}
+          onSaved={() => {
+            setEditing(null);
+            reload();
+          }}
+        />
+      )}
       {members && (
         <GroupMembers
           group={members}
@@ -165,6 +206,57 @@ function Groups() {
         />
       )}
     </Card>
+  );
+}
+
+function GroupEdit({
+  group,
+  choices,
+  onClose,
+  onSaved,
+}: {
+  group: Group;
+  choices: Group[];
+  onClose: () => void;
+  onSaved: () => void;
+}) {
+  const { t } = useTranslation('admin');
+  const [name, setName] = useState(group.name);
+  const [description, setDescription] = useState(group.description);
+  const [parent, setParent] = useState(group.parent_id != null ? String(group.parent_id) : '');
+  const { busy, error, run } = useAction();
+  return (
+    <Modal title={t('settings.editGroup')} onClose={onClose}>
+      <form
+        className="stack"
+        onSubmit={(e) => {
+          e.preventDefault();
+          run(
+            () => put(`/admin/groups/${group.id}`, { name, description, parent_id: parent ? Number(parent) : null }).then(onSaved),
+            t('settings.saved'),
+          );
+        }}
+      >
+        <Field label={t('settings.groupName')}>
+          <input className="input" value={name} onChange={(e) => setName(e.target.value)} required />
+        </Field>
+        <Field label={t('settings.groupDescription')}>
+          <input className="input" value={description} onChange={(e) => setDescription(e.target.value)} />
+        </Field>
+        <Field label={t('settings.partOf')} hint={t('settings.partOfHint')}>
+          <select className="input" value={parent} onChange={(e) => setParent(e.target.value)}>
+            <option value="">{t('settings.topLevel')}</option>
+            {choices.map((g) => (
+              <option key={g.id} value={g.id}>{g.name}</option>
+            ))}
+          </select>
+        </Field>
+        <ErrorBox error={error} />
+        <Button variant="primary" type="submit" disabled={busy}>
+          {t('settings.save')}
+        </Button>
+      </form>
+    </Modal>
   );
 }
 
