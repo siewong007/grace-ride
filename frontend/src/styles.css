@@ -2498,3 +2498,33 @@ main:focus { outline: none; }
 .group-actions > .btn { width: auto; flex: 0 0 auto; }
 .group-row { flex-wrap: wrap; }
 .group-row > .grow { flex: 1 1 10rem; min-width: 10rem; }
+
+/* Member help home: rows, not boxes; one card only for today's ride. */
+.help-home { display: flex; flex-direction: column; gap: var(--space-6); max-width: 44rem; }
+.help-today { display: flex; flex-direction: column; gap: var(--space-2); }
+.help-today-when { font-size: var(--fs-lg); }
+.help-today .btn-row > .btn { flex: 1 1 10rem; }
+.help-block { display: flex; flex-direction: column; gap: var(--space-1); }
+.help-label { font-size: var(--fs-sm); font-weight: 600; color: var(--muted); margin: 0; }
+.help-label-row { display: flex; justify-content: space-between; align-items: baseline; gap: var(--space-2); }
+.help-rows { border-top: 1px solid var(--border); }
+.help-row {
+  display: flex; align-items: center; gap: var(--space-3); width: 100%; min-height: 52px;
+  padding: var(--space-3) 0; border: none; border-bottom: 1px solid var(--border);
+  background: none; color: inherit; text-align: start; text-decoration: none; font: inherit; cursor: pointer;
+}
+.help-row:hover .grow, .help-row:focus-visible .grow { color: var(--primary); }
+.help-row-icon { display: inline-flex; color: var(--muted); flex: 0 0 auto; }
+.help-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--primary); flex: 0 0 auto; }
+.block { display: block; }
+.link-btn { background: none; border: none; padding: var(--space-1) 0; color: var(--primary); font-weight: 600; cursor: pointer; }
+.link-btn:hover { text-decoration: underline; }
+.help-emergency { display: flex; justify-content: space-between; align-items: center; gap: var(--space-3); flex-wrap: wrap; color: var(--muted); margin: 0; }
+.help-emergency a { color: var(--primary); }
+/* Topic sheet: the quick answer sits on a tinted panel above the message form. */
+.help-answer { background: var(--surface-2); border-radius: var(--radius); padding: var(--space-4); }
+.help-answer p { margin: 0; }
+.help-ride-pick { border: none; padding: 0; margin: 0; min-width: 0; }
+.help-ride-pick .chip { display: inline-flex; align-items: center; cursor: pointer; }
+.help-ride-pick .chip:has(input:focus-visible) { outline: 2px solid var(--primary); outline-offset: 2px; }
+.help-search-box.is-member { max-width: 44rem; }

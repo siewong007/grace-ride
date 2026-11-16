@@ -483,6 +483,57 @@ async fn insert_reference_data(db: &PgPool) -> anyhow::Result<()> {
             ]),
         ),
         (
+            "answer-a-driver-offer",
+            "回复司机的接送邀请",
+            "Answer a driver's offer",
+            "义工司机愿意接送您时，查看后接受或拒绝。",
+            "When a volunteer offers to drive you, check the details and accept or decline.",
+            "member",
+            json!([
+                {"title_en":"Open the ride","title_zh":"打开接送","body_en":"Home shows “… offered to drive you”, and the ride says “Your reply needed”. Open it to see the driver and their car.","body_zh":"首页会显示「… 愿意接送您」，接送状态为「待您回复」。打开即可查看司机与车辆。","link":"/rides"},
+                {"title_en":"Accept or decline","title_zh":"接受或拒绝","body_en":"Accept and the transport team confirms the ride. Decline and the request goes back to other drivers.","body_zh":"接受后由交通组确认接送；拒绝则重新开放给其他司机。","link":"/rides"}
+            ]),
+        ),
+        (
+            "cant-make-it",
+            "当天无法出行",
+            "Can't make it on the day",
+            "告诉司机您准备好了、需要稍等或无法出行。",
+            "Tell your driver you're ready, running late, or can't come.",
+            "member",
+            json!([
+                {"title_en":"Open today's ride","title_zh":"打开今天的接送","body_en":"On the day, your ride shows a readiness check right under the driver.","body_zh":"接送当天，司机资料下方会显示出行确认。","link":"/rides"},
+                {"title_en":"Ready or running late","title_zh":"准时或稍慢","body_en":"Tap “Ready on time”, or “Need 5-10 mins” so your driver can plan.","body_zh":"点「准时出发」，或点「稍慢 5-10 分钟」方便司机安排。","link":"/rides"},
+                {"title_en":"Can't join today","title_zh":"今天无法出行","body_en":"Tap “Can't join today” and add a reason if you like. Your driver skips your stop at once; the reason is seen by the driver and transport team. Days before, use “Cancel ride” instead.","body_zh":"点「今天无法出行」，可选填原因。司机会立即跳过您的站点，原因只有司机与交通组可见。提前几天请改用「取消接送」。","link":"/rides"}
+            ]),
+        ),
+        (
+            "join-as-a-group",
+            "以群体报名活动",
+            "Sign up for an event as your group",
+            "活动面向群体及其子群体；报名时选择以哪个群体参加。",
+            "Events are for groups and their sub-groups; choose which group you come as.",
+            "member",
+            json!([
+                {"title_en":"Find events for you","title_zh":"找到适合您的活动","body_en":"Events lists what's open to your groups, including events for a group yours belongs to.","body_zh":"「活动」列出对您群体开放的活动，包括您所属上级群体的活动。","link":"/events"},
+                {"title_en":"Choose who you're joining as","title_zh":"选择以哪个群体参加","body_en":"If more than one of your groups fits, pick one before signing up. It decides which drivers can take your ride.","body_zh":"若您有多个群体适用，报名前请选择其一；这决定哪些司机可以接送您。","link":"/events"},
+                {"title_en":"Ask for a ride","title_zh":"申请接送","body_en":"Once you're going, “I need a ride to the event” appears on the event page.","body_zh":"报名成功后，活动页面会出现「我需要接送」。","link":"/events"}
+            ]),
+        ),
+        (
+            "bring-a-visitor",
+            "带访客参加活动",
+            "Bring a visitor to an event",
+            "为非会员朋友预约接送，并发送一次性链接。",
+            "Book a ride for a friend without an account and send them a one-time link.",
+            "member",
+            json!([
+                {"title_en":"Invite them","title_zh":"邀请访客","body_en":"Sign up for the event, then under “Bringing a visitor” tap “Invite a visitor” and enter their name and pickup.","body_zh":"先报名活动，然后在「带访客同行」中点「邀请访客」，填写姓名与上车地点。","link":"/events"},
+                {"title_en":"Send the link","title_zh":"发送链接","body_en":"Share the link on WhatsApp. It opens 24 hours before pickup and works on the one phone that opens it first.","body_zh":"通过 WhatsApp 分享链接。链接于接送前 24 小时开放，只能在第一部打开它的手机上使用。","link":"/events"},
+                {"title_en":"If something changes","title_zh":"如有变动","body_en":"Send a new link if they change phone, or turn the link off. The link stops by itself when the journey ends; cancel their ride from the ride page if they aren't coming.","body_zh":"对方换手机可发送新链接，也可停用链接。行程结束后链接会自动失效；若对方不来，请在接送页面取消。","link":"/events"}
+            ]),
+        ),
+        (
             "ask-for-help",
             "寻求协助",
             "Ask for help",

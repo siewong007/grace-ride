@@ -160,8 +160,14 @@ describe('Help hub without tabs', () => {
     // Staff guides and drafts are hidden from regular members
     expect(screen.queryByText('Plan transport')).toBeNull();
     expect(screen.queryByText('Draft unreleased guide')).toBeNull();
-    expect(screen.getByText('My requests')).toBeInTheDocument();
-    expect(screen.getAllByText('Driver is late').length).toBeGreaterThanOrEqual(1);
+    // Open requests are listed once under "Your requests"; topics come before them.
+    expect(screen.getByRole('heading', { name: 'Your requests' })).toBeInTheDocument();
+    expect(screen.getByText('Driver is late')).toBeInTheDocument();
+    expect(screen.getByRole('heading', { name: 'Get help with' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'My driver is late' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Bringing a visitor' })).toBeInTheDocument();
+    // "A driver offered" appears only when a ride is waiting for the member's answer.
+    expect(screen.queryByRole('button', { name: 'A driver offered to drive me' })).toBeNull();
   });
 
   it('shows staff inbox with counts and filter chips', async () => {
@@ -220,8 +226,9 @@ describe('In-browser search', () => {
 });
 
 describe('Composer suggestions', () => {
-  it('suggests matching guides when typing subject', async () => {
+  it('answers first, then sends a message only when the member asks', async () => {
     mocks.allowed.add('help.view');
+    const { post } = await import('../api');
 
     render(
       <MemoryRouter>
@@ -229,18 +236,22 @@ describe('Composer suggestions', () => {
       </MemoryRouter>,
     );
 
-    // Open composer via Contact us button
-    fireEvent.click(screen.getByRole('button', { name: 'Contact us' }));
-    expect(await screen.findByRole('dialog')).toBeInTheDocument();
-
-    const subjectInput = screen.getByLabelText(/subject/i);
-    fireEvent.change(subjectInput, { target: { value: 'account' } });
-
-    await waitFor(() => {
-      expect(screen.getByText('These might answer it')).toBeInTheDocument();
-    });
-    const dialog = screen.getByRole('dialog');
-    expect(within(dialog).getByRole('link', { name: /getting started/i })).toBeInTheDocument();
+    // A topic opens with the quick answer; the form waits for "Still need help?".
+    fireEvent.click(screen.getByRole('button', { name: 'Payments and costs' }));
+    const dialog = await screen.findByRole('dialog');
+    expect(within(dialog).getByText('Try this first')).toBeInTheDocument();
+    expect(within(dialog).getByRole('link', { name: /open my costs/i })).toHaveAttribute('href', '/costs');
+    expect(within(dialog).queryByLabelText(/what’s happening/i)).toBeNull();
+    fireEvent.click(within(dialog).getByRole('button', { name: /still need help/i }));
+    const box = within(dialog).getByLabelText(/what’s happening/i);
+    fireEvent.click(within(dialog).getByRole('button', { name: /send to help centre/i }));
+    expect(within(dialog).getByText(/write a short message first/i)).toBeInTheDocument();
+    expect(post).not.toHaveBeenCalled();
+    fireEvent.change(box, { target: { value: 'I paid twice for the retreat lunch' } });
+    fireEvent.click(within(dialog).getByRole('button', { name: /send to help centre/i }));
+    await waitFor(() =>
+      expect(post).toHaveBeenCalledWith('/help', { subject: 'Payments and costs', body: 'I paid twice for the retreat lunch' }),
+    );
   });
 });
 

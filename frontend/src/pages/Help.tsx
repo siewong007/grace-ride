@@ -6,7 +6,6 @@ import {
   BookOpen,
   ChevronDown,
   ChevronRight,
-  Phone,
   Plus,
   Search,
   X,
@@ -16,6 +15,8 @@ import { useAuth } from '../auth';
 import { canAnyAdminPage } from '../perms';
 import { Ride } from '../components/RideCard';
 import HelpComposer from '../components/HelpComposer';
+import HelpHome from '../components/HelpHome';
+import HelpTopicSheet, { TopicKey } from '../components/HelpTopicSheet';
 import GuideArranger from '../components/GuideArranger';
 import HelpDetail from './HelpDetail';
 import { GuideStep, GuideSummary, usePick } from './HelpGuides';
@@ -30,7 +31,7 @@ import {
   Pill,
   StatusPill,
 } from '../components/ui';
-import { fmtAgo, fmtTime, HELP_STATUS, HELP_STATUS_STAFF, RIDE_STATUS, todayStr, useFormatT } from '../format';
+import { fmtAgo, HELP_STATUS, HELP_STATUS_STAFF, useFormatT } from '../format';
 
 export { HelpDetail };
 
@@ -103,6 +104,9 @@ export default function Help() {
   const searchInputRef = useRef<HTMLInputElement>(null);
   const [searchQuery, setSearchQuery] = useState('');
 
+  // Member topic sheet (answer first, then ask)
+  const [topic, setTopic] = useState<{ key: TopicKey; rideId: number | null } | null>(null);
+
   // Composer modal state
   const [composerOpen, setComposerOpen] = useState(false);
   const [composerSubject, setComposerSubject] = useState('');
@@ -155,12 +159,14 @@ export default function Help() {
       }, 100);
     }
     const r = params.get('ride');
-    if (r) {
+    if (r && !isHelpDesk) {
+      setTopic({ key: 'ride', rideId: Number(r) });
+    } else if (r) {
       setComposerRideId(Number(r));
       setComposerSubject(t('relatedRide', { rideId: r }));
       setComposerOpen(true);
     }
-  }, [params, t]);
+  }, [params, t, isHelpDesk]);
 
   // Data fetching:
   // 1. Guides with steps for instant search
@@ -176,12 +182,6 @@ export default function Help() {
   // 3. Member's upcoming rides
   const ridesApi = useApi<Ride[]>(can('rides') ? '/rides' : null, 30000);
   const memberRides = ridesApi.data ?? [];
-
-  // Today or in-progress ride
-  const today = todayStr();
-  const todayRide = memberRides.find(
-    (r) => r.status === 'in_progress' || (r.pickup_at && r.pickup_at.startsWith(today)),
-  );
 
   // 4. Staff inbox requests
   const staffStatusParam = staffFilter === 'all' ? '' : `&status=${staffFilter}`;
@@ -212,9 +212,6 @@ export default function Help() {
       setSelectedTicketId(staffRequests[0].id);
     }
   }, [isDesktop, isHelpDesk, viewAsMember, staffRequests, selectedTicketId]);
-
-  // Answered tickets waiting for member
-  const waitingForYou = ownRequests.filter((r) => r.status === 'answered');
 
   // Instant browser search matching
   const searchResults = useMemo(() => {
@@ -285,13 +282,6 @@ export default function Help() {
     setComposerOpen(true);
   };
 
-  const commonQuestions = [
-    { key: 'driverLate', text: t('commonDriverLate') },
-    { key: 'changePickup', text: t('commonChangePickup') },
-    { key: 'cancelRide', text: t('commonCancelRide') },
-    { key: 'payment', text: t('commonPayment') },
-    { key: 'somethingElse', text: t('commonSomethingElse') },
-  ];
 
   // Filtered guides by audience
   const displayedGuides = guides.filter((g) => {
@@ -305,7 +295,7 @@ export default function Help() {
       <div className="stack">
         <PageHeader
           title={isHelpDesk && !viewAsMember ? t('title') : t('howCanWeHelp')}
-          subtitle={t('desc')}
+          subtitle={isHelpDesk && !viewAsMember ? t('desc') : undefined}
           back={isHelpDesk && !viewAsMember ? (can('admin_dashboard') ? '/admin' : '/') : '/me'}
           actions={
             isHelpDesk ? (
@@ -321,7 +311,7 @@ export default function Help() {
         />
 
         {/* Global Search Bar (press / to focus) */}
-        <div className="help-search-box">
+        <div className={`help-search-box ${isHelpDesk && !viewAsMember ? '' : 'is-member'}`}>
           <Search size={18} className="help-search-icon" aria-hidden="true" />
           <input
             ref={searchInputRef}
@@ -679,101 +669,19 @@ export default function Help() {
               </section>
             )}
 
-            {/* MEMBER HOME EXPERIENCE */}
+            {/* MEMBER HELP HOME */}
             {(!isHelpDesk || viewAsMember) && (
-              <div className="stack">
-                {/* Active Ride Today Banner */}
-                {todayRide && (
-                  <div className="card notice info stack-xs">
-                    <div className="row between nowrap">
-                      <span className="bold small">
-                        {t('rideTodayBanner', {
-                          time: fmtTime(todayRide.pickup_at, ft),
-                          dest: todayRide.destination,
-                        })}
-                      </span>
-                      <StatusPill map={RIDE_STATUS} status={todayRide.status} />
-                    </div>
-                    <div className="btn-row" style={{ marginTop: 'var(--space-2)' }}>
-                      <Button
-                        variant="primary"
-                        size="sm"
-                        onClick={() =>
-                          openComposer(t('relatedRide', { rideId: todayRide.id }), todayRide.id)
-                        }
-                      >
-                        {t('getHelpWithRide')}
-                      </Button>
-                      {todayRide.driver?.phone && (
-                        <a
-                          className="btn sm secondary row nowrap gap-xs"
-                          href={`tel:${todayRide.driver.phone}`}
-                        >
-                          <Phone size={14} />
-                          <span>{t('callDriver')}</span>
-                        </a>
-                      )}
-                    </div>
-                  </div>
-                )}
-
-                {/* Urgent Strip */}
-                <div className="help-urgent-strip">
-                  <div className="row nowrap gap-xs align-center">
-                    <span className="bold small">{t('urgentPrefix')}</span>
-                    <span className="muted small">{t('urgent')}</span>
-                  </div>
-                  <a className="btn sm secondary row nowrap gap-xs" href="tel:+60379573888">
-                    <Phone size={14} aria-hidden="true" />
-                    <span>{t('callTransportShort')}</span>
-                  </a>
-                </div>
-
-                {/* Waiting For You (answered requests lifted to top) */}
-                {waitingForYou.length > 0 && (
-                  <section className="stack-xs">
-                    <h3 className="row nowrap gap-xs tone-blue">
-                      <span>{t('waitingForYouCount', { count: waitingForYou.length })}</span>
-                    </h3>
-                    <Card className="stack">
-                      <div className="list">
-                        {waitingForYou.map((tk) => (
-                          <Link key={tk.id} to={`/help/${tk.id}`} className="item">
-                            <div className="grow min-w-0">
-                              <div className="bold ellipsis">{tk.subject}</div>
-                              <div className="muted tiny">
-                                {tk.last_body ? `"${tk.last_body}" · ` : ''}
-                                {fmtAgo(tk.last_at || tk.updated_at, ft)}
-                              </div>
-                            </div>
-                            <ChevronRight size={18} className="muted" />
-                          </Link>
-                        ))}
-                      </div>
-                    </Card>
-                  </section>
-                )}
-
-                {/* Common questions chips */}
-                <section className="stack-xs">
-                  <span className="muted bold tiny">{t('commonQuestions')}</span>
-                  <div className="chips">
-                    {commonQuestions.map((q) => (
-                      <button
-                        key={q.key}
-                        type="button"
-                        className="chip"
-                        onClick={() => openComposer(q.text)}
-                      >
-                        {q.text}
-                      </button>
-                    ))}
-                  </div>
-                </section>
-              </div>
+              <HelpHome
+                rides={memberRides}
+                requests={ownRequests}
+                guides={displayedGuides.filter((g) => g.published)}
+                guideProgress={getGuideProgress}
+                onTopic={(key, rideId) => setTopic({ key, rideId: rideId ?? null })}
+              />
             )}
 
-            {/* GUIDES SECTION */}
+            {/* GUIDES SECTION (help desk: audiences, arranging, new guides) */}
+            {isHelpDesk && !viewAsMember && (
             <section id="guides-section" className="stack">
               <div className="help-inbox-bar">
                 <h2>{t('guideTab')}</h2>
@@ -894,58 +802,22 @@ export default function Help() {
               )}
             </section>
 
-            {/* MY REQUESTS SECTION (shown to members or in viewAsMember mode) */}
-            {(!isHelpDesk || viewAsMember) && (
-              <section className="stack">
-                <div className="help-inbox-bar">
-                  <h2>{t('myRequests')}</h2>
-                  <Button
-                    variant="secondary"
-                    size="sm"
-                    onClick={() => openComposer()}
-                  >
-                    {t('contactUs')}
-                  </Button>
-                </div>
-
-                {ownRequestsApi.loading ? (
-                  <ListSkeleton count={3} />
-                ) : !ownRequests.length ? (
-                  <EmptyState
-                    title={t('noRequestsYet')}
-                    description={t('noRequestsDesc')}
-                    action={
-                      <Button
-                        variant="primary"
-                        onClick={() => openComposer()}
-                      >
-                        {t('contactUs')}
-                      </Button>
-                    }
-                  />
-                ) : (
-                  <Card className="stack">
-                    <div className="list">
-                      {ownRequests.map((tk) => (
-                        <Link key={tk.id} to={`/help/${tk.id}`} className="item">
-                          <div className="grow min-w-0">
-                            <div className="bold ellipsis">{tk.subject}</div>
-                            <div className="muted tiny ellipsis">
-                              {tk.last_body ? `${tk.last_body} · ` : ''}
-                              {fmtAgo(tk.updated_at, ft)}
-                            </div>
-                            <div className="help-row-status">
-                              <StatusPill map={HELP_STATUS} status={tk.status} />
-                            </div>
-                          </div>
-                        </Link>
-                      ))}
-                    </div>
-                  </Card>
-                )}
-              </section>
             )}
           </div>
+        )}
+
+        {topic && (
+          <HelpTopicSheet
+            topic={topic.key}
+            rideId={topic.rideId}
+            rides={memberRides}
+            guideSlugs={new Set(displayedGuides.filter((g) => g.published).map((g) => g.slug))}
+            onClose={() => setTopic(null)}
+            onSent={(id) => {
+              ownRequestsApi.reload();
+              nav(`/help/${id}`);
+            }}
+          />
         )}
 
         {/* Contact Composer Modal */}
