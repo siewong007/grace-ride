@@ -26,6 +26,7 @@ The generic Compose stack includes Caddy. The AIC deployment uses host Caddy and
 | `backend/src/lib.rs` | Database connection/migrations, initialization, router and middleware |
 | `backend/src/auth.rs`, `perms.rs`, `security.rs` | Cookie sessions, permission catalog, request guards, rate limits and headers |
 | `backend/src/routes/` | Auth, rides, events, plan, settlements, files, community, admin and roles |
+| `backend/src/audience.rs`, `routes/visitors.rs` | Who an event is for (group tree), joining-as choices, driver matching; visitor passes |
 | `backend/src/arrange.rs`, `routing.rs` | Staff planning suggestions and geocoding/route computation |
 | `backend/src/jobs.rs`, `stream.rs` | Recurring work and SSE notifications |
 | `backend/src/i18n/`, `error.rs`, `util.rs` | Localized messages, errors, shared audit/notification helpers |
@@ -42,6 +43,7 @@ The generic Compose stack includes Caddy. The AIC deployment uses host Caddy and
 - SSE signals changes and polling refreshes data. This avoids a bidirectional WebSocket service. Browser visibility and connection state affect refresh behavior; no fixed latency guarantee is made.
 - Rate limits, route caches and SSE fan-out are process-local. Multiple API instances would require shared coordination, including a strategy for recurring jobs.
 - Leaflet displays OSM maps. Address autocomplete is proxied through Photon; geocoding uses Nominatim and road routing uses OSRM by default. Results are cached. Google Maps/Waze links hand off navigation; computed ETAs are not live-traffic estimates. Providers can be configured/self-hosted; disabling routing disables address autocomplete.
+- Event audiences extend `event_groups` with a group tree (`groups.parent_id`): an event for a group reaches it and every group below it, and every visibility check goes through `audience::visible_events_sql`. Signups and event rides record `as_group_id`; drivers match on it (or the host's group for a visitor's ride, `audience::MATCH_GROUP_SQL`). Visitors get a scoped, expiring pass rather than an account. See `docs/superpowers/specs/2026-11-16-event-audience-rides-design.md`.
 - The UI uses white/neutral surfaces, logo-blue primary actions, restrained status colors, dark mode and adjustable text. CSS tokens and shared primitives are authoritative. The earlier teal UI plan is obsolete.
 
 ## Storage and migrations

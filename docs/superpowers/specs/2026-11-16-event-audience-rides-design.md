@@ -1,7 +1,7 @@
 # ADR: Event audiences and the rides tied to them
 
-**Status:** Proposed. Product decisions were answered on 16 November 2026 (see the
-last section).
+**Status:** Implemented on branch `feat/event-audience-visitors` (17 November 2026). Product
+decisions were answered on 16 November 2026 (see the last section).
 **Date:** 16 November 2026
 **Deciders:** product owner (event rules), transport team (driver matching), maintainer (schema)
 
@@ -285,7 +285,7 @@ what decision 1 rules out.
 4. **The event and its group list** are visible only to people eligible through the
    event's groups or sub-groups. → Sections 1 and 3.
 
-### Assumptions to confirm
+### Assumptions (built as stated; still to confirm with the church)
 
 - **Who can invite a visitor:** any member who is going to the event, plus organisers.
 - **Visitor ride matching:** uses the host's joining-as group, so a Youth member's visitor
@@ -294,3 +294,6 @@ what decision 1 rules out.
   starts if the ride was never completed.
 - **The rule applies to event rides only.** Everyday rides without an event stay
   matched by area, as today.
+- **An organiser who isn't going** may invite a visitor; their visitor is matched on the
+  organiser's best-fitting group among the event's choices.
+- **Turning a link off** does not cancel the ride; the host cancels it from the ride page.

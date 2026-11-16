@@ -2491,7 +2491,7 @@ main:focus { outline: none; }
 .visit-stage { color: var(--primary); }
 .visit-facts { display: grid; gap: var(--space-2); margin: 0; }
 .visit-facts > div { display: flex; justify-content: space-between; gap: var(--space-3); padding-block: var(--space-2); border-bottom: 1px solid var(--border); }
-.visit-facts dt { display: inline-flex; align-items: center; gap: var(--space-2); color: var(--muted); }
+.visit-facts dt { display: inline-flex; align-items: center; gap: var(--space-2); color: var(--muted); white-space: nowrap; flex: 0 0 auto; }
 .visit-facts dd { margin: 0; text-align: end; font-weight: 600; overflow-wrap: anywhere; }
 .visit-ready > .btn { flex: 1 1 0; }
 .group-actions { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: var(--space-1); flex: 0 0 auto; }

@@ -22,7 +22,8 @@ For an event, transport staff can use the planning board to review passengers an
 
 ## Activities and money
 
-- Organizers create group-visible events. Members sign up, offer driving or request transport. Capacity can create a waitlist; withdrawals promote waiting members and cancel linked rides as applicable. Organizers record attendance.
+- Organizers create events for groups; a group's sub-groups see them too. Members sign up as one of their groups (asked only when more than one fits), then may offer driving or request transport. Event rides are offered to drivers in the rider's group; transport staff can assign anyone else, which is audited. A member who is going can invite a visitor: that books the visitor's ride and gives them a one-time link that closes when the journey ends.
+- Capacity can create a waitlist; withdrawals promote waiting members and cancel linked rides as applicable. Organizers record attendance.
 - Organizers prepare activity expenses, subsidy and equal/custom attendee shares. Publish the bill; members submit external-payment proof; the payee verifies it. Revisions notify affected members, and disputed shares need resolution.
 - Substitute-transport claims go through transport review and manual finance payout recording. Completed volunteer rides can generate rate-based reimbursement records. These records do not transfer money.
 - Members review notifications, help threads and monthly reports; staff uses dashboards, reports, audit and settings according to permissions.
