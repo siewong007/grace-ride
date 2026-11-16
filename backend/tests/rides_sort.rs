@@ -108,7 +108,8 @@ async fn admin_rides_sort_uses_allow_listed_fields() {
         .collect();
     let past: Vec<_> = times.iter().skip(upcoming.len()).cloned().collect();
     assert!(
-        past.iter().all(|stamp| stamp.len() >= 10 && &stamp[..10] < today.as_str()),
+        past.iter()
+            .all(|stamp| stamp.len() >= 10 && &stamp[..10] < today.as_str()),
         "a past ride is mixed into upcoming: {times:?}"
     );
     assert!(upcoming.windows(2).all(|w| w[0] <= w[1]), "{upcoming:?}");

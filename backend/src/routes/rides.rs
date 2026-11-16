@@ -2707,6 +2707,9 @@ mod unable_reason_tests {
     fn reason_is_trimmed_and_capped() {
         assert_eq!(unable_reason(Some("  fever  ")), "fever");
         let long = "a".repeat(UNABLE_REASON_MAX + 50);
-        assert_eq!(unable_reason(Some(&long)).chars().count(), UNABLE_REASON_MAX);
+        assert_eq!(
+            unable_reason(Some(&long)).chars().count(),
+            UNABLE_REASON_MAX
+        );
     }
 }
