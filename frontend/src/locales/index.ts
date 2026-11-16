@@ -6,6 +6,8 @@ import zhAuth from './auth.zh'
 import enAuth from './auth.en'
 import zhInvite from './invite.zh'
 import enInvite from './invite.en'
+import zhVisit from './visit.zh'
+import enVisit from './visit.en'
 import zhHome from './home.zh'
 import enHome from './home.en'
 import zhRides from './rides.zh'
@@ -58,6 +60,7 @@ export const namespaces = [
   'layout',
   'auth',
   'invite',
+  'visit',
   'home',
   'rides',
   'rideCard',
@@ -91,6 +94,7 @@ export const resources = {
     layout: enLayout,
     auth: enAuth,
     invite: enInvite,
+    visit: enVisit,
     home: enHome,
     rides: enRides,
     rideCard: enRideCard,
@@ -120,6 +124,7 @@ export const resources = {
     layout: zhLayout,
     auth: zhAuth,
     invite: zhInvite,
+    visit: zhVisit,
     home: zhHome,
     rides: zhRides,
     rideCard: zhRideCard,

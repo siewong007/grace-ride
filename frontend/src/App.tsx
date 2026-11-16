@@ -16,6 +16,7 @@ import TermsPage from './components/Terms';
 const named = <M extends Record<string, unknown>, K extends keyof M>(load: () => Promise<M>, key: K) =>
   lazy(() => load().then((m) => ({ default: m[key] as ComponentType })));
 const Invite = lazy(() => import('./pages/Invite'));
+const Visit = lazy(() => import('./pages/Visit'));
 const Rides = lazy(() => import('./pages/Rides'));
 const RideNew = lazy(() => import('./pages/RideNew'));
 const RideDetail = lazy(() => import('./pages/RideDetail'));
@@ -100,6 +101,8 @@ export default function App() {
       <Route path="/login" element={<Login />} />
       <Route path="/terms" element={<TermsPage />} />
       <Route path="/invite/:token" element={page(<Invite />)} />
+      {/* A visitor's ride: no account, outside the signed-in app. */}
+      <Route path="/visit/:token" element={page(<Visit />)} />
       <Route element={<RequireAuth><Layout /></RequireAuth>}>
         <Route index element={<Home />} />
         <Route path="rides" element={gated(<Rides />, 'rides')} />

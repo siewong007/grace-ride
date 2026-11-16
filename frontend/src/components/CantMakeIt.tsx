@@ -13,10 +13,13 @@ export const CANT_MAKE_IT_MAX = 300;
 export default function CantMakeItModal({
   rideId,
   riderName,
+  endpoint,
   onClose,
   onDone,
 }: {
   rideId: number;
+  /** Where to send it; the visitor page posts to its own endpoint. */
+  endpoint?: string;
   /** Set when the ride was booked for someone else, so the wording names them. */
   riderName?: string;
   onClose: () => void;
@@ -29,7 +32,7 @@ export default function CantMakeItModal({
   const submit = async () => {
     const notes = reason.trim();
     const ok = await run(
-      () => post(`/rides/${rideId}/readiness`, { status: 'unable_to_join', ...(notes ? { notes } : {}) }),
+      () => post(endpoint ?? `/rides/${rideId}/readiness`, { status: 'unable_to_join', ...(notes ? { notes } : {}) }),
       t('unableDone'),
     );
     if (ok) {

@@ -45,7 +45,8 @@ export async function api<T = unknown>(path: string, opts: { method?: string; bo
     }
   }
   if (!res.ok) {
-    if (res.status === 401 && !path.startsWith('/auth/')) window.dispatchEvent(new Event('gr:unauthorized'));
+    // A visitor's page has no member session; its 401 must not send anyone to sign-in.
+    if (res.status === 401 && !path.startsWith('/auth/') && !path.startsWith('/visit/')) window.dispatchEvent(new Event('gr:unauthorized'));
     throw new ApiError(res.status, apiMessage(data, 'network'));
   }
   return data as T;

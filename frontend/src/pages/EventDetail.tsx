@@ -30,6 +30,7 @@ import {
 import { EVENT_KIND, fmtDateTime, RIDE_STATUS, useFormatT } from '../format';
 import type { EventItem } from './Events';
 import { useTranslation } from 'react-i18next';
+import VisitorInvites from '../components/VisitorInvites';
 
 interface EventFull extends EventItem {
   group_ids: number[];
@@ -294,6 +295,9 @@ export default function EventDetail() {
 
               <ErrorBox error={actErr} />
             </Card>
+
+            {/* Members who are going, and the organiser, can bring a visitor. */}
+            {open && (going || e.can_manage) && can('rides', 'create') && <VisitorInvites event={e} />}
           </div>
 
           {/* Right Column: Organiser Tools / Manage Card */}
