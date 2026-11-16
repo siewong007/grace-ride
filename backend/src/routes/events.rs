@@ -236,7 +236,8 @@ async fn get_event(
         .map(|(gid, name)| json!({"id": gid, "name": name}))
         .collect::<Vec<_>>());
     let my_ride: Option<(i64, String)> = sqlx::query_as(
-        "SELECT id, status FROM rides WHERE event_id=$1 AND passenger_id=$2 AND status NOT IN ('cancelled') ORDER BY id DESC LIMIT 1",
+        // Their own ride, not one they booked for a visitor.
+        "SELECT id, status FROM rides WHERE event_id=$1 AND passenger_id=$2 AND is_proxy=0 AND status NOT IN ('cancelled') ORDER BY id DESC LIMIT 1",
     )
     .bind(id)
     .bind(u.id)
@@ -695,7 +696,9 @@ async fn withdraw(
         }
     }
     let rides: Vec<(i64, Option<i64>)> = sqlx::query_as(
-        "SELECT id, driver_id FROM rides WHERE event_id=$1 AND passenger_id=$2 AND status IN ('pending_driver','pending_passenger','pending_approval','pending_driver_confirm','confirmed')",
+        // Only their own ride: a visitor they invited may still come, and the host can cancel
+        // that ride from the ride page.
+        "SELECT id, driver_id FROM rides WHERE event_id=$1 AND passenger_id=$2 AND is_proxy=0 AND status IN ('pending_driver','pending_passenger','pending_approval','pending_driver_confirm','confirmed')",
     )
     .bind(id)
     .bind(u.id)
@@ -766,7 +769,7 @@ async fn list_signups(
     );
     let rows: Vec<SignupRow> = sqlx::query_as(
         "SELECT s.id, s.user_id, u.name, s.status, s.need_ride, s.offer_drive, s.offer_seats, s.attended,
-            (SELECT r.status FROM rides r WHERE r.event_id = s.event_id AND r.passenger_id = s.user_id AND r.status != 'cancelled' ORDER BY r.id DESC LIMIT 1),
+            (SELECT r.status FROM rides r WHERE r.event_id = s.event_id AND r.passenger_id = s.user_id AND r.is_proxy = 0 AND r.status != 'cancelled' ORDER BY r.id DESC LIMIT 1),
             (SELECT name FROM groups WHERE id = s.as_group_id)
          FROM event_signups s JOIN users u ON u.id = s.user_id WHERE s.event_id=$1 ORDER BY s.status, s.created_at",
     )

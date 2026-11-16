@@ -41,6 +41,8 @@ Install the matching Playwright Chromium browser if missing (`npx playwright ins
 | Permission changes and settings | `backend/tests/perms.rs` | Backend authorization/settings tests |
 | Audit behavior, filtering, retention and export | `backend/tests/audit.rs` | Audit-specific integration coverage |
 | Planning and routing | `backend/tests/plan.rs`, `backend/tests/routing.rs` | Plan validation and routing behavior |
+| Event audiences | `backend/tests/audience.rs` | Sub-group visibility both ways, joining-as limits, out-of-group drivers hidden and refused, audited admin override, masked event title, planning-board group fields, and a guard that visibility SQL lives only in `audience.rs` |
+| Visitor passes | `backend/tests/visitors.rs`, `frontend/src/visit.test.tsx` | One-time claim, second browser refused, not-yet-open, member APIs refusing the visitor cookie, host-group driver matching, host withdrawal, organiser fallback, closing on completion, can't-make-it, reissue, revoke and expiry. Tests pass the cookie by hand; no live-backend browser run is recorded |
 | Capacity | `backend/tests/capacity.rs`, `scripts/capacity_baseline.sh` | Synthetic thousand-member fixture, configured live-driver cap and reminder timing; not proof of sustained production throughput or rejection of an actual eleventh live driver |
 | Remaining handler branches | `backend/tests/flows.rs` | One HTTP case for each auth, ride, event, settlement, community, file, admin, and plan branch the suites above do not already assert. Keys no handler constructs are listed in that file. Race-only codes stay in the suite that can force them |
 | UI components and pages | `frontend/src/**/*.test.ts*` | Vitest/Testing Library, including permissions, auto-lock, locales and formatting |

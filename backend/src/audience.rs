@@ -81,6 +81,26 @@ pub fn audience_users_sql(event: &str) -> String {
     )
 }
 
+/// Does this member see the event through its groups (or as its organiser)? For wording
+/// sent to someone else, such as a driver staff assigned from outside the event's groups.
+pub async fn member_sees_event(
+    db: &PgPool,
+    user_id: i64,
+    event_id: i64,
+) -> Result<bool, sqlx::Error> {
+    let (scope, _) = group_scopes(db, user_id).await?;
+    let n: i64 = sqlx::query_scalar(&format!(
+        "SELECT COUNT(*) FROM events e WHERE e.id = $1 AND {}",
+        visible_events_sql("$2", "$3")
+    ))
+    .bind(event_id)
+    .bind(user_id)
+    .bind(&scope)
+    .fetch_one(db)
+    .await?;
+    Ok(n > 0)
+}
+
 /// The same visibility rule as [`visible_events_sql`], for an event already loaded.
 pub fn sees_event(u: &CurrentUser, created_by: i64, is_all: bool, groups: &[i64]) -> bool {
     u.can(Page::AdminEvents, Act::View)
@@ -145,10 +165,23 @@ pub async fn join_choices(
     mine.sort_by_key(|(id, _)| !direct.contains(id));
     if mine.is_empty() {
         mine = rows
-            .into_iter()
+            .iter()
             .filter(|(_, _, all)| *all)
-            .map(|(id, n, _)| (id, n))
+            .map(|(id, n, _)| (*id, n.clone()))
             .collect();
+    }
+    // Someone who sees the event without being in its groups (its organiser, an event
+    // admin) still comes as one of them: offer all of the event's choices. Callers check
+    // that the member may see the event first.
+    if mine.is_empty() {
+        let audience: Vec<i64> =
+            sqlx::query_scalar("SELECT group_id FROM event_groups WHERE event_id = $1")
+                .bind(event_id)
+                .fetch_all(db)
+                .await?;
+        mine = rows.into_iter().map(|(id, n, _)| (id, n)).collect();
+        // The groups the event was made for come before their sub-groups.
+        mine.sort_by_key(|(id, _)| !audience.contains(id));
     }
     Ok(mine)
 }

@@ -574,7 +574,16 @@ async fn save_plan(
             }
         }
     }
+    // A driver from outside the event's groups learns only that it is a church event.
+    let title_for = |sees: bool| -> (String, String) {
+        if sees {
+            (ev.title.clone(), ev.title.clone())
+        } else {
+            ("教会活动".to_string(), "Church event".to_string())
+        }
+    };
     for (d, n) in &gained {
+        let (zh, en) = title_for(crate::audience::member_sees_event(&st.db, *d, id).await?);
         notify(
             &st.db,
             *d,
@@ -586,20 +595,23 @@ async fn save_plan(
                 ),
             ),
             (
-                &format!("{} · {} · 请在「开车」确认", ev.title, when),
-                &format!("{} · {} · please confirm in Driving", ev.title, when),
+                &format!("{} · {} · 请在「开车」确认", zh, when),
+                &format!("{} · {} · please confirm in Driving", en, when),
             ),
             "/drive",
         )
         .await;
     }
     for (d, names) in &lost {
-        let line = format!("{} · {}", ev.title, names.join(", "));
+        let (zh, en) = title_for(crate::audience::member_sees_event(&st.db, *d, id).await?);
         notify(
             &st.db,
             *d,
             ("接送已改派", "Ride reassigned"),
-            (&line, &line),
+            (
+                &format!("{} · {}", zh, names.join(", ")),
+                &format!("{} · {}", en, names.join(", ")),
+            ),
             "/drive",
         )
         .await;

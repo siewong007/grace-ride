@@ -154,6 +154,21 @@ async fn a_visitor_link_is_one_time_and_closes_with_the_journey() {
     let ride = pass.json["ride_id"].as_i64().unwrap();
     let link = format!("/api/visit/{tok}");
 
+    // The visitor's ride is booked in the host's name but is not the host's own ride.
+    let ev_view = call(
+        &app,
+        Method::GET,
+        &format!("/api/events/{ev}"),
+        Some(&host),
+        None,
+    )
+    .await;
+    assert!(
+        ev_view.json["my_ride"].is_null(),
+        "{}",
+        ev_view.json["my_ride"]
+    );
+
     // Opening the link uses nothing up; claiming does, once.
     let r = call(&app, Method::GET, &link, None, None).await;
     assert_eq!(r.status, StatusCode::OK, "{}", r.json);
@@ -242,6 +257,85 @@ async fn a_visitor_link_is_one_time_and_closes_with_the_journey() {
     )
     .await;
     assert_eq!(r.json["as_group"]["name"], "访客", "reported as a visitor");
+
+    // The host withdrawing cancels only their own ride; their visitor may still come.
+    let r = call(
+        &app,
+        Method::POST,
+        &format!("/api/events/{ev}/withdraw"),
+        Some(&host),
+        None,
+    )
+    .await;
+    assert_eq!(r.status, StatusCode::OK, "{}", r.json);
+    let still = call(
+        &app,
+        Method::GET,
+        &format!("/api/rides/{ride}"),
+        Some(&host),
+        None,
+    )
+    .await;
+    assert_eq!(still.json["status"], "pending_driver");
+    assert_eq!(
+        call(&app, Method::GET, "/api/visit/me", Some(&visitor), None)
+            .await
+            .status,
+        StatusCode::OK
+    );
+    let r = call(
+        &app,
+        Method::POST,
+        &format!("/api/events/{ev}/signup"),
+        Some(&host),
+        Some(json!({})),
+    )
+    .await;
+    assert_eq!(r.status, StatusCode::OK, "{}", r.json);
+
+    // The organiser, in none of the event's groups, can still join as one of them and
+    // bring a visitor.
+    let admin_id = user_id(&st, "admin@example.org").await;
+    only_in(&st, admin_id, &[]).await;
+    let as_admin = call(
+        &app,
+        Method::GET,
+        &format!("/api/events/{ev}"),
+        Some(&admin),
+        None,
+    )
+    .await;
+    assert_eq!(
+        as_admin.json["join_as"][0]["id"], youth,
+        "{}",
+        as_admin.json["join_as"]
+    );
+    let r = call(
+        &app,
+        Method::POST,
+        &path,
+        Some(&admin),
+        Some(invite(in_hours(3), "Eve")),
+    )
+    .await;
+    assert_eq!(r.status, StatusCode::OK, "{}", r.json);
+    let eve_ride = r.json["ride_id"].as_i64().unwrap();
+    let eve = call(
+        &app,
+        Method::GET,
+        "/api/driver/requests",
+        Some(&driver_c),
+        None,
+    )
+    .await;
+    assert!(
+        eve.json
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|x| x["id"] == eve_ride),
+        "matched on the organiser's Youth fit"
+    );
 
     // Completing the ride ends the journey: the page closes and the cookie stops working.
     sqlx::query("UPDATE rides SET status='completed' WHERE id=$1")
