@@ -48,7 +48,7 @@ pub async fn can_see_event(st: &AppState, u: &CurrentUser, event_id: i64) -> App
 
 /// The organiser may change their own event while they hold the matching 活动
 /// permission; 全部活动 (admin_events) reaches every event.
-fn can_manage(u: &CurrentUser, created_by: i64, act: Act) -> bool {
+pub(crate) fn can_manage(u: &CurrentUser, created_by: i64, act: Act) -> bool {
     (created_by == u.id && u.can(Page::Events, act)) || u.can(Page::AdminEvents, act)
 }
 

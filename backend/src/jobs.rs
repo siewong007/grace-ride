@@ -32,6 +32,8 @@ pub async fn run_once(db: &PgPool, cfg: &Config) -> anyhow::Result<()> {
     event_reminders(db).await?;
     escalate_unmatched(db).await?;
     housekeeping(db, cfg).await?;
+    // Visitor links close for good once their journey is over.
+    crate::routes::visitors::close_finished(db).await?;
     Ok(())
 }
 

@@ -107,8 +107,10 @@ fn visitor_lang(headers: &HeaderMap) -> Lang {
 /// Rate limits for unauthenticated / credential endpoints.
 pub async fn rate_limit(State(st): State<AppState>, req: Request, next: Next) -> Response {
     let path = req.uri().path();
+    // Visitor links (preview and claim), but not the claimed browser's page, which polls.
+    let visit_link = path.starts_with("/api/visit/") && !path.starts_with("/api/visit/me");
     let rule: Option<(&str, u32, u64)> =
-        if req.method() == Method::GET && !path.starts_with("/api/invites/") {
+        if req.method() == Method::GET && !path.starts_with("/api/invites/") && !visit_link {
             None
         } else if path == "/api/auth/login"
             || path == "/api/auth/dev-login"
@@ -119,6 +121,8 @@ pub async fn rate_limit(State(st): State<AppState>, req: Request, next: Next) ->
             Some(("recovery", 3, 3600))
         } else if path.starts_with("/api/invites/") {
             Some(("invite", 20, 600))
+        } else if visit_link {
+            Some(("visit", 30, 600))
         } else if path == "/api/files" {
             Some(("upload", 30, 600))
         } else {

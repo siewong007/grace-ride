@@ -755,10 +755,10 @@ async fn passenger_respond(
 }
 
 #[derive(Deserialize)]
-struct ReadinessReq {
-    status: String,
+pub(crate) struct ReadinessReq {
+    pub status: String,
     #[serde(default)]
-    notes: Option<String>,
+    pub notes: Option<String>,
 }
 
 /// The passenger's optional reason for missing a pickup: trimmed, at most
@@ -785,16 +785,29 @@ async fn post_readiness(
         return Err(forbidden(u.lang, ErrorKey::OnlyPassengerCanRespond));
     }
 
+    apply_readiness(&st, u.lang, &r, Some(u.id), &req).await
+}
+
+/// Readiness, delay or "can't make it" for a ride, from its passenger, staff, or the
+/// visitor whose pass covers it (`actor` None). Callers have checked who may do this.
+pub(crate) async fn apply_readiness(
+    st: &AppState,
+    lang: Lang,
+    r: &RideRow,
+    actor: Option<i64>,
+    req: &ReadinessReq,
+) -> AppResult<Json<Value>> {
+    let id = r.id;
     // Trip-progress updates (readiness / delay / gate arrival) only apply while the ride
     // is active. A completed or otherwise terminal ride must not accept new updates,
     // otherwise misleading notifications go out after the trip is done.
     if !matches!(r.status.as_str(), "confirmed" | "in_progress") {
-        return Err(conflict(u.lang, ErrorKey::TripAlreadyCompleted));
+        return Err(conflict(lang, ErrorKey::TripAlreadyCompleted));
     }
 
     let valid_statuses = ["ready", "delayed_5m", "delayed_10m", "unable_to_join"];
     if !valid_statuses.contains(&req.status.as_str()) {
-        return Err(bad(u.lang, ErrorKey::InvalidStatus));
+        return Err(bad(lang, ErrorKey::InvalidStatus));
     }
 
     let timestamp = now();
@@ -806,7 +819,7 @@ async fn post_readiness(
 
     if req.status == "unable_to_join" {
         if matches!(r.status.as_str(), "confirmed" | "in_progress") {
-            set_status(&st, id, &["confirmed", "in_progress"], "cancelled", u.lang).await?;
+            set_status(st, id, &["confirmed", "in_progress"], "cancelled", lang).await?;
             let reason = unable_reason(req.notes.as_deref());
             sqlx::query("UPDATE rides SET readiness_status='unable_to_join', readiness_updated_at=$1, attention_reason=$2, completed_at=COALESCE(completed_at, $1) WHERE id=$3")
                 .bind(&timestamp)
@@ -814,9 +827,9 @@ async fn post_readiness(
                 .bind(id)
                 .execute(&st.db)
                 .await?;
-            clear_passenger_location(&st, id).await?;
+            clear_passenger_location(st, id).await?;
             if let Some(d) = r.driver_id {
-                clear_location_if_idle(&st, d).await?;
+                clear_location_if_idle(st, d).await?;
                 notify(
                     &st.db,
                     d,
@@ -844,7 +857,7 @@ async fn post_readiness(
             }
             audit(
                 &st.db,
-                Some(u.id),
+                actor,
                 "ride.unable_to_join",
                 "ride",
                 Some(id),
@@ -890,7 +903,7 @@ async fn post_readiness(
         }
         audit(
             &st.db,
-            Some(u.id),
+            actor,
             "ride.delayed",
             "ride",
             Some(id),
@@ -927,7 +940,7 @@ async fn post_readiness(
                 .await;
             }
         }
-        audit(&st.db, Some(u.id), "ride.ready", "ride", Some(id), "").await;
+        audit(&st.db, actor, "ride.ready", "ride", Some(id), "").await;
     }
 
     Ok(Json(json!({"ok": true, "status": req.status})))

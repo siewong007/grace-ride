@@ -7,6 +7,7 @@ pub mod plan;
 pub mod rides;
 pub mod roles;
 pub mod settlements;
+pub mod visitors;
 
 use axum::Router;
 
@@ -23,4 +24,5 @@ pub fn api() -> Router<AppState> {
         .merge(community::router())
         .merge(admin::router())
         .merge(roles::router())
+        .merge(visitors::router())
 }
