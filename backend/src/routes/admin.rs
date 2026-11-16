@@ -512,16 +512,22 @@ fn present<'de, D: serde::Deserializer<'de>>(d: D) -> Result<Option<Option<i64>>
 /// loops, and leave it at most three levels deep.
 async fn check_parent(st: &AppState, lang: Lang, group: i64, parent: Option<i64>) -> AppResult<()> {
     let Some(p) = parent else { return Ok(()) };
-    let special: Option<(i64, i64)> = sqlx::query_as("SELECT is_all, is_visitor FROM groups WHERE id=$1")
-        .bind(p)
-        .fetch_optional(&st.db)
-        .await?;
-    let mine: Option<(i64, i64)> = sqlx::query_as("SELECT is_all, is_visitor FROM groups WHERE id=$1")
-        .bind(group)
-        .fetch_optional(&st.db)
-        .await?;
+    let special: Option<(i64, i64)> =
+        sqlx::query_as("SELECT is_all, is_visitor FROM groups WHERE id=$1")
+            .bind(p)
+            .fetch_optional(&st.db)
+            .await?;
+    let mine: Option<(i64, i64)> =
+        sqlx::query_as("SELECT is_all, is_visitor FROM groups WHERE id=$1")
+            .bind(group)
+            .fetch_optional(&st.db)
+            .await?;
     let plain = |g: Option<(i64, i64)>| g.is_none_or(|(a, v)| a == 0 && v == 0);
-    if special.is_none() || !plain(special) || !plain(mine) || !crate::audience::parent_ok(&st.db, group, p).await? {
+    if special.is_none()
+        || !plain(special)
+        || !plain(mine)
+        || !crate::audience::parent_ok(&st.db, group, p).await?
+    {
         return Err(bad(lang, ErrorKey::InvalidParentGroup));
     }
     Ok(())
@@ -539,13 +545,14 @@ async fn create_group(
     let parent = req.parent_id.flatten();
     // 0 is never a group id: a new group has no children and cannot be its own ancestor.
     check_parent(&st, u.lang, 0, parent).await?;
-    let result =
-        sqlx::query_as("INSERT INTO groups (name, description, parent_id) VALUES ($1,$2,$3) RETURNING id")
-            .bind(req.name.trim())
-            .bind(req.description.unwrap_or_default())
-            .bind(parent)
-            .fetch_one(&st.db)
-            .await;
+    let result = sqlx::query_as(
+        "INSERT INTO groups (name, description, parent_id) VALUES ($1,$2,$3) RETURNING id",
+    )
+    .bind(req.name.trim())
+    .bind(req.description.unwrap_or_default())
+    .bind(parent)
+    .fetch_one(&st.db)
+    .await;
     let (id,): (i64,) = match result {
         Ok(row) => row,
         Err(sqlx::Error::Database(e)) if e.is_unique_violation() => {

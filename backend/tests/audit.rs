@@ -340,6 +340,11 @@ async fn automatic_and_cascading_changes_are_logged() {
         .fetch_one(&st.db)
         .await
         .unwrap();
+    // Members in more than one group say which one they come as.
+    let youth: i64 = sqlx::query_scalar("SELECT id FROM groups WHERE name='青年团契'")
+        .fetch_one(&st.db)
+        .await
+        .unwrap();
     let ev = call(
         &app,
         Method::POST,
@@ -358,15 +363,29 @@ async fn automatic_and_cascading_changes_are_logged() {
         Method::POST,
         &format!("/api/events/{eid}/signup"),
         Some(&member),
-        Some(json!({"need_ride": true})),
+        Some(json!({"need_ride": true, "as_group_id": youth})),
     )
     .await;
     assert_eq!(signup.status, StatusCode::OK, "{}", signup.json);
     assert_eq!(
         logged(&st, "event.signup").await.last().unwrap(),
-        &(Some(uid), Some(eid), "going; needs a ride".to_string())
+        &(
+            Some(uid),
+            Some(eid),
+            "going; as 青年团契; needs a ride".to_string()
+        )
     );
     let mine = new_ride(member.clone(), ride(Some(eid), tomorrow("18:00"))).await;
+    // An event ride needs a "going" signup first.
+    let r = call(
+        &app,
+        Method::POST,
+        &format!("/api/events/{eid}/signup"),
+        Some(&sophie),
+        Some(json!({"need_ride": true})),
+    )
+    .await;
+    assert_eq!(r.status, StatusCode::OK, "{}", r.json);
     let theirs = new_ride(sophie.clone(), ride(Some(eid), tomorrow("18:10"))).await;
 
     // Withdrawing from the event cancels the member's own linked ride.

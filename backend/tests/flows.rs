@@ -1047,13 +1047,38 @@ async fn event_create_signup_and_attendance_branches() {
     )
     .await;
 
+    // A member in two groups must say which one they come as, and only one of theirs.
+    deny(
+        &app,
+        Method::POST,
+        &path("/signup"),
+        Some(&c.member),
+        Some(json!({"need_ride": true})),
+        StatusCode::BAD_REQUEST,
+        "JOIN_AS_REQUIRED",
+    )
+    .await;
+    let visitor_group: i64 = sqlx::query_scalar("SELECT id FROM groups WHERE is_visitor=1")
+        .fetch_one(&st.db)
+        .await
+        .unwrap();
+    deny(
+        &app,
+        Method::POST,
+        &path("/signup"),
+        Some(&c.member),
+        Some(json!({"need_ride": true, "as_group_id": visitor_group})),
+        StatusCode::BAD_REQUEST,
+        "JOIN_AS_NOT_ALLOWED",
+    )
+    .await;
     assert_eq!(
         must(
             &app,
             Method::POST,
             &path("/signup"),
             Some(&c.member),
-            Some(json!({"need_ride": true})),
+            Some(json!({"need_ride": true, "as_group_id": c.youth_group})),
         )
         .await["status"],
         "going"
@@ -3573,6 +3598,17 @@ async fn files_admin_directory_and_plan_branches() {
     assert!(settings["max_live_drivers"].as_i64().unwrap() >= 1);
 
     let event = make_event(&app, &c.admin, &[c.all_group], 0).await;
+    // Event rides need a "going" signup, which records the group each person comes as.
+    for who in [&c.driver, &c.member] {
+        must(
+            &app,
+            Method::POST,
+            &format!("/api/events/{event}/signup"),
+            Some(who),
+            Some(json!({"need_ride": true, "as_group_id": c.youth_group})),
+        )
+        .await;
+    }
     let ride = must(
         &app,
         Method::POST,

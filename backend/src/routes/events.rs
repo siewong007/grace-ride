@@ -224,10 +224,11 @@ async fn get_event(
         .fetch_all(&st.db)
         .await?;
     v["group_ids"] = json!(gids.into_iter().map(|g| g.0).collect::<Vec<_>>());
-    let narrowed: Vec<i64> = sqlx::query_scalar("SELECT group_id FROM event_attribution_groups WHERE event_id=$1")
-        .bind(id)
-        .fetch_all(&st.db)
-        .await?;
+    let narrowed: Vec<i64> =
+        sqlx::query_scalar("SELECT group_id FROM event_attribution_groups WHERE event_id=$1")
+            .bind(id)
+            .fetch_all(&st.db)
+            .await?;
     v["as_group_ids"] = json!(narrowed);
     v["join_as"] = json!(join_choices(&st.db, &u, id)
         .await?
@@ -269,13 +270,19 @@ struct EventIn {
 
 /// Replace an event's audience and its narrowed "joining as" choices.
 async fn save_event_groups(st: &AppState, id: i64, req: &EventIn) -> AppResult<()> {
-    sqlx::query("DELETE FROM event_groups WHERE event_id=$1").bind(id).execute(&st.db).await?;
+    sqlx::query("DELETE FROM event_groups WHERE event_id=$1")
+        .bind(id)
+        .execute(&st.db)
+        .await?;
     sqlx::query("INSERT INTO event_groups (event_id, group_id) SELECT $1, unnest($2::BIGINT[]) ON CONFLICT DO NOTHING")
         .bind(id)
         .bind(&req.group_ids)
         .execute(&st.db)
         .await?;
-    sqlx::query("DELETE FROM event_attribution_groups WHERE event_id=$1").bind(id).execute(&st.db).await?;
+    sqlx::query("DELETE FROM event_attribution_groups WHERE event_id=$1")
+        .bind(id)
+        .execute(&st.db)
+        .await?;
     let narrowed = req.as_group_ids.clone().unwrap_or_default();
     // Only real, non-visitor groups.
     sqlx::query(
@@ -340,7 +347,10 @@ async fn create_event(
     .await?;
     save_event_groups(&st, id, &req).await?;
     // Invite members of the target groups and their sub-groups (相关活动邀请).
-    let members: Vec<(i64,)> = sqlx::query_as(&audience_users_sql("$1")).bind(id).fetch_all(&st.db).await?;
+    let members: Vec<(i64,)> = sqlx::query_as(&audience_users_sql("$1"))
+        .bind(id)
+        .fetch_all(&st.db)
+        .await?;
     for (m,) in members.into_iter().filter(|(m,)| *m != u.id) {
         let body = format!("{} · {}", req.title.trim(), at.replace('T', " "));
         notify(
@@ -547,12 +557,6 @@ async fn signup(
         return Err(bad(u.lang, ErrorKey::DriverRegistrationRequired));
     }
     let choices = join_choices(&st.db, &u, id).await?;
-    let as_group = match req.as_group_id {
-        Some(g) if choices.iter().any(|(c, _)| *c == g) => g,
-        Some(_) => return Err(bad(u.lang, ErrorKey::JoinAsNotAllowed)),
-        None if choices.len() == 1 => choices[0].0,
-        None => return Err(bad(u.lang, ErrorKey::JoinAsRequired)),
-    };
     // Lock the event row while counting seats and inserting the signup. Concurrent
     // signups then queue behind each other and the last seat cannot be handed out twice.
     let mut tx = st.db.begin().await?;
@@ -570,6 +574,14 @@ async fn signup(
     if deadline.as_deref().map(|d| d < n.as_str()).unwrap_or(false) || starts_at < n {
         return Err(bad(u.lang, ErrorKey::SignupClosed));
     }
+    // Which group they come as: checked once the event is known to be open, so a closed
+    // event says so rather than asking for a group.
+    let as_group = match req.as_group_id {
+        Some(g) if choices.iter().any(|(c, _)| *c == g) => g,
+        Some(_) => return Err(bad(u.lang, ErrorKey::JoinAsNotAllowed)),
+        None if choices.len() == 1 => choices[0].0,
+        None => return Err(bad(u.lang, ErrorKey::JoinAsRequired)),
+    };
     let (going,): (i64,) =
         sqlx::query_as("SELECT COUNT(*) FROM event_signups WHERE event_id=$1 AND status='going'")
             .bind(id)
@@ -616,7 +628,11 @@ async fn signup(
         "event",
         Some(id),
         format!(
-            "{status}; as group {as_group}{}{}",
+            "{status}; as {}{}{}",
+            choices
+                .iter()
+                .find(|(c, _)| *c == as_group)
+                .map_or("?", |(_, n)| n.as_str()),
             if req.need_ride.unwrap_or(false) {
                 "; needs a ride"
             } else {
@@ -736,7 +752,18 @@ async fn list_signups(
     if !can_see_signups(&u, e.created_by) {
         return Err(forbidden(u.lang, ErrorKey::OnlyOrganiserCanViewSignups));
     }
-    type SignupRow = (i64, i64, String, String, i64, i64, i64, Option<i64>, Option<String>, Option<String>);
+    type SignupRow = (
+        i64,
+        i64,
+        String,
+        String,
+        i64,
+        i64,
+        i64,
+        Option<i64>,
+        Option<String>,
+        Option<String>,
+    );
     let rows: Vec<SignupRow> = sqlx::query_as(
         "SELECT s.id, s.user_id, u.name, s.status, s.need_ride, s.offer_drive, s.offer_seats, s.attended,
             (SELECT r.status FROM rides r WHERE r.event_id = s.event_id AND r.passenger_id = s.user_id AND r.status != 'cancelled' ORDER BY r.id DESC LIMIT 1),

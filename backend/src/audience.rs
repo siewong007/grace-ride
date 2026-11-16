@@ -81,7 +81,11 @@ pub fn drives_for(u: &CurrentUser, group: Option<i64>) -> bool {
 /// The visitor group is never a member's choice. From those, a member may pick groups they
 /// belong to directly or through a sub-group. If none fits (say, an `is_all` event and a
 /// member in no group yet), the `is_all` group itself is offered so they can still join.
-pub async fn join_choices(db: &PgPool, u: &CurrentUser, event_id: i64) -> Result<Vec<(i64, String)>, sqlx::Error> {
+pub async fn join_choices(
+    db: &PgPool,
+    u: &CurrentUser,
+    event_id: i64,
+) -> Result<Vec<(i64, String)>, sqlx::Error> {
     let rows: Vec<(i64, String, bool)> = sqlx::query_as(
         "WITH RECURSIVE base AS (
              SELECT group_id AS id FROM event_attribution_groups WHERE event_id = $1
@@ -108,10 +112,11 @@ pub async fn join_choices(db: &PgPool, u: &CurrentUser, event_id: i64) -> Result
     .fetch_all(db)
     .await?;
     // Direct groups first: they are the likeliest answer.
-    let direct: Vec<i64> = sqlx::query_scalar("SELECT group_id FROM group_members WHERE user_id = $1")
-        .bind(u.id)
-        .fetch_all(db)
-        .await?;
+    let direct: Vec<i64> =
+        sqlx::query_scalar("SELECT group_id FROM group_members WHERE user_id = $1")
+            .bind(u.id)
+            .fetch_all(db)
+            .await?;
     let mut mine: Vec<(i64, String)> = rows
         .iter()
         .filter(|(id, _, all)| !*all && u.group_scope.contains(id))
@@ -119,7 +124,11 @@ pub async fn join_choices(db: &PgPool, u: &CurrentUser, event_id: i64) -> Result
         .collect();
     mine.sort_by_key(|(id, _)| !direct.contains(id));
     if mine.is_empty() {
-        mine = rows.into_iter().filter(|(_, _, all)| *all).map(|(id, n, _)| (id, n)).collect();
+        mine = rows
+            .into_iter()
+            .filter(|(_, _, all)| *all)
+            .map(|(id, n, _)| (id, n))
+            .collect();
     }
     Ok(mine)
 }

@@ -253,10 +253,11 @@ async fn insert_reference_data(db: &PgPool) -> anyhow::Result<()> {
         .await?;
     }
     sqlx::query("INSERT INTO groups (name, description, is_all, demo_batch) VALUES ('全体会员', '所有获批准的会员', 1, NULL) ON CONFLICT (name) DO NOTHING").execute(db).await?;
-    // Visitors who come with a member join events as this group (visitor passes).
-    sqlx::query("INSERT INTO groups (name, description, is_visitor) VALUES ('访客', '会员带来的访客', 1) ON CONFLICT (name) DO UPDATE SET is_visitor = 1").execute(db).await?;
     sqlx::query("INSERT INTO groups (name, description, demo_batch) VALUES ('青年团契', 'PJ State CMC 青年团契', NULL) ON CONFLICT (name) DO NOTHING").execute(db).await?;
     sqlx::query("INSERT INTO groups (name, description, demo_batch) VALUES ('运动兴趣小组', '羽球、保龄球、皮划艇与散步', NULL) ON CONFLICT (name) DO NOTHING").execute(db).await?;
+    // Visitors who come with a member join events as this group (visitor passes). Created
+    // after the groups above: demo memberships refer to those by id (2 = 青年团契, 3 = 运动兴趣小组).
+    sqlx::query("INSERT INTO groups (name, description, is_visitor) VALUES ('访客', '会员带来的访客', 1) ON CONFLICT (name) DO UPDATE SET is_visitor = 1").execute(db).await?;
 
     // Starter admin workflow guides — reference content, editable in-app by
     // help-centre staff. ON CONFLICT keeps operator edits on re-deploys.

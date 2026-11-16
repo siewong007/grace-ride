@@ -444,7 +444,16 @@ async fn create_ride(
     } else {
         u.name.clone()
     };
-    notify_area_drivers(&st, req.pickup_area_id, as_group, u.id, &at, &rider_label, seats).await?;
+    notify_area_drivers(
+        &st,
+        req.pickup_area_id,
+        as_group,
+        u.id,
+        &at,
+        &rider_label,
+        seats,
+    )
+    .await?;
     Ok(Json(json!({ "id": id })))
 }
 
