@@ -11,10 +11,30 @@
 //! Every SQL check that an event is visible goes through [`visible_events_sql`]; a test
 //! fails if `event_groups` visibility is written out anywhere else.
 
+use std::collections::HashMap;
+
 use sqlx::PgPool;
 
 use crate::auth::CurrentUser;
 use crate::perms::{Act, Page};
+
+/// SQL: the group a ride (alias `r`) is matched on for drivers — the host's group for a
+/// visitor's ride, otherwise the group the passenger joined as. NULL: any driver.
+pub const MATCH_GROUP_SQL: &str = "COALESCE((SELECT vp.host_group_id FROM visitor_passes vp WHERE vp.ride_id = r.id ORDER BY vp.id DESC LIMIT 1), r.as_group_id)";
+
+/// Every member's drive scope (their groups and every group below them), by user id.
+pub async fn drive_scopes(db: &PgPool) -> Result<HashMap<i64, Vec<i64>>, sqlx::Error> {
+    let rows: Vec<(i64, Vec<i64>)> = sqlx::query_as(
+        "WITH RECURSIVE down(user_id, id) AS (
+             SELECT user_id, group_id FROM group_members
+             UNION
+             SELECT d.user_id, g.id FROM groups g JOIN down d ON g.parent_id = d.id
+         ) SELECT user_id, array_agg(DISTINCT id) FROM down GROUP BY user_id",
+    )
+    .fetch_all(db)
+    .await?;
+    Ok(rows.into_iter().collect())
+}
 
 /// The member's (groups + ancestors, groups + descendants). See `CurrentUser`.
 pub async fn group_scopes(db: &PgPool, user_id: i64) -> Result<(Vec<i64>, Vec<i64>), sqlx::Error> {

@@ -13,6 +13,8 @@ export interface PlanRide {
   status: string;
   driver_id: number | null;
   last: { driver_id: number; driver_name: string; times: number; at: string } | null;
+  /** The group drivers are matched on (the host's for a visitor). None: any driver. */
+  match_group_id?: number | null;
 }
 
 export interface PlanDriver {
@@ -23,8 +25,14 @@ export interface PlanDriver {
   other_seats: number;
   other_rides: number;
   area_ids: number[];
+  /** Groups this driver may drive for: their groups and every group below them. */
+  drive_group_ids?: number[];
   vehicle: { model: string | null; plate: string | null; seats: number | null };
 }
+
+/** May this driver take this rider without an admin override? (`audience::drives_for`) */
+export const inGroup = (d: PlanDriver, r: PlanRide): boolean =>
+  r.match_group_id == null || (d.drive_group_ids ?? []).includes(r.match_group_id);
 
 export interface Plan {
   event: { id: number; title: string; starts_at: string; location: string; status: string };

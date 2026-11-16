@@ -245,6 +245,42 @@ async fn sub_groups_drivers_and_masked_titles() {
     )
     .await;
     assert_eq!(own.json["event"]["title"], "青年营");
+
+    // The planning board says which group each rider is matched on and whom each driver
+    // may drive for, so staff can see who is outside the group.
+    let board = call(
+        &app,
+        Method::GET,
+        &format!("/api/admin/events/{youth_ev}/plan"),
+        Some(&admin),
+        None,
+    )
+    .await;
+    assert_eq!(board.status, StatusCode::OK, "{}", board.json);
+    let row = board.json["rides"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|r| r["id"] == ride)
+        .unwrap();
+    assert_eq!(row["match_group_id"], youth);
+    let drive_groups = |id: i64| {
+        board.json["drivers"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|d| d["id"] == id)
+            .map(|d| d["drive_group_ids"].clone())
+    };
+    assert!(drive_groups(driver)
+        .unwrap()
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|g| g == youth));
+    if let Some(g) = drive_groups(driver2) {
+        assert!(g.as_array().unwrap().is_empty(), "{g}");
+    }
 }
 
 /// Every "who can see this event" check must go through `audience::visible_events_sql`.

@@ -31,6 +31,7 @@ import {
   Plan,
   PlanRide,
   Reason,
+  inGroup,
   savedDraft,
   servesArea,
 } from './planLogic';
@@ -349,6 +350,7 @@ function PassengerCard({
         )}
         {r.last && <Pill tone="neutral" icon={<History size={14} />}>{t('last', { name: r.last.driver_name, times: r.last.times })}</Pill>}
         {driver && !servesArea(driver, r) && <Pill tone="warning">{t('outsideArea')}</Pill>}
+        {driver && !inGroup(driver, r) && <Pill tone="warning">{t('outsideGroup')}</Pill>}
         {noRoom && <Pill tone="danger">{t('noRoom')}</Pill>}
       </div>
       {reason && (
@@ -379,16 +381,24 @@ function PassengerCard({
         onChange={(e) => onAssign(e.target.value ? Number(e.target.value) : null)}
       >
         <option value="">{t('noDriver')}</option>
-        {plan.drivers
-          .filter((d) => d.id !== r.passenger.id)
-          .map((d) => {
+        {/* Drivers from the rider's group first; anyone else only by an admin's choice (audited). */}
+        {[true, false].map((inside) => {
+          const list = plan.drivers.filter((d) => d.id !== r.passenger.id && inGroup(d, r) === inside);
+          if (!list.length) return null;
+          const options = list.map((d) => {
             const l = driverLoad(plan, draft, d);
             return (
               <option key={d.id} value={d.id}>
                 {t('driverOption', { name: d.name, used: l.seats, cap: d.cap })}
               </option>
             );
-          })}
+          });
+          return inside && r.match_group_id == null ? options : (
+            <optgroup key={String(inside)} label={inside ? t('inGroup') : t('outsideGroupAdmin')}>
+              {options}
+            </optgroup>
+          );
+        })}
       </select>
     </article>
   );

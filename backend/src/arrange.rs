@@ -42,6 +42,9 @@ pub struct Rider {
     pub needs_assistance: bool,
     /// Previous driver and how many rides they've shared.
     pub last: Option<(i64, i64)>,
+    /// The group an event rider is matched on (`audience::MATCH_GROUP_SQL`); only drivers
+    /// who serve it are suggested. None: any driver.
+    pub group: Option<i64>,
 }
 
 #[derive(Clone, Debug)]
@@ -53,6 +56,8 @@ pub struct Car {
     /// Bookings the driver already has elsewhere around the same time.
     pub other_rides: i64,
     pub area_ids: Vec<i64>,
+    /// The groups this driver may drive for: their groups and every group below them.
+    pub drive_groups: Vec<i64>,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -92,6 +97,10 @@ pub fn arrange(riders: &[Rider], cars: &[Car], fixed: &HashMap<i64, i64>) -> Arr
         let car = &cars[c];
         let r = &riders[i];
         if r.passenger_id == car.driver_id {
+            return false;
+        }
+        // Suggestions stay inside the rider's group; only an admin's manual pick goes outside.
+        if r.group.is_some_and(|grp| !car.drive_groups.contains(&grp)) {
             return false;
         }
         let g = &groups[c];
@@ -308,6 +317,7 @@ mod tests {
             point: at.map(|(lat, lng)| LatLng { lat, lng }),
             needs_assistance: false,
             last: None,
+            group: None,
         }
     }
     fn car(id: i64, seats: i64, areas: &[i64]) -> Car {
@@ -317,7 +327,29 @@ mod tests {
             carpool: true,
             other_rides: 0,
             area_ids: areas.to_vec(),
+            drive_groups: Vec::new(),
         }
+    }
+
+    #[test]
+    fn event_riders_are_suggested_only_drivers_from_their_group() {
+        let youth = Rider {
+            group: Some(7),
+            ..rider(1, 1, None)
+        };
+        let outsider = car(10, 4, &[1]);
+        let insider = Car {
+            drive_groups: vec![7],
+            ..car(11, 4, &[2])
+        };
+        let a = arrange(
+            std::slice::from_ref(&youth),
+            std::slice::from_ref(&outsider),
+            &HashMap::new(),
+        );
+        assert_eq!(driver_of(&a, 1), None, "no in-group driver: left for staff");
+        let a = arrange(&[youth], &[outsider, insider], &HashMap::new());
+        assert_eq!(driver_of(&a, 1), Some(11));
     }
     fn driver_of(a: &Arrangement, ride: i64) -> Option<i64> {
         a.placed

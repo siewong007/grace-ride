@@ -68,6 +68,8 @@ struct PlanRide {
     status: String,
     driver_id: Option<i64>,
     trip_id: Option<i64>,
+    /// The group drivers are matched on (`audience::MATCH_GROUP_SQL`).
+    match_group_id: Option<i64>,
 }
 
 #[derive(sqlx::FromRow)]
@@ -104,16 +106,17 @@ async fn load_event(st: &AppState, u: &CurrentUser, id: i64) -> AppResult<EventR
 }
 
 async fn plan_rides(st: &AppState, event: i64) -> AppResult<Vec<PlanRide>> {
-    Ok(sqlx::query_as(
+    Ok(sqlx::query_as(&format!(
         "SELECT r.id, r.passenger_id,
                 CASE WHEN r.is_proxy = 1 AND r.rider_name != '' THEN r.rider_name || ' (' || p.name || ' 代订)' ELSE p.name END AS p_name,
                 r.seats, r.pickup_area_id AS area_id,
                 a.name AS area_name, r.pickup_at, r.pickup_address, r.assistance, r.notes,
-                r.status, r.driver_id, r.trip_id
+                r.status, r.driver_id, r.trip_id, {} AS match_group_id
          FROM rides r JOIN users p ON p.id = r.passenger_id JOIN areas a ON a.id = r.pickup_area_id
          WHERE r.event_id = $1 AND r.status = ANY($2)
          ORDER BY a.name, r.pickup_at, p.name",
-    )
+        crate::audience::MATCH_GROUP_SQL
+    ))
     .bind(event)
     .bind(&PLANNABLE[..])
     .fetch_all(&st.db)
@@ -193,6 +196,8 @@ struct Board {
     driver_areas: HashMap<i64, Vec<i64>>,
     /// Passenger → (previous driver, name, rides together, last ride time).
     last: HashMap<i64, (i64, String, i64, String)>,
+    /// Driver → the groups they may drive for (`audience::drive_scopes`).
+    scopes: HashMap<i64, Vec<i64>>,
 }
 
 async fn load_board(st: &AppState, u: &CurrentUser, id: i64) -> AppResult<Board> {
@@ -230,6 +235,7 @@ async fn load_board(st: &AppState, u: &CurrentUser, id: i64) -> AppResult<Board>
             last.insert(p, (d, name, times, at));
         }
     }
+    let scopes = crate::audience::drive_scopes(&st.db).await?;
     Ok(Board {
         ev,
         rides,
@@ -237,6 +243,7 @@ async fn load_board(st: &AppState, u: &CurrentUser, id: i64) -> AppResult<Board>
         other,
         driver_areas,
         last,
+        scopes,
     })
 }
 
@@ -253,6 +260,7 @@ async fn get_plan(
         other,
         driver_areas,
         last,
+        scopes,
     } = load_board(&st, &u, id).await?;
 
     Ok(Json(json!({
@@ -268,6 +276,7 @@ async fn get_plan(
             "notes": r.notes,
             "status": r.status,
             "driver_id": r.driver_id,
+            "match_group_id": r.match_group_id,
             "last": last.get(&r.passenger_id).map(|(d, name, times, at)| json!({
                 "driver_id": d, "driver_name": name, "times": times, "at": at,
             })),
@@ -282,6 +291,7 @@ async fn get_plan(
                 "other_seats": load,
                 "other_rides": bookings,
                 "area_ids": driver_areas.get(&d.id).cloned().unwrap_or_default(),
+                "drive_group_ids": scopes.get(&d.id).cloned().unwrap_or_default(),
                 "vehicle": { "model": d.v_model, "plate": d.v_plate, "seats": d.v_seats },
             })
         }).collect::<Vec<_>>(),
@@ -341,6 +351,7 @@ async fn arrange_plan(
             point: points.get(&r.pickup_address).copied(),
             needs_assistance: !r.assistance.is_empty(),
             last: b.last.get(&r.passenger_id).map(|(d, _, t, _)| (*d, *t)),
+            group: r.match_group_id,
         })
         .collect();
     let cars: Vec<Car> = b
@@ -354,6 +365,7 @@ async fn arrange_plan(
                 carpool: d.carpool_enabled == 1,
                 other_rides: o_rides,
                 area_ids: b.driver_areas.get(&d.id).cloned().unwrap_or_default(),
+                drive_groups: b.scopes.get(&d.id).cloned().unwrap_or_default(),
             }
         })
         .collect();
@@ -428,6 +440,7 @@ async fn save_plan(
 
     // Validate every new driver and the seats each driver ends up with.
     let drivers = plan_drivers(&st).await?;
+    let scopes = crate::audience::drive_scopes(&st.db).await?;
     let driver: HashMap<i64, &PlanDriver> = drivers.iter().map(|d| (d.id, d)).collect();
     let final_driver = |r: &PlanRide| match changes.get(&r.id) {
         Some(c) => c.driver_id,
@@ -546,6 +559,20 @@ async fn save_plan(
             format!("event {id}: driver {:?} → {:?}", r.driver_id, c.driver_id),
         )
         .await;
+        // Staff may go outside the rider's group; that is recorded, as on a reassign.
+        if let (Some(d), Some(g)) = (c.driver_id, r.match_group_id) {
+            if !scopes.get(&d).is_some_and(|s| s.contains(&g)) {
+                audit(
+                    &st.db,
+                    Some(u.id),
+                    "ride.assign_outside_group",
+                    "ride",
+                    Some(r.id),
+                    format!("driver {d} is outside group {g}"),
+                )
+                .await;
+            }
+        }
     }
     for (d, n) in &gained {
         notify(
