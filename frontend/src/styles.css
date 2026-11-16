@@ -381,10 +381,11 @@ button, input, select, textarea { font: inherit; color: inherit; }
 @media (max-width: 767px) {
   .page-head { align-items: flex-start; margin-bottom: 0; gap: var(--space-2); }
   .page-head h1 { font-size: var(--fs-xl); line-height: 1.25; }
+  /* Subtitles carry the route, disclaimers and context: allow a few lines before clamping. */
   .page-head p {
     margin-top: 2px;
     display: -webkit-box;
-    -webkit-line-clamp: 1;
+    -webkit-line-clamp: 3;
     -webkit-box-orient: vertical;
     overflow: hidden;
   }
@@ -502,7 +503,9 @@ button, input, select, textarea { font: inherit; color: inherit; }
 .stat, .card.link.stat { display: flex; flex-direction: column; gap: 2px; }
 @media (max-width: 767px) { .grid.cols-4 { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: var(--space-3); } }
 @media (max-width: 767px) { .stat .num { font-size: var(--fs-2xl); } .card.stat { padding: var(--space-3); } }
-.stat .num { font-size: var(--fs-3xl); font-weight: 700; line-height: 1.1; font-variant-numeric: tabular-nums; }
+.stat .num { font-size: var(--fs-3xl); font-weight: 700; line-height: 1.1; font-variant-numeric: tabular-nums; overflow-wrap: anywhere; }
+/* "RM 25.00" reads as one value: never break after the currency. */
+.stat .num .nowrap, .num-nowrap { white-space: nowrap; }
 .stat .label { color: var(--muted); font-size: var(--fs-sm); font-weight: 600; }
 /* Several key numbers in one framed block, divided by hairlines (admin dashboard). */
 .stat-strip { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 1px; background: var(--border); border: 1px solid var(--border); border-radius: var(--radius); overflow: hidden; }
@@ -1164,8 +1167,43 @@ main:focus { outline: none; }
 .section-head { display: flex; align-items: baseline; justify-content: space-between; gap: var(--space-3); margin-bottom: var(--space-1); }
 .section-head h2 { font-size: var(--fs-xl); }
 .home-section > .list { border-top: 1px solid var(--border); }
-.home-announcement { align-items: flex-start; }
-.home-next { display: flex; flex-direction: column; gap: var(--space-2); }
+/* "A driver offered to drive you" — the whole notice is the link to answer. */
+.home-reply { padding: 0; }
+.home-reply .notice-icon { margin: var(--space-3) 0 0 var(--space-4); }
+.home-reply-link { display: flex; align-items: center; gap: var(--space-3); padding: var(--space-3) var(--space-4) var(--space-3) 0; color: inherit; text-decoration: none; min-height: 44px; }
+.home-reply-link > .grow { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.home-reply-cta { display: inline-flex; align-items: center; gap: 2px; color: var(--primary); font-weight: 600; }
+.home-reply-link:hover .home-reply-cta { text-decoration: underline; }
+/* "Needs you": one row per thing only the member can do, each ending in a single verb. */
+.home-need { min-height: 44px; }
+.home-need > .grow { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.home-need-cta { display: inline-flex; align-items: center; gap: 2px; color: var(--primary); font-weight: 600; }
+.home-need:hover .home-need-cta { text-decoration: underline; }
+/* Nothing booked: the empty card holds the screen's only blue button. */
+.home-empty { display: flex; flex-direction: column; gap: var(--space-3); }
+.home-empty > h2 { font-size: var(--fs-xl); }
+/* Announcements: one line that opens to show the latest few. */
+.home-announce { border-top: 1px solid var(--border); border-bottom: 1px solid var(--border); }
+.home-announce > summary { display: flex; align-items: center; gap: var(--space-2); min-height: 44px; padding: var(--space-2) 0; cursor: pointer; list-style: none; }
+.home-announce > summary::-webkit-details-marker { display: none; }
+.home-announce > summary::after { content: '›'; color: var(--muted); transition: transform .15s; }
+.home-announce[open] > summary::after { transform: rotate(90deg); }
+.home-announce-title { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.home-announce[open] .home-announce-title { white-space: normal; }
+.home-announce > .stack { padding: var(--space-2) 0 var(--space-4); }
+.home-next { position: relative; display: flex; flex-direction: column; gap: var(--space-2); }
+/* Pickup day: outlined so it reads as "this is happening now". */
+.home-next--today { border-color: var(--primary); box-shadow: 0 0 0 1px var(--primary); }
+/* The time is a link stretched over the whole card; controls sit above it. */
+.home-next-link { color: inherit; text-decoration: none; }
+.home-next-link::after { content: ''; position: absolute; inset: 0; border-radius: inherit; }
+.home-next-link:focus-visible { outline: none; }
+.home-next-link:focus-visible::after { outline: 2px solid var(--primary); outline-offset: 2px; }
+.home-next:hover .home-next-link { text-decoration: underline; }
+.home-next-above { position: relative; z-index: 1; }
+.home-ready-row { display: grid; grid-template-columns: 1fr 1fr; gap: var(--space-2); }
+.home-ready-row > .btn { min-width: 0; white-space: normal; }
+.home-cant { align-self: flex-start; }
 .home-next-time { font-size: var(--fs-2xl); font-weight: 700; line-height: 1.25; font-variant-numeric: tabular-nums; }
 .home-next-route { font-size: var(--fs-lg); }
 .home-next-driver { gap: var(--space-3); padding: var(--space-3) 0; margin: var(--space-1) 0 var(--space-2); border-top: 1px solid var(--border); border-bottom: 1px solid var(--border); }
@@ -1359,6 +1397,7 @@ main:focus { outline: none; }
 }
 
 /* Sticky action bar on phones in RideDetail */
+.ride-cancel-row { display: flex; justify-content: center; }
 .ride-detail-sticky-bar {
   display: none;
 }
@@ -1396,6 +1435,8 @@ main:focus { outline: none; }
 .event-seats-meter { display: flex; flex-direction: column; gap: var(--space-1); }
 .min-w-0 { min-width: 0; }
 .ellipsis { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* Up to two lines, then an ellipsis: titles and places that must stay readable on phones. */
+.clamp-2 { display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; overflow-wrap: anywhere; }
 
 /* Event Detail */
 .event-detail-hero {
@@ -2245,6 +2286,11 @@ main:focus { outline: none; }
 .help-detail-layout.is-pane > * { width: 100%; max-width: none; }
 .help-row-status { margin-top: var(--space-1); }
 .segmented-item { white-space: nowrap; }
+/* Two long choices (e.g. "Book for family / cell member") must fit a 320px phone. */
+@media (max-width: 479px) {
+  .segmented-control.wrap-phone { min-width: 0; max-width: 100%; }
+  .segmented-control.wrap-phone .segmented-item { white-space: normal; text-align: center; min-width: 0; line-height: 1.3; }
+}
 .help-turn-bar {
   padding: var(--space-2) var(--space-3);
   background: var(--surface-2);

@@ -686,6 +686,17 @@ struct ReadinessReq {
     notes: Option<String>,
 }
 
+/// The passenger's optional reason for missing a pickup: trimmed, at most
+/// `UNABLE_REASON_MAX` characters, and the standard wording when left blank. The driver
+/// and transport staff read it on the ride (`attention_reason`).
+const UNABLE_REASON_MAX: usize = 300;
+fn unable_reason(notes: Option<&str>) -> String {
+    match notes.map(str::trim).filter(|s| !s.is_empty()) {
+        Some(s) => s.chars().take(UNABLE_REASON_MAX).collect(),
+        None => "乘客行前告知无法出席".into(),
+    }
+}
+
 async fn post_readiness(
     State(st): State<AppState>,
     u: CurrentUser,
@@ -721,10 +732,7 @@ async fn post_readiness(
     if req.status == "unable_to_join" {
         if matches!(r.status.as_str(), "confirmed" | "in_progress") {
             set_status(&st, id, &["confirmed", "in_progress"], "cancelled", u.lang).await?;
-            let reason = req
-                .notes
-                .clone()
-                .unwrap_or_else(|| "乘客行前告知无法出席".into());
+            let reason = unable_reason(req.notes.as_deref());
             sqlx::query("UPDATE rides SET readiness_status='unable_to_join', readiness_updated_at=$1, attention_reason=$2, completed_at=COALESCE(completed_at, $1) WHERE id=$3")
                 .bind(&timestamp)
                 .bind(format!("乘客无法出席：{reason}"))
@@ -2683,4 +2691,22 @@ async fn delete_proxy_rider(
         return Err(not_found(u.lang));
     }
     Ok(Json(json!({ "ok": true })))
+}
+
+#[cfg(test)]
+mod unable_reason_tests {
+    use super::{unable_reason, UNABLE_REASON_MAX};
+
+    #[test]
+    fn blank_reason_falls_back_to_standard_wording() {
+        assert_eq!(unable_reason(None), "乘客行前告知无法出席");
+        assert_eq!(unable_reason(Some("   ")), "乘客行前告知无法出席");
+    }
+
+    #[test]
+    fn reason_is_trimmed_and_capped() {
+        assert_eq!(unable_reason(Some("  fever  ")), "fever");
+        let long = "a".repeat(UNABLE_REASON_MAX + 50);
+        assert_eq!(unable_reason(Some(&long)).chars().count(), UNABLE_REASON_MAX);
+    }
 }

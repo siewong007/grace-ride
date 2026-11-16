@@ -1,5 +1,7 @@
 export default {
   rideStatus: { pending_driver: 'Awaiting driver', pending_passenger: 'Awaiting passenger', pending_approval: 'Pending approval', pending_driver_confirm: 'Awaiting new driver', confirmed: 'Confirmed', in_progress: 'In progress', completed: 'Completed', cancelled: 'Cancelled', no_show: 'No-show', alt_transport: 'Alternative transport approved' },
+  // Wording for the passenger's own ride.
+  rideStatusMine: { pending_passenger: 'Your reply needed' },
   eventKind: { badminton: 'Badminton', bowling: 'Bowling', kayak: 'Kayak', walk: 'Park walk', other: 'Fellowship event' },
   shareStatus: { unpaid: 'Unpaid', pending: 'Awaiting check', confirmed: 'Confirmed', needs_info: 'Info needed' },
   reimbStatus: { pending: 'Pending approval', returned: 'Returned for info', rejected: 'Not approved', approved: 'Approved · Awaiting payment', paid: 'Paid' },
@@ -18,7 +20,8 @@ export default {
   minutesAgo: '{n} min ago',
   hoursAgo: '{count} hours ago',
   hoursAgo_one: '{count} hour ago',
-  monthDay: '{m}/{d}',
+  dayDate: '{wd} {d} {mon}',
+  month: ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'],
   meters: '{n} m',
   km: '{n} km',
   minutes: '{n} min',

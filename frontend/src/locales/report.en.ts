@@ -16,6 +16,8 @@ export default {
   earned: 'Earned ✓',
   rule: 'Rule',
   monthLabel: 'Month',
+  rangeLabel: 'Period',
+  typeLabel: 'Ride type',
   rangeMonthly: 'Monthly',
   rangeQuarterly: 'Quarterly',
   rangeYearly: 'Yearly',

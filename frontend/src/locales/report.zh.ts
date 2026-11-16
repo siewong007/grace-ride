@@ -16,6 +16,8 @@ export default {
   earned: '已获得 ✓',
   rule: '规则',
   monthLabel: '月份',
+  rangeLabel: '时段',
+  typeLabel: '行程类型',
   rangeMonthly: '按月',
   rangeQuarterly: '按季度',
   rangeYearly: '按年',

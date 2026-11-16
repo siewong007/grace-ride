@@ -1030,6 +1030,8 @@ async fn ride_readiness_and_delay_workflow() {
     .await;
     assert_eq!(ride.json["status"], "cancelled");
     assert_eq!(ride.json["readiness_status"], "unable_to_join");
+    // The optional reason reaches the ride for the driver and transport team.
+    assert!(ride.json["attention_reason"].as_str().unwrap().contains("woke up with fever"));
 
     // 6. User profile readiness preference
     let res = call(

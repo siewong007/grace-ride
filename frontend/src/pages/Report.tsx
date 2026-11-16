@@ -14,6 +14,7 @@ import {
 } from '../components/ui';
 import { EVENT_KIND, fmtDateTime, rm, useFormatT } from '../format';
 import { useTranslation } from 'react-i18next';
+import { useAuth } from '../auth';
 import jsPDF from 'jspdf';
 
 interface Badge {
@@ -48,6 +49,7 @@ export default function Report() {
   const { t, i18n } = useTranslation('report');
   const ft = useFormatT();
   const lang = i18n.language;
+  const { can } = useAuth();
   const now = new Date();
   const [month, setMonth] = useState(
     `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`,
@@ -59,6 +61,9 @@ export default function Report() {
   const { data: r, error } = useApi<MonthReport>(
     `/reports/monthly?${params.toString()}`,
   );
+  // Driving figures mean nothing to a member who has never driven: show them to drivers only.
+  // A chosen ride type keeps the selector, so a former driver can switch back to "all".
+  const drives = can('drive') || type !== 'all' || (r?.rides_driven ?? 0) > 0;
 
   const periodLabel = () => {
     const start = new Date(r?.period_start ?? `${month}-01`);
@@ -227,22 +232,24 @@ export default function Report() {
                 className="input"
                 value={range}
                 onChange={(e) => setRange(e.target.value as any)}
-                aria-label="range"
+                aria-label={t('rangeLabel')}
               >
                 <option value="monthly">{t('rangeMonthly')}</option>
                 <option value="quarterly">{t('rangeQuarterly')}</option>
                 <option value="yearly">{t('rangeYearly')}</option>
               </select>
-              <select
-                className="input"
-                value={type}
-                onChange={(e) => setType(e.target.value as any)}
-                aria-label="type"
-              >
-                <option value="all">{t('typeAll')}</option>
-                <option value="driver">{t('typeDriver')}</option>
-                <option value="passenger">{t('typePassenger')}</option>
-              </select>
+              {drives && (
+                <select
+                  className="input"
+                  value={type}
+                  onChange={(e) => setType(e.target.value as any)}
+                  aria-label={t('typeLabel')}
+                >
+                  <option value="all">{t('typeAll')}</option>
+                  <option value="driver">{t('typeDriver')}</option>
+                  <option value="passenger">{t('typePassenger')}</option>
+                </select>
+              )}
               <Button
                 variant="ghost"
                 size="sm"
@@ -278,11 +285,13 @@ export default function Report() {
                 value={r.events_attended}
                 icon={<Calendar size={20} />}
               />
-              <Stat
-                label={t('driven')}
-                value={r.rides_driven}
-                icon={<CarFront size={20} />}
-              />
+              {drives && (
+                <Stat
+                  label={t('driven')}
+                  value={r.rides_driven}
+                  icon={<CarFront size={20} />}
+                />
+              )}
               <Stat
                 label={t('received')}
                 value={r.rides_received}
@@ -290,10 +299,10 @@ export default function Report() {
               />
               <Stat
                 label={t('costs')}
-                value={rm(r.costs_paid_cents)}
+                value={<span className="nowrap">{rm(r.costs_paid_cents)}</span>}
                 icon={<DollarSign size={20} />}
               />
-              {type !== 'passenger' && (
+              {drives && type !== 'passenger' && (
                 <>
                   <Stat
                     label={t('distance')}
@@ -302,7 +311,7 @@ export default function Report() {
                   />
                   <Stat
                     label={t('reimbursement')}
-                    value={rm(r.reimbursement_cents)}
+                    value={<span className="nowrap">{rm(r.reimbursement_cents)}</span>}
                     icon={<DollarSign size={20} />}
                   />
                 </>

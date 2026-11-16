@@ -206,7 +206,7 @@ export default function RideNew() {
           {/* Section 0: Who is this ride for? */}
           <section className="form-section stack">
             <h3>{t('riderTypeSection')}</h3>
-            <div className="segmented-control" role="tablist">
+            <div className="segmented-control wrap-phone" role="tablist">
               <button
                 type="button"
                 className={`segmented-item ${!isProxy ? 'active' : ''}`}

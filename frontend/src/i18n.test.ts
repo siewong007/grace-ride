@@ -30,7 +30,8 @@ describe('placeholders', () => {
     expect(fmtAgo(local(new Date()))).toBe('Just now');
     expect(fmtAgo(local(new Date(Date.now() - 5 * 60_000)))).toBe('5 min ago');
     const far = new Date(2026, 2, 7, 9, 0);
-    expect(fmtDay(local(far))).toMatch(/^3\/7 /);
+    // Day before month in English: "Sat 7 Mar".
+    expect(fmtDay(local(far))).toBe('Sat 7 Mar');
   });
 
   it('puts am/pm after the time in English and before it in Chinese', async () => {

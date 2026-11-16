@@ -45,6 +45,12 @@ export const RIDE_STATUS: Record<string, StatusMap> = {
   alt_transport: { label: 'format:rideStatus.alt_transport', tone: 'blue' },
 };
 
+/** The same statuses worded for the passenger reading about their own ride. */
+export const RIDE_STATUS_PASSENGER: Record<string, StatusMap> = {
+  ...RIDE_STATUS,
+  pending_passenger: { label: 'format:rideStatusMine.pending_passenger', tone: 'amber' },
+};
+
 export const RIDE_FLOW = ['pending_driver', 'pending_passenger', 'pending_approval', 'completed'];
 
 export const EVENT_KIND: Record<string, { label: string; emoji: string }> = {
@@ -134,7 +140,12 @@ export function fmtDay(s: string, tt?: FormatT) {
   const t = tt ?? globalT;
   if (same(d, today)) return `${t('format:today')} ${t(WEEKDAY[d.getDay()])}`;
   if (same(d, tomorrow)) return `${t('format:tomorrow')} ${t(WEEKDAY[d.getDay()])}`;
-  return `${t('format:monthDay', { m: d.getMonth() + 1, d: d.getDate() })} ${t(WEEKDAY[d.getDay()])}`;
+  // English reads "Sun 22 Nov" (day before month, as in Malaysia); Chinese puts the month first.
+  return t('format:dayDate', {
+    wd: t(WEEKDAY[d.getDay()]),
+    d: d.getDate(),
+    mon: t(`format:month.${d.getMonth()}`),
+  });
 }
 
 export const fmtDateTime = (s: string, t?: FormatT) => `${fmtDay(s, t)} · ${fmtTime(s, t)}`;

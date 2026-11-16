@@ -1,6 +1,6 @@
 import { Link } from 'react-router-dom';
 import { AlertTriangle, Lock } from 'lucide-react';
-import { fmtDay, fmtTime, RIDE_STATUS, useFormatT } from '../format';
+import { fmtDay, fmtTime, RIDE_STATUS, RIDE_STATUS_PASSENGER, useFormatT } from '../format';
 import { StatusPill } from './ui';
 import { useTranslation } from 'react-i18next';
 
@@ -94,7 +94,7 @@ export default function RideCard({
       </div>
 
       <div className="ride-card-side">
-        <StatusPill map={RIDE_STATUS} status={ride.status} />
+        <StatusPill map={perspective === 'passenger' && ride.viewer?.is_passenger ? RIDE_STATUS_PASSENGER : RIDE_STATUS} status={ride.status} />
         {person && <span className="ride-card-person muted small">{person}</span>}
       </div>
     </Link>

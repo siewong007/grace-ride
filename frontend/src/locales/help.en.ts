@@ -66,7 +66,7 @@ export default {
   guideCancel: 'Cancel',
 
   // Redesign additions
-  searchPlaceholder: 'Search guides and your requests…',
+  searchPlaceholder: 'Search guides & requests',
   searchResults: 'Search results',
   searchResultsCount: '{count} results found',
   searchResultsCount_one: '{count} result found',

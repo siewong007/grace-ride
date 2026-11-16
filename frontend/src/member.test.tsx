@@ -1,5 +1,7 @@
 import { beforeAll, describe, expect, it, vi } from 'vitest';
 import { render, screen } from '@testing-library/react';
+import userEvent from '@testing-library/user-event';
+import { post } from './api';
 import { MemoryRouter, Route, Routes } from 'react-router-dom';
 import i18n from './i18n';
 import Events from './pages/Events';
@@ -10,6 +12,7 @@ import { ReimbursementDetail } from './pages/Reimbursements';
 import { HelpDetail } from './pages/Help';
 import Notifications from './pages/Notifications';
 import Report from './pages/Report';
+import Home from './pages/Home';
 
 beforeAll(async () => {
   await i18n.changeLanguage('en');
@@ -200,6 +203,16 @@ const mockApiMap: Record<string, unknown> = {
   '/events/10': mockEvent,
   '/events/10/signups': mockSignups,
   '/me/shares': [mockShare],
+  '/rides': [
+    {
+      id: 44, status: 'pending_passenger', pickup_at: '2026-12-06T09:30:00', destination: 'Grace Church',
+      area: { id: 1, name: 'PJ' }, pickup_address: null, seats: 1, assistance: '', notes: '', event: null, trip_id: null,
+      passenger: { id: 2, name: 'Grace Member', phone: null },
+      driver: { id: 3, name: 'Brother Silas', phone: null, vehicle: null },
+      needs_attention: false, attention_reason: '', started_at: null, picked_up_at: null, completed_at: null,
+      updated_at: '2026-11-19T10:00:00', viewer: { is_passenger: true, is_driver: false, is_staff: false },
+    },
+  ],
   '/settlements': [mockSettlement],
   '/settlements/20': mockSettlement,
   '/settlements/20/revisions': [],
@@ -343,5 +356,60 @@ describe('Report page', () => {
 
     expect(screen.getByLabelText(/month/i)).toBeInTheDocument();
     expect(screen.getByText('Active Participant')).toBeInTheDocument();
+  });
+});
+
+describe('Home page', () => {
+  const renderHome = () =>
+    render(
+      <MemoryRouter>
+        <Home />
+      </MemoryRouter>
+    );
+
+  it('lists unpaid shares under "Needs you", linking to My costs where they are paid', () => {
+    renderHome();
+    expect(screen.getByRole('heading', { name: /needs you/i })).toBeInTheDocument();
+    // Members cannot open the bills list, and a share id is not a bill id.
+    expect(screen.getByRole('link', { name: /badminton court share/i })).toHaveAttribute('href', '/costs');
+    expect(screen.getByRole('link', { name: /badminton court share/i })).toHaveTextContent(/pay/i);
+  });
+
+  it('asks the member to answer a driver who offered to drive them', () => {
+    renderHome();
+    expect(screen.getByRole('link', { name: /brother silas offered to drive you/i })).toHaveAttribute('href', '/rides/44');
+  });
+
+  it('shows events the member is going to under "Coming up"', () => {
+    mockApiMap['/events'] = [mockEvent, { ...mockEvent, id: 11, title: 'Choir Practice', my_signup: null }];
+    try {
+      renderHome();
+      expect(screen.getByRole('heading', { name: /coming up/i })).toBeInTheDocument();
+      expect(screen.getByRole('link', { name: /badminton night/i })).toHaveAttribute('href', '/events/10');
+      // Events they have not joined stay on the Events tab.
+      expect(screen.queryByText('Choir Practice')).not.toBeInTheDocument();
+    } finally {
+      delete mockApiMap['/events'];
+    }
+  });
+
+  it('on pickup day, lets the passenger say they cannot make it, with an optional reason', async () => {
+    const saved = mockApiMap['/rides'];
+    const ride = (saved as Record<string, unknown>[])[0];
+    const now = new Date();
+    const today = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
+    mockApiMap['/rides'] = [{ ...ride, id: 45, status: 'confirmed', pickup_at: `${today}T23:30:00`, readiness_status: 'unconfirmed' }];
+    try {
+      const user = userEvent.setup();
+      renderHome();
+      expect(screen.getByRole('button', { name: /i’m ready/i })).toBeInTheDocument();
+      expect(screen.getByRole('button', { name: /running late/i })).toBeInTheDocument();
+      await user.click(screen.getByRole('button', { name: /can’t make it today/i }));
+      await user.type(screen.getByLabelText(/reason/i), '  Feeling unwell  ');
+      await user.click(screen.getByRole('button', { name: /i can't make it/i }));
+      expect(post).toHaveBeenCalledWith('/rides/45/readiness', { status: 'unable_to_join', notes: 'Feeling unwell' });
+    } finally {
+      mockApiMap['/rides'] = saved;
+    }
   });
 });

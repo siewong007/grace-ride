@@ -155,7 +155,7 @@ export default function Notifications() {
                         </div>
                         <div className="grow min-w-0">
                           <div className={`ellipsis ${n.read ? '' : 'bold'}`}>{n.title}</div>
-                          {n.body && <div className="muted small ellipsis">{n.body}</div>}
+                          {n.body && <div className="muted small clamp-2">{n.body}</div>}
                           <div className="muted tiny">{fmtAgo(n.created_at, ft)}</div>
                         </div>
                         <span aria-hidden className={`unread-dot ${n.read ? 'read' : ''}`} />
@@ -181,7 +181,7 @@ export default function Notifications() {
                         </div>
                         <div className="grow min-w-0">
                           <div className={`ellipsis ${n.read ? '' : 'bold'}`}>{n.title}</div>
-                          {n.body && <div className="muted small ellipsis">{n.body}</div>}
+                          {n.body && <div className="muted small clamp-2">{n.body}</div>}
                           <div className="muted tiny">{fmtAgo(n.created_at, ft)}</div>
                         </div>
                         <span aria-hidden className={`unread-dot ${n.read ? 'read' : ''}`} />

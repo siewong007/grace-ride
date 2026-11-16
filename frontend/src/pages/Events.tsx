@@ -158,12 +158,12 @@ export default function Events() {
                     <span className="event-date-day">{dayNum}</span>
                   </div>
                   <div className="grow min-w-0 event-card-main">
-                    <div className="bold ellipsis">{e.title}</div>
-                    <div className="muted small ellipsis">
+                    <div className="bold clamp-2">{e.title}</div>
+                    <div className="muted small clamp-2">
                       {fmtDateTime(e.starts_at, ft)} · {e.location}
                     </div>
                     <div className="muted small ellipsis">
-                      {ft(EVENT_KIND[e.kind]?.label ?? e.kind)} · {e.groups}
+                      {ft(EVENT_KIND[e.kind]?.label ?? e.kind)}{e.groups ? ` · ${e.groups}` : ''}
                     </div>
                   </div>
                   <div className="event-card-side">

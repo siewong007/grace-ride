@@ -61,9 +61,12 @@ import {
   fmtDuration,
   fmtTime,
   RIDE_STATUS,
+  RIDE_STATUS_PASSENGER,
+  todayStr,
   useFormatT,
 } from '../format';
 import { Trans, useTranslation } from 'react-i18next';
+import CantMakeItModal from '../components/CantMakeIt';
 import type { TFunction } from 'i18next';
 
 export default function RideDetail() {
@@ -73,12 +76,24 @@ export default function RideDetail() {
   const { id } = useParams();
   const chatRef = useRef<HTMLDivElement>(null);
   const { data: r, error, reload } = useApi<Ride>(`/rides/${id}`, 15000);
+  const auth = useAuth();
+  const canAct = auth?.can ?? (() => true);
 
   if (error) return <ErrorBox error={error} />;
   if (!r) return <Spinner />;
 
   const chatVisible = r.trip_id != null && (r.viewer.is_passenger || r.viewer.is_driver || r.viewer.is_staff);
   const live = r.status === 'in_progress';
+  // The passenger has something to do now (answer a driver, say they are ready or late):
+  // show those controls beside the driver card on every screen, not at the bottom or
+  // behind "More actions".
+  const passengerTurn =
+    r.viewer.is_passenger &&
+    canAct('rides', 'update') &&
+    (r.status === 'pending_passenger' ||
+      // "Ready / running late" matters on the day itself, not days ahead.
+      (r.status === 'confirmed' && r.pickup_at.slice(0, 10) <= todayStr()) ||
+      (r.status === 'in_progress' && !r.picked_up_at));
 
   const scrollToChat = () => {
     chatRef.current?.scrollIntoView({ behavior: 'smooth' });
@@ -92,7 +107,7 @@ export default function RideDetail() {
           title={fmtDateTime(r.pickup_at, ft)}
           subtitle={`${r.area.name} → ${r.destination}`}
           back={loc.pathname.startsWith('/admin/') ? '/admin/rides' : '/rides'}
-          actions={<StatusPill map={RIDE_STATUS} status={r.status} />}
+          actions={<StatusPill map={r.viewer.is_passenger ? RIDE_STATUS_PASSENGER : RIDE_STATUS} status={r.status} />}
         />
 
         {r.needs_attention && r.attention_reason && (
@@ -108,6 +123,8 @@ export default function RideDetail() {
             {/* Driver / Vehicle Card */}
             <DriverCard ride={r} onChatClick={chatVisible ? scrollToChat : undefined} />
 
+            {passengerTurn && <PassengerActions ride={r} reload={reload} part="respond" />}
+
             {/* Live Map (Mobile & Desktop priority when in progress) */}
             {live && <CollapsibleTrackCard ride={r} />}
 
@@ -117,9 +134,12 @@ export default function RideDetail() {
             {/* Vertical Status Timeline */}
             <StatusTimeline ride={r} />
 
+            {/* Cancelling stays available, but below the details rather than beside "I'm ready". */}
+            {passengerTurn && <PassengerActions ride={r} reload={reload} part="cancel" />}
+
             {/* Actions for Desktop / Tablet */}
             <div className="hide-mobile">
-              {r.viewer.is_passenger && <PassengerActions ride={r} reload={reload} />}
+              {r.viewer.is_passenger && !passengerTurn && <PassengerActions ride={r} reload={reload} />}
               {r.viewer.is_driver && <DriverActions ride={r} reload={reload} />}
               {r.viewer.is_staff && <StaffActions ride={r} reload={reload} />}
               {!r.viewer.is_passenger && !r.viewer.is_driver && !r.viewer.is_staff && r.status === 'pending_driver' && (
@@ -145,7 +165,7 @@ export default function RideDetail() {
 
         {/* Sticky Action Bar on Phones */}
         <div className="hide-tablet-up">
-          <MobileStickyActions ride={r} reload={reload} />
+          <MobileStickyActions ride={r} reload={reload} passengerTurn={passengerTurn} />
         </div>
       </div>
     </Page>
@@ -704,7 +724,9 @@ function PassengerShareLocation({ rideId, sharing, onChange }: { rideId: number;
   );
 }
 
-function PassengerActions({ ride: r, reload }: { ride: Ride; reload: () => void }) {
+/** `part` splits the card when the passenger has something to do now: "respond" is the
+ *  answer/readiness block shown near the top, "cancel" the quieter cancel control below. */
+function PassengerActions({ ride: r, reload, part = 'all' }: { ride: Ride; reload: () => void; part?: 'all' | 'respond' | 'cancel' }) {
   const { t } = useTranslation('rideDetail');
   const auth = useAuth();
   const can = auth?.can ?? (() => true);
@@ -712,6 +734,7 @@ function PassengerActions({ ride: r, reload }: { ride: Ride; reload: () => void 
   const { busy, error, run } = useAction();
   const nav = useNavigate();
   const [cancel, setCancel] = useState(false);
+  const [unable, setUnable] = useState(false);
   const cancellable = ['pending_driver', 'pending_passenger', 'pending_approval', 'pending_driver_confirm', 'confirmed'].includes(r.status);
 
   const handleDecline = async () => {
@@ -725,6 +748,31 @@ function PassengerActions({ ride: r, reload }: { ride: Ride; reload: () => void 
       await run(() => post(`/rides/${r.id}/respond`, { accept: false }).then(reload), t('respondedDeclined'));
     }
   };
+
+  const cancelControls = (
+    <>
+      {cancellable && can('rides', 'delete') && (
+        <Button variant={part === 'cancel' ? 'ghost' : 'danger'} className={part === 'cancel' ? 'text-danger' : undefined} onClick={() => setCancel(true)}>
+          {t('cancelRide')}
+        </Button>
+      )}
+      {cancel && (
+        <ReasonModal
+          error={error}
+          title={t('cancelTitle')}
+          label={t('cancelReason')}
+          confirm={t('confirmCancel')}
+          onClose={() => setCancel(false)}
+          onSubmit={(reason) => run(() => post(`/rides/${r.id}/cancel`, { reason }).then(() => nav('/rides')), t('rideCancelled'))}
+        />
+      )}
+    </>
+  );
+
+  if (part === 'cancel') {
+    if (!cancellable || !can('rides', 'delete')) return null;
+    return <div className="ride-cancel-row">{cancelControls}</div>;
+  }
 
   return (
     <Card className="stack">
@@ -818,17 +866,7 @@ function PassengerActions({ ride: r, reload }: { ride: Ride; reload: () => void 
                 size="sm"
                 className="text-danger"
                 disabled={busy}
-                onClick={async () => {
-                  const ok = await confirm({
-                    title: t('confirmUnableTitle'),
-                    body: t('confirmUnableBody'),
-                    confirmLabel: t('confirmUnableBtn'),
-                    tone: 'danger',
-                  });
-                  if (ok) {
-                    await run(() => post(`/rides/${r.id}/readiness`, { status: 'unable_to_join' }).then(reload));
-                  }
-                }}
+                onClick={() => setUnable(true)}
               >
                 {r.is_proxy && r.proxy
                   ? t('unableToJoinBtnProxy', { name: r.proxy.rider_name })
@@ -839,19 +877,13 @@ function PassengerActions({ ride: r, reload }: { ride: Ride; reload: () => void 
         </div>
       )}
       <ErrorBox error={error} />
-      {cancellable && can('rides', 'delete') && (
-        <Button variant="danger" onClick={() => setCancel(true)}>
-          {t('cancelRide')}
-        </Button>
-      )}
-      {cancel && (
-        <ReasonModal
-          error={error}
-          title={t('cancelTitle')}
-          label={t('cancelReason')}
-          confirm={t('confirmCancel')}
-          onClose={() => setCancel(false)}
-          onSubmit={(reason) => run(() => post(`/rides/${r.id}/cancel`, { reason }).then(() => nav('/rides')), t('rideCancelled'))}
+      {part === 'all' && cancelControls}
+      {unable && (
+        <CantMakeItModal
+          rideId={r.id}
+          riderName={r.is_proxy && r.proxy ? r.proxy.rider_name : undefined}
+          onClose={() => setUnable(false)}
+          onDone={reload}
         />
       )}
     </Card>
@@ -1096,18 +1128,9 @@ function StaffActions({ ride: r, reload }: { ride: Ride; reload: () => void }) {
   );
 }
 
-function MobileStickyActions({ ride: r, reload }: { ride: Ride; reload: () => void }) {
+function MobileStickyActions({ ride: r, reload, passengerTurn }: { ride: Ride; reload: () => void; passengerTurn: boolean }) {
   const { t } = useTranslation('rideDetail');
   const [showMore, setShowMore] = useState(false);
-
-  // Determine primary action based on status and role
-  if (r.viewer.is_passenger && r.status === 'pending_passenger') {
-    return (
-      <div className="ride-detail-sticky-bar">
-        <PassengerActions ride={r} reload={reload} />
-      </div>
-    );
-  }
 
   if (r.viewer.is_driver) {
     if (r.status === 'pending_driver') {
@@ -1136,6 +1159,9 @@ function MobileStickyActions({ ride: r, reload }: { ride: Ride; reload: () => vo
     );
   }
 
+  // A passenger whose controls are already on the page has nothing more to open.
+  if (passengerTurn && !r.viewer.is_driver && !r.viewer.is_staff) return null;
+
   // If there's an action drawer / menu
   return (
     <>
@@ -1146,7 +1172,7 @@ function MobileStickyActions({ ride: r, reload }: { ride: Ride; reload: () => vo
       </div>
       {showMore && (
         <Modal title={t('moreActions')} onClose={() => setShowMore(false)}>
-          {r.viewer.is_passenger && <PassengerActions ride={r} reload={reload} />}
+          {r.viewer.is_passenger && !passengerTurn && <PassengerActions ride={r} reload={reload} />}
           {r.viewer.is_driver && <DriverActions ride={r} reload={reload} />}
           {r.viewer.is_staff && <StaffActions ride={r} reload={reload} />}
           {!r.viewer.is_passenger && !r.viewer.is_driver && !r.viewer.is_staff && r.status === 'pending_driver' && (

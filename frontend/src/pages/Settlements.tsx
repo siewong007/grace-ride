@@ -561,7 +561,10 @@ export function SettlementForm() {
 export function SettlementDetail() {
   const { t } = useTranslation('settlements');
   const { id } = useParams();
+  const { can } = useAuth();
   const { data: s, error } = useApi<Settlement>(id ? `/settlements/${id}` : null);
+  // A member who only pays shares reaches a bill from My costs and cannot open the bills list.
+  const backTo = can('settlements') || can('admin_bills') ? '/settlements' : '/costs';
   if (error) return <ErrorBox error={error} />;
   if (!s) return <Spinner />;
 
@@ -577,7 +580,7 @@ export function SettlementDetail() {
       <div className="stack">
         <PageHeader
           title={t('settlementDetail.title', { title: s.title })}
-          back="/settlements"
+          back={backTo}
           actions={
             <div className="row nowrap gap-sm">
               <StatusPill map={SETTLEMENT_STATUS} status={s.status} />

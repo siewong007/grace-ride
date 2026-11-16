@@ -1,5 +1,6 @@
 export default {
   rideStatus: { pending_driver: '待司机选择', pending_passenger: '待乘客确认', pending_approval: '待审批', pending_driver_confirm: '待新司机确认', confirmed: '已确认', in_progress: '行程中', completed: '已完成', cancelled: '已取消', no_show: '未到场', alt_transport: '已批准替代交通' },
+  rideStatusMine: { pending_passenger: '待您回复' },
   eventKind: { badminton: '羽毛球', bowling: '保龄球', kayak: '皮划艇', walk: '公园散步', other: '团契活动' },
   shareStatus: { unpaid: '未付款', pending: '待核对', confirmed: '已确认', needs_info: '需补资料' },
   reimbStatus: { pending: '待审批', returned: '退回补资料', rejected: '未获批准', approved: '已批准 · 待付款', paid: '已付款' },
@@ -20,7 +21,8 @@ export default {
   km: '{n} 公里',
   minutes: '{n} 分钟',
   hoursMinutes: '{h} 小时 {m} 分钟',
-  monthDay: '{m}月{d}日',
+  dayDate: '{mon}{d}日 {wd}',
+  month: ['1月', '2月', '3月', '4月', '5月', '6月', '7月', '8月', '9月', '10月', '11月', '12月'],
   rm: 'RM {amount}',
   morning: '早安',
   afternoon: '午安',

@@ -155,7 +155,7 @@ describe('Help hub without tabs', () => {
 
     // Member sees search box, common questions, member guides, and my requests
     expect(screen.getByRole('heading', { level: 1, name: 'How can we help?' })).toBeInTheDocument();
-    expect(screen.getByPlaceholderText(/search guides and your requests/i)).toBeInTheDocument();
+    expect(screen.getByPlaceholderText(/search guides & requests/i)).toBeInTheDocument();
     expect(screen.getByText('Getting started')).toBeInTheDocument();
     // Staff guides and drafts are hidden from regular members
     expect(screen.queryByText('Plan transport')).toBeNull();
@@ -194,7 +194,7 @@ describe('In-browser search', () => {
       </MemoryRouter>,
     );
 
-    const searchInput = screen.getByPlaceholderText(/search guides and your requests/i);
+    const searchInput = screen.getByPlaceholderText(/search guides & requests/i);
     fireEvent.change(searchInput, { target: { value: 'account' } });
 
     expect(await screen.findByRole('heading', { level: 2, name: 'Search results' })).toBeInTheDocument();
@@ -211,7 +211,7 @@ describe('In-browser search', () => {
       </MemoryRouter>,
     );
 
-    const searchInput = screen.getByPlaceholderText(/search guides and your requests/i);
+    const searchInput = screen.getByPlaceholderText(/search guides & requests/i);
     fireEvent.change(searchInput, { target: { value: 'nonexistenttermxyz' } });
 
     expect(await screen.findByText(/no results for "nonexistenttermxyz"/i)).toBeInTheDocument();
