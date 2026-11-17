@@ -10,6 +10,7 @@ import {
   Circle,
   CircleDot,
   Clock,
+  Copy,
   Hand,
   LifeBuoy,
   Lock,
@@ -18,7 +19,9 @@ import {
   MoreHorizontal,
   Navigation,
   Phone,
+  Repeat,
   Share2,
+  ShieldCheck,
 } from 'lucide-react';
 import { downloadIcs } from '../calendar';
 import { api, del, post, useApi } from '../api';
@@ -53,6 +56,7 @@ import {
   StatusPill,
   useAction,
   useConfirm,
+  useToast,
 } from '../components/ui';
 import {
   fmtAgo,
@@ -80,6 +84,7 @@ export default function RideDetail() {
   const auth = useAuth();
   const canAct = auth?.can ?? (() => true);
   const [staleRefreshed, setStaleRefreshed] = useState(false);
+  const [careModal, setCareModal] = useState(false);
 
   useEffect(() => {
     if (auth?.me?.id && liveRide && String(liveRide.id) === id) {
@@ -144,6 +149,17 @@ export default function RideDetail() {
           </Notice>
         )}
 
+        {r.paired_ride_id && (
+          <Notice tone="info" icon={<Repeat size={18} />}>
+            <div className="row between wrap gap-sm">
+              <span>{r.leg === 'return' ? t('pairedOutboundInfo') : t('pairedReturnInfo')}</span>
+              <Link to={`/rides/${r.paired_ride_id}`} className="bold">
+                {r.leg === 'return' ? t('openOutboundRide') : t('openReturnRide')}
+              </Link>
+            </div>
+          </Notice>
+        )}
+
         {r.needs_attention && r.attention_reason && (
           <Notice tone="warning" icon={<AlertTriangle size={18} />}>
             <span>{r.attention_reason}</span>
@@ -197,6 +213,13 @@ export default function RideDetail() {
                 {t('needHelp')}
               </Button>
             )}
+            {(r.viewer.is_passenger || r.viewer.is_staff) &&
+              !['completed', 'cancelled', 'no_show', 'alt_transport'].includes(r.status) && (
+                <Button variant="ghost" size="sm" onClick={() => setCareModal(true)} icon={<ShieldCheck size={16} />}>
+                  {t('careLinkBtn')}
+                </Button>
+              )}
+            {careModal && <CareLinkModal ride={r} onClose={() => setCareModal(false)} />}
           </div>
         </div>
 
@@ -1223,3 +1246,87 @@ function MobileStickyActions({ ride: r, reload, passengerTurn }: { ride: Ride; r
 }
 
 export { ReasonModal };
+
+function CareLinkModal({ ride, onClose }: { ride: Ride; onClose: () => void }) {
+  const { t } = useTranslation('rideDetail');
+  const toast = useToast();
+  const { busy, error, run } = useAction();
+  const [label, setLabel] = useState('');
+  const [link, setLink] = useState<{ url: string; valid_until: string } | null>(null);
+
+  const generate = () => {
+    run(async () => {
+      const res = await post<{ token: string; url: string; valid_until: string }>(
+        `/rides/${ride.id}/care-link`,
+        { label: label.trim() },
+      );
+      const origin = typeof window !== 'undefined' ? window.location.origin : '';
+      setLink({ url: `${origin}${res.url}`, valid_until: res.valid_until });
+    });
+  };
+
+  const revoke = () => {
+    run(async () => {
+      await del(`/rides/${ride.id}/care-link`);
+      setLink(null);
+    }, t('careLinkRevoked'));
+  };
+
+  const copy = () => {
+    if (!link || typeof navigator === 'undefined' || !navigator.clipboard) return;
+    navigator.clipboard.writeText(link.url).then(() => toast.success(t('careLinkCopied')));
+  };
+
+  return (
+    <Modal title={t('careLinkTitle')} onClose={onClose}>
+      <p className="muted small">{t('careLinkDesc')}</p>
+      {!link ? (
+        <div className="stack-sm">
+          <Field label={t('careLinkLabelField')}>
+            <input
+              className="input"
+              value={label}
+              onChange={(e) => setLabel(e.target.value)}
+              placeholder={t('careLinkLabelPlaceholder')}
+            />
+          </Field>
+          <ErrorBox error={error} />
+          <div className="btn-row">
+            <Button variant="primary" disabled={busy} onClick={generate}>
+              {t('careLinkGenerate')}
+            </Button>
+            <Button variant="ghost" disabled={busy} onClick={revoke}>
+              {t('careLinkRevokeOld')}
+            </Button>
+          </div>
+        </div>
+      ) : (
+        <div className="stack-sm">
+          <input className="input mono" readOnly value={link.url} />
+          <ErrorBox error={error} />
+          <div className="btn-row">
+            <Button variant="primary" icon={<Copy size={16} />} onClick={copy}>
+              {t('careLinkCopy')}
+            </Button>
+            <Button
+              variant="secondary"
+              icon={<Share2 size={16} />}
+              onClick={() =>
+                window.open(
+                  `https://wa.me/?text=${encodeURIComponent(`${t('careLinkShareText')}: ${link.url}`)}`,
+                  '_blank',
+                  'noopener,noreferrer',
+                )
+              }
+            >
+              {t('shareWhatsApp')}
+            </Button>
+            <Button variant="danger" size="sm" disabled={busy} onClick={revoke}>
+              {t('careLinkRevokeOld')}
+            </Button>
+          </div>
+        </div>
+      )}
+    </Modal>
+  );
+}

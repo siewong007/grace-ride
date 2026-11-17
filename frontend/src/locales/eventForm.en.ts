@@ -30,4 +30,10 @@ export default {
   attendanceModule: 'Attendance module',
   enableAttendance: 'Enable attendance tracking (QR check-in)',
   attendanceHint: 'When enabled, members can scan an event QR code to check in and record attendance directly (no ride required).',
+  repeatFrequency: 'Repeat series',
+  repeatNone: 'One-time event',
+  repeatWeekly: 'Weekly',
+  repeatBiweekly: 'Every 2 weeks',
+  repeatMonthly: 'Monthly (every 4 weeks)',
+  repeatCount: 'Number of occurrences (2–12)',
 };

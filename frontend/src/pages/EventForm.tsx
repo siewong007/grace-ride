@@ -1,5 +1,5 @@
 import { FormEvent, useEffect, useState } from 'react';
-import { useNavigate, useParams } from 'react-router-dom';
+import { useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import { post, put, useApi } from '../api';
 import { Button, ErrorBox, Field, Page, PageHeader, useAction } from '../components/ui';
 import { EVENT_KIND, useFormatT } from '../format';
@@ -38,9 +38,13 @@ export default function EventForm() {
   const { t } = useTranslation('eventForm');
   const ft = useFormatT();
   const { id } = useParams();
+  const [params] = useSearchParams();
+  const duplicateId = !id ? params.get('duplicate') : null;
   const nav = useNavigate();
   const { data: groups } = useApi<Group[]>('/groups');
-  const { data: existing } = useApi<ExistingEvent>(id ? `/events/${id}` : null);
+  const { data: existing } = useApi<ExistingEvent>(
+    id ? `/events/${id}` : duplicateId ? `/events/${duplicateId}` : null,
+  );
   const [f, setF] = useState({
     title: '',
     kind: 'badminton',
@@ -55,6 +59,8 @@ export default function EventForm() {
     as_group_ids: [] as number[],
     photo_file_id: null as number | null,
     attendance_enabled: true,
+    repeat_frequency: 'none' as 'none' | 'weekly' | 'biweekly' | 'monthly',
+    repeat_count: '4',
   });
   const [narrow, setNarrow] = useState(false);
   const { busy, error, run } = useAction();
@@ -66,19 +72,21 @@ export default function EventForm() {
       title: existing.title,
       kind: existing.kind,
       description: existing.description,
-      date: d,
+      date: duplicateId ? '' : d,
       time: t2,
       location: existing.location,
       capacity: String(existing.capacity),
       cost_note: existing.cost_note,
-      deadline: existing.signup_deadline ?? '',
+      deadline: duplicateId ? '' : existing.signup_deadline ?? '',
       group_ids: existing.group_ids,
       as_group_ids: existing.as_group_ids ?? [],
       photo_file_id: existing.photo_file_id ?? null,
       attendance_enabled: existing.attendance_enabled ?? true,
+      repeat_frequency: 'none',
+      repeat_count: '4',
     });
     setNarrow((existing.as_group_ids ?? []).length > 0);
-  }, [existing]);
+  }, [existing, duplicateId]);
 
   const set = (k: keyof typeof f) => (e: { target: { value: string } }) =>
     setF({ ...f, [k]: e.target.value });
@@ -119,6 +127,8 @@ export default function EventForm() {
       attendance_enabled: f.attendance_enabled,
       // Empty: people choose from the audience groups and their sub-groups.
       as_group_ids: narrow ? f.as_group_ids.filter((g) => joinable.some((j) => j.id === g)) : [],
+      repeat_frequency: !id && f.repeat_frequency !== 'none' ? f.repeat_frequency : undefined,
+      repeat_count: !id && f.repeat_frequency !== 'none' ? Math.max(2, Math.min(12, Number(f.repeat_count) || 2)) : undefined,
     };
     run(async () => {
       if (id) {
@@ -245,6 +255,34 @@ export default function EventForm() {
                 </label>
               </Field>
             </div>
+            {!id && (
+              <>
+                <Field label={t('repeatFrequency')}>
+                  <select
+                    className="input"
+                    value={f.repeat_frequency}
+                    onChange={(e) => setF({ ...f, repeat_frequency: e.target.value as 'none' | 'weekly' | 'biweekly' | 'monthly' })}
+                  >
+                    <option value="none">{t('repeatNone')}</option>
+                    <option value="weekly">{t('repeatWeekly')}</option>
+                    <option value="biweekly">{t('repeatBiweekly')}</option>
+                    <option value="monthly">{t('repeatMonthly')}</option>
+                  </select>
+                </Field>
+                {f.repeat_frequency !== 'none' && (
+                  <Field label={t('repeatCount')}>
+                    <input
+                      className="input"
+                      type="number"
+                      min={2}
+                      max={12}
+                      value={f.repeat_count}
+                      onChange={set('repeat_count')}
+                    />
+                  </Field>
+                )}
+              </>
+            )}
           </div>
 
           <div className="stack-sm">

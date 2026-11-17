@@ -30,4 +30,10 @@ export default {
   attendanceModule: '出席签到模块',
   enableAttendance: '开启出席签到模块（允许会员扫码签到）',
   attendanceHint: '开启后，可在活动页出示签到二维码，会员无需申请接送即可扫码参与并签到。',
+  repeatFrequency: '周期重复系列',
+  repeatNone: '单次活动',
+  repeatWeekly: '每周重复',
+  repeatBiweekly: '每两周重复',
+  repeatMonthly: '每月重复（每4周）',
+  repeatCount: '生成场次数量（2–12）',
 };

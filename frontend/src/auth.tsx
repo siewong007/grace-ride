@@ -26,6 +26,11 @@ export interface Me {
   auto_lock_mins?: number;
   session_timeout_mins?: number;
   backup_codes_count?: number;
+  locked?: boolean;
+  telegram_chat_id?: string;
+  whatsapp_opt_in?: boolean;
+  push_opt_in?: boolean;
+  caregiver_user_id?: number | null;
   privileged: boolean;
   unread: number;
   groups: { id: number; name: string }[];
@@ -73,12 +78,37 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   // Keep the unread badge fresh. Re-subscribe only when the signed-in user changes.
   const meId = me?.id;
+  const pushOptIn = me?.push_opt_in ?? true;
   useEffect(() => {
     if (meId == null) return;
     return subscribe((kind) => {
       if (kind === 'notify' || kind === 'resume') refresh();
+      if (
+        kind === 'notify' &&
+        pushOptIn &&
+        typeof document !== 'undefined' &&
+        document.visibilityState === 'hidden' &&
+        typeof Notification !== 'undefined' &&
+        Notification.permission === 'granted'
+      ) {
+        const msg = {
+          type: 'SHOW_NOTIFICATION',
+          title: 'Grace Ride',
+          body: '',
+          url: '/notifications',
+        };
+        if (navigator.serviceWorker?.controller) {
+          navigator.serviceWorker.controller.postMessage(msg);
+        } else {
+          try {
+            new Notification('Grace Ride', { data: { url: '/notifications' } } as NotificationOptions);
+          } catch {
+            // Browser requires ServiceWorkerRegistration.showNotification (Android Chrome)
+          }
+        }
+      }
     });
-  }, [meId, refresh]);
+  }, [meId, pushOptIn, refresh]);
 
   const granted = useMemo(() => new Set(me?.permissions ?? []), [me?.permissions]);
   const can = useCallback((page: PageKey, act: Act = 'view') => granted.has(`${page}.${act}`), [granted]);

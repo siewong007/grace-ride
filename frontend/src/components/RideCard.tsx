@@ -1,13 +1,15 @@
 import { Link } from 'react-router-dom';
 import { AlertTriangle, Lock } from 'lucide-react';
 import { fmtDay, fmtTime, RIDE_STATUS, RIDE_STATUS_PASSENGER, useFormatT } from '../format';
-import { StatusPill } from './ui';
+import { Pill, StatusPill } from './ui';
 import { useTranslation } from 'react-i18next';
 
 export interface Ride {
   id: number;
   status: string;
   pickup_at: string;
+  leg?: 'outbound' | 'return';
+  paired_ride_id?: number | null;
   area: { id: number; name: string };
   pickup_address: string | null;
   destination: string;
@@ -18,7 +20,19 @@ export interface Ride {
   event: { id: number | null; title: string | null; private?: boolean } | null;
   trip_id: number | null;
   passenger: { id: number; name: string; phone: string | null };
-  driver: { id: number; name: string; phone: string | null; vehicle: { model: string; color: string; plate: string } | null } | null;
+  driver: {
+    id: number;
+    name: string;
+    phone: string | null;
+    vehicle: {
+      model: string;
+      color: string;
+      plate: string;
+      wheelchair_ok?: boolean;
+      low_step?: boolean;
+      child_seat?: boolean;
+    } | null;
+  } | null;
   needs_attention: boolean;
   attention_reason: string;
   started_at: string | null;
@@ -81,6 +95,7 @@ export default function RideCard({
       <div className="ride-card-main grow">
         <div className="ride-card-dest">{ride.destination}</div>
         <div className="ride-card-pickup muted small row nowrap">
+          {ride.leg === 'return' && <Pill tone="info">{t('returnLeg')}</Pill>}
           {ride.pickup_address === null && <Lock size={14} aria-hidden="true" />}
           <span>{ride.area.name}</span>
           {ride.seats > 1 && <span>· {ride.seats} {t('seats')}</span>}

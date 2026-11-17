@@ -151,7 +151,8 @@ export function ReimbursementForm() {
   const [params] = useSearchParams();
   const editId = params.get('edit');
   const { me } = useAuth();
-  const past = useApi<PastRide[]>('/rides?scope=past');
+  const past = useApi<PastRide[] | { items: PastRide[] }>('/rides?scope=past');
+  const pastRides = Array.isArray(past.data) ? past.data : past.data?.items ?? [];
   const existing = useApi<Reimb>(editId ? `/reimbursements/${editId}` : null);
   const [f, setF] = useState({
     ride: params.get('ride') ?? '',
@@ -214,7 +215,7 @@ export function ReimbursementForm() {
               onChange={(e) => setF({ ...f, ride: e.target.value })}
             >
               <option value="">{t('noneRide')}</option>
-              {past.data?.map((r) => (
+              {pastRides.map((r) => (
                 <option key={r.id} value={r.id}>
                   {fmtDateTime(r.pickup_at, ft)} · {r.area.name} → {r.destination}
                 </option>

@@ -58,4 +58,8 @@ export default {
   churchDest: 'PJ State CMC',
   addressSearching: 'Looking up map suggestions…',
   addressNoMatch: 'No map pin found — you can still submit this address as typed.',
+  includeReturn: 'Book a paired return ride too',
+  returnTime: 'Return pickup time',
+  returnHint: 'Picks up from destination back to pickup address',
+  savedPlaceApplied: 'Applied saved place: {label}',
 };

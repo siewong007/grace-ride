@@ -59,4 +59,11 @@ export default {
   undoStep: 'Undo last move',
   chooseDriverSheet: 'Choose driver for {name}',
   filterEmpty: 'No passengers match this filter.',
+  returnTag: 'Return',
+  matchReturns: 'Match return drivers',
+  matchReturnDone: 'Matched {placed} of {candidates} return trips to their outbound driver.',
+  matchReturnNone: 'No unassigned return trips have a fitted outbound driver on this board.',
+  wheelchairTag: 'Wheelchair OK',
+  lowStepTag: 'Low step',
+  childSeatTag: 'Child seat',
 };

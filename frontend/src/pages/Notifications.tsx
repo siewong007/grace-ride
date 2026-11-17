@@ -49,16 +49,25 @@ export default function Notifications() {
 
   useEffect(() => {
     if (data && !Array.isArray(data)) {
-      setNextBefore(data.next_before);
+      // Only update the cursor from page 1 when older pages have not been appended yet;
+      // otherwise polling page 1 would reset nextBefore and re-fetch duplicate page-2 items.
+      setNextBefore((cur) => (olderItems.length > 0 ? cur : data.next_before));
     }
-  }, [data]);
+  }, [data, olderItems.length]);
 
   const { refresh } = useAuth();
   const { run } = useAction();
   const nav = useNavigate();
 
   const initialItems = Array.isArray(data) ? data : data?.items ?? [];
-  const items = [...initialItems, ...olderItems];
+  const seenIds = new Set<number>();
+  const items: Notif[] = [];
+  for (const n of [...initialItems, ...olderItems]) {
+    if (!seenIds.has(n.id)) {
+      seenIds.add(n.id);
+      items.push(n);
+    }
+  }
 
   const loadMore = useCallback(async () => {
     if (nextBefore == null || loadingMore) return;
@@ -67,7 +76,10 @@ export default function Notifications() {
       const res = await api<NotifsPage | Notif[]>(`/notifications?before=${nextBefore}&limit=30`);
       const newItems = Array.isArray(res) ? res : res.items;
       const nb = Array.isArray(res) ? null : res.next_before;
-      setOlderItems((prev) => [...prev, ...newItems]);
+      setOlderItems((prev) => {
+        const existing = new Set(prev.map((x) => x.id));
+        return [...prev, ...newItems.filter((x) => !existing.has(x.id))];
+      });
       setNextBefore(nb);
     } catch {
       // ignore
@@ -83,7 +95,10 @@ export default function Notifications() {
   });
 
   const open = async (n: Notif) => {
-    if (!n.read) await run(() => post(`/notifications/${n.id}/read`));
+    if (!n.read) {
+      await run(() => post(`/notifications/${n.id}/read`));
+      setOlderItems((prev) => prev.map((x) => (x.id === n.id ? { ...x, read: true } : x)));
+    }
     refresh();
     if (n.link) nav(n.link);
     else reload();
@@ -92,6 +107,7 @@ export default function Notifications() {
   const markAllRead = async () => {
     await run(async () => {
       await post('/notifications/read-all');
+      setOlderItems((prev) => prev.map((x) => ({ ...x, read: true })));
       reload();
       refresh();
     });

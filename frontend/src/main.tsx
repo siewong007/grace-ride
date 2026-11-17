@@ -18,6 +18,12 @@ import './styles.css';
 // App normally hides the boot splash once auth resolves; never leave it covering a stuck or crashed load.
 window.setTimeout(() => hideSplash(true), 10_000);
 
+if (typeof window !== 'undefined' && 'serviceWorker' in navigator && import.meta.env.PROD) {
+  window.addEventListener('load', () => {
+    navigator.serviceWorker.register('/sw.js').catch(() => {});
+  });
+}
+
 ReactDOM.createRoot(document.getElementById('root')!).render(
   <React.StrictMode>
     <ErrorBoundary>

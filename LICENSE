@@ -15,7 +15,7 @@ The name "PJ State CMC" and the church's own logo, from which the Grace Ride mar
 blue arc is derived, belong to the church and are used with its permission.
 
 Third-party open-source components are licensed under their own terms. See
-README.md ("Third-Party Notices"), and the generated /third-party-licenses.txt served by the app.
+docs/TECHNICAL.md ("Third-Party Notices"), and the generated /third-party-licenses.txt served by the app.
 
 THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED. TO
 THE EXTENT PERMITTED BY LAW, THE COPYRIGHT HOLDER IS NOT LIABLE FOR ANY CLAIM, DAMAGES

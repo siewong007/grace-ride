@@ -78,4 +78,13 @@ export default {
   transportPromptTitle: '您打算怎么前往？',
   transportPromptBody: '您已完成报名！如需乘车或能顺道载人，请告诉我们。',
   goingOwnWay: '自行前往',
+  backToEvent: '返回活动',
+  checkinFailedTitle: '签到未成功',
+  duplicate: '复制此活动',
+  myCheckinPass: '我的签到通行码',
+  myCheckinPassDesc: '到达活动现场时出示此二维码或通行码，供同工扫码签到。',
+  scanMemberPass: '扫会员通行码',
+  scanMemberPassDesc: '扫描会员的个人签到码或手动输入下方通行码完成签到。',
+  memberPassPlaceholder: '输入会员通行码（如 A1B2C3D4E5）',
+  memberCheckedIn: '已完成签到：{name}',
 };

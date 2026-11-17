@@ -6,7 +6,7 @@ import { useTranslation } from 'react-i18next';
 import { Copy, Share2, UserPlus } from 'lucide-react';
 import { post, useApi } from '../api';
 import { Button, Card, ErrorBox, Field, Modal, Pill, useAction, useConfirm, useToast } from './ui';
-import { fmtDateTime, useFormatT } from '../format';
+import { fmtDateTime, parseLocal, useFormatT } from '../format';
 
 interface VisitorPass {
   id: number;
@@ -28,7 +28,7 @@ interface Area {
 
 /** One hour before the event, as the date and time fields want it. */
 function defaultPickup(startsAt: string): { date: string; time: string } {
-  const d = new Date(startsAt.length === 16 ? `${startsAt}:00` : startsAt);
+  const d = parseLocal(startsAt);
   d.setHours(d.getHours() - 1);
   const pad = (n: number) => String(n).padStart(2, '0');
   return { date: `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`, time: `${pad(d.getHours())}:${pad(d.getMinutes())}` };

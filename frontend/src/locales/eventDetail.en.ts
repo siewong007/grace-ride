@@ -78,4 +78,13 @@ export default {
   transportPromptTitle: 'How are you getting there?',
   transportPromptBody: 'You’re signed up! Let us know if you need a lift or have spare seats.',
   goingOwnWay: 'Going on my own',
+  backToEvent: 'Back to event',
+  checkinFailedTitle: 'Check-in unsuccessful',
+  duplicate: 'Duplicate',
+  myCheckinPass: 'My check-in pass QR',
+  myCheckinPassDesc: 'Show this QR code or pass code at the entrance for an organiser to check you in.',
+  scanMemberPass: 'Scan member pass',
+  scanMemberPassDesc: 'Scan a member’s check-in pass QR or enter their pass code below.',
+  memberPassPlaceholder: 'Pass code (e.g. A1B2C3D4E5)',
+  memberCheckedIn: 'Checked in: {name}',
 };

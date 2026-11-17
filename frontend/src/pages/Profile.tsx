@@ -53,6 +53,20 @@ export default function Profile() {
   const { busy, error, run } = useAction();
   if (!me) return null;
 
+  const openSection = (section: SectionKey) => {
+    setF({
+      name: me.name ?? '',
+      phone: me.phone ?? '',
+      photo: me.photo_file_id ?? null,
+      optOut: me.badges_opt_out ?? false,
+    });
+    setReadinessPrompt(me.readiness_prompt_mins ?? 45);
+    setAutoLockMins(
+      me.auto_lock_mins ?? (parseInt(localStorage.getItem('gr_autolock_mins') || '0', 10) || 0),
+    );
+    setOpen(section);
+  };
+
   const isPending = me.status === 'pending';
   const isAdmin = me.privileged;
   const roleText = isPending ? t('pending') : isAdmin ? t('administrator') : t('member');
@@ -114,9 +128,9 @@ export default function Profile() {
         <section className="stack-xs" aria-label={t('account')}>
           <div className="section-label">{t('account')}</div>
           <div className="list">
-            <SheetLink icon={<User size={iconSz} />} label={t('personalInfo')} aria-haspopup="dialog" onClick={() => setOpen('personal')} />
-            <SheetLink icon={<Sliders size={iconSz} />} label={t('preferences')} aria-haspopup="dialog" onClick={() => setOpen('preferences')} />
-            <SheetLink icon={<Shield size={iconSz} />} label={t('security')} aria-haspopup="dialog" onClick={() => setOpen('security')} />
+            <SheetLink icon={<User size={iconSz} />} label={t('personalInfo')} aria-haspopup="dialog" onClick={() => openSection('personal')} />
+            <SheetLink icon={<Sliders size={iconSz} />} label={t('preferences')} aria-haspopup="dialog" onClick={() => openSection('preferences')} />
+            <SheetLink icon={<Shield size={iconSz} />} label={t('security')} aria-haspopup="dialog" onClick={() => openSection('security')} />
           </div>
         </section>
 

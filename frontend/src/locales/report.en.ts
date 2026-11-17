@@ -32,6 +32,7 @@ export default {
   range: 'Range',
   type: 'Type',
   summary: 'Summary',
+  byKind: 'By event kind',
   events_attended: 'Events attended',
   rides_driven: 'Rides driven',
   rides_received: 'Rides received',

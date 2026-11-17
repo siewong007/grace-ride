@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { FormEvent, useCallback, useEffect, useState } from 'react';
 import { useParams, useSearchParams } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
 import { AlertTriangle, ArrowRight, Calendar, CheckCircle2, MapPin } from 'lucide-react';
@@ -20,34 +20,49 @@ interface CheckinInfo {
 export default function EventCheckin() {
   const { id } = useParams();
   const [params] = useSearchParams();
-  const code = params.get('code') || '';
+  const queryCode = params.get('code') || '';
   const { t } = useTranslation('eventDetail');
   const ft = useFormatT();
   const { me } = useAuth();
   const { data: info, error: infoErr } = useApi<CheckinInfo>(id ? `/events/${id}/checkin` : null);
+  const [manualCode, setManualCode] = useState('');
   const [checkedIn, setCheckedIn] = useState(false);
   const [alreadyAttended, setAlreadyAttended] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
 
+  // Pending or disabled accounts cannot check in.
+  const isNonMember = Boolean(me && me.status !== 'active');
+
+  const submitCheckin = useCallback(
+    (codeToSubmit: string) => {
+      if (!id || !codeToSubmit.trim() || isNonMember) return;
+      setBusy(true);
+      setError(null);
+      post<{ ok: boolean; already_attended: boolean }>(`/events/${id}/checkin`, { code: codeToSubmit.trim() })
+        .then((res) => {
+          setCheckedIn(true);
+          setAlreadyAttended(res.already_attended);
+        })
+        .catch((err) => {
+          setError(err instanceof Error ? err.message : String(err));
+        })
+        .finally(() => setBusy(false));
+    },
+    [id, isNonMember],
+  );
+
   useEffect(() => {
-    if (!id || !code) return;
-    setBusy(true);
-    post<{ ok: boolean; already_attended: boolean }>(`/events/${id}/checkin`, { code })
-      .then((res) => {
-        setCheckedIn(true);
-        setAlreadyAttended(res.already_attended);
-      })
-      .catch((err) => {
-        setError(err instanceof Error ? err.message : String(err));
-      })
-      .finally(() => setBusy(false));
-  }, [id, code]);
+    if (!id || !queryCode || isNonMember) return;
+    submitCheckin(queryCode);
+  }, [id, queryCode, isNonMember, submitCheckin]);
 
   const title = info?.title || t('attendanceModule');
 
-  // If pending or not active (non-member)
-  const isNonMember = me && me.status !== 'active';
+  const handleManualSubmit = (e: FormEvent) => {
+    e.preventDefault();
+    submitCheckin(manualCode);
+  };
 
   return (
     <Page width="narrow">
@@ -68,7 +83,7 @@ export default function EventCheckin() {
               <h3>{t('membersOnlyNotice')}</h3>
               <p className="muted small">{t('attendanceDisabled')}</p>
               <Button variant="secondary" to="/" block>
-                {t('manageTitle', 'Back')}
+                {t('home', { ns: 'chrome' })}
               </Button>
             </div>
           ) : checkedIn || info?.my_attended ? (
@@ -94,7 +109,17 @@ export default function EventCheckin() {
                 </div>
               )}
               <Button variant="primary" block to={`/events/${id}`} icon={<ArrowRight size={16} />}>
-                {t('manageTitle')}
+                {t('backToEvent')}
+              </Button>
+            </div>
+          ) : info && !info.attendance_enabled ? (
+            <div className="stack items-center" style={{ width: '100%' }}>
+              <div style={{ color: 'var(--danger)', marginBottom: '0.5rem' }}>
+                <AlertTriangle size={56} />
+              </div>
+              <h3>{t('attendanceDisabled')}</h3>
+              <Button variant="secondary" block to={`/events/${id}`}>
+                {t('backToEvent')}
               </Button>
             </div>
           ) : error || infoErr ? (
@@ -102,16 +127,46 @@ export default function EventCheckin() {
               <div style={{ color: 'var(--danger)', marginBottom: '0.5rem' }}>
                 <AlertTriangle size={56} />
               </div>
-              <h3>{t('attendanceDisabled')}</h3>
+              <h3>{info?.attendance_enabled === false ? t('attendanceDisabled') : t('checkinFailedTitle')}</h3>
               <ErrorBox error={error || infoErr} />
-              {!code && (
-                <p className="muted small">{t('scanQrModalDesc')}</p>
-              )}
+              <form className="stack-sm" style={{ width: '100%' }} onSubmit={handleManualSubmit}>
+                <input
+                  className="input"
+                  type="text"
+                  placeholder={t('enterCodePlaceholder')}
+                  aria-label={t('enterCodePlaceholder')}
+                  value={manualCode}
+                  onChange={(e) => setManualCode(e.target.value)}
+                />
+                <Button variant="primary" block type="submit" disabled={!manualCode.trim()}>
+                  {t('submitCheckin')}
+                </Button>
+              </form>
               <Button variant="secondary" block to={`/events/${id}`}>
-                {t('manageTitle')}
+                {t('backToEvent')}
               </Button>
             </div>
-          ) : null}
+          ) : (
+            <div className="stack items-center" style={{ width: '100%' }}>
+              <p className="muted small">{t('scanQrModalDesc')}</p>
+              <form className="stack-sm" style={{ width: '100%' }} onSubmit={handleManualSubmit}>
+                <input
+                  className="input"
+                  type="text"
+                  placeholder={t('enterCodePlaceholder')}
+                  aria-label={t('enterCodePlaceholder')}
+                  value={manualCode}
+                  onChange={(e) => setManualCode(e.target.value)}
+                />
+                <Button variant="primary" block type="submit" disabled={!manualCode.trim()}>
+                  {t('submitCheckin')}
+                </Button>
+              </form>
+              <Button variant="secondary" block to={`/events/${id}`}>
+                {t('backToEvent')}
+              </Button>
+            </div>
+          )}
         </Card>
       </div>
     </Page>

@@ -11,6 +11,7 @@ import {
   QrCode,
   RefreshCw,
   Route,
+  ScanLine,
   Share2,
 } from 'lucide-react';
 import QRCode from 'qrcode';
@@ -33,6 +34,7 @@ import {
   StatusPill,
   useAction,
   useConfirm,
+  useToast,
 } from '../components/ui';
 import { EVENT_KIND, fmtDateTime, RIDE_STATUS, useFormatT } from '../format';
 import type { EventItem } from './Events';
@@ -73,6 +75,8 @@ export default function EventDetail() {
   const [walkIn, setWalkIn] = useState(false);
   const [showQrModal, setShowQrModal] = useState(false);
   const [showScanModal, setShowScanModal] = useState(false);
+  const [showMyPass, setShowMyPass] = useState(false);
+  const [showScanMember, setShowScanMember] = useState(false);
   const [joinAs, setJoinAs] = useState<number | null>(null);
   const [joinAsMissing, setJoinAsMissing] = useState(false);
   const [showTransportPrompt, setShowTransportPrompt] = useState(false);
@@ -149,16 +153,21 @@ export default function EventDetail() {
           subtitle={`${fmtDateTime(e.starts_at, ft)} · ${e.location}`}
           back="/events"
           actions={
-            (e.can_manage && open) || (canPlan && open) ? (
+            (e.can_manage && open) || (canPlan && open) || can('events', 'create') ? (
               <div className="btn-row">
-                {canPlan && (
+                {canPlan && open && (
                   <Button variant="primary" to={`/admin/events/${e.id}/plan`} icon={<Route size={16} />}>
                     {t('open', { ns: 'plan' })}
                   </Button>
                 )}
-                {e.can_manage && (
+                {e.can_manage && open && (
                   <Button variant="secondary" to={`/events/${e.id}/edit`} icon={<Edit2 size={16} />}>
                     {t('edit')}
+                  </Button>
+                )}
+                {can('events', 'create') && (
+                  <Button variant="ghost" to={`/events/new?duplicate=${e.id}`} icon={<Copy size={16} />}>
+                    {t('duplicate')}
                   </Button>
                 )}
               </div>
@@ -262,6 +271,17 @@ export default function EventDetail() {
                       onClick={() => setShowScanModal(true)}
                     >
                       {t('scanToAttend')}
+                    </Button>
+                  )}
+                  {signed && e.my_signup?.pass_code && (
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      block
+                      icon={<QrCode size={16} />}
+                      onClick={() => setShowMyPass(true)}
+                    >
+                      {t('myCheckinPass')}
                     </Button>
                   )}
                 </div>
@@ -455,6 +475,9 @@ export default function EventDetail() {
                       <Button variant="ghost" size="sm" onClick={() => setWalkIn(true)} icon={<Plus size={16} />}>
                         {t('walkIn')}
                       </Button>
+                      <Button variant="secondary" size="sm" onClick={() => setShowScanMember(true)} icon={<ScanLine size={16} />}>
+                        {t('scanMemberPass')}
+                      </Button>
                     </div>
                     <p className="muted tiny">{t('walkInNote')}</p>
                   </>
@@ -529,6 +552,22 @@ export default function EventDetail() {
           <WalkIn
             onClose={() => setWalkIn(false)}
             onPick={(uid) => mark(uid, true).then(() => setWalkIn(false))}
+          />
+        )}
+
+        {showMyPass && e.my_signup?.pass_code && (
+          <MemberPassQrModal
+            event={e}
+            passCode={e.my_signup.pass_code}
+            onClose={() => setShowMyPass(false)}
+          />
+        )}
+
+        {showScanMember && (
+          <ScanMemberPassModal
+            eventId={e.id}
+            onClose={() => setShowScanMember(false)}
+            onSuccess={() => reloadS()}
           />
         )}
       </div>
@@ -707,6 +746,8 @@ function EventScannerModal({
       onSuccess();
     }, t('checkinSuccess'));
   };
+  const checkinRef = useRef(handleCheckin);
+  checkinRef.current = handleCheckin;
 
   useEffect(() => {
     let stream: MediaStream | null = null;
@@ -734,7 +775,7 @@ function EventScannerModal({
                   const barcodes = await detector.detect(videoRef.current);
                   if (barcodes.length > 0) {
                     const raw = barcodes[0].rawValue;
-                    handleCheckin(raw);
+                    checkinRef.current(raw);
                     return;
                   }
                 } catch {
@@ -839,6 +880,162 @@ function WalkIn({ onClose, onPick }: { onClose: () => void; onPick: (uid: number
             {u.name}
           </button>
         ))}
+      </div>
+    </Modal>
+  );
+}
+
+function MemberPassQrModal({
+  event,
+  passCode,
+  onClose,
+}: {
+  event: EventFull;
+  passCode: string;
+  onClose: () => void;
+}) {
+  const { t } = useTranslation('eventDetail');
+  const [qrUrl, setQrUrl] = useState<string | null>(null);
+  const payload = `GRPASS:${event.id}:${passCode}`;
+
+  useEffect(() => {
+    QRCode.toDataURL(payload, { margin: 1, width: 240, errorCorrectionLevel: 'M' })
+      .then(setQrUrl)
+      .catch(() => setQrUrl(null));
+  }, [payload]);
+
+  return (
+    <Modal title={t('myCheckinPass')} onClose={onClose}>
+      <div className="stack items-center" style={{ padding: 'var(--space-2) 0' }}>
+        {qrUrl && (
+          <div className="totp-qr" style={{ padding: 'var(--space-3)', background: '#fff', borderRadius: 'var(--radius-md)' }}>
+            <img src={qrUrl} width={240} height={240} alt={t('myCheckinPass')} />
+          </div>
+        )}
+        <code className="card flat tight mono">{passCode}</code>
+        <p className="muted tiny center max-w-sm">{t('myCheckinPassDesc')}</p>
+      </div>
+    </Modal>
+  );
+}
+
+function ScanMemberPassModal({
+  eventId,
+  onClose,
+  onSuccess,
+}: {
+  eventId: number;
+  onClose: () => void;
+  onSuccess: () => void;
+}) {
+  const { t } = useTranslation('eventDetail');
+  const toast = useToast();
+  const [rawCode, setRawCode] = useState('');
+  const { busy, error, run } = useAction();
+  const videoRef = useRef<HTMLVideoElement | null>(null);
+  const streamRef = useRef<MediaStream | null>(null);
+  const [cameraOn, setCameraOn] = useState(false);
+
+  const stopCamera = () => {
+    if (streamRef.current) {
+      streamRef.current.getTracks().forEach((tr) => tr.stop());
+      streamRef.current = null;
+    }
+    setCameraOn(false);
+  };
+
+  useEffect(() => () => stopCamera(), []);
+
+  const submitCode = (input: string) => {
+    const trimmed = input.trim();
+    const parts = trimmed.split(':');
+    const code = parts.length === 3 && parts[0] === 'GRPASS' ? parts[2] : trimmed;
+    if (!code) return;
+    run(async () => {
+      const res = await post<{ ok: boolean; user: { id: number; name: string } }>(
+        `/events/${eventId}/checkin/scan-member`,
+        { pass_code: code },
+      );
+      stopCamera();
+      toast.success(t('memberCheckedIn', { name: res.user?.name ?? '' }));
+      onSuccess();
+      onClose();
+    });
+  };
+
+  useEffect(() => {
+    if (!cameraOn) return;
+    let cancelled = false;
+    let raf = 0;
+    const start = async () => {
+      try {
+        const stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'environment' } });
+        if (cancelled) {
+          stream.getTracks().forEach((tr) => tr.stop());
+          return;
+        }
+        streamRef.current = stream;
+        if (videoRef.current) {
+          videoRef.current.srcObject = stream;
+          await videoRef.current.play();
+        }
+        if ('BarcodeDetector' in window && window.BarcodeDetector) {
+          const detector = new window.BarcodeDetector({ formats: ['qr_code'] });
+          const scan = async () => {
+            if (cancelled || !videoRef.current) return;
+            try {
+              const codes = await detector.detect(videoRef.current);
+              if (codes.length > 0 && codes[0].rawValue) {
+                submitCode(codes[0].rawValue);
+                return;
+              }
+            } catch {
+              // skip frame
+            }
+            raf = requestAnimationFrame(scan);
+          };
+          raf = requestAnimationFrame(scan);
+        }
+      } catch {
+        setCameraOn(false);
+      }
+    };
+    void start();
+    return () => {
+      cancelled = true;
+      cancelAnimationFrame(raf);
+      stopCamera();
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [cameraOn]);
+
+  return (
+    <Modal title={t('scanMemberPass')} onClose={onClose}>
+      <div className="stack">
+        <p className="muted small">{t('scanMemberPassDesc')}</p>
+        {cameraOn && (
+          <div style={{ borderRadius: 'var(--radius-md)', overflow: 'hidden', background: '#000' }}>
+            <video ref={videoRef} playsInline muted style={{ width: '100%', maxHeight: 240, display: 'block', objectFit: 'cover' }} />
+          </div>
+        )}
+        <div className="btn-row">
+          <Button variant="secondary" size="sm" onClick={() => setCameraOn((v) => !v)} icon={<QrCode size={16} />}>
+            {t('scanQrCheckin')}
+          </Button>
+        </div>
+        <div className="row nowrap gap-sm">
+          <input
+            className="input grow mono"
+            value={rawCode}
+            onChange={(e) => setRawCode(e.target.value)}
+            placeholder={t('memberPassPlaceholder')}
+            onKeyDown={(e) => e.key === 'Enter' && submitCode(rawCode)}
+          />
+          <Button variant="primary" disabled={busy || !rawCode.trim()} onClick={() => submitCode(rawCode)}>
+            {t('submitCheckin')}
+          </Button>
+        </div>
+        <ErrorBox error={error} />
       </div>
     </Modal>
   );

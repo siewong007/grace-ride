@@ -1,8 +1,8 @@
 import { FormEvent, useEffect, useMemo, useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
-import { Accessibility, Check, Lock, Minus, Phone, Plus } from 'lucide-react';
+import { Accessibility, Check, Lock, Minus, Phone, Plus, Repeat, Trash2 } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
-import { post, put, useApi } from '../api';
+import { del, post, put, useApi } from '../api';
 import { useAuth } from '../auth';
 import { Ride } from '../components/RideCard';
 import { DriverRouteCard } from '../components/TripRoute';
@@ -58,6 +58,9 @@ interface Profile {
     plate: string;
     seats: number;
     vehicle_type: string;
+    wheelchair_ok?: boolean;
+    low_step?: boolean;
+    child_seat?: boolean;
   } | null;
 }
 
@@ -615,6 +618,9 @@ function Settings() {
           plate: profile.vehicle?.plate ?? '',
           seats: Number(profile.vehicle?.seats) || 5,
           vehicle_type: profile.vehicle?.vehicle_type ?? 'standard',
+          wheelchair_ok: !!profile.vehicle?.wheelchair_ok,
+          low_step: !!profile.vehicle?.low_step,
+          child_seat: !!profile.vehicle?.child_seat,
         },
       };
       setP(initial);
@@ -633,6 +639,9 @@ function Settings() {
         plate: p.vehicle?.plate ?? '',
         seats: Number(p.vehicle?.seats) || 5,
         vehicle_type: p.vehicle?.vehicle_type ?? 'standard',
+        wheelchair_ok: !!p.vehicle?.wheelchair_ok,
+        low_step: !!p.vehicle?.low_step,
+        child_seat: !!p.vehicle?.child_seat,
       },
     };
     return JSON.stringify(currentNormalized) !== initialRef.current;
@@ -650,7 +659,7 @@ function Settings() {
   };
 
   const v = p.vehicle;
-  const setV = (k: keyof typeof v, val: string | number) =>
+  const setV = (k: keyof typeof v, val: string | number | boolean) =>
     setP({ ...p, vehicle: { ...v, [k]: val } });
 
   const save = async (e: FormEvent) => {
@@ -677,6 +686,7 @@ function Settings() {
   };
 
   return (
+    <div className="stack">
     <form onSubmit={save}>
       <div className="driver-settings-grid">
         <div className="stack">
@@ -830,6 +840,34 @@ function Settings() {
                 </select>
               </Field>
             </div>
+
+            <div className="stack-xs">
+              <div className="bold small">{t('accessibilityTitle')}</div>
+              <label className={`check ${v.wheelchair_ok ? 'on' : ''}`}>
+                <input
+                  type="checkbox"
+                  checked={!!v.wheelchair_ok}
+                  onChange={(e) => setV('wheelchair_ok', e.target.checked)}
+                />
+                {t('wheelchairOk')}
+              </label>
+              <label className={`check ${v.low_step ? 'on' : ''}`}>
+                <input
+                  type="checkbox"
+                  checked={!!v.low_step}
+                  onChange={(e) => setV('low_step', e.target.checked)}
+                />
+                {t('lowStep')}
+              </label>
+              <label className={`check ${v.child_seat ? 'on' : ''}`}>
+                <input
+                  type="checkbox"
+                  checked={!!v.child_seat}
+                  onChange={(e) => setV('child_seat', e.target.checked)}
+                />
+                {t('childSeat')}
+              </label>
+            </div>
           </Card>
         </div>
       </div>
@@ -866,5 +904,106 @@ function Settings() {
         </div>
       </div>
     </form>
+      <StandingDriverSchedules areas={(areas ?? []).filter((a) => a.active)} />
+    </div>
+  );
+}
+
+interface DriverStanding {
+  id: number;
+  kind: 'passenger' | 'driver';
+  label: string;
+  weekday: number;
+  pickup_time: string;
+  area_id: number;
+  area_name: string;
+  destination: string;
+  seats: number;
+}
+
+const WEEKDAYS_DRIVE = ['sun', 'mon', 'tue', 'wed', 'thu', 'fri', 'sat'] as const;
+
+function StandingDriverSchedules({ areas }: { areas: Area[] }) {
+  const { t } = useTranslation('drive');
+  const { data: listRaw, reload } = useApi<DriverStanding[]>('/recurring-schedules');
+  const rows = (Array.isArray(listRaw) ? listRaw : []).filter((r) => r.kind === 'driver');
+  const { busy, error, run } = useAction();
+  const [f, setF] = useState({ weekday: 0, pickup_time: '08:30', area_id: '', destination: '', label: '' });
+
+  const add = () => {
+    run(async () => {
+      await post('/recurring-schedules', {
+        kind: 'driver',
+        label: f.label.trim(),
+        weekday: Number(f.weekday),
+        pickup_time: f.pickup_time,
+        area_id: Number(f.area_id),
+        destination: f.destination.trim(),
+        seats: 1,
+      });
+      setF({ weekday: 0, pickup_time: '08:30', area_id: '', destination: '', label: '' });
+      await reload();
+    }, t('standingAdded'));
+  };
+
+  return (
+    <Card className="stack" style={{ marginTop: 'var(--space-4)' }}>
+      <div className="row nowrap gap-xs items-center">
+        <Repeat size={18} aria-hidden="true" />
+        <h3 className="no-margin">{t('standingTitle')}</h3>
+      </div>
+      <p className="muted small no-margin">{t('standingDesc')}</p>
+      {rows.length > 0 && (
+        <div className="stack-sm">
+          {rows.map((s) => (
+            <div key={s.id} className="card flat tight row between nowrap gap-sm">
+              <div className="min-w-0">
+                <div className="bold small">
+                  {t(`weekdays.${WEEKDAYS_DRIVE[s.weekday] ?? 'sun'}`)} · {s.pickup_time}
+                  {s.label ? ` · ${s.label}` : ''}
+                </div>
+                <div className="muted tiny">
+                  {s.area_name}{s.destination ? ` → ${s.destination}` : ''}
+                </div>
+              </div>
+              <IconButton
+                size="sm"
+                variant="danger"
+                label={t('standingDelete')}
+                icon={<Trash2 size={15} />}
+                onClick={() => run(() => del(`/recurring-schedules/${s.id}`).then(reload))}
+              />
+            </div>
+          ))}
+        </div>
+      )}
+      <div className="form-grid two">
+        <Field label={t('standingDay')}>
+          <select className="input" value={f.weekday} onChange={(e) => setF({ ...f, weekday: Number(e.target.value) })}>
+            {WEEKDAYS_DRIVE.map((w, idx) => (
+              <option key={w} value={idx}>{t(`weekdays.${w}`)}</option>
+            ))}
+          </select>
+        </Field>
+        <Field label={t('standingTime')}>
+          <input type="time" className="input" value={f.pickup_time} onChange={(e) => setF({ ...f, pickup_time: e.target.value })} />
+        </Field>
+        <Field label={t('standingArea')}>
+          <select className="input" value={f.area_id} onChange={(e) => setF({ ...f, area_id: e.target.value })}>
+            <option value="">—</option>
+            {areas.map((a) => (
+              <option key={a.id} value={a.id}>{a.name}</option>
+            ))}
+          </select>
+        </Field>
+        <Field label={t('standingLabel')}>
+          <input className="input" value={f.label} onChange={(e) => setF({ ...f, label: e.target.value })} placeholder={t('standingLabelPlaceholder')} />
+        </Field>
+      </div>
+      <ErrorBox error={error} />
+      <Button variant="secondary" disabled={busy || !f.area_id} onClick={add}>
+        {t('standingAdd')}
+      </Button>
+    </Card>
   );
 }

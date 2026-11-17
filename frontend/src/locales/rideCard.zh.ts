@@ -7,4 +7,5 @@ export default {
   seats: '位',
   proxyLabel: '代订',
   proxyBookedBy: '{name} 代订',
+  returnLeg: '返程',
 };

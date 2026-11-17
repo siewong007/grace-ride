@@ -32,6 +32,7 @@ export default {
   range: '范围',
   type: '类型',
   summary: '摘要',
+  byKind: '按活动类型',
   events_attended: '出席活动',
   rides_driven: '驾驶行程',
   rides_received: '乘坐行程',

@@ -130,7 +130,7 @@ describe('Design Tokens & Visual Language (Phase 3)', () => {
     expect(css).toMatch(/:root\s*\{[^}]*--brand-red:\s*#E8462F;/);
   });
 
-  describe('minimalist rules (README.md)', () => {
+  describe('minimalist rules (docs/TECHNICAL.md)', () => {
     const rootBlock = css.match(/:root\s*\{([^}]*)\}/)![1];
     const token = (name: string) => rootBlock.match(new RegExp(`${name}:\\s*([^;]+);`))?.[1].trim();
 

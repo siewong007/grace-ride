@@ -78,4 +78,16 @@ export default {
   turnOffBody: 'The link stops working. Their ride stays booked; cancel it from the ride if they aren’t coming.',
   viewRide: 'Ride',
   invitedBy: 'Invited by {name}',
+  care: {
+    badge: 'Caregiver Safe-Arrival Link',
+    title: '{name}’s ride status',
+    privacyHint: 'Area-level route view only; home address stays hidden.',
+    returnLeg: 'Return leg',
+    route: 'Route',
+    arrivedSafely: 'Arrived safely at {dest}',
+    pickedUpOnWay: 'Picked up — on the way to {dest}',
+    readinessLabel: 'Confirm readiness on behalf of the rider',
+    riderReady: '{name} is ready',
+    closedTitle: 'Safe-arrival link closed',
+  },
 };

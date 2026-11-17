@@ -59,4 +59,11 @@ export default {
   undoStep: '撤销上一步',
   chooseDriverSheet: '为 {name} 选择司机',
   filterEmpty: '没有符合此筛选条件的乘客。',
+  returnTag: '返程',
+  matchReturns: '配对去程司机',
+  matchReturnDone: '已为 {candidates} 趟中的 {placed} 趟返程安排同位去程司机。',
+  matchReturnNone: '目前待安排的返程没有可承接的原去程司机。',
+  wheelchairTag: '可载轮椅',
+  lowStepTag: '低台阶',
+  childSeatTag: '儿童座椅',
 };

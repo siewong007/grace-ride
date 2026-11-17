@@ -7,4 +7,5 @@ export default {
   seats: 'seats',
   proxyLabel: 'Proxy',
   proxyBookedBy: 'Booked by {name}',
+  returnLeg: 'Return trip',
 };

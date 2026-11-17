@@ -41,6 +41,19 @@ interface ProxyRider {
   phone: string;
   relationship: string;
   notes: string;
+  area_id?: number | null;
+  pickup_address?: string;
+  gate_notes?: string;
+}
+
+interface SavedPlace {
+  id: number;
+  label: string;
+  area_id: number | null;
+  area_name: string | null;
+  address: string;
+  gate_notes: string;
+  is_default: number;
 }
 
 export default function RideNew() {
@@ -53,6 +66,8 @@ export default function RideNew() {
     eventId ? `/events/${eventId}` : null,
   );
   const { data: frequentRiders } = useApi<ProxyRider[]>('/proxy-riders');
+  const { data: savedPlacesRaw } = useApi<SavedPlace[]>('/saved-places');
+  const savedPlaces = Array.isArray(savedPlacesRaw) ? savedPlacesRaw : [];
   const { data: recentRides } = useApi<Ride[]>('/rides');
   const toast = useToast();
 
@@ -64,6 +79,8 @@ export default function RideNew() {
 
   const [date, setDate] = useState('');
   const [time, setTime] = useState('');
+  const [includeReturn, setIncludeReturn] = useState(false);
+  const [returnTime, setReturnTime] = useState('12:30');
   const [area, setArea] = useState('');
   const [address, setAddress] = useState('');
   const [destination, setDestination] = useState('');
@@ -114,7 +131,29 @@ export default function RideNew() {
     // update when the rider actually supplies them.
     setRiderPhone(fr.phone);
     if (fr.relationship) setRiderRelationship(fr.relationship);
-    if (fr.notes && !notes) setNotes(fr.notes);
+    if (fr.area_id) {
+      setArea(String(fr.area_id));
+      setErrors((cur) => ({ ...cur, area: '' }));
+    }
+    if (fr.pickup_address) {
+      setAddress(fr.pickup_address);
+      setErrors((cur) => ({ ...cur, address: '' }));
+    }
+    const extraNotes = [fr.gate_notes, fr.notes].filter(Boolean).join(' · ');
+    if (extraNotes && !notes) setNotes(extraNotes);
+  };
+
+  const applySavedPlace = (sp: SavedPlace) => {
+    if (sp.area_id) {
+      setArea(String(sp.area_id));
+      setErrors((cur) => ({ ...cur, area: '' }));
+    }
+    setAddress(sp.address);
+    setErrors((cur) => ({ ...cur, address: '' }));
+    if (sp.gate_notes && !notes.includes(sp.gate_notes)) {
+      setNotes((cur) => (cur ? `${cur}\n${sp.gate_notes}` : sp.gate_notes));
+    }
+    toast(t('savedPlaceApplied', { label: sp.label }));
   };
 
   const lastOwnRide = (recentRides ?? []).find((r) => !r.is_proxy && r.area?.id);
@@ -197,6 +236,10 @@ export default function RideNew() {
         rider_phone: isProxy ? riderPhone.trim() : undefined,
         rider_relationship: isProxy ? riderRelationship : undefined,
         save_proxy_rider: isProxy ? saveProxyRider : false,
+        return_pickup_at: includeReturn && date && returnTime ? `${date}T${returnTime}` : undefined,
+        return_pickup_area_id: includeReturn ? Number(area) : undefined,
+        return_pickup_address: includeReturn ? destination.trim() : undefined,
+        return_destination: includeReturn ? address.trim() : undefined,
       });
       nav(`/rides/${r.id}`, { replace: true });
     }, t('submitted'));
@@ -400,21 +443,53 @@ export default function RideNew() {
                 )}
               </div>
             </div>
+            <label className="row gap-xs items-center small">
+              <input
+                type="checkbox"
+                checked={includeReturn}
+                onChange={(e) => setIncludeReturn(e.target.checked)}
+              />
+              <span>{t('includeReturn')}</span>
+            </label>
+            {includeReturn && (
+              <div className="form-grid two">
+                <Field label={t('returnTime')} hint={t('returnHint')}>
+                  <input
+                    className="input"
+                    type="time"
+                    value={returnTime}
+                    onChange={(e) => setReturnTime(e.target.value)}
+                  />
+                </Field>
+              </div>
+            )}
           </section>
 
           {/* Section 2: Where */}
           <section className="form-section stack">
             <div className="row between wrap gap-xs">
               <h3>{t('whereSection')}</h3>
-              {!isProxy && lastOwnRide && (
-                <button
-                  type="button"
-                  className="chip"
-                  onClick={applyLastPickup}
-                >
-                  {t('useLastPickup', { area: lastOwnRide.area.name })}
-                </button>
-              )}
+              <div className="row wrap gap-xs">
+                {savedPlaces.map((sp) => (
+                  <button
+                    key={sp.id}
+                    type="button"
+                    className={`chip ${address === sp.address ? 'active' : ''}`}
+                    onClick={() => applySavedPlace(sp)}
+                  >
+                    {sp.label}
+                  </button>
+                ))}
+                {!isProxy && lastOwnRide && (
+                  <button
+                    type="button"
+                    className="chip"
+                    onClick={applyLastPickup}
+                  >
+                    {t('useLastPickup', { area: lastOwnRide.area.name })}
+                  </button>
+                )}
+              </div>
             </div>
             <div className="form-grid two">
               <div className="full">

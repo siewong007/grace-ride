@@ -34,7 +34,7 @@ export interface EventItem {
   going: number;
   waitlist: number;
   spots_left: number | null;
-  my_signup: { status: string; need_ride: boolean; offer_drive: boolean; attended: number | null } | null;
+  my_signup: { status: string; need_ride: boolean; offer_drive: boolean; attended: number | null; pass_code?: string | null } | null;
   groups: string;
   can_manage: boolean;
   /** May cancel it (the events page's delete permission). */
@@ -71,12 +71,16 @@ export default function Events() {
     if (before == null) setLoadingPast(true);
     else setLoadingMore(true);
     try {
-      const qs = before != null ? `&before=${encodeURIComponent(before)}&limit=25` : '';
+      const qs = before != null ? `&before=${encodeURIComponent(before)}&limit=25` : '&limit=25';
       const res = await api<EventsPage | EventItem[]>(`/events?scope=past${qs}`);
       if (mine !== latestPast.current) return;
       const newItems = Array.isArray(res) ? res : res.items;
       const nb = Array.isArray(res) ? null : res.next_before;
-      setPastEvents((prev) => (before == null ? newItems : [...prev, ...newItems]));
+      setPastEvents((prev) => {
+        if (before == null) return newItems;
+        const existing = new Set(prev.map((e) => e.id));
+        return [...prev, ...newItems.filter((e) => !existing.has(e.id))];
+      });
       setNextPast(nb);
       setPastError(null);
     } catch (e) {

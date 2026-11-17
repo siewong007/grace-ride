@@ -1,4 +1,4 @@
-//! Event audiences (see README.md):
+//! Event audiences (see docs/TECHNICAL.md):
 //! sub-group visibility, group-matched drivers, the audited admin override and the
 //! masked event title.
 

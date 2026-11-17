@@ -12,16 +12,22 @@ import {
   Spinner,
   Stat,
 } from '../components/ui';
-import { EVENT_KIND, fmtDateTime, rm, useFormatT } from '../format';
+import { EVENT_KIND, fmtDateTime, parseLocal, rm, useFormatT } from '../format';
 import { useTranslation } from 'react-i18next';
 import { useAuth } from '../auth';
-import jsPDF from 'jspdf';
+import { createPdfWriter } from '../pdfWriter';
 
 interface Badge {
   key: string;
   char: string;
   name: string;
   rule: string;
+  char_zh?: string;
+  char_en?: string;
+  name_zh?: string;
+  name_en?: string;
+  rule_zh?: string;
+  rule_en?: string;
   progress: number;
   target: number;
   earned: boolean;
@@ -66,17 +72,23 @@ export default function Report() {
   const drives = can('drive') || type !== 'all' || (r?.rides_driven ?? 0) > 0;
 
   const periodLabel = () => {
-    const start = new Date(r?.period_start ?? `${month}-01`);
-    const end = new Date(r?.period_end ?? `${month}-01`);
-    end.setMonth(end.getMonth() + 1);
+    const start = parseLocal(r?.period_start ?? `${month}-01`);
+    const end = parseLocal(r?.period_end ?? `${month}-01`);
+    // Backend period_end is half-open (first day of the month AFTER the period).
+    if (r?.period_end) end.setMonth(end.getMonth() - 1);
     const fmt = (d: Date) =>
-      d.toLocaleDateString(lang === 'zh' ? 'zh-CN' : 'en-GB', {
+      d.toLocaleDateString(lang?.startsWith('zh') ? 'zh-CN' : 'en-GB', {
         year: 'numeric',
         month: 'long',
       });
     if (range === 'monthly') return fmt(start);
     return `${fmt(start)} – ${fmt(end)}`;
   };
+
+  const isZh = lang?.startsWith('zh');
+  const badgeChar = (b: Badge) => (isZh ? b.char_zh ?? b.char : b.char_en ?? b.char);
+  const badgeName = (b: Badge) => (isZh ? b.name_zh ?? b.name : b.name_en ?? b.name);
+  const badgeRule = (b: Badge) => (isZh ? b.rule_zh ?? b.rule : b.rule_en ?? b.rule);
 
   const fileBase = `grace-ride-report-${range}-${month}`;
 
@@ -113,7 +125,7 @@ export default function Report() {
     lines.push('Badge Key,Name,Rule,Progress,Target,Earned');
     for (const b of r.badges)
       lines.push(
-        `${escapeCsv(b.key)},${escapeCsv(b.name)},${escapeCsv(b.rule)},${b.progress},${b.target},${b.earned}`,
+        `${escapeCsv(b.key)},${escapeCsv(badgeName(b))},${escapeCsv(badgeRule(b))},${b.progress},${b.target},${b.earned}`,
       );
     const csv = lines.join('\n');
     const blob = new Blob([csv], { type: 'text/csv;charset=utf-8' });
@@ -125,91 +137,85 @@ export default function Report() {
     URL.revokeObjectURL(url);
   };
 
-  const exportPdf = () => {
+  const exportPdf = async () => {
     if (!r) return;
-    const doc = new jsPDF();
-    const pageW = doc.internal.pageSize.getWidth();
-    const pageH = doc.internal.pageSize.getHeight();
-    let y = 20;
-
-    const pt = (key: string) => t(key);
-
-    doc.setFontSize(18);
-    doc.text(pt('pdfTitle'), 20, y);
-    y += 10;
-    doc.setFontSize(11);
-    doc.text(`${pt('user')}: ${r.user.name} (${r.user.id})`, 20, y);
-    y += 7;
-    doc.text(`${pt('period')}: ${r.period_start} to ${r.period_end}`, 20, y);
-    y += 7;
-    doc.text(`${pt('range')}: ${r.range}`, 20, y);
-    y += 7;
-    doc.text(`${pt('type')}: ${r.type}`, 20, y);
-    y += 12;
-
-    doc.setFontSize(14);
-    doc.text(pt('summary'), 20, y);
-    y += 8;
+    const rangeMap: Record<string, string> = {
+      monthly: t('rangeMonthly'),
+      quarterly: t('rangeQuarterly'),
+      yearly: t('rangeYearly'),
+    };
+    const typeMap: Record<string, string> = {
+      all: t('typeAll'),
+      driver: t('typeDriver'),
+      passenger: t('typePassenger'),
+    };
+    const kinds = r.by_kind.map((k) => `${ft(EVENT_KIND[k.kind]?.label ?? k.kind)} × ${k.count}`);
+    const events = r.events.map((e) => `${e.title} — ${fmtDateTime(e.starts_at, ft)}`);
+    const badges = r.badges.map(
+      (b) => `${badgeName(b)} — ${badgeRule(b)} (${b.progress}/${b.target}) ${b.earned ? t('earned') : ''}`,
+    );
+    const heads = [t('summary'), t('byKind'), t('events'), t('badges')];
     const rows: [string, string][] = [
-      [pt('events_attended'), String(r.events_attended)],
-      [pt('rides_driven'), String(r.rides_driven)],
-      [pt('rides_received'), String(r.rides_received)],
-      [pt('distance_km'), `${r.distance_km} km`],
-      [pt('reimbursement_cents'), `${r.reimbursement_cents}`],
-      [pt('costs_paid_cents'), `${r.costs_paid_cents}`],
+      [t('events_attended'), String(r.events_attended)],
+      [t('rides_driven'), String(r.rides_driven)],
+      [t('rides_received'), String(r.rides_received)],
+      [t('distance_km'), `${r.distance_km} km`],
+      [t('reimbursement_cents'), `${r.reimbursement_cents}`],
+      [t('costs_paid_cents'), `${r.costs_paid_cents}`],
     ];
+    const meta = [
+      `${t('user')}: ${r.user.name} (${r.user.id})`,
+      `${t('period')}: ${r.period_start} to ${r.period_end}`,
+      `${t('range')}: ${rangeMap[r.range] ?? r.range}`,
+      `${t('type')}: ${typeMap[r.type] ?? r.type}`,
+    ];
+    const w = await createPdfWriter([t('pdfTitle'), ...meta, ...heads, ...rows.flat(), ...kinds, ...events, ...badges]);
+    const M = 20;
+    const body = w.width - M - 25;
+    let yPos = 20;
+    const room = () => {
+      if (yPos > w.height - 40) {
+        w.addPage();
+        yPos = 20;
+      }
+    };
+    const heading = (text: string) => {
+      room();
+      yPos += w.text(text, M, yPos, { size: 14, bold: true }) + 3;
+    };
+    const list = (items: string[]) => {
+      for (const item of items) {
+        room();
+        yPos += w.text(item, M + 5, yPos, { maxWidth: body }) + 1.5;
+      }
+      yPos += 6;
+    };
+
+    yPos += w.text(t('pdfTitle'), M, yPos, { size: 18, bold: true }) + 4;
+    for (const line of meta) yPos += w.text(line, M, yPos) + 1;
+    yPos += 8;
+
+    heading(t('summary'));
     for (const [label, val] of rows) {
-      doc.text(label, 25, y);
-      doc.text(val, pageW - 40 - doc.getTextWidth(val), y);
-      y += 7;
+      w.text(label, M + 5, yPos);
+      yPos += w.text(val, w.width - 40, yPos, { align: 'right' }) + 1;
     }
-    y += 8;
+    yPos += 6;
 
-    if (r.by_kind.length > 0) {
-      doc.setFontSize(14);
-      doc.text('By event kind', 20, y);
-      y += 8;
-      for (const k of r.by_kind) {
-        doc.text(`${ft(EVENT_KIND[k.kind]?.label ?? k.kind)} × ${k.count}`, 25, y);
-        y += 6;
-      }
-      y += 8;
+    if (kinds.length > 0) {
+      heading(t('byKind'));
+      list(kinds);
     }
-
-    if (r.events.length > 0) {
-      doc.setFontSize(14);
-      doc.text('Events', 20, y);
-      y += 8;
-      for (const e of r.events) {
-        if (y > pageH - 40) {
-          doc.addPage();
-          y = 20;
-        }
-        doc.text(`${e.title} — ${fmtDateTime(e.starts_at, ft)}`, 25, y);
-        y += 6;
-      }
-      y += 8;
+    if (events.length > 0) {
+      heading(t('events'));
+      list(events);
+    }
+    if (badges.length > 0) {
+      heading(t('badges'));
+      list(badges);
     }
 
-    if (r.badges.length > 0) {
-      doc.setFontSize(14);
-      doc.text(pt('badges'), 20, y);
-      y += 8;
-      for (const b of r.badges) {
-        if (y > pageH - 40) {
-          doc.addPage();
-          y = 20;
-        }
-        doc.text(
-          `${b.name} — ${b.rule} (${b.progress}/${b.target}) ${b.earned ? 'earned' : ''}`,
-          25,
-          y,
-        );
-        y += 6;
-      }
-    }
-
-    doc.save(`${fileBase}.pdf`);
+    w.save(`${fileBase}.pdf`);
   };
 
   return (
@@ -231,7 +237,7 @@ export default function Report() {
               <select
                 className="input"
                 value={range}
-                onChange={(e) => setRange(e.target.value as any)}
+                onChange={(e) => setRange(e.target.value as 'monthly' | 'quarterly' | 'yearly')}
                 aria-label={t('rangeLabel')}
               >
                 <option value="monthly">{t('rangeMonthly')}</option>
@@ -242,7 +248,7 @@ export default function Report() {
                 <select
                   className="input"
                   value={type}
-                  onChange={(e) => setType(e.target.value as any)}
+                  onChange={(e) => setType(e.target.value as 'all' | 'driver' | 'passenger')}
                   aria-label={t('typeLabel')}
                 >
                   <option value="all">{t('typeAll')}</option>
@@ -369,11 +375,11 @@ export default function Report() {
                             className={`badge-char ${b.earned ? 'earned' : ''}`}
                             aria-hidden="true"
                           >
-                            {b.char}
+                            {badgeChar(b)}
                           </div>
                           <div className="grow min-w-0 stack-xs">
                             <div className="row between nowrap">
-                              <strong className="ellipsis">{b.name}</strong>
+                              <strong className="ellipsis">{badgeName(b)}</strong>
                               <span className="small muted">
                                 {b.earned ? (
                                   <span className="row nowrap gap-xs text-primary bold">
@@ -388,7 +394,7 @@ export default function Report() {
                             <div className="bar">
                               <div style={{ width: `${percent}%` }} />
                             </div>
-                            <div className="muted tiny">{b.rule}</div>
+                            <div className="muted tiny">{badgeRule(b)}</div>
                           </div>
                         </div>
                       );

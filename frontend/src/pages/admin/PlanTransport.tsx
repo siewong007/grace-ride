@@ -4,7 +4,7 @@
 import { DragEvent, useCallback, useEffect, useMemo, useState } from 'react';
 import { useParams } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
-import { Accessibility, Car, History, RotateCcw, Send, Sparkles, Undo2, UserRound } from 'lucide-react';
+import { Accessibility, Car, History, Repeat, RotateCcw, Send, Sparkles, Undo2, UserRound } from 'lucide-react';
 import { ApiError, post, useApi } from '../../api';
 import { useAuth } from '../../auth';
 import {
@@ -25,6 +25,7 @@ import {
 import { fmtDateTime, fmtTime, RIDE_STATUS, useFormatT } from '../../format';
 import {
   applyLastTime,
+  applyMatchReturnDrivers,
   ArrangeResult,
   changesOf,
   Draft,
@@ -192,6 +193,15 @@ export default function PlanTransport() {
     else toast.success(t('sameAsLastDone', { placed: res.placed, candidates: res.candidates }));
   };
 
+  const hasReturnRides = plan.rides.some((r) => r.leg === 'return' && draft[r.id] == null);
+  const matchReturns = () => {
+    const res = applyMatchReturnDrivers(plan, draft);
+    if (res.placed > 0) setUndoStack((s) => [...s.slice(-24), draft]);
+    setDraft(res.draft);
+    if (res.candidates === 0) toast.info(t('matchReturnNone'));
+    else toast.success(t('matchReturnDone', { placed: res.placed, candidates: res.candidates }));
+  };
+
   const resetAll = () => {
     setUndoStack((s) => [...s.slice(-24), draft]);
     setDraft(savedDraft(plan));
@@ -276,6 +286,11 @@ export default function PlanTransport() {
               <Button variant="secondary" icon={<History size={16} />} onClick={sameAsLast} disabled={unassigned.length === 0}>
                 {t('sameAsLast')}
               </Button>
+              {hasReturnRides && (
+                <Button variant="secondary" icon={<Repeat size={16} />} onClick={matchReturns}>
+                  {t('matchReturns')}
+                </Button>
+              )}
               <Button variant="ghost" icon={<Undo2 size={16} />} onClick={undoStep} disabled={undoStack.length === 0}>
                 {t('undoStep')}
               </Button>
@@ -367,9 +382,14 @@ export default function PlanTransport() {
                           <Car size={18} aria-hidden="true" /> {d.name}
                         </h3>
                         <div className="muted plan-driver-meta">
-                          {[d.vehicle.model, d.vehicle.plate].filter(Boolean).join(' · ')}
-                          {' · '}
-                          {d.carpool ? t('carpool') : t('oneBooking')}
+                          {[
+                            d.vehicle.model,
+                            d.vehicle.plate,
+                            d.carpool ? t('carpool') : t('oneBooking'),
+                            d.vehicle.wheelchair_ok ? t('wheelchairTag') : null,
+                            d.vehicle.low_step ? t('lowStepTag') : null,
+                            d.vehicle.child_seat ? t('childSeatTag') : null,
+                          ].filter(Boolean).join(' · ')}
                         </div>
                       </div>
                       <SeatBar used={load.seats} cap={d.cap} over={load.over} label={t('seats', { used: load.seats, cap: d.cap })} />
@@ -499,6 +519,7 @@ function PassengerCard({
       </div>
       {r.pickup_address && <div className="plan-passenger-addr">{r.pickup_address}</div>}
       <div className="plan-tags">
+        {r.leg === 'return' && <Pill tone="info">{t('returnTag')}</Pill>}
         {r.assistance && (
           <Pill tone="warning" icon={<Accessibility size={14} />}>
             {t('assistance', { what: r.assistance })}

@@ -179,8 +179,13 @@ async fn list_events(
 
     if q.scope.as_deref() == Some("past") && (q.before.is_some() || q.limit.is_some()) {
         let limit = q.limit.unwrap_or(25).clamp(1, 100);
+        let cond = if q.before.is_some() {
+            "e.starts_at < $3"
+        } else {
+            "(e.starts_at < $3 OR e.status='finished')"
+        };
         let cutoff = q.before.as_ref().unwrap_or(&now_str);
-        let sql = format!("{EVENT_SELECT} WHERE {visibility} AND e.starts_at < $3 ORDER BY e.starts_at DESC LIMIT $4");
+        let sql = format!("{EVENT_SELECT} WHERE {visibility} AND {cond} ORDER BY e.starts_at DESC LIMIT $4");
         let mut rows = sqlx::query_as::<_, EventRow>(&sql)
             .bind(u.id)
             .bind(&u.group_scope)

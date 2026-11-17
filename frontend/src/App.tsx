@@ -17,6 +17,7 @@ const named = <M extends Record<string, unknown>, K extends keyof M>(load: () =>
   lazy(() => load().then((m) => ({ default: m[key] as ComponentType })));
 const Invite = lazy(() => import('./pages/Invite'));
 const Visit = lazy(() => import('./pages/Visit'));
+const CarePass = lazy(() => import('./pages/CarePass'));
 const Rides = lazy(() => import('./pages/Rides'));
 const RideNew = lazy(() => import('./pages/RideNew'));
 const RideDetail = lazy(() => import('./pages/RideDetail'));
@@ -104,6 +105,8 @@ export default function App() {
       <Route path="/invite/:token" element={page(<Invite />)} />
       {/* A visitor's ride: no account, outside the signed-in app. */}
       <Route path="/visit/:token" element={page(<Visit />)} />
+      {/* Scoped caregiver safe-arrival view: no street address, read-only status + readiness toggle. */}
+      <Route path="/care/:token" element={page(<CarePass />)} />
       <Route element={<RequireAuth><Layout /></RequireAuth>}>
         <Route index element={<Home />} />
         <Route path="rides" element={gated(<Rides />, 'rides')} />

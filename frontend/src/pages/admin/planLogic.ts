@@ -12,6 +12,8 @@ export interface PlanRide {
   notes: string;
   status: string;
   driver_id: number | null;
+  leg?: 'outbound' | 'return';
+  paired_ride_id?: number | null;
   last: { driver_id: number; driver_name: string; times: number; at: string } | null;
   /** The group drivers are matched on (the host's for a visitor). None: any driver. */
   match_group_id?: number | null;
@@ -27,7 +29,14 @@ export interface PlanDriver {
   area_ids: number[];
   /** Groups this driver may drive for: their groups and every group below them. */
   drive_group_ids?: number[];
-  vehicle: { model: string | null; plate: string | null; seats: number | null };
+  vehicle: {
+    model: string | null;
+    plate: string | null;
+    seats: number | null;
+    wheelchair_ok?: boolean;
+    low_step?: boolean;
+    child_seat?: boolean;
+  };
 }
 
 /** May this driver take this rider without an admin override? (`audience::drives_for`) */
@@ -60,9 +69,20 @@ export function driverLoad(plan: Plan, draft: Draft, d: PlanDriver): Load {
   return { seats, rides, over: seats > d.cap || (!d.carpool && rides > 1) };
 }
 
-/** Would adding this ride keep the driver within their seats and booking rules? */
+/** Check whether a driver's vehicle supports the rider's mobility/equipment requirements. */
+export function vehicleCompatible(d: PlanDriver, ride: PlanRide): boolean {
+  const lower = (ride.assistance || '').toLowerCase();
+  if (lower.includes('wheelchair') && !d.vehicle.wheelchair_ok) return false;
+  if ((lower.includes('stroller') || lower.includes('child seat')) && !d.vehicle.child_seat) {
+    return false;
+  }
+  return true;
+}
+
+/** Would adding this ride keep the driver within their seats, booking rules, and vehicle accessibility? */
 export function fits(plan: Plan, draft: Draft, d: PlanDriver, ride: PlanRide): boolean {
   if (ride.passenger.id === d.id) return false;
+  if (!vehicleCompatible(d, ride)) return false;
   return !driverLoad(plan, { ...draft, [ride.id]: d.id }, d).over;
 }
 
@@ -85,6 +105,38 @@ export function applyLastTime(plan: Plan, draft: Draft): { draft: Draft; placed:
   for (const r of open) {
     candidates++;
     const d = byId.get(r.last!.driver_id)!;
+    if (fits(plan, next, d, r)) {
+      next[r.id] = d.id;
+      placed++;
+    }
+  }
+  return { draft: next, placed, candidates };
+}
+
+/**
+ * "Match return drivers": assign unassigned return-leg rides to the same driver handling
+ * their paired outbound ride (or the same passenger's outbound ride) when the car fits.
+ */
+export function applyMatchReturnDrivers(
+  plan: Plan,
+  draft: Draft,
+): { draft: Draft; placed: number; candidates: number } {
+  const next: Draft = { ...draft };
+  const byDriverId = new Map(plan.drivers.map((d) => [d.id, d]));
+  const rideById = new Map(plan.rides.map((r) => [r.id, r]));
+  let placed = 0;
+  let candidates = 0;
+  for (const r of plan.rides) {
+    if (r.leg !== 'return' || next[r.id] != null) continue;
+    const paired =
+      (r.paired_ride_id != null ? rideById.get(r.paired_ride_id) : undefined) ??
+      plan.rides.find((o) => o.id !== r.id && o.passenger.id === r.passenger.id && o.leg !== 'return');
+    if (!paired) continue;
+    const outboundDriverId = next[paired.id] ?? null;
+    if (outboundDriverId == null) continue;
+    const d = byDriverId.get(outboundDriverId);
+    if (!d) continue;
+    candidates++;
     if (fits(plan, next, d, r)) {
       next[r.id] = d.id;
       placed++;

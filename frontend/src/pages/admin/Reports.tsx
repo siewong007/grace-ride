@@ -22,8 +22,8 @@ import { ADMIN_HOME } from '../../staffNav';
 interface Member {
   id: number;
   name: string;
-  email: string;
-  roles: string[];
+  email?: string;
+  roles?: string[];
 }
 
 interface Badge {
@@ -31,6 +31,12 @@ interface Badge {
   char: string;
   name: string;
   rule: string;
+  char_zh?: string;
+  char_en?: string;
+  name_zh?: string;
+  name_en?: string;
+  rule_zh?: string;
+  rule_en?: string;
   progress: number;
   target: number;
   earned: boolean;
@@ -67,8 +73,12 @@ const TYPE_LABEL: Record<string, string> = {
 };
 
 export default function AdminReports() {
-  const { t } = useTranslation('admin');
+  const { t, i18n } = useTranslation('admin');
   const ft = useFormatT();
+  const isZh = i18n.language?.startsWith('zh');
+  const badgeChar = (b: Badge) => (isZh ? b.char_zh ?? b.char : b.char_en ?? b.char);
+  const badgeName = (b: Badge) => (isZh ? b.name_zh ?? b.name : b.name_en ?? b.name);
+  const badgeRule = (b: Badge) => (isZh ? b.rule_zh ?? b.rule : b.rule_en ?? b.rule);
   // The route only renders this page for members who may view member reports.
   const { me } = useAuth();
   const [selectedId, setSelectedId] = useState<number | null>(me?.id ?? null);
@@ -79,17 +89,17 @@ export default function AdminReports() {
   const [type, setType] = useState<'all' | 'driver' | 'passenger'>('all');
   const [y, m] = month.split('-').map(Number);
 
-  const { data: membersData } = useApi<Member[]>('/admin/users?q=');
-  const members = membersData ?? [];
+  const { data: membersData } = useApi<Member[] | { items: Member[] }>('/admin/users?q=');
+  const members = Array.isArray(membersData) ? membersData : membersData?.items ?? [];
   // The picker lists everyone, so a search box narrows it. The chosen member always stays listed.
   const [memberQuery, setMemberQuery] = useState('');
   const needle = memberQuery.trim().toLowerCase();
   const shownMembers = needle
     ? members.filter(
-        (m) =>
-          m.id === selectedId ||
-          m.name.toLowerCase().includes(needle) ||
-          m.email.toLowerCase().includes(needle),
+        (mem) =>
+          mem.id === selectedId ||
+          mem.name.toLowerCase().includes(needle) ||
+          Boolean(mem.email && mem.email.toLowerCase().includes(needle)),
       )
     : members;
 
@@ -138,7 +148,7 @@ export default function AdminReports() {
     lines.push('Badge Key,Name,Rule,Progress,Target,Earned');
     for (const b of r.badges)
       lines.push(
-        `${escapeCsv(b.key)},${escapeCsv(b.name)},${escapeCsv(b.rule)},${b.progress},${b.target},${b.earned}`,
+        `${escapeCsv(b.key)},${escapeCsv(badgeName(b))},${escapeCsv(badgeRule(b))},${b.progress},${b.target},${b.earned}`,
       );
     const csv = lines.join('\n');
     const blob = new Blob([csv], { type: 'text/csv;charset=utf-8' });
@@ -155,7 +165,7 @@ export default function AdminReports() {
     const kinds = r.by_kind.map((k) => `${ft(EVENT_KIND[k.kind]?.label ?? k.kind)} × ${k.count}`);
     const events = r.events.map((e) => `${e.title} — ${fmtDateTime(e.starts_at, ft)}`);
     const badges = r.badges.map(
-      (b) => `${b.name} — ${b.rule} (${b.progress}/${b.target}) ${b.earned ? t('reports.earned') : ''}`,
+      (b) => `${badgeName(b)} — ${badgeRule(b)} (${b.progress}/${b.target}) ${b.earned ? t('reports.earned') : ''}`,
     );
     const heads = [t('reports.summary'), t('reports.byKind'), t('reports.events'), t('reports.badges')];
     const rows: [string, string][] = [
@@ -295,7 +305,7 @@ export default function AdminReports() {
                 <option value="">{t('reports.self')}</option>
                 {shownMembers.map((mem) => (
                   <option key={mem.id} value={mem.id}>
-                    {mem.name} ({mem.email})
+                    {mem.email ? `${mem.name} (${mem.email})` : mem.name}
                   </option>
                 ))}
               </select>
@@ -392,11 +402,11 @@ export default function AdminReports() {
                             className={`badge-char ${b.earned ? 'earned' : ''}`}
                             aria-hidden="true"
                           >
-                            {b.char}
+                            {badgeChar(b)}
                           </div>
                           <div className="grow min-w-0 stack-xs">
                             <div className="row between nowrap">
-                              <strong className="ellipsis">{b.name}</strong>
+                              <strong className="ellipsis">{badgeName(b)}</strong>
                               <span className="small muted">
                                 {b.earned ? (
                                   <span className="row nowrap gap-xs text-primary bold">
@@ -411,7 +421,7 @@ export default function AdminReports() {
                             <div className="bar">
                               <div style={{ width: `${percent}%` }} />
                             </div>
-                            <div className="muted tiny">{b.rule}</div>
+                            <div className="muted tiny">{badgeRule(b)}</div>
                           </div>
                         </div>
                       );

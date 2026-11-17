@@ -76,4 +76,16 @@ export default {
   turnOffBody: '链接将失效。接送仍保留；若对方不来，请在接送页面取消。',
   viewRide: '接送',
   invitedBy: '由 {name} 邀请',
+  care: {
+    badge: '家属安全护送状态链接',
+    title: '{name} 的接送状态',
+    privacyHint: '仅显示地区与目的地；上车门牌地址保持隐藏。',
+    returnLeg: '返程',
+    route: '路线',
+    arrivedSafely: '已安全抵达 {dest}',
+    pickedUpOnWay: '已上车，正在前往 {dest}',
+    readinessLabel: '替乘车人确认准备状态',
+    riderReady: '{name} 已准备好',
+    closedTitle: '安全状态链接已关闭',
+  },
 };

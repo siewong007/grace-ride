@@ -58,4 +58,8 @@ export default {
   churchDest: '八打灵卫理公会（PJ State CMC）',
   addressSearching: '正在查找地图建议…',
   addressNoMatch: '未找到地图定位——您仍可直接提交所填地址。',
+  includeReturn: '同时预约关联返程接送',
+  returnTime: '返程接送时间',
+  returnHint: '将从目的地接回您的上车地址',
+  savedPlaceApplied: '已填入常用地点：{label}',
 };
