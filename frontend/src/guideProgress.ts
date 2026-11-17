@@ -19,7 +19,8 @@ const hash = (str: string) => {
 export function stepIds(steps: GuideStep[]): string[] {
   const seen = new Map<string, number>();
   return steps.map((s) => {
-    const base = hash(`${s.title_en}|${s.title_zh}|${s.link}`);
+    const explicit = s.id?.trim();
+    const base = explicit || hash(`${s.title_en}|${s.title_zh}|${s.link}`);
     const n = seen.get(base) ?? 0;
     seen.set(base, n + 1);
     return n ? `${base}.${n}` : base;

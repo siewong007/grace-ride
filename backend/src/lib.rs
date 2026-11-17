@@ -287,6 +287,10 @@ pub fn router(state: AppState) -> Router {
         .route("/stream", get(stream::handler))
         .route("/health", get(health))
         .fallback(api_not_found)
+        .layer(from_fn_with_state(
+            state.clone(),
+            security::session_lock_guard,
+        ))
         .layer(from_fn_with_state(state.clone(), security::pending_guard));
     let mut app = Router::new().nest("/api", api);
 

@@ -23,6 +23,7 @@ pub fn router() -> Router<AppState> {
         .route("/groups", get(list_groups))
         .route("/events", get(list_events).post(create_event))
         .route("/events/{id}", get(get_event).put(update_event))
+        .route("/events/{id}/duplicate", post(duplicate_event))
         .route("/events/{id}/cancel", post(cancel_event))
         .route("/events/{id}/finish", post(finish_event))
         .route("/events/{id}/signup", post(signup))
@@ -33,6 +34,7 @@ pub fn router() -> Router<AppState> {
             "/events/{id}/checkin",
             get(get_checkin_info).post(self_checkin),
         )
+        .route("/events/{id}/checkin/scan-member", post(scan_member_pass))
         .route("/events/{id}/checkin-code/reset", post(reset_checkin_code))
 }
 
@@ -113,6 +115,8 @@ struct EventRow {
     my_attended: Option<i64>,
     my_as_group_id: Option<i64>,
     my_as_group: Option<String>,
+    my_pass_code: Option<String>,
+    series_id: Option<String>,
     groups: Option<String>,
     photo_file_id: Option<i64>,
     attendance_enabled: i64,
@@ -121,11 +125,11 @@ struct EventRow {
 
 const EVENT_SELECT: &str = "SELECT e.id, e.title, e.kind, e.description, e.starts_at, e.location, e.capacity, e.cost_note,
     e.signup_deadline, e.status, e.created_by, c.name AS creator_name, e.photo_file_id,
-    e.attendance_enabled, e.checkin_code,
+    e.attendance_enabled, e.checkin_code, e.series_id,
     (SELECT COUNT(*) FROM event_signups s WHERE s.event_id=e.id AND s.status='going') AS going,
     (SELECT COUNT(*) FROM event_signups s WHERE s.event_id=e.id AND s.status='waitlist') AS waitlist,
     ms.status AS my_status, ms.need_ride AS my_need_ride, ms.offer_drive AS my_offer_drive, ms.attended AS my_attended,
-    ms.as_group_id AS my_as_group_id, (SELECT name FROM groups WHERE id = ms.as_group_id) AS my_as_group,
+    ms.as_group_id AS my_as_group_id, (SELECT name FROM groups WHERE id = ms.as_group_id) AS my_as_group, ms.pass_code AS my_pass_code,
     (SELECT string_agg(g.name, '、') FROM event_groups eg JOIN groups g ON g.id=eg.group_id WHERE eg.event_id=e.id) AS groups
     FROM events e JOIN users c ON c.id = e.created_by
     LEFT JOIN event_signups ms ON ms.event_id = e.id AND ms.user_id = $1";
@@ -136,10 +140,17 @@ fn event_json(e: &EventRow, u: &CurrentUser) -> Value {
         "id": e.id, "title": e.title, "kind": e.kind, "description": e.description, "starts_at": e.starts_at,
         "location": e.location, "capacity": e.capacity, "cost_note": e.cost_note, "signup_deadline": e.signup_deadline,
         "status": e.status, "created_by": {"id": e.created_by, "name": e.creator_name},
+        "series_id": e.series_id,
         "going": e.going, "waitlist": e.waitlist,
         "spots_left": if e.capacity > 0 { Some((e.capacity - e.going).max(0)) } else { None },
-        "my_signup": e.my_status.as_ref().map(|s| json!({"status": s, "need_ride": e.my_need_ride == Some(1), "offer_drive": e.my_offer_drive == Some(1), "attended": e.my_attended,
-            "as_group": e.my_as_group_id.map(|id| json!({"id": id, "name": e.my_as_group}))})),
+        "my_signup": e.my_status.as_ref().map(|s| json!({
+            "status": s,
+            "need_ride": e.my_need_ride == Some(1),
+            "offer_drive": e.my_offer_drive == Some(1),
+            "attended": e.my_attended,
+            "pass_code": e.my_pass_code,
+            "as_group": e.my_as_group_id.map(|id| json!({"id": id, "name": e.my_as_group})),
+        })),
         "groups": e.groups.clone().unwrap_or_default(),
         "photo_file_id": e.photo_file_id,
         "attendance_enabled": e.attendance_enabled == 1,
@@ -290,6 +301,10 @@ struct EventIn {
     photo_file_id: Option<i64>,
     /// Optional attendance module: members can scan QR code to check in without a ride.
     attendance_enabled: Option<bool>,
+    /// Optional recurring schedule: none | weekly | biweekly | monthly
+    repeat_frequency: Option<String>,
+    /// Number of occurrences to generate (1..=12)
+    repeat_count: Option<i64>,
 }
 
 /// A cover photo must be an image the saver uploaded themselves, so nobody can surface
@@ -384,6 +399,28 @@ fn validate(req: &EventIn, lang: Lang) -> AppResult<(String, Option<String>)> {
     Ok((at, dl))
 }
 
+fn shift_occurrence(dt_str: &str, freq: &str, idx: i64) -> String {
+    if idx <= 0 || freq == "none" {
+        return dt_str.to_string();
+    }
+    let Some(dt) = crate::util::parse_dt(dt_str) else {
+        return dt_str.to_string();
+    };
+    let shifted = match freq {
+        "weekly" => dt + chrono::Duration::days(7 * idx),
+        "biweekly" => dt + chrono::Duration::days(14 * idx),
+        "monthly" => {
+            let d = dt
+                .date()
+                .checked_add_months(chrono::Months::new(idx as u32))
+                .unwrap_or(dt.date());
+            chrono::NaiveDateTime::new(d, dt.time())
+        }
+        _ => dt,
+    };
+    shifted.format("%Y-%m-%dT%H:%M").to_string()
+}
+
 async fn create_event(
     State(st): State<AppState>,
     u: CurrentUser,
@@ -394,38 +431,61 @@ async fn create_event(
     }
     let (at, dl) = validate(&req, u.lang)?;
     check_photo(&st, &u, req.photo_file_id, None).await?;
-    let att_enabled = req.attendance_enabled.unwrap_or(true);
-    let checkin_code = if att_enabled {
-        Some(random_token(10))
+    let freq = req.repeat_frequency.as_deref().unwrap_or("none");
+    if !matches!(freq, "none" | "weekly" | "biweekly" | "monthly") {
+        return Err(bad(u.lang, ErrorKey::InvalidAction));
+    }
+    let repeat_count = if freq == "none" {
+        1
+    } else {
+        req.repeat_count.unwrap_or(1).clamp(1, 12)
+    };
+    let series_id = if repeat_count > 1 {
+        Some(uuid::Uuid::new_v4().to_string())
     } else {
         None
     };
-    // The event and its audience are saved together, or not at all.
+    let att_enabled = req.attendance_enabled.unwrap_or(true);
+
+    // The event(s) and their audience are saved together, or not at all.
     let mut tx = st.db.begin().await?;
-    let (id,): (i64,) = sqlx::query_as(
-        "INSERT INTO events (title, kind, description, starts_at, location, capacity, cost_note, signup_deadline, created_by, created_at, photo_file_id, attendance_enabled, checkin_code)
-         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13) RETURNING id",
-    )
-    .bind(req.title.trim())
-    .bind(&req.kind)
-    .bind(req.description.clone().unwrap_or_default())
-    .bind(&at)
-    .bind(req.location.trim())
-    .bind(req.capacity.unwrap_or(0).max(0))
-    .bind(req.cost_note.clone().unwrap_or_default())
-    .bind(&dl)
-    .bind(u.id)
-    .bind(now())
-    .bind(req.photo_file_id)
-    .bind(att_enabled as i64)
-    .bind(checkin_code)
-    .fetch_one(&mut *tx)
-    .await?;
-    save_event_groups(&mut tx, id, &req, u.lang).await?;
+    let mut created_ids = Vec::with_capacity(repeat_count as usize);
+    for idx in 0..repeat_count {
+        let occ_at = shift_occurrence(&at, freq, idx);
+        let occ_dl = dl.as_deref().map(|d| shift_occurrence(d, freq, idx));
+        let checkin_code = if att_enabled {
+            Some(random_token(10))
+        } else {
+            None
+        };
+        let (id,): (i64,) = sqlx::query_as(
+            "INSERT INTO events (title, kind, description, starts_at, location, capacity, cost_note, signup_deadline, created_by, created_at, photo_file_id, attendance_enabled, checkin_code, series_id)
+             VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14) RETURNING id",
+        )
+        .bind(req.title.trim())
+        .bind(&req.kind)
+        .bind(req.description.clone().unwrap_or_default())
+        .bind(&occ_at)
+        .bind(req.location.trim())
+        .bind(req.capacity.unwrap_or(0).max(0))
+        .bind(req.cost_note.clone().unwrap_or_default())
+        .bind(&occ_dl)
+        .bind(u.id)
+        .bind(now())
+        .bind(req.photo_file_id)
+        .bind(att_enabled as i64)
+        .bind(checkin_code)
+        .bind(&series_id)
+        .fetch_one(&mut *tx)
+        .await?;
+        save_event_groups(&mut tx, id, &req, u.lang).await?;
+        created_ids.push(id);
+    }
     tx.commit().await?;
+    let first_id = created_ids[0];
     // Invite members of the target groups and their sub-groups (相关活动邀请).
     let members: Vec<(i64,)> = sqlx::query_as(&audience_users_sql("$1"))
-        .bind(id)
+        .bind(first_id)
         .fetch_all(&st.db)
         .await?;
     let invited: Vec<i64> = members
@@ -433,25 +493,130 @@ async fn create_event(
         .map(|(m,)| m)
         .filter(|m| *m != u.id)
         .collect();
-    let body = format!("{} · {}", req.title.trim(), at.replace('T', " "));
+    let body = if repeat_count > 1 {
+        format!(
+            "{} · {} ({} sessions)",
+            req.title.trim(),
+            at.replace('T', " "),
+            repeat_count
+        )
+    } else {
+        format!("{} · {}", req.title.trim(), at.replace('T', " "))
+    };
     notify_many(
         &st.db,
         &invited,
         ("新的活动邀请", "New event invitation"),
         (&body, &body),
-        &format!("/events/{id}"),
+        &format!("/events/{first_id}"),
     )
     .await;
+    for &eid in &created_ids {
+        audit(
+            &st.db,
+            Some(u.id),
+            "event.create",
+            "event",
+            Some(eid),
+            req.title.trim(),
+        )
+        .await;
+    }
+    Ok(Json(json!({
+        "id": first_id,
+        "created_ids": created_ids,
+        "series_id": series_id,
+    })))
+}
+
+#[derive(Deserialize)]
+struct DuplicateIn {
+    starts_at: String,
+    signup_deadline: Option<String>,
+    title: Option<String>,
+}
+
+async fn duplicate_event(
+    State(st): State<AppState>,
+    u: CurrentUser,
+    Path(id): Path<i64>,
+    Json(req): Json<DuplicateIn>,
+) -> AppResult<Json<Value>> {
+    require(&u, Page::Events, Act::Create)?;
+    let src = load_visible_event(&st, &u, id).await?;
+    let at = norm_dt(&req.starts_at).ok_or_else(|| bad(u.lang, ErrorKey::InvalidEventTime))?;
+    let dl = match req.signup_deadline.as_deref().filter(|s| !s.is_empty()) {
+        Some(s) => {
+            let d = norm_dt(s).ok_or_else(|| bad(u.lang, ErrorKey::InvalidSignupDeadline))?;
+            if d > at {
+                return Err(bad(u.lang, ErrorKey::DeadlineAfterEvent));
+            }
+            Some(d)
+        }
+        None => None,
+    };
+    let title = req
+        .title
+        .as_deref()
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .unwrap_or(&src.title)
+        .to_string();
+    let att_enabled = src.attendance_enabled == 1;
+    let checkin_code = if att_enabled {
+        Some(random_token(10))
+    } else {
+        None
+    };
+
+    let mut tx = st.db.begin().await?;
+    let (new_id,): (i64,) = sqlx::query_as(
+        "INSERT INTO events (title, kind, description, starts_at, location, capacity, cost_note, signup_deadline, created_by, created_at, photo_file_id, attendance_enabled, checkin_code)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13) RETURNING id",
+    )
+    .bind(&title)
+    .bind(&src.kind)
+    .bind(&src.description)
+    .bind(&at)
+    .bind(&src.location)
+    .bind(src.capacity)
+    .bind(&src.cost_note)
+    .bind(&dl)
+    .bind(u.id)
+    .bind(now())
+    .bind(src.photo_file_id)
+    .bind(att_enabled as i64)
+    .bind(checkin_code)
+    .fetch_one(&mut *tx)
+    .await?;
+    sqlx::query(
+        "INSERT INTO event_groups (event_id, group_id)
+         SELECT $1, group_id FROM event_groups WHERE event_id=$2 ON CONFLICT DO NOTHING",
+    )
+    .bind(new_id)
+    .bind(id)
+    .execute(&mut *tx)
+    .await?;
+    sqlx::query(
+        "INSERT INTO event_attribution_groups (event_id, group_id)
+         SELECT $1, group_id FROM event_attribution_groups WHERE event_id=$2 ON CONFLICT DO NOTHING",
+    )
+    .bind(new_id)
+    .bind(id)
+    .execute(&mut *tx)
+    .await?;
+    tx.commit().await?;
+
     audit(
         &st.db,
         Some(u.id),
         "event.create",
         "event",
-        Some(id),
-        req.title.trim(),
+        Some(new_id),
+        format!("{title} (from #{id})"),
     )
     .await;
-    Ok(Json(json!({"id": id})))
+    Ok(Json(json!({ "id": new_id })))
 }
 
 async fn update_event(
@@ -734,9 +899,11 @@ async fn signup(
     } else {
         "waitlist"
     };
+    let pass_code = random_token(10);
     sqlx::query(
-        "INSERT INTO event_signups (event_id, user_id, status, need_ride, offer_drive, offer_seats, created_at, as_group_id) VALUES ($1,$2,$3,$4,$5,$6,$7,$8)
+        "INSERT INTO event_signups (event_id, user_id, status, need_ride, offer_drive, offer_seats, created_at, as_group_id, pass_code) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)
          ON CONFLICT(event_id, user_id) DO UPDATE SET status=excluded.status, need_ride=excluded.need_ride, offer_drive=excluded.offer_drive, offer_seats=excluded.offer_seats, as_group_id=excluded.as_group_id,
+         pass_code = COALESCE(event_signups.pass_code, excluded.pass_code),
          created_at = CASE WHEN event_signups.status = 'cancelled' THEN excluded.created_at ELSE event_signups.created_at END",
     )
     .bind(id)
@@ -747,6 +914,7 @@ async fn signup(
     .bind(req.offer_seats.unwrap_or(0))
     .bind(now())
     .bind(as_group)
+    .bind(&pass_code)
     .execute(&mut *tx)
     .await?;
     // A ride already booked for this event follows a changed "joining as".
@@ -1011,12 +1179,13 @@ async fn mark_attendance(
         if in_audience == 0 {
             return Err(forbidden(u.lang, ErrorKey::EventNotOpenToGroup));
         }
-        sqlx::query("INSERT INTO event_signups (event_id, user_id, status, attended, created_at) VALUES ($1,$2, 'going', $3, $4)
-             ON CONFLICT (event_id, user_id) DO UPDATE SET attended=excluded.attended, status='going'")
+        sqlx::query("INSERT INTO event_signups (event_id, user_id, status, attended, created_at, pass_code) VALUES ($1,$2, 'going', $3, $4, $5)
+             ON CONFLICT (event_id, user_id) DO UPDATE SET attended=excluded.attended, status='going', pass_code=COALESCE(event_signups.pass_code, excluded.pass_code)")
             .bind(id)
             .bind(req.user_id)
             .bind(v)
             .bind(now())
+            .bind(random_token(10))
             .execute(&st.db)
             .await?;
     }
@@ -1092,14 +1261,15 @@ async fn self_checkin(
             let choices = join_choices(&st.db, &u, id).await.unwrap_or_default();
             let as_group = choices.first().map(|c| c.0);
             sqlx::query(
-                "INSERT INTO event_signups (event_id, user_id, status, attended, need_ride, offer_drive, offer_seats, as_group_id, created_at)
-                 VALUES ($1, $2, 'going', 1, 0, 0, 0, $3, $4)
-                 ON CONFLICT (event_id, user_id) DO UPDATE SET attended = 1, status = 'going'",
+                "INSERT INTO event_signups (event_id, user_id, status, attended, need_ride, offer_drive, offer_seats, as_group_id, created_at, pass_code)
+                 VALUES ($1, $2, 'going', 1, 0, 0, 0, $3, $4, $5)
+                 ON CONFLICT (event_id, user_id) DO UPDATE SET attended = 1, status = 'going', pass_code = COALESCE(event_signups.pass_code, excluded.pass_code)",
             )
             .bind(id)
             .bind(u.id)
             .bind(as_group)
             .bind(now())
+            .bind(random_token(10))
             .execute(&mut *tx)
             .await?;
         }
@@ -1149,6 +1319,82 @@ async fn get_checkin_info(
         "attendance_enabled": e.attendance_enabled == 1,
         "my_attended": my_attended.and_then(|(a,)| a) == Some(1),
         "is_member": true,
+    })))
+}
+
+#[derive(Deserialize)]
+struct ScanMemberIn {
+    pass_code: String,
+}
+
+async fn scan_member_pass(
+    State(st): State<AppState>,
+    u: CurrentUser,
+    Path(id): Path<i64>,
+    Json(req): Json<ScanMemberIn>,
+) -> AppResult<Json<Value>> {
+    let e = load_event(&st, &u, id).await?;
+    if !can_manage(&u, e.created_by, Act::Update) {
+        return Err(forbidden(
+            u.lang,
+            ErrorKey::OnlyOrganiserCanRecordAttendance,
+        ));
+    }
+    if e.status != "published" {
+        return Err(bad(u.lang, ErrorKey::EventNotOpen));
+    }
+    if e.attendance_enabled != 1 {
+        return Err(bad(u.lang, ErrorKey::AttendanceModuleDisabled));
+    }
+    let raw = req.pass_code.trim();
+    let prefix = format!("GRPASS:{id}:");
+    let clean = raw
+        .strip_prefix(&prefix)
+        .or_else(|| raw.strip_prefix(&prefix.to_ascii_lowercase()))
+        .unwrap_or(raw)
+        .trim();
+    if clean.is_empty() {
+        return Err(bad(u.lang, ErrorKey::InvalidPassCode));
+    }
+
+    let row: Option<(i64, String, Option<i64>)> = sqlx::query_as(
+        "SELECT es.user_id, u.name, es.attended
+         FROM event_signups es JOIN users u ON u.id = es.user_id
+         WHERE es.event_id = $1 AND es.pass_code IS NOT NULL AND lower(es.pass_code) = lower($2)",
+    )
+    .bind(id)
+    .bind(clean)
+    .fetch_optional(&st.db)
+    .await?;
+    let Some((uid, member_name, prev_att)) = row else {
+        return Err(bad(u.lang, ErrorKey::InvalidPassCode));
+    };
+    let already_attended = prev_att == Some(1);
+    if !already_attended {
+        sqlx::query(
+            "UPDATE event_signups SET attended = 1,
+                status = CASE WHEN status IN ('cancelled','waitlist') THEN 'going' ELSE status END
+             WHERE event_id = $1 AND user_id = $2",
+        )
+        .bind(id)
+        .bind(uid)
+        .execute(&st.db)
+        .await?;
+        audit(
+            &st.db,
+            Some(u.id),
+            "event.attendance",
+            "event",
+            Some(id),
+            format!("scan member {uid} ({member_name}) = Some(true)"),
+        )
+        .await;
+    }
+    Ok(Json(json!({
+        "ok": true,
+        "user_id": uid,
+        "member_name": member_name,
+        "already_attended": already_attended,
     })))
 }
 

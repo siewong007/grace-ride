@@ -1,25 +1,40 @@
 //! Notifications, announcements, help center, Grab reimbursements, monthly reports & badges, profile.
 
 use axum::{
+    body::Body,
     extract::{Path, Query, State},
+    http::{header, HeaderMap, StatusCode},
+    response::Response,
     routing::{delete, get, post},
     Json, Router,
 };
 use serde::Deserialize;
 use serde_json::{json, Value};
 
-use crate::auth::CurrentUser;
-use crate::error::{bad, conflict, forbidden, not_found, AppResult};
+use crate::auth::{hash_token, CurrentUser};
+use crate::error::{bad, conflict, forbidden, not_found, AppError, AppResult};
 use crate::i18n::ErrorKey;
 use crate::perms::{Act, Page};
 use crate::state::AppState;
 use crate::util::{
-    audit, check_name, check_phone, fmt_rm, notify, notify_perm, now, require, require_one, t, Lang,
+    audit, check_name, check_phone, fmt_rm, notify, notify_perm, now, parse_dt, random_token,
+    require, require_one, t, Lang,
 };
 
 pub fn router() -> Router<AppState> {
     Router::new()
         .route("/me", axum::routing::put(update_profile))
+        .route(
+            "/me/calendar-feed",
+            get(get_calendar_feed).delete(revoke_calendar_feed),
+        )
+        .route("/me/calendar-feed/rotate", post(rotate_calendar_feed))
+        .route("/calendar/{token}", get(serve_calendar_ics))
+        .route("/push/config", get(push_config))
+        .route(
+            "/push/subscribe",
+            post(push_subscribe).delete(push_unsubscribe),
+        )
         .route("/notifications", get(list_notifications))
         .route("/notifications/read-all", post(read_all))
         .route("/notifications/{id}/read", post(read_one))
@@ -47,6 +62,15 @@ pub fn router() -> Router<AppState> {
             get(get_guide).put(update_guide).delete(delete_guide),
         )
         .route(
+            "/reimbursements/batches",
+            get(list_payout_batches).post(create_payout_batch),
+        )
+        .route(
+            "/reimbursements/batches/{id}/csv",
+            get(export_payout_batch_csv),
+        )
+        .route("/reimbursements/batches/{id}/pay", post(pay_payout_batch))
+        .route(
             "/reimbursements",
             get(list_reimbursements).post(create_reimbursement),
         )
@@ -73,6 +97,11 @@ struct ProfileIn {
     lang: Option<String>,
     readiness_prompt_mins: Option<i64>,
     auto_lock_mins: Option<i64>,
+    telegram_chat_id: Option<String>,
+    whatsapp_opt_in: Option<bool>,
+    push_opt_in: Option<bool>,
+    caregiver_user_id: Option<i64>,
+    clear_caregiver: Option<bool>,
 }
 
 async fn update_profile(
@@ -106,6 +135,23 @@ async fn update_profile(
             return Err(forbidden(u.lang, ErrorKey::InvalidPhoto));
         }
     }
+    if let Some(cg) = req.caregiver_user_id {
+        if cg == u.id {
+            return Err(bad(u.lang, ErrorKey::InvalidAction));
+        }
+        let ok: Option<(i64,)> =
+            sqlx::query_as("SELECT id FROM users WHERE id=$1 AND status='active'")
+                .bind(cg)
+                .fetch_optional(&st.db)
+                .await?;
+        if ok.is_none() {
+            return Err(bad(u.lang, ErrorKey::InvalidAction));
+        }
+    }
+    let tg = req
+        .telegram_chat_id
+        .as_deref()
+        .map(|s| s.trim().chars().take(64).collect::<String>());
     sqlx::query(
         "UPDATE users SET
             name=COALESCE($1, name),
@@ -114,8 +160,12 @@ async fn update_profile(
             badges_opt_out=COALESCE($4, badges_opt_out),
             lang=COALESCE($5, lang),
             readiness_prompt_mins=COALESCE($6, readiness_prompt_mins),
-            auto_lock_mins=COALESCE($7, auto_lock_mins)
-         WHERE id=$8",
+            auto_lock_mins=COALESCE($7, auto_lock_mins),
+            telegram_chat_id=COALESCE($8, telegram_chat_id),
+            whatsapp_opt_in=COALESCE($9, whatsapp_opt_in),
+            push_opt_in=COALESCE($10, push_opt_in),
+            caregiver_user_id=CASE WHEN $11 THEN NULL ELSE COALESCE($12, caregiver_user_id) END
+         WHERE id=$13",
     )
     .bind(req.name.as_deref().map(str::trim))
     .bind(req.phone.as_deref().map(str::trim))
@@ -124,6 +174,11 @@ async fn update_profile(
     .bind(req.lang.as_deref())
     .bind(req.readiness_prompt_mins)
     .bind(req.auto_lock_mins)
+    .bind(tg.as_deref())
+    .bind(req.whatsapp_opt_in.map(|b| b as i64))
+    .bind(req.push_opt_in.map(|b| b as i64))
+    .bind(req.clear_caregiver.unwrap_or(false))
+    .bind(req.caregiver_user_id)
     .bind(u.id)
     .execute(&st.db)
     .await?;
@@ -135,6 +190,16 @@ async fn update_profile(
         ("badges_opt_out", req.badges_opt_out.is_some()),
         ("lang", req.lang.is_some()),
         ("auto_lock", req.auto_lock_mins.is_some()),
+        (
+            "alerts",
+            req.telegram_chat_id.is_some()
+                || req.whatsapp_opt_in.is_some()
+                || req.push_opt_in.is_some(),
+        ),
+        (
+            "caregiver",
+            req.caregiver_user_id.is_some() || req.clear_caregiver.unwrap_or(false),
+        ),
     ]
     .into_iter()
     .filter_map(|(k, sent)| sent.then_some(k))
@@ -149,6 +214,274 @@ async fn update_profile(
     )
     .await;
     Ok(Json(json!({"ok": true})))
+}
+
+// ---------------- Live Calendar Subscription (.ics) ----------------
+
+async fn get_calendar_feed(State(st): State<AppState>, u: CurrentUser) -> AppResult<Json<Value>> {
+    let (has_hash,): (bool,) =
+        sqlx::query_as("SELECT calendar_token_hash IS NOT NULL FROM users WHERE id=$1")
+            .bind(u.id)
+            .fetch_one(&st.db)
+            .await?;
+    Ok(Json(json!({ "enabled": has_hash })))
+}
+
+async fn rotate_calendar_feed(
+    State(st): State<AppState>,
+    u: CurrentUser,
+) -> AppResult<Json<Value>> {
+    let token = random_token(48);
+    let token_hash = hash_token(&token);
+    sqlx::query("UPDATE users SET calendar_token_hash=$1 WHERE id=$2")
+        .bind(&token_hash)
+        .bind(u.id)
+        .execute(&st.db)
+        .await?;
+    audit(
+        &st.db,
+        Some(u.id),
+        "calendar.rotate",
+        "user",
+        Some(u.id),
+        "",
+    )
+    .await;
+    Ok(Json(json!({
+        "token": token,
+        "ics_path": format!("/api/calendar/{token}.ics"),
+    })))
+}
+
+async fn revoke_calendar_feed(
+    State(st): State<AppState>,
+    u: CurrentUser,
+) -> AppResult<Json<Value>> {
+    sqlx::query("UPDATE users SET calendar_token_hash=NULL WHERE id=$1")
+        .bind(u.id)
+        .execute(&st.db)
+        .await?;
+    audit(
+        &st.db,
+        Some(u.id),
+        "calendar.revoke",
+        "user",
+        Some(u.id),
+        "",
+    )
+    .await;
+    Ok(Json(json!({ "ok": true })))
+}
+
+fn escape_ics_text(s: &str) -> String {
+    s.replace('\\', "\\\\")
+        .replace(';', "\\;")
+        .replace(',', "\\,")
+        .replace('\r', "")
+        .replace('\n', "\\n")
+}
+
+fn fmt_ics_dt(raw: &str) -> String {
+    let Some(dt) = parse_dt(raw) else {
+        return raw.replace(['-', ':'], "").chars().take(15).collect();
+    };
+    dt.format("%Y%m%dT%H%M%S").to_string()
+}
+
+fn shift_ics_dt(raw: &str, mins: i64) -> String {
+    let Some(dt) = parse_dt(raw) else {
+        return fmt_ics_dt(raw);
+    };
+    (dt + chrono::Duration::minutes(mins))
+        .format("%Y%m%dT%H%M%S")
+        .to_string()
+}
+
+async fn serve_calendar_ics(
+    State(st): State<AppState>,
+    headers: HeaderMap,
+    Path(raw_token): Path<String>,
+) -> AppResult<Response> {
+    let lang = Lang::from_accept_language(
+        headers
+            .get(header::ACCEPT_LANGUAGE)
+            .and_then(|v| v.to_str().ok())
+            .unwrap_or(""),
+    );
+    let token = raw_token.strip_suffix(".ics").unwrap_or(&raw_token);
+    if token.len() < 16 {
+        return Err(not_found(lang));
+    }
+    let user: Option<(i64, String)> = sqlx::query_as(
+        "SELECT id, name FROM users WHERE calendar_token_hash=$1 AND status='active'",
+    )
+    .bind(hash_token(token))
+    .fetch_optional(&st.db)
+    .await?;
+    let Some((uid, _uname)) = user else {
+        return Err(not_found(lang));
+    };
+
+    let cutoff = crate::util::in_days(-30);
+    let rides: Vec<(i64, i64, Option<i64>, String, String, String, String)> = sqlx::query_as(
+        "SELECT id, passenger_id, driver_id, pickup_at, destination, pickup_address, status
+         FROM rides
+         WHERE (passenger_id=$1 OR driver_id=$1)
+           AND status IN ('confirmed','in_progress','completed','pending_driver_confirm','pending_approval')
+           AND pickup_at >= $2
+         ORDER BY pickup_at",
+    )
+    .bind(uid)
+    .bind(&cutoff)
+    .fetch_all(&st.db)
+    .await?;
+
+    let events: Vec<(i64, String, String, String, String)> = sqlx::query_as(
+        "SELECT e.id, e.title, e.starts_at, e.location, e.description
+         FROM event_signups es JOIN events e ON e.id = es.event_id
+         WHERE es.user_id=$1 AND es.status='going' AND e.status IN ('published','finished') AND e.starts_at >= $2
+         ORDER BY e.starts_at",
+    )
+    .bind(uid)
+    .bind(&cutoff)
+    .fetch_all(&st.db)
+    .await?;
+
+    let stamp = fmt_ics_dt(&now());
+    let mut lines = vec![
+        "BEGIN:VCALENDAR".to_string(),
+        "VERSION:2.0".to_string(),
+        "PRODID:-//Grace Ride PJ State CMC//EN".to_string(),
+        "CALSCALE:GREGORIAN".to_string(),
+        "METHOD:PUBLISH".to_string(),
+        "X-WR-CALNAME:Grace Ride".to_string(),
+    ];
+
+    for (rid, pass_id, _drv_id, pickup_at, dest, addr, status) in rides {
+        let role = if pass_id == uid {
+            t(lang, "乘车接送", "Grace Ride")
+        } else {
+            t(lang, "志愿接送驾驶", "Volunteer Drive")
+        };
+        lines.push("BEGIN:VEVENT".to_string());
+        lines.push(format!("UID:gr-ride-{rid}@graceride.cmc"));
+        lines.push(format!("DTSTAMP:{stamp}"));
+        lines.push(format!("DTSTART:{}", fmt_ics_dt(&pickup_at)));
+        lines.push(format!("DTEND:{}", shift_ics_dt(&pickup_at, 60)));
+        lines.push(format!(
+            "SUMMARY:{}",
+            escape_ics_text(&format!("{role} -> {dest}"))
+        ));
+        if !addr.is_empty() {
+            lines.push(format!("LOCATION:{}", escape_ics_text(&addr)));
+        }
+        lines.push(format!(
+            "DESCRIPTION:{}",
+            escape_ics_text(&format!("Ride #{rid} ({status})"))
+        ));
+        lines.push("STATUS:CONFIRMED".to_string());
+        lines.push("END:VEVENT".to_string());
+    }
+
+    for (eid, title, starts_at, location, desc) in events {
+        lines.push("BEGIN:VEVENT".to_string());
+        lines.push(format!("UID:gr-event-{eid}@graceride.cmc"));
+        lines.push(format!("DTSTAMP:{stamp}"));
+        lines.push(format!("DTSTART:{}", fmt_ics_dt(&starts_at)));
+        lines.push(format!("DTEND:{}", shift_ics_dt(&starts_at, 120)));
+        lines.push(format!("SUMMARY:{}", escape_ics_text(&title)));
+        if !location.is_empty() {
+            lines.push(format!("LOCATION:{}", escape_ics_text(&location)));
+        }
+        if !desc.is_empty() {
+            lines.push(format!("DESCRIPTION:{}", escape_ics_text(&desc)));
+        }
+        lines.push("STATUS:CONFIRMED".to_string());
+        lines.push("END:VEVENT".to_string());
+    }
+
+    lines.push("END:VCALENDAR".to_string());
+    let body = lines.join("\r\n") + "\r\n";
+
+    Response::builder()
+        .status(StatusCode::OK)
+        .header(header::CONTENT_TYPE, "text/calendar; charset=utf-8")
+        .header(header::CACHE_CONTROL, "no-store")
+        .body(Body::from(body))
+        .map_err(|e| AppError::Other(anyhow::anyhow!(e)))
+}
+
+// ---------------- Web Push Subscriptions ----------------
+
+async fn push_config(State(st): State<AppState>, _u: CurrentUser) -> AppResult<Json<Value>> {
+    let key: Option<String> =
+        sqlx::query_scalar("SELECT value FROM app_secrets WHERE name='vapid_public_key'")
+            .fetch_optional(&st.db)
+            .await?;
+    Ok(Json(json!({
+        "enabled": true,
+        "vapid_public_key": key.unwrap_or_default(),
+    })))
+}
+
+#[derive(Deserialize)]
+struct PushSubIn {
+    endpoint: String,
+    #[serde(default)]
+    p256dh: String,
+    #[serde(default)]
+    auth: String,
+}
+
+async fn push_subscribe(
+    State(st): State<AppState>,
+    u: CurrentUser,
+    headers: HeaderMap,
+    Json(req): Json<PushSubIn>,
+) -> AppResult<Json<Value>> {
+    let endpoint = req.endpoint.trim();
+    if endpoint.is_empty() || endpoint.len() > 1000 || !endpoint.starts_with("https://") {
+        return Err(bad(u.lang, ErrorKey::InvalidAction));
+    }
+    let ua = headers
+        .get(header::USER_AGENT)
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or("")
+        .chars()
+        .take(200)
+        .collect::<String>();
+    sqlx::query(
+        "INSERT INTO push_subscriptions (user_id, endpoint, p256dh, auth, user_agent, created_at)
+         VALUES ($1,$2,$3,$4,$5,$6)
+         ON CONFLICT (endpoint) DO UPDATE SET user_id=excluded.user_id, p256dh=excluded.p256dh, auth=excluded.auth",
+    )
+    .bind(u.id)
+    .bind(endpoint)
+    .bind(req.p256dh.trim())
+    .bind(req.auth.trim())
+    .bind(ua)
+    .bind(now())
+    .execute(&st.db)
+    .await?;
+    Ok(Json(json!({ "ok": true })))
+}
+
+#[derive(Deserialize)]
+struct PushUnsubIn {
+    endpoint: String,
+}
+
+async fn push_unsubscribe(
+    State(st): State<AppState>,
+    u: CurrentUser,
+    Json(req): Json<PushUnsubIn>,
+) -> AppResult<Json<Value>> {
+    sqlx::query("DELETE FROM push_subscriptions WHERE user_id=$1 AND endpoint=$2")
+        .bind(u.id)
+        .bind(req.endpoint.trim())
+        .execute(&st.db)
+        .await?;
+    Ok(Json(json!({ "ok": true })))
 }
 
 // ---------------- Notifications ----------------
@@ -923,7 +1256,7 @@ async fn claim_ticket(
 
 /// The in-app manual is readable by anyone who can see any staff page and
 /// written by help-centre staff only (see CRUD handlers below).
-fn any_admin_page(u: &CurrentUser) -> bool {
+pub(crate) fn any_admin_page(u: &CurrentUser) -> bool {
     crate::perms::CATALOG
         .iter()
         .any(|d| d.page.area() != crate::perms::Area::Member && u.can(d.page, Act::View))
@@ -1078,11 +1411,16 @@ async fn get_guide(
 
 #[derive(Deserialize)]
 struct GuideStepIn {
+    id: Option<String>,
     title_en: Option<String>,
     title_zh: Option<String>,
     body_en: Option<String>,
     body_zh: Option<String>,
     link: Option<String>,
+    image_file_id: Option<i64>,
+    note_kind: Option<String>,
+    note_en: Option<String>,
+    note_zh: Option<String>,
 }
 
 #[derive(Deserialize)]
@@ -1150,11 +1488,45 @@ fn validate_guide(
                 return Err(bad(lang, ErrorKey::GuideLinkInvalid));
             }
         }
-        steps.push(json!({
+        let step_id =
+            s.id.as_deref()
+                .map(str::trim)
+                .filter(|id| {
+                    !id.is_empty()
+                        && id.len() <= 36
+                        && id
+                            .chars()
+                            .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_')
+                })
+                .map(str::to_string)
+                .unwrap_or_else(|| uuid::Uuid::new_v4().simple().to_string()[..12].to_string());
+        let note_en = trim_opt(&s.note_en);
+        let note_zh = trim_opt(&s.note_zh);
+        let note_kind = trim_opt(&s.note_kind).to_lowercase();
+        if !note_kind.is_empty()
+            && !matches!(note_kind.as_str(), "tip" | "warning" | "important" | "note")
+        {
+            return Err(bad(lang, ErrorKey::GuideStepInvalid));
+        }
+        let mut obj = json!({
+            "id": step_id,
             "title_en": ten, "title_zh": tzh,
             "body_en": trim_opt(&s.body_en), "body_zh": trim_opt(&s.body_zh),
             "link": link.unwrap_or(""),
-        }));
+        });
+        if let Some(fid) = s.image_file_id.filter(|&id| id > 0) {
+            obj["image_file_id"] = json!(fid);
+        }
+        if !note_en.is_empty() || !note_zh.is_empty() {
+            obj["note_kind"] = json!(if note_kind.is_empty() {
+                "tip"
+            } else {
+                note_kind.as_str()
+            });
+            obj["note_en"] = json!(note_en);
+            obj["note_zh"] = json!(note_zh);
+        }
+        steps.push(obj);
     }
     Ok((
         slug.to_string(),
@@ -1168,12 +1540,62 @@ fn validate_guide(
     ))
 }
 
+async fn verify_guide_step_files(
+    st: &AppState,
+    u: &CurrentUser,
+    req: &GuideIn,
+    existing_guide_id: Option<i64>,
+) -> AppResult<()> {
+    let fids: Vec<i64> = req
+        .steps
+        .iter()
+        .filter_map(|s| s.image_file_id.filter(|&id| id > 0))
+        .collect();
+    if fids.is_empty() {
+        return Ok(());
+    }
+    let mut already_attached = std::collections::HashSet::new();
+    if let Some(gid) = existing_guide_id {
+        if let Some((raw,)) =
+            sqlx::query_as::<_, (String,)>("SELECT steps::text FROM guide_workflows WHERE id=$1")
+                .bind(gid)
+                .fetch_optional(&st.db)
+                .await?
+        {
+            if let Ok(Value::Array(arr)) = serde_json::from_str::<Value>(&raw) {
+                for item in arr {
+                    if let Some(fid) = item.get("image_file_id").and_then(Value::as_i64) {
+                        already_attached.insert(fid);
+                    }
+                }
+            }
+        }
+    }
+    for fid in fids {
+        if already_attached.contains(&fid) {
+            continue;
+        }
+        let (ok,): (i64,) = sqlx::query_as(
+            "SELECT COUNT(*) FROM files WHERE id=$1 AND owner_id=$2 AND mime LIKE 'image/%'",
+        )
+        .bind(fid)
+        .bind(u.id)
+        .fetch_one(&st.db)
+        .await?;
+        if ok == 0 {
+            return Err(bad(u.lang, ErrorKey::InvalidPhoto));
+        }
+    }
+    Ok(())
+}
+
 async fn create_guide(
     State(st): State<AppState>,
     u: CurrentUser,
     Json(req): Json<GuideIn>,
 ) -> AppResult<Json<Value>> {
     require(&u, Page::AdminHelp, Act::Update)?;
+    verify_guide_step_files(&st, &u, &req, None).await?;
     let (slug, ten, tzh, sen, szh, published, audience, steps) = validate_guide(&req, u.lang)?;
     let dup: Option<(i64,)> = sqlx::query_as("SELECT id FROM guide_workflows WHERE slug=$1")
         .bind(&slug)
@@ -1217,6 +1639,7 @@ async fn update_guide(
     Json(req): Json<GuideIn>,
 ) -> AppResult<Json<Value>> {
     require(&u, Page::AdminHelp, Act::Update)?;
+    verify_guide_step_files(&st, &u, &req, Some(key)).await?;
     let (slug, ten, tzh, sen, szh, published, audience, steps) = validate_guide(&req, u.lang)?;
     let dup: Option<(i64,)> =
         sqlx::query_as("SELECT id FROM guide_workflows WHERE slug=$1 AND id<>$2")
@@ -1807,6 +2230,313 @@ async fn pay_reimbursement(
     )
     .await;
     Ok(Json(json!({"ok": true})))
+}
+
+// ---------------- Monthly Finance Payout Batches ----------------
+
+#[derive(sqlx::FromRow)]
+struct PayoutBatchRow {
+    id: i64,
+    month: String,
+    title: String,
+    total_cents: i64,
+    claim_count: i64,
+    status: String,
+    paid_ref: String,
+    created_by: String,
+    paid_by: Option<String>,
+    paid_at: Option<String>,
+    created_at: String,
+}
+
+async fn list_payout_batches(State(st): State<AppState>, u: CurrentUser) -> AppResult<Json<Value>> {
+    require(&u, Page::AdminReimbPay, Act::View)?;
+    let rows: Vec<PayoutBatchRow> = sqlx::query_as(
+        "SELECT b.id, b.month, b.title, b.total_cents, b.claim_count, b.status, b.paid_ref,
+                c.name AS created_by, p.name AS paid_by, b.paid_at, b.created_at
+         FROM payout_batches b
+         JOIN users c ON c.id = b.created_by
+         LEFT JOIN users p ON p.id = b.paid_by
+         ORDER BY b.id DESC LIMIT 50",
+    )
+    .fetch_all(&st.db)
+    .await?;
+    Ok(Json(json!(rows
+        .into_iter()
+        .map(|b| json!({
+            "id": b.id,
+            "month": b.month,
+            "title": b.title,
+            "total_cents": b.total_cents,
+            "claim_count": b.claim_count,
+            "status": b.status,
+            "paid_ref": b.paid_ref,
+            "created_by": b.created_by,
+            "paid_by": b.paid_by,
+            "paid_at": b.paid_at,
+            "created_at": b.created_at,
+        }))
+        .collect::<Vec<_>>())))
+}
+
+#[derive(Deserialize)]
+struct CreateBatchIn {
+    month: Option<String>,
+    title: Option<String>,
+    claim_ids: Option<Vec<i64>>,
+}
+
+async fn create_payout_batch(
+    State(st): State<AppState>,
+    u: CurrentUser,
+    Json(req): Json<CreateBatchIn>,
+) -> AppResult<Json<Value>> {
+    require(&u, Page::AdminReimbPay, Act::Update)?;
+    let month = req
+        .month
+        .as_deref()
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .map(str::to_string)
+        .unwrap_or_else(|| now()[..7].to_string());
+    if parse_report_month(&month).is_none() {
+        return Err(bad(u.lang, ErrorKey::MonthFormatInvalid));
+    }
+
+    let mut tx = st.db.begin().await?;
+    let eligible: Vec<(i64, i64)> = if let Some(ref ids) = req.claim_ids {
+        if ids.is_empty() {
+            return Err(bad(u.lang, ErrorKey::BatchEmpty));
+        }
+        sqlx::query_as(
+            "SELECT id, amount_cents FROM reimbursements
+             WHERE id = ANY($1) AND status = 'approved' AND batch_id IS NULL
+               AND user_id <> $2 AND reviewed_by IS DISTINCT FROM $2
+             FOR UPDATE",
+        )
+        .bind(ids)
+        .bind(u.id)
+        .fetch_all(&mut *tx)
+        .await?
+    } else {
+        sqlx::query_as(
+            "SELECT id, amount_cents FROM reimbursements
+             WHERE status = 'approved' AND batch_id IS NULL
+               AND substr(created_at, 1, 7) = $1
+               AND user_id <> $2 AND reviewed_by IS DISTINCT FROM $2
+             FOR UPDATE",
+        )
+        .bind(&month)
+        .bind(u.id)
+        .fetch_all(&mut *tx)
+        .await?
+    };
+
+    if eligible.is_empty() {
+        return Err(bad(u.lang, ErrorKey::BatchEmpty));
+    }
+    let claim_ids: Vec<i64> = eligible.iter().map(|(id, _)| *id).collect();
+    let total_cents: i64 = eligible.iter().map(|(_, amt)| *amt).sum();
+    let claim_count = claim_ids.len() as i64;
+    let title = req
+        .title
+        .as_deref()
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .map(str::to_string)
+        .unwrap_or_else(|| format!("Payout {month}"));
+
+    let (batch_id,): (i64,) = sqlx::query_as(
+        "INSERT INTO payout_batches (month, title, total_cents, claim_count, status, created_by, created_at)
+         VALUES ($1,$2,$3,$4,'open',$5,$6) RETURNING id",
+    )
+    .bind(&month)
+    .bind(&title)
+    .bind(total_cents)
+    .bind(claim_count)
+    .bind(u.id)
+    .bind(now())
+    .fetch_one(&mut *tx)
+    .await?;
+
+    sqlx::query("UPDATE reimbursements SET batch_id=$1, updated_at=$2 WHERE id = ANY($3)")
+        .bind(batch_id)
+        .bind(now())
+        .bind(&claim_ids)
+        .execute(&mut *tx)
+        .await?;
+    tx.commit().await?;
+
+    audit(
+        &st.db,
+        Some(u.id),
+        "reimbursement.batch_create",
+        "payout_batch",
+        Some(batch_id),
+        format!("{title}: {claim_count} claims, {}", fmt_rm(total_cents)),
+    )
+    .await;
+    Ok(Json(json!({
+        "id": batch_id,
+        "month": month,
+        "title": title,
+        "total_cents": total_cents,
+        "claim_count": claim_count,
+    })))
+}
+
+fn csv_cell(v: &str) -> String {
+    if v.contains([',', '"', '\n', '\r']) {
+        format!("\"{}\"", v.replace('"', "\"\""))
+    } else {
+        v.to_string()
+    }
+}
+
+async fn export_payout_batch_csv(
+    State(st): State<AppState>,
+    u: CurrentUser,
+    Path(id): Path<i64>,
+) -> AppResult<Response> {
+    require(&u, Page::AdminReimbPay, Act::View)?;
+    let exists: Option<(String,)> = sqlx::query_as("SELECT month FROM payout_batches WHERE id=$1")
+        .bind(id)
+        .fetch_optional(&st.db)
+        .await?;
+    let Some((month,)) = exists else {
+        return Err(not_found(u.lang));
+    };
+    let rows: Vec<(i64, String, String, i64, String, Option<i64>, String, String)> = sqlx::query_as(
+        "SELECT r.id, r.payee_name, r.payee_phone, r.amount_cents, u.name, r.ride_id, r.description, r.status
+         FROM reimbursements r JOIN users u ON u.id = r.user_id
+         WHERE r.batch_id = $1 ORDER BY r.id",
+    )
+    .bind(id)
+    .fetch_all(&st.db)
+    .await?;
+
+    let mut out = String::from(
+        "Claim ID,Payee Name,DuitNow / Phone,Amount (MYR),Applicant,Ride ID,Description,Status\r\n",
+    );
+    for (cid, pname, pphone, cents, uname, ride_id, desc, status) in rows {
+        let rm_str = format!("{:.2}", cents as f64 / 100.0);
+        let eff_payee = if pname.is_empty() { &uname } else { &pname };
+        out.push_str(&format!(
+            "{},{},{},{},{},{},{},{}\r\n",
+            cid,
+            csv_cell(eff_payee),
+            csv_cell(&pphone),
+            rm_str,
+            csv_cell(&uname),
+            ride_id.map(|x| x.to_string()).unwrap_or_default(),
+            csv_cell(&desc),
+            csv_cell(&status),
+        ));
+    }
+
+    Response::builder()
+        .status(StatusCode::OK)
+        .header(header::CONTENT_TYPE, "text/csv; charset=utf-8")
+        .header(
+            header::CONTENT_DISPOSITION,
+            format!("attachment; filename=\"grace-ride-payout-batch-{id}-{month}.csv\""),
+        )
+        .body(Body::from(out))
+        .map_err(|e| AppError::Other(anyhow::anyhow!(e)))
+}
+
+async fn pay_payout_batch(
+    State(st): State<AppState>,
+    u: CurrentUser,
+    Path(id): Path<i64>,
+    Json(req): Json<PayIn>,
+) -> AppResult<Json<Value>> {
+    require(&u, Page::AdminReimbPay, Act::Update)?;
+    if !req.payee_verified {
+        return Err(bad(u.lang, ErrorKey::PayeeVerificationRequired));
+    }
+    let paid_ref = req.paid_ref.trim();
+    if paid_ref.len() < 3 {
+        return Err(bad(u.lang, ErrorKey::TxnRefRequired));
+    }
+
+    let mut tx = st.db.begin().await?;
+    let batch: Option<(String,)> =
+        sqlx::query_as("SELECT status FROM payout_batches WHERE id=$1 FOR UPDATE")
+            .bind(id)
+            .fetch_optional(&mut *tx)
+            .await?;
+    let Some((status,)) = batch else {
+        return Err(not_found(u.lang));
+    };
+    if status != "open" {
+        return Err(bad(u.lang, ErrorKey::BatchAlreadyPaid));
+    }
+    let claims: Vec<(i64, i64, Option<i64>, i64)> = sqlx::query_as(
+        "SELECT id, user_id, reviewed_by, amount_cents FROM reimbursements
+         WHERE batch_id=$1 AND status='approved' FOR UPDATE",
+    )
+    .bind(id)
+    .fetch_all(&mut *tx)
+    .await?;
+    if claims.is_empty() {
+        return Err(bad(u.lang, ErrorKey::BatchEmpty));
+    }
+    for &(_cid, uid, reviewed_by, _amt) in &claims {
+        if uid == u.id {
+            return Err(forbidden(u.lang, ErrorKey::CannotPayOwnRequest));
+        }
+        if reviewed_by == Some(u.id) {
+            return Err(forbidden(u.lang, ErrorKey::CannotPayOwnApproval));
+        }
+    }
+
+    let ts_now = now();
+    let claim_ids: Vec<i64> = claims.iter().map(|(cid, ..)| *cid).collect();
+    sqlx::query(
+        "UPDATE reimbursements SET status='paid', payee_verified=1, paid_ref=$1, paid_by=$2, paid_at=$3, updated_at=$3
+         WHERE id = ANY($4)",
+    )
+    .bind(paid_ref)
+    .bind(u.id)
+    .bind(&ts_now)
+    .bind(&claim_ids)
+    .execute(&mut *tx)
+    .await?;
+    sqlx::query(
+        "UPDATE payout_batches SET status='paid', paid_ref=$1, paid_by=$2, paid_at=$3 WHERE id=$4",
+    )
+    .bind(paid_ref)
+    .bind(u.id)
+    .bind(&ts_now)
+    .bind(id)
+    .execute(&mut *tx)
+    .await?;
+    tx.commit().await?;
+
+    for (cid, uid, _, amt) in claims {
+        notify(
+            &st.db,
+            uid,
+            ("报销款项已转账", "Reimbursement paid"),
+            (
+                &format!("{} · 交易编号 {}", fmt_rm(amt), paid_ref),
+                &format!("{} · Transaction ref {}", fmt_rm(amt), paid_ref),
+            ),
+            &format!("/reimbursements/{cid}"),
+        )
+        .await;
+    }
+    audit(
+        &st.db,
+        Some(u.id),
+        "reimbursement.batch_pay",
+        "payout_batch",
+        Some(id),
+        paid_ref,
+    )
+    .await;
+    Ok(Json(json!({ "ok": true, "paid_count": claim_ids.len() })))
 }
 
 // ---------------- Monthly report & badges ----------------

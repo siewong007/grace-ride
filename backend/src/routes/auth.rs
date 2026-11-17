@@ -52,6 +52,8 @@ pub fn router() -> Router<AppState> {
         .route("/auth/dev-login", post(dev_login))
         .route("/auth/logout", post(logout))
         .route("/auth/logout-all", post(logout_all))
+        .route("/auth/lock", post(lock_session))
+        .route("/auth/unlock", post(unlock_session))
         .route("/auth/terms", post(accept_terms))
         .route("/auth/passkey/login/start", post(passkey_login_start))
         .route("/auth/passkey/login/finish", post(passkey_login_finish))
@@ -209,29 +211,41 @@ fn clear_cookies(jar: CookieJar) -> CookieJar {
         )
 }
 
+#[derive(sqlx::FromRow)]
+struct MeRow {
+    phone: String,
+    photo_file_id: Option<i64>,
+    totp_enabled: i64,
+    password_hash: Option<String>,
+    badges_opt_out: i64,
+    carpool_enabled: i64,
+    spare_seats: i64,
+    terms_accepted_at: Option<String>,
+    readiness_prompt_mins: Option<i64>,
+    gate_wait_mins: Option<i64>,
+    auto_lock_mins: Option<i64>,
+    totp_backup_codes: Option<String>,
+    terms_version: i32,
+    telegram_chat_id: String,
+    whatsapp_opt_in: i64,
+    push_opt_in: i64,
+    caregiver_user_id: Option<i64>,
+}
+
 async fn me(State(st): State<AppState>, u: CurrentUser) -> AppResult<Json<Value>> {
-    let row: (
-        String,
-        Option<i64>,
-        i64,
-        Option<String>,
-        i64,
-        i64,
-        i64,
-        Option<String>,
-        Option<i64>,
-        Option<i64>,
-        Option<i64>,
-        Option<String>,
-        i32,
-    ) = sqlx::query_as(
-        "SELECT phone, photo_file_id, totp_enabled, password_hash, badges_opt_out, carpool_enabled, spare_seats, terms_accepted_at, readiness_prompt_mins, gate_wait_mins, auto_lock_mins, totp_backup_codes, terms_version FROM users WHERE id=$1",
+    let row: MeRow = sqlx::query_as(
+        "SELECT phone, photo_file_id, totp_enabled, password_hash, badges_opt_out, carpool_enabled, spare_seats, terms_accepted_at, readiness_prompt_mins, gate_wait_mins, auto_lock_mins, totp_backup_codes, terms_version, telegram_chat_id, whatsapp_opt_in, push_opt_in, caregiver_user_id FROM users WHERE id=$1",
     )
     .bind(u.id)
     .fetch_one(&st.db)
     .await?;
+    let (locked_at,): (Option<String>,) =
+        sqlx::query_as("SELECT locked_at FROM sessions WHERE token=$1")
+            .bind(&u.session_id)
+            .fetch_one(&st.db)
+            .await?;
     let backup_codes_count = row
-        .11
+        .totp_backup_codes
         .as_deref()
         .and_then(|s| serde_json::from_str::<Vec<String>>(s).ok())
         .map(|v| v.len())
@@ -267,19 +281,24 @@ async fn me(State(st): State<AppState>, u: CurrentUser) -> AppResult<Json<Value>
             .and_then(|v: String| v.parse::<i64>().ok())
             .unwrap_or(st.cfg.session_timeout_mins);
     Ok(Json(json!({
-        "id": u.id, "name": u.name, "email": u.email, "phone": row.0, "photo_file_id": row.1,
+        "id": u.id, "name": u.name, "email": u.email, "phone": row.phone, "photo_file_id": row.photo_file_id,
         "status": u.status,
         "lang": u.lang.code(),
         "roles": u.roles, "role_names": role_names,
         // What this session may do, as '<page>.<action>'. Staff permissions are left out
         // until the member signs in with a passkey or 2FA (`privileged` says they exist).
         "permissions": u.perms.usable_keys(u.mfa_ok),
-        "mfa_ok": u.mfa_ok, "totp_enabled": row.2 == 1,
-        "has_password": row.3.is_some(), "passkey_count": passkeys.0,
-        "badges_opt_out": row.4 == 1, "carpool_enabled": row.5 == 1, "spare_seats": row.6,
-        "readiness_prompt_mins": row.8.unwrap_or(45), "gate_wait_mins": row.9.unwrap_or(5),
-        "auto_lock_mins": row.10.unwrap_or(0), "session_timeout_mins": session_timeout, "backup_codes_count": backup_codes_count,
-        "terms_accepted": row.7.is_some() && row.12 >= TERMS_VERSION,
+        "mfa_ok": u.mfa_ok, "totp_enabled": row.totp_enabled == 1,
+        "has_password": row.password_hash.is_some(), "passkey_count": passkeys.0,
+        "badges_opt_out": row.badges_opt_out == 1, "carpool_enabled": row.carpool_enabled == 1, "spare_seats": row.spare_seats,
+        "readiness_prompt_mins": row.readiness_prompt_mins.unwrap_or(45), "gate_wait_mins": row.gate_wait_mins.unwrap_or(5),
+        "auto_lock_mins": row.auto_lock_mins.unwrap_or(0), "session_timeout_mins": session_timeout, "backup_codes_count": backup_codes_count,
+        "session_locked": locked_at.is_some(),
+        "telegram_chat_id": row.telegram_chat_id,
+        "whatsapp_opt_in": row.whatsapp_opt_in == 1,
+        "push_opt_in": row.push_opt_in == 1,
+        "caregiver_user_id": row.caregiver_user_id,
+        "terms_accepted": row.terms_accepted_at.is_some() && row.terms_version >= TERMS_VERSION,
         "terms_version": TERMS_VERSION,
         "privileged": u.perms.privileged(), "unread": unread.0,
         "groups": groups.into_iter().map(|(id, name)| json!({"id": id, "name": name})).collect::<Vec<_>>(),
@@ -749,11 +768,13 @@ async fn passkey_reauth_finish(
     if !touch_passkey(&st, u.id, &res).await? {
         return Err(bad(u.lang, ErrorKey::PasskeyFailed));
     }
-    sqlx::query("UPDATE sessions SET created_at=$1 WHERE token=$2")
-        .bind(now())
-        .bind(&u.session_id)
-        .execute(&st.db)
-        .await?;
+    sqlx::query(
+        "UPDATE sessions SET created_at=$1, locked_at=NULL, last_seen_at=$1 WHERE token=$2",
+    )
+    .bind(now())
+    .bind(&u.session_id)
+    .execute(&st.db)
+    .await?;
     audit(&st.db, Some(u.id), "login.reauth", "user", Some(u.id), "").await;
     Ok(Json(json!({ "ok": true })))
 }
@@ -971,6 +992,146 @@ async fn totp_enable(
     Ok(Json(json!({ "ok": true, "backup_codes": plain_codes })))
 }
 
+async fn consume_backup_code(
+    st: &AppState,
+    user_id: i64,
+    raw: &str,
+    lang: Lang,
+) -> AppResult<usize> {
+    let norm = raw.trim().replace(['-', ' '], "").to_uppercase();
+    if norm.len() != 8 {
+        return Err(bad(lang, ErrorKey::InvalidCode));
+    }
+    let mut consumed: Option<(String,)> = None;
+    for code_hash in [
+        hash_backup_code(user_id, &norm),
+        crate::auth::hash_token(&norm),
+    ] {
+        consumed = sqlx::query_as(
+            "UPDATE users
+             SET totp_backup_codes = (
+                 SELECT COALESCE(jsonb_agg(elem ORDER BY seq), '[]'::jsonb)::text
+                 FROM jsonb_array_elements_text(totp_backup_codes::jsonb)
+                      WITH ORDINALITY AS t(elem, seq)
+                 WHERE elem <> $2
+             )
+             WHERE id = $1 AND totp_backup_codes::jsonb ? $2
+             RETURNING totp_backup_codes",
+        )
+        .bind(user_id)
+        .bind(&code_hash)
+        .fetch_optional(&st.db)
+        .await?;
+        if consumed.is_some() {
+            break;
+        }
+    }
+    let Some((remaining_json,)) = consumed else {
+        audit(
+            &st.db,
+            Some(user_id),
+            "totp.backup_code_used",
+            "user",
+            Some(user_id),
+            "already used",
+        )
+        .await;
+        return Err(bad(lang, ErrorKey::InvalidCode));
+    };
+    let remaining: usize = serde_json::from_str::<Vec<String>>(&remaining_json)
+        .map(|v| v.len())
+        .unwrap_or(0);
+    Ok(remaining)
+}
+
+async fn lock_session(State(st): State<AppState>, u: CurrentUser) -> AppResult<Json<Value>> {
+    sqlx::query("UPDATE sessions SET locked_at=$1 WHERE token=$2")
+        .bind(now())
+        .bind(&u.session_id)
+        .execute(&st.db)
+        .await?;
+    audit(&st.db, Some(u.id), "session.lock", "user", Some(u.id), "").await;
+    Ok(Json(json!({ "ok": true })))
+}
+
+#[derive(Deserialize)]
+struct UnlockReq {
+    totp_code: Option<String>,
+    backup_code: Option<String>,
+    dev_unlock: Option<bool>,
+}
+
+async fn unlock_session(
+    State(st): State<AppState>,
+    u: CurrentUser,
+    Json(req): Json<UnlockReq>,
+) -> AppResult<Json<Value>> {
+    let (totp_enabled, totp_secret, passkey_count): (i64, Option<String>, i64) = sqlx::query_as(
+        "SELECT u.totp_enabled, u.totp_secret, (SELECT COUNT(*) FROM passkeys WHERE user_id=u.id)
+         FROM users u WHERE u.id=$1",
+    )
+    .bind(u.id)
+    .fetch_one(&st.db)
+    .await?;
+
+    let mut mfa_verified = false;
+    if let Some(code) = req
+        .totp_code
+        .as_deref()
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+    {
+        if totp_enabled != 1 {
+            return Err(bad(u.lang, ErrorKey::TwoFactorNotConfigured));
+        }
+        let sec = totp_secret.ok_or_else(|| bad(u.lang, ErrorKey::TwoFactorNotConfigured))?;
+        verify_totp(&st, u.id, &sec, &u.email, code, u.lang).await?;
+        mfa_verified = true;
+    } else if let Some(bcode) = req
+        .backup_code
+        .as_deref()
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+    {
+        if totp_enabled != 1 {
+            return Err(bad(u.lang, ErrorKey::TwoFactorNotConfigured));
+        }
+        consume_backup_code(&st, u.id, bcode, u.lang).await?;
+        mfa_verified = true;
+    } else if req.dev_unlock == Some(true) && st.cfg.dev_mode {
+        if passkey_count > 0 || totp_enabled == 1 {
+            return Err(bad(u.lang, ErrorKey::UnlockMethodRequired));
+        }
+    } else {
+        return Err(bad(u.lang, ErrorKey::UnlockMethodRequired));
+    }
+
+    let ts_now = now();
+    if mfa_verified {
+        sqlx::query("UPDATE sessions SET locked_at=NULL, last_seen_at=$1, mfa_ok=1 WHERE token=$2")
+            .bind(&ts_now)
+            .bind(&u.session_id)
+            .execute(&st.db)
+            .await?;
+    } else {
+        sqlx::query("UPDATE sessions SET locked_at=NULL, last_seen_at=$1 WHERE token=$2")
+            .bind(&ts_now)
+            .bind(&u.session_id)
+            .execute(&st.db)
+            .await?;
+    }
+    audit(
+        &st.db,
+        Some(u.id),
+        "session.unlock",
+        "user",
+        Some(u.id),
+        if mfa_verified { "2fa" } else { "dev" },
+    )
+    .await;
+    Ok(Json(json!({ "ok": true })))
+}
+
 async fn totp_verify(
     State(st): State<AppState>,
     u: CurrentUser,
@@ -1021,49 +1182,7 @@ async fn totp_verify(
     // instead of HTTP 200.
     let norm = clean.replace(['-', ' '], "").to_uppercase();
     if norm.len() == 8 {
-        // Codes issued before per-member salting were stored as a bare hash; accept
-        // either form so members who already printed their codes keep them.
-        let mut consumed: Option<(String,)> = None;
-        for code_hash in [
-            hash_backup_code(u.id, &norm),
-            crate::auth::hash_token(&norm),
-        ] {
-            consumed = sqlx::query_as(
-                "UPDATE users
-                 SET totp_backup_codes = (
-                     SELECT COALESCE(jsonb_agg(elem ORDER BY seq), '[]'::jsonb)::text
-                     FROM jsonb_array_elements_text(totp_backup_codes::jsonb)
-                          WITH ORDINALITY AS t(elem, seq)
-                     WHERE elem <> $2
-                 )
-                 WHERE id = $1 AND totp_backup_codes::jsonb ? $2
-                 RETURNING totp_backup_codes",
-            )
-            .bind(u.id)
-            .bind(&code_hash)
-            .fetch_optional(&st.db)
-            .await?;
-            if consumed.is_some() {
-                break;
-            }
-        }
-
-        let Some((remaining_json,)) = consumed else {
-            audit(
-                &st.db,
-                Some(u.id),
-                "totp.backup_code_used",
-                "user",
-                Some(u.id),
-                "already used",
-            )
-            .await;
-            return Err(bad(u.lang, ErrorKey::InvalidCode));
-        };
-
-        let remaining: usize = serde_json::from_str::<Vec<String>>(&remaining_json)
-            .map(|v| v.len())
-            .unwrap_or(0);
+        let remaining = consume_backup_code(&st, u.id, &norm, u.lang).await?;
 
         sqlx::query("UPDATE sessions SET mfa_ok=1 WHERE token=$1")
             .bind(&u.session_id)

@@ -72,6 +72,8 @@ pub enum ErrorKey {
     AuthDisabled,
     AccountPending,
     TermsRequired,
+    SessionLocked,
+    UnlockMethodRequired,
 
     // === Events ===
     EventNameRequired,
@@ -105,6 +107,8 @@ pub enum ErrorKey {
     VisitorJourneyEnded,
     VisitorNameRequired,
     OnlyGoingCanInviteVisitor,
+    InvalidPassCode,
+    CarePassClosed,
 
     // === Rides ===
     PickupTimeRequired,
@@ -254,6 +258,8 @@ pub enum ErrorKey {
     ReimbursementProcessed,
     ReasonRequired,
     MonthFormatInvalid,
+    BatchEmpty,
+    BatchAlreadyPaid,
 
     // === Files ===
     NoFileReceived,
@@ -334,6 +340,8 @@ impl ErrorKey {
             Self::AuthDisabled => "AUTH_DISABLED",
             Self::AccountPending => "ACCOUNT_PENDING",
             Self::TermsRequired => "TERMS_REQUIRED",
+            Self::SessionLocked => "SESSION_LOCKED",
+            Self::UnlockMethodRequired => "UNLOCK_METHOD_REQUIRED",
 
             Self::EventNameRequired => "EVENT_NAME_REQUIRED",
             Self::InvalidEventType => "INVALID_EVENT_TYPE",
@@ -366,6 +374,8 @@ impl ErrorKey {
             Self::VisitorJourneyEnded => "VISITOR_JOURNEY_ENDED",
             Self::VisitorNameRequired => "VISITOR_NAME_REQUIRED",
             Self::OnlyGoingCanInviteVisitor => "ONLY_GOING_CAN_INVITE_VISITOR",
+            Self::InvalidPassCode => "INVALID_PASS_CODE",
+            Self::CarePassClosed => "CARE_PASS_CLOSED",
 
             Self::PickupTimeRequired => "PICKUP_TIME_REQUIRED",
             Self::InvalidPickupTime => "INVALID_PICKUP_TIME",
@@ -489,6 +499,8 @@ impl ErrorKey {
             Self::ReimbursementProcessed => "REIMBURSEMENT_PROCESSED",
             Self::ReasonRequired => "REASON_REQUIRED",
             Self::MonthFormatInvalid => "MONTH_FORMAT_INVALID",
+            Self::BatchEmpty => "BATCH_EMPTY",
+            Self::BatchAlreadyPaid => "BATCH_ALREADY_PAID",
 
             Self::NoFileReceived => "NO_FILE_RECEIVED",
             Self::FileTooLarge => "FILE_TOO_LARGE",

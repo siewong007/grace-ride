@@ -25,10 +25,10 @@ interface PendingMsg {
 
 export default function Chat({
   rideId,
-  role,
+  viewerRole,
 }: {
   rideId: number;
-  role?: 'passenger' | 'driver' | 'staff';
+  viewerRole?: 'passenger' | 'driver' | 'staff';
 }) {
   const { t } = useTranslation('rideDetail');
   const ft = useFormatT();
@@ -59,7 +59,7 @@ export default function Chat({
   };
 
   useEffect(() => {
-    const count = data?.messages.length ?? 0;
+    const count = data?.messages?.length ?? 0;
     if (count > prevCountRef.current) {
       if (stickRef.current || prevCountRef.current === 0) {
         logRef.current?.scrollTo?.({ top: logRef.current.scrollHeight });
@@ -69,7 +69,7 @@ export default function Chat({
       }
     }
     prevCountRef.current = count;
-  }, [data?.messages.length]);
+  }, [data?.messages?.length]);
 
   const submitMessage = async (raw: string) => {
     const body = raw.trim();
@@ -101,9 +101,9 @@ export default function Chat({
   if (!data || !Array.isArray(data.messages)) return null;
 
   const quickReplies =
-    role === 'driver'
+    viewerRole === 'driver'
       ? [t('quickDriverOnWay'), t('quickDriver5m'), t('quickDriverOutside')]
-      : role === 'passenger'
+      : viewerRole === 'passenger'
         ? [t('quickPassengerReady'), t('quickPassenger5m'), t('quickPassengerGate')]
         : [];
 

@@ -109,29 +109,42 @@ pub async fn rate_limit(State(st): State<AppState>, req: Request, next: Next) ->
     let path = req.uri().path();
     // Visitor links (preview and claim), but not the claimed browser's page, which polls.
     let visit_link = path.starts_with("/api/visit/") && !path.starts_with("/api/visit/me");
-    let rule: Option<(&str, u32, u64)> =
-        if req.method() == Method::GET && !path.starts_with("/api/invites/") && !visit_link {
-            None
-        } else if path == "/api/auth/login"
-            || path == "/api/auth/dev-login"
-            || path.starts_with("/api/auth/passkey/login")
-        {
-            Some(("login", 10, 60))
-        } else if path == "/api/auth/totp/verify" || path == "/api/auth/totp/enable" {
-            // A 6-digit code has a million values: guesses are capped per member
-            // (below), so neither a new address nor a new session buys more tries.
-            Some(("totp", 10, 300))
-        } else if path == "/api/auth/recovery-request" {
-            Some(("recovery", 3, 3600))
-        } else if path.starts_with("/api/invites/") {
-            Some(("invite", 20, 600))
-        } else if visit_link {
-            Some(("visit", 30, 600))
-        } else if path == "/api/files" {
-            Some(("upload", 30, 600))
-        } else {
-            None
-        };
+    let care_link = path.starts_with("/api/care/");
+    let calendar_link = path.starts_with("/api/calendar/");
+    let rule: Option<(&str, u32, u64)> = if req.method() == Method::GET
+        && !path.starts_with("/api/invites/")
+        && !visit_link
+        && !care_link
+        && !calendar_link
+    {
+        None
+    } else if path == "/api/auth/login"
+        || path == "/api/auth/dev-login"
+        || path.starts_with("/api/auth/passkey/login")
+    {
+        Some(("login", 10, 60))
+    } else if path == "/api/auth/totp/verify"
+        || path == "/api/auth/totp/enable"
+        || path == "/api/auth/unlock"
+    {
+        // A 6-digit code has a million values: guesses are capped per member
+        // (below), so neither a new address nor a new session buys more tries.
+        Some(("totp", 10, 300))
+    } else if path == "/api/auth/recovery-request" {
+        Some(("recovery", 3, 3600))
+    } else if path.starts_with("/api/invites/") {
+        Some(("invite", 20, 600))
+    } else if visit_link {
+        Some(("visit", 30, 600))
+    } else if care_link {
+        Some(("care", 60, 600))
+    } else if calendar_link {
+        Some(("calendar", 30, 600))
+    } else if path == "/api/files" {
+        Some(("upload", 30, 600))
+    } else {
+        None
+    };
     if let Some((bucket, limit, secs)) = rule {
         let peer = req
             .extensions()
@@ -187,6 +200,85 @@ fn pending_profile_only(path: &str) -> bool {
         || path == "/files"
         || path.starts_with("/files/")
         || path.starts_with("/invites/")
+        || path.starts_with("/visit/")
+        || path.starts_with("/care/")
+        || path.starts_with("/calendar/")
+}
+
+fn lock_bypass_path(path: &str) -> bool {
+    let path = path.strip_prefix("/api").unwrap_or(path);
+    path == "/health"
+        || path == "/stream"
+        || path == "/auth/me"
+        || path == "/auth/lock"
+        || path == "/auth/unlock"
+        || path == "/auth/logout"
+        || path == "/auth/logout-all"
+        || path == "/auth/login"
+        || path == "/auth/dev-users"
+        || path == "/auth/dev-login"
+        || path == "/auth/recovery-request"
+        || path == "/auth/passkey/reauth/start"
+        || path == "/auth/passkey/reauth/finish"
+        || path.starts_with("/auth/passkey/login")
+        || path.starts_with("/invites/")
+        || path.starts_with("/visit/")
+        || path.starts_with("/care/")
+        || path.starts_with("/calendar/")
+}
+
+/// Server-enforced screen lock: blocks API access when the current session is locked
+/// or has been inactive longer than the user's configured auto-lock timeout.
+pub async fn session_lock_guard(State(st): State<AppState>, req: Request, next: Next) -> Response {
+    let path = req.uri().path().to_string();
+    if lock_bypass_path(&path) {
+        return next.run(req).await;
+    }
+    let jar = CookieJar::from_headers(req.headers());
+    let token = jar
+        .get(SESSION_COOKIE_SECURE)
+        .or_else(|| jar.get(SESSION_COOKIE))
+        .map(|c| c.value().to_string());
+    let Some(token) = token.filter(|t| t.len() == 48) else {
+        return next.run(req).await;
+    };
+    let token_hash = hash_token(&token);
+    let row: Option<(Option<String>, String, i64, String, String)> = sqlx::query_as(
+        "SELECT s.locked_at, s.last_seen_at, u.auto_lock_mins, u.lang, s.expires_at
+         FROM sessions s JOIN users u ON u.id = s.user_id
+         WHERE s.token = $1",
+    )
+    .bind(&token_hash)
+    .fetch_optional(&st.db)
+    .await
+    .ok()
+    .flatten();
+    if let Some((locked_at, last_seen_at, auto_lock_mins, lang, expires)) = row {
+        let now_str = now();
+        if expires >= now_str {
+            if locked_at.is_some() {
+                return forbidden(Lang::from_code(&lang), ErrorKey::SessionLocked).into_response();
+            }
+            if auto_lock_mins > 0 && last_seen_at < crate::util::minutes_ago(auto_lock_mins) {
+                let _ = sqlx::query(
+                    "UPDATE sessions SET locked_at = $1 WHERE token = $2 AND locked_at IS NULL",
+                )
+                .bind(&now_str)
+                .bind(&token_hash)
+                .execute(&st.db)
+                .await;
+                return forbidden(Lang::from_code(&lang), ErrorKey::SessionLocked).into_response();
+            }
+            if last_seen_at < crate::util::minutes_ago(1) {
+                let _ = sqlx::query("UPDATE sessions SET last_seen_at = $1 WHERE token = $2")
+                    .bind(&now_str)
+                    .bind(&token_hash)
+                    .execute(&st.db)
+                    .await;
+            }
+        }
+    }
+    next.run(req).await
 }
 
 /// A member who has accepted an invite but is not yet approved may use their
@@ -259,11 +351,11 @@ pub async fn security_headers(State(st): State<AppState>, req: Request, next: Ne
     set(h, "x-content-type-options", "nosniff");
     set(h, "x-frame-options", "DENY");
     set(h, "referrer-policy", "strict-origin-when-cross-origin");
-    // Drivers share GPS from this origin only; nothing else may use sensors.
+    // Drivers share GPS and QR check-in scanner may use camera on this origin; nothing else may use sensors.
     set(
         h,
         "permissions-policy",
-        "geolocation=(self), camera=(), microphone=(), payment=(), usb=(), interest-cohort=()",
+        "geolocation=(self), camera=(self), microphone=(), payment=(), usb=(), interest-cohort=()",
     );
     set(h, "cross-origin-opener-policy", "same-origin");
     set(h, "cross-origin-resource-policy", "same-origin");

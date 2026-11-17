@@ -53,6 +53,8 @@ pub async fn run_reminders(db: &PgPool) -> anyhow::Result<()> {
     event_reminders(db).await?;
     escalate_unmatched(db).await?;
     expire_stale_requests(db).await?;
+    // Standing weekly ride & driver schedules.
+    crate::routes::rides::process_recurring_schedules(db).await?;
     // Visitor links close for good once their journey is over.
     crate::routes::visitors::close_finished(db).await?;
     Ok(())

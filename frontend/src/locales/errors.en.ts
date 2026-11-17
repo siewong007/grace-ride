@@ -67,7 +67,9 @@ export default {
     "TOO_MANY_FAILED_LOGINS": "Too many failed logins; the account is locked for 15 minutes. You can sign in with a passkey instead.",
     "AUTH_DISABLED": "This app signs in with a passkey, not a password.",
     "ACCOUNT_PENDING": "This account is waiting for approval. Only the profile is available.",
-    "TERMS_REQUIRED": "Please read the terms and opt in before continuing."
+    "TERMS_REQUIRED": "Please read the terms and opt in before continuing.",
+    "SESSION_LOCKED": "Screen is locked. Verify your identity to continue.",
+    "UNLOCK_METHOD_REQUIRED": "Provide a passkey, two-factor code, or backup code to unlock."
   },
   "events": {
     "EVENT_NAME_REQUIRED": "Please enter an event name",
@@ -100,7 +102,9 @@ export default {
     "VISITOR_LINK_USED": "This link was already used on another device. Ask the person who invited you for a new one",
     "VISITOR_JOURNEY_ENDED": "This journey has ended. Thank you for coming!",
     "VISITOR_NAME_REQUIRED": "Enter the visitor’s name",
-    "ONLY_GOING_CAN_INVITE_VISITOR": "Only members going to the event, or its organiser, can invite a visitor"
+    "ONLY_GOING_CAN_INVITE_VISITOR": "Only members going to the event, or its organiser, can invite a visitor",
+    "INVALID_PASS_CODE": "No matching member pass code found for this event",
+    "CARE_PASS_CLOSED": "This safe-arrival status link is closed or expired"
   },
   "rides": {
     "PICKUP_TIME_REQUIRED": "Please enter a pickup time",
@@ -226,7 +230,9 @@ export default {
     "PAYEE_VERIFICATION_REQUIRED": "Please verify the payee name, phone and DuitNow destination first",
     "REIMBURSEMENT_PROCESSED": "This claim has already been handled",
     "REASON_REQUIRED": "Please provide a reason",
-    "MONTH_FORMAT_INVALID": "Month must be in YYYY-MM format"
+    "MONTH_FORMAT_INVALID": "Month must be in YYYY-MM format",
+    "BATCH_EMPTY": "No eligible approved reimbursements available for this batch",
+    "BATCH_ALREADY_PAID": "This payout batch has already been paid"
   },
   "files": {
     "NO_FILE_RECEIVED": "No file received",

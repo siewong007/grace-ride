@@ -68,6 +68,8 @@ struct PlanRide {
     status: String,
     driver_id: Option<i64>,
     trip_id: Option<i64>,
+    leg: String,
+    paired_ride_id: Option<i64>,
     /// The group drivers are matched on (`audience::MATCH_GROUP_SQL`).
     match_group_id: Option<i64>,
 }
@@ -81,6 +83,9 @@ struct PlanDriver {
     v_model: Option<String>,
     v_plate: Option<String>,
     v_seats: Option<i64>,
+    wheelchair_ok: i64,
+    low_step: i64,
+    child_seat: i64,
 }
 
 struct EventRow {
@@ -116,7 +121,7 @@ async fn plan_rides(st: &AppState, event: i64) -> AppResult<Vec<PlanRide>> {
                 CASE WHEN r.is_proxy = 1 AND r.rider_name != '' THEN r.rider_name || ' (' || p.name || ' 代订)' ELSE p.name END AS p_name,
                 r.seats, r.pickup_area_id AS area_id,
                 a.name AS area_name, r.pickup_at, r.pickup_address, r.assistance, r.notes,
-                r.status, r.driver_id, r.trip_id, {} AS match_group_id
+                r.status, r.driver_id, r.trip_id, r.leg, r.paired_ride_id, {} AS match_group_id
          FROM rides r JOIN users p ON p.id = r.passenger_id JOIN areas a ON a.id = r.pickup_area_id
          WHERE r.event_id = $1 AND r.status = ANY($2)
          ORDER BY a.name, r.pickup_at, p.name",
@@ -130,37 +135,14 @@ async fn plan_rides(st: &AppState, event: i64) -> AppResult<Vec<PlanRide>> {
 
 /// Active members who may take rides (接送 · create) and have a vehicle on file.
 async fn plan_drivers(st: &AppState) -> AppResult<Vec<PlanDriver>> {
-    Ok(sqlx::query_as::<
-        _,
-        (
-            i64,
-            String,
-            i64,
-            i64,
-            Option<String>,
-            Option<String>,
-            Option<i64>,
-        ),
-    >(&format!(
-        "SELECT u.id, u.name, u.carpool_enabled, u.spare_seats, v.model, v.plate, v.seats
+    Ok(sqlx::query_as::<_, PlanDriver>(&format!(
+        "SELECT u.id, u.name, u.carpool_enabled, u.spare_seats, v.model AS v_model, v.plate AS v_plate, v.seats AS v_seats,
+                v.wheelchair_ok, v.low_step, v.child_seat
          FROM users u JOIN vehicles v ON v.user_id = u.id WHERE {} ORDER BY u.name",
         perms::sql_holds("u", Perm(Page::Drive, Act::Create))
     ))
     .fetch_all(&st.db)
-    .await?
-    .into_iter()
-    .map(
-        |(id, name, carpool_enabled, spare_seats, v_model, v_plate, v_seats)| PlanDriver {
-            id,
-            name,
-            carpool_enabled,
-            spare_seats,
-            v_model,
-            v_plate,
-            v_seats,
-        },
-    )
-    .collect())
+    .await?)
 }
 
 /// Seats and bookings each driver already holds outside this event, around its pickup times.
@@ -281,6 +263,8 @@ async fn get_plan(
             "notes": r.notes,
             "status": r.status,
             "driver_id": r.driver_id,
+            "leg": r.leg,
+            "paired_ride_id": r.paired_ride_id,
             "match_group_id": r.match_group_id,
             "last": last.get(&r.passenger_id).map(|(d, name, times, at)| json!({
                 "driver_id": d, "driver_name": name, "times": times, "at": at,
@@ -297,7 +281,14 @@ async fn get_plan(
                 "other_rides": bookings,
                 "area_ids": driver_areas.get(&d.id).cloned().unwrap_or_default(),
                 "drive_group_ids": scopes.get(&d.id).cloned().unwrap_or_default(),
-                "vehicle": { "model": d.v_model, "plate": d.v_plate, "seats": d.v_seats },
+                "vehicle": {
+                    "model": d.v_model,
+                    "plate": d.v_plate,
+                    "seats": d.v_seats,
+                    "wheelchair_ok": d.wheelchair_ok == 1,
+                    "low_step": d.low_step == 1,
+                    "child_seat": d.child_seat == 1,
+                },
             })
         }).collect::<Vec<_>>(),
     })))
@@ -355,6 +346,7 @@ async fn arrange_plan(
             area_id: r.area_id,
             point: points.get(&r.pickup_address).copied(),
             needs_assistance: !r.assistance.is_empty(),
+            assistance: r.assistance.clone(),
             last: b.last.get(&r.passenger_id).map(|(d, _, t, _)| (*d, *t)),
             group: r.match_group_id,
         })
@@ -371,6 +363,9 @@ async fn arrange_plan(
                 other_rides: o_rides,
                 area_ids: b.driver_areas.get(&d.id).cloned().unwrap_or_default(),
                 drive_groups: b.scopes.get(&d.id).cloned().unwrap_or_default(),
+                wheelchair_ok: d.wheelchair_ok == 1,
+                low_step: d.low_step == 1,
+                child_seat: d.child_seat == 1,
             }
         })
         .collect();

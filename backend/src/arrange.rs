@@ -40,6 +40,7 @@ pub struct Rider {
     pub area_id: i64,
     pub point: Option<LatLng>,
     pub needs_assistance: bool,
+    pub assistance: String,
     /// Previous driver and how many rides they've shared.
     pub last: Option<(i64, i64)>,
     /// The group an event rider is matched on (`audience::MATCH_GROUP_SQL`); only drivers
@@ -58,6 +59,9 @@ pub struct Car {
     pub area_ids: Vec<i64>,
     /// The groups this driver may drive for: their groups and every group below them.
     pub drive_groups: Vec<i64>,
+    pub wheelchair_ok: bool,
+    pub low_step: bool,
+    pub child_seat: bool,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -103,6 +107,13 @@ pub fn arrange(riders: &[Rider], cars: &[Car], fixed: &HashMap<i64, i64>) -> Arr
         if r.group.is_some_and(|grp| !car.drive_groups.contains(&grp)) {
             return false;
         }
+        // Accessibility compatibility: wheelchair needs wheelchair-accessible boot; stroller needs child_seat or wheelchair_ok.
+        if r.assistance == "wheelchair" && !car.wheelchair_ok {
+            return false;
+        }
+        if r.assistance == "stroller" && !(car.child_seat || car.wheelchair_ok) {
+            return false;
+        }
         let g = &groups[c];
         let used: i64 = g.iter().map(|&j| riders[j].seats).sum();
         if used + r.seats > car.seats_left {
@@ -126,6 +137,9 @@ pub fn arrange(riders: &[Rider], cars: &[Car], fixed: &HashMap<i64, i64>) -> Arr
             km += PER_EXTRA_AREA_KM * car.area_ids.len().saturating_sub(1) as f64;
         } else {
             km += AREA_PENALTY_KM;
+        }
+        if (r.needs_assistance || !r.assistance.is_empty()) && !car.low_step {
+            km += 4.0;
         }
         if let Some((d, times)) = r.last {
             if d == car.driver_id {
@@ -316,6 +330,7 @@ mod tests {
             area_id: area,
             point: at.map(|(lat, lng)| LatLng { lat, lng }),
             needs_assistance: false,
+            assistance: String::new(),
             last: None,
             group: None,
         }
@@ -328,6 +343,9 @@ mod tests {
             other_rides: 0,
             area_ids: areas.to_vec(),
             drive_groups: Vec::new(),
+            wheelchair_ok: false,
+            low_step: false,
+            child_seat: false,
         }
     }
 
@@ -487,5 +505,38 @@ mod tests {
         );
         assert_eq!(driver_of(&a, 2), Some(10));
         assert_eq!(a.unplaced, vec![1]);
+    }
+
+    #[test]
+    fn wheelchair_and_stroller_require_compatible_vehicles() {
+        let mut wheel = rider(1, 1, None);
+        wheel.needs_assistance = true;
+        wheel.assistance = "wheelchair".into();
+        let mut stroller = rider(2, 1, None);
+        stroller.needs_assistance = true;
+        stroller.assistance = "stroller".into();
+
+        let plain = car(10, 4, &[1]);
+        let mut child_car = car(11, 4, &[1]);
+        child_car.child_seat = true;
+        let mut wheel_car = car(12, 4, &[1]);
+        wheel_car.wheelchair_ok = true;
+        wheel_car.low_step = true;
+
+        let a = arrange(
+            &[wheel.clone()],
+            &[plain.clone(), child_car.clone()],
+            &HashMap::new(),
+        );
+        assert_eq!(driver_of(&a, 1), None);
+        assert_eq!(a.unplaced, vec![1]);
+
+        let a = arrange(
+            &[wheel, stroller],
+            &[plain, child_car, wheel_car],
+            &HashMap::new(),
+        );
+        assert_eq!(driver_of(&a, 1), Some(12));
+        assert_eq!(driver_of(&a, 2), Some(11));
     }
 }

@@ -81,7 +81,9 @@ pub fn render(lang: Lang, key: &ErrorKey) -> String {
         | ErrorKey::TooManyFailedLogins
         | ErrorKey::AuthDisabled
         | ErrorKey::AccountPending
-        | ErrorKey::TermsRequired => auth::render(lang, key),
+        | ErrorKey::TermsRequired
+        | ErrorKey::SessionLocked
+        | ErrorKey::UnlockMethodRequired => auth::render(lang, key),
         ErrorKey::EventNameRequired
         | ErrorKey::InvalidEventType
         | ErrorKey::SelectVisibleGroup
@@ -112,7 +114,9 @@ pub fn render(lang: Lang, key: &ErrorKey) -> String {
         | ErrorKey::VisitorLinkUsed
         | ErrorKey::VisitorJourneyEnded
         | ErrorKey::VisitorNameRequired
-        | ErrorKey::OnlyGoingCanInviteVisitor => events::render(lang, key),
+        | ErrorKey::OnlyGoingCanInviteVisitor
+        | ErrorKey::InvalidPassCode
+        | ErrorKey::CarePassClosed => events::render(lang, key),
         ErrorKey::PickupTimeRequired
         | ErrorKey::InvalidPickupTime
         | ErrorKey::PickupTimeInPast
@@ -232,7 +236,9 @@ pub fn render(lang: Lang, key: &ErrorKey) -> String {
         | ErrorKey::PayeeVerificationRequired
         | ErrorKey::ReimbursementProcessed
         | ErrorKey::ReasonRequired
-        | ErrorKey::MonthFormatInvalid => community::render(lang, key),
+        | ErrorKey::MonthFormatInvalid
+        | ErrorKey::BatchEmpty
+        | ErrorKey::BatchAlreadyPaid => community::render(lang, key),
         ErrorKey::NoFileReceived
         | ErrorKey::FileTooLarge
         | ErrorKey::InvalidFileType
@@ -312,6 +318,8 @@ mod tests {
             ErrorKey::AuthDisabled,
             ErrorKey::AccountPending,
             ErrorKey::TermsRequired,
+            ErrorKey::SessionLocked,
+            ErrorKey::UnlockMethodRequired,
             ErrorKey::EventNameRequired,
             ErrorKey::InvalidEventType,
             ErrorKey::SelectVisibleGroup,
@@ -343,6 +351,8 @@ mod tests {
             ErrorKey::VisitorJourneyEnded,
             ErrorKey::VisitorNameRequired,
             ErrorKey::OnlyGoingCanInviteVisitor,
+            ErrorKey::InvalidPassCode,
+            ErrorKey::CarePassClosed,
             ErrorKey::PickupTimeRequired,
             ErrorKey::InvalidPickupTime,
             ErrorKey::PickupTimeInPast,
@@ -474,6 +484,8 @@ mod tests {
             ErrorKey::ReimbursementProcessed,
             ErrorKey::ReasonRequired,
             ErrorKey::MonthFormatInvalid,
+            ErrorKey::BatchEmpty,
+            ErrorKey::BatchAlreadyPaid,
             ErrorKey::NoFileReceived,
             ErrorKey::FileTooLarge,
             ErrorKey::InvalidFileType,

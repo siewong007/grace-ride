@@ -1,10 +1,10 @@
 // Transport planning board: arrange every ride request for one event at once.
-// Drag a passenger onto a driver (desktop) or pick the driver from the card's menu (phones,
+// Drag a passenger onto a driver (desktop) or pick the driver from the card's menu / sheet (phones,
 // keyboards, screen readers). Nothing is sent until "Confirm & notify".
-import { DragEvent, useEffect, useMemo, useState } from 'react';
+import { DragEvent, useCallback, useEffect, useMemo, useState } from 'react';
 import { useParams } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
-import { Accessibility, Car, History, RotateCcw, Send, Sparkles, UserRound } from 'lucide-react';
+import { Accessibility, Car, History, RotateCcw, Send, Sparkles, Undo2, UserRound } from 'lucide-react';
 import { ApiError, post, useApi } from '../../api';
 import { useAuth } from '../../auth';
 import {
@@ -13,6 +13,8 @@ import {
   CardSkeleton,
   EmptyState,
   ErrorBox,
+  IconButton,
+  Modal,
   Page,
   PageHeader,
   Pill,
@@ -48,6 +50,9 @@ export default function PlanTransport() {
   const canUpdate = can('admin_plan', 'update');
   const { data, error, loading, reload } = useApi<Plan>(`/admin/events/${id}/plan`);
   const [draft, setDraft] = useState<Draft>({});
+  const [undoStack, setUndoStack] = useState<Draft[]>([]);
+  const [filter, setFilter] = useState<string>('all');
+  const [pickerRideId, setPickerRideId] = useState<number | null>(null);
   const [busy, setBusy] = useState(false);
   const [dropTarget, setDropTarget] = useState<string | null>(null);
   // Auto-arrange's explanations, and who it couldn't fit; cleared when the board resets.
@@ -59,6 +64,7 @@ export default function PlanTransport() {
   useEffect(() => {
     if (data) {
       setDraft(savedDraft(data));
+      setUndoStack([]);
       setReasons({});
       setNoRoom(new Set());
     }
@@ -73,6 +79,29 @@ export default function PlanTransport() {
     window.addEventListener('beforeunload', warn);
     return () => window.removeEventListener('beforeunload', warn);
   }, [dirty]);
+
+  const undoStep = useCallback(() => {
+    setUndoStack((stack) => {
+      if (stack.length === 0) return stack;
+      const prev = stack[stack.length - 1];
+      setDraft(prev);
+      return stack.slice(0, -1);
+    });
+  }, []);
+
+  useEffect(() => {
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (!canUpdate || undoStack.length === 0) return;
+      const tag = (e.target as HTMLElement | null)?.tagName;
+      if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT') return;
+      if ((e.metaKey || e.ctrlKey) && !e.shiftKey && e.key.toLowerCase() === 'z') {
+        e.preventDefault();
+        undoStep();
+      }
+    };
+    window.addEventListener('keydown', onKeyDown);
+    return () => window.removeEventListener('keydown', onKeyDown);
+  }, [canUpdate, undoStack.length, undoStep]);
 
   if (loading && !data) {
     return (
@@ -92,6 +121,8 @@ export default function PlanTransport() {
   const plan = data;
   const assign = (rideId: number, driverId: number | null) => {
     if (!canUpdate) return;
+    if ((draft[rideId] ?? null) === driverId) return;
+    setUndoStack((s) => [...s.slice(-24), draft]);
     setDraft((d) => ({ ...d, [rideId]: driverId }));
   };
   const loads = new Map(plan.drivers.map((d) => [d.id, driverLoad(plan, draft, d)]));
@@ -99,6 +130,17 @@ export default function PlanTransport() {
   const unassigned = plan.rides.filter((r) => draft[r.id] == null);
   const placed = plan.rides.length - unassigned.length;
   const seatsUsed = plan.rides.filter((r) => draft[r.id] != null).reduce((n, r) => n + r.seats, 0);
+  const assistanceCount = plan.rides.filter((r) => Boolean(r.assistance)).length;
+  const uniqueAreas = Array.from(new Set(plan.rides.map((r) => r.area.name)));
+
+  const matchesFilter = (r: PlanRide): boolean => {
+    if (filter === 'unassigned') return draft[r.id] == null;
+    if (filter === 'assistance') return Boolean(r.assistance);
+    if (filter.startsWith('area:')) return r.area.name === filter.slice(5);
+    return true;
+  };
+
+  const visibleUnassigned = unassigned.filter(matchesFilter);
 
   const onDrop = (target: number | null) => (e: DragEvent) => {
     e.preventDefault();
@@ -125,8 +167,11 @@ export default function PlanTransport() {
       const res = await post<ArrangeResult>(`/admin/events/${plan.event.id}/plan/arrange`, {
         draft: draftEntries(plan, draft),
       });
-      setDraft((d) => ({ ...d, ...Object.fromEntries(res.placed.map((p) => [p.ride_id, p.driver_id])) }));
-      setReasons((cur) => ({ ...cur, ...Object.fromEntries(res.placed.map((p) => [p.ride_id, p])) }));
+      if (res.placed.length > 0) {
+        setUndoStack((s) => [...s.slice(-24), draft]);
+        setDraft((d) => ({ ...d, ...Object.fromEntries(res.placed.map((p) => [p.ride_id, p.driver_id])) }));
+        setReasons((cur) => ({ ...cur, ...Object.fromEntries(res.placed.map((p) => [p.ride_id, p])) }));
+      }
       setNoRoom(new Set(res.unplaced));
       if (res.placed.length === 0 && res.unplaced.length === 0) toast.info(t('autoArrangeNone'));
       if (res.placed.length > 0) toast.success(t('autoArrangeDone', { count: res.placed.length }));
@@ -141,9 +186,15 @@ export default function PlanTransport() {
 
   const sameAsLast = () => {
     const res = applyLastTime(plan, draft);
+    if (res.placed > 0) setUndoStack((s) => [...s.slice(-24), draft]);
     setDraft(res.draft);
     if (res.candidates === 0) toast.info(t('sameAsLastNone'));
     else toast.success(t('sameAsLastDone', { placed: res.placed, candidates: res.candidates }));
+  };
+
+  const resetAll = () => {
+    setUndoStack((s) => [...s.slice(-24), draft]);
+    setDraft(savedDraft(plan));
   };
 
   const send = async () => {
@@ -188,12 +239,15 @@ export default function PlanTransport() {
       plan={plan}
       draft={draft}
       onAssign={(d) => assign(r.id, d)}
+      onOpenPicker={() => setPickerRideId(r.id)}
       changed={(draft[r.id] ?? null) !== r.driver_id}
       reason={reasons[r.id]?.driver_id === draft[r.id] ? reasons[r.id] : undefined}
       noRoom={draft[r.id] == null && noRoom.has(r.id)}
       canUpdate={canUpdate}
     />
   );
+
+  const pickerRide = pickerRideId != null ? plan.rides.find((r) => r.id === pickerRideId) ?? null : null;
 
   return (
     <Page width="wide" className="plan-page">
@@ -204,31 +258,73 @@ export default function PlanTransport() {
       />
 
       {plan.rides.length > 0 && (
-        <div className="plan-toolbar">
-          <div className="plan-summary" aria-live="polite">
-            {t('summary', { placed, total: plan.rides.length, seats: seatsUsed })}
+        <>
+          <div className="plan-toolbar">
+            <div className="plan-summary" aria-live="polite">
+              {t('summary', { placed, total: plan.rides.length, seats: seatsUsed })}
+            </div>
+            <div className="btn-row">
+              <Button
+                variant="secondary"
+                icon={<Sparkles size={16} />}
+                onClick={autoArrange}
+                loading={arranging}
+                disabled={unassigned.length === 0 || arranging}
+              >
+                {t('autoArrange')}
+              </Button>
+              <Button variant="secondary" icon={<History size={16} />} onClick={sameAsLast} disabled={unassigned.length === 0}>
+                {t('sameAsLast')}
+              </Button>
+              <Button variant="ghost" icon={<Undo2 size={16} />} onClick={undoStep} disabled={undoStack.length === 0}>
+                {t('undoStep')}
+              </Button>
+              <Button variant="ghost" icon={<RotateCcw size={16} />} onClick={resetAll} disabled={!dirty}>
+                {t('reset')}
+              </Button>
+              <Button variant="primary" className="plan-confirm" icon={<Send size={16} />} onClick={send} disabled={!dirty || busy} loading={busy}>
+                {t('confirm', { count: changes.length })}
+              </Button>
+            </div>
           </div>
-          <div className="btn-row">
-            <Button
-              variant="secondary"
-              icon={<Sparkles size={16} />}
-              onClick={autoArrange}
-              loading={arranging}
-              disabled={unassigned.length === 0 || arranging}
+
+          <div className="chips plan-filters" role="group" aria-label={t('title')}>
+            <button
+              type="button"
+              className={`chip ${filter === 'all' ? 'on' : ''}`}
+              onClick={() => setFilter('all')}
             >
-              {t('autoArrange')}
-            </Button>
-            <Button variant="secondary" icon={<History size={16} />} onClick={sameAsLast} disabled={unassigned.length === 0}>
-              {t('sameAsLast')}
-            </Button>
-            <Button variant="ghost" icon={<RotateCcw size={16} />} onClick={() => setDraft(savedDraft(plan))} disabled={!dirty}>
-              {t('reset')}
-            </Button>
-            <Button variant="primary" className="plan-confirm" icon={<Send size={16} />} onClick={send} disabled={!dirty || busy} loading={busy}>
-              {t('confirm', { count: changes.length })}
-            </Button>
+              {t('filterAll', { count: plan.rides.length })}
+            </button>
+            <button
+              type="button"
+              className={`chip ${filter === 'unassigned' ? 'on' : ''}`}
+              onClick={() => setFilter('unassigned')}
+            >
+              {t('filterUnassigned', { count: unassigned.length })}
+            </button>
+            {assistanceCount > 0 && (
+              <button
+                type="button"
+                className={`chip ${filter === 'assistance' ? 'on' : ''}`}
+                onClick={() => setFilter('assistance')}
+              >
+                {t('filterAssistance', { count: assistanceCount })}
+              </button>
+            )}
+            {uniqueAreas.length > 1 &&
+              uniqueAreas.map((areaName) => (
+                <button
+                  key={areaName}
+                  type="button"
+                  className={`chip ${filter === `area:${areaName}` ? 'on' : ''}`}
+                  onClick={() => setFilter(`area:${areaName}`)}
+                >
+                  {areaName}
+                </button>
+              ))}
           </div>
-        </div>
+        </>
       )}
       {dirty && <p className="plan-unsaved">{t('unsaved')}</p>}
 
@@ -244,43 +340,101 @@ export default function PlanTransport() {
             <h2 className="plan-col-title">
               {t('unassigned')} <span className="plan-count">{unassigned.length}</span>
             </h2>
-            {unassigned.length === 0 ? <p className="muted">{t('unassignedEmpty')}</p> : unassigned.map(card)}
+            {unassigned.length === 0 ? (
+              <p className="muted">{t('unassignedEmpty')}</p>
+            ) : visibleUnassigned.length === 0 ? (
+              <p className="muted">{t('filterEmpty')}</p>
+            ) : (
+              visibleUnassigned.map(card)
+            )}
           </section>
 
-          <div className="plan-drivers">
-            {plan.drivers.length === 0 && <EmptyState title={t('noDrivers')} />}
-            {plan.drivers.map((d) => {
-              const load = loads.get(d.id)!;
-              const mine = plan.rides.filter((r) => draft[r.id] === d.id);
-              return (
-                <Card
-                  key={d.id}
-                  className={`plan-driver ${load.over ? 'is-over' : ''} ${dropTarget === `d${d.id}` ? 'is-drop' : ''}`}
-                  {...dropProps(`d${d.id}`, d.id)}
-                >
-                  <div className="plan-driver-head">
-                    <div>
-                      <h3 className="plan-driver-name">
-                        <Car size={18} aria-hidden="true" /> {d.name}
-                      </h3>
-                      <div className="muted plan-driver-meta">
-                        {[d.vehicle.model, d.vehicle.plate].filter(Boolean).join(' · ')}
-                        {' · '}
-                        {d.carpool ? t('carpool') : t('oneBooking')}
+          {filter !== 'unassigned' && (
+            <div className="plan-drivers">
+              {plan.drivers.length === 0 && <EmptyState title={t('noDrivers')} />}
+              {plan.drivers.map((d) => {
+                const load = loads.get(d.id)!;
+                const mine = plan.rides.filter((r) => draft[r.id] === d.id && matchesFilter(r));
+                return (
+                  <Card
+                    key={d.id}
+                    className={`plan-driver ${load.over ? 'is-over' : ''} ${dropTarget === `d${d.id}` ? 'is-drop' : ''}`}
+                    {...dropProps(`d${d.id}`, d.id)}
+                  >
+                    <div className="plan-driver-head">
+                      <div>
+                        <h3 className="plan-driver-name">
+                          <Car size={18} aria-hidden="true" /> {d.name}
+                        </h3>
+                        <div className="muted plan-driver-meta">
+                          {[d.vehicle.model, d.vehicle.plate].filter(Boolean).join(' · ')}
+                          {' · '}
+                          {d.carpool ? t('carpool') : t('oneBooking')}
+                        </div>
                       </div>
+                      <SeatBar used={load.seats} cap={d.cap} over={load.over} label={t('seats', { used: load.seats, cap: d.cap })} />
                     </div>
-                    <SeatBar used={load.seats} cap={d.cap} over={load.over} label={t('seats', { used: load.seats, cap: d.cap })} />
-                  </div>
-                  {d.other_seats > 0 && <p className="plan-note">{t('otherRides', { count: d.other_seats })}</p>}
-                  {load.over && <p className="plan-note is-bad">{t('overLimit')}</p>}
-                  <div className="plan-driver-rides">
-                    {mine.length === 0 ? <p className="plan-drop-hint">{t('dropHere')}</p> : mine.map(card)}
-                  </div>
-                </Card>
-              );
-            })}
-          </div>
+                    {d.other_seats > 0 && <p className="plan-note">{t('otherRides', { count: d.other_seats })}</p>}
+                    {load.over && <p className="plan-note is-bad">{t('overLimit')}</p>}
+                    <div className="plan-driver-rides">
+                      {mine.length === 0 ? <p className="plan-drop-hint">{t('dropHere')}</p> : mine.map(card)}
+                    </div>
+                  </Card>
+                );
+              })}
+            </div>
+          )}
         </div>
+      )}
+
+      {pickerRide && (
+        <Modal
+          title={t('chooseDriverSheet', { name: pickerRide.passenger.name })}
+          onClose={() => setPickerRideId(null)}
+        >
+          <div className="stack-sm">
+            <button
+              type="button"
+              className={`item row between ${draft[pickerRide.id] == null ? 'active' : ''}`}
+              onClick={() => {
+                assign(pickerRide.id, null);
+                setPickerRideId(null);
+              }}
+            >
+              <span className="bold">{t('noDriver')}</span>
+            </button>
+            {plan.drivers
+              .filter((d) => d.id !== pickerRide.passenger.id)
+              .sort((a, b) => Number(inGroup(b, pickerRide)) - Number(inGroup(a, pickerRide)))
+              .map((d) => {
+                const l = driverLoad(plan, draft, d);
+                const sameGrp = inGroup(d, pickerRide);
+                const sameArea = servesArea(d, pickerRide);
+                return (
+                  <button
+                    key={d.id}
+                    type="button"
+                    className="item stack-xs plan-picker-option"
+                    onClick={() => {
+                      assign(pickerRide.id, d.id);
+                      setPickerRideId(null);
+                    }}
+                  >
+                    <div className="row between nowrap">
+                      <span className="bold">{d.name}</span>
+                      <SeatBar used={l.seats} cap={d.cap} over={l.over} label={t('seats', { used: l.seats, cap: d.cap })} />
+                    </div>
+                    <div className="row wrap gap-xs">
+                      <Pill tone={sameGrp ? 'success' : 'warning'}>
+                        {sameGrp ? t('inGroup') : t('outsideGroupAdmin')}
+                      </Pill>
+                      {sameArea && <Pill tone="info">{t('whyInArea')}</Pill>}
+                    </div>
+                  </button>
+                );
+              })}
+          </div>
+        </Modal>
       )}
     </Page>
   );
@@ -303,6 +457,7 @@ function PassengerCard({
   plan,
   draft,
   onAssign,
+  onOpenPicker,
   changed,
   reason,
   noRoom,
@@ -312,6 +467,7 @@ function PassengerCard({
   plan: Plan;
   draft: Draft;
   onAssign: (driverId: number | null) => void;
+  onOpenPicker: () => void;
   changed: boolean;
   reason?: Reason;
   noRoom?: boolean;
@@ -370,36 +526,47 @@ function PassengerCard({
           </span>
         </p>
       )}
-      <label className="sr-only" htmlFor={selectId}>
-        {t('assignTo', { name: r.passenger.name })}
-      </label>
-      <select
-        id={selectId}
-        className="input plan-select"
-        value={current ?? ''}
-        disabled={!canUpdate}
-        onChange={(e) => onAssign(e.target.value ? Number(e.target.value) : null)}
-      >
-        <option value="">{t('noDriver')}</option>
-        {/* Drivers from the rider's group first; anyone else only by an admin's choice (audited). */}
-        {[true, false].map((inside) => {
-          const list = plan.drivers.filter((d) => d.id !== r.passenger.id && inGroup(d, r) === inside);
-          if (!list.length) return null;
-          const options = list.map((d) => {
-            const l = driverLoad(plan, draft, d);
-            return (
-              <option key={d.id} value={d.id}>
-                {t('driverOption', { name: d.name, used: l.seats, cap: d.cap })}
-              </option>
+      <div className="row nowrap gap-xs">
+        <label className="sr-only" htmlFor={selectId}>
+          {t('assignTo', { name: r.passenger.name })}
+        </label>
+        <select
+          id={selectId}
+          className="input plan-select grow"
+          value={current ?? ''}
+          disabled={!canUpdate}
+          onChange={(e) => onAssign(e.target.value ? Number(e.target.value) : null)}
+        >
+          <option value="">{t('noDriver')}</option>
+          {/* Drivers from the rider's group first; anyone else only by an admin's choice (audited). */}
+          {[true, false].map((inside) => {
+            const list = plan.drivers.filter((d) => d.id !== r.passenger.id && inGroup(d, r) === inside);
+            if (!list.length) return null;
+            const options = list.map((d) => {
+              const l = driverLoad(plan, draft, d);
+              return (
+                <option key={d.id} value={d.id}>
+                  {t('driverOption', { name: d.name, used: l.seats, cap: d.cap })}
+                </option>
+              );
+            });
+            return inside && r.match_group_id == null ? options : (
+              <optgroup key={String(inside)} label={inside ? t('inGroup') : t('outsideGroupAdmin')}>
+                {options}
+              </optgroup>
             );
-          });
-          return inside && r.match_group_id == null ? options : (
-            <optgroup key={String(inside)} label={inside ? t('inGroup') : t('outsideGroupAdmin')}>
-              {options}
-            </optgroup>
-          );
-        })}
-      </select>
+          })}
+        </select>
+        {canUpdate && (
+          <IconButton
+            size="sm"
+            variant="secondary"
+            label={t('chooseDriverSheet', { name: r.passenger.name })}
+            icon={<Car size={16} />}
+            onClick={onOpenPicker}
+          />
+        )}
+      </div>
     </article>
   );
 }

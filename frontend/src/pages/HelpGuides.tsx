@@ -18,11 +18,13 @@ import {
 } from '../components/ui';
 
 export interface GuideStep {
+  id?: string;
   title_en: string;
   title_zh: string;
   body_en: string;
   body_zh: string;
   link: string;
+  image_file_id?: number | null;
 }
 
 export interface GuideSummary {

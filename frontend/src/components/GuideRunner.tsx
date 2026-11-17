@@ -84,6 +84,21 @@ function WalkthroughCard({ active, minimised, onMinimise, onPrev, onNext, onStop
           <div className="guide-card-body">
             <h2 className="guide-card-title">{stepTitle || t('stepNumber', { n: stepIndex + 1 })}</h2>
             {stepBody && <StepText text={stepBody} />}
+            {step?.image_file_id && (
+              <a
+                href={`/api/files/${step.image_file_id}`}
+                target="_blank"
+                rel="noreferrer"
+                className="guide-step-img-link"
+              >
+                <img
+                  src={`/api/files/${step.image_file_id}`}
+                  alt={stepTitle || t('stepNumber', { n: stepIndex + 1 })}
+                  className="guide-step-img"
+                  loading="lazy"
+                />
+              </a>
+            )}
             {!step?.link && <p className="small">{t('stepHere')}</p>}
             {step?.link && !hereLink(step.link) && (
               <Link to={step.link} className="guide-step-link">

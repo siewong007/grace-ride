@@ -154,6 +154,21 @@ export default function GuideSteps({
                 {isCurrent && doneCount > 0 && <span className="guide-step-kicker">{t('upNext')}</span>}
                 <h4 className="bold guide-step-title">{stepTitle || t('stepNumber', { n: idx + 1 })}</h4>
                 {stepBody && <StepText text={stepBody} className="guide-step-text" />}
+                {s.image_file_id && (
+                  <a
+                    href={`/api/files/${s.image_file_id}`}
+                    target="_blank"
+                    rel="noreferrer"
+                    className="guide-step-img-link"
+                  >
+                    <img
+                      src={`/api/files/${s.image_file_id}`}
+                      alt={stepTitle || t('stepNumber', { n: idx + 1 })}
+                      className="guide-step-img"
+                      loading="lazy"
+                    />
+                  </a>
+                )}
                 {s.link && (
                   <div style={{ marginTop: 'var(--space-2)' }}>
                     <Link

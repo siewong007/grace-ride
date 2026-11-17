@@ -1,6 +1,5 @@
 //! Visitor passes: a one-time link that lets a member's visitor follow their ride to an
-//! event, and closes when the journey ends
-//! (docs/superpowers/specs/2026-11-16-event-audience-rides-design.md, section 4).
+//! event, and closes when the journey ends (see README.md).
 //!
 //! - A member who is going (or the organiser) invites a visitor. That books a proxy ride
 //!   in the member's name for the visitor, recorded as the visitor group and matched to

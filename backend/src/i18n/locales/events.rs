@@ -148,6 +148,16 @@ pub fn render(lang: Lang, key: &ErrorKey) -> String {
             "只有已报名参加的会员或活动负责人可以邀请访客",
             "Only members going to the event, or its organiser, can invite a visitor",
         ),
+        ErrorKey::InvalidPassCode => pair(
+            lang,
+            "找不到对应的活动通行码",
+            "No matching member pass code found for this event",
+        ),
+        ErrorKey::CarePassClosed => pair(
+            lang,
+            "此平安接送追踪链接已关闭或过期",
+            "This safe-arrival status link is closed or expired",
+        ),
         other => panic!("{} is not an events error", other.code()),
     }
 }

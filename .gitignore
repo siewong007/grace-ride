@@ -13,3 +13,6 @@ frontend/dist/
 frontend/test-results/
 frontend/playwright-report/
 frontend/public/third-party-licenses.txt
+
+# CodeGraph local index
+.codegraph/

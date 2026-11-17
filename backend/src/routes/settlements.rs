@@ -70,6 +70,7 @@ struct SettlementIn {
     participants: Vec<ParticipantIn>,
     payee_name: String,
     payee_account: String,
+    payee_qr_file_id: Option<i64>,
     due_date: Option<String>,
     reason: Option<String>,
 }
@@ -155,6 +156,17 @@ async fn check_receipts(st: &AppState, u: &CurrentUser, req: &SettlementIn) -> A
             return Err(forbidden(u.lang, ErrorKey::InvalidReceipt));
         }
     }
+    if let Some(qr_id) = req.payee_qr_file_id {
+        let row: Option<(i64, String)> =
+            sqlx::query_as("SELECT owner_id, mime FROM files WHERE id=$1")
+                .bind(qr_id)
+                .fetch_optional(&st.db)
+                .await?;
+        match row {
+            Some((owner, mime)) if owner == u.id && mime.starts_with("image/") => {}
+            _ => return Err(bad(u.lang, ErrorKey::InvalidPhoto)),
+        }
+    }
     Ok(())
 }
 
@@ -233,12 +245,13 @@ async fn write_body(
     req: &SettlementIn,
     shares: &[(i64, i64)],
 ) -> AppResult<()> {
-    sqlx::query("UPDATE settlements SET title=$1, split_mode=$2, subsidy_cents=$3, payee_name=$4, payee_account=$5, due_date=$6, updated_at=$7 WHERE id=$8")
+    sqlx::query("UPDATE settlements SET title=$1, split_mode=$2, subsidy_cents=$3, payee_name=$4, payee_account=$5, payee_qr_file_id=$6, due_date=$7, updated_at=$8 WHERE id=$9")
         .bind(req.title.trim())
         .bind(&req.split_mode)
         .bind(req.subsidy_cents.unwrap_or(0))
         .bind(req.payee_name.trim())
         .bind(req.payee_account.trim())
+        .bind(req.payee_qr_file_id)
         .bind(req.due_date.clone().filter(|d| !d.is_empty()))
         .bind(now())
         .bind(sid)
@@ -376,6 +389,7 @@ struct SRow {
     subsidy_cents: i64,
     payee_name: String,
     payee_account: String,
+    payee_qr_file_id: Option<i64>,
     due_date: Option<String>,
     status: String,
     version: i64,
@@ -387,7 +401,7 @@ struct SRow {
 
 async fn load(st: &AppState, lang: Lang, id: i64) -> AppResult<SRow> {
     sqlx::query_as::<_, SRow>(
-        "SELECT s.id, s.event_id, s.created_by, s.title, s.split_mode, s.subsidy_cents, s.payee_name, s.payee_account, s.due_date,
+        "SELECT s.id, s.event_id, s.created_by, s.title, s.split_mode, s.subsidy_cents, s.payee_name, s.payee_account, s.payee_qr_file_id, s.due_date,
                 s.status, s.version, s.created_at, e.title AS event_title, e.starts_at AS event_starts_at, u.name AS creator_name
          FROM settlements s JOIN events e ON e.id=s.event_id JOIN users u ON u.id=s.created_by WHERE s.id=$1",
     )
@@ -414,7 +428,7 @@ async fn snapshot(st: &AppState, s: &SRow) -> AppResult<Value> {
         "id": s.id, "event": {"id": s.event_id, "title": s.event_title, "starts_at": s.event_starts_at},
         "created_by": {"id": s.created_by, "name": s.creator_name},
         "title": s.title, "split_mode": s.split_mode, "subsidy_cents": s.subsidy_cents,
-        "payee_name": s.payee_name, "payee_account": s.payee_account, "due_date": s.due_date,
+        "payee_name": s.payee_name, "payee_account": s.payee_account, "payee_qr_file_id": s.payee_qr_file_id, "due_date": s.due_date,
         "status": s.status, "version": s.version, "created_at": s.created_at,
         "gross_cents": gross, "total_cents": gross - s.subsidy_cents,
         "items": items.into_iter().map(|(id, l, a, r)| json!({"id": id, "label": l, "amount_cents": a, "receipt_file_id": r})).collect::<Vec<_>>(),
@@ -911,8 +925,8 @@ async fn revisions(
 
 async fn my_shares(State(st): State<AppState>, u: CurrentUser) -> AppResult<Json<Value>> {
     require(&u, Page::Costs, Act::View)?;
-    let rows: Vec<(i64, i64, String, String, i64, String, String, String, Option<String>, String, String, Option<i64>)> = sqlx::query_as(
-        "SELECT sh.id, s.id, s.title, e.title, sh.amount_cents, sh.status, s.payee_name, s.payee_account, s.due_date, sh.note, sh.txn_ref, sh.proof_file_id
+    let rows: Vec<(i64, i64, String, String, i64, String, String, String, Option<i64>, Option<String>, String, String, Option<i64>)> = sqlx::query_as(
+        "SELECT sh.id, s.id, s.title, e.title, sh.amount_cents, sh.status, s.payee_name, s.payee_account, s.payee_qr_file_id, s.due_date, sh.note, sh.txn_ref, sh.proof_file_id
          FROM settlement_shares sh JOIN settlements s ON s.id=sh.settlement_id JOIN events e ON e.id=s.event_id
          WHERE sh.user_id=$1 AND s.status IN ('published','closed') AND s.created_by != $2
          ORDER BY CASE sh.status WHEN 'confirmed' THEN 1 ELSE 0 END, s.id DESC",
@@ -921,9 +935,9 @@ async fn my_shares(State(st): State<AppState>, u: CurrentUser) -> AppResult<Json
     .bind(u.id)
     .fetch_all(&st.db)
     .await?;
-    Ok(Json(json!(rows.into_iter().map(|(id, sid, t, et, amt, status, pn, pa, due, note, txn, proof)| json!({
+    Ok(Json(json!(rows.into_iter().map(|(id, sid, t, et, amt, status, pn, pa, qr, due, note, txn, proof)| json!({
         "id": id, "settlement_id": sid, "title": t, "event_title": et, "amount_cents": amt, "status": status,
-        "payee_name": pn, "payee_account": pa, "due_date": due, "note": note, "txn_ref": txn, "proof_file_id": proof,
+        "payee_name": pn, "payee_account": pa, "payee_qr_file_id": qr, "due_date": due, "note": note, "txn_ref": txn, "proof_file_id": proof,
     })).collect::<Vec<_>>())))
 }
 

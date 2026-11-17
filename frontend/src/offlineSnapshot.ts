@@ -1,7 +1,12 @@
 import type { Ride } from './components/RideCard';
-import { todayStr } from './format';
 
 const SNAPSHOT_KEY = 'gr_today_rides_v1';
+
+function todayStr(): string {
+  const d = new Date();
+  const pad = (n: number) => String(n).padStart(2, '0');
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+}
 
 const ACTIVE_STATUSES = new Set([
   'pending_driver',

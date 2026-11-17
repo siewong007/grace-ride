@@ -67,7 +67,9 @@ export default {
     "TOO_MANY_FAILED_LOGINS": "登入失败次数过多，账号已暂时锁定 15 分钟。可改用通行密钥登入。",
     "AUTH_DISABLED": "此应用使用通行密钥登入，不使用密码。",
     "ACCOUNT_PENDING": "账号尚未通过审核，目前只能使用个人资料。",
-    "TERMS_REQUIRED": "请先阅读并勾选同意使用条款。"
+    "TERMS_REQUIRED": "请先阅读并勾选同意使用条款。",
+    "SESSION_LOCKED": "屏幕已锁定，请验证后继续使用。",
+    "UNLOCK_METHOD_REQUIRED": "请提供通行密钥、双重验证码或备用码来解锁。"
   },
   "events": {
     "EVENT_NAME_REQUIRED": "请填写活动名称",
@@ -100,7 +102,9 @@ export default {
     "VISITOR_LINK_USED": "此链接已在另一部设备上使用，请向邀请人索取新链接",
     "VISITOR_JOURNEY_ENDED": "此行程已结束，感谢您的参与！",
     "VISITOR_NAME_REQUIRED": "请填写访客姓名",
-    "ONLY_GOING_CAN_INVITE_VISITOR": "只有已报名参加的会员或活动负责人可以邀请访客"
+    "ONLY_GOING_CAN_INVITE_VISITOR": "只有已报名参加的会员或活动负责人可以邀请访客",
+    "INVALID_PASS_CODE": "找不到对应的活动通行码",
+    "CARE_PASS_CLOSED": "此平安接送追踪链接已关闭或过期"
   },
   "rides": {
     "PICKUP_TIME_REQUIRED": "请填写接送时间",
@@ -226,7 +230,9 @@ export default {
     "PAYEE_VERIFICATION_REQUIRED": "请先核对收款人姓名、手机号及 DuitNow 收款去向",
     "REIMBURSEMENT_PROCESSED": "此报销已处理",
     "REASON_REQUIRED": "请填写原因",
-    "MONTH_FORMAT_INVALID": "月份格式应为 YYYY-MM"
+    "MONTH_FORMAT_INVALID": "月份格式应为 YYYY-MM",
+    "BATCH_EMPTY": "没有符合条件可加入批次的已批准报销",
+    "BATCH_ALREADY_PAID": "此付款批次已完成付款"
   },
   "files": {
     "NO_FILE_RECEIVED": "没有收到文件",

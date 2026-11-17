@@ -13,6 +13,7 @@ import {
 import { del, post, put, useApi } from '../api';
 import GuideSteps from '../components/GuideSteps';
 import { useGuideRunner } from '../components/GuideRunner';
+import PhotoAttach from '../components/PhotoAttach';
 import { GuideDetailData, GuideStep } from './HelpGuides';
 import {
   Button,
@@ -54,12 +55,16 @@ const APP_PAGES: { key: string; value: string }[] = [
   { key: 'audit', value: '/admin/audit' },
 ];
 
+const newStepId = () => `s_${Math.random().toString(36).slice(2, 10)}`;
+
 const emptyStep = (): GuideStep => ({
+  id: newStepId(),
   title_en: '',
   title_zh: '',
   body_en: '',
   body_zh: '',
   link: '',
+  image_file_id: null,
 });
 
 function slugify(text: string): string {
@@ -550,13 +555,53 @@ export default function HelpGuideEditor() {
                           />
                         </Field>
                         <Field label={t('guideStepBodyEn')}>
-                          <textarea
-                            className="input"
-                            rows={2}
-                            value={s.body_en}
-                            onChange={(e) => setStep(idx, { body_en: e.target.value })}
-                            placeholder="Detailed instructions for this step"
-                          />
+                          <div className="stack-xs">
+                            <div className="chips">
+                              <button
+                                type="button"
+                                className="chip"
+                                onClick={() =>
+                                  setStep(idx, { body_en: `${s.body_en}${s.body_en ? ' ' : ''}**bold**` })
+                                }
+                              >
+                                {t('fmtBold')}
+                              </button>
+                              <button
+                                type="button"
+                                className="chip"
+                                onClick={() =>
+                                  setStep(idx, { body_en: `${s.body_en}${s.body_en ? '\n' : ''}Note: ` })
+                                }
+                              >
+                                {t('fmtNote')}
+                              </button>
+                              <button
+                                type="button"
+                                className="chip"
+                                onClick={() =>
+                                  setStep(idx, { body_en: `${s.body_en}${s.body_en ? '\n' : ''}Tip: ` })
+                                }
+                              >
+                                {t('fmtTip')}
+                              </button>
+                              <button
+                                type="button"
+                                className="chip"
+                                onClick={() =>
+                                  setStep(idx, { body_en: `${s.body_en}${s.body_en ? '\n' : ''}Warning: ` })
+                                }
+                              >
+                                {t('fmtWarning')}
+                              </button>
+                            </div>
+                            <textarea
+                              className="input"
+                              rows={2}
+                              value={s.body_en}
+                              onChange={(e) => setStep(idx, { body_en: e.target.value })}
+                              placeholder="Detailed instructions for this step"
+                            />
+                          </div>
                         </Field>
                       </>
                     ) : (
@@ -570,16 +615,64 @@ export default function HelpGuideEditor() {
                           />
                         </Field>
                         <Field label={t('guideStepBodyZh')}>
-                          <textarea
-                            className="input"
-                            rows={2}
-                            value={s.body_zh}
-                            onChange={(e) => setStep(idx, { body_zh: e.target.value })}
-                            placeholder={t('stepBodyZhPlaceholder')}
-                          />
+                          <div className="stack-xs">
+                            <div className="chips">
+                              <button
+                                type="button"
+                                className="chip"
+                                onClick={() =>
+                                  setStep(idx, { body_zh: `${s.body_zh}**\u91cd\u70b9**` })
+                                }
+                              >
+                                {t('fmtBold')}
+                              </button>
+                              <button
+                                type="button"
+                                className="chip"
+                                onClick={() =>
+                                  setStep(idx, { body_zh: `${s.body_zh}${s.body_zh ? '\n' : ''}\u6ce8\u610f\uff1a` })
+                                }
+                              >
+                                {t('fmtNote')}
+                              </button>
+                              <button
+                                type="button"
+                                className="chip"
+                                onClick={() =>
+                                  setStep(idx, { body_zh: `${s.body_zh}${s.body_zh ? '\n' : ''}\u63d0\u793a\uff1a` })
+                                }
+                              >
+                                {t('fmtTip')}
+                              </button>
+                              <button
+                                type="button"
+                                className="chip"
+                                onClick={() =>
+                                  setStep(idx, { body_zh: `${s.body_zh}${s.body_zh ? '\n' : ''}\u8b66\u544a\uff1a` })
+                                }
+                              >
+                                {t('fmtWarning')}
+                              </button>
+                            </div>
+                            <textarea
+                              className="input"
+                              rows={2}
+                              value={s.body_zh}
+                              onChange={(e) => setStep(idx, { body_zh: e.target.value })}
+                              placeholder={t('stepBodyZhPlaceholder')}
+                            />
+                          </div>
                         </Field>
                       </>
                     )}
+
+                    {/* Optional Step Screenshot */}
+                    <Field label={t('stepScreenshot')}>
+                      <PhotoAttach
+                        fileId={s.image_file_id ?? null}
+                        onChange={(fid) => setStep(idx, { image_file_id: fid })}
+                      />
+                    </Field>
 
                     {/* Link Picker */}
                     <Field label={t('guideStepLink')}>

@@ -188,7 +188,7 @@ export default function RideDetail() {
               <div ref={chatRef}>
                 <Chat
                   rideId={r.id}
-                  role={r.viewer.is_driver ? 'driver' : r.viewer.is_passenger ? 'passenger' : 'staff'}
+                  viewerRole={r.viewer.is_driver ? 'driver' : r.viewer.is_passenger ? 'passenger' : 'staff'}
                 />
               </div>
             )}

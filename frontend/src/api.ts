@@ -86,7 +86,7 @@ export function isStreamConnected(): boolean {
 }
 
 function openStream() {
-  if (stream || document.visibilityState === 'hidden') return;
+  if (stream || typeof EventSource === 'undefined' || document.visibilityState === 'hidden') return;
   const es = new EventSource('/api/stream');
   es.onopen = () => {
     streamOpen = true;

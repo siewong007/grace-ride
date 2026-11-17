@@ -183,12 +183,14 @@ pub async fn notify(
     link: &str,
 ) {
     let lang = user_lang(db, user_id).await;
+    let title_s = t(lang, title.0, title.1).to_string();
+    let body_s = t(lang, body.0, body.1).to_string();
     let r = sqlx::query(
         "INSERT INTO notifications (user_id, title, body, link, created_at) VALUES ($1,$2,$3,$4,$5)",
     )
     .bind(user_id)
-    .bind(t(lang, title.0, title.1))
-    .bind(t(lang, body.0, body.1))
+    .bind(&title_s)
+    .bind(&body_s)
     .bind(link)
     .bind(now())
     .execute(db)
@@ -197,6 +199,10 @@ pub async fn notify(
         tracing::error!("notify failed: {e}");
     } else {
         crate::stream::publish(user_id, "notify");
+        tokio::spawn(dispatch_external_alerts(
+            db.clone(),
+            vec![(user_id, title_s, body_s, link.to_string())],
+        ));
     }
 }
 
@@ -228,14 +234,14 @@ pub async fn notify_many(
     if user_ids.is_empty() {
         return;
     }
-    let r: sqlx::Result<Vec<(i64,)>> = sqlx::query_as(
+    let r: sqlx::Result<Vec<(i64, String, String)>> = sqlx::query_as(
         "INSERT INTO notifications (user_id, title, body, link, created_at)
          SELECT u.id,
                 CASE WHEN u.lang = 'en' THEN $3 ELSE $2 END,
                 CASE WHEN u.lang = 'en' THEN $5 ELSE $4 END,
                 $6, $7
          FROM users u WHERE u.id = ANY($1)
-         RETURNING user_id",
+         RETURNING user_id, title, body",
     )
     .bind(user_ids)
     .bind(title.0)
@@ -248,11 +254,101 @@ pub async fn notify_many(
     .await;
     match r {
         Ok(rows) => {
-            for (id,) in rows {
+            let mut alerts = Vec::with_capacity(rows.len());
+            for (id, t_s, b_s) in rows {
                 crate::stream::publish(id, "notify");
+                alerts.push((id, t_s, b_s, link.to_string()));
+            }
+            if !alerts.is_empty() {
+                tokio::spawn(dispatch_external_alerts(db.clone(), alerts));
             }
         }
         Err(e) => tracing::error!("notify_many failed: {e}"),
+    }
+}
+
+static ALERT_HTTP: OnceLock<reqwest::Client> = OnceLock::new();
+
+fn alert_client() -> &'static reqwest::Client {
+    ALERT_HTTP.get_or_init(|| {
+        reqwest::Client::builder()
+            .timeout(std::time::Duration::from_secs(5))
+            .build()
+            .unwrap_or_default()
+    })
+}
+
+async fn dispatch_external_alerts(db: PgPool, recipients: Vec<(i64, String, String, String)>) {
+    if recipients.is_empty() {
+        return;
+    }
+    let secrets: Vec<(String, String)> = sqlx::query_as(
+        "SELECT name, value FROM app_secrets WHERE name IN ('telegram_bot_token', 'alert_webhook_url')",
+    )
+    .fetch_all(&db)
+    .await
+    .unwrap_or_default();
+
+    let mut tg_token = String::new();
+    let mut webhook_url = String::new();
+    for (k, v) in secrets {
+        match k.as_str() {
+            "telegram_bot_token" => tg_token = v.trim().to_string(),
+            "alert_webhook_url" => webhook_url = v.trim().to_string(),
+            _ => {}
+        }
+    }
+    if tg_token.is_empty() && webhook_url.is_empty() {
+        return;
+    }
+
+    let ids: Vec<i64> = recipients.iter().map(|(id, _, _, _)| *id).collect();
+    let prefs: Vec<(i64, String, String, String, i64)> = sqlx::query_as(
+        "SELECT id, name, phone, COALESCE(telegram_chat_id, ''), whatsapp_opt_in
+         FROM users WHERE id = ANY($1)",
+    )
+    .bind(&ids)
+    .fetch_all(&db)
+    .await
+    .unwrap_or_default();
+
+    let pref_map: std::collections::HashMap<i64, (String, String, String, i64)> = prefs
+        .into_iter()
+        .map(|(id, name, phone, tg, wa)| (id, (name, phone, tg, wa)))
+        .collect();
+
+    let client = alert_client();
+    for (uid, title, body, link) in recipients {
+        let Some((name, phone, tg_chat_id, wa_opt_in)) = pref_map.get(&uid) else {
+            continue;
+        };
+        if !tg_token.is_empty() && !tg_chat_id.trim().is_empty() {
+            let text = format!("{title}\n{body}\n{link}");
+            let url = format!("https://api.telegram.org/bot{tg_token}/sendMessage");
+            let _ = client
+                .post(&url)
+                .json(&serde_json::json!({
+                    "chat_id": tg_chat_id.trim(),
+                    "text": text,
+                }))
+                .send()
+                .await;
+        }
+        if !webhook_url.is_empty() && *wa_opt_in == 1 {
+            let _ = client
+                .post(&webhook_url)
+                .json(&serde_json::json!({
+                    "channel": "whatsapp",
+                    "user_id": uid,
+                    "name": name,
+                    "phone": phone,
+                    "title": title,
+                    "body": body,
+                    "link": link,
+                }))
+                .send()
+                .await;
+        }
     }
 }
 

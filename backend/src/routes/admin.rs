@@ -1,7 +1,7 @@
 //! 管理员: dashboard, members, invitations, groups, areas, recovery approvals, audit log.
 //! Roles themselves are edited in `routes::roles`.
 
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap, HashSet};
 
 use axum::{
     body::Body,
@@ -11,7 +11,7 @@ use axum::{
     routing::{delete, get, post, put},
     Json, Router,
 };
-use chrono::NaiveDate;
+use chrono::{Datelike, NaiveDate};
 use futures_util::StreamExt;
 use serde::Deserialize;
 use serde_json::{json, Value};
@@ -57,6 +57,11 @@ pub fn router() -> Router<AppState> {
         .route(
             "/admin/settings/system",
             get(get_system_settings).put(update_system_settings),
+        )
+        .route("/admin/reports/demand", get(demand_report))
+        .route(
+            "/admin/settings/alerts",
+            get(get_alert_settings).put(update_alert_settings),
         )
 }
 
@@ -1734,5 +1739,385 @@ async fn update_system_settings(
     )
     .await;
 
+    Ok(Json(json!({ "ok": true })))
+}
+
+#[derive(Deserialize)]
+struct DemandQuery {
+    month: Option<String>,
+    from: Option<String>,
+    to: Option<String>,
+}
+
+fn month_window(month: &str) -> Option<(String, String)> {
+    let mut parts = month.split('-');
+    let y: i32 = parts.next()?.parse().ok()?;
+    let m: u32 = parts.next()?.parse().ok()?;
+    if parts.next().is_some() || !(1..=12).contains(&m) {
+        return None;
+    }
+    let (ey, em) = if m == 12 { (y + 1, 1) } else { (y, m + 1) };
+    Some((format!("{y:04}-{m:02}-01"), format!("{ey:04}-{em:02}-01")))
+}
+
+async fn demand_report(
+    State(st): State<AppState>,
+    u: CurrentUser,
+    Query(q): Query<DemandQuery>,
+) -> AppResult<Json<Value>> {
+    require(&u, Page::AdminReports, Act::View)?;
+
+    let (start, end, period_label) = match (q.from.as_deref(), q.to.as_deref()) {
+        (Some(f), Some(t)) => {
+            let fd = NaiveDate::parse_from_str(f.trim(), "%Y-%m-%d")
+                .map_err(|_| bad(u.lang, ErrorKey::InvalidAction))?;
+            let td = NaiveDate::parse_from_str(t.trim(), "%Y-%m-%d")
+                .map_err(|_| bad(u.lang, ErrorKey::InvalidAction))?;
+            if td < fd {
+                return Err(bad(u.lang, ErrorKey::InvalidAction));
+            }
+            let end_d = td.succ_opt().unwrap_or(td);
+            (
+                fd.format("%Y-%m-%d").to_string(),
+                end_d.format("%Y-%m-%d").to_string(),
+                format!("{}..{}", f.trim(), t.trim()),
+            )
+        }
+        _ => {
+            let m = q
+                .month
+                .as_deref()
+                .map(str::trim)
+                .filter(|s| !s.is_empty())
+                .map(str::to_string)
+                .unwrap_or_else(|| now()[..7].to_string());
+            let (s, e) =
+                month_window(&m).ok_or_else(|| bad(u.lang, ErrorKey::MonthFormatInvalid))?;
+            (s, e, m)
+        }
+    };
+
+    #[derive(sqlx::FromRow)]
+    struct DemandRow {
+        area_id: i64,
+        area_zh: String,
+        area_en: String,
+        pickup_at: String,
+        status: String,
+        driver_id: Option<i64>,
+        passenger_id: i64,
+        seats_needed: i64,
+        assistance: String,
+        leg: String,
+    }
+
+    let rows: Vec<DemandRow> = sqlx::query_as(
+        "SELECT r.area_id, COALESCE(a.name_zh, '') AS area_zh, COALESCE(a.name_en, '') AS area_en,
+                r.pickup_at, r.status, r.driver_id, r.passenger_id, r.seats_needed,
+                COALESCE(r.assistance, '') AS assistance, COALESCE(r.leg, 'outbound') AS leg
+         FROM rides r
+         LEFT JOIN areas a ON a.id = r.area_id
+         WHERE r.pickup_at >= $1 AND r.pickup_at < $2",
+    )
+    .bind(&start)
+    .bind(&end)
+    .fetch_all(&st.db)
+    .await?;
+
+    let mut total_requests = 0_i64;
+    let mut fulfilled = 0_i64;
+    let mut unfilled = 0_i64;
+    let mut completed = 0_i64;
+    let mut cancelled_unassigned = 0_i64;
+    let mut wheelchair_requests = 0_i64;
+    let mut return_requests = 0_i64;
+    let mut seats_unfilled = 0_i64;
+    let mut drivers_active: HashSet<i64> = HashSet::new();
+    let mut passengers_seen: HashSet<i64> = HashSet::new();
+
+    #[derive(Default)]
+    struct Bucket {
+        area_zh: String,
+        area_en: String,
+        total: i64,
+        fulfilled: i64,
+        unfilled: i64,
+        cancelled_unassigned: i64,
+        seats_needed: i64,
+        seats_unfilled: i64,
+    }
+
+    let mut by_area: HashMap<i64, Bucket> = HashMap::new();
+    let mut by_slot: BTreeMap<(u32, String), Bucket> = BTreeMap::new();
+
+    for r in &rows {
+        let is_cancelled = r.status == "cancelled";
+        let is_closed_alt = matches!(r.status.as_str(), "no_show" | "alt_transport");
+        let is_unfilled = !is_cancelled && !is_closed_alt && r.driver_id.is_none();
+        let is_fulfilled = !is_cancelled && r.driver_id.is_some();
+
+        if is_cancelled {
+            if r.driver_id.is_none() {
+                cancelled_unassigned += 1;
+            }
+        } else {
+            total_requests += 1;
+            passengers_seen.insert(r.passenger_id);
+            if r.status == "completed" {
+                completed += 1;
+            }
+            if let Some(did) = r.driver_id {
+                drivers_active.insert(did);
+            }
+            if is_fulfilled {
+                fulfilled += 1;
+            }
+            if is_unfilled {
+                unfilled += 1;
+                seats_unfilled += r.seats_needed;
+            }
+            if r.assistance.to_ascii_lowercase().contains("wheelchair") {
+                wheelchair_requests += 1;
+            }
+            if r.leg == "return" {
+                return_requests += 1;
+            }
+        }
+
+        let ab = by_area.entry(r.area_id).or_insert_with(|| Bucket {
+            area_zh: r.area_zh.clone(),
+            area_en: r.area_en.clone(),
+            ..Default::default()
+        });
+        if is_cancelled {
+            if r.driver_id.is_none() {
+                ab.cancelled_unassigned += 1;
+            }
+        } else {
+            ab.total += 1;
+            ab.seats_needed += r.seats_needed;
+            if is_fulfilled {
+                ab.fulfilled += 1;
+            }
+            if is_unfilled {
+                ab.unfilled += 1;
+                ab.seats_unfilled += r.seats_needed;
+            }
+        }
+
+        if r.pickup_at.len() >= 13 {
+            if let Ok(d) = NaiveDate::parse_from_str(&r.pickup_at[..10], "%Y-%m-%d") {
+                let wd = d.weekday().num_days_from_sunday();
+                let hour: u32 = r.pickup_at[11..13].parse().unwrap_or(0);
+                let bucket_h = (hour / 2) * 2;
+                let slot_label = format!("{bucket_h:02}:00-{:02}:00", (bucket_h + 2).min(24));
+                let sb = by_slot.entry((wd, slot_label)).or_default();
+                if is_cancelled {
+                    if r.driver_id.is_none() {
+                        sb.cancelled_unassigned += 1;
+                    }
+                } else {
+                    sb.total += 1;
+                    sb.seats_needed += r.seats_needed;
+                    if is_fulfilled {
+                        sb.fulfilled += 1;
+                    }
+                    if is_unfilled {
+                        sb.unfilled += 1;
+                        sb.seats_unfilled += r.seats_needed;
+                    }
+                }
+            }
+        }
+    }
+
+    let mut area_list: Vec<Value> = by_area
+        .into_iter()
+        .map(|(area_id, b)| {
+            json!({
+                "area_id": area_id,
+                "area_name_zh": b.area_zh,
+                "area_name_en": b.area_en,
+                "total": b.total,
+                "fulfilled": b.fulfilled,
+                "unfilled": b.unfilled,
+                "cancelled_unassigned": b.cancelled_unassigned,
+                "seats_needed": b.seats_needed,
+                "seats_unfilled": b.seats_unfilled,
+                "fulfillment_rate_pct": if b.total > 0 { (b.fulfilled * 100) / b.total } else { 100 },
+            })
+        })
+        .collect();
+    area_list.sort_by(|a, b| {
+        b["unfilled"]
+            .as_i64()
+            .cmp(&a["unfilled"].as_i64())
+            .then_with(|| b["total"].as_i64().cmp(&a["total"].as_i64()))
+    });
+
+    let mut slot_list: Vec<Value> = by_slot
+        .into_iter()
+        .filter(|(_, b)| b.total > 0 || b.cancelled_unassigned > 0)
+        .map(|((wd, slot), b)| {
+            json!({
+                "weekday": wd,
+                "slot": slot,
+                "total": b.total,
+                "fulfilled": b.fulfilled,
+                "unfilled": b.unfilled,
+                "cancelled_unassigned": b.cancelled_unassigned,
+                "seats_needed": b.seats_needed,
+            })
+        })
+        .collect();
+    slot_list.sort_by(|a, b| {
+        b["unfilled"]
+            .as_i64()
+            .cmp(&a["unfilled"].as_i64())
+            .then_with(|| b["total"].as_i64().cmp(&a["total"].as_i64()))
+    });
+
+    let fulfillment_rate_pct = if total_requests > 0 {
+        (fulfilled * 100) / total_requests
+    } else {
+        100
+    };
+
+    Ok(Json(json!({
+        "period": period_label,
+        "from": start,
+        "to": end,
+        "totals": {
+            "total_requests": total_requests,
+            "fulfilled": fulfilled,
+            "unfilled": unfilled,
+            "completed": completed,
+            "cancelled_unassigned": cancelled_unassigned,
+            "wheelchair_requests": wheelchair_requests,
+            "return_requests": return_requests,
+            "seats_unfilled": seats_unfilled,
+            "active_drivers": drivers_active.len(),
+            "unique_passengers": passengers_seen.len(),
+            "fulfillment_rate_pct": fulfillment_rate_pct,
+        },
+        "by_area": area_list,
+        "by_slot": slot_list,
+    })))
+}
+
+async fn get_alert_settings(State(st): State<AppState>, u: CurrentUser) -> AppResult<Json<Value>> {
+    require(&u, Page::AdminSettings, Act::View)?;
+    let rows: Vec<(String, String)> = sqlx::query_as(
+        "SELECT name, value FROM app_secrets WHERE name IN ('telegram_bot_token', 'telegram_bot_username', 'alert_webhook_url', 'vapid_public_key')",
+    )
+    .fetch_all(&st.db)
+    .await?;
+
+    let mut tg_configured = false;
+    let mut tg_username = String::new();
+    let mut webhook_url = String::new();
+    let mut vapid_public_key = String::new();
+    for (k, v) in rows {
+        match k.as_str() {
+            "telegram_bot_token" => tg_configured = !v.trim().is_empty(),
+            "telegram_bot_username" => tg_username = v,
+            "alert_webhook_url" => webhook_url = v,
+            "vapid_public_key" => vapid_public_key = v,
+            _ => {}
+        }
+    }
+
+    Ok(Json(json!({
+        "telegram_bot_configured": tg_configured,
+        "telegram_bot_username": tg_username,
+        "alert_webhook_url": webhook_url,
+        "vapid_public_key": vapid_public_key,
+    })))
+}
+
+#[derive(Deserialize)]
+struct UpdateAlertSettingsIn {
+    telegram_bot_token: Option<String>,
+    clear_telegram_bot_token: Option<bool>,
+    telegram_bot_username: Option<String>,
+    alert_webhook_url: Option<String>,
+    vapid_public_key: Option<String>,
+}
+
+async fn update_alert_settings(
+    State(st): State<AppState>,
+    u: CurrentUser,
+    Json(req): Json<UpdateAlertSettingsIn>,
+) -> AppResult<Json<Value>> {
+    require(&u, Page::AdminSettings, Act::Update)?;
+
+    let mut tx = st.db.begin().await?;
+    if req.clear_telegram_bot_token.unwrap_or(false) {
+        sqlx::query("DELETE FROM app_secrets WHERE name='telegram_bot_token'")
+            .execute(&mut *tx)
+            .await?;
+    } else if let Some(tok) = req
+        .telegram_bot_token
+        .as_deref()
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+    {
+        sqlx::query(
+            "INSERT INTO app_secrets (name, value) VALUES ('telegram_bot_token', $1)
+             ON CONFLICT (name) DO UPDATE SET value = EXCLUDED.value",
+        )
+        .bind(tok)
+        .execute(&mut *tx)
+        .await?;
+    }
+
+    if let Some(username) = req.telegram_bot_username.as_deref() {
+        let cleaned = username.trim().trim_start_matches('@');
+        sqlx::query(
+            "INSERT INTO app_secrets (name, value) VALUES ('telegram_bot_username', $1)
+             ON CONFLICT (name) DO UPDATE SET value = EXCLUDED.value",
+        )
+        .bind(cleaned)
+        .execute(&mut *tx)
+        .await?;
+    }
+
+    if let Some(url) = req.alert_webhook_url.as_deref() {
+        let cleaned = url.trim();
+        if !cleaned.is_empty()
+            && !cleaned.starts_with("https://")
+            && !cleaned.starts_with("http://")
+        {
+            return Err(bad(u.lang, ErrorKey::InvalidAction));
+        }
+        sqlx::query(
+            "INSERT INTO app_secrets (name, value) VALUES ('alert_webhook_url', $1)
+             ON CONFLICT (name) DO UPDATE SET value = EXCLUDED.value",
+        )
+        .bind(cleaned)
+        .execute(&mut *tx)
+        .await?;
+    }
+
+    if let Some(vapid) = req.vapid_public_key.as_deref() {
+        sqlx::query(
+            "INSERT INTO app_secrets (name, value) VALUES ('vapid_public_key', $1)
+             ON CONFLICT (name) DO UPDATE SET value = EXCLUDED.value",
+        )
+        .bind(vapid.trim())
+        .execute(&mut *tx)
+        .await?;
+    }
+
+    tx.commit().await?;
+    audit(
+        &st.db,
+        Some(u.id),
+        "settings.alerts",
+        "app_secrets",
+        None,
+        "updated alert channels",
+    )
+    .await;
     Ok(Json(json!({ "ok": true })))
 }

@@ -1,4 +1,4 @@
-/* 恩典同行 Grace Ride — minimalist design system (docs/ARCHITECTURE.md)
+/* 恩典同行 Grace Ride — minimalist design system (README.md)
    One background, one text colour, one grey, one accent (logo blue).
    Mobile  < 768px : bottom tab bar, single column
    Tablet  768–1199: icon rail, 2-column grids
@@ -2700,3 +2700,31 @@ main p a:not(.btn), main .small a:not(.btn), main td a:not(.btn):not(.table-filt
 }
 /* A phone number inside a line of text is a link; underline it like the other in-text links. */
 main a[href^="tel:"]:not(.btn) { text-decoration: underline; }
+
+/* Public & first-run display comfort */
+.public-display-bar { gap: var(--space-1); }
+.text-size-toggle { font-weight: 700; min-width: var(--tap); min-height: var(--tap); }
+.home-comfort { border-color: var(--primary); }
+
+/* Kerbside Next Stop highlight on Drive */
+.driver-next-stop { border: 2px solid var(--primary); background: var(--surface-2); }
+.driver-next-stop-head { padding-bottom: var(--space-2); margin-bottom: var(--space-2); border-bottom: 1px solid var(--border); }
+
+/* Trip chat quick chips, pending bubble & retry */
+.chat-quick-chips { overflow-x: auto; flex-wrap: nowrap; padding-bottom: var(--space-1); }
+.chat-quick-chips .chip { white-space: nowrap; flex: none; min-height: var(--tap); }
+.pending-bubble { opacity: 0.85; }
+.chat-retry-btn { background: none; border: none; padding: 0; color: inherit; font: inherit; text-decoration: underline; cursor: pointer; min-height: 32px; }
+.chat-new-pill { align-self: center; }
+
+/* Planning board filters & driver picker options */
+.plan-filters { margin-bottom: var(--space-3); }
+.plan-picker-option { width: 100%; text-align: left; cursor: pointer; background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); padding: var(--space-3); }
+.plan-picker-option:hover { background: var(--surface-2); }
+@media (max-width: 767px) {
+  .plan-toolbar .btn-row { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
+
+/* Guide step optional screenshot */
+.guide-step-img-link { display: block; margin-top: var(--space-2); }
+.guide-step-img { display: block; max-width: 100%; max-height: 260px; width: auto; border-radius: var(--radius); border: 1px solid var(--border); }

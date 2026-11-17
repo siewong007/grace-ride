@@ -1,5 +1,6 @@
 pub mod admin;
 pub mod auth;
+pub mod care;
 pub mod community;
 pub mod events;
 pub mod files;
@@ -25,4 +26,5 @@ pub fn api() -> Router<AppState> {
         .merge(admin::router())
         .merge(roles::router())
         .merge(visitors::router())
+        .merge(care::router())
 }

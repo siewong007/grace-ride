@@ -216,6 +216,11 @@ export default {
   photoAttached: '已附照片',
   photoRemove: '移除照片',
   photoInMessage: '消息中的照片（点击查看大图）',
+  fmtBold: '加粗',
+  fmtNote: '+ 注意',
+  fmtTip: '+ 提示',
+  fmtWarning: '+ 警告',
+  stepScreenshot: '步骤截图（可选）',
   hub: {
     todayRide: '今天的接送',
     todayLine: '{time} · 前往{dest}',

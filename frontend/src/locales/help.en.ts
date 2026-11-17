@@ -216,6 +216,11 @@ export default {
   photoAttached: 'Photo attached',
   photoRemove: 'Remove photo',
   photoInMessage: 'Photo in message (opens full size)',
+  fmtBold: 'Bold',
+  fmtNote: '+ Note',
+  fmtTip: '+ Tip',
+  fmtWarning: '+ Warning',
+  stepScreenshot: 'Step screenshot (optional)',
   // Member help home and topic sheets
   hub: {
     todayRide: 'Your ride today',

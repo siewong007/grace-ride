@@ -34,6 +34,8 @@ pub fn render(lang: Lang, key: &ErrorKey) -> String {
         ErrorKey::AuthDisabled => pair(lang, "此应用使用通行密钥登入，不使用密码。", "This app signs in with a passkey, not a password."),
         ErrorKey::AccountPending => pair(lang, "账号尚未通过审核，目前只能使用个人资料。", "This account is waiting for approval. Only the profile is available."),
         ErrorKey::TermsRequired => pair(lang, "请先阅读并勾选同意使用条款。", "Please read the terms and opt in before continuing."),
+        ErrorKey::SessionLocked => pair(lang, "屏幕已锁定，请验证后继续使用。", "Screen is locked. Verify your identity to continue."),
+        ErrorKey::UnlockMethodRequired => pair(lang, "请提供通行密钥、双重验证码或备用码来解锁。", "Provide a passkey, two-factor code, or backup code to unlock."),
         other => panic!("{} is not an auth error", other.code()),
     }
 }

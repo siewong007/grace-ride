@@ -1,4 +1,4 @@
-//! Event audiences (docs/superpowers/specs/2026-11-16-event-audience-rides-design.md):
+//! Event audiences (see README.md):
 //! sub-group visibility, group-matched drivers, the audited admin override and the
 //! masked event title.
 

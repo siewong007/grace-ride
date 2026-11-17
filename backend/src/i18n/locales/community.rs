@@ -120,6 +120,16 @@ pub fn render(lang: Lang, key: &ErrorKey) -> String {
             "月份格式应为 YYYY-MM",
             "Month must be in YYYY-MM format",
         ),
+        ErrorKey::BatchEmpty => pair(
+            lang,
+            "没有符合条件可加入批次的已批准报销",
+            "No eligible approved reimbursements available for this batch",
+        ),
+        ErrorKey::BatchAlreadyPaid => pair(
+            lang,
+            "此付款批次已完成付款",
+            "This payout batch has already been paid",
+        ),
         other => panic!("{} is not a community error", other.code()),
     }
 }
