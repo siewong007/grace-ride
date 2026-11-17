@@ -52,6 +52,7 @@ pub async fn run_reminders(db: &PgPool) -> anyhow::Result<()> {
     ride_reminders(db).await?;
     event_reminders(db).await?;
     escalate_unmatched(db).await?;
+    expire_stale_requests(db).await?;
     // Visitor links close for good once their journey is over.
     crate::routes::visitors::close_finished(db).await?;
     Ok(())
@@ -203,6 +204,25 @@ async fn escalate_unmatched(db: &PgPool) -> anyhow::Result<()> {
         )
         .await;
     }
+    Ok(())
+}
+
+/// A request that was never matched, accepted or approved and whose pickup time passed
+/// hours ago will never happen: close it so it stops showing as upcoming.
+async fn expire_stale_requests(db: &PgPool) -> anyhow::Result<()> {
+    let expired: Vec<(i64,)> = sqlx::query_as(
+        "UPDATE rides SET status='cancelled', needs_attention=0,
+                attention_reason='已过接送时间，请求自动关闭 / Pickup time passed; request closed', updated_at=$2
+         WHERE status IN ('pending_driver','pending_passenger','pending_approval','pending_driver_confirm')
+           AND pickup_at < $1
+         RETURNING id",
+    )
+    .bind(ts_in(-6 * 60))
+    .bind(now())
+    .fetch_all(db)
+    .await?;
+    let ids: Vec<i64> = expired.into_iter().map(|(id,)| id).collect();
+    audit_many(db, None, "ride.expire", "ride", &ids, "pickup time passed").await?;
     Ok(())
 }
 

@@ -1249,6 +1249,10 @@ async fn driver_claim(
     if !crate::audience::drives_for(&u, r.match_group_id) {
         return Err(forbidden(u.lang, ErrorKey::DriverOutsideGroup));
     }
+    // The request list already hides past pickups; the claim itself must refuse them too.
+    if r.pickup_at.as_str() < &now()[..16] {
+        return Err(bad(u.lang, ErrorKey::PickupTimeInPast));
+    }
     // Lock the driver's row for the whole capacity check + claim. Two concurrent claims
     // for different rides by the same driver then serialise; the second sees the first
     // booking in `load` and is rejected instead of overbooking the car.
@@ -1405,11 +1409,11 @@ async fn driver_withdraw(
 /// old car's trip (the other riders keep it, and so does its chat), so reusing it would
 /// put the new driver in the old car's chat. Then a fresh number comes from the rides
 /// id sequence, which no ride — and so no ride-id trip — will ever get.
-async fn new_trip_id(st: &AppState, ride_id: i64) -> AppResult<i64> {
+async fn new_trip_id(conn: &mut sqlx::PgConnection, ride_id: i64) -> AppResult<i64> {
     let claimed: Option<i64> =
         sqlx::query_scalar("INSERT INTO trips (id) VALUES ($1) ON CONFLICT (id) DO NOTHING RETURNING id")
             .bind(ride_id)
-            .fetch_optional(&st.db)
+            .fetch_optional(&mut *conn)
             .await?;
     if let Some(t) = claimed {
         return Ok(t);
@@ -1417,13 +1421,15 @@ async fn new_trip_id(st: &AppState, ride_id: i64) -> AppResult<i64> {
     let fresh: i64 = sqlx::query_scalar(
         "INSERT INTO trips (id) VALUES (nextval(pg_get_serial_sequence('rides', 'id'))) RETURNING id",
     )
-    .fetch_one(&st.db)
+    .fetch_one(&mut *conn)
     .await?;
     Ok(fresh)
 }
 
 /// Assign a confirmed ride to a trip: same driver, same destination, within 60 minutes.
-async fn assign_trip(st: &AppState, r: &RideRow) -> AppResult<i64> {
+/// Run while holding the driver's row lock, so two rides confirmed for one driver at the
+/// same moment join the same trip instead of each opening their own.
+async fn assign_trip(conn: &mut sqlx::PgConnection, r: &RideRow) -> AppResult<i64> {
     let existing: Option<(i64,)> = sqlx::query_as(
         "SELECT trip_id FROM rides WHERE driver_id=$1 AND id != $2 AND trip_id IS NOT NULL AND status IN ('confirmed','in_progress')
          AND destination = $3 AND abs(EXTRACT(EPOCH FROM (pickup_at::timestamp - $4::timestamp))) < 3600 LIMIT 1",
@@ -1432,16 +1438,16 @@ async fn assign_trip(st: &AppState, r: &RideRow) -> AppResult<i64> {
     .bind(r.id)
     .bind(&r.destination)
     .bind(&r.pickup_at)
-    .fetch_optional(&st.db)
+    .fetch_optional(&mut *conn)
     .await?;
     let trip = match existing {
         Some((t,)) => t,
-        None => new_trip_id(st, r.id).await?,
+        None => new_trip_id(&mut *conn, r.id).await?,
     };
     sqlx::query("UPDATE rides SET trip_id=$1 WHERE id=$2")
         .bind(trip)
         .bind(r.id)
-        .execute(&st.db)
+        .execute(&mut *conn)
         .await?;
     Ok(trip)
 }
@@ -1537,20 +1543,28 @@ async fn driver_confirm_assignment(
         return Err(forbidden(u.lang, ErrorKey::NotRideDriver));
     }
     // Only while this driver still holds the assignment: staff may have reassigned it.
+    // `reminder_sent=0`: a new driver means the pickup reminder goes out again.
+    let mut tx = st.db.begin().await?;
+    sqlx::query("SELECT id FROM users WHERE id=$1 FOR UPDATE")
+        .bind(u.id)
+        .fetch_optional(&mut *tx)
+        .await?;
     let confirmed = sqlx::query(
-        "UPDATE rides SET status='confirmed', needs_attention=0, updated_at=$1
+        "UPDATE rides SET status='confirmed', needs_attention=0, reminder_sent=0, updated_at=$1
          WHERE id=$2 AND driver_id=$3 AND status='pending_driver_confirm'",
     )
     .bind(now())
     .bind(id)
     .bind(u.id)
-    .execute(&st.db)
+    .execute(&mut *tx)
     .await?;
     if confirmed.rows_affected() == 0 {
         return Err(conflict(u.lang, ErrorKey::RideStatusChanged));
     }
+    assign_trip(&mut tx, &r).await?;
+    tx.commit().await?;
     let r = load_ride(&st, u.lang, id).await?;
-    let trip = assign_trip(&st, &r).await?;
+    let trip = r.trip_id.unwrap_or(id);
     announce_confirmed(&st, &r, trip, true).await;
     audit(
         &st.db,
@@ -2463,7 +2477,7 @@ async fn staff_approve(
         return Err(bad(u.lang, ErrorKey::NotEnoughDriverSeats { load, cap }));
     }
     let approved = sqlx::query(
-        "UPDATE rides SET status='confirmed', approved_by=$1, needs_attention=0, updated_at=$2
+        "UPDATE rides SET status='confirmed', approved_by=$1, needs_attention=0, reminder_sent=0, updated_at=$2
          WHERE id=$3 AND driver_id=$4 AND status='pending_approval'",
     )
     .bind(u.id)
@@ -2475,9 +2489,10 @@ async fn staff_approve(
     if approved.rows_affected() == 0 {
         return Err(conflict(u.lang, ErrorKey::RideStatusChanged));
     }
+    assign_trip(&mut tx, &r).await?;
     tx.commit().await?;
     let r = load_ride(&st, u.lang, id).await?;
-    let trip = assign_trip(&st, &r).await?;
+    let trip = r.trip_id.unwrap_or(id);
     announce_confirmed(&st, &r, trip, false).await;
     audit(&st.db, Some(u.id), "ride.approve", "ride", Some(id), "").await;
     Ok(Json(json!({"ok": true})))
