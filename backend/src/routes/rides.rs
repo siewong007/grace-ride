@@ -385,7 +385,10 @@ async fn create_ride(
             .execute(&mut *tx)
             .await?;
         if !req.is_proxy.unwrap_or(false)
-            && req.rider_name.as_deref().map_or(true, |s| s.trim().is_empty())
+            && req
+                .rider_name
+                .as_deref()
+                .is_none_or(|s| s.trim().is_empty())
         {
             let (dup,): (i64,) = sqlx::query_as(
                 "SELECT COUNT(*) FROM rides WHERE event_id=$1 AND passenger_id=$2 AND is_proxy=0
@@ -1410,11 +1413,12 @@ async fn driver_withdraw(
 /// put the new driver in the old car's chat. Then a fresh number comes from the rides
 /// id sequence, which no ride — and so no ride-id trip — will ever get.
 async fn new_trip_id(conn: &mut sqlx::PgConnection, ride_id: i64) -> AppResult<i64> {
-    let claimed: Option<i64> =
-        sqlx::query_scalar("INSERT INTO trips (id) VALUES ($1) ON CONFLICT (id) DO NOTHING RETURNING id")
-            .bind(ride_id)
-            .fetch_optional(&mut *conn)
-            .await?;
+    let claimed: Option<i64> = sqlx::query_scalar(
+        "INSERT INTO trips (id) VALUES ($1) ON CONFLICT (id) DO NOTHING RETURNING id",
+    )
+    .bind(ride_id)
+    .fetch_optional(&mut *conn)
+    .await?;
     if let Some(t) = claimed {
         return Ok(t);
     }

@@ -1358,6 +1358,12 @@ async fn proxy_booking_and_frequent_riders_workflow() {
 #[tokio::test]
 async fn reminder_job_notifies_passenger_and_driver() {
     let (_app, st) = setup().await;
+    // Silence seeded rides so a run whose wall-clock time happens to sit within 60 minutes
+    // of a demo ride does not generate extra reminder notifications.
+    sqlx::query("UPDATE rides SET reminder_sent=1")
+        .execute(&st.db)
+        .await
+        .unwrap();
     let soon = (grace_ride::util::local_now() + chrono::Duration::minutes(30))
         .format("%Y-%m-%dT%H:%M")
         .to_string();

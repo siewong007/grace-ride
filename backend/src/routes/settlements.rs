@@ -593,7 +593,10 @@ async fn update(
             .await?;
         write_body(&mut tx, id, &req, &shares).await?;
         tx.commit().await?;
-        let before: Vec<(i64, i64)> = before.into_iter().map(|(uid, amt, _, _)| (uid, amt)).collect();
+        let before: Vec<(i64, i64)> = before
+            .into_iter()
+            .map(|(uid, amt, _, _)| (uid, amt))
+            .collect();
         for (uid, old) in &before {
             match shares.iter().find(|x| x.0 == *uid) {
                 Some((_, new)) if new != old => {

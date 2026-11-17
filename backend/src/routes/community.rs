@@ -721,10 +721,11 @@ async fn reply_ticket(
     // Lock the ticket and look at its status again: a close saved since the read above
     // must not be undone by this reply flipping the ticket back to open/answered.
     let mut tx = st.db.begin().await?;
-    let (current,): (String,) = sqlx::query_as("SELECT status FROM help_tickets WHERE id=$1 FOR UPDATE")
-        .bind(id)
-        .fetch_one(&mut *tx)
-        .await?;
+    let (current,): (String,) =
+        sqlx::query_as("SELECT status FROM help_tickets WHERE id=$1 FOR UPDATE")
+            .bind(id)
+            .fetch_one(&mut *tx)
+            .await?;
     if current == "closed" {
         return Err(bad(u.lang, ErrorKey::RequestAlreadyClosed));
     }

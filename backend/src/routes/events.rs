@@ -308,11 +308,10 @@ async fn save_event_groups(
     let mut wanted = req.group_ids.clone();
     wanted.sort_unstable();
     wanted.dedup();
-    let found: Vec<i64> =
-        sqlx::query_scalar("SELECT id FROM groups WHERE id = ANY($1) FOR SHARE")
-            .bind(&wanted)
-            .fetch_all(&mut *tx)
-            .await?;
+    let found: Vec<i64> = sqlx::query_scalar("SELECT id FROM groups WHERE id = ANY($1) FOR SHARE")
+        .bind(&wanted)
+        .fetch_all(&mut *tx)
+        .await?;
     if found.len() != wanted.len() {
         return Err(bad(lang, ErrorKey::SelectVisibleGroup));
     }
@@ -552,10 +551,11 @@ async fn cancel_event(
     }
     // The event and the ride requests not yet underway are cancelled together, or not at all.
     let mut tx = st.db.begin().await?;
-    let cancelled = sqlx::query("UPDATE events SET status='cancelled' WHERE id=$1 AND status='published'")
-        .bind(id)
-        .execute(&mut *tx)
-        .await?;
+    let cancelled =
+        sqlx::query("UPDATE events SET status='cancelled' WHERE id=$1 AND status='published'")
+            .bind(id)
+            .execute(&mut *tx)
+            .await?;
     if cancelled.rows_affected() == 0 {
         return Err(bad(u.lang, ErrorKey::EventNotOpen));
     }
@@ -623,10 +623,11 @@ async fn finish_event(
     if !can_manage(&u, e.created_by, Act::Update) {
         return Err(forbidden(u.lang, ErrorKey::OnlyOrganiserCanPerformAction));
     }
-    let finished = sqlx::query("UPDATE events SET status='finished' WHERE id=$1 AND status='published'")
-        .bind(id)
-        .execute(&st.db)
-        .await?;
+    let finished =
+        sqlx::query("UPDATE events SET status='finished' WHERE id=$1 AND status='published'")
+            .bind(id)
+            .execute(&st.db)
+            .await?;
     if finished.rows_affected() == 0 {
         return Err(bad(u.lang, ErrorKey::EventNotOpen));
     }

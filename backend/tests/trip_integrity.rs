@@ -78,7 +78,11 @@ async fn reassigning_a_carpools_first_ride_gives_it_a_distinct_trip() {
     assert_eq!(res.status, StatusCode::OK, "{}", res.json);
 
     let new_trip = trip_of(&st, a).await.expect("A joins a trip");
-    assert_eq!(trip_of(&st, b).await, Some(a), "B keeps the original car's trip");
+    assert_eq!(
+        trip_of(&st, b).await,
+        Some(a),
+        "B keeps the original car's trip"
+    );
     assert_ne!(new_trip, a, "A must not reuse the trip B is still in");
 
     // A message in B's car stays out of A's chat.

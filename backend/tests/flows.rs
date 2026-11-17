@@ -4474,7 +4474,10 @@ async fn repeated_revisions_keep_a_payment_recognised() {
         Some(custom_bill(&c, 1000, 1000)),
     )
     .await;
-    assert_eq!(share(c.member_id).await, (1000, "pending".into(), String::new()));
+    assert_eq!(
+        share(c.member_id).await,
+        (1000, "pending".into(), String::new())
+    );
 
     // A reset says nothing was received, so the next revision makes the share owed.
     let sophie_share = share_id(c.sophie_id).await;
@@ -4494,7 +4497,10 @@ async fn repeated_revisions_keep_a_payment_recognised() {
         Some(custom_bill(&c, 1500, 1500)),
     )
     .await;
-    assert_eq!(share(c.sophie_id).await, (1500, "unpaid".into(), String::new()));
+    assert_eq!(
+        share(c.sophie_id).await,
+        (1500, "unpaid".into(), String::new())
+    );
 }
 
 #[tokio::test]
@@ -4519,13 +4525,7 @@ async fn closing_races_a_revision_without_trapping_a_share() {
             Some(&c.admin),
             Some(custom_bill(&c, 2000, 2000)),
         );
-        let close = call(
-            &app,
-            Method::POST,
-            &close_path,
-            Some(&c.admin),
-            None,
-        );
+        let close = call(&app, Method::POST, &close_path, Some(&c.admin), None);
         let (revised, closed) = tokio::join!(revise, close);
         let (status,): (String,) = sqlx::query_as("SELECT status FROM settlements WHERE id=$1")
             .bind(sid)
@@ -4543,9 +4543,17 @@ async fn closing_races_a_revision_without_trapping_a_share() {
         if status == "closed" {
             assert_eq!(open, 0, "round {round}: closed bill has open shares");
             assert_eq!(closed.status, StatusCode::OK, "round {round}");
-            assert_eq!(revised.json["code"], "BILL_CLOSED_CANNOT_EDIT", "round {round}");
+            assert_eq!(
+                revised.json["code"], "BILL_CLOSED_CANNOT_EDIT",
+                "round {round}"
+            );
         } else {
-            assert_eq!(revised.status, StatusCode::OK, "round {round} {}", revised.json);
+            assert_eq!(
+                revised.status,
+                StatusCode::OK,
+                "round {round} {}",
+                revised.json
+            );
             assert_eq!(closed.json["code"], "OPEN_PAYMENTS_REMAIN", "round {round}");
         }
     }

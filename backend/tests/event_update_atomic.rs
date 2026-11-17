@@ -14,10 +14,11 @@ async fn event_edit_with_deleted_group_changes_nothing() {
         .fetch_one(&st.db)
         .await
         .unwrap();
-    let member_id: i64 = sqlx::query_scalar("SELECT id FROM users WHERE email='member@example.org'")
-        .fetch_one(&st.db)
-        .await
-        .unwrap();
+    let member_id: i64 =
+        sqlx::query_scalar("SELECT id FROM users WHERE email='member@example.org'")
+            .fetch_one(&st.db)
+            .await
+            .unwrap();
     sqlx::query("DELETE FROM group_members WHERE user_id=$1")
         .bind(member_id)
         .execute(&st.db)
@@ -29,12 +30,11 @@ async fn event_edit_with_deleted_group_changes_nothing() {
         .execute(&st.db)
         .await
         .unwrap();
-    let doomed: i64 = sqlx::query_scalar(
-        "INSERT INTO groups (name) VALUES ('临时小组') RETURNING id",
-    )
-    .fetch_one(&st.db)
-    .await
-    .unwrap();
+    let doomed: i64 =
+        sqlx::query_scalar("INSERT INTO groups (name) VALUES ('临时小组') RETURNING id")
+            .fetch_one(&st.db)
+            .await
+            .unwrap();
     let admin = login(&st, "admin@example.org").await;
     let member = login(&st, "member@example.org").await;
     let starts = tomorrow("19:00");
@@ -67,7 +67,14 @@ async fn event_edit_with_deleted_group_changes_nothing() {
     assert_eq!(r.status, StatusCode::BAD_REQUEST, "{}", r.json);
     assert_eq!(r.json["code"], "SELECT_VISIBLE_GROUP");
 
-    let r = call(&app, Method::GET, &format!("/api/events/{ev}"), Some(&member), None).await;
+    let r = call(
+        &app,
+        Method::GET,
+        &format!("/api/events/{ev}"),
+        Some(&member),
+        None,
+    )
+    .await;
     assert_eq!(r.status, StatusCode::OK, "{}", r.json);
     assert_eq!(r.json["location"], "教会");
     assert_eq!(r.json["group_ids"], json!([youth]));

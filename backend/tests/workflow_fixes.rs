@@ -94,8 +94,10 @@ async fn disabling_a_driver_releases_unstarted_rides() {
         Method::PUT,
         "/api/admin/users/4",
         Some(&admin),
-        Some(json!({"roles": roles.split(',').filter(|s| !s.is_empty()).collect::<Vec<_>>(),
-                    "status": "disabled"})),
+        Some(
+            json!({"roles": roles.split(',').filter(|s| !s.is_empty()).collect::<Vec<_>>(),
+                    "status": "disabled"}),
+        ),
     )
     .await;
     assert_eq!(r.status, StatusCode::OK, "{}", r.json);
@@ -105,5 +107,8 @@ async fn disabling_a_driver_releases_unstarted_rides() {
             .fetch_one(&st.db)
             .await
             .unwrap();
-    assert_eq!((status.as_str(), driver, attention), ("pending_driver", None, 1));
+    assert_eq!(
+        (status.as_str(), driver, attention),
+        ("pending_driver", None, 1)
+    );
 }
