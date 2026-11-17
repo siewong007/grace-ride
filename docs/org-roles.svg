@@ -1,0 +1,270 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="2400" height="2333.0" viewBox="0 0 2400 2333.0" font-family="PingFang SC, Helvetica Neue, Arial, sans-serif">
+<defs>
+<filter id="sh" x="-20%" y="-20%" width="140%" height="140%"><feDropShadow dx="0" dy="3" stdDeviation="6" flood-color="#0F172A" flood-opacity="0.10"/></filter>
+<linearGradient id="bg" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#F8FAFC"/><stop offset="0.35" stop-color="#FFFFFF"/></linearGradient>
+</defs>
+<rect width="2400" height="2333.0" fill="url(#bg)"/>
+<rect x="0" y="0" width="2400" height="10" fill="#6D28D9"/>
+<rect x="600" y="0" width="600" height="10" fill="#4338CA"/>
+<rect x="1200" y="0" width="600" height="10" fill="#0E7490"/>
+<rect x="1800" y="0" width="600" height="10" fill="#B45309"/>
+<text x="80" y="92" font-size="46" font-weight="800" fill="#0F172A">Grace Ride · Organisation &amp; Permissions</text>
+<text x="80" y="132" font-size="23" fill="#475569">角色架构与允许的权限 · Role chart with the permissions each built-in role is granted</text>
+<text x="80" y="168" font-size="17" fill="#64748B">一个人可同时持多个角色，权限相加；每位活跃成员自动附加 Member 角色。角色为系统内置，不可删除；除超级管理员外均可编辑。</text>
+<text x="1243" y="196" font-size="17" font-weight="700" fill="#0F766E">V</text><text x="1273" y="196" font-size="16" fill="#475569">查看</text>
+<text x="1331" y="196" font-size="17" font-weight="700" fill="#1D4ED8">C</text><text x="1361" y="196" font-size="16" fill="#475569">新增</text>
+<text x="1419" y="196" font-size="17" font-weight="700" fill="#B45309">U</text><text x="1449" y="196" font-size="16" fill="#475569">修改</text>
+<text x="1507" y="196" font-size="17" font-weight="700" fill="#B91C1C">D</text><text x="1537" y="196" font-size="16" fill="#475569">删除</text>
+<text x="1595" y="196" font-size="17" font-weight="700" fill="#0E7490">◆</text><text x="1625" y="196" font-size="16" fill="#475569">仅本人创建 / 相关记录</text>
+<text x="1822" y="196" font-size="17" font-weight="700" fill="#6D28D9">★</text><text x="1852" y="196" font-size="16" fill="#475569">任命 / 卸任管理员</text>
+<text x="2016" y="196" font-size="17" font-weight="700" fill="#B45309">⚠</text><text x="2046" y="196" font-size="16" fill="#475569">需会长确认</text>
+<text x="2152" y="196" font-size="17" font-weight="700" fill="#B91C1C">×</text><text x="2182" y="196" font-size="16" fill="#475569">明确没有此权限</text>
+<line x1="344" y1="328" x2="344" y2="2023.0" stroke="#CBD5E1" stroke-width="3" stroke-dasharray="2 10" stroke-linecap="round"/>
+<line x1="344" y1="402.5" x2="366" y2="402.5" stroke="#111827" stroke-width="2.5" stroke-dasharray="6 6"/>
+<circle cx="344" cy="402.5" r="10" fill="#111827"/>
+<circle cx="344" cy="402.5" r="4" fill="#FFFFFF"/>
+<text x="80" y="396.5" font-size="15.5" font-weight="800" fill="#111827" letter-spacing="0.8">ULTIMATE AUTHORITY</text>
+<text x="80" y="422.5" font-size="16" fill="#64748B">最高权限</text>
+<line x1="344" y1="762.0" x2="366" y2="762.0" stroke="#6D28D9" stroke-width="2.5" stroke-dasharray="6 6"/>
+<circle cx="344" cy="762.0" r="10" fill="#6D28D9"/>
+<circle cx="344" cy="762.0" r="4" fill="#FFFFFF"/>
+<text x="80" y="756.0" font-size="15.5" font-weight="800" fill="#6D28D9" letter-spacing="0.8">CHURCH LEADERSHIP</text>
+<text x="80" y="782.0" font-size="16" fill="#64748B">领导层</text>
+<line x1="344" y1="1162.0" x2="366" y2="1162.0" stroke="#4338CA" stroke-width="2.5" stroke-dasharray="6 6"/>
+<circle cx="344" cy="1162.0" r="10" fill="#4338CA"/>
+<circle cx="344" cy="1162.0" r="4" fill="#FFFFFF"/>
+<text x="80" y="1156.0" font-size="15.5" font-weight="800" fill="#4338CA" letter-spacing="0.8">ADMINISTRATION</text>
+<text x="80" y="1182.0" font-size="16" fill="#64748B">行政管理</text>
+<line x1="344" y1="1548.5" x2="366" y2="1548.5" stroke="#B45309" stroke-width="2.5" stroke-dasharray="6 6"/>
+<circle cx="344" cy="1548.5" r="10" fill="#B45309"/>
+<circle cx="344" cy="1548.5" r="4" fill="#FFFFFF"/>
+<text x="80" y="1542.5" font-size="15.5" font-weight="800" fill="#B45309" letter-spacing="0.8">SPECIALIST DUTIES</text>
+<text x="80" y="1568.5" font-size="16" fill="#64748B">专业职务</text>
+<line x1="344" y1="1921.5" x2="366" y2="1921.5" stroke="#475569" stroke-width="2.5" stroke-dasharray="6 6"/>
+<circle cx="344" cy="1921.5" r="10" fill="#475569"/>
+<circle cx="344" cy="1921.5" r="4" fill="#FFFFFF"/>
+<text x="80" y="1915.5" font-size="15.5" font-weight="800" fill="#475569" letter-spacing="0.8">MEMBERS &amp; VOLUNTEERS</text>
+<text x="80" y="1941.5" font-size="16" fill="#64748B">成员与执行</text>
+<rect x="370.0" y="294.0" width="1950.0" height="217.0" rx="16" fill="#FFFFFF" stroke="#E2E8F0" stroke-width="1.5" filter="url(#sh)"/>
+<path d="M386.0 294.0 H2304.0 Q2320.0 294.0 2320.0 310.0 V303.0 H370.0 V310.0 Q370.0 294.0 386.0 294.0 Z" fill="#111827"/>
+<text x="396.0" y="344.0" font-size="27" font-weight="800" fill="#111827">Super Admin</text>
+<text x="396.0" y="372.0" font-size="18" fill="#64748B">超级管理员</text>
+<line x1="396.0" y1="388.0" x2="2294.0" y2="388.0" stroke="#EEF2F7" stroke-width="2"/>
+<circle cx="401.0" cy="403.5" r="3.2" fill="#111827" fill-opacity="0.55"/>
+<text x="416.0" y="409.0" font-size="16.5" font-weight="400" fill="#334155">全部</text><text x="454.6" y="409.0" font-size="16.5" font-weight="400" fill="#334155">67</text><text x="478.7" y="409.0" font-size="16.5" font-weight="400" fill="#334155">项权限，永不缺失</text>
+
+<text x="416.0" y="436.0" font-size="16.5" font-weight="400" fill="#334155">系统设置</text><text x="487.6" y="436.0" font-size="16.5" font-weight="700" fill="#0F766E">V</text><text x="503.1" y="436.0" font-size="16.5" font-weight="700" fill="#B45309">U</text><text x="518.6" y="436.0" font-size="16.5" font-weight="400" fill="#334155">·</text><text x="533.5" y="436.0" font-size="16.5" font-weight="400" fill="#334155">审计日志</text><text x="605.1" y="436.0" font-size="16.5" font-weight="700" fill="#0F766E">V</text>
+
+<text x="416.0" y="463.0" font-size="16.5" font-weight="400" fill="#334155">唯一可授予</text><text x="504.1" y="463.0" font-size="16.5" font-weight="400" fill="#334155">/</text><text x="519.0" y="463.0" font-size="16.5" font-weight="400" fill="#334155">收回「超级管理员」角色</text>
+<circle cx="1374.0" cy="403.5" r="3.2" fill="#111827" fill-opacity="0.55"/>
+<text x="1389.0" y="409.0" font-size="16.5" font-weight="400" fill="#334155">唯一可以修改超级管理员的人</text>
+
+<text x="1389.0" y="436.0" font-size="16.5" font-weight="400" fill="#334155">内置角色不可删除；超级管理员角色不可编辑</text>
+
+<text x="1389.0" y="463.0" font-size="16.5" font-weight="400" fill="#334155">任何权限误配，都可由此恢复</text>
+<rect x="370.0" y="613.0" width="962.0" height="298.0" rx="16" fill="#FFFFFF" stroke="#E2E8F0" stroke-width="1.5" filter="url(#sh)"/>
+<path d="M386.0 613.0 H1316.0 Q1332.0 613.0 1332.0 629.0 V622.0 H370.0 V629.0 Q370.0 613.0 386.0 613.0 Z" fill="#6D28D9"/>
+<text x="396.0" y="663.0" font-size="27" font-weight="800" fill="#6D28D9">President</text>
+<text x="396.0" y="691.0" font-size="18" fill="#64748B">会长</text>
+<rect x="1218.0" y="643.0" width="88.0" height="30" rx="15" fill="#6D28D9" fill-opacity="0.10"/><text x="1262.0" y="663.0" font-size="15" font-weight="600" fill="#6D28D9" text-anchor="middle">任命授权</text>
+<line x1="396.0" y1="707.0" x2="1306.0" y2="707.0" stroke="#EEF2F7" stroke-width="2"/>
+<circle cx="401.0" cy="722.5" r="3.2" fill="#6D28D9" fill-opacity="0.55"/>
+<text x="416.0" y="728.0" font-size="16.5" font-weight="400" fill="#334155">全部管理后台权限（审计日志除外</text><text x="669.1" y="728.0" font-size="16.5" font-weight="700" fill="#B91C1C">×）</text>
+
+<text x="416.0" y="755.0" font-size="16.5" font-weight="400" fill="#334155">财政只读：付款</text><text x="537.1" y="755.0" font-size="16.5" font-weight="700" fill="#0F766E">V</text><text x="552.6" y="755.0" font-size="16.5" font-weight="400" fill="#334155">·</text><text x="567.5" y="755.0" font-size="16.5" font-weight="400" fill="#334155">账单</text><text x="606.1" y="755.0" font-size="16.5" font-weight="700" fill="#0F766E">V</text><text x="621.6" y="755.0" font-size="16.5" font-weight="400" fill="#334155">·</text><text x="636.4" y="755.0" font-size="16.5" font-weight="400" fill="#334155">成员报告</text><text x="708.1" y="755.0" font-size="16.5" font-weight="700" fill="#0F766E">V</text>
+
+<text x="416.0" y="782.0" font-size="16.5" font-weight="400" fill="#334155">成员</text><text x="454.6" y="782.0" font-size="16.5" font-weight="400" fill="#334155">/</text><text x="469.5" y="782.0" font-size="16.5" font-weight="400" fill="#334155">邀请</text><text x="508.1" y="782.0" font-size="16.5" font-weight="400" fill="#334155">/</text><text x="522.9" y="782.0" font-size="16.5" font-weight="400" fill="#334155">审批</text><text x="561.5" y="782.0" font-size="16.5" font-weight="400" fill="#334155">·</text><text x="576.4" y="782.0" font-size="16.5" font-weight="400" fill="#334155">小组</text><text x="615.0" y="782.0" font-size="16.5" font-weight="400" fill="#334155">·</text><text x="629.8" y="782.0" font-size="16.5" font-weight="400" fill="#334155">角色管理</text>
+
+<text x="416.0" y="809.0" font-size="16.5" font-weight="400" fill="#334155">系统设置</text><text x="487.6" y="809.0" font-size="16.5" font-weight="400" fill="#334155">只读</text><text x="526.2" y="809.0" font-size="16.5" font-weight="400" fill="#334155">V（不可修改）</text>
+
+<text x="416.0" y="836.0" font-size="16.5" font-weight="700" fill="#6D28D9">★</text><text x="431.5" y="836.0" font-size="16.5" font-weight="400" fill="#334155">任命</text><text x="470.1" y="836.0" font-size="16.5" font-weight="400" fill="#334155">/</text><text x="485.0" y="836.0" font-size="16.5" font-weight="400" fill="#334155">卸任管理员</text>
+
+<text x="416.0" y="863.0" font-size="16.5" font-weight="700" fill="#6D28D9">★</text><text x="431.5" y="863.0" font-size="16.5" font-weight="400" fill="#334155">三种任命授权人之一：超管</text><text x="635.1" y="863.0" font-size="16.5" font-weight="400" fill="#334155">·</text><text x="650.0" y="863.0" font-size="16.5" font-weight="400" fill="#334155">会长</text><text x="688.6" y="863.0" font-size="16.5" font-weight="400" fill="#334155">·</text><text x="703.4" y="863.0" font-size="16.5" font-weight="400" fill="#334155">副会长</text>
+<rect x="1358.0" y="613.0" width="962.0" height="298.0" rx="16" fill="#FFFFFF" stroke="#E2E8F0" stroke-width="1.5" filter="url(#sh)"/>
+<path d="M1374.0 613.0 H2304.0 Q2320.0 613.0 2320.0 629.0 V622.0 H1358.0 V629.0 Q1358.0 613.0 1374.0 613.0 Z" fill="#6D28D9"/>
+<text x="1384.0" y="663.0" font-size="27" font-weight="800" fill="#6D28D9">Vice-President</text>
+<text x="1384.0" y="691.0" font-size="18" fill="#64748B">副会长</text>
+<rect x="2206.0" y="643.0" width="88.0" height="30" rx="15" fill="#6D28D9" fill-opacity="0.10"/><text x="2250.0" y="663.0" font-size="15" font-weight="600" fill="#6D28D9" text-anchor="middle">任命授权</text>
+<line x1="1384.0" y1="707.0" x2="2294.0" y2="707.0" stroke="#EEF2F7" stroke-width="2"/>
+<circle cx="1389.0" cy="722.5" r="3.2" fill="#6D28D9" fill-opacity="0.55"/>
+<text x="1404.0" y="728.0" font-size="16.5" font-weight="400" fill="#334155">同会长：全部管理后台（审计除外</text><text x="1657.1" y="728.0" font-size="16.5" font-weight="700" fill="#B91C1C">×）</text>
+
+<text x="1404.0" y="755.0" font-size="16.5" font-weight="400" fill="#334155">财政只读：付款</text><text x="1525.1" y="755.0" font-size="16.5" font-weight="700" fill="#0F766E">V</text><text x="1540.6" y="755.0" font-size="16.5" font-weight="400" fill="#334155">·</text><text x="1555.5" y="755.0" font-size="16.5" font-weight="400" fill="#334155">账单</text><text x="1594.1" y="755.0" font-size="16.5" font-weight="700" fill="#0F766E">V</text><text x="1609.6" y="755.0" font-size="16.5" font-weight="400" fill="#334155">·</text><text x="1624.4" y="755.0" font-size="16.5" font-weight="400" fill="#334155">成员报告</text><text x="1696.0" y="755.0" font-size="16.5" font-weight="700" fill="#0F766E">V</text>
+
+<text x="1404.0" y="782.0" font-size="16.5" font-weight="400" fill="#334155">成员</text><text x="1442.6" y="782.0" font-size="16.5" font-weight="400" fill="#334155">/</text><text x="1457.5" y="782.0" font-size="16.5" font-weight="400" fill="#334155">邀请</text><text x="1496.1" y="782.0" font-size="16.5" font-weight="400" fill="#334155">/</text><text x="1510.9" y="782.0" font-size="16.5" font-weight="400" fill="#334155">审批</text><text x="1549.5" y="782.0" font-size="16.5" font-weight="400" fill="#334155">·</text><text x="1564.4" y="782.0" font-size="16.5" font-weight="400" fill="#334155">小组</text><text x="1603.0" y="782.0" font-size="16.5" font-weight="400" fill="#334155">·</text><text x="1617.8" y="782.0" font-size="16.5" font-weight="400" fill="#334155">角色管理</text>
+
+<text x="1404.0" y="809.0" font-size="16.5" font-weight="400" fill="#334155">系统设置</text><text x="1475.6" y="809.0" font-size="16.5" font-weight="400" fill="#334155">只读</text><text x="1514.2" y="809.0" font-size="16.5" font-weight="400" fill="#334155">V（不可修改）</text>
+
+<text x="1404.0" y="836.0" font-size="16.5" font-weight="700" fill="#6D28D9">★</text><text x="1419.5" y="836.0" font-size="16.5" font-weight="400" fill="#334155">任命</text><text x="1458.1" y="836.0" font-size="16.5" font-weight="400" fill="#334155">/</text><text x="1473.0" y="836.0" font-size="16.5" font-weight="400" fill="#334155">卸任管理员</text>
+
+<text x="1404.0" y="863.0" font-size="16.5" font-weight="700" fill="#B45309">⚠</text><text x="1419.5" y="863.0" font-size="16.5" font-weight="400" fill="#334155">把普通成员升为管理员，须会长先确认</text>
+<rect x="370.0" y="1013.0" width="632.7" height="298.0" rx="16" fill="#FFFFFF" stroke="#E2E8F0" stroke-width="1.5" filter="url(#sh)"/>
+<path d="M386.0 1013.0 H986.7 Q1002.7 1013.0 1002.7 1029.0 V1022.0 H370.0 V1029.0 Q370.0 1013.0 386.0 1013.0 Z" fill="#4338CA"/>
+<text x="396.0" y="1063.0" font-size="27" font-weight="800" fill="#4338CA">Administrator</text>
+<text x="396.0" y="1091.0" font-size="18" fill="#64748B">管理员</text>
+<rect x="858.7" y="1043.0" width="118.0" height="30" rx="15" fill="#4338CA" fill-opacity="0.10"/><text x="917.7" y="1063.0" font-size="15" font-weight="600" fill="#4338CA" text-anchor="middle">现有超级权限</text>
+<line x1="396.0" y1="1107.0" x2="976.7" y2="1107.0" stroke="#EEF2F7" stroke-width="2"/>
+<circle cx="401.0" cy="1122.5" r="3.2" fill="#4338CA" fill-opacity="0.55"/>
+<text x="416.0" y="1128.0" font-size="16.5" font-weight="400" fill="#334155">交通组全部权限（含报销审核）</text>
+
+<text x="416.0" y="1155.0" font-size="16.5" font-weight="400" fill="#334155">活动管理</text><text x="487.6" y="1155.0" font-size="16.5" font-weight="700" fill="#0F766E">V</text><text x="503.1" y="1155.0" font-size="16.5" font-weight="700" fill="#B45309">U</text><text x="518.6" y="1155.0" font-size="16.5" font-weight="700" fill="#B91C1C">D</text><text x="534.1" y="1155.0" font-size="16.5" font-weight="400" fill="#334155">·</text><text x="549.0" y="1155.0" font-size="16.5" font-weight="400" fill="#334155">结算管理</text>
+
+<text x="416.0" y="1182.0" font-size="16.5" font-weight="400" fill="#334155">成员</text><text x="454.6" y="1182.0" font-size="16.5" font-weight="700" fill="#0F766E">V</text><text x="470.1" y="1182.0" font-size="16.5" font-weight="700" fill="#B45309">U</text><text x="485.6" y="1182.0" font-size="16.5" font-weight="400" fill="#334155">·</text><text x="500.5" y="1182.0" font-size="16.5" font-weight="400" fill="#334155">邀请</text><text x="539.1" y="1182.0" font-size="16.5" font-weight="700" fill="#0F766E">V</text><text x="554.6" y="1182.0" font-size="16.5" font-weight="700" fill="#1D4ED8">C</text><text x="570.1" y="1182.0" font-size="16.5" font-weight="700" fill="#B91C1C">D</text><text x="585.6" y="1182.0" font-size="16.5" font-weight="400" fill="#334155">·</text><text x="600.5" y="1182.0" font-size="16.5" font-weight="400" fill="#334155">账号恢复</text><text x="672.1" y="1182.0" font-size="16.5" font-weight="700" fill="#0F766E">V</text><text x="687.6" y="1182.0" font-size="16.5" font-weight="700" fill="#B45309">U</text>
+
+<text x="416.0" y="1209.0" font-size="16.5" font-weight="400" fill="#334155">小组</text><text x="454.6" y="1209.0" font-size="16.5" font-weight="700" fill="#0F766E">V</text><text x="470.1" y="1209.0" font-size="16.5" font-weight="700" fill="#1D4ED8">C</text><text x="485.6" y="1209.0" font-size="16.5" font-weight="700" fill="#B45309">U</text><text x="501.1" y="1209.0" font-size="16.5" font-weight="700" fill="#B91C1C">D</text><text x="516.6" y="1209.0" font-size="16.5" font-weight="400" fill="#334155">·</text><text x="531.5" y="1209.0" font-size="16.5" font-weight="400" fill="#334155">地区</text><text x="570.1" y="1209.0" font-size="16.5" font-weight="700" fill="#0F766E">V</text><text x="585.6" y="1209.0" font-size="16.5" font-weight="700" fill="#1D4ED8">C</text><text x="601.1" y="1209.0" font-size="16.5" font-weight="700" fill="#B45309">U</text>
+
+<text x="416.0" y="1236.0" font-size="16.5" font-weight="400" fill="#334155">角色</text><text x="454.6" y="1236.0" font-size="16.5" font-weight="700" fill="#0F766E">V</text><text x="470.1" y="1236.0" font-size="16.5" font-weight="700" fill="#1D4ED8">C</text><text x="485.6" y="1236.0" font-size="16.5" font-weight="700" fill="#B45309">U</text><text x="501.1" y="1236.0" font-size="16.5" font-weight="700" fill="#B91C1C">D</text><text x="516.6" y="1236.0" font-size="16.5" font-weight="400" fill="#334155">·</text><text x="531.5" y="1236.0" font-size="16.5" font-weight="400" fill="#334155">审计</text><text x="570.1" y="1236.0" font-size="16.5" font-weight="700" fill="#0F766E">V</text><text x="585.6" y="1236.0" font-size="16.5" font-weight="400" fill="#334155">·</text><text x="600.5" y="1236.0" font-size="16.5" font-weight="400" fill="#334155">设置</text><text x="639.1" y="1236.0" font-size="16.5" font-weight="700" fill="#0F766E">V</text><text x="654.6" y="1236.0" font-size="16.5" font-weight="700" fill="#B45309">U</text>
+
+<text x="416.0" y="1263.0" font-size="16.5" font-weight="400" fill="#334155">不能任命</text><text x="487.6" y="1263.0" font-size="16.5" font-weight="400" fill="#334155">/</text><text x="502.5" y="1263.0" font-size="16.5" font-weight="400" fill="#334155">卸任管理员</text><text x="590.6" y="1263.0" font-size="16.5" font-weight="700" fill="#B91C1C">×</text>
+<rect x="1028.7" y="1013.0" width="632.7" height="298.0" rx="16" fill="#FFFFFF" stroke="#E2E8F0" stroke-width="1.5" filter="url(#sh)"/>
+<path d="M1044.7 1013.0 H1645.3 Q1661.3 1013.0 1661.3 1029.0 V1022.0 H1028.7 V1029.0 Q1028.7 1013.0 1044.7 1013.0 Z" fill="#4338CA"/>
+<text x="1054.7" y="1063.0" font-size="27" font-weight="800" fill="#4338CA">Secretary</text>
+<text x="1054.7" y="1091.0" font-size="18" fill="#64748B">秘书</text>
+<rect x="1547.3" y="1043.0" width="88.0" height="30" rx="15" fill="#4338CA" fill-opacity="0.10"/><text x="1591.3" y="1063.0" font-size="15" font-weight="600" fill="#4338CA" text-anchor="middle">行政支持</text>
+<line x1="1054.7" y1="1107.0" x2="1635.3" y2="1107.0" stroke="#EEF2F7" stroke-width="2"/>
+<circle cx="1059.7" cy="1122.5" r="3.2" fill="#4338CA" fill-opacity="0.55"/>
+<text x="1074.7" y="1128.0" font-size="16.5" font-weight="400" fill="#334155">交通组全部</text><text x="1162.8" y="1128.0" font-size="16.5" font-weight="400" fill="#334155">+</text><text x="1177.6" y="1128.0" font-size="16.5" font-weight="400" fill="#334155">活动管理</text>
+
+<text x="1074.7" y="1155.0" font-size="16.5" font-weight="400" fill="#334155">成员</text><text x="1113.3" y="1155.0" font-size="16.5" font-weight="400" fill="#334155">只读</text><text x="1151.9" y="1155.0" font-size="16.5" font-weight="700" fill="#0F766E">V</text><text x="1167.4" y="1155.0" font-size="16.5" font-weight="400" fill="#334155">·</text><text x="1182.2" y="1155.0" font-size="16.5" font-weight="400" fill="#334155">账号恢复</text><text x="1253.9" y="1155.0" font-size="16.5" font-weight="700" fill="#0F766E">V</text><text x="1269.4" y="1155.0" font-size="16.5" font-weight="700" fill="#B45309">U</text>
+
+<text x="1074.7" y="1182.0" font-size="16.5" font-weight="400" fill="#334155">小组</text><text x="1113.3" y="1182.0" font-size="16.5" font-weight="700" fill="#0F766E">V</text><text x="1128.8" y="1182.0" font-size="16.5" font-weight="700" fill="#1D4ED8">C</text><text x="1144.3" y="1182.0" font-size="16.5" font-weight="700" fill="#B45309">U</text><text x="1159.8" y="1182.0" font-size="16.5" font-weight="700" fill="#B91C1C">D</text><text x="1175.3" y="1182.0" font-size="16.5" font-weight="400" fill="#334155">·</text><text x="1190.2" y="1182.0" font-size="16.5" font-weight="400" fill="#334155">角色</text><text x="1228.8" y="1182.0" font-size="16.5" font-weight="400" fill="#334155">只读</text><text x="1267.4" y="1182.0" font-size="16.5" font-weight="700" fill="#0F766E">V</text>
+
+<text x="1074.7" y="1209.0" font-size="16.5" font-weight="400" fill="#334155">审计日志</text><text x="1146.3" y="1209.0" font-size="16.5" font-weight="700" fill="#0F766E">V</text><text x="1161.8" y="1209.0" font-size="16.5" font-weight="400" fill="#334155">·</text><text x="1176.6" y="1209.0" font-size="16.5" font-weight="400" fill="#334155">公告</text><text x="1215.2" y="1209.0" font-size="16.5" font-weight="400" fill="#334155">/</text><text x="1230.1" y="1209.0" font-size="16.5" font-weight="400" fill="#334155">求助台</text>
+
+<text x="1074.7" y="1236.0" font-size="16.5" font-weight="400" fill="#334155">不能邀请</text><text x="1146.3" y="1236.0" font-size="16.5" font-weight="400" fill="#334155">/</text><text x="1161.1" y="1236.0" font-size="16.5" font-weight="400" fill="#334155">审批</text><text x="1199.7" y="1236.0" font-size="16.5" font-weight="700" fill="#B91C1C">×</text><text x="1215.2" y="1236.0" font-size="16.5" font-weight="400" fill="#334155">·</text><text x="1230.1" y="1236.0" font-size="16.5" font-weight="400" fill="#334155">不能改角色</text><text x="1318.2" y="1236.0" font-size="16.5" font-weight="700" fill="#B91C1C">×</text>
+
+<text x="1074.7" y="1263.0" font-size="16.5" font-weight="400" fill="#334155">不能任命管理员</text><text x="1195.8" y="1263.0" font-size="16.5" font-weight="700" fill="#B91C1C">×</text><text x="1211.3" y="1263.0" font-size="16.5" font-weight="400" fill="#334155">·</text><text x="1226.1" y="1263.0" font-size="16.5" font-weight="400" fill="#334155">系统设置</text><text x="1297.7" y="1263.0" font-size="16.5" font-weight="700" fill="#B91C1C">×</text>
+<rect x="1687.3" y="1013.0" width="632.7" height="298.0" rx="16" fill="#FFFFFF" stroke="#E2E8F0" stroke-width="1.5" filter="url(#sh)"/>
+<path d="M1703.3 1013.0 H2304.0 Q2320.0 1013.0 2320.0 1029.0 V1022.0 H1687.3 V1029.0 Q1687.3 1013.0 1703.3 1013.0 Z" fill="#0E7490"/>
+<text x="1713.3" y="1063.0" font-size="27" font-weight="800" fill="#0E7490">Head of Traffic</text>
+<text x="1713.3" y="1091.0" font-size="18" fill="#64748B">交通组组长</text>
+<rect x="2206.0" y="1043.0" width="88.0" height="30" rx="15" fill="#0E7490" fill-opacity="0.10"/><text x="2250.0" y="1063.0" font-size="15" font-weight="600" fill="#0E7490" text-anchor="middle">交通负责</text>
+<line x1="1713.3" y1="1107.0" x2="2294.0" y2="1107.0" stroke="#EEF2F7" stroke-width="2"/>
+<circle cx="1718.3" cy="1122.5" r="3.2" fill="#0E7490" fill-opacity="0.55"/>
+<text x="1733.3" y="1128.0" font-size="16.5" font-weight="400" fill="#334155">交通总览</text><text x="1804.9" y="1128.0" font-size="16.5" font-weight="700" fill="#0F766E">V</text><text x="1820.5" y="1128.0" font-size="16.5" font-weight="400" fill="#334155">·</text><text x="1835.3" y="1128.0" font-size="16.5" font-weight="400" fill="#334155">接送管理</text><text x="1906.9" y="1128.0" font-size="16.5" font-weight="700" fill="#0F766E">V</text><text x="1922.4" y="1128.0" font-size="16.5" font-weight="700" fill="#B45309">U</text><text x="1937.9" y="1128.0" font-size="16.5" font-weight="700" fill="#B91C1C">D</text>
+
+<text x="1733.3" y="1155.0" font-size="16.5" font-weight="400" fill="#334155">实时地图</text><text x="1804.9" y="1155.0" font-size="16.5" font-weight="700" fill="#0F766E">V</text><text x="1820.5" y="1155.0" font-size="16.5" font-weight="400" fill="#334155">·</text><text x="1835.3" y="1155.0" font-size="16.5" font-weight="400" fill="#334155">交通编排</text><text x="1906.9" y="1155.0" font-size="16.5" font-weight="700" fill="#0F766E">V</text><text x="1922.4" y="1155.0" font-size="16.5" font-weight="700" fill="#B45309">U</text>
+
+<text x="1733.3" y="1182.0" font-size="16.5" font-weight="400" fill="#334155">活动管理</text><text x="1804.9" y="1182.0" font-size="16.5" font-weight="700" fill="#0F766E">V</text><text x="1820.5" y="1182.0" font-size="16.5" font-weight="700" fill="#B45309">U</text><text x="1836.0" y="1182.0" font-size="16.5" font-weight="700" fill="#B91C1C">D</text><text x="1851.5" y="1182.0" font-size="16.5" font-weight="400" fill="#334155">·</text><text x="1866.3" y="1182.0" font-size="16.5" font-weight="400" fill="#334155">报销审核</text><text x="1937.9" y="1182.0" font-size="16.5" font-weight="700" fill="#0F766E">V</text><text x="1953.4" y="1182.0" font-size="16.5" font-weight="700" fill="#B45309">U</text>
+
+<text x="1733.3" y="1209.0" font-size="16.5" font-weight="400" fill="#334155">公告</text><text x="1771.9" y="1209.0" font-size="16.5" font-weight="700" fill="#0F766E">V</text><text x="1787.5" y="1209.0" font-size="16.5" font-weight="700" fill="#1D4ED8">C</text><text x="1803.0" y="1209.0" font-size="16.5" font-weight="700" fill="#B91C1C">D</text><text x="1818.5" y="1209.0" font-size="16.5" font-weight="400" fill="#334155">·</text><text x="1833.3" y="1209.0" font-size="16.5" font-weight="400" fill="#334155">求助台</text><text x="1888.4" y="1209.0" font-size="16.5" font-weight="700" fill="#0F766E">V</text><text x="1903.9" y="1209.0" font-size="16.5" font-weight="700" fill="#B45309">U</text>
+
+<text x="1733.3" y="1236.0" font-size="16.5" font-weight="400" fill="#334155">成员</text><text x="1771.9" y="1236.0" font-size="16.5" font-weight="700" fill="#0F766E">V</text><text x="1787.5" y="1236.0" font-size="16.5" font-weight="700" fill="#B45309">U</text><text x="1803.0" y="1236.0" font-size="16.5" font-weight="400" fill="#334155">·</text><text x="1817.8" y="1236.0" font-size="16.5" font-weight="400" fill="#334155">报告</text><text x="1856.4" y="1236.0" font-size="16.5" font-weight="700" fill="#0F766E">V</text><text x="1871.9" y="1236.0" font-size="16.5" font-weight="400" fill="#334155">·</text><text x="1886.8" y="1236.0" font-size="16.5" font-weight="400" fill="#334155">地区</text><text x="1925.4" y="1236.0" font-size="16.5" font-weight="700" fill="#0F766E">V</text><text x="1940.9" y="1236.0" font-size="16.5" font-weight="700" fill="#1D4ED8">C</text><text x="1956.4" y="1236.0" font-size="16.5" font-weight="700" fill="#B45309">U</text><text x="1971.9" y="1236.0" font-size="16.5" font-weight="400" fill="#334155">·</text><text x="1986.8" y="1236.0" font-size="16.5" font-weight="400" fill="#334155">审计</text><text x="2025.4" y="1236.0" font-size="16.5" font-weight="700" fill="#0F766E">V</text>
+
+<text x="1733.3" y="1263.0" font-size="16.5" font-weight="400" fill="#334155">不能邀请</text><text x="1804.9" y="1263.0" font-size="16.5" font-weight="400" fill="#334155">/</text><text x="1819.8" y="1263.0" font-size="16.5" font-weight="400" fill="#334155">改角色</text><text x="1874.9" y="1263.0" font-size="16.5" font-weight="400" fill="#334155">/</text><text x="1889.8" y="1263.0" font-size="16.5" font-weight="400" fill="#334155">系统设置</text><text x="1961.4" y="1263.0" font-size="16.5" font-weight="700" fill="#B91C1C">×</text>
+<rect x="370.0" y="1413.0" width="468.0" height="271.0" rx="16" fill="#FFFFFF" stroke="#E2E8F0" stroke-width="1.5" filter="url(#sh)"/>
+<path d="M386.0 1413.0 H822.0 Q838.0 1413.0 838.0 1429.0 V1422.0 H370.0 V1429.0 Q370.0 1413.0 386.0 1413.0 Z" fill="#B45309"/>
+<text x="396.0" y="1463.0" font-size="27" font-weight="800" fill="#B45309">Treasurer</text>
+<text x="396.0" y="1491.0" font-size="18" fill="#64748B">财政</text>
+<rect x="754.0" y="1443.0" width="58.0" height="30" rx="15" fill="#B45309" fill-opacity="0.10"/><text x="783.0" y="1463.0" font-size="15" font-weight="600" fill="#B45309" text-anchor="middle">财务</text>
+<line x1="396.0" y1="1507.0" x2="812.0" y2="1507.0" stroke="#EEF2F7" stroke-width="2"/>
+<circle cx="401.0" cy="1522.5" r="3.2" fill="#B45309" fill-opacity="0.55"/>
+<text x="416.0" y="1528.0" font-size="16.5" font-weight="400" fill="#334155">报销付款</text><text x="487.6" y="1528.0" font-size="16.5" font-weight="700" fill="#0F766E">V</text><text x="503.1" y="1528.0" font-size="16.5" font-weight="400" fill="#334155">U（记录付款）</text>
+
+<text x="416.0" y="1555.0" font-size="16.5" font-weight="400" fill="#334155">全部账单与凭证</text><text x="537.1" y="1555.0" font-size="16.5" font-weight="700" fill="#0F766E">V</text>
+
+<text x="416.0" y="1582.0" font-size="16.5" font-weight="400" fill="#334155">成员月度报告</text><text x="520.6" y="1582.0" font-size="16.5" font-weight="700" fill="#0F766E">V</text>
+
+<text x="416.0" y="1609.0" font-size="16.5" font-weight="400" fill="#334155">无成员</text><text x="471.1" y="1609.0" font-size="16.5" font-weight="400" fill="#334155">/</text><text x="486.0" y="1609.0" font-size="16.5" font-weight="400" fill="#334155">角色</text><text x="524.6" y="1609.0" font-size="16.5" font-weight="400" fill="#334155">/</text><text x="539.4" y="1609.0" font-size="16.5" font-weight="400" fill="#334155">设置</text><text x="578.0" y="1609.0" font-size="16.5" font-weight="400" fill="#334155">/</text><text x="592.9" y="1609.0" font-size="16.5" font-weight="400" fill="#334155">审计</text><text x="631.5" y="1609.0" font-size="16.5" font-weight="700" fill="#B91C1C">×</text>
+
+<text x="416.0" y="1636.0" font-size="16.5" font-weight="400" fill="#334155">财务权限不可自行授予</text>
+<rect x="864.0" y="1413.0" width="468.0" height="271.0" rx="16" fill="#FFFFFF" stroke="#E2E8F0" stroke-width="1.5" filter="url(#sh)"/>
+<path d="M880.0 1413.0 H1316.0 Q1332.0 1413.0 1332.0 1429.0 V1422.0 H864.0 V1429.0 Q864.0 1413.0 880.0 1413.0 Z" fill="#B45309"/>
+<text x="890.0" y="1463.0" font-size="27" font-weight="800" fill="#B45309">Financial Auditor</text>
+<text x="890.0" y="1491.0" font-size="18" fill="#64748B">查账</text>
+<rect x="1218.0" y="1443.0" width="88.0" height="30" rx="15" fill="#B45309" fill-opacity="0.10"/><text x="1262.0" y="1463.0" font-size="15" font-weight="600" fill="#B45309" text-anchor="middle">只读财务</text>
+<line x1="890.0" y1="1507.0" x2="1306.0" y2="1507.0" stroke="#EEF2F7" stroke-width="2"/>
+<circle cx="895.0" cy="1522.5" r="3.2" fill="#B45309" fill-opacity="0.55"/>
+<text x="910.0" y="1528.0" font-size="16.5" font-weight="400" fill="#334155">报销付款</text><text x="981.6" y="1528.0" font-size="16.5" font-weight="400" fill="#334155">只读</text><text x="1020.2" y="1528.0" font-size="16.5" font-weight="700" fill="#0F766E">V</text>
+
+<text x="910.0" y="1555.0" font-size="16.5" font-weight="400" fill="#334155">全部账单与凭证</text><text x="1031.1" y="1555.0" font-size="16.5" font-weight="700" fill="#0F766E">V</text>
+
+<text x="910.0" y="1582.0" font-size="16.5" font-weight="400" fill="#334155">成员月度报告</text><text x="1014.6" y="1582.0" font-size="16.5" font-weight="700" fill="#0F766E">V</text>
+
+<text x="910.0" y="1609.0" font-size="16.5" font-weight="400" fill="#334155">只读：不能付款、不能修改记录</text>
+
+<text x="910.0" y="1636.0" font-size="16.5" font-weight="400" fill="#334155">财务权限不可自行授予</text>
+<rect x="1358.0" y="1413.0" width="468.0" height="271.0" rx="16" fill="#FFFFFF" stroke="#E2E8F0" stroke-width="1.5" filter="url(#sh)"/>
+<path d="M1374.0 1413.0 H1810.0 Q1826.0 1413.0 1826.0 1429.0 V1422.0 H1358.0 V1429.0 Q1358.0 1413.0 1374.0 1413.0 Z" fill="#0E7490"/>
+<text x="1384.0" y="1463.0" font-size="27" font-weight="800" fill="#0E7490">Cell Group Leader</text>
+<text x="1384.0" y="1491.0" font-size="18" fill="#64748B">小组组长</text>
+<rect x="1697.0" y="1443.0" width="103.0" height="30" rx="15" fill="#0E7490" fill-opacity="0.10"/><text x="1748.5" y="1463.0" font-size="15" font-weight="600" fill="#0E7490" text-anchor="middle">仅本人活动</text>
+<line x1="1384.0" y1="1507.0" x2="1800.0" y2="1507.0" stroke="#EEF2F7" stroke-width="2"/>
+<circle cx="1389.0" cy="1522.5" r="3.2" fill="#0E7490" fill-opacity="0.55"/>
+<text x="1404.0" y="1528.0" font-size="16.5" font-weight="400" fill="#334155">活动交通编排</text><text x="1508.6" y="1528.0" font-size="16.5" font-weight="700" fill="#0F766E">V</text><text x="1524.1" y="1528.0" font-size="16.5" font-weight="700" fill="#B45309">U</text><text x="1539.6" y="1528.0" font-size="16.5" font-weight="700" fill="#0E7490">◆</text>
+
+<text x="1404.0" y="1555.0" font-size="16.5" font-weight="400" fill="#334155">接送管理</text><text x="1475.6" y="1555.0" font-size="16.5" font-weight="700" fill="#0F766E">V</text><text x="1491.1" y="1555.0" font-size="16.5" font-weight="700" fill="#B45309">U</text><text x="1506.6" y="1555.0" font-size="16.5" font-weight="700" fill="#B91C1C">D</text><text x="1522.1" y="1555.0" font-size="16.5" font-weight="700" fill="#0E7490">◆</text><text x="1537.6" y="1555.0" font-size="16.5" font-weight="400" fill="#334155">·</text><text x="1552.5" y="1555.0" font-size="16.5" font-weight="400" fill="#334155">实时地图</text><text x="1624.1" y="1555.0" font-size="16.5" font-weight="700" fill="#0F766E">V</text><text x="1639.6" y="1555.0" font-size="16.5" font-weight="700" fill="#0E7490">◆</text>
+
+<text x="1404.0" y="1582.0" font-size="16.5" font-weight="400" fill="#334155">本人活动的报名与出席管理</text>
+
+<text x="1404.0" y="1609.0" font-size="16.5" font-weight="400" fill="#334155">成员报告</text><text x="1475.6" y="1609.0" font-size="16.5" font-weight="700" fill="#0F766E">V</text><text x="1491.1" y="1609.0" font-size="16.5" font-weight="400" fill="#334155">·</text><text x="1506.0" y="1609.0" font-size="16.5" font-weight="400" fill="#334155">成员名单</text><text x="1577.6" y="1609.0" font-size="16.5" font-weight="400" fill="#334155">V（无联系方式）</text>
+
+<text x="1404.0" y="1636.0" font-size="16.5" font-weight="400" fill="#334155">无报销</text><text x="1459.1" y="1636.0" font-size="16.5" font-weight="400" fill="#334155">/</text><text x="1474.0" y="1636.0" font-size="16.5" font-weight="400" fill="#334155">财政</text><text x="1512.6" y="1636.0" font-size="16.5" font-weight="700" fill="#B91C1C">×；须会长或副会长另授财务角色</text>
+<rect x="1852.0" y="1413.0" width="468.0" height="271.0" rx="16" fill="#FFFFFF" stroke="#E2E8F0" stroke-width="1.5" filter="url(#sh)"/>
+<path d="M1868.0 1413.0 H2304.0 Q2320.0 1413.0 2320.0 1429.0 V1422.0 H1852.0 V1429.0 Q1852.0 1413.0 1868.0 1413.0 Z" fill="#0E7490"/>
+<text x="1878.0" y="1463.0" font-size="27" font-weight="800" fill="#0E7490">Transport Team</text>
+<text x="1878.0" y="1491.0" font-size="18" fill="#64748B">交通组</text>
+<rect x="2206.0" y="1443.0" width="88.0" height="30" rx="15" fill="#0E7490" fill-opacity="0.10"/><text x="2250.0" y="1463.0" font-size="15" font-weight="600" fill="#0E7490" text-anchor="middle">交通执行</text>
+<line x1="1878.0" y1="1507.0" x2="2294.0" y2="1507.0" stroke="#EEF2F7" stroke-width="2"/>
+<circle cx="1883.0" cy="1522.5" r="3.2" fill="#0E7490" fill-opacity="0.55"/>
+<text x="1898.0" y="1528.0" font-size="16.5" font-weight="400" fill="#334155">交通总览</text><text x="1969.6" y="1528.0" font-size="16.5" font-weight="700" fill="#0F766E">V</text><text x="1985.1" y="1528.0" font-size="16.5" font-weight="400" fill="#334155">·</text><text x="2000.0" y="1528.0" font-size="16.5" font-weight="400" fill="#334155">实时地图</text><text x="2071.6" y="1528.0" font-size="16.5" font-weight="700" fill="#0F766E">V</text>
+
+<text x="1898.0" y="1555.0" font-size="16.5" font-weight="400" fill="#334155">接送管理</text><text x="1969.6" y="1555.0" font-size="16.5" font-weight="700" fill="#0F766E">V</text><text x="1985.1" y="1555.0" font-size="16.5" font-weight="700" fill="#B45309">U</text><text x="2000.6" y="1555.0" font-size="16.5" font-weight="700" fill="#B91C1C">D</text><text x="2016.1" y="1555.0" font-size="16.5" font-weight="400" fill="#334155">·</text><text x="2031.0" y="1555.0" font-size="16.5" font-weight="400" fill="#334155">交通编排</text><text x="2102.6" y="1555.0" font-size="16.5" font-weight="700" fill="#0F766E">V</text><text x="2118.1" y="1555.0" font-size="16.5" font-weight="700" fill="#B45309">U</text>
+
+<text x="1898.0" y="1582.0" font-size="16.5" font-weight="400" fill="#334155">报销审核</text><text x="1969.6" y="1582.0" font-size="16.5" font-weight="700" fill="#0F766E">V</text><text x="1985.1" y="1582.0" font-size="16.5" font-weight="700" fill="#B45309">U</text><text x="2000.6" y="1582.0" font-size="16.5" font-weight="400" fill="#334155">·</text><text x="2015.5" y="1582.0" font-size="16.5" font-weight="400" fill="#334155">公告</text><text x="2054.1" y="1582.0" font-size="16.5" font-weight="700" fill="#0F766E">V</text><text x="2069.6" y="1582.0" font-size="16.5" font-weight="700" fill="#1D4ED8">C</text><text x="2085.1" y="1582.0" font-size="16.5" font-weight="700" fill="#B91C1C">D</text>
+
+<text x="1898.0" y="1609.0" font-size="16.5" font-weight="400" fill="#334155">求助台</text><text x="1953.1" y="1609.0" font-size="16.5" font-weight="700" fill="#0F766E">V</text><text x="1968.6" y="1609.0" font-size="16.5" font-weight="700" fill="#B45309">U</text><text x="1984.1" y="1609.0" font-size="16.5" font-weight="400" fill="#334155">·</text><text x="1999.0" y="1609.0" font-size="16.5" font-weight="400" fill="#334155">成员名单</text><text x="2070.6" y="1609.0" font-size="16.5" font-weight="700" fill="#0F766E">V</text>
+
+<text x="1898.0" y="1636.0" font-size="16.5" font-weight="400" fill="#334155">地区</text><text x="1936.6" y="1636.0" font-size="16.5" font-weight="700" fill="#0F766E">V</text><text x="1952.1" y="1636.0" font-size="16.5" font-weight="700" fill="#1D4ED8">C</text><text x="1967.6" y="1636.0" font-size="16.5" font-weight="700" fill="#B45309">U</text><text x="1983.1" y="1636.0" font-size="16.5" font-weight="400" fill="#334155">·</text><text x="1998.0" y="1636.0" font-size="16.5" font-weight="400" fill="#334155">审计日志</text><text x="2069.6" y="1636.0" font-size="16.5" font-weight="700" fill="#0F766E">V</text>
+<rect x="370.0" y="1786.0" width="632.7" height="271.0" rx="16" fill="#FFFFFF" stroke="#E2E8F0" stroke-width="1.5" filter="url(#sh)"/>
+<path d="M386.0 1786.0 H986.7 Q1002.7 1786.0 1002.7 1802.0 V1795.0 H370.0 V1802.0 Q370.0 1786.0 386.0 1786.0 Z" fill="#475569"/>
+<text x="396.0" y="1836.0" font-size="27" font-weight="800" fill="#475569">Activity Leader</text>
+<text x="396.0" y="1864.0" font-size="18" fill="#64748B">活动负责人</text>
+<rect x="888.7" y="1816.0" width="88.0" height="30" rx="15" fill="#475569" fill-opacity="0.10"/><text x="932.7" y="1836.0" font-size="15" font-weight="600" fill="#475569" text-anchor="middle">本人活动</text>
+<line x1="396.0" y1="1880.0" x2="976.7" y2="1880.0" stroke="#EEF2F7" stroke-width="2"/>
+<circle cx="401.0" cy="1895.5" r="3.2" fill="#475569" fill-opacity="0.55"/>
+<text x="416.0" y="1901.0" font-size="16.5" font-weight="400" fill="#334155">活动</text><text x="454.6" y="1901.0" font-size="16.5" font-weight="700" fill="#1D4ED8">C</text><text x="470.1" y="1901.0" font-size="16.5" font-weight="700" fill="#B45309">U</text><text x="485.6" y="1901.0" font-size="16.5" font-weight="400" fill="#334155">D（本人主办）</text>
+
+<text x="416.0" y="1928.0" font-size="16.5" font-weight="400" fill="#334155">结算</text><text x="454.6" y="1928.0" font-size="16.5" font-weight="700" fill="#0F766E">V</text><text x="470.1" y="1928.0" font-size="16.5" font-weight="700" fill="#1D4ED8">C</text><text x="485.6" y="1928.0" font-size="16.5" font-weight="700" fill="#B45309">U</text><text x="501.1" y="1928.0" font-size="16.5" font-weight="400" fill="#334155">D（本人账单）</text>
+
+<text x="416.0" y="1955.0" font-size="16.5" font-weight="400" fill="#334155">报名与出席管理（本人活动）</text>
+
+<text x="416.0" y="1982.0" font-size="16.5" font-weight="400" fill="#334155">无任何交通后台权限</text><text x="570.1" y="1982.0" font-size="16.5" font-weight="700" fill="#B91C1C">×</text>
+<rect x="1028.7" y="1786.0" width="632.7" height="271.0" rx="16" fill="#FFFFFF" stroke="#E2E8F0" stroke-width="1.5" filter="url(#sh)"/>
+<path d="M1044.7 1786.0 H1645.3 Q1661.3 1786.0 1661.3 1802.0 V1795.0 H1028.7 V1802.0 Q1028.7 1786.0 1044.7 1786.0 Z" fill="#475569"/>
+<text x="1054.7" y="1836.0" font-size="27" font-weight="800" fill="#475569">Driver</text>
+<text x="1054.7" y="1864.0" font-size="18" fill="#64748B">司机</text>
+<rect x="1547.3" y="1816.0" width="88.0" height="30" rx="15" fill="#475569" fill-opacity="0.10"/><text x="1591.3" y="1836.0" font-size="15" font-weight="600" fill="#475569" text-anchor="middle">自愿服务</text>
+<line x1="1054.7" y1="1880.0" x2="1635.3" y2="1880.0" stroke="#EEF2F7" stroke-width="2"/>
+<circle cx="1059.7" cy="1895.5" r="3.2" fill="#475569" fill-opacity="0.55"/>
+<text x="1074.7" y="1901.0" font-size="16.5" font-weight="400" fill="#334155">顺风车需求</text><text x="1162.8" y="1901.0" font-size="16.5" font-weight="700" fill="#0F766E">V</text><text x="1178.3" y="1901.0" font-size="16.5" font-weight="700" fill="#1D4ED8">C</text><text x="1193.8" y="1901.0" font-size="16.5" font-weight="700" fill="#B45309">U</text><text x="1209.3" y="1901.0" font-size="16.5" font-weight="400" fill="#334155">D（接单、出车）</text>
+
+<text x="1074.7" y="1928.0" font-size="16.5" font-weight="400" fill="#334155">车辆与可用时段</text><text x="1195.8" y="1928.0" font-size="16.5" font-weight="700" fill="#1D4ED8">C</text><text x="1211.3" y="1928.0" font-size="16.5" font-weight="700" fill="#B45309">U</text><text x="1226.8" y="1928.0" font-size="16.5" font-weight="700" fill="#B91C1C">D</text>
+
+<text x="1074.7" y="1955.0" font-size="16.5" font-weight="400" fill="#334155">本人驾驶的行程</text><text x="1195.8" y="1955.0" font-size="16.5" font-weight="700" fill="#0F766E">V</text><text x="1211.3" y="1955.0" font-size="16.5" font-weight="700" fill="#B45309">U</text><text x="1226.8" y="1955.0" font-size="16.5" font-weight="700" fill="#B91C1C">D</text>
+
+<text x="1074.7" y="1982.0" font-size="16.5" font-weight="400" fill="#334155">进度</text><text x="1113.3" y="1982.0" font-size="16.5" font-weight="400" fill="#334155">/</text><text x="1128.1" y="1982.0" font-size="16.5" font-weight="400" fill="#334155">延误</text><text x="1166.7" y="1982.0" font-size="16.5" font-weight="400" fill="#334155">/</text><text x="1181.6" y="1982.0" font-size="16.5" font-weight="400" fill="#334155">到闸上报</text><text x="1253.2" y="1982.0" font-size="16.5" font-weight="400" fill="#334155">·</text><text x="1268.0" y="1982.0" font-size="16.5" font-weight="400" fill="#334155">行程聊天</text>
+<rect x="1687.3" y="1786.0" width="632.7" height="271.0" rx="16" fill="#FFFFFF" stroke="#E2E8F0" stroke-width="1.5" filter="url(#sh)"/>
+<path d="M1703.3 1786.0 H2304.0 Q2320.0 1786.0 2320.0 1802.0 V1795.0 H1687.3 V1802.0 Q1687.3 1786.0 1703.3 1786.0 Z" fill="#475569"/>
+<text x="1713.3" y="1836.0" font-size="27" font-weight="800" fill="#475569">Member</text>
+<text x="1713.3" y="1864.0" font-size="18" fill="#64748B">成员</text>
+<rect x="2206.0" y="1816.0" width="88.0" height="30" rx="15" fill="#475569" fill-opacity="0.10"/><text x="2250.0" y="1836.0" font-size="15" font-weight="600" fill="#475569" text-anchor="middle">自动附加</text>
+<line x1="1713.3" y1="1880.0" x2="2294.0" y2="1880.0" stroke="#EEF2F7" stroke-width="2"/>
+<circle cx="1718.3" cy="1895.5" r="3.2" fill="#475569" fill-opacity="0.55"/>
+<text x="1733.3" y="1901.0" font-size="16.5" font-weight="400" fill="#334155">行程</text><text x="1771.9" y="1901.0" font-size="16.5" font-weight="700" fill="#0F766E">V</text><text x="1787.5" y="1901.0" font-size="16.5" font-weight="700" fill="#1D4ED8">C</text><text x="1803.0" y="1901.0" font-size="16.5" font-weight="700" fill="#B45309">U</text><text x="1818.5" y="1901.0" font-size="16.5" font-weight="400" fill="#334155">D（仅本人）</text>
+
+<text x="1733.3" y="1928.0" font-size="16.5" font-weight="400" fill="#334155">活动浏览</text><text x="1804.9" y="1928.0" font-size="16.5" font-weight="700" fill="#0F766E">V</text><text x="1820.5" y="1928.0" font-size="16.5" font-weight="400" fill="#334155">·</text><text x="1835.3" y="1928.0" font-size="16.5" font-weight="400" fill="#334155">主办需「活动负责人」角色</text>
+
+<text x="1733.3" y="1955.0" font-size="16.5" font-weight="400" fill="#334155">费用分摊</text><text x="1804.9" y="1955.0" font-size="16.5" font-weight="700" fill="#0F766E">V</text><text x="1820.5" y="1955.0" font-size="16.5" font-weight="700" fill="#B45309">U</text><text x="1836.0" y="1955.0" font-size="16.5" font-weight="400" fill="#334155">·</text><text x="1850.8" y="1955.0" font-size="16.5" font-weight="400" fill="#334155">报销申请</text><text x="1922.4" y="1955.0" font-size="16.5" font-weight="700" fill="#0F766E">V</text><text x="1937.9" y="1955.0" font-size="16.5" font-weight="700" fill="#1D4ED8">C</text><text x="1953.4" y="1955.0" font-size="16.5" font-weight="700" fill="#B45309">U</text>
+
+<text x="1733.3" y="1982.0" font-size="16.5" font-weight="400" fill="#334155">求助</text><text x="1771.9" y="1982.0" font-size="16.5" font-weight="700" fill="#0F766E">V</text><text x="1787.5" y="1982.0" font-size="16.5" font-weight="700" fill="#1D4ED8">C</text><text x="1803.0" y="1982.0" font-size="16.5" font-weight="700" fill="#B45309">U</text><text x="1818.5" y="1982.0" font-size="16.5" font-weight="400" fill="#334155">·</text><text x="1833.3" y="1982.0" font-size="16.5" font-weight="400" fill="#334155">月度报告</text><text x="1904.9" y="1982.0" font-size="16.5" font-weight="700" fill="#0F766E">V</text>
+
+<text x="1733.3" y="2009.0" font-size="16.5" font-weight="400" fill="#334155">每位活跃成员自动持有此角色</text>
+<rect x="80" y="2131" width="2240" height="172" rx="18" fill="#F1F5F9"/>
+<text x="110" y="2171" font-size="19" font-weight="800" fill="#0F172A">任职与权限规则 / Rules that no role can bypass</text>
+<text x="110" y="2207" font-size="17" fill="#334155">• 任命管理员：只有超级管理员、会长、副会长可以任命或卸任管理员；副会长升任管理员须会长确认，并写入审计日志。</text>
+<text x="1200" y="2207" font-size="17" fill="#334155">• 系统设置：只有超级管理员可以授予系统设置权限；会长与副会长只能查看设置，不能修改。</text>
+<text x="110" y="2259" font-size="17" fill="#334155">• 财政隔离：报销付款与账单只属于财务职务（财政 / 查账）；财务权限不可自行授予，任何变更都留审计记录。</text>
+<text x="1200" y="2259" font-size="17" fill="#334155">• 访问要求：所有管理后台页面都要求通行密钥或双因素会话；小组成员的交通功能只覆盖其本人创建的活动。</text>
+<text x="2320" y="2315.0" font-size="13" fill="#94A3B8" text-anchor="end">Generated from backend/src/perms.rs · Grace Ride</text>
+</svg>

@@ -42,6 +42,8 @@ pub const TRAFFIC_HEAD_ROLE: &str = "traffic_head";
 pub const CELL_LEADER_ROLE: &str = "cell_leader";
 /// 查账: reads the financial records and member reports without paying or editing.
 pub const AUDITOR_ROLE: &str = "auditor";
+/// 财务: pays reimbursements and sees bills. Appointed by the Vice-President.
+pub const FINANCE_ROLE: &str = "finance";
 /// Built-in roles, created on first start. They can be edited (all but `superadmin`)
 /// and never deleted.
 pub const SYSTEM_ROLES: &[&str] = &[
@@ -54,7 +56,7 @@ pub const SYSTEM_ROLES: &[&str] = &[
     TRAFFIC_HEAD_ROLE,
     CELL_LEADER_ROLE,
     "transport",
-    "finance",
+    FINANCE_ROLE,
     AUDITOR_ROLE,
     "leader",
     "driver",
@@ -322,7 +324,7 @@ pub fn defaults(role: &str) -> Vec<Perm> {
             (AdminAreas, &[View, Create, Update]),
             (AdminAudit, &[View]),
         ],
-        "finance" => &[
+        FINANCE_ROLE => &[
             (AdminReimbPay, &[View, Update]),
             (AdminBills, &[View]),
             (AdminReports, &[View]),
@@ -428,6 +430,62 @@ pub fn can_manage_admins(roles: &[String]) -> bool {
     roles
         .iter()
         .any(|r| r == SUPERADMIN_ROLE || r == PRESIDENT_ROLE || r == VICE_PRESIDENT_ROLE)
+}
+
+/// Chain of command, highest authority first. A member's rank is the strongest ranked
+/// role they hold. Each level appoints only the level directly below it, and commands
+/// (disables, edits, revokes) every level below. Roles outside the chain (admin,
+/// secretary, traffic head, custom roles...) have no rank: they cannot touch ranked
+/// roles or members at all.
+pub const RANKED_ROLES: &[&str] = &[
+    SUPERADMIN_ROLE,
+    PRESIDENT_ROLE,
+    VICE_PRESIDENT_ROLE,
+    FINANCE_ROLE,
+    AUDITOR_ROLE,
+];
+
+/// Rank of one role key: 0 is the highest authority, `None` is outside the chain.
+pub fn role_rank(key: &str) -> Option<usize> {
+    RANKED_ROLES.iter().position(|r| *r == key)
+}
+
+/// The strongest rank among these roles, `None` when none is ranked.
+pub fn rank_of(roles: &[String]) -> Option<usize> {
+    roles.iter().filter_map(|r| role_rank(r)).min()
+}
+
+/// May an account with `actor` roles appoint someone to the ranked role `target`?
+/// Only the level directly below the actor's own.
+pub fn can_appoint(actor: &[String], target: &str) -> bool {
+    match (rank_of(actor), role_rank(target)) {
+        (Some(a), Some(t)) => t == a + 1,
+        _ => false,
+    }
+}
+
+/// May an account with `actor` roles command (disable, edit, revoke) an account that
+/// holds `target` roles? An account outside the chain is open to ordinary permission
+/// checks; a ranked one only to somebody strictly above it.
+pub fn outranks(actor: &[String], target: &[String]) -> bool {
+    match rank_of(target) {
+        None => true,
+        Some(t) => rank_of(actor).is_some_and(|a| a < t),
+    }
+}
+
+/// May an account with `actor` roles edit or take away the ranked role `target`?
+/// Strictly above it; the super admin role itself is never editable.
+pub fn outranks_role(actor: &[String], target: &str) -> bool {
+    match role_rank(target) {
+        None => true,
+        Some(t) => rank_of(actor).is_some_and(|a| a < t),
+    }
+}
+
+/// Permission keys that make a role an administrator in practice: editing roles.
+pub fn admin_power_keys() -> Vec<String> {
+    vec![Perm(Page::AdminRoles, Act::Update).key()]
 }
 
 /// A Vice-President promoting an ordinary member to administrator must first

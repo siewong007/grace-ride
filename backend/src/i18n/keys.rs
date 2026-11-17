@@ -39,6 +39,9 @@ pub enum ErrorKey {
     SuperadminOnly,
     LastSuperadmin,
     AdminAppointmentRestricted,
+    RankTooLow,
+    CannotGrantUnheldPermission,
+    AppointNextLevelOnly,
     PresidentAcknowledgementRequired,
     SettingsSuperadminOnly,
 
@@ -299,6 +302,9 @@ impl ErrorKey {
             Self::SuperadminOnly => "SUPERADMIN_ONLY",
             Self::LastSuperadmin => "LAST_SUPERADMIN",
             Self::AdminAppointmentRestricted => "ADMIN_APPOINTMENT_RESTRICTED",
+            Self::RankTooLow => "RANK_TOO_LOW",
+            Self::CannotGrantUnheldPermission => "CANNOT_GRANT_UNHELD_PERMISSION",
+            Self::AppointNextLevelOnly => "APPOINT_NEXT_LEVEL_ONLY",
             Self::PresidentAcknowledgementRequired => "PRESIDENT_ACKNOWLEDGEMENT_REQUIRED",
             Self::SettingsSuperadminOnly => "SETTINGS_SUPERADMIN_ONLY",
 

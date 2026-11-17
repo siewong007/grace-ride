@@ -568,8 +568,31 @@ async fn admin_cannot_grant_self_finance() {
     assert_eq!(denied.status, StatusCode::FORBIDDEN, "{}", denied.json);
     assert_eq!(denied.json["code"], "CANNOT_GRANT_SELF_FINANCE");
 
-    // A different admin may grant it.
+    // An ordinary admin is outside the chain of command and cannot appoint finance at
+    // all; only the Vice-President appoints that level.
     sqlx::query("UPDATE users SET roles='transport,admin' WHERE email='transport@example.org'")
+        .execute(&st.db)
+        .await
+        .unwrap();
+    let peer = login(&st, "transport@example.org").await;
+    let not_chain = call(
+        &app,
+        Method::PUT,
+        &format!("/api/admin/users/{admin_id}"),
+        Some(&peer),
+        Some(json!({"roles": ["admin", "finance"], "status": "active"})),
+    )
+    .await;
+    assert_eq!(
+        not_chain.status,
+        StatusCode::FORBIDDEN,
+        "{}",
+        not_chain.json
+    );
+    assert_eq!(not_chain.json["code"], "APPOINT_NEXT_LEVEL_ONLY");
+
+    // A different person, the Vice-President, may grant it.
+    sqlx::query("UPDATE users SET roles='vice_president' WHERE email='transport@example.org'")
         .execute(&st.db)
         .await
         .unwrap();

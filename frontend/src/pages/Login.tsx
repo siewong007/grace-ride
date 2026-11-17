@@ -1,11 +1,11 @@
 import { FormEvent, useEffect, useState } from 'react';
 import { Link, Navigate, useLocation, useNavigate } from 'react-router-dom';
-import { Fingerprint, Globe } from 'lucide-react';
+import { Fingerprint } from 'lucide-react';
 import { api, post } from '../api';
 import { useAuth } from '../auth';
 import { useTranslation } from 'react-i18next';
-import { setLanguage, SupportedLanguage } from '../i18n';
 import { LogoMark, Wordmark } from '../components/Brand';
+import { PublicDisplayBar } from '../components/AppChrome';
 import { Button, ErrorBox, Field, useAction } from '../components/ui';
 import { loginWithPasskey, passkeySupported } from '../webauthn';
 import { clearAutoLock } from '../components/AutoLock';
@@ -13,7 +13,7 @@ import { clearAutoLock } from '../components/AutoLock';
 type DevUser = { name: string; email: string; roles: string };
 
 export default function Login() {
-  const { t, i18n } = useTranslation('auth');
+  const { t } = useTranslation('auth');
   const { me, refresh } = useAuth();
   const nav = useNavigate();
   const loc = useLocation();
@@ -22,7 +22,6 @@ export default function Login() {
   const [who, setWho] = useState('');
   const [devUsers, setDevUsers] = useState<DevUser[] | null>(null);
   const { busy, error, run } = useAction();
-  const currentLang: SupportedLanguage = i18n.language?.startsWith('zh') ? 'zh' : 'en';
 
   useEffect(() => {
     api<DevUser[]>('/auth/dev-users').then(setDevUsers).catch(() => setDevUsers(null));
@@ -70,14 +69,7 @@ export default function Login() {
                 <p className="muted small">{t('brandSub', { ns: 'layout' })}</p>
               </div>
             </div>
-            <button
-              type="button"
-              className="btn sm ghost lang-toggle"
-              onClick={() => setLanguage(currentLang === 'zh' ? 'en' : 'zh')}
-            >
-              <Globe size={16} aria-hidden="true" />
-              <span>{currentLang === 'zh' ? t('en', { ns: 'chrome' }) : t('zh', { ns: 'chrome' })}</span>
-            </button>
+            <PublicDisplayBar />
           </div>
 
           <div>

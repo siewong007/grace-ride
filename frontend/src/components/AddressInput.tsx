@@ -2,6 +2,7 @@
 // Free text still works: suggestions only help members type a full, findable address.
 import { KeyboardEvent, ReactNode, useEffect, useId, useRef, useState } from 'react';
 import { MapPin } from 'lucide-react';
+import { useTranslation } from 'react-i18next';
 import { api } from '../api';
 
 export interface Place {
@@ -27,10 +28,13 @@ interface Props {
 
 /** Combobox (WAI-ARIA list autocomplete): arrows move, Enter picks, Escape closes. */
 export function AddressInput({ id, label, value, onChange, onBlur, hint, placeholder, required, invalid }: Props) {
+  const { t } = useTranslation('rideNew');
   const listId = useId();
   const [options, setOptions] = useState<Place[]>([]);
   const [open, setOpen] = useState(false);
   const [active, setActive] = useState(-1);
+  const [searching, setSearching] = useState(false);
+  const [noMatch, setNoMatch] = useState(false);
   // Only text the person typed triggers a search; a picked suggestion doesn't.
   const [query, setQuery] = useState<string | null>(null);
   const seq = useRef(0);
@@ -42,17 +46,28 @@ export function AddressInput({ id, label, value, onChange, onBlur, hint, placeho
     const q = query.trim();
     if (q.length < MIN_CHARS) {
       setOptions([]);
+      setSearching(false);
+      setNoMatch(false);
       return;
     }
     const mine = ++seq.current;
+    setSearching(true);
+    setNoMatch(false);
     const timer = window.setTimeout(() => {
       api<Place[]>(`/places?q=${encodeURIComponent(q)}`)
         .then((hits) => {
           if (mine !== seq.current) return; // a newer keystroke won
           setOptions(hits);
           setActive(-1);
+          setSearching(false);
+          setNoMatch(hits.length === 0);
         })
-        .catch(() => mine === seq.current && setOptions([]));
+        .catch(() => {
+          if (mine !== seq.current) return;
+          setOptions([]);
+          setSearching(false);
+          setNoMatch(false);
+        });
     }, DEBOUNCE_MS);
     return () => window.clearTimeout(timer);
   }, [query]);
@@ -71,6 +86,8 @@ export function AddressInput({ id, label, value, onChange, onBlur, hint, placeho
     seq.current++; // drop any search still in flight
     setQuery(null);
     setOptions([]);
+    setSearching(false);
+    setNoMatch(false);
     setOpen(false);
     setActive(-1);
     onChange(p.label);
@@ -158,6 +175,11 @@ export function AddressInput({ id, label, value, onChange, onBlur, hint, placeho
           <div className="address-ac-credit">© OpenStreetMap contributors</div>
         </div>
       </div>
+      {open && (searching || noMatch) && (
+        <small className="hint" role="status" aria-live="polite">
+          {searching ? t('addressSearching') : t('addressNoMatch')}
+        </small>
+      )}
       {hint && <small className="hint">{hint}</small>}
     </div>
   );

@@ -1,5 +1,6 @@
 import { createContext, ReactNode, useCallback, useContext, useEffect, useMemo, useState } from 'react';
 import { api, subscribe } from './api';
+import { clearOfflineSnapshots } from './offlineSnapshot';
 import type { Act, Can, PageKey } from './perms';
 
 export interface Me {
@@ -57,7 +58,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   useEffect(() => {
     refresh();
-    const onUnauth = () => setMe(null);
+    const onUnauth = () => {
+      clearOfflineSnapshots();
+      setMe(null);
+    };
     window.addEventListener('gr:unauthorized', onUnauth);
     // Keep the unread badge fresh.
     const t = setInterval(() => document.visibilityState === 'visible' && refresh(), 30000);

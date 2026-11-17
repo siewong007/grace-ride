@@ -108,4 +108,7 @@ export default {
   bookedBy: '由 {name} 代订',
   callRider: '致电长辈 ({name})',
   callBooker: '致电代订人 ({name})',
+  nextStopActive: '当前接送',
+  nextStopSoon: '即将出发',
+  openRideDetail: '详情与群聊',
 };

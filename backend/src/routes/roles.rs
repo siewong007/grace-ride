@@ -175,6 +175,47 @@ fn adds_settings(set: &PermSet, before: &PermSet) -> bool {
         .any(|a| set.has(Page::AdminSettings, *a) && !before.has(Page::AdminSettings, *a))
 }
 
+/// Rank rules for creating or editing a role, called with the roles-mutation lock held.
+/// The caller's roles are re-read here rather than trusting `u`, which was loaded earlier.
+///  - a ranked role is edited only by somebody strictly above it;
+///  - a ranked role only gains permissions its editor holds themselves (the super admin
+///    holds all);
+///  - giving a role the power to manage members or roles is reserved for the super admin,
+///    President and Vice-President, like appointing an administrator.
+async fn guard_rank(
+    st: &AppState,
+    u: &CurrentUser,
+    key: &str,
+    set: &PermSet,
+    before: &PermSet,
+) -> AppResult<()> {
+    let (raw,): (String,) = sqlx::query_as("SELECT roles FROM users WHERE id = $1")
+        .bind(u.id)
+        .fetch_one(&st.db)
+        .await?;
+    let roles = perms::parse_roles(&raw);
+    if !perms::outranks_role(&roles, key) {
+        return Err(forbidden(u.lang, ErrorKey::RankTooLow));
+    }
+    let added: Vec<Perm> = set
+        .keys()
+        .iter()
+        .filter_map(|k| Perm::parse(k))
+        .filter(|p| !before.contains(*p))
+        .collect();
+    if perms::role_rank(key).is_some() && !perms::is_superadmin(&roles) {
+        let held = perms::for_roles(&st.db, &roles).await?;
+        if added.iter().any(|p| !held.contains(*p)) {
+            return Err(forbidden(u.lang, ErrorKey::CannotGrantUnheldPermission));
+        }
+    }
+    let power = perms::admin_power_keys();
+    if !perms::can_manage_admins(&roles) && added.iter().any(|p| power.contains(&p.key())) {
+        return Err(forbidden(u.lang, ErrorKey::AdminAppointmentRestricted));
+    }
+    Ok(())
+}
+
 /// What the caller would hold if role `key` granted `replacement` (`None`: role gone).
 async fn caller_after(
     st: &AppState,
@@ -268,6 +309,7 @@ async fn create(
     sqlx::query("SELECT pg_advisory_xact_lock(hashtextextended('grace_ride_roles_mutation', 0))")
         .execute(&mut *tx)
         .await?;
+    guard_rank(&st, &u, &key, &set, &PermSet::default()).await?;
     sqlx::query("INSERT INTO roles (key, name, description, is_system) VALUES ($1, $2, $3, 0)")
         .bind(&key)
         .bind(&name)
@@ -316,6 +358,7 @@ async fn update(
         .execute(&mut *tx)
         .await?;
     guard_own_access(&st, &u, &key, Some(&set)).await?;
+    guard_rank(&st, &u, &key, &set, &before).await?;
     // Built-in roles are named by the app in each member's language.
     let name = if is_system == 1 {
         old_name

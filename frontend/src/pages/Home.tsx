@@ -1,6 +1,6 @@
 import { Link } from 'react-router-dom';
 import { CalendarPlus, ChevronRight, Phone, Pin } from 'lucide-react';
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import type { ReactNode } from 'react';
 import { useTranslation } from 'react-i18next';
 import { post, useApi } from '../api';
@@ -8,7 +8,9 @@ import { useAuth } from '../auth';
 import CantMakeItModal from '../components/CantMakeIt';
 import type { Ride } from '../components/RideCard';
 import { Button, CardSkeleton, ErrorBox, ListSkeleton, Notice, Page, StatusPill, useAction } from '../components/ui';
-import { fmtDay, fmtTime, greeting, RIDE_STATUS, RIDE_STATUS_PASSENGER, rm, todayStr, useFormatT } from '../format';
+import { fmtAgo, fmtDay, fmtTime, greeting, RIDE_STATUS, RIDE_STATUS_PASSENGER, rm, todayStr, useFormatT } from '../format';
+import { loadTodayRidesSnapshot, saveTodayRidesSnapshot } from '../offlineSnapshot';
+import { loadPrefs, savePrefs, TextSize } from '../prefs';
 import type { EventItem } from './Events';
 
 interface Share {
@@ -77,7 +79,35 @@ export default function Home() {
   const today = todayStr();
   const driving = useApi<Ride[]>(can('drive') ? `/driver/schedule?from=${today}&to=${today}` : null);
 
-  const myRides = rides.data ?? [];
+  const [showComfort, setShowComfort] = useState(() => {
+    try {
+      return !localStorage.getItem('gr-prefs') && !localStorage.getItem('gr-comfort-dismissed');
+    } catch {
+      return false;
+    }
+  });
+
+  const chooseComfort = (size: TextSize) => {
+    const p = loadPrefs();
+    savePrefs({ ...p, textSize: size });
+    try {
+      localStorage.setItem('gr-comfort-dismissed', '1');
+    } catch {
+      // ignore
+    }
+    setShowComfort(false);
+  };
+
+  useEffect(() => {
+    if (!me?.id) return;
+    const combined = [...(rides.data ?? []), ...(driving.data ?? [])];
+    if (rides.data || driving.data) {
+      saveTodayRidesSnapshot(me.id, combined);
+    }
+  }, [me?.id, rides.data, driving.data]);
+
+  const offlineSnap = !rides.data && rides.error && me?.id ? loadTodayRidesSnapshot(me.id) : null;
+  const myRides = rides.data ?? (offlineSnap ? offlineSnap.rides.filter((r) => r.viewer?.is_passenger) : []);
   const next = myRides[0];
   // Rides where a driver has offered and only the member's answer is missing.
   const awaitingReply = myRides.filter((r) => r.status === 'pending_passenger' && r.viewer?.is_passenger && r.driver);
@@ -123,6 +153,12 @@ export default function Home() {
           )}
         </div>
 
+        {offlineSnap && (
+          <Notice tone="warning">
+            <span>{t('offlineSnapshot', { when: fmtAgo(offlineSnap.savedAt, ft) })}</span>
+          </Notice>
+        )}
+
         {/* 1. Needs you — only when something is waiting on the member. */}
         {(awaitingReply.length > 0 || toPay.length > 0) && (
           <Section title={t('needsYou')}>
@@ -166,6 +202,26 @@ export default function Home() {
                 </Button>
               </>
             )}
+          </section>
+        )}
+
+        {!rides.loading && !next && !isDriverToday && showComfort && (
+          <section className="card stack-sm home-comfort" aria-label={t('comfortTitle')}>
+            <div>
+              <div className="bold">{t('comfortTitle')}</div>
+              <p className="muted small">{t('comfortBody')}</p>
+            </div>
+            <div className="btn-row">
+              <Button variant="secondary" size="sm" onClick={() => chooseComfort('large')}>
+                {t('comfortLarge')}
+              </Button>
+              <Button variant="secondary" size="sm" onClick={() => chooseComfort('xlarge')}>
+                {t('comfortXlarge')}
+              </Button>
+              <Button variant="ghost" size="sm" onClick={() => chooseComfort('normal')}>
+                {t('comfortKeep')}
+              </Button>
+            </div>
           </section>
         )}
 

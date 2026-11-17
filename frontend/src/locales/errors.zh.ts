@@ -33,7 +33,13 @@ export default {
     "SYSTEM_ROLE_CANNOT_BE_DELETED": "内置角色不能删除，可改为调整其权限",
     "CANNOT_REMOVE_OWN_ROLE_ACCESS": "不能移除自己管理角色的权限",
     "SUPERADMIN_ONLY": "只有超级管理员可以授予超级管理员角色或变更其账号",
-    "LAST_SUPERADMIN": "必须保留至少一位启用中的超级管理员"
+    "LAST_SUPERADMIN": "必须保留至少一位启用中的超级管理员",
+    "ADMIN_APPOINTMENT_RESTRICTED": "只有超级管理员、会长或副会长可以委任或卸任管理员",
+    "RANK_TOO_LOW": "只能管理职级低于自己的成员和角色",
+    "CANNOT_GRANT_UNHELD_PERMISSION": "不能授予自己不具备的权限",
+    "APPOINT_NEXT_LEVEL_ONLY": "只能委任比自己低一级的职务",
+    "PRESIDENT_ACKNOWLEDGEMENT_REQUIRED": "副会长将普通会员升为管理员前，必须先取得会长确认并勾选确认",
+    "SETTINGS_SUPERADMIN_ONLY": "只有超级管理员可以授予系统设置权限"
   },
   "auth": {
     "INVALID_CREDENTIALS": "电邮或密码不正确",
@@ -82,7 +88,19 @@ export default {
     "ATTENDANCE_MODULE_DISABLED": "此活动未开启出席签到模块",
     "INVALID_CHECKIN_CODE": "签到码无效或已更新",
     "MEMBERS_ONLY_ATTENDANCE": "出席签到仅限正式会员",
-    "EVENT_NOT_OPEN_TO_GROUP": "此活动不对您所属的群体开放"
+    "EVENT_NOT_OPEN_TO_GROUP": "此活动不对您所属的群体开放",
+    "JOIN_AS_REQUIRED": "请选择您以哪个群体参加",
+    "JOIN_AS_NOT_ALLOWED": "您不能以这个群体参加此活动",
+    "INVALID_PARENT_GROUP": "上级群体无效：不能形成循环，且最多三层",
+    "EVENT_RIDE_NEEDS_SIGNUP": "请先报名参加此活动，再申请接送",
+    "DUPLICATE_EVENT_RIDE": "您已为此活动申请了接送，请在「我的接送」中查看",
+    "DRIVER_OUTSIDE_GROUP": "此接送只开放给该群体的司机，交通组可另行指派",
+    "VISITOR_LINK_INVALID": "此链接无效",
+    "VISITOR_NOT_OPEN_YET": "此链接尚未开放",
+    "VISITOR_LINK_USED": "此链接已在另一部设备上使用，请向邀请人索取新链接",
+    "VISITOR_JOURNEY_ENDED": "此行程已结束，感谢您的参与！",
+    "VISITOR_NAME_REQUIRED": "请填写访客姓名",
+    "ONLY_GOING_CAN_INVITE_VISITOR": "只有已报名参加的会员或活动负责人可以邀请访客"
   },
   "rides": {
     "PICKUP_TIME_REQUIRED": "请填写接送时间",

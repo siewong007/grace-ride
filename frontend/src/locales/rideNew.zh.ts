@@ -52,4 +52,10 @@ export default {
   riderPhonePlaceholder: '例如：012-3456789 (若无手机可留空)',
   riderPhoneHint: '若长辈无手机可留空，司机将直接通知并致电您（代订人）',
   saveFrequentRider: '保存到常用代订名单，下次可一键选择',
+  useLastPickup: '沿用上次上车地点（{area}）',
+  lastPickupApplied: '已填入上次的上车资料',
+  quickDestinations: '常用目的地',
+  churchDest: '八打灵卫理公会（PJ State CMC）',
+  addressSearching: '正在查找地图建议…',
+  addressNoMatch: '未找到地图定位——您仍可直接提交所填地址。',
 };

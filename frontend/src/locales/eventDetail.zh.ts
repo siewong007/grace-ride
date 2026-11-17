@@ -75,4 +75,7 @@ export default {
   qrResetDone: '二维码已刷新',
   statusAttended: '已出席',
   statusNotAttended: '未签到',
+  transportPromptTitle: '您打算怎么前往？',
+  transportPromptBody: '您已完成报名！如需乘车或能顺道载人，请告诉我们。',
+  goingOwnWay: '自行前往',
 };

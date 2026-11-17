@@ -33,7 +33,13 @@ export default {
     "SYSTEM_ROLE_CANNOT_BE_DELETED": "Built-in roles cannot be deleted; change their permissions instead",
     "CANNOT_REMOVE_OWN_ROLE_ACCESS": "You cannot remove your own right to manage roles",
     "SUPERADMIN_ONLY": "Only a super admin can give the super admin role or change a super admin's account",
-    "LAST_SUPERADMIN": "There must always be one active super admin"
+    "LAST_SUPERADMIN": "There must always be one active super admin",
+    "ADMIN_APPOINTMENT_RESTRICTED": "Only the super admin, President or Vice-President can appoint or demote an administrator",
+    "RANK_TOO_LOW": "You can only manage members and roles ranked below you",
+    "CANNOT_GRANT_UNHELD_PERMISSION": "You can’t grant a permission you don’t hold yourself",
+    "APPOINT_NEXT_LEVEL_ONLY": "You can only appoint the level directly below your own",
+    "PRESIDENT_ACKNOWLEDGEMENT_REQUIRED": "A Vice-President must confirm the President has acknowledged the appointment before making an ordinary member an administrator",
+    "SETTINGS_SUPERADMIN_ONLY": "Only the super admin can grant system settings access"
   },
   "auth": {
     "INVALID_CREDENTIALS": "Incorrect email or password",
@@ -82,7 +88,19 @@ export default {
     "ATTENDANCE_MODULE_DISABLED": "The attendance module is not enabled for this event",
     "INVALID_CHECKIN_CODE": "The check-in code is invalid or has expired",
     "MEMBERS_ONLY_ATTENDANCE": "Attendance check-in is for members only",
-    "EVENT_NOT_OPEN_TO_GROUP": "This event is not open to your groups"
+    "EVENT_NOT_OPEN_TO_GROUP": "This event is not open to your groups",
+    "JOIN_AS_REQUIRED": "Choose which group you are joining as",
+    "JOIN_AS_NOT_ALLOWED": "You can’t join this event as that group",
+    "INVALID_PARENT_GROUP": "That parent group isn’t allowed: no loops, and at most three levels",
+    "EVENT_RIDE_NEEDS_SIGNUP": "Sign up for the event before asking for a ride to it",
+    "DUPLICATE_EVENT_RIDE": "You already have a ride request for this event; check My rides",
+    "DRIVER_OUTSIDE_GROUP": "Only drivers from this rider’s group can take this ride; transport staff can assign others",
+    "VISITOR_LINK_INVALID": "This link isn’t valid",
+    "VISITOR_NOT_OPEN_YET": "This link isn’t open yet",
+    "VISITOR_LINK_USED": "This link was already used on another device. Ask the person who invited you for a new one",
+    "VISITOR_JOURNEY_ENDED": "This journey has ended. Thank you for coming!",
+    "VISITOR_NAME_REQUIRED": "Enter the visitor’s name",
+    "ONLY_GOING_CAN_INVITE_VISITOR": "Only members going to the event, or its organiser, can invite a visitor"
   },
   "rides": {
     "PICKUP_TIME_REQUIRED": "Please enter a pickup time",

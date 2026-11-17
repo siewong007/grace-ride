@@ -75,4 +75,7 @@ export default {
   qrResetDone: 'Check-in code refreshed',
   statusAttended: 'Attended',
   statusNotAttended: 'Not attended',
+  transportPromptTitle: 'How are you getting there?',
+  transportPromptBody: 'You’re signed up! Let us know if you need a lift or have spare seats.',
+  goingOwnWay: 'Going on my own',
 };

@@ -39,6 +39,8 @@ export default {
   driverHere: '司机位置',
   updated: '更新于 {when}',
   openMap: '在地图中打开',
+  addToCalendar: '加入日历',
+  staleLocation: '定位可能因网络延迟（最后信号：{when}）',
   bringTitle: '带访客同行',
   bringDesc: '为非会员朋友预约接送。对方会收到只适用于这次行程的链接。',
   bringConsent: '请先征得访客同意，教会才可使用其姓名、电话和上车地址安排这次接送，然后再添加。',

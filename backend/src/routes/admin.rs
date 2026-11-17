@@ -336,7 +336,12 @@ async fn update_user(
     Path(id): Path<i64>,
     Json(req): Json<UserUpdate>,
 ) -> AppResult<Json<Value>> {
-    require(&u, Page::AdminMembers, Act::Update)?;
+    // Somebody in the chain of command may appoint the level below without holding the
+    // members page (Finance appoints Audit), but only for a change that moves chain
+    // roles and nothing else. That is decided below, once the member's roles are known.
+    if perms::rank_of(&u.roles).is_none() {
+        require(&u, Page::AdminMembers, Act::Update)?;
+    }
     if !matches!(req.status.as_str(), "active" | "disabled") {
         return Err(bad(u.lang, ErrorKey::InvalidStatus));
     }
@@ -387,10 +392,39 @@ async fn update_user(
     {
         return Err(bad(u.lang, ErrorKey::LastSuperadmin));
     }
-    if roles_changed {
-        // Giving or taking a role decides what a member may do, which is the same
-        // authority as editing the roles themselves.
+    // Chain of command (see `perms::RANKED_ROLES`). Read the caller's roles under the
+    // lock rather than trusting `u`, which was loaded before it.
+    let (caller_raw,): (String,) = sqlx::query_as("SELECT roles FROM users WHERE id=$1")
+        .bind(u.id)
+        .fetch_one(&mut *tx)
+        .await?;
+    let caller_roles = parse_roles(&caller_raw);
+    let caller_super = perms::is_superadmin(&caller_roles);
+    // Permissions. A change that only moves chain-of-command roles, or disables or
+    // re-enables somebody the caller outranks, is authorised by rank alone (the checks
+    // above and below decide which ones): Finance appoints and commands Audit without
+    // holding the members or roles pages. Anything else needs the pages' permissions.
+    let chain_only = new_roles
+        .iter()
+        .filter(|r| !old_parsed.contains(r))
+        .chain(old_parsed.iter().filter(|r| !new_roles.contains(r)))
+        .all(|r| perms::role_rank(r).is_some() && r != perms::SUPERADMIN_ROLE);
+    let commands_ranked = id != u.id
+        && perms::rank_of(&old_parsed).is_some()
+        && perms::outranks(&caller_roles, &old_parsed);
+    let by_rank = perms::rank_of(&caller_roles).is_some()
+        && req.group_ids.is_none()
+        && (!roles_changed || chain_only)
+        && (req.status == old_status || commands_ranked);
+    if !by_rank {
+        require(&u, Page::AdminMembers, Act::Update)?;
+    }
+    if roles_changed && !chain_only {
+        // Giving or taking any other role decides what a member may do, which is the
+        // same authority as editing the roles themselves.
         require(&u, Page::AdminRoles, Act::Update)?;
+    }
+    if roles_changed {
         let (known,): (i64,) = sqlx::query_as("SELECT COUNT(*) FROM roles WHERE key = ANY($1)")
             .bind(&new_roles)
             .fetch_one(&mut *tx)
@@ -418,6 +452,68 @@ async fn update_user(
                 return Err(forbidden(u.lang, ErrorKey::CannotGrantSelfFinance));
             }
         }
+    }
+    // Chain of command (see `perms::RANKED_ROLES`).
+    // Whoever is ranked can only be disabled, edited or re-assigned by somebody strictly
+    // above them; the super admin may act on any account (peers included, as before).
+    if id != u.id && !caller_super && !perms::outranks(&caller_roles, &old_parsed) {
+        return Err(forbidden(u.lang, ErrorKey::RankTooLow));
+    }
+    if roles_changed {
+        let ranked = |roles: &[String]| -> Vec<String> {
+            roles
+                .iter()
+                .filter(|r| perms::role_rank(r).is_some())
+                .cloned()
+                .collect()
+        };
+        let (old_ranked, new_ranked) = (ranked(&old_parsed), ranked(&new_roles));
+        // Nobody changes their own place in the chain.
+        if id == u.id && !caller_super && old_ranked != new_ranked {
+            return Err(forbidden(u.lang, ErrorKey::RankTooLow));
+        }
+        // Appointing is one level at a time; taking a role away is a command over
+        // everything below. The super admin role itself is handled above.
+        for role in new_ranked.iter().filter(|r| !old_ranked.contains(r)) {
+            if role != perms::SUPERADMIN_ROLE && !perms::can_appoint(&caller_roles, role) {
+                return Err(forbidden(u.lang, ErrorKey::AppointNextLevelOnly));
+            }
+        }
+        for role in old_ranked.iter().filter(|r| !new_ranked.contains(r)) {
+            if role != perms::SUPERADMIN_ROLE
+                && !caller_super
+                && !perms::outranks_role(&caller_roles, role)
+            {
+                return Err(forbidden(u.lang, ErrorKey::RankTooLow));
+            }
+        }
+        // A role that carries the power to manage members or roles makes its holder an
+        // administrator in all but name, so it is handed out like the admin role.
+        let added: Vec<String> = new_roles
+            .iter()
+            .filter(|r| !old_parsed.contains(r))
+            .cloned()
+            .collect();
+        if !added.is_empty() && !perms::can_manage_admins(&caller_roles) {
+            let (power,): (i64,) = sqlx::query_as(
+                "SELECT COUNT(*) FROM role_permissions WHERE role_key = ANY($1) AND permission = ANY($2)",
+            )
+            .bind(&added)
+            .bind(perms::admin_power_keys())
+            .fetch_one(&mut *tx)
+            .await?;
+            if power > 0 {
+                return Err(forbidden(u.lang, ErrorKey::AdminAppointmentRestricted));
+            }
+        }
+    }
+    // Disabling or re-enabling an administrator is as much a demotion as removing the
+    // role, so it needs the same standing.
+    if req.status != old_status
+        && old_parsed.iter().any(|r| r == perms::ADMIN_ROLE)
+        && !perms::can_manage_admins(&caller_roles)
+    {
+        return Err(forbidden(u.lang, ErrorKey::AdminAppointmentRestricted));
     }
     // Appointing or demoting an administrator is reserved for the super admin,
     // President and Vice-President. Other staff may hold admin tools without that power.

@@ -40,6 +40,8 @@ export default {
   driverHere: 'Driver’s location',
   updated: 'Updated {when}',
   openMap: 'Open in maps',
+  addToCalendar: 'Add to calendar',
+  staleLocation: 'Location may be delayed (last signal {when})',
   // Inviting a visitor (event page)
   bringTitle: 'Bringing a visitor',
   bringDesc: 'Book a ride for a friend who isn’t a member. They get a link that works for this trip only.',

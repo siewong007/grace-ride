@@ -108,4 +108,7 @@ export default {
   bookedBy: 'Booked by {name}',
   callRider: 'Call rider ({name})',
   callBooker: 'Call booker ({name})',
+  nextStopActive: 'Active pickup',
+  nextStopSoon: 'Up next',
+  openRideDetail: 'Trip details & chat',
 };

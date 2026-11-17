@@ -25,6 +25,7 @@ import {
   KeyValue,
   KeyValueItem,
   Modal,
+  Notice,
   Page,
   PageHeader,
   Pill,
@@ -74,6 +75,7 @@ export default function EventDetail() {
   const [showScanModal, setShowScanModal] = useState(false);
   const [joinAs, setJoinAs] = useState<number | null>(null);
   const [joinAsMissing, setJoinAsMissing] = useState(false);
+  const [showTransportPrompt, setShowTransportPrompt] = useState(false);
   const { data: signups, reload: reloadS } = useApi<Signup[]>(id ? `/events/${id}/signups` : null);
 
   if (error) return <ErrorBox error={error} />;
@@ -102,6 +104,7 @@ export default function EventDetail() {
     }
     run(async () => {
       await post(`/events/${e.id}/signup`, mustChoose ? { as_group_id: joinAs } : {});
+      setShowTransportPrompt(true);
       reload();
     }, t('signedUpSuccess'));
   };
@@ -299,6 +302,30 @@ export default function EventDetail() {
                 >
                   {isFull ? t('joinWaitlist') : t('signUp')}
                 </Button>
+              )}
+
+              {open && showTransportPrompt && going && !e.my_ride && (
+                <Notice tone="info" className="stack-sm">
+                  <div>
+                    <strong>{t('transportPromptTitle')}</strong>
+                    <div className="small muted">{t('transportPromptBody')}</div>
+                  </div>
+                  <div className="btn-row">
+                    {can('rides', 'create') && (
+                      <Button variant="primary" size="sm" to={`/rides/new?event=${e.id}`} icon={<CarFront size={16} />}>
+                        {t('needRide')}
+                      </Button>
+                    )}
+                    {can('drive', 'create') && (
+                      <Button variant="secondary" size="sm" to="/drive">
+                        {t('offerDrive')}
+                      </Button>
+                    )}
+                    <Button variant="ghost" size="sm" onClick={() => setShowTransportPrompt(false)}>
+                      {t('goingOwnWay')}
+                    </Button>
+                  </div>
+                </Notice>
               )}
 
               {open && signed && (

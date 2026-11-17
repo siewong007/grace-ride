@@ -31,4 +31,10 @@ export default {
   imReady: 'I’m ready',
   runningLate: 'Running late',
   cantMakeIt: 'Can’t make it today',
+  comfortTitle: 'Prefer larger text?',
+  comfortBody: 'You can make words bigger on this device anytime.',
+  comfortLarge: 'Large text',
+  comfortXlarge: 'Extra-large text',
+  comfortKeep: 'Keep standard',
+  offlineSnapshot: 'Offline — showing your saved trip details from {when}.',
 };

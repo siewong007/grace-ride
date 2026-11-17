@@ -22,7 +22,9 @@ import {
   Page,
   PageHeader,
   useAction,
+  useToast,
 } from '../components/ui';
+import type { Ride } from '../components/RideCard';
 import { todayStr } from '../format';
 import { useTranslation } from 'react-i18next';
 import { AddressInput } from '../components/AddressInput';
@@ -51,6 +53,8 @@ export default function RideNew() {
     eventId ? `/events/${eventId}` : null,
   );
   const { data: frequentRiders } = useApi<ProxyRider[]>('/proxy-riders');
+  const { data: recentRides } = useApi<Ride[]>('/rides');
+  const toast = useToast();
 
   const [isProxy, setIsProxy] = useState(false);
   const [riderName, setRiderName] = useState('');
@@ -111,6 +115,27 @@ export default function RideNew() {
     setRiderPhone(fr.phone);
     if (fr.relationship) setRiderRelationship(fr.relationship);
     if (fr.notes && !notes) setNotes(fr.notes);
+  };
+
+  const lastOwnRide = (recentRides ?? []).find((r) => !r.is_proxy && r.area?.id);
+  const quickDestList = Array.from(
+    new Set(
+      [
+        t('churchDest'),
+        ...(recentRides ?? []).map((r) => r.destination?.trim()).filter((d): d is string => Boolean(d)),
+      ],
+    ),
+  ).slice(0, 3);
+
+  const applyLastPickup = () => {
+    if (!lastOwnRide) return;
+    setArea(String(lastOwnRide.area.id));
+    setErrors((cur) => ({ ...cur, area: '' }));
+    if (lastOwnRide.pickup_address) {
+      setAddress(lastOwnRide.pickup_address);
+      setErrors((cur) => ({ ...cur, address: '' }));
+    }
+    toast(t('lastPickupApplied'));
   };
 
   const submit = (e: FormEvent) => {
@@ -379,7 +404,18 @@ export default function RideNew() {
 
           {/* Section 2: Where */}
           <section className="form-section stack">
-            <h3>{t('whereSection')}</h3>
+            <div className="row between wrap gap-xs">
+              <h3>{t('whereSection')}</h3>
+              {!isProxy && lastOwnRide && (
+                <button
+                  type="button"
+                  className="chip"
+                  onClick={applyLastPickup}
+                >
+                  {t('useLastPickup', { area: lastOwnRide.area.name })}
+                </button>
+              )}
+            </div>
             <div className="form-grid two">
               <div className="full">
                 <Field label={t('area')} hint={t('areaHint')}>
@@ -445,6 +481,23 @@ export default function RideNew() {
                   placeholder={t('destinationPlaceholder')}
                   invalid={touched.destination && !!errors.destination}
                 />
+                {!event && quickDestList.length > 0 && (
+                  <div className="chips" role="group" aria-label={t('quickDestinations')}>
+                    {quickDestList.map((d) => (
+                      <button
+                        key={d}
+                        type="button"
+                        className={`chip ${destination === d ? 'active' : ''}`}
+                        onClick={() => {
+                          setDestination(d);
+                          setErrors((c) => ({ ...c, destination: '' }));
+                        }}
+                      >
+                        {d}
+                      </button>
+                    ))}
+                  </div>
+                )}
                 {touched.destination && errors.destination && (
                   <div className="field-error-msg" role="alert">{errors.destination}</div>
                 )}

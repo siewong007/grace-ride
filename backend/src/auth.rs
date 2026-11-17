@@ -158,7 +158,9 @@ impl FromRequestParts<AppState> for CurrentUser {
             } else {
                 mfa_ok == 1 || state.cfg.dev_mode
             },
-            lang: Lang::from_code(&lang),
+            lang: accept_lang_hdr
+                .map(Lang::from_accept_language)
+                .unwrap_or_else(|| Lang::from_code(&lang)),
             session_id,
             group_scope,
             drive_scope,

@@ -53,4 +53,10 @@ export default {
   noRides: 'No ride requests for this event yet.',
   noDrivers: 'No active drivers with a vehicle.',
   unsaved: 'You have changes that are not sent yet.',
+  filterAll: 'All ({count})',
+  filterUnassigned: 'Unassigned ({count})',
+  filterAssistance: 'Needs assistance ({count})',
+  undoStep: 'Undo last move',
+  chooseDriverSheet: 'Choose driver for {name}',
+  filterEmpty: 'No passengers match this filter.',
 };

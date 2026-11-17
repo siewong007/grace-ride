@@ -31,4 +31,10 @@ export default {
   imReady: '我准备好了',
   runningLate: '会晚一点',
   cantMakeIt: '今天去不了',
+  comfortTitle: '需要把字调大一点吗？',
+  comfortBody: '您可以随时在这部设备上放大字体，阅读更轻松。',
+  comfortLarge: '大字',
+  comfortXlarge: '特大字',
+  comfortKeep: '保持标准',
+  offlineSnapshot: '目前离线——显示 {when} 保存的今日行程资料。',
 };

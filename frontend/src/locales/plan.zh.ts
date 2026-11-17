@@ -53,4 +53,10 @@ export default {
   noRides: '此活动尚未有接送申请。',
   noDrivers: '没有已登记车辆的活跃司机。',
   unsaved: '您有尚未发送的更改。',
+  filterAll: '全部（{count}）',
+  filterUnassigned: '待安排（{count}）',
+  filterAssistance: '需协助（{count}）',
+  undoStep: '撤销上一步',
+  chooseDriverSheet: '为 {name} 选择司机',
+  filterEmpty: '没有符合此筛选条件的乘客。',
 };

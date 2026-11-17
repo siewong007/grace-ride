@@ -4,6 +4,7 @@ import { Fingerprint } from 'lucide-react';
 import { post, useApi } from '../api';
 import { useAuth } from '../auth';
 import { LogoMark, Wordmark } from '../components/Brand';
+import { PublicDisplayBar } from '../components/AppChrome';
 import { TermsOptIn, TermsText } from '../components/Terms';
 import { Button, ErrorBox, Field, Spinner, useAction } from '../components/ui';
 import { passkeySupported, registerPasskey } from '../webauthn';
@@ -94,9 +95,12 @@ export default function Invite() {
   return (
     <div className="auth-page">
       <div className="card auth-card stack">
-        <div className="row nowrap auth-brand">
-          <LogoMark size={36} />
-          <Wordmark />
+        <div className="row between auth-header-row">
+          <div className="row nowrap auth-brand">
+            <LogoMark size={36} />
+            <Wordmark />
+          </div>
+          <PublicDisplayBar />
         </div>
 
         {/* 3-step progress stepper */}

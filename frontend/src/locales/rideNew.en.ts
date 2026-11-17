@@ -52,4 +52,10 @@ export default {
   riderPhonePlaceholder: 'E.g. 012-3456789 (leave blank if none)',
   riderPhoneHint: 'Leave blank if senior has no phone; driver will contact you directly',
   saveFrequentRider: 'Save to frequent riders for 1-tap booking next time',
+  useLastPickup: 'Use last pickup ({area})',
+  lastPickupApplied: 'Filled from your last ride',
+  quickDestinations: 'Quick destinations',
+  churchDest: 'PJ State CMC',
+  addressSearching: 'Looking up map suggestions…',
+  addressNoMatch: 'No map pin found — you can still submit this address as typed.',
 };

@@ -4,12 +4,15 @@
 import { useEffect, useState } from 'react';
 import { useParams } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
-import { Car, Clock, MapPin, Phone, UserRound } from 'lucide-react';
+import { Calendar, Car, Clock, MapPin, Phone, UserRound } from 'lucide-react';
 import { post, useApi } from '../api';
+import { downloadIcs } from '../calendar';
+import { PublicDisplayBar } from '../components/AppChrome';
 import { LogoMark, Wordmark } from '../components/Brand';
 import CantMakeItModal from '../components/CantMakeIt';
+import LiveMap from '../components/LiveMap';
 import { Button, ErrorBox, Notice, Spinner, useAction } from '../components/ui';
-import { fmtAgo, fmtDateTime, useFormatT } from '../format';
+import { fmtAgo, fmtDateTime, parseLocal, useFormatT } from '../format';
 
 interface EventBrief {
   title: string;
@@ -48,9 +51,12 @@ function Shell({ children }: { children: React.ReactNode }) {
   return (
     <div className="auth-page">
       <div className="card auth-card stack visit-card">
-        <div className="row nowrap auth-brand">
-          <LogoMark size={32} />
-          <Wordmark />
+        <div className="row between auth-header-row">
+          <div className="row nowrap auth-brand">
+            <LogoMark size={32} />
+            <Wordmark />
+          </div>
+          <PublicDisplayBar />
         </div>
         {children}
       </div>
@@ -92,6 +98,24 @@ export default function Visit() {
           <h1 className="visit-title">{t('notYetTitle', { when: fmtDateTime(p.opens_at, ft) })}</h1>
           <p className="muted">{eventLine}</p>
           <p>{t('notYetBody')}</p>
+          <Button
+            variant="secondary"
+            block
+            icon={<Calendar size={18} />}
+            onClick={() =>
+              downloadIcs(
+                {
+                  title: p.event.title,
+                  description: `${t('openTitle', { host: p.host })}\n${typeof window !== 'undefined' ? window.location.href : ''}`,
+                  location: p.event.location,
+                  startsAt: p.event.starts_at,
+                },
+                `${p.event.title}.ics`,
+              )
+            }
+          >
+            {t('addToCalendar')}
+          </Button>
         </>
       )}
       {p.state === 'used' && (
@@ -172,7 +196,7 @@ function RideView({ onEnded }: { onEnded: () => void }) {
         </a>
       )}
 
-      {r.status === 'in_progress' && <DriverSpot />}
+      {r.status === 'in_progress' && !aboard && <DriverSpot driverName={d?.name} />}
 
       {canRespond && (
         <div className="stack-sm">
@@ -204,7 +228,7 @@ function RideView({ onEnded }: { onEnded: () => void }) {
 }
 
 /** The driver's last known position while the ride is under way. */
-function DriverSpot() {
+function DriverSpot({ driverName }: { driverName?: string }) {
   const { t } = useTranslation('visit');
   const ft = useFormatT();
   const { data, reload } = useApi<{ sharing: boolean; lat?: number; lng?: number; updated_at?: string }>('/visit/me/location');
@@ -213,12 +237,33 @@ function DriverSpot() {
     return () => clearInterval(id);
   }, [reload]);
   if (!data?.sharing || data.lat == null || data.lng == null) return null;
+  const ageLabel = data.updated_at ? fmtAgo(data.updated_at, ft) : '';
+  const isStale = data.updated_at ? Date.now() - parseLocal(data.updated_at).getTime() > 5 * 60_000 : false;
+
   return (
-    <p className="row between small visit-spot">
-      <span>{t('driverHere')} · {t('updated', { when: fmtAgo(data.updated_at!, ft) })}</span>
-      <a href={`https://www.google.com/maps/search/?api=1&query=${data.lat},${data.lng}`} target="_blank" rel="noopener noreferrer">
-        {t('openMap')}
-      </a>
-    </p>
+    <div className="stack-xs visit-spot-wrap">
+      {isStale && ageLabel && (
+        <Notice tone="warning">
+          <span>{t('staleLocation', { when: ageLabel })}</span>
+        </Notice>
+      )}
+      <LiveMap
+        points={[
+          {
+            id: 'driver',
+            lat: data.lat,
+            lng: data.lng,
+            label: driverName ?? t('driver'),
+            detail: ageLabel ? t('updated', { when: ageLabel }) : undefined,
+          },
+        ]}
+      />
+      <p className="row between small visit-spot">
+        <span>{t('driverHere')}{ageLabel ? ` · ${t('updated', { when: ageLabel })}` : ''}</span>
+        <a href={`https://www.google.com/maps/search/?api=1&query=${data.lat},${data.lng}`} target="_blank" rel="noopener noreferrer">
+          {t('openMap')}
+        </a>
+      </p>
+    </div>
   );
 }

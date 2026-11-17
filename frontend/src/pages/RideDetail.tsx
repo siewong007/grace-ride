@@ -67,6 +67,7 @@ import {
 } from '../format';
 import { Trans, useTranslation } from 'react-i18next';
 import CantMakeItModal from '../components/CantMakeIt';
+import { loadTodayRideById, saveTodayRidesSnapshot } from '../offlineSnapshot';
 import type { TFunction } from 'i18next';
 
 export default function RideDetail() {
@@ -75,11 +76,31 @@ export default function RideDetail() {
   const ft = useFormatT();
   const { id } = useParams();
   const chatRef = useRef<HTMLDivElement>(null);
-  const { data: r, error, reload } = useApi<Ride>(`/rides/${id}`, 15000);
+  const { data: liveRide, error, reload } = useApi<Ride>(`/rides/${id}`, 15000);
   const auth = useAuth();
   const canAct = auth?.can ?? (() => true);
+  const [staleRefreshed, setStaleRefreshed] = useState(false);
 
-  if (error) return <ErrorBox error={error} />;
+  useEffect(() => {
+    if (auth?.me?.id && liveRide && String(liveRide.id) === id) {
+      saveTodayRidesSnapshot(auth.me.id, [liveRide]);
+    }
+  }, [auth?.me?.id, liveRide, id]);
+
+  useEffect(() => {
+    const onStale = () => {
+      setStaleRefreshed(true);
+      void reload();
+    };
+    window.addEventListener('gr:ride-stale', onStale);
+    return () => window.removeEventListener('gr:ride-stale', onStale);
+  }, [reload]);
+
+  const offlineFallback =
+    !liveRide && error && auth?.me?.id && id ? loadTodayRideById(auth.me.id, Number(id)) : null;
+  const r = liveRide ?? offlineFallback?.ride ?? null;
+
+  if (error && !offlineFallback) return <ErrorBox error={error} />;
   // Never act on a ride other than the one in the URL, even for a moment.
   if (!r || String(r.id) !== id) return <Spinner />;
 
@@ -110,6 +131,18 @@ export default function RideDetail() {
           back={loc.pathname.startsWith('/admin/') ? '/admin/rides' : '/rides'}
           actions={<StatusPill map={r.viewer.is_passenger ? RIDE_STATUS_PASSENGER : RIDE_STATUS} status={r.status} />}
         />
+
+        {offlineFallback && (
+          <Notice tone="warning">
+            <span>{t('offlineSnapshot', { when: fmtAgo(offlineFallback.savedAt, ft) })}</span>
+          </Notice>
+        )}
+
+        {staleRefreshed && (
+          <Notice tone="info">
+            <span>{t('staleRefreshed')}</span>
+          </Notice>
+        )}
 
         {r.needs_attention && r.attention_reason && (
           <Notice tone="warning" icon={<AlertTriangle size={18} />}>
@@ -151,9 +184,12 @@ export default function RideDetail() {
 
           {/* Right Column: Chat, Help */}
           <div className="stack">
-            {chatVisible && (
+            {chatVisible && !offlineFallback && (
               <div ref={chatRef}>
-                <Chat rideId={r.id} />
+                <Chat
+                  rideId={r.id}
+                  role={r.viewer.is_driver ? 'driver' : r.viewer.is_passenger ? 'passenger' : 'staff'}
+                />
               </div>
             )}
             {(r.viewer.is_passenger || r.viewer.is_driver) && (

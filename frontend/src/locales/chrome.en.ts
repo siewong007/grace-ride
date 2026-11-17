@@ -19,4 +19,6 @@ export default {
   zh: '中文',
   en: 'English',
   preview: 'Preview: Tue 8:30 AM · North gate',
+  quickTextSize: 'Text size ({size})',
+  switchLang: 'Switch language',
 };

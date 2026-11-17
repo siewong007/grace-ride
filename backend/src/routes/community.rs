@@ -1819,6 +1819,12 @@ struct ReportQuery {
     r#type: Option<String>,
     /// "monthly" | "quarterly" | "yearly" — report period granularity (default: monthly)
     range: Option<String>,
+    lang: Option<String>,
+}
+
+#[derive(Deserialize)]
+struct BadgeQuery {
+    lang: Option<String>,
 }
 
 /// Parse `YYYY-MM` without slicing by byte offset: a 7-byte non-ASCII string used
@@ -1883,37 +1889,34 @@ pub async fn compute_badges(st: &AppState, user_id: i64, lang: Lang) -> AppResul
     let defs = [
         (
             "night",
-            t(lang, "宵", "N"),
-            t(lang, "宵夜王", "Night Owl"),
-            t(
-                lang,
-                "完成 3 次或以上晚上 9 点后的接送",
-                "Complete 3 or more rides after 9 pm",
-            ),
+            "宵",
+            "N",
+            "宵夜王",
+            "Night Owl",
+            "完成 3 次或以上晚上 9 点后的接送",
+            "Complete 3 or more rides after 9 pm",
             night,
             3,
         ),
         (
             "regular",
-            t(lang, "勤", "R"),
-            t(lang, "常驻司机", "Resident Driver"),
-            t(
-                lang,
-                "过去 6 个月中至少 3 个月有完成接送",
-                "Completed rides in at least 3 of the past 6 months",
-            ),
+            "勤",
+            "R",
+            "常驻司机",
+            "Resident Driver",
+            "过去 6 个月中至少 3 个月有完成接送",
+            "Completed rides in at least 3 of the past 6 months",
             months,
             3,
         ),
         (
             "carpool",
-            t(lang, "爱", "C"),
-            t(lang, "爱心同行者", "Caring Companion"),
-            t(
-                lang,
-                "开启共乘并完成 2 趟或以上多人同车接送",
-                "Enable carpool and complete 2 or more rides with multiple passengers",
-            ),
+            "爱",
+            "C",
+            "爱心同行者",
+            "Caring Companion",
+            "开启共乘并完成 2 趟或以上多人同车接送",
+            "Enable carpool and complete 2 or more rides with multiple passengers",
             if carpool == 1 { shared } else { 0 },
             2,
         ),
@@ -1921,12 +1924,38 @@ pub async fn compute_badges(st: &AppState, user_id: i64, lang: Lang) -> AppResul
     let _ = total;
     Ok(defs
         .iter()
-        .map(|(key, ch, name, rule, have, need)| json!({"key": key, "char": ch, "name": name, "rule": rule, "progress": have, "target": need, "earned": have >= need}))
+        .map(
+            |(key, ch_zh, ch_en, name_zh, name_en, rule_zh, rule_en, have, need)| {
+                let ch = t(lang, ch_zh, ch_en);
+                let name = t(lang, name_zh, name_en);
+                let rule = t(lang, rule_zh, rule_en);
+                json!({
+                    "key": key,
+                    "char": ch,
+                    "name": name,
+                    "rule": rule,
+                    "char_zh": ch_zh,
+                    "char_en": ch_en,
+                    "name_zh": name_zh,
+                    "name_en": name_en,
+                    "rule_zh": rule_zh,
+                    "rule_en": rule_en,
+                    "progress": have,
+                    "target": need,
+                    "earned": have >= need,
+                })
+            },
+        )
         .collect())
 }
 
-async fn my_badges(State(st): State<AppState>, u: CurrentUser) -> AppResult<Json<Value>> {
-    Ok(Json(json!(compute_badges(&st, u.id, u.lang).await?)))
+async fn my_badges(
+    State(st): State<AppState>,
+    u: CurrentUser,
+    Query(q): Query<BadgeQuery>,
+) -> AppResult<Json<Value>> {
+    let lang = q.lang.as_deref().map(Lang::from_code).unwrap_or(u.lang);
+    Ok(Json(json!(compute_badges(&st, u.id, lang).await?)))
 }
 
 /// 个人月报 — only the member themself or an admin (获授权人员) may view.
@@ -1942,6 +1971,7 @@ async fn monthly_report(
     } else {
         require(&u, Page::Report, Act::View)?;
     }
+    let report_lang = q.lang.as_deref().map(Lang::from_code).unwrap_or(u.lang);
     let rtype = q.r#type.as_deref().unwrap_or("all");
     let range = q.range.as_deref().unwrap_or("monthly");
     let month = q.month.unwrap_or_else(|| now()[..7].to_string());
@@ -2064,6 +2094,6 @@ async fn monthly_report(
         "by_kind": attended.into_iter().map(|(k, n)| json!({"kind": k, "count": n})).collect::<Vec<_>>(),
         "events": events.into_iter().map(|(id, t, k, at)| json!({"id": id, "title": t, "kind": k, "starts_at": at})).collect::<Vec<_>>(),
         "costs_paid_cents": paid,
-        "badges": compute_badges(&st, target, u.lang).await?,
+        "badges": compute_badges(&st, target, report_lang).await?,
     })))
 }

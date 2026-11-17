@@ -6,6 +6,7 @@ import { useAuth } from '../auth';
 import { post } from '../api';
 import { Avatar, Button } from './ui';
 import { passkeySupported, reauthWithPasskey } from '../webauthn';
+import { clearOfflineSnapshots } from '../offlineSnapshot';
 
 interface AutoLockCtx {
   isLocked: boolean;
@@ -71,6 +72,7 @@ export function AutoLockProvider({ children }: { children: ReactNode }) {
 
   const lock = useCallback(() => {
     if (meIdRef.current) writeStore(LOCKED_KEY, meIdRef.current);
+    clearOfflineSnapshots();
     setIsLocked(true);
   }, []);
 

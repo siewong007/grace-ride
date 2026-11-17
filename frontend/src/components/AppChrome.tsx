@@ -180,3 +180,45 @@ export function DisplayPreferences() {
     </div>
   );
 }
+
+/**
+ * Compact 2-button bar for public/onboarding screens (Login, Invite, Visit):
+ * 1-tap text-size cycle (Standard -> Large -> Extra large) + Language toggle.
+ */
+export function PublicDisplayBar() {
+  const { t, i18n: i18nInstance } = useTranslation('chrome');
+  const [p, setP] = useState<Prefs>(loadPrefs);
+  const currentLang: SupportedLanguage = i18nInstance?.language?.startsWith('zh') ? 'zh' : 'en';
+
+  const cycleTextSize = () => {
+    const order: TextSize[] = ['normal', 'large', 'xlarge'];
+    const nextSize = order[(order.indexOf(p.textSize) + 1) % order.length];
+    const next = { ...p, textSize: nextSize };
+    setP(next);
+    savePrefs(next);
+  };
+
+  const sizeBadge = p.textSize === 'xlarge' ? 'Aa++' : p.textSize === 'large' ? 'Aa+' : 'Aa';
+
+  return (
+    <div className="row nowrap public-display-bar">
+      <button
+        type="button"
+        className="btn sm ghost text-size-toggle"
+        aria-label={t('quickTextSize', { size: t(p.textSize) })}
+        onClick={cycleTextSize}
+      >
+        <span aria-hidden="true">{sizeBadge}</span>
+      </button>
+      <button
+        type="button"
+        className="btn sm ghost lang-toggle"
+        aria-label={t('switchLang')}
+        onClick={() => setLanguage(currentLang === 'zh' ? 'en' : 'zh')}
+      >
+        <Globe size={16} aria-hidden="true" />
+        <span>{currentLang === 'zh' ? t('en') : t('zh')}</span>
+      </button>
+    </div>
+  );
+}

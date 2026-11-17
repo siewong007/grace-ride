@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import i18n from './i18n';
+import { clearOfflineSnapshots } from './offlineSnapshot';
 
 const ERROR_GROUPS = ['common', 'admin', 'auth', 'events', 'rides', 'settlements', 'community', 'files'] as const
 
@@ -49,7 +50,13 @@ export async function api<T = unknown>(path: string, opts: { method?: string; bo
   if (!res.ok) {
     // A visitor's page has no member session; its 401 must not send anyone to sign-in.
     if (res.status === 401 && !path.startsWith('/auth/') && !path.startsWith('/visit/')) window.dispatchEvent(new Event('gr:unauthorized'));
+    if (data?.code === 'RIDE_STATUS_CHANGED' && typeof window !== 'undefined') {
+      window.dispatchEvent(new Event('gr:ride-stale'));
+    }
     throw new ApiError(res.status, apiMessage(data, 'network'), data?.code);
+  }
+  if (path.startsWith('/auth/logout')) {
+    clearOfflineSnapshots();
   }
   return data as T;
 }
@@ -68,20 +75,36 @@ export async function uploadFile(file: File): Promise<{ id: number; mime: string
 }
 
 /** One shared server-sent-events connection per tab. Polling stays as the
- *  fallback; events only make changes appear without waiting for the next tick. */
+ *  fallback; events only make changes appear without waiting for the next tick.
+ *  While SSE is open and healthy, fallback polling relaxes 4x. */
 const listeners = new Set<(kind: string) => void>();
 let stream: EventSource | null = null;
+let streamOpen = false;
+
+export function isStreamConnected(): boolean {
+  return streamOpen;
+}
 
 function openStream() {
   if (stream || document.visibilityState === 'hidden') return;
   const es = new EventSource('/api/stream');
-  es.onmessage = (e) => listeners.forEach((fn) => fn(e.data));
+  es.onopen = () => {
+    streamOpen = true;
+  };
+  es.onerror = () => {
+    streamOpen = false;
+  };
+  es.onmessage = (e) => {
+    streamOpen = true;
+    listeners.forEach((fn) => fn(e.data));
+  };
   stream = es;
 }
 
 function closeStream() {
   stream?.close();
   stream = null;
+  streamOpen = false;
 }
 
 export function subscribe(fn: (kind: string) => void) {
@@ -113,9 +136,13 @@ export function useApi<T>(path: string | null, pollMs?: number) {
   const [data, setData] = useState<T | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(Boolean(path));
+  const [refreshing, setRefreshing] = useState(false);
   const pathRef = useRef(path);
+  const prevBaseRef = useRef<string | null>(path ? path.split('?')[0] : null);
+  const hasDataRef = useRef(false);
   const requestId = useRef(0);
   pathRef.current = path;
+  hasDataRef.current = data !== null;
 
   const reload = useCallback(async () => {
     const currentRequest = ++requestId.current;
@@ -124,8 +151,10 @@ export function useApi<T>(path: string | null, pollMs?: number) {
       requestId.current === currentRequest && pathRef.current === requestPath;
     if (!requestPath) {
       setLoading(false);
+      setRefreshing(false);
       return;
     }
+    if (hasDataRef.current) setRefreshing(true);
     try {
       const d = await api<T>(requestPath);
       if (isCurrent()) {
@@ -135,7 +164,10 @@ export function useApi<T>(path: string | null, pollMs?: number) {
     } catch (e) {
       if (isCurrent()) setError((e as Error).message);
     } finally {
-      if (isCurrent()) setLoading(false);
+      if (isCurrent()) {
+        setLoading(false);
+        setRefreshing(false);
+      }
     }
   }, []);
 
@@ -143,17 +175,28 @@ export function useApi<T>(path: string | null, pollMs?: number) {
     const requests = requestId;
     if (!path) {
       requests.current++;
+      prevBaseRef.current = null;
       setLoading(false);
+      setRefreshing(false);
       setData(null);
       setError(null);
       return;
     }
-    setLoading(true);
-    setData(null);
+    const base = path.split('?')[0];
+    const sameEndpoint = prevBaseRef.current === base && hasDataRef.current;
+    prevBaseRef.current = base;
+    if (!sameEndpoint) {
+      setLoading(true);
+      setData(null);
+    }
     reload();
     if (!pollMs) return;
+    let skipped = 0;
     const t = setInterval(() => {
-      if (document.visibilityState === 'visible') reload();
+      if (document.visibilityState !== 'visible') return;
+      if (streamOpen && ++skipped < 4) return;
+      skipped = 0;
+      reload();
     }, pollMs);
     const unsub = subscribe(reload);
     return () => {
@@ -163,5 +206,5 @@ export function useApi<T>(path: string | null, pollMs?: number) {
     };
   }, [path, pollMs, reload]);
 
-  return { data, error, loading, reload, setData };
+  return { data, error, loading, refreshing, reload, setData };
 }

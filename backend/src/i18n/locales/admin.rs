@@ -61,6 +61,21 @@ pub fn render(lang: Lang, key: &ErrorKey) -> String {
             "只有超级管理员、会长或副会长可以委任或卸任管理员",
             "Only the super admin, President or Vice-President can appoint or demote an administrator",
         ),
+        ErrorKey::RankTooLow => pair(
+            lang,
+            "只能管理职级低于自己的成员和角色",
+            "You can only manage members and roles ranked below you",
+        ),
+        ErrorKey::CannotGrantUnheldPermission => pair(
+            lang,
+            "不能授予自己不具备的权限",
+            "You can't grant a permission you don't hold yourself",
+        ),
+        ErrorKey::AppointNextLevelOnly => pair(
+            lang,
+            "只能委任比自己低一级的职务",
+            "You can only appoint the level directly below your own",
+        ),
         ErrorKey::PresidentAcknowledgementRequired => pair(
             lang,
             "副会长将普通会员升为管理员前，必须先取得会长确认并勾选确认",

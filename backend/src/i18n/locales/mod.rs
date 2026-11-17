@@ -51,6 +51,9 @@ pub fn render(lang: Lang, key: &ErrorKey) -> String {
         | ErrorKey::SuperadminOnly
         | ErrorKey::LastSuperadmin
         | ErrorKey::AdminAppointmentRestricted
+        | ErrorKey::RankTooLow
+        | ErrorKey::CannotGrantUnheldPermission
+        | ErrorKey::AppointNextLevelOnly
         | ErrorKey::PresidentAcknowledgementRequired
         | ErrorKey::SettingsSuperadminOnly => admin::render(lang, key),
         ErrorKey::InvalidCredentials
@@ -278,6 +281,9 @@ mod tests {
             ErrorKey::SuperadminOnly,
             ErrorKey::LastSuperadmin,
             ErrorKey::AdminAppointmentRestricted,
+            ErrorKey::RankTooLow,
+            ErrorKey::CannotGrantUnheldPermission,
+            ErrorKey::AppointNextLevelOnly,
             ErrorKey::PresidentAcknowledgementRequired,
             ErrorKey::SettingsSuperadminOnly,
             ErrorKey::InvalidCredentials,
