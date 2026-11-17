@@ -113,6 +113,10 @@ describe('Design Tokens & Visual Language (Phase 3)', () => {
     // The browser bar matches the white top bar and splash (minimalist pass).
     expect(indexHtml).toContain('<meta name="theme-color" content="#FFFFFF" />');
     expect(indexHtml).toContain('<div id="splash"');
+    // The splash must follow the theme saved in Settings, not just the device setting.
+    expect(indexHtml).toContain('<script src="/theme-boot.js"></script>');
+    expect(indexHtml.indexOf('/theme-boot.js')).toBeLessThan(indexHtml.indexOf('<div id="splash"'));
+    expect(fs.readFileSync(path.resolve(__dirname, '../public/theme-boot.js'), 'utf-8')).toContain("'gr-prefs'");
 
     const manifest = fs.readFileSync(path.resolve(__dirname, '../public/manifest.webmanifest'), 'utf-8');
     expect(manifest).toContain('"theme_color": "#1F5DB4"');
