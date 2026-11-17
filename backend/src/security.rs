@@ -117,6 +117,10 @@ pub async fn rate_limit(State(st): State<AppState>, req: Request, next: Next) ->
             || path.starts_with("/api/auth/passkey/login")
         {
             Some(("login", 10, 60))
+        } else if path == "/api/auth/totp/verify" || path == "/api/auth/totp/enable" {
+            // A 6-digit code has a million values: guesses are capped per session
+            // (below), so changing address doesn't buy more tries.
+            Some(("totp", 10, 300))
         } else if path == "/api/auth/recovery-request" {
             Some(("recovery", 3, 3600))
         } else if path.starts_with("/api/invites/") {
@@ -134,9 +138,19 @@ pub async fn rate_limit(State(st): State<AppState>, req: Request, next: Next) ->
             .get::<ConnectInfo<SocketAddr>>()
             .map(|c| c.0);
         let ip = client_ip(req.headers(), peer, st.cfg.trust_proxy);
+        // Code checks count per signed-in session; everything else per address.
+        let who = if bucket == "totp" {
+            let jar = CookieJar::from_headers(req.headers());
+            jar.get(SESSION_COOKIE_SECURE)
+                .or_else(|| jar.get(SESSION_COOKIE))
+                .map(|c| hash_token(c.value()))
+                .unwrap_or(ip.clone())
+        } else {
+            ip.clone()
+        };
         if let Err(wait) =
             st.limiter
-                .check(&format!("{bucket}:{ip}"), limit, Duration::from_secs(secs))
+                .check(&format!("{bucket}:{who}"), limit, Duration::from_secs(secs))
         {
             tracing::warn!(bucket, ip, "rate limited");
             let lang = visitor_lang(req.headers());

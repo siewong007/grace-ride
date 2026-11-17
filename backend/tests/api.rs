@@ -2353,3 +2353,64 @@ async fn disaster_recovery_backup_restore_drill() {
     let _ = app;
     let _ = std::fs::remove_dir_all(&backup_dir);
 }
+
+#[tokio::test]
+async fn stream_session_check_sees_sign_out_and_disabling() {
+    let (_app, st) = setup().await;
+    let cookie = login(&st, "member@example.org").await;
+    let token = cookie.split('=').nth(1).unwrap();
+    let session = grace_ride::auth::hash_token(token);
+    assert!(grace_ride::stream::session_alive(&st.db, &session).await);
+
+    sqlx::query("UPDATE users SET status='disabled' WHERE email='member@example.org'")
+        .execute(&st.db)
+        .await
+        .unwrap();
+    assert!(!grace_ride::stream::session_alive(&st.db, &session).await);
+
+    sqlx::query("UPDATE users SET status='active' WHERE email='member@example.org'")
+        .execute(&st.db)
+        .await
+        .unwrap();
+    sqlx::query("DELETE FROM sessions WHERE token=$1")
+        .bind(&session)
+        .execute(&st.db)
+        .await
+        .unwrap();
+    assert!(!grace_ride::stream::session_alive(&st.db, &session).await);
+}
+
+#[tokio::test]
+async fn two_step_code_guesses_are_limited_per_session() {
+    let (app, st) = setup().await;
+    let cookie = login(&st, "member@example.org").await;
+    let mut limited_at = None;
+    for i in 0..12 {
+        let r = call(
+            &app,
+            Method::POST,
+            "/api/auth/totp/verify",
+            Some(&cookie),
+            Some(json!({"code": format!("{:06}", i)})),
+        )
+        .await;
+        if r.status == StatusCode::TOO_MANY_REQUESTS {
+            assert!(r.headers.contains_key(header::RETRY_AFTER));
+            limited_at = Some(i);
+            break;
+        }
+    }
+    assert_eq!(limited_at, Some(10), "the 11th guess should be refused");
+
+    // Another member's session has its own allowance.
+    let other = login(&st, "sophie@example.org").await;
+    let r = call(
+        &app,
+        Method::POST,
+        "/api/auth/totp/verify",
+        Some(&other),
+        Some(json!({"code": "000000"})),
+    )
+    .await;
+    assert_ne!(r.status, StatusCode::TOO_MANY_REQUESTS);
+}

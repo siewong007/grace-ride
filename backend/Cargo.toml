@@ -8,7 +8,7 @@ description = "恩典同行 Grace Ride — invite-only ride & fellowship app for
 axum = { version = "0.8", features = ["multipart", "macros"] }
 axum-extra = { version = "0.10", features = ["cookie"] }
 tokio = { version = "1", features = ["full"] }
-tokio-stream = { version = "0.1", features = ["sync"] }
+tokio-stream = { version = "0.1", features = ["sync", "time"] }
 futures-util = "0.3"
 async-stream = "0.3"
 tower-http = { version = "0.6", features = ["fs", "trace", "limit", "compression-gzip", "compression-br"] }

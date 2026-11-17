@@ -14,7 +14,10 @@ use axum::{
     response::sse::{Event, KeepAlive, Sse},
 };
 use tokio::sync::broadcast;
-use tokio_stream::{wrappers::BroadcastStream, Stream, StreamExt};
+use tokio_stream::{
+    wrappers::{BroadcastStream, IntervalStream},
+    Stream, StreamExt,
+};
 
 use crate::{auth::CurrentUser, state::AppState};
 
@@ -39,16 +42,58 @@ pub fn publish(user_id: i64, kind: &'static str) {
     }
 }
 
+/// How often an open stream checks that its session is still valid.
+const SESSION_CHECK: Duration = Duration::from_secs(60);
+
+enum Tick {
+    Push(Event),
+    /// Result of the periodic session check.
+    Session(bool),
+}
+
+/// Is this session still one the app accepts (not signed out, expired or disabled)?
+pub async fn session_alive(db: &sqlx::PgPool, session_id: &str) -> bool {
+    sqlx::query_scalar::<_, i64>(
+        "SELECT COUNT(*) FROM sessions s JOIN users u ON u.id = s.user_id
+         WHERE s.token = $1 AND s.expires_at > $2 AND u.status IN ('active', 'pending')",
+    )
+    .bind(session_id)
+    .bind(crate::util::now())
+    .fetch_one(db)
+    .await
+    // A database hiccup keeps the stream; only a clear "gone" ends it.
+    .map_or(true, |n| n > 0)
+}
+
 pub async fn handler(
     State(st): State<AppState>,
     u: CurrentUser,
 ) -> Sse<impl Stream<Item = Result<Event, Infallible>>> {
     let uid = u.id;
-    let stream = BroadcastStream::new(st.events.subscribe()).filter_map(move |msg| {
+    let pushes = BroadcastStream::new(st.events.subscribe()).filter_map(move |msg| {
         // A lagged receiver just misses a tick; the next poll catches up.
         let ev = msg.ok()?;
-        (ev.user_id == uid).then(|| Ok(Event::default().data(ev.kind)))
+        (ev.user_id == uid).then(|| Tick::Push(Event::default().data(ev.kind)))
     });
+    // Signing out, a session running out, or an admin disabling the member closes the
+    // stream within a minute instead of leaving it open until the tab closes.
+    let db = st.db.clone();
+    let session_id = u.session_id.clone();
+    let mut checks =
+        tokio::time::interval_at(tokio::time::Instant::now() + SESSION_CHECK, SESSION_CHECK);
+    checks.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+    let checks = IntervalStream::new(checks).then(move |_| {
+        let db = db.clone();
+        let session_id = session_id.clone();
+        async move { Tick::Session(session_alive(&db, &session_id).await) }
+    });
+    let stream = pushes
+        .merge(checks)
+        .take_while(|t| !matches!(t, Tick::Session(false)))
+        .filter_map(|t| match t {
+            Tick::Push(ev) => Some(Ok(ev)),
+            Tick::Session(_) => None,
+        });
     Sse::new(stream).keep_alive(
         KeepAlive::new()
             .interval(Duration::from_secs(15))
