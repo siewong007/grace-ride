@@ -382,7 +382,7 @@ async fn insert_reference_data(db: &PgPool) -> anyhow::Result<()> {
             "Accept an invitation, set up your account and recover access.",
             "member",
             json!([
-                {"title_en":"Accept your invite","title_zh":"接受邀请","body_en":"Open your invitation, register a passkey, sign in and accept the terms.","body_zh":"打开邀请链接、登记通行密钥、登录并接受条款。","link":"/invite/example"},
+                {"title_en":"Accept your invite","title_zh":"接受邀请","body_en":"Open your invitation, register a passkey, sign in and accept the terms.","body_zh":"打开邀请链接、登记通行密钥、登录并接受条款。","link":""},
                 {"title_en":"Set up and recover your account","title_zh":"设置及找回账号","body_en":"Check your profile and language, add a passkey and configure 2FA. If you lose access, request recovery and wait for staff approval.","body_zh":"检查个人资料和语言，添加通行密钥并设置双重验证；若无法登录，请申请找回并等待职员审批。","link":"/me"}
             ]),
         ),
@@ -407,7 +407,7 @@ async fn insert_reference_data(db: &PgPool) -> anyhow::Result<()> {
             "member",
             json!([
                 {"title_en":"Respond and get ready","title_zh":"回应并准备","body_en":"Open your ride to accept or decline the driver and confirm your readiness.","body_zh":"打开行程接受或拒绝司机安排，并确认已准备好。","link":"/rides"},
-                {"title_en":"Coordinate or cancel","title_zh":"联系或取消","body_en":"Share your location when asked, use ride chat for updates and cancel promptly if plans change.","body_zh":"按需要分享位置，用行程聊天更新情况；计划有变时尽早取消。","link":"/rides/:id"}
+                {"title_en":"Coordinate or cancel","title_zh":"联系或取消","body_en":"Share your location when asked, use ride chat for updates and cancel promptly if plans change.","body_zh":"按需要分享位置，用行程聊天更新情况；计划有变时尽早取消。","link":"/rides"}
             ]),
         ),
         (
@@ -419,7 +419,7 @@ async fn insert_reference_data(db: &PgPool) -> anyhow::Result<()> {
             "member",
             json!([
                 {"title_en":"Set up and claim","title_zh":"设置资料并接单","body_en":"Add your vehicle and available seats in Profile, then choose a ride in Drive. Confirm any reassignment before setting off.","body_zh":"在个人资料填写车辆和座位，再到「驾驶」选择行程；重新指派后须先确认。","link":"/drive"},
-                {"title_en":"Complete or withdraw","title_zh":"完成或退出","body_en":"Start the trip, mark pickup and complete it. Report delays, gate issues or no-shows in chat; withdraw early if unable to drive.","body_zh":"开始行程、标记接载并完成；延误、门禁或乘客未到请在聊天说明，无法驾驶时尽早退出。","link":"/rides/:id"}
+                {"title_en":"Complete or withdraw","title_zh":"完成或退出","body_en":"Start the trip, mark pickup and complete it. Report delays, gate issues or no-shows in chat; withdraw early if unable to drive.","body_zh":"开始行程、标记接载并完成；延误、门禁或乘客未到请在聊天说明，无法驾驶时尽早退出。","link":"/drive"}
             ]),
         ),
         (
@@ -431,7 +431,7 @@ async fn insert_reference_data(db: &PgPool) -> anyhow::Result<()> {
             "member",
             json!([
                 {"title_en":"Browse and sign up","title_zh":"浏览并报名","body_en":"Browse upcoming events and open one to sign up or offer to drive.","body_zh":"浏览即将举行的活动，打开活动报名或表示愿意驾驶。","link":"/events"},
-                {"title_en":"Manage your place","title_zh":"管理报名","body_en":"Check signup or waitlist status and withdraw if plans change.","body_zh":"查看报名或候补状态；计划有变时退出活动。","link":"/events/:id"}
+                {"title_en":"Manage your place","title_zh":"管理报名","body_en":"Check signup or waitlist status and withdraw if plans change.","body_zh":"查看报名或候补状态；计划有变时退出活动。","link":"/events"}
             ]),
         ),
         (
@@ -443,7 +443,7 @@ async fn insert_reference_data(db: &PgPool) -> anyhow::Result<()> {
             "member",
             json!([
                 {"title_en":"Create and manage signups","title_zh":"新增活动并管理报名","body_en":"Organisers create or edit events, review signups and driver offers.","body_zh":"活动负责人新增或编辑活动，并查看报名及驾驶意向。","link":"/events/new"},
-                {"title_en":"Record attendance and finish","title_zh":"记录出席并结束","body_en":"Record attendance, manage signups, cancel when needed or mark the event finished.","body_zh":"记录出席、管理报名；需要时取消活动或标记完成。","link":"/events/:id"}
+                {"title_en":"Record attendance and finish","title_zh":"记录出席并结束","body_en":"Record attendance, manage signups, cancel when needed or mark the event finished.","body_zh":"记录出席、管理报名；需要时取消活动或标记完成。","link":"/events"}
             ]),
         ),
         (
@@ -454,7 +454,7 @@ async fn insert_reference_data(db: &PgPool) -> anyhow::Result<()> {
             "Create, publish and close an activity bill.",
             "member",
             json!([
-                {"title_en":"Create the bill","title_zh":"建立账单","body_en":"From an event, list expenses, choose participants and calculate each share.","body_zh":"从活动建立账单、列出费用、选择参与者并计算分摊。","link":"/events/:id/settle"},
+                {"title_en":"Create the bill","title_zh":"建立账单","body_en":"From an event, list expenses, choose participants and calculate each share.","body_zh":"从活动建立账单、列出费用、选择参与者并计算分摊。","link":"/events"},
                 {"title_en":"Publish and close","title_zh":"发布并结账","body_en":"Review and publish the split, verify submitted payments and close the bill when settled.","body_zh":"核对并发布分摊，确认付款资料并在结清后关闭账单。","link":"/settlements"}
             ]),
         ),
@@ -467,7 +467,7 @@ async fn insert_reference_data(db: &PgPool) -> anyhow::Result<()> {
             "member",
             json!([
                 {"title_en":"Review your costs","title_zh":"查看应缴费用","body_en":"Open My costs to see published bills and your amount due.","body_zh":"打开「我的费用」查看已发布账单和应缴金额。","link":"/costs"},
-                {"title_en":"Submit payment proof","title_zh":"提交付款证明","body_en":"Open the bill, upload transfer proof and wait for the organiser to verify it.","body_zh":"打开账单并上传转账证明，等待负责人核实。","link":"/settlements/:id"}
+                {"title_en":"Submit payment proof","title_zh":"提交付款证明","body_en":"Open the bill, upload transfer proof and wait for the organiser to verify it.","body_zh":"打开账单并上传转账证明，等待负责人核实。","link":"/costs"}
             ]),
         ),
         (
@@ -542,7 +542,7 @@ async fn insert_reference_data(db: &PgPool) -> anyhow::Result<()> {
             "member",
             json!([
                 {"title_en":"Open a request","title_zh":"提交求助","body_en":"Describe your question clearly and include the related ride when relevant.","body_zh":"清楚说明问题；若与行程有关，请关联行程。","link":"/help"},
-                {"title_en":"Follow up and close","title_zh":"跟进并结案","body_en":"Reply in the ticket thread and mark it resolved once you have the answer.","body_zh":"在求助对话中回复；问题解决后标记为已解决。","link":"/help/:id"}
+                {"title_en":"Follow up and close","title_zh":"跟进并结案","body_en":"Reply in the ticket thread and mark it resolved once you have the answer.","body_zh":"在求助对话中回复；问题解决后标记为已解决。","link":"/help"}
             ]),
         ),
         (
@@ -577,7 +577,7 @@ async fn insert_reference_data(db: &PgPool) -> anyhow::Result<()> {
             "staff",
             json!([
                 {"title_en":"Review and assign","title_zh":"审核与指派","body_en":"Approve or return requests, assign or reassign drivers and arrange alternative transport when needed.","body_zh":"批准或退回申请，指派或重新指派司机；需要时安排替代交通。","link":"/admin/rides"},
-                {"title_en":"Resolve changes","title_zh":"处理变更","body_en":"Record no-shows and cancellations on the ride detail page.","body_zh":"在行程详情记录乘客未到和取消。","link":"/admin/rides/:id"}
+                {"title_en":"Resolve changes","title_zh":"处理变更","body_en":"Record no-shows and cancellations on the ride detail page.","body_zh":"在行程详情记录乘客未到和取消。","link":"/admin/rides"}
             ]),
         ),
         (
@@ -600,7 +600,7 @@ async fn insert_reference_data(db: &PgPool) -> anyhow::Result<()> {
             "staff",
             json!([
                 {"title_en":"Review events","title_zh":"查看活动","body_en":"With event permissions, review details, signups and attendance across events.","body_zh":"拥有活动权限的职员可查看各活动详情、报名和出席。","link":"/events"},
-                {"title_en":"Edit or finish","title_zh":"编辑或结束","body_en":"Update or cancel an event, record attendance or mark it finished.","body_zh":"更新或取消活动、记录出席或标记完成。","link":"/events/:id"}
+                {"title_en":"Edit or finish","title_zh":"编辑或结束","body_en":"Update or cancel an event, record attendance or mark it finished.","body_zh":"更新或取消活动、记录出席或标记完成。","link":"/events"}
             ]),
         ),
         (

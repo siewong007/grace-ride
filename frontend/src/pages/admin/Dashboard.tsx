@@ -17,7 +17,7 @@ import {
   TableColumn,
   UniversalTable,
 } from '../../components/ui';
-import { auditActionLabel, auditEntityLabel } from '../../auditLabel';
+import { auditActionLabel, auditItemLine } from '../../auditLabel';
 import { fmtAgo, fmtDay, fmtTime, RIDE_STATUS, todayStr, useFormatT } from '../../format';
 import { ADMIN_HOME } from '../../staffNav';
 import { rideCompactRow } from './rideRows';
@@ -89,6 +89,7 @@ export default function Dashboard() {
       action: string;
       entity: string;
       entity_id: number | null;
+      entity_name?: string | null;
       detail: string;
       created_at: string;
     }[];
@@ -361,7 +362,7 @@ export default function Dashboard() {
                           {a.actor ?? t('audit.system')} · {auditActionLabel(a.action, t)}
                         </div>
                         <div className="muted tiny">
-                          {auditEntityLabel(a.entity, t)}{a.entity_id != null && ` #${a.entity_id}`} {a.detail && `· ${a.detail}`}
+                          {auditItemLine(a, t)} {a.detail && a.detail !== a.entity_name && `· ${a.detail}`}
                         </div>
                       </div>
                       <span className="tiny mono muted">

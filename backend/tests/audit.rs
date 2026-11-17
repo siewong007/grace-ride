@@ -537,6 +537,114 @@ async fn audit_log_identifies_the_target_even_when_the_actor_is_someone_else() {
     assert_eq!(items[1]["entity_name"], member_name);
 }
 
+/// Every kind of entry reads as a name, not just a number: looked up while the record
+/// lives, taken from the entry's own detail once it is deleted or has no numeric id.
+#[tokio::test]
+async fn audit_log_names_tickets_roles_and_deleted_items() {
+    let (app, st) = setup().await;
+    let admin = login(&st, "admin@example.org").await;
+    let admin_id = user_id(&st, "admin@example.org").await;
+    let ticket: i64 = sqlx::query_scalar(
+        "INSERT INTO help_tickets (user_id, subject) VALUES ($1, 'Lost umbrella') RETURNING id",
+    )
+    .bind(admin_id)
+    .fetch_one(&st.db)
+    .await
+    .unwrap();
+    for (action, entity, target, detail) in [
+        ("help.close", "help_ticket", Some(ticket), ""),
+        ("announcement.delete", "announcement", Some(-1), "Old news"),
+        (
+            "settlement.delete",
+            "settlement",
+            Some(-1),
+            "draft: Camp bus",
+        ),
+        (
+            "role.create",
+            "role",
+            None,
+            "Ride lead (ride_lead): admin_rides.view",
+        ),
+        (
+            "role.update",
+            "role",
+            None,
+            "gone_role: +[admin_rides.view] -[]",
+        ),
+        ("help.reply", "help_ticket", Some(-1), "by staff"),
+    ] {
+        grace_ride::util::audit(&st.db, Some(admin_id), action, entity, target, detail).await;
+    }
+
+    let res = call(
+        &app,
+        Method::GET,
+        "/api/admin/audit?limit=6",
+        Some(&admin),
+        None,
+    )
+    .await;
+    assert_eq!(res.status, StatusCode::OK, "{}", res.json);
+    let names: Vec<_> = res.json["items"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .rev()
+        .map(|i| i["entity_name"].as_str().map(str::to_string))
+        .collect();
+    assert_eq!(
+        names,
+        [
+            Some("Lost umbrella"),
+            Some("Old news"),
+            Some("Camp bus"),
+            Some("Ride lead"),
+            Some("gone_role"),
+            None,
+        ]
+        .map(|n| n.map(str::to_string))
+    );
+
+    let (status, _, csv) = call_raw(
+        &app,
+        Method::GET,
+        "/api/admin/audit/export?action=help.close",
+        Some(&admin),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert!(
+        csv.contains(&format!("help_ticket,{ticket},Lost umbrella,")),
+        "{csv}"
+    );
+
+    // The name is what the admin reads, so the search box finds an entry by it, in the
+    // list and in the export alike.
+    let found = call(
+        &app,
+        Method::GET,
+        "/api/admin/audit?q=umbrella",
+        Some(&admin),
+        None,
+    )
+    .await;
+    let found = found.json["items"].as_array().unwrap().clone();
+    assert_eq!(found.len(), 1, "{found:?}");
+    assert_eq!(found[0]["action"], "help.close");
+    let (_, _, by_name) = call_raw(
+        &app,
+        Method::GET,
+        "/api/admin/audit/export?q=umbrella",
+        Some(&admin),
+    )
+    .await;
+    assert!(
+        by_name.contains("Lost umbrella") && !by_name.contains("Camp bus"),
+        "{by_name}"
+    );
+}
+
 #[tokio::test]
 async fn audit_log_resolves_the_member_and_status_in_existing_attendance_entries() {
     let (app, st) = setup().await;
@@ -788,7 +896,7 @@ async fn audit_stream_export_csv_with_filters_and_utf8_bom() {
         body.starts_with('\u{FEFF}'),
         "CSV export must begin with UTF-8 BOM"
     );
-    assert!(body.contains("ID,Timestamp,Actor ID,Actor,Action,Entity,Entity ID,Detail"));
+    assert!(body.contains("ID,Timestamp,Actor ID,Actor,Action,Entity,Entity ID,Entity Name,Detail"));
     assert!(body.contains("stream.test_event"));
     assert!(body.contains("system.routine"));
     assert!(body.contains("教会活动"));

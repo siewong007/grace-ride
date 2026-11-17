@@ -1030,6 +1030,50 @@ fn audit_attendance(action: &str, detail: &str) -> Option<(i64, &'static str)> {
     Some((member.parse().ok()?, status))
 }
 
+/// SQL for the name of what an audit entry is about. The live record comes first; once
+/// that is gone (or for roles, which have no numeric id) the name the entry itself
+/// carried in `detail` stands in, so a deleted item still reads as more than a number.
+fn audit_name_sql(lang: Lang) -> String {
+    let guide_title = match lang {
+        Lang::Zh => "title_zh",
+        Lang::En => "title_en",
+    };
+    format!(
+        r"COALESCE(
+            CASE a.entity
+                WHEN 'user' THEN (SELECT name FROM users WHERE id = a.entity_id)
+                WHEN 'ride' THEN (SELECT p.name FROM rides r JOIN users p ON p.id = r.passenger_id WHERE r.id = a.entity_id)
+                WHEN 'event' THEN (SELECT title FROM events WHERE id = a.entity_id)
+                WHEN 'group' THEN (SELECT name FROM groups WHERE id = a.entity_id)
+                WHEN 'area' THEN (SELECT name FROM areas WHERE id = a.entity_id)
+                WHEN 'settlement' THEN (SELECT title FROM settlements WHERE id = a.entity_id)
+                WHEN 'settlement_share' THEN (SELECT p.name FROM settlement_shares s JOIN users p ON p.id = s.user_id WHERE s.id = a.entity_id)
+                WHEN 'reimbursement' THEN (SELECT p.name FROM reimbursements r JOIN users p ON p.id = r.user_id WHERE r.id = a.entity_id)
+                WHEN 'announcement' THEN (SELECT title FROM announcements WHERE id = a.entity_id)
+                WHEN 'help_ticket' THEN (SELECT subject FROM help_tickets WHERE id = a.entity_id)
+                WHEN 'file' THEN (SELECT NULLIF(original_name, '') FROM files WHERE id = a.entity_id)
+                WHEN 'invite' THEN (SELECT COALESCE(NULLIF(name, ''), NULLIF(email, '')) FROM invites WHERE id = a.entity_id)
+                WHEN 'recovery' THEN (SELECT email FROM recovery_requests WHERE id = a.entity_id)
+                WHEN 'visitor_pass' THEN (SELECT name FROM visitor_passes WHERE id = a.entity_id)
+                WHEN 'guide_workflow' THEN (SELECT {guide_title} FROM guide_workflows WHERE id = a.entity_id)
+                WHEN 'role' THEN CASE
+                    WHEN a.action = 'role.update' THEN COALESCE(
+                        (SELECT NULLIF(name, '') FROM roles WHERE key = split_part(a.detail, ':', 1)),
+                        NULLIF(split_part(a.detail, ':', 1), ''))
+                    ELSE substring(a.detail from '^(.*) \([a-z][a-z0-9_]*\)[:;]')
+                END
+            END,
+            CASE
+                WHEN a.action IN ('group.create', 'group.update', 'group.delete', 'area.create',
+                                  'announcement.create', 'announcement.update', 'announcement.delete',
+                                  'settlement.create', 'event.create', 'event.cancel')
+                    THEN NULLIF(a.detail, '')
+                WHEN a.action = 'settlement.delete' THEN NULLIF(regexp_replace(a.detail, '^draft: ', ''), '')
+            END
+        )"
+    )
+}
+
 /// 管理员可查看谁在何时修改了安排。 Newest first, one page at a time: `next_before` is
 /// the cursor for the next page and is null on the last one, so the whole retained log
 /// can be read, not just its newest entries.
@@ -1061,50 +1105,53 @@ async fn audit_log(
     let action = q.action.filter(|a| !a.is_empty());
     let entity = q.entity.filter(|e| !e.is_empty());
     let limit = q.limit.unwrap_or(AUDIT_PAGE).clamp(1, AUDIT_PAGE_MAX);
-    // One row more than the page shows whether another page follows.
-    let mut rows: Vec<(i64, Option<i64>, Option<String>, String, String, Option<i64>, Option<String>, String, String)> = sqlx::query_as(
+    let sql = format!(
         "SELECT a.id, a.actor_id, u.name, a.action, a.entity, a.entity_id,
-                CASE a.entity
-                    WHEN 'user' THEN (SELECT name FROM users WHERE id = a.entity_id)
-                    WHEN 'ride' THEN (SELECT p.name FROM rides r JOIN users p ON p.id = r.passenger_id WHERE r.id = a.entity_id)
-                    WHEN 'event' THEN (SELECT title FROM events WHERE id = a.entity_id)
-                    WHEN 'group' THEN CASE WHEN a.action = 'group.delete' THEN a.detail
-                                           ELSE (SELECT name FROM groups WHERE id = a.entity_id) END
-                    WHEN 'area' THEN (SELECT name FROM areas WHERE id = a.entity_id)
-                    WHEN 'settlement' THEN (SELECT title FROM settlements WHERE id = a.entity_id)
-                    WHEN 'settlement_share' THEN (SELECT p.name FROM settlement_shares s JOIN users p ON p.id = s.user_id WHERE s.id = a.entity_id)
-                    WHEN 'reimbursement' THEN (SELECT p.name FROM reimbursements r JOIN users p ON p.id = r.user_id WHERE r.id = a.entity_id)
-                    WHEN 'announcement' THEN (SELECT title FROM announcements WHERE id = a.entity_id)
-                END,
+                {name},
+                CASE WHEN a.entity = 'ride' THEN (SELECT pickup_at FROM rides WHERE id = a.entity_id) END,
                 a.detail, a.created_at
          FROM audit_logs a LEFT JOIN users u ON u.id=a.actor_id
          WHERE ($1::text IS NULL OR a.entity = $1)
            AND ($2::bigint IS NULL OR a.entity_id = $2)
-           AND ($3::text IS NULL OR a.action ILIKE $3 OR a.entity ILIKE $3 OR a.detail ILIKE $3 OR u.name ILIKE $3)
+           AND ($3::text IS NULL OR a.action ILIKE $3 OR a.entity ILIKE $3 OR a.detail ILIKE $3 OR u.name ILIKE $3 OR {name} ILIKE $3)
            AND ($4::text IS NULL OR a.created_at >= $4)
            AND ($5::text IS NULL OR a.created_at < $5)
            AND ($6::bigint IS NULL OR a.id < $6)
            AND ($7::text IS NULL OR a.action = $7)
            AND ($8::bigint IS NULL OR a.actor_id = $8)
          ORDER BY a.id DESC LIMIT $9",
-    )
-    .bind(&entity)
-    .bind(q.entity_id)
-    .bind(&like)
-    .bind(&from)
-    .bind(&until)
-    .bind(q.before)
-    .bind(&action)
-    .bind(q.actor_id)
-    .bind(limit + 1)
-    .fetch_all(&st.db)
-    .await?;
+        name = audit_name_sql(u.lang),
+    );
+    // One row more than the page shows whether another page follows.
+    let mut rows: Vec<(
+        i64,
+        Option<i64>,
+        Option<String>,
+        String,
+        String,
+        Option<i64>,
+        Option<String>,
+        Option<String>,
+        String,
+        String,
+    )> = sqlx::query_as(&sql)
+        .bind(&entity)
+        .bind(q.entity_id)
+        .bind(&like)
+        .bind(&from)
+        .bind(&until)
+        .bind(q.before)
+        .bind(&action)
+        .bind(q.actor_id)
+        .bind(limit + 1)
+        .fetch_all(&st.db)
+        .await?;
     let more = rows.len() as i64 > limit;
     rows.truncate(limit as usize);
     let next_before = rows.last().filter(|_| more).map(|r| r.0);
     let attendance: Vec<_> = rows
         .iter()
-        .map(|(_, _, _, action, _, _, _, detail, _)| audit_attendance(action, detail))
+        .map(|(_, _, _, action, _, _, _, _, detail, _)| audit_attendance(action, detail))
         .collect();
     let member_ids: Vec<_> = attendance.iter().flatten().map(|(id, _)| *id).collect();
     let member_names: HashMap<i64, String> = if member_ids.is_empty() {
@@ -1128,13 +1175,13 @@ async fn audit_log(
     .unwrap_or(st.cfg.audit_retention_days);
 
     Ok(Json(json!({
-        "items": rows.into_iter().zip(attendance).map(|((id, aid, actor, action, entity, eid, name, detail, at), attendance)| {
+        "items": rows.into_iter().zip(attendance).map(|((id, aid, actor, action, entity, eid, name, entity_at, detail, at), attendance)| {
             let attendance = attendance.map(|(member_id, status)| json!({
                 "member_id": member_id, "member_name": member_names.get(&member_id), "status": status,
             }));
             json!({
                 "id": id, "actor_id": aid, "actor": actor, "action": action, "entity": entity, "entity_id": eid,
-                "entity_name": name, "detail": detail, "attendance": attendance, "created_at": at,
+                "entity_name": name, "entity_at": entity_at, "detail": detail, "attendance": attendance, "created_at": at,
             })
         }).collect::<Vec<_>>(),
         "next_before": next_before,
@@ -1213,22 +1260,24 @@ async fn audit_export(
         .clamp(1, AUDIT_EXPORT_MAX);
 
     let pool = st.db.clone();
+    let sql = format!(
+        "SELECT a.id, a.actor_id, u.name, a.action, a.entity, a.entity_id, {name}, a.detail, a.created_at \
+         FROM audit_logs a LEFT JOIN users u ON u.id=a.actor_id \
+         WHERE ($1::text IS NULL OR a.entity = $1) \
+           AND ($2::bigint IS NULL OR a.entity_id = $2) \
+           AND ($3::text IS NULL OR a.action ILIKE $3 OR a.entity ILIKE $3 OR a.detail ILIKE $3 OR u.name ILIKE $3 OR {name} ILIKE $3) \
+           AND ($4::text IS NULL OR a.created_at >= $4) \
+           AND ($5::text IS NULL OR a.created_at < $5) \
+           AND ($6::text IS NULL OR a.action = $6) \
+           AND ($7::bigint IS NULL OR a.actor_id = $7) \
+         ORDER BY a.id DESC LIMIT $8",
+        name = audit_name_sql(u.lang),
+    );
     let stream = async_stream::stream! {
         // UTF-8 BOM so Excel and spreadsheet viewers recognize UTF-8 encoding (CJK text).
-        yield Ok::<String, std::io::Error>("\u{FEFF}ID,Timestamp,Actor ID,Actor,Action,Entity,Entity ID,Detail\r\n".to_string());
+        yield Ok::<String, std::io::Error>("\u{FEFF}ID,Timestamp,Actor ID,Actor,Action,Entity,Entity ID,Entity Name,Detail\r\n".to_string());
 
-        let mut rows = sqlx::query_as::<_, (i64, Option<i64>, Option<String>, String, String, Option<i64>, String, String)>(
-            "SELECT a.id, a.actor_id, u.name, a.action, a.entity, a.entity_id, a.detail, a.created_at \
-             FROM audit_logs a LEFT JOIN users u ON u.id=a.actor_id \
-             WHERE ($1::text IS NULL OR a.entity = $1) \
-               AND ($2::bigint IS NULL OR a.entity_id = $2) \
-               AND ($3::text IS NULL OR a.action ILIKE $3 OR a.entity ILIKE $3 OR a.detail ILIKE $3 OR u.name ILIKE $3) \
-               AND ($4::text IS NULL OR a.created_at >= $4) \
-               AND ($5::text IS NULL OR a.created_at < $5) \
-               AND ($6::text IS NULL OR a.action = $6) \
-               AND ($7::bigint IS NULL OR a.actor_id = $7) \
-             ORDER BY a.id DESC LIMIT $8",
-        )
+        let mut rows = sqlx::query_as::<_, (i64, Option<i64>, Option<String>, String, String, Option<i64>, Option<String>, String, String)>(&sql)
         .bind(&entity)
         .bind(q.entity_id)
         .bind(&like)
@@ -1241,9 +1290,9 @@ async fn audit_export(
 
         while let Some(row) = rows.next().await {
             match row {
-                Ok((id, aid, actor, act, ent, eid, detail, at)) => {
+                Ok((id, aid, actor, act, ent, eid, name, detail, at)) => {
                     let line = format!(
-                        "{},{},{},{},{},{},{},{}\r\n",
+                        "{},{},{},{},{},{},{},{},{}\r\n",
                         id,
                         at,
                         aid.map(|v| v.to_string()).unwrap_or_default(),
@@ -1251,6 +1300,7 @@ async fn audit_export(
                         escape_csv_field(&act),
                         escape_csv_field(&ent),
                         eid.map(|v| v.to_string()).unwrap_or_default(),
+                        escape_csv_field(&name.unwrap_or_default()),
                         escape_csv_field(&detail),
                     );
                     yield Ok(line);

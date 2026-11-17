@@ -68,7 +68,7 @@ async fn an_older_history_replays_the_schema_without_losing_rows() {
     db.close().await;
 
     let db = connect_db(&url).await.expect("replay");
-    assert_eq!(versions(&db).await, vec![1]);
+    assert_eq!(versions(&db).await, vec![1, 2]);
     let kept: Option<(String,)> = sqlx::query_as("SELECT name FROM areas WHERE name = '历史区'")
         .fetch_optional(&db)
         .await
@@ -103,7 +103,7 @@ async fn an_older_history_replays_the_schema_without_losing_rows() {
 
     // The next start keeps the new history as it is.
     let db = connect_db(&url).await.expect("second start");
-    assert_eq!(versions(&db).await, vec![1]);
+    assert_eq!(versions(&db).await, vec![1, 2]);
 }
 
 /// A later file that was edited after it ran (or that this build doesn't ship) must
@@ -114,7 +114,7 @@ async fn an_unknown_later_migration_stops_start_up() {
     let db = connect_db(&url).await.expect("schema");
     sqlx::query(
         "INSERT INTO _sqlx_migrations (version, description, success, checksum, execution_time)
-         VALUES (2, 'from a newer build', true, $1, 0)",
+         VALUES (3, 'from a newer build', true, $1, 0)",
     )
     .bind(vec![3u8; 48])
     .execute(&db)
@@ -123,7 +123,7 @@ async fn an_unknown_later_migration_stops_start_up() {
     db.close().await;
 
     let err = connect_db(&url).await.expect_err("diverged history");
-    assert!(err.to_string().contains("0002"), "{err}");
+    assert!(err.to_string().contains("0003"), "{err}");
 }
 
 /// An existing row that breaks a rule must not stop a deploy: the rule still guards

@@ -20,7 +20,7 @@ import {
   UniversalTable,
   useInfiniteScroll,
 } from '../../components/ui';
-import { auditActionLabel, auditEntityLabel } from '../../auditLabel';
+import { auditActionLabel, auditEntityLabel, auditItemLabel, auditItemLine, auditItemParts, showAuditItemId } from '../../auditLabel';
 import { fmtDateTime, useFormatT } from '../../format';
 import { ADMIN_HOME } from '../../staffNav';
 
@@ -32,6 +32,7 @@ interface AuditItem {
   entity: string;
   entity_id: number | null;
   entity_name?: string | null;
+  entity_at?: string | null;
   detail: string;
   attendance?: {
     member_id: number;
@@ -41,7 +42,7 @@ interface AuditItem {
   created_at: string;
 }
 
-const showObjectId = (entity: string) => entity !== 'event' && entity !== 'user';
+const showObjectId = showAuditItemId;
 
 /** One page of the log, newest first. `next_before` is null on the last page. */
 interface AuditPage {
@@ -67,6 +68,7 @@ const ENTITIES = [
   'announcement',
   'recovery',
   'guide_workflow',
+  'visitor_pass',
   'reimbursement_rates',
   'system_settings',
 ];
@@ -254,28 +256,37 @@ const getFirstOfThisMonth = () => {
   return formatIsoDate(d);
 };
 
-export const getObjectLink = (entity: string, id: number | null): string | null => {
+/**
+ * Where an audit entry's item can be opened. `exact` is true when the page is that one
+ * item; otherwise it is only the list the item lives in, and the link must say so.
+ */
+export const getObjectLink = (
+  entity: string,
+  id: number | null,
+): { url: string; exact: boolean } | null => {
   if (id == null) return null;
+  const item = (url: string) => ({ url, exact: true });
+  const list = (url: string) => ({ url, exact: false });
   switch (entity) {
     case 'ride':
-      return `/admin/rides/${id}`;
+      return item(`/admin/rides/${id}`);
     case 'event':
-      return `/events/${id}`;
-    case 'user':
-      return `/admin/members`;
+      return item(`/events/${id}`);
     case 'help_ticket':
-      return `/help/${id}`;
+      return item(`/help/${id}`);
     case 'settlement':
-      return `/settlements/${id}`;
+      return item(`/settlements/${id}`);
+    case 'user':
+      return list('/admin/members');
     case 'reimbursement':
-      return `/admin/reimbursements`;
+      return list('/admin/reimbursements');
     case 'group':
     case 'area':
-      return `/admin/settings`;
+      return list('/admin/settings');
     case 'role':
-      return `/admin/roles`;
+      return list('/admin/roles');
     case 'announcement':
-      return `/admin/announcements`;
+      return list('/admin/announcements');
     default:
       return null;
   }
@@ -476,13 +487,17 @@ export default function Audit() {
   // A link may name an object this list doesn't know; keep it selectable.
   const entities = entity && !ENTITIES.includes(entity) ? [...ENTITIES, entity] : ENTITIES;
   const entityLabel = (k: string) => auditEntityLabel(k, t);
-  const objectLabel = (item: AuditItem) => {
-    const type = entityLabel(item.entity);
-    const name = item.entity_name?.trim();
-    if (!showObjectId(item.entity)) return name || type;
-    const id = item.entity_id != null ? ` #${item.entity_id}` : '';
-    return name ? `${type}${id} · ${name}` : `${type}${id}`;
+  const objectLabel = (item: AuditItem) => auditItemLabel(item, t);
+  // The second line under a name: what kind of thing it is, its number, and for a ride
+  // its pick-up time, since one passenger has many rides.
+  const objectKind = (item: AuditItem) => {
+    const { kind } = auditItemParts(item, t);
+    return item.entity === 'ride' && item.entity_at
+      ? `${kind} · ${fmtDateTime(item.entity_at, ft)}`
+      : kind;
   };
+  const showsKind = (item: AuditItem) =>
+    showObjectId(item.entity) && Boolean(item.entity_name?.trim());
   const filteredObject = items.find((item) =>
     item.entity === entity && String(item.entity_id) === entityId,
   );
@@ -505,7 +520,7 @@ export default function Audit() {
     lines.push(`Generated,${new Date().toISOString()}`);
     if (query) lines.push(`Filters,${escapeCsv(query)}`);
     lines.push('');
-    lines.push('ID,Time,Actor,Action,Entity,Entity ID,Detail');
+    lines.push('ID,Time,Actor,Action,Entity,Entity ID,Entity Name,Detail');
     for (const a of items) {
       lines.push(
         [
@@ -515,6 +530,7 @@ export default function Audit() {
           escapeCsv(a.action),
           escapeCsv(a.entity),
           a.entity_id ?? '',
+          escapeCsv(a.entity_name ?? ''),
           escapeCsv(a.detail),
         ].join(','),
       );
@@ -599,6 +615,7 @@ export default function Audit() {
       const timeStr = a.created_at.replace('T', ' ').slice(0, 19);
       const actorStr = doc.splitTextToSize(a.actor ?? t('audit.system'), 32)[0] || '';
       const actionStr = doc.splitTextToSize(a.action, 38)[0] || '';
+      // The PDF font is Latin-only, so the item stays as its code and number here.
       const objStr = `${a.entity}${a.entity_id != null ? ` #${a.entity_id}` : ''}`;
       const detailStr = doc.splitTextToSize(a.detail, pageW - 175)[0] || '';
 
@@ -614,7 +631,7 @@ export default function Audit() {
     doc.save(`grace-ride-audit-${dateStr}.pdf`);
   };
 
-  const selectedTargetUrl = selectedItem ? getObjectLink(selectedItem.entity, selectedItem.entity_id) : null;
+  const selectedTarget = selectedItem ? getObjectLink(selectedItem.entity, selectedItem.entity_id) : null;
   const securityCount = items.filter((a) => SECURITY_ACTIONS.includes(a.action)).length;
   const escalationCount = items.filter((a) => a.action === 'ride.escalate').length;
   const isSecurityActive = q === 'failed';
@@ -662,30 +679,33 @@ export default function Audit() {
       key: 'object',
       header: t('audit.object'),
       render: (a) => {
-        const targetUrl = getObjectLink(a.entity, a.entity_id);
+        const target = getObjectLink(a.entity, a.entity_id);
         const label = objectLabel(a);
         return (
-          <div className="row gap-xs" style={{ display: 'inline-flex', alignItems: 'center' }}>
-            <button
-              type="button"
-              className="table-filter-link"
-              onClick={() => {
-                setMany({ entity: a.entity, entity_id: a.entity_id == null ? '' : String(a.entity_id) });
-              }}
-              title={t('audit.filterByObject')}
-            >
-              {highlightText(label, search)}
-            </button>
-            {targetUrl && (
-              <Link
-                to={targetUrl}
-                title={t('audit.viewObject')}
-                aria-label={`${t('audit.viewObject')} ${label}`}
-                className="icon-link"
+          <div style={{ display: 'inline-flex', flexDirection: 'column', alignItems: 'flex-start', minWidth: '11rem' }}>
+            <div className="row gap-xs" style={{ display: 'inline-flex', alignItems: 'center', flexWrap: 'nowrap' }}>
+              <button
+                type="button"
+                className="table-filter-link"
+                onClick={() => {
+                  setMany({ entity: a.entity, entity_id: a.entity_id == null ? '' : String(a.entity_id) });
+                }}
+                title={t('audit.filterByObject')}
               >
-                <ExternalLink size={14} />
-              </Link>
-            )}
+                {highlightText(label, search)}
+              </button>
+              {target?.exact && (
+                <Link
+                  to={target.url}
+                  title={t('audit.viewObject')}
+                  aria-label={`${t('audit.viewObject')} ${label}`}
+                  className="icon-link"
+                >
+                  <ExternalLink size={14} />
+                </Link>
+              )}
+            </div>
+            {showsKind(a) && <span className="muted tiny">{highlightText(objectKind(a), search)}</span>}
           </div>
         );
       },
@@ -926,7 +946,7 @@ export default function Audit() {
                   <div>
                     <Pill tone={getActionTone(a.action)}>{auditActionLabel(a.action, t)}</Pill>
                   </div>
-                  <div className="small ellipsis">{objectLabel(a)}</div>
+                  <div className="small ellipsis">{auditItemLine(a, t)}</div>
                   <div className="muted tiny clamp-2">{detailLabel(a)}</div>
                 </div>
               )}
@@ -982,11 +1002,14 @@ export default function Audit() {
             <div className="audit-entry-row small">
               <span className="muted">{t('audit.object')}</span>
               <div className="row gap-xs" style={{ alignItems: 'center' }}>
-                <span>{selectedItem.entity_name?.trim() || objectLabel(selectedItem)}</span>
-                {selectedTargetUrl && (
-                  <Link to={selectedTargetUrl} className="btn ghost sm" onClick={() => setSelectedItem(null)}>
+                <div style={{ display: 'flex', flexDirection: 'column' }}>
+                  <span>{objectLabel(selectedItem)}</span>
+                  {showsKind(selectedItem) && <span className="muted tiny">{objectKind(selectedItem)}</span>}
+                </div>
+                {selectedTarget && (
+                  <Link to={selectedTarget.url} className="btn ghost sm" onClick={() => setSelectedItem(null)}>
                     <ExternalLink size={14} />
-                    {t('audit.viewObject')}
+                    {t(selectedTarget.exact ? 'audit.viewObject' : 'audit.viewList')}
                   </Link>
                 )}
               </div>

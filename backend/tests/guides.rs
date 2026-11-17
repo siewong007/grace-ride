@@ -601,10 +601,102 @@ async fn seeded_guide_coverage_and_links_match_app_routes() {
                 "member guide {slug} links to {link}"
             );
             let path = link.split('?').next().unwrap();
+            // A route pattern or a one-time token page opens an item that does not
+            // exist ("/rides/:id" loads ride ":id" and answers Not found).
+            assert!(
+                !link.contains(':')
+                    && !path.starts_with("/invite/")
+                    && !path.starts_with("/visit/"),
+                "{slug} links to {link}, which is not a page a person can open"
+            );
             assert!(
                 routes.iter().any(|route| route_matches(route, path)),
                 "unknown route {link} in {slug}"
             );
         }
+    }
+}
+
+/// The API refuses a step link it cannot open, so every seeded guide must survive an
+/// editor saving it back unchanged.
+#[tokio::test]
+async fn every_seeded_guide_saves_back_unchanged() {
+    let (app, st) = setup().await;
+    let editor = login(&st, "transport@example.org").await;
+    let rows: Vec<(i64, String, String, String, String, String, String, bool, String)> =
+        sqlx::query_as(
+            "SELECT id, slug, title_en, title_zh, summary_en, summary_zh, audience, published, steps::text
+             FROM guide_workflows WHERE id < 90000 ORDER BY slug",
+        )
+        .fetch_all(&st.db)
+        .await
+        .unwrap();
+    assert!(!rows.is_empty());
+    for (id, slug, ten, tzh, sen, szh, audience, published, steps) in rows {
+        let body = json!({
+            "slug": slug, "title_en": ten, "title_zh": tzh,
+            "summary_en": sen, "summary_zh": szh,
+            "audience": audience, "published": published,
+            "steps": serde_json::from_str::<Value>(&steps).unwrap(),
+        });
+        let r = call(
+            &app,
+            Method::PUT,
+            &format!("/api/help/guides/{id}"),
+            Some(&editor),
+            Some(body),
+        )
+        .await;
+        assert_eq!(r.status, StatusCode::OK, "{slug}: {}", r.json);
+    }
+}
+
+/// 0002 repairs guides seeded with links that open nothing, keeps step order and every
+/// other field, and changes nothing the second time or on a guide an editor wrote.
+#[tokio::test]
+async fn migration_0002_repairs_broken_step_links_once() {
+    let (_app, st) = setup().await;
+    let migration = include_str!("../migrations/0002_guide_step_links.sql");
+    let old_steps = json!([
+        {"title_en": "One", "title_zh": "一", "body_en": "b", "body_zh": "乙", "link": "/rides"},
+        {"title_en": "Two", "title_zh": "二", "body_en": "", "body_zh": "", "link": "/rides/:id"},
+        {"title_en": "Three", "title_zh": "三", "body_en": "", "body_zh": "", "link": ""}
+    ]);
+    sqlx::query("UPDATE guide_workflows SET steps=$1::jsonb WHERE slug='track-your-ride'")
+        .bind(old_steps.to_string())
+        .execute(&st.db)
+        .await
+        .unwrap();
+    // An editor's guide keeps its links, even one with the same shape as a seeded one.
+    let editor_steps = json!([{"title_en": "X", "title_zh": "", "link": "/events/:id"}]);
+    seed_guide(&st, "editor-guide", true, &editor_steps.to_string()).await;
+
+    let steps_of = |slug: &'static str| {
+        let db = st.db.clone();
+        async move {
+            let (s,): (String,) =
+                sqlx::query_as("SELECT steps::text FROM guide_workflows WHERE slug=$1")
+                    .bind(slug)
+                    .fetch_one(&db)
+                    .await
+                    .unwrap();
+            serde_json::from_str::<Value>(&s).unwrap()
+        }
+    };
+    for _ in 0..2 {
+        sqlx::query(migration).execute(&st.db).await.unwrap();
+        let fixed = steps_of("track-your-ride").await;
+        let titles: Vec<_> = fixed
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|s| s["title_en"].clone())
+            .collect();
+        assert_eq!(titles, [json!("One"), json!("Two"), json!("Three")]);
+        assert_eq!(fixed[0], old_steps[0]);
+        assert_eq!(fixed[1]["link"], "/rides");
+        assert_eq!(fixed[1]["body_zh"], "");
+        assert_eq!(fixed[2], old_steps[2]);
+        assert_eq!(steps_of("editor-guide").await, editor_steps);
     }
 }
