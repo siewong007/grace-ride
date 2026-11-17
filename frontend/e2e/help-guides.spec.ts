@@ -97,7 +97,7 @@ test('staff sees both audiences, can edit audience and follows guide links in ap
 test('audit object click sets entity and entity_id together', async ({ page }) => {
   await mockApi(page, 'staff');
   await page.goto('/admin/audit');
-  await page.getByTitle('Filter by object').click();
+  await page.getByTitle('Show this item’s history').click();
   await expect(page).toHaveURL(/entity=ride/);
   await expect(page).toHaveURL(/entity_id=17/);
 });
