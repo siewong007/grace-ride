@@ -2316,24 +2316,25 @@ async fn staff_return(
 ) -> AppResult<Json<Value>> {
     require(&u, Page::AdminRides, Act::Update)?;
     let r = load_ride(&st, u.lang, id).await?;
-    set_status(
-        &st,
-        id,
-        &[
-            "pending_approval",
-            "pending_passenger",
-            "pending_driver_confirm",
-        ],
-        "pending_driver",
-        u.lang,
-    )
-    .await?;
     let reason = req.reason.unwrap_or_default();
-    sqlx::query("UPDATE rides SET driver_id=NULL, trip_id=NULL, attention_reason=$1 WHERE id=$2")
-        .bind(format!("交通组退回：{reason}"))
-        .bind(id)
-        .execute(&st.db)
-        .await?;
+    // One statement, and only while the ride still has the driver loaded above: as two
+    // steps a driver could claim the reopened ride in between, and clearing the driver
+    // afterwards left it waiting on a passenger reply with nobody driving.
+    let returned = sqlx::query(
+        "UPDATE rides SET status='pending_driver', driver_id=NULL, trip_id=NULL,
+                attention_reason=$1, updated_at=$2
+         WHERE id=$3 AND driver_id IS NOT DISTINCT FROM $4
+           AND status IN ('pending_approval','pending_passenger','pending_driver_confirm')",
+    )
+    .bind(format!("交通组退回：{reason}"))
+    .bind(now())
+    .bind(id)
+    .bind(r.driver_id)
+    .execute(&st.db)
+    .await?;
+    if returned.rows_affected() == 0 {
+        return Err(conflict(u.lang, ErrorKey::RideStatusChanged));
+    }
     notify(
         &st.db,
         r.passenger_id,
@@ -2409,26 +2410,24 @@ async fn staff_reassign(
             ErrorKey::NotEnoughDriverSeatsReassign { load, cap },
         ));
     }
-    set_status(
-        &st,
-        id,
-        &[
-            "pending_driver",
-            "pending_passenger",
-            "pending_approval",
-            "pending_driver_confirm",
-            "confirmed",
-        ],
-        "pending_driver_confirm",
-        u.lang,
+    // One statement, and only while the ride still has the driver loaded above, so a
+    // withdrawal or claim in between is not silently overwritten (or half-applied).
+    let reassigned = sqlx::query(
+        "UPDATE rides SET status='pending_driver_confirm', driver_id=$1, trip_id=NULL, approved_by=$2,
+                needs_attention=1, attention_reason='等待新司机确认', updated_at=$3
+         WHERE id=$4 AND driver_id IS NOT DISTINCT FROM $5
+           AND status IN ('pending_driver','pending_passenger','pending_approval','pending_driver_confirm','confirmed')",
     )
+    .bind(req.driver_id)
+    .bind(u.id)
+    .bind(now())
+    .bind(id)
+    .bind(r.driver_id)
+    .execute(&st.db)
     .await?;
-    sqlx::query("UPDATE rides SET driver_id=$1, trip_id=NULL, approved_by=$2, needs_attention=1, attention_reason='等待新司机确认' WHERE id=$3")
-        .bind(req.driver_id)
-        .bind(u.id)
-        .bind(id)
-        .execute(&st.db)
-        .await?;
+    if reassigned.rows_affected() == 0 {
+        return Err(conflict(u.lang, ErrorKey::RideStatusChanged));
+    }
     if let (Some(old), Some(t)) = (r.driver_id, r.trip_id) {
         if old != req.driver_id {
             let line = format!("{} · {}", r.p_name, r.pickup_at.replace('T', " "));
@@ -2495,29 +2494,27 @@ async fn staff_alt_transport(
 ) -> AppResult<Json<Value>> {
     require(&u, Page::AdminRides, Act::Update)?;
     let r = load_ride(&st, u.lang, id).await?;
-    set_status(
-        &st,
-        id,
-        &[
-            "pending_driver",
-            "pending_passenger",
-            "pending_approval",
-            "pending_driver_confirm",
-            "confirmed",
-        ],
-        "alt_transport",
-        u.lang,
-    )
-    .await?;
     let note = req
         .reason
         .unwrap_or_else(|| "已批准使用 Grab 替代交通".into());
-    sqlx::query("UPDATE rides SET driver_id=NULL, trip_id=NULL, needs_attention=0, attention_reason=$1, approved_by=$2 WHERE id=$3")
-        .bind(&note)
-        .bind(u.id)
-        .bind(id)
-        .execute(&st.db)
-        .await?;
+    // One statement, and only while the ride still has the driver loaded above, so the
+    // driver who is told the ride was taken off them is the one it was taken from.
+    let switched = sqlx::query(
+        "UPDATE rides SET status='alt_transport', driver_id=NULL, trip_id=NULL, needs_attention=0,
+                attention_reason=$1, approved_by=$2, updated_at=$3
+         WHERE id=$4 AND driver_id IS NOT DISTINCT FROM $5
+           AND status IN ('pending_driver','pending_passenger','pending_approval','pending_driver_confirm','confirmed')",
+    )
+    .bind(&note)
+    .bind(u.id)
+    .bind(now())
+    .bind(id)
+    .bind(r.driver_id)
+    .execute(&st.db)
+    .await?;
+    if switched.rows_affected() == 0 {
+        return Err(conflict(u.lang, ErrorKey::RideStatusChanged));
+    }
     if let Some(driver_id) = r.driver_id {
         notify(
             &st.db,
@@ -2862,6 +2859,7 @@ const NOT_STARTED: &[&str] = &[
 ///   flagged for the transport team to check.
 /// - Drivers are told; members going were already told by the event change.
 /// - Visitor links close relative to the new time.
+/// - The event's reminder is sent again for the new time.
 pub async fn event_moved(
     st: &AppState,
     event_id: i64,
@@ -2887,6 +2885,11 @@ pub async fn event_moved(
         .await?;
     }
     if old_at != new_at {
+        // The day-before reminder is for the new time, even if one went out for the old.
+        sqlx::query("UPDATE events SET reminder_sent=0 WHERE id=$1")
+            .bind(event_id)
+            .execute(&mut *tx)
+            .await?;
         sqlx::query(
             "UPDATE rides SET needs_attention=1, attention_reason=$1, updated_at=$2
              WHERE event_id=$3 AND status = ANY($4)",

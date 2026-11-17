@@ -11,7 +11,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 
 use crate::auth::CurrentUser;
-use crate::error::{bad, forbidden, not_found, AppResult};
+use crate::error::{bad, conflict, forbidden, not_found, AppResult};
 use crate::i18n::ErrorKey;
 use crate::perms::{Act, Page};
 use crate::state::AppState;
@@ -645,7 +645,17 @@ async fn update(
         )
         .await;
     } else {
+        // Hold the bill and look again: a publish that got in first means these changes
+        // would land on a published bill with no revision kept and no attendance check.
         let mut tx = st.db.begin().await?;
+        let (status,): (String,) =
+            sqlx::query_as("SELECT status FROM settlements WHERE id=$1 FOR UPDATE")
+                .bind(id)
+                .fetch_one(&mut *tx)
+                .await?;
+        if status != "draft" {
+            return Err(conflict(u.lang, ErrorKey::SettlementAlreadyPublished));
+        }
         write_body(&mut tx, id, &req, &shares).await?;
         tx.commit().await?;
         audit(
@@ -692,6 +702,14 @@ async fn publish(
     u: CurrentUser,
     Path(id): Path<i64>,
 ) -> AppResult<Json<Value>> {
+    // Hold the bill while checking and publishing it, so a draft edit saved at the same
+    // moment either lands first (and is what gets checked) or waits and is refused, and
+    // two presses of publish send the notices once.
+    let mut tx = st.db.begin().await?;
+    sqlx::query("SELECT id FROM settlements WHERE id=$1 FOR UPDATE")
+        .bind(id)
+        .execute(&mut *tx)
+        .await?;
     let s = load(&st, u.lang, id).await?;
     if s.created_by != u.id || !u.can(Page::Settlements, Act::Update) {
         return Err(forbidden(u.lang, ErrorKey::OnlyOrganiserCanPublish));
@@ -707,7 +725,7 @@ async fn publish(
         "SELECT user_id, amount_cents FROM settlement_shares WHERE settlement_id=$1",
     )
     .bind(id)
-    .fetch_all(&st.db)
+    .fetch_all(&mut *tx)
     .await?;
     ensure_all_attended(
         &st,
@@ -719,8 +737,9 @@ async fn publish(
     sqlx::query("UPDATE settlements SET status='published', updated_at=$1 WHERE id=$2")
         .bind(now())
         .bind(id)
-        .execute(&st.db)
+        .execute(&mut *tx)
         .await?;
+    tx.commit().await?;
     for (uid, amt) in shares {
         if uid != u.id && amt > 0 {
             let due_zh = s
@@ -863,8 +882,13 @@ async fn submit_proof(
         .execute(&mut *tx)
         .await?;
 
+    // Holding the bill (as a revision does) means a revision saved at the same moment
+    // either finishes first, and this reads its result, or waits for this proof. Without
+    // it the revision rewrote the share from a stale read: the proof's 'pending' went
+    // back to 'unpaid', or the share and its proof were deleted outright.
     let row: Option<(i64, i64, String, String, i64, String)> = sqlx::query_as(
-        "SELECT sh.user_id, s.id, sh.status, s.status, s.created_by, s.title FROM settlement_shares sh JOIN settlements s ON s.id=sh.settlement_id WHERE sh.id=$1",
+        "SELECT sh.user_id, s.id, sh.status, s.status, s.created_by, s.title FROM settlement_shares sh JOIN settlements s ON s.id=sh.settlement_id WHERE sh.id=$1
+         FOR UPDATE OF s, sh",
     )
     .bind(id)
     .fetch_optional(&mut *tx)
@@ -942,11 +966,15 @@ async fn verify(
     Path(id): Path<i64>,
     Json(req): Json<VerifyIn>,
 ) -> AppResult<Json<Value>> {
+    // The bill is held, as for a proof, so a revision can't change the amount between
+    // this read and the payee's confirmation landing on it.
+    let mut tx = st.db.begin().await?;
     let row: Option<(i64, i64, i64, String, i64, String)> = sqlx::query_as(
-        "SELECT sh.user_id, s.id, s.created_by, s.title, sh.amount_cents, s.status FROM settlement_shares sh JOIN settlements s ON s.id=sh.settlement_id WHERE sh.id=$1",
+        "SELECT sh.user_id, s.id, s.created_by, s.title, sh.amount_cents, s.status FROM settlement_shares sh JOIN settlements s ON s.id=sh.settlement_id WHERE sh.id=$1
+         FOR UPDATE OF s, sh",
     )
     .bind(id)
-    .fetch_optional(&st.db)
+    .fetch_optional(&mut *tx)
     .await?;
     let (member, _sid, payee, title, amt, s_status) = row.ok_or(not_found(u.lang))?;
     if payee != u.id || !u.can(Page::Settlements, Act::Update) {
@@ -989,8 +1017,9 @@ async fn verify(
         .bind(&note)
         .bind(now())
         .bind(id)
-        .execute(&st.db)
+        .execute(&mut *tx)
         .await?;
+    tx.commit().await?;
     let (zh_title, en_title) = if status == "confirmed" {
         ("付款已确认", "Payment confirmed")
     } else {

@@ -4213,3 +4213,80 @@ async fn reopening_a_ride_never_drops_a_driver_who_just_claimed_it() {
         .await;
     }
 }
+
+#[tokio::test]
+async fn reminders_are_sent_again_after_a_new_time_or_a_new_driver() {
+    let (app, st) = setup().await;
+    let c = cast(&app, &st).await;
+
+    // An event whose day-before reminder already went out, then postponed.
+    let event = make_event(&app, &c.admin, &[c.all_group], 0).await;
+    sqlx::query("UPDATE events SET reminder_sent=1 WHERE id=$1")
+        .bind(event)
+        .execute(&st.db)
+        .await
+        .unwrap();
+    must(
+        &app,
+        Method::PUT,
+        &format!("/api/events/{event}"),
+        Some(&c.admin),
+        Some(event_body(
+            "团契聚会",
+            "other",
+            &day(9, "10:00"),
+            "",
+            &[c.all_group],
+            0,
+        )),
+    )
+    .await;
+    let event_flag: i64 = sqlx::query_scalar("SELECT reminder_sent FROM events WHERE id=$1")
+        .bind(event)
+        .fetch_one(&st.db)
+        .await
+        .unwrap();
+    assert_eq!(event_flag, 0, "a postponed event is reminded again");
+
+    // A ride reminded with one driver, who then drops out.
+    let ride = book(&app, &c.member, c.area_id, 1).await;
+    must(
+        &app,
+        Method::POST,
+        &format!("/api/rides/{ride}/claim"),
+        Some(&c.driver),
+        None,
+    )
+    .await;
+    let flag = || {
+        let db = st.db.clone();
+        async move {
+            sqlx::query_scalar::<_, i64>("SELECT reminder_sent FROM rides WHERE id=$1")
+                .bind(ride)
+                .fetch_one(&db)
+                .await
+                .unwrap()
+        }
+    };
+    sqlx::query("UPDATE rides SET reminder_sent=1 WHERE id=$1")
+        .bind(ride)
+        .execute(&st.db)
+        .await
+        .unwrap();
+    // Other changes to the ride leave the reminder as sent.
+    sqlx::query("UPDATE rides SET notes='带伞' WHERE id=$1")
+        .bind(ride)
+        .execute(&st.db)
+        .await
+        .unwrap();
+    assert_eq!(flag().await, 1);
+    must(
+        &app,
+        Method::POST,
+        &format!("/api/rides/{ride}/withdraw"),
+        Some(&c.driver),
+        Some(json!({"reason": "车坏了"})),
+    )
+    .await;
+    assert_eq!(flag().await, 0, "the next driver gets the reminder");
+}
