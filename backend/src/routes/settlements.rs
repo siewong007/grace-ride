@@ -10,6 +10,7 @@ use axum::{
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 
+use crate::audience::audience_users_sql;
 use crate::auth::CurrentUser;
 use crate::error::{bad, conflict, forbidden, not_found, AppResult};
 use crate::i18n::ErrorKey;
@@ -179,6 +180,23 @@ async fn ensure_all_attended(
             .fetch_optional(&st.db)
             .await?;
     if att_enabled.map(|(a,)| a == 0).unwrap_or(false) {
+        // Attendance is not tracked, but a bill must still only reach people connected
+        // to the event: the organiser, a real 'going' signup, or the event's audience.
+        // Without this the organiser could switch tracking off and bill any member.
+        let (outside,): (i64,) = sqlx::query_as(&format!(
+            "SELECT COUNT(*) FROM unnest($2::BIGINT[]) AS u(user_id) WHERE NOT (
+                EXISTS (SELECT 1 FROM events ev WHERE ev.id=$1 AND ev.created_by=u.user_id)
+                OR EXISTS (SELECT 1 FROM event_signups es WHERE es.event_id=$1 AND es.user_id=u.user_id AND es.status='going')
+                OR u.user_id IN ({}))",
+            audience_users_sql("$1")
+        ))
+        .bind(event_id)
+        .bind(user_ids)
+        .fetch_one(&st.db)
+        .await?;
+        if outside > 0 {
+            return Err(bad(lang, ErrorKey::UnattendedMembers(outside)));
+        }
         return Ok(());
     }
     let (not_attended,): (i64,) = sqlx::query_as(

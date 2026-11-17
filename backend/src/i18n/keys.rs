@@ -38,6 +38,9 @@ pub enum ErrorKey {
     CannotRemoveOwnRoleAccess,
     SuperadminOnly,
     LastSuperadmin,
+    AdminAppointmentRestricted,
+    PresidentAcknowledgementRequired,
+    SettingsSuperadminOnly,
 
     // === Auth ===
     InvalidCredentials,
@@ -295,6 +298,9 @@ impl ErrorKey {
             Self::CannotRemoveOwnRoleAccess => "CANNOT_REMOVE_OWN_ROLE_ACCESS",
             Self::SuperadminOnly => "SUPERADMIN_ONLY",
             Self::LastSuperadmin => "LAST_SUPERADMIN",
+            Self::AdminAppointmentRestricted => "ADMIN_APPOINTMENT_RESTRICTED",
+            Self::PresidentAcknowledgementRequired => "PRESIDENT_ACKNOWLEDGEMENT_REQUIRED",
+            Self::SettingsSuperadminOnly => "SETTINGS_SUPERADMIN_ONLY",
 
             Self::InvalidCredentials => "INVALID_CREDENTIALS",
             Self::VerificationExpired => "VERIFICATION_EXPIRED",

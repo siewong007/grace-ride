@@ -49,7 +49,10 @@ pub fn render(lang: Lang, key: &ErrorKey) -> String {
         | ErrorKey::SystemRoleCannotBeDeleted
         | ErrorKey::CannotRemoveOwnRoleAccess
         | ErrorKey::SuperadminOnly
-        | ErrorKey::LastSuperadmin => admin::render(lang, key),
+        | ErrorKey::LastSuperadmin
+        | ErrorKey::AdminAppointmentRestricted
+        | ErrorKey::PresidentAcknowledgementRequired
+        | ErrorKey::SettingsSuperadminOnly => admin::render(lang, key),
         ErrorKey::InvalidCredentials
         | ErrorKey::VerificationExpired
         | ErrorKey::InvalidCode
@@ -274,6 +277,9 @@ mod tests {
             ErrorKey::CannotRemoveOwnRoleAccess,
             ErrorKey::SuperadminOnly,
             ErrorKey::LastSuperadmin,
+            ErrorKey::AdminAppointmentRestricted,
+            ErrorKey::PresidentAcknowledgementRequired,
+            ErrorKey::SettingsSuperadminOnly,
             ErrorKey::InvalidCredentials,
             ErrorKey::VerificationExpired,
             ErrorKey::InvalidCode,

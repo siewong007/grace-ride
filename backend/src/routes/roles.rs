@@ -165,6 +165,16 @@ async fn role_perms(st: &AppState, key: &str) -> AppResult<PermSet> {
     Ok(PermSet::from_keys(rows.iter().map(|r| r.0.as_str())))
 }
 
+fn holds_settings(set: &PermSet) -> bool {
+    set.has(Page::AdminSettings, Act::View) || set.has(Page::AdminSettings, Act::Update)
+}
+
+fn adds_settings(set: &PermSet, before: &PermSet) -> bool {
+    [Act::View, Act::Update]
+        .iter()
+        .any(|a| set.has(Page::AdminSettings, *a) && !before.has(Page::AdminSettings, *a))
+}
+
 /// What the caller would hold if role `key` granted `replacement` (`None`: role gone).
 async fn caller_after(
     st: &AppState,
@@ -247,6 +257,11 @@ async fn create(
     let name = req.name.as_deref().unwrap_or_default().trim().to_string();
     check_name(&st, u.lang, &name, "").await?;
     let set = parse_permissions(u.lang, &req.permissions)?;
+    // System configuration stays with the super admin, even if another role may
+    // create or edit roles.
+    if !perms::is_superadmin(&u.roles) && holds_settings(&set) {
+        return Err(forbidden(u.lang, ErrorKey::SettingsSuperadminOnly));
+    }
     // Random key: role names may be 中文 and may be renamed, the key never changes.
     let key = format!("c_{}", hex::encode(rand::random::<[u8; 5]>()));
     let mut tx = st.db.begin().await?;
@@ -287,6 +302,11 @@ async fn update(
             .await?
             .ok_or(not_found(u.lang))?;
     let set = parse_permissions(u.lang, &req.permissions)?;
+    let before = role_perms(&st, &key).await?;
+    // Only the super admin adds system-configuration access to a role.
+    if !perms::is_superadmin(&u.roles) && adds_settings(&set, &before) {
+        return Err(forbidden(u.lang, ErrorKey::SettingsSuperadminOnly));
+    }
     // The super admin role is fixed: it holds every permission and nothing else is stored.
     if key == SUPERADMIN_ROLE || perms::locked(&key).into_iter().any(|p| !set.contains(p)) {
         return Err(bad(u.lang, ErrorKey::RolePermissionLocked));
@@ -304,7 +324,6 @@ async fn update(
         check_name(&st, u.lang, &name, &key).await?;
         name
     };
-    let before = role_perms(&st, &key).await?;
 
     sqlx::query("UPDATE roles SET name = $1, description = $2 WHERE key = $3")
         .bind(&name)

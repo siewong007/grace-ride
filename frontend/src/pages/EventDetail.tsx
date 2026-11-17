@@ -134,6 +134,10 @@ export default function EventDetail() {
     kvItems.push({ label: t('deadline'), value: fmtDateTime(e.signup_deadline, ft) });
   }
 
+  // Global traffic staff (the dashboard holders) plan any event; a cell group leader
+  // plans only the events they created, matching the server's scope.
+  const canPlan = isStaff && (can('admin_dashboard') || e.can_manage);
+
   return (
     <Page width="wide">
       <div className="stack">
@@ -142,9 +146,9 @@ export default function EventDetail() {
           subtitle={`${fmtDateTime(e.starts_at, ft)} · ${e.location}`}
           back="/events"
           actions={
-            (e.can_manage && open) || (isStaff && open) ? (
+            (e.can_manage && open) || (canPlan && open) ? (
               <div className="btn-row">
-                {isStaff && (
+                {canPlan && (
                   <Button variant="primary" to={`/admin/events/${e.id}/plan`} icon={<Route size={16} />}>
                     {t('open', { ns: 'plan' })}
                   </Button>

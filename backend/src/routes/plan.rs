@@ -24,7 +24,7 @@ use serde_json::{json, Value};
 
 use crate::arrange::{arrange, Car, Rider};
 use crate::auth::CurrentUser;
-use crate::error::{bad, conflict, not_found, AppResult};
+use crate::error::{bad, conflict, forbidden, not_found, AppResult};
 use crate::perms::{self, Act, Page, Perm};
 use crate::routes::rides::seat_capacity;
 use crate::state::AppState;
@@ -91,12 +91,17 @@ struct EventRow {
 }
 
 async fn load_event(st: &AppState, u: &CurrentUser, id: i64) -> AppResult<EventRow> {
-    let row: Option<(String, String, String, String)> =
-        sqlx::query_as("SELECT title, starts_at, location, status FROM events WHERE id=$1")
-            .bind(id)
-            .fetch_optional(&st.db)
-            .await?;
-    let (title, starts_at, location, status) = row.ok_or_else(|| not_found(u.lang))?;
+    let row: Option<(String, String, String, String, i64)> = sqlx::query_as(
+        "SELECT title, starts_at, location, status, created_by FROM events WHERE id=$1",
+    )
+    .bind(id)
+    .fetch_optional(&st.db)
+    .await?;
+    let (title, starts_at, location, status, created_by) = row.ok_or_else(|| not_found(u.lang))?;
+    // Global traffic staff plan any event; a cell group leader only events they created.
+    if !u.traffic_is_global() && created_by != u.id {
+        return Err(forbidden(u.lang, ErrorKey::CannotViewEvent));
+    }
     Ok(EventRow {
         title,
         starts_at,

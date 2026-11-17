@@ -406,7 +406,8 @@ function MemberFormModal({
 }) {
   const { t } = useTranslation('admin');
   const ft = useFormatT();
-  const { can } = useAuth();
+  const { can, me } = useAuth();
+  const confirm = useConfirm();
   // Giving and taking roles decides what a member may do: it needs the roles page's update permission.
   const canAssign = can('admin_roles', 'update');
   const { assignable, names } = useRoleOptions();
@@ -416,6 +417,14 @@ function MemberFormModal({
     mode === 'edit' ? user.roles : [],
   );
   const [status, setStatus] = useState(mode === 'approve' ? 'active' : user.status);
+
+  // A Vice-President making an ordinary member an administrator must first
+  // confirm the President has acknowledged it. The server enforces the flag.
+  const viceNeedsAck =
+    !!me?.roles?.includes('vice_president') &&
+    !me.roles.includes('president') &&
+    !me.roles.includes('superadmin');
+  const promotingToAdmin = !user.roles.includes('admin') && roles.includes('admin');
 
   const initialGroups = user.groups ? user.groups.split('、') : [];
   const [gids, setGids] = useState<number[] | null>(
@@ -441,18 +450,30 @@ function MemberFormModal({
     setGids(next);
   };
 
-  const save = () =>
+  const save = async () => {
+    const needsAck = viceNeedsAck && promotingToAdmin;
+    if (needsAck) {
+      const ok = await confirm({
+        title: t('members.presidentAckTitle'),
+        body: t('members.presidentAckBody', { name: user.name }),
+        confirmLabel: t('members.presidentAckConfirm'),
+        tone: 'primary',
+      });
+      if (!ok) return;
+    }
     run(
       () =>
         put(`/admin/users/${user.id}`, {
           roles,
           status,
           ...(groups ? { group_ids: selectedG } : {}),
+          ...(needsAck ? { president_acknowledged: true } : {}),
         }).then(onSuccess),
       mode === 'approve'
         ? t('members.memberApproved')
         : t('members.memberUpdated'),
     );
+  };
 
   const modalTitle =
     mode === 'approve'

@@ -56,6 +56,21 @@ pub fn render(lang: Lang, key: &ErrorKey) -> String {
             "必须保留至少一位启用中的超级管理员",
             "There must always be one active super admin",
         ),
+        ErrorKey::AdminAppointmentRestricted => pair(
+            lang,
+            "只有超级管理员、会长或副会长可以委任或卸任管理员",
+            "Only the super admin, President or Vice-President can appoint or demote an administrator",
+        ),
+        ErrorKey::PresidentAcknowledgementRequired => pair(
+            lang,
+            "副会长将普通会员升为管理员前，必须先取得会长确认并勾选确认",
+            "A Vice-President must confirm the President has acknowledged the appointment before making an ordinary member an administrator",
+        ),
+        ErrorKey::SettingsSuperadminOnly => pair(
+            lang,
+            "只有超级管理员可以授予系统设置权限",
+            "Only the super admin can grant system settings access",
+        ),
         ErrorKey::SecondAdminRequired => pair(
             lang,
             "恢复管理职务账号需要另一位管理员确认",

@@ -260,14 +260,16 @@ async fn attendance_checkin_rejects_members_outside_event_groups() {
         .await
         .unwrap();
 
-    let member_id: i64 = sqlx::query_scalar("SELECT id FROM users WHERE email='member@example.org'")
-        .fetch_one(&st.db)
-        .await
-        .unwrap();
-    let outsider_id: i64 = sqlx::query_scalar("SELECT id FROM users WHERE email='amina@example.org'")
-        .fetch_one(&st.db)
-        .await
-        .unwrap();
+    let member_id: i64 =
+        sqlx::query_scalar("SELECT id FROM users WHERE email='member@example.org'")
+            .fetch_one(&st.db)
+            .await
+            .unwrap();
+    let outsider_id: i64 =
+        sqlx::query_scalar("SELECT id FROM users WHERE email='amina@example.org'")
+            .fetch_one(&st.db)
+            .await
+            .unwrap();
 
     // member is in youth group, outsider is not in youth group
     sqlx::query("DELETE FROM group_members WHERE user_id=$1")
@@ -327,7 +329,12 @@ async fn attendance_checkin_rejects_members_outside_event_groups() {
         None,
     )
     .await;
-    assert_eq!(get_outsider.status, StatusCode::FORBIDDEN, "{}", get_outsider.json);
+    assert_eq!(
+        get_outsider.status,
+        StatusCode::FORBIDDEN,
+        "{}",
+        get_outsider.json
+    );
     assert_eq!(get_outsider.json["code"], "EVENT_NOT_OPEN_TO_GROUP");
 
     // 2. Outsider gets 403 on POST /api/events/{id}/checkin
@@ -339,7 +346,12 @@ async fn attendance_checkin_rejects_members_outside_event_groups() {
         Some(json!({ "code": code })),
     )
     .await;
-    assert_eq!(post_outsider.status, StatusCode::FORBIDDEN, "{}", post_outsider.json);
+    assert_eq!(
+        post_outsider.status,
+        StatusCode::FORBIDDEN,
+        "{}",
+        post_outsider.json
+    );
     assert_eq!(post_outsider.json["code"], "EVENT_NOT_OPEN_TO_GROUP");
 
     // 3. Member inside group succeeds on GET and POST

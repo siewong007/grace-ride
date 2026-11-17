@@ -995,7 +995,22 @@ async fn mark_attendance(
         .execute(&st.db)
         .await?;
     if r.rows_affected() == 0 && v == Some(1) {
-        // Walk-in: organiser may record someone who attended without signing up.
+        // Walk-in: organiser may record someone who attended without signing up, but
+        // only a member the event is for (or the organiser): otherwise this would let any
+        // member id be marked present and then billed.
+        let (in_audience,): (i64,) = sqlx::query_as(&format!(
+            "SELECT COUNT(*) FROM users u WHERE u.id=$2 AND u.status='active' AND (
+                u.id=$3 OR u.id IN ({}))",
+            audience_users_sql("$1")
+        ))
+        .bind(id)
+        .bind(req.user_id)
+        .bind(e.created_by)
+        .fetch_one(&st.db)
+        .await?;
+        if in_audience == 0 {
+            return Err(forbidden(u.lang, ErrorKey::EventNotOpenToGroup));
+        }
         sqlx::query("INSERT INTO event_signups (event_id, user_id, status, attended, created_at) VALUES ($1,$2, 'going', $3, $4)
              ON CONFLICT (event_id, user_id) DO UPDATE SET attended=excluded.attended, status='going'")
             .bind(id)

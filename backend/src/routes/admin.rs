@@ -324,6 +324,10 @@ struct UserUpdate {
     roles: Vec<String>,
     status: String,
     group_ids: Option<Vec<i64>>,
+    /// Sent by a Vice-President when promoting an ordinary member to administrator,
+    /// after the President has acknowledged the appointment.
+    #[serde(default)]
+    president_acknowledged: bool,
 }
 
 async fn update_user(
@@ -414,6 +418,23 @@ async fn update_user(
                 return Err(forbidden(u.lang, ErrorKey::CannotGrantSelfFinance));
             }
         }
+    }
+    // Appointing or demoting an administrator is reserved for the super admin,
+    // President and Vice-President. Other staff may hold admin tools without that power.
+    let was_admin = old_parsed.iter().any(|r| r == perms::ADMIN_ROLE);
+    let becomes_admin = new_roles.iter().any(|r| r == perms::ADMIN_ROLE);
+    if roles_changed && was_admin != becomes_admin && !perms::can_manage_admins(&u.roles) {
+        return Err(forbidden(u.lang, ErrorKey::AdminAppointmentRestricted));
+    }
+    // A Vice-President promoting an ordinary member to administrator must first
+    // confirm that the President has acknowledged the appointment.
+    let president_ack =
+        roles_changed && !was_admin && becomes_admin && perms::needs_president_ack(&u.roles);
+    if president_ack && !req.president_acknowledged {
+        return Err(forbidden(
+            u.lang,
+            ErrorKey::PresidentAcknowledgementRequired,
+        ));
     }
     let roles = if roles_changed {
         new_roles.join(",")
@@ -510,8 +531,13 @@ async fn update_user(
         "user",
         Some(id),
         format!(
-            "roles {old_roles} → {roles}; status {old_status} → {}{groups_note}",
-            req.status
+            "roles {old_roles} → {roles}; status {old_status} → {}{groups_note}{}",
+            req.status,
+            if president_ack {
+                "; Vice-President confirmed President's acknowledgement"
+            } else {
+                ""
+            }
         ),
     )
     .await;

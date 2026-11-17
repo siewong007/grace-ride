@@ -639,12 +639,14 @@ async fn role_based_access() {
         .status,
         StatusCode::OK
     );
-    assert_eq!(
-        call(&app, Method::GET, "/api/admin/users", Some(&finance), None)
-            .await
-            .status,
-        StatusCode::FORBIDDEN
-    );
+    // Finance reads member reports, so it may pick names from the directory — but the
+    // answer carries no contact details (that needs 成员 · view).
+    let users = call(&app, Method::GET, "/api/admin/users", Some(&finance), None).await;
+    assert_eq!(users.status, StatusCode::OK, "{}", users.json);
+    for row in users.json.as_array().unwrap() {
+        assert!(row.get("email").is_none(), "{}", users.json);
+        assert!(row.get("phone").is_none(), "{}", users.json);
+    }
     assert_eq!(
         call(
             &app,

@@ -165,7 +165,7 @@ pub async fn load_ride(st: &AppState, lang: Lang, id: i64) -> AppResult<RideRow>
 pub fn ride_json(r: &RideRow, u: &CurrentUser) -> Value {
     let is_passenger = r.passenger_id == u.id;
     let is_driver = r.driver_id == Some(u.id);
-    let staff = u.can(Page::AdminRides, Act::View);
+    let staff = traffic_can(u, r, Act::View);
     let approved = matches!(r.status.as_str(), "confirmed" | "in_progress");
     let show_address = is_passenger || staff || (is_driver && approved);
     let show_contact = is_passenger || staff || (is_driver && approved);
@@ -253,10 +253,29 @@ pub fn ride_json(r: &RideRow, u: &CurrentUser) -> Value {
 fn can_view(r: &RideRow, u: &CurrentUser) -> bool {
     r.passenger_id == u.id
         || r.driver_id == Some(u.id)
-        || u.can(Page::AdminRides, Act::View)
+        || traffic_can(u, r, Act::View)
         || (u.can(Page::Drive, Act::View)
             && r.status == "pending_driver"
             && crate::audience::drives_for(u, r.match_group_id))
+}
+
+/// Global traffic staff (traffic dashboard holders) manage every event. A cell group
+/// leader also holds the traffic tools, but only for events they created.
+fn traffic_scope_ok(u: &CurrentUser, event_created_by: Option<i64>) -> bool {
+    u.traffic_is_global() || event_created_by == Some(u.id)
+}
+
+/// Traffic-page permission for one ride, honouring the event scope above.
+fn traffic_can(u: &CurrentUser, r: &RideRow, act: Act) -> bool {
+    u.can(Page::AdminRides, act) && traffic_scope_ok(u, r.event_created_by)
+}
+
+/// SQL condition limiting the traffic pages to events the caller created.
+fn traffic_owned_events_sql(u: &CurrentUser) -> String {
+    format!(
+        "(r.event_id IN (SELECT id FROM events WHERE created_by = {}))",
+        u.id
+    )
 }
 
 async fn set_status(st: &AppState, id: i64, from: &[&str], to: &str, lang: Lang) -> AppResult<()> {
@@ -619,7 +638,7 @@ async fn get_ride(
         return Err(forbidden(u.lang, ErrorKey::CannotViewRide));
     }
     let mut v = ride_json(&r, &u);
-    if u.can(Page::AdminRides, Act::View) {
+    if traffic_can(&u, &r, Act::View) {
         if let Some(d) = r.driver_id {
             let (load, cap) = driver_load(&st, d, &r.pickup_at, Some(r.id)).await?;
             v["driver_load"] = json!({ "seats_used": load, "capacity": cap });
@@ -655,7 +674,7 @@ async fn cancel_ride(
 ) -> AppResult<Json<Value>> {
     let r = load_ride(&st, u.lang, id).await?;
     let own = r.passenger_id == u.id && u.can(Page::Rides, Act::Delete);
-    if !own && !u.can(Page::AdminRides, Act::Delete) {
+    if !own && !traffic_can(&u, &r, Act::Delete) {
         return Err(forbidden(u.lang, ErrorKey::OnlyPassengerOrStaffCanCancel));
     }
     let reason = body.and_then(|b| b.0.reason).unwrap_or_default();
@@ -851,7 +870,7 @@ async fn post_readiness(
 ) -> AppResult<Json<Value>> {
     let r = load_ride(&st, u.lang, id).await?;
     let is_passenger = r.passenger_id == u.id;
-    let is_admin = u.can(Page::AdminRides, Act::Update);
+    let is_admin = traffic_can(&u, &r, Act::Update);
     if !is_passenger && !is_admin {
         return Err(forbidden(u.lang, ErrorKey::OnlyPassengerCanRespond));
     }
@@ -1045,7 +1064,7 @@ async fn post_driver_delay(
 ) -> AppResult<Json<Value>> {
     let r = load_ride(&st, u.lang, id).await?;
     let is_driver = r.driver_id == Some(u.id);
-    let is_admin = u.can(Page::AdminRides, Act::Update);
+    let is_admin = traffic_can(&u, &r, Act::Update);
     if !is_driver && !is_admin {
         return Err(forbidden(u.lang, ErrorKey::NotRideDriver));
     }
@@ -1117,7 +1136,7 @@ async fn post_arrived_gate(
 ) -> AppResult<Json<Value>> {
     let r = load_ride(&st, u.lang, id).await?;
     let is_driver = r.driver_id == Some(u.id);
-    let is_admin = u.can(Page::AdminRides, Act::Update);
+    let is_admin = traffic_can(&u, &r, Act::Update);
     if !is_driver && !is_admin {
         return Err(forbidden(u.lang, ErrorKey::NotRideDriver));
     }
@@ -1780,7 +1799,7 @@ async fn no_show(
     Path(id): Path<i64>,
 ) -> AppResult<Json<Value>> {
     let r = load_ride(&st, u.lang, id).await?;
-    if r.driver_id != Some(u.id) && !u.can(Page::AdminRides, Act::Update) {
+    if r.driver_id != Some(u.id) && !traffic_can(&u, &r, Act::Update) {
         return Err(forbidden(u.lang, ErrorKey::NotRideDriver));
     }
     // A passenger who has been picked up showed up. Checked in the update itself too, so a
@@ -2259,7 +2278,7 @@ async fn ride_location(
     Path(id): Path<i64>,
 ) -> AppResult<Json<Value>> {
     let r = load_ride(&st, u.lang, id).await?;
-    if r.passenger_id != u.id && r.driver_id != Some(u.id) && !u.can(Page::AdminRides, Act::View) {
+    if r.passenger_id != u.id && r.driver_id != Some(u.id) && !traffic_can(&u, &r, Act::View) {
         return Err(forbidden(u.lang, ErrorKey::CannotViewLocation));
     }
     if r.status != "in_progress" {
@@ -2291,7 +2310,7 @@ async fn ride_location(
     // Distance and ETA to this passenger (or to the destination once aboard).
     if let (true, Some(driver)) = (out["sharing"] == true, r.driver_id) {
         let trip = r.trip_id.unwrap_or(r.id);
-        let full_view = r.driver_id == Some(u.id) || u.can(Page::AdminRides, Act::View);
+        let full_view = r.driver_id == Some(u.id) || traffic_can(&u, &r, Act::View);
         if let Ok(Some(route)) = crate::routing::driver_route(&st, driver, Some(trip)).await {
             if let Some(eta) =
                 crate::routing::ride_eta(&route, id, r.picked_up_at.is_some(), full_view)
@@ -2399,7 +2418,7 @@ async fn chat_access(st: &AppState, u: &CurrentUser, ride_id: i64) -> AppResult<
     let is_member = members
         .iter()
         .any(|(p, d, s)| (*p == u.id && s != "cancelled") || *d == Some(u.id));
-    if !is_member && !u.can(Page::AdminRides, Act::View) {
+    if !is_member && !traffic_can(u, &r, Act::View) {
         return Err(forbidden(u.lang, ErrorKey::OnlyTripMembersCanViewChat));
     }
     let open = members
@@ -2483,6 +2502,9 @@ async fn staff_approve(
 ) -> AppResult<Json<Value>> {
     require(&u, Page::AdminRides, Act::Update)?;
     let r = load_ride(&st, u.lang, id).await?;
+    if !traffic_scope_ok(&u, r.event_created_by) {
+        return Err(forbidden(u.lang, ErrorKey::CannotViewRide));
+    }
     let d = r
         .driver_id
         .ok_or_else(|| bad(u.lang, ErrorKey::NoDriverYet))?;
@@ -2528,6 +2550,9 @@ async fn staff_return(
 ) -> AppResult<Json<Value>> {
     require(&u, Page::AdminRides, Act::Update)?;
     let r = load_ride(&st, u.lang, id).await?;
+    if !traffic_scope_ok(&u, r.event_created_by) {
+        return Err(forbidden(u.lang, ErrorKey::CannotViewRide));
+    }
     let reason = req.reason.unwrap_or_default();
     // One statement, and only while the ride still has the driver loaded above: as two
     // steps a driver could claim the reopened ride in between, and clearing the driver
@@ -2586,6 +2611,9 @@ async fn staff_reassign(
 ) -> AppResult<Json<Value>> {
     require(&u, Page::AdminRides, Act::Update)?;
     let r = load_ride(&st, u.lang, id).await?;
+    if !traffic_scope_ok(&u, r.event_created_by) {
+        return Err(forbidden(u.lang, ErrorKey::CannotViewRide));
+    }
     let (can_drive,): (bool,) = sqlx::query_as(&format!(
         "SELECT {} FROM users u WHERE u.id=$1 AND u.status='active'",
         perms::sql_holds("u", Perm(Page::Drive, Act::Create))
@@ -2716,6 +2744,9 @@ async fn staff_alt_transport(
 ) -> AppResult<Json<Value>> {
     require(&u, Page::AdminRides, Act::Update)?;
     let r = load_ride(&st, u.lang, id).await?;
+    if !traffic_scope_ok(&u, r.event_created_by) {
+        return Err(forbidden(u.lang, ErrorKey::CannotViewRide));
+    }
     let note = req
         .reason
         .unwrap_or_else(|| "已批准使用 Grab 替代交通".into());
@@ -2801,6 +2832,10 @@ async fn admin_rides(
 ) -> AppResult<Json<Value>> {
     require(&u, Page::AdminRides, Act::View)?;
     let mut conds = vec!["1=1".to_string()];
+    // A cell group leader only sees the rides of events they created.
+    if !u.traffic_is_global() {
+        conds.push(traffic_owned_events_sql(&u));
+    }
     let mut n = 1;
     if q.date.is_some() {
         // Same rows as `substr(pickup_at,1,10) = date`, written as a range so the pickup
@@ -2946,11 +2981,17 @@ async fn admin_live(State(st): State<AppState>, u: CurrentUser) -> AppResult<Jso
     .flatten()
     .and_then(|value| value.parse::<i64>().ok())
     .unwrap_or(st.cfg.max_live_drivers);
-    let rows: Vec<(i64, String, Option<f64>, Option<f64>, Option<String>, i64, String)> = sqlx::query_as(
+    // A cell group leader only sees drivers carrying rides for events they created.
+    let scope = if u.traffic_is_global() {
+        String::new()
+    } else {
+        format!(" AND {}", traffic_owned_events_sql(&u))
+    };
+    let rows: Vec<(i64, String, Option<f64>, Option<f64>, Option<String>, i64, String)> = sqlx::query_as(&format!(
         "SELECT d.id, d.name, l.lat, l.lng, l.updated_at, COUNT(r.id), MIN(r.pickup_at)
          FROM rides r JOIN users d ON d.id = r.driver_id LEFT JOIN driver_locations l ON l.driver_id = d.id
-         WHERE r.status = 'in_progress' GROUP BY d.id, l.driver_id",
-    )
+         WHERE r.status = 'in_progress'{scope} GROUP BY d.id, l.driver_id",
+    ))
     .fetch_all(&st.db)
     .await?;
     Ok(Json(json!({

@@ -31,14 +31,31 @@ pub const ADMIN_ROLE: &str = "admin";
 /// Holds every permission, always. It is the one role that cannot be edited, so
 /// whatever else an administrator configures, somebody can still put it right.
 pub const SUPERADMIN_ROLE: &str = "superadmin";
+/// Church leadership. They hold the day-to-day admin tools but not the system
+/// configuration page, and they may appoint or demote administrators.
+pub const PRESIDENT_ROLE: &str = "president";
+pub const VICE_PRESIDENT_ROLE: &str = "vice_president";
+/// Administrative support and group leads: admin tools, no system configuration,
+/// and no power to appoint or demote administrators.
+pub const SECRETARY_ROLE: &str = "secretary";
+pub const TRAFFIC_HEAD_ROLE: &str = "traffic_head";
+pub const CELL_LEADER_ROLE: &str = "cell_leader";
+/// 查账: reads the financial records and member reports without paying or editing.
+pub const AUDITOR_ROLE: &str = "auditor";
 /// Built-in roles, created on first start. They can be edited (all but `superadmin`)
 /// and never deleted.
 pub const SYSTEM_ROLES: &[&str] = &[
     MEMBER_ROLE,
     SUPERADMIN_ROLE,
     ADMIN_ROLE,
+    PRESIDENT_ROLE,
+    VICE_PRESIDENT_ROLE,
+    SECRETARY_ROLE,
+    TRAFFIC_HEAD_ROLE,
+    CELL_LEADER_ROLE,
     "transport",
     "finance",
+    AUDITOR_ROLE,
     "leader",
     "driver",
 ];
@@ -273,6 +290,11 @@ fn grid(page: Page, acts: &[Act]) -> impl Iterator<Item = Perm> + '_ {
 pub fn defaults(role: &str) -> Vec<Perm> {
     use Act::*;
     use Page::*;
+    let trim = |mut perms: Vec<Perm>| {
+        perms.sort_by_key(|p| (p.0 as usize, p.1 as usize));
+        perms.dedup();
+        perms
+    };
     let pages: &[(Page, &[Act])] = match role {
         SUPERADMIN_ROLE => return all().collect(),
         "member" => &[
@@ -300,7 +322,17 @@ pub fn defaults(role: &str) -> Vec<Perm> {
             (AdminAreas, &[View, Create, Update]),
             (AdminAudit, &[View]),
         ],
-        "finance" => &[(AdminReimbPay, &[View, Update]), (AdminBills, &[View])],
+        "finance" => &[
+            (AdminReimbPay, &[View, Update]),
+            (AdminBills, &[View]),
+            (AdminReports, &[View]),
+        ],
+        // 查账: read-only finance and member reports.
+        AUDITOR_ROLE => &[
+            (AdminReimbPay, &[View]),
+            (AdminBills, &[View]),
+            (AdminReports, &[View]),
+        ],
         // 管理员 also acts as 交通组 and 活动负责人, but not as finance or driver:
         // receipts and payment records stay with finance (按职务需要查看).
         "admin" => {
@@ -317,9 +349,57 @@ pub fn defaults(role: &str) -> Vec<Perm> {
                 (AdminRoles, &[View, Create, Update, Delete]),
             ];
             out.extend(own.iter().flat_map(|(p, a)| grid(*p, a)));
-            out.sort_by_key(|p| (p.0 as usize, p.1 as usize));
-            out.dedup();
-            return out;
+            return trim(out);
+        }
+        // 会长 / 副会长: run the office, see finance and settings, but no audit log and
+        // no authority to change a super admin. Settings stay read-only.
+        PRESIDENT_ROLE | VICE_PRESIDENT_ROLE => {
+            let mut out = defaults(ADMIN_ROLE);
+            out.retain(|p| p.0 != AdminAudit && !(p.0 == AdminSettings && p.1 == Update));
+            out.extend(grid(AdminReimbPay, &[View]));
+            out.extend(grid(AdminBills, &[View]));
+            return trim(out);
+        }
+        // 秘书: administrative support. Cannot invite or approve members, hand out
+        // roles, appoint administrators, or open system settings.
+        SECRETARY_ROLE => {
+            let mut out = defaults("transport");
+            out.extend(defaults("leader"));
+            let own: &[(Page, &[Act])] = &[
+                (AdminEvents, &[View, Update, Delete]),
+                (AdminReports, &[View]),
+                (AdminRecovery, &[View, Update]),
+                (AdminGroups, &[View, Create, Update, Delete]),
+                (AdminRoles, &[View]),
+            ];
+            out.extend(own.iter().flat_map(|(p, a)| grid(*p, a)));
+            return trim(out);
+        }
+        // 交通组组长: manages the transport dashboard, ride management and live map,
+        // plus member/event oversight for coordination.
+        TRAFFIC_HEAD_ROLE => {
+            let mut out = defaults("transport");
+            let own: &[(Page, &[Act])] = &[
+                (AdminEvents, &[View, Update, Delete]),
+                (AdminReports, &[View]),
+                (AdminMembers, &[View, Update]),
+            ];
+            out.extend(own.iter().flat_map(|(p, a)| grid(*p, a)));
+            return trim(out);
+        }
+        // 小组组长: leads a cell group. Runs its own activities end to end and manages
+        // their traffic, but only for events they created, and never claims payments.
+        CELL_LEADER_ROLE => {
+            let mut out = defaults("leader");
+            let own: &[(Page, &[Act])] = &[
+                (AdminPlan, &[View, Update]),
+                (AdminRides, &[View, Update, Delete]),
+                (AdminLive, &[View]),
+                (AdminReports, &[View]),
+                (AdminMembers, &[View]),
+            ];
+            out.extend(own.iter().flat_map(|(p, a)| grid(*p, a)));
+            return trim(out);
         }
         _ => &[],
     };
@@ -340,6 +420,22 @@ pub fn locked(role: &str) -> Vec<Perm> {
 /// Whether these role keys include the super admin role.
 pub fn is_superadmin(roles: &[String]) -> bool {
     roles.iter().any(|r| r == SUPERADMIN_ROLE)
+}
+
+/// President and Vice-President may appoint or demote administrators. The
+/// super admin keeps ultimate power and may always do so.
+pub fn can_manage_admins(roles: &[String]) -> bool {
+    roles
+        .iter()
+        .any(|r| r == SUPERADMIN_ROLE || r == PRESIDENT_ROLE || r == VICE_PRESIDENT_ROLE)
+}
+
+/// A Vice-President promoting an ordinary member to administrator must first
+/// confirm the President has acknowledged it. Presidents and super admins do not.
+pub fn needs_president_ack(roles: &[String]) -> bool {
+    roles.iter().any(|r| r == VICE_PRESIDENT_ROLE)
+        && !roles.iter().any(|r| r == PRESIDENT_ROLE)
+        && !is_superadmin(roles)
 }
 
 /// Start-up, after seeding: there is always one active super admin. If nobody holds
@@ -415,6 +511,16 @@ pub async fn is_privileged(db: &PgPool, roles: &str) -> sqlx::Result<bool> {
 pub async fn sync(db: &PgPool) -> sqlx::Result<()> {
     let mut tx = db.begin().await?;
     let system: Vec<String> = SYSTEM_ROLES.iter().map(|r| r.to_string()).collect();
+    // A built-in role this database has not seen before (a release added it) gets
+    // its full default set, not just permissions this database has not seen.
+    let existing: HashSet<String> =
+        sqlx::query_as::<_, (String,)>("SELECT key FROM roles WHERE key = ANY($1)")
+            .bind(&system)
+            .fetch_all(&mut *tx)
+            .await?
+            .into_iter()
+            .map(|r| r.0)
+            .collect();
     sqlx::query(
         "INSERT INTO roles (key, is_system) SELECT k, 1 FROM UNNEST($1::text[]) AS k
          ON CONFLICT (key) DO UPDATE SET is_system = 1",
@@ -434,9 +540,10 @@ pub async fn sync(db: &PgPool) -> sqlx::Result<()> {
 
     let (mut grant_roles, mut grant_perms) = (Vec::new(), Vec::new());
     for role in SYSTEM_ROLES {
+        let is_new_role = !existing.contains(*role);
         let wanted = defaults(role)
             .into_iter()
-            .filter(|p| fresh.contains(p))
+            .filter(|p| is_new_role || fresh.contains(p))
             .chain(locked(role));
         for p in wanted {
             grant_roles.push(role.to_string());

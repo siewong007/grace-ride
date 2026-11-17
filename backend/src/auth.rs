@@ -58,6 +58,13 @@ impl CurrentUser {
     pub fn can(&self, page: Page, act: Act) -> bool {
         self.perms.has(page, act) && (self.mfa_ok || !page.sensitive())
     }
+
+    /// Traffic staff who run every event. A cell group leader also holds the traffic
+    /// tools, but only for events they created (their own group's activity), so the
+    /// ride, live-map and plan pages scope them to those events.
+    pub fn traffic_is_global(&self) -> bool {
+        self.can(Page::AdminDashboard, Act::View)
+    }
 }
 
 impl FromRequestParts<AppState> for CurrentUser {

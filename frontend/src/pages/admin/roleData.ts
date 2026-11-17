@@ -32,7 +32,7 @@ export interface RolesResponse {
 }
 
 /** Until the role list loads (or if it can't), offer the built-in roles. */
-const BUILT_IN = ['admin', 'transport', 'finance', 'leader', 'driver'];
+const BUILT_IN = ['admin', 'president', 'vice_president', 'secretary', 'traffic_head', 'cell_leader', 'transport', 'finance', 'auditor', 'leader', 'driver'];
 
 /** Roles that can be given to a member, and the names of the custom ones. */
 export function useRoleOptions(enabled = true) {

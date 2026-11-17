@@ -51,6 +51,12 @@ const LEGACY_DEMO_EMAILS: &[&str] = &[
     "meiling@example.org",
     "enci@example.org",
     "guorong@example.org",
+    "president@example.org",
+    "vicepresident@example.org",
+    "secretary@example.org",
+    "traffichead@example.org",
+    "cellleader@example.org",
+    "auditor@example.org",
 ];
 const GIVEN_NAMES: &[&str] = &[
     "Ah Mei",
@@ -670,7 +676,8 @@ async fn insert_reference_data(db: &PgPool) -> anyhow::Result<()> {
             "staff",
             json!([
                 {"title_en":"Edit roles","title_zh":"编辑角色","body_en":"Grant only necessary permissions. Some system-role permissions are locked.","body_zh":"仅授予必要权限；部分系统角色权限不可修改。","link":"/admin/roles"},
-                {"title_en":"Superadmin safeguards","title_zh":"超级管理员保护规则","body_en":"Only a superadmin can grant or remove superadmin. The last superadmin cannot be removed or disabled, and role changes require MFA.","body_zh":"只有超级管理员可授予或移除超级管理员权限；最后一位超级管理员不可被移除或停用，角色变更须通过双重验证。","link":"/admin/roles"}
+                {"title_en":"Leadership roles","title_zh":"领导职务","body_en":"President, Vice-President, Secretary, Head of Traffic and Cell Group Leader hold admin tools but never system settings. Only the super admin, President and Vice-President may appoint or demote an administrator. A Cell Group Leader's traffic tools (ride list, live map and per-event plan) cover only events they created, and claims need a separate finance role granted by the President or Vice-President.","body_zh":"会长、副会长、秘书、交通组组长和小组组长拥有管理功能，但不能进入系统设置。只有超级管理员、会长和副会长可以委任或卸任管理员。小组组长的交通功能（接送管理、实时地图与活动交通编排）只限其本人创建的活动；如需报销权限，须由会长或副会长另行授予财务职务。","link":"/admin/members"},
+                {"title_en":"Superadmin safeguards","title_zh":"超级管理员保护规则","body_en":"Only a superadmin can grant or remove superadmin, and the super admin keeps ultimate power. The last superadmin cannot be removed or disabled, and role changes require MFA. A Vice-President promoting an ordinary member to administrator must confirm the President has acknowledged it first.","body_zh":"只有超级管理员可授予或移除超级管理员权限，并保留最终权力；最后一位超级管理员不可被移除或停用，角色变更须通过双重验证。副会长把普通会员升为管理员前，必须先确认会长已知悉并同意。","link":"/admin/roles"}
             ]),
         ),
         (
@@ -861,14 +868,14 @@ async fn insert_member(
     id
 }
 
-/// Original core demo fixtures (demo accounts 1..=13, events 1..=7, rides 20001..=20009).
+/// Original core demo fixtures (demo accounts 1..=20, events 1..=7, rides 20001..=20009).
 /// Reproduces the pre-existing seed content so current integration tests keep
 /// passing, now stamped with demo_batch and given stable ids.
 async fn seed_core(db: &PgPool) -> anyhow::Result<()> {
     let pw = hash_password(DEMO_PASSWORD).map_err(|e| anyhow::anyhow!("{e}"))?;
     let today = today_local();
 
-    // --- core demo users (ids 1..=14) ---
+    // --- core demo users (ids 1..=20) ---
     let core = [
         // Holds every permission. Kept apart from 管理员 Grace so the demo also shows
         // what a plain admin cannot do (finance stays separate).
@@ -984,6 +991,58 @@ async fn seed_core(db: &PgPool) -> anyhow::Result<()> {
             "driver,transport",
             "active",
         ),
+        // --- church leadership (ids 15..=20) ---
+        // Admin tools without the system configuration page. The President and
+        // Vice-President can appoint or demote administrators.
+        (
+            15,
+            "会长 陈志远",
+            "president@example.org",
+            "012-300 0017",
+            "president",
+            "active",
+        ),
+        (
+            16,
+            "副会长 林美珍",
+            "vicepresident@example.org",
+            "012-300 0018",
+            "vice_president",
+            "active",
+        ),
+        (
+            17,
+            "秘书 黄晓婷",
+            "secretary@example.org",
+            "012-300 0019",
+            "secretary",
+            "active",
+        ),
+        (
+            18,
+            "交通组组长 张伟康",
+            "traffichead@example.org",
+            "012-300 0020",
+            "traffic_head",
+            "active",
+        ),
+        (
+            19,
+            "小组组长 李秀兰",
+            "cellleader@example.org",
+            "012-300 0021",
+            "cell_leader",
+            "active",
+        ),
+        // 查账: reads the finance records and member reports without paying or editing.
+        (
+            20,
+            "查账 周文彬",
+            "auditor@example.org",
+            "012-300 0022",
+            "auditor",
+            "active",
+        ),
     ];
     let mut id_of = std::collections::HashMap::<&str, i64>::new();
     for (id, name, email, phone, roles, status) in core {
@@ -1021,6 +1080,12 @@ async fn seed_core(db: &PgPool) -> anyhow::Result<()> {
     let meiling = get("郑美玲", &id_of);
     let enci = get("许恩慈", &id_of);
     let guorong = get("陈国荣", &id_of);
+    let president = get("会长 陈志远", &id_of);
+    let vice_president = get("副会长 林美珍", &id_of);
+    let secretary = get("秘书 黄晓婷", &id_of);
+    let traffic_head = get("交通组组长 张伟康", &id_of);
+    let cell_leader = get("小组组长 李秀兰", &id_of);
+    let auditor = get("查账 周文彬", &id_of);
 
     // --- group memberships ---
     for (uid, g) in [
@@ -1038,6 +1103,13 @@ async fn seed_core(db: &PgPool) -> anyhow::Result<()> {
         (enci, 2),
         (zhiqiang, 3),
         (guorong, 3),
+        (president, 2),
+        (vice_president, 2),
+        (secretary, 2),
+        (traffic_head, 3),
+        (cell_leader, 2),
+        (cell_leader, 3),
+        (auditor, 2),
     ] {
         sqlx::query("INSERT INTO group_members (group_id, user_id, demo_batch) VALUES ($1,$2,$3) ON CONFLICT DO NOTHING")
             .bind(g).bind(uid).bind(DEMO_BATCH).execute(db).await?;
@@ -1345,6 +1417,8 @@ async fn seed_core(db: &PgPool) -> anyhow::Result<()> {
         .bind(7001i64).bind(transport).bind(DEMO_BATCH).bind(now()).execute(db).await?;
     sqlx::query("INSERT INTO notifications (id, user_id, title, body, link, demo_batch, created_at) VALUES ($1,$2,'费用分摊已发布','上周羽毛球费用，每人 RM28.00。','/settlements',$3,$4) ON CONFLICT DO NOTHING")
         .bind(7002).bind(fala).bind(DEMO_BATCH).bind(now()).execute(db).await?;
+    sqlx::query("INSERT INTO notifications (id, user_id, title, body, link, demo_batch, created_at) VALUES ($1,$2,'委任管理员需会长确认','把普通会员升为管理员前，请先取得会长同意，并在确认提示中勾选确认。','/admin/members',$3,$4) ON CONFLICT DO NOTHING")
+        .bind(7003i64).bind(vice_president).bind(DEMO_BATCH).bind(now()).execute(db).await?;
 
     // --- help ticket + reply ---
     sqlx::query("INSERT INTO help_tickets (id, user_id, subject, status, demo_batch, created_at, updated_at) VALUES ($1,$2,'周日接送可以改到北门吗？','answered',$3,$4,$4) ON CONFLICT DO NOTHING")
@@ -1377,7 +1451,7 @@ async fn seed_core(db: &PgPool) -> anyhow::Result<()> {
         Some(admin),
         "seed.core",
         "users",
-        Some(13),
+        Some(20),
         &format!(
             "core demo users {}-{}",
             core.first().unwrap().0,
@@ -1396,7 +1470,7 @@ async fn seed_core(db: &PgPool) -> anyhow::Result<()> {
 ///
 /// Idempotent and safe to call alongside `seed_core` (or on its own). Stable
 /// ids use reserved ranges that never collide with the core demo
-/// (users 1..=14, events 1..=7, rides 20001..=20009) or the generated scale
+/// (users 1..=20, events 1..=7, rides 20001..=20009) or the generated scale
 /// range (users 10001..=60000).
 ///
 /// Look up edge users in tests by these stable emails:

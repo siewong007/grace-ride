@@ -777,7 +777,12 @@ async fn superadmin_recovery_refuses_ordinary_admin_in_both_stages() {
         None,
     )
     .await;
-    assert_eq!(admin_stage1.status, StatusCode::FORBIDDEN, "{}", admin_stage1.json);
+    assert_eq!(
+        admin_stage1.status,
+        StatusCode::FORBIDDEN,
+        "{}",
+        admin_stage1.json
+    );
     assert_eq!(admin_stage1.json["code"], "SUPERADMIN_ONLY");
 
     // Superadmin 1 approves stage 1 -> moves to awaiting_second
@@ -801,7 +806,12 @@ async fn superadmin_recovery_refuses_ordinary_admin_in_both_stages() {
         None,
     )
     .await;
-    assert_eq!(admin_stage2.status, StatusCode::FORBIDDEN, "{}", admin_stage2.json);
+    assert_eq!(
+        admin_stage2.status,
+        StatusCode::FORBIDDEN,
+        "{}",
+        admin_stage2.json
+    );
     assert_eq!(admin_stage2.json["code"], "SUPERADMIN_ONLY");
 
     // Superadmin 1 cannot confirm their own flag
@@ -813,7 +823,12 @@ async fn superadmin_recovery_refuses_ordinary_admin_in_both_stages() {
         None,
     )
     .await;
-    assert_eq!(super1_again.status, StatusCode::FORBIDDEN, "{}", super1_again.json);
+    assert_eq!(
+        super1_again.status,
+        StatusCode::FORBIDDEN,
+        "{}",
+        super1_again.json
+    );
     assert_eq!(super1_again.json["code"], "SECOND_ADMIN_REQUIRED");
 
     // Superadmin 2 confirms and completes recovery
