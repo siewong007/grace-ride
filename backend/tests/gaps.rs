@@ -732,6 +732,104 @@ async fn privileged_recovery_needs_two_admins() {
 }
 
 #[tokio::test]
+async fn superadmin_recovery_refuses_ordinary_admin_in_both_stages() {
+    let (app, st) = setup().await;
+    // admin@example.org has 'admin' role, but is not a superadmin
+    let admin = login(&st, "admin@example.org").await;
+    // create a second ordinary admin
+    sqlx::query("UPDATE users SET roles='transport,admin' WHERE email='transport@example.org'")
+        .execute(&st.db)
+        .await
+        .unwrap();
+    let second_admin = login(&st, "transport@example.org").await;
+
+    // superadmin@example.org is the superadmin target
+    // We create a second superadmin to test the valid two-superadmin flow
+    sqlx::query("UPDATE users SET roles='superadmin,admin' WHERE email='sophie@example.org'")
+        .execute(&st.db)
+        .await
+        .unwrap();
+    let root = login(&st, "superadmin@example.org").await;
+    let root2 = login(&st, "sophie@example.org").await;
+
+    // File recovery request for superadmin@example.org
+    let _ = call(
+        &app,
+        Method::POST,
+        "/api/auth/recovery-request",
+        None,
+        Some(json!({"email": "superadmin@example.org", "reason": "lost device"})),
+    )
+    .await;
+    let (rid,): (i64,) = sqlx::query_as(
+        "SELECT id FROM recovery_requests WHERE email='superadmin@example.org' ORDER BY id DESC LIMIT 1",
+    )
+    .fetch_one(&st.db)
+    .await
+    .unwrap();
+
+    // Stage 1 (status: 'pending'): ordinary admin attempts to approve recovery for superadmin
+    let admin_stage1 = call(
+        &app,
+        Method::POST,
+        &format!("/api/admin/recovery/{rid}/approve"),
+        Some(&admin),
+        None,
+    )
+    .await;
+    assert_eq!(admin_stage1.status, StatusCode::FORBIDDEN, "{}", admin_stage1.json);
+    assert_eq!(admin_stage1.json["code"], "SUPERADMIN_ONLY");
+
+    // Superadmin 1 approves stage 1 -> moves to awaiting_second
+    let super_stage1 = call(
+        &app,
+        Method::POST,
+        &format!("/api/admin/recovery/{rid}/approve"),
+        Some(&root),
+        None,
+    )
+    .await;
+    assert_eq!(super_stage1.status, StatusCode::OK, "{}", super_stage1.json);
+    assert_eq!(super_stage1.json["awaiting_second"], true);
+
+    // Stage 2 (status: 'awaiting_second'): ordinary admin attempts to approve stage 2
+    let admin_stage2 = call(
+        &app,
+        Method::POST,
+        &format!("/api/admin/recovery/{rid}/approve"),
+        Some(&second_admin),
+        None,
+    )
+    .await;
+    assert_eq!(admin_stage2.status, StatusCode::FORBIDDEN, "{}", admin_stage2.json);
+    assert_eq!(admin_stage2.json["code"], "SUPERADMIN_ONLY");
+
+    // Superadmin 1 cannot confirm their own flag
+    let super1_again = call(
+        &app,
+        Method::POST,
+        &format!("/api/admin/recovery/{rid}/approve"),
+        Some(&root),
+        None,
+    )
+    .await;
+    assert_eq!(super1_again.status, StatusCode::FORBIDDEN, "{}", super1_again.json);
+    assert_eq!(super1_again.json["code"], "SECOND_ADMIN_REQUIRED");
+
+    // Superadmin 2 confirms and completes recovery
+    let super_stage2 = call(
+        &app,
+        Method::POST,
+        &format!("/api/admin/recovery/{rid}/approve"),
+        Some(&root2),
+        None,
+    )
+    .await;
+    assert_eq!(super_stage2.status, StatusCode::OK, "{}", super_stage2.json);
+    assert!(super_stage2.json["url"].is_string());
+}
+
+#[tokio::test]
 async fn terms_accept_endpoint() {
     let (app, st) = setup().await;
     let cookie = login(&st, "member@example.org").await;

@@ -247,3 +247,121 @@ async fn attendance_checkin_is_for_members_only() {
     .await;
     assert_eq!(pending_checkin.status, StatusCode::FORBIDDEN);
 }
+
+#[tokio::test]
+async fn attendance_checkin_rejects_members_outside_event_groups() {
+    let (app, st) = setup().await;
+    let organiser = login(&st, "admin@example.org").await;
+    let member = login(&st, "member@example.org").await;
+    let outsider = login(&st, "amina@example.org").await;
+
+    let youth: i64 = sqlx::query_scalar("SELECT id FROM groups WHERE name='青年团契'")
+        .fetch_one(&st.db)
+        .await
+        .unwrap();
+
+    let member_id: i64 = sqlx::query_scalar("SELECT id FROM users WHERE email='member@example.org'")
+        .fetch_one(&st.db)
+        .await
+        .unwrap();
+    let outsider_id: i64 = sqlx::query_scalar("SELECT id FROM users WHERE email='amina@example.org'")
+        .fetch_one(&st.db)
+        .await
+        .unwrap();
+
+    // member is in youth group, outsider is not in youth group
+    sqlx::query("DELETE FROM group_members WHERE user_id=$1")
+        .bind(member_id)
+        .execute(&st.db)
+        .await
+        .unwrap();
+    sqlx::query("INSERT INTO group_members (group_id, user_id) VALUES ($1,$2)")
+        .bind(youth)
+        .bind(member_id)
+        .execute(&st.db)
+        .await
+        .unwrap();
+
+    sqlx::query("DELETE FROM group_members WHERE user_id=$1")
+        .bind(outsider_id)
+        .execute(&st.db)
+        .await
+        .unwrap();
+
+    // Create an event targeting only youth group with attendance enabled
+    let res = call(
+        &app,
+        Method::POST,
+        "/api/events",
+        Some(&organiser),
+        Some(json!({
+            "title": "Youth Fellowship",
+            "kind": "other",
+            "starts_at": "2026-12-10T19:00:00",
+            "location": "Youth Hall",
+            "capacity": 25,
+            "group_ids": [youth],
+            "attendance_enabled": true
+        })),
+    )
+    .await;
+    assert_eq!(res.status, StatusCode::OK, "{}", res.json);
+    let event_id = res.json["id"].as_i64().unwrap();
+
+    let detail = call(
+        &app,
+        Method::GET,
+        &format!("/api/events/{event_id}"),
+        Some(&organiser),
+        None,
+    )
+    .await;
+    let code = detail.json["checkin_code"].as_str().unwrap();
+
+    // 1. Outsider gets 403 on GET /api/events/{id}/checkin
+    let get_outsider = call(
+        &app,
+        Method::GET,
+        &format!("/api/events/{event_id}/checkin"),
+        Some(&outsider),
+        None,
+    )
+    .await;
+    assert_eq!(get_outsider.status, StatusCode::FORBIDDEN, "{}", get_outsider.json);
+    assert_eq!(get_outsider.json["code"], "EVENT_NOT_OPEN_TO_GROUP");
+
+    // 2. Outsider gets 403 on POST /api/events/{id}/checkin
+    let post_outsider = call(
+        &app,
+        Method::POST,
+        &format!("/api/events/{event_id}/checkin"),
+        Some(&outsider),
+        Some(json!({ "code": code })),
+    )
+    .await;
+    assert_eq!(post_outsider.status, StatusCode::FORBIDDEN, "{}", post_outsider.json);
+    assert_eq!(post_outsider.json["code"], "EVENT_NOT_OPEN_TO_GROUP");
+
+    // 3. Member inside group succeeds on GET and POST
+    let get_member = call(
+        &app,
+        Method::GET,
+        &format!("/api/events/{event_id}/checkin"),
+        Some(&member),
+        None,
+    )
+    .await;
+    assert_eq!(get_member.status, StatusCode::OK, "{}", get_member.json);
+    assert_eq!(get_member.json["title"], "Youth Fellowship");
+
+    let post_member = call(
+        &app,
+        Method::POST,
+        &format!("/api/events/{event_id}/checkin"),
+        Some(&member),
+        Some(json!({ "code": code })),
+    )
+    .await;
+    assert_eq!(post_member.status, StatusCode::OK, "{}", post_member.json);
+    assert_eq!(post_member.json["ok"], true);
+}

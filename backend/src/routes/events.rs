@@ -224,15 +224,19 @@ async fn load_event(st: &AppState, u: &CurrentUser, id: i64) -> AppResult<EventR
         .ok_or(not_found(u.lang))
 }
 
+async fn load_visible_event(st: &AppState, u: &CurrentUser, id: i64) -> AppResult<EventRow> {
+    if !can_see_event(st, u, id).await? {
+        return Err(forbidden(u.lang, ErrorKey::EventNotOpenToGroup));
+    }
+    load_event(st, u, id).await
+}
+
 async fn get_event(
     State(st): State<AppState>,
     u: CurrentUser,
     Path(id): Path<i64>,
 ) -> AppResult<Json<Value>> {
-    if !can_see_event(&st, &u, id).await? {
-        return Err(forbidden(u.lang, ErrorKey::EventNotOpenToGroup));
-    }
-    let e = load_event(&st, &u, id).await?;
+    let e = load_visible_event(&st, &u, id).await?;
     let mut v = event_json(&e, &u);
     let gids: Vec<(i64,)> = sqlx::query_as("SELECT group_id FROM event_groups WHERE event_id=$1")
         .bind(id)
@@ -1028,7 +1032,7 @@ async fn self_checkin(
     if u.status != "active" {
         return Err(forbidden(u.lang, ErrorKey::MembersOnlyAttendance));
     }
-    let e = load_event(&st, &u, id).await?;
+    let e = load_visible_event(&st, &u, id).await?;
     if e.status != "published" {
         return Err(bad(u.lang, ErrorKey::EventNotOpen));
     }
@@ -1114,7 +1118,7 @@ async fn get_checkin_info(
     if u.status != "active" {
         return Err(forbidden(u.lang, ErrorKey::MembersOnlyAttendance));
     }
-    let e = load_event(&st, &u, id).await?;
+    let e = load_visible_event(&st, &u, id).await?;
     let my_attended: Option<(Option<i64>,)> =
         sqlx::query_as("SELECT attended FROM event_signups WHERE event_id = $1 AND user_id = $2")
             .bind(id)

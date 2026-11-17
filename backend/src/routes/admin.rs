@@ -936,6 +936,10 @@ async fn approve_recovery(
         .bind(uid)
         .fetch_one(&mut *tx)
         .await?;
+    let target_roles = parse_roles(&roles);
+    if perms::is_superadmin(&target_roles) && !perms::is_superadmin(&u.roles) {
+        return Err(forbidden(u.lang, ErrorKey::SuperadminOnly));
+    }
     // Recovering a privileged account needs two different admins: the first
     // only flags the request, the second confirms and receives the link.
     if status == "pending" && perms::is_privileged(&st.db, &roles).await? {
