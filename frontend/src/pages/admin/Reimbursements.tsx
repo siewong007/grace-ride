@@ -114,8 +114,6 @@ function List({ scope }: { scope: 'review' | 'payout' }) {
   apiQuery.set('limit', String(pageSize));
   const { data, error, loading, reload } = useApi<PaginatedReimbursements | Reimb[]>(
     `/reimbursements?${apiQuery}`,
-    undefined,
-    { latestOnly: true },
   );
   const [initialLoadComplete, setInitialLoadComplete] = useState(false);
   if (!loading && !initialLoadComplete) setInitialLoadComplete(true);

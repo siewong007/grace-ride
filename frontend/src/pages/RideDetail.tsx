@@ -80,7 +80,8 @@ export default function RideDetail() {
   const canAct = auth?.can ?? (() => true);
 
   if (error) return <ErrorBox error={error} />;
-  if (!r) return <Spinner />;
+  // Never act on a ride other than the one in the URL, even for a moment.
+  if (!r || String(r.id) !== id) return <Spinner />;
 
   const chatVisible = r.trip_id != null && (r.viewer.is_passenger || r.viewer.is_driver || r.viewer.is_staff);
   const live = r.status === 'in_progress';

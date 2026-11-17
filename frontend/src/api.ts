@@ -107,25 +107,21 @@ if (typeof window !== 'undefined') {
 }
 
 /** Fetch JSON for a path; re-fetch on `reload()` and optionally poll every `pollMs`.
- *  `latestOnly` ignores responses for requests superseded by a newer path or reload. */
-export function useApi<T>(
-  path: string | null,
-  pollMs?: number,
-  options: { latestOnly?: boolean } = {},
-) {
+ *  Responses for requests superseded by a newer path or reload are always ignored,
+ *  so a slow reply for a previous path can never replace the current path's data. */
+export function useApi<T>(path: string | null, pollMs?: number) {
   const [data, setData] = useState<T | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(Boolean(path));
   const pathRef = useRef(path);
   const requestId = useRef(0);
-  const latestOnly = options.latestOnly ?? false;
   pathRef.current = path;
 
   const reload = useCallback(async () => {
     const currentRequest = ++requestId.current;
     const requestPath = pathRef.current;
     const isCurrent = () =>
-      !latestOnly || (requestId.current === currentRequest && pathRef.current === requestPath);
+      requestId.current === currentRequest && pathRef.current === requestPath;
     if (!requestPath) {
       setLoading(false);
       return;
@@ -141,12 +137,12 @@ export function useApi<T>(
     } finally {
       if (isCurrent()) setLoading(false);
     }
-  }, [latestOnly]);
+  }, []);
 
   useEffect(() => {
     const requests = requestId;
     if (!path) {
-      if (latestOnly) requests.current++;
+      requests.current++;
       setLoading(false);
       setData(null);
       setError(null);
@@ -163,9 +159,9 @@ export function useApi<T>(
     return () => {
       clearInterval(t);
       unsub();
-      if (latestOnly) requests.current++;
+      requests.current++;
     };
-  }, [path, pollMs, reload, latestOnly]);
+  }, [path, pollMs, reload]);
 
   return { data, error, loading, reload, setData };
 }

@@ -295,20 +295,39 @@ async fn check_photo(
     ok.map(|_| ()).ok_or(bad(u.lang, ErrorKey::InvalidPhoto))
 }
 
-/// Replace an event's audience and its narrowed "joining as" choices.
-async fn save_event_groups(st: &AppState, id: i64, req: &EventIn) -> AppResult<()> {
+/// Replace an event's audience and its narrowed "joining as" choices. Runs on the caller's
+/// transaction so a failure leaves the event's previous details and audience untouched.
+async fn save_event_groups(
+    tx: &mut sqlx::PgConnection,
+    id: i64,
+    req: &EventIn,
+    lang: Lang,
+) -> AppResult<()> {
+    // Every audience group must still exist (one deleted since the form opened is a 400,
+    // not a foreign-key 500). FOR SHARE keeps them from being deleted until we commit.
+    let mut wanted = req.group_ids.clone();
+    wanted.sort_unstable();
+    wanted.dedup();
+    let found: Vec<i64> =
+        sqlx::query_scalar("SELECT id FROM groups WHERE id = ANY($1) FOR SHARE")
+            .bind(&wanted)
+            .fetch_all(&mut *tx)
+            .await?;
+    if found.len() != wanted.len() {
+        return Err(bad(lang, ErrorKey::SelectVisibleGroup));
+    }
     sqlx::query("DELETE FROM event_groups WHERE event_id=$1")
         .bind(id)
-        .execute(&st.db)
+        .execute(&mut *tx)
         .await?;
     sqlx::query("INSERT INTO event_groups (event_id, group_id) SELECT $1, unnest($2::BIGINT[]) ON CONFLICT DO NOTHING")
         .bind(id)
-        .bind(&req.group_ids)
-        .execute(&st.db)
+        .bind(&wanted)
+        .execute(&mut *tx)
         .await?;
     sqlx::query("DELETE FROM event_attribution_groups WHERE event_id=$1")
         .bind(id)
-        .execute(&st.db)
+        .execute(&mut *tx)
         .await?;
     let narrowed = req.as_group_ids.clone().unwrap_or_default();
     // Only real, non-visitor groups.
@@ -318,7 +337,7 @@ async fn save_event_groups(st: &AppState, id: i64, req: &EventIn) -> AppResult<(
     )
     .bind(id)
     .bind(&narrowed)
-    .execute(&st.db)
+    .execute(&mut *tx)
     .await?;
     Ok(())
 }
@@ -357,6 +376,8 @@ async fn create_event(
     }
     let (at, dl) = validate(&req, u.lang)?;
     check_photo(&st, &u, req.photo_file_id, None).await?;
+    // The event and its audience are saved together, or not at all.
+    let mut tx = st.db.begin().await?;
     let (id,): (i64,) = sqlx::query_as(
         "INSERT INTO events (title, kind, description, starts_at, location, capacity, cost_note, signup_deadline, created_by, created_at, photo_file_id)
          VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11) RETURNING id",
@@ -372,9 +393,10 @@ async fn create_event(
     .bind(u.id)
     .bind(now())
     .bind(req.photo_file_id)
-    .fetch_one(&st.db)
+    .fetch_one(&mut *tx)
     .await?;
-    save_event_groups(&st, id, &req).await?;
+    save_event_groups(&mut tx, id, &req, u.lang).await?;
+    tx.commit().await?;
     // Invite members of the target groups and their sub-groups (相关活动邀请).
     let members: Vec<(i64,)> = sqlx::query_as(&audience_users_sql("$1"))
         .bind(id)
@@ -440,10 +462,12 @@ async fn update_event(
         .bind(id)
         .execute(&mut *tx)
         .await?;
+    // Details, audience and waitlist promotions commit together: a failed save (say, a
+    // group deleted since the form opened) must not keep the new venue and drop the audience.
+    save_event_groups(&mut tx, id, &req, u.lang).await?;
     let promoted = promote_waitlist(&mut tx, id, capacity, &event_status).await?;
     tx.commit().await?;
     notify_promoted(&st, id, req.title.trim(), &promoted).await;
-    save_event_groups(&st, id, &req).await?;
     if at != e.starts_at || req.location.trim() != e.location {
         let body = format!(
             "{} · {} · {}",

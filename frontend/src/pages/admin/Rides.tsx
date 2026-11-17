@@ -69,7 +69,6 @@ export default function AdminRides() {
   const { data, error, loading } = useApi<AdminRidesData | Ride[]>(
     `/admin/rides?${apiQuery}`,
     20000,
-    { latestOnly: true },
   );
 
   const [initialLoadComplete, setInitialLoadComplete] = useState(false);

@@ -178,8 +178,6 @@ function MemberList() {
   apiQuery.set('limit', String(pageSize));
   const { data, loading, reload } = useApi<PaginatedUsers | User[]>(
     `/admin/users?${apiQuery}`,
-    undefined,
-    { latestOnly: true },
   );
   const [initialLoadComplete, setInitialLoadComplete] = useState(false);
   if (!loading && !initialLoadComplete) setInitialLoadComplete(true);

@@ -17,11 +17,7 @@ function response(value: string) {
 
 function Harness() {
   const [params, setParams] = useSearchParams();
-  const { data } = useApi<{ value: string }>(
-    `/members?sort=${params.get('sort')}`,
-    undefined,
-    { latestOnly: true },
-  );
+  const { data } = useApi<{ value: string }>(`/members?sort=${params.get('sort')}`);
   return (
     <div>
       <output data-testid="value">{data?.value ?? ''}</output>
@@ -32,7 +28,7 @@ function Harness() {
 
 afterEach(() => vi.unstubAllGlobals());
 
-describe('useApi latestOnly', () => {
+describe('useApi stale responses', () => {
   it('does not let an older query response replace newer data', async () => {
     const requests: ReturnType<typeof deferredResponse>[] = [];
     vi.stubGlobal('fetch', vi.fn(() => {
