@@ -23,6 +23,7 @@ const RideDetail = lazy(() => import('./pages/RideDetail'));
 const Drive = lazy(() => import('./pages/Drive'));
 const Events = lazy(() => import('./pages/Events'));
 const EventDetail = lazy(() => import('./pages/EventDetail'));
+const EventCheckin = lazy(() => import('./pages/EventCheckin'));
 const EventForm = lazy(() => import('./pages/EventForm'));
 const Settlements = lazy(() => import('./pages/Settlements'));
 const SettlementDetail = named(() => import('./pages/Settlements'), 'SettlementDetail');
@@ -85,7 +86,7 @@ function RequireAuth({ children }: { children: JSX.Element }) {
   const { me, loading } = useAuth();
   const loc = useLocation();
   if (loading) return <Spinner />;
-  if (!me) return <Navigate to="/login" state={{ from: loc.pathname }} replace />;
+  if (!me) return <Navigate to="/login" state={{ from: loc.pathname + loc.search }} replace />;
   return <AutoLockProvider>{children}</AutoLockProvider>;
 }
 
@@ -112,6 +113,7 @@ export default function App() {
         <Route path="events" element={gated(<Events />, 'events')} />
         <Route path="events/new" element={gated(<EventForm />, ['events', 'create'])} />
         <Route path="events/:id" element={gated(<EventDetail />, 'events', 'admin_events')} />
+        <Route path="events/:id/checkin" element={gated(<EventCheckin />, 'events', 'admin_events')} />
         <Route path="events/:id/edit" element={gated(<EventForm />, ['events', 'update'], ['admin_events', 'update'])} />
         <Route path="events/:eventId/settle" element={gated(<SettlementForm />, ['settlements', 'create'])} />
         <Route path="settlements" element={gated(<Settlements />, 'settlements', 'admin_bills')} />

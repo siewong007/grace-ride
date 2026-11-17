@@ -1,6 +1,7 @@
 export default {
   openTitle: '{host} 为您安排了接送',
   openOnePhone: '此链接只能在一部手机上打开。请用您出行时带的手机打开。',
+  privacyNote: '您的姓名、电话和上车地址只用于安排这次接送，并会提供给司机和交通组。打开此链接即表示您同意。如有疑问，请询问邀请您的人或教会办公室。',
   openButton: '查看我的接送',
   notYetTitle: '接送页面将于 {when} 开放',
   notYetBody: '届时请再打开此链接。',
@@ -40,6 +41,7 @@ export default {
   openMap: '在地图中打开',
   bringTitle: '带访客同行',
   bringDesc: '为非会员朋友预约接送。对方会收到只适用于这次行程的链接。',
+  bringConsent: '请先征得访客同意，教会才可使用其姓名、电话和上车地址安排这次接送，然后再添加。',
   inviteButton: '邀请访客',
   formTitle: '邀请访客',
   name: '访客姓名',

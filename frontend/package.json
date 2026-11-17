@@ -2,9 +2,11 @@
   "name": "grace-ride-web",
   "private": true,
   "version": "0.1.0",
+  "license": "UNLICENSED",
   "type": "module",
   "scripts": {
     "dev": "vite",
+    "prebuild": "node scripts/third-party-licenses.mjs",
     "build": "tsc -b && vite build",
     "lint": "eslint src",
     "preview": "vite preview",

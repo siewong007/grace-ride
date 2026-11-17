@@ -168,7 +168,7 @@ async fn role_perms(st: &AppState, key: &str) -> AppResult<PermSet> {
 /// What the caller would hold if role `key` granted `replacement` (`None`: role gone).
 async fn caller_after(
     st: &AppState,
-    u: &CurrentUser,
+    roles: &[String],
     key: &str,
     replacement: Option<&PermSet>,
 ) -> AppResult<PermSet> {
@@ -177,7 +177,7 @@ async fn caller_after(
          WHERE (role_key = $1 OR role_key = ANY($2)) AND role_key <> $3",
     )
     .bind(MEMBER_ROLE)
-    .bind(&u.roles)
+    .bind(roles)
     .bind(key)
     .fetch_all(&st.db)
     .await?;
@@ -190,20 +190,30 @@ async fn caller_after(
 
 /// A change to a role the caller holds must not take away their own right to manage
 /// roles (someone must always hold it) nor hand them finance permissions.
+///
+/// Call it while holding the roles-mutation advisory lock. It re-reads the caller's
+/// roles rather than trusting `u`, which was loaded before the lock: a concurrent
+/// "give myself role X" may have committed in between.
 async fn guard_own_access(
     st: &AppState,
     u: &CurrentUser,
     key: &str,
     replacement: Option<&PermSet>,
 ) -> AppResult<()> {
-    if key != MEMBER_ROLE && !u.roles.iter().any(|r| r == key) {
+    let (raw,): (String,) = sqlx::query_as("SELECT roles FROM users WHERE id = $1")
+        .bind(u.id)
+        .fetch_one(&st.db)
+        .await?;
+    let roles = crate::perms::parse_roles(&raw);
+    if key != MEMBER_ROLE && !roles.iter().any(|r| r == key) {
         return Ok(());
     }
-    let after = caller_after(st, u, key, replacement).await?;
-    if u.perms.has(Page::AdminRoles, Act::Update) && !after.has(Page::AdminRoles, Act::Update) {
+    let current = crate::perms::for_roles(&st.db, &roles).await?;
+    let after = caller_after(st, &roles, key, replacement).await?;
+    if current.has(Page::AdminRoles, Act::Update) && !after.has(Page::AdminRoles, Act::Update) {
         return Err(forbidden(u.lang, ErrorKey::CannotRemoveOwnRoleAccess));
     }
-    if after.new_finance(&u.perms) {
+    if after.new_finance(&current) {
         return Err(forbidden(u.lang, ErrorKey::CannotGrantSelfFinance));
     }
     Ok(())

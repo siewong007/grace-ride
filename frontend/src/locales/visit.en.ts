@@ -2,6 +2,7 @@ export default {
   // The visitor's own page (/visit/:token)
   openTitle: '{host} has arranged a ride for you',
   openOnePhone: 'This link works on one phone only. Open it on the phone you’ll travel with.',
+  privacyNote: 'Your name, phone and pickup address are used only to arrange this ride and are shared with your driver and the transport team. Opening the link means you agree. Ask your host or the church office if you have questions.',
   openButton: 'Open my ride',
   notYetTitle: 'Your ride page opens on {when}',
   notYetBody: 'Come back to this link then.',
@@ -42,6 +43,7 @@ export default {
   // Inviting a visitor (event page)
   bringTitle: 'Bringing a visitor',
   bringDesc: 'Book a ride for a friend who isn’t a member. They get a link that works for this trip only.',
+  bringConsent: 'Add a visitor only after they agree that the church may use their name, phone and pickup address to arrange this ride.',
   inviteButton: 'Invite a visitor',
   formTitle: 'Invite a visitor',
   name: 'Visitor’s name',

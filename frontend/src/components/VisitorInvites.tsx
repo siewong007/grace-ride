@@ -72,6 +72,7 @@ export default function VisitorInvites({ event }: { event: { id: number; title: 
       <div>
         <h3>{t('bringTitle')}</h3>
         <p className="muted small">{t('bringDesc')}</p>
+        <p className="muted small">{t('bringConsent')}</p>
       </div>
       {!!data?.length && (
         <div className="list">

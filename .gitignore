@@ -12,3 +12,4 @@ frontend/dist/
 # Playwright
 frontend/test-results/
 frontend/playwright-report/
+frontend/public/third-party-licenses.txt

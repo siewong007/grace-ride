@@ -15,6 +15,7 @@ Audited 14 November 2026 against repository HEAD `5659a63` and the local working
 | [Testing](docs/TESTING.md) | Current commands, coverage inventory and verification limits |
 | [Deployment](docs/DEPLOYMENT.md) | Local setup, deployment, backups, recovery and monitoring |
 | [Security](docs/SECURITY.md) | Access controls, privacy, accepted risks and launch checks |
+| [Compliance](docs/COMPLIANCE.md) | PDPA, terms and consent, retention, breach response, third-party services, transport law, copyright and licences (draft for church and legal review) |
 
 The [original Chinese proposal](docs/Grace_Ride_Chinese.pdf) is retained as a requirements reference, not a description of everything currently built. The [brand asset guide](docs/brand/grace-ride-logo-kit/README.md) owns logo usage.
 

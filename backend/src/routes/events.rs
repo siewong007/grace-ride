@@ -14,7 +14,9 @@ use crate::error::{bad, forbidden, not_found, AppResult};
 use crate::i18n::ErrorKey;
 use crate::perms::{Act, Page};
 use crate::state::AppState;
-use crate::util::{audit, audit_many, norm_dt, notify, notify_many, now, random_token, require, Lang};
+use crate::util::{
+    audit, audit_many, norm_dt, notify, notify_many, now, random_token, require, Lang,
+};
 
 pub fn router() -> Router<AppState> {
     Router::new()
@@ -27,7 +29,10 @@ pub fn router() -> Router<AppState> {
         .route("/events/{id}/withdraw", post(withdraw))
         .route("/events/{id}/signups", get(list_signups))
         .route("/events/{id}/attendance", post(mark_attendance))
-        .route("/events/{id}/checkin", get(get_checkin_info).post(self_checkin))
+        .route(
+            "/events/{id}/checkin",
+            get(get_checkin_info).post(self_checkin),
+        )
         .route("/events/{id}/checkin-code/reset", post(reset_checkin_code))
 }
 
@@ -1110,13 +1115,12 @@ async fn get_checkin_info(
         return Err(forbidden(u.lang, ErrorKey::MembersOnlyAttendance));
     }
     let e = load_event(&st, &u, id).await?;
-    let my_attended: Option<(Option<i64>,)> = sqlx::query_as(
-        "SELECT attended FROM event_signups WHERE event_id = $1 AND user_id = $2",
-    )
-    .bind(id)
-    .bind(u.id)
-    .fetch_optional(&st.db)
-    .await?;
+    let my_attended: Option<(Option<i64>,)> =
+        sqlx::query_as("SELECT attended FROM event_signups WHERE event_id = $1 AND user_id = $2")
+            .bind(id)
+            .bind(u.id)
+            .fetch_optional(&st.db)
+            .await?;
 
     Ok(Json(json!({
         "id": e.id,

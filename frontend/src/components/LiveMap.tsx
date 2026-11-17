@@ -99,7 +99,7 @@ export default function LiveMap({
   const center: [number, number] = points[0] ? [points[0].lat, points[0].lng] : [3.1073, 101.6067]; // Petaling Jaya
   return (
     <MapContainer center={center} zoom={13} className={`map ${tall ? 'tall' : ''}`} scrollWheelZoom={false}>
-      <TileLayer attribution='&copy; OpenStreetMap contributors' url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png" />
+      <TileLayer attribution='&copy; <a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noopener noreferrer">OpenStreetMap</a> contributors' url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png" />
       {route && route.length > 1 && (
         <Polyline positions={route} pathOptions={{ color: cssVar('--primary'), weight: 5, opacity: 0.75 }} />
       )}

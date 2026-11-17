@@ -4,25 +4,41 @@ import { post } from '../api';
 import { useAuth } from '../auth';
 import { Button, ErrorBox, useAction } from './ui';
 import { useTranslation } from 'react-i18next';
+import ms from '../locales/terms.ms';
 
-const SECTIONS = ['service', 'who', 'info', 'location', 'see', 'choices', 'accept'] as const;
+export const TERMS_SECTIONS = [
+  'service', 'who', 'controller', 'info', 'sensitive', 'purpose', 'location', 'see', 'third',
+  'retention', 'rights', 'drivers', 'conduct', 'ownership', 'changes', 'accept',
+] as const;
 
-/** The terms. `heading` is h1 on a page of its own, lower when shown inside another step. */
+/**
+ * The terms and privacy notice. `heading` is h1 on a page of its own, lower when shown
+ * inside another step. The Malay text is one tap away because PDPA s.7(3) requires the
+ * notice in Malay and English; the app itself stays Chinese/English.
+ */
 export function TermsText({ heading: Heading = 'h2' }: { heading?: 'h1' | 'h2' | 'h3' }) {
-  const { t } = useTranslation('terms');
+  const { t: tUi } = useTranslation('terms');
+  const [malay, setMalay] = useState(false);
+  const t = (key: keyof typeof ms) => (malay ? ms[key] : tUi(key));
   return (
-    <div className="terms-measure stack">
+    <div className="terms-measure stack" lang={malay ? 'ms' : undefined}>
       <div>
         <Heading className="terms-title">{t('title')}</Heading>
         <p className="muted small">{t('updated')}</p>
+        <button type="button" className="link-btn small" lang={malay ? undefined : 'ms'} onClick={() => setMalay(!malay)}>
+          {malay ? tUi('readOwn') : tUi('readMalay')}
+        </button>
       </div>
       <p className="terms-intro">{t('intro')}</p>
-      {SECTIONS.map((key) => (
+      {TERMS_SECTIONS.map((key) => (
         <section key={key} className="stack-sm">
           <h3>{t(`${key}Title`)}</h3>
           <p className="muted">{t(`${key}Body`)}</p>
         </section>
       ))}
+      <p className="small">
+        <a href="/third-party-licenses.txt" target="_blank" rel="noopener noreferrer">{t('licences')}</a>
+      </p>
     </div>
   );
 }

@@ -291,14 +291,14 @@ async fn search_places(
     u: CurrentUser,
     Query(q): Query<PlacesQuery>,
 ) -> AppResult<Json<Value>> {
+    // Per member, and for the whole server: Photon bans by source IP, so it is the
+    // total from this server that must stay modest.
+    let minute = std::time::Duration::from_secs(60);
     if st
         .limiter
-        .check(
-            &format!("places:{}", u.id),
-            30,
-            std::time::Duration::from_secs(60),
-        )
+        .check(&format!("places:{}", u.id), 30, minute)
         .is_err()
+        || st.limiter.check("places:all", 300, minute).is_err()
     {
         return Ok(Json(json!([])));
     }

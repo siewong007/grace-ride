@@ -223,8 +223,9 @@ async fn me(State(st): State<AppState>, u: CurrentUser) -> AppResult<Json<Value>
         Option<i64>,
         Option<i64>,
         Option<String>,
+        i32,
     ) = sqlx::query_as(
-        "SELECT phone, photo_file_id, totp_enabled, password_hash, badges_opt_out, carpool_enabled, spare_seats, terms_accepted_at, readiness_prompt_mins, gate_wait_mins, auto_lock_mins, totp_backup_codes FROM users WHERE id=$1",
+        "SELECT phone, photo_file_id, totp_enabled, password_hash, badges_opt_out, carpool_enabled, spare_seats, terms_accepted_at, readiness_prompt_mins, gate_wait_mins, auto_lock_mins, totp_backup_codes, terms_version FROM users WHERE id=$1",
     )
     .bind(u.id)
     .fetch_one(&st.db)
@@ -278,7 +279,8 @@ async fn me(State(st): State<AppState>, u: CurrentUser) -> AppResult<Json<Value>
         "badges_opt_out": row.4 == 1, "carpool_enabled": row.5 == 1, "spare_seats": row.6,
         "readiness_prompt_mins": row.8.unwrap_or(45), "gate_wait_mins": row.9.unwrap_or(5),
         "auto_lock_mins": row.10.unwrap_or(0), "session_timeout_mins": session_timeout, "backup_codes_count": backup_codes_count,
-        "terms_accepted": row.7.is_some(),
+        "terms_accepted": row.7.is_some() && row.12 >= TERMS_VERSION,
+        "terms_version": TERMS_VERSION,
         "privileged": u.perms.privileged(), "unread": unread.0,
         "groups": groups.into_iter().map(|(id, name)| json!({"id": id, "name": name})).collect::<Vec<_>>(),
         "dev_mode": st.cfg.dev_mode,
@@ -1251,6 +1253,11 @@ async fn invite_preview(
     Ok(Json(json!({ "kind": kind, "email": email, "name": name })))
 }
 
+/// Version of the terms and privacy notice in `frontend/src/locales/terms.*.ts`. Raise it
+/// when their meaning changes (and the column default in a new migration, see 0007): every
+/// member who agreed to an older version is asked to opt in again.
+pub const TERMS_VERSION: i32 = 2;
+
 #[derive(Deserialize)]
 struct TermsIn {
     accepted: bool,
@@ -1264,12 +1271,22 @@ async fn accept_terms(
     if !req.accepted {
         return Err(bad(u.lang, ErrorKey::TermsRequired));
     }
-    sqlx::query("UPDATE users SET terms_accepted_at=COALESCE(terms_accepted_at, $1) WHERE id=$2")
+    // Each opt-in records when and to which version, so a later version asks again.
+    sqlx::query("UPDATE users SET terms_accepted_at=$1, terms_version=$2 WHERE id=$3")
         .bind(now())
+        .bind(TERMS_VERSION)
         .bind(u.id)
         .execute(&st.db)
         .await?;
-    audit(&st.db, Some(u.id), "terms.accept", "user", Some(u.id), "").await;
+    audit(
+        &st.db,
+        Some(u.id),
+        "terms.accept",
+        "user",
+        Some(u.id),
+        &format!("version {TERMS_VERSION}"),
+    )
+    .await;
     Ok(Json(json!({ "ok": true })))
 }
 
@@ -1368,18 +1385,17 @@ async fn invite_accept(
             .bind(inv_id)
             .execute(&mut *tx)
             .await?;
-        sqlx::query(
-            "UPDATE users SET terms_accepted_at=COALESCE(terms_accepted_at, $1) WHERE id=$2",
-        )
-        .bind(now())
-        .bind(id)
-        .execute(&mut *tx)
-        .await?;
+        sqlx::query("UPDATE users SET terms_accepted_at=$1, terms_version=$2 WHERE id=$3")
+            .bind(now())
+            .bind(TERMS_VERSION)
+            .bind(id)
+            .execute(&mut *tx)
+            .await?;
         id
     } else {
         // The invite only opens a profile. Role and group are assigned when an admin approves.
         let (id,): (i64,) = sqlx::query_as(
-            "INSERT INTO users (name, email, phone, roles, status, password_hash, webauthn_uuid, terms_accepted_at) VALUES ($1,$2,$3,'','pending',$4,$5,$6) RETURNING id",
+            "INSERT INTO users (name, email, phone, roles, status, password_hash, webauthn_uuid, terms_accepted_at, terms_version) VALUES ($1,$2,$3,'','pending',$4,$5,$6,$7) RETURNING id",
         )
         .bind(&joined_name)
         .bind(&joined_email)
@@ -1387,6 +1403,7 @@ async fn invite_accept(
         .bind(None::<String>)
         .bind(uuid::Uuid::new_v4().to_string())
         .bind(now())
+        .bind(TERMS_VERSION)
         .fetch_one(&mut *tx)
         .await
         .map_err(|_| bad(lang, ErrorKey::EmailAlreadyRegistered))?;

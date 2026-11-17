@@ -741,12 +741,18 @@ async fn seed_admin_only(db: &PgPool, cfg: &Config) -> anyhow::Result<()> {
                 .bind(&email).bind(stable_uuid(0)).fetch_one(db).await?.0
         }
         Some((id, pw)) => {
-            let (passkeys,): (i64,) =
-                sqlx::query_as("SELECT COUNT(*) FROM passkeys WHERE user_id = $1")
-                    .bind(id)
-                    .fetch_one(db)
-                    .await?;
-            if passkeys > 0 || pw.is_some() {
+            // Only an administrator who has never finished setup gets a new link. Anyone
+            // who has signed in before (accepted the terms) and later lost their keys
+            // goes through recovery like any member: otherwise a restart after a
+            // recovery approval would write a working sign-in link into the logs.
+            let (passkeys, set_up): (i64, bool) = sqlx::query_as(
+                "SELECT (SELECT COUNT(*) FROM passkeys WHERE user_id = $1),
+                        (SELECT terms_accepted_at IS NOT NULL OR status <> 'active' FROM users WHERE id = $1)",
+            )
+            .bind(id)
+            .fetch_one(db)
+            .await?;
+            if passkeys > 0 || pw.is_some() || set_up {
                 return Ok(());
             }
             // First admin exists but has no passkey and no password set up.

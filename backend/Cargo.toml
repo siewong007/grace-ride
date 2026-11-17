@@ -2,6 +2,8 @@
 name = "grace-ride"
 version = "0.1.0"
 edition = "2021"
+license-file = "../LICENSE"
+publish = false
 description = "恩典同行 Grace Ride — invite-only ride & fellowship app for PJ State CMC"
 
 [dependencies]

@@ -48,7 +48,10 @@ async fn event_attendance_module_lifecycle_and_checkin() {
     .await;
     assert_eq!(detail_org.status, StatusCode::OK);
     assert_eq!(detail_org.json["attendance_enabled"], true);
-    let code = detail_org.json["checkin_code"].as_str().unwrap().to_string();
+    let code = detail_org.json["checkin_code"]
+        .as_str()
+        .unwrap()
+        .to_string();
     assert!(!code.is_empty());
 
     // Member viewing event detail sees attendance_enabled: true, but not checkin_code

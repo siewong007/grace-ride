@@ -27,7 +27,7 @@ export default function EventCheckin() {
   const { data: info, error: infoErr } = useApi<CheckinInfo>(id ? `/events/${id}/checkin` : null);
   const [checkedIn, setCheckedIn] = useState(false);
   const [alreadyAttended, setAlreadyAttended] = useState(false);
-  const [error, setError] = useState<unknown>(null);
+  const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
 
   useEffect(() => {
@@ -39,7 +39,7 @@ export default function EventCheckin() {
         setAlreadyAttended(res.already_attended);
       })
       .catch((err) => {
-        setError(err);
+        setError(err instanceof Error ? err.message : String(err));
       })
       .finally(() => setBusy(false));
   }, [id, code]);
@@ -73,7 +73,7 @@ export default function EventCheckin() {
             </div>
           ) : checkedIn || info?.my_attended ? (
             <div className="stack items-center">
-              <div style={{ color: '#10b981', marginBottom: '0.5rem' }}>
+              <div style={{ color: 'var(--success)', marginBottom: '0.5rem' }}>
                 <CheckCircle2 size={64} />
               </div>
               <h2>{alreadyAttended || info?.my_attended ? t('alreadyAttendedNote') : t('checkinSuccess')}</h2>

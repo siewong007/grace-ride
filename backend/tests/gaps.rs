@@ -766,6 +766,43 @@ async fn terms_accept_endpoint() {
 }
 
 #[tokio::test]
+async fn older_terms_version_asks_again() {
+    let (app, st) = setup().await;
+    let cookie = login(&st, "member@example.org").await;
+    let accept = || {
+        call(
+            &app,
+            Method::POST,
+            "/api/auth/terms",
+            Some(&cookie),
+            Some(json!({"accepted": true})),
+        )
+    };
+    let accepted = || async {
+        call(&app, Method::GET, "/api/auth/me", Some(&cookie), None)
+            .await
+            .json["terms_accepted"]
+            .clone()
+    };
+    assert_eq!(accept().await.status, StatusCode::OK);
+    assert_eq!(accepted().await, json!(true));
+    // A member who agreed to version 1 is gated until they opt in to the current version.
+    sqlx::query("UPDATE users SET terms_version=1 WHERE email='member@example.org'")
+        .execute(&st.db)
+        .await
+        .unwrap();
+    assert_eq!(accepted().await, json!(false));
+    assert_eq!(accept().await.status, StatusCode::OK);
+    assert_eq!(accepted().await, json!(true));
+    let (version,): (i32,) =
+        sqlx::query_as("SELECT terms_version FROM users WHERE email='member@example.org'")
+            .fetch_one(&st.db)
+            .await
+            .unwrap();
+    assert_eq!(version, grace_ride::routes::auth::TERMS_VERSION);
+}
+
+#[tokio::test]
 async fn profile_lang_switch_and_disabled_user() {
     let (app, st) = setup().await;
     let cookie = login(&st, "member@example.org").await;

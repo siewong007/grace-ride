@@ -80,6 +80,7 @@ export default function Visit() {
           <h1 className="visit-title">{t('openTitle', { host: p.host })}</h1>
           <p className="muted">{eventLine}</p>
           <p className="small">{t('openOnePhone')}</p>
+          <p className="muted small">{t('privacyNote')}</p>
           <ErrorBox error={error} />
           <Button variant="primary" size="lg" block disabled={busy} onClick={() => run(() => post(`/visit/${token}/claim`).then(preview.reload))}>
             {t('openButton')}

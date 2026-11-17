@@ -82,6 +82,7 @@ export default function EventDetail() {
   const signed = !!e.my_signup && e.my_signup.status !== 'cancelled';
   const open = e.status === 'published';
   const isFull = e.capacity > 0 && e.going >= e.capacity;
+  const attendanceEnabled = e.attendance_enabled !== false;
 
   const active = signups?.filter((s) => s.status !== 'cancelled') ?? [];
   const signupsAttended = active.filter((s) => s.attended === 1).length;
@@ -221,15 +222,43 @@ export default function EventDetail() {
             <Card className="stack">
               <div className="row between nowrap">
                 <h3>{t('mySignup')}</h3>
-                {signed && (
-                  <Pill tone={e.my_signup!.status === 'going' ? 'success' : 'warning'}>
-                    {e.my_signup!.status === 'going' ? t('going') : t('waitlist')}
-                  </Pill>
-                )}
+                <div className="row nowrap gap-xs">
+                  {signed && (
+                    <Pill tone={e.my_signup!.status === 'going' ? 'success' : 'warning'}>
+                      {e.my_signup!.status === 'going' ? t('going') : t('waitlist')}
+                    </Pill>
+                  )}
+                  {attendanceEnabled && signed && e.my_signup?.attended === 1 && (
+                    <Pill tone="success">{t('statusAttended')}</Pill>
+                  )}
+                </div>
               </div>
 
               {signed && myGroup && <p className="small">{t('joiningAsName', { name: myGroup })}</p>}
               <p className="muted small">{t('signupNote')}</p>
+
+              {attendanceEnabled && open && (
+                <div className="card flat tight stack-xs">
+                  <div className="row between nowrap">
+                    <span className="bold small">{t('attendanceModule')}</span>
+                    <span className="muted tiny">
+                      {e.my_signup?.attended === 1 ? `✓ ${t('statusAttended')}` : t('statusNotAttended')}
+                    </span>
+                  </div>
+                  <p className="muted tiny">{t('participateNoRide')}</p>
+                  {e.my_signup?.attended !== 1 && (
+                    <Button
+                      variant="secondary"
+                      size="sm"
+                      block
+                      icon={<QrCode size={16} />}
+                      onClick={() => setShowScanModal(true)}
+                    >
+                      {t('scanToAttend')}
+                    </Button>
+                  )}
+                </div>
+              )}
 
               {open && !signed && mustChoose && (
                 <fieldset className="join-as stack-sm">
@@ -322,10 +351,25 @@ export default function EventDetail() {
                     <h3>{t('manageTitle')}</h3>
                     <p className="muted tiny">{t('manageDesc')}</p>
                   </div>
-                  <span className="muted small">
-                    {t('attendance', { attended: signupsAttended, total: active.length })}
-                  </span>
+                  {attendanceEnabled && (
+                    <span className="muted small">
+                      {t('attendance', { attended: signupsAttended, total: active.length })}
+                    </span>
+                  )}
                 </div>
+
+                {attendanceEnabled && (
+                  <div className="btn-row">
+                    <Button
+                      variant="secondary"
+                      size="sm"
+                      icon={<QrCode size={16} />}
+                      onClick={() => setShowQrModal(true)}
+                    >
+                      {t('attendanceQr')}
+                    </Button>
+                  </div>
+                )}
 
                 {!active.length ? (
                   <EmptyState title={t('noSignups')} />
@@ -349,35 +393,41 @@ export default function EventDetail() {
                             {s.as_group && <>{(s.need_ride || s.offer_drive) ? ' · ' : ''}{t('joiningAsName', { name: s.as_group })}</>}
                           </div>
                         </div>
-                        <div className="chips">
-                          <button
-                            type="button"
-                            className={`chip ${s.attended === 1 ? 'on' : ''}`}
-                            disabled={busy}
-                            onClick={() => mark(s.user_id, s.attended === 1 ? null : true)}
-                          >
-                            {t('attending')}
-                          </button>
-                          <button
-                            type="button"
-                            className={`chip ${s.attended === 0 ? 'on' : ''}`}
-                            disabled={busy}
-                            onClick={() => mark(s.user_id, s.attended === 0 ? null : false)}
-                          >
-                            {t('absent')}
-                          </button>
-                        </div>
+                        {attendanceEnabled && (
+                          <div className="chips">
+                            <button
+                              type="button"
+                              className={`chip ${s.attended === 1 ? 'on' : ''}`}
+                              disabled={busy}
+                              onClick={() => mark(s.user_id, s.attended === 1 ? null : true)}
+                            >
+                              {t('attending')}
+                            </button>
+                            <button
+                              type="button"
+                              className={`chip ${s.attended === 0 ? 'on' : ''}`}
+                              disabled={busy}
+                              onClick={() => mark(s.user_id, s.attended === 0 ? null : false)}
+                            >
+                              {t('absent')}
+                            </button>
+                          </div>
+                        )}
                       </div>
                     ))}
                   </div>
                 )}
 
-                <div className="btn-row">
-                  <Button variant="ghost" size="sm" onClick={() => setWalkIn(true)} icon={<Plus size={16} />}>
-                    {t('walkIn')}
-                  </Button>
-                </div>
-                <p className="muted tiny">{t('walkInNote')}</p>
+                {attendanceEnabled && (
+                  <>
+                    <div className="btn-row">
+                      <Button variant="ghost" size="sm" onClick={() => setWalkIn(true)} icon={<Plus size={16} />}>
+                        {t('walkIn')}
+                      </Button>
+                    </div>
+                    <p className="muted tiny">{t('walkInNote')}</p>
+                  </>
+                )}
 
                 {/* Event Actions & Settlements */}
                 <div className="divider" />
@@ -425,6 +475,25 @@ export default function EventDetail() {
           </div>
         </div>
 
+        {showQrModal && (
+          <AttendanceQrModal
+            event={e}
+            onClose={() => setShowQrModal(false)}
+            onResetCode={() => reload()}
+          />
+        )}
+
+        {showScanModal && (
+          <EventScannerModal
+            event={e}
+            onClose={() => setShowScanModal(false)}
+            onSuccess={() => {
+              setShowScanModal(false);
+              reload();
+            }}
+          />
+        )}
+
         {walkIn && (
           <WalkIn
             onClose={() => setWalkIn(false)}
@@ -433,6 +502,283 @@ export default function EventDetail() {
         )}
       </div>
     </Page>
+  );
+}
+
+function AttendanceQrModal({
+  event,
+  onClose,
+  onResetCode,
+}: {
+  event: EventFull;
+  onClose: () => void;
+  onResetCode: (newCode: string) => void;
+}) {
+  const { t } = useTranslation('eventDetail');
+  const ft = useFormatT();
+  const confirm = useConfirm();
+  const { busy, run } = useAction();
+  const [qrUrl, setQrUrl] = useState<string | null>(null);
+  const [fullscreen, setFullscreen] = useState(false);
+  const [copied, setCopied] = useState(false);
+
+  const checkinUrl = `${window.location.origin}/events/${event.id}/checkin${
+    event.checkin_code ? `?code=${encodeURIComponent(event.checkin_code)}` : ''
+  }`;
+
+  useEffect(() => {
+    QRCode.toDataURL(checkinUrl, {
+      margin: 1,
+      width: 280,
+      errorCorrectionLevel: 'M',
+    })
+      .then(setQrUrl)
+      .catch(() => setQrUrl(null));
+  }, [checkinUrl]);
+
+  const handleCopy = async () => {
+    try {
+      await navigator.clipboard.writeText(checkinUrl);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2500);
+    } catch {
+      // fallback
+    }
+  };
+
+  const handleReset = async () => {
+    const ok = await confirm({
+      title: t('qrResetCode'),
+      body: t('qrResetConfirm'),
+      confirmLabel: t('qrResetCode'),
+      tone: 'danger',
+    });
+    if (ok) {
+      run(async () => {
+        const res = await post<{ checkin_code: string }>(`/events/${event.id}/checkin-code/reset`);
+        onResetCode(res.checkin_code);
+      }, t('qrResetDone'));
+    }
+  };
+
+  return (
+    <Modal title={t('qrModalTitle')} onClose={onClose}>
+      <div
+        className="stack items-center"
+        style={
+          fullscreen
+            ? {
+                position: 'fixed',
+                inset: 0,
+                zIndex: 1000,
+                background: 'var(--bg)',
+                padding: '2rem',
+                display: 'flex',
+                flexDirection: 'column',
+                alignItems: 'center',
+                justifyContent: 'center',
+              }
+            : undefined
+        }
+      >
+        <div className="text-center stack-sm">
+          <h3>{event.title}</h3>
+          <p className="muted small">
+            {fmtDateTime(event.starts_at, ft)} · {event.location}
+          </p>
+        </div>
+
+        {qrUrl ? (
+          <div
+            className="totp-qr"
+            style={{
+              padding: '1rem',
+              borderRadius: '12px',
+              border: '1px solid var(--border)',
+            }}
+          >
+            <img src={qrUrl} width={280} height={280} alt={t('qrModalTitle')} />
+          </div>
+        ) : (
+          <Spinner />
+        )}
+
+        <div className="text-center stack-sm">
+          {event.checkin_code && (
+            <p className="small">
+              <span className="muted">{t('enterCodePlaceholder')}: </span>
+              <strong style={{ letterSpacing: '2px', fontFamily: 'monospace', fontSize: '1.25rem' }}>
+                {event.checkin_code}
+              </strong>
+            </p>
+          )}
+          <p className="muted tiny max-w-sm">{t('qrModalDesc')}</p>
+        </div>
+
+        <div className="btn-row wrap justify-center">
+          <Button variant="secondary" size="sm" icon={<Copy size={16} />} onClick={handleCopy}>
+            {copied ? t('qrLinkCopied') : t('qrCopyLink')}
+          </Button>
+          <Button
+            variant="ghost"
+            size="sm"
+            icon={fullscreen ? <Minimize2 size={16} /> : <Maximize2 size={16} />}
+            onClick={() => setFullscreen(!fullscreen)}
+          >
+            {fullscreen ? t('qrExitFullscreen') : t('qrFullscreen')}
+          </Button>
+          <Button
+            variant="ghost"
+            size="sm"
+            icon={<RefreshCw size={16} />}
+            disabled={busy}
+            onClick={handleReset}
+          >
+            {t('qrResetCode')}
+          </Button>
+        </div>
+      </div>
+    </Modal>
+  );
+}
+
+function EventScannerModal({
+  event,
+  onClose,
+  onSuccess,
+}: {
+  event: EventFull;
+  onClose: () => void;
+  onSuccess: () => void;
+}) {
+  const { t } = useTranslation('eventDetail');
+  const [code, setCode] = useState('');
+  const { busy, error, run } = useAction();
+  const videoRef = useRef<HTMLVideoElement | null>(null);
+  const [cameraActive, setCameraActive] = useState(false);
+
+  const extractCode = (input: string) => {
+    try {
+      if (input.includes('code=')) {
+        const u = new URL(input, window.location.origin);
+        return u.searchParams.get('code') || input;
+      }
+    } catch {
+      // not a full url
+    }
+    return input.trim();
+  };
+
+  const handleCheckin = (codeToUse: string) => {
+    const clean = extractCode(codeToUse);
+    run(async () => {
+      await post(`/events/${event.id}/checkin`, { code: clean });
+      onSuccess();
+    }, t('checkinSuccess'));
+  };
+
+  useEffect(() => {
+    let stream: MediaStream | null = null;
+    let timer: number | null = null;
+
+    if (navigator.mediaDevices && navigator.mediaDevices.getUserMedia) {
+      navigator.mediaDevices
+        .getUserMedia({ video: { facingMode: 'environment' } })
+        .then((s) => {
+          stream = s;
+          if (videoRef.current) {
+            videoRef.current.srcObject = s;
+            videoRef.current.play().catch(() => {});
+            setCameraActive(true);
+          }
+          if ('BarcodeDetector' in window) {
+            // @ts-expect-error BarcodeDetector browser standard
+            const detector = new window.BarcodeDetector({ formats: ['qr_code'] });
+            const scanLoop = async () => {
+              if (
+                videoRef.current &&
+                videoRef.current.readyState === videoRef.current.HAVE_ENOUGH_DATA
+              ) {
+                try {
+                  const barcodes = await detector.detect(videoRef.current);
+                  if (barcodes.length > 0) {
+                    const raw = barcodes[0].rawValue;
+                    handleCheckin(raw);
+                    return;
+                  }
+                } catch {
+                  // ignore
+                }
+              }
+              timer = window.setTimeout(scanLoop, 250);
+            };
+            timer = window.setTimeout(scanLoop, 500);
+          }
+        })
+        .catch(() => {
+          setCameraActive(false);
+        });
+    }
+
+    return () => {
+      if (timer) clearTimeout(timer);
+      if (stream) {
+        stream.getTracks().forEach((track) => track.stop());
+      }
+    };
+  }, []);
+
+  return (
+    <Modal title={t('scanQrModalTitle')} onClose={onClose}>
+      <div className="stack">
+        <p className="muted small">{t('scanQrModalDesc')}</p>
+
+        {cameraActive && (
+          <div
+            style={{
+              position: 'relative',
+              width: '100%',
+              maxWidth: '320px',
+              margin: '0 auto',
+              overflow: 'hidden',
+              borderRadius: '12px',
+              background: 'var(--surface-2)',
+            }}
+          >
+            <video
+              ref={videoRef}
+              style={{ width: '100%', height: '240px', objectFit: 'cover' }}
+              muted
+              playsInline
+            />
+          </div>
+        )}
+
+        <form
+          className="stack-sm"
+          onSubmit={(e) => {
+            e.preventDefault();
+            if (code.trim()) handleCheckin(code);
+          }}
+        >
+          <input
+            className="input"
+            type="text"
+            placeholder={t('enterCodePlaceholder')}
+            value={code}
+            onChange={(e) => setCode(e.target.value)}
+            disabled={busy}
+            autoFocus={!cameraActive}
+          />
+          <Button variant="primary" block type="submit" loading={busy} disabled={!code.trim()}>
+            {t('submitCheckin')}
+          </Button>
+        </form>
+
+        <p className="muted tiny">{t('participateNoRide')}</p>
+        <ErrorBox error={error} />
+      </div>
+    </Modal>
   );
 }
 

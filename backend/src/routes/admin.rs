@@ -337,6 +337,12 @@ async fn update_user(
         return Err(bad(u.lang, ErrorKey::InvalidStatus));
     }
     let mut tx = st.db.begin().await?;
+    // Serialize with role edits (routes::roles) so a self-check below never reads a
+    // role's permissions while another request is changing them. Taken before any
+    // row lock, in the same order as routes::roles, so the two cannot deadlock.
+    sqlx::query("SELECT pg_advisory_xact_lock(hashtextextended('grace_ride_roles_mutation', 0))")
+        .execute(&mut *tx)
+        .await?;
     // Lock active superadmins in a stable order so concurrent edits cannot each
     // observe themselves as the last one and demote both accounts.
     let active_superadmins: Vec<i64> = sqlx::query_scalar(
@@ -381,12 +387,6 @@ async fn update_user(
         // Giving or taking a role decides what a member may do, which is the same
         // authority as editing the roles themselves.
         require(&u, Page::AdminRoles, Act::Update)?;
-        // Serialize role and member role mutations to prevent race conditions.
-        sqlx::query(
-            "SELECT pg_advisory_xact_lock(hashtextextended('grace_ride_roles_mutation', 0))",
-        )
-        .execute(&mut *tx)
-        .await?;
         let (known,): (i64,) = sqlx::query_as("SELECT COUNT(*) FROM roles WHERE key = ANY($1)")
             .bind(&new_roles)
             .fetch_one(&mut *tx)
@@ -407,7 +407,10 @@ async fn update_user(
             }
             // Finance sees every receipt and payment record, so nobody grants it to
             // themselves; another administrator must decide.
-            if after.new_finance(&u.perms) {
+            // Compare with what the caller holds now (read under the lock), not with
+            // the permissions loaded when the request arrived.
+            let current = perms::for_roles(&st.db, &old_parsed).await?;
+            if after.new_finance(&current) {
                 return Err(forbidden(u.lang, ErrorKey::CannotGrantSelfFinance));
             }
         }
@@ -424,8 +427,10 @@ async fn update_user(
         .execute(&mut *tx)
         .await?;
     let mut released: Vec<i64> = Vec::new();
-    if roles_changed {
-        // Cap existing sessions to 12 hours max if holding staff permissions.
+    if roles_changed && perms::for_roles(&st.db, &new_roles).await?.privileged() {
+        // The session check caps staff sessions at 12 hours from sign-in; this also
+        // shortens the stored expiry so open streams (which only check expires_at)
+        // end on time.
         sqlx::query("UPDATE sessions SET expires_at = $1 WHERE user_id = $2 AND expires_at > $1")
             .bind(crate::util::in_hours(12))
             .bind(id)

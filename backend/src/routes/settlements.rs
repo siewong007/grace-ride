@@ -974,6 +974,17 @@ async fn submit_proof(
     if dup > 0 {
         return Err(bad(u.lang, ErrorKey::DuplicateTxnOrProof));
     }
+    // The same reference on another member's bill is still a likely reused receipt, but
+    // refusing here would tell the member that reference exists somewhere. Accept it and
+    // flag it to whoever verifies this share instead.
+    let (elsewhere,): (i64,) = sqlx::query_as(
+        "SELECT COUNT(*) FROM settlement_shares WHERE txn_ref = $1 AND user_id <> $2 AND settlement_id <> $3",
+    )
+    .bind(txn)
+    .bind(u.id)
+    .bind(sid)
+    .fetch_one(&mut *tx)
+    .await?;
     sqlx::query("UPDATE settlement_shares SET status='pending', proof_file_id=$1, txn_ref=$2, paid_date=$3, updated_at=$4, paid_cents=amount_cents WHERE id=$5")
         .bind(req.proof_file_id)
         .bind(txn)
@@ -984,10 +995,18 @@ async fn submit_proof(
         .await?;
     tx.commit().await?;
     let by = format!("{} · {}", u.name, title);
+    let title_pair = if elsewhere > 0 {
+        (
+            "付款凭证待核对：交易编号已在其他账单使用",
+            "Payment proof to verify: reference already used on another bill",
+        )
+    } else {
+        ("有新的付款凭证待核对", "New payment proof to verify")
+    };
     notify(
         &st.db,
         payee,
-        ("有新的付款凭证待核对", "New payment proof to verify"),
+        title_pair,
         (&by, &by),
         &format!("/settlements/{sid}"),
     )
@@ -998,7 +1017,11 @@ async fn submit_proof(
         "share.proof",
         "settlement_share",
         Some(id),
-        txn,
+        if elsewhere > 0 {
+            format!("{txn} (reference also used on {elsewhere} other share(s))")
+        } else {
+            txn.to_string()
+        },
     )
     .await;
     Ok(Json(json!({"ok": true})))

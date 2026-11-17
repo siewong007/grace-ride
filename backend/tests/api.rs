@@ -404,6 +404,64 @@ async fn totp_backup_codes_and_auto_lock_flow() {
     assert_eq!(me_after_regen.json["backup_codes_count"], 8);
 }
 
+/// Codes printed before backup-code hashes were salted with the member id were stored
+/// as a bare SHA-256; members who still hold them must be able to use them.
+#[tokio::test]
+async fn backup_codes_issued_before_salting_still_work() {
+    let (app, st) = setup().await;
+    let cookie = login(&st, "member@example.org").await;
+    let setup_res = call(
+        &app,
+        Method::POST,
+        "/api/auth/totp/setup",
+        Some(&cookie),
+        None,
+    )
+    .await;
+    let secret = setup_res.json["secret"].as_str().unwrap();
+    let code = totp_code(secret, "member@example.org");
+    let enable_res = call(
+        &app,
+        Method::POST,
+        "/api/auth/totp/enable",
+        Some(&cookie),
+        Some(json!({ "code": code })),
+    )
+    .await;
+    assert_eq!(enable_res.status, StatusCode::OK, "{}", enable_res.json);
+
+    // Replace the stored codes with one in the old, unsalted format.
+    let legacy = json!([hash_token("ABCD2345")]).to_string();
+    sqlx::query("UPDATE users SET totp_backup_codes=$1 WHERE email='member@example.org'")
+        .bind(&legacy)
+        .execute(&st.db)
+        .await
+        .unwrap();
+
+    let r = call(
+        &app,
+        Method::POST,
+        "/api/auth/totp/verify",
+        Some(&cookie),
+        Some(json!({ "code": "ABCD-2345" })),
+    )
+    .await;
+    assert_eq!(r.status, StatusCode::OK, "{}", r.json);
+    assert_eq!(r.json["method"], "backup_code");
+    assert_eq!(r.json["remaining_backup_codes"], 0);
+
+    // Still single-use.
+    let again = call(
+        &app,
+        Method::POST,
+        "/api/auth/totp/verify",
+        Some(&cookie),
+        Some(json!({ "code": "ABCD-2345" })),
+    )
+    .await;
+    assert_eq!(again.status, StatusCode::BAD_REQUEST);
+}
+
 #[tokio::test]
 async fn totp_backup_code_concurrent_use_one_wins() {
     let (app, st) = setup().await;
