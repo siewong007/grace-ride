@@ -81,7 +81,6 @@ export default function EventCheckin() {
                 <AlertTriangle size={56} />
               </div>
               <h3>{t('membersOnlyNotice')}</h3>
-              <p className="muted small">{t('attendanceDisabled')}</p>
               <Button variant="secondary" to="/" block>
                 {t('home', { ns: 'chrome' })}
               </Button>

@@ -117,10 +117,11 @@ async fn disabling_a_driver_releases_unstarted_rides() {
 async fn reminder_job_respects_passenger_readiness_prompt_mins() {
     let (app, st) = setup().await;
     let passenger = login(&st, "member@example.org").await;
-    let passenger_id: i64 = sqlx::query_scalar("SELECT id FROM users WHERE email='member@example.org'")
-        .fetch_one(&st.db)
-        .await
-        .unwrap();
+    let passenger_id: i64 =
+        sqlx::query_scalar("SELECT id FROM users WHERE email='member@example.org'")
+            .fetch_one(&st.db)
+            .await
+            .unwrap();
 
     // 1. Passenger sets readiness_prompt_mins = 30.
     sqlx::query("UPDATE users SET readiness_prompt_mins=30 WHERE id=$1")
@@ -169,11 +170,13 @@ async fn reminder_job_respects_passenger_readiness_prompt_mins() {
         .unwrap();
     assert_eq!(sent_after, 1);
 
-    let p_notifs: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM notifications WHERE user_id=$1 AND link LIKE '%action=readiness%'")
-        .bind(passenger_id)
-        .fetch_one(&st.db)
-        .await
-        .unwrap();
+    let p_notifs: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM notifications WHERE user_id=$1 AND link LIKE '%action=readiness%'",
+    )
+    .bind(passenger_id)
+    .fetch_one(&st.db)
+    .await
+    .unwrap();
     assert_eq!(p_notifs, 1);
 
     // 2. Passenger disables readiness prompt (0): driver still gets notified at T-45m, passenger gets 0 new reminders.
@@ -208,7 +211,10 @@ async fn reminder_job_respects_passenger_readiness_prompt_mins() {
         .fetch_one(&st.db)
         .await
         .unwrap();
-    assert_eq!(p_notifs_opt_out, 0, "opted-out passenger should receive no readiness prompt");
+    assert_eq!(
+        p_notifs_opt_out, 0,
+        "opted-out passenger should receive no readiness prompt"
+    );
     assert_eq!(d_notifs, 1, "driver should still receive pre-trip reminder");
 }
 
@@ -243,7 +249,12 @@ async fn care_pass_blocks_unable_to_join_and_post_pickup_readiness() {
         Some(json!({"status": "unable_to_join"})),
     )
     .await;
-    assert_eq!(cancel_attempt.status, StatusCode::BAD_REQUEST, "{}", cancel_attempt.json);
+    assert_eq!(
+        cancel_attempt.status,
+        StatusCode::BAD_REQUEST,
+        "{}",
+        cancel_attempt.json
+    );
     assert_eq!(status_of(&st, ride_id).await, "confirmed");
 
     // Ready status works before pickup.
@@ -272,7 +283,12 @@ async fn care_pass_blocks_unable_to_join_and_post_pickup_readiness() {
         Some(json!({"status": "delayed_5m"})),
     )
     .await;
-    assert_eq!(post_pickup.status, StatusCode::CONFLICT, "{}", post_pickup.json);
+    assert_eq!(
+        post_pickup.status,
+        StatusCode::CONFLICT,
+        "{}",
+        post_pickup.json
+    );
 }
 
 #[tokio::test]
@@ -288,10 +304,10 @@ async fn past_events_first_paginated_page_includes_finished_events() {
         Some(&admin),
         Some(json!({
             "title": "Early Finished Fellowship",
-            "kind": "fellowship",
+            "kind": "other",
             "starts_at": tomorrow("18:00"),
             "location": "Hall B",
-            "status": "published"
+            "group_ids": [1]
         })),
     )
     .await;
@@ -313,7 +329,9 @@ async fn past_events_first_paginated_page_includes_finished_events() {
     )
     .await;
     assert_eq!(past_page.status, StatusCode::OK, "{}", past_page.json);
-    let items = past_page.json["items"].as_array().expect("paginated items array");
+    let items = past_page.json["items"]
+        .as_array()
+        .expect("paginated items array");
     assert!(
         items.iter().any(|e| e["id"].as_i64() == Some(ev_id)),
         "finished event should appear on first paginated past page"

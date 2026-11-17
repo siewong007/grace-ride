@@ -107,11 +107,11 @@ pub fn arrange(riders: &[Rider], cars: &[Car], fixed: &HashMap<i64, i64>) -> Arr
         if r.group.is_some_and(|grp| !car.drive_groups.contains(&grp)) {
             return false;
         }
-        // Accessibility compatibility: wheelchair needs wheelchair-accessible boot; stroller needs child_seat or wheelchair_ok.
+        // Accessibility compatibility: wheelchair needs wheelchair-accessible boot; stroller needs child_seat.
         if r.assistance == "wheelchair" && !car.wheelchair_ok {
             return false;
         }
-        if r.assistance == "stroller" && !(car.child_seat || car.wheelchair_ok) {
+        if r.assistance == "stroller" && !car.child_seat {
             return false;
         }
         let g = &groups[c];

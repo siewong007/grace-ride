@@ -3408,28 +3408,36 @@ async fn update_proxy_rider(
             return Err(bad(u.lang, ErrorKey::InvalidAction));
         }
     }
-    let res = sqlx::query(
+    let phone = req.phone.unwrap_or_default().trim().to_string();
+    let relationship = req.relationship.unwrap_or_default().trim().to_string();
+    let notes = req.notes.unwrap_or_default().trim().to_string();
+    let pickup_address = req.pickup_address.unwrap_or_default().trim().to_string();
+    let gate_notes = req.gate_notes.unwrap_or_default().trim().to_string();
+    let row: Option<ProxyRiderRow> = sqlx::query_as(
         "UPDATE proxy_riders
          SET name=$1, phone=$2, relationship=$3, notes=$4, area_id=$5, pickup_address=$6, gate_notes=$7, caregiver_user_id=$8, updated_at=$9
-         WHERE id=$10 AND user_id=$11",
+         WHERE id=$10 AND user_id=$11
+         RETURNING id, user_id, name, phone, relationship, notes, area_id, pickup_address, gate_notes, caregiver_user_id, created_at, updated_at",
     )
     .bind(name)
-    .bind(req.phone.unwrap_or_default().trim())
-    .bind(req.relationship.unwrap_or_default().trim())
-    .bind(req.notes.unwrap_or_default().trim())
+    .bind(phone)
+    .bind(relationship)
+    .bind(notes)
     .bind(req.area_id)
-    .bind(req.pickup_address.unwrap_or_default().trim())
-    .bind(req.gate_notes.unwrap_or_default().trim())
+    .bind(pickup_address)
+    .bind(gate_notes)
     .bind(req.caregiver_user_id)
     .bind(now())
     .bind(id)
     .bind(u.id)
-    .execute(&st.db)
+    .fetch_optional(&st.db)
     .await?;
-    if res.rows_affected() == 0 {
+    let Some(row) = row else {
         return Err(not_found(u.lang));
-    }
-    Ok(Json(json!({ "ok": true })))
+    };
+    let mut out = json!(row);
+    out["ok"] = json!(true);
+    Ok(Json(out))
 }
 
 async fn delete_proxy_rider(

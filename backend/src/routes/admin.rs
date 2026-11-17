@@ -1812,11 +1812,11 @@ async fn demand_report(
     }
 
     let rows: Vec<DemandRow> = sqlx::query_as(
-        "SELECT r.area_id, COALESCE(a.name_zh, '') AS area_zh, COALESCE(a.name_en, '') AS area_en,
-                r.pickup_at, r.status, r.driver_id, r.passenger_id, r.seats_needed,
+        "SELECT r.pickup_area_id AS area_id, COALESCE(a.name, '') AS area_zh, COALESCE(a.name, '') AS area_en,
+                r.pickup_at, r.status, r.driver_id, r.passenger_id, r.seats AS seats_needed,
                 COALESCE(r.assistance, '') AS assistance, COALESCE(r.leg, 'outbound') AS leg
          FROM rides r
-         LEFT JOIN areas a ON a.id = r.area_id
+         LEFT JOIN areas a ON a.id = r.pickup_area_id
          WHERE r.pickup_at >= $1 AND r.pickup_at < $2",
     )
     .bind(&start)

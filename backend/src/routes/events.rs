@@ -1399,6 +1399,7 @@ async fn scan_member_pass(
     }
     Ok(Json(json!({
         "ok": true,
+        "user": { "id": uid, "name": member_name },
         "user_id": uid,
         "member_name": member_name,
         "already_attended": already_attended,

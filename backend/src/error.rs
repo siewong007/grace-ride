@@ -21,6 +21,8 @@ pub enum AppError {
     Conflict { lang: Lang, key: ErrorKey },
     #[error("too many requests")]
     TooManyRequests { lang: Lang, key: ErrorKey },
+    #[error("locked")]
+    Locked { lang: Lang, key: ErrorKey },
     #[error(transparent)]
     Db(#[from] sqlx::Error),
     #[error(transparent)]
@@ -43,6 +45,10 @@ pub fn conflict(lang: Lang, key: ErrorKey) -> AppError {
 
 pub fn too_many_requests(lang: Lang, key: ErrorKey) -> AppError {
     AppError::TooManyRequests { lang, key }
+}
+
+pub fn locked(lang: Lang, key: ErrorKey) -> AppError {
+    AppError::Locked { lang, key }
 }
 
 /// 401 in the requester's language: Accept-Language for unauthenticated
@@ -82,6 +88,7 @@ impl IntoResponse for AppError {
             AppError::NotFound { lang, key } => (StatusCode::NOT_FOUND, *lang, key),
             AppError::Conflict { lang, key } => (StatusCode::CONFLICT, *lang, key),
             AppError::TooManyRequests { lang, key } => (StatusCode::TOO_MANY_REQUESTS, *lang, key),
+            AppError::Locked { lang, key } => (StatusCode::LOCKED, *lang, key),
             // sqlx `?`-propagated RowNotFound arrives here without user context;
             // render the app default locale (zh) for those infrastructure paths.
             AppError::Db(sqlx::Error::RowNotFound) => {

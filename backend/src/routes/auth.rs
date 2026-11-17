@@ -293,7 +293,7 @@ async fn me(State(st): State<AppState>, u: CurrentUser) -> AppResult<Json<Value>
         "badges_opt_out": row.badges_opt_out == 1, "carpool_enabled": row.carpool_enabled == 1, "spare_seats": row.spare_seats,
         "readiness_prompt_mins": row.readiness_prompt_mins.unwrap_or(45), "gate_wait_mins": row.gate_wait_mins.unwrap_or(5),
         "auto_lock_mins": row.auto_lock_mins.unwrap_or(0), "session_timeout_mins": session_timeout, "backup_codes_count": backup_codes_count,
-        "session_locked": locked_at.is_some(),
+        "locked": locked_at.is_some(),
         "telegram_chat_id": row.telegram_chat_id,
         "whatsapp_opt_in": row.whatsapp_opt_in == 1,
         "push_opt_in": row.push_opt_in == 1,

@@ -1,3 +1,4 @@
+import { ReactNode } from 'react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
@@ -10,7 +11,7 @@ import EventCheckin from './pages/EventCheckin';
 import VisitorInvites from './components/VisitorInvites';
 import Rides from './pages/Rides';
 import Events from './pages/Events';
-import { FeedbackProvider } from './components/ui';
+import { ConfirmProvider, ToastProvider } from './components/ui';
 
 const mockApi = vi.fn();
 const mockPost = vi.fn();
@@ -57,6 +58,16 @@ vi.mock('./api', () => ({
     reload: mockReload,
   }),
 }));
+
+function TestWrap({ children }: { children: ReactNode }) {
+  return (
+    <MemoryRouter>
+      <ToastProvider>
+        <ConfirmProvider>{children}</ConfirmProvider>
+      </ToastProvider>
+    </MemoryRouter>
+  );
+}
 
 describe('Application bug-fix regressions', () => {
   beforeEach(async () => {
@@ -113,20 +124,15 @@ describe('Application bug-fix regressions', () => {
     };
 
     render(
-      <MemoryRouter>
-        <FeedbackProvider>
-          <AdminReports />
-        </FeedbackProvider>
-      </MemoryRouter>,
+      <TestWrap>
+        <AdminReports />
+      </TestWrap>,
     );
-
-    const individualTab = screen.getByRole('tab', { name: /individual/i });
-    await user.click(individualTab);
 
     expect(screen.queryByText(/\(undefined\)/i)).not.toBeInTheDocument();
     expect(screen.getByRole('option', { name: 'Elder Timothy' })).toBeInTheDocument();
 
-    const filterInput = screen.getByPlaceholderText(/search by name or email/i);
+    const filterInput = screen.getByRole('searchbox', { name: /find a member/i });
     await user.type(filterInput, 'hannah');
     expect(screen.getByRole('option', { name: 'Sister Hannah' })).toBeInTheDocument();
   });
@@ -138,12 +144,17 @@ describe('Application bug-fix regressions', () => {
     const qPayload = {
       month,
       range: 'quarterly',
+      type: 'all',
       period_start: '2026-01-01',
       period_end: '2026-04-01',
-      rides: { as_passenger: 2, as_driver: 3, cancelled: 0 },
-      events: { signed_up: 1, attended: 1, by_kind: [] },
-      costs: { total_cents: 0, paid_cents: 0, unpaid_cents: 0 },
-      reimbursements: { count: 0, total_cents: 0 },
+      rides_driven: 3,
+      rides_received: 2,
+      distance_km: 15,
+      reimbursement_cents: 0,
+      events_attended: 1,
+      by_kind: [],
+      events: [],
+      costs_paid_cents: 0,
       badges: [
         {
           key: 'driver_star',
@@ -172,8 +183,8 @@ describe('Application bug-fix regressions', () => {
       </MemoryRouter>,
     );
 
-    await user.selectOptions(screen.getByLabelText(/time range/i), 'quarterly');
-    expect(screen.getByText('January 2026 \u2013 March 2026')).toBeInTheDocument();
+    await user.selectOptions(screen.getByLabelText(/^period$/i), 'quarterly');
+    expect(screen.getByText(/January 2026 \u2013 March 2026/)).toBeInTheDocument();
     expect(screen.queryByText(/May 2026/)).not.toBeInTheDocument();
     expect(screen.getByText('Faithful Driver')).toBeInTheDocument();
 
@@ -181,7 +192,7 @@ describe('Application bug-fix regressions', () => {
     expect(await screen.findByText('\u5fe0\u5fc3\u53f8\u673a')).toBeInTheDocument();
   });
 
-  it('Notifications deduplicates paginated items across refreshes and marks older items read', async () => {
+  it('Notifications deduplicates paginated items across refreshes and marks all as read', async () => {
     const user = userEvent.setup();
     apiDataMap['/notifications'] = {
       items: [
@@ -189,12 +200,6 @@ describe('Application bug-fix regressions', () => {
       ],
       next_before: 10,
     };
-    mockApi.mockResolvedValueOnce({
-      items: [
-        { id: 9, title: 'Older alert', body: 'Body 9', link: '/rides/2', read: false, created_at: '2026-11-10T09:00:00' },
-      ],
-      next_before: null,
-    });
 
     const { rerender } = render(
       <MemoryRouter>
@@ -202,13 +207,11 @@ describe('Application bug-fix regressions', () => {
       </MemoryRouter>,
     );
 
-    // Simulate older page load via infinite-scroll callback or re-render after state load
     expect(screen.getByText('Newest alert')).toBeInTheDocument();
 
-    await user.click(screen.getByRole('button', { name: /mark all read/i }));
+    await user.click(screen.getByRole('button', { name: /mark all as read/i }));
     expect(mockPost).toHaveBeenCalledWith('/notifications/read-all');
 
-    // Simulate 20s poll returning same page 1 with next_before: 10
     rerender(
       <MemoryRouter>
         <Notifications />
@@ -217,7 +220,7 @@ describe('Application bug-fix regressions', () => {
     expect(screen.getAllByText('Newest alert')).toHaveLength(1);
   });
 
-  it('EventCheckin renders manual code entry when ?code= is missing and blocks pending accounts', async () => {
+  it('EventCheckin renders manual code entry when ?code= is missing and shows accurate failure copy', async () => {
     const user = userEvent.setup();
     apiDataMap['/events/10/checkin'] = {
       id: 10,
@@ -245,7 +248,7 @@ describe('Application bug-fix regressions', () => {
     await user.click(screen.getByRole('button', { name: /^check in$/i }));
 
     expect(await screen.findByText('Check-in unsuccessful')).toBeInTheDocument();
-    expect(screen.queryByText(/attendance is disabled/i)).not.toBeInTheDocument();
+    expect(screen.queryByText(/attendance module is not enabled/i)).not.toBeInTheDocument();
   });
 
   it('EventCheckin does not auto-post check-in when account status is pending', async () => {
@@ -268,7 +271,8 @@ describe('Application bug-fix regressions', () => {
       </MemoryRouter>,
     );
 
-    expect(screen.getByText(/membership pending/i)).toBeInTheDocument();
+    expect(screen.getByText(/attendance check-in is for members only/i)).toBeInTheDocument();
+    expect(screen.queryByText(/attendance module is not enabled/i)).not.toBeInTheDocument();
     expect(mockPost).not.toHaveBeenCalled();
   });
 
@@ -278,11 +282,9 @@ describe('Application bug-fix regressions', () => {
     apiDataMap['/areas'] = [{ id: 1, name: 'Petaling Jaya', active: true }];
 
     render(
-      <MemoryRouter>
-        <FeedbackProvider>
-          <VisitorInvites event={{ id: 10, title: 'Fellowship Dinner', starts_at: '2026-11-22 19:00:00' }} />
-        </FeedbackProvider>
-      </MemoryRouter>,
+      <TestWrap>
+        <VisitorInvites event={{ id: 10, title: 'Fellowship Dinner', starts_at: '2026-11-22 19:00:00' }} />
+      </TestWrap>,
     );
 
     await user.click(screen.getByRole('button', { name: /invite a visitor/i }));
@@ -296,11 +298,9 @@ describe('Application bug-fix regressions', () => {
     apiDataMap['/events?scope=upcoming'] = [];
 
     const { unmount } = render(
-      <MemoryRouter>
-        <FeedbackProvider>
-          <Rides />
-        </FeedbackProvider>
-      </MemoryRouter>,
+      <TestWrap>
+        <Rides />
+      </TestWrap>,
     );
 
     await user.click(screen.getByRole('tab', { name: /past/i }));
@@ -310,11 +310,9 @@ describe('Application bug-fix regressions', () => {
     unmount();
 
     render(
-      <MemoryRouter>
-        <FeedbackProvider>
-          <Events />
-        </FeedbackProvider>
-      </MemoryRouter>,
+      <TestWrap>
+        <Events />
+      </TestWrap>,
     );
 
     await user.click(screen.getByRole('tab', { name: /past/i }));

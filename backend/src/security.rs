@@ -23,7 +23,7 @@ use serde_json::json;
 use axum_extra::extract::CookieJar;
 
 use crate::auth::{hash_token, SESSION_COOKIE, SESSION_COOKIE_SECURE};
-use crate::error::forbidden;
+use crate::error::{forbidden, locked};
 use crate::i18n::ErrorKey;
 use crate::state::AppState;
 use crate::util::{now, t, Lang};
@@ -257,7 +257,7 @@ pub async fn session_lock_guard(State(st): State<AppState>, req: Request, next: 
         let now_str = now();
         if expires >= now_str {
             if locked_at.is_some() {
-                return forbidden(Lang::from_code(&lang), ErrorKey::SessionLocked).into_response();
+                return locked(Lang::from_code(&lang), ErrorKey::SessionLocked).into_response();
             }
             if auto_lock_mins > 0 && last_seen_at < crate::util::minutes_ago(auto_lock_mins) {
                 let _ = sqlx::query(
@@ -267,7 +267,7 @@ pub async fn session_lock_guard(State(st): State<AppState>, req: Request, next: 
                 .bind(&token_hash)
                 .execute(&st.db)
                 .await;
-                return forbidden(Lang::from_code(&lang), ErrorKey::SessionLocked).into_response();
+                return locked(Lang::from_code(&lang), ErrorKey::SessionLocked).into_response();
             }
             if last_seen_at < crate::util::minutes_ago(1) {
                 let _ = sqlx::query("UPDATE sessions SET last_seen_at = $1 WHERE token = $2")

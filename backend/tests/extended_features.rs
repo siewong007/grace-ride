@@ -50,6 +50,19 @@ async fn all_group_id(st: &AppState) -> i64 {
         .unwrap()
 }
 
+async fn join_as_group(app: &Router, cookie: &str, ev_id: i64) -> i64 {
+    let r = call(
+        app,
+        Method::GET,
+        &format!("/api/events/{ev_id}"),
+        Some(cookie),
+        None,
+    )
+    .await;
+    assert_eq!(r.status, StatusCode::OK, "{}", r.json);
+    r.json["join_as"][0]["id"].as_i64().expect("join_as choice")
+}
+
 async fn user_id(st: &AppState, email: &str) -> i64 {
     sqlx::query_scalar("SELECT id FROM users WHERE email=$1")
         .bind(email)
@@ -92,6 +105,7 @@ async fn round_trip_saved_places_proxy_defaults_and_care_links() {
     let member = login(&st, "member@example.org").await;
     let sophie = login(&st, "sophie@example.org").await;
     let driver = login(&st, "driver@example.org").await;
+    let admin = login(&st, "admin@example.org").await;
     let transport = login(&st, "transport@example.org").await;
     let area = first_area_id(&st).await;
     let all_group = all_group_id(&st).await;
@@ -178,7 +192,7 @@ async fn round_trip_saved_places_proxy_defaults_and_care_links() {
         &app,
         Method::POST,
         "/api/events",
-        Some(&transport),
+        Some(&admin),
         Some(json!({
             "title": "Sunday Service",
             "kind": "other",
@@ -192,12 +206,13 @@ async fn round_trip_saved_places_proxy_defaults_and_care_links() {
     assert_eq!(ev.status, StatusCode::OK, "{}", ev.json);
     let ev_id = ev.json["id"].as_i64().unwrap();
 
+    let join_group = join_as_group(&app, &member, ev_id).await;
     let su = call(
         &app,
         Method::POST,
         &format!("/api/events/{ev_id}/signup"),
         Some(&member),
-        Some(json!({})),
+        Some(json!({ "as_group_id": join_group })),
     )
     .await;
     assert_eq!(su.status, StatusCode::OK, "{}", su.json);
@@ -411,6 +426,7 @@ async fn accessibility_arrange_and_recurring_schedules() {
     let member = login(&st, "member@example.org").await;
     let driver1 = login(&st, "driver@example.org").await;
     let driver2 = login(&st, "driver2@example.org").await;
+    let admin = login(&st, "admin@example.org").await;
     let transport = login(&st, "transport@example.org").await;
     let area = first_area_id(&st).await;
     let all_group = all_group_id(&st).await;
@@ -475,7 +491,7 @@ async fn accessibility_arrange_and_recurring_schedules() {
         &app,
         Method::POST,
         "/api/events",
-        Some(&transport),
+        Some(&admin),
         Some(json!({
             "title": "Accessibility Plan Event",
             "kind": "other",
@@ -486,14 +502,16 @@ async fn accessibility_arrange_and_recurring_schedules() {
         })),
     )
     .await;
+    assert_eq!(ev.status, StatusCode::OK, "{}", ev.json);
     let ev_id = ev.json["id"].as_i64().unwrap();
+    let join_group = join_as_group(&app, &member, ev_id).await;
     assert_eq!(
         call(
             &app,
             Method::POST,
             &format!("/api/events/{ev_id}/signup"),
             Some(&member),
-            Some(json!({}))
+            Some(json!({ "as_group_id": join_group }))
         )
         .await
         .status,
@@ -511,7 +529,7 @@ async fn accessibility_arrange_and_recurring_schedules() {
             "pickup_address": "10 Jalan Kemajuan",
             "destination": "Church Hall",
             "seats": 1,
-            "assistance": "Wheelchair"
+            "assistance": "wheelchair"
         })),
     )
     .await;
@@ -568,11 +586,8 @@ async fn accessibility_arrange_and_recurring_schedules() {
     )
     .await;
     assert_eq!(gen1.status, StatusCode::OK, "{}", gen1.json);
-    assert!(
-        gen1.json["created_ride_id"].as_i64().is_some(),
-        "{}",
-        gen1.json
-    );
+    assert!(gen1.json["ride_id"].as_i64().is_some(), "{}", gen1.json);
+    assert_eq!(gen1.json["already_generated"], false, "{}", gen1.json);
 
     // Second generate in same week is idempotent (creates nothing)
     let gen2 = call(
@@ -584,13 +599,14 @@ async fn accessibility_arrange_and_recurring_schedules() {
     )
     .await;
     assert_eq!(gen2.status, StatusCode::OK);
-    assert!(gen2.json["created_ride_id"].is_null(), "{}", gen2.json);
+    assert!(gen2.json["ride_id"].is_null(), "{}", gen2.json);
+    assert_eq!(gen2.json["already_generated"], true, "{}", gen2.json);
 }
 
 #[tokio::test]
 async fn event_series_duplication_and_member_qr_pass() {
     let (app, st) = setup().await;
-    let transport = login(&st, "transport@example.org").await;
+    let admin = login(&st, "admin@example.org").await;
     let member = login(&st, "member@example.org").await;
     let all_group = all_group_id(&st).await;
 
@@ -599,7 +615,7 @@ async fn event_series_duplication_and_member_qr_pass() {
         &app,
         Method::POST,
         "/api/events",
-        Some(&transport),
+        Some(&admin),
         Some(json!({
             "title": "Friday Youth",
             "kind": "other",
@@ -624,7 +640,7 @@ async fn event_series_duplication_and_member_qr_pass() {
         &app,
         Method::POST,
         &format!("/api/events/{first_id}/duplicate"),
-        Some(&transport),
+        Some(&admin),
         Some(json!({
             "starts_at": future_dt(14, "20:00"),
             "title": "Friday Youth Special"
@@ -636,13 +652,14 @@ async fn event_series_duplication_and_member_qr_pass() {
     assert_ne!(dup_id, first_id);
 
     // Member signs up -> gets personal 10-char pass_code -> organiser scans it
+    let join_group = join_as_group(&app, &member, dup_id).await;
     assert_eq!(
         call(
             &app,
             Method::POST,
             &format!("/api/events/{dup_id}/signup"),
             Some(&member),
-            Some(json!({}))
+            Some(json!({ "as_group_id": join_group }))
         )
         .await
         .status,
@@ -667,20 +684,25 @@ async fn event_series_duplication_and_member_qr_pass() {
         &app,
         Method::POST,
         &format!("/api/events/{dup_id}/checkin/scan-member"),
-        Some(&transport),
+        Some(&admin),
         Some(json!({ "pass_code": pass_code })),
     )
     .await;
     assert_eq!(scan.status, StatusCode::OK, "{}", scan.json);
     assert_eq!(scan.json["ok"], true);
-    assert_eq!(scan.json["already"], false);
+    assert_eq!(scan.json["already_attended"], false);
+    assert!(
+        scan.json["user"]["name"].as_str().is_some(),
+        "{}",
+        scan.json
+    );
 
     // Invalid pass code rejects cleanly
     let bad_scan = call(
         &app,
         Method::POST,
         &format!("/api/events/{dup_id}/checkin/scan-member"),
-        Some(&transport),
+        Some(&admin),
         Some(json!({ "pass_code": "INVALID000" })),
     )
     .await;
@@ -833,6 +855,7 @@ async fn live_calendar_feed_and_alert_channels() {
 #[tokio::test]
 async fn settlement_qr_receipt_extraction_payout_batches_and_demand() {
     let (app, st) = setup().await;
+    let admin = login(&st, "admin@example.org").await;
     let transport = login(&st, "transport@example.org").await;
     let finance = login(&st, "finance@example.org").await;
     let driver = login(&st, "driver@example.org").await;
@@ -856,12 +879,12 @@ async fn settlement_qr_receipt_extraction_payout_batches_and_demand() {
     assert_eq!(ext.status, StatusCode::OK, "{}", ext.json);
     assert_eq!(ext.json["ref"], "DN20261118007");
 
-    let qr_id = upload_png_with_text(&app, &transport, b"DUITNOW-QR-PNG").await;
+    let qr_id = upload_png_with_text(&app, &admin, b"DUITNOW-QR-PNG").await;
     let ev = call(
         &app,
         Method::POST,
         "/api/events",
-        Some(&transport),
+        Some(&admin),
         Some(json!({
             "title": "Badminton Night",
             "kind": "badminton",
@@ -873,12 +896,13 @@ async fn settlement_qr_receipt_extraction_payout_batches_and_demand() {
         })),
     )
     .await;
+    assert_eq!(ev.status, StatusCode::OK, "{}", ev.json);
     let ev_id = ev.json["id"].as_i64().unwrap();
     let bill = call(
         &app,
         Method::POST,
         &format!("/api/events/{ev_id}/settlements"),
-        Some(&transport),
+        Some(&admin),
         Some(json!({
             "title": "Court Rental",
             "items": [{ "label": "Courts", "amount_cents": 2000 }],
@@ -898,7 +922,7 @@ async fn settlement_qr_receipt_extraction_payout_batches_and_demand() {
             &app,
             Method::POST,
             &format!("/api/settlements/{sid}/publish"),
-            Some(&transport),
+            Some(&admin),
             Some(json!({}))
         )
         .await
@@ -1042,7 +1066,7 @@ async fn settlement_qr_receipt_extraction_payout_batches_and_demand() {
         &app,
         Method::GET,
         &format!("/api/admin/reports/demand?month={demand_month}"),
-        Some(&transport),
+        Some(&admin),
         None,
     )
     .await;
@@ -1134,12 +1158,12 @@ async fn server_session_lock_and_rich_help_guides() {
     )
     .await;
     assert_eq!(g.status, StatusCode::OK, "{}", g.json);
-    let gid = g.json["id"].as_i64().unwrap();
+    assert!(g.json["id"].as_i64().is_some(), "{}", g.json);
 
     let fetched = call(
         &app,
         Method::GET,
-        &format!("/api/help/guides/{gid}"),
+        "/api/help/guides/extended-rich-guide",
         Some(&member),
         None,
     )

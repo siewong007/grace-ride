@@ -979,8 +979,15 @@ function ScanMemberPassModal({
           videoRef.current.srcObject = stream;
           await videoRef.current.play();
         }
-        if ('BarcodeDetector' in window && window.BarcodeDetector) {
-          const detector = new window.BarcodeDetector({ formats: ['qr_code'] });
+        const Detector = (
+          window as Window & {
+            BarcodeDetector?: new (opts?: { formats?: string[] }) => {
+              detect(source: HTMLVideoElement): Promise<{ rawValue?: string }[]>;
+            };
+          }
+        ).BarcodeDetector;
+        if (Detector) {
+          const detector = new Detector({ formats: ['qr_code'] });
           const scan = async () => {
             if (cancelled || !videoRef.current) return;
             try {
