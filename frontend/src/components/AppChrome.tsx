@@ -199,6 +199,7 @@ export function PublicDisplayBar() {
   };
 
   const sizeBadge = p.textSize === 'xlarge' ? 'Aa++' : p.textSize === 'large' ? 'Aa+' : 'Aa';
+  const nextLangLabel = currentLang === 'zh' ? t('en') : t('zh');
 
   return (
     <div className="row nowrap public-display-bar">
@@ -213,11 +214,11 @@ export function PublicDisplayBar() {
       <button
         type="button"
         className="btn sm ghost lang-toggle"
-        aria-label={t('switchLang')}
+        aria-label={`${nextLangLabel} (${t('switchLang')})`}
         onClick={() => setLanguage(currentLang === 'zh' ? 'en' : 'zh')}
       >
         <Globe size={16} aria-hidden="true" />
-        <span>{currentLang === 'zh' ? t('en') : t('zh')}</span>
+        <span>{nextLangLabel}</span>
       </button>
     </div>
   );
