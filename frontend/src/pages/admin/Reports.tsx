@@ -69,6 +69,17 @@ export default function AdminReports() {
 
   const { data: membersData } = useApi<Member[]>('/admin/users?q=');
   const members = membersData ?? [];
+  // The picker lists everyone, so a search box narrows it. The chosen member always stays listed.
+  const [memberQuery, setMemberQuery] = useState('');
+  const needle = memberQuery.trim().toLowerCase();
+  const shownMembers = needle
+    ? members.filter(
+        (m) =>
+          m.id === selectedId ||
+          m.name.toLowerCase().includes(needle) ||
+          m.email.toLowerCase().includes(needle),
+      )
+    : members;
 
   const params = new URLSearchParams({
     month,
@@ -225,51 +236,8 @@ export default function AdminReports() {
           back={ADMIN_HOME}
           actions={
             <>
-              <input
-                className="input report-month-input"
-                type="month"
-                value={month}
-                onChange={(e) => setMonth(e.target.value)}
-                aria-label={t('reports.monthLabel')}
-              />
-              <select
-                className="input"
-                value={range}
-                onChange={(e) => setRange(e.target.value as any)}
-                aria-label="range"
-              >
-                <option value="monthly">{t('reports.rangeMonthly')}</option>
-                <option value="quarterly">{t('reports.rangeQuarterly')}</option>
-                <option value="yearly">{t('reports.rangeYearly')}</option>
-              </select>
-              <select
-                className="input"
-                value={type}
-                onChange={(e) => setType(e.target.value as any)}
-                aria-label="type"
-              >
-                <option value="all">{t('reports.typeAll')}</option>
-                <option value="driver">{t('reports.typeDriver')}</option>
-                <option value="passenger">{t('reports.typePassenger')}</option>
-              </select>
-              <Field label={t('reports.selectMember')}>
-                <select
-                  className="input"
-                  value={selectedId ?? ''}
-                  onChange={(e) =>
-                    setSelectedId(e.target.value ? Number(e.target.value) : null)
-                  }
-                >
-                  <option value="">{t('reports.self')}</option>
-                  {members.map((mem) => (
-                    <option key={mem.id} value={mem.id}>
-                      {mem.name} ({mem.email})
-                    </option>
-                  ))}
-                </select>
-              </Field>
               <Button
-                variant="ghost"
+                variant="secondary"
                 size="sm"
                 onClick={exportCsv}
                 disabled={!r}
@@ -278,7 +246,7 @@ export default function AdminReports() {
                 {t('reports.exportCsv')}
               </Button>
               <Button
-                variant="ghost"
+                variant="secondary"
                 size="sm"
                 onClick={exportPdf}
                 disabled={!r}
@@ -290,6 +258,56 @@ export default function AdminReports() {
           }
         />
         <ErrorBox error={error} />
+
+        <Card className="report-filters">
+          <Field label={t('reports.monthLabel')}>
+            <input
+              className="input"
+              type="month"
+              value={month}
+              onChange={(e) => setMonth(e.target.value)}
+            />
+          </Field>
+          <Field label={t('reports.range')}>
+            <select className="input" value={range} onChange={(e) => setRange(e.target.value as typeof range)}>
+              <option value="monthly">{t('reports.rangeMonthly')}</option>
+              <option value="quarterly">{t('reports.rangeQuarterly')}</option>
+              <option value="yearly">{t('reports.rangeYearly')}</option>
+            </select>
+          </Field>
+          <Field label={t('reports.type')}>
+            <select className="input" value={type} onChange={(e) => setType(e.target.value as typeof type)}>
+              <option value="all">{t('reports.typeAll')}</option>
+              <option value="driver">{t('reports.typeDriver')}</option>
+              <option value="passenger">{t('reports.typePassenger')}</option>
+            </select>
+          </Field>
+          <div className="report-member">
+            <Field label={t('reports.findMember')}>
+              <input
+                className="input"
+                type="search"
+                value={memberQuery}
+                placeholder={t('reports.findMemberHint')}
+                onChange={(e) => setMemberQuery(e.target.value)}
+              />
+            </Field>
+            <Field label={t('reports.selectMember')}>
+              <select
+                className="input"
+                value={selectedId ?? ''}
+                onChange={(e) => setSelectedId(e.target.value ? Number(e.target.value) : null)}
+              >
+                <option value="">{t('reports.self')}</option>
+                {shownMembers.map((mem) => (
+                  <option key={mem.id} value={mem.id}>
+                    {mem.name} ({mem.email})
+                  </option>
+                ))}
+              </select>
+            </Field>
+          </div>
+        </Card>
 
         {loading ? (
           <CardSkeleton count={3} />

@@ -96,6 +96,8 @@ Effort: S ≈ under half a day, M ≈ 1–2 days, L ≈ 3+ days. Each phase is s
 
 ### Phase 2 — Phone and tablet lists (about 3–4 days)
 
+**Status: implemented 2026-11-17.** Checked with unit tests and a browser render at phone, tablet and desktop size (mocked data). Part of this work (the table component, shared ride row, audit/dashboard/members/rides pages) was swept into commit `c8d3fbf` by another session's broad `git add`; the rest is in the Phase 2 commit. Not covered: dark mode, real devices, the Chinese wording of new labels.
+
 | Item | Fixes | Effort |
 |---|---|---|
 | `compactRow` for Reimbursements, Audit and Dashboard "Today's rides" (tap a row to open the existing detail dialog) | H5 | M |

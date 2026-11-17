@@ -224,7 +224,7 @@ export default function PlanTransport() {
             <Button variant="ghost" icon={<RotateCcw size={16} />} onClick={() => setDraft(savedDraft(plan))} disabled={!dirty}>
               {t('reset')}
             </Button>
-            <Button variant="primary" icon={<Send size={16} />} onClick={send} disabled={!dirty || busy} loading={busy}>
+            <Button variant="primary" className="plan-confirm" icon={<Send size={16} />} onClick={send} disabled={!dirty || busy} loading={busy}>
               {t('confirm', { count: changes.length })}
             </Button>
           </div>

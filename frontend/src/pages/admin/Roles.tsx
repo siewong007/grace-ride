@@ -92,7 +92,20 @@ export default function Roles() {
         <CardSkeleton count={2} />
       ) : (
         <div className="roles-layout">
-          <Card className="stack-sm">
+          {/* Phones and tablets pick the role from a menu so the editor is the first thing on screen. */}
+          <div className="roles-picker">
+            <Field label={t('roles.listTitle')}>
+              <select className="input" value={current.key} onChange={(e) => pick(e.target.value)}>
+                {current.key === NEW && <option value={NEW}>{t('roles.newRole')}</option>}
+                {roles.map((r) => (
+                  <option key={r.key} value={r.key}>
+                    {roleLabel(r.key, ft, { [r.key]: r.name })}
+                  </option>
+                ))}
+              </select>
+            </Field>
+          </div>
+          <Card className="stack-sm roles-list">
             <h3>{t('roles.listTitle')}</h3>
             <div className="list">
               {roles.map((r) => (

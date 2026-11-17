@@ -350,6 +350,8 @@ export default {
     title: 'Member reports',
     desc: 'View any member’s monthly/quarterly/yearly ride and event report.',
     noPermission: 'Staff privileges required, with passkey or 2FA login.',
+    findMember: 'Find a member',
+    findMemberHint: 'Name or email',
     selectMember: 'Select member',
     self: 'Yourself (current user)',
     monthLabel: 'Month',

@@ -265,26 +265,19 @@ function List({ scope }: { scope: 'review' | 'payout' }) {
               itemKey={(r) => r.id}
               compactRow={(r) => (
                 <>
-                  <div className="grow min-w-0">
+                  <div className="grow min-w-0 stack-xs">
                     <div className="row between nowrap">
                       <span className="bold ellipsis">{r.user.name}</span>
-                      <span className="mono bold">{rm(r.amount_cents)}</span>
+                      <span className="mono bold no-wrap">{rm(r.amount_cents)}</span>
                     </div>
                     <div className="small clamp-2">{r.description}</div>
-                    <div className="muted tiny">
-                      {fmtDay(r.created_at, ft)}
-                      {r.ride_id && (
-                        <>
-                          {' · '}
-                          <Link to={`/admin/rides/${r.ride_id}`}>{t('reimb.rideLink')}</Link>
-                        </>
-                      )}
+                    <div className="row tiny muted">
+                      <StatusPill map={REIMB_STATUS} status={r.status} />
+                      <span>{fmtDay(r.created_at, ft)}</span>
+                      {r.ride_id && <Link to={`/admin/rides/${r.ride_id}`}>{t('reimb.rideLink')}</Link>}
                     </div>
                   </div>
-                  <div className="item-actions">
-                    <StatusPill map={REIMB_STATUS} status={r.status} />
-                    {actionCell(r)}
-                  </div>
+                  <div className="item-actions">{actionCell(r)}</div>
                 </>
               )}
               sort={sort}

@@ -350,6 +350,8 @@ export default {
     title: '会员报告',
     desc: '查看任意会员的月度/季度/年度行程与活动报告。',
     noPermission: '需要工作人员权限，并以通行密钥或 2FA 登入。',
+    findMember: '查找会员',
+    findMemberHint: '姓名或电邮',
     selectMember: '选择会员',
     self: '您自己（当前用户）',
     monthLabel: '月份',
