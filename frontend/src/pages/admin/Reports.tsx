@@ -16,7 +16,7 @@ import {
 } from '../../components/ui';
 import { EVENT_KIND, fmtDateTime, rm, useFormatT } from '../../format';
 import { useTranslation } from 'react-i18next';
-import jsPDF from 'jspdf';
+import { createPdfWriter } from '../../pdfWriter';
 import { ADMIN_HOME } from '../../staffNav';
 
 interface Member {
@@ -53,6 +53,18 @@ interface MonthReport {
   costs_paid_cents: number;
   badges: Badge[];
 }
+
+/** Locale keys for the range and type a report was made for, so the PDF names them in the reader's language. */
+const RANGE_LABEL: Record<string, string> = {
+  monthly: 'reports.rangeMonthly',
+  quarterly: 'reports.rangeQuarterly',
+  yearly: 'reports.rangeYearly',
+};
+const TYPE_LABEL: Record<string, string> = {
+  all: 'reports.typeAll',
+  driver: 'reports.typeDriver',
+  passenger: 'reports.typePassenger',
+};
 
 export default function AdminReports() {
   const { t } = useTranslation('admin');
@@ -138,48 +150,14 @@ export default function AdminReports() {
     URL.revokeObjectURL(url);
   };
 
-  const exportPdf = () => {
+  const exportPdf = async () => {
     if (!r) return;
-    // The PDF's built-in font cannot draw Chinese: print the page instead, which uses the
-    // device's own fonts and can be saved as a PDF from the print dialog.
-    const drawable = (s: string) =>
-      Array.from({ length: s.length }, (_, i) => s.charCodeAt(i)).every(
-        (c) => c <= 0x24f || (c >= 0x2000 && c <= 0x206f),
-      );
-    const texts = [
-      r.user.name,
-      t('reports.pdfTitle'),
-      t('reports.summary'),
-      t('reports.events_attended'),
-      ...r.events.map((e) => e.title),
-      ...r.by_kind.map((k) => ft(EVENT_KIND[k.kind]?.label ?? k.kind)),
-      ...r.badges.flatMap((b) => [b.name, b.rule]),
-    ];
-    if (!texts.every(drawable)) {
-      window.print();
-      return;
-    }
-    const doc = new jsPDF();
-    const pageW = doc.internal.pageSize.getWidth();
-    const pageH = doc.internal.pageSize.getHeight();
-    let y = 20;
-
-    doc.setFontSize(18);
-    doc.text(t('reports.pdfTitle'), 20, y);
-    y += 10;
-    doc.setFontSize(11);
-    doc.text(`${t('reports.user')}: ${r.user.name} (${r.user.id})`, 20, y);
-    y += 7;
-    doc.text(`${t('reports.period')}: ${r.period_start} to ${r.period_end}`, 20, y);
-    y += 7;
-    doc.text(`${t('reports.range')}: ${r.range}`, 20, y);
-    y += 7;
-    doc.text(`${t('reports.type')}: ${r.type}`, 20, y);
-    y += 12;
-
-    doc.setFontSize(14);
-    doc.text(t('reports.summary'), 20, y);
-    y += 8;
+    const kinds = r.by_kind.map((k) => `${ft(EVENT_KIND[k.kind]?.label ?? k.kind)} × ${k.count}`);
+    const events = r.events.map((e) => `${e.title} — ${fmtDateTime(e.starts_at, ft)}`);
+    const badges = r.badges.map(
+      (b) => `${b.name} — ${b.rule} (${b.progress}/${b.target}) ${b.earned ? t('reports.earned') : ''}`,
+    );
+    const heads = [t('reports.summary'), t('reports.byKind'), t('reports.events'), t('reports.badges')];
     const rows: [string, string][] = [
       [t('reports.events_attended'), String(r.events_attended)],
       [t('reports.rides_driven'), String(r.rides_driven)],
@@ -188,62 +166,59 @@ export default function AdminReports() {
       [t('reports.reimbursement_cents'), `${r.reimbursement_cents}`],
       [t('reports.costs_paid_cents'), `${r.costs_paid_cents}`],
     ];
-    for (const [label, val] of rows) {
-      doc.text(label, 25, y);
-      doc.text(val, pageW - 40 - doc.getTextWidth(val), y);
-      y += 7;
-    }
+    const meta = [
+      `${t('reports.user')}: ${r.user.name} (${r.user.id})`,
+      `${t('reports.period')}: ${r.period_start} to ${r.period_end}`,
+      `${t('reports.range')}: ${t(RANGE_LABEL[r.range] ?? 'reports.rangeMonthly')}`,
+      `${t('reports.type')}: ${t(TYPE_LABEL[r.type] ?? 'reports.typeAll')}`,
+    ];
+    // Chinese cannot be drawn with the PDF's own font; the writer switches to the device's fonts.
+    const w = await createPdfWriter([t('reports.pdfTitle'), ...meta, ...heads, ...rows.flat(), ...kinds, ...events, ...badges]);
+    const M = 20;
+    const body = w.width - M - 25;
+    let y = 20;
+    const room = () => {
+      if (y > w.height - 40) {
+        w.addPage();
+        y = 20;
+      }
+    };
+    const heading = (text: string) => {
+      room();
+      y += w.text(text, M, y, { size: 14, bold: true }) + 3;
+    };
+    const list = (items: string[]) => {
+      for (const item of items) {
+        room();
+        y += w.text(item, M + 5, y, { maxWidth: body }) + 1.5;
+      }
+      y += 6;
+    };
+
+    y += w.text(t('reports.pdfTitle'), M, y, { size: 18, bold: true }) + 4;
+    for (const line of meta) y += w.text(line, M, y) + 1;
     y += 8;
 
-    if (r.by_kind.length > 0) {
-      doc.setFontSize(14);
-      doc.text(t('reports.byKind'), 20, y);
-      y += 8;
-      for (const k of r.by_kind) {
-        doc.text(
-          `${ft(EVENT_KIND[k.kind]?.label ?? k.kind)} × ${k.count}`,
-          25,
-          y,
-        );
-        y += 6;
-      }
-      y += 8;
+    heading(t('reports.summary'));
+    for (const [label, val] of rows) {
+      w.text(label, M + 5, y);
+      y += w.text(val, w.width - 40, y, { align: 'right' }) + 1;
     }
+    y += 6;
 
-    if (r.events.length > 0) {
-      doc.setFontSize(14);
-      doc.text(t('reports.events'), 20, y);
-      y += 8;
-      for (const e of r.events) {
-        if (y > pageH - 40) {
-          doc.addPage();
-          y = 20;
-        }
-        doc.text(`${e.title} — ${fmtDateTime(e.starts_at, ft)}`, 25, y);
-        y += 6;
-      }
-      y += 8;
+    if (kinds.length > 0) {
+      heading(t('reports.byKind'));
+      list(kinds);
     }
-
-    if (r.badges.length > 0) {
-      doc.setFontSize(14);
-      doc.text(t('reports.badges'), 20, y);
-      y += 8;
-      for (const b of r.badges) {
-        if (y > pageH - 40) {
-          doc.addPage();
-          y = 20;
-        }
-        doc.text(
-          `${b.name} — ${b.rule} (${b.progress}/${b.target}) ${b.earned ? t('reports.earned') : ''}`,
-          25,
-          y,
-        );
-        y += 6;
-      }
+    if (events.length > 0) {
+      heading(t('reports.events'));
+      list(events);
     }
-
-    doc.save(`${fileBase}.pdf`);
+    if (badges.length > 0) {
+      heading(t('reports.badges'));
+      list(badges);
+    }
+    w.save(`${fileBase}.pdf`);
   };
 
   return (

@@ -2,7 +2,7 @@ import { ReactNode, useCallback, useEffect, useRef, useState } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
 import { Download, ExternalLink, Eye, FileText, ShieldAlert } from 'lucide-react';
-import jsPDF from 'jspdf';
+import { createPdfWriter } from '../../pdfWriter';
 import { api } from '../../api';
 import {
   BackToTop,
@@ -569,67 +569,52 @@ export default function Audit() {
     }
   };
 
-  const exportPdf = () => {
+  const exportPdf = async () => {
     if (!items.length) return;
-    const doc = new jsPDF();
-    const pageW = doc.internal.pageSize.getWidth();
-    const pageH = doc.internal.pageSize.getHeight();
+    const heads = [t('audit.time'), t('audit.actor'), t('audit.action'), t('audit.object'), t('audit.detail')];
+    const generated = t('audit.pdfGenerated', { time: new Date().toLocaleString() });
+    const filters = query ? t('audit.pdfFilters', { filters: query }) : '';
+    const cells = items.map((a) => ({
+      time: a.created_at.replace('T', ' ').slice(0, 19),
+      actor: a.actor ?? t('audit.system'),
+      action: auditActionLabel(a.action, t),
+      object: objectLabel(a),
+      detail: detailLabel(a),
+    }));
+    // Chinese cannot be drawn with the PDF's own font; the writer switches to the device's fonts.
+    const w = await createPdfWriter([
+      t('audit.pdfTitle'), generated, filters, ...heads,
+      ...cells.flatMap((c) => [c.actor, c.action, c.object, c.detail]),
+    ]);
+    // Column left edges and widths in mm.
+    const cols = [
+      { x: 18, w: 35 }, { x: 55, w: 33 }, { x: 90, w: 38 }, { x: 130, w: 28 }, { x: 160, w: 35 },
+    ];
     let y = 20;
-
-    doc.setFontSize(18);
-    doc.text(t('audit.pdfTitle'), 20, y);
-    y += 9;
-    doc.setFontSize(10);
-    doc.text(t('audit.pdfGenerated', { time: new Date().toLocaleString() }), 20, y);
-    y += 6;
-    if (query) {
-      doc.text(t('audit.pdfFilters', { filters: query }), 20, y);
-      y += 6;
-    }
+    y += w.text(t('audit.pdfTitle'), 20, y, { size: 18, bold: true }) + 3;
+    y += w.text(generated, 20, y, { size: 10 }) + 1;
+    if (filters) y += w.text(filters, 20, y, { size: 10 }) + 1;
     y += 4;
 
-    doc.setFontSize(9);
-    doc.setFillColor(245, 245, 245);
-    doc.rect(15, y, pageW - 30, 8, 'F');
-    doc.setFont('helvetica', 'bold');
-    doc.text(t('audit.time'), 18, y + 5.5);
-    doc.text(t('audit.actor'), 55, y + 5.5);
-    doc.text(t('audit.action'), 90, y + 5.5);
-    doc.text(t('audit.object'), 130, y + 5.5);
-    doc.text(t('audit.detail'), 160, y + 5.5);
-    y += 10;
-    doc.setFont('helvetica', 'normal');
-
-    for (const a of items) {
-      if (y > pageH - 20) {
-        doc.addPage();
+    const header = () => {
+      w.band(15, y, w.width - 30, 8);
+      heads.forEach((h, i) => w.text(h, cols[i].x, y + 1.8, { size: 9, bold: true, maxWidth: cols[i].w, maxLines: 1 }));
+      y += 10;
+    };
+    header();
+    for (const c of cells) {
+      if (y > w.height - 25) {
+        w.addPage();
         y = 20;
-        doc.setFont('helvetica', 'bold');
-        doc.text(t('audit.time'), 18, y);
-        doc.text(t('audit.actor'), 55, y);
-        doc.text(t('audit.action'), 90, y);
-        doc.text(t('audit.object'), 130, y);
-        doc.text(t('audit.detail'), 160, y);
-        y += 8;
-        doc.setFont('helvetica', 'normal');
+        header();
       }
-      const timeStr = a.created_at.replace('T', ' ').slice(0, 19);
-      const actorStr = doc.splitTextToSize(a.actor ?? t('audit.system'), 32)[0] || '';
-      const actionStr = doc.splitTextToSize(a.action, 38)[0] || '';
-      // The PDF font is Latin-only, so the item stays as its code and number here.
-      const objStr = `${a.entity}${a.entity_id != null ? ` #${a.entity_id}` : ''}`;
-      const detailStr = doc.splitTextToSize(a.detail, pageW - 175)[0] || '';
-
-      doc.text(timeStr, 18, y);
-      doc.text(actorStr, 55, y);
-      doc.text(actionStr, 90, y);
-      doc.text(objStr, 130, y);
-      doc.text(detailStr, 160, y);
-      y += 7;
+      const row = [c.time, c.actor, c.action, c.object, c.detail];
+      const heights = row.map((v, i) => w.text(v, cols[i].x, y, { size: 9, maxWidth: cols[i].w, maxLines: i === 0 ? 1 : 2 }));
+      y += Math.max(...heights) + 2.5;
     }
 
     const dateStr = new Date().toISOString().slice(0, 10);
-    doc.save(`grace-ride-audit-${dateStr}.pdf`);
+    w.save(`grace-ride-audit-${dateStr}.pdf`);
   };
 
   const selectedTarget = selectedItem ? getObjectLink(selectedItem.entity, selectedItem.entity_id) : null;
