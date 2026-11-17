@@ -238,6 +238,15 @@ async fn housekeeping(db: &PgPool, cfg: &Config) -> anyhow::Result<()> {
     .bind(ts_in(-chat_days * 24 * 60))
     .execute(db)
     .await?;
+    // A trip no ride belongs to any more and with no chat left is just a number.
+    sqlx::query(
+        "DELETE FROM trips t WHERE t.created_at < $1
+         AND NOT EXISTS (SELECT 1 FROM rides r WHERE r.trip_id = t.id)
+         AND NOT EXISTS (SELECT 1 FROM ride_messages m WHERE m.trip_id = t.id)",
+    )
+    .bind(ts_in(-24 * 60))
+    .execute(db)
+    .await?;
     sqlx::query("DELETE FROM audit_logs WHERE created_at < $1")
         .bind(ts_in(-audit_days * 24 * 60))
         .execute(db)

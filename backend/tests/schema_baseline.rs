@@ -42,7 +42,7 @@ async fn stale_migration_history_replays_the_schema_without_losing_rows() {
             .fetch_all(&db)
             .await
             .unwrap();
-    assert_eq!(versions, vec![1, 2]);
+    assert_eq!(versions, vec![1, 2, 3]);
     let kept: Option<(String,)> = sqlx::query_as("SELECT name FROM areas WHERE name = '历史区'")
         .fetch_optional(&db)
         .await
@@ -81,7 +81,7 @@ async fn stale_migration_history_replays_the_schema_without_losing_rows() {
             .fetch_all(&db)
             .await
             .unwrap();
-    assert_eq!(versions, vec![1, 2]);
+    assert_eq!(versions, vec![1, 2, 3]);
 }
 
 /// A database that has run 0001 only (every database before 2026-11-17) keeps its
@@ -112,7 +112,7 @@ async fn new_migration_files_run_once_after_the_frozen_schema() {
             .fetch_all(&db)
             .await
             .unwrap();
-    assert_eq!(versions, vec![1, 2]);
+    assert_eq!(versions, vec![1, 2, 3]);
     // 0001 was left alone (same row), not cleared and replayed.
     let (checksum, installed): (Vec<u8>, String) = sqlx::query_as(
         "SELECT checksum, installed_on::text FROM _sqlx_migrations WHERE version = 1",
@@ -248,3 +248,71 @@ const RULES_0002: &[&str] = &[
     "chk_announcements_pinned",
     "chk_reimbursements_payee_verified",
 ];
+
+/// 0003 on a database full of demo and edge-case chats: every trip in use gets a row,
+/// both foreign keys hold, and rides given a trip later still work without app changes.
+#[tokio::test]
+async fn trips_link_rides_and_chats() {
+    let (_app, st) = common::setup().await;
+    common::seed_edge(&st).await;
+    // Undo 0003 as if this database had stopped at 0002, then upgrade it.
+    for sql in [
+        "ALTER TABLE ride_messages DROP CONSTRAINT fk_ride_messages_trip",
+        "ALTER TABLE rides DROP CONSTRAINT fk_rides_trip",
+        "DROP TRIGGER trg_rides_ensure_trip ON rides",
+        "DROP TABLE trips",
+        "DELETE FROM _sqlx_migrations WHERE version > 2",
+    ] {
+        sqlx::query(sql).execute(&st.db).await.unwrap();
+    }
+    let chats: i64 = sqlx::query_scalar("SELECT COUNT(DISTINCT trip_id) FROM ride_messages")
+        .fetch_one(&st.db)
+        .await
+        .unwrap();
+    assert!(chats > 0, "the seed has chats to carry over");
+
+    let db = connect_db(&st.cfg.database_url).await.expect("upgrade");
+    let missing: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM (SELECT trip_id FROM rides WHERE trip_id IS NOT NULL
+                               UNION SELECT trip_id FROM ride_messages) used
+         WHERE NOT EXISTS (SELECT 1 FROM trips t WHERE t.id = used.trip_id)",
+    )
+    .fetch_one(&db)
+    .await
+    .unwrap();
+    assert_eq!(missing, 0);
+
+    // Setting a trip on a ride adds the trip; a message for an unknown trip is refused.
+    let ride: i64 = sqlx::query_scalar("SELECT id FROM rides WHERE trip_id IS NULL ORDER BY id LIMIT 1")
+        .fetch_one(&db)
+        .await
+        .unwrap();
+    sqlx::query("UPDATE rides SET trip_id = 987654 WHERE id = $1")
+        .bind(ride)
+        .execute(&db)
+        .await
+        .unwrap();
+    sqlx::query("INSERT INTO ride_messages (trip_id, body) VALUES (987654, 'hi')")
+        .execute(&db)
+        .await
+        .expect("message on the new trip");
+    let stray = sqlx::query("INSERT INTO ride_messages (trip_id, body) VALUES (987655, 'hi')")
+        .execute(&db)
+        .await;
+    assert!(stray.is_err(), "no such trip");
+
+    // Removing a trip takes its chat and unlinks its rides.
+    sqlx::query("DELETE FROM trips WHERE id = 987654")
+        .execute(&db)
+        .await
+        .unwrap();
+    let (left, linked): (i64, Option<i64>) = sqlx::query_as(
+        "SELECT (SELECT COUNT(*) FROM ride_messages WHERE trip_id = 987654),
+                (SELECT trip_id FROM rides WHERE id = $1)",
+    )
+    .bind(ride)
+    .fetch_one(&db)
+    .await
+    .unwrap();
+    assert_eq!((left, linked), (0, None));
+}
