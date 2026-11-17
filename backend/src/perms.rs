@@ -8,7 +8,9 @@
 //!   edit the built-in roles and add their own; nothing in the handlers names a role.
 //!
 //! Every active member holds the built-in `member` role on top of the roles listed in
-//! `users.roles`. Handlers ask `u.can(Page::X, Act::Y)` or `require(&u, Page::X, Act::Y)`.
+//! `users.roles`. The app writes that column; the database copies the names that are
+//! real roles into `member_roles` (migration 0004), which is what permission checks read.
+//! Handlers ask `u.can(Page::X, Act::Y)` or `require(&u, Page::X, Act::Y)`.
 //!
 //! Three rules sit above the stored matrix and cannot be configured away:
 //! - Staff pages show other members' data, so they need a passkey or 2FA session.
@@ -348,7 +350,9 @@ pub async fn ensure_superadmin(
     db: &PgPool,
     preferred_email: Option<&str>,
 ) -> sqlx::Result<Option<(i64, String)>> {
-    let holds = |role: &str| format!("'{role}' = ANY(string_to_array(roles, ','))");
+    let holds = |role: &str| {
+        format!("EXISTS (SELECT 1 FROM member_roles mr WHERE mr.user_id = users.id AND mr.role_key = '{role}')")
+    };
     let existing: Option<(i64,)> = sqlx::query_as(&format!(
         "SELECT id FROM users WHERE status = 'active' AND {} LIMIT 1",
         holds(SUPERADMIN_ROLE)
@@ -384,7 +388,7 @@ pub fn parse_roles(s: &str) -> Vec<String> {
 pub fn sql_holds(alias: &str, perm: Perm) -> String {
     format!(
         "({alias}.status = 'active' AND EXISTS (SELECT 1 FROM role_permissions rp WHERE rp.permission = '{}' \
-         AND (rp.role_key = '{MEMBER_ROLE}' OR rp.role_key = ANY(string_to_array({alias}.roles, ',')))))",
+         AND (rp.role_key = '{MEMBER_ROLE}' OR rp.role_key IN (SELECT mr.role_key FROM member_roles mr WHERE mr.user_id = {alias}.id))))",
         perm.key()
     )
 }

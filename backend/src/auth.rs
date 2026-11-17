@@ -104,7 +104,8 @@ impl FromRequestParts<AppState> for CurrentUser {
         let row: Option<Row> = sqlx::query_as(
             "SELECT u.id, u.name, u.email, u.roles, u.status, s.mfa_ok, s.expires_at, u.lang,
                     COALESCE((SELECT string_agg(rp.permission, ',') FROM role_permissions rp
-                              WHERE rp.role_key = $2 OR rp.role_key = ANY(string_to_array(u.roles, ','))), '')
+                              WHERE rp.role_key = $2
+                                 OR rp.role_key IN (SELECT role_key FROM member_roles WHERE user_id = u.id)), '')
              FROM sessions s JOIN users u ON u.id = s.user_id
              WHERE s.token = $1 AND u.status IN ('active', 'pending')",
         )

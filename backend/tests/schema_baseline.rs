@@ -42,7 +42,7 @@ async fn stale_migration_history_replays_the_schema_without_losing_rows() {
             .fetch_all(&db)
             .await
             .unwrap();
-    assert_eq!(versions, vec![1, 2, 3]);
+    assert_eq!(versions, vec![1, 2, 3, 4]);
     let kept: Option<(String,)> = sqlx::query_as("SELECT name FROM areas WHERE name = '历史区'")
         .fetch_optional(&db)
         .await
@@ -81,7 +81,7 @@ async fn stale_migration_history_replays_the_schema_without_losing_rows() {
             .fetch_all(&db)
             .await
             .unwrap();
-    assert_eq!(versions, vec![1, 2, 3]);
+    assert_eq!(versions, vec![1, 2, 3, 4]);
 }
 
 /// A database that has run 0001 only (every database before 2026-11-17) keeps its
@@ -112,7 +112,7 @@ async fn new_migration_files_run_once_after_the_frozen_schema() {
             .fetch_all(&db)
             .await
             .unwrap();
-    assert_eq!(versions, vec![1, 2, 3]);
+    assert_eq!(versions, vec![1, 2, 3, 4]);
     // 0001 was left alone (same row), not cleared and replayed.
     let (checksum, installed): (Vec<u8>, String) = sqlx::query_as(
         "SELECT checksum, installed_on::text FROM _sqlx_migrations WHERE version = 1",
@@ -315,4 +315,63 @@ async fn trips_link_rides_and_chats() {
     .await
     .unwrap();
     assert_eq!((left, linked), (0, None));
+}
+
+/// 0004 on a database full of demo and edge-case members: member_roles matches each
+/// member's listed roles, a name that is not a role grants nothing until the role is
+/// created, and writes to users.roles (the seed, tests, start-up) keep it in step.
+#[tokio::test]
+async fn member_roles_follow_users_roles() {
+    let (_app, st) = common::setup().await;
+    common::seed_edge(&st).await;
+    // Undo 0004 as if this database had stopped at 0003, then upgrade it.
+    for sql in [
+        "DROP TRIGGER trg_roles_attach_members ON roles",
+        "DROP TRIGGER trg_users_sync_member_roles ON users",
+        "DROP TABLE member_roles",
+        "DELETE FROM _sqlx_migrations WHERE version > 3",
+    ] {
+        sqlx::query(sql).execute(&st.db).await.unwrap();
+    }
+    sqlx::query("UPDATE users SET roles = 'driver, ghost_team' WHERE email = 'member@example.org'")
+        .execute(&st.db)
+        .await
+        .unwrap();
+
+    let db = connect_db(&st.cfg.database_url).await.expect("upgrade");
+    common::assert_member_roles_in_step(&db).await;
+    let held = |email: &'static str| {
+        let db = db.clone();
+        async move {
+            sqlx::query_scalar::<_, String>(
+                "SELECT mr.role_key FROM member_roles mr JOIN users u ON u.id = mr.user_id
+                 WHERE u.email = $1 ORDER BY 1",
+            )
+            .bind(email)
+            .fetch_all(&db)
+            .await
+            .unwrap()
+        }
+    };
+    assert_eq!(held("member@example.org").await, ["driver"]);
+    let admins: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM member_roles WHERE role_key = 'admin'")
+        .fetch_one(&db)
+        .await
+        .unwrap();
+    assert!(admins > 0, "seeded admins carried over");
+
+    // The role is created later: the member who already listed it now holds it.
+    sqlx::query("INSERT INTO roles (key, name) VALUES ('ghost_team', 'Ghost team')")
+        .execute(&db)
+        .await
+        .unwrap();
+    assert_eq!(held("member@example.org").await, ["driver", "ghost_team"]);
+
+    // Taking a role off in users.roles takes it out of member_roles.
+    sqlx::query("UPDATE users SET roles = 'ghost_team' WHERE email = 'member@example.org'")
+        .execute(&db)
+        .await
+        .unwrap();
+    assert_eq!(held("member@example.org").await, ["ghost_team"]);
+    common::assert_member_roles_in_step(&db).await;
 }

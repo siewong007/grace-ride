@@ -187,7 +187,7 @@ async fn list_users(
     if q.page.is_some() || q.limit.is_some() {
         let mut conds = vec!["(u.name LIKE $1 OR u.email LIKE $2 OR u.phone LIKE $3)".to_string()];
         if q.role.is_some() {
-            conds.push("(',' || u.roles || ',') LIKE ('%,' || $4 || ',%')".to_string());
+            conds.push("EXISTS (SELECT 1 FROM member_roles mr WHERE mr.user_id = u.id AND mr.role_key = $4)".to_string());
         }
         let count_sql = format!("SELECT COUNT(*) FROM users u WHERE {}", conds.join(" AND "));
         let mut count_query = sqlx::query_as::<_, (i64,)>(&count_sql)
@@ -306,7 +306,8 @@ async fn update_user(
     // Lock active superadmins in a stable order so concurrent edits cannot each
     // observe themselves as the last one and demote both accounts.
     let active_superadmins: Vec<i64> = sqlx::query_scalar(
-        "SELECT id FROM users WHERE status='active' AND $1=ANY(string_to_array(roles, ',')) ORDER BY id FOR UPDATE",
+        "SELECT u.id FROM users u JOIN member_roles mr ON mr.user_id = u.id AND mr.role_key = $1
+         WHERE u.status='active' ORDER BY u.id FOR UPDATE OF u",
     )
     .bind(perms::SUPERADMIN_ROLE)
     .fetch_all(&mut *tx)

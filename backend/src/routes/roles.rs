@@ -69,8 +69,8 @@ async fn list(State(st): State<AppState>, u: CurrentUser) -> AppResult<Json<Valu
             .fetch_all(&st.db)
             .await?;
     let holders: Vec<(String, i64)> = sqlx::query_as(
-        "SELECT r, COUNT(*) FROM users u, unnest(string_to_array(u.roles, ',')) AS r
-         WHERE u.status = 'active' GROUP BY r",
+        "SELECT mr.role_key, COUNT(*) FROM member_roles mr JOIN users u ON u.id = mr.user_id
+         WHERE u.status = 'active' GROUP BY mr.role_key",
     )
     .fetch_all(&st.db)
     .await?;

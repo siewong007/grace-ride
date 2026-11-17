@@ -211,3 +211,20 @@ pub fn totp_code(secret_b32: &str, email: &str) -> String {
     .expect("totp");
     totp.generate_current().expect("code")
 }
+
+/// `member_roles` (migration 0004) must hold exactly the names in each member's
+/// `users.roles` that are real roles, apart from the implicit `member`.
+pub async fn assert_member_roles_in_step(db: &sqlx::PgPool) {
+    let drift: Vec<(i64, String)> = sqlx::query_as(
+        "WITH want AS (
+             SELECT u.id AS user_id, k AS role_key FROM users u, unnest(listed_role_keys(u.roles)) AS k
+             WHERE EXISTS (SELECT 1 FROM roles r WHERE r.key = k))
+         (SELECT user_id, '+' || role_key FROM want EXCEPT SELECT user_id, '+' || role_key FROM member_roles)
+         UNION ALL
+         (SELECT user_id, '-' || role_key FROM member_roles EXCEPT SELECT user_id, '-' || role_key FROM want)",
+    )
+    .fetch_all(db)
+    .await
+    .unwrap();
+    assert!(drift.is_empty(), "member_roles out of step (+missing, -extra): {drift:?}");
+}

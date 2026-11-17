@@ -161,6 +161,7 @@ async fn custom_role_grants_exactly_the_actions_ticked() {
     )
     .await;
     assert_eq!(give.status, StatusCode::OK, "{}", give.json);
+    assert_member_roles_in_step(&st.db).await;
 
     // The role reaches a staff page, so the member's existing session applies at once
     // (dev-mode sessions are MFA-verified through `login`).
@@ -226,6 +227,13 @@ async fn custom_role_grants_exactly_the_actions_ticked() {
     )
     .await;
     assert_eq!(gone.status, StatusCode::OK, "{}", gone.json);
+    let held: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM member_roles WHERE role_key = $1")
+        .bind(&key)
+        .fetch_one(&st.db)
+        .await
+        .unwrap();
+    assert_eq!(held, 0);
+    assert_member_roles_in_step(&st.db).await;
     let (roles,): (String,) = sqlx::query_as("SELECT roles FROM users WHERE id=$1")
         .bind(member_id)
         .fetch_one(&st.db)
@@ -1012,6 +1020,7 @@ async fn startup_gives_superadmin_to_the_original_administrator_when_nobody_hold
             .await
             .unwrap();
     assert_eq!(roles, "superadmin,admin");
+    assert_member_roles_in_step(&st.db).await;
 
     // ADMIN_EMAIL names the original administrator when there are several admins.
     sqlx::query("UPDATE users SET roles='admin' WHERE email IN ('admin@example.org', 'transport@example.org')")
