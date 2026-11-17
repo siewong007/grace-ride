@@ -448,7 +448,7 @@ async fn update_user(
             sqlx::query("INSERT INTO group_members (group_id, user_id) VALUES ($1,$2) ON CONFLICT DO NOTHING")
                 .bind(g)
                 .bind(id)
-                .execute(&st.db)
+                .execute(&mut *tx)
                 .await?;
         }
         if gids != old {
@@ -697,10 +697,20 @@ async fn set_group_members(
     State(st): State<AppState>,
     u: CurrentUser,
     Path(id): Path<i64>,
-    Json(req): Json<MembersIn>,
+    Json(mut req): Json<MembersIn>,
 ) -> AppResult<Json<Value>> {
     require(&u, Page::AdminGroups, Act::Update)?;
+    req.user_ids.sort_unstable();
+    req.user_ids.dedup();
     let mut tx = st.db.begin().await?;
+    // An unknown member id would otherwise fail the foreign key and come back as a 500.
+    let (known,): (i64,) = sqlx::query_as("SELECT COUNT(*) FROM users WHERE id=ANY($1)")
+        .bind(&req.user_ids)
+        .fetch_one(&mut *tx)
+        .await?;
+    if known != req.user_ids.len() as i64 {
+        return Err(bad(u.lang, ErrorKey::InvalidAction));
+    }
     let exists: Option<i64> = sqlx::query_scalar("SELECT id FROM groups WHERE id=$1 FOR KEY SHARE")
         .bind(id)
         .fetch_optional(&mut *tx)

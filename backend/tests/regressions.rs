@@ -1255,3 +1255,42 @@ async fn failed_concurrent_registration_leaves_its_invite_usable() {
     .await;
     assert_eq!(retry.status, StatusCode::OK, "{}", retry.json);
 }
+
+/// Saving a member with groups used to insert the memberships on the pool while the
+/// edit's transaction held the member's row lock, so the insert's foreign-key check
+/// waited on that lock forever and the request never returned.
+#[tokio::test]
+async fn update_user_with_groups_returns() {
+    let (app, st) = setup().await;
+    let admin = login(&st, "superadmin@example.org").await;
+    let (uid, roles): (i64, String) =
+        sqlx::query_as("SELECT id, roles FROM users WHERE email='member@example.org'")
+            .fetch_one(&st.db)
+            .await
+            .unwrap();
+    let youth: i64 = sqlx::query_scalar("SELECT id FROM groups WHERE name='青年团契'")
+        .fetch_one(&st.db)
+        .await
+        .unwrap();
+    let roles: Vec<&str> = roles.split(',').filter(|s| !s.is_empty()).collect();
+    let r = tokio::time::timeout(
+        std::time::Duration::from_secs(10),
+        call(
+            &app,
+            Method::PUT,
+            &format!("/api/admin/users/{uid}"),
+            Some(&admin),
+            Some(json!({"roles": roles, "status": "active", "group_ids": [youth]})),
+        ),
+    )
+    .await
+    .expect("member update with groups hung");
+    assert_eq!(r.status, StatusCode::OK, "{}", r.json);
+    let groups: Vec<i64> =
+        sqlx::query_scalar("SELECT group_id FROM group_members WHERE user_id=$1")
+            .bind(uid)
+            .fetch_all(&st.db)
+            .await
+            .unwrap();
+    assert_eq!(groups, vec![youth]);
+}
