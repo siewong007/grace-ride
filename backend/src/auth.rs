@@ -74,13 +74,14 @@ impl FromRequestParts<AppState> for CurrentUser {
         parts: &mut Parts,
         state: &AppState,
     ) -> Result<Self, Self::Rejection> {
-        let accept_lang = Lang::from_accept_language(
-            parts
-                .headers
-                .get(axum::http::header::ACCEPT_LANGUAGE)
-                .and_then(|v| v.to_str().ok())
-                .unwrap_or(""),
-        );
+        let accept_lang_hdr = parts
+            .headers
+            .get(axum::http::header::ACCEPT_LANGUAGE)
+            .and_then(|v| v.to_str().ok())
+            .filter(|s| !s.trim().is_empty());
+        let accept_lang = accept_lang_hdr
+            .map(Lang::from_accept_language)
+            .unwrap_or(Lang::Zh);
         // The session cookie is the only credential. `security::pending_guard` reads the
         // same cookie to keep unapproved members out; a second way to present the token
         // (it used to be accepted as a Bearer header) would walk straight past that guard.
