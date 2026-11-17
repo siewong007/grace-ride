@@ -126,12 +126,20 @@ async fn close_if_done(db: &PgPool, p: &mut Pass) -> AppResult<()> {
         }
         None => None,
     };
-    let reason = match status.as_deref() {
-        Some("completed") => Some("completed"),
-        Some(s) if ENDED.contains(&s) => Some("cancelled"),
-        None => Some("cancelled"),
-        _ if now() > p.valid_until => Some("expired"),
-        _ => None,
+    let event_status: Option<String> = sqlx::query_scalar("SELECT status FROM events WHERE id=$1")
+        .bind(p.event_id)
+        .fetch_optional(db)
+        .await?;
+    let reason = if event_status.as_deref() == Some("cancelled") {
+        Some("cancelled")
+    } else {
+        match status.as_deref() {
+            Some("completed") => Some("completed"),
+            Some(s) if ENDED.contains(&s) => Some("cancelled"),
+            None => Some("cancelled"),
+            _ if now() > p.valid_until => Some("expired"),
+            _ => None,
+        }
     };
     if let Some(r) = reason {
         close(db, p.id, r).await?;

@@ -30,10 +30,10 @@ concurrency:
   cancel-in-progress: false
 
 env:
-  VPS_HOST: 162.19.81.122
-  VPS_PORT: "20049"
-  VPS_USER: root
-  VPS_HOST_KEY: "[162.19.81.122]:20049 ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIIxenH95jfg3hxfkumJpZJyV7phwCNDrXrAL0wUXnta9"
+  VPS_HOST: ${{ vars.VPS_HOST }}
+  VPS_PORT: ${{ vars.VPS_PORT || '20049' }}
+  VPS_USER: ${{ vars.VPS_USER || 'deploy' }}
+  VPS_HOST_KEY: ${{ secrets.VPS_HOST_KEY }}
   PUBLIC_URL: https://graceride.saliminn.my
 
 jobs:
@@ -42,9 +42,9 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 45
     environment: production
-    # A CI run from a push to master that passed (not a pull request's run, not a failure).
+    # Deploy master push with passed CI, or manual dispatch restricted to master.
     if: >-
-      github.event_name == 'workflow_dispatch' ||
+      (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/master') ||
       (github.event.workflow_run.conclusion == 'success' &&
        github.event.workflow_run.event == 'push' &&
        github.event.workflow_run.head_repository.full_name == github.repository)

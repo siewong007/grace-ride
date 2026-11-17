@@ -11,8 +11,8 @@ BACKUP_DIR="${2:-./backups}"
 KEEP_DAYS="${3:-30}"
 STAMP="$(date +%Y%m%d-%H%M%S)"
 DEST="$BACKUP_DIR/grace-ride-$STAMP"
-mkdir -p "$DEST"
 umask 077
+mkdir -p "$DEST"
 
 : "${DATABASE_URL:?set DATABASE_URL (postgres://user:pass@host/dbname)}"
 

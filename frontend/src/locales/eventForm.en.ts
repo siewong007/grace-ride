@@ -27,4 +27,7 @@ export default {
   photoAttached: 'Photo added',
   photoRemove: 'Remove photo',
   peopleCount: 'people',
+  attendanceModule: 'Attendance module',
+  enableAttendance: 'Enable attendance tracking (QR check-in)',
+  attendanceHint: 'When enabled, members can scan an event QR code to check in and record attendance directly (no ride required).',
 };

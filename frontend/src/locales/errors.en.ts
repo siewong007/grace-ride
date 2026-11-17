@@ -79,6 +79,9 @@ export default {
     "ONLY_ORGANISER_CAN_PERFORM_ACTION": "Only the event organiser can perform this action",
     "ONLY_ORGANISER_CAN_VIEW_SIGNUPS": "Only the event organiser can view the signup list",
     "ONLY_ORGANISER_CAN_RECORD_ATTENDANCE": "Only the event organiser can record attendance",
+    "ATTENDANCE_MODULE_DISABLED": "The attendance module is not enabled for this event",
+    "INVALID_CHECKIN_CODE": "The check-in code is invalid or has expired",
+    "MEMBERS_ONLY_ATTENDANCE": "Attendance check-in is for members only",
     "EVENT_NOT_OPEN_TO_GROUP": "This event is not open to your groups"
   },
   "rides": {

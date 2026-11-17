@@ -91,6 +91,9 @@ pub fn render(lang: Lang, key: &ErrorKey) -> String {
         | ErrorKey::OnlyOrganiserCanPerformAction
         | ErrorKey::OnlyOrganiserCanViewSignups
         | ErrorKey::OnlyOrganiserCanRecordAttendance
+        | ErrorKey::AttendanceModuleDisabled
+        | ErrorKey::InvalidCheckinCode
+        | ErrorKey::MembersOnlyAttendance
         | ErrorKey::EventNotOpenToGroup
         | ErrorKey::JoinAsRequired
         | ErrorKey::JoinAsNotAllowed
@@ -312,6 +315,9 @@ mod tests {
             ErrorKey::OnlyOrganiserCanPerformAction,
             ErrorKey::OnlyOrganiserCanViewSignups,
             ErrorKey::OnlyOrganiserCanRecordAttendance,
+            ErrorKey::AttendanceModuleDisabled,
+            ErrorKey::InvalidCheckinCode,
+            ErrorKey::MembersOnlyAttendance,
             ErrorKey::EventNotOpenToGroup,
             ErrorKey::JoinAsRequired,
             ErrorKey::JoinAsNotAllowed,

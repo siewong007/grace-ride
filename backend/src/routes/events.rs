@@ -14,7 +14,7 @@ use crate::error::{bad, forbidden, not_found, AppResult};
 use crate::i18n::ErrorKey;
 use crate::perms::{Act, Page};
 use crate::state::AppState;
-use crate::util::{audit, audit_many, norm_dt, notify, notify_many, now, require, Lang};
+use crate::util::{audit, audit_many, norm_dt, notify, notify_many, now, random_token, require, Lang};
 
 pub fn router() -> Router<AppState> {
     Router::new()
@@ -27,6 +27,8 @@ pub fn router() -> Router<AppState> {
         .route("/events/{id}/withdraw", post(withdraw))
         .route("/events/{id}/signups", get(list_signups))
         .route("/events/{id}/attendance", post(mark_attendance))
+        .route("/events/{id}/checkin", get(get_checkin_info).post(self_checkin))
+        .route("/events/{id}/checkin-code/reset", post(reset_checkin_code))
 }
 
 pub const KINDS: &[&str] = &["badminton", "bowling", "kayak", "walk", "other"];
@@ -108,10 +110,13 @@ struct EventRow {
     my_as_group: Option<String>,
     groups: Option<String>,
     photo_file_id: Option<i64>,
+    attendance_enabled: i64,
+    checkin_code: Option<String>,
 }
 
 const EVENT_SELECT: &str = "SELECT e.id, e.title, e.kind, e.description, e.starts_at, e.location, e.capacity, e.cost_note,
     e.signup_deadline, e.status, e.created_by, c.name AS creator_name, e.photo_file_id,
+    e.attendance_enabled, e.checkin_code,
     (SELECT COUNT(*) FROM event_signups s WHERE s.event_id=e.id AND s.status='going') AS going,
     (SELECT COUNT(*) FROM event_signups s WHERE s.event_id=e.id AND s.status='waitlist') AS waitlist,
     ms.status AS my_status, ms.need_ride AS my_need_ride, ms.offer_drive AS my_offer_drive, ms.attended AS my_attended,
@@ -121,6 +126,7 @@ const EVENT_SELECT: &str = "SELECT e.id, e.title, e.kind, e.description, e.start
     LEFT JOIN event_signups ms ON ms.event_id = e.id AND ms.user_id = $1";
 
 fn event_json(e: &EventRow, u: &CurrentUser) -> Value {
+    let can_edit = can_manage(u, e.created_by, Act::Update);
     json!({
         "id": e.id, "title": e.title, "kind": e.kind, "description": e.description, "starts_at": e.starts_at,
         "location": e.location, "capacity": e.capacity, "cost_note": e.cost_note, "signup_deadline": e.signup_deadline,
@@ -131,7 +137,9 @@ fn event_json(e: &EventRow, u: &CurrentUser) -> Value {
             "as_group": e.my_as_group_id.map(|id| json!({"id": id, "name": e.my_as_group}))})),
         "groups": e.groups.clone().unwrap_or_default(),
         "photo_file_id": e.photo_file_id,
-        "can_manage": can_manage(u, e.created_by, Act::Update),
+        "attendance_enabled": e.attendance_enabled == 1,
+        "checkin_code": if can_edit { e.checkin_code.clone() } else { None },
+        "can_manage": can_edit,
         "can_cancel": can_manage(u, e.created_by, Act::Delete),
         "can_see_signups": can_see_signups(u, e.created_by),
     })
@@ -271,6 +279,8 @@ struct EventIn {
     as_group_ids: Option<Vec<i64>>,
     /// Optional cover photo: an image the saver uploaded (or the event's current photo).
     photo_file_id: Option<i64>,
+    /// Optional attendance module: members can scan QR code to check in without a ride.
+    attendance_enabled: Option<bool>,
 }
 
 /// A cover photo must be an image the saver uploaded themselves, so nobody can surface
@@ -375,11 +385,17 @@ async fn create_event(
     }
     let (at, dl) = validate(&req, u.lang)?;
     check_photo(&st, &u, req.photo_file_id, None).await?;
+    let att_enabled = req.attendance_enabled.unwrap_or(true);
+    let checkin_code = if att_enabled {
+        Some(random_token(10))
+    } else {
+        None
+    };
     // The event and its audience are saved together, or not at all.
     let mut tx = st.db.begin().await?;
     let (id,): (i64,) = sqlx::query_as(
-        "INSERT INTO events (title, kind, description, starts_at, location, capacity, cost_note, signup_deadline, created_by, created_at, photo_file_id)
-         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11) RETURNING id",
+        "INSERT INTO events (title, kind, description, starts_at, location, capacity, cost_note, signup_deadline, created_by, created_at, photo_file_id, attendance_enabled, checkin_code)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13) RETURNING id",
     )
     .bind(req.title.trim())
     .bind(&req.kind)
@@ -392,6 +408,8 @@ async fn create_event(
     .bind(u.id)
     .bind(now())
     .bind(req.photo_file_id)
+    .bind(att_enabled as i64)
+    .bind(checkin_code)
     .fetch_one(&mut *tx)
     .await?;
     save_event_groups(&mut tx, id, &req, u.lang).await?;
@@ -453,7 +471,13 @@ async fn update_event(
         return Err(bad(u.lang, ErrorKey::EventNotOpen));
     }
     let capacity = req.capacity.unwrap_or(0).max(0);
-    sqlx::query("UPDATE events SET title=$1, kind=$2, description=$3, starts_at=$4, location=$5, capacity=$6, cost_note=$7, signup_deadline=$8, photo_file_id=$9 WHERE id=$10")
+    let att_enabled = req.attendance_enabled.unwrap_or(e.attendance_enabled == 1);
+    let checkin_code = if att_enabled && e.checkin_code.is_none() {
+        Some(random_token(10))
+    } else {
+        e.checkin_code.clone()
+    };
+    sqlx::query("UPDATE events SET title=$1, kind=$2, description=$3, starts_at=$4, location=$5, capacity=$6, cost_note=$7, signup_deadline=$8, photo_file_id=$9, attendance_enabled=$10, checkin_code=$11 WHERE id=$12")
         .bind(req.title.trim())
         .bind(&req.kind)
         .bind(req.description.clone().unwrap_or_default())
@@ -463,6 +487,8 @@ async fn update_event(
         .bind(req.cost_note.clone().unwrap_or_default())
         .bind(&dl)
         .bind(req.photo_file_id)
+        .bind(att_enabled as i64)
+        .bind(checkin_code)
         .bind(id)
         .execute(&mut *tx)
         .await?;
@@ -942,6 +968,9 @@ async fn mark_attendance(
             ErrorKey::OnlyOrganiserCanRecordAttendance,
         ));
     }
+    if e.attendance_enabled != 1 {
+        return Err(bad(u.lang, ErrorKey::AttendanceModuleDisabled));
+    }
     let v = req.attended.map(|a| a as i64);
     // Recording someone as attended also makes them a participant: a member who withdrew
     // (or was still waitlisted) but came anyway is a walk-in and must show in the list
@@ -977,4 +1006,152 @@ async fn mark_attendance(
     )
     .await;
     Ok(Json(json!({"ok": true})))
+}
+
+#[derive(Deserialize)]
+struct CheckinIn {
+    code: Option<String>,
+}
+
+async fn self_checkin(
+    State(st): State<AppState>,
+    u: CurrentUser,
+    Path(id): Path<i64>,
+    Json(req): Json<CheckinIn>,
+) -> AppResult<Json<Value>> {
+    // Attendance is for members only!
+    if u.status != "active" {
+        return Err(forbidden(u.lang, ErrorKey::MembersOnlyAttendance));
+    }
+    let e = load_event(&st, &u, id).await?;
+    if e.status != "published" {
+        return Err(bad(u.lang, ErrorKey::EventNotOpen));
+    }
+    if e.attendance_enabled != 1 {
+        return Err(bad(u.lang, ErrorKey::AttendanceModuleDisabled));
+    }
+    if let Some(expected) = &e.checkin_code {
+        let matches = req
+            .code
+            .as_deref()
+            .map(str::trim)
+            .is_some_and(|c| c.eq_ignore_ascii_case(expected.trim()));
+        if !matches {
+            return Err(bad(u.lang, ErrorKey::InvalidCheckinCode));
+        }
+    }
+
+    let mut tx = st.db.begin().await?;
+    let existing: Option<(Option<i64>, String)> = sqlx::query_as(
+        "SELECT attended, status FROM event_signups WHERE event_id = $1 AND user_id = $2 FOR UPDATE",
+    )
+    .bind(id)
+    .bind(u.id)
+    .fetch_optional(&mut *tx)
+    .await?;
+
+    let already_attended = existing.as_ref().is_some_and(|(att, _)| *att == Some(1));
+
+    if !already_attended {
+        if existing.is_some() {
+            sqlx::query(
+                "UPDATE event_signups SET attended = 1,
+                   status = CASE WHEN status IN ('cancelled','waitlist') THEN 'going' ELSE status END
+                 WHERE event_id = $1 AND user_id = $2",
+            )
+            .bind(id)
+            .bind(u.id)
+            .execute(&mut *tx)
+            .await?;
+        } else {
+            // Member participates directly via check-in without requiring a ride.
+            let choices = join_choices(&st.db, &u, id).await.unwrap_or_default();
+            let as_group = choices.first().map(|c| c.0);
+            sqlx::query(
+                "INSERT INTO event_signups (event_id, user_id, status, attended, need_ride, offer_drive, offer_seats, as_group_id, created_at)
+                 VALUES ($1, $2, 'going', 1, 0, 0, 0, $3, $4)
+                 ON CONFLICT (event_id, user_id) DO UPDATE SET attended = 1, status = 'going'",
+            )
+            .bind(id)
+            .bind(u.id)
+            .bind(as_group)
+            .bind(now())
+            .execute(&mut *tx)
+            .await?;
+        }
+
+        audit(
+            &st.db,
+            Some(u.id),
+            "event.attendance",
+            "event",
+            Some(id),
+            format!("user {} = Some(true)", u.id),
+        )
+        .await;
+    }
+    tx.commit().await?;
+
+    Ok(Json(json!({
+        "ok": true,
+        "already_attended": already_attended,
+        "title": e.title,
+        "starts_at": e.starts_at,
+        "location": e.location,
+    })))
+}
+
+async fn get_checkin_info(
+    State(st): State<AppState>,
+    u: CurrentUser,
+    Path(id): Path<i64>,
+) -> AppResult<Json<Value>> {
+    if u.status != "active" {
+        return Err(forbidden(u.lang, ErrorKey::MembersOnlyAttendance));
+    }
+    let e = load_event(&st, &u, id).await?;
+    let my_attended: Option<(Option<i64>,)> = sqlx::query_as(
+        "SELECT attended FROM event_signups WHERE event_id = $1 AND user_id = $2",
+    )
+    .bind(id)
+    .bind(u.id)
+    .fetch_optional(&st.db)
+    .await?;
+
+    Ok(Json(json!({
+        "id": e.id,
+        "title": e.title,
+        "starts_at": e.starts_at,
+        "location": e.location,
+        "attendance_enabled": e.attendance_enabled == 1,
+        "my_attended": my_attended.and_then(|(a,)| a) == Some(1),
+        "is_member": true,
+    })))
+}
+
+async fn reset_checkin_code(
+    State(st): State<AppState>,
+    u: CurrentUser,
+    Path(id): Path<i64>,
+) -> AppResult<Json<Value>> {
+    let e = load_event(&st, &u, id).await?;
+    if !can_manage(&u, e.created_by, Act::Update) {
+        return Err(forbidden(u.lang, ErrorKey::OnlyOrganiserCanEdit));
+    }
+    let new_code = random_token(10);
+    sqlx::query("UPDATE events SET checkin_code = $1 WHERE id = $2")
+        .bind(&new_code)
+        .bind(id)
+        .execute(&st.db)
+        .await?;
+    audit(
+        &st.db,
+        Some(u.id),
+        "event.update",
+        "event",
+        Some(id),
+        "reset checkin code",
+    )
+    .await;
+    Ok(Json(json!({ "checkin_code": new_code })))
 }

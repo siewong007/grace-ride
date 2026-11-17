@@ -381,6 +381,12 @@ async fn update_user(
         // Giving or taking a role decides what a member may do, which is the same
         // authority as editing the roles themselves.
         require(&u, Page::AdminRoles, Act::Update)?;
+        // Serialize role and member role mutations to prevent race conditions.
+        sqlx::query(
+            "SELECT pg_advisory_xact_lock(hashtextextended('grace_ride_roles_mutation', 0))",
+        )
+        .execute(&mut *tx)
+        .await?;
         let (known,): (i64,) = sqlx::query_as("SELECT COUNT(*) FROM roles WHERE key = ANY($1)")
             .bind(&new_roles)
             .fetch_one(&mut *tx)
@@ -418,6 +424,14 @@ async fn update_user(
         .execute(&mut *tx)
         .await?;
     let mut released: Vec<i64> = Vec::new();
+    if roles_changed {
+        // Cap existing sessions to 12 hours max if holding staff permissions.
+        sqlx::query("UPDATE sessions SET expires_at = $1 WHERE user_id = $2 AND expires_at > $1")
+            .bind(crate::util::in_hours(12))
+            .bind(id)
+            .execute(&mut *tx)
+            .await?;
+    }
     if req.status == "disabled" {
         sqlx::query("DELETE FROM sessions WHERE user_id=$1")
             .bind(id)
@@ -992,6 +1006,10 @@ async fn approve_recovery(
         .bind(uid)
         .execute(&mut *tx)
         .await?;
+    sqlx::query("DELETE FROM auth_challenges WHERE user_id=$1")
+        .bind(uid)
+        .execute(&mut *tx)
+        .await?;
     tx.commit().await?;
     audit(
         &st.db,
@@ -1261,13 +1279,16 @@ struct AuditExportQuery {
 }
 
 fn escape_csv_field(s: &str) -> String {
-    // Prefix single quote on formula triggers (=, +, -, @, \t, \r) to prevent spreadsheet injection.
-    let sanitized = if s.starts_with('=')
-        || s.starts_with('+')
-        || s.starts_with('-')
-        || s.starts_with('@')
-        || s.starts_with('\t')
-        || s.starts_with('\r')
+    // Prefix single quote on formula triggers (=, +, -, @, \t, \r, |, %) to prevent spreadsheet injection.
+    let trimmed = s.trim_start();
+    let sanitized = if trimmed.starts_with('=')
+        || trimmed.starts_with('+')
+        || trimmed.starts_with('-')
+        || trimmed.starts_with('@')
+        || trimmed.starts_with('\t')
+        || trimmed.starts_with('\r')
+        || trimmed.starts_with('|')
+        || trimmed.starts_with('%')
     {
         format!("'{s}")
     } else {

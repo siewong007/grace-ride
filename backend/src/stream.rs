@@ -7,7 +7,10 @@
 //! this app is designed around; with more than one, fan out via Postgres
 //! `LISTEN/NOTIFY` instead.
 
-use std::{convert::Infallible, sync::OnceLock, time::Duration};
+use std::{
+    collections::HashMap, convert::Infallible, sync::Mutex as StdMutex, sync::OnceLock,
+    time::Duration,
+};
 
 use axum::{
     extract::State,
@@ -19,7 +22,12 @@ use tokio_stream::{
     Stream, StreamExt,
 };
 
-use crate::{auth::CurrentUser, state::AppState};
+use crate::{
+    auth::CurrentUser,
+    error::{bad, AppResult},
+    i18n::ErrorKey,
+    state::AppState,
+};
 
 /// `kind` is only a hint for the client: "notify" (ride/event/settlement
 /// updates) or "chat" (a trip message).
@@ -30,6 +38,27 @@ pub struct Push {
 }
 
 static EVENTS: OnceLock<broadcast::Sender<Push>> = OnceLock::new();
+static ACTIVE_STREAMS: OnceLock<StdMutex<HashMap<i64, usize>>> = OnceLock::new();
+const MAX_STREAMS_PER_USER: usize = 5;
+
+fn stream_map() -> &'static StdMutex<HashMap<i64, usize>> {
+    ACTIVE_STREAMS.get_or_init(|| StdMutex::new(HashMap::new()))
+}
+
+struct StreamGuard(i64);
+impl Drop for StreamGuard {
+    fn drop(&mut self) {
+        if let Ok(mut map) = stream_map().lock() {
+            if let Some(count) = map.get_mut(&self.0) {
+                if *count <= 1 {
+                    map.remove(&self.0);
+                } else {
+                    *count -= 1;
+                }
+            }
+        }
+    }
+}
 
 pub fn channel() -> broadcast::Sender<Push> {
     EVENTS.get_or_init(|| broadcast::channel(256).0).clone()
@@ -68,7 +97,16 @@ pub async fn session_alive(db: &sqlx::PgPool, session_id: &str) -> bool {
 pub async fn handler(
     State(st): State<AppState>,
     u: CurrentUser,
-) -> Sse<impl Stream<Item = Result<Event, Infallible>>> {
+) -> AppResult<Sse<impl Stream<Item = Result<Event, Infallible>>>> {
+    {
+        let mut map = stream_map().lock().unwrap_or_else(|e| e.into_inner());
+        let count = map.entry(u.id).or_insert(0);
+        if *count >= MAX_STREAMS_PER_USER {
+            return Err(bad(u.lang, ErrorKey::RateLimited));
+        }
+        *count += 1;
+    }
+    let guard = std::sync::Arc::new(StreamGuard(u.id));
     let uid = u.id;
     let pushes = BroadcastStream::new(st.events.subscribe()).filter_map(move |msg| {
         // A lagged receiver just misses a tick; the next poll catches up.
@@ -90,13 +128,16 @@ pub async fn handler(
     let stream = pushes
         .merge(checks)
         .take_while(|t| !matches!(t, Tick::Session(false)))
-        .filter_map(|t| match t {
-            Tick::Push(ev) => Some(Ok(ev)),
-            Tick::Session(_) => None,
+        .filter_map(move |t| {
+            let _hold = &guard;
+            match t {
+                Tick::Push(ev) => Some(Ok(ev)),
+                Tick::Session(_) => None,
+            }
         });
-    Sse::new(stream).keep_alive(
+    Ok(Sse::new(stream).keep_alive(
         KeepAlive::new()
             .interval(Duration::from_secs(15))
             .text("keep-alive"),
-    )
+    ))
 }

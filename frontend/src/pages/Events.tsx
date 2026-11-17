@@ -41,6 +41,10 @@ export interface EventItem {
   can_cancel?: boolean;
   /** Optional cover photo. */
   photo_file_id?: number | null;
+  /** Whether the optional attendance module is enabled for this event. */
+  attendance_enabled?: boolean;
+  /** Check-in code for QR attendance (returned only to organiser). */
+  checkin_code?: string | null;
 }
 
 interface EventsPage {

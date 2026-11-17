@@ -79,6 +79,9 @@ export default {
     "ONLY_ORGANISER_CAN_PERFORM_ACTION": "只有活动负责人可以操作",
     "ONLY_ORGANISER_CAN_VIEW_SIGNUPS": "只有活动负责人可以查看报名名单",
     "ONLY_ORGANISER_CAN_RECORD_ATTENDANCE": "只有活动负责人可以记录出席",
+    "ATTENDANCE_MODULE_DISABLED": "此活动未开启出席签到模块",
+    "INVALID_CHECKIN_CODE": "签到码无效或已更新",
+    "MEMBERS_ONLY_ATTENDANCE": "出席签到仅限正式会员",
     "EVENT_NOT_OPEN_TO_GROUP": "此活动不对您所属的群体开放"
   },
   "rides": {

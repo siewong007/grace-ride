@@ -126,6 +126,10 @@ pub async fn can_access_file(st: &AppState, u: &CurrentUser, file_id: i64) -> Ap
     if owner == u.id {
         return Ok(true);
     }
+    // Pending (unapproved) accounts can only access files they uploaded themselves.
+    if u.status != "active" {
+        return Ok(false);
+    }
     let bills = u.can(Page::AdminBills, Act::View);
     // Profile photos are visible to members (passengers recognise their driver).
     let (photo,): (i64,) = sqlx::query_as("SELECT COUNT(*) FROM users WHERE photo_file_id=$1")

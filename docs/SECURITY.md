@@ -42,7 +42,9 @@ Source: `frontend/src/components/AutoLock.tsx`, `backend/src/auth.rs`, `backend/
 - **Dependency exceptions:** CI currently ignores `RUSTSEC-2023-0071` and `RUSTSEC-2026-0459`. Inspect `.github/workflows/ci.yml` and the Cargo audit configuration when reviewing a release; this documentation audit did not rerun the dependency scan or verify current advisory applicability.
 - **`style-src 'unsafe-inline'`** is needed by Leaflet's marker markup. Script injection is still blocked.
 - **In-memory rate limiter** resets on restart and is per instance. The per-account lockout is in the database, so it survives restarts.
-- **The data at rest is not encrypted by the app.** Use an encrypted disk/volume on the host and encrypt backups (`scripts/backup.sh` output contains personal data).
+- **The data at rest is not encrypted by the app.** Use an encrypted disk/volume on the host and encrypt backups (`scripts/backup.sh` output contains personal data). Backup codes are per-user salted SHA-256 hashes.
+- **Dual-admin limits on self-finance separation:** The "nobody grants themselves finance" rule strictly guards against single-account privilege escalation (`id == u.id`). An administrator holding rights across invites, member editing, and role assignment could theoretically invite and approve a second identity to grant finance, or file and approve recovery for a non-staff member. The mitigation is organizational: independent periodic review of audit logs (`user.update`, `role.update`, `recovery.approve`), and maintaining multiple distinct active administrators.
+- **Origin TLS Verification:** Ensure the origin Caddy webserver uses a Cloudflare Origin CA certificate with Cloudflare SSL/TLS set to "Full (strict)" (or Authenticated Origin Pulls) so traffic between Cloudflare edge and the origin server is fully verified.
 - **Notifications** carry names and times in-app only. If email or push is added, keep addresses and phone numbers out of message bodies.
 
 ## Before launch

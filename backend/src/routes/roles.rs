@@ -240,6 +240,9 @@ async fn create(
     // Random key: role names may be 中文 and may be renamed, the key never changes.
     let key = format!("c_{}", hex::encode(rand::random::<[u8; 5]>()));
     let mut tx = st.db.begin().await?;
+    sqlx::query("SELECT pg_advisory_xact_lock(hashtextextended('grace_ride_roles_mutation', 0))")
+        .execute(&mut *tx)
+        .await?;
     sqlx::query("INSERT INTO roles (key, name, description, is_system) VALUES ($1, $2, $3, 0)")
         .bind(&key)
         .bind(&name)
@@ -278,6 +281,10 @@ async fn update(
     if key == SUPERADMIN_ROLE || perms::locked(&key).into_iter().any(|p| !set.contains(p)) {
         return Err(bad(u.lang, ErrorKey::RolePermissionLocked));
     }
+    let mut tx = st.db.begin().await?;
+    sqlx::query("SELECT pg_advisory_xact_lock(hashtextextended('grace_ride_roles_mutation', 0))")
+        .execute(&mut *tx)
+        .await?;
     guard_own_access(&st, &u, &key, Some(&set)).await?;
     // Built-in roles are named by the app in each member's language.
     let name = if is_system == 1 {
@@ -289,7 +296,6 @@ async fn update(
     };
     let before = role_perms(&st, &key).await?;
 
-    let mut tx = st.db.begin().await?;
     sqlx::query("UPDATE roles SET name = $1, description = $2 WHERE key = $3")
         .bind(&name)
         .bind(description(&req))
@@ -337,8 +343,11 @@ async fn remove(
     if is_system == 1 || key == ADMIN_ROLE {
         return Err(bad(u.lang, ErrorKey::SystemRoleCannotBeDeleted));
     }
-    guard_own_access(&st, &u, &key, None).await?;
     let mut tx = st.db.begin().await?;
+    sqlx::query("SELECT pg_advisory_xact_lock(hashtextextended('grace_ride_roles_mutation', 0))")
+        .execute(&mut *tx)
+        .await?;
+    guard_own_access(&st, &u, &key, None).await?;
     // Members who held the role simply lose it.
     let held = sqlx::query(
         "UPDATE users SET roles = array_to_string(array_remove(string_to_array(roles, ','), $1), ',')

@@ -1,13 +1,19 @@
-import { useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { Link, useParams } from 'react-router-dom';
 import {
   Calendar,
   CarFront,
+  Copy,
   Edit2,
+  Maximize2,
+  Minimize2,
   Plus,
+  QrCode,
+  RefreshCw,
   Route,
   Share2,
 } from 'lucide-react';
+import QRCode from 'qrcode';
 import { downloadIcs } from '../calendar';
 import { post, useApi } from '../api';
 import { useAuth } from '../auth';
@@ -64,6 +70,8 @@ export default function EventDetail() {
   const { busy, error: actErr, run } = useAction();
   const confirm = useConfirm();
   const [walkIn, setWalkIn] = useState(false);
+  const [showQrModal, setShowQrModal] = useState(false);
+  const [showScanModal, setShowScanModal] = useState(false);
   const [joinAs, setJoinAs] = useState<number | null>(null);
   const [joinAsMissing, setJoinAsMissing] = useState(false);
   const { data: signups, reload: reloadS } = useApi<Signup[]>(id ? `/events/${id}/signups` : null);

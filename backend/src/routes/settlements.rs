@@ -173,6 +173,14 @@ async fn ensure_all_attended(
     event_id: i64,
     user_ids: Vec<i64>,
 ) -> AppResult<()> {
+    let att_enabled: Option<(i64,)> =
+        sqlx::query_as("SELECT attendance_enabled FROM events WHERE id=$1")
+            .bind(event_id)
+            .fetch_optional(&st.db)
+            .await?;
+    if att_enabled.map(|(a,)| a == 0).unwrap_or(false) {
+        return Ok(());
+    }
     let (not_attended,): (i64,) = sqlx::query_as(
         "SELECT COUNT(*) FROM unnest($2::BIGINT[]) AS u(user_id) WHERE NOT EXISTS
             (SELECT 1 FROM event_signups es WHERE es.event_id=$1 AND es.user_id=u.user_id AND es.attended=1)",
@@ -952,14 +960,17 @@ async fn submit_proof(
     if txn.len() < 4 {
         return Err(bad(u.lang, ErrorKey::TxnRefRequired));
     }
-    // Duplicate screenshot / reference protection.
-    let (dup,): (i64,) =
-        sqlx::query_as("SELECT COUNT(*) FROM settlement_shares WHERE id != $1 AND (txn_ref = $2 OR proof_file_id = $3)")
-            .bind(id)
-            .bind(txn)
-            .bind(req.proof_file_id)
-            .fetch_one(&mut *tx)
-            .await?;
+    // Duplicate screenshot / reference protection: scoped to this settlement or this member's shares.
+    let (dup,): (i64,) = sqlx::query_as(
+        "SELECT COUNT(*) FROM settlement_shares WHERE (settlement_id = $1 OR user_id = $2) AND id != $3 AND (txn_ref = $4 OR proof_file_id = $5)",
+    )
+    .bind(sid)
+    .bind(u.id)
+    .bind(id)
+    .bind(txn)
+    .bind(req.proof_file_id)
+    .fetch_one(&mut *tx)
+    .await?;
     if dup > 0 {
         return Err(bad(u.lang, ErrorKey::DuplicateTxnOrProof));
     }

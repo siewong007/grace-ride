@@ -100,9 +100,10 @@ impl FromRequestParts<AppState> for CurrentUser {
             String,
             String,
             String,
+            String,
         );
         let row: Option<Row> = sqlx::query_as(
-            "SELECT u.id, u.name, u.email, u.roles, u.status, s.mfa_ok, s.expires_at, u.lang,
+            "SELECT u.id, u.name, u.email, u.roles, u.status, s.mfa_ok, s.expires_at, s.created_at, u.lang,
                     COALESCE((SELECT string_agg(rp.permission, ',') FROM role_permissions rp
                               WHERE rp.role_key = $2
                                  OR rp.role_key IN (SELECT role_key FROM member_roles WHERE user_id = u.id)), '')
@@ -114,7 +115,7 @@ impl FromRequestParts<AppState> for CurrentUser {
         .fetch_optional(&state.db)
         .await?;
 
-        let (id, name, email, roles, status, mfa_ok, expires, lang, granted) =
+        let (id, name, email, roles, status, mfa_ok, expires, created_at, lang, granted) =
             row.ok_or(unauthorized(accept_lang))?;
         if expires < now() {
             return Err(unauthorized(accept_lang));
@@ -125,6 +126,10 @@ impl FromRequestParts<AppState> for CurrentUser {
             PermSet::default()
         };
         let privileged = perms.privileged();
+        // Staff sessions that can access sensitive/other members' data must be capped at 12 hours.
+        if privileged && created_at < crate::util::minutes_ago(12 * 60) {
+            return Err(unauthorized(accept_lang));
+        }
         let (group_scope, drive_scope) = if status == "active" {
             crate::audience::group_scopes(&state.db, id).await?
         } else {

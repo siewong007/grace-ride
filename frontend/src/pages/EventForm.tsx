@@ -31,6 +31,7 @@ interface ExistingEvent {
   group_ids: number[];
   as_group_ids: number[];
   photo_file_id: number | null;
+  attendance_enabled: boolean;
 }
 
 export default function EventForm() {
@@ -53,6 +54,7 @@ export default function EventForm() {
     group_ids: [] as number[],
     as_group_ids: [] as number[],
     photo_file_id: null as number | null,
+    attendance_enabled: true,
   });
   const [narrow, setNarrow] = useState(false);
   const { busy, error, run } = useAction();
@@ -73,6 +75,7 @@ export default function EventForm() {
       group_ids: existing.group_ids,
       as_group_ids: existing.as_group_ids ?? [],
       photo_file_id: existing.photo_file_id ?? null,
+      attendance_enabled: existing.attendance_enabled ?? true,
     });
     setNarrow((existing.as_group_ids ?? []).length > 0);
   }, [existing]);
@@ -113,6 +116,7 @@ export default function EventForm() {
       signup_deadline: f.deadline || null,
       group_ids: f.group_ids,
       photo_file_id: f.photo_file_id,
+      attendance_enabled: f.attendance_enabled,
       // Empty: people choose from the audience groups and their sub-groups.
       as_group_ids: narrow ? f.as_group_ids.filter((g) => joinable.some((j) => j.id === g)) : [],
     };
@@ -227,6 +231,18 @@ export default function EventForm() {
                   onChange={(photo_file_id) => setF({ ...f, photo_file_id })}
                   disabled={busy}
                 />
+              </Field>
+            </div>
+            <div className="full">
+              <Field label={t('attendanceModule')} hint={t('attendanceHint')}>
+                <label className="row nowrap gap-sm">
+                  <input
+                    type="checkbox"
+                    checked={f.attendance_enabled}
+                    onChange={(e) => setF({ ...f, attendance_enabled: e.target.checked })}
+                  />
+                  <span>{t('enableAttendance')}</span>
+                </label>
               </Field>
             </div>
           </div>

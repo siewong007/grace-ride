@@ -35,7 +35,7 @@ docker compose --env-file .env.production up -d --build
 
 The configured public URL is https://graceride.saliminn.my. A successful CI run for a push to `master` triggers `.github/workflows/deploy.yml`; manual workflow dispatch is also supported. That workflow builds the linux/amd64 image and replaces only the app container on the AIC VPS. The Postgres container and its volume are left as they are. Host Caddy keeps ports 80 and 443.
 
-The production environment needs one secret, `VPS_SSH_PRIVATE_KEY`, the same key hotel-app uses for `root@162.19.81.122` port `20049`. A commit message that contains `[skip ci]` does not deploy. The current CI workflow has no Markdown path exclusion: a Markdown-only push to `master` can run CI and then deploy.
+The production environment requires the `VPS_SSH_PRIVATE_KEY` and `VPS_HOST_KEY` repository secrets, along with the `VPS_HOST` variable (and optional `VPS_PORT` / `VPS_USER`). A dedicated non-root deploy user should be used. A commit message that contains `[skip ci]` does not deploy. The current CI workflow has no Markdown path exclusion: a Markdown-only push to `master` can run CI and then deploy.
 
 Migrations run automatically at startup and are additive. The app shuts down gracefully on SIGTERM; PostgreSQL checkpoints automatically.
 

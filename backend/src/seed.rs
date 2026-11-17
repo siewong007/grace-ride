@@ -722,19 +722,59 @@ async fn insert_reference_data(db: &PgPool) -> anyhow::Result<()> {
 /// Existing members are left alone. A second insert would fail the unique email
 /// and stop the process on every restart.
 async fn seed_admin_only(db: &PgPool, cfg: &Config) -> anyhow::Result<()> {
-    let (n,): (i64,) = sqlx::query_as("SELECT COUNT(*) FROM users")
-        .fetch_one(db)
-        .await?;
-    if n > 0 {
-        return Ok(());
-    }
     let email = std::env::var("ADMIN_EMAIL").unwrap_or_else(|_| "admin@example.org".into());
-    let id = sqlx::query_as::<_, (i64,)>("INSERT INTO users (name, email, roles, webauthn_uuid, demo_batch) VALUES ('管理员', $1, 'admin', $2, NULL) RETURNING id")
-        .bind(&email).bind(stable_uuid(0)).fetch_one(db).await?.0;
+    let user: Option<(i64, Option<String>)> =
+        sqlx::query_as("SELECT id, password_hash FROM users WHERE email = $1")
+            .bind(&email)
+            .fetch_optional(db)
+            .await?;
+
+    let id = match user {
+        None => {
+            let (total,): (i64,) = sqlx::query_as("SELECT COUNT(*) FROM users")
+                .fetch_one(db)
+                .await?;
+            if total > 0 {
+                return Ok(());
+            }
+            sqlx::query_as::<_, (i64,)>("INSERT INTO users (name, email, roles, webauthn_uuid, demo_batch) VALUES ('管理员', $1, 'admin', $2, NULL) RETURNING id")
+                .bind(&email).bind(stable_uuid(0)).fetch_one(db).await?.0
+        }
+        Some((id, pw)) => {
+            let (passkeys,): (i64,) =
+                sqlx::query_as("SELECT COUNT(*) FROM passkeys WHERE user_id = $1")
+                    .bind(id)
+                    .fetch_one(db)
+                    .await?;
+            if passkeys > 0 || pw.is_some() {
+                return Ok(());
+            }
+            // First admin exists but has no passkey and no password set up.
+            // Check if there is already an unexpired recovery link.
+            let (unexpired,): (i64,) = sqlx::query_as(
+                "SELECT COUNT(*) FROM invites WHERE user_id = $1 AND kind = 'recovery' AND used_at IS NULL AND expires_at > $2",
+            )
+            .bind(id)
+            .bind(now())
+            .fetch_one(db)
+            .await?;
+            if unexpired > 0 {
+                return Ok(());
+            }
+            // Previous invite expired without being claimed; issue a fresh one.
+            sqlx::query("UPDATE invites SET expires_at = $1 WHERE user_id = $2 AND kind = 'recovery' AND used_at IS NULL")
+                .bind(now())
+                .bind(id)
+                .execute(db)
+                .await?;
+            id
+        }
+    };
+
     let token = random_token(32);
     sqlx::query("INSERT INTO invites (token, kind, email, name, roles, group_ids, user_id, created_by, expires_at, demo_batch) VALUES ($1, 'recovery', $2, '管理员', 'admin', '[]', $3, $3, $4, NULL)")
         .bind(crate::auth::hash_token(&token)).bind(&email).bind(id).bind(in_days(2)).execute(db).await?;
-    tracing::warn!("First administrator created for {email}. Open this one-time link to register a passkey: {}/invite/{token}", cfg.public_url);
+    tracing::warn!("Administrator setup link for {email}. Open this one-time link to register a passkey: {}/invite/{token}", cfg.public_url);
     Ok(())
 }
 

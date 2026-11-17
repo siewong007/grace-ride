@@ -448,16 +448,14 @@ async fn take_challenge(
     kind: &str,
     lang: Lang,
 ) -> AppResult<(i64, String)> {
-    let row: Option<(i64, String)> =
-        sqlx::query_as("SELECT user_id, state FROM auth_challenges WHERE id=$1 AND kind=$2")
-            .bind(id)
-            .bind(kind)
-            .fetch_optional(&st.db)
-            .await?;
-    sqlx::query("DELETE FROM auth_challenges WHERE id=$1")
-        .bind(id)
-        .execute(&st.db)
-        .await?;
+    let row: Option<(i64, String)> = sqlx::query_as(
+        "DELETE FROM auth_challenges WHERE id=$1 AND kind=$2 AND created_at >= $3 RETURNING user_id, state",
+    )
+    .bind(id)
+    .bind(kind)
+    .bind(minutes_ago(10))
+    .fetch_optional(&st.db)
+    .await?;
     row.ok_or_else(|| bad(lang, ErrorKey::VerificationExpired))
 }
 
@@ -651,22 +649,36 @@ async fn passkey_login_finish(
         .await;
         return Err(bad(lang, ErrorKey::PasskeyFailed));
     };
-    touch_passkey(&st, uid, &res).await?;
+    let key_found = touch_passkey(&st, uid, &res).await?;
+    if !key_found {
+        audit(
+            &st.db,
+            None,
+            "login.failed",
+            "user",
+            Some(uid),
+            format!("passkey credential not found or revoked; from {ip}"),
+        )
+        .await;
+        return Err(bad(lang, ErrorKey::PasskeyFailed));
+    }
     let jar = create_session(&st, jar, uid, true).await?;
     audit(&st.db, Some(uid), "login.passkey", "user", Some(uid), "").await;
     Ok((jar, Json(json!({ "ok": true }))))
 }
 
 /// Stores the credential's new signature counter and last-used time after a successful sign-in.
-async fn touch_passkey(st: &AppState, uid: i64, res: &AuthenticationResult) -> AppResult<()> {
+async fn touch_passkey(st: &AppState, uid: i64, res: &AuthenticationResult) -> AppResult<bool> {
     let rows: Vec<(i64, String)> =
         sqlx::query_as("SELECT id, passkey FROM passkeys WHERE user_id=$1")
             .bind(uid)
             .fetch_all(&st.db)
             .await?;
+    let mut found = false;
     for (pid, pj) in rows {
         if let Ok(mut pk) = serde_json::from_str::<Passkey>(&pj) {
             if pk.cred_id() == res.cred_id() {
+                found = true;
                 pk.update_credential(res);
                 sqlx::query("UPDATE passkeys SET passkey=$1, last_used=$2 WHERE id=$3")
                     .bind(serde_json::to_string(&pk).map_err(anyhow::Error::from)?)
@@ -677,7 +689,7 @@ async fn touch_passkey(st: &AppState, uid: i64, res: &AuthenticationResult) -> A
             }
         }
     }
-    Ok(())
+    Ok(found)
 }
 
 /// Starts a passkey check for the member who is already signed in, so they can renew
@@ -732,7 +744,9 @@ async fn passkey_reauth_finish(
         .await;
         return Err(bad(u.lang, ErrorKey::PasskeyFailed));
     };
-    touch_passkey(&st, u.id, &res).await?;
+    if !touch_passkey(&st, u.id, &res).await? {
+        return Err(bad(u.lang, ErrorKey::PasskeyFailed));
+    }
     sqlx::query("UPDATE sessions SET created_at=$1 WHERE token=$2")
         .bind(now())
         .bind(&u.session_id)
@@ -801,6 +815,10 @@ async fn passkey_register_finish(
     let cred_id = serde_json::to_string(pk.cred_id()).map_err(anyhow::Error::from)?;
     let label = req
         .label
+        .as_deref()
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .map(|s| s.chars().take(60).collect::<String>())
         .unwrap_or_else(|| t(u.lang, "我的设备", "My device").into());
     sqlx::query(
         "INSERT INTO passkeys (user_id, cred_id, passkey, label, created_at) VALUES ($1,$2,$3,$4,$5)",
@@ -896,7 +914,11 @@ struct CodeReq {
     code: String,
 }
 
-fn generate_backup_codes() -> (Vec<String>, Vec<String>) {
+fn hash_backup_code(user_id: i64, norm: &str) -> String {
+    crate::auth::hash_token(&format!("backup:{user_id}:{norm}"))
+}
+
+fn generate_backup_codes(user_id: i64) -> (Vec<String>, Vec<String>) {
     use rand::Rng;
     const CHARSET: &[u8] = b"ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
     let mut rng = rand::thread_rng();
@@ -911,7 +933,7 @@ fn generate_backup_codes() -> (Vec<String>, Vec<String>) {
             .collect();
         let code = format!("{p1}-{p2}");
         let norm = format!("{p1}{p2}");
-        hashed.push(crate::auth::hash_token(&norm));
+        hashed.push(hash_backup_code(user_id, &norm));
         plain.push(code);
     }
     (plain, hashed)
@@ -931,7 +953,7 @@ async fn totp_enable(
         audit(&st.db, Some(u.id), "totp.failed", "user", Some(u.id), "").await;
         return Err(e);
     }
-    let (plain_codes, hashed_codes) = generate_backup_codes();
+    let (plain_codes, hashed_codes) = generate_backup_codes(u.id);
     let backup_json =
         serde_json::to_string(&hashed_codes).map_err(|e| AppError::Other(anyhow::anyhow!(e)))?;
     sqlx::query("UPDATE users SET totp_enabled=1, totp_backup_codes=$1 WHERE id=$2")
@@ -997,22 +1019,32 @@ async fn totp_verify(
     // instead of HTTP 200.
     let norm = clean.replace(['-', ' '], "").to_uppercase();
     if norm.len() == 8 {
-        let code_hash = crate::auth::hash_token(&norm);
-        let consumed: Option<(String,)> = sqlx::query_as(
-            "UPDATE users
-             SET totp_backup_codes = (
-                 SELECT COALESCE(jsonb_agg(elem ORDER BY seq), '[]'::jsonb)::text
-                 FROM jsonb_array_elements_text(totp_backup_codes::jsonb)
-                      WITH ORDINALITY AS t(elem, seq)
-                 WHERE elem <> $2
-             )
-             WHERE id = $1 AND totp_backup_codes::jsonb ? $2
-             RETURNING totp_backup_codes",
-        )
-        .bind(u.id)
-        .bind(&code_hash)
-        .fetch_optional(&st.db)
-        .await?;
+        // Codes issued before per-member salting were stored as a bare hash; accept
+        // either form so members who already printed their codes keep them.
+        let mut consumed: Option<(String,)> = None;
+        for code_hash in [
+            hash_backup_code(u.id, &norm),
+            crate::auth::hash_token(&norm),
+        ] {
+            consumed = sqlx::query_as(
+                "UPDATE users
+                 SET totp_backup_codes = (
+                     SELECT COALESCE(jsonb_agg(elem ORDER BY seq), '[]'::jsonb)::text
+                     FROM jsonb_array_elements_text(totp_backup_codes::jsonb)
+                          WITH ORDINALITY AS t(elem, seq)
+                     WHERE elem <> $2
+                 )
+                 WHERE id = $1 AND totp_backup_codes::jsonb ? $2
+                 RETURNING totp_backup_codes",
+            )
+            .bind(u.id)
+            .bind(&code_hash)
+            .fetch_optional(&st.db)
+            .await?;
+            if consumed.is_some() {
+                break;
+            }
+        }
 
         let Some((remaining_json,)) = consumed else {
             audit(
@@ -1075,7 +1107,7 @@ async fn totp_regenerate_backup_codes(
     if enabled != 1 {
         return Err(bad(u.lang, ErrorKey::TwoFactorNotConfigured));
     }
-    let (plain_codes, hashed_codes) = generate_backup_codes();
+    let (plain_codes, hashed_codes) = generate_backup_codes(u.id);
     let backup_json =
         serde_json::to_string(&hashed_codes).map_err(|e| AppError::Other(anyhow::anyhow!(e)))?;
     sqlx::query("UPDATE users SET totp_backup_codes=$1 WHERE id=$2")
@@ -1150,6 +1182,9 @@ async fn recovery_request(
 ) -> AppResult<Json<Value>> {
     // Always answer the same way so the endpoint can't be used to probe member emails.
     let email = req.email.trim().to_lowercase();
+    if email.is_empty() || email.len() > 254 {
+        return Ok(Json(json!({ "ok": true })));
+    }
     let exists: Option<(i64,)> = sqlx::query_as("SELECT id FROM users WHERE email=$1")
         .bind(&email)
         .fetch_optional(&st.db)

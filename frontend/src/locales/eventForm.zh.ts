@@ -27,4 +27,7 @@ export default {
   photoAttached: '已添加图片',
   photoRemove: '移除图片',
   peopleCount: '人',
+  attendanceModule: '出席签到模块',
+  enableAttendance: '开启出席签到模块（允许会员扫码签到）',
+  attendanceHint: '开启后，可在活动页出示签到二维码，会员无需申请接送即可扫码参与并签到。',
 };

@@ -291,6 +291,17 @@ async fn search_places(
     u: CurrentUser,
     Query(q): Query<PlacesQuery>,
 ) -> AppResult<Json<Value>> {
+    if st
+        .limiter
+        .check(
+            &format!("places:{}", u.id),
+            30,
+            std::time::Duration::from_secs(60),
+        )
+        .is_err()
+    {
+        return Ok(Json(json!([])));
+    }
     let hits = crate::routing::search_places(&st, &q.q, u.lang.code()).await;
     Ok(Json(json!(hits)))
 }
@@ -1056,7 +1067,13 @@ async fn post_driver_delay(
         .await?;
 
     let mins = req.delay_minutes;
-    let note = req.reason.unwrap_or_default();
+    let note = req
+        .reason
+        .as_deref()
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .map(|s| s.chars().take(300).collect::<String>())
+        .unwrap_or_default();
     notify(
         &st.db,
         r.passenger_id,

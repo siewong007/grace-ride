@@ -3,6 +3,6 @@
 ignore = [
   # Marvin Attack; transitive via webauthn/rsa stack — no upgrade path on 0.9 yet.
   "RUSTSEC-2023-0071",
-  # SQLite CVE via webauthn-authenticator-rs SoftPasskey (dev-dep only; not in prod binary).
+  # SQLite CVE via sqlx-macros-core -> sqlx-sqlite in Cargo.lock (not used at runtime; prod uses PostgreSQL only).
   "RUSTSEC-2026-0459",
 ]

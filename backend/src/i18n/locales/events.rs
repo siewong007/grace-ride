@@ -68,6 +68,21 @@ pub fn render(lang: Lang, key: &ErrorKey) -> String {
             "只有活动负责人可以记录出席",
             "Only the event organiser can record attendance",
         ),
+        ErrorKey::AttendanceModuleDisabled => pair(
+            lang,
+            "此活动未开启出席签到模块",
+            "The attendance module is not enabled for this event",
+        ),
+        ErrorKey::InvalidCheckinCode => pair(
+            lang,
+            "签到码无效或已更新",
+            "The check-in code is invalid or has expired",
+        ),
+        ErrorKey::MembersOnlyAttendance => pair(
+            lang,
+            "出席签到仅限正式会员",
+            "Attendance check-in is for members only",
+        ),
         ErrorKey::EventNotOpenToGroup => pair(
             lang,
             "此活动不对您所属的群体开放",

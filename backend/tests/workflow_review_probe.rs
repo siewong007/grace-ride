@@ -1,6 +1,6 @@
 mod common;
 use axum::{
-    http::{header, Method, StatusCode},
+    http::{Method, StatusCode},
     Router,
 };
 use common::*;
@@ -52,7 +52,7 @@ async fn pending_login() -> (Router, AppState, String, Value) {
     )
 }
 #[tokio::test]
-async fn revoked_key_can_finish_login_after_recovery() {
+async fn revoked_key_cannot_finish_login_after_recovery() {
     let (app, st, old_cookie, assertion) = pending_login().await;
     let admin = login(&st, "admin@example.org").await;
     ok(
@@ -86,26 +86,15 @@ async fn revoked_key_can_finish_login_after_recovery() {
         Some(assertion),
     )
     .await;
-    assert_eq!(result.status, StatusCode::OK, "{}", result.json);
-    let cookie = result
-        .headers
-        .get_all(header::SET_COOKIE)
-        .iter()
-        .find_map(|v| {
-            let s = v.to_str().ok()?;
-            s.starts_with("gr_session=")
-                .then(|| s.split(';').next().unwrap().to_string())
-        })
-        .unwrap();
-    let me = call(&app, Method::GET, "/api/auth/me", Some(&cookie), None).await;
-    println!(
-        "Old credential after recovery: login {}, authenticated API {}",
-        result.status, me.status
+    assert_eq!(
+        result.status,
+        StatusCode::BAD_REQUEST,
+        "revoked credential must be rejected"
     );
-    assert_eq!(me.status, StatusCode::OK);
 }
+
 #[tokio::test]
-async fn expired_challenge_still_authenticates() {
+async fn expired_challenge_is_rejected() {
     let (app, st, _, assertion) = pending_login().await;
     sqlx::query("UPDATE auth_challenges SET created_at=$1 WHERE id=$2")
         .bind(grace_ride::util::minutes_ago(20))
@@ -121,11 +110,15 @@ async fn expired_challenge_still_authenticates() {
         Some(assertion),
     )
     .await;
-    println!("20-minute-old challenge accepted: {}", r.status);
-    assert_eq!(r.status, StatusCode::OK, "{}", r.json);
+    assert_eq!(
+        r.status,
+        StatusCode::BAD_REQUEST,
+        "expired challenge must be rejected"
+    );
 }
+
 #[tokio::test]
-async fn challenge_can_be_replayed_concurrently() {
+async fn challenge_cannot_be_replayed_concurrently() {
     let (app, st, _, assertion) = pending_login().await;
     let mut lock = st.db.begin().await.unwrap();
     let pid: i32 = sqlx::query_scalar("SELECT pg_backend_pid()")
@@ -153,9 +146,17 @@ async fn challenge_can_be_replayed_concurrently() {
     }
     tokio::time::timeout(std::time::Duration::from_secs(10),async{loop{let n:i64=sqlx::query_scalar("SELECT count(*) FROM pg_stat_activity WHERE cardinality(pg_blocking_pids(pid))>0 AND query LIKE 'DELETE FROM auth_challenges WHERE id=%'").fetch_one(&st.db).await.unwrap();if n>=2{break;}tokio::time::sleep(std::time::Duration::from_millis(20)).await;}}).await.unwrap_or_else(|_|panic!("wait for blocker {pid}"));
     lock.commit().await.unwrap();
+    let mut statuses = Vec::new();
     for t in tasks {
         let r = t.await.unwrap();
-        println!("Same signed assertion: {}", r.status);
-        assert_eq!(r.status, StatusCode::OK, "{}", r.json);
+        statuses.push(r.status);
     }
+    assert!(
+        statuses.contains(&StatusCode::OK),
+        "one request should succeed"
+    );
+    assert!(
+        statuses.contains(&StatusCode::BAD_REQUEST),
+        "duplicate replay should be rejected"
+    );
 }
