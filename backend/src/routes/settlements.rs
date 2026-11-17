@@ -698,10 +698,13 @@ async fn delete_draft(
         return Err(bad(u.lang, ErrorKey::OnlyDraftsCanBeDeleted));
     }
     require(&u, Page::Settlements, Act::Delete)?;
-    sqlx::query("DELETE FROM settlements WHERE id=$1")
+    let deleted = sqlx::query("DELETE FROM settlements WHERE id=$1 AND status='draft'")
         .bind(id)
         .execute(&st.db)
         .await?;
+    if deleted.rows_affected() == 0 {
+        return Err(conflict(u.lang, ErrorKey::SettlementAlreadyPublished));
+    }
     audit(
         &st.db,
         Some(u.id),
@@ -826,6 +829,9 @@ async fn close(
             .await?;
     if status == "closed" {
         return Err(bad(u.lang, ErrorKey::BillClosedCannotEdit));
+    }
+    if status != "published" {
+        return Err(bad(u.lang, ErrorKey::ProofNotNeededNow));
     }
     let (open,): (i64,) = sqlx::query_as(
         "SELECT COUNT(*) FROM settlement_shares WHERE settlement_id=$1 AND status != 'confirmed'",

@@ -1148,12 +1148,34 @@ async fn event_create_signup_and_attendance_branches() {
         None,
     )
     .await;
-    must(
+    // A finished event can no longer be cancelled, and a cancelled one cannot be finished.
+    deny(
         &app,
         Method::POST,
         &format!("/api/events/{done}/cancel"),
         Some(&c.leader),
         None,
+        StatusCode::BAD_REQUEST,
+        "EVENT_NOT_OPEN",
+    )
+    .await;
+    let dropped = make_event(&app, &c.leader, &groups, 0).await;
+    must(
+        &app,
+        Method::POST,
+        &format!("/api/events/{dropped}/cancel"),
+        Some(&c.leader),
+        None,
+    )
+    .await;
+    deny(
+        &app,
+        Method::POST,
+        &format!("/api/events/{dropped}/finish"),
+        Some(&c.leader),
+        None,
+        StatusCode::BAD_REQUEST,
+        "EVENT_NOT_OPEN",
     )
     .await;
     let listed = must(&app, Method::GET, "/api/groups", Some(&c.leader), None).await;

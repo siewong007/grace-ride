@@ -704,7 +704,18 @@ async fn passenger_respond(
     }
     require(&u, Page::Rides, Act::Update)?;
     if req.accept {
-        set_status(&st, id, &["pending_passenger"], "pending_approval", u.lang).await?;
+        let accepted = sqlx::query(
+            "UPDATE rides SET status='pending_approval', updated_at=$1
+             WHERE id=$2 AND driver_id IS NOT DISTINCT FROM $3 AND status='pending_passenger'",
+        )
+        .bind(now())
+        .bind(id)
+        .bind(r.driver_id)
+        .execute(&st.db)
+        .await?;
+        if accepted.rows_affected() == 0 {
+            return Err(conflict(u.lang, ErrorKey::RideStatusChanged));
+        }
         let line = format!(
             "{} ← {} · {}",
             r.p_name,
@@ -737,10 +748,11 @@ async fn passenger_respond(
         // Reopen and let the driver go in one statement (see `driver_withdraw`).
         let declined = sqlx::query(
             "UPDATE rides SET status='pending_driver', driver_id=NULL, updated_at=$1
-             WHERE id=$2 AND status='pending_passenger'",
+             WHERE id=$2 AND driver_id IS NOT DISTINCT FROM $3 AND status='pending_passenger'",
         )
         .bind(now())
         .bind(id)
+        .bind(r.driver_id)
         .execute(&st.db)
         .await?;
         if declined.rows_affected() == 0 {
@@ -839,7 +851,20 @@ pub(crate) async fn apply_readiness(
 
     if req.status == "unable_to_join" {
         if matches!(r.status.as_str(), "confirmed" | "in_progress") {
-            set_status(st, id, &["confirmed", "in_progress"], "cancelled", lang).await?;
+            if r.picked_up_at.is_some() {
+                return Err(conflict(lang, ErrorKey::PassengerAlreadyPickedUp));
+            }
+            let cancelled = sqlx::query(
+                "UPDATE rides SET status='cancelled', needs_attention=0, updated_at=$1
+                 WHERE id=$2 AND status IN ('confirmed','in_progress') AND picked_up_at IS NULL",
+            )
+            .bind(now())
+            .bind(id)
+            .execute(&st.db)
+            .await?;
+            if cancelled.rows_affected() == 0 {
+                return Err(conflict(lang, ErrorKey::RideStatusChanged));
+            }
             let reason = unable_reason(req.notes.as_deref());
             sqlx::query("UPDATE rides SET readiness_status='unable_to_join', readiness_updated_at=$1, attention_reason=$2, completed_at=COALESCE(completed_at, $1) WHERE id=$3")
                 .bind(&timestamp)
@@ -1483,11 +1508,19 @@ async fn driver_confirm_assignment(
     if r.driver_id != Some(u.id) {
         return Err(forbidden(u.lang, ErrorKey::NotRideDriver));
     }
-    set_status(&st, id, &["pending_driver_confirm"], "confirmed", u.lang).await?;
-    sqlx::query("UPDATE rides SET needs_attention=0 WHERE id=$1")
-        .bind(id)
-        .execute(&st.db)
-        .await?;
+    // Only while this driver still holds the assignment: staff may have reassigned it.
+    let confirmed = sqlx::query(
+        "UPDATE rides SET status='confirmed', needs_attention=0, updated_at=$1
+         WHERE id=$2 AND driver_id=$3 AND status='pending_driver_confirm'",
+    )
+    .bind(now())
+    .bind(id)
+    .bind(u.id)
+    .execute(&st.db)
+    .await?;
+    if confirmed.rows_affected() == 0 {
+        return Err(conflict(u.lang, ErrorKey::RideStatusChanged));
+    }
     let r = load_ride(&st, u.lang, id).await?;
     let trip = assign_trip(&st, &r).await?;
     announce_confirmed(&st, &r, trip, true).await;
@@ -2513,17 +2546,18 @@ async fn staff_reassign(
         return Err(conflict(u.lang, ErrorKey::RideStatusChanged));
     }
     tx.commit().await?;
-    if let (Some(old), Some(t)) = (r.driver_id, r.trip_id) {
-        if old != req.driver_id {
-            let line = format!("{} · {}", r.p_name, r.pickup_at.replace('T', " "));
-            notify(
-                &st.db,
-                old,
-                ("接送已改派", "Ride reassigned"),
-                (&line, &line),
-                "/drive",
-            )
-            .await;
+    if let Some(old) = r.driver_id.filter(|o| *o != req.driver_id) {
+        let line = format!("{} · {}", r.p_name, r.pickup_at.replace('T', " "));
+        notify(
+            &st.db,
+            old,
+            ("接送已改派", "Ride reassigned"),
+            (&line, &line),
+            "/drive",
+        )
+        .await;
+        if let Some(t) = r.trip_id {
+            st.routing.invalidate(old, t).await;
             system_message(
                 &st.db,
                 t,

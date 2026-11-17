@@ -547,10 +547,13 @@ async fn cancel_event(
     }
     // The event and the ride requests not yet underway are cancelled together, or not at all.
     let mut tx = st.db.begin().await?;
-    sqlx::query("UPDATE events SET status='cancelled' WHERE id=$1")
+    let cancelled = sqlx::query("UPDATE events SET status='cancelled' WHERE id=$1 AND status='published'")
         .bind(id)
         .execute(&mut *tx)
         .await?;
+    if cancelled.rows_affected() == 0 {
+        return Err(bad(u.lang, ErrorKey::EventNotOpen));
+    }
     let rides: Vec<(i64, Option<i64>)> = sqlx::query_as(
         "UPDATE rides SET status='cancelled', attention_reason='活动已取消', updated_at=$2
          WHERE event_id=$1 AND status IN ('pending_driver','pending_passenger','pending_approval','pending_driver_confirm','confirmed')
@@ -615,10 +618,13 @@ async fn finish_event(
     if !can_manage(&u, e.created_by, Act::Update) {
         return Err(forbidden(u.lang, ErrorKey::OnlyOrganiserCanPerformAction));
     }
-    sqlx::query("UPDATE events SET status='finished' WHERE id=$1")
+    let finished = sqlx::query("UPDATE events SET status='finished' WHERE id=$1 AND status='published'")
         .bind(id)
         .execute(&st.db)
         .await?;
+    if finished.rows_affected() == 0 {
+        return Err(bad(u.lang, ErrorKey::EventNotOpen));
+    }
     audit(&st.db, Some(u.id), "event.finish", "event", Some(id), "").await;
     Ok(Json(json!({"ok": true})))
 }
@@ -689,7 +695,8 @@ async fn signup(
     };
     sqlx::query(
         "INSERT INTO event_signups (event_id, user_id, status, need_ride, offer_drive, offer_seats, created_at, as_group_id) VALUES ($1,$2,$3,$4,$5,$6,$7,$8)
-         ON CONFLICT(event_id, user_id) DO UPDATE SET status=excluded.status, need_ride=excluded.need_ride, offer_drive=excluded.offer_drive, offer_seats=excluded.offer_seats, as_group_id=excluded.as_group_id",
+         ON CONFLICT(event_id, user_id) DO UPDATE SET status=excluded.status, need_ride=excluded.need_ride, offer_drive=excluded.offer_drive, offer_seats=excluded.offer_seats, as_group_id=excluded.as_group_id,
+         created_at = CASE WHEN event_signups.status = 'cancelled' THEN excluded.created_at ELSE event_signups.created_at END",
     )
     .bind(id)
     .bind(u.id)
@@ -943,9 +950,10 @@ async fn mark_attendance(
         .bind(req.user_id)
         .execute(&st.db)
         .await?;
-    if r.rows_affected() == 0 {
+    if r.rows_affected() == 0 && v == Some(1) {
         // Walk-in: organiser may record someone who attended without signing up.
-        sqlx::query("INSERT INTO event_signups (event_id, user_id, status, attended, created_at) VALUES ($1,$2, 'going', $3, $4)")
+        sqlx::query("INSERT INTO event_signups (event_id, user_id, status, attended, created_at) VALUES ($1,$2, 'going', $3, $4)
+             ON CONFLICT (event_id, user_id) DO UPDATE SET attended=excluded.attended, status='going'")
             .bind(id)
             .bind(req.user_id)
             .bind(v)
