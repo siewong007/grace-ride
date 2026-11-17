@@ -617,13 +617,26 @@ async fn seeded_guide_coverage_and_links_match_app_routes() {
     }
 }
 
+/// id, slug, title (en, zh), summary (en, zh), audience, published, steps as JSON text.
+type GuideRow = (
+    i64,
+    String,
+    String,
+    String,
+    String,
+    String,
+    String,
+    bool,
+    String,
+);
+
 /// The API refuses a step link it cannot open, so every seeded guide must survive an
 /// editor saving it back unchanged.
 #[tokio::test]
 async fn every_seeded_guide_saves_back_unchanged() {
     let (app, st) = setup().await;
     let editor = login(&st, "transport@example.org").await;
-    let rows: Vec<(i64, String, String, String, String, String, String, bool, String)> =
+    let rows: Vec<GuideRow> =
         sqlx::query_as(
             "SELECT id, slug, title_en, title_zh, summary_en, summary_zh, audience, published, steps::text
              FROM guide_workflows WHERE id < 90000 ORDER BY slug",

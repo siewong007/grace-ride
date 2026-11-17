@@ -142,7 +142,10 @@ export default function AdminReports() {
     if (!r) return;
     // The PDF's built-in font cannot draw Chinese: print the page instead, which uses the
     // device's own fonts and can be saved as a PDF from the print dialog.
-    const drawable = (s: string) => !/[^\u0000-\u024f\u2000-\u206f]/.test(s);
+    const drawable = (s: string) =>
+      Array.from({ length: s.length }, (_, i) => s.charCodeAt(i)).every(
+        (c) => c <= 0x24f || (c >= 0x2000 && c <= 0x206f),
+      );
     const texts = [
       r.user.name,
       t('reports.pdfTitle'),
