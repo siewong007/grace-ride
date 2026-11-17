@@ -229,5 +229,8 @@ pub async fn assert_member_roles_in_step(db: &sqlx::PgPool) {
     .fetch_all(db)
     .await
     .unwrap();
-    assert!(drift.is_empty(), "member_roles out of step (+missing, -extra): {drift:?}");
+    assert!(
+        drift.is_empty(),
+        "member_roles out of step (+missing, -extra): {drift:?}"
+    );
 }

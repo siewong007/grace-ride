@@ -180,7 +180,15 @@ async fn escalate_unmatched(db: &PgPool) -> anyhow::Result<()> {
     .fetch_all(db)
     .await?;
     let ids: Vec<i64> = rows.iter().map(|(id, _, _)| *id).collect();
-    audit_many(db, None, "ride.escalate", "ride", &ids, "no driver 12h before pickup").await?;
+    audit_many(
+        db,
+        None,
+        "ride.escalate",
+        "ride",
+        &ids,
+        "no driver 12h before pickup",
+    )
+    .await?;
     for (id, name, at) in rows {
         notify_perm(
             db,

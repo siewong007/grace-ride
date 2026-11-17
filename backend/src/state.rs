@@ -91,7 +91,9 @@ impl DbConfig {
         };
         let timezone = match var("APP_TIMEZONE") {
             Some(v) => v.trim().parse::<Tz>().map_err(|_| {
-                anyhow::anyhow!("APP_TIMEZONE must be an IANA zone such as Asia/Kuala_Lumpur (got {v})")
+                anyhow::anyhow!(
+                    "APP_TIMEZONE must be an IANA zone such as Asia/Kuala_Lumpur (got {v})"
+                )
             })?,
             None => d.timezone,
         };

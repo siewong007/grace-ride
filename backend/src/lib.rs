@@ -86,7 +86,10 @@ pub async fn connect_db_with(url: &str, cfg: &DbConfig) -> anyhow::Result<PgPool
 /// the app's zone, so the session uses that zone too: `LOCALTIMESTAMP`, `CURRENT_DATE`
 /// and `now()::text` then agree with the times the app writes.
 fn set_time_zone(cfg: &DbConfig) -> String {
-    format!("SET TIME ZONE '{}'", cfg.timezone.name().replace('\'', "''"))
+    format!(
+        "SET TIME ZONE '{}'",
+        cfg.timezone.name().replace('\'', "''")
+    )
 }
 
 /// Statements run on every new pool connection.
@@ -213,42 +216,6 @@ async fn clear_squashed_migration_history(conn: &mut PgConnection) -> anyhow::Re
     }
 }
 
-#[cfg(test)]
-mod history_tests {
-    use super::{classify_history, History};
-
-    fn shipped() -> Vec<(i64, Vec<u8>)> {
-        sqlx::migrate!("./migrations")
-            .iter()
-            .map(|m| (m.version, m.checksum.to_vec()))
-            .collect()
-    }
-
-    #[test]
-    fn current_history_and_empty_history_are_kept() {
-        let migrator = sqlx::migrate!("./migrations");
-        assert_eq!(classify_history(&[], &migrator), History::Current);
-        assert_eq!(classify_history(&shipped(), &migrator), History::Current);
-    }
-
-    #[test]
-    fn an_older_squashed_schema_is_replayed() {
-        let migrator = sqlx::migrate!("./migrations");
-        // The five files from before the November 2026 squash.
-        let old: Vec<(i64, Vec<u8>)> = (1..=5).map(|v| (v, vec![7u8; 48])).collect();
-        assert_eq!(classify_history(&old, &migrator), History::Squashed);
-        assert_eq!(classify_history(&[(16, vec![1])], &migrator), History::Squashed);
-    }
-
-    #[test]
-    fn an_edited_or_unknown_later_file_is_refused() {
-        let migrator = sqlx::migrate!("./migrations");
-        let mut applied = shipped();
-        applied.push((99, vec![0u8; 48]));
-        assert_eq!(classify_history(&applied, &migrator), History::Diverged(99));
-    }
-}
-
 /// Build shared state: database, migrations, first-run data, WebAuthn.
 pub async fn init(cfg: Config) -> anyhow::Result<AppState> {
     std::fs::create_dir_all(&cfg.upload_dir)?;
@@ -340,4 +307,43 @@ pub fn router(state: AppState) -> Router {
         ))
         .layer(TraceLayer::new_for_http())
         .with_state(state)
+}
+
+#[cfg(test)]
+mod history_tests {
+    use super::{classify_history, History};
+
+    fn shipped() -> Vec<(i64, Vec<u8>)> {
+        sqlx::migrate!("./migrations")
+            .iter()
+            .map(|m| (m.version, m.checksum.to_vec()))
+            .collect()
+    }
+
+    #[test]
+    fn current_history_and_empty_history_are_kept() {
+        let migrator = sqlx::migrate!("./migrations");
+        assert_eq!(classify_history(&[], &migrator), History::Current);
+        assert_eq!(classify_history(&shipped(), &migrator), History::Current);
+    }
+
+    #[test]
+    fn an_older_squashed_schema_is_replayed() {
+        let migrator = sqlx::migrate!("./migrations");
+        // The five files from before the November 2026 squash.
+        let old: Vec<(i64, Vec<u8>)> = (1..=5).map(|v| (v, vec![7u8; 48])).collect();
+        assert_eq!(classify_history(&old, &migrator), History::Squashed);
+        assert_eq!(
+            classify_history(&[(16, vec![1])], &migrator),
+            History::Squashed
+        );
+    }
+
+    #[test]
+    fn an_edited_or_unknown_later_file_is_refused() {
+        let migrator = sqlx::migrate!("./migrations");
+        let mut applied = shipped();
+        applied.push((99, vec![0u8; 48]));
+        assert_eq!(classify_history(&applied, &migrator), History::Diverged(99));
+    }
 }

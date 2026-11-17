@@ -947,10 +947,11 @@ async fn reject_recovery(
         .fetch_optional(&mut *tx)
         .await?
         .ok_or(not_found(u.lang))?;
-    let user_id: Option<i64> = sqlx::query_scalar("SELECT id FROM users WHERE email=lower($1) FOR UPDATE")
-        .bind(&email)
-        .fetch_optional(&mut *tx)
-        .await?;
+    let user_id: Option<i64> =
+        sqlx::query_scalar("SELECT id FROM users WHERE email=lower($1) FOR UPDATE")
+            .bind(&email)
+            .fetch_optional(&mut *tx)
+            .await?;
     let status: String =
         sqlx::query_scalar("SELECT status FROM recovery_requests WHERE id=$1 FOR UPDATE")
             .bind(id)

@@ -30,7 +30,14 @@ async fn any_area(st: &grace_ride::state::AppState) -> i64 {
 }
 
 /// Insert a ride directly, minute precision like the app writes.
-async fn ride(st: &grace_ride::state::AppState, passenger: i64, driver: Option<i64>, event: Option<i64>, pickup_at: &str, status: &str) -> i64 {
+async fn ride(
+    st: &grace_ride::state::AppState,
+    passenger: i64,
+    driver: Option<i64>,
+    event: Option<i64>,
+    pickup_at: &str,
+    status: &str,
+) -> i64 {
     let area = any_area(st).await;
     sqlx::query_scalar(
         "INSERT INTO rides (passenger_id, driver_id, event_id, pickup_at, pickup_area_id, status)
@@ -51,7 +58,14 @@ async fn ride(st: &grace_ride::state::AppState, passenger: i64, driver: Option<i
 async fn passkey_sign_in_ignores_the_case_of_the_email() {
     let (app, st) = setup().await;
     let cookie = login(&st, "member@example.org").await;
-    let start = call(&app, Method::POST, "/api/auth/passkey/register/start", Some(&cookie), None).await;
+    let start = call(
+        &app,
+        Method::POST,
+        "/api/auth/passkey/register/start",
+        Some(&cookie),
+        None,
+    )
+    .await;
     assert_eq!(start.status, StatusCode::OK, "{}", start.json);
     let options: CreationChallengeResponse =
         serde_json::from_value(start.json["options"].clone()).unwrap();
@@ -125,7 +139,14 @@ async fn needs_attention_means_unmatched_within_24_hours() {
     let soon = ride(&st, member, None, None, &in_hours(20), "pending_driver").await;
     let later = ride(&st, member, None, None, &in_hours(30), "pending_driver").await;
 
-    let r = call(&app, Method::GET, "/api/admin/rides?attention=true", Some(&admin), None).await;
+    let r = call(
+        &app,
+        Method::GET,
+        "/api/admin/rides?attention=true",
+        Some(&admin),
+        None,
+    )
+    .await;
     assert_eq!(r.status, StatusCode::OK, "{}", r.json);
     let ids: Vec<i64> = r
         .json
@@ -152,11 +173,42 @@ async fn cancelling_an_event_cancels_its_open_rides_together() {
     .fetch_one(&st.db)
     .await
     .unwrap();
-    let open = ride(&st, member, None, Some(event), &in_hours(47), "pending_driver").await;
-    let confirmed = ride(&st, member, Some(admin_id), Some(event), &in_hours(47), "confirmed").await;
-    let done = ride(&st, member, Some(admin_id), Some(event), &in_hours(47), "completed").await;
+    let open = ride(
+        &st,
+        member,
+        None,
+        Some(event),
+        &in_hours(47),
+        "pending_driver",
+    )
+    .await;
+    let confirmed = ride(
+        &st,
+        member,
+        Some(admin_id),
+        Some(event),
+        &in_hours(47),
+        "confirmed",
+    )
+    .await;
+    let done = ride(
+        &st,
+        member,
+        Some(admin_id),
+        Some(event),
+        &in_hours(47),
+        "completed",
+    )
+    .await;
 
-    let r = call(&app, Method::POST, &format!("/api/events/{event}/cancel"), Some(&admin), None).await;
+    let r = call(
+        &app,
+        Method::POST,
+        &format!("/api/events/{event}/cancel"),
+        Some(&admin),
+        None,
+    )
+    .await;
     assert_eq!(r.status, StatusCode::OK, "{}", r.json);
 
     let statuses: Vec<(i64, String)> =
@@ -176,7 +228,7 @@ async fn cancelling_an_event_cancels_its_open_rides_together() {
     let audited: Vec<i64> = sqlx::query_scalar(
         "SELECT entity_id FROM audit_logs WHERE action = 'ride.cancel' AND entity_id = ANY($1) ORDER BY entity_id",
     )
-    .bind(&[open, confirmed, done])
+    .bind([open, confirmed, done])
     .fetch_all(&st.db)
     .await
     .unwrap();
@@ -194,7 +246,15 @@ async fn a_ride_reminder_is_sent_once_however_many_ticks_see_it() {
     let (_app, st) = setup().await;
     let member = user_id(&st, "member@example.org").await;
     let driver = user_id(&st, "admin@example.org").await;
-    let r = ride(&st, member, Some(driver), None, &in_minutes(30), "confirmed").await;
+    let r = ride(
+        &st,
+        member,
+        Some(driver),
+        None,
+        &in_minutes(30),
+        "confirmed",
+    )
+    .await;
     let reminders = || async {
         sqlx::query_scalar::<_, i64>(
             "SELECT COUNT(*) FROM notifications WHERE user_id = $1 AND link LIKE $2",

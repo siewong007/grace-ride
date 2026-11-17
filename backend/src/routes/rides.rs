@@ -1789,7 +1789,9 @@ async fn driver_requests(
     if q.date.is_some() {
         // Same rows as `substr(pickup_at,1,10) = date`, written as a range so the pickup
         // index can serve it: every time on that day sorts between "dateT" and "dateU".
-        conds.push(format!("(r.pickup_at >= (${n} || 'T') AND r.pickup_at < (${n} || 'U'))"));
+        conds.push(format!(
+            "(r.pickup_at >= (${n} || 'T') AND r.pickup_at < (${n} || 'U'))"
+        ));
     }
     let sql = format!(
         "{RIDE_SELECT} WHERE {} ORDER BY r.pickup_at LIMIT 100",
@@ -2572,7 +2574,9 @@ async fn admin_rides(
     if q.date.is_some() {
         // Same rows as `substr(pickup_at,1,10) = date`, written as a range so the pickup
         // index can serve it: every time on that day sorts between "dateT" and "dateU".
-        conds.push(format!("(r.pickup_at >= (${n} || 'T') AND r.pickup_at < (${n} || 'U'))"));
+        conds.push(format!(
+            "(r.pickup_at >= (${n} || 'T') AND r.pickup_at < (${n} || 'U'))"
+        ));
         n += 1;
     }
     if q.status.is_some() {

@@ -279,10 +279,11 @@ async fn trips_link_rides_and_chats() {
     assert_eq!(missing, 0);
 
     // Setting a trip on a ride adds the trip; a message for an unknown trip is refused.
-    let ride: i64 = sqlx::query_scalar("SELECT id FROM rides WHERE trip_id IS NULL ORDER BY id LIMIT 1")
-        .fetch_one(&db)
-        .await
-        .unwrap();
+    let ride: i64 =
+        sqlx::query_scalar("SELECT id FROM rides WHERE trip_id IS NULL ORDER BY id LIMIT 1")
+            .fetch_one(&db)
+            .await
+            .unwrap();
     sqlx::query("UPDATE rides SET trip_id = 987654 WHERE id = $1")
         .bind(ride)
         .execute(&db)
@@ -350,10 +351,11 @@ async fn member_roles_follow_users_roles() {
         }
     };
     assert_eq!(held("member@example.org").await, ["driver"]);
-    let admins: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM member_roles WHERE role_key = 'admin'")
-        .fetch_one(&db)
-        .await
-        .unwrap();
+    let admins: i64 =
+        sqlx::query_scalar("SELECT COUNT(*) FROM member_roles WHERE role_key = 'admin'")
+            .fetch_one(&db)
+            .await
+            .unwrap();
     assert!(admins > 0, "seeded admins carried over");
 
     // The role is created later: the member who already listed it now holds it.
@@ -408,7 +410,10 @@ async fn json_columns_become_jsonb() {
     .fetch_one(&db)
     .await
     .unwrap();
-    assert_eq!((kept.as_str(), parsed.as_str()), ("string", "上周羽毛球费用"));
+    assert_eq!(
+        (kept.as_str(), parsed.as_str()),
+        ("string", "上周羽毛球费用")
+    );
     let validated: bool = sqlx::query_scalar(
         "SELECT convalidated FROM pg_constraint WHERE conname = 'chk_invites_group_ids' AND conrelid = 'invites'::regclass",
     )
@@ -417,14 +422,18 @@ async fn json_columns_become_jsonb() {
     .unwrap();
     assert!(validated);
 
-    let bad = sqlx::query("UPDATE settlement_revisions SET snapshot = 'not json'::text::jsonb WHERE id = 43001")
-        .execute(&db)
-        .await;
+    let bad = sqlx::query(
+        "UPDATE settlement_revisions SET snapshot = 'not json'::text::jsonb WHERE id = 43001",
+    )
+    .execute(&db)
+    .await;
     assert!(bad.is_err(), "not JSON");
-    let bad = sqlx::query("INSERT INTO invites (token, email, group_ids, created_by, expires_at)
-         VALUES ('t-json', '', '{}', (SELECT MIN(id) FROM users), '2099-01-01T00:00:00')")
-        .execute(&db)
-        .await;
+    let bad = sqlx::query(
+        "INSERT INTO invites (token, email, group_ids, created_by, expires_at)
+         VALUES ('t-json', '', '{}', (SELECT MIN(id) FROM users), '2099-01-01T00:00:00')",
+    )
+    .execute(&db)
+    .await;
     assert!(bad.is_err(), "groups are a list");
     sqlx::query(
         "INSERT INTO invites (token, email, created_by, expires_at)
@@ -466,7 +475,10 @@ async fn older_defaults_and_mixed_case_emails_are_brought_in_line() {
         .await
         .unwrap();
     // BOB@ would collide with bob@, so it is left for someone to merge by hand.
-    assert_eq!(emails, ["alice@example.org", "BOB@example.org", "bob@example.org"]);
+    assert_eq!(
+        emails,
+        ["alice@example.org", "BOB@example.org", "bob@example.org"]
+    );
     let validated: bool = sqlx::query_scalar(
         "SELECT convalidated FROM pg_constraint WHERE conname = 'chk_users_email_lower' AND conrelid = 'users'::regclass",
     )
@@ -474,9 +486,11 @@ async fn older_defaults_and_mixed_case_emails_are_brought_in_line() {
     .await
     .unwrap();
     assert!(!validated, "the collision is left for review");
-    let bad = sqlx::query("INSERT INTO users (name, email, webauthn_uuid) VALUES ('丁', 'Dan@example.org', 'u4')")
-        .execute(&db)
-        .await;
+    let bad = sqlx::query(
+        "INSERT INTO users (name, email, webauthn_uuid) VALUES ('丁', 'Dan@example.org', 'u4')",
+    )
+    .execute(&db)
+    .await;
     assert!(bad.is_err(), "new emails must be lowercase");
 }
 
@@ -536,7 +550,7 @@ async fn trigger_functions_pin_their_search_path() {
            AND proname = ANY($1)
            AND NOT EXISTS (SELECT 1 FROM unnest(proconfig) c WHERE c LIKE 'search_path=%')",
     )
-    .bind(&[
+    .bind([
         "app_now",
         "listed_role_keys",
         "sync_member_roles",

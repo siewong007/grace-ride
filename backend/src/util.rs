@@ -322,7 +322,6 @@ pub fn fmt_rm(cents: i64) -> String {
     format!("RM {}.{:02}", cents / 100, (cents % 100).abs())
 }
 
-
 /// Build an `ORDER BY` body from an allow-list of `(client_key, SQL expression)`.
 /// Unknown keys use `default`; any direction other than `desc` sorts ascending.
 /// `tiebreak` keeps paginated results stable when the sort value repeats.
