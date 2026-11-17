@@ -11,6 +11,7 @@ import {
   Pill,
 } from '../../components/ui';
 import { fmtAgo, fmtTime, parseLocal, useFormatT } from '../../format';
+import { ADMIN_HOME } from '../../staffNav';
 
 interface Live {
   max: number;
@@ -60,7 +61,7 @@ export default function AdminLive() {
       <PageHeader
         title={t('live.title')}
         subtitle={t('live.desc')}
-        back="/admin"
+        back={ADMIN_HOME}
         actions={
           <Pill tone="teal">
             {data?.drivers.length ?? 0} / {data?.max ?? 10} {t('live.drivers')}

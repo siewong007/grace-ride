@@ -29,6 +29,7 @@ import {
 } from '../../components/ui';
 import { exportToCsv, fmtAgo, roleLabel, todayStr, useFormatT } from '../../format';
 import { useRoleOptions } from './roleData';
+import { ADMIN_HOME } from '../../staffNav';
 
 interface User {
   id: number;
@@ -65,6 +66,21 @@ interface RecoveryItem {
   reason: string;
   status: string;
   created_at: string;
+}
+
+/** Copy text to the clipboard and say whether it worked; the link is still on screen if it did not. */
+function useCopy() {
+  const { t } = useTranslation('admin');
+  const toast = useToast();
+  return async (text: string) => {
+    try {
+      await navigator.clipboard.writeText(text);
+      toast.success(t('members.copied'));
+    } catch {
+      // Clipboard access is unavailable outside secure browser contexts.
+      toast.error(t('members.copyFailed'));
+    }
+  };
 }
 
 export default function Members() {
@@ -104,7 +120,7 @@ export default function Members() {
 
   return (
     <Page>
-      <PageHeader title={t('members.title')} subtitle={t('members.desc')} back="/admin" />
+      <PageHeader title={t('members.title')} subtitle={t('members.desc')} back={ADMIN_HOME} />
       <Tabs
         value={tab}
         onChange={(v) => handleTabChange(v as Tab)}
@@ -496,21 +512,12 @@ function MemberFormModal({
 function Invites() {
   const { t } = useTranslation('admin');
   const ft = useFormatT();
-  const toast = useToast();
   const confirm = useConfirm();
   const { can } = useAuth();
   const { data, loading, reload } = useApi<InviteItem[]>('/admin/invites');
   const [link, setLink] = useState<string | null>(null);
   const { busy, error, run } = useAction();
-
-  const copy = async (s: string) => {
-    try {
-      await navigator.clipboard.writeText(s);
-      toast.success(t('members.copied'));
-    } catch {
-      // Clipboard access is unavailable outside secure browser contexts.
-    }
-  };
+  const copy = useCopy();
 
   const submit = (e: FormEvent) => {
     e.preventDefault();
@@ -569,9 +576,9 @@ function Invites() {
         ) : (
           <div className="list">
             {data.map((i) => (
-              <div key={i.id} className="item">
-                <div className="grow">
-                  <div className="bold">
+              <div key={i.id} className="item item-stack">
+                <div className="grow min-w-0">
+                  <div className="bold text-break">
                     {i.email || t('members.openInvite')}{' '}
                     {i.kind === 'recovery' && (
                       <Pill tone="blue">{t('members.recoveryTab')}</Pill>
@@ -615,17 +622,57 @@ function Recovery() {
   const { t } = useTranslation('admin');
   const ft = useFormatT();
   const { can } = useAuth();
+  const confirm = useConfirm();
+  const copy = useCopy();
   const canDecide = can('admin_recovery', 'update');
   const { data, loading, reload } = useApi<RecoveryItem[]>('/admin/recovery');
   const [link, setLink] = useState<string | null>(null);
   const { busy, error, run } = useAction();
 
+  // Approving signs the member out everywhere and issues a login link; rejecting is final.
+  // Both are asked about first, naming who it is for.
+  const approve = async (r: RecoveryItem) => {
+    const who = `${r.name ?? r.email} (${r.email})`;
+    const second = r.status === 'awaiting_second';
+    const ok = await confirm({
+      title: second ? t('members.confirmSecond') : t('members.approve'),
+      body: t(second ? 'members.confirmSecondBody' : 'members.approveRecoveryConfirm', { who }),
+      confirmLabel: second ? t('members.confirmSecond') : t('members.approve'),
+      tone: 'primary',
+    });
+    if (!ok) return;
+    run(async () => {
+      const x = await post<{ url?: string; awaiting_second?: boolean }>(`/admin/recovery/${r.id}/approve`);
+      if (x.url) setLink(x.url);
+      reload();
+    });
+  };
+
+  const reject = async (r: RecoveryItem) => {
+    const ok = await confirm({
+      title: t('members.reject'),
+      body: t('members.rejectRecoveryConfirm', { who: `${r.name ?? r.email} (${r.email})` }),
+      confirmLabel: t('members.reject'),
+      tone: 'danger',
+    });
+    if (ok) run(() => post(`/admin/recovery/${r.id}/reject`).then(reload));
+  };
+
   return (
     <div className="stack">
       <div className="notice info">{t('members.recoveryNotice')}</div>
       {link && (
-        <div className="notice ok text-break">
-          {t('members.recoveryLink', { link })}
+        <div className="notice ok stack-sm">
+          <span>{t('members.recoveryLinkLabel')}</span>
+          <code className="text-break">{link}</code>
+          <div className="btn-row">
+            <Button variant="secondary" size="sm" type="button" onClick={() => copy(link)}>
+              {t('members.copy')}
+            </Button>
+            <Button variant="ghost" size="sm" type="button" onClick={() => setLink(null)}>
+              {t('members.dismiss')}
+            </Button>
+          </div>
         </div>
       )}
       <ErrorBox error={error} />
@@ -638,52 +685,41 @@ function Recovery() {
         ) : (
           <div className="list">
             {data.map((r) => (
-              <div key={r.id} className="item">
-                <div className="grow">
-                  <div className="bold">
+              <div key={r.id} className="item item-stack">
+                <div className="grow min-w-0">
+                  <div className="bold text-break">
                     {r.name ?? t('members.nonMember')} · {r.email}
                   </div>
-                  <div className="small">{r.reason}</div>
+                  <div className="small text-break">{r.reason}</div>
                   <div className="muted tiny">{fmtAgo(r.created_at, ft)}</div>
                 </div>
                 {r.status === 'pending' || r.status === 'awaiting_second' ? (
-                  <div className="btn-row">
+                  <div className="item-actions">
                     {r.status === 'awaiting_second' && (
                       <span className="muted tiny">
                         {t('members.secondAdminNotice')}
                       </span>
                     )}
-                    <Button
-                      variant="primary"
-                      size="sm"
-                      disabled={busy || !r.name || !canDecide}
-                      onClick={() =>
-                        run(async () => {
-                          const x = await post<{
-                            url?: string;
-                            awaiting_second?: boolean;
-                          }>(`/admin/recovery/${r.id}/approve`);
-                          if (x.url) setLink(x.url);
-                          reload();
-                        })
-                      }
-                    >
-                      {r.status === 'awaiting_second'
-                        ? t('members.confirmSecond')
-                        : t('members.approve')}
-                    </Button>
-                    <Button
-                      variant="secondary"
-                      size="sm"
-                      disabled={busy || !canDecide}
-                      onClick={() =>
-                        run(() =>
-                          post(`/admin/recovery/${r.id}/reject`).then(reload),
-                        )
-                      }
-                    >
-                      {t('members.reject')}
-                    </Button>
+                    <div className="btn-row">
+                      <Button
+                        variant="primary"
+                        size="sm"
+                        disabled={busy || !r.name || !canDecide}
+                        onClick={() => approve(r)}
+                      >
+                        {r.status === 'awaiting_second'
+                          ? t('members.confirmSecond')
+                          : t('members.approve')}
+                      </Button>
+                      <Button
+                        variant="secondary"
+                        size="sm"
+                        disabled={busy || !canDecide}
+                        onClick={() => reject(r)}
+                      >
+                        {t('members.reject')}
+                      </Button>
+                    </div>
                   </div>
                 ) : (
                   <Pill tone={r.status === 'approved' ? 'green' : 'gray'}>

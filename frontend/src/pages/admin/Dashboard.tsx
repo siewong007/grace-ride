@@ -19,6 +19,7 @@ import {
 } from '../../components/ui';
 import { auditActionLabel } from '../../auditLabel';
 import { fmtAgo, fmtDay, fmtTime, RIDE_STATUS, todayStr, useFormatT } from '../../format';
+import { ADMIN_HOME } from '../../staffNav';
 
 interface Dash {
   today: string;
@@ -186,7 +187,7 @@ export default function Dashboard() {
       <PageHeader
         title={t('dashboard.title')}
         subtitle={`${fmtDay(`${d.today}T00:00`, ft)} · ${t('dashboard.desc')}`}
-        back="/"
+        back={ADMIN_HOME}
         actions={
           <Link className="btn" to="/admin/live">
             {t('dashboard.liveMap', { live: d.live_drivers, max: d.max_live_drivers })}

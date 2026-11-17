@@ -27,6 +27,7 @@ import {
 import { useTableParams } from '../../components/tableState';
 import { exportToCsv, fmtDateTime, fmtDay, REIMB_STATUS, rm, todayStr, useFormatT } from '../../format';
 import type { Reimb } from '../Reimbursements';
+import { ADMIN_HOME } from '../../staffNav';
 
 interface PaginatedReimbursements {
   items: Reimb[];
@@ -69,7 +70,7 @@ export default function AdminReimbursements() {
 
   return (
     <Page>
-      <PageHeader title={t('reimb.title')} subtitle={t('reimb.desc')} back="/admin" />
+      <PageHeader title={t('reimb.title')} subtitle={t('reimb.desc')} back={ADMIN_HOME} />
       {canReview && canPay && (
         <Tabs
           value={tab}
@@ -334,6 +335,7 @@ function ReviewModal({
   const { t } = useTranslation('admin');
   const ft = useFormatT();
   const [note, setNote] = useState('');
+  const needsNote = !note.trim();
   const { busy, error, run } = useAction();
 
   const act = (action: string, msg: string) =>
@@ -363,7 +365,7 @@ function ReviewModal({
             {t('reimb.ride', { time: fmtDateTime(r.ride_at, ft) })}
           </p>
         )}
-        <Field label={t('reimb.noteLabel')}>
+        <Field label={t('reimb.noteLabel')} hint={needsNote ? t('reimb.noteNeeded') : undefined}>
           <input
             className="input"
             value={note}
@@ -371,24 +373,26 @@ function ReviewModal({
           />
         </Field>
         <ErrorBox error={error} />
+        <Button
+          variant="primary"
+          block
+          disabled={busy}
+          onClick={() => act('approve', t('reimb.approved'))}
+        >
+          {t('reimb.approve')}
+        </Button>
+        {/* Sending it back or turning it down needs a reason the member can read. */}
         <div className="btn-row">
           <Button
-            variant="primary"
-            disabled={busy}
-            onClick={() => act('approve', t('reimb.approved'))}
-          >
-            {t('reimb.approve')}
-          </Button>
-          <Button
             variant="secondary"
-            disabled={busy}
+            disabled={busy || !note.trim()}
             onClick={() => act('return', t('reimb.returned'))}
           >
             {t('reimb.return')}
           </Button>
           <Button
             variant="danger"
-            disabled={busy}
+            disabled={busy || !note.trim()}
             onClick={() => act('reject', t('reimb.rejected'))}
           >
             {t('reimb.reject')}

@@ -17,6 +17,7 @@ import {
 import { EVENT_KIND, fmtDateTime, rm, useFormatT } from '../../format';
 import { useTranslation } from 'react-i18next';
 import jsPDF from 'jspdf';
+import { ADMIN_HOME } from '../../staffNav';
 
 interface Member {
   id: number;
@@ -221,7 +222,7 @@ export default function AdminReports() {
         <PageHeader
           title={t('reports.title')}
           subtitle={t('reports.desc')}
-          back="/admin"
+          back={ADMIN_HOME}
           actions={
             <>
               <input

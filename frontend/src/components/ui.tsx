@@ -1156,7 +1156,7 @@ export function Pagination({
           <span className="pagination-btn-text">{t('pagination.prev')}</span>
         </button>
 
-        <div className="pagination-pages" role="list">
+        <div className="pagination-pages">
           {pages.map((p, idx) => {
             if (typeof p === 'string') {
               return (

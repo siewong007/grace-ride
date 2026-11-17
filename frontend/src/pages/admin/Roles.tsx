@@ -1,4 +1,4 @@
-import { Fragment, useState } from 'react';
+import { Fragment, useEffect, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { Plus, ShieldCheck, Trash2 } from 'lucide-react';
 import { del, post, put, useApi } from '../../api';
@@ -19,6 +19,7 @@ import {
 import { roleLabel, useFormatT } from '../../format';
 import { ACTIONS, AREAS, type Act } from '../../perms';
 import type { CatalogPage, RoleDef, RolesResponse } from './roleData';
+import { ADMIN_HOME } from '../../staffNav';
 
 /** Stands in for the role being created until the server gives it a key. */
 const NEW = '__new__';
@@ -39,16 +40,36 @@ export default function Roles() {
   const { t } = useTranslation('admin');
   const ft = useFormatT();
   const { can, refresh } = useAuth();
+  const confirm = useConfirm();
   const { data, loading, error, reload } = useApi<RolesResponse>('/admin/roles');
   const [picked, setPicked] = useState<string | null>(null);
+  // Set by the editor while it holds ticks or text that were not saved.
+  const [dirty, setDirty] = useState(false);
 
   const roles = data?.roles ?? [];
   const current = picked === NEW ? BLANK : roles.find((r) => r.key === picked) ?? roles[0];
+
+  // Switching roles replaces the editor, so unsaved ticks would vanish: ask first.
+  const pick = async (key: string) => {
+    if (key === current?.key) return;
+    if (dirty) {
+      const ok = await confirm({
+        title: t('roles.discardTitle'),
+        body: t('roles.discardBody'),
+        confirmLabel: t('roles.discard'),
+        tone: 'warning',
+      });
+      if (!ok) return;
+    }
+    setDirty(false);
+    setPicked(key);
+  };
 
   // Editing a role can change what the signed-in member may do, so reload both.
   const afterChange = async (key: string | null) => {
     reload();
     await refresh();
+    setDirty(false);
     setPicked(key);
   };
 
@@ -57,10 +78,10 @@ export default function Roles() {
       <PageHeader
         title={t('roles.title')}
         subtitle={t('roles.desc')}
-        back="/admin"
+        back={ADMIN_HOME}
         actions={
           can('admin_roles', 'create') ? (
-            <Button variant="primary" icon={<Plus size={18} />} onClick={() => setPicked(NEW)}>
+            <Button variant="primary" icon={<Plus size={18} />} onClick={() => pick(NEW)}>
               {t('roles.newRole')}
             </Button>
           ) : undefined
@@ -80,7 +101,7 @@ export default function Roles() {
                   type="button"
                   aria-current={r.key === current.key}
                   className={`item role-item ${r.key === current.key ? 'on' : ''}`}
-                  onClick={() => setPicked(r.key)}
+                  onClick={() => pick(r.key)}
                 >
                   <span className="grow">
                     <span className="bold">{roleLabel(r.key, ft, { [r.key]: r.name })}</span>
@@ -93,7 +114,7 @@ export default function Roles() {
               ))}
             </div>
           </Card>
-          <RoleEditor key={current.key} role={current} catalog={data.catalog} onChanged={afterChange} />
+          <RoleEditor key={current.key} role={current} catalog={data.catalog} onChanged={afterChange} onDirtyChange={setDirty} />
         </div>
       )}
     </Page>
@@ -104,10 +125,12 @@ function RoleEditor({
   role,
   catalog,
   onChanged,
+  onDirtyChange,
 }: {
   role: RoleDef;
   catalog: CatalogPage[];
   onChanged: (key: string | null) => void;
+  onDirtyChange: (dirty: boolean) => void;
 }) {
   const { t } = useTranslation('admin');
   const ft = useFormatT();
@@ -121,6 +144,24 @@ function RoleEditor({
   const [name, setName] = useState(role.name);
   const [description, setDescription] = useState(role.description);
   const [granted, setGranted] = useState(() => new Set(role.permissions));
+
+  // Unsaved work: text or ticks that differ from what the server has.
+  const saved = new Set(role.permissions);
+  const dirty =
+    name !== role.name ||
+    description !== role.description ||
+    granted.size !== saved.size ||
+    [...granted].some((k) => !saved.has(k));
+  useEffect(() => {
+    onDirtyChange(dirty);
+    return () => onDirtyChange(false);
+  }, [dirty, onDirtyChange]);
+  useEffect(() => {
+    if (!dirty) return;
+    const warn = (e: BeforeUnloadEvent) => e.preventDefault();
+    window.addEventListener('beforeunload', warn);
+    return () => window.removeEventListener('beforeunload', warn);
+  }, [dirty]);
 
   const toggle = (key: string) =>
     setGranted((prev) => {
@@ -263,7 +304,8 @@ function RoleEditor({
       <ErrorBox error={error} />
 
       {editable && (
-        <div className="btn-row">
+        <div className="btn-row sticky-actions">
+          {dirty && <span className="sticky-actions-note small" role="status">{t('roles.unsaved')}</span>}
           <Button variant="primary" disabled={busy || (!role.system && !name.trim())} onClick={save}>
             {isNew ? t('roles.create') : t('roles.save')}
           </Button>

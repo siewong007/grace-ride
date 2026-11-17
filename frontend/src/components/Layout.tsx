@@ -154,7 +154,7 @@ export default function Layout() {
   return (
     <div className="shell">
       <nav className="sidebar" aria-label={t('mainNav')}>
-        <Link to={pending ? '/me' : '/'} className="sidebar-brand">
+        <Link to={pending ? '/me' : '/'} className="sidebar-brand" aria-label="Grace Ride">
           <LogoMark />
           <span className="sidebar-brand-text">
             <Wordmark />

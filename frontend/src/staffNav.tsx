@@ -129,6 +129,12 @@ export function useStaffNav() {
   return { staffGroups, staff, staffWaiting, helpDesk };
 }
 
+/**
+ * Where an admin page's back arrow goes. The back arrow only shows on phones, where the
+ * staff menu is the hub; the dashboard is just one of its rows and not everyone may open it.
+ */
+export const ADMIN_HOME = '/admin/menu';
+
 /** Permissions that unlock at least one item on the admin menu. */
 export const ADMIN_MENU_PERMS: PageKey[] = [
   'admin_dashboard',

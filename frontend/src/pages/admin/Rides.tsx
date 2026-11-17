@@ -20,6 +20,7 @@ import {
 } from '../../components/ui';
 import { useTableParams } from '../../components/tableState';
 import { exportToCsv, fmtDay, RIDE_STATUS, todayStr, useFormatT } from '../../format';
+import { ADMIN_HOME } from '../../staffNav';
 
 // Every status a ride can have. The API filters on the exact status, so these must be real
 // values ("requested" / "matched" were not, and always returned nothing).
@@ -160,7 +161,7 @@ export default function AdminRides() {
       <PageHeader
         title={t('rides.title')}
         subtitle={t('rides.desc')}
-        back="/admin"
+        back={ADMIN_HOME}
         actions={
           rides.length > 0 ? (
             <Button variant="secondary" size="sm" onClick={handleExport} icon={<Download size={16} />}>

@@ -17,6 +17,7 @@ import {
   useConfirm,
 } from '../../components/ui';
 import { fmtAgo, useFormatT } from '../../format';
+import { ADMIN_HOME } from '../../staffNav';
 
 interface AnnouncementItem {
   id: number;
@@ -71,7 +72,7 @@ export default function Announcements() {
       <PageHeader
         title={t('announcements.title')}
         subtitle={t('announcements.desc')}
-        back="/admin"
+        back={ADMIN_HOME}
       />
 
       <div className="split">

@@ -22,6 +22,7 @@ import {
 } from '../../components/ui';
 import { auditActionLabel } from '../../auditLabel';
 import { fmtDateTime, useFormatT } from '../../format';
+import { ADMIN_HOME } from '../../staffNav';
 
 interface AuditItem {
   id: number;
@@ -717,7 +718,7 @@ export default function Audit() {
       <PageHeader
         title={t('audit.title')}
         subtitle={t('audit.desc')}
-        back="/admin"
+        back={ADMIN_HOME}
         actions={
           <div className="row gap-xs">
             <Button

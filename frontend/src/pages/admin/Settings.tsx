@@ -18,6 +18,7 @@ import {
   useAction,
   useConfirm,
 } from '../../components/ui';
+import { ADMIN_HOME } from '../../staffNav';
 
 interface Group {
   id: number;
@@ -59,7 +60,7 @@ export default function Settings() {
 
   return (
     <Page>
-      <PageHeader title={t('settings.title')} subtitle={t('settings.desc')} back="/admin" />
+      <PageHeader title={t('settings.title')} subtitle={t('settings.desc')} back={ADMIN_HOME} />
       <div className="stack gap-lg">
         {(groups || areas) && (
           <div className="split">

@@ -1,8 +1,9 @@
 import { beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
-import { fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { MemoryRouter } from 'react-router-dom';
 import i18n from '../../i18n';
 import Roles from './Roles';
+import { ConfirmProvider } from '../../components/ui';
 
 beforeAll(async () => {
   await i18n.changeLanguage('en');
@@ -74,7 +75,9 @@ vi.mock('../../api', () => ({
 const show = () =>
   render(
     <MemoryRouter>
-      <Roles />
+      <ConfirmProvider>
+        <Roles />
+      </ConfirmProvider>
     </MemoryRouter>,
   );
 
@@ -144,5 +147,35 @@ describe('Roles & permissions', () => {
     expect(screen.getByRole('checkbox', { name: 'My rides · View' })).toBeDisabled();
     expect(screen.queryByRole('button', { name: /save permissions/i })).toBeNull();
     expect(screen.queryByRole('button', { name: /new role/i })).toBeNull();
+  });
+
+  it('warns before switching roles with unsaved ticks, and keeps them if the admin stays', async () => {
+    show();
+    fireEvent.click(screen.getByRole('button', { name: /welcome team/i }));
+    expect(screen.queryByText('Unsaved changes')).toBeNull();
+    fireEvent.click(screen.getByRole('checkbox', { name: 'Announcements · Create' }));
+    expect(screen.getByText('Unsaved changes')).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole('button', { name: /^admin/i }));
+    const dialog = await screen.findByRole('dialog');
+    expect(within(dialog).getByText(/will lose them/i)).toBeInTheDocument();
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Cancel' }));
+    await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
+    // Still on the same role, tick intact.
+    expect(screen.getByRole('checkbox', { name: 'Announcements · Create' })).toBeChecked();
+
+    // Discarding moves on.
+    fireEvent.click(screen.getByRole('button', { name: /^admin/i }));
+    fireEvent.click(within(await screen.findByRole('dialog')).getByRole('button', { name: 'Discard changes' }));
+    await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
+    expect(screen.getByRole('checkbox', { name: 'Announcements · Create' })).not.toBeChecked();
+    expect(screen.queryByText('Unsaved changes')).toBeNull();
+  });
+
+  it('switches roles without asking when nothing was changed', () => {
+    show();
+    fireEvent.click(screen.getByRole('button', { name: /welcome team/i }));
+    fireEvent.click(screen.getByRole('button', { name: /^admin/i }));
+    expect(screen.queryByRole('dialog')).toBeNull();
   });
 });
