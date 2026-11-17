@@ -5,6 +5,7 @@ import { Check, CheckCircle2, ChevronRight, ThumbsDown, ThumbsUp } from 'lucide-
 import { GuideStep } from '../pages/HelpGuides';
 import { Button, useAction, useToast } from './ui';
 import { post } from '../api';
+import { readDone, readFeedback, writeDone, writeFeedback } from '../guideProgress';
 
 /** The app page a step links to, named as the menu names it ("My rides", "Events"). */
 const PAGE_LABELS: [string, string][] = [
@@ -23,6 +24,10 @@ interface GuideStepsProps {
   lang?: 'en' | 'zh';
   readOnly?: boolean;
   onContactUs?: (prefilled: string) => void;
+  /** Called when someone follows a step's link, so the guide can travel with them as a walkthrough. */
+  onFollow?: (stepIndex: number) => void;
+  /** The guide to offer after this one is finished. */
+  nextGuide?: { slug: string; title: string } | null;
 }
 
 export default function GuideSteps({
@@ -33,6 +38,8 @@ export default function GuideSteps({
   lang,
   readOnly = false,
   onContactUs,
+  onFollow,
+  nextGuide,
 }: GuideStepsProps) {
   const { t, i18n } = useTranslation('help');
   const { t: tl } = useTranslation('layout');
@@ -40,195 +47,160 @@ export default function GuideSteps({
   const pick = (zh: string, en: string) => (activeLang === 'zh' ? zh || en : en || zh);
   const toast = useToast();
   const { run, busy } = useAction();
+  const total = steps.length;
 
-  // Completed steps state
-  const storageKey = slug ? `graceride_guide_${slug}_done` : null;
-  const [completed, setCompleted] = useState<number[]>(() => {
-    if (!storageKey) return [];
-    try {
-      const raw = localStorage.getItem(storageKey);
-      return raw ? JSON.parse(raw) : [];
-    } catch {
-      return [];
-    }
-  });
+  const [completed, setCompleted] = useState<number[]>(() => (slug ? readDone(slug, total) : []));
+  const [feedbackGiven, setFeedbackGiven] = useState<'yes' | 'no' | null>(() => (slug ? readFeedback(slug) : null));
 
-  // Feedback state
-  const [feedbackGiven, setFeedbackGiven] = useState<'yes' | 'no' | null>(null);
-
-  // Sync completed steps with localStorage
+  const update = (next: number[]) => {
+    setCompleted(next);
+    if (slug) writeDone(slug, next);
+  };
   const toggleStep = (idx: number) => {
     if (readOnly) return;
-    setCompleted((prev) => {
-      const next = prev.includes(idx) ? prev.filter((i) => i !== idx) : [...prev, idx];
-      if (storageKey) {
-        try {
-          localStorage.setItem(storageKey, JSON.stringify(next));
-        } catch {
-          // ignore
-        }
-      }
-      return next;
-    });
+    update(completed.includes(idx) ? completed.filter((i) => i !== idx) : [...completed, idx]);
   };
 
-  const markStepDone = (idx: number) => {
-    if (readOnly) return;
-    setCompleted((prev) => {
-      if (prev.includes(idx)) return prev;
-      const next = [...prev, idx];
-      if (storageKey) {
-        try {
-          localStorage.setItem(storageKey, JSON.stringify(next));
-        } catch {
-          // ignore
-        }
-      }
-      return next;
-    });
-  };
-
-  // Scroll to hash on mount
+  // Scroll to #step-N on arrival (search results link straight to a step).
   useEffect(() => {
     const hash = window.location.hash;
-    if (hash && hash.startsWith('#step-')) {
-      const el = document.querySelector(hash);
-      el?.scrollIntoView({ behavior: 'smooth' });
-    }
+    if (hash && hash.startsWith('#step-')) document.querySelector(hash)?.scrollIntoView({ behavior: 'smooth' });
   }, []);
 
-  const total = steps.length;
   const doneCount = completed.length;
+  const current = steps.findIndex((_, i) => !completed.includes(i));
+  const finished = total > 0 && current === -1;
   const progressPct = total > 0 ? Math.round((doneCount / total) * 100) : 0;
+  const progressLabel = t('stepsDone', { done: doneCount, total });
 
   const handleFeedback = (helpful: boolean) => {
-    if (!guideId) {
-      setFeedbackGiven(helpful ? 'yes' : 'no');
-      return;
-    }
+    const answer = helpful ? 'yes' : 'no';
+    const remember = () => {
+      setFeedbackGiven(answer);
+      if (slug) writeFeedback(slug, answer);
+    };
+    if (!guideId) return remember();
     run(async () => {
       await post(`/help/guides/${guideId}/feedback`, { helpful });
-      setFeedbackGiven(helpful ? 'yes' : 'no');
+      remember();
       toast(helpful ? t('feedbackThanks', 'Thank you for your feedback!') : t('feedbackSaved', 'Feedback received'));
     });
   };
 
   return (
     <div className="stack guide-steps-container">
-      {/* Overall Progress Bar */}
       {total > 0 && (
-        <div className="stack-xs" style={{ marginBottom: 'var(--space-3)' }}>
-          <span className="tiny muted">{t('guideProgress', { done: doneCount, total })}</span>
-          <div className="guide-progress-bar">
+        <div className="stack-xs">
+          <span className="small muted">{progressLabel}</span>
+          <div
+            className="guide-progress-bar"
+            role="progressbar"
+            aria-label={progressLabel}
+            aria-valuemin={0}
+            aria-valuemax={total}
+            aria-valuenow={doneCount}
+          >
             <div className="guide-progress-fill" style={{ width: `${progressPct}%` }} />
           </div>
         </div>
       )}
 
-      {/* Stepper list */}
-      <div className="guide-stepper" role="list">
+      {finished && !readOnly && (
+        <div className="guide-finish stack-xs" role="status">
+          <CheckCircle2 size={32} aria-hidden="true" />
+          <p className="bold">{t('guideFinished')}</p>
+          <div className="btn-row">
+            {nextGuide && (
+              <Link to={`/help/guides/${nextGuide.slug}`} className="btn sm primary">
+                {t('nextGuide', { title: nextGuide.title })}
+              </Link>
+            )}
+            <button type="button" className="btn sm secondary" onClick={() => update([])}>
+              {t('startAgain')}
+            </button>
+          </div>
+        </div>
+      )}
+
+      <ol className="guide-stepper" style={{ listStyle: 'none', margin: 0 }}>
         {steps.map((s, idx) => {
           const isDone = completed.includes(idx);
+          const isCurrent = idx === current && !readOnly;
           const isLast = idx === total - 1;
           const stepTitle = pick(s.title_zh, s.title_en);
           const stepBody = pick(s.body_zh, s.body_en);
+          const page = s.link ? pageKey(s.link) : undefined;
 
           return (
-            <div
+            <li
               key={idx}
               id={`step-${idx}`}
-              className="guide-step-item"
-              role="listitem"
+              className={`guide-step-item ${isDone ? 'done' : ''} ${isCurrent ? 'current' : ''}`}
+              aria-current={isCurrent ? 'step' : undefined}
             >
               {!isLast && <div className="guide-step-line" aria-hidden="true" />}
               <button
                 type="button"
                 className={`guide-step-indicator ${isDone ? 'done' : ''}`}
                 onClick={() => toggleStep(idx)}
-                aria-label={isDone ? t('markStepIncomplete', 'Mark step incomplete') : t('markStepComplete', 'Mark step complete')}
+                aria-pressed={isDone}
+                aria-label={isDone ? t('unmarkStepN', { n: idx + 1 }) : t('markStepN', { n: idx + 1 })}
                 disabled={readOnly}
               >
-                {isDone ? <Check size={16} /> : idx + 1}
+                {isDone ? <Check size={16} aria-hidden="true" /> : idx + 1}
               </button>
               <div className="guide-step-body stack-xs">
-                <div className="row between nowrap">
-                  <h4 className="bold" style={{ margin: 0 }}>
-                    {stepTitle || `${t('stepNumber', { n: idx + 1 })}`}
-                  </h4>
-                  {isDone && (
-                    <span className="tiny tone-green row nowrap gap-xs">
-                      <CheckCircle2 size={14} />
-                      <span>{t('done', 'Done')}</span>
-                    </span>
-                  )}
-                </div>
-
-                {stepBody && (
-                  <p className="muted pre-wrap" style={{ margin: 'var(--space-1) 0' }}>
-                    {stepBody}
-                  </p>
-                )}
-
+                {isCurrent && doneCount > 0 && <span className="guide-step-kicker">{t('upNext')}</span>}
+                <h4 className="bold guide-step-title">{stepTitle || t('stepNumber', { n: idx + 1 })}</h4>
+                {stepBody && <p className="muted pre-wrap guide-step-text" style={{ margin: 0 }}>{stepBody}</p>}
                 {s.link && (
                   <div style={{ marginTop: 'var(--space-2)' }}>
                     <Link
                       to={s.link}
-                      className="guide-step-link"
-                      onClick={() => markStepDone(idx)}
+                      className={`guide-step-link ${isCurrent ? 'primary' : ''}`}
+                      onClick={(e) => {
+                        if (onFollow && !readOnly) {
+                          e.preventDefault();
+                          onFollow(idx);
+                        }
+                      }}
                     >
-                      <span>{pageKey(s.link) ? t('goToPage', { page: tl(pageKey(s.link)!) }) : t('guideOpen', 'Open this page')}</span>
+                      <span>{page ? t('goToPage', { page: tl(page) }) : t('guideOpen', 'Open this page')}</span>
                       <ChevronRight size={16} aria-hidden="true" />
                     </Link>
                   </div>
                 )}
               </div>
-            </div>
+            </li>
           );
         })}
-      </div>
+      </ol>
 
-      {/* "Did this help?" Section at the end of the guide */}
       {!readOnly && (
-        <div className="card tight center stack-xs" style={{ marginTop: 'var(--space-4)', background: 'var(--surface-2)' }}>
+        <div className="guide-feedback">
           {feedbackGiven === null ? (
             <>
-              <p className="bold small">{t('didThisHelp', 'Did this help?')}</p>
-              <div className="btn-row center">
-                <Button
-                  variant="secondary"
-                  size="sm"
-                  onClick={() => handleFeedback(true)}
-                  disabled={busy}
-                  icon={<ThumbsUp size={14} />}
-                >
+              <span className="small bold">{t('didThisHelp', 'Did this guide help?')}</span>
+              <div className="btn-row">
+                <Button variant="secondary" size="sm" onClick={() => handleFeedback(true)} disabled={busy} icon={<ThumbsUp size={14} />}>
                   {t('yes', 'Yes')}
                 </Button>
-                <Button
-                  variant="secondary"
-                  size="sm"
-                  onClick={() => handleFeedback(false)}
-                  disabled={busy}
-                  icon={<ThumbsDown size={14} />}
-                >
+                <Button variant="secondary" size="sm" onClick={() => handleFeedback(false)} disabled={busy} icon={<ThumbsDown size={14} />}>
                   {t('no', 'No')}
                 </Button>
               </div>
             </>
           ) : feedbackGiven === 'yes' ? (
-            <p className="tone-green bold small">{t('feedbackThanks', 'Thank you for your feedback!')}</p>
+            <span className="small bold" style={{ color: 'var(--success)' }}>{t('feedbackThanks', 'Thank you for your feedback!')}</span>
           ) : (
-            <div className="stack-xs center">
-              <p className="muted small">{t('sorryDidntHelp', 'Sorry this guide did not help.')}</p>
+            <>
+              <span className="muted small">{t('sorryDidntHelp', 'Sorry this guide did not help.')}</span>
               {onContactUs && (
-                <Button
-                  variant="primary"
-                  size="sm"
-                  onClick={() => onContactUs(guideTitle ? `${guideTitle} (guide inquiry)` : '')}
-                >
+                <Button variant="secondary" size="sm" onClick={() => onContactUs(guideTitle ? `${guideTitle} (guide inquiry)` : '')}>
                   {t('contactUs')}
                 </Button>
               )}
-            </div>
+            </>
           )}
         </div>
       )}

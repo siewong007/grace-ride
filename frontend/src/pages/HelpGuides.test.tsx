@@ -397,6 +397,53 @@ describe('HelpGuideDetail', () => {
   });
 });
 
+describe('HelpGuideDetail progress', () => {
+  const detail = {
+    id: 1, slug: 'plan-transport', title_en: 'Plan transport', title_zh: '', summary_en: 'Walk through it', summary_zh: '',
+    published: true, audience: 'member' as const,
+    steps: [
+      { title_en: 'Find the event', title_zh: '', body_en: 'Open Events', body_zh: '', link: '/events' },
+      { title_en: 'Assign driver', title_zh: '', body_en: '', body_zh: '', link: '' },
+    ],
+  };
+  const renderDetail = () => {
+    mocks.guides = [detail as unknown as never];
+    render(
+      <MemoryRouter initialEntries={['/help/guides/plan-transport']}>
+        <Routes><Route path="/help/guides/:slug" element={<HelpGuideDetail />} /></Routes>
+      </MemoryRouter>,
+    );
+  };
+
+  it('ticks a step by number, reports progress, and shows a finish state with Start again', async () => {
+    localStorage.clear();
+    renderDetail();
+    expect(await screen.findByRole('progressbar', { name: '0 of 2 steps done' })).toHaveAttribute('aria-valuenow', '0');
+    fireEvent.click(screen.getByRole('button', { name: 'Mark step 1 done' }));
+    expect(screen.getByRole('progressbar', { name: '1 of 2 steps done' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Mark step 1 not done' })).toHaveAttribute('aria-pressed', 'true');
+    fireEvent.click(screen.getByRole('button', { name: 'Mark step 2 done' }));
+    expect(screen.getByText('You have finished this guide')).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: 'Start again' }));
+    expect(screen.queryByText('You have finished this guide')).not.toBeInTheDocument();
+  });
+
+  it('does not mark a step done just because its link was followed, and ignores out-of-range saved steps', async () => {
+    localStorage.setItem('graceride_guide_plan-transport_done', JSON.stringify([7]));
+    renderDetail();
+    expect(await screen.findByRole('progressbar', { name: '0 of 2 steps done' })).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('link', { name: /go to events/i }));
+    expect(screen.getByRole('button', { name: 'Mark step 1 done' })).toBeInTheDocument();
+  });
+
+  it('remembers the feedback answer', async () => {
+    localStorage.clear();
+    renderDetail();
+    fireEvent.click(await screen.findByRole('button', { name: 'Yes' }));
+    await waitFor(() => expect(localStorage.getItem('graceride_guide_plan-transport_fb')).toBe('yes'));
+  });
+});
+
 describe('HelpGuideEditor', () => {
   it('creates a new guide with slug auto-generation and live preview', async () => {
     mocks.allowed.add('admin_help.view');

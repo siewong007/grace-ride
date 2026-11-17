@@ -2344,69 +2344,66 @@ main:focus { outline: none; }
   }
 }
 
-/* Guide Stepper */
-.guide-stepper {
-  display: flex;
-  flex-direction: column;
-  position: relative;
-  gap: var(--space-4);
-  padding: var(--space-2) 0;
-}
-.guide-step-item {
-  display: flex;
-  gap: var(--space-3);
-  position: relative;
-}
-.guide-step-line {
-  position: absolute;
-  top: 32px;
-  bottom: -16px;
-  left: 15px;
-  width: 2px;
-  background: var(--border);
-}
+/* Guide page: numbered steps with a line down the side */
+.guide-stepper { display: flex; flex-direction: column; padding: var(--space-1) 0; }
+.guide-step-item { display: flex; gap: var(--space-3); position: relative; padding-bottom: var(--space-5); scroll-margin-top: 88px; }
+.guide-step-item:last-child { padding-bottom: 0; }
+.guide-step-line { position: absolute; top: 36px; bottom: 4px; left: 15px; width: 2px; background: var(--border); }
+.guide-step-item.done .guide-step-line { background: var(--primary); }
 .guide-step-indicator {
-  width: 32px;
-  height: 32px;
-  border-radius: 50%;
-  border: 2px solid var(--border);
-  background: var(--surface);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  font-weight: 700;
-  font-size: var(--fs-sm);
-  color: var(--muted);
-  flex-shrink: 0;
-  cursor: pointer;
-  z-index: 1;
-  transition: all var(--dur-fast) var(--ease);
+  position: relative; width: 32px; height: 32px; border-radius: 50%; border: 2px solid var(--border);
+  background: var(--surface); display: flex; align-items: center; justify-content: center;
+  font-weight: 700; font-size: var(--fs-sm); color: var(--muted); flex: none; cursor: pointer; z-index: 1;
+  transition: background var(--dur-fast) var(--ease), border-color var(--dur-fast) var(--ease);
 }
-.guide-step-indicator.done {
-  border-color: var(--primary);
-  background: var(--primary);
-  color: var(--primary-ink);
+/* 44px touch target around the 32px circle */
+.guide-step-indicator::after { content: ''; position: absolute; inset: -6px; }
+.guide-step-indicator:focus-visible { outline: 3px solid var(--primary); outline-offset: 2px; }
+.guide-step-indicator:disabled { cursor: default; }
+.guide-step-item.current .guide-step-indicator { border-color: var(--primary); color: var(--primary); }
+.guide-step-indicator.done { border-color: var(--primary); background: var(--primary); color: var(--primary-ink); }
+.guide-step-body { flex: 1; min-width: 0; padding-top: 4px; }
+.guide-step-title { margin: 0; }
+.guide-step-item.done .guide-step-title, .guide-step-item.done .guide-step-text { color: var(--muted); }
+.guide-step-item.current .guide-step-title { font-size: 1.125rem; }
+.guide-step-kicker { font-size: var(--fs-sm); font-weight: 700; color: var(--primary); text-transform: uppercase; letter-spacing: .04em; }
+.guide-step-link.primary {
+  background: var(--primary); color: var(--primary-ink); border-radius: var(--radius);
+  padding: 0 var(--space-4); text-decoration: none;
 }
-.guide-step-body {
-  flex: 1;
-  min-width: 0;
-  padding-bottom: var(--space-2);
+.guide-step-link.primary:hover { text-decoration: none; filter: brightness(1.08); }
+.guide-finish { text-align: center; background: var(--surface-2); border-radius: var(--radius); padding: var(--space-5) var(--space-4); }
+.guide-finish svg { color: var(--success); }
+.guide-feedback .btn-row > .btn { flex: 0 0 auto; }
+.guide-feedback { display: flex; align-items: center; justify-content: center; flex-wrap: wrap; gap: var(--space-2) var(--space-3); padding-top: var(--space-3); border-top: 1px solid var(--border); }
+
+/* Walkthrough card: follows you from page to page while you do the steps */
+.guide-card {
+  position: fixed; z-index: 50; left: var(--space-3); right: var(--space-3);
+  bottom: calc(var(--nav-h) + env(safe-area-inset-bottom) + var(--space-2));
+  background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-lg); display: flex; flex-direction: column; overflow: hidden;
 }
-.guide-runner-bar {
-  position: fixed;
-  left: 0;
-  right: 0;
-  bottom: 0;
-  z-index: 50;
-  background: var(--surface);
-  border-top: 1px solid var(--border);
-  box-shadow: var(--shadow-lg);
-  padding: var(--space-2) var(--space-4);
+.guide-card-head { display: flex; align-items: center; gap: var(--space-1); padding: var(--space-1) var(--space-1) 0 var(--space-4); }
+.guide-card-kicker { flex: 1; min-width: 0; display: flex; align-items: baseline; gap: .4em; font-size: var(--fs-sm); }
+.guide-card-step { font-weight: 700; color: var(--primary); white-space: nowrap; }
+.guide-card-body { padding: 0 var(--space-4) var(--space-3); max-height: 26vh; overflow-y: auto; display: flex; flex-direction: column; gap: var(--space-1); }
+.guide-card-title { margin: 0; font-size: 1.0625rem; }
+.guide-card-body p { margin: 0; color: var(--muted); }
+.guide-card-actions { display: flex; gap: var(--space-2); padding: var(--space-3) var(--space-4); border-top: 1px solid var(--border); }
+.guide-card-actions .btn { flex: 0 0 auto; }
+.guide-card-actions .btn.primary { flex: 1; }
+.guide-card.min .guide-card-head { padding-bottom: var(--space-1); }
+@media (min-width: 768px) {
+  .guide-card { left: auto; right: var(--space-6); bottom: var(--space-6); width: 380px; }
+  .guide-card-body { max-height: 30vh; }
 }
-@media (max-width: 767px) {
-  .guide-runner-bar {
-    bottom: 56px; /* Above mobile bottom nav */
-  }
+/* Leave room under the card so it never hides the end of the page, and lift toasts above it. */
+body[data-walkthrough="open"] .main { padding-bottom: calc(var(--nav-h) + env(safe-area-inset-bottom) + 18rem); }
+body[data-walkthrough="min"] .main { padding-bottom: calc(var(--nav-h) + env(safe-area-inset-bottom) + 6rem); }
+@media (max-width: 1099px) {
+  body[data-walkthrough="open"] .toast-container { bottom: calc(var(--nav-h) + env(safe-area-inset-bottom) + 18rem); }
+  body[data-walkthrough="min"] .toast-container { bottom: calc(var(--nav-h) + env(safe-area-inset-bottom) + 5rem); }
 }
 
 
@@ -2542,3 +2539,27 @@ main:focus { outline: none; }
 .help-reply-tools { align-items: center; gap: var(--space-2); }
 .guide-step-link { display: inline-flex; align-items: center; gap: 2px; color: var(--primary); font-weight: 600; text-decoration: none; min-height: 44px; }
 .guide-step-link:hover { text-decoration: underline; }
+
+/* Admin list row with text on one side and buttons on the other: on phones the buttons drop below the text. */
+.item-actions { display: flex; flex-direction: column; gap: var(--space-1); align-items: flex-end; flex: none; }
+@media (max-width: 639px) {
+  .list > .item.item-stack { flex-direction: column; align-items: stretch; }
+  .item-stack > .item-actions { align-items: stretch; }
+  .item-stack .btn-row > .btn { flex: 1 1 0; }
+}
+
+/* Save bar that stays in view while a long form (the permissions matrix) scrolls. */
+.sticky-actions {
+  position: sticky; bottom: 0; z-index: 5;
+  align-items: center; padding: var(--space-3) 0; background: var(--surface); border-top: 1px solid var(--border);
+}
+.sticky-actions-note { flex: 1 1 100%; color: var(--muted); }
+@media (max-width: 767px) {
+  .sticky-actions { bottom: calc(var(--nav-h) + env(safe-area-inset-bottom, 0px)); }
+}
+
+/* Touch screens: page buttons reach the 44px minimum. */
+@media (pointer: coarse) {
+  .pagination-btn, .pagination-page { min-height: 44px; min-width: 44px; }
+  .pagination-page { height: 44px; }
+}

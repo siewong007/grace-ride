@@ -8,7 +8,7 @@ import { Button, Card, CardSkeleton, EmptyState, ErrorBox, Notice, Page, PageHea
 import GuideSteps from '../components/GuideSteps';
 import { useGuideRunner } from '../components/GuideRunner';
 import HelpComposer from '../components/HelpComposer';
-import { GuideDetailData, usePick } from './HelpGuides';
+import { GuideDetailData, GuideSummary, usePick } from './HelpGuides';
 
 export default function HelpGuideDetail() {
   const { t } = useTranslation('help');
@@ -20,6 +20,8 @@ export default function HelpGuideDetail() {
   const { startWalkthrough } = useGuideRunner();
 
   const { data: g, error, loading } = useApi<GuideDetailData>(`/help/guides/${slug}`);
+  // The next guide for the same audience, offered once this one is finished.
+  const { data: allGuides } = useApi<GuideSummary[]>('/help/guides');
   const [composerOpen, setComposerOpen] = useState(false);
   const [composerSubject, setComposerSubject] = useState('');
 
@@ -41,6 +43,11 @@ export default function HelpGuideDetail() {
 
   const guideTitle = pick(g.title_zh, g.title_en);
   const guideSummary = pick(g.summary_zh, g.summary_en);
+
+  const list = Array.isArray(allGuides) ? allGuides.filter((x) => x.published && x.audience === g.audience) : [];
+  const at = list.findIndex((x) => x.slug === g.slug);
+  const next = at >= 0 ? list[at + 1] : undefined;
+  const nextGuide = next ? { slug: next.slug, title: pick(next.title_zh, next.title_en) } : null;
 
   const handleStartWalkthrough = () => {
     startWalkthrough(g);
@@ -99,6 +106,8 @@ export default function HelpGuideDetail() {
               guideId={g.id}
               guideTitle={guideTitle}
               onContactUs={handleContactUs}
+              onFollow={(idx) => startWalkthrough(g, idx)}
+              nextGuide={nextGuide}
             />
           )}
         </Card>

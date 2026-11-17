@@ -91,7 +91,7 @@ test('staff sees both audiences, can edit audience and follows guide links in ap
   await page.goto('/help/guides/getting-started');
   await page.getByRole('link', { name: 'Go to Events' }).click();
   await expect(page).toHaveURL(/\/events$/);
-  await expect(page.getByRole('heading', { name: /events/i })).toBeVisible();
+  await expect(page.getByRole('heading', { level: 1, name: /events/i })).toBeVisible();
 });
 
 test('audit object click sets entity and entity_id together', async ({ page }) => {

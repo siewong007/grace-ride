@@ -2,11 +2,20 @@ import { createContext, ReactNode, useContext, useEffect, useState } from 'react
 import { useLocation, useNavigate, Link } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
 import { ChevronDown, ChevronUp, ExternalLink, HelpCircle, X } from 'lucide-react';
+import { markDone } from '../guideProgress';
 import { GuideDetailData, GuideStep, GuideSummary, usePick } from '../pages/HelpGuides';
 import { Button, useToast } from './ui';
 import { useApi } from '../api';
 
 const STORAGE_KEY = 'graceride_walkthrough';
+
+/** The path part of an in-app link, without ?query or #hash. */
+const linkPath = (link: string) => link.split(/[?#]/)[0];
+/** True when the link points at the page the person is already on (a link with a ?query must match it too). */
+const isHere = (link: string, pathname: string, search: string) => {
+  const q = link.includes('?') ? `?${link.split('?')[1].split('#')[0]}` : '';
+  return linkPath(link) === pathname && (!q || q === search);
+};
 
 interface WalkthroughState {
   guide: GuideDetailData;
@@ -33,9 +42,70 @@ const GuideRunnerCtx = createContext<GuideRunnerContextType>({
 
 export const useGuideRunner = () => useContext(GuideRunnerCtx);
 
-export function GuideRunnerProvider({ children }: { children: ReactNode }) {
+function WalkthroughCard({ active, minimised, onMinimise, onPrev, onNext, onStop, hereLink }: {
+  active: WalkthroughState;
+  minimised: boolean;
+  onMinimise: (v: boolean) => void;
+  onPrev: () => void;
+  onNext: () => void;
+  onStop: () => void;
+  hereLink: (link: string) => boolean;
+}) {
   const { t } = useTranslation('help');
   const pick = usePick();
+  const { guide, stepIndex } = active;
+  const step = guide.steps[stepIndex];
+  const total = guide.steps.length;
+  const last = stepIndex === total - 1;
+  const stepTitle = pick(step?.title_zh ?? '', step?.title_en ?? '');
+  const stepBody = pick(step?.body_zh ?? '', step?.body_en ?? '');
+  const counter = t('stepOfTotal', { n: stepIndex + 1, total });
+
+  return (
+    <aside className={`guide-card ${minimised ? 'min' : ''}`} role="region" aria-label={t('walkthroughBar', 'Guide walkthrough')}>
+      <div className="guide-card-head">
+        <div className="guide-card-kicker">
+          <span className="guide-card-step">{counter}</span>
+          {!minimised && <span className="muted ellipsis"> · {pick(guide.title_zh, guide.title_en)}</span>}
+          {minimised && <span className="ellipsis"> · {stepTitle}</span>}
+        </div>
+        <button type="button" className="icon-btn sm ghost" onClick={() => onMinimise(!minimised)} aria-expanded={!minimised}
+          aria-label={minimised ? t('expandStep', 'Expand') : t('collapseStep', 'Collapse')}>
+          {minimised ? <ChevronUp size={18} aria-hidden="true" /> : <ChevronDown size={18} aria-hidden="true" />}
+        </button>
+        <button type="button" className="icon-btn sm ghost" onClick={onStop} aria-label={t('closeWalkthrough', 'Exit walkthrough')}>
+          <X size={18} aria-hidden="true" />
+        </button>
+      </div>
+
+      {!minimised && (
+        <>
+          <div className="guide-card-body">
+            <h2 className="guide-card-title">{stepTitle || t('stepNumber', { n: stepIndex + 1 })}</h2>
+            {stepBody && <p className="pre-wrap">{stepBody}</p>}
+            {step?.link && !hereLink(step.link) && (
+              <Link to={step.link} className="guide-step-link">
+                <ExternalLink size={14} aria-hidden="true" />
+                <span>{t('openStepLink', 'Open this step page')}</span>
+              </Link>
+            )}
+          </div>
+          <div className="guide-card-actions">
+            <button type="button" className="btn sm secondary" onClick={onPrev} disabled={stepIndex === 0}>
+              {t('back')}
+            </button>
+            <button type="button" className="btn sm primary" onClick={onNext}>
+              {last ? t('finish', 'Finish') : t('next', 'Next')}
+            </button>
+          </div>
+        </>
+      )}
+    </aside>
+  );
+}
+
+export function GuideRunnerProvider({ children }: { children: ReactNode }) {
+  const { t } = useTranslation('help');
   const nav = useNavigate();
   const loc = useLocation();
   const toast = useToast();
@@ -49,7 +119,7 @@ export function GuideRunnerProvider({ children }: { children: ReactNode }) {
     }
   });
 
-  const [expanded, setExpanded] = useState(false);
+  const [minimised, setMinimised] = useState(false);
 
   // Sync to sessionStorage
   useEffect(() => {
@@ -64,6 +134,15 @@ export function GuideRunnerProvider({ children }: { children: ReactNode }) {
     }
   }, [active]);
 
+  // Tell the stylesheet a card is showing, so the page leaves room under it and toasts sit above it.
+  useEffect(() => {
+    if (active) document.body.dataset.walkthrough = minimised ? 'min' : 'open';
+    else delete document.body.dataset.walkthrough;
+    return () => {
+      delete document.body.dataset.walkthrough;
+    };
+  }, [active, minimised]);
+
   // Find if any published guide has a step pointing to the current page
   const guidesApi = useApi<(GuideSummary & { steps?: GuideStep[] })[]>('/help/guides?full=true');
   const allGuides = guidesApi.data ?? [];
@@ -74,7 +153,7 @@ export function GuideRunnerProvider({ children }: { children: ReactNode }) {
 
     for (const g of allGuides) {
       if (!g.published || !g.steps) continue;
-      const stepIdx = g.steps.findIndex((s) => s.link && s.link.split('#')[0] === currentPath);
+      const stepIdx = g.steps.findIndex((s) => s.link && linkPath(s.link) === currentPath);
       if (stepIdx !== -1) {
         return { guide: g, stepIndex: stepIdx };
       }
@@ -85,11 +164,11 @@ export function GuideRunnerProvider({ children }: { children: ReactNode }) {
   const startWalkthrough = (guide: GuideDetailData, startAtStep = 0) => {
     const safeIdx = Math.max(0, Math.min(startAtStep, guide.steps.length - 1));
     setActive({ guide, stepIndex: safeIdx });
-    setExpanded(false);
+    setMinimised(false);
 
     // If starting step has a link and we're not on it, navigate
     const step = guide.steps[safeIdx];
-    if (step?.link && loc.pathname !== step.link) {
+    if (step?.link && !isHere(step.link, loc.pathname, loc.search)) {
       nav(step.link);
     }
   };
@@ -98,30 +177,16 @@ export function GuideRunnerProvider({ children }: { children: ReactNode }) {
     setActive(null);
   };
 
-  const markStepDoneInStorage = (slug: string, stepIdx: number) => {
-    const key = `graceride_guide_${slug}_done`;
-    try {
-      const raw = localStorage.getItem(key);
-      const arr: number[] = raw ? JSON.parse(raw) : [];
-      if (!arr.includes(stepIdx)) {
-        arr.push(stepIdx);
-        localStorage.setItem(key, JSON.stringify(arr));
-      }
-    } catch {
-      // ignore
-    }
-  };
-
   const nextStep = () => {
     if (!active) return;
     const { guide, stepIndex } = active;
-    markStepDoneInStorage(guide.slug, stepIndex);
+    markDone(guide.slug, stepIndex);
 
     if (stepIndex < guide.steps.length - 1) {
       const nextIdx = stepIndex + 1;
       setActive({ guide, stepIndex: nextIdx });
       const nextStepObj = guide.steps[nextIdx];
-      if (nextStepObj?.link && loc.pathname !== nextStepObj.link) {
+      if (nextStepObj?.link && !isHere(nextStepObj.link, loc.pathname, loc.search)) {
         nav(nextStepObj.link);
       }
     } else {
@@ -137,7 +202,7 @@ export function GuideRunnerProvider({ children }: { children: ReactNode }) {
     const prevIdx = active.stepIndex - 1;
     setActive({ guide: active.guide, stepIndex: prevIdx });
     const prevStepObj = active.guide.steps[prevIdx];
-    if (prevStepObj?.link && loc.pathname !== prevStepObj.link) {
+    if (prevStepObj?.link && !isHere(prevStepObj.link, loc.pathname, loc.search)) {
       nav(prevStepObj.link);
     }
   };
@@ -153,95 +218,17 @@ export function GuideRunnerProvider({ children }: { children: ReactNode }) {
         matchingGuideForPage,
       }}
     >
-      <div className={`guide-runner-container ${active ? 'has-active-walkthrough' : ''}`}>
-        {children}
-      </div>
+      {children}
 
-      {active && (
-        <aside
-          className="guide-runner-bar stack-xs"
-          role="region"
-          aria-label={t('walkthroughBar', 'Guide walkthrough')}
-        >
-          <div className="row between nowrap">
-            <div className="row nowrap gap-xs align-center min-w-0 grow">
-              <span className="bold small ellipsis">
-                {pick(active.guide.title_zh, active.guide.title_en)}
-              </span>
-              <span className="muted tiny nowrap">
-                · {t('stepNumber', { n: active.stepIndex + 1 })} / {active.guide.steps.length} ·
-              </span>
-              <span className="small bold ellipsis">
-                {pick(
-                  active.guide.steps[active.stepIndex]?.title_zh ?? '',
-                  active.guide.steps[active.stepIndex]?.title_en ?? '',
-                )}
-              </span>
-            </div>
-
-            <div className="btn-row nowrap align-center">
-              <Button
-                variant="ghost"
-                size="sm"
-                onClick={() => setExpanded(!expanded)}
-                aria-label={expanded ? t('collapseStep', 'Collapse') : t('expandStep', 'Expand')}
-              >
-                {expanded ? <ChevronDown size={16} /> : <ChevronUp size={16} />}
-              </Button>
-              <Button
-                variant="secondary"
-                size="sm"
-                onClick={prevStep}
-                disabled={active.stepIndex === 0}
-              >
-                {t('back', 'Back')}
-              </Button>
-              <Button variant="primary" size="sm" onClick={nextStep}>
-                {active.stepIndex === active.guide.steps.length - 1
-                  ? t('finish', 'Finish')
-                  : t('next', 'Next')}
-              </Button>
-              <Button
-                variant="ghost"
-                size="sm"
-                onClick={stopWalkthrough}
-                aria-label={t('closeWalkthrough', 'Exit walkthrough')}
-              >
-                <X size={16} />
-              </Button>
-            </div>
-          </div>
-
-          {expanded && (
-            <div
-              className="card tight stack-xs"
-              style={{
-                marginTop: 'var(--space-2)',
-                background: 'var(--surface-2)',
-                border: '1px solid var(--border)',
-              }}
-            >
-              <p className="muted small pre-wrap">
-                {pick(
-                  active.guide.steps[active.stepIndex]?.body_zh ?? '',
-                  active.guide.steps[active.stepIndex]?.body_en ?? '',
-                )}
-              </p>
-              {active.guide.steps[active.stepIndex]?.link && (
-                <div style={{ marginTop: 'var(--space-1)' }}>
-                  <Link
-                    to={active.guide.steps[active.stepIndex].link}
-                    className="small row nowrap gap-xs bold"
-                  >
-                    <ExternalLink size={14} />
-                    <span>{t('openStepLink', 'Open this step page')}</span>
-                  </Link>
-                </div>
-              )}
-            </div>
-          )}
-        </aside>
-      )}
+      {active && <WalkthroughCard
+        active={active}
+        minimised={minimised}
+        onMinimise={setMinimised}
+        onPrev={prevStep}
+        onNext={nextStep}
+        onStop={stopWalkthrough}
+        hereLink={(link) => isHere(link, loc.pathname, loc.search)}
+      />}
     </GuideRunnerCtx.Provider>
   );
 }
