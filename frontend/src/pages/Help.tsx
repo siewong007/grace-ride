@@ -19,6 +19,7 @@ import HelpComposer from '../components/HelpComposer';
 import HelpHome from '../components/HelpHome';
 import HelpTopicSheet, { TOPICS, TopicKey } from '../components/HelpTopicSheet';
 import GuideArranger from '../components/GuideArranger';
+import GuideListRow from '../components/GuideListRow';
 import HelpDetail from './HelpDetail';
 import { GuideStep, GuideSummary, usePick } from './HelpGuides';
 import {
@@ -29,7 +30,6 @@ import {
   ListSkeleton,
   Page,
   PageHeader,
-  Pill,
   StatusPill,
 } from '../components/ui';
 import { fmtAgo, HELP_STATUS, HELP_STATUS_STAFF, useFormatT } from '../format';
@@ -56,17 +56,6 @@ interface TicketCounts {
   open: number;
   answered: number;
   closed: number;
-}
-
-function getGuideProgress(slug: string): number {
-  try {
-    const raw = localStorage.getItem(`graceride_guide_${slug}_done`);
-    if (!raw) return 0;
-    const parsed = JSON.parse(raw);
-    return Array.isArray(parsed) ? parsed.length : 0;
-  } catch {
-    return 0;
-  }
 }
 
 function HighlightMatch({ text, query }: { text: string; query: string }) {
@@ -666,7 +655,6 @@ export default function Help() {
                 rides={memberRides}
                 requests={ownRequests}
                 guides={displayedGuides.filter((g) => g.published)}
-                guideProgress={getGuideProgress}
                 onTopic={(key, rideId) => setTopic({ key, rideId: rideId ?? null })}
               />
             )}
@@ -738,57 +726,8 @@ export default function Help() {
               ) : !displayedGuides.length ? (
                 <EmptyState title={t('guideNone')} />
               ) : (
-                <div className="grid cols-3">
-                  {displayedGuides.map((g) => {
-                    const progress = getGuideProgress(g.slug);
-                    const totalSteps = g.step_count || 1;
-                    const hasProgress = progress > 0 && progress < totalSteps;
-
-                    return (
-                      <Link
-                        key={g.id}
-                        to={`/help/guides/${g.slug}`}
-                        className="card link stack-xs min-w-0"
-                      >
-                        <div className="row between nowrap min-w-0">
-                          <div className="row nowrap gap-xs min-w-0">
-                            <BookOpen size={16} aria-hidden="true" />
-                            <span className="bold ellipsis min-w-0">{pick(g.title_zh, g.title_en)}</span>
-                          </div>
-                          {!g.published && (
-                            <Pill tone="warning">{t('guideDraft')}</Pill>
-                          )}
-                        </div>
-
-                        <p className="muted small ellipsis-2">
-                          {pick(g.summary_zh, g.summary_en)}
-                        </p>
-
-                        {hasProgress ? (
-                          <div className="stack-xs" style={{ marginTop: 'var(--space-2)' }}>
-                            <div className="row between nowrap tiny muted">
-                              <span>{t('continueGuide')}</span>
-                              <span>
-                                {t('guideProgress', { done: progress, total: totalSteps })}
-                              </span>
-                            </div>
-                            <div className="guide-progress-bar">
-                              <div
-                                className="guide-progress-fill"
-                                style={{
-                                  width: `${Math.round((progress / totalSteps) * 100)}%`,
-                                }}
-                              />
-                            </div>
-                          </div>
-                        ) : (
-                          <span className="muted tiny" style={{ marginTop: 'var(--space-2)' }}>
-                            {t('guideSteps', { count: totalSteps })}
-                          </span>
-                        )}
-                      </Link>
-                    );
-                  })}
+                <div className="help-rows">
+                  {displayedGuides.map((g) => <GuideListRow key={g.id} guide={g} />)}
                 </div>
               )}
             </section>

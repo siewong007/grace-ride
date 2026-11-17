@@ -3,13 +3,14 @@
 import { useState } from 'react';
 import { Link } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
-import { AlertTriangle, BookOpen, ChevronRight, Phone } from 'lucide-react';
+import { AlertTriangle, ChevronRight, Phone } from 'lucide-react';
 import { Ride } from './RideCard';
 import { StatusPill } from './ui';
 import { TOPICS, TopicKey } from './HelpTopicSheet';
 import { fmtAgo, fmtTime, HELP_STATUS, RIDE_STATUS, RIDE_STATUS_PASSENGER, todayStr, useFormatT } from '../format';
 import type { GuideSummary } from '../pages/HelpGuides';
-import { usePick } from '../pages/HelpGuides';
+import GuideListRow from './GuideListRow';
+import { guideStatus } from '../guideProgress';
 import type { TicketSummary } from '../pages/Help';
 
 const SHOW = 3;
@@ -19,18 +20,15 @@ export default function HelpHome({
   rides,
   requests,
   guides,
-  guideProgress,
   onTopic,
 }: {
   rides: Ride[];
   requests: TicketSummary[];
   guides: GuideSummary[];
-  guideProgress: (slug: string) => number;
   onTopic: (topic: TopicKey, rideId?: number) => void;
 }) {
   const { t } = useTranslation('help');
   const ft = useFormatT();
-  const pick = usePick();
   const [allGuides, setAllGuides] = useState(false);
   const [allRequests, setAllRequests] = useState(false);
 
@@ -48,7 +46,8 @@ export default function HelpHome({
   const shownRequests = allRequests ? rest : rest.slice(0, SHOW);
 
   // Guides already started come first.
-  const ordered = [...guides].sort((a, b) => Number(guideProgress(b.slug) > 0) - Number(guideProgress(a.slug) > 0));
+  const started = (g: GuideSummary) => Number(guideStatus(g.slug, g.step_count).state === 'started');
+  const ordered = [...guides].sort((a, b) => started(b) - started(a));
   const shownGuides = allGuides ? ordered : ordered.slice(0, SHOW);
 
   const d = todayRide?.driver;
@@ -124,22 +123,7 @@ export default function HelpHome({
             )}
           </div>
           <div className="help-rows">
-            {shownGuides.map((g) => {
-              const done = guideProgress(g.slug);
-              const total = g.step_count || 1;
-              return (
-                <Link key={g.id} to={`/help/guides/${g.slug}`} className="help-row">
-                  <span className="help-row-icon" aria-hidden="true"><BookOpen size={18} /></span>
-                  <span className="grow min-w-0">
-                    <span className="block clamp-2">{pick(g.title_zh, g.title_en)}</span>
-                    <span className="muted small block">
-                      {done > 0 && done < total ? t('guideProgress', { done, total }) : t('guideSteps', { count: total })}
-                    </span>
-                  </span>
-                  <ChevronRight size={18} className="muted" aria-hidden="true" />
-                </Link>
-              );
-            })}
+            {shownGuides.map((g) => <GuideListRow key={g.id} guide={g} showSummary={false} />)}
           </div>
         </section>
       )}

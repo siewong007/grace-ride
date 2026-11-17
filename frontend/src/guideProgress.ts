@@ -43,3 +43,10 @@ export function writeFeedback(slug: string, v: 'yes' | 'no') {
     // not remembered
   }
 }
+
+/** Where someone is in a guide, safe against guides that have since gained or lost steps. */
+export function guideStatus(slug: string, total: number): { done: number; total: number; state: 'new' | 'started' | 'finished' } {
+  const t = Math.max(total, 1);
+  const done = readDone(slug, t).length;
+  return { done, total: t, state: done === 0 ? 'new' : done >= t ? 'finished' : 'started' };
+}

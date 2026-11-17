@@ -2563,3 +2563,4 @@ body[data-walkthrough="min"] .main { padding-bottom: calc(var(--nav-h) + env(saf
   .pagination-btn, .pagination-page { min-height: 44px; min-width: 44px; }
   .pagination-page { height: 44px; }
 }
+.guide-card-all { color: var(--primary); font-weight: 600; min-height: 44px; display: inline-flex; align-items: center; }

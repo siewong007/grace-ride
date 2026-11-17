@@ -83,12 +83,14 @@ function WalkthroughCard({ active, minimised, onMinimise, onPrev, onNext, onStop
           <div className="guide-card-body">
             <h2 className="guide-card-title">{stepTitle || t('stepNumber', { n: stepIndex + 1 })}</h2>
             {stepBody && <p className="pre-wrap">{stepBody}</p>}
+            {!step?.link && <p className="small">{t('stepHere')}</p>}
             {step?.link && !hereLink(step.link) && (
               <Link to={step.link} className="guide-step-link">
                 <ExternalLink size={14} aria-hidden="true" />
                 <span>{t('openStepLink', 'Open this step page')}</span>
               </Link>
             )}
+            <Link to={`/help/guides/${guide.slug}`} className="small guide-card-all">{t('seeAllSteps')}</Link>
           </div>
           <div className="guide-card-actions">
             <button type="button" className="btn sm secondary" onClick={onPrev} disabled={stepIndex === 0}>
@@ -236,18 +238,20 @@ export function GuideRunnerProvider({ children }: { children: ReactNode }) {
 /** Small button for PageHeader when a guide links to the current page */
 export function PageHeaderGuideButton() {
   const { t } = useTranslation('help');
-  const { matchingGuideForPage, startWalkthrough } = useGuideRunner();
+  const { active, matchingGuideForPage, startWalkthrough } = useGuideRunner();
+  const pick = usePick();
   const { data: fullGuide } = useApi<GuideDetailData>(
     matchingGuideForPage ? `/help/guides/${matchingGuideForPage.guide.slug}` : null,
   );
 
-  if (!matchingGuideForPage || !fullGuide) return null;
+  if (active || !matchingGuideForPage || !fullGuide) return null;
 
   return (
     <Button
       variant="ghost"
       size="sm"
       icon={<HelpCircle size={14} />}
+      aria-label={t('pageGuideNamed', { title: pick(fullGuide.title_zh, fullGuide.title_en) })}
       onClick={() => startWalkthrough(fullGuide, matchingGuideForPage.stepIndex)}
     >
       {t('pageGuideBtn', 'Guide')}
