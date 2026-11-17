@@ -5,6 +5,7 @@ import {
   LayoutGrid, LifeBuoy, PanelLeftClose, PanelLeftOpen, Search, Receipt, ShieldAlert, User, Wallet, BarChart3, WifiOff,
 } from 'lucide-react';
 import { useAuth } from '../auth';
+import { BackNavigationProvider, getDefaultBack, SwipeBackGesture, useSmartBack } from './BackNavigation';
 import { LogoMark, Wordmark } from './Brand';
 import { GuideHeaderActionContext, PageChromeContext } from './PageChrome';
 import { TermsGate } from './Terms';
@@ -33,7 +34,7 @@ function getPageTitle(pathname: string, t: (key: string) => string): string {
   if (pathname.startsWith('/events/')) return t('eventDetail');
   if (pathname === '/events') return t('events');
   if (pathname === '/costs') return t('myCosts');
-  if (pathname === '/reimbursements') return t('reimbursements');
+  if (pathname.startsWith('/reimbursements')) return t('reimbursements');
   if (pathname === '/report') return t('myReport');
   if (pathname === '/help/guides/new') return t('guideNew');
   if (pathname.includes('/help/guides/') && pathname.endsWith('/edit')) return t('guideEdit');
@@ -41,7 +42,7 @@ function getPageTitle(pathname: string, t: (key: string) => string): string {
   if (pathname.startsWith('/help/')) return t('ticketDetail');
   if (pathname === '/help') return t('help');
   if (pathname === '/drive') return t('drive');
-  if (pathname === '/settlements') return t('settlements');
+  if (pathname.startsWith('/settlements')) return t('settlements');
   if (pathname === '/notifications') return t('notifications');
   if (pathname === '/me') return t('profile');
   if (pathname === '/admin/menu') return t('adminSheetTitle');
@@ -61,6 +62,14 @@ function getPageTitle(pathname: string, t: (key: string) => string): string {
 }
 
 export default function Layout() {
+  return (
+    <BackNavigationProvider>
+      <LayoutInner />
+    </BackNavigationProvider>
+  );
+}
+
+function LayoutInner() {
   const { t } = useTranslation('layout');
   const { t: tc } = useTranslation();
   const { me, can } = useAuth();
@@ -73,9 +82,23 @@ export default function Layout() {
   const [isOffline, setIsOffline] = useState(typeof navigator !== 'undefined' ? !navigator.onLine : false);
   const chrome = useMemo(() => ({ setBack, setHeadingVisible }), []);
   const [jumpOpen, setJumpOpen] = useState(false);
-  const openJump = useCallback(() => setJumpOpen(true), []);
+  const openJump = useCallback(() => {
+    try {
+      if (localStorage.getItem('gr_locked_user')) return;
+    } catch {
+      /* ignore */
+    }
+    setJumpOpen(true);
+  }, []);
   useQuickJumpShortcut(openJump);
   const { staffGroups, staff, staffWaiting, helpDesk } = useStaffNav();
+  const isHome = loc.pathname === '/';
+  const pending = me?.status === 'pending';
+  const effectiveBack = !isHome && !pending ? (back ?? getDefaultBack(loc.pathname, can)) : null;
+  const smartBack = useSmartBack(effectiveBack, {
+    disabled: !effectiveBack,
+    isAuthenticated: Boolean(me),
+  });
   // On tablets the sidebar is a rail of icons; this opens it to show the names. Remembered per device.
   const [railOpen, setRailOpen] = useState(() => {
     try {
@@ -120,7 +143,6 @@ export default function Layout() {
 
   if (!me) return null;
   if (!me.terms_accepted) return <TermsGate />;
-  const pending = me.status === 'pending';
   if (pending && loc.pathname !== '/me') return <Navigate to="/me" replace />;
   const sz = 20;
 
@@ -167,7 +189,6 @@ export default function Layout() {
   );
 
   const unreadLabel = me.unread ? t('unread', { count: me.unread }) : '';
-  const isHome = loc.pathname === '/';
   const pageTitle = getPageTitle(loc.pathname, t);
 
   return (
@@ -215,8 +236,13 @@ export default function Layout() {
               </Link>
             ) : (
               <>
-                {back && (
-                  <Link to={back} className="icon-btn topbar-back hide-tablet-up" aria-label={tc('back')}>
+                {effectiveBack && (
+                  <Link
+                    to={smartBack.href}
+                    onClick={smartBack.onClick}
+                    className="icon-btn topbar-back"
+                    aria-label={tc('back')}
+                  >
                     <ArrowLeft size={22} />
                   </Link>
                 )}
@@ -339,6 +365,7 @@ export default function Layout() {
           onClose={() => setJumpOpen(false)}
         />
       )}
+      <SwipeBackGesture enabled={Boolean(effectiveBack)} onBack={smartBack.goBack} />
     </div>
   );
 }

@@ -239,7 +239,11 @@ pub fn ride_json(r: &RideRow, u: &CurrentUser) -> Value {
         "pickup_at": r.pickup_at,
         "area": {"id": r.pickup_area_id, "name": r.area_name},
         "pickup_address": if show_address { Some(r.pickup_address.clone()) } else { None },
-        "destination": r.destination,
+        "destination": if !show_address && r.leg == "return" {
+            r.area_name.clone()
+        } else {
+            r.destination.clone()
+        },
         "seats": r.seats,
         "assistance": r.assistance,
         "notes": r.notes,
@@ -398,6 +402,48 @@ struct CreateRide {
     return_destination: Option<String>,
 }
 
+/// Normalize UI assistance chips or free text into the canonical DB enum (`'' | wheelchair |
+/// stroller | oxygen | other`) while preserving richer descriptive details in `notes`.
+pub(crate) fn normalize_assistance(raw: &str, notes: &str) -> (String, String) {
+    let trimmed = raw.trim();
+    let clean_notes = notes.trim();
+    if trimmed.is_empty() {
+        return (String::new(), clean_notes.to_string());
+    }
+    let lower = trimmed.to_ascii_lowercase();
+    if matches!(
+        lower.as_str(),
+        "wheelchair" | "stroller" | "oxygen" | "other"
+    ) {
+        return (lower, clean_notes.to_string());
+    }
+    let canonical = if lower.contains("wheelchair") || trimmed.contains("轮椅") {
+        "wheelchair"
+    } else if lower.contains("stroller")
+        || lower.contains("child seat")
+        || lower.contains("child_seat")
+        || lower.contains("infant")
+        || lower.contains("baby")
+        || trimmed.contains("婴儿")
+        || trimmed.contains("儿童座椅")
+        || trimmed.contains("安全座椅")
+    {
+        "stroller"
+    } else if lower.contains("oxygen") || trimmed.contains("氧") {
+        "oxygen"
+    } else {
+        "other"
+    };
+    let merged_notes = if clean_notes.is_empty() {
+        trimmed.to_string()
+    } else if clean_notes.contains(trimmed) {
+        clean_notes.to_string()
+    } else {
+        format!("{trimmed} · {clean_notes}")
+    };
+    (canonical.to_string(), merged_notes)
+}
+
 async fn create_ride(
     State(st): State<AppState>,
     u: CurrentUser,
@@ -425,6 +471,9 @@ async fn create_ride(
         .filter(|s| !s.is_empty())
     {
         Some(raw) => {
+            if leg == "return" {
+                return Err(bad(u.lang, ErrorKey::InvalidAction));
+            }
             let parsed = norm_dt(raw).ok_or_else(|| bad(u.lang, ErrorKey::InvalidPickupTime))?;
             if parsed <= at {
                 return Err(bad(u.lang, ErrorKey::InvalidPickupTime));
@@ -550,8 +599,10 @@ async fn create_ride(
         return Err(bad(u.lang, ErrorKey::RiderNameRequired));
     }
     let is_proxy_int = if is_proxy { 1i64 } else { 0i64 };
-    let assistance = req.assistance.unwrap_or_default();
-    let notes = req.notes.as_deref().unwrap_or_default().to_string();
+    let (assistance, notes) = normalize_assistance(
+        req.assistance.as_deref().unwrap_or_default(),
+        req.notes.as_deref().unwrap_or_default(),
+    );
 
     let (id,): (i64,) = sqlx::query_as(
         "INSERT INTO rides (passenger_id, event_id, pickup_at, pickup_area_id, pickup_address, destination, seats, assistance, notes, is_proxy, rider_name, rider_phone, rider_relationship, created_at, updated_at, as_group_id, leg)
@@ -684,6 +735,18 @@ pub(crate) async fn notify_area_drivers(
     rider_label: &str,
     seats: i64,
 ) -> AppResult<()> {
+    notify_area_drivers_pool(&st.db, area, match_group, passenger, at, rider_label, seats).await
+}
+
+pub(crate) async fn notify_area_drivers_pool(
+    db: &PgPool,
+    area: i64,
+    match_group: Option<i64>,
+    passenger: i64,
+    at: &str,
+    rider_label: &str,
+    seats: i64,
+) -> AppResult<()> {
     let drivers: Vec<(i64,)> = sqlx::query_as(
         "WITH RECURSIVE up AS (
              SELECT $3::BIGINT AS id WHERE $3::BIGINT IS NOT NULL
@@ -697,12 +760,12 @@ pub(crate) async fn notify_area_drivers(
     .bind(area)
     .bind(passenger)
     .bind(match_group)
-    .fetch_all(&st.db)
+    .fetch_all(db)
     .await?;
     let when = format!("{} · {} · {} 位", at.replace('T', " "), rider_label, seats);
     for (d,) in drivers {
         notify(
-            &st.db,
+            db,
             d,
             ("新的接送报名", "New ride request"),
             (&when, &when),
@@ -776,13 +839,38 @@ async fn my_rides(
         .collect::<Vec<_>>())))
 }
 
+async fn is_active_caregiver_for_ride(st: &AppState, r: &RideRow, user_id: i64) -> AppResult<bool> {
+    if user_id == r.passenger_id {
+        return Ok(false);
+    }
+    let hit: Option<i64> = sqlx::query_scalar(
+        "SELECT 1
+         FROM users cg
+         WHERE cg.id = $1 AND cg.status = 'active'
+           AND (
+               EXISTS (SELECT 1 FROM users p WHERE p.id = $2 AND p.caregiver_user_id = $1)
+               OR ($3 = 1 AND $4 <> '' AND EXISTS (
+                   SELECT 1 FROM proxy_riders pr
+                   WHERE pr.user_id = $2 AND pr.name = $4 AND pr.caregiver_user_id = $1
+               ))
+           )",
+    )
+    .bind(user_id)
+    .bind(r.passenger_id)
+    .bind(r.is_proxy)
+    .bind(&r.rider_name)
+    .fetch_optional(&st.db)
+    .await?;
+    Ok(hit.is_some())
+}
+
 async fn get_ride(
     State(st): State<AppState>,
     u: CurrentUser,
     Path(id): Path<i64>,
 ) -> AppResult<Json<Value>> {
     let r = load_ride(&st, u.lang, id).await?;
-    if !can_view(&r, &u) {
+    if !can_view(&r, &u) && !is_active_caregiver_for_ride(&st, &r, u.id).await? {
         return Err(forbidden(u.lang, ErrorKey::CannotViewRide));
     }
     let mut v = ride_json(&r, &u);
@@ -887,6 +975,22 @@ async fn cancel_ride(
             &format!("/admin/rides/{id}"),
         )
         .await;
+    }
+    if r.leg == "outbound" {
+        if let Some(paired_id) = r.paired_ride_id {
+            let _ = sqlx::query(
+                "UPDATE rides
+                 SET needs_attention=1,
+                     attention_reason=COALESCE(NULLIF(attention_reason,''), '去程已取消，请确认返程接送 / Outbound ride cancelled; confirm return leg'),
+                     updated_at=$1
+                 WHERE id=$2 AND leg='return' AND driver_id IS NOT NULL
+                   AND status NOT IN ('completed','cancelled','no_show','alt_transport')",
+            )
+            .bind(now())
+            .bind(paired_id)
+            .execute(&st.db)
+            .await;
+        }
     }
     audit(&st.db, Some(u.id), "ride.cancel", "ride", Some(id), reason).await;
     Ok(Json(json!({"ok": true})))
@@ -1106,6 +1210,22 @@ pub(crate) async fn apply_readiness(
                             rider_disp
                         ),
                     )
+                    .await;
+                }
+            }
+            if r.leg == "outbound" {
+                if let Some(paired_id) = r.paired_ride_id {
+                    let _ = sqlx::query(
+                        "UPDATE rides
+                         SET needs_attention=1,
+                             attention_reason=COALESCE(NULLIF(attention_reason,''), '去程乘客无法出席，请确认返程接送 / Outbound passenger unable to join; confirm return leg'),
+                             updated_at=$1
+                         WHERE id=$2 AND leg='return' AND driver_id IS NOT NULL
+                           AND status NOT IN ('completed','cancelled','no_show','alt_transport')",
+                    )
+                    .bind(now())
+                    .bind(paired_id)
+                    .execute(&st.db)
                     .await;
                 }
             }
@@ -1622,13 +1742,23 @@ async fn new_trip_id(conn: &mut sqlx::PgConnection, ride_id: i64) -> AppResult<i
 /// same moment join the same trip instead of each opening their own.
 async fn assign_trip(conn: &mut sqlx::PgConnection, r: &RideRow) -> AppResult<i64> {
     let existing: Option<(i64,)> = sqlx::query_as(
-        "SELECT trip_id FROM rides WHERE driver_id=$1 AND id != $2 AND trip_id IS NOT NULL AND status IN ('confirmed','in_progress')
-         AND destination = $3 AND abs(EXTRACT(EPOCH FROM (pickup_at::timestamp - $4::timestamp))) < 3600 LIMIT 1",
+        "SELECT trip_id FROM rides
+         WHERE driver_id=$1 AND id != $2 AND trip_id IS NOT NULL AND status IN ('confirmed','in_progress')
+           AND leg = $5
+           AND (
+               (leg <> 'return' AND destination = $3)
+               OR (leg = 'return' AND (($6::BIGINT IS NOT NULL AND event_id = $6) OR pickup_address = $7))
+           )
+           AND abs(EXTRACT(EPOCH FROM (pickup_at::timestamp - $4::timestamp))) < 3600
+         LIMIT 1",
     )
     .bind(r.driver_id)
     .bind(r.id)
     .bind(&r.destination)
     .bind(&r.pickup_at)
+    .bind(&r.leg)
+    .bind(r.event_id)
+    .bind(&r.pickup_address)
     .fetch_optional(&mut *conn)
     .await?;
     let trip = match existing {
@@ -1922,6 +2052,11 @@ async fn pickup(
     } else {
         r.p_name.clone()
     };
+    let dest_disp = if r.leg == "return" {
+        &r.area_name
+    } else {
+        &r.destination
+    };
     if r.is_proxy == 1 {
         notify(
             &st.db,
@@ -1930,11 +2065,11 @@ async fn pickup(
             (
                 &format!(
                     "{} 已由司机 {} 接上车，正在前往 {}。",
-                    rider_disp, u.name, r.destination
+                    rider_disp, u.name, dest_disp
                 ),
                 &format!(
                     "{} has been picked up by {} and is heading to {}.",
-                    rider_disp, u.name, r.destination
+                    rider_disp, u.name, dest_disp
                 ),
             ),
             &format!("/rides/{id}"),
@@ -1950,11 +2085,11 @@ async fn pickup(
             (
                 &format!(
                     "{} 已由司机 {} 接上车，正在前往 {}。",
-                    rider_disp, u.name, r.destination
+                    rider_disp, u.name, dest_disp
                 ),
                 &format!(
                     "{} has been picked up by {} and is heading to {}.",
-                    rider_disp, u.name, r.destination
+                    rider_disp, u.name, dest_disp
                 ),
             ),
             &format!("/rides/{id}"),
@@ -1967,19 +2102,23 @@ async fn pickup(
 
 async fn caregiver_ids_for_ride(st: &AppState, r: &RideRow) -> Vec<i64> {
     let mut ids = Vec::new();
-    if let Ok(Some(Some(cg))) =
-        sqlx::query_scalar::<_, Option<i64>>("SELECT caregiver_user_id FROM users WHERE id=$1")
-            .bind(r.passenger_id)
-            .fetch_optional(&st.db)
-            .await
+    if let Ok(Some(cg)) = sqlx::query_scalar::<_, i64>(
+        "SELECT cg.id FROM users u JOIN users cg ON cg.id = u.caregiver_user_id
+         WHERE u.id=$1 AND cg.status = 'active'",
+    )
+    .bind(r.passenger_id)
+    .fetch_optional(&st.db)
+    .await
     {
         if cg != r.passenger_id && !ids.contains(&cg) {
             ids.push(cg);
         }
     }
     if r.is_proxy == 1 && !r.rider_name.is_empty() {
-        if let Ok(Some(Some(cg))) = sqlx::query_scalar::<_, Option<i64>>(
-            "SELECT caregiver_user_id FROM proxy_riders WHERE user_id=$1 AND name=$2",
+        if let Ok(Some(cg)) = sqlx::query_scalar::<_, i64>(
+            "SELECT cg.id FROM proxy_riders p JOIN users cg ON cg.id = p.caregiver_user_id
+             WHERE p.user_id=$1 AND p.name=$2 AND cg.status = 'active'
+             ORDER BY p.id ASC LIMIT 1",
         )
         .bind(r.passenger_id)
         .bind(&r.rider_name)
@@ -2168,13 +2307,18 @@ async fn complete(
         } else {
             r.p_name.clone()
         };
+        let dest_disp = if r.leg == "return" {
+            &r.area_name
+        } else {
+            &r.destination
+        };
         crate::util::notify_many(
             &st.db,
             &caregivers,
             ("平安抵达通知", "Safe arrival"),
             (
-                &format!("{} 已安全抵达 {}。", rider_disp, r.destination),
-                &format!("{} has arrived safely at {}.", rider_disp, r.destination),
+                &format!("{} 已安全抵达 {}。", rider_disp, dest_disp),
+                &format!("{} has arrived safely at {}.", rider_disp, dest_disp),
             ),
             &format!("/rides/{id}"),
         )
@@ -2346,6 +2490,7 @@ async fn get_driver_profile(State(st): State<AppState>, u: CurrentUser) -> AppRe
             "plate": p,
             "seats": s,
             "type": t,
+            "vehicle_type": t,
             "wheelchair_ok": w == 1,
             "low_step": l == 1,
             "child_seat": cs == 1,
@@ -2435,8 +2580,17 @@ async fn put_driver_profile(
             return Err(bad(u.lang, ErrorKey::VehicleSeatsRange));
         }
         sqlx::query(
-            "INSERT INTO vehicles (user_id, model, color, plate, seats, vehicle_type, wheelchair_ok, low_step, child_seat) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)
-             ON CONFLICT(user_id) DO UPDATE SET model=excluded.model, color=excluded.color, plate=excluded.plate, seats=excluded.seats, vehicle_type=excluded.vehicle_type, wheelchair_ok=excluded.wheelchair_ok, low_step=excluded.low_step, child_seat=excluded.child_seat",
+            "INSERT INTO vehicles (user_id, model, color, plate, seats, vehicle_type, wheelchair_ok, low_step, child_seat)
+             VALUES ($1,$2,$3,$4,$5,$6,COALESCE($7, 0),COALESCE($8, 0),COALESCE($9, 0))
+             ON CONFLICT(user_id) DO UPDATE SET
+                 model=excluded.model,
+                 color=excluded.color,
+                 plate=excluded.plate,
+                 seats=excluded.seats,
+                 vehicle_type=excluded.vehicle_type,
+                 wheelchair_ok=COALESCE($7, vehicles.wheelchair_ok),
+                 low_step=COALESCE($8, vehicles.low_step),
+                 child_seat=COALESCE($9, vehicles.child_seat)",
         )
         .bind(u.id)
         .bind(v.model.trim())
@@ -2444,9 +2598,9 @@ async fn put_driver_profile(
         .bind(v.plate.trim().to_uppercase())
         .bind(v.seats)
         .bind(&v.vehicle_type)
-        .bind(if v.wheelchair_ok.unwrap_or(false) { 1i64 } else { 0i64 })
-        .bind(if v.low_step.unwrap_or(false) { 1i64 } else { 0i64 })
-        .bind(if v.child_seat.unwrap_or(false) { 1i64 } else { 0i64 })
+        .bind(v.wheelchair_ok.map(|b| if b { 1i64 } else { 0i64 }))
+        .bind(v.low_step.map(|b| if b { 1i64 } else { 0i64 }))
+        .bind(v.child_seat.map(|b| if b { 1i64 } else { 0i64 }))
         .execute(&mut *tx)
         .await?;
         detail.push_str(&format!(
@@ -3335,14 +3489,76 @@ async fn list_proxy_riders(State(st): State<AppState>, u: CurrentUser) -> AppRes
     Ok(Json(json!(rows)))
 }
 
+struct ProxyFields<'a> {
+    name: &'a str,
+    phone: &'a str,
+    relationship: &'a str,
+    notes: &'a str,
+    pickup_address: &'a str,
+    gate_notes: &'a str,
+    area_id: Option<i64>,
+    caregiver_user_id: Option<i64>,
+}
+
+async fn validate_proxy_fields(db: &PgPool, u: &CurrentUser, f: &ProxyFields<'_>) -> AppResult<()> {
+    crate::util::check_name(u.lang, f.name)?;
+    crate::util::check_phone(u.lang, f.phone)?;
+    if f.relationship.chars().count() > 60
+        || f.notes.chars().count() > 500
+        || f.pickup_address.chars().count() > 200
+        || f.gate_notes.chars().count() > 300
+    {
+        return Err(bad(u.lang, ErrorKey::InvalidAction));
+    }
+    if let Some(aid) = f.area_id {
+        let ok: Option<(i64,)> = sqlx::query_as("SELECT id FROM areas WHERE id=$1 AND active=1")
+            .bind(aid)
+            .fetch_optional(db)
+            .await?;
+        if ok.is_none() {
+            return Err(bad(u.lang, ErrorKey::PickupAreaRequired));
+        }
+    }
+    if let Some(cg) = f.caregiver_user_id {
+        if cg == u.id {
+            return Err(bad(u.lang, ErrorKey::InvalidAction));
+        }
+        let ok: Option<(i64,)> = sqlx::query_as(
+            "SELECT cg.id FROM users cg
+             WHERE cg.id=$1 AND cg.status='active'
+               AND EXISTS (
+                   SELECT 1 FROM group_members g1
+                   JOIN group_members g2 ON g2.group_id = g1.group_id
+                   WHERE g1.user_id = $1 AND g2.user_id = $2
+               )",
+        )
+        .bind(cg)
+        .bind(u.id)
+        .fetch_optional(db)
+        .await?;
+        if ok.is_none() {
+            return Err(bad(u.lang, ErrorKey::InvalidAction));
+        }
+    }
+    Ok(())
+}
+
 async fn create_proxy_rider(
     State(st): State<AppState>,
     u: CurrentUser,
     Json(req): Json<CreateProxyRiderReq>,
 ) -> AppResult<Json<Value>> {
+    require(&u, Page::Rides, Act::Create)?;
     let name = req.name.trim();
     if name.is_empty() {
         return Err(bad(u.lang, ErrorKey::RiderNameRequired));
+    }
+    let count: (i64,) = sqlx::query_as("SELECT COUNT(*) FROM proxy_riders WHERE user_id=$1")
+        .bind(u.id)
+        .fetch_one(&st.db)
+        .await?;
+    if count.0 >= 50 {
+        return Err(bad(u.lang, ErrorKey::InvalidAction));
     }
     let phone = req.phone.map(|s| s.trim().to_string()).unwrap_or_default();
     let relationship = req
@@ -3358,16 +3574,21 @@ async fn create_proxy_rider(
         .gate_notes
         .map(|s| s.trim().to_string())
         .unwrap_or_default();
-    if let Some(cg) = req.caregiver_user_id {
-        let ok: Option<(i64,)> =
-            sqlx::query_as("SELECT id FROM users WHERE id=$1 AND status='active'")
-                .bind(cg)
-                .fetch_optional(&st.db)
-                .await?;
-        if ok.is_none() {
-            return Err(bad(u.lang, ErrorKey::InvalidAction));
-        }
-    }
+    validate_proxy_fields(
+        &st.db,
+        &u,
+        &ProxyFields {
+            name,
+            phone: &phone,
+            relationship: &relationship,
+            notes: &notes,
+            pickup_address: &pickup_address,
+            gate_notes: &gate_notes,
+            area_id: req.area_id,
+            caregiver_user_id: req.caregiver_user_id,
+        },
+    )
+    .await?;
     let (id,): (i64,) = sqlx::query_as(
         "INSERT INTO proxy_riders (user_id, name, phone, relationship, notes, area_id, pickup_address, gate_notes, caregiver_user_id, created_at, updated_at)
          VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11) RETURNING id",
@@ -3394,25 +3615,31 @@ async fn update_proxy_rider(
     Path(id): Path<i64>,
     Json(req): Json<CreateProxyRiderReq>,
 ) -> AppResult<Json<Value>> {
+    require(&u, Page::Rides, Act::Update)?;
     let name = req.name.trim();
     if name.is_empty() {
         return Err(bad(u.lang, ErrorKey::RiderNameRequired));
-    }
-    if let Some(cg) = req.caregiver_user_id {
-        let ok: Option<(i64,)> =
-            sqlx::query_as("SELECT id FROM users WHERE id=$1 AND status='active'")
-                .bind(cg)
-                .fetch_optional(&st.db)
-                .await?;
-        if ok.is_none() {
-            return Err(bad(u.lang, ErrorKey::InvalidAction));
-        }
     }
     let phone = req.phone.unwrap_or_default().trim().to_string();
     let relationship = req.relationship.unwrap_or_default().trim().to_string();
     let notes = req.notes.unwrap_or_default().trim().to_string();
     let pickup_address = req.pickup_address.unwrap_or_default().trim().to_string();
     let gate_notes = req.gate_notes.unwrap_or_default().trim().to_string();
+    validate_proxy_fields(
+        &st.db,
+        &u,
+        &ProxyFields {
+            name,
+            phone: &phone,
+            relationship: &relationship,
+            notes: &notes,
+            pickup_address: &pickup_address,
+            gate_notes: &gate_notes,
+            area_id: req.area_id,
+            caregiver_user_id: req.caregiver_user_id,
+        },
+    )
+    .await?;
     let row: Option<ProxyRiderRow> = sqlx::query_as(
         "UPDATE proxy_riders
          SET name=$1, phone=$2, relationship=$3, notes=$4, area_id=$5, pickup_address=$6, gate_notes=$7, caregiver_user_id=$8, updated_at=$9
@@ -3502,13 +3729,27 @@ async fn create_saved_place(
     u: CurrentUser,
     Json(req): Json<SavedPlaceIn>,
 ) -> AppResult<Json<Value>> {
+    require(&u, Page::Rides, Act::Create)?;
     let label = req.label.trim();
     let address = req.address.trim();
-    if label.is_empty() || label.chars().count() > 40 || address.is_empty() {
+    let gate_notes = req.gate_notes.unwrap_or_default().trim().to_string();
+    if label.is_empty()
+        || label.chars().count() > 40
+        || address.is_empty()
+        || address.chars().count() > 200
+        || gate_notes.chars().count() > 300
+    {
         return Err(bad(u.lang, ErrorKey::AddressAndDestinationRequired));
     }
+    let count: (i64,) = sqlx::query_as("SELECT COUNT(*) FROM saved_places WHERE user_id=$1")
+        .bind(u.id)
+        .fetch_one(&st.db)
+        .await?;
+    if count.0 >= 50 {
+        return Err(bad(u.lang, ErrorKey::InvalidAction));
+    }
     if let Some(aid) = req.area_id {
-        let ok: Option<(i64,)> = sqlx::query_as("SELECT id FROM areas WHERE id=$1")
+        let ok: Option<(i64,)> = sqlx::query_as("SELECT id FROM areas WHERE id=$1 AND active=1")
             .bind(aid)
             .fetch_optional(&st.db)
             .await?;
@@ -3542,7 +3783,7 @@ async fn create_saved_place(
     .bind(label)
     .bind(req.area_id)
     .bind(address)
-    .bind(req.gate_notes.unwrap_or_default().trim())
+    .bind(&gate_notes)
     .bind(lat)
     .bind(lng)
     .bind(is_def)
@@ -3560,10 +3801,26 @@ async fn update_saved_place(
     Path(id): Path<i64>,
     Json(req): Json<SavedPlaceIn>,
 ) -> AppResult<Json<Value>> {
+    require(&u, Page::Rides, Act::Update)?;
     let label = req.label.trim();
     let address = req.address.trim();
-    if label.is_empty() || label.chars().count() > 40 || address.is_empty() {
+    let gate_notes = req.gate_notes.unwrap_or_default().trim().to_string();
+    if label.is_empty()
+        || label.chars().count() > 40
+        || address.is_empty()
+        || address.chars().count() > 200
+        || gate_notes.chars().count() > 300
+    {
         return Err(bad(u.lang, ErrorKey::AddressAndDestinationRequired));
+    }
+    if let Some(aid) = req.area_id {
+        let ok: Option<(i64,)> = sqlx::query_as("SELECT id FROM areas WHERE id=$1 AND active=1")
+            .bind(aid)
+            .fetch_optional(&st.db)
+            .await?;
+        if ok.is_none() {
+            return Err(bad(u.lang, ErrorKey::PickupAreaRequired));
+        }
     }
     let cached: Option<(Option<f64>, Option<f64>)> =
         sqlx::query_as("SELECT lat, lng FROM geocode_cache WHERE query=$1")
@@ -3590,7 +3847,7 @@ async fn update_saved_place(
     .bind(label)
     .bind(req.area_id)
     .bind(address)
-    .bind(req.gate_notes.unwrap_or_default().trim())
+    .bind(&gate_notes)
     .bind(lat)
     .bind(lng)
     .bind(is_def)
@@ -3706,7 +3963,11 @@ async fn create_recurring_schedule(
 ) -> AppResult<Json<Value>> {
     match req.kind.as_str() {
         "passenger" => require(&u, Page::Rides, Act::Create)?,
-        "driver" => require(&u, Page::Drive, Act::Update)?,
+        "driver" => {
+            if !u.can(Page::Drive, Act::Create) && !u.can(Page::Drive, Act::Update) {
+                return Err(forbidden(u.lang, ErrorKey::OnlyVolunteerDriversCanSet));
+            }
+        }
         _ => return Err(bad(u.lang, ErrorKey::InvalidAction)),
     }
     if !(0..=6).contains(&req.weekday) {
@@ -3735,6 +3996,10 @@ async fn create_recurring_schedule(
     } else {
         0i64
     };
+    let (assistance, notes) = normalize_assistance(
+        req.assistance.as_deref().unwrap_or_default(),
+        req.notes.as_deref().unwrap_or_default(),
+    );
     let (id,): (i64,) = sqlx::query_as(
         "INSERT INTO recurring_ride_schedules (user_id, kind, label, weekday, pickup_time, area_id, pickup_address, destination, seats, assistance, notes, lead_days, active, created_at, updated_at)
          VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15) RETURNING id",
@@ -3748,8 +4013,8 @@ async fn create_recurring_schedule(
     .bind(&pickup_address)
     .bind(&destination)
     .bind(seats)
-    .bind(req.assistance.unwrap_or_default().trim())
-    .bind(req.notes.unwrap_or_default().trim())
+    .bind(&assistance)
+    .bind(&notes)
     .bind(lead_days)
     .bind(active)
     .bind(now())
@@ -3767,7 +4032,11 @@ async fn update_recurring_schedule(
 ) -> AppResult<Json<Value>> {
     match req.kind.as_str() {
         "passenger" => require(&u, Page::Rides, Act::Update)?,
-        "driver" => require(&u, Page::Drive, Act::Update)?,
+        "driver" => {
+            if !u.can(Page::Drive, Act::Create) && !u.can(Page::Drive, Act::Update) {
+                return Err(forbidden(u.lang, ErrorKey::OnlyVolunteerDriversCanSet));
+            }
+        }
         _ => return Err(bad(u.lang, ErrorKey::InvalidAction)),
     }
     if !(0..=6).contains(&req.weekday) {
@@ -3796,6 +4065,10 @@ async fn update_recurring_schedule(
     } else {
         0i64
     };
+    let (assistance, notes) = normalize_assistance(
+        req.assistance.as_deref().unwrap_or_default(),
+        req.notes.as_deref().unwrap_or_default(),
+    );
     let res = sqlx::query(
         "UPDATE recurring_ride_schedules
          SET kind=$1, label=$2, weekday=$3, pickup_time=$4, area_id=$5, pickup_address=$6, destination=$7,
@@ -3810,8 +4083,8 @@ async fn update_recurring_schedule(
     .bind(&pickup_address)
     .bind(&destination)
     .bind(seats)
-    .bind(req.assistance.unwrap_or_default().trim())
-    .bind(req.notes.unwrap_or_default().trim())
+    .bind(&assistance)
+    .bind(&notes)
     .bind(lead_days)
     .bind(active)
     .bind(now())
@@ -3858,6 +4131,7 @@ struct ActiveScheduleRow {
     assistance: String,
     notes: String,
     lead_days: i64,
+    active: i64,
     last_generated_date: Option<String>,
 }
 
@@ -3866,21 +4140,44 @@ async fn apply_recurring_schedule_for_date(
     s: &ActiveScheduleRow,
     target_date: &str,
 ) -> anyhow::Result<Option<i64>> {
-    let claimed: Option<(i64,)> = sqlx::query_as(
-        "UPDATE recurring_ride_schedules SET last_generated_date=$1, updated_at=$2
-         WHERE id=$3 AND last_generated_date IS DISTINCT FROM $1 RETURNING id",
+    let mut tx = db.begin().await?;
+    let locked: Option<(i64, Option<String>)> = sqlx::query_as(
+        "SELECT active, last_generated_date FROM recurring_ride_schedules WHERE id=$1 FOR UPDATE",
     )
-    .bind(target_date)
-    .bind(now())
     .bind(s.id)
-    .fetch_optional(db)
+    .fetch_optional(&mut *tx)
     .await?;
-    if claimed.is_none() {
+    let Some((active, last_gen)) = locked else {
+        return Ok(None);
+    };
+    if active != 1 || last_gen.as_deref().is_some_and(|d| d >= target_date) {
         return Ok(None);
     }
 
     if s.kind == "passenger" {
         let pickup_at = format!("{target_date}T{}", s.pickup_time);
+        let existing_count: (i64,) = sqlx::query_as(
+            "SELECT COUNT(*) FROM rides
+             WHERE passenger_id=$1 AND pickup_at=$2
+               AND status NOT IN ('cancelled','no_show','alt_transport')",
+        )
+        .bind(s.user_id)
+        .bind(&pickup_at)
+        .fetch_one(&mut *tx)
+        .await?;
+        sqlx::query(
+            "UPDATE recurring_ride_schedules SET last_generated_date=$1, updated_at=$2 WHERE id=$3",
+        )
+        .bind(target_date)
+        .bind(now())
+        .bind(s.id)
+        .execute(&mut *tx)
+        .await?;
+        if existing_count.0 > 0 {
+            tx.commit().await?;
+            return Ok(None);
+        }
+        let (assistance, notes) = normalize_assistance(&s.assistance, &s.notes);
         let (ride_id,): (i64,) = sqlx::query_as(
             "INSERT INTO rides (passenger_id, pickup_at, pickup_area_id, pickup_address, destination, seats, assistance, notes, created_at, updated_at)
              VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10) RETURNING id",
@@ -3891,12 +4188,13 @@ async fn apply_recurring_schedule_for_date(
         .bind(&s.pickup_address)
         .bind(&s.destination)
         .bind(s.seats)
-        .bind(&s.assistance)
-        .bind(&s.notes)
+        .bind(&assistance)
+        .bind(&notes)
         .bind(now())
         .bind(now())
-        .fetch_one(db)
+        .fetch_one(&mut *tx)
         .await?;
+        tx.commit().await?;
         audit(
             db,
             Some(s.user_id),
@@ -3927,16 +4225,41 @@ async fn apply_recurring_schedule_for_date(
             &format!("/rides/{ride_id}"),
         )
         .await;
+        let _ = notify_area_drivers_pool(
+            db,
+            s.area_id,
+            None,
+            s.user_id,
+            &pickup_at,
+            &s.user_name,
+            s.seats,
+        )
+        .await;
         Ok(Some(ride_id))
     } else {
-        let (open,): (i64,) = sqlx::query_as(
-            "SELECT COUNT(*) FROM rides WHERE status='pending_driver' AND pickup_area_id=$1 AND substr(pickup_at,1,10)=$2 AND passenger_id != $3",
+        sqlx::query(
+            "UPDATE recurring_ride_schedules SET last_generated_date=$1, updated_at=$2 WHERE id=$3",
         )
-        .bind(s.area_id)
         .bind(target_date)
-        .bind(s.user_id)
-        .fetch_one(db)
+        .bind(now())
+        .bind(s.id)
+        .execute(&mut *tx)
         .await?;
+        tx.commit().await?;
+        let (_, drive_scope) = crate::audience::group_scopes(db, s.user_id).await?;
+        let open_sql = format!(
+            "SELECT COUNT(*) FROM rides r
+             WHERE r.status='pending_driver' AND r.pickup_area_id=$1
+               AND substr(r.pickup_at,1,10)=$2 AND r.passenger_id != $3
+               AND ({MATCH_GROUP_SQL} IS NULL OR {MATCH_GROUP_SQL} = ANY($4))"
+        );
+        let (open,): (i64,) = sqlx::query_as(&open_sql)
+            .bind(s.area_id)
+            .bind(target_date)
+            .bind(s.user_id)
+            .bind(&drive_scope)
+            .fetch_one(db)
+            .await?;
         let label = if s.label.is_empty() {
             s.area_name.clone()
         } else {
@@ -3967,16 +4290,18 @@ async fn apply_recurring_schedule_for_date(
 pub async fn process_recurring_schedules(db: &PgPool) -> anyhow::Result<usize> {
     let today = crate::util::today_local();
     let now_hm = crate::util::local_now().format("%H:%M").to_string();
-    let rows: Vec<ActiveScheduleRow> = sqlx::query_as(
+    let query_sql = format!(
         "SELECT s.id, s.user_id, u.name AS user_name, s.kind, s.label, s.weekday, s.pickup_time, s.area_id, a.name AS area_name,
-                s.pickup_address, s.destination, s.seats, s.assistance, s.notes, s.lead_days, s.last_generated_date
+                s.pickup_address, s.destination, s.seats, s.assistance, s.notes, s.lead_days, s.active, s.last_generated_date
          FROM recurring_ride_schedules s
          JOIN users u ON u.id = s.user_id
          JOIN areas a ON a.id = s.area_id
-         WHERE s.active = 1 AND u.status = 'active' AND a.active = 1",
-    )
-    .fetch_all(db)
-    .await?;
+         WHERE s.active = 1 AND u.status = 'active' AND a.active = 1
+           AND ((s.kind = 'passenger' AND {}) OR (s.kind = 'driver' AND {}))",
+        perms::sql_holds("u", Perm(Page::Rides, Act::Create)),
+        perms::sql_holds("u", Perm(Page::Drive, Act::Create)),
+    );
+    let rows: Vec<ActiveScheduleRow> = sqlx::query_as(&query_sql).fetch_all(db).await?;
 
     let mut count = 0usize;
     for s in rows {
@@ -3989,8 +4314,11 @@ pub async fn process_recurring_schedules(db: &PgPool) -> anyhow::Result<usize> {
                 continue;
             }
             let target_str = d.format("%Y-%m-%d").to_string();
-            if s.last_generated_date.as_deref() == Some(target_str.as_str()) {
-                break;
+            if s.last_generated_date
+                .as_deref()
+                .is_some_and(|last| last >= target_str.as_str())
+            {
+                continue;
             }
             if apply_recurring_schedule_for_date(db, &s, &target_str)
                 .await?
@@ -4011,7 +4339,7 @@ async fn generate_recurring_schedule(
 ) -> AppResult<Json<Value>> {
     let row: Option<(ActiveScheduleRow, i64)> = sqlx::query_as::<_, ActiveScheduleRow>(
         "SELECT s.id, s.user_id, u.name AS user_name, s.kind, s.label, s.weekday, s.pickup_time, s.area_id, a.name AS area_name,
-                s.pickup_address, s.destination, s.seats, s.assistance, s.notes, s.lead_days, s.last_generated_date
+                s.pickup_address, s.destination, s.seats, s.assistance, s.notes, s.lead_days, s.active, s.last_generated_date
          FROM recurring_ride_schedules s
          JOIN users u ON u.id = s.user_id
          JOIN areas a ON a.id = s.area_id
@@ -4033,8 +4361,15 @@ async fn generate_recurring_schedule(
     let (s, area_active) = row.ok_or_else(|| not_found(u.lang))?;
     match s.kind.as_str() {
         "passenger" => require(&u, Page::Rides, Act::Create)?,
-        "driver" => require(&u, Page::Drive, Act::Update)?,
+        "driver" => {
+            if !u.can(Page::Drive, Act::Create) && !u.can(Page::Drive, Act::Update) {
+                return Err(forbidden(u.lang, ErrorKey::OnlyVolunteerDriversCanSet));
+            }
+        }
         _ => return Err(bad(u.lang, ErrorKey::InvalidAction)),
+    }
+    if s.active != 1 {
+        return Err(bad(u.lang, ErrorKey::InvalidAction));
     }
     if area_active != 1 {
         return Err(bad(u.lang, ErrorKey::PickupAreaRequired));
@@ -4043,7 +4378,7 @@ async fn generate_recurring_schedule(
     let today = crate::util::today_local();
     let now_hm = crate::util::local_now().format("%H:%M").to_string();
     let mut chosen: Option<String> = None;
-    for offset in 0..=7 {
+    for offset in 0..=s.lead_days.max(7) {
         let d = today + chrono::Duration::days(offset);
         if d.weekday().num_days_from_sunday() as i64 != s.weekday {
             continue;
@@ -4099,7 +4434,18 @@ pub async fn event_moved(
     if old_place != new_place {
         sqlx::query(
             "UPDATE rides SET destination=$1, updated_at=$2
-             WHERE event_id=$3 AND status = ANY($4) AND destination=$5",
+             WHERE event_id=$3 AND leg='outbound' AND status = ANY($4) AND destination=$5",
+        )
+        .bind(new_place)
+        .bind(now())
+        .bind(event_id)
+        .bind(&statuses)
+        .bind(old_place)
+        .execute(&mut *tx)
+        .await?;
+        sqlx::query(
+            "UPDATE rides SET pickup_address=$1, updated_at=$2
+             WHERE event_id=$3 AND leg='return' AND status = ANY($4) AND pickup_address=$5",
         )
         .bind(new_place)
         .bind(now())
@@ -4129,6 +4475,33 @@ pub async fn event_moved(
         .bind(&statuses)
         .execute(&mut *tx)
         .await?;
+        if let (Some(old_dt), Some(new_dt)) =
+            (crate::util::parse_dt(old_at), crate::util::parse_dt(new_at))
+        {
+            let delta = new_dt - old_dt;
+            if delta > chrono::Duration::zero() {
+                let open_passes: Vec<(i64, String)> = sqlx::query_as(
+                    "SELECT cp.id, cp.valid_until
+                     FROM caregiver_passes cp
+                     JOIN rides r ON r.id = cp.ride_id
+                     WHERE r.event_id=$1 AND r.status = ANY($2) AND cp.closed_at IS NULL",
+                )
+                .bind(event_id)
+                .bind(&statuses)
+                .fetch_all(&mut *tx)
+                .await?;
+                for (cp_id, vu) in open_passes {
+                    if let Some(vu_dt) = crate::util::parse_dt(&vu) {
+                        let shifted = (vu_dt + delta).format("%Y-%m-%dT%H:%M:%S").to_string();
+                        sqlx::query("UPDATE caregiver_passes SET valid_until=$1 WHERE id=$2")
+                            .bind(shifted)
+                            .bind(cp_id)
+                            .execute(&mut *tx)
+                            .await?;
+                    }
+                }
+            }
+        }
     }
     let drivers: Vec<(i64,)> = sqlx::query_as(
         "SELECT DISTINCT driver_id FROM rides

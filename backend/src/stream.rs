@@ -84,7 +84,7 @@ enum Tick {
 pub async fn session_alive(db: &sqlx::PgPool, session_id: &str) -> bool {
     sqlx::query_scalar::<_, i64>(
         "SELECT COUNT(*) FROM sessions s JOIN users u ON u.id = s.user_id
-         WHERE s.token = $1 AND s.expires_at > $2 AND u.status IN ('active', 'pending')",
+         WHERE s.token = $1 AND s.expires_at > $2 AND s.locked_at IS NULL AND u.status IN ('active', 'pending')",
     )
     .bind(session_id)
     .bind(crate::util::now())
@@ -92,6 +92,16 @@ pub async fn session_alive(db: &sqlx::PgPool, session_id: &str) -> bool {
     .await
     // A database hiccup keeps the stream; only a clear "gone" ends it.
     .map_or(true, |n| n > 0)
+}
+
+/// Checks session liveness including server-enforced idle auto-lock.
+async fn session_alive_checked(st: &AppState, session_id: &str) -> bool {
+    if !session_alive(&st.db, session_id).await {
+        return false;
+    }
+    crate::security::evaluate_session_lock(st, session_id, false)
+        .await
+        .is_none()
 }
 
 pub async fn handler(
@@ -115,15 +125,15 @@ pub async fn handler(
     });
     // Signing out, a session running out, or an admin disabling the member closes the
     // stream within a minute instead of leaving it open until the tab closes.
-    let db = st.db.clone();
+    let state = st.clone();
     let session_id = u.session_id.clone();
     let mut checks =
         tokio::time::interval_at(tokio::time::Instant::now() + SESSION_CHECK, SESSION_CHECK);
     checks.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
     let checks = IntervalStream::new(checks).then(move |_| {
-        let db = db.clone();
+        let state = state.clone();
         let session_id = session_id.clone();
-        async move { Tick::Session(session_alive(&db, &session_id).await) }
+        async move { Tick::Session(session_alive_checked(&state, &session_id).await) }
     });
     let stream = pushes
         .merge(checks)

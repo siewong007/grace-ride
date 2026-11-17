@@ -33,11 +33,13 @@ self.addEventListener('fetch', (event) => {
   }
 
   if (request.mode === 'navigate') {
+    const isSensitiveRoute =
+      /^\/(care|visit|invite|recover)\//.test(url.pathname) || url.searchParams.has('code');
     event.respondWith(
       fetch(request)
         .then((res) => {
           const ct = res.headers.get('content-type') || '';
-          if (res.ok && ct.includes('text/html')) {
+          if (!isSensitiveRoute && res.ok && ct.includes('text/html')) {
             const copy = res.clone();
             // Store under canonical '/index.html' rather than request.url so bearer
             // capability URLs (/care/:token, /visit/:token, /invite/:token, ?code=)
@@ -100,13 +102,17 @@ self.addEventListener('message', (event) => {
 function safeTargetUrl(raw) {
   try {
     const resolved = new URL(typeof raw === 'string' && raw ? raw : '/notifications', self.location.origin);
-    if (resolved.origin === self.location.origin) {
-      return resolved.pathname + resolved.search + resolved.hash;
+    if (
+      resolved.origin === self.location.origin &&
+      !resolved.pathname.startsWith('//') &&
+      !resolved.pathname.startsWith('/api/')
+    ) {
+      return resolved.href;
     }
   } catch {
     // Fall back to /notifications below.
   }
-  return '/notifications';
+  return `${self.location.origin}/notifications`;
 }
 
 self.addEventListener('notificationclick', (event) => {

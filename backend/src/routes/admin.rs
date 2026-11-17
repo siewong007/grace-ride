@@ -564,6 +564,14 @@ async fn update_user(
             .bind(id)
             .execute(&mut *tx)
             .await?;
+        sqlx::query("UPDATE users SET calendar_token_hash=NULL WHERE id=$1")
+            .bind(id)
+            .execute(&mut *tx)
+            .await?;
+        sqlx::query("DELETE FROM push_subscriptions WHERE user_id=$1")
+            .bind(id)
+            .execute(&mut *tx)
+            .await?;
         // A disabled driver can no longer drive: rides not yet started go back to the
         // pool, flagged for transport staff, instead of waiting on someone who can't act.
         released = sqlx::query_scalar(
@@ -1138,7 +1146,11 @@ async fn approve_recovery(
         .bind(uid)
         .execute(&mut *tx)
         .await?;
-    sqlx::query("UPDATE users SET totp_enabled=0, totp_secret=NULL, totp_last_step=0, totp_backup_codes=NULL WHERE id=$1")
+    sqlx::query("UPDATE users SET totp_enabled=0, totp_secret=NULL, totp_last_step=0, totp_backup_codes=NULL, calendar_token_hash=NULL WHERE id=$1")
+        .bind(uid)
+        .execute(&mut *tx)
+        .await?;
+    sqlx::query("DELETE FROM push_subscriptions WHERE user_id=$1")
         .bind(uid)
         .execute(&mut *tx)
         .await?;
@@ -1697,7 +1709,7 @@ async fn update_system_settings(
     if !(1..=100).contains(&req.max_live_drivers) {
         return Err(bad(u.lang, ErrorKey::InvalidAction));
     }
-    if !(0..=1440).contains(&session_timeout) {
+    if !(1..=1440).contains(&session_timeout) {
         return Err(bad(u.lang, ErrorKey::InvalidAction));
     }
 
@@ -1760,6 +1772,13 @@ fn month_window(month: &str) -> Option<(String, String)> {
     Some((format!("{y:04}-{m:02}-01"), format!("{ey:04}-{em:02}-01")))
 }
 
+pub(crate) fn has_global_report_scope(u: &CurrentUser) -> bool {
+    u.traffic_is_global()
+        || u.can(Page::AdminReimbPay, Act::View)
+        || u.can(Page::AdminBills, Act::View)
+        || u.can(Page::AdminEvents, Act::View)
+}
+
 async fn demand_report(
     State(st): State<AppState>,
     u: CurrentUser,
@@ -1767,19 +1786,20 @@ async fn demand_report(
 ) -> AppResult<Json<Value>> {
     require(&u, Page::AdminReports, Act::View)?;
 
-    let (start, end, period_label) = match (q.from.as_deref(), q.to.as_deref()) {
+    let (start, end, display_to, period_label) = match (q.from.as_deref(), q.to.as_deref()) {
         (Some(f), Some(t)) => {
             let fd = NaiveDate::parse_from_str(f.trim(), "%Y-%m-%d")
                 .map_err(|_| bad(u.lang, ErrorKey::InvalidAction))?;
             let td = NaiveDate::parse_from_str(t.trim(), "%Y-%m-%d")
                 .map_err(|_| bad(u.lang, ErrorKey::InvalidAction))?;
-            if td < fd {
+            if td < fd || (td - fd).num_days() > 366 {
                 return Err(bad(u.lang, ErrorKey::InvalidAction));
             }
             let end_d = td.succ_opt().unwrap_or(td);
             (
                 fd.format("%Y-%m-%d").to_string(),
                 end_d.format("%Y-%m-%d").to_string(),
+                td.format("%Y-%m-%d").to_string(),
                 format!("{}..{}", f.trim(), t.trim()),
             )
         }
@@ -1793,7 +1813,8 @@ async fn demand_report(
                 .unwrap_or_else(|| now()[..7].to_string());
             let (s, e) =
                 month_window(&m).ok_or_else(|| bad(u.lang, ErrorKey::MonthFormatInvalid))?;
-            (s, e, m)
+            let d_to = e.clone();
+            (s, e, d_to, m)
         }
     };
 
@@ -1811,16 +1832,24 @@ async fn demand_report(
         leg: String,
     }
 
+    let scope_creator: Option<i64> = if has_global_report_scope(&u) {
+        None
+    } else {
+        Some(u.id)
+    };
+
     let rows: Vec<DemandRow> = sqlx::query_as(
         "SELECT r.pickup_area_id AS area_id, COALESCE(a.name, '') AS area_zh, COALESCE(a.name, '') AS area_en,
                 r.pickup_at, r.status, r.driver_id, r.passenger_id, r.seats AS seats_needed,
                 COALESCE(r.assistance, '') AS assistance, COALESCE(r.leg, 'outbound') AS leg
          FROM rides r
          LEFT JOIN areas a ON a.id = r.pickup_area_id
-         WHERE r.pickup_at >= $1 AND r.pickup_at < $2",
+         WHERE r.pickup_at >= $1 AND r.pickup_at < $2
+           AND ($3::BIGINT IS NULL OR r.event_id IN (SELECT id FROM events WHERE created_by = $3))",
     )
     .bind(&start)
     .bind(&end)
+    .bind(scope_creator)
     .fetch_all(&st.db)
     .await?;
 
@@ -1854,7 +1883,7 @@ async fn demand_report(
         let is_cancelled = r.status == "cancelled";
         let is_closed_alt = matches!(r.status.as_str(), "no_show" | "alt_transport");
         let is_unfilled = !is_cancelled && !is_closed_alt && r.driver_id.is_none();
-        let is_fulfilled = !is_cancelled && r.driver_id.is_some();
+        let is_fulfilled = matches!(r.status.as_str(), "confirmed" | "in_progress" | "completed");
 
         if is_cancelled {
             if r.driver_id.is_none() {
@@ -1876,7 +1905,9 @@ async fn demand_report(
                 unfilled += 1;
                 seats_unfilled += r.seats_needed;
             }
-            if r.assistance.to_ascii_lowercase().contains("wheelchair") {
+            if r.assistance.to_ascii_lowercase().contains("wheelchair")
+                || r.assistance.contains("轮椅")
+            {
                 wheelchair_requests += 1;
             }
             if r.leg == "return" {
@@ -1986,7 +2017,7 @@ async fn demand_report(
     Ok(Json(json!({
         "period": period_label,
         "from": start,
-        "to": end,
+        "to": display_to,
         "totals": {
             "total_requests": total_requests,
             "fulfilled": fulfilled,
@@ -2003,6 +2034,31 @@ async fn demand_report(
         "by_area": area_list,
         "by_slot": slot_list,
     })))
+}
+
+fn mask_webhook_url(raw: &str) -> String {
+    let trimmed = raw.trim();
+    if trimmed.is_empty() {
+        return String::new();
+    }
+    if let Ok(parsed) = url::Url::parse(trimmed) {
+        let host = parsed.host_str().unwrap_or("");
+        let port = parsed.port().map(|p| format!(":{p}")).unwrap_or_default();
+        return format!("{}://{host}{port}/***", parsed.scheme());
+    }
+    "***".to_string()
+}
+
+fn validate_telegram_bot_token(tok: &str) -> bool {
+    let Some((bot_id, secret)) = tok.split_once(':') else {
+        return false;
+    };
+    !bot_id.is_empty()
+        && bot_id.bytes().all(|b| b.is_ascii_digit())
+        && secret.len() >= 10
+        && secret
+            .bytes()
+            .all(|b| b.is_ascii_alphanumeric() || b == b'_' || b == b'-')
 }
 
 async fn get_alert_settings(State(st): State<AppState>, u: CurrentUser) -> AppResult<Json<Value>> {
@@ -2030,7 +2086,8 @@ async fn get_alert_settings(State(st): State<AppState>, u: CurrentUser) -> AppRe
     Ok(Json(json!({
         "telegram_bot_configured": tg_configured,
         "telegram_bot_username": tg_username,
-        "alert_webhook_url": webhook_url,
+        "alert_webhook_configured": !webhook_url.trim().is_empty(),
+        "alert_webhook_url": mask_webhook_url(&webhook_url),
         "vapid_public_key": vapid_public_key,
     })))
 }
@@ -2041,6 +2098,7 @@ struct UpdateAlertSettingsIn {
     clear_telegram_bot_token: Option<bool>,
     telegram_bot_username: Option<String>,
     alert_webhook_url: Option<String>,
+    clear_alert_webhook_url: Option<bool>,
     vapid_public_key: Option<String>,
 }
 
@@ -2050,6 +2108,27 @@ async fn update_alert_settings(
     Json(req): Json<UpdateAlertSettingsIn>,
 ) -> AppResult<Json<Value>> {
     require(&u, Page::AdminSettings, Act::Update)?;
+
+    if let Some(tok) = req
+        .telegram_bot_token
+        .as_deref()
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+    {
+        if !req.clear_telegram_bot_token.unwrap_or(false) && !validate_telegram_bot_token(tok) {
+            return Err(bad(u.lang, ErrorKey::InvalidAction));
+        }
+    }
+
+    let clear_webhook = req.clear_alert_webhook_url.unwrap_or(false);
+    let new_webhook = req.alert_webhook_url.as_deref().map(str::trim);
+    if !clear_webhook {
+        if let Some(cleaned) = new_webhook.filter(|s| !s.is_empty()) {
+            if !crate::util::validate_webhook_target(cleaned, st.cfg.dev_mode).await {
+                return Err(bad(u.lang, ErrorKey::InvalidAction));
+            }
+        }
+    }
 
     let mut tx = st.db.begin().await?;
     if req.clear_telegram_bot_token.unwrap_or(false) {
@@ -2082,14 +2161,11 @@ async fn update_alert_settings(
         .await?;
     }
 
-    if let Some(url) = req.alert_webhook_url.as_deref() {
-        let cleaned = url.trim();
-        if !cleaned.is_empty()
-            && !cleaned.starts_with("https://")
-            && !cleaned.starts_with("http://")
-        {
-            return Err(bad(u.lang, ErrorKey::InvalidAction));
-        }
+    if clear_webhook || new_webhook == Some("") {
+        sqlx::query("DELETE FROM app_secrets WHERE name='alert_webhook_url'")
+            .execute(&mut *tx)
+            .await?;
+    } else if let Some(cleaned) = new_webhook.filter(|s| !s.is_empty()) {
         sqlx::query(
             "INSERT INTO app_secrets (name, value) VALUES ('alert_webhook_url', $1)
              ON CONFLICT (name) DO UPDATE SET value = EXCLUDED.value",

@@ -20,6 +20,7 @@ import HelpHome from '../components/HelpHome';
 import HelpTopicSheet, { TOPICS, TopicKey } from '../components/HelpTopicSheet';
 import GuideArranger from '../components/GuideArranger';
 import GuideListRow from '../components/GuideListRow';
+import { PageChromeContext } from '../components/PageChrome';
 import HelpDetail from './HelpDetail';
 import { GuideStep, GuideSummary, usePick } from './HelpGuides';
 import {
@@ -556,14 +557,16 @@ export default function Help() {
                     {/* Right Pane: Selected Thread */}
                     <div className="help-two-pane-right">
                       {selectedTicketId ? (
-                        <HelpDetail
-                          ticketId={selectedTicketId}
-                          isTwoPane
-                          onStatusChange={() => {
-                            staffRequestsApi.reload();
-                            countsApi.reload();
-                          }}
-                        />
+                        <PageChromeContext.Provider value={null}>
+                          <HelpDetail
+                            ticketId={selectedTicketId}
+                            isTwoPane
+                            onStatusChange={() => {
+                              staffRequestsApi.reload();
+                              countsApi.reload();
+                            }}
+                          />
+                        </PageChromeContext.Provider>
                       ) : (
                         <Card className="stack center pad-lg">
                           <p className="muted">{t('selectTicket', 'Select a request to view')}</p>

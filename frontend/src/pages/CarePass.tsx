@@ -7,7 +7,7 @@ import { PublicDisplayBar } from '../components/AppChrome';
 import { LogoMark, Wordmark } from '../components/Brand';
 import LiveMap from '../components/LiveMap';
 import { Button, ErrorBox, Notice, Pill, Spinner, StatusPill, useAction } from '../components/ui';
-import { fmtAgo, fmtDateTime, parseLocal, RIDE_STATUS_PASSENGER, useFormatT } from '../format';
+import { fmtAgo, fmtDateTime, parseLocal, RIDE_STATUS_PASSENGER, todayStr, useFormatT } from '../format';
 
 interface CareStatus {
   ride_id: number;
@@ -59,14 +59,17 @@ export default function CarePass() {
   const { token } = useParams();
   const { t } = useTranslation('visit');
   const ft = useFormatT();
-  const { data, error, loading, reload } = useApi<CareStatus>(token ? `/care/${token}` : null, 15000);
+  const { data, error, loading, reload } = useApi<CareStatus>(token ? `/care/${token}` : null);
   const { busy, error: actErr, run } = useAction();
 
+  const stopped = Boolean(error) || data?.status === 'completed';
   useEffect(() => {
-    if (!token) return;
-    const id = setInterval(() => document.visibilityState === 'visible' && reload(), 15000);
+    if (!token || stopped) return;
+    const id = setInterval(() => {
+      if (document.visibilityState === 'visible') void reload();
+    }, 15000);
     return () => clearInterval(id);
-  }, [token, reload]);
+  }, [token, stopped, reload]);
 
   if (loading && !data) return <CareShell><Spinner /></CareShell>;
   if (error || !data) {
@@ -82,7 +85,11 @@ export default function CarePass() {
 
   const aboard = !!data.picked_up_at;
   const completed = data.status === 'completed';
-  const canRespond = !completed && (data.status === 'confirmed' || data.status === 'in_progress') && !aboard;
+  const canRespond =
+    !completed &&
+    !aboard &&
+    (data.status === 'in_progress' ||
+      (data.status === 'confirmed' && data.pickup_at.slice(0, 10) <= todayStr()));
   const send = (status: string, done: string) =>
     run(() => post(`/care/${token}/readiness`, { status }).then(reload), done);
 

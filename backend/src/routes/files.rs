@@ -445,21 +445,67 @@ async fn extract_ref(
     Path(id): Path<i64>,
     body: Bytes,
 ) -> AppResult<Json<Value>> {
-    if !can_access_file(&st, &u, id).await? {
+    use tokio::io::AsyncReadExt;
+
+    let file_row: Option<(i64, String, String)> =
+        sqlx::query_as("SELECT owner_id, stored_name, original_name FROM files WHERE id=$1")
+            .bind(id)
+            .fetch_optional(&st.db)
+            .await?;
+    let Some((owner_id, stored, name)) = file_row else {
+        return Err(not_found(u.lang));
+    };
+
+    let mut allowed = owner_id == u.id;
+    if !allowed
+        && (u.can(Page::AdminBills, Act::View)
+            || u.can(Page::AdminReimbReview, Act::View)
+            || u.can(Page::AdminReimbPay, Act::View))
+        && can_access_file(&st, &u, id).await?
+    {
+        let finance_doc: i64 = sqlx::query_scalar(
+            "SELECT (SELECT COUNT(*) FROM reimbursements WHERE receipt_file_id=$1)
+                  + (SELECT COUNT(*) FROM settlement_items WHERE receipt_file_id=$1)
+                  + (SELECT COUNT(*) FROM settlement_shares WHERE proof_file_id=$1)",
+        )
+        .bind(id)
+        .fetch_one(&st.db)
+        .await?;
+        allowed = finance_doc > 0;
+    }
+    if !allowed {
+        let organizer_doc: i64 = sqlx::query_scalar(
+            "SELECT COUNT(*) FROM settlement_shares sh JOIN settlements s ON s.id=sh.settlement_id
+             WHERE sh.proof_file_id=$1 AND s.created_by=$2",
+        )
+        .bind(id)
+        .bind(u.id)
+        .fetch_one(&st.db)
+        .await?;
+        allowed = organizer_doc > 0;
+    }
+    if !allowed {
         return Err(forbidden(u.lang, ErrorKey::CannotViewFile));
     }
-    let (stored, _mime, name): (String, String, String) =
-        sqlx::query_as("SELECT stored_name, mime, original_name FROM files WHERE id=$1")
-            .bind(id)
-            .fetch_one(&st.db)
-            .await?;
+
     let extra = serde_json::from_slice::<ExtractRefIn>(&body)
         .ok()
         .and_then(|v| v.text);
-    let data = tokio::fs::read(st.cfg.upload_dir.join(&stored))
-        .await
-        .unwrap_or_default();
-    let candidates = extract_receipt_ref(&data, &name, extra.as_deref());
+    let mut data = Vec::new();
+    if let Ok(f) = tokio::fs::File::open(st.cfg.upload_dir.join(&stored)).await {
+        let _ = f.take(512 * 1024).read_to_end(&mut data).await;
+    }
+    let safe_name: String = name
+        .chars()
+        .map(|c| {
+            if c.is_ascii_alphanumeric() || c == '-' || c == '_' {
+                c
+            } else {
+                ' '
+            }
+        })
+        .collect();
+    let candidates = extract_receipt_ref(&data, &safe_name, extra.as_deref());
     let best = candidates.first().cloned().unwrap_or_default();
     Ok(Json(json!({
         "ref": best,

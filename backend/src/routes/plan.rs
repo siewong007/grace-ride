@@ -145,20 +145,18 @@ async fn plan_drivers(st: &AppState) -> AppResult<Vec<PlanDriver>> {
     .await?)
 }
 
-/// Seats and bookings each driver already holds outside this event, around its pickup times.
-async fn other_load(
+/// Seats and bookings each driver already holds outside this event, partitioned by leg window.
+struct OtherLegLoad {
+    outbound: HashMap<i64, (i64, i64)>,
+    ret: HashMap<i64, (i64, i64)>,
+}
+
+async fn query_other_window(
     st: &AppState,
     event: i64,
-    rides: &[PlanRide],
-    starts_at: &str,
+    from: &str,
+    to: &str,
 ) -> AppResult<HashMap<i64, (i64, i64)>> {
-    let (from, to) = match (
-        rides.iter().map(|r| r.pickup_at.as_str()).min(),
-        rides.iter().map(|r| r.pickup_at.as_str()).max(),
-    ) {
-        (Some(a), Some(b)) => (a.to_string(), b.to_string()),
-        _ => (starts_at.to_string(), starts_at.to_string()),
-    };
     let rows: Vec<(i64, i64, i64)> = sqlx::query_as(
         "SELECT driver_id, COALESCE(SUM(seats),0)::BIGINT, COUNT(*) FROM rides
          WHERE driver_id IS NOT NULL AND event_id IS DISTINCT FROM $1 AND status = ANY($2)
@@ -174,12 +172,52 @@ async fn other_load(
     Ok(rows.into_iter().map(|(d, s, n)| (d, (s, n))).collect())
 }
 
+async fn other_load(
+    st: &AppState,
+    event: i64,
+    rides: &[PlanRide],
+    starts_at: &str,
+) -> AppResult<OtherLegLoad> {
+    let (out_from, out_to) = match (
+        rides
+            .iter()
+            .filter(|r| r.leg != "return")
+            .map(|r| r.pickup_at.as_str())
+            .min(),
+        rides
+            .iter()
+            .filter(|r| r.leg != "return")
+            .map(|r| r.pickup_at.as_str())
+            .max(),
+    ) {
+        (Some(a), Some(b)) => (a.to_string(), b.to_string()),
+        _ => (starts_at.to_string(), starts_at.to_string()),
+    };
+    let outbound = query_other_window(st, event, &out_from, &out_to).await?;
+    let ret = match (
+        rides
+            .iter()
+            .filter(|r| r.leg == "return")
+            .map(|r| r.pickup_at.as_str())
+            .min(),
+        rides
+            .iter()
+            .filter(|r| r.leg == "return")
+            .map(|r| r.pickup_at.as_str())
+            .max(),
+    ) {
+        (Some(a), Some(b)) => query_other_window(st, event, a, b).await?,
+        _ => HashMap::new(),
+    };
+    Ok(OtherLegLoad { outbound, ret })
+}
+
 /// Everything the board shows, loaded once for viewing or arranging.
 struct Board {
     ev: EventRow,
     rides: Vec<PlanRide>,
     drivers: Vec<PlanDriver>,
-    other: HashMap<i64, (i64, i64)>,
+    other: OtherLegLoad,
     driver_areas: HashMap<i64, Vec<i64>>,
     /// Passenger → (previous driver, name, rides together, last ride time).
     last: HashMap<i64, (i64, String, i64, String)>,
@@ -271,14 +309,19 @@ async fn get_plan(
             })),
         })).collect::<Vec<_>>(),
         "drivers": drivers.iter().map(|d| {
-            let (load, bookings) = other.get(&d.id).copied().unwrap_or((0, 0));
+            let (out_load, out_bookings) = other.outbound.get(&d.id).copied().unwrap_or((0, 0));
+            let (ret_load, ret_bookings) = other.ret.get(&d.id).copied().unwrap_or((0, 0));
             json!({
                 "id": d.id,
                 "name": d.name,
                 "carpool": d.carpool_enabled == 1,
                 "cap": seat_capacity(d.spare_seats, d.v_seats),
-                "other_seats": load,
-                "other_rides": bookings,
+                "other_seats": out_load,
+                "other_rides": out_bookings,
+                "other_outbound_seats": out_load,
+                "other_outbound_rides": out_bookings,
+                "other_return_seats": ret_load,
+                "other_return_rides": ret_bookings,
                 "area_ids": driver_areas.get(&d.id).cloned().unwrap_or_default(),
                 "drive_group_ids": scopes.get(&d.id).cloned().unwrap_or_default(),
                 "vehicle": {
@@ -336,51 +379,65 @@ async fn arrange_plan(
         .count();
     crate::routing::warm_geocodes(&st, missing);
 
-    let riders: Vec<Rider> = b
-        .rides
-        .iter()
-        .map(|r| Rider {
-            ride_id: r.id,
-            passenger_id: r.passenger_id,
-            seats: r.seats,
-            area_id: r.area_id,
-            point: points.get(&r.pickup_address).copied(),
-            needs_assistance: !r.assistance.is_empty(),
-            assistance: r.assistance.clone(),
-            last: b.last.get(&r.passenger_id).map(|(d, _, t, _)| (*d, *t)),
-            group: r.match_group_id,
-        })
-        .collect();
-    let cars: Vec<Car> = b
-        .drivers
-        .iter()
-        .map(|d| {
-            let (o_seats, o_rides) = b.other.get(&d.id).copied().unwrap_or((0, 0));
-            Car {
-                driver_id: d.id,
-                seats_left: seat_capacity(d.spare_seats, d.v_seats) - o_seats,
-                carpool: d.carpool_enabled == 1,
-                other_rides: o_rides,
-                area_ids: b.driver_areas.get(&d.id).cloned().unwrap_or_default(),
-                drive_groups: b.scopes.get(&d.id).cloned().unwrap_or_default(),
-                wheelchair_ok: d.wheelchair_ok == 1,
-                low_step: d.low_step == 1,
-                child_seat: d.child_seat == 1,
-            }
-        })
-        .collect();
-    let known: HashSet<i64> = b.rides.iter().map(|r| r.id).collect();
-    let fixed: HashMap<i64, i64> = req
-        .draft
-        .iter()
-        .filter(|e| known.contains(&e.ride_id))
-        .filter_map(|e| e.driver_id.map(|d| (e.ride_id, d)))
-        .collect();
+    let arrange_leg = |want_return: bool, other_map: &HashMap<i64, (i64, i64)>| {
+        let leg_rides: Vec<&PlanRide> = b
+            .rides
+            .iter()
+            .filter(|r| (r.leg == "return") == want_return)
+            .collect();
+        let riders: Vec<Rider> = leg_rides
+            .iter()
+            .map(|r| Rider {
+                ride_id: r.id,
+                passenger_id: r.passenger_id,
+                seats: r.seats,
+                area_id: r.area_id,
+                point: points.get(&r.pickup_address).copied(),
+                needs_assistance: !r.assistance.is_empty(),
+                assistance: r.assistance.clone(),
+                last: b.last.get(&r.passenger_id).map(|(d, _, t, _)| (*d, *t)),
+                group: r.match_group_id,
+            })
+            .collect();
+        let cars: Vec<Car> = b
+            .drivers
+            .iter()
+            .map(|d| {
+                let (o_seats, o_rides) = other_map.get(&d.id).copied().unwrap_or((0, 0));
+                Car {
+                    driver_id: d.id,
+                    seats_left: seat_capacity(d.spare_seats, d.v_seats) - o_seats,
+                    carpool: d.carpool_enabled == 1,
+                    other_rides: o_rides,
+                    area_ids: b.driver_areas.get(&d.id).cloned().unwrap_or_default(),
+                    drive_groups: b.scopes.get(&d.id).cloned().unwrap_or_default(),
+                    wheelchair_ok: d.wheelchair_ok == 1,
+                    low_step: d.low_step == 1,
+                    child_seat: d.child_seat == 1,
+                }
+            })
+            .collect();
+        let known: HashSet<i64> = leg_rides.iter().map(|r| r.id).collect();
+        let fixed: HashMap<i64, i64> = req
+            .draft
+            .iter()
+            .filter(|e| known.contains(&e.ride_id))
+            .filter_map(|e| e.driver_id.map(|d| (e.ride_id, d)))
+            .collect();
+        arrange(&riders, &cars, &fixed)
+    };
 
-    let result = arrange(&riders, &cars, &fixed);
+    let out_res = arrange_leg(false, &b.other.outbound);
+    let ret_res = arrange_leg(true, &b.other.ret);
+    let placed_all: Vec<_> = out_res.placed.into_iter().chain(ret_res.placed).collect();
+    let unplaced_all: Vec<i64> = out_res
+        .unplaced
+        .into_iter()
+        .chain(ret_res.unplaced)
+        .collect();
     let names: HashMap<i64, &str> = b.rides.iter().map(|r| (r.id, r.p_name.as_str())).collect();
     Ok(Json(json!({
-        "placed": result.placed.iter().map(|p| json!({
+        "placed": placed_all.iter().map(|p| json!({
             "ride_id": p.ride_id,
             "driver_id": p.driver_id,
             "near": p.near.map(|(ride, m)| json!({
@@ -391,7 +448,7 @@ async fn arrange_plan(
             "in_area": p.in_area,
             "together": p.together,
         })).collect::<Vec<_>>(),
-        "unplaced": result.unplaced,
+        "unplaced": unplaced_all,
         "approximate": approximate,
     })))
 }
@@ -471,21 +528,29 @@ async fn save_plan(
     }
     let other = other_load(&st, id, &rides, &ev.starts_at).await?;
     for d in &touched {
-        let mine: Vec<&PlanRide> = rides
-            .iter()
-            .filter(|r| final_driver(r) == Some(*d))
-            .collect();
-        let (o_seats, o_rides) = other.get(d).copied().unwrap_or((0, 0));
-        let load = o_seats + mine.iter().map(|r| r.seats).sum::<i64>();
         let dr = driver[d];
         let cap = seat_capacity(dr.spare_seats, dr.v_seats);
-        // Without 共乘模式 a driver takes one booking per time slot.
-        let one_booking = dr.carpool_enabled == 1 || o_rides + mine.len() as i64 <= 1;
-        if load > cap || !one_booking {
-            return Err(bad(
-                u.lang,
-                ErrorKey::NotEnoughDriverSeatsReassign { load, cap },
-            ));
+        for (is_ret, other_map) in [(false, &other.outbound), (true, &other.ret)] {
+            let assigned_on_leg = changes
+                .values()
+                .any(|c| c.driver_id == Some(*d) && (by_id[&c.ride_id].leg == "return") == is_ret);
+            if !assigned_on_leg {
+                continue;
+            }
+            let mine: Vec<&PlanRide> = rides
+                .iter()
+                .filter(|r| (r.leg == "return") == is_ret && final_driver(r) == Some(*d))
+                .collect();
+            let (o_seats, o_rides) = other_map.get(d).copied().unwrap_or((0, 0));
+            let load = o_seats + mine.iter().map(|r| r.seats).sum::<i64>();
+            // Without 共乘模式 a driver takes one booking per leg/time slot.
+            let one_booking = dr.carpool_enabled == 1 || o_rides + mine.len() as i64 <= 1;
+            if load > cap || !one_booking {
+                return Err(bad(
+                    u.lang,
+                    ErrorKey::NotEnoughDriverSeatsReassign { load, cap },
+                ));
+            }
         }
     }
 

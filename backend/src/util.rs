@@ -1,5 +1,6 @@
 //! Shared helpers: time, audit log, notifications, permission checks.
 
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::OnceLock;
 
 use chrono::{DateTime, Duration, NaiveDate, NaiveDateTime, Utc};
@@ -15,6 +16,17 @@ use crate::perms::{self, Act, Page, Perm};
 pub const DEFAULT_TIMEZONE: Tz = chrono_tz::Asia::Kuala_Lumpur;
 
 static ZONE: OnceLock<Tz> = OnceLock::new();
+static DEV_MODE: AtomicBool = AtomicBool::new(false);
+
+/// Record whether the server runs in development mode so background helpers know whether
+/// plaintext HTTP / loopback webhook URLs are allowed without threading `Config`.
+pub fn set_dev_mode(dev: bool) {
+    DEV_MODE.store(dev, Ordering::Relaxed);
+}
+
+pub fn is_dev_mode() -> bool {
+    DEV_MODE.load(Ordering::Relaxed)
+}
 
 /// Set the app's time zone (`APP_TIMEZONE`). Stored times are local text in this
 /// zone, so it is fixed for the life of the process: a second call with a different
@@ -240,7 +252,7 @@ pub async fn notify_many(
                 CASE WHEN u.lang = 'en' THEN $3 ELSE $2 END,
                 CASE WHEN u.lang = 'en' THEN $5 ELSE $4 END,
                 $6, $7
-         FROM users u WHERE u.id = ANY($1)
+         FROM users u WHERE u.id = ANY($1) AND u.status = 'active'
          RETURNING user_id, title, body",
     )
     .bind(user_ids)
@@ -272,10 +284,151 @@ static ALERT_HTTP: OnceLock<reqwest::Client> = OnceLock::new();
 fn alert_client() -> &'static reqwest::Client {
     ALERT_HTTP.get_or_init(|| {
         reqwest::Client::builder()
+            .redirect(reqwest::redirect::Policy::none())
             .timeout(std::time::Duration::from_secs(5))
             .build()
             .unwrap_or_default()
     })
+}
+
+fn is_metadata_ip(ip: std::net::IpAddr) -> bool {
+    match ip {
+        std::net::IpAddr::V4(v4) => v4 == std::net::Ipv4Addr::new(169, 254, 169, 254),
+        std::net::IpAddr::V6(v6) => {
+            v6.to_ipv4_mapped() == Some(std::net::Ipv4Addr::new(169, 254, 169, 254))
+        }
+    }
+}
+
+fn is_non_global_v4(v4: std::net::Ipv4Addr) -> bool {
+    let o = v4.octets();
+    let cgnat = o[0] == 100 && (o[1] & 0b1100_0000) == 64;
+    let bench = o[0] == 198 && (o[1] == 18 || o[1] == 19);
+    let this_net = o[0] == 0;
+    this_net
+        || v4.is_private()
+        || v4.is_loopback()
+        || v4.is_link_local()
+        || v4.is_broadcast()
+        || v4.is_documentation()
+        || v4.is_multicast()
+        || v4.is_unspecified()
+        || cgnat
+        || bench
+        || o[0] >= 240
+}
+
+fn is_non_global_ip(ip: std::net::IpAddr) -> bool {
+    match ip {
+        std::net::IpAddr::V4(v4) => is_non_global_v4(v4),
+        std::net::IpAddr::V6(v6) => {
+            if let Some(mapped) = v6.to_ipv4_mapped() {
+                return is_non_global_v4(mapped);
+            }
+            let segs = v6.segments();
+            let is_ipv4_compat =
+                segs[0..6] == [0, 0, 0, 0, 0, 0] && !v6.is_loopback() && !v6.is_unspecified();
+            if is_ipv4_compat {
+                let mapped = std::net::Ipv4Addr::new(
+                    (segs[6] >> 8) as u8,
+                    segs[6] as u8,
+                    (segs[7] >> 8) as u8,
+                    segs[7] as u8,
+                );
+                return is_non_global_v4(mapped);
+            }
+            let unicast_link_local = (segs[0] & 0xffc0) == 0xfe80;
+            let unique_local = (segs[0] & 0xfe00) == 0xfc00;
+            let doc = segs[0] == 0x2001 && segs[1] == 0x0db8;
+            v6.is_loopback()
+                || v6.is_unspecified()
+                || v6.is_multicast()
+                || unicast_link_local
+                || unique_local
+                || doc
+        }
+    }
+}
+
+/// Validates an external alert webhook URL against SSRF targets.
+pub async fn validate_webhook_target(raw: &str, dev_mode: bool) -> bool {
+    let trimmed = raw.trim();
+    if trimmed.is_empty() || trimmed.len() > 500 {
+        return false;
+    }
+    let Ok(parsed) = url::Url::parse(trimmed) else {
+        return false;
+    };
+    if !parsed.username().is_empty() || parsed.password().is_some() {
+        return false;
+    }
+    let scheme = parsed.scheme();
+    if dev_mode {
+        if scheme != "https" && scheme != "http" {
+            return false;
+        }
+    } else if scheme != "https" {
+        return false;
+    }
+    let Some(host) = parsed.host() else {
+        return false;
+    };
+    let host_lower = parsed
+        .host_str()
+        .unwrap_or_default()
+        .trim_end_matches('.')
+        .to_ascii_lowercase();
+    if host_lower.is_empty()
+        || host_lower == "metadata.google.internal"
+        || host_lower == "169.254.169.254"
+    {
+        return false;
+    }
+    match host {
+        url::Host::Ipv4(v4) => {
+            let ip = std::net::IpAddr::V4(v4);
+            if is_metadata_ip(ip) {
+                return false;
+            }
+            dev_mode || !is_non_global_v4(v4)
+        }
+        url::Host::Ipv6(v6) => {
+            let ip = std::net::IpAddr::V6(v6);
+            if is_metadata_ip(ip) {
+                return false;
+            }
+            dev_mode || !is_non_global_ip(ip)
+        }
+        url::Host::Domain(domain) => {
+            let d = domain.trim_end_matches('.').to_ascii_lowercase();
+            if d == "metadata.google.internal" {
+                return false;
+            }
+            if dev_mode {
+                return true;
+            }
+            if d == "localhost"
+                || d.ends_with(".localhost")
+                || d.ends_with(".local")
+                || d.ends_with(".internal")
+                || !d.contains('.')
+            {
+                return false;
+            }
+            let port = parsed.port_or_known_default().unwrap_or(443);
+            let Ok(addrs) = tokio::net::lookup_host((d.as_str(), port)).await else {
+                return false;
+            };
+            let mut saw_any = false;
+            for addr in addrs {
+                saw_any = true;
+                if is_non_global_ip(addr.ip()) {
+                    return false;
+                }
+            }
+            saw_any
+        }
+    }
 }
 
 async fn dispatch_external_alerts(db: PgPool, recipients: Vec<(i64, String, String, String)>) {
@@ -298,14 +451,19 @@ async fn dispatch_external_alerts(db: PgPool, recipients: Vec<(i64, String, Stri
             _ => {}
         }
     }
-    if tg_token.is_empty() && webhook_url.is_empty() {
+    let webhook_ok =
+        !webhook_url.is_empty() && validate_webhook_target(&webhook_url, is_dev_mode()).await;
+    if !webhook_url.is_empty() && !webhook_ok {
+        tracing::warn!("blocked alert webhook URL failing SSRF policy");
+    }
+    if tg_token.is_empty() && !webhook_ok {
         return;
     }
 
     let ids: Vec<i64> = recipients.iter().map(|(id, _, _, _)| *id).collect();
     let prefs: Vec<(i64, String, String, String, i64)> = sqlx::query_as(
         "SELECT id, name, phone, COALESCE(telegram_chat_id, ''), whatsapp_opt_in
-         FROM users WHERE id = ANY($1)",
+         FROM users WHERE id = ANY($1) AND status = 'active'",
     )
     .bind(&ids)
     .fetch_all(&db)
@@ -317,39 +475,58 @@ async fn dispatch_external_alerts(db: PgPool, recipients: Vec<(i64, String, Stri
         .map(|(id, name, phone, tg, wa)| (id, (name, phone, tg, wa)))
         .collect();
 
-    let client = alert_client();
+    let client = alert_client().clone();
+    let sem = std::sync::Arc::new(tokio::sync::Semaphore::new(8));
+    let mut join_set = tokio::task::JoinSet::new();
     for (uid, title, body, link) in recipients {
-        let Some((name, phone, tg_chat_id, wa_opt_in)) = pref_map.get(&uid) else {
+        let Some((name, phone, tg_chat_id, wa_opt_in)) = pref_map.get(&uid).cloned() else {
             continue;
         };
-        if !tg_token.is_empty() && !tg_chat_id.trim().is_empty() {
-            let text = format!("{title}\n{body}\n{link}");
-            let url = format!("https://api.telegram.org/bot{tg_token}/sendMessage");
-            let _ = client
-                .post(&url)
-                .json(&serde_json::json!({
-                    "chat_id": tg_chat_id.trim(),
-                    "text": text,
-                }))
-                .send()
-                .await;
+        let tg_token = tg_token.clone();
+        let webhook_url = if webhook_ok && wa_opt_in == 1 {
+            Some(webhook_url.clone())
+        } else {
+            None
+        };
+        if (tg_token.is_empty() || tg_chat_id.trim().is_empty()) && webhook_url.is_none() {
+            continue;
         }
-        if !webhook_url.is_empty() && *wa_opt_in == 1 {
-            let _ = client
-                .post(&webhook_url)
-                .json(&serde_json::json!({
-                    "channel": "whatsapp",
-                    "user_id": uid,
-                    "name": name,
-                    "phone": phone,
-                    "title": title,
-                    "body": body,
-                    "link": link,
-                }))
-                .send()
-                .await;
-        }
+        let client = client.clone();
+        let sem = sem.clone();
+        join_set.spawn(async move {
+            let Ok(_permit) = sem.acquire_owned().await else {
+                return;
+            };
+            if !tg_token.is_empty() && !tg_chat_id.trim().is_empty() {
+                let text = format!("{title}\n{body}\n{link}");
+                let url = format!("https://api.telegram.org/bot{tg_token}/sendMessage");
+                let _ = client
+                    .post(&url)
+                    .json(&serde_json::json!({
+                        "chat_id": tg_chat_id.trim(),
+                        "text": text,
+                    }))
+                    .send()
+                    .await;
+            }
+            if let Some(hook) = webhook_url {
+                let _ = client
+                    .post(&hook)
+                    .json(&serde_json::json!({
+                        "channel": "whatsapp",
+                        "user_id": uid,
+                        "name": name,
+                        "phone": phone,
+                        "title": title,
+                        "body": body,
+                        "link": link,
+                    }))
+                    .send()
+                    .await;
+            }
+        });
     }
+    while join_set.join_next().await.is_some() {}
 }
 
 /// Notify every active member who may do `act` on `page`; each recipient gets the

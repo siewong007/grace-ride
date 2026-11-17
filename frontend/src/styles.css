@@ -181,6 +181,7 @@ body {
   font-family: var(--font);
   font-size: var(--fs-md);
   line-height: 1.55;
+  overscroll-behavior-x: contain;
 }
 a { color: var(--primary); text-decoration: none; }
 a:hover { text-decoration: underline; text-underline-offset: 3px; }
@@ -217,7 +218,7 @@ button, input, select, textarea { font: inherit; color: inherit; }
 .topbar.is-scrolled { border-bottom-color: var(--border); }
 
 .topbar-left { display: flex; align-items: center; gap: var(--space-1); min-width: 0; flex: 1; }
-.topbar-back { margin-left: calc(-1 * var(--space-2)); }
+.topbar-back { margin-left: calc(-1 * var(--space-2)); flex-shrink: 0; }
 .topbar-brand { font-weight: 700; font-size: var(--fs-lg); display: flex; align-items: center; gap: var(--space-2); color: var(--text); }
 .topbar-brand-name { white-space: nowrap; }
 .topbar-title {
@@ -2722,7 +2723,7 @@ main p a:not(.btn), main .small a:not(.btn), main td a:not(.btn):not(.table-filt
 
 /* Printing a page (e.g. a report) leaves out the app frame. */
 @media print {
-  .sidebar, .topbar, .bottom-nav, .page-head-actions, .report-filters, .toast-container, .shell-notice-container { display: none !important; }
+  .sidebar, .topbar, .bottom-nav, .page-head-actions, .report-filters, .toast-container, .shell-notice-container, .swipe-back-indicator { display: none !important; }
   .shell { display: block; }
   .main { padding: 0; max-width: none; }
   body { background: #fff; color: #000; }
@@ -2775,3 +2776,30 @@ main a[href^="tel:"]:not(.btn) { text-decoration: underline; }
 /* Guide step optional screenshot */
 .guide-step-img-link { display: block; margin-top: var(--space-2); }
 .guide-step-img { display: block; max-width: 100%; max-height: 260px; width: auto; border-radius: var(--radius); border: 1px solid var(--border); }
+
+/* Swipe-right-to-go-back edge indicator */
+.swipe-back-indicator {
+  position: fixed;
+  left: var(--space-3);
+  top: 50%;
+  z-index: 60;
+  width: 44px;
+  height: 44px;
+  display: grid;
+  place-items: center;
+  border-radius: var(--radius-pill);
+  background: var(--surface);
+  color: var(--text);
+  border: 1px solid var(--border);
+  box-shadow: var(--shadow-lg);
+  pointer-events: none;
+  opacity: 0;
+  transform: translate3d(-48px, -50%, 0);
+  transition: opacity var(--dur-fast) var(--ease), background var(--dur-fast) var(--ease), color var(--dur-fast) var(--ease), border-color var(--dur-fast) var(--ease);
+}
+.swipe-back-indicator.is-active { opacity: 1; }
+.swipe-back-indicator.is-ready {
+  background: var(--btn-bg);
+  color: var(--btn-ink);
+  border-color: var(--btn-bg);
+}

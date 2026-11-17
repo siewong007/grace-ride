@@ -90,13 +90,27 @@ export async function uploadFile(file: File): Promise<{ id: number; mime: string
 const listeners = new Set<(kind: string) => void>();
 let stream: EventSource | null = null;
 let streamOpen = false;
+let sessionLocked = (() => {
+  try {
+    return typeof localStorage !== 'undefined' && Boolean(localStorage.getItem('gr_locked_user'));
+  } catch {
+    return false;
+  }
+})();
 
 export function isStreamConnected(): boolean {
   return streamOpen;
 }
 
 function openStream() {
-  if (stream || typeof EventSource === 'undefined' || document.visibilityState === 'hidden') return;
+  if (
+    stream ||
+    sessionLocked ||
+    typeof EventSource === 'undefined' ||
+    document.visibilityState === 'hidden'
+  ) {
+    return;
+  }
   const es = new EventSource('/api/stream');
   es.onopen = () => {
     streamOpen = true;
@@ -127,12 +141,26 @@ export function subscribe(fn: (kind: string) => void) {
 }
 
 if (typeof window !== 'undefined') {
-  // EventSource retries a rejected handshake forever; a 401 from any poll closes it.
-  window.addEventListener('gr:unauthorized', closeStream);
+  // EventSource retries a rejected handshake forever; a 401 or lock closes it cleanly.
+  window.addEventListener('gr:unauthorized', () => {
+    sessionLocked = false;
+    closeStream();
+  });
+  window.addEventListener('gr:session-locked', () => {
+    sessionLocked = true;
+    closeStream();
+  });
+  window.addEventListener('gr:session-unlocked', () => {
+    sessionLocked = false;
+    if (listeners.size && document.visibilityState !== 'hidden') {
+      openStream();
+      listeners.forEach((fn) => fn('unlocked'));
+    }
+  });
   document.addEventListener('visibilitychange', () => {
     if (document.hidden) {
       closeStream();
-    } else if (listeners.size) {
+    } else if (listeners.size && !sessionLocked) {
       openStream();
       listeners.forEach((fn) => fn('resume'));
     }
@@ -150,9 +178,11 @@ export function useApi<T>(path: string | null, pollMs?: number) {
   const pathRef = useRef(path);
   const prevBaseRef = useRef<string | null>(path ? path.split('?')[0] : null);
   const hasDataRef = useRef(false);
+  const errorRef = useRef<string | null>(error);
   const requestId = useRef(0);
   pathRef.current = path;
   hasDataRef.current = data !== null;
+  errorRef.current = error;
 
   const reload = useCallback(async () => {
     const currentRequest = ++requestId.current;
@@ -200,16 +230,28 @@ export function useApi<T>(path: string | null, pollMs?: number) {
       setData(null);
     }
     reload();
-    if (!pollMs) return;
+    const onUnlocked = () => {
+      if (errorRef.current !== null || !hasDataRef.current) {
+        void reload();
+      }
+    };
+    window.addEventListener('gr:session-unlocked', onUnlocked);
+    if (!pollMs) {
+      return () => {
+        window.removeEventListener('gr:session-unlocked', onUnlocked);
+        requests.current++;
+      };
+    }
     let skipped = 0;
     const t = setInterval(() => {
-      if (document.visibilityState !== 'visible') return;
+      if (document.visibilityState !== 'visible' || sessionLocked) return;
       if (streamOpen && ++skipped < 4) return;
       skipped = 0;
       reload();
     }, pollMs);
     const unsub = subscribe(reload);
     return () => {
+      window.removeEventListener('gr:session-unlocked', onUnlocked);
       clearInterval(t);
       unsub();
       requests.current++;

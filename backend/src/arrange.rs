@@ -108,10 +108,16 @@ pub fn arrange(riders: &[Rider], cars: &[Car], fixed: &HashMap<i64, i64>) -> Arr
             return false;
         }
         // Accessibility compatibility: wheelchair needs wheelchair-accessible boot; stroller needs child_seat.
-        if r.assistance == "wheelchair" && !car.wheelchair_ok {
+        let assist = r.assistance.trim().to_ascii_lowercase();
+        let is_wheelchair = assist.contains("wheelchair") || r.assistance.contains("轮椅");
+        let is_stroller = assist.contains("stroller")
+            || assist.contains("child")
+            || r.assistance.contains("婴儿车")
+            || r.assistance.contains("安全座椅");
+        if is_wheelchair && !car.wheelchair_ok {
             return false;
         }
-        if r.assistance == "stroller" && !car.child_seat {
+        if is_stroller && !car.child_seat {
             return false;
         }
         let g = &groups[c];

@@ -58,12 +58,13 @@ export function AutoLockProvider({ children }: { children: ReactNode }) {
   meIdRef.current = meId;
   const lastActiveRef = useRef<number>(Date.now());
   const unlockBtnRef = useRef<HTMLButtonElement>(null);
+  const bgRef = useRef<HTMLDivElement>(null);
   const [unlocking, setUnlocking] = useState(false);
   const [unlockError, setUnlockError] = useState<string | null>(null);
   const [code, setCode] = useState('');
   const canPasskey = passkeySupported() && (me?.passkey_count ?? 0) > 0;
-  const canTotp = Boolean(me?.totp_enabled || (me?.backup_codes_count ?? 0) > 0);
-  const canDevUnlock = Boolean(me?.dev_mode && !canPasskey && !canTotp);
+  const canTotp = Boolean(me?.totp_enabled);
+  const canDevUnlock = Boolean(me?.dev_mode && (me?.passkey_count ?? 0) === 0 && !me?.totp_enabled);
 
   // Inactivity timeout in minutes:
   // 1. If user set auto_lock_mins > 0: user's custom duration
@@ -87,7 +88,14 @@ export function AutoLockProvider({ children }: { children: ReactNode }) {
     setUnlockError(null);
     setCode('');
     setIsLocked(false);
+    window.dispatchEvent(new Event('gr:session-unlocked'));
   }, []);
+
+  useEffect(() => {
+    const el = bgRef.current;
+    if (!el) return;
+    (el as unknown as { inert: boolean }).inert = Boolean(isLocked && me);
+  }, [isLocked, me]);
 
   // `me` loads after the first render: pick up a local or server-enforced lock.
   useEffect(() => {
@@ -223,7 +231,13 @@ export function AutoLockProvider({ children }: { children: ReactNode }) {
 
   return (
     <Ctx.Provider value={{ isLocked, lock, unlock }}>
-      {children}
+      <div
+        ref={bgRef}
+        aria-hidden={Boolean(isLocked && me) || undefined}
+        style={isLocked && me ? { pointerEvents: 'none', userSelect: 'none' } : undefined}
+      >
+        {children}
+      </div>
       {isLocked && me && (
         <div
           className="lock-screen-bg"

@@ -26,6 +26,11 @@ export function useQuickJumpShortcut(open: () => void) {
   useEffect(() => {
     const onKey = (e: globalThis.KeyboardEvent) => {
       if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'k') {
+        try {
+          if (localStorage.getItem('gr_locked_user')) return;
+        } catch {
+          /* ignore */
+        }
         e.preventDefault();
         open();
       }

@@ -116,7 +116,7 @@ async fn create_care_link(
     let ts_now = now();
     let token = random_token(TOKEN_LEN);
     let token_hash = hash_token(&token);
-    let valid_until = shift(&r.pickup_at, CLOSES_AFTER_HOURS);
+    let valid_until = shift(&r.pickup_at, CLOSES_AFTER_HOURS).max(crate::util::in_hours(2));
     let label = req
         .and_then(|j| j.0.label)
         .map(|s| s.trim().chars().take(60).collect::<String>())
@@ -213,7 +213,7 @@ async fn care_status(
 ) -> AppResult<Json<Value>> {
     let lang = lang_of(&headers);
     let (pass, r) = load_care_pass(&st, &token, lang).await?;
-    let approved = matches!(r.status.as_str(), "confirmed" | "in_progress" | "completed");
+    let approved = matches!(r.status.as_str(), "confirmed" | "in_progress");
     let rider_name = if r.is_proxy == 1 && !r.rider_name.is_empty() {
         r.rider_name.clone()
     } else {
@@ -243,8 +243,8 @@ async fn care_status(
             .bind(driver_id)
             .fetch_optional(&st.db)
             .await?;
-            if let Some((lat, lng, h, at)) = loc {
-                let mut l = json!({ "sharing": true, "lat": lat, "lng": lng, "heading": h, "updated_at": at });
+            if let Some((_lat, _lng, _h, at)) = loc {
+                let mut l = json!({ "sharing": true, "updated_at": at });
                 let trip = r.trip_id.unwrap_or(r.id);
                 if let Ok(Some(route)) =
                     crate::routing::driver_route(&st, driver_id, Some(trip)).await
@@ -269,7 +269,7 @@ async fn care_status(
         "leg": r.leg,
         "pickup_at": r.pickup_at,
         "area": { "id": r.pickup_area_id, "name": r.area_name },
-        "destination": r.destination,
+        "destination": if r.leg == "return" { &r.area_name } else { &r.destination },
         "readiness_status": r.readiness_status.as_deref().unwrap_or("unconfirmed"),
         "delay_minutes": r.delay_minutes.unwrap_or(0),
         "arrived_at_gate_at": r.arrived_at_gate_at,

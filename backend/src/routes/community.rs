@@ -65,6 +65,7 @@ pub fn router() -> Router<AppState> {
             "/reimbursements/batches",
             get(list_payout_batches).post(create_payout_batch),
         )
+        .route("/reimbursements/batches/{id}", delete(cancel_payout_batch))
         .route(
             "/reimbursements/batches/{id}/csv",
             get(export_payout_batch_csv),
@@ -139,11 +140,19 @@ async fn update_profile(
         if cg == u.id {
             return Err(bad(u.lang, ErrorKey::InvalidAction));
         }
-        let ok: Option<(i64,)> =
-            sqlx::query_as("SELECT id FROM users WHERE id=$1 AND status='active'")
-                .bind(cg)
-                .fetch_optional(&st.db)
-                .await?;
+        let ok: Option<(i64,)> = sqlx::query_as(
+            "SELECT cg.id FROM users cg
+             WHERE cg.id=$1 AND cg.status='active'
+               AND EXISTS (
+                   SELECT 1 FROM group_members g1
+                   JOIN group_members g2 ON g2.group_id = g1.group_id
+                   WHERE g1.user_id = $1 AND g2.user_id = $2
+               )",
+        )
+        .bind(cg)
+        .bind(u.id)
+        .fetch_optional(&st.db)
+        .await?;
         if ok.is_none() {
             return Err(bad(u.lang, ErrorKey::InvalidAction));
         }
@@ -285,16 +294,33 @@ fn fmt_ics_dt(raw: &str) -> String {
     let Some(dt) = parse_dt(raw) else {
         return raw.replace(['-', ':'], "").chars().take(15).collect();
     };
-    dt.format("%Y%m%dT%H%M%S").to_string()
+    use chrono::TimeZone;
+    crate::util::zone()
+        .from_local_datetime(&dt)
+        .earliest()
+        .map(|zdt| {
+            zdt.with_timezone(&chrono::Utc)
+                .format("%Y%m%dT%H%M%SZ")
+                .to_string()
+        })
+        .unwrap_or_else(|| dt.format("%Y%m%dT%H%M%S").to_string())
 }
 
 fn shift_ics_dt(raw: &str, mins: i64) -> String {
     let Some(dt) = parse_dt(raw) else {
         return fmt_ics_dt(raw);
     };
-    (dt + chrono::Duration::minutes(mins))
-        .format("%Y%m%dT%H%M%S")
-        .to_string()
+    let shifted = dt + chrono::Duration::minutes(mins);
+    use chrono::TimeZone;
+    crate::util::zone()
+        .from_local_datetime(&shifted)
+        .earliest()
+        .map(|zdt| {
+            zdt.with_timezone(&chrono::Utc)
+                .format("%Y%m%dT%H%M%SZ")
+                .to_string()
+        })
+        .unwrap_or_else(|| shifted.format("%Y%m%dT%H%M%S").to_string())
 }
 
 async fn serve_calendar_ics(
@@ -323,13 +349,15 @@ async fn serve_calendar_ics(
     };
 
     let cutoff = crate::util::in_days(-30);
-    let rides: Vec<(i64, i64, Option<i64>, String, String, String, String)> = sqlx::query_as(
-        "SELECT id, passenger_id, driver_id, pickup_at, destination, pickup_address, status
-         FROM rides
-         WHERE (passenger_id=$1 OR driver_id=$1)
-           AND status IN ('confirmed','in_progress','completed','pending_driver_confirm','pending_approval')
-           AND pickup_at >= $2
-         ORDER BY pickup_at",
+    let rides: Vec<(i64, i64, Option<i64>, String, String, String, String, String, String)> = sqlx::query_as(
+        "SELECT r.id, r.passenger_id, r.driver_id, r.pickup_at, r.destination, r.pickup_address,
+                r.status, COALESCE(r.leg, 'outbound'), COALESCE(a.name, '')
+         FROM rides r
+         LEFT JOIN areas a ON a.id = r.pickup_area_id
+         WHERE (r.passenger_id=$1 OR r.driver_id=$1)
+           AND r.status IN ('confirmed','in_progress','completed','pending_driver_confirm','pending_approval')
+           AND r.pickup_at >= $2
+         ORDER BY r.pickup_at",
     )
     .bind(uid)
     .bind(&cutoff)
@@ -357,11 +385,22 @@ async fn serve_calendar_ics(
         "X-WR-CALNAME:Grace Ride".to_string(),
     ];
 
-    for (rid, pass_id, _drv_id, pickup_at, dest, addr, status) in rides {
+    for (rid, pass_id, _drv_id, pickup_at, dest, addr, status, leg, area_name) in rides {
         let role = if pass_id == uid {
             t(lang, "乘车接送", "Grace Ride")
         } else {
             t(lang, "志愿接送驾驶", "Volunteer Drive")
+        };
+        let show_address = pass_id == uid || matches!(status.as_str(), "confirmed" | "in_progress");
+        let safe_dest = if !show_address && leg == "return" {
+            area_name.as_str()
+        } else {
+            dest.as_str()
+        };
+        let safe_loc = if !show_address && leg != "return" {
+            area_name.as_str()
+        } else {
+            addr.as_str()
         };
         lines.push("BEGIN:VEVENT".to_string());
         lines.push(format!("UID:gr-ride-{rid}@graceride.cmc"));
@@ -370,10 +409,10 @@ async fn serve_calendar_ics(
         lines.push(format!("DTEND:{}", shift_ics_dt(&pickup_at, 60)));
         lines.push(format!(
             "SUMMARY:{}",
-            escape_ics_text(&format!("{role} -> {dest}"))
+            escape_ics_text(&format!("{role} -> {safe_dest}"))
         ));
-        if !addr.is_empty() {
-            lines.push(format!("LOCATION:{}", escape_ics_text(&addr)));
+        if !safe_loc.is_empty() {
+            lines.push(format!("LOCATION:{}", escape_ics_text(safe_loc)));
         }
         lines.push(format!(
             "DESCRIPTION:{}",
@@ -384,6 +423,9 @@ async fn serve_calendar_ics(
     }
 
     for (eid, title, starts_at, location, desc) in events {
+        if !crate::audience::member_sees_event(&st.db, uid, eid).await? {
+            continue;
+        }
         lines.push("BEGIN:VEVENT".to_string());
         lines.push(format!("UID:gr-event-{eid}@graceride.cmc"));
         lines.push(format!("DTSTAMP:{stamp}"));
@@ -453,7 +495,9 @@ async fn push_subscribe(
     sqlx::query(
         "INSERT INTO push_subscriptions (user_id, endpoint, p256dh, auth, user_agent, created_at)
          VALUES ($1,$2,$3,$4,$5,$6)
-         ON CONFLICT (endpoint) DO UPDATE SET user_id=excluded.user_id, p256dh=excluded.p256dh, auth=excluded.auth",
+         ON CONFLICT (endpoint) DO UPDATE
+         SET user_id=excluded.user_id, p256dh=excluded.p256dh, auth=excluded.auth,
+             user_agent=excluded.user_agent, created_at=excluded.created_at",
     )
     .bind(u.id)
     .bind(endpoint)
@@ -461,6 +505,19 @@ async fn push_subscribe(
     .bind(req.auth.trim())
     .bind(ua)
     .bind(now())
+    .execute(&st.db)
+    .await?;
+    sqlx::query(
+        "DELETE FROM push_subscriptions
+         WHERE user_id=$1
+           AND id NOT IN (
+               SELECT id FROM push_subscriptions
+               WHERE user_id=$1
+               ORDER BY created_at DESC, id DESC
+               LIMIT 10
+           )",
+    )
+    .bind(u.id)
     .execute(&st.db)
     .await?;
     Ok(Json(json!({ "ok": true })))
@@ -2190,14 +2247,19 @@ async fn pay_reimbursement(
     // The status check above and this update are separate statements, so a second
     // finance admin can pass the check before the first commit. Transitioning from
     // 'approved' in the update itself makes exactly one payout win.
-    let paid = sqlx::query("UPDATE reimbursements SET status='paid', payee_verified=1, paid_ref=$1, paid_by=$2, paid_at=$3, updated_at=$4 WHERE id=$5 AND status='approved' AND reviewed_by IS DISTINCT FROM $2")
-        .bind(req.paid_ref.trim())
-        .bind(u.id)
-        .bind(now())
-        .bind(now())
-        .bind(id)
-        .execute(&st.db)
-        .await?;
+    let paid = sqlx::query(
+        "UPDATE reimbursements
+         SET status='paid', payee_verified=1, paid_ref=$1, paid_by=$2, paid_at=$3, updated_at=$4
+         WHERE id=$5 AND status='approved' AND batch_id IS NULL
+           AND user_id <> $2 AND reviewed_by IS DISTINCT FROM $2",
+    )
+    .bind(req.paid_ref.trim())
+    .bind(u.id)
+    .bind(now())
+    .bind(now())
+    .bind(id)
+    .execute(&st.db)
+    .await?;
     if paid.rows_affected() == 0 {
         return Err(conflict(u.lang, ErrorKey::ReimbursementProcessed));
     }
@@ -2305,24 +2367,31 @@ async fn create_payout_batch(
 
     let mut tx = st.db.begin().await?;
     let eligible: Vec<(i64, i64)> = if let Some(ref ids) = req.claim_ids {
-        if ids.is_empty() {
+        let mut unique_ids = ids.clone();
+        unique_ids.sort_unstable();
+        unique_ids.dedup();
+        if unique_ids.is_empty() {
             return Err(bad(u.lang, ErrorKey::BatchEmpty));
         }
-        sqlx::query_as(
+        let rows: Vec<(i64, i64)> = sqlx::query_as(
             "SELECT id, amount_cents FROM reimbursements
              WHERE id = ANY($1) AND status = 'approved' AND batch_id IS NULL
                AND user_id <> $2 AND reviewed_by IS DISTINCT FROM $2
              FOR UPDATE",
         )
-        .bind(ids)
+        .bind(&unique_ids)
         .bind(u.id)
         .fetch_all(&mut *tx)
-        .await?
+        .await?;
+        if rows.len() != unique_ids.len() {
+            return Err(conflict(u.lang, ErrorKey::ReimbursementProcessed));
+        }
+        rows
     } else {
         sqlx::query_as(
             "SELECT id, amount_cents FROM reimbursements
              WHERE status = 'approved' AND batch_id IS NULL
-               AND substr(created_at, 1, 7) = $1
+               AND substr(created_at, 1, 7) <= $1
                AND user_id <> $2 AND reviewed_by IS DISTINCT FROM $2
              FOR UPDATE",
         )
@@ -2386,10 +2455,17 @@ async fn create_payout_batch(
 }
 
 fn csv_cell(v: &str) -> String {
-    if v.contains([',', '"', '\n', '\r']) {
-        format!("\"{}\"", v.replace('"', "\"\""))
+    let needs_neutralize = v.starts_with(['=', '+', '-', '@', '\t', '\r'])
+        || v.trim_start().starts_with(['=', '+', '-', '@']);
+    let safe = if needs_neutralize {
+        format!("'{v}")
     } else {
         v.to_string()
+    };
+    if safe.contains([',', '"', '\n', '\r']) {
+        format!("\"{}\"", safe.replace('"', "\"\""))
+    } else {
+        safe
     }
 }
 
@@ -2419,13 +2495,21 @@ async fn export_payout_batch_csv(
         "Claim ID,Payee Name,DuitNow / Phone,Amount (MYR),Applicant,Ride ID,Description,Status\r\n",
     );
     for (cid, pname, pphone, cents, uname, ride_id, desc, status) in rows {
-        let rm_str = format!("{:.2}", cents as f64 / 100.0);
+        let sign = if cents < 0 { "-" } else { "" };
+        let abs_cents = cents.abs();
+        let rm_str = format!("{sign}{}.{:02}", abs_cents / 100, abs_cents % 100);
         let eff_payee = if pname.is_empty() { &uname } else { &pname };
+        let phone_cell = csv_cell(&pphone);
+        let quoted_phone = if phone_cell.starts_with('"') {
+            phone_cell
+        } else {
+            format!("\"{phone_cell}\"")
+        };
         out.push_str(&format!(
             "{},{},{},{},{},{},{},{}\r\n",
             cid,
             csv_cell(eff_payee),
-            csv_cell(&pphone),
+            quoted_phone,
             rm_str,
             csv_cell(&uname),
             ride_id.map(|x| x.to_string()).unwrap_or_default(),
@@ -2445,6 +2529,46 @@ async fn export_payout_batch_csv(
         .map_err(|e| AppError::Other(anyhow::anyhow!(e)))
 }
 
+async fn cancel_payout_batch(
+    State(st): State<AppState>,
+    u: CurrentUser,
+    Path(id): Path<i64>,
+) -> AppResult<Json<Value>> {
+    require(&u, Page::AdminReimbPay, Act::Update)?;
+    let mut tx = st.db.begin().await?;
+    let batch: Option<(String,)> =
+        sqlx::query_as("SELECT status FROM payout_batches WHERE id=$1 FOR UPDATE")
+            .bind(id)
+            .fetch_optional(&mut *tx)
+            .await?;
+    let Some((status,)) = batch else {
+        return Err(not_found(u.lang));
+    };
+    if status != "open" {
+        return Err(bad(u.lang, ErrorKey::BatchAlreadyPaid));
+    }
+    sqlx::query("UPDATE reimbursements SET batch_id=NULL, updated_at=$1 WHERE batch_id=$2")
+        .bind(now())
+        .bind(id)
+        .execute(&mut *tx)
+        .await?;
+    sqlx::query("DELETE FROM payout_batches WHERE id=$1")
+        .bind(id)
+        .execute(&mut *tx)
+        .await?;
+    tx.commit().await?;
+    audit(
+        &st.db,
+        Some(u.id),
+        "reimbursement.batch_cancel",
+        "payout_batch",
+        Some(id),
+        "",
+    )
+    .await;
+    Ok(Json(json!({ "ok": true })))
+}
+
 async fn pay_payout_batch(
     State(st): State<AppState>,
     u: CurrentUser,
@@ -2456,7 +2580,7 @@ async fn pay_payout_batch(
         return Err(bad(u.lang, ErrorKey::PayeeVerificationRequired));
     }
     let paid_ref = req.paid_ref.trim();
-    if paid_ref.len() < 3 {
+    if paid_ref.len() < 4 {
         return Err(bad(u.lang, ErrorKey::TxnRefRequired));
     }
 
@@ -2698,6 +2822,9 @@ async fn monthly_report(
     let target = q.user_id.unwrap_or(u.id);
     if target != u.id {
         require(&u, Page::AdminReports, Act::View)?;
+        if !crate::routes::admin::has_global_report_scope(&u) {
+            return Err(forbidden(u.lang, ErrorKey::NoPermission));
+        }
     } else {
         require(&u, Page::Report, Act::View)?;
     }

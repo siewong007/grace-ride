@@ -220,6 +220,7 @@ async fn clear_squashed_migration_history(conn: &mut PgConnection) -> anyhow::Re
 pub async fn init(cfg: Config) -> anyhow::Result<AppState> {
     std::fs::create_dir_all(&cfg.upload_dir)?;
     util::set_timezone(cfg.db.timezone);
+    util::set_dev_mode(cfg.dev_mode);
     let db = connect_db_with(&cfg.database_url, &cfg.db).await?;
     // Built-in roles and their default permissions must exist before anyone signs in.
     perms::sync(&db).await?;

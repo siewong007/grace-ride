@@ -1,9 +1,11 @@
 import { MapPinOff } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
+import { SwipeBackGesture, useSmartBack } from '../components/BackNavigation';
 import { Button, Page } from '../components/ui';
 
 export default function NotFound() {
   const { t } = useTranslation('notFound');
+  const smartBack = useSmartBack('/');
 
   return (
     <Page width="narrow" className="not-found-page">
@@ -20,11 +22,12 @@ export default function NotFound() {
           <Button variant="primary" to="/">
             {t('goHome')}
           </Button>
-          <Button variant="secondary" onClick={() => window.history.back()}>
+          <Button variant="secondary" onClick={smartBack.goBack}>
             {t('back')}
           </Button>
         </div>
       </div>
+      <SwipeBackGesture enabled onBack={smartBack.goBack} />
     </Page>
   );
 }

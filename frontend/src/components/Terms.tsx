@@ -1,7 +1,9 @@
 import { useState } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { Link, useNavigate } from 'react-router-dom';
+import { ArrowLeft } from 'lucide-react';
 import { post } from '../api';
 import { useAuth } from '../auth';
+import { SwipeBackGesture, useSmartBack } from './BackNavigation';
 import { Button, ErrorBox, useAction } from './ui';
 import { useTranslation } from 'react-i18next';
 import ms from '../locales/terms.ms';
@@ -97,14 +99,25 @@ export function TermsGate() {
 
 export default function TermsPage() {
   const { t } = useTranslation('terms');
+  const { t: tc } = useTranslation();
+  const auth = useAuth();
+  const me = auth?.me ?? null;
+  const smartBack = useSmartBack(me ? '/' : '/login', { isAuthenticated: Boolean(me) });
+  const backLabel = me ? tc('back') : t('back');
   return (
     <div className="auth-page">
       <div className="card auth-card terms-measure stack">
+        <div>
+          <Link to={smartBack.href} onClick={smartBack.onClick} className="icon-btn topbar-back" aria-label={backLabel}>
+            <ArrowLeft size={22} />
+          </Link>
+        </div>
         <TermsText heading="h1" />
         <div>
-          <Button variant="secondary" to="/login">{t('back')}</Button>
+          <Button variant="secondary" to={smartBack.href} onClick={smartBack.onClick}>{backLabel}</Button>
         </div>
       </div>
+      <SwipeBackGesture enabled onBack={smartBack.goBack} />
     </div>
   );
 }

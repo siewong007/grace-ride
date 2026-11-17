@@ -1,6 +1,7 @@
 import { ComponentType, lazy, ReactNode, Suspense, useEffect, useLayoutEffect } from 'react';
 import { Navigate, Route, Routes, useLocation } from 'react-router-dom';
 import { useAuth } from './auth';
+import { BackNavigationProvider } from './components/BackNavigation';
 import Layout from './components/Layout';
 import { NoAccess, Page, Spinner } from './components/ui';
 import type { Act, PageKey } from './perms';
@@ -99,56 +100,58 @@ export default function App() {
   }, [loading]);
 
   return (
-    <Routes>
-      <Route path="/login" element={<Login />} />
-      <Route path="/terms" element={<TermsPage />} />
-      <Route path="/invite/:token" element={page(<Invite />)} />
-      {/* A visitor's ride: no account, outside the signed-in app. */}
-      <Route path="/visit/:token" element={page(<Visit />)} />
-      {/* Scoped caregiver safe-arrival view: no street address, read-only status + readiness toggle. */}
-      <Route path="/care/:token" element={page(<CarePass />)} />
-      <Route element={<RequireAuth><Layout /></RequireAuth>}>
-        <Route index element={<Home />} />
-        <Route path="rides" element={gated(<Rides />, 'rides')} />
-        <Route path="rides/new" element={gated(<RideNew />, ['rides', 'create'])} />
-        <Route path="rides/:id" element={page(<RideDetail />)} />
-        <Route path="drive" element={gated(<Drive />, 'drive')} />
-        <Route path="events" element={gated(<Events />, 'events')} />
-        <Route path="events/new" element={gated(<EventForm />, ['events', 'create'])} />
-        <Route path="events/:id" element={gated(<EventDetail />, 'events', 'admin_events')} />
-        <Route path="events/:id/checkin" element={gated(<EventCheckin />, 'events', 'admin_events')} />
-        <Route path="events/:id/edit" element={gated(<EventForm />, ['events', 'update'], ['admin_events', 'update'])} />
-        <Route path="events/:eventId/settle" element={gated(<SettlementForm />, ['settlements', 'create'])} />
-        <Route path="settlements" element={gated(<Settlements />, 'settlements', 'admin_bills')} />
-        <Route path="settlements/:id" element={page(<SettlementDetail />)} />
-        <Route path="settlements/:id/edit" element={gated(<SettlementForm />, ['settlements', 'update'])} />
-        <Route path="costs" element={gated(<Costs />, 'costs')} />
-        <Route path="reimbursements" element={gated(<Reimbursements />, 'reimbursements')} />
-        <Route path="reimbursements/new" element={gated(<ReimbursementForm />, ['reimbursements', 'create'], ['reimbursements', 'update'])} />
-        <Route path="reimbursements/:id" element={page(<ReimbursementDetail />)} />
-        <Route path="help" element={gated(<Help />, 'help', 'admin_help')} />
-        <Route path="help/:id" element={page(<HelpDetail />)} />
-        <Route path="help/guides/new" element={gated(<HelpGuideEditor />, ['admin_help', 'update'])} />
-        <Route path="help/guides/:slug/edit" element={gated(<HelpGuideEditor />, ['admin_help', 'update'])} />
-        <Route path="help/guides/:slug" element={gated(<HelpGuideDetail />, 'help')} />
-        <Route path="report" element={gated(<Report />, 'report')} />
-        <Route path="notifications" element={page(<Notifications />)} />
-        <Route path="me" element={page(<Profile />)} />
-        <Route path="admin/menu" element={gated(<AdminMenu />, ...ADMIN_MENU_PERMS)} />
-        <Route path="admin" element={gated(<AdminDashboard />, 'admin_dashboard')} />
-        <Route path="admin/rides" element={gated(<AdminRides />, 'admin_rides')} />
-        <Route path="admin/rides/:id" element={gated(<RideDetail />, 'admin_rides')} />
-        <Route path="admin/live" element={gated(<AdminLive />, 'admin_live')} />
-        <Route path="admin/members" element={gated(<AdminMembers />, 'admin_members', 'admin_invites', 'admin_recovery')} />
-        <Route path="admin/settings" element={gated(<AdminSettings />, 'admin_groups', 'admin_areas', 'admin_settings')} />
-        <Route path="admin/reimbursements" element={gated(<AdminReimbursements />, 'admin_reimb_review', 'admin_reimb_pay')} />
-        <Route path="admin/announcements" element={gated(<AdminAnnouncements />, 'admin_announcements')} />
-        <Route path="admin/audit" element={gated(<AdminAudit />, 'admin_audit')} />
-        <Route path="admin/reports" element={gated(<AdminReports />, 'admin_reports')} />
-        <Route path="admin/roles" element={gated(<AdminRoles />, 'admin_roles')} />
-        <Route path="admin/events/:id/plan" element={gated(<PlanTransport />, 'admin_plan')} />
-      </Route>
-      <Route path="*" element={page(<NotFound />)} />
-    </Routes>
+    <BackNavigationProvider>
+      <Routes>
+        <Route path="/login" element={<Login />} />
+        <Route path="/terms" element={<TermsPage />} />
+        <Route path="/invite/:token" element={page(<Invite />)} />
+        {/* A visitor's ride: no account, outside the signed-in app. */}
+        <Route path="/visit/:token" element={page(<Visit />)} />
+        {/* Scoped caregiver safe-arrival view: no street address, read-only status + readiness toggle. */}
+        <Route path="/care/:token" element={page(<CarePass />)} />
+        <Route element={<RequireAuth><Layout /></RequireAuth>}>
+          <Route index element={<Home />} />
+          <Route path="rides" element={gated(<Rides />, 'rides')} />
+          <Route path="rides/new" element={gated(<RideNew />, ['rides', 'create'])} />
+          <Route path="rides/:id" element={page(<RideDetail />)} />
+          <Route path="drive" element={gated(<Drive />, 'drive')} />
+          <Route path="events" element={gated(<Events />, 'events')} />
+          <Route path="events/new" element={gated(<EventForm />, ['events', 'create'])} />
+          <Route path="events/:id" element={gated(<EventDetail />, 'events', 'admin_events')} />
+          <Route path="events/:id/checkin" element={gated(<EventCheckin />, 'events', 'admin_events')} />
+          <Route path="events/:id/edit" element={gated(<EventForm />, ['events', 'update'], ['admin_events', 'update'])} />
+          <Route path="events/:eventId/settle" element={gated(<SettlementForm />, ['settlements', 'create'])} />
+          <Route path="settlements" element={gated(<Settlements />, 'settlements', 'admin_bills')} />
+          <Route path="settlements/:id" element={page(<SettlementDetail />)} />
+          <Route path="settlements/:id/edit" element={gated(<SettlementForm />, ['settlements', 'update'])} />
+          <Route path="costs" element={gated(<Costs />, 'costs')} />
+          <Route path="reimbursements" element={gated(<Reimbursements />, 'reimbursements')} />
+          <Route path="reimbursements/new" element={gated(<ReimbursementForm />, ['reimbursements', 'create'], ['reimbursements', 'update'])} />
+          <Route path="reimbursements/:id" element={page(<ReimbursementDetail />)} />
+          <Route path="help" element={gated(<Help />, 'help', 'admin_help')} />
+          <Route path="help/:id" element={page(<HelpDetail />)} />
+          <Route path="help/guides/new" element={gated(<HelpGuideEditor />, ['admin_help', 'update'])} />
+          <Route path="help/guides/:slug/edit" element={gated(<HelpGuideEditor />, ['admin_help', 'update'])} />
+          <Route path="help/guides/:slug" element={gated(<HelpGuideDetail />, 'help')} />
+          <Route path="report" element={gated(<Report />, 'report')} />
+          <Route path="notifications" element={page(<Notifications />)} />
+          <Route path="me" element={page(<Profile />)} />
+          <Route path="admin/menu" element={gated(<AdminMenu />, ...ADMIN_MENU_PERMS)} />
+          <Route path="admin" element={gated(<AdminDashboard />, 'admin_dashboard')} />
+          <Route path="admin/rides" element={gated(<AdminRides />, 'admin_rides')} />
+          <Route path="admin/rides/:id" element={gated(<RideDetail />, 'admin_rides')} />
+          <Route path="admin/live" element={gated(<AdminLive />, 'admin_live')} />
+          <Route path="admin/members" element={gated(<AdminMembers />, 'admin_members', 'admin_invites', 'admin_recovery')} />
+          <Route path="admin/settings" element={gated(<AdminSettings />, 'admin_groups', 'admin_areas', 'admin_settings')} />
+          <Route path="admin/reimbursements" element={gated(<AdminReimbursements />, 'admin_reimb_review', 'admin_reimb_pay')} />
+          <Route path="admin/announcements" element={gated(<AdminAnnouncements />, 'admin_announcements')} />
+          <Route path="admin/audit" element={gated(<AdminAudit />, 'admin_audit')} />
+          <Route path="admin/reports" element={gated(<AdminReports />, 'admin_reports')} />
+          <Route path="admin/roles" element={gated(<AdminRoles />, 'admin_roles')} />
+          <Route path="admin/events/:id/plan" element={gated(<PlanTransport />, 'admin_plan')} />
+        </Route>
+        <Route path="*" element={page(<NotFound />)} />
+      </Routes>
+    </BackNavigationProvider>
   );
 }

@@ -148,7 +148,7 @@ fn event_json(e: &EventRow, u: &CurrentUser) -> Value {
             "need_ride": e.my_need_ride == Some(1),
             "offer_drive": e.my_offer_drive == Some(1),
             "attended": e.my_attended,
-            "pass_code": e.my_pass_code,
+            "pass_code": if s == "going" { e.my_pass_code.clone() } else { None },
             "as_group": e.my_as_group_id.map(|id| json!({"id": id, "name": e.my_as_group})),
         })),
         "groups": e.groups.clone().unwrap_or_default(),
@@ -273,14 +273,24 @@ async fn get_event(
         .map(|(gid, name)| json!({"id": gid, "name": name}))
         .collect::<Vec<_>>());
     let my_ride: Option<(i64, String)> = sqlx::query_as(
-        // Their own ride, not one they booked for a visitor.
-        "SELECT id, status FROM rides WHERE event_id=$1 AND passenger_id=$2 AND is_proxy=0 AND status NOT IN ('cancelled') ORDER BY id DESC LIMIT 1",
+        // Their own ride, not one they booked for a visitor; prefer outbound when round-trip.
+        "SELECT id, status FROM rides WHERE event_id=$1 AND passenger_id=$2 AND is_proxy=0 AND status NOT IN ('cancelled')
+         ORDER BY CASE WHEN leg='outbound' THEN 0 ELSE 1 END, id DESC LIMIT 1",
     )
     .bind(id)
     .bind(u.id)
     .fetch_optional(&st.db)
     .await?;
     v["my_ride"] = json!(my_ride.map(|(i, s)| json!({"id": i, "status": s})));
+    let my_return_ride: Option<(i64, String)> = sqlx::query_as(
+        "SELECT id, status FROM rides WHERE event_id=$1 AND passenger_id=$2 AND is_proxy=0 AND leg='return' AND status NOT IN ('cancelled')
+         ORDER BY id DESC LIMIT 1",
+    )
+    .bind(id)
+    .bind(u.id)
+    .fetch_optional(&st.db)
+    .await?;
+    v["my_return_ride"] = json!(my_return_ride.map(|(i, s)| json!({"id": i, "status": s})));
     let settlement: Option<(i64, String)> = sqlx::query_as(
         "SELECT id, status FROM settlements WHERE event_id=$1 ORDER BY id DESC LIMIT 1",
     )
@@ -454,12 +464,23 @@ async fn create_event(
     };
     let att_enabled = req.attendance_enabled.unwrap_or(true);
 
+    let dl_delta = dl.as_deref().and_then(|d| {
+        crate::util::parse_dt(d)
+            .zip(crate::util::parse_dt(&at))
+            .map(|(dd, ad)| ad - dd)
+    });
+
     // The event(s) and their audience are saved together, or not at all.
     let mut tx = st.db.begin().await?;
     let mut created_ids = Vec::with_capacity(repeat_count as usize);
     for idx in 0..repeat_count {
         let occ_at = shift_occurrence(&at, freq, idx);
-        let occ_dl = dl.as_deref().map(|d| shift_occurrence(d, freq, idx));
+        let occ_dl = match (dl_delta, crate::util::parse_dt(&occ_at)) {
+            (Some(delta), Some(occ_dt)) => {
+                Some((occ_dt - delta).format("%Y-%m-%dT%H:%M").to_string())
+            }
+            _ => None,
+        };
         let checkin_code = if att_enabled {
             Some(random_token(10))
         } else {
@@ -500,21 +521,30 @@ async fn create_event(
         .map(|(m,)| m)
         .filter(|m| *m != u.id)
         .collect();
-    let body = if repeat_count > 1 {
-        format!(
-            "{} · {} ({} sessions)",
-            req.title.trim(),
-            at.replace('T', " "),
-            repeat_count
+    let (body_zh, body_en) = if repeat_count > 1 {
+        (
+            format!(
+                "{} · {}（共 {} 场）",
+                req.title.trim(),
+                at.replace('T', " "),
+                repeat_count
+            ),
+            format!(
+                "{} · {} ({} sessions)",
+                req.title.trim(),
+                at.replace('T', " "),
+                repeat_count
+            ),
         )
     } else {
-        format!("{} · {}", req.title.trim(), at.replace('T', " "))
+        let single = format!("{} · {}", req.title.trim(), at.replace('T', " "));
+        (single.clone(), single)
     };
     notify_many(
         &st.db,
         &invited,
         ("新的活动邀请", "New event invitation"),
-        (&body, &body),
+        (&body_zh, &body_en),
         &format!("/events/{first_id}"),
     )
     .await;
@@ -575,6 +605,19 @@ async fn duplicate_event(
     } else {
         None
     };
+    let photo_file_id = if let Some(fid) = src.photo_file_id {
+        let owner: Option<i64> = sqlx::query_scalar("SELECT owner_id FROM files WHERE id=$1")
+            .bind(fid)
+            .fetch_optional(&st.db)
+            .await?;
+        if owner == Some(u.id) {
+            Some(fid)
+        } else {
+            None
+        }
+    } else {
+        None
+    };
 
     let mut tx = st.db.begin().await?;
     let (new_id,): (i64,) = sqlx::query_as(
@@ -591,19 +634,26 @@ async fn duplicate_event(
     .bind(&dl)
     .bind(u.id)
     .bind(now())
-    .bind(src.photo_file_id)
+    .bind(photo_file_id)
     .bind(att_enabled as i64)
     .bind(checkin_code)
     .fetch_one(&mut *tx)
     .await?;
-    sqlx::query(
+    let groups_copied = sqlx::query(
         "INSERT INTO event_groups (event_id, group_id)
-         SELECT $1, group_id FROM event_groups WHERE event_id=$2 ON CONFLICT DO NOTHING",
+         SELECT $1, g.id
+         FROM event_groups eg JOIN groups g ON g.id = eg.group_id
+         WHERE eg.event_id=$2
+         FOR SHARE OF g
+         ON CONFLICT DO NOTHING",
     )
     .bind(new_id)
     .bind(id)
     .execute(&mut *tx)
     .await?;
+    if groups_copied.rows_affected() == 0 {
+        return Err(bad(u.lang, ErrorKey::SelectVisibleGroup));
+    }
     sqlx::query(
         "INSERT INTO event_attribution_groups (event_id, group_id)
          SELECT $1, group_id FROM event_attribution_groups WHERE event_id=$2 ON CONFLICT DO NOTHING",
@@ -613,6 +663,25 @@ async fn duplicate_event(
     .execute(&mut *tx)
     .await?;
     tx.commit().await?;
+
+    let members: Vec<(i64,)> = sqlx::query_as(&audience_users_sql("$1"))
+        .bind(new_id)
+        .fetch_all(&st.db)
+        .await?;
+    let invited: Vec<i64> = members
+        .into_iter()
+        .map(|(m,)| m)
+        .filter(|m| *m != u.id)
+        .collect();
+    let body = format!("{title} · {}", at.replace('T', " "));
+    notify_many(
+        &st.db,
+        &invited,
+        ("新的活动邀请", "New event invitation"),
+        (&body, &body),
+        &format!("/events/{new_id}"),
+    )
+    .await;
 
     audit(
         &st.db,
@@ -842,6 +911,25 @@ async fn finish_event(
     Ok(Json(json!({"ok": true})))
 }
 
+async fn allocate_pass_code(conn: &mut sqlx::PgConnection, event_id: i64) -> AppResult<String> {
+    for _ in 0..8 {
+        let candidate = random_token(10);
+        let exists: Option<i64> = sqlx::query_scalar(
+            "SELECT id FROM event_signups
+             WHERE event_id=$1 AND pass_code IS NOT NULL AND lower(pass_code)=lower($2)
+             LIMIT 1",
+        )
+        .bind(event_id)
+        .bind(&candidate)
+        .fetch_optional(&mut *conn)
+        .await?;
+        if exists.is_none() {
+            return Ok(candidate);
+        }
+    }
+    Ok(random_token(10))
+}
+
 #[derive(Deserialize)]
 struct SignupIn {
     need_ride: Option<bool>,
@@ -906,7 +994,7 @@ async fn signup(
     } else {
         "waitlist"
     };
-    let pass_code = random_token(10);
+    let pass_code = allocate_pass_code(&mut tx, id).await?;
     sqlx::query(
         "INSERT INTO event_signups (event_id, user_id, status, need_ride, offer_drive, offer_seats, created_at, as_group_id, pass_code) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)
          ON CONFLICT(event_id, user_id) DO UPDATE SET status=excluded.status, need_ride=excluded.need_ride, offer_drive=excluded.offer_drive, offer_seats=excluded.offer_seats, as_group_id=excluded.as_group_id,
@@ -1120,7 +1208,8 @@ async fn list_signups(
     );
     let rows: Vec<SignupRow> = sqlx::query_as(
         "SELECT s.id, s.user_id, u.name, s.status, s.need_ride, s.offer_drive, s.offer_seats, s.attended,
-            (SELECT r.status FROM rides r WHERE r.event_id = s.event_id AND r.passenger_id = s.user_id AND r.is_proxy = 0 AND r.status != 'cancelled' ORDER BY r.id DESC LIMIT 1),
+            (SELECT r.status FROM rides r WHERE r.event_id = s.event_id AND r.passenger_id = s.user_id AND r.is_proxy = 0 AND r.status != 'cancelled'
+             ORDER BY CASE WHEN r.leg='outbound' THEN 0 ELSE 1 END, r.id DESC LIMIT 1),
             (SELECT name FROM groups WHERE id = s.as_group_id)
          FROM event_signups s JOIN users u ON u.id = s.user_id WHERE s.event_id=$1 ORDER BY s.status, s.created_at",
     )
@@ -1156,20 +1245,53 @@ async fn mark_attendance(
         return Err(bad(u.lang, ErrorKey::AttendanceModuleDisabled));
     }
     let v = req.attended.map(|a| a as i64);
+    let mut tx = st.db.begin().await?;
+    let (capacity,): (i64,) = sqlx::query_as("SELECT capacity FROM events WHERE id=$1 FOR UPDATE")
+        .bind(id)
+        .fetch_one(&mut *tx)
+        .await?;
+    let target_status: Option<(String,)> = sqlx::query_as("SELECT status FROM users WHERE id=$1")
+        .bind(req.user_id)
+        .fetch_optional(&mut *tx)
+        .await?;
+    if target_status.as_ref().map(|(s,)| s.as_str()) != Some("active") {
+        return Err(forbidden(u.lang, ErrorKey::MembersOnlyAttendance));
+    }
+    let existing: Option<(String,)> = sqlx::query_as(
+        "SELECT status FROM event_signups WHERE event_id=$1 AND user_id=$2 FOR UPDATE",
+    )
+    .bind(id)
+    .bind(req.user_id)
+    .fetch_optional(&mut *tx)
+    .await?;
+    let promoting_to_going =
+        v == Some(1) && existing.as_ref().map(|(s,)| s.as_str()) != Some("going");
+    if promoting_to_going && capacity > 0 {
+        let (going,): (i64,) = sqlx::query_as(
+            "SELECT COUNT(*) FROM event_signups WHERE event_id=$1 AND status='going'",
+        )
+        .bind(id)
+        .fetch_one(&mut *tx)
+        .await?;
+        if going >= capacity {
+            return Err(bad(u.lang, ErrorKey::SignupClosed));
+        }
+    }
     // Recording someone as attended also makes them a participant: a member who withdrew
     // (or was still waitlisted) but came anyway is a walk-in and must show in the list
     // and count, which only include 'going'.
-    let r = sqlx::query(
-        "UPDATE event_signups SET attended=$1,
-           status = CASE WHEN $1 = 1 AND status IN ('cancelled','waitlist') THEN 'going' ELSE status END
-         WHERE event_id=$2 AND user_id=$3",
-    )
+    if existing.is_some() {
+        sqlx::query(
+            "UPDATE event_signups SET attended=$1,
+               status = CASE WHEN $1 = 1 AND status IN ('cancelled','waitlist') THEN 'going' ELSE status END
+             WHERE event_id=$2 AND user_id=$3",
+        )
         .bind(v)
         .bind(id)
         .bind(req.user_id)
-        .execute(&st.db)
+        .execute(&mut *tx)
         .await?;
-    if r.rows_affected() == 0 && v == Some(1) {
+    } else if v == Some(1) {
         // Walk-in: organiser may record someone who attended without signing up, but
         // only a member the event is for (or the organiser): otherwise this would let any
         // member id be marked present and then billed.
@@ -1181,21 +1303,23 @@ async fn mark_attendance(
         .bind(id)
         .bind(req.user_id)
         .bind(e.created_by)
-        .fetch_one(&st.db)
+        .fetch_one(&mut *tx)
         .await?;
         if in_audience == 0 {
             return Err(forbidden(u.lang, ErrorKey::EventNotOpenToGroup));
         }
+        let pass_code = allocate_pass_code(&mut tx, id).await?;
         sqlx::query("INSERT INTO event_signups (event_id, user_id, status, attended, created_at, pass_code) VALUES ($1,$2, 'going', $3, $4, $5)
              ON CONFLICT (event_id, user_id) DO UPDATE SET attended=excluded.attended, status='going', pass_code=COALESCE(event_signups.pass_code, excluded.pass_code)")
             .bind(id)
             .bind(req.user_id)
             .bind(v)
             .bind(now())
-            .bind(random_token(10))
-            .execute(&st.db)
+            .bind(pass_code)
+            .execute(&mut *tx)
             .await?;
     }
+    tx.commit().await?;
     audit(
         &st.db,
         Some(u.id),
@@ -1242,6 +1366,10 @@ async fn self_checkin(
     }
 
     let mut tx = st.db.begin().await?;
+    let (capacity,): (i64,) = sqlx::query_as("SELECT capacity FROM events WHERE id=$1 FOR UPDATE")
+        .bind(id)
+        .fetch_one(&mut *tx)
+        .await?;
     let existing: Option<(Option<i64>, String)> = sqlx::query_as(
         "SELECT attended, status FROM event_signups WHERE event_id = $1 AND user_id = $2 FOR UPDATE",
     )
@@ -1253,6 +1381,18 @@ async fn self_checkin(
     let already_attended = existing.as_ref().is_some_and(|(att, _)| *att == Some(1));
 
     if !already_attended {
+        let needs_spot = existing.as_ref().map(|(_, st_s)| st_s.as_str()) != Some("going");
+        if needs_spot && capacity > 0 {
+            let (going,): (i64,) = sqlx::query_as(
+                "SELECT COUNT(*) FROM event_signups WHERE event_id=$1 AND status='going'",
+            )
+            .bind(id)
+            .fetch_one(&mut *tx)
+            .await?;
+            if going >= capacity {
+                return Err(bad(u.lang, ErrorKey::SignupClosed));
+            }
+        }
         if existing.is_some() {
             sqlx::query(
                 "UPDATE event_signups SET attended = 1,
@@ -1267,6 +1407,7 @@ async fn self_checkin(
             // Member participates directly via check-in without requiring a ride.
             let choices = join_choices(&st.db, &u, id).await.unwrap_or_default();
             let as_group = choices.first().map(|c| c.0);
+            let pass_code = allocate_pass_code(&mut tx, id).await?;
             sqlx::query(
                 "INSERT INTO event_signups (event_id, user_id, status, attended, need_ride, offer_drive, offer_seats, as_group_id, created_at, pass_code)
                  VALUES ($1, $2, 'going', 1, 0, 0, 0, $3, $4, $5)
@@ -1276,7 +1417,7 @@ async fn self_checkin(
             .bind(u.id)
             .bind(as_group)
             .bind(now())
-            .bind(random_token(10))
+            .bind(pass_code)
             .execute(&mut *tx)
             .await?;
         }
@@ -1364,20 +1505,40 @@ async fn scan_member_pass(
         return Err(bad(u.lang, ErrorKey::InvalidPassCode));
     }
 
-    let row: Option<(i64, String, Option<i64>)> = sqlx::query_as(
-        "SELECT es.user_id, u.name, es.attended
+    let mut tx = st.db.begin().await?;
+    let (capacity,): (i64,) = sqlx::query_as("SELECT capacity FROM events WHERE id=$1 FOR UPDATE")
+        .bind(id)
+        .fetch_one(&mut *tx)
+        .await?;
+    let row: Option<(i64, String, String, String, Option<i64>)> = sqlx::query_as(
+        "SELECT es.user_id, u.name, u.status, es.status, es.attended
          FROM event_signups es JOIN users u ON u.id = es.user_id
-         WHERE es.event_id = $1 AND es.pass_code IS NOT NULL AND lower(es.pass_code) = lower($2)",
+         WHERE es.event_id = $1 AND es.pass_code IS NOT NULL AND lower(es.pass_code) = lower($2)
+         FOR UPDATE OF es",
     )
     .bind(id)
     .bind(clean)
-    .fetch_optional(&st.db)
+    .fetch_optional(&mut *tx)
     .await?;
-    let Some((uid, member_name, prev_att)) = row else {
+    let Some((uid, member_name, member_status, signup_status, prev_att)) = row else {
         return Err(bad(u.lang, ErrorKey::InvalidPassCode));
     };
+    if member_status != "active" {
+        return Err(forbidden(u.lang, ErrorKey::MembersOnlyAttendance));
+    }
     let already_attended = prev_att == Some(1);
     if !already_attended {
+        if signup_status != "going" && capacity > 0 {
+            let (going,): (i64,) = sqlx::query_as(
+                "SELECT COUNT(*) FROM event_signups WHERE event_id=$1 AND status='going'",
+            )
+            .bind(id)
+            .fetch_one(&mut *tx)
+            .await?;
+            if going >= capacity {
+                return Err(bad(u.lang, ErrorKey::SignupClosed));
+            }
+        }
         sqlx::query(
             "UPDATE event_signups SET attended = 1,
                 status = CASE WHEN status IN ('cancelled','waitlist') THEN 'going' ELSE status END
@@ -1385,8 +1546,9 @@ async fn scan_member_pass(
         )
         .bind(id)
         .bind(uid)
-        .execute(&st.db)
+        .execute(&mut *tx)
         .await?;
+        tx.commit().await?;
         audit(
             &st.db,
             Some(u.id),
@@ -1396,6 +1558,8 @@ async fn scan_member_pass(
             format!("scan member {uid} ({member_name}) = Some(true)"),
         )
         .await;
+    } else {
+        tx.commit().await?;
     }
     Ok(Json(json!({
         "ok": true,

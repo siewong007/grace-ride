@@ -128,11 +128,16 @@ pub async fn verify_totp(
             if step <= last {
                 return Err(bad(lang, ErrorKey::CodeAlreadyUsed));
             }
-            sqlx::query("UPDATE users SET totp_last_step=$1 WHERE id=$2")
-                .bind(step)
-                .bind(user_id)
-                .execute(&st.db)
-                .await?;
+            let updated = sqlx::query(
+                "UPDATE users SET totp_last_step=$1 WHERE id=$2 AND COALESCE(totp_last_step, -1) < $1",
+            )
+            .bind(step)
+            .bind(user_id)
+            .execute(&st.db)
+            .await?;
+            if updated.rows_affected() == 0 {
+                return Err(bad(lang, ErrorKey::CodeAlreadyUsed));
+            }
             return Ok(());
         }
     }
@@ -239,6 +244,7 @@ async fn me(State(st): State<AppState>, u: CurrentUser) -> AppResult<Json<Value>
     .bind(u.id)
     .fetch_one(&st.db)
     .await?;
+    let _ = crate::security::evaluate_session_lock(&st, &u.session_id, false).await;
     let (locked_at,): (Option<String>,) =
         sqlx::query_as("SELECT locked_at FROM sessions WHERE token=$1")
             .bind(&u.session_id)
@@ -769,7 +775,7 @@ async fn passkey_reauth_finish(
         return Err(bad(u.lang, ErrorKey::PasskeyFailed));
     }
     sqlx::query(
-        "UPDATE sessions SET created_at=$1, locked_at=NULL, last_seen_at=$1 WHERE token=$2",
+        "UPDATE sessions SET created_at=$1, locked_at=NULL, last_seen_at=$1, mfa_ok=1 WHERE token=$2",
     )
     .bind(now())
     .bind(&u.session_id)
@@ -998,6 +1004,17 @@ async fn consume_backup_code(
     raw: &str,
     lang: Lang,
 ) -> AppResult<usize> {
+    if st
+        .limiter
+        .check(
+            &format!("totp_user:{user_id}"),
+            10,
+            std::time::Duration::from_secs(300),
+        )
+        .is_err()
+    {
+        return Err(crate::error::too_many_requests(lang, ErrorKey::RateLimited));
+    }
     let norm = raw.trim().replace(['-', ' '], "").to_uppercase();
     if norm.len() != 8 {
         return Err(bad(lang, ErrorKey::InvalidCode));
@@ -1085,7 +1102,18 @@ async fn unlock_session(
             return Err(bad(u.lang, ErrorKey::TwoFactorNotConfigured));
         }
         let sec = totp_secret.ok_or_else(|| bad(u.lang, ErrorKey::TwoFactorNotConfigured))?;
-        verify_totp(&st, u.id, &sec, &u.email, code, u.lang).await?;
+        if let Err(err) = verify_totp(&st, u.id, &sec, &u.email, code, u.lang).await {
+            audit(
+                &st.db,
+                Some(u.id),
+                "totp.failed",
+                "user",
+                Some(u.id),
+                "unlock",
+            )
+            .await;
+            return Err(err);
+        }
         mfa_verified = true;
     } else if let Some(bcode) = req
         .backup_code

@@ -3,7 +3,10 @@ import { useNavigate, useParams } from 'react-router-dom';
 import { Fingerprint } from 'lucide-react';
 import { post, useApi } from '../api';
 import { useAuth } from '../auth';
+import { clearAutoLock } from '../components/AutoLock';
+import { clearOfflineSnapshots } from '../offlineSnapshot';
 import { LogoMark, Wordmark } from '../components/Brand';
+import { SwipeBackGesture } from '../components/BackNavigation';
 import { PublicDisplayBar } from '../components/AppChrome';
 import { TermsOptIn, TermsText } from '../components/Terms';
 import { Button, ErrorBox, Field, Spinner, useAction } from '../components/ui';
@@ -73,6 +76,8 @@ export default function Invite() {
         `/invites/${token}/accept`,
         recovery ? { terms: true } : { name: name.trim(), email: email.trim(), phone: phone.trim(), terms: true }
       );
+      clearAutoLock();
+      clearOfflineSnapshots();
       await refresh();
       setStep('passkey');
     });
@@ -235,6 +240,7 @@ export default function Invite() {
           </div>
         )}
       </div>
+      <SwipeBackGesture enabled={step === 'terms'} onBack={() => setStep('details')} />
     </div>
   );
 }

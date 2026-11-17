@@ -32,6 +32,7 @@ import { uploadFile } from '../api';
 import { observeElementRect, useVirtualizer } from '@tanstack/react-virtual';
 import { Tone } from '../format';
 import { LoadingMark } from './Brand';
+import { useSmartBack } from './BackNavigation';
 import { GuideHeaderActionContext, usePageChrome } from './PageChrome';
 import { useTranslation } from 'react-i18next';
 
@@ -201,6 +202,15 @@ export interface PageHeaderProps {
   className?: string;
 }
 
+function StandaloneBackLink({ to, label }: { to: string; label: string }) {
+  const smartBack = useSmartBack(to);
+  return (
+    <Link to={smartBack.href} onClick={smartBack.onClick} className="icon-btn sm" aria-label={label}>
+      <ArrowLeft size={20} />
+    </Link>
+  );
+}
+
 /**
  * Page heading with optional subtitle and actions. Inside the app frame the back link
  * lives in the top bar, and the top bar shows the title only once this heading scrolls away.
@@ -214,9 +224,7 @@ export function PageHeader({ title, subtitle, back, actions, className = '' }: P
     <div className={`page-head ${className}`.trim()}>
       <div className="row nowrap page-head-title">
         {back && !inFrame && (
-          <Link to={back} className="icon-btn sm hide-tablet-up" aria-label={t('back') || 'Back'}>
-            <ArrowLeft size={20} />
-          </Link>
+          <StandaloneBackLink to={back} label={t('back') || 'Back'} />
         )}
         <div className="page-head-text">
           <h1 ref={headingRef}>{title}</h1>

@@ -578,6 +578,10 @@ async fn create_pass(
     };
     let valid_until = shift(&latest, CLOSES_AFTER_HOURS);
 
+    let (assistance, notes) = crate::routes::rides::normalize_assistance(
+        req.assistance.as_deref().unwrap_or_default(),
+        req.notes.as_deref().unwrap_or_default(),
+    );
     let mut tx = st.db.begin().await?;
     let (ride_id,): (i64,) = sqlx::query_as(
         "INSERT INTO rides (passenger_id, event_id, pickup_at, pickup_area_id, pickup_address, destination, seats, assistance, notes,
@@ -591,8 +595,8 @@ async fn create_pass(
     .bind(req.pickup_address.trim())
     .bind(&location)
     .bind(seats)
-    .bind(req.assistance.unwrap_or_default())
-    .bind(req.notes.unwrap_or_default())
+    .bind(&assistance)
+    .bind(&notes)
     .bind(&name)
     .bind(&phone)
     .bind(&n)

@@ -1040,6 +1040,43 @@ async fn round_trip_bounds_stroller_arrange_rule_and_proxy_vs_self_duplicate_gua
         "stroller ride should be placed once child_seat=true: {}",
         arr2.json
     );
+
+    // Composite UI assistance text normalizes safely to canonical DB enum while preserving original detail in notes
+    let chips_ride = call(
+        &app,
+        Method::POST,
+        "/api/rides",
+        Some(&member),
+        Some(json!({
+            "event_id": ev_id,
+            "pickup_at": future_dt(2, "08:50"),
+            "pickup_area_id": area,
+            "pickup_address": "12 Jalan Satu",
+            "destination": "Sanctuary",
+            "seats": 1,
+            "is_proxy": true,
+            "rider_name": "Elder Tan",
+            "assistance": "Wheelchair, Walking aid",
+            "notes": "Ring doorbell"
+        })),
+    )
+    .await;
+    assert_eq!(chips_ride.status, StatusCode::OK, "{}", chips_ride.json);
+    let chips_id = chips_ride.json["id"].as_i64().unwrap();
+    let chips_detail = call(
+        &app,
+        Method::GET,
+        &format!("/api/rides/{chips_id}"),
+        Some(&member),
+        None,
+    )
+    .await;
+    assert_eq!(chips_detail.status, StatusCode::OK);
+    assert_eq!(chips_detail.json["assistance"], "wheelchair");
+    assert_eq!(
+        chips_detail.json["notes"],
+        "Wheelchair, Walking aid · Ring doorbell"
+    );
 }
 
 #[tokio::test]

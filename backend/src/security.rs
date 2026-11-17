@@ -49,6 +49,9 @@ impl RateLimiter {
         let mut map = self.windows.lock().unwrap_or_else(|e| e.into_inner());
         if map.len() > 50_000 {
             map.retain(|_, (start, w, _)| now.duration_since(*start) < *w);
+            if !map.contains_key(key) && map.len() >= 50_000 {
+                return Err(window.as_secs().max(1));
+            }
         }
         let entry = map.entry(key.to_string()).or_insert((now, window, 0));
         if now.duration_since(entry.0) >= window || entry.1 != window {
@@ -124,7 +127,7 @@ pub async fn rate_limit(State(st): State<AppState>, req: Request, next: Next) ->
     {
         Some(("login", 10, 60))
     } else if path.starts_with("/api/auth/passkey/reauth/") {
-        Some(("reauth", 10, 60))
+        Some(("reauth", 20, 300))
     } else if path == "/api/auth/totp/verify"
         || path == "/api/auth/totp/enable"
         || path == "/api/auth/unlock"
@@ -145,7 +148,7 @@ pub async fn rate_limit(State(st): State<AppState>, req: Request, next: Next) ->
     } else if path == "/api/files" {
         Some(("upload", 30, 600))
     } else if path.starts_with("/api/files/") && path.ends_with("/extract-ref") {
-        Some(("extract_ref", 20, 600))
+        Some(("extract_ref", 30, 600))
     } else {
         None
     };
@@ -207,6 +210,9 @@ async fn totp_owner(st: &AppState, headers: &HeaderMap) -> Option<String> {
         .or_else(|| jar.get(SESSION_COOKIE))?
         .value()
         .to_string();
+    if token.len() != 48 {
+        return None;
+    }
     let uid: Option<i64> =
         sqlx::query_scalar("SELECT user_id FROM sessions WHERE token=$1 AND expires_at > $2")
             .bind(hash_token(&token))
@@ -253,6 +259,91 @@ fn lock_bypass_path(path: &str) -> bool {
         || path.starts_with("/calendar/")
 }
 
+/// Evaluates whether a session is currently locked (or has exceeded its idle timeout),
+/// engaging `sessions.locked_at` when idle and updating `last_seen_at` if `touch` is true.
+/// Returns `Some((lang, is_locked_without_mfa))` when the session is locked.
+pub async fn evaluate_session_lock(
+    st: &AppState,
+    token_hash: &str,
+    touch: bool,
+) -> Option<(Lang, bool)> {
+    type LockRow = (
+        Option<String>,
+        String,
+        i64,
+        String,
+        String,
+        String,
+        i64,
+        i64,
+        Option<String>,
+    );
+    let row: Option<LockRow> = sqlx::query_as(
+        "SELECT s.locked_at, s.last_seen_at, u.auto_lock_mins, u.lang, s.expires_at,
+                u.status, u.totp_enabled,
+                (SELECT COUNT(*) FROM passkeys p WHERE p.user_id = u.id) AS passkey_count,
+                (SELECT value FROM system_settings WHERE key = 'session_timeout_mins') AS org_timeout
+         FROM sessions s JOIN users u ON u.id = s.user_id
+         WHERE s.token = $1",
+    )
+    .bind(token_hash)
+    .fetch_optional(&st.db)
+    .await
+    .ok()
+    .flatten();
+    let (
+        locked_at,
+        last_seen_at,
+        auto_lock_mins,
+        lang,
+        expires,
+        status,
+        totp_enabled,
+        passkey_count,
+        org_timeout_str,
+    ) = row?;
+    let now_str = now();
+    if expires < now_str {
+        return None;
+    }
+    let has_unlock_method = passkey_count > 0 || totp_enabled == 1 || st.cfg.dev_mode;
+    if locked_at.is_some() {
+        return Some((Lang::from_code(&lang), !has_unlock_method));
+    }
+    let org_timeout = org_timeout_str
+        .and_then(|v| v.parse::<i64>().ok())
+        .unwrap_or(st.cfg.session_timeout_mins);
+    let effective_mins = if auto_lock_mins > 0 {
+        auto_lock_mins
+    } else if auto_lock_mins == 0 {
+        org_timeout
+    } else {
+        0
+    };
+    if effective_mins > 0
+        && status == "active"
+        && has_unlock_method
+        && last_seen_at < crate::util::minutes_ago(effective_mins)
+    {
+        let _ = sqlx::query(
+            "UPDATE sessions SET locked_at = $1 WHERE token = $2 AND locked_at IS NULL",
+        )
+        .bind(&now_str)
+        .bind(token_hash)
+        .execute(&st.db)
+        .await;
+        return Some((Lang::from_code(&lang), false));
+    }
+    if touch && last_seen_at < crate::util::minutes_ago(1) {
+        let _ = sqlx::query("UPDATE sessions SET last_seen_at = $1 WHERE token = $2")
+            .bind(&now_str)
+            .bind(token_hash)
+            .execute(&st.db)
+            .await;
+    }
+    None
+}
+
 /// Server-enforced screen lock: blocks API access when the current session is locked
 /// or has been inactive longer than the user's configured auto-lock timeout.
 pub async fn session_lock_guard(State(st): State<AppState>, req: Request, next: Next) -> Response {
@@ -269,52 +360,14 @@ pub async fn session_lock_guard(State(st): State<AppState>, req: Request, next: 
         return next.run(req).await;
     };
     let token_hash = hash_token(&token);
-    let row: Option<(Option<String>, String, i64, String, String, Option<String>)> =
-        sqlx::query_as(
-            "SELECT s.locked_at, s.last_seen_at, u.auto_lock_mins, u.lang, s.expires_at,
-                (SELECT value FROM system_settings WHERE key = 'session_timeout_mins')
-         FROM sessions s JOIN users u ON u.id = s.user_id
-         WHERE s.token = $1",
-        )
-        .bind(&token_hash)
-        .fetch_optional(&st.db)
-        .await
-        .ok()
-        .flatten();
-    if let Some((locked_at, last_seen_at, auto_lock_mins, lang, expires, org_timeout_str)) = row {
-        let now_str = now();
-        if expires >= now_str {
-            if locked_at.is_some() {
-                return locked(Lang::from_code(&lang), ErrorKey::SessionLocked).into_response();
-            }
-            let org_timeout = org_timeout_str
-                .and_then(|v| v.parse::<i64>().ok())
-                .unwrap_or(st.cfg.session_timeout_mins);
-            let effective_timeout = if auto_lock_mins > 0 {
-                auto_lock_mins
-            } else if auto_lock_mins == -1 {
-                0
-            } else {
-                org_timeout
-            };
-            if effective_timeout > 0 && last_seen_at < crate::util::minutes_ago(effective_timeout) {
-                let _ = sqlx::query(
-                    "UPDATE sessions SET locked_at = $1 WHERE token = $2 AND locked_at IS NULL",
-                )
-                .bind(&now_str)
-                .bind(&token_hash)
-                .execute(&st.db)
-                .await;
-                return locked(Lang::from_code(&lang), ErrorKey::SessionLocked).into_response();
-            }
-            if last_seen_at < crate::util::minutes_ago(1) {
-                let _ = sqlx::query("UPDATE sessions SET last_seen_at = $1 WHERE token = $2")
-                    .bind(&now_str)
-                    .bind(&token_hash)
-                    .execute(&st.db)
-                    .await;
-            }
+    if let Some((lang, no_mfa)) = evaluate_session_lock(&st, &token_hash, true).await {
+        let sub = path.strip_prefix("/api").unwrap_or(&path);
+        if no_mfa
+            && (sub == "/auth/passkey/register/start" || sub == "/auth/passkey/register/finish")
+        {
+            return next.run(req).await;
         }
+        return locked(lang, ErrorKey::SessionLocked).into_response();
     }
     next.run(req).await
 }

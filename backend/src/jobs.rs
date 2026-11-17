@@ -271,6 +271,19 @@ async fn housekeeping(db: &PgPool, cfg: &Config) -> anyhow::Result<()> {
     sqlx::query("DELETE FROM passenger_locations WHERE ride_id NOT IN (SELECT id FROM rides WHERE status='in_progress' AND picked_up_at IS NULL)")
         .execute(db)
         .await?;
+    let close_at = now();
+    sqlx::query(
+        "UPDATE caregiver_passes
+         SET closed_at = $1
+         WHERE closed_at IS NULL
+           AND (
+               valid_until < $1
+               OR ride_id IN (SELECT id FROM rides WHERE status IN ('cancelled', 'no_show', 'alt_transport'))
+           )",
+    )
+    .bind(&close_at)
+    .execute(db)
+    .await?;
 
     let rows: Vec<(String, String)> = sqlx::query_as(
         "SELECT key, value FROM system_settings WHERE key IN ('audit_retention_days', 'chat_retention_days')",
