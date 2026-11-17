@@ -1,6 +1,6 @@
 # Features by module
 
-Audited 14 November 2026 against HEAD `5659a63` and local source. This is the single inventory of built features; no claim of production availability or fresh test success is implied. Paths below are repository-relative. Original R-01–R-35 IDs are retained from the former traceability inventory; page references refer to the original Chinese proposal.
+Audited 14 November 2026 against HEAD `5659a63` and local source; workflow rules updated 17 November 2026 (see [Workflow](WORKFLOW.md)). This is the single inventory of built features; no claim of production availability or fresh test success is implied. Paths below are repository-relative. Original R-01–R-35 IDs are retained from the former traceability inventory; page references refer to the original Chinese proposal.
 
 | Module / pages | Implemented behavior | Main source | Requirements |
 |---|---|---|---|
@@ -28,4 +28,7 @@ Audited 14 November 2026 against HEAD `5659a63` and local source. This is the si
 - Auto-lock currently overlays the client UI; its Unlock action clears local lock state. It is not server-enforced idle-session expiry or a reauthentication gate. See [Security](SECURITY.md).
 - Test coverage is inventoried in [Testing](TESTING.md). Browser suites use mocked APIs; full live-API browser journeys, a current restore drill and current capacity measurements are not established by this audit.
 - R-34: church approval is still needed for privacy/retention policy, collection responsibilities, absentee rules, subsidy approval and refunds. Do not treat the proposal or demo terms as approved policy.
+- Database conventions with a known cost, not defects: times are KL-local `TEXT` (move hot columns to `timestamptz` later); booleans are `BIGINT 0/1`; `users.roles` is still the written source with `member_roles` a trigger-maintained copy; `demo_batch` foreign keys are unindexed; the SSE broadcast and 60 s job loop assume one app instance (move to `LISTEN/NOTIFY` and advisory locks before adding a second). The ride-list query rewrite is deferred until about 20k rides, frontend polling is not yet relaxed while SSE is connected, and `group_scopes` is not yet folded into the auth query.
+- Help guides: richer step content (bold, notes, screenshots) and progress keyed to stable step ids need a backend change and are not built. Check [the help-guide audit](HELP_GUIDE_UI_AUDIT_2026-11-17.md) before treating its UI phases as open; some were committed the same day.
+- Unreviewed after the 17 November workflow pass: the frontend pages, and the Chinese wording of the new "duplicate event ride" message.
 - The original proposal remains in `docs/Grace_Ride_Chinese.pdf`; its conceptual screens and future phases are not evidence of built functionality.

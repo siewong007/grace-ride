@@ -1,4 +1,4 @@
-//! Regressions for the 2026-11-17 database audit (docs/DB_AUDIT_2026-11-17.md):
+//! Regressions for the 2026-11-17 database audit:
 //! - email lookups ignore case (C2);
 //! - the "needs attention" window is 24 hours by the app's clock, not the session's (C1);
 //! - cancelling an event cancels its open rides in one go, with one audit row each (C3);

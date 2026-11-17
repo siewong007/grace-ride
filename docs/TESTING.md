@@ -45,12 +45,15 @@ Install the matching Playwright Chromium browser if missing (`npx playwright ins
 | Event audiences | `backend/tests/audience.rs` | Sub-group visibility both ways, joining-as limits, out-of-group drivers hidden and refused, audited admin override, masked event title, planning-board group fields, and a guard that visibility SQL lives only in `audience.rs` |
 | Visitor passes | `backend/tests/visitors.rs`, `frontend/src/visit.test.tsx` | One-time claim, second browser refused, not-yet-open, member APIs refusing the visitor cookie, host-group driver matching, host withdrawal, organiser fallback, closing on completion, can't-make-it, reissue, revoke and expiry. Tests pass the cookie by hand; no live-backend browser run is recorded |
 | Capacity | `backend/tests/capacity.rs`, `scripts/capacity_baseline.sh` | Synthetic thousand-member fixture, configured live-driver cap and reminder timing; not proof of sustained production throughput or rejection of an actual eleventh live driver |
+| Workflow fixes | `backend/tests/workflow_fixes.rs` | Unable-to-join after pickup, confirm by a replaced driver (stopped by the driver check, so the guarded update itself is not exercised), disabling a driver releasing rides. Duplicate event ride, settlement close/delete, event cancel/finish (flows.rs), help reply race, approval/plan locks and waitlist order have no dedicated test |
 | Remaining handler branches | `backend/tests/flows.rs` | One HTTP case for each auth, ride, event, settlement, community, file, admin, and plan branch the suites above do not already assert. Keys no handler constructs are listed in that file. Race-only codes stay in the suite that can force them |
 | UI components and pages | `frontend/src/**/*.test.ts*` | Vitest/Testing Library, including permissions, auto-lock, locales and formatting |
 | Browser smoke | `frontend/e2e/smoke.spec.ts` | Mocked API, public/login/routing checks |
 | Visual/accessibility | `frontend/e2e/visual.spec.ts` and snapshots | Mocked API, selected pages at mobile/desktop sizes, themes and axe checks; not whole-product accessibility certification |
 
 ## Still needs current evidence
+
+- `reminder_job_notifies_passenger_and_driver` (`backend/tests/api.rs`) fails when demo-seed rides fall inside the one-hour reminder window (it counts 4 reminders instead of 2); it depends on the time of day. Not caused by the 17 November changes as far as observed, but the cause was not isolated.
 
 - Full browser journeys against a real test API for member, driver, transport, organizer and finance roles, including failure/recovery paths.
 - Real-device passkey, GPS denial/staleness, weak-network and trip-end privacy checks.
