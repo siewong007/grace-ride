@@ -168,6 +168,14 @@ interface Revision {
   reason: string;
 }
 
+/** Same split as the server: whole cents, the leftover cents going one each to the first people. */
+export function equalSplit(total: number, n: number): number[] {
+  if (n <= 0 || total < 0) return [];
+  const base = Math.floor(total / n);
+  const rem = total % n;
+  return Array.from({ length: n }, (_, i) => base + (i < rem ? 1 : 0));
+}
+
 export function SettlementForm() {
   const { t } = useTranslation('settlements');
   const ft = useFormatT();
@@ -188,6 +196,12 @@ export function SettlementForm() {
   const [custom, setCustom] = useState<Record<number, string>>({});
   const [payee, setPayee] = useState({ name: '', account: '' });
   const [review, setReview] = useState<ShareRow | null>(null);
+  // Set once the first save makes a draft, so saving again updates it instead of
+  // creating a second bill (say, when publishing is refused over attendance).
+  const [draftId, setDraftId] = useState<number | null>(id ? Number(id) : null);
+  // After publishing, the server keeps the old version and needs a reason for changes.
+  const [reason, setReason] = useState('');
+  const isPublished = existing?.status === 'published';
 
   const { busy, error, run } = useAction();
 
@@ -221,7 +235,8 @@ export function SettlementForm() {
     () => items.reduce((s, it) => s + (toCents(it.amount) || 0), 0) - (toCents(subsidy) || 0),
     [items, subsidy],
   );
-  const perPerson = selected.length ? Math.round(total / selected.length) : 0;
+  const equalAmounts = useMemo(() => equalSplit(Math.max(total, 0), selected.length), [total, selected.length]);
+  const equalFor = (uid: number) => equalAmounts[selected.indexOf(uid)] ?? 0;
 
   const customSum = useMemo(() => {
     return selected.reduce((sum, uid) => {
@@ -242,12 +257,10 @@ export function SettlementForm() {
     return customSum === total;
   }, [mode, selected, custom, customSum, total]);
 
-  const submit = (e: FormEvent) => {
-    e.preventDefault();
+  const save = (publish: boolean) => {
     if (!customValid) return;
     const body = {
       title,
-      event_id: evId ? Number(evId) : undefined,
       items: items.map((it) => ({
         label: it.label,
         amount_cents: toCents(it.amount),
@@ -257,22 +270,35 @@ export function SettlementForm() {
       split_mode: mode,
       payee_name: payee.name,
       payee_account: payee.account,
-      shares:
+      // The server works out an equal split itself; custom amounts are sent as typed.
+      participants:
         mode === 'equal'
-          ? selected.map((uid) => ({ user_id: uid, amount_cents: perPerson }))
+          ? selected.map((uid) => ({ user_id: uid }))
           : selected.map((uid) => ({ user_id: uid, amount_cents: toCents(custom[uid] || '0') })),
+      reason: isPublished ? reason.trim() : undefined,
     };
+    const done = isPublished ? t('updated') : publish ? t('billPublished') : t('draftSaved');
     run(async () => {
-      if (id) {
-        await put(`/settlements/${id}`, body);
-        nav(`/settlements/${id}`);
+      let sid = draftId;
+      if (sid) {
+        await put(`/settlements/${sid}`, body);
       } else {
-        const r = await post<{ id: number }>('/settlements', body);
-        nav(`/settlements/${r.id}`);
+        if (!evId) throw new Error(t('noEvent'));
+        sid = (await post<{ id: number }>(`/events/${evId}/settlements`, body)).id;
+        setDraftId(sid);
       }
-    }, id ? t('updated') : t('billPublished'));
+      if (publish && !isPublished) await post(`/settlements/${sid}/publish`);
+      nav(`/settlements/${sid}`);
+    }, done);
   };
 
+  const submit = (e: FormEvent) => {
+    e.preventDefault();
+    save(!isPublished);
+  };
+
+  const canSave =
+    !!title && !!payee.name && !!payee.account && selected.length > 0 && total > 0 && customValid;
   const confirmedShares = existing ? existing.shares.filter((x) => x.status === 'confirmed').length : 0;
 
   return (
@@ -405,7 +431,7 @@ export function SettlementForm() {
                         }
                       />
                       <span>
-                        {s.name} {mode === 'equal' && ` · ${rm(perPerson)}`}
+                        {s.name} {mode === 'equal' && selected.includes(s.user_id) && ` · ${rm(equalFor(s.user_id))}`}
                       </span>
                     </label>
                     {mode === 'custom' && selected.includes(s.user_id) && (
@@ -437,23 +463,28 @@ export function SettlementForm() {
             <strong className="mono">{rm(Math.max(total, 0))}</strong>
           </div>
 
+          {isPublished && (
+            <Field label={t('revisionReason')} hint={t('revisionReasonHint')}>
+              <input
+                className="input"
+                required
+                value={reason}
+                onChange={(e) => setReason(e.target.value)}
+              />
+            </Field>
+          )}
+
           <ErrorBox error={error} />
-          <Button
-            variant="primary"
-            block
-            type="submit"
-            disabled={
-              busy ||
-              !title ||
-              !payee.name ||
-              !payee.account ||
-              selected.length === 0 ||
-              total <= 0 ||
-              !customValid
-            }
-          >
-            {busy ? t('saving') : id ? t('saveDraft') : t('publishBill')}
-          </Button>
+          <div className="btn-row">
+            {!isPublished && (
+              <Button variant="secondary" disabled={busy || !canSave} onClick={() => save(false)}>
+                {t('saveDraft')}
+              </Button>
+            )}
+            <Button variant="primary" type="submit" disabled={busy || !canSave || (isPublished && !reason.trim())}>
+              {busy ? t('saving') : isPublished ? t('saveChanges') : t('publishBill')}
+            </Button>
+          </div>
         </form>
 
         {id && existing && (
