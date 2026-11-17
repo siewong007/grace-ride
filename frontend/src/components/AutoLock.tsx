@@ -1,10 +1,11 @@
 import { createContext, ReactNode, useCallback, useContext, useEffect, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
-import { Lock, LogOut } from 'lucide-react';
+import { Fingerprint, Lock, LogOut } from 'lucide-react';
 import { useAuth } from '../auth';
 import { post } from '../api';
 import { Avatar, Button } from './ui';
+import { passkeySupported, reauthWithPasskey } from '../webauthn';
 
 interface AutoLockCtx {
   isLocked: boolean;
@@ -27,6 +28,9 @@ export function AutoLockProvider({ children }: { children: ReactNode }) {
   const [isLocked, setIsLocked] = useState(false);
   const lastActiveRef = useRef<number>(Date.now());
   const unlockBtnRef = useRef<HTMLButtonElement>(null);
+  const [unlocking, setUnlocking] = useState(false);
+  const [unlockError, setUnlockError] = useState<string | null>(null);
+  const canPasskey = passkeySupported() && (me?.passkey_count ?? 0) > 0;
 
   // Inactivity timeout in minutes:
   // 1. If user set auto_lock_mins > 0: user's custom duration
@@ -42,6 +46,7 @@ export function AutoLockProvider({ children }: { children: ReactNode }) {
 
   const unlock = useCallback(() => {
     lastActiveRef.current = Date.now();
+    setUnlockError(null);
     setIsLocked(false);
   }, []);
 
@@ -77,9 +82,25 @@ export function AutoLockProvider({ children }: { children: ReactNode }) {
     }
   }, [isLocked]);
 
+  // Unlocking needs a fresh passkey check; the screen never opens on a plain click.
+  const handleUnlock = async () => {
+    if (unlocking) return;
+    setUnlocking(true);
+    setUnlockError(null);
+    try {
+      await reauthWithPasskey();
+      unlock();
+    } catch (e) {
+      setUnlockError((e as Error).message || t('unlockFailed'));
+    } finally {
+      setUnlocking(false);
+    }
+  };
+
   const handleLogout = async () => {
     await post('/auth/logout');
     setIsLocked(false);
+    setUnlockError(null);
     await refresh();
     nav('/login');
   };
@@ -106,17 +127,26 @@ export function AutoLockProvider({ children }: { children: ReactNode }) {
             <div className="stack-sm">
               <div className="bold">{t('sessionLocked')}</div>
               <p className="muted small">{t('sessionLockedDesc')}</p>
+              <p className="muted small">{canPasskey ? t('unlockPasskeyDesc') : t('unlockNoPasskey')}</p>
+              {unlockError && (
+                <div className="notice error" role="alert">
+                  {unlockError}
+                </div>
+              )}
             </div>
             <div className="btn-row" style={{ marginTop: 'var(--space-2)' }}>
-              <button
-                ref={unlockBtnRef}
-                type="button"
-                className="btn primary"
-                onClick={unlock}
-              >
-                <Lock size={16} />
-                {t('unlock')}
-              </button>
+              {canPasskey && (
+                <button
+                  ref={unlockBtnRef}
+                  type="button"
+                  className="btn primary"
+                  onClick={handleUnlock}
+                  disabled={unlocking}
+                >
+                  <Fingerprint size={16} />
+                  {unlocking ? t('unlocking') : t('unlockWithPasskey')}
+                </button>
+              )}
               <Button
                 variant="ghost"
                 onClick={handleLogout}

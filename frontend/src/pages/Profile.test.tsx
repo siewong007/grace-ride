@@ -51,6 +51,7 @@ vi.mock('../api', () => ({
 vi.mock('../webauthn', () => ({
   passkeySupported: () => false,
   registerPasskey: vi.fn(),
+  withRecentSignIn: (fn: () => Promise<unknown>) => fn(),
 }));
 
 vi.mock('../components/AutoLock', () => ({
@@ -320,5 +321,15 @@ describe('Profile compact layout', () => {
     fireEvent.click(screen.getByRole('button', { name: /^Log out all devices$/ }));
     await waitFor(() => expect(confirmMock).toHaveBeenCalled());
     expect(postMock).not.toHaveBeenCalledWith('/auth/logout-all');
+  });
+
+  it('shows a scannable QR code when setting up 2FA', async () => {
+    vi.mocked(post).mockResolvedValueOnce({ secret: 'JBSWY3DPEHPK3PXP', url: 'otpauth://totp/Grace%20Ride:a@b.c?secret=JBSWY3DPEHPK3PXP' });
+    renderProfile(baseMe);
+    fireEvent.click(screen.getByRole('button', { name: /Account security/i }));
+    fireEvent.click(screen.getByRole('button', { name: 'setupTotp' }));
+    const qr = await screen.findByAltText('totpQrAlt');
+    expect(qr.getAttribute('src')).toMatch(/^data:image\/png;base64,/);
+    expect(screen.getByText('JBSWY3DPEHPK3PXP')).toBeInTheDocument();
   });
 });

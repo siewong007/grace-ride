@@ -1,5 +1,5 @@
 // Minimal WebAuthn helpers translating between webauthn-rs JSON (base64url) and the browser API.
-import { post } from './api';
+import { post, type ApiError } from './api';
 import i18n from './i18n';
 
 const b64urlToBuf = (s: string): ArrayBuffer => {
@@ -59,8 +59,9 @@ export async function registerPasskey(label?: string) {
   await post('/auth/passkey/register/finish', { challenge_id, credential, label });
 }
 
-export async function loginWithPasskey(email: string) {
-  const { challenge_id, options } = await post<{ challenge_id: string; options: ServerPasskeyOptions }>('/auth/passkey/login/start', { email });
+/** Asks the browser for a passkey assertion and posts it to `finishPath`. */
+async function assertPasskey(startPath: string, startBody: unknown, finishPath: string) {
+  const { challenge_id, options } = await post<{ challenge_id: string; options: ServerPasskeyOptions }>(startPath, startBody);
   const pk = options.publicKey;
   const cred = (await navigator.credentials.get({
     publicKey: {
@@ -83,5 +84,26 @@ export async function loginWithPasskey(email: string) {
     },
     extensions: cred.getClientExtensionResults(),
   };
-  await post('/auth/passkey/login/finish', { challenge_id, credential });
+  await post(finishPath, { challenge_id, credential });
+}
+
+export const loginWithPasskey = (email: string) =>
+  assertPasskey('/auth/passkey/login/start', { email }, '/auth/passkey/login/finish');
+
+/** Confirms the signed-in member with their passkey, without signing out. */
+export const reauthWithPasskey = () =>
+  assertPasskey('/auth/passkey/reauth/start', {}, '/auth/passkey/reauth/finish');
+
+/**
+ * Runs a security change. If the server says the sign-in is too old, asks for the
+ * passkey once and retries, so nobody has to sign out and in again.
+ */
+export async function withRecentSignIn<T>(fn: () => Promise<T>): Promise<T> {
+  try {
+    return await fn();
+  } catch (e) {
+    if ((e as ApiError).code !== 'RECENT_SIGN_IN_REQUIRED') throw e;
+    await reauthWithPasskey();
+    return fn();
+  }
 }

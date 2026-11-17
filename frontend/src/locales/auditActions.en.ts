@@ -1,6 +1,7 @@
 /** Names for audit action codes. Keys are the code with "." replaced by "_". */
 export default {
   login_passkey: 'Signed in with a passkey',
+  login_reauth: 'Confirmed identity with a passkey',
   login_dev: 'Signed in (dev)',
   login_failed: 'Sign-in failed',
   password_failed: 'Password sign-in failed',

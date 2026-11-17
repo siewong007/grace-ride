@@ -1,6 +1,7 @@
 /** 操作记录动作代码的名称。键是把代码里的 "." 换成 "_"。 */
 export default {
   login_passkey: '用通行密钥登入',
+  login_reauth: '用通行密钥再次验证身份',
   login_dev: '登入（开发）',
   login_failed: '登入失败',
   password_failed: '密码登入失败',

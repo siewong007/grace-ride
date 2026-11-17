@@ -1,4 +1,4 @@
-import { ReactNode, useState } from 'react';
+import { ReactNode, useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import {
   BarChart3,
@@ -21,7 +21,8 @@ import { useAutoLock } from '../components/AutoLock';
 import { DisplayPreferences } from '../components/AppChrome';
 import { Avatar, Button, ErrorBox, Field, FileInput, Modal, Pill, SheetLink, useAction, useConfirm } from '../components/ui';
 import { fmtAgo, roleLabel, useFormatT } from '../format';
-import { passkeySupported, registerPasskey } from '../webauthn';
+import { passkeySupported, registerPasskey, withRecentSignIn } from '../webauthn';
+import QRCode from 'qrcode';
 import { useTranslation } from 'react-i18next';
 
 type SectionKey = 'personal' | 'preferences' | 'security';
@@ -240,7 +241,7 @@ export default function Profile() {
                               confirmLabel: t('remove'),
                               tone: 'danger',
                             });
-                            if (ok) run(() => del(`/auth/passkeys/${p.id}`).then(passkeys.reload).then(refresh), t('removed'));
+                            if (ok) run(() => withRecentSignIn(() => del(`/auth/passkeys/${p.id}`)).then(passkeys.reload).then(refresh), t('removed'));
                           }}
                         >
                           {t('remove')}
@@ -254,7 +255,7 @@ export default function Profile() {
                 <Button
                   variant="primary"
                   disabled={busy || !passkeySupported()}
-                  onClick={() => run(() => registerPasskey(navigator.platform || t('myPhone')).then(passkeys.reload).then(refresh), t('addPasskeyDone'))}
+                  onClick={() => run(() => withRecentSignIn(() => registerPasskey(navigator.platform || t('myPhone'))).then(passkeys.reload).then(refresh), t('addPasskeyDone'))}
                 >
                   <Fingerprint size={18} />
                   {t('addPasskey')}
@@ -276,7 +277,7 @@ export default function Profile() {
                       <Button
                         variant="secondary"
                         disabled={busy}
-                        onClick={() => run(async () => setTotp(await post('/auth/totp/setup')))}
+                        onClick={() => run(async () => setTotp(await withRecentSignIn(() => post<{ secret: string; url: string }>('/auth/totp/setup'))))}
                       >
                         {t('setupTotp')}
                       </Button>
@@ -295,8 +296,8 @@ export default function Profile() {
                             });
                             if (ok) {
                               run(async () => {
-                                const res = await post<{ ok: boolean; backup_codes: string[] }>(
-                                  '/auth/totp/backup-codes/regenerate',
+                                const res = await withRecentSignIn(() =>
+                                  post<{ ok: boolean; backup_codes: string[] }>('/auth/totp/backup-codes/regenerate'),
                                 );
                                 setShowBackupCodes(res.backup_codes);
                                 await refresh();
@@ -447,6 +448,18 @@ function TotpModal({
   const [backupCodes, setBackupCodes] = useState<string[] | null>(null);
   const { busy, error, run } = useAction();
   const [copied, setCopied] = useState(false);
+  const [qr, setQr] = useState<string | null>(null);
+
+  // The QR is drawn in the browser from the otpauth link, so the secret never goes to a third party.
+  useEffect(() => {
+    let live = true;
+    QRCode.toDataURL(url, { margin: 1, width: 192, errorCorrectionLevel: 'M' })
+      .then((d) => live && setQr(d))
+      .catch(() => live && setQr(null));
+    return () => {
+      live = false;
+    };
+  }, [url]);
 
   if (backupCodes) {
     const copy = () => {
@@ -481,8 +494,14 @@ function TotpModal({
     <Modal title={t('totpTitle')} onClose={onClose}>
       <ol className="steps">
         <li>{t('totpStep1')}</li>
-        <li>{t('totpStep2')}</li>
+        <li>{t('totpScan')}</li>
       </ol>
+      {qr && (
+        <div className="totp-qr">
+          <img src={qr} width={192} height={192} alt={t('totpQrAlt')} />
+        </div>
+      )}
+      <p className="muted small">{t('totpStep2')}</p>
       <code className="card flat tight mono break-all">{secret}</code>
       <a className="small" href={url}>
         {t('totpJoin')}

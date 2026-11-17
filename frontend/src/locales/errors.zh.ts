@@ -56,7 +56,7 @@ export default {
     "NAME_REQUIRED": "请填写姓名",
     "NAME_TOO_LONG": "姓名不能超过 60 个字",
     "PHONE_INVALID": "电话号码需为 10 至 20 个字符",
-    "RECENT_SIGN_IN_REQUIRED": "为保护账号，请先登出，再用通行密钥登入，然后在 15 分钟内完成此设置。",
+    "RECENT_SIGN_IN_REQUIRED": "为保护账号，请先用通行密钥再次验证身份，然后在 15 分钟内完成此设置。",
     "EMAIL_ALREADY_REGISTERED": "此电邮已经注册",
     "TOO_MANY_FAILED_LOGINS": "登入失败次数过多，账号已暂时锁定 15 分钟。可改用通行密钥登入。",
     "AUTH_DISABLED": "此应用使用通行密钥登入，不使用密码。",

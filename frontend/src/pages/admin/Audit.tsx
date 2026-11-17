@@ -112,6 +112,7 @@ const ACTION_CATEGORIES = [
     category: 'security',
     actions: [
       'login.passkey',
+      'login.reauth',
       'login.dev',
       'login.failed',
       'password.failed',

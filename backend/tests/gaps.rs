@@ -1639,6 +1639,67 @@ async fn adding_or_removing_a_sign_in_method_needs_a_recent_sign_in() {
 }
 
 #[tokio::test]
+async fn a_passkey_check_renews_the_recent_sign_in_without_signing_out() {
+    let (app, st) = setup().await;
+    let cookie = login(&st, "sophie@example.org").await;
+    let mut soft = WebauthnAuthenticator::new(SoftPasskey::new(true));
+    let origin = Url::parse(ORIGIN).unwrap();
+    let start = call(&app, Method::POST, "/api/auth/passkey/register/start", Some(&cookie), None).await;
+    assert_eq!(start.status, StatusCode::OK, "{}", start.json);
+    let credential = soft
+        .do_registration(
+            origin.clone(),
+            serde_json::from_value::<CreationChallengeResponse>(start.json["options"].clone()).unwrap(),
+        )
+        .unwrap();
+    let done = call(
+        &app,
+        Method::POST,
+        "/api/auth/passkey/register/finish",
+        Some(&cookie),
+        Some(json!({"challenge_id": start.json["challenge_id"], "credential": credential})),
+    )
+    .await;
+    assert_eq!(done.status, StatusCode::OK, "{}", done.json);
+
+    sqlx::query("UPDATE sessions SET created_at=$1")
+        .bind(grace_ride::util::minutes_ago(120))
+        .execute(&st.db)
+        .await
+        .unwrap();
+    let blocked = call(&app, Method::POST, "/api/auth/totp/setup", Some(&cookie), None).await;
+    assert_eq!(blocked.json["code"], "RECENT_SIGN_IN_REQUIRED", "{}", blocked.json);
+
+    // Same session, no sign-out: prove it is them with the passkey.
+    let rstart = call(&app, Method::POST, "/api/auth/passkey/reauth/start", Some(&cookie), None).await;
+    assert_eq!(rstart.status, StatusCode::OK, "{}", rstart.json);
+    let assertion = soft
+        .do_authentication(
+            origin,
+            serde_json::from_value::<RequestChallengeResponse>(rstart.json["options"].clone()).unwrap(),
+        )
+        .unwrap();
+    let rfinish = call(
+        &app,
+        Method::POST,
+        "/api/auth/passkey/reauth/finish",
+        Some(&cookie),
+        Some(json!({"challenge_id": rstart.json["challenge_id"], "credential": assertion})),
+    )
+    .await;
+    assert_eq!(rfinish.status, StatusCode::OK, "{}", rfinish.json);
+
+    let setup = call(&app, Method::POST, "/api/auth/totp/setup", Some(&cookie), None).await;
+    assert_eq!(setup.status, StatusCode::OK, "{}", setup.json);
+    assert!(setup.json["url"].as_str().unwrap().starts_with("otpauth://totp/"));
+
+    // Another member's challenge can't renew this session.
+    let other = login(&st, "admin@example.org").await;
+    let none = call(&app, Method::POST, "/api/auth/passkey/reauth/start", Some(&other), None).await;
+    assert_eq!(none.status, StatusCode::BAD_REQUEST, "{}", none.json);
+}
+
+#[tokio::test]
 async fn recovery_links_are_stored_hashed() {
     let (app, st) = setup().await;
     let admin = login(&st, "admin@example.org").await;

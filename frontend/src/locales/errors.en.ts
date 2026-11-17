@@ -56,7 +56,7 @@ export default {
     "NAME_REQUIRED": "Please enter your name",
     "NAME_TOO_LONG": "Name cannot exceed 60 characters",
     "PHONE_INVALID": "Phone number must be 10 to 20 characters",
-    "RECENT_SIGN_IN_REQUIRED": "To protect your account, sign out and sign in again with your passkey, then finish this within 15 minutes.",
+    "RECENT_SIGN_IN_REQUIRED": "To protect your account, confirm it is you with your passkey, then finish this within 15 minutes.",
     "EMAIL_ALREADY_REGISTERED": "This email is already registered",
     "TOO_MANY_FAILED_LOGINS": "Too many failed logins; the account is locked for 15 minutes. You can sign in with a passkey instead.",
     "AUTH_DISABLED": "This app signs in with a passkey, not a password.",

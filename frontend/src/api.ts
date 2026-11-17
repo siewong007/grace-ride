@@ -22,9 +22,11 @@ export function apiMessage(data: ErrorBody, fallback: 'network' | 'uploadFailed'
 
 export class ApiError extends Error {
   status: number;
-  constructor(status: number, message: string) {
+  code?: string;
+  constructor(status: number, message: string, code?: string) {
     super(message);
     this.status = status;
+    this.code = code;
   }
 }
 
@@ -47,7 +49,7 @@ export async function api<T = unknown>(path: string, opts: { method?: string; bo
   if (!res.ok) {
     // A visitor's page has no member session; its 401 must not send anyone to sign-in.
     if (res.status === 401 && !path.startsWith('/auth/') && !path.startsWith('/visit/')) window.dispatchEvent(new Event('gr:unauthorized'));
-    throw new ApiError(res.status, apiMessage(data, 'network'));
+    throw new ApiError(res.status, apiMessage(data, 'network'), data?.code);
   }
   return data as T;
 }

@@ -55,6 +55,8 @@ pub fn router() -> Router<AppState> {
         .route("/auth/terms", post(accept_terms))
         .route("/auth/passkey/login/start", post(passkey_login_start))
         .route("/auth/passkey/login/finish", post(passkey_login_finish))
+        .route("/auth/passkey/reauth/start", post(passkey_reauth_start))
+        .route("/auth/passkey/reauth/finish", post(passkey_reauth_finish))
         .route("/auth/passkey/register/start", post(passkey_register_start))
         .route(
             "/auth/passkey/register/finish",
@@ -649,7 +651,14 @@ async fn passkey_login_finish(
         .await;
         return Err(bad(lang, ErrorKey::PasskeyFailed));
     };
-    // Update stored credential counters if needed.
+    touch_passkey(&st, uid, &res).await?;
+    let jar = create_session(&st, jar, uid, true).await?;
+    audit(&st.db, Some(uid), "login.passkey", "user", Some(uid), "").await;
+    Ok((jar, Json(json!({ "ok": true }))))
+}
+
+/// Stores the credential's new signature counter and last-used time after a successful sign-in.
+async fn touch_passkey(st: &AppState, uid: i64, res: &AuthenticationResult) -> AppResult<()> {
     let rows: Vec<(i64, String)> =
         sqlx::query_as("SELECT id, passkey FROM passkeys WHERE user_id=$1")
             .bind(uid)
@@ -658,7 +667,7 @@ async fn passkey_login_finish(
     for (pid, pj) in rows {
         if let Ok(mut pk) = serde_json::from_str::<Passkey>(&pj) {
             if pk.cred_id() == res.cred_id() {
-                pk.update_credential(&res);
+                pk.update_credential(res);
                 sqlx::query("UPDATE passkeys SET passkey=$1, last_used=$2 WHERE id=$3")
                     .bind(serde_json::to_string(&pk).map_err(anyhow::Error::from)?)
                     .bind(now())
@@ -668,9 +677,58 @@ async fn passkey_login_finish(
             }
         }
     }
-    let jar = create_session(&st, jar, uid, true).await?;
-    audit(&st.db, Some(uid), "login.passkey", "user", Some(uid), "").await;
-    Ok((jar, Json(json!({ "ok": true }))))
+    Ok(())
+}
+
+/// Starts a passkey check for the member who is already signed in, so they can renew
+/// their "recent sign-in" without signing out first.
+async fn passkey_reauth_start(State(st): State<AppState>, u: CurrentUser) -> AppResult<Json<Value>> {
+    let keys = load_passkeys(&st, u.id).await?;
+    if keys.is_empty() {
+        return Err(bad(u.lang, ErrorKey::PasskeyFailed));
+    }
+    let (rcr, auth_state) = st
+        .webauthn
+        .start_passkey_authentication(&keys)
+        .map_err(|e| AppError::Other(anyhow::anyhow!("webauthn: {e:?}")))?;
+    let cid = save_challenge(
+        &st,
+        u.id,
+        "auth",
+        serde_json::to_string(&auth_state).map_err(anyhow::Error::from)?,
+    )
+    .await?;
+    Ok(Json(json!({ "challenge_id": cid, "options": rcr })))
+}
+
+/// Finishes the check. The passkey must belong to the signed-in member; on success the
+/// current session counts as signed in just now (the session itself is unchanged).
+async fn passkey_reauth_finish(
+    State(st): State<AppState>,
+    u: CurrentUser,
+    Json(req): Json<LoginFinish>,
+) -> AppResult<Json<Value>> {
+    let (uid, state_json) = take_challenge(&st, &req.challenge_id, "auth", u.lang).await?;
+    if uid != u.id {
+        return Err(forbidden(u.lang, ErrorKey::ChallengeMismatch));
+    }
+    let auth_state: PasskeyAuthentication =
+        serde_json::from_str(&state_json).map_err(anyhow::Error::from)?;
+    let Ok(res) = st
+        .webauthn
+        .finish_passkey_authentication(&req.credential, &auth_state)
+    else {
+        audit(&st.db, Some(u.id), "login.failed", "user", Some(u.id), "passkey rejected on re-check").await;
+        return Err(bad(u.lang, ErrorKey::PasskeyFailed));
+    };
+    touch_passkey(&st, u.id, &res).await?;
+    sqlx::query("UPDATE sessions SET created_at=$1 WHERE token=$2")
+        .bind(now())
+        .bind(&u.session_id)
+        .execute(&st.db)
+        .await?;
+    audit(&st.db, Some(u.id), "login.reauth", "user", Some(u.id), "").await;
+    Ok(Json(json!({ "ok": true })))
 }
 
 async fn passkey_register_start(

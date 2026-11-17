@@ -1,5 +1,5 @@
 import { describe, expect, it, vi, beforeEach, afterEach } from 'vitest';
-import { fireEvent, render, screen, act } from '@testing-library/react';
+import { fireEvent, render, screen, act, waitFor } from '@testing-library/react';
 import { MemoryRouter } from 'react-router-dom';
 import { AutoLockProvider, useAutoLock } from './AutoLock';
 
@@ -17,6 +17,7 @@ let currentMe = {
   privileged: false,
   mfa_ok: true,
   unread: 0,
+  passkey_count: 1,
   auto_lock_mins: 15,
   session_timeout_mins: 15,
 };
@@ -29,6 +30,12 @@ vi.mock('../auth', () => ({
     can: () => true,
     refresh: vi.fn(),
   }),
+}));
+
+const reauth = vi.fn();
+vi.mock('../webauthn', () => ({
+  passkeySupported: () => true,
+  reauthWithPasskey: () => reauth(),
 }));
 
 vi.mock('../api', () => ({
@@ -50,6 +57,8 @@ describe('AutoLockProvider', () => {
     vi.useFakeTimers();
     localStorage.clear();
     currentMe = { ...defaultMockMe };
+    reauth.mockReset();
+    reauth.mockResolvedValue(undefined);
   });
 
   afterEach(() => {
@@ -69,7 +78,7 @@ describe('AutoLockProvider', () => {
     expect(screen.queryByRole('dialog')).toBeNull();
   });
 
-  it('locks screen on manual lock() call and unlocks on click', () => {
+  const renderLocked = () => {
     render(
       <MemoryRouter>
         <AutoLockProvider>
@@ -77,23 +86,45 @@ describe('AutoLockProvider', () => {
         </AutoLockProvider>
       </MemoryRouter>
     );
-
-    // Trigger manual lock
     fireEvent.click(screen.getByText('Trigger Lock'));
+  };
+
+  it('locks screen on manual lock() call and unlocks only after a passkey check', async () => {
+    vi.useRealTimers();
+    renderLocked();
 
     expect(screen.getByTestId('status')).toHaveTextContent('locked');
     const dialog = screen.getByRole('dialog');
-    expect(dialog).toBeInTheDocument();
     expect(dialog).toHaveAttribute('aria-modal', 'true');
     expect(screen.getByText('Grace Member')).toBeInTheDocument();
     expect(screen.getByText('grace@example.com')).toBeInTheDocument();
 
-    // Click Unlock button
-    const unlockBtn = screen.getByRole('button', { name: /unlock/i });
-    fireEvent.click(unlockBtn);
+    fireEvent.click(screen.getByRole('button', { name: /unlockWithPasskey/ }));
 
-    expect(screen.getByTestId('status')).toHaveTextContent('unlocked');
+    await waitFor(() => expect(screen.getByTestId('status')).toHaveTextContent('unlocked'));
+    expect(reauth).toHaveBeenCalledTimes(1);
     expect(screen.queryByRole('dialog')).toBeNull();
+  });
+
+  it('stays locked and shows the error when the passkey check fails', async () => {
+    vi.useRealTimers();
+    reauth.mockRejectedValue(new Error('Passkey verification failed'));
+    renderLocked();
+
+    fireEvent.click(screen.getByRole('button', { name: /unlockWithPasskey/ }));
+
+    expect(await screen.findByRole('alert')).toHaveTextContent('Passkey verification failed');
+    expect(screen.getByTestId('status')).toHaveTextContent('locked');
+  });
+
+  it('offers no unlock button when the member has no passkey', () => {
+    currentMe = { ...defaultMockMe, passkey_count: 0 };
+    renderLocked();
+
+    expect(screen.getByTestId('status')).toHaveTextContent('locked');
+    expect(screen.queryByRole('button', { name: /unlock/i })).toBeNull();
+    expect(screen.getByRole('button', { name: /logout/ })).toBeInTheDocument();
+    expect(reauth).not.toHaveBeenCalled();
   });
 
   it('triggers lock when idle time exceeds configured auto_lock_mins', () => {

@@ -2632,3 +2632,14 @@ main p a:not(.btn), main .small a:not(.btn), main td a:not(.btn):not(.table-filt
   .table-toolbar .table-filter:first-child { flex-basis: 100%; }
   .table-toolbar .table-filter .input { width: 100%; }
 }
+
+/* QR codes need a light quiet zone to scan, even in dark mode. */
+.totp-qr {
+  display: flex;
+  justify-content: center;
+}
+.totp-qr img {
+  background: #fff;
+  padding: 8px;
+  border-radius: 8px;
+}
