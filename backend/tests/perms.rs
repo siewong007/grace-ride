@@ -779,10 +779,10 @@ async fn admin_settings_system_retention_crud_permissions_and_audit() {
     assert!(audit_row.2.contains("session_timeout_mins: 30m"));
 
     // 7. Verify housekeeping retention uses the dynamic 365 days
-    let old_ts = (chrono::Local::now() - chrono::Duration::days(366))
+    let old_ts = (grace_ride::util::local_now() - chrono::Duration::days(366))
         .format("%Y-%m-%dT%H:%M:%S")
         .to_string();
-    let new_ts = (chrono::Local::now() - chrono::Duration::days(300))
+    let new_ts = (grace_ride::util::local_now() - chrono::Duration::days(300))
         .format("%Y-%m-%dT%H:%M:%S")
         .to_string();
 

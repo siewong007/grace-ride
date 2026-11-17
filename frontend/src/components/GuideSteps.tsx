@@ -5,6 +5,7 @@ import { Check, CheckCircle2, ChevronRight, ThumbsDown, ThumbsUp } from 'lucide-
 import { GuideStep } from '../pages/HelpGuides';
 import { Button, useAction, useToast } from './ui';
 import { post } from '../api';
+import StepText from './StepText';
 import { readDone, readFeedback, writeDone, writeFeedback } from '../guideProgress';
 
 /** The app page a step links to, named as the menu names it ("My rides", "Events"). */
@@ -49,12 +50,12 @@ export default function GuideSteps({
   const { run, busy } = useAction();
   const total = steps.length;
 
-  const [completed, setCompleted] = useState<number[]>(() => (slug ? readDone(slug, total) : []));
+  const [completed, setCompleted] = useState<number[]>(() => (slug ? readDone(slug, steps) : []));
   const [feedbackGiven, setFeedbackGiven] = useState<'yes' | 'no' | null>(() => (slug ? readFeedback(slug) : null));
 
   const update = (next: number[]) => {
     setCompleted(next);
-    if (slug) writeDone(slug, next);
+    if (slug) writeDone(slug, steps, next);
   };
   const toggleStep = (idx: number) => {
     if (readOnly) return;
@@ -152,7 +153,7 @@ export default function GuideSteps({
               <div className="guide-step-body stack-xs">
                 {isCurrent && doneCount > 0 && <span className="guide-step-kicker">{t('upNext')}</span>}
                 <h4 className="bold guide-step-title">{stepTitle || t('stepNumber', { n: idx + 1 })}</h4>
-                {stepBody && <p className="muted pre-wrap guide-step-text" style={{ margin: 0 }}>{stepBody}</p>}
+                {stepBody && <StepText text={stepBody} className="guide-step-text" />}
                 {s.link && (
                   <div style={{ marginTop: 'var(--space-2)' }}>
                     <Link

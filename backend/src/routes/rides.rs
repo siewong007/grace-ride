@@ -1787,7 +1787,9 @@ async fn driver_requests(
         n += 1;
     }
     if q.date.is_some() {
-        conds.push(format!("substr(r.pickup_at,1,10) = ${n}"));
+        // Same rows as `substr(pickup_at,1,10) = date`, written as a range so the pickup
+        // index can serve it: every time on that day sorts between "dateT" and "dateU".
+        conds.push(format!("(r.pickup_at >= (${n} || 'T') AND r.pickup_at < (${n} || 'U'))"));
     }
     let sql = format!(
         "{RIDE_SELECT} WHERE {} ORDER BY r.pickup_at LIMIT 100",
@@ -2568,7 +2570,9 @@ async fn admin_rides(
     let mut conds = vec!["1=1".to_string()];
     let mut n = 1;
     if q.date.is_some() {
-        conds.push(format!("substr(r.pickup_at,1,10) = ${n}"));
+        // Same rows as `substr(pickup_at,1,10) = date`, written as a range so the pickup
+        // index can serve it: every time on that day sorts between "dateT" and "dateU".
+        conds.push(format!("(r.pickup_at >= (${n} || 'T') AND r.pickup_at < (${n} || 'U'))"));
         n += 1;
     }
     if q.status.is_some() {
@@ -2576,11 +2580,14 @@ async fn admin_rides(
         n += 1;
     }
     if q.attention.unwrap_or(false) {
-        conds.push(
-            "(r.needs_attention = 1 OR (r.status='pending_driver' AND r.pickup_at::timestamp - LOCALTIMESTAMP < interval '1 day'))".to_string(),
-        );
+        // Unmatched within a day. The cut-off comes from our own clock in the app's zone,
+        // so it is safe to interpolate (and never depends on the session's time zone).
+        let within_a_day = crate::util::in_hours(24);
+        conds.push(format!(
+            "(r.needs_attention = 1 OR (r.status='pending_driver' AND r.pickup_at < '{within_a_day}'))"
+        ));
     }
-    let today = crate::util::today_kl().format("%Y-%m-%d").to_string();
+    let today = crate::util::today_local().format("%Y-%m-%d").to_string();
     // No sort chosen: upcoming and today first (soonest first), then past rides newest first.
     // `today` is YYYY-MM-DD from our own clock, so it is safe to interpolate.
     let default_order = format!(

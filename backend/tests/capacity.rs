@@ -38,6 +38,9 @@ async fn setup_capacity() -> (Router, AppState) {
         google_client_id: None,
         google_client_secret: None,
         routing: Default::default(),
+        db: Default::default(),
+        housekeeping_interval_mins: 60,
+        notification_retention_days: 90,
     };
     cfg.validate().unwrap();
     let state = init(cfg.clone()).await.unwrap();
@@ -77,7 +80,7 @@ async fn setup_capacity() -> (Router, AppState) {
     }
 
     // 50 completed rides spread across the 10 drivers.
-    let tomorrow = (chrono::Local::now() + chrono::Duration::days(1))
+    let tomorrow = (grace_ride::util::local_now() + chrono::Duration::days(1))
         .format("%Y-%m-%dT08:30")
         .to_string();
     let ts = grace_ride::util::now();

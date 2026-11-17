@@ -354,7 +354,7 @@ async fn dev_login(
         return Err(not_found(lang));
     }
     let row: Option<(i64, String)> = sqlx::query_as("SELECT id, status FROM users WHERE email=$1")
-        .bind(req.email.trim())
+        .bind(req.email.trim().to_lowercase())
         .fetch_optional(&st.db)
         .await?;
     let Some((id, status)) = row else {
@@ -423,7 +423,8 @@ async fn save_challenge(
     state: String,
 ) -> AppResult<String> {
     let id = uuid::Uuid::new_v4().to_string();
-    sqlx::query("DELETE FROM auth_challenges WHERE created_at < to_char(LOCALTIMESTAMP - interval '10 minutes', 'YYYY-MM-DD\"T\"HH24:MI:SS')")
+    sqlx::query("DELETE FROM auth_challenges WHERE created_at < $1")
+        .bind(crate::util::minutes_ago(10))
         .execute(&st.db)
         .await?;
     sqlx::query(
@@ -475,7 +476,9 @@ async fn passkey_login_start(
             .unwrap_or(""),
     );
     let _ = lang;
-    let email = req.email.trim();
+    // Emails are stored lowercase; "Alice@…" is the same member as "alice@…".
+    let email = req.email.trim().to_lowercase();
+    let email = email.as_str();
     let row: Option<(i64,)> =
         sqlx::query_as("SELECT id FROM users WHERE email=$1 AND status IN ('active', 'pending')")
             .bind(email)
@@ -1077,13 +1080,14 @@ async fn recovery_request(
     Json(req): Json<RecoveryReq>,
 ) -> AppResult<Json<Value>> {
     // Always answer the same way so the endpoint can't be used to probe member emails.
+    let email = req.email.trim().to_lowercase();
     let exists: Option<(i64,)> = sqlx::query_as("SELECT id FROM users WHERE email=$1")
-        .bind(req.email.trim())
+        .bind(&email)
         .fetch_optional(&st.db)
         .await?;
     if let Some((uid,)) = exists {
         sqlx::query("INSERT INTO recovery_requests (email, reason, created_at) VALUES ($1,$2,$3)")
-            .bind(req.email.trim())
+            .bind(&email)
             .bind(req.reason.chars().take(500).collect::<String>())
             .bind(now())
             .execute(&st.db)

@@ -3,6 +3,7 @@ import React, {
   FormEvent,
   forwardRef,
   ReactNode,
+  RefObject,
   useCallback,
   useContext,
   useEffect,
@@ -1463,6 +1464,25 @@ function compareValues(a: unknown, b: unknown): number {
 }
 
 /** True on a phone-width window. Starts false so tests (no matchMedia) keep the table. */
+/**
+ * A table that offers a phone layout switches to it when the space it actually has is too
+ * narrow for its columns, not only on phones: tablets, split views and half-width cards
+ * would otherwise scroll sideways and push the action column out of sight.
+ */
+const COMPACT_BELOW_PX = 860;
+
+function useNarrowBox(ref: RefObject<HTMLElement | null>, enabled: boolean): boolean {
+  const [narrow, setNarrow] = useState(false);
+  useEffect(() => {
+    const el = ref.current;
+    if (!enabled || !el || typeof ResizeObserver === 'undefined') return;
+    const obs = new ResizeObserver(([entry]) => setNarrow(entry.contentRect.width < COMPACT_BELOW_PX));
+    obs.observe(el);
+    return () => obs.disconnect();
+  }, [ref, enabled]);
+  return narrow;
+}
+
 function useNarrowScreen(): boolean {
   const [narrow, setNarrow] = useState(false);
   useEffect(() => {
@@ -1507,8 +1527,10 @@ export function UniversalTable<T>({
   compactRow,
 }: UniversalTableProps<T>) {
   const { t } = useTranslation('common');
-  const narrow = useNarrowScreen();
-  const showCompact = narrow && !!compactRow && items.length > 0;
+  const blockRef = useRef<HTMLDivElement>(null);
+  const narrowScreen = useNarrowScreen();
+  const narrowBox = useNarrowBox(blockRef, !!compactRow);
+  const showCompact = (narrowScreen || narrowBox) && !!compactRow && items.length > 0;
   const [localSort, setLocalSort] = useState<TableSort | null>(defaultSort);
   const controlled = sort !== undefined;
   const activeSort = controlled ? sort : localSort;
@@ -1619,7 +1641,7 @@ export function UniversalTable<T>({
     : 'table responsive sticky-header';
 
   return (
-    <div className={`table-block${className ? ` ${className}` : ''}`}>
+    <div ref={blockRef} className={`table-block${className ? ` ${className}` : ''}`}>
       {sortableColumns.length > 0 && (
         <label className="table-mobile-sort">
           <span>{t('table.sortBy')}</span>

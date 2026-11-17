@@ -27,7 +27,7 @@ use uuid::Uuid;
 
 use crate::routes::auth::hash_password;
 use crate::state::Config;
-use crate::util::{audit, in_days, now_kl, random_token, today_kl};
+use crate::util::{audit, in_days, now, random_token, today_local};
 
 pub const DEMO_PASSWORD: &str = "GraceRide2026!";
 pub const DEMO_BATCH: &str = "demo-2026";
@@ -214,7 +214,7 @@ pub async fn run(db: &PgPool, cfg: &Config) -> anyhow::Result<()> {
     if !cfg.dev_mode {
         return seed_admin_only(db, cfg).await;
     }
-    // 0005 FK requires demo_batches rows before any demo_batch-stamped seed insert.
+    // The demo_batch foreign keys require demo_batches rows before any demo_batch-stamped seed insert.
     ensure_demo_batches(db).await?;
     let (n,): (i64,) = sqlx::query_as("SELECT COUNT(*) FROM users WHERE demo_batch = $1")
         .bind(DEMO_BATCH)
@@ -711,7 +711,7 @@ async fn insert_reference_data(db: &PgPool) -> anyhow::Result<()> {
         .bind(audience)
         .bind(steps.to_string())
         .bind(i as i32)
-        .bind(now_kl())
+        .bind(now())
         .execute(db)
         .await?;
     }
@@ -767,7 +767,7 @@ fn demo_user<'a>(
     .bind(Option::<String>::None)
     .bind(0i64)
     .bind(batch)
-    .bind(now_kl())
+    .bind(now())
 }
 
 /// Seed one `users` row and optional TOTP/passkey simulation; returns id.
@@ -807,7 +807,7 @@ async fn insert_member(
             .bind(json!({"demo": true, "note": "SIMULATED passkey record - not a real credential", "id": id}).to_string())
             .bind(format!("SIMULATED - device {id}"))
             .bind(batch)
-            .bind(now_kl())
+            .bind(now())
             .execute(db)
             .await
             .unwrap();
@@ -820,7 +820,7 @@ async fn insert_member(
 /// passing, now stamped with demo_batch and given stable ids.
 async fn seed_core(db: &PgPool) -> anyhow::Result<()> {
     let pw = hash_password(DEMO_PASSWORD).map_err(|e| anyhow::anyhow!("{e}"))?;
-    let today = today_kl();
+    let today = today_local();
 
     // --- core demo users (ids 1..=14) ---
     let core = [
@@ -1271,7 +1271,7 @@ async fn seed_core(db: &PgPool) -> anyhow::Result<()> {
             None
         };
         sqlx::query_as::<_, (i64,)>("INSERT INTO rides (id, passenger_id, driver_id, pickup_at, pickup_area_id, pickup_address, destination, seats, assistance, status, created_at, updated_at, completed_at, demo_batch) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14) RETURNING id")
-            .bind(id).bind(p).bind(d).bind(&at).bind(area).bind(addr).bind(dest).bind(seats).bind(assistance).bind(status).bind(now_kl()).bind(now_kl()).bind(completed).bind(DEMO_BATCH).fetch_one(db).await?;
+            .bind(id).bind(p).bind(d).bind(&at).bind(area).bind(addr).bind(dest).bind(seats).bind(assistance).bind(status).bind(now()).bind(now()).bind(completed).bind(DEMO_BATCH).fetch_one(db).await?;
         if matches!(status, "confirmed" | "completed") {
             sqlx::query("UPDATE rides SET trip_id=id, approved_by=$1 WHERE id=$2")
                 .bind(transport)
@@ -1279,37 +1279,37 @@ async fn seed_core(db: &PgPool) -> anyhow::Result<()> {
                 .execute(db)
                 .await?;
             sqlx::query("INSERT INTO ride_messages (id, trip_id, user_id, body, demo_batch, created_at) VALUES ($1,$2,NULL,'行程已获批准，群聊已开启。',$3,$4) ON CONFLICT DO NOTHING")
-                .bind(id).bind(id).bind(DEMO_BATCH).bind(now_kl()).execute(db).await?;
+                .bind(id).bind(id).bind(DEMO_BATCH).bind(now()).execute(db).await?;
         }
         if status == "confirmed" {
             sqlx::query("INSERT INTO ride_messages (id, trip_id, user_id, body, demo_batch, created_at) VALUES ($1,$2,$3,'是在北门入口集合吗？',$4,$5) ON CONFLICT DO NOTHING")
-                .bind(id + 80000).bind(id).bind(p).bind(DEMO_BATCH).bind(now_kl()).execute(db).await?;
+                .bind(id + 80000).bind(id).bind(p).bind(DEMO_BATCH).bind(now()).execute(db).await?;
             sqlx::query("INSERT INTO ride_messages (id, trip_id, user_id, body, demo_batch, created_at) VALUES ($1,$2,$3,'对，8 点见！',$4,$5) ON CONFLICT DO NOTHING")
-                .bind(id + 80001).bind(id).bind(d).bind(DEMO_BATCH).bind(now_kl()).execute(db).await?;
+                .bind(id + 80001).bind(id).bind(d).bind(DEMO_BATCH).bind(now()).execute(db).await?;
         }
     }
     // --- announcements ---
     sqlx::query("INSERT INTO announcements (id, title, body, pinned, created_by, demo_batch, created_at) VALUES ($1,'欢迎使用恩典同行','接送、活动与重要消息，集中在同一个平台。如有问题，请到帮助中心提问。',1,$2,$3,$4) ON CONFLICT DO NOTHING")
-        .bind(101i64).bind(admin).bind(DEMO_BATCH).bind(now_kl()).execute(db).await?;
+        .bind(101i64).bind(admin).bind(DEMO_BATCH).bind(now()).execute(db).await?;
     sqlx::query("INSERT INTO announcements (id, title, body, pinned, created_by, demo_batch, created_at) VALUES ($2,'本周日接送安排','请于周五前提交周日崇拜的接送报名，交通组会在周六确认。',0,$2,$3,$4) ON CONFLICT DO NOTHING")
-        .bind(102i64).bind(transport).bind(DEMO_BATCH).bind(now_kl()).execute(db).await?;
+        .bind(102i64).bind(transport).bind(DEMO_BATCH).bind(now()).execute(db).await?;
 
     // --- notifications ---
     sqlx::query("INSERT INTO notifications (id, user_id, title, body, link, demo_batch, created_at) VALUES ($1,$2,'本周有新的接送报名','蒲种有一位会员等待司机。','/admin/rides',$3,$4) ON CONFLICT DO NOTHING")
-        .bind(7001i64).bind(transport).bind(DEMO_BATCH).bind(now_kl()).execute(db).await?;
+        .bind(7001i64).bind(transport).bind(DEMO_BATCH).bind(now()).execute(db).await?;
     sqlx::query("INSERT INTO notifications (id, user_id, title, body, link, demo_batch, created_at) VALUES ($1,$2,'费用分摊已发布','上周羽毛球费用，每人 RM28.00。','/settlements',$3,$4) ON CONFLICT DO NOTHING")
-        .bind(7002).bind(fala).bind(DEMO_BATCH).bind(now_kl()).execute(db).await?;
+        .bind(7002).bind(fala).bind(DEMO_BATCH).bind(now()).execute(db).await?;
 
     // --- help ticket + reply ---
     sqlx::query("INSERT INTO help_tickets (id, user_id, subject, status, demo_batch, created_at, updated_at) VALUES ($1,$2,'周日接送可以改到北门吗？','answered',$3,$4,$4) ON CONFLICT DO NOTHING")
-        .bind(501i64).bind(yawen).bind(DEMO_BATCH).bind(now_kl()).execute(db).await?;
+        .bind(501i64).bind(yawen).bind(DEMO_BATCH).bind(now()).execute(db).await?;
     sqlx::query("INSERT INTO help_replies (id, ticket_id, user_id, body, demo_batch, created_at) VALUES ($1,$2,$3,'可以，请在报名里把上车点改成北门入口。',$4,$5) ON CONFLICT DO NOTHING")
-        .bind(901i64).bind(501).bind(transport).bind(DEMO_BATCH).bind(now_kl()).execute(db).await?;
+        .bind(901i64).bind(501).bind(transport).bind(DEMO_BATCH).bind(now()).execute(db).await?;
 
     // --- settlement: 上周羽毛球费用 (event 5, equal split RM28 each, reconciles to RM168.00) ---
     let due = kl(today + Duration::days(7), 23, 59);
     let settle = sqlx::query_as::<_, (i64,)>("INSERT INTO settlements (id, event_id, created_by, title, split_mode, subsidy_cents, payee_name, payee_account, due_date, status, version, demo_batch, created_at, updated_at) VALUES ($1,$2,$3,'上周羽毛球费用','equal',0,'李德明','012-300 0004',$4,'published',1,$5,$6,$6) RETURNING id")
-        .bind(40001i64).bind(5).bind(deming).bind(&due).bind(DEMO_BATCH).bind(now_kl()).fetch_one(db).await?.0;
+        .bind(40001i64).bind(5).bind(deming).bind(&due).bind(DEMO_BATCH).bind(now()).fetch_one(db).await?.0;
     sqlx::query("INSERT INTO settlement_items (id, settlement_id, label, amount_cents, receipt_file_id, demo_batch) VALUES ($1,$2,'场租',12000,NULL,$3) ON CONFLICT DO NOTHING").bind(41001i64).bind(settle).bind(DEMO_BATCH).execute(db).await?;
     sqlx::query("INSERT INTO settlement_items (id, settlement_id, label, amount_cents, receipt_file_id, demo_batch) VALUES ($1,$2,'羽球',4800,NULL,$3) ON CONFLICT DO NOTHING").bind(41002).bind(settle).bind(DEMO_BATCH).execute(db).await?;
     for (uid, status) in [
@@ -1321,10 +1321,10 @@ async fn seed_core(db: &PgPool) -> anyhow::Result<()> {
         (sophie, "unpaid"),
     ] {
         sqlx::query("INSERT INTO settlement_shares (id, settlement_id, user_id, amount_cents, status, proof_file_id, txn_ref, paid_date, note, updated_at, demo_batch) VALUES ($1,$2,$3,2800,$4,NULL,'',NULL,'',$5,$6) ON CONFLICT DO NOTHING")
-            .bind(42000i64 + uid).bind(settle).bind(uid).bind(status).bind(now_kl()).bind(DEMO_BATCH).execute(db).await?;
+            .bind(42000i64 + uid).bind(settle).bind(uid).bind(status).bind(now()).bind(DEMO_BATCH).execute(db).await?;
     }
     sqlx::query("INSERT INTO settlement_revisions (id, settlement_id, version, snapshot, reason, created_by, demo_batch, created_at) VALUES ($1,$2,1,$3::jsonb,'首次发布',$4,$5,$6) ON CONFLICT DO NOTHING")
-        .bind(43001i64).bind(settle).bind(r#"{"title":"上周羽毛球费用","total_cents":16800}"#).bind(deming).bind(DEMO_BATCH).bind(now_kl()).execute(db).await?;
+        .bind(43001i64).bind(settle).bind(r#"{"title":"上周羽毛球费用","total_cents":16800}"#).bind(deming).bind(DEMO_BATCH).bind(now()).execute(db).await?;
 
     audit(
         db,
@@ -1368,8 +1368,8 @@ pub async fn seed_edge(db: &PgPool) -> anyhow::Result<()> {
     insert_reference_data(db).await?;
     ensure_demo_batches(db).await?;
     let pw = hash_password(DEMO_PASSWORD).map_err(|e| anyhow::anyhow!("{e}"))?;
-    let now = now_kl();
-    let today = today_kl();
+    let now = now();
+    let today = today_local();
     let kl = |d: NaiveDate, h: i32, m: i32| format!("{}T{:02}:{:02}", d, h, m);
     let future = kl(today + Duration::days(2), 9, 0);
     let past = kl(today - Duration::days(5), 9, 0);
@@ -2798,7 +2798,7 @@ async fn sync_identity_sequences(db: &PgPool) -> anyhow::Result<()> {
 async fn seed_scale(db: &PgPool, scale: i64) -> anyhow::Result<()> {
     let n = scale.clamp(1, 50_000);
     let pw = hash_password(DEMO_PASSWORD).map_err(|e| anyhow::anyhow!("{e}"))?;
-    let today = today_kl();
+    let today = today_local();
     let mut rng = Rng::new();
     let mut plate_pool = HashSet::new();
     for p in ["VXX 1234", "WQA 8821", "BPM 3302", "BKS 4410", "VBE 7788"] {

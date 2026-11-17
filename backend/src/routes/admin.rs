@@ -823,7 +823,7 @@ async fn approve_recovery(
         .fetch_optional(&mut *tx)
         .await?
         .ok_or(not_found(u.lang))?;
-    let uid: i64 = sqlx::query_scalar("SELECT id FROM users WHERE email=$1 FOR UPDATE")
+    let uid: i64 = sqlx::query_scalar("SELECT id FROM users WHERE email=lower($1) FOR UPDATE")
         .bind(&email)
         .fetch_optional(&mut *tx)
         .await?
@@ -901,7 +901,7 @@ async fn approve_recovery(
     if changed.rows_affected() == 0 {
         return Err(conflict(u.lang, ErrorKey::RequestAlreadyHandled));
     }
-    sqlx::query("UPDATE recovery_requests SET status='superseded' WHERE email=$1 AND id<>$2 AND status IN ('pending','awaiting_second')")
+    sqlx::query("UPDATE recovery_requests SET status='superseded' WHERE email=lower($1) AND id<>$2 AND status IN ('pending','awaiting_second')")
         .bind(&email)
         .bind(id)
         .execute(&mut *tx)
@@ -947,7 +947,7 @@ async fn reject_recovery(
         .fetch_optional(&mut *tx)
         .await?
         .ok_or(not_found(u.lang))?;
-    let user_id: Option<i64> = sqlx::query_scalar("SELECT id FROM users WHERE email=$1 FOR UPDATE")
+    let user_id: Option<i64> = sqlx::query_scalar("SELECT id FROM users WHERE email=lower($1) FOR UPDATE")
         .bind(&email)
         .fetch_optional(&mut *tx)
         .await?;

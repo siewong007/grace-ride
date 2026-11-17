@@ -1,20 +1,62 @@
-//! Migrations: `0001_init.sql` is frozen and later changes are new numbered files.
-//! - A history that is the start of this build's files is kept; new files run once.
-//! - A history from the old numbered files (other contents under the same versions)
-//!   is cleared, the scripts run again, and existing rows stay.
+//! Migrations: one squashed `0001_init.sql`, frozen from 2026-11-17. Later changes are
+//! new numbered files.
+//! - A history whose version 1 is this file is kept; later files run once.
+//! - A history from an older schema (its version 1 differs: the pre-November numbered
+//!   files, the first frozen 0001, or 0001–0005) is cleared and 0001 runs again over
+//!   the existing tables, keeping every row.
+//! - A later file edited after it ran, or one this build doesn't ship, stops start-up.
+//!
+//! Each upgrade test below undoes part of the schema on a seeded database, marks the
+//! history as one of the older schemas, and connects again.
 
 mod common;
 
-use grace_ride::connect_db;
+use grace_ride::{connect_db, connect_db_with, state::DbConfig};
+use sqlx::PgPool;
+
+/// Make the history look like the five files from before the squash.
+async fn mark_history_as_pre_squash(db: &PgPool) {
+    sqlx::query("DELETE FROM _sqlx_migrations")
+        .execute(db)
+        .await
+        .unwrap();
+    for (version, description) in [
+        (1, "init"),
+        (2, "constraints_indexes"),
+        (3, "trips"),
+        (4, "member_roles"),
+        (5, "json_columns"),
+    ] {
+        sqlx::query(
+            "INSERT INTO _sqlx_migrations (version, description, success, checksum, execution_time)
+             VALUES ($1, $2, true, $3, 0)",
+        )
+        .bind(version as i64)
+        .bind(description)
+        .bind(vec![version as u8; 48])
+        .execute(db)
+        .await
+        .unwrap();
+    }
+}
+
+async fn versions(db: &PgPool) -> Vec<i64> {
+    sqlx::query_scalar("SELECT version FROM _sqlx_migrations ORDER BY version")
+        .fetch_all(db)
+        .await
+        .unwrap()
+}
 
 #[tokio::test]
-async fn stale_migration_history_replays_the_schema_without_losing_rows() {
+async fn an_older_history_replays_the_schema_without_losing_rows() {
     let url = common::fresh_db().await;
     let db = connect_db(&url).await.expect("schema");
     sqlx::query("INSERT INTO areas (name) VALUES ('历史区')")
         .execute(&db)
         .await
         .unwrap();
+    mark_history_as_pre_squash(&db).await;
+    // The pre-November numbered files went up to 0016.
     sqlx::query(
         "INSERT INTO _sqlx_migrations (version, description, success, checksum, execution_time)
          VALUES (16, 'help_claim_attach', true, $1, 0)",
@@ -23,26 +65,10 @@ async fn stale_migration_history_replays_the_schema_without_losing_rows() {
     .execute(&db)
     .await
     .unwrap();
-    // The old 0002 had other contents under the same version.
-    sqlx::query("UPDATE _sqlx_migrations SET checksum = $1, description = 'passenger_locations' WHERE version = 2")
-        .bind(vec![9u8; 8])
-        .execute(&db)
-        .await
-        .unwrap();
-    sqlx::query("UPDATE _sqlx_migrations SET checksum = $1 WHERE version = 1")
-        .bind(vec![1u8; 8])
-        .execute(&db)
-        .await
-        .unwrap();
     db.close().await;
 
-    let db = connect_db(&url).await.expect("rebase");
-    let versions: Vec<i64> =
-        sqlx::query_scalar("SELECT version FROM _sqlx_migrations ORDER BY version")
-            .fetch_all(&db)
-            .await
-            .unwrap();
-    assert_eq!(versions, vec![1, 2, 3, 4, 5]);
+    let db = connect_db(&url).await.expect("replay");
+    assert_eq!(versions(&db).await, vec![1]);
     let kept: Option<(String,)> = sqlx::query_as("SELECT name FROM areas WHERE name = '历史区'")
         .fetch_optional(&db)
         .await
@@ -53,20 +79,20 @@ async fn stale_migration_history_replays_the_schema_without_losing_rows() {
         .await
         .unwrap();
     assert_eq!(rates, 2);
-    let settings: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM system_settings")
-        .fetch_one(&db)
+    let settings: Vec<String> = sqlx::query_scalar("SELECT key FROM system_settings ORDER BY key")
+        .fetch_all(&db)
         .await
         .unwrap();
-    assert_eq!(settings, 4);
-    let assignee: i64 = sqlx::query_scalar(
-        "SELECT COUNT(*) FROM information_schema.columns
-         WHERE table_schema = current_schema()
-           AND table_name = 'help_tickets' AND column_name = 'assignee_id'",
-    )
-    .fetch_one(&db)
-    .await
-    .unwrap();
-    assert_eq!(assignee, 1);
+    assert_eq!(
+        settings,
+        [
+            "audit_retention_days",
+            "chat_retention_days",
+            "max_live_drivers",
+            "session_timeout_mins",
+            "timezone"
+        ]
+    );
     let retired: Option<String> =
         sqlx::query_scalar("SELECT to_regclass(current_schema() || '.user_roles')::text")
             .fetch_one(&db)
@@ -75,61 +101,33 @@ async fn stale_migration_history_replays_the_schema_without_losing_rows() {
     assert!(retired.is_none());
     db.close().await;
 
+    // The next start keeps the new history as it is.
     let db = connect_db(&url).await.expect("second start");
-    let versions: Vec<i64> =
-        sqlx::query_scalar("SELECT version FROM _sqlx_migrations ORDER BY version")
-            .fetch_all(&db)
-            .await
-            .unwrap();
-    assert_eq!(versions, vec![1, 2, 3, 4, 5]);
+    assert_eq!(versions(&db).await, vec![1]);
 }
 
-/// A database that has run 0001 only (every database before 2026-11-17) keeps its
-/// history and gains 0002 on the next start, without clearing anything.
+/// A later file that was edited after it ran (or that this build doesn't ship) must
+/// stop start-up rather than silently replay anything.
 #[tokio::test]
-async fn new_migration_files_run_once_after_the_frozen_schema() {
+async fn an_unknown_later_migration_stops_start_up() {
     let url = common::fresh_db().await;
     let db = connect_db(&url).await.expect("schema");
-    sqlx::query("DELETE FROM _sqlx_migrations WHERE version > 1")
-        .execute(&db)
-        .await
-        .unwrap();
-    let first_run: Vec<u8> =
-        sqlx::query_scalar("SELECT checksum FROM _sqlx_migrations WHERE version = 1")
-            .fetch_one(&db)
-            .await
-            .unwrap();
-    let installed_on: String =
-        sqlx::query_scalar("SELECT installed_on::text FROM _sqlx_migrations WHERE version = 1")
-            .fetch_one(&db)
-            .await
-            .unwrap();
-    db.close().await;
-
-    let db = connect_db(&url).await.expect("upgrade");
-    let versions: Vec<i64> =
-        sqlx::query_scalar("SELECT version FROM _sqlx_migrations ORDER BY version")
-            .fetch_all(&db)
-            .await
-            .unwrap();
-    assert_eq!(versions, vec![1, 2, 3, 4, 5]);
-    // 0001 was left alone (same row), not cleared and replayed.
-    let (checksum, installed): (Vec<u8>, String) = sqlx::query_as(
-        "SELECT checksum, installed_on::text FROM _sqlx_migrations WHERE version = 1",
+    sqlx::query(
+        "INSERT INTO _sqlx_migrations (version, description, success, checksum, execution_time)
+         VALUES (2, 'from a newer build', true, $1, 0)",
     )
-    .fetch_one(&db)
+    .bind(vec![3u8; 48])
+    .execute(&db)
     .await
     .unwrap();
-    assert_eq!((checksum, installed), (first_run, installed_on));
-    // 0002's rules are in force.
-    let bad = sqlx::query("INSERT INTO groups (name, is_all) VALUES ('坏数据', 5)")
-        .execute(&db)
-        .await;
-    assert!(bad.is_err(), "a flag must be 0 or 1");
+    db.close().await;
+
+    let err = connect_db(&url).await.expect_err("diverged history");
+    assert!(err.to_string().contains("0002"), "{err}");
 }
 
-/// An existing row that breaks a new rule must not stop a deploy: the rule still
-/// guards new rows, and is left unvalidated for someone to review.
+/// An existing row that breaks a rule must not stop a deploy: the rule still guards
+/// new rows, and is left unvalidated for someone to review.
 #[tokio::test]
 async fn an_old_bad_row_leaves_the_rule_unvalidated_instead_of_failing() {
     let url = common::fresh_db().await;
@@ -142,10 +140,7 @@ async fn an_old_bad_row_leaves_the_rule_unvalidated_instead_of_failing() {
         .execute(&db)
         .await
         .unwrap();
-    sqlx::query("DELETE FROM _sqlx_migrations WHERE version > 1")
-        .execute(&db)
-        .await
-        .unwrap();
+    mark_history_as_pre_squash(&db).await;
     db.close().await;
 
     let db = connect_db(&url)
@@ -176,54 +171,51 @@ fn the_initial_schema_is_frozen() {
     .unwrap();
     assert_eq!(
         hex::encode(Sha256::digest(&sql)),
-        "d3e06f39dd6bdebae1fe06f8010268b3192ef5f4804bf7c52641f60fabbed87d",
+        "4b83742e84488e6cf8d4722d834b831a4043d4491ccccd8487a1a98e323745c6",
         "0001_init.sql changed; add a new migration file instead"
     );
 }
 
-/// Upgrading a database full of demo and edge-case rows to 0002 validates every new
+/// Replaying 0001 over a database full of demo and edge-case rows validates every
 /// rule against that data: none of them is left unvalidated.
 #[tokio::test]
-async fn the_new_rules_hold_for_existing_seeded_data() {
+async fn every_rule_holds_for_existing_seeded_data() {
     let (_app, st) = common::setup().await;
     common::seed_edge(&st).await;
-    // Undo 0002 as if this database had only ever run 0001, then upgrade it.
+    // Undo every rule added after a table was created, as an older database lacks them.
     let added: Vec<(String, String)> = sqlx::query_as(
         "SELECT conrelid::regclass::text, conname FROM pg_constraint
          WHERE connamespace = current_schema()::regnamespace AND conname = ANY($1)",
     )
-    .bind(RULES_0002)
+    .bind(LATER_RULES)
     .fetch_all(&st.db)
     .await
     .unwrap();
-    assert_eq!(added.len(), RULES_0002.len(), "0002 added every rule");
+    assert_eq!(added.len(), LATER_RULES.len(), "0001 added every rule");
     for (table, name) in &added {
         sqlx::query(&format!("ALTER TABLE {table} DROP CONSTRAINT {name}"))
             .execute(&st.db)
             .await
             .unwrap();
     }
-    sqlx::query("DELETE FROM _sqlx_migrations WHERE version > 1")
-        .execute(&st.db)
-        .await
-        .unwrap();
-    let url = st.cfg.database_url.clone();
-    let db = connect_db(&url).await.expect("upgrade");
+    mark_history_as_pre_squash(&st.db).await;
+    let db = connect_db(&st.cfg.database_url).await.expect("upgrade");
     let unvalidated: Vec<String> = sqlx::query_scalar(
         "SELECT conname::text FROM pg_constraint
-         WHERE connamespace = current_schema()::regnamespace AND conname = ANY($1) AND NOT convalidated",
+         WHERE connamespace = current_schema()::regnamespace AND NOT convalidated",
     )
-    .bind(RULES_0002)
     .fetch_all(&db)
     .await
     .unwrap();
     assert!(unvalidated.is_empty(), "seeded rows break {unvalidated:?}");
 }
 
-const RULES_0002: &[&str] = &[
+const LATER_RULES: &[&str] = &[
     "chk_users_status",
+    "chk_users_email_lower",
     "chk_recovery_requests_status",
     "chk_invites_kind",
+    "chk_invites_group_ids",
     "chk_auth_challenges_kind",
     "chk_events_status",
     "chk_event_signups_status",
@@ -231,6 +223,7 @@ const RULES_0002: &[&str] = &[
     "chk_event_signups_offer_seats",
     "chk_settlements_status",
     "chk_settlements_split_mode",
+    "chk_settlement_items_amount",
     "chk_settlement_shares_status",
     "chk_visitor_passes_window",
     "chk_sessions_mfa_ok",
@@ -247,24 +240,27 @@ const RULES_0002: &[&str] = &[
     "chk_rides_delay_minutes",
     "chk_announcements_pinned",
     "chk_reimbursements_payee_verified",
+    "chk_rides_pickup_at_format",
+    "chk_events_starts_at_format",
+    "chk_sessions_expires_at_format",
 ];
 
-/// 0003 on a database full of demo and edge-case chats: every trip in use gets a row,
+/// Trips on a database full of demo and edge-case chats: every trip in use gets a row,
 /// both foreign keys hold, and rides given a trip later still work without app changes.
 #[tokio::test]
 async fn trips_link_rides_and_chats() {
     let (_app, st) = common::setup().await;
     common::seed_edge(&st).await;
-    // Undo 0003 as if this database had stopped at 0002, then upgrade it.
+    // Undo trips as if this database came from before they existed.
     for sql in [
         "ALTER TABLE ride_messages DROP CONSTRAINT fk_ride_messages_trip",
         "ALTER TABLE rides DROP CONSTRAINT fk_rides_trip",
         "DROP TRIGGER trg_rides_ensure_trip ON rides",
         "DROP TABLE trips",
-        "DELETE FROM _sqlx_migrations WHERE version > 2",
     ] {
         sqlx::query(sql).execute(&st.db).await.unwrap();
     }
+    mark_history_as_pre_squash(&st.db).await;
     let chats: i64 = sqlx::query_scalar("SELECT COUNT(DISTINCT trip_id) FROM ride_messages")
         .fetch_one(&st.db)
         .await
@@ -317,22 +313,22 @@ async fn trips_link_rides_and_chats() {
     assert_eq!((left, linked), (0, None));
 }
 
-/// 0004 on a database full of demo and edge-case members: member_roles matches each
+/// member_roles on a database full of demo and edge-case members: it matches each
 /// member's listed roles, a name that is not a role grants nothing until the role is
 /// created, and writes to users.roles (the seed, tests, start-up) keep it in step.
 #[tokio::test]
 async fn member_roles_follow_users_roles() {
     let (_app, st) = common::setup().await;
     common::seed_edge(&st).await;
-    // Undo 0004 as if this database had stopped at 0003, then upgrade it.
+    // Undo member_roles as if this database came from before it existed.
     for sql in [
         "DROP TRIGGER trg_roles_attach_members ON roles",
         "DROP TRIGGER trg_users_sync_member_roles ON users",
         "DROP TABLE member_roles",
-        "DELETE FROM _sqlx_migrations WHERE version > 3",
     ] {
         sqlx::query(sql).execute(&st.db).await.unwrap();
     }
+    mark_history_as_pre_squash(&st.db).await;
     sqlx::query("UPDATE users SET roles = 'driver, ghost_team' WHERE email = 'member@example.org'")
         .execute(&st.db)
         .await
@@ -376,14 +372,14 @@ async fn member_roles_follow_users_roles() {
     common::assert_member_roles_in_step(&db).await;
 }
 
-/// 0005 on a seeded database whose JSON columns are still text: they become JSONB,
-/// valid JSON keeps its shape, text that isn't JSON is kept as a JSON string, and
-/// the database then refuses anything that isn't JSON.
+/// A seeded database whose JSON columns are still text: they become JSONB, valid JSON
+/// keeps its shape, text that isn't JSON is kept as a JSON string, and the database
+/// then refuses anything that isn't JSON.
 #[tokio::test]
 async fn json_columns_become_jsonb() {
     let (_app, st) = common::setup().await;
     common::seed_edge(&st).await;
-    // Undo 0005 as if this database had stopped at 0004, then upgrade it.
+    // Undo JSONB as if this database came from before it.
     for sql in [
         "ALTER TABLE invites DROP CONSTRAINT chk_invites_group_ids",
         "ALTER TABLE invites ALTER COLUMN group_ids DROP DEFAULT",
@@ -391,10 +387,10 @@ async fn json_columns_become_jsonb() {
         "ALTER TABLE invites ALTER COLUMN group_ids SET DEFAULT '[]'",
         "ALTER TABLE settlement_revisions ALTER COLUMN snapshot TYPE text USING snapshot::text",
         "UPDATE settlement_revisions SET snapshot = 'initial draft' WHERE id = 63001",
-        "DELETE FROM _sqlx_migrations WHERE version > 4",
     ] {
         sqlx::query(sql).execute(&st.db).await.unwrap();
     }
+    mark_history_as_pre_squash(&st.db).await;
 
     let db = connect_db(&st.cfg.database_url).await.expect("upgrade");
     let types: Vec<String> = sqlx::query_scalar(
@@ -414,7 +410,7 @@ async fn json_columns_become_jsonb() {
     .unwrap();
     assert_eq!((kept.as_str(), parsed.as_str()), ("string", "上周羽毛球费用"));
     let validated: bool = sqlx::query_scalar(
-        "SELECT convalidated FROM pg_constraint WHERE conname = 'chk_invites_group_ids'",
+        "SELECT convalidated FROM pg_constraint WHERE conname = 'chk_invites_group_ids' AND conrelid = 'invites'::regclass",
     )
     .fetch_one(&db)
     .await
@@ -437,4 +433,137 @@ async fn json_columns_become_jsonb() {
     .execute(&db)
     .await
     .expect("the default is an empty list");
+}
+
+/// An older database whose time defaults named Asia/Kuala_Lumpur outright, and whose
+/// emails were not all lowercase: replaying 0001 points the defaults at app_now() and
+/// lowercases the emails (unless that would collide with another account).
+#[tokio::test]
+async fn older_defaults_and_mixed_case_emails_are_brought_in_line() {
+    let url = common::fresh_db().await;
+    let db = connect_db(&url).await.expect("schema");
+    for sql in [
+        "ALTER TABLE users DROP CONSTRAINT chk_users_email_lower",
+        "ALTER TABLE areas ADD COLUMN created_at TEXT NOT NULL DEFAULT (to_char(NOW() AT TIME ZONE 'Asia/Kuala_Lumpur', 'YYYY-MM-DD\"T\"HH24:MI:SS'))",
+        "INSERT INTO users (name, email, webauthn_uuid) VALUES ('甲', 'Alice@Example.org', 'u1'), ('乙', 'BOB@example.org', 'u2'), ('丙', 'bob@example.org', 'u3')",
+    ] {
+        sqlx::query(sql).execute(&db).await.unwrap();
+    }
+    mark_history_as_pre_squash(&db).await;
+    db.close().await;
+
+    let db = connect_db(&url).await.expect("upgrade");
+    let default: String = sqlx::query_scalar(
+        "SELECT column_default FROM information_schema.columns
+         WHERE table_schema = current_schema() AND table_name = 'areas' AND column_name = 'created_at'",
+    )
+    .fetch_one(&db)
+    .await
+    .unwrap();
+    assert_eq!(default, "app_now()");
+    let emails: Vec<String> = sqlx::query_scalar("SELECT email FROM users ORDER BY webauthn_uuid")
+        .fetch_all(&db)
+        .await
+        .unwrap();
+    // BOB@ would collide with bob@, so it is left for someone to merge by hand.
+    assert_eq!(emails, ["alice@example.org", "BOB@example.org", "bob@example.org"]);
+    let validated: bool = sqlx::query_scalar(
+        "SELECT convalidated FROM pg_constraint WHERE conname = 'chk_users_email_lower' AND conrelid = 'users'::regclass",
+    )
+    .fetch_one(&db)
+    .await
+    .unwrap();
+    assert!(!validated, "the collision is left for review");
+    let bad = sqlx::query("INSERT INTO users (name, email, webauthn_uuid) VALUES ('丁', 'Dan@example.org', 'u4')")
+        .execute(&db)
+        .await;
+    assert!(bad.is_err(), "new emails must be lowercase");
+}
+
+/// APP_TIMEZONE decides the zone of every time the database writes by itself
+/// (app_now() defaults) and the session zone the app's queries run in.
+#[tokio::test]
+async fn the_time_zone_follows_the_configuration() {
+    let url = common::fresh_db().await;
+    let cfg = DbConfig {
+        timezone: chrono_tz::Pacific::Auckland,
+        ..DbConfig::default()
+    };
+    let db = connect_db_with(&url, &cfg).await.expect("schema");
+    let (stored, session, written): (String, String, String) = sqlx::query_as(
+        "SELECT (SELECT value FROM system_settings WHERE key = 'timezone'),
+                current_setting('TimeZone'),
+                app_now()",
+    )
+    .fetch_one(&db)
+    .await
+    .unwrap();
+    assert_eq!(stored, "Pacific/Auckland");
+    assert_eq!(session, "Pacific/Auckland");
+    let expected = chrono::Utc::now().with_timezone(&chrono_tz::Pacific::Auckland);
+    let written = chrono::NaiveDateTime::parse_from_str(&written, "%Y-%m-%dT%H:%M:%S").unwrap();
+    let drift = (expected.naive_local() - written).num_seconds().abs();
+    assert!(drift < 60, "app_now() is Auckland time (off by {drift}s)");
+    // LOCALTIMESTAMP agrees with app_now() in the app's sessions.
+    let agree: bool = sqlx::query_scalar(
+        "SELECT abs(extract(epoch FROM LOCALTIMESTAMP - app_now()::timestamp)) < 60",
+    )
+    .fetch_one(&db)
+    .await
+    .unwrap();
+    assert!(agree);
+    db.close().await;
+
+    // Back to the default zone: the setting follows.
+    let db = connect_db(&url).await.expect("restart");
+    let stored: String =
+        sqlx::query_scalar("SELECT value FROM system_settings WHERE key = 'timezone'")
+            .fetch_one(&db)
+            .await
+            .unwrap();
+    assert_eq!(stored, "Asia/Kuala_Lumpur");
+}
+
+/// Trigger functions carry their own search_path, so a data-only restore (which runs
+/// with an empty search_path) still finds member_roles and trips.
+#[tokio::test]
+async fn trigger_functions_pin_their_search_path() {
+    let url = common::fresh_db().await;
+    let db = connect_db(&url).await.expect("schema");
+    let unpinned: Vec<String> = sqlx::query_scalar(
+        "SELECT proname::text FROM pg_proc
+         WHERE pronamespace = current_schema()::regnamespace
+           AND proname = ANY($1)
+           AND NOT EXISTS (SELECT 1 FROM unnest(proconfig) c WHERE c LIKE 'search_path=%')",
+    )
+    .bind(&[
+        "app_now",
+        "listed_role_keys",
+        "sync_member_roles",
+        "users_sync_member_roles",
+        "roles_attach_members",
+        "rides_ensure_trip",
+    ])
+    .fetch_all(&db)
+    .await
+    .unwrap();
+    assert!(unpinned.is_empty(), "{unpinned:?}");
+    let schema: String = sqlx::query_scalar("SELECT current_schema()::text")
+        .fetch_one(&db)
+        .await
+        .unwrap();
+    let mut tx = db.begin().await.unwrap();
+    sqlx::query("SET LOCAL search_path = ''")
+        .execute(&mut *tx)
+        .await
+        .unwrap();
+    // The insert fires roles_attach_members (member_roles, users) and app_now()
+    // (system_settings), all named without a schema.
+    sqlx::query(&format!(
+        "INSERT INTO \"{schema}\".roles (key, name) VALUES ('restore_check', 'Restore check')"
+    ))
+    .execute(&mut *tx)
+    .await
+    .expect("trigger and default resolve their tables with an empty search_path");
+    tx.rollback().await.unwrap();
 }

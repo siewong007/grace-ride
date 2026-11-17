@@ -49,6 +49,9 @@ pub async fn setup() -> (Router, AppState) {
         google_client_id: None,
         google_client_secret: None,
         routing: Default::default(),
+        db: Default::default(),
+        housekeeping_interval_mins: 60,
+        notification_retention_days: 90,
     };
     cfg.validate().unwrap();
     let state = init(cfg).await.unwrap();
@@ -139,7 +142,7 @@ pub async fn login_mfa(st: &AppState, email: &str, mfa_ok: bool) -> String {
     let token =
         uuid::Uuid::new_v4().simple().to_string() + &uuid::Uuid::new_v4().simple().to_string();
     let token = token[..48].to_string();
-    let expires = (chrono::Local::now() + chrono::Duration::days(7))
+    let expires = (grace_ride::util::local_now() + chrono::Duration::days(7))
         .format("%Y-%m-%dT%H:%M:%S")
         .to_string();
     sqlx::query(
@@ -163,7 +166,7 @@ pub async fn login(st: &AppState, email: &str) -> String {
 pub fn tomorrow(hhmm: &str) -> String {
     format!(
         "{}T{hhmm}",
-        (grace_ride::util::today_kl() + chrono::Duration::days(1)).format("%Y-%m-%d")
+        (grace_ride::util::today_local() + chrono::Duration::days(1)).format("%Y-%m-%d")
     )
 }
 
@@ -212,7 +215,7 @@ pub fn totp_code(secret_b32: &str, email: &str) -> String {
     totp.generate_current().expect("code")
 }
 
-/// `member_roles` (migration 0004) must hold exactly the names in each member's
+/// `member_roles` (kept in step by triggers in 0001_init.sql) must hold exactly the names in each member's
 /// `users.roles` that are real roles, apart from the implicit `member`.
 pub async fn assert_member_roles_in_step(db: &sqlx::PgPool) {
     let drift: Vec<(i64, String)> = sqlx::query_as(

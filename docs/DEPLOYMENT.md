@@ -81,7 +81,11 @@ npm ci
 npm run dev                            # localhost:5173, proxies /api
 ```
 
-Startup runs the numbered migrations and seeds demo accounts only in dev mode. Do not drop a database as a routine update procedure. See [Testing](TESTING.md) for all checks; the Makefile covers only a subset of frontend checks.
+Startup runs the numbered migrations and seeds demo accounts only in dev mode. Do not drop a database as a routine update procedure.
+
+The first start after the 2026-11-17 squash logs `Migration history (N row(s)) is from an older schema; replaying 0001_init.sql`. That is expected and happens once: the single repeatable `0001_init.sql` runs over the existing tables, keeps every row, and the history then holds only version 1. Check `SELECT conrelid::regclass, conname FROM pg_constraint WHERE NOT convalidated;` afterwards; any rule listed there is guarding new rows but found old rows to review. Rolling back to an older image afterwards replays that image's own files the same way.
+
+Time and database settings (all optional): `APP_TIMEZONE` (IANA zone, default `Asia/Kuala_Lumpur`; choose it before real data exists, because a later change does not convert stored times), `DB_MAX_CONNECTIONS` (10), `DB_ACQUIRE_TIMEOUT_SECS` (5), `DB_STATEMENT_TIMEOUT_SECS` (15, 0 = off), `HOUSEKEEPING_INTERVAL_MINS` (60) and `NOTIFICATION_RETENTION_DAYS` (90). See [Testing](TESTING.md) for all checks; the Makefile covers only a subset of frontend checks.
 
 ## Recovery cautions
 

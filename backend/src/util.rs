@@ -1,6 +1,9 @@
 //! Shared helpers: time, audit log, notifications, permission checks.
 
-use chrono::{Duration, FixedOffset, Local, NaiveDate, NaiveDateTime, Utc};
+use std::sync::OnceLock;
+
+use chrono::{DateTime, Duration, NaiveDate, NaiveDateTime, Utc};
+use chrono_tz::Tz;
 use rand::{distributions::Alphanumeric, Rng};
 use sqlx::PgPool;
 
@@ -8,27 +11,60 @@ use crate::auth::CurrentUser;
 use crate::error::{bad, forbidden, AppResult};
 use crate::perms::{self, Act, Page, Perm};
 
+/// The zone every stored time is written in when nothing else is configured.
+pub const DEFAULT_TIMEZONE: Tz = chrono_tz::Asia::Kuala_Lumpur;
+
+static ZONE: OnceLock<Tz> = OnceLock::new();
+
+/// Set the app's time zone (`APP_TIMEZONE`). Stored times are local text in this
+/// zone, so it is fixed for the life of the process: a second call with a different
+/// zone is ignored with a warning.
+pub fn set_timezone(tz: Tz) {
+    if ZONE.set(tz).is_err() && zone() != tz {
+        tracing::warn!("time zone already set to {}; ignoring {tz}", zone());
+    }
+}
+
+/// The app's time zone. Never the host's: `TZ` on the server does not matter.
+pub fn zone() -> Tz {
+    *ZONE.get().unwrap_or(&DEFAULT_TIMEZONE)
+}
+
+/// The current time in the app's zone.
+pub fn local_now() -> DateTime<Tz> {
+    Utc::now().with_timezone(&zone())
+}
+
+/// Today's date in the app's zone.
+pub fn today_local() -> NaiveDate {
+    local_now().date_naive()
+}
+
+/// The stored text form of a time: `YYYY-MM-DDTHH:MM:SS`, local to the app's zone.
+pub fn ts(at: DateTime<Tz>) -> String {
+    at.format("%Y-%m-%dT%H:%M:%S").to_string()
+}
+
 pub fn now() -> String {
-    Local::now().format("%Y-%m-%dT%H:%M:%S").to_string()
+    ts(local_now())
 }
 
 pub fn in_days(days: i64) -> String {
-    (Local::now() + Duration::days(days))
-        .format("%Y-%m-%dT%H:%M:%S")
-        .to_string()
+    ts(local_now() + Duration::days(days))
 }
 
 pub fn in_hours(hours: i64) -> String {
-    (Local::now() + Duration::hours(hours))
-        .format("%Y-%m-%dT%H:%M:%S")
-        .to_string()
+    ts(local_now() + Duration::hours(hours))
+}
+
+/// Timestamp `minutes` from now (negative: ago), in the same text format as `now()`.
+pub fn in_minutes(minutes: i64) -> String {
+    ts(local_now() + Duration::minutes(minutes))
 }
 
 /// Timestamp `minutes` ago, in the same text format as `now()`, for comparisons.
 pub fn minutes_ago(minutes: i64) -> String {
-    (Local::now() - Duration::minutes(minutes))
-        .format("%Y-%m-%dT%H:%M:%S")
-        .to_string()
+    in_minutes(-minutes)
 }
 
 /// Longest display name accepted. Names show on every list, chat and notification.
@@ -98,6 +134,33 @@ pub async fn audit(
     }
 }
 
+/// One audit row per id, in a single statement (inside a transaction when given one).
+pub async fn audit_many<'e>(
+    db: impl sqlx::PgExecutor<'e>,
+    actor: Option<i64>,
+    action: &str,
+    entity: &str,
+    entity_ids: &[i64],
+    detail: &str,
+) -> sqlx::Result<()> {
+    if entity_ids.is_empty() {
+        return Ok(());
+    }
+    sqlx::query(
+        "INSERT INTO audit_logs (actor_id, action, entity, entity_id, detail, created_at)
+         SELECT $1, $2, $3, id, $5, $6 FROM unnest($4::BIGINT[]) AS id",
+    )
+    .bind(actor)
+    .bind(action)
+    .bind(entity)
+    .bind(entity_ids)
+    .bind(detail)
+    .bind(now())
+    .execute(db)
+    .await?;
+    Ok(())
+}
+
 pub use crate::i18n::{t, ErrorKey, Lang};
 
 async fn user_lang(db: &PgPool, user_id: i64) -> Lang {
@@ -152,6 +215,47 @@ pub async fn notify_trip(db: &PgPool, trip_id: i64) {
     }
 }
 
+/// The same notification for many members in one statement; each recipient gets the
+/// side of each (中文, English) pair that matches their saved language. Ids that are
+/// not members are skipped.
+pub async fn notify_many(
+    db: &PgPool,
+    user_ids: &[i64],
+    title: (&str, &str),
+    body: (&str, &str),
+    link: &str,
+) {
+    if user_ids.is_empty() {
+        return;
+    }
+    let r: sqlx::Result<Vec<(i64,)>> = sqlx::query_as(
+        "INSERT INTO notifications (user_id, title, body, link, created_at)
+         SELECT u.id,
+                CASE WHEN u.lang = 'en' THEN $3 ELSE $2 END,
+                CASE WHEN u.lang = 'en' THEN $5 ELSE $4 END,
+                $6, $7
+         FROM users u WHERE u.id = ANY($1)
+         RETURNING user_id",
+    )
+    .bind(user_ids)
+    .bind(title.0)
+    .bind(title.1)
+    .bind(body.0)
+    .bind(body.1)
+    .bind(link)
+    .bind(now())
+    .fetch_all(db)
+    .await;
+    match r {
+        Ok(rows) => {
+            for (id,) in rows {
+                crate::stream::publish(id, "notify");
+            }
+        }
+        Err(e) => tracing::error!("notify_many failed: {e}"),
+    }
+}
+
 /// Notify every active member who may do `act` on `page`; each recipient gets the
 /// message in their own language.
 pub async fn notify_perm(
@@ -169,9 +273,8 @@ pub async fn notify_perm(
     .fetch_all(db)
     .await
     .unwrap_or_default();
-    for (id,) in users {
-        notify(db, id, title, body, link).await;
-    }
+    let ids: Vec<i64> = users.into_iter().map(|(id,)| id).collect();
+    notify_many(db, &ids, title, body, link).await;
 }
 
 /// Chat system message: one shared row for the whole trip, so both languages
@@ -219,23 +322,6 @@ pub fn fmt_rm(cents: i64) -> String {
     format!("RM {}.{:02}", cents / 100, (cents % 100).abs())
 }
 
-/// Asia/Kuala Lumpur is UTC+8. All demo timestamps are generated with this
-/// fixed offset so seed data is reproducible regardless of the host time zone.
-pub const KL_OFFSET_SECS: i32 = 8 * 3600;
-
-pub fn now_kl() -> String {
-    let offset = FixedOffset::east_opt(KL_OFFSET_SECS).expect("UTC+8 is a valid offset");
-    Utc::now()
-        .with_timezone(&offset)
-        .format("%Y-%m-%dT%H:%M:%S")
-        .to_string()
-}
-
-/// Demo "today" in KL time; all relative seed dates anchor on this date.
-pub fn today_kl() -> NaiveDate {
-    let offset = FixedOffset::east_opt(KL_OFFSET_SECS).expect("UTC+8 is a valid offset");
-    Utc::now().with_timezone(&offset).date_naive()
-}
 
 /// Build an `ORDER BY` body from an allow-list of `(client_key, SQL expression)`.
 /// Unknown keys use `default`; any direction other than `desc` sorts ascending.

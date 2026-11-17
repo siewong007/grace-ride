@@ -9,7 +9,7 @@
 //!
 //! Every active member holds the built-in `member` role on top of the roles listed in
 //! `users.roles`. The app writes that column; the database copies the names that are
-//! real roles into `member_roles` (migration 0004), which is what permission checks read.
+//! real roles into `member_roles` (triggers in 0001_init.sql), which is what permission checks read.
 //! Handlers ask `u.can(Page::X, Act::Y)` or `require(&u, Page::X, Act::Y)`.
 //!
 //! Three rules sit above the stored matrix and cannot be configured away:

@@ -699,6 +699,8 @@ export default function Audit() {
     {
       key: 'viewDetail',
       header: t('audit.viewDetail'),
+      headerClassName: 'col-sticky-end',
+      cellClassName: 'col-sticky-end',
       render: (a) => (
         <Button
           variant="ghost"
@@ -915,6 +917,20 @@ export default function Audit() {
               columns={columns}
               items={items}
               itemKey={(a) => a.id}
+              onRowClick={(a) => setSelectedItem(a)}
+              compactRow={(a) => (
+                <div className="grow min-w-0 stack-xs">
+                  <div className="row between nowrap">
+                    <span className="bold ellipsis">{a.actor ?? t('audit.system')}</span>
+                    <span className="mono tiny muted">{fmtDateTime(a.created_at, ft)}</span>
+                  </div>
+                  <div>
+                    <Pill tone={getActionTone(a.action)}>{auditActionLabel(a.action, t)}</Pill>
+                  </div>
+                  <div className="small ellipsis">{objectLabel(a)}</div>
+                  <div className="muted tiny clamp-2">{detailLabel(a)}</div>
+                </div>
+              )}
             />
           </Card>
 

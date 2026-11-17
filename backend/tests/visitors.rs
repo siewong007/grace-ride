@@ -9,7 +9,7 @@ use grace_ride::state::AppState;
 use serde_json::{json, Value};
 
 fn in_hours(h: i64) -> String {
-    (chrono::Local::now() + chrono::Duration::hours(h))
+    (grace_ride::util::local_now() + chrono::Duration::hours(h))
         .format("%Y-%m-%dT%H:%M")
         .to_string()
 }

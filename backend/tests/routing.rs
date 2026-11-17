@@ -251,7 +251,7 @@ async fn upcoming_trip_is_planned_without_etas() {
     let driver_id = user_id(&st, "driver2@example.org").await;
     let p = user_id(&st, "member@example.org").await;
     let driver = login(&st, "driver2@example.org").await;
-    let soon = (chrono::Local::now() + chrono::Duration::minutes(60))
+    let soon = (grace_ride::util::local_now() + chrono::Duration::minutes(60))
         .format("%Y-%m-%dT%H:%M")
         .to_string();
     let id = insert_ride(

@@ -321,7 +321,7 @@ async fn automatic_and_cascading_changes_are_logged() {
     };
 
     // The background job flags a ride with no driver close to pickup: no actor.
-    let soon = (chrono::Local::now() + chrono::Duration::hours(3))
+    let soon = (grace_ride::util::local_now() + chrono::Duration::hours(3))
         .format("%Y-%m-%dT%H:%M")
         .to_string();
     let lonely = new_ride(member.clone(), ride(None, soon)).await;
@@ -657,7 +657,7 @@ async fn audit_log_pages_through_every_entry_and_filters() {
 
     // Dates include both ends.
     let day = |offset: i64| {
-        (chrono::Local::now() + chrono::Duration::days(offset))
+        (grace_ride::util::local_now() + chrono::Duration::days(offset))
             .format("%Y-%m-%d")
             .to_string()
     };
@@ -682,10 +682,10 @@ async fn audit_log_pages_through_every_entry_and_filters() {
 #[tokio::test]
 async fn audit_retention_purges_entries_past_retention_days() {
     let (_app, st) = setup().await;
-    let old_ts = (chrono::Local::now() - chrono::Duration::days(st.cfg.audit_retention_days + 1))
+    let old_ts = (grace_ride::util::local_now() - chrono::Duration::days(st.cfg.audit_retention_days + 1))
         .format("%Y-%m-%dT%H:%M:%S")
         .to_string();
-    let new_ts = chrono::Local::now().format("%Y-%m-%dT%H:%M:%S").to_string();
+    let new_ts = grace_ride::util::local_now().format("%Y-%m-%dT%H:%M:%S").to_string();
 
     let (old_id,): (i64,) = sqlx::query_as(
         "INSERT INTO audit_logs (actor_id, action, entity, entity_id, detail, created_at)
@@ -738,7 +738,7 @@ async fn audit_stream_export_csv_with_filters_and_utf8_bom() {
     let admin_uid = user_id(&st, "admin@example.org").await;
 
     // Insert known audit logs including Chinese text and formula-like characters.
-    let now_str = chrono::Local::now().format("%Y-%m-%dT%H:%M:%S").to_string();
+    let now_str = grace_ride::util::local_now().format("%Y-%m-%dT%H:%M:%S").to_string();
     sqlx::query(
         "INSERT INTO audit_logs (actor_id, action, entity, entity_id, detail, created_at)
          VALUES ($1, 'stream.test_event', 'test', 101, '教会活动 =1+1 formula test', $2)",

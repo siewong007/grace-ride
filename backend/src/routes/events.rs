@@ -14,7 +14,7 @@ use crate::error::{bad, forbidden, not_found, AppResult};
 use crate::i18n::ErrorKey;
 use crate::perms::{Act, Page};
 use crate::state::AppState;
-use crate::util::{audit, norm_dt, notify, now, require, Lang};
+use crate::util::{audit, audit_many, norm_dt, notify, notify_many, now, require, Lang};
 
 pub fn router() -> Router<AppState> {
     Router::new()
@@ -352,17 +352,20 @@ async fn create_event(
         .bind(id)
         .fetch_all(&st.db)
         .await?;
-    for (m,) in members.into_iter().filter(|(m,)| *m != u.id) {
-        let body = format!("{} · {}", req.title.trim(), at.replace('T', " "));
-        notify(
-            &st.db,
-            m,
-            ("新的活动邀请", "New event invitation"),
-            (&body, &body),
-            &format!("/events/{id}"),
-        )
-        .await;
-    }
+    let invited: Vec<i64> = members
+        .into_iter()
+        .map(|(m,)| m)
+        .filter(|m| *m != u.id)
+        .collect();
+    let body = format!("{} · {}", req.title.trim(), at.replace('T', " "));
+    notify_many(
+        &st.db,
+        &invited,
+        ("新的活动邀请", "New event invitation"),
+        (&body, &body),
+        &format!("/events/{id}"),
+    )
+    .await;
     audit(
         &st.db,
         Some(u.id),
@@ -449,9 +452,8 @@ async fn notify_signups(
     .bind(id)
     .fetch_all(&st.db)
     .await?;
-    for (uid,) in users {
-        notify(&st.db, uid, title, body, &format!("/events/{id}")).await;
-    }
+    let ids: Vec<i64> = users.into_iter().map(|(uid,)| uid).collect();
+    notify_many(&st.db, &ids, title, body, &format!("/events/{id}")).await;
     Ok(())
 }
 
@@ -464,10 +466,33 @@ async fn cancel_event(
     if !can_manage(&u, e.created_by, Act::Delete) {
         return Err(forbidden(u.lang, ErrorKey::OnlyOrganiserCanCancel));
     }
+    // The event and the ride requests not yet underway are cancelled together, or not at all.
+    let mut tx = st.db.begin().await?;
     sqlx::query("UPDATE events SET status='cancelled' WHERE id=$1")
         .bind(id)
-        .execute(&st.db)
+        .execute(&mut *tx)
         .await?;
+    let rides: Vec<(i64, Option<i64>)> = sqlx::query_as(
+        "UPDATE rides SET status='cancelled', attention_reason='活动已取消', updated_at=$2
+         WHERE event_id=$1 AND status IN ('pending_driver','pending_passenger','pending_approval','pending_driver_confirm','confirmed')
+         RETURNING id, driver_id",
+    )
+    .bind(id)
+    .bind(now())
+    .fetch_all(&mut *tx)
+    .await?;
+    let ride_ids: Vec<i64> = rides.iter().map(|(rid, _)| *rid).collect();
+    audit_many(
+        &mut *tx,
+        Some(u.id),
+        "ride.cancel",
+        "ride",
+        &ride_ids,
+        &format!("event {id} cancelled"),
+    )
+    .await?;
+    tx.commit().await?;
+
     notify_signups(
         &st,
         id,
@@ -475,24 +500,7 @@ async fn cancel_event(
         (e.title.as_str(), e.title.as_str()),
     )
     .await?;
-    // Release linked ride requests that are not yet underway.
-    let rides: Vec<(i64, Option<i64>)> = sqlx::query_as(
-        "SELECT id, driver_id FROM rides WHERE event_id=$1 AND status IN ('pending_driver','pending_passenger','pending_approval','pending_driver_confirm','confirmed')",
-    )
-    .bind(id)
-    .fetch_all(&st.db)
-    .await?;
-    for (rid, d) in rides {
-        sqlx::query("UPDATE rides SET status='cancelled', attention_reason='活动已取消', updated_at=$1 WHERE id=$2").bind(now()).bind(rid).execute(&st.db).await?;
-        audit(
-            &st.db,
-            Some(u.id),
-            "ride.cancel",
-            "ride",
-            Some(rid),
-            format!("event {id} cancelled"),
-        )
-        .await;
+    for (_, d) in rides {
         if let Some(d) = d {
             notify(
                 &st.db,
@@ -698,23 +706,27 @@ async fn withdraw(
     let rides: Vec<(i64, Option<i64>)> = sqlx::query_as(
         // Only their own ride: a visitor they invited may still come, and the host can cancel
         // that ride from the ride page.
-        "SELECT id, driver_id FROM rides WHERE event_id=$1 AND passenger_id=$2 AND is_proxy=0 AND status IN ('pending_driver','pending_passenger','pending_approval','pending_driver_confirm','confirmed')",
+        "UPDATE rides SET status='cancelled', attention_reason='乘客取消活动报名', updated_at=$3
+         WHERE event_id=$1 AND passenger_id=$2 AND is_proxy=0
+           AND status IN ('pending_driver','pending_passenger','pending_approval','pending_driver_confirm','confirmed')
+         RETURNING id, driver_id",
     )
     .bind(id)
     .bind(u.id)
+    .bind(now())
     .fetch_all(&st.db)
     .await?;
-    for (rid, d) in rides {
-        sqlx::query("UPDATE rides SET status='cancelled', attention_reason='乘客取消活动报名', updated_at=$1 WHERE id=$2").bind(now()).bind(rid).execute(&st.db).await?;
-        audit(
-            &st.db,
-            Some(u.id),
-            "ride.cancel",
-            "ride",
-            Some(rid),
-            format!("withdrew from event {id}"),
-        )
-        .await;
+    let ride_ids: Vec<i64> = rides.iter().map(|(rid, _)| *rid).collect();
+    audit_many(
+        &st.db,
+        Some(u.id),
+        "ride.cancel",
+        "ride",
+        &ride_ids,
+        &format!("withdrew from event {id}"),
+    )
+    .await?;
+    for (_, d) in rides {
         if let Some(d) = d {
             let body = format!("{} · {}", u.name, e.title);
             notify(

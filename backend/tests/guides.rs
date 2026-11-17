@@ -42,6 +42,9 @@ async fn setup() -> (Router, AppState) {
         google_client_id: None,
         google_client_secret: None,
         routing: Default::default(),
+        db: Default::default(),
+        housekeeping_interval_mins: 60,
+        notification_retention_days: 90,
     };
     cfg.validate().unwrap();
     let state = init(cfg).await.unwrap();
@@ -90,7 +93,7 @@ async fn login(st: &AppState, email: &str) -> String {
     let token =
         uuid::Uuid::new_v4().simple().to_string() + &uuid::Uuid::new_v4().simple().to_string();
     let token = token[..48].to_string();
-    let expires = (chrono::Local::now() + chrono::Duration::days(7))
+    let expires = (grace_ride::util::local_now() + chrono::Duration::days(7))
         .format("%Y-%m-%dT%H:%M:%S")
         .to_string();
     sqlx::query(

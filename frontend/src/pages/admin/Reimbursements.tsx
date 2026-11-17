@@ -172,6 +172,17 @@ function List({ scope }: { scope: 'review' | 'payout' }) {
     exportToCsv(`grace-ride-reimbursements-${scope}-${todayStr()}`, headers, rows);
   };
 
+  /** Review or Pay when this member may act on the claim now; otherwise the receipt. */
+  const actionCell = (r: Reimb) =>
+    canAct &&
+    ((scope === 'review' && r.status === 'pending') || (scope === 'payout' && r.status === 'approved')) ? (
+      <Button variant="primary" size="sm" onClick={() => setOpen(r)}>
+        {scope === 'review' ? t('reimb.reviewBtn') : t('reimb.payBtn')}
+      </Button>
+    ) : (
+      <ReceiptLink id={r.receipt_file_id} label={t('reimb.receipt')} />
+    );
+
   const columns: TableColumn<Reimb>[] = [
     {
       key: 'applicant',
@@ -221,28 +232,9 @@ function List({ scope }: { scope: 'review' | 'payout' }) {
     {
       key: 'action',
       header: t('actions'),
-      render: (r) => (
-        <>
-          {canAct &&
-          ((scope === 'review' && r.status === 'pending') ||
-            (scope === 'payout' && r.status === 'approved')) ? (
-            <Button
-              variant="primary"
-              size="sm"
-              onClick={() => setOpen(r)}
-            >
-              {scope === 'review'
-                ? t('reimb.reviewBtn')
-                : t('reimb.payBtn')}
-            </Button>
-          ) : (
-            <ReceiptLink
-              id={r.receipt_file_id}
-              label={t('reimb.receipt')}
-            />
-          )}
-        </>
-      ),
+      headerClassName: 'col-sticky-end',
+      cellClassName: 'col-sticky-end',
+      render: (r) => actionCell(r),
     },
   ];
 
@@ -271,6 +263,30 @@ function List({ scope }: { scope: 'review' | 'payout' }) {
               columns={columns}
               items={loading ? [] : items}
               itemKey={(r) => r.id}
+              compactRow={(r) => (
+                <>
+                  <div className="grow min-w-0">
+                    <div className="row between nowrap">
+                      <span className="bold ellipsis">{r.user.name}</span>
+                      <span className="mono bold">{rm(r.amount_cents)}</span>
+                    </div>
+                    <div className="small clamp-2">{r.description}</div>
+                    <div className="muted tiny">
+                      {fmtDay(r.created_at, ft)}
+                      {r.ride_id && (
+                        <>
+                          {' · '}
+                          <Link to={`/admin/rides/${r.ride_id}`}>{t('reimb.rideLink')}</Link>
+                        </>
+                      )}
+                    </div>
+                  </div>
+                  <div className="item-actions">
+                    <StatusPill map={REIMB_STATUS} status={r.status} />
+                    {actionCell(r)}
+                  </div>
+                </>
+              )}
               sort={sort}
               onSortChange={setSort}
               filters={filterDefs}

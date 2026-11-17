@@ -1747,9 +1747,16 @@ pub async fn compute_badges(st: &AppState, user_id: i64, lang: Lang) -> AppResul
     .fetch_one(&st.db)
     .await?;
     let (months,): (i64,) = sqlx::query_as(
-        "SELECT COUNT(DISTINCT substr(pickup_at,1,7)) FROM rides WHERE driver_id=$1 AND status='completed' AND pickup_at >= to_char(LOCALTIMESTAMP - interval '6 months','YYYY-MM-DD')",
+        "SELECT COUNT(DISTINCT substr(pickup_at,1,7)) FROM rides WHERE driver_id=$1 AND status='completed' AND pickup_at >= $2",
     )
     .bind(user_id)
+    .bind(
+        crate::util::today_local()
+            .checked_sub_months(chrono::Months::new(6))
+            .unwrap_or_default()
+            .format("%Y-%m-%d")
+            .to_string(),
+    )
     .fetch_one(&st.db)
     .await?;
     let (total,): (i64,) =

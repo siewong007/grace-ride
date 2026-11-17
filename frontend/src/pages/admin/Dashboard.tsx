@@ -20,6 +20,7 @@ import {
 import { auditActionLabel } from '../../auditLabel';
 import { fmtAgo, fmtDay, fmtTime, RIDE_STATUS, todayStr, useFormatT } from '../../format';
 import { ADMIN_HOME } from '../../staffNav';
+import { rideCompactRow } from './rideRows';
 
 interface Dash {
   today: string;
@@ -253,6 +254,7 @@ export default function Dashboard() {
               items={today.data ?? []}
               onRowClick={(r) => nav(`/admin/rides/${r.id}`)}
               itemKey={(r) => r.id}
+              compactRow={(r) => rideCompactRow(r, ft)}
             />
           )}
         </Card>

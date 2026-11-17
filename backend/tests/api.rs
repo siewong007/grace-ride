@@ -45,6 +45,9 @@ async fn setup() -> (Router, AppState) {
         google_client_id: None,
         google_client_secret: None,
         routing: Default::default(),
+        db: Default::default(),
+        housekeeping_interval_mins: 60,
+        notification_retention_days: 90,
     };
     cfg.validate().unwrap();
     let state = init(cfg).await.unwrap();
@@ -112,7 +115,7 @@ async fn login(st: &AppState, email: &str) -> String {
     let token =
         uuid::Uuid::new_v4().simple().to_string() + &uuid::Uuid::new_v4().simple().to_string();
     let token = token[..48].to_string();
-    let expires = (chrono::Local::now() + chrono::Duration::days(7))
+    let expires = (grace_ride::util::local_now() + chrono::Duration::days(7))
         .format("%Y-%m-%dT%H:%M:%S")
         .to_string();
     sqlx::query(
@@ -131,7 +134,7 @@ async fn login(st: &AppState, email: &str) -> String {
 fn tomorrow(hhmm: &str) -> String {
     format!(
         "{}T{hhmm}",
-        (chrono::Local::now() + chrono::Duration::days(1)).format("%Y-%m-%d")
+        (grace_ride::util::local_now() + chrono::Duration::days(1)).format("%Y-%m-%d")
     )
 }
 
@@ -1211,7 +1214,7 @@ async fn proxy_booking_and_frequent_riders_workflow() {
     assert_eq!(list.json[0]["phone"], "012-3456789");
 
     // 2. Create proxy ride
-    let when = (chrono::Local::now() + chrono::Duration::minutes(90))
+    let when = (grace_ride::util::local_now() + chrono::Duration::minutes(90))
         .format("%Y-%m-%dT%H:%M")
         .to_string();
     let create_res = call(
@@ -1355,7 +1358,7 @@ async fn proxy_booking_and_frequent_riders_workflow() {
 #[tokio::test]
 async fn reminder_job_notifies_passenger_and_driver() {
     let (_app, st) = setup().await;
-    let soon = (chrono::Local::now() + chrono::Duration::minutes(30))
+    let soon = (grace_ride::util::local_now() + chrono::Duration::minutes(30))
         .format("%Y-%m-%dT%H:%M")
         .to_string();
     sqlx::query("INSERT INTO rides (passenger_id, driver_id, pickup_at, pickup_area_id, pickup_address, destination, status) VALUES (6, 4, $1, 2, 'x', 'y', 'confirmed')")
@@ -1398,6 +1401,9 @@ fn production_config_rejects_dev_mode_and_plain_http() {
         google_client_id: None,
         google_client_secret: None,
         routing: Default::default(),
+        db: Default::default(),
+        housekeeping_interval_mins: 60,
+        notification_retention_days: 90,
     };
     assert!(
         cfg.validate().is_err(),
@@ -1814,7 +1820,7 @@ async fn insert_driver_session(st: &AppState, n: i64) -> (i64, String) {
     .execute(&st.db)
     .await
     .unwrap();
-    let expires = (chrono::Local::now() + chrono::Duration::days(7))
+    let expires = (grace_ride::util::local_now() + chrono::Duration::days(7))
         .format("%Y-%m-%dT%H:%M:%S")
         .to_string();
     sqlx::query(
@@ -2067,7 +2073,7 @@ async fn monthly_report_returns_user_stats() {
     let (app, st) = setup().await;
     let member = login(&st, "member@example.org").await;
 
-    let this_month = chrono::Local::now().format("%Y-%m").to_string();
+    let this_month = grace_ride::util::local_now().format("%Y-%m").to_string();
     let r = call(
         &app,
         Method::GET,

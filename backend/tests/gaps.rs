@@ -1352,7 +1352,7 @@ async fn past_pickup_rejected() {
     let passenger = login(&st, "member@example.org").await;
     let past = format!(
         "{}T08:00",
-        (chrono::Local::now() - chrono::Duration::days(1)).format("%Y-%m-%d")
+        (grace_ride::util::local_now() - chrono::Duration::days(1)).format("%Y-%m-%d")
     );
     let r = call(
         &app,

@@ -121,7 +121,7 @@ async fn deny(
 fn day(offset: i64, hhmm: &str) -> String {
     format!(
         "{}T{hhmm}",
-        (grace_ride::util::today_kl() + chrono::Duration::days(offset)).format("%Y-%m-%d")
+        (grace_ride::util::today_local() + chrono::Duration::days(offset)).format("%Y-%m-%d")
     )
 }
 
@@ -261,6 +261,9 @@ async fn prod_app() -> Router {
         google_client_id: None,
         google_client_secret: None,
         routing: Default::default(),
+        db: Default::default(),
+        housekeeping_interval_mins: 60,
+        notification_retention_days: 90,
     };
     cfg.validate().unwrap();
     let state = init(cfg).await.unwrap();

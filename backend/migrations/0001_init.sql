@@ -1,22 +1,79 @@
 -- 恩典同行 Grace Ride — schema
 --
--- This is the only migration. It creates the full schema and the reference rows
--- the API expects (reimbursement rates and system settings). Demo members are
--- inserted by seed::run, not by this file.
+-- One migration creates the whole schema and the reference rows the API expects
+-- (reimbursement rates and system settings). Demo members are inserted by seed::run.
 --
--- The script is idempotent. Startup deletes a _sqlx_migrations history that does
--- not match this file, then runs it. Databases that applied the old numbered
--- files (0002 through 0016) keep their rows and record only this version.
--- Do not add DROP COLUMN, TRUNCATE, or unguarded DELETE here: a checksum change
--- re-runs the whole script on existing databases.
+-- It replaced six earlier histories on 2026-11-17: the pre-November numbered files,
+-- the first frozen 0001, and 0001–0005. A database whose recorded 0001 is not this
+-- file has its _sqlx_migrations history cleared at start-up and this script runs over
+-- the existing tables (lib.rs::classify_history). So every statement here must be
+-- repeatable and must keep existing rows:
+--   • CREATE … IF NOT EXISTS, ADD COLUMN IF NOT EXISTS, guarded DO blocks;
+--   • no DROP COLUMN, no TRUNCATE, no unguarded DELETE;
+--   • a rule that existing rows might break is added NOT VALID, then validated; a
+--     failed validation is a warning, not a failed deploy. Find those rules with
+--     SELECT conrelid::regclass, conname FROM pg_constraint WHERE NOT convalidated;
+-- This file is now frozen (tests/schema_baseline.rs). Later changes are 0002, 0003, …
 --
 -- Conventions:
---   • Times are local Asia/Kuala_Lumpur ISO strings: YYYY-MM-DD"T"HH24:MI:SS
+--   • Times are local text, YYYY-MM-DD"T"HH24:MI[:SS], in the app's zone. The zone is
+--     APP_TIMEZONE (default Asia/Kuala_Lumpur); the app copies it into
+--     system_settings.timezone, and app_now() writes in it.
 --   • Money is integer cents (RM 0.01)
 --   • Booleans are BIGINT 0/1, except geocode_cache.approx,
 --     guide_workflows.published and guide_feedback.helpful (BOOLEAN)
---   • Role lists are comma-separated TEXT on users.roles
+--   • Role lists are comma-separated TEXT on users.roles; member_roles mirrors them
+--   • Emails are stored lowercase
 --   • demo_batch stamps seed rows so they can be wiped without touching live data
+
+-- =====================================================================
+-- Helpers
+-- =====================================================================
+
+-- "Now" as the app stores it: local text in the zone recorded in
+-- system_settings.timezone. Used as the default for every created_at/updated_at,
+-- so a row written from psql gets the same kind of time as one written by the app.
+CREATE OR REPLACE FUNCTION app_now() RETURNS text
+LANGUAGE plpgsql STABLE
+SET search_path FROM CURRENT
+AS $$
+DECLARE
+    zone text;
+BEGIN
+    SELECT value INTO zone FROM system_settings WHERE key = 'timezone';
+    RETURN to_char(now() AT TIME ZONE COALESCE(NULLIF(zone, ''), 'Asia/Kuala_Lumpur'),
+                   'YYYY-MM-DD"T"HH24:MI:SS');
+END
+$$;
+
+-- Add a CHECK rule that holds for new rows at once, then validate existing rows.
+-- An existing row that breaks it leaves the rule unvalidated, with a warning.
+CREATE OR REPLACE FUNCTION pg_temp.add_check(tbl regclass, name text, expr text) RETURNS void
+LANGUAGE plpgsql AS $$
+BEGIN
+    IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conrelid = tbl AND conname = name) THEN
+        EXECUTE format('ALTER TABLE %s ADD CONSTRAINT %I CHECK (%s) NOT VALID', tbl, name, expr);
+    END IF;
+    IF EXISTS (SELECT 1 FROM pg_constraint WHERE conrelid = tbl AND conname = name AND NOT convalidated) THEN
+        BEGIN
+            EXECUTE format('ALTER TABLE %s VALIDATE CONSTRAINT %I', tbl, name);
+        EXCEPTION WHEN check_violation THEN
+            RAISE WARNING 'rows in % break %: new rows are checked, existing ones need review', tbl, name;
+        END;
+    END IF;
+END
+$$;
+
+-- Text that was meant to be JSON; anything that isn't is kept as a JSON string.
+CREATE OR REPLACE FUNCTION pg_temp.as_jsonb(v text, what text) RETURNS jsonb
+LANGUAGE plpgsql AS $$
+BEGIN
+    RETURN v::jsonb;
+EXCEPTION WHEN invalid_text_representation THEN
+    RAISE WARNING '% is not JSON; kept as a JSON string: %', what, left(v, 80);
+    RETURN to_jsonb(v);
+END
+$$;
 
 -- =====================================================================
 -- Demo seed bookkeeping (referenced by demo_batch foreign keys below)
@@ -26,7 +83,7 @@ CREATE TABLE IF NOT EXISTS demo_batches (
     batch      TEXT NOT NULL PRIMARY KEY,
     scale      TEXT NOT NULL DEFAULT '',
     note       TEXT NOT NULL DEFAULT '',
-    created_at TEXT NOT NULL DEFAULT (to_char(NOW() AT TIME ZONE 'Asia/Kuala_Lumpur', 'YYYY-MM-DD"T"HH24:MI:SS'))
+    created_at TEXT NOT NULL DEFAULT (app_now())
 );
 
 -- =====================================================================
@@ -54,7 +111,7 @@ CREATE TABLE IF NOT EXISTS users (
     lang            TEXT NOT NULL DEFAULT 'zh' CHECK (lang IN ('zh','en')),
     terms_accepted_at TEXT,
     demo_batch      TEXT,
-    created_at      TEXT NOT NULL DEFAULT (to_char(NOW() AT TIME ZONE 'Asia/Kuala_Lumpur', 'YYYY-MM-DD"T"HH24:MI:SS')),
+    created_at      TEXT NOT NULL DEFAULT (app_now()),
     readiness_prompt_mins BIGINT NOT NULL DEFAULT 45,
     gate_wait_mins  BIGINT NOT NULL DEFAULT 5,
     totp_backup_codes TEXT,
@@ -92,13 +149,13 @@ CREATE TABLE IF NOT EXISTS invites (
     email       TEXT NOT NULL,
     name        TEXT NOT NULL DEFAULT '',
     roles       TEXT NOT NULL DEFAULT '',
-    group_ids   TEXT NOT NULL DEFAULT '[]',
+    group_ids   JSONB NOT NULL DEFAULT '[]'::jsonb, -- group ids the invite adds
     user_id     BIGINT REFERENCES users(id),       -- set for recovery invites
     created_by  BIGINT NOT NULL REFERENCES users(id),
     expires_at  TEXT NOT NULL,
     used_at     TEXT,
     demo_batch  TEXT,
-    created_at  TEXT NOT NULL DEFAULT (to_char(NOW() AT TIME ZONE 'Asia/Kuala_Lumpur', 'YYYY-MM-DD"T"HH24:MI:SS')),
+    created_at  TEXT NOT NULL DEFAULT (app_now()),
     CONSTRAINT fk_invites_demo_batch FOREIGN KEY (demo_batch) REFERENCES demo_batches(batch) ON DELETE SET NULL
 );
 
@@ -109,7 +166,7 @@ CREATE TABLE IF NOT EXISTS passkeys (
     passkey     TEXT NOT NULL,
     label       TEXT NOT NULL DEFAULT '',
     demo_batch  TEXT,
-    created_at  TEXT NOT NULL DEFAULT (to_char(NOW() AT TIME ZONE 'Asia/Kuala_Lumpur', 'YYYY-MM-DD"T"HH24:MI:SS')),
+    created_at  TEXT NOT NULL DEFAULT (app_now()),
     last_used   TEXT,
     CONSTRAINT chk_passkey_label CHECK (length(trim(label)) >= 0),
     CONSTRAINT fk_passkeys_demo_batch FOREIGN KEY (demo_batch) REFERENCES demo_batches(batch) ON DELETE SET NULL
@@ -120,15 +177,16 @@ CREATE TABLE IF NOT EXISTS sessions (
     user_id     BIGINT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
     mfa_ok      BIGINT NOT NULL DEFAULT 0,
     expires_at  TEXT NOT NULL,
-    created_at  TEXT NOT NULL DEFAULT (to_char(NOW() AT TIME ZONE 'Asia/Kuala_Lumpur', 'YYYY-MM-DD"T"HH24:MI:SS'))
+    created_at  TEXT NOT NULL DEFAULT (app_now())
 );
 
+-- user_id has no foreign key: a sign-in for an unknown email still gets a decoy challenge.
 CREATE TABLE IF NOT EXISTS auth_challenges (
     id          TEXT PRIMARY KEY,
     user_id     BIGINT NOT NULL,
     kind        TEXT NOT NULL,                     -- reg | auth
     state       TEXT NOT NULL,
-    created_at  TEXT NOT NULL DEFAULT (to_char(NOW() AT TIME ZONE 'Asia/Kuala_Lumpur', 'YYYY-MM-DD"T"HH24:MI:SS'))
+    created_at  TEXT NOT NULL DEFAULT (app_now())
 );
 
 CREATE TABLE IF NOT EXISTS recovery_requests (
@@ -137,19 +195,19 @@ CREATE TABLE IF NOT EXISTS recovery_requests (
     reason      TEXT NOT NULL DEFAULT '',
     status      TEXT NOT NULL DEFAULT 'pending',   -- pending | awaiting_second | approved | rejected | superseded
     resolved_by BIGINT REFERENCES users(id),
-    created_at  TEXT NOT NULL DEFAULT (to_char(NOW() AT TIME ZONE 'Asia/Kuala_Lumpur', 'YYYY-MM-DD"T"HH24:MI:SS'))
+    created_at  TEXT NOT NULL DEFAULT (app_now())
 );
 
 CREATE TABLE IF NOT EXISTS login_failures (
     id         BIGINT GENERATED BY DEFAULT AS IDENTITY PRIMARY KEY,
     email      TEXT NOT NULL,
     ip         TEXT NOT NULL DEFAULT '',
-    created_at TEXT NOT NULL DEFAULT (to_char(NOW() AT TIME ZONE 'Asia/Kuala_Lumpur', 'YYYY-MM-DD"T"HH24:MI:SS'))
+    created_at TEXT NOT NULL DEFAULT (app_now())
 );
 
 CREATE TABLE IF NOT EXISTS oauth_states (
     state      TEXT PRIMARY KEY,
-    created_at TEXT NOT NULL DEFAULT (to_char(NOW() AT TIME ZONE 'Asia/Kuala_Lumpur', 'YYYY-MM-DD"T"HH24:MI:SS'))
+    created_at TEXT NOT NULL DEFAULT (app_now())
 );
 
 CREATE TABLE IF NOT EXISTS oauth_accounts (
@@ -158,7 +216,7 @@ CREATE TABLE IF NOT EXISTS oauth_accounts (
     provider         TEXT NOT NULL DEFAULT 'google',
     provider_user_id TEXT NOT NULL,
     email            TEXT NOT NULL,
-    created_at       TEXT NOT NULL DEFAULT (to_char(NOW() AT TIME ZONE 'Asia/Kuala_Lumpur', 'YYYY-MM-DD"T"HH24:MI:SS')),
+    created_at       TEXT NOT NULL DEFAULT (app_now()),
     UNIQUE (provider, provider_user_id)
 );
 
@@ -185,7 +243,10 @@ CREATE TABLE IF NOT EXISTS groups (
     name        TEXT NOT NULL UNIQUE,
     description TEXT NOT NULL DEFAULT '',
     is_all      BIGINT NOT NULL DEFAULT 0,         -- "全体会员": every active member is in it
-    demo_batch  TEXT
+    demo_batch  TEXT,
+    parent_id   BIGINT REFERENCES groups(id) ON DELETE SET NULL,
+    -- The built-in group visitors join as. Not a driving group: visitor rides match the host's group.
+    is_visitor  BIGINT NOT NULL DEFAULT 0
 );
 
 CREATE TABLE IF NOT EXISTS group_members (
@@ -207,7 +268,7 @@ CREATE TABLE IF NOT EXISTS files (
     original_name TEXT NOT NULL DEFAULT '',
     size          BIGINT NOT NULL DEFAULT 0,
     demo_batch    TEXT,
-    created_at    TEXT NOT NULL DEFAULT (to_char(NOW() AT TIME ZONE 'Asia/Kuala_Lumpur', 'YYYY-MM-DD"T"HH24:MI:SS'))
+    created_at    TEXT NOT NULL DEFAULT (app_now())
 );
 
 -- =====================================================================
@@ -228,7 +289,7 @@ CREATE TABLE IF NOT EXISTS events (
     created_by       BIGINT NOT NULL REFERENCES users(id),
     reminder_sent    BIGINT NOT NULL DEFAULT 0,
     demo_batch       TEXT,
-    created_at       TEXT NOT NULL DEFAULT (to_char(NOW() AT TIME ZONE 'Asia/Kuala_Lumpur', 'YYYY-MM-DD"T"HH24:MI:SS')),
+    created_at       TEXT NOT NULL DEFAULT (app_now()),
     CONSTRAINT chk_events_kind CHECK (kind IN ('badminton','bowling','kayak','walk','other')),
     CONSTRAINT chk_events_capacity CHECK (capacity >= 0),
     CONSTRAINT chk_events_cost_note CHECK (length(cost_note) <= 100),
@@ -242,6 +303,13 @@ CREATE TABLE IF NOT EXISTS event_groups (
     PRIMARY KEY (event_id, group_id)
 );
 
+-- The "joining as" choices an organiser narrowed an event to. None = the audience and its sub-groups.
+CREATE TABLE IF NOT EXISTS event_attribution_groups (
+    event_id BIGINT NOT NULL REFERENCES events(id) ON DELETE CASCADE,
+    group_id BIGINT NOT NULL REFERENCES groups(id) ON DELETE CASCADE,
+    PRIMARY KEY (event_id, group_id)
+);
+
 CREATE TABLE IF NOT EXISTS event_signups (
     id           BIGINT GENERATED BY DEFAULT AS IDENTITY PRIMARY KEY,
     event_id     BIGINT NOT NULL REFERENCES events(id) ON DELETE CASCADE,
@@ -252,14 +320,24 @@ CREATE TABLE IF NOT EXISTS event_signups (
     offer_seats  BIGINT NOT NULL DEFAULT 0,
     attended     BIGINT,                           -- NULL unknown, 0 absent, 1 attended
     demo_batch   TEXT,
-    created_at   TEXT NOT NULL DEFAULT (to_char(NOW() AT TIME ZONE 'Asia/Kuala_Lumpur', 'YYYY-MM-DD"T"HH24:MI:SS')),
+    created_at   TEXT NOT NULL DEFAULT (app_now()),
+    as_group_id  BIGINT REFERENCES groups(id) ON DELETE SET NULL,
     UNIQUE (event_id, user_id),
     CONSTRAINT fk_event_signups_demo_batch FOREIGN KEY (demo_batch) REFERENCES demo_batches(batch) ON DELETE SET NULL
 );
 
 -- =====================================================================
--- Rides & live location
+-- Rides, trips & live location
 -- =====================================================================
+
+-- A trip is the group of confirmed rides one driver takes to one place together; its
+-- id is the id of the ride that started it (routes::rides::assign_trip). The app sets
+-- rides.trip_id directly and a trigger adds the trips row first. Deleting a trip
+-- removes its chat and unlinks its rides.
+CREATE TABLE IF NOT EXISTS trips (
+    id         BIGINT PRIMARY KEY,
+    created_at TEXT NOT NULL DEFAULT (app_now())
+);
 
 CREATE TABLE IF NOT EXISTS rides (
     id                BIGINT GENERATED BY DEFAULT AS IDENTITY PRIMARY KEY,
@@ -285,8 +363,8 @@ CREATE TABLE IF NOT EXISTS rides (
     completed_at      TEXT,
     reminder_sent     BIGINT NOT NULL DEFAULT 0,
     demo_batch        TEXT,
-    created_at        TEXT NOT NULL DEFAULT (to_char(NOW() AT TIME ZONE 'Asia/Kuala_Lumpur', 'YYYY-MM-DD"T"HH24:MI:SS')),
-    updated_at        TEXT NOT NULL DEFAULT (to_char(NOW() AT TIME ZONE 'Asia/Kuala_Lumpur', 'YYYY-MM-DD"T"HH24:MI:SS')),
+    created_at        TEXT NOT NULL DEFAULT (app_now()),
+    updated_at        TEXT NOT NULL DEFAULT (app_now()),
     distance_km       BIGINT,
     reimbursement_amount_cents BIGINT NOT NULL DEFAULT 0,
     readiness_status  TEXT NOT NULL DEFAULT 'unconfirmed'
@@ -298,6 +376,8 @@ CREATE TABLE IF NOT EXISTS rides (
     rider_name        TEXT NOT NULL DEFAULT '',
     rider_phone       TEXT NOT NULL DEFAULT '',
     rider_relationship TEXT NOT NULL DEFAULT '',
+    -- Copied from the signup when the ride is made, so reports keep the group someone came as.
+    as_group_id       BIGINT REFERENCES groups(id) ON DELETE SET NULL,
     CONSTRAINT chk_rides_status CHECK (status IN (
         'pending_driver','pending_passenger','pending_approval','pending_driver_confirm',
         'confirmed','in_progress','completed','cancelled','no_show','alt_transport'
@@ -311,11 +391,11 @@ CREATE TABLE IF NOT EXISTS rides (
 
 CREATE TABLE IF NOT EXISTS ride_messages (
     id         BIGINT GENERATED BY DEFAULT AS IDENTITY PRIMARY KEY,
-    trip_id    BIGINT NOT NULL,                    -- = rides.trip_id, no foreign key
+    trip_id    BIGINT NOT NULL,                    -- foreign key to trips added below
     user_id    BIGINT REFERENCES users(id),        -- NULL = system message
     body       TEXT NOT NULL,
     demo_batch TEXT,
-    created_at TEXT NOT NULL DEFAULT (to_char(NOW() AT TIME ZONE 'Asia/Kuala_Lumpur', 'YYYY-MM-DD"T"HH24:MI:SS'))
+    created_at TEXT NOT NULL DEFAULT (app_now())
 );
 
 CREATE TABLE IF NOT EXISTS driver_locations (
@@ -324,14 +404,14 @@ CREATE TABLE IF NOT EXISTS driver_locations (
     lng        DOUBLE PRECISION NOT NULL,
     heading    DOUBLE PRECISION,
     demo_batch TEXT,
-    updated_at TEXT NOT NULL DEFAULT (to_char(NOW() AT TIME ZONE 'Asia/Kuala_Lumpur', 'YYYY-MM-DD"T"HH24:MI:SS'))
+    updated_at TEXT NOT NULL DEFAULT (app_now())
 );
 
 CREATE TABLE IF NOT EXISTS passenger_locations (
     ride_id    BIGINT PRIMARY KEY REFERENCES rides(id) ON DELETE CASCADE,
     lat        DOUBLE PRECISION NOT NULL,
     lng        DOUBLE PRECISION NOT NULL,
-    updated_at TEXT NOT NULL DEFAULT (to_char(NOW() AT TIME ZONE 'Asia/Kuala_Lumpur', 'YYYY-MM-DD"T"HH24:MI:SS'))
+    updated_at TEXT NOT NULL DEFAULT (app_now())
 );
 
 CREATE TABLE IF NOT EXISTS proxy_riders (
@@ -341,8 +421,33 @@ CREATE TABLE IF NOT EXISTS proxy_riders (
     phone        TEXT NOT NULL DEFAULT '',
     relationship TEXT NOT NULL DEFAULT '',
     notes        TEXT NOT NULL DEFAULT '',
-    created_at   TEXT NOT NULL DEFAULT (to_char(NOW() AT TIME ZONE 'Asia/Kuala_Lumpur', 'YYYY-MM-DD"T"HH24:MI:SS')),
-    updated_at   TEXT NOT NULL DEFAULT (to_char(NOW() AT TIME ZONE 'Asia/Kuala_Lumpur', 'YYYY-MM-DD"T"HH24:MI:SS'))
+    created_at   TEXT NOT NULL DEFAULT (app_now()),
+    updated_at   TEXT NOT NULL DEFAULT (app_now())
+);
+
+-- A one-time link for a visitor's journey to an event. Only the token's hash is kept.
+CREATE TABLE IF NOT EXISTS visitor_passes (
+    id            BIGINT GENERATED BY DEFAULT AS IDENTITY PRIMARY KEY,
+    token_hash    TEXT NOT NULL UNIQUE,
+    event_id      BIGINT NOT NULL REFERENCES events(id) ON DELETE CASCADE,
+    host_id       BIGINT NOT NULL REFERENCES users(id),
+    host_group_id BIGINT NOT NULL REFERENCES groups(id),
+    ride_id       BIGINT REFERENCES rides(id) ON DELETE SET NULL,
+    name          TEXT NOT NULL,
+    phone         TEXT NOT NULL DEFAULT '',
+    valid_from    TEXT NOT NULL,
+    valid_until   TEXT NOT NULL,
+    claimed_at    TEXT,
+    closed_at     TEXT,
+    closed_reason TEXT CHECK (closed_reason IN ('completed', 'cancelled', 'revoked', 'expired', 'reissued')),
+    created_at    TEXT NOT NULL DEFAULT (app_now())
+);
+
+-- The browser that claimed a pass. Like `sessions`, keyed by the cookie token's hash.
+CREATE TABLE IF NOT EXISTS visitor_sessions (
+    token_hash TEXT PRIMARY KEY,
+    pass_id    BIGINT NOT NULL REFERENCES visitor_passes(id) ON DELETE CASCADE,
+    expires_at TEXT NOT NULL
 );
 
 -- =====================================================================
@@ -357,7 +462,7 @@ CREATE TABLE IF NOT EXISTS notifications (
     link       TEXT NOT NULL DEFAULT '',
     read_at    TEXT,
     demo_batch TEXT,
-    created_at TEXT NOT NULL DEFAULT (to_char(NOW() AT TIME ZONE 'Asia/Kuala_Lumpur', 'YYYY-MM-DD"T"HH24:MI:SS'))
+    created_at TEXT NOT NULL DEFAULT (app_now())
 );
 
 CREATE TABLE IF NOT EXISTS announcements (
@@ -367,7 +472,7 @@ CREATE TABLE IF NOT EXISTS announcements (
     pinned     BIGINT NOT NULL DEFAULT 0,
     created_by BIGINT NOT NULL REFERENCES users(id),
     demo_batch TEXT,
-    created_at TEXT NOT NULL DEFAULT (to_char(NOW() AT TIME ZONE 'Asia/Kuala_Lumpur', 'YYYY-MM-DD"T"HH24:MI:SS'))
+    created_at TEXT NOT NULL DEFAULT (app_now())
 );
 
 CREATE TABLE IF NOT EXISTS help_tickets (
@@ -377,8 +482,8 @@ CREATE TABLE IF NOT EXISTS help_tickets (
     subject     TEXT NOT NULL,
     status      TEXT NOT NULL DEFAULT 'open',      -- open | answered | closed
     demo_batch  TEXT,
-    created_at  TEXT NOT NULL DEFAULT (to_char(NOW() AT TIME ZONE 'Asia/Kuala_Lumpur', 'YYYY-MM-DD"T"HH24:MI:SS')),
-    updated_at  TEXT NOT NULL DEFAULT (to_char(NOW() AT TIME ZONE 'Asia/Kuala_Lumpur', 'YYYY-MM-DD"T"HH24:MI:SS')),
+    created_at  TEXT NOT NULL DEFAULT (app_now()),
+    updated_at  TEXT NOT NULL DEFAULT (app_now()),
     assignee_id BIGINT REFERENCES users(id) ON DELETE SET NULL,
     CONSTRAINT chk_help_tickets_status CHECK (status IN ('open','answered','closed'))
 );
@@ -389,7 +494,7 @@ CREATE TABLE IF NOT EXISTS help_replies (
     user_id    BIGINT NOT NULL REFERENCES users(id),
     body       TEXT NOT NULL,
     demo_batch TEXT,
-    created_at TEXT NOT NULL DEFAULT (to_char(NOW() AT TIME ZONE 'Asia/Kuala_Lumpur', 'YYYY-MM-DD"T"HH24:MI:SS')),
+    created_at TEXT NOT NULL DEFAULT (app_now()),
     file_id    BIGINT REFERENCES files(id) ON DELETE SET NULL
 );
 
@@ -401,7 +506,7 @@ CREATE TABLE IF NOT EXISTS audit_logs (
     entity_id  BIGINT,
     detail     TEXT NOT NULL DEFAULT '',
     demo_batch TEXT,
-    created_at TEXT NOT NULL DEFAULT (to_char(NOW() AT TIME ZONE 'Asia/Kuala_Lumpur', 'YYYY-MM-DD"T"HH24:MI:SS'))
+    created_at TEXT NOT NULL DEFAULT (app_now())
 );
 
 CREATE TABLE IF NOT EXISTS guide_workflows (
@@ -448,8 +553,8 @@ CREATE TABLE IF NOT EXISTS reimbursements (
     paid_by         BIGINT REFERENCES users(id),
     paid_at         TEXT,
     demo_batch      TEXT,
-    created_at      TEXT NOT NULL DEFAULT (to_char(NOW() AT TIME ZONE 'Asia/Kuala_Lumpur', 'YYYY-MM-DD"T"HH24:MI:SS')),
-    updated_at      TEXT NOT NULL DEFAULT (to_char(NOW() AT TIME ZONE 'Asia/Kuala_Lumpur', 'YYYY-MM-DD"T"HH24:MI:SS')),
+    created_at      TEXT NOT NULL DEFAULT (app_now()),
+    updated_at      TEXT NOT NULL DEFAULT (app_now()),
     CONSTRAINT chk_reimbursements_status CHECK (
         status IN ('pending','returned','rejected','approved','paid')
     ),
@@ -460,7 +565,7 @@ CREATE TABLE IF NOT EXISTS reimbursements (
 CREATE TABLE IF NOT EXISTS reimbursement_rates (
     vehicle_type TEXT PRIMARY KEY CHECK (vehicle_type IN ('standard', 'other')),
     rate_cents_per_km BIGINT NOT NULL CHECK (rate_cents_per_km >= 0),
-    updated_at TEXT NOT NULL DEFAULT (to_char(NOW() AT TIME ZONE 'Asia/Kuala_Lumpur', 'YYYY-MM-DD"T"HH24:MI:SS'))
+    updated_at TEXT NOT NULL DEFAULT (app_now())
 );
 
 CREATE TABLE IF NOT EXISTS settlements (
@@ -476,8 +581,8 @@ CREATE TABLE IF NOT EXISTS settlements (
     status         TEXT NOT NULL DEFAULT 'draft', -- draft | published | closed
     version        BIGINT NOT NULL DEFAULT 1,
     demo_batch     TEXT,
-    created_at     TEXT NOT NULL DEFAULT (to_char(NOW() AT TIME ZONE 'Asia/Kuala_Lumpur', 'YYYY-MM-DD"T"HH24:MI:SS')),
-    updated_at     TEXT NOT NULL DEFAULT (to_char(NOW() AT TIME ZONE 'Asia/Kuala_Lumpur', 'YYYY-MM-DD"T"HH24:MI:SS')),
+    created_at     TEXT NOT NULL DEFAULT (app_now()),
+    updated_at     TEXT NOT NULL DEFAULT (app_now()),
     CONSTRAINT chk_settlements_subsidy CHECK (subsidy_cents >= 0),
     CONSTRAINT fk_settlements_demo_batch FOREIGN KEY (demo_batch) REFERENCES demo_batches(batch) ON DELETE SET NULL
 );
@@ -503,7 +608,7 @@ CREATE TABLE IF NOT EXISTS settlement_shares (
     paid_date      TEXT,
     note           TEXT NOT NULL DEFAULT '',
     demo_batch     TEXT,
-    updated_at     TEXT NOT NULL DEFAULT (to_char(NOW() AT TIME ZONE 'Asia/Kuala_Lumpur', 'YYYY-MM-DD"T"HH24:MI:SS')),
+    updated_at     TEXT NOT NULL DEFAULT (app_now()),
     UNIQUE (settlement_id, user_id),
     CONSTRAINT chk_settlement_shares_amount CHECK (amount_cents >= 0),
     CONSTRAINT fk_settlement_shares_demo_batch FOREIGN KEY (demo_batch) REFERENCES demo_batches(batch) ON DELETE SET NULL
@@ -513,16 +618,16 @@ CREATE TABLE IF NOT EXISTS settlement_revisions (
     id             BIGINT GENERATED BY DEFAULT AS IDENTITY PRIMARY KEY,
     settlement_id  BIGINT NOT NULL REFERENCES settlements(id) ON DELETE CASCADE,
     version        BIGINT NOT NULL,
-    snapshot       TEXT NOT NULL,
+    snapshot       JSONB NOT NULL,                 -- the bill as it stood at this revision
     reason         TEXT NOT NULL DEFAULT '',
     created_by     BIGINT NOT NULL REFERENCES users(id),
     demo_batch     TEXT,
-    created_at     TEXT NOT NULL DEFAULT (to_char(NOW() AT TIME ZONE 'Asia/Kuala_Lumpur', 'YYYY-MM-DD"T"HH24:MI:SS')),
+    created_at     TEXT NOT NULL DEFAULT (app_now()),
     CONSTRAINT fk_settlement_revisions_demo_batch FOREIGN KEY (demo_batch) REFERENCES demo_batches(batch) ON DELETE SET NULL
 );
 
 -- =====================================================================
--- Roles, secrets, geocoding, retention settings
+-- Roles, secrets, geocoding, settings
 -- =====================================================================
 
 CREATE TABLE IF NOT EXISTS roles (
@@ -530,7 +635,7 @@ CREATE TABLE IF NOT EXISTS roles (
     name        TEXT NOT NULL DEFAULT '',
     description TEXT NOT NULL DEFAULT '',
     is_system   BIGINT NOT NULL DEFAULT 0 CHECK (is_system IN (0, 1)),
-    created_at  TEXT NOT NULL DEFAULT (to_char(NOW() AT TIME ZONE 'Asia/Kuala_Lumpur', 'YYYY-MM-DD"T"HH24:MI:SS'))
+    created_at  TEXT NOT NULL DEFAULT (app_now())
 );
 
 CREATE TABLE IF NOT EXISTS role_permissions (
@@ -543,6 +648,17 @@ CREATE TABLE IF NOT EXISTS permission_catalog (
     permission TEXT PRIMARY KEY
 );
 
+-- One row per member per role they hold, kept in step with users.roles by the
+-- triggers below. Permission checks read this table, so a listed name that is not a
+-- role grants nothing, and deleting a role removes it from every member at once.
+-- The built-in `member` role is held by everyone and is not listed here.
+-- (Not named user_roles: an older, narrower table of that name is dropped below.)
+CREATE TABLE IF NOT EXISTS member_roles (
+    user_id  BIGINT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    role_key TEXT   NOT NULL REFERENCES roles(key) ON DELETE CASCADE,
+    PRIMARY KEY (user_id, role_key)
+);
+
 CREATE TABLE IF NOT EXISTS app_secrets (
     name  TEXT PRIMARY KEY,
     value TEXT NOT NULL
@@ -553,24 +669,24 @@ CREATE TABLE IF NOT EXISTS geocode_cache (
     lat        DOUBLE PRECISION,
     lng        DOUBLE PRECISION,
     approx     BOOLEAN NOT NULL DEFAULT FALSE,
-    updated_at TEXT NOT NULL DEFAULT (to_char(NOW() AT TIME ZONE 'Asia/Kuala_Lumpur', 'YYYY-MM-DD"T"HH24:MI:SS'))
+    updated_at TEXT NOT NULL DEFAULT (app_now())
 );
 
 CREATE TABLE IF NOT EXISTS system_settings (
     key        TEXT PRIMARY KEY,
     value      TEXT NOT NULL,
-    updated_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL DEFAULT (app_now()),
     updated_by BIGINT REFERENCES users(id) ON DELETE SET NULL
 );
 
--- The normalised user_roles table only allowed five role names. Membership
--- lives in users.roles. Drop the leftover copy if an older database still has it.
+-- The normalised user_roles table only allowed five role names. Membership lives in
+-- users.roles (mirrored into member_roles). Drop the leftover if an old database has it.
 DROP TABLE IF EXISTS user_roles;
 
 -- =====================================================================
--- Columns added by the old numbered migrations. CREATE TABLE IF NOT EXISTS
--- does not alter a table that already exists, so an older database receives
--- the missing columns here. A new database already has every column.
+-- Upgrading an older database. CREATE TABLE IF NOT EXISTS leaves an existing table
+-- as it was, so columns and types added since the table first appeared are brought
+-- in here. On a new database every statement in this section does nothing.
 -- =====================================================================
 
 ALTER TABLE users ADD COLUMN IF NOT EXISTS readiness_prompt_mins BIGINT NOT NULL DEFAULT 45;
@@ -604,105 +720,331 @@ ALTER TABLE guide_workflows
     ADD COLUMN IF NOT EXISTS audience TEXT NOT NULL DEFAULT 'staff'
         CHECK (audience IN ('member', 'staff'));
 
--- Event audiences: sub-groups, "joining as", group-matched drivers and visitor passes
--- (docs/superpowers/specs/2026-11-16-event-audience-rides-design.md).
+-- Event audiences (docs/superpowers/specs/2026-11-16-event-audience-rides-design.md).
 ALTER TABLE groups ADD COLUMN IF NOT EXISTS parent_id BIGINT REFERENCES groups(id) ON DELETE SET NULL;
--- The built-in group visitors join as. Not a driving group: visitor rides match the host's group.
 ALTER TABLE groups ADD COLUMN IF NOT EXISTS is_visitor BIGINT NOT NULL DEFAULT 0;
-
--- The "joining as" choices an organiser narrowed an event to. None = the audience and its sub-groups.
-CREATE TABLE IF NOT EXISTS event_attribution_groups (
-    event_id BIGINT NOT NULL REFERENCES events(id) ON DELETE CASCADE,
-    group_id BIGINT NOT NULL REFERENCES groups(id) ON DELETE CASCADE,
-    PRIMARY KEY (event_id, group_id)
-);
 ALTER TABLE event_signups ADD COLUMN IF NOT EXISTS as_group_id BIGINT REFERENCES groups(id) ON DELETE SET NULL;
--- Copied from the signup when the ride is made, so reports keep the group someone came as.
 ALTER TABLE rides ADD COLUMN IF NOT EXISTS as_group_id BIGINT REFERENCES groups(id) ON DELETE SET NULL;
 
--- A one-time link for a visitor's journey to an event. Only the token's hash is kept.
-CREATE TABLE IF NOT EXISTS visitor_passes (
-    id            BIGINT GENERATED BY DEFAULT AS IDENTITY PRIMARY KEY,
-    token_hash    TEXT NOT NULL UNIQUE,
-    event_id      BIGINT NOT NULL REFERENCES events(id) ON DELETE CASCADE,
-    host_id       BIGINT NOT NULL REFERENCES users(id),
-    host_group_id BIGINT NOT NULL REFERENCES groups(id),
-    ride_id       BIGINT REFERENCES rides(id) ON DELETE SET NULL,
-    name          TEXT NOT NULL,
-    phone         TEXT NOT NULL DEFAULT '',
-    valid_from    TEXT NOT NULL,
-    valid_until   TEXT NOT NULL,
-    claimed_at    TEXT,
-    closed_at     TEXT,
-    closed_reason TEXT CHECK (closed_reason IN ('completed', 'cancelled', 'revoked', 'expired', 'reissued')),
-    created_at    TEXT NOT NULL DEFAULT (to_char(NOW() AT TIME ZONE 'Asia/Kuala_Lumpur', 'YYYY-MM-DD"T"HH24:MI:SS'))
-);
--- The browser that claimed a pass. Like `sessions`, keyed by the cookie token's hash.
-CREATE TABLE IF NOT EXISTS visitor_sessions (
-    token_hash TEXT PRIMARY KEY,
-    pass_id    BIGINT NOT NULL REFERENCES visitor_passes(id) ON DELETE CASCADE,
-    expires_at TEXT NOT NULL
-);
+-- JSON kept as JSON (once text). Converted only while the column is still text.
+DO $$
+BEGIN
+    IF (SELECT data_type FROM information_schema.columns
+        WHERE table_schema = current_schema() AND table_name = 'settlement_revisions'
+          AND column_name = 'snapshot') = 'text' THEN
+        ALTER TABLE settlement_revisions
+            ALTER COLUMN snapshot TYPE jsonb
+            USING pg_temp.as_jsonb(snapshot, 'settlement_revisions.snapshot of revision ' || id);
+    END IF;
+
+    IF (SELECT data_type FROM information_schema.columns
+        WHERE table_schema = current_schema() AND table_name = 'invites'
+          AND column_name = 'group_ids') = 'text' THEN
+        ALTER TABLE invites ALTER COLUMN group_ids DROP DEFAULT;
+        ALTER TABLE invites
+            ALTER COLUMN group_ids TYPE jsonb
+            USING pg_temp.as_jsonb(group_ids, 'invites.group_ids of invite ' || id);
+        ALTER TABLE invites ALTER COLUMN group_ids SET DEFAULT '[]'::jsonb;
+    END IF;
+END
+$$;
+
+-- Time defaults once named the zone outright. They now follow system_settings.timezone.
+DO $$
+DECLARE
+    col record;
+BEGIN
+    FOR col IN
+        SELECT table_name, column_name FROM information_schema.columns
+        WHERE table_schema = current_schema()
+          AND column_default LIKE '%AT TIME ZONE ''Asia/Kuala_Lumpur''%'
+    LOOP
+        EXECUTE format('ALTER TABLE %I ALTER COLUMN %I SET DEFAULT app_now()', col.table_name, col.column_name);
+    END LOOP;
+END
+$$;
+ALTER TABLE system_settings ALTER COLUMN updated_at SET DEFAULT app_now();
+
+-- The first reference settings rows were stamped with CURRENT_TIMESTAMP ("2026-11-17
+-- 02:47:48.123+08"), unlike every other time. Rewrite them in the stored format.
+UPDATE system_settings
+SET updated_at = to_char(updated_at::timestamptz AT TIME ZONE 'Asia/Kuala_Lumpur', 'YYYY-MM-DD"T"HH24:MI:SS')
+WHERE updated_at !~ '^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}$'
+  AND updated_at ~ '^\d{4}-\d{2}-\d{2}[ T]\d{2}:\d{2}:\d{2}';
+
+-- Emails are stored lowercase; sign-in lowercases what is typed before looking it up.
+-- A lowercase copy that would collide with another account is left alone (warning).
+DO $$
+DECLARE
+    clash record;
+BEGIN
+    FOR clash IN
+        SELECT u.id, u.email FROM users u
+        WHERE u.email <> lower(u.email)
+          AND EXISTS (SELECT 1 FROM users o WHERE o.id <> u.id AND o.email = lower(u.email))
+    LOOP
+        RAISE WARNING 'user % has email % and another account has its lowercase form; merge them by hand', clash.id, clash.email;
+    END LOOP;
+    UPDATE users u SET email = lower(u.email)
+    WHERE u.email <> lower(u.email)
+      AND NOT EXISTS (SELECT 1 FROM users o WHERE o.id <> u.id AND o.email = lower(u.email));
+    UPDATE recovery_requests SET email = lower(email) WHERE email <> lower(email);
+END
+$$;
+
+-- =====================================================================
+-- Rules: allowed values, yes/no flags, formats
+-- =====================================================================
+
+SELECT pg_temp.add_check('users', 'chk_users_status', $$status IN ('active', 'pending', 'disabled')$$);
+SELECT pg_temp.add_check('users', 'chk_users_email_lower', $$email = lower(email)$$);
+SELECT pg_temp.add_check('recovery_requests', 'chk_recovery_requests_status',
+    $$status IN ('pending', 'awaiting_second', 'approved', 'rejected', 'superseded')$$);
+SELECT pg_temp.add_check('invites', 'chk_invites_kind', $$kind IN ('invite', 'recovery')$$);
+SELECT pg_temp.add_check('invites', 'chk_invites_group_ids', $$jsonb_typeof(group_ids) = 'array'$$);
+SELECT pg_temp.add_check('auth_challenges', 'chk_auth_challenges_kind', $$kind IN ('reg', 'auth')$$);
+SELECT pg_temp.add_check('events', 'chk_events_status', $$status IN ('published', 'cancelled', 'finished')$$);
+SELECT pg_temp.add_check('event_signups', 'chk_event_signups_status', $$status IN ('going', 'waitlist', 'cancelled')$$);
+SELECT pg_temp.add_check('event_signups', 'chk_event_signups_attended', $$attended IS NULL OR attended IN (0, 1)$$);
+SELECT pg_temp.add_check('event_signups', 'chk_event_signups_offer_seats', $$offer_seats >= 0$$);
+SELECT pg_temp.add_check('settlements', 'chk_settlements_status', $$status IN ('draft', 'published', 'closed')$$);
+SELECT pg_temp.add_check('settlements', 'chk_settlements_split_mode', $$split_mode IN ('equal', 'custom')$$);
+SELECT pg_temp.add_check('settlement_items', 'chk_settlement_items_amount', $$amount_cents >= 0$$);
+SELECT pg_temp.add_check('settlement_shares', 'chk_settlement_shares_status',
+    $$status IN ('unpaid', 'pending', 'confirmed', 'needs_info')$$);
+SELECT pg_temp.add_check('visitor_passes', 'chk_visitor_passes_window', $$valid_from <= valid_until$$);
+
+SELECT pg_temp.add_check('sessions', 'chk_sessions_mfa_ok', $$mfa_ok IN (0, 1)$$);
+SELECT pg_temp.add_check('areas', 'chk_areas_active', $$active IN (0, 1)$$);
+SELECT pg_temp.add_check('groups', 'chk_groups_is_all', $$is_all IN (0, 1)$$);
+SELECT pg_temp.add_check('groups', 'chk_groups_is_visitor', $$is_visitor IN (0, 1)$$);
+SELECT pg_temp.add_check('groups', 'chk_groups_not_own_parent', $$parent_id IS NULL OR parent_id <> id$$);
+SELECT pg_temp.add_check('events', 'chk_events_reminder_sent', $$reminder_sent IN (0, 1)$$);
+SELECT pg_temp.add_check('event_signups', 'chk_event_signups_need_ride', $$need_ride IN (0, 1)$$);
+SELECT pg_temp.add_check('event_signups', 'chk_event_signups_offer_drive', $$offer_drive IN (0, 1)$$);
+SELECT pg_temp.add_check('rides', 'chk_rides_needs_attention', $$needs_attention IN (0, 1)$$);
+SELECT pg_temp.add_check('rides', 'chk_rides_reminder_sent', $$reminder_sent IN (0, 1)$$);
+SELECT pg_temp.add_check('rides', 'chk_rides_is_proxy', $$is_proxy IN (0, 1)$$);
+SELECT pg_temp.add_check('rides', 'chk_rides_delay_minutes', $$delay_minutes >= 0$$);
+SELECT pg_temp.add_check('announcements', 'chk_announcements_pinned', $$pinned IN (0, 1)$$);
+SELECT pg_temp.add_check('reimbursements', 'chk_reimbursements_payee_verified', $$payee_verified IN (0, 1)$$);
+
+-- Times that are compared as text or cast to timestamp must all have one shape;
+-- a single stray value would otherwise break every query that casts it.
+SELECT pg_temp.add_check('rides', 'chk_rides_pickup_at_format',
+    $$pickup_at ~ '^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(:\d{2})?$'$$);
+SELECT pg_temp.add_check('events', 'chk_events_starts_at_format',
+    $$starts_at ~ '^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(:\d{2})?$'$$);
+SELECT pg_temp.add_check('sessions', 'chk_sessions_expires_at_format',
+    $$expires_at ~ '^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(:\d{2})?$'$$);
+
+-- =====================================================================
+-- Trips: every trip in use gets a row, then both references become foreign keys
+-- =====================================================================
+
+INSERT INTO trips (id)
+SELECT trip_id FROM rides WHERE trip_id IS NOT NULL
+UNION
+SELECT trip_id FROM ride_messages
+ON CONFLICT (id) DO NOTHING;
+
+CREATE OR REPLACE FUNCTION rides_ensure_trip() RETURNS trigger
+LANGUAGE plpgsql
+SET search_path FROM CURRENT
+AS $$
+BEGIN
+    IF NEW.trip_id IS NOT NULL THEN
+        INSERT INTO trips (id) VALUES (NEW.trip_id) ON CONFLICT (id) DO NOTHING;
+    END IF;
+    RETURN NEW;
+END
+$$;
+
+DROP TRIGGER IF EXISTS trg_rides_ensure_trip ON rides;
+CREATE TRIGGER trg_rides_ensure_trip
+    BEFORE INSERT OR UPDATE OF trip_id ON rides
+    FOR EACH ROW EXECUTE FUNCTION rides_ensure_trip();
+
+DO $$
+BEGIN
+    IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conrelid = 'rides'::regclass AND conname = 'fk_rides_trip') THEN
+        ALTER TABLE rides ADD CONSTRAINT fk_rides_trip
+            FOREIGN KEY (trip_id) REFERENCES trips(id) ON DELETE SET NULL;
+    END IF;
+    IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conrelid = 'ride_messages'::regclass AND conname = 'fk_ride_messages_trip') THEN
+        ALTER TABLE ride_messages ADD CONSTRAINT fk_ride_messages_trip
+            FOREIGN KEY (trip_id) REFERENCES trips(id) ON DELETE CASCADE;
+    END IF;
+END
+$$;
+
+-- =====================================================================
+-- member_roles: kept in step with users.roles by the database
+-- =====================================================================
+
+-- Role keys listed in a users.roles value, as perms::parse_roles reads them.
+CREATE OR REPLACE FUNCTION listed_role_keys(listed text) RETURNS text[]
+LANGUAGE sql IMMUTABLE
+SET search_path FROM CURRENT
+AS $$
+    SELECT COALESCE(array_agg(DISTINCT k), '{}')
+    FROM (SELECT trim(x) AS k FROM unnest(string_to_array(COALESCE(listed, ''), ',')) AS x) s
+    WHERE k <> '' AND k <> 'member'
+$$;
+
+-- Make one member's rows match their users.roles.
+CREATE OR REPLACE FUNCTION sync_member_roles(uid bigint, listed text) RETURNS void
+LANGUAGE plpgsql
+SET search_path FROM CURRENT
+AS $$
+DECLARE
+    keys text[] := listed_role_keys(listed);
+BEGIN
+    DELETE FROM member_roles WHERE user_id = uid AND NOT (role_key = ANY(keys));
+    INSERT INTO member_roles (user_id, role_key)
+    SELECT uid, r.key FROM roles r WHERE r.key = ANY(keys)
+    ON CONFLICT DO NOTHING;
+END
+$$;
+
+CREATE OR REPLACE FUNCTION users_sync_member_roles() RETURNS trigger
+LANGUAGE plpgsql
+SET search_path FROM CURRENT
+AS $$
+BEGIN
+    PERFORM sync_member_roles(NEW.id, NEW.roles);
+    RETURN NULL;
+END
+$$;
+
+DROP TRIGGER IF EXISTS trg_users_sync_member_roles ON users;
+CREATE TRIGGER trg_users_sync_member_roles
+    AFTER INSERT OR UPDATE OF roles ON users
+    FOR EACH ROW EXECUTE FUNCTION users_sync_member_roles();
+
+CREATE OR REPLACE FUNCTION roles_attach_members() RETURNS trigger
+LANGUAGE plpgsql
+SET search_path FROM CURRENT
+AS $$
+BEGIN
+    INSERT INTO member_roles (user_id, role_key)
+    SELECT u.id, NEW.key FROM users u WHERE NEW.key = ANY(listed_role_keys(u.roles))
+    ON CONFLICT DO NOTHING;
+    RETURN NULL;
+END
+$$;
+
+DROP TRIGGER IF EXISTS trg_roles_attach_members ON roles;
+CREATE TRIGGER trg_roles_attach_members
+    AFTER INSERT ON roles
+    FOR EACH ROW EXECUTE FUNCTION roles_attach_members();
+
+-- Backfill, and point out names that match no role (they grant nothing).
+DO $$
+DECLARE
+    stray record;
+BEGIN
+    PERFORM sync_member_roles(id, roles) FROM users;
+    FOR stray IN
+        SELECT u.id, k FROM users u, unnest(listed_role_keys(u.roles)) AS k
+        WHERE NOT EXISTS (SELECT 1 FROM roles r WHERE r.key = k)
+    LOOP
+        RAISE WARNING 'user % lists role "%", which does not exist; it grants nothing', stray.id, stray.k;
+    END LOOP;
+END
+$$;
 
 -- =====================================================================
 -- Indexes
 -- =====================================================================
 
+-- Covered by a primary key, a unique constraint or a wider index, or not selective.
+DROP INDEX IF EXISTS idx_event_signups_event_user;  -- UNIQUE (event_id, user_id)
+DROP INDEX IF EXISTS idx_demo_batches_lookup;       -- primary key
+DROP INDEX IF EXISTS idx_reimbursement_rates_type;  -- primary key
+DROP INDEX IF EXISTS idx_group_members_group;       -- primary key (group_id, user_id)
+DROP INDEX IF EXISTS idx_audit_logs_keyset;         -- primary key, scanned backwards
+DROP INDEX IF EXISTS idx_rides_status;              -- idx_rides_status_created
+DROP INDEX IF EXISTS idx_rides_pickup;              -- idx_rides_keyset
+DROP INDEX IF EXISTS idx_reimbursements_status;     -- idx_reimbursements_status_id
+DROP INDEX IF EXISTS idx_notif_user;                -- idx_notifications_unread + keyset
+DROP INDEX IF EXISTS idx_events_kind;               -- five values
+DROP INDEX IF EXISTS idx_events_capacity;
+DROP INDEX IF EXISTS idx_rides_readiness;
+DROP INDEX IF EXISTS idx_users_has_admin_role;      -- a text match that also caught "superadmin"
+
+-- Auth and members
 CREATE INDEX IF NOT EXISTS idx_demo_batch_users ON users(demo_batch) WHERE demo_batch IS NOT NULL;
+CREATE INDEX IF NOT EXISTS idx_users_terms_accepted ON users(terms_accepted_at) WHERE terms_accepted_at IS NOT NULL;
+CREATE INDEX IF NOT EXISTS idx_users_phone ON users(phone) WHERE phone != '';
 CREATE INDEX IF NOT EXISTS idx_sessions_user ON sessions(user_id);
 CREATE INDEX IF NOT EXISTS idx_sessions_expires ON sessions(expires_at);
+CREATE INDEX IF NOT EXISTS idx_passkeys_user ON passkeys(user_id);
 CREATE INDEX IF NOT EXISTS idx_login_failures_email ON login_failures(email, created_at);
 CREATE INDEX IF NOT EXISTS idx_oauth_accounts_user ON oauth_accounts(user_id);
 CREATE INDEX IF NOT EXISTS idx_oauth_accounts_email ON oauth_accounts(email);
+CREATE INDEX IF NOT EXISTS idx_member_roles_role ON member_roles(role_key);
+CREATE INDEX IF NOT EXISTS idx_role_permissions_permission ON role_permissions(permission);
+CREATE INDEX IF NOT EXISTS idx_vehicles_plate ON vehicles(plate) WHERE plate != '';
+
+-- Groups and areas
 CREATE INDEX IF NOT EXISTS idx_group_members_user ON group_members(user_id);
+CREATE INDEX IF NOT EXISTS idx_groups_parent ON groups(parent_id) WHERE parent_id IS NOT NULL;
+CREATE INDEX IF NOT EXISTS idx_driver_areas_area ON driver_areas(area_id);
+
+-- Events
 CREATE INDEX IF NOT EXISTS idx_demo_batch_events ON events(demo_batch) WHERE demo_batch IS NOT NULL;
+CREATE INDEX IF NOT EXISTS idx_events_keyset ON events(starts_at DESC, id DESC);
+CREATE INDEX IF NOT EXISTS idx_event_groups_group ON event_groups(group_id);
+CREATE INDEX IF NOT EXISTS idx_event_attribution_groups_group ON event_attribution_groups(group_id);
 CREATE INDEX IF NOT EXISTS idx_signups_user ON event_signups(user_id);
-CREATE INDEX IF NOT EXISTS idx_rides_status ON rides(status);
+CREATE INDEX IF NOT EXISTS idx_signups_as_group ON event_signups(as_group_id) WHERE as_group_id IS NOT NULL;
+
+-- Rides
 CREATE INDEX IF NOT EXISTS idx_rides_driver ON rides(driver_id);
 CREATE INDEX IF NOT EXISTS idx_rides_passenger ON rides(passenger_id);
-CREATE INDEX IF NOT EXISTS idx_rides_pickup ON rides(pickup_at);
 CREATE INDEX IF NOT EXISTS idx_rides_trip ON rides(trip_id);
+CREATE INDEX IF NOT EXISTS idx_rides_event ON rides(event_id) WHERE event_id IS NOT NULL;
+CREATE INDEX IF NOT EXISTS idx_rides_as_group ON rides(as_group_id) WHERE as_group_id IS NOT NULL;
 CREATE INDEX IF NOT EXISTS idx_demo_batch_rides ON rides(demo_batch) WHERE demo_batch IS NOT NULL;
-CREATE INDEX IF NOT EXISTS idx_messages_trip ON ride_messages(trip_id, id);
-CREATE INDEX IF NOT EXISTS idx_notif_user ON notifications(user_id, read_at);
-CREATE INDEX IF NOT EXISTS idx_demo_batch_notifications ON notifications(demo_batch) WHERE demo_batch IS NOT NULL;
-CREATE INDEX IF NOT EXISTS idx_audit_entity ON audit_logs(entity, entity_id);
-CREATE INDEX IF NOT EXISTS idx_shares_user ON settlement_shares(user_id);
-CREATE INDEX IF NOT EXISTS idx_users_terms_accepted ON users(terms_accepted_at) WHERE terms_accepted_at IS NOT NULL;
-CREATE INDEX IF NOT EXISTS idx_events_kind ON events(kind);
 CREATE INDEX IF NOT EXISTS idx_rides_status_created ON rides(status, created_at);
+CREATE INDEX IF NOT EXISTS idx_rides_keyset ON rides(pickup_at DESC, id DESC);
 CREATE INDEX IF NOT EXISTS idx_rides_driver_active ON rides(driver_id) WHERE driver_id IS NOT NULL AND status = 'confirmed';
-CREATE INDEX IF NOT EXISTS idx_reimbursements_status ON reimbursements(status);
-CREATE INDEX IF NOT EXISTS idx_settlements_due_date ON settlements(due_date) WHERE due_date IS NOT NULL;
-CREATE INDEX IF NOT EXISTS idx_event_signups_event_user ON event_signups(event_id, user_id);
-CREATE INDEX IF NOT EXISTS idx_users_has_admin_role ON users((roles LIKE '%admin%')) WHERE roles LIKE '%admin%';
-CREATE INDEX IF NOT EXISTS idx_help_tickets_status ON help_tickets(status);
-CREATE INDEX IF NOT EXISTS idx_reimbursements_ride ON reimbursements(ride_id);
-CREATE INDEX IF NOT EXISTS idx_settlements_event ON settlements(event_id);
-CREATE INDEX IF NOT EXISTS idx_users_phone ON users(phone) WHERE phone != '';
-CREATE INDEX IF NOT EXISTS idx_vehicles_plate ON vehicles(plate) WHERE plate != '';
-CREATE INDEX IF NOT EXISTS idx_events_capacity ON events(capacity) WHERE capacity > 0;
-CREATE INDEX IF NOT EXISTS idx_group_members_group ON group_members(group_id);
-CREATE INDEX IF NOT EXISTS idx_demo_batches_lookup ON demo_batches(batch);
-CREATE INDEX IF NOT EXISTS idx_geocode_cache_updated ON geocode_cache(updated_at);
-CREATE INDEX IF NOT EXISTS idx_role_permissions_permission ON role_permissions(permission);
-CREATE INDEX IF NOT EXISTS idx_reimbursement_rates_type ON reimbursement_rates(vehicle_type);
 CREATE INDEX IF NOT EXISTS idx_rides_driver_completed ON rides(driver_id, completed_at) WHERE status = 'completed';
 CREATE INDEX IF NOT EXISTS idx_rides_passenger_completed ON rides(passenger_id, completed_at) WHERE status = 'completed';
-CREATE INDEX IF NOT EXISTS idx_rides_keyset ON rides(pickup_at DESC, id DESC);
-CREATE INDEX IF NOT EXISTS idx_notifications_keyset ON notifications(user_id, id DESC);
-CREATE INDEX IF NOT EXISTS idx_events_keyset ON events(starts_at DESC, id DESC);
-CREATE INDEX IF NOT EXISTS idx_audit_logs_keyset ON audit_logs(id DESC);
-CREATE INDEX IF NOT EXISTS idx_reimbursements_user_id ON reimbursements(user_id, id DESC);
-CREATE INDEX IF NOT EXISTS idx_reimbursements_status_id ON reimbursements(status, id DESC);
-CREATE INDEX IF NOT EXISTS idx_rides_readiness ON rides(readiness_status);
 CREATE INDEX IF NOT EXISTS idx_rides_is_proxy ON rides(is_proxy) WHERE is_proxy = 1;
+CREATE INDEX IF NOT EXISTS idx_messages_trip ON ride_messages(trip_id, id);
+CREATE INDEX IF NOT EXISTS idx_ride_messages_created ON ride_messages(created_at);
 CREATE INDEX IF NOT EXISTS idx_proxy_riders_user ON proxy_riders(user_id);
-CREATE INDEX IF NOT EXISTS idx_groups_parent ON groups(parent_id) WHERE parent_id IS NOT NULL;
 CREATE INDEX IF NOT EXISTS idx_visitor_passes_event ON visitor_passes(event_id);
 CREATE INDEX IF NOT EXISTS idx_visitor_passes_ride ON visitor_passes(ride_id) WHERE ride_id IS NOT NULL;
 CREATE INDEX IF NOT EXISTS idx_visitor_sessions_pass ON visitor_sessions(pass_id);
+
+-- Community
+CREATE INDEX IF NOT EXISTS idx_notifications_keyset ON notifications(user_id, id DESC);
+CREATE INDEX IF NOT EXISTS idx_notifications_unread ON notifications(user_id) WHERE read_at IS NULL;
+CREATE INDEX IF NOT EXISTS idx_notifications_created ON notifications(created_at);
+CREATE INDEX IF NOT EXISTS idx_demo_batch_notifications ON notifications(demo_batch) WHERE demo_batch IS NOT NULL;
+CREATE INDEX IF NOT EXISTS idx_help_tickets_status ON help_tickets(status);
+CREATE INDEX IF NOT EXISTS idx_help_tickets_user ON help_tickets(user_id);
+CREATE INDEX IF NOT EXISTS idx_help_tickets_ride ON help_tickets(ride_id) WHERE ride_id IS NOT NULL;
+CREATE INDEX IF NOT EXISTS idx_help_replies_ticket ON help_replies(ticket_id, id);
 CREATE INDEX IF NOT EXISTS idx_help_replies_file ON help_replies(file_id) WHERE file_id IS NOT NULL;
+CREATE INDEX IF NOT EXISTS idx_audit_entity ON audit_logs(entity, entity_id);
+CREATE INDEX IF NOT EXISTS idx_audit_logs_created ON audit_logs(created_at);
+CREATE INDEX IF NOT EXISTS idx_audit_logs_actor ON audit_logs(actor_id) WHERE actor_id IS NOT NULL;
+CREATE INDEX IF NOT EXISTS idx_files_owner ON files(owner_id, created_at);
+CREATE INDEX IF NOT EXISTS idx_geocode_cache_updated ON geocode_cache(updated_at);
+
+-- Finance
+CREATE INDEX IF NOT EXISTS idx_reimbursements_user_id ON reimbursements(user_id, id DESC);
+CREATE INDEX IF NOT EXISTS idx_reimbursements_status_id ON reimbursements(status, id DESC);
+CREATE INDEX IF NOT EXISTS idx_reimbursements_ride ON reimbursements(ride_id);
+CREATE INDEX IF NOT EXISTS idx_settlements_event ON settlements(event_id);
+CREATE INDEX IF NOT EXISTS idx_settlements_due_date ON settlements(due_date) WHERE due_date IS NOT NULL;
+CREATE INDEX IF NOT EXISTS idx_settlement_items_settlement ON settlement_items(settlement_id);
+CREATE INDEX IF NOT EXISTS idx_settlement_revisions_settlement ON settlement_revisions(settlement_id, version DESC);
+CREATE INDEX IF NOT EXISTS idx_shares_user ON settlement_shares(user_id);
 
 -- =====================================================================
 -- Reference rows. Demo members are not inserted here.
@@ -712,10 +1054,11 @@ INSERT INTO reimbursement_rates (vehicle_type, rate_cents_per_km)
 VALUES ('standard', 30), ('other', 50)
 ON CONFLICT (vehicle_type) DO NOTHING;
 
-INSERT INTO system_settings (key, value, updated_at, updated_by)
+-- `timezone` is written by the app at start-up from APP_TIMEZONE.
+INSERT INTO system_settings (key, value)
 VALUES
-    ('audit_retention_days', '730', CURRENT_TIMESTAMP, NULL),
-    ('chat_retention_days', '180', CURRENT_TIMESTAMP, NULL),
-    ('max_live_drivers', '10', CURRENT_TIMESTAMP, NULL),
-    ('session_timeout_mins', '15', CURRENT_TIMESTAMP, NULL)
+    ('audit_retention_days', '730'),
+    ('chat_retention_days', '180'),
+    ('max_live_drivers', '10'),
+    ('session_timeout_mins', '15')
 ON CONFLICT (key) DO NOTHING;

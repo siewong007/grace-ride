@@ -261,6 +261,8 @@ function MemberList() {
     columns.push({
       key: 'actions',
       header: t('members.actions'),
+      headerClassName: 'col-sticky-end',
+      cellClassName: 'col-sticky-end',
       render: (u) =>
         !editable(u) ? null : (
           <>

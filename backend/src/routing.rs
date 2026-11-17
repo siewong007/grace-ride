@@ -22,7 +22,6 @@ use std::{
     time::{Duration, Instant},
 };
 
-use chrono::Local;
 use serde::Serialize;
 use serde_json::{json, Value};
 use tokio::sync::Mutex;
@@ -479,7 +478,7 @@ pub fn warm_geocodes(st: &AppState, addresses: Vec<String>) {
 }
 
 fn ago(d: Duration) -> String {
-    (Local::now() - chrono::Duration::from_std(d).unwrap_or_default())
+    (crate::util::local_now() - chrono::Duration::from_std(d).unwrap_or_default())
         .format("%Y-%m-%dT%H:%M:%S")
         .to_string()
 }
@@ -916,7 +915,7 @@ struct TripRide {
 }
 
 fn minutes_from_now(m: i64) -> String {
-    (Local::now() + chrono::Duration::minutes(m))
+    (crate::util::local_now() + chrono::Duration::minutes(m))
         .format("%Y-%m-%dT%H:%M")
         .to_string()
 }
@@ -1167,7 +1166,7 @@ async fn compute(
     };
 
     // Walk the legs: cumulative distance/time and ETAs (only when the driver's position is known).
-    let started_at = Local::now();
+    let started_at = crate::util::local_now();
     let eta = |secs: f64| {
         origin.as_ref().map(|_| {
             (started_at + chrono::Duration::seconds(secs.round() as i64))

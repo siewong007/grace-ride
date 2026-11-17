@@ -2,7 +2,7 @@ mod common;
 
 use axum::http::{Method, StatusCode};
 use common::*;
-use grace_ride::util::today_kl;
+use grace_ride::util::today_local;
 
 fn pickup_times(body: &serde_json::Value) -> Vec<String> {
     body["items"]
@@ -100,7 +100,7 @@ async fn admin_rides_sort_uses_allow_listed_fields() {
     .await;
     assert_eq!(natural.status, StatusCode::OK, "{}", natural.json);
     let times = pickup_times(&natural.json);
-    let today = today_kl().format("%Y-%m-%d").to_string();
+    let today = today_local().format("%Y-%m-%d").to_string();
     let upcoming: Vec<_> = times
         .iter()
         .take_while(|stamp| stamp.len() >= 10 && &stamp[..10] >= today.as_str())

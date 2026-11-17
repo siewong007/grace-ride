@@ -21,6 +21,7 @@ import {
 import { useTableParams } from '../../components/tableState';
 import { exportToCsv, fmtDay, RIDE_STATUS, todayStr, useFormatT } from '../../format';
 import { ADMIN_HOME } from '../../staffNav';
+import { rideCompactRow } from './rideRows';
 
 // Every status a ride can have. The API filters on the exact status, so these must be real
 // values ("requested" / "matched" were not, and always returned nothing).
@@ -183,23 +184,7 @@ export default function AdminRides() {
               items={loading ? [] : rides}
               onRowClick={(r) => nav(`/admin/rides/${r.id}`)}
               itemKey={(r) => r.id}
-              compactRow={(r) => (
-                <>
-                  <div className="grow min-w-0">
-                    <div className="bold ellipsis">
-                      {r.passenger.name}
-                      {r.seats > 1 ? ` (${r.seats})` : ''}
-                    </div>
-                    <div className="muted small ellipsis">
-                      {fmtDay(r.pickup_at, ft).split(' ')[0]} {r.pickup_at.slice(11, 16)}
-                      {' · '}
-                      {r.area.name} → {r.destination}
-                    </div>
-                    <div className="muted tiny ellipsis">{r.driver?.name ?? '—'}</div>
-                  </div>
-                  <StatusPill map={RIDE_STATUS} status={r.status} />
-                </>
-              )}
+              compactRow={(r) => rideCompactRow(r, ft, true)}
               sort={sort}
               onSortChange={setSort}
               filters={filterDefs}

@@ -3,6 +3,7 @@ import { useLocation, useNavigate, Link } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
 import { ChevronDown, ChevronUp, ExternalLink, HelpCircle, X } from 'lucide-react';
 import { markDone } from '../guideProgress';
+import StepText from './StepText';
 import { GuideDetailData, GuideStep, GuideSummary, usePick } from '../pages/HelpGuides';
 import { Button, useToast } from './ui';
 import { useApi } from '../api';
@@ -82,7 +83,7 @@ function WalkthroughCard({ active, minimised, onMinimise, onPrev, onNext, onStop
         <>
           <div className="guide-card-body">
             <h2 className="guide-card-title">{stepTitle || t('stepNumber', { n: stepIndex + 1 })}</h2>
-            {stepBody && <p className="pre-wrap">{stepBody}</p>}
+            {stepBody && <StepText text={stepBody} />}
             {!step?.link && <p className="small">{t('stepHere')}</p>}
             {step?.link && !hereLink(step.link) && (
               <Link to={step.link} className="guide-step-link">
@@ -182,7 +183,7 @@ export function GuideRunnerProvider({ children }: { children: ReactNode }) {
   const nextStep = () => {
     if (!active) return;
     const { guide, stepIndex } = active;
-    markDone(guide.slug, stepIndex);
+    markDone(guide.slug, guide.steps, stepIndex);
 
     if (stepIndex < guide.steps.length - 1) {
       const nextIdx = stepIndex + 1;

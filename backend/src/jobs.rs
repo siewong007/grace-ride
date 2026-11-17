@@ -1,26 +1,40 @@
-//! Background maintenance (runs once a minute):
+//! Background maintenance.
+//! Every minute:
 //! - reminders: confirmed rides ~1h away, published events ~24h away
 //! - escalation: unmatched rides still driverless ~12h before pickup
+//!
+//! Every HOUSEKEEPING_INTERVAL_MINS (default hourly):
 //! - housekeeping: expired sessions/challenges, stale GPS, old login failures, old geocodes
-//! - retention (资料保存期限): purge chat messages and audit entries past the configured age
+//! - retention (资料保存期限): purge chat messages, audit entries and notifications past
+//!   the configured age
+//!
+//! Each reminder and escalation claims its rows with `UPDATE … RETURNING` before
+//! notifying, so a row is handled once even if two ticks (or two instances) overlap.
 
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
-use chrono::Local;
 use sqlx::PgPool;
 
 use crate::perms::{Act, Page};
 use crate::state::Config;
-use crate::util::{audit, notify, notify_perm, now};
+use crate::util::{audit_many, notify, notify_many, notify_perm, now};
 
 pub fn spawn(db: PgPool, cfg: Config) {
     tokio::spawn(async move {
         let mut tick = tokio::time::interval(Duration::from_secs(60));
         tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+        let every = Duration::from_secs(cfg.housekeeping_interval_mins.max(1) as u64 * 60);
+        let mut last_housekeeping: Option<Instant> = None;
         loop {
             tick.tick().await;
-            if let Err(e) = run_once(&db, &cfg).await {
+            if let Err(e) = run_reminders(&db).await {
                 tracing::error!("background job failed: {e:?}");
+            }
+            if last_housekeeping.is_none_or(|t| t.elapsed() >= every) {
+                last_housekeeping = Some(Instant::now());
+                if let Err(e) = housekeeping(&db, &cfg).await {
+                    tracing::error!("housekeeping failed: {e:?}");
+                }
             }
         }
     });
@@ -28,19 +42,23 @@ pub fn spawn(db: PgPool, cfg: Config) {
 
 /// Run a single tick of the background jobs.
 pub async fn run_once(db: &PgPool, cfg: &Config) -> anyhow::Result<()> {
+    run_reminders(db).await?;
+    housekeeping(db, cfg).await?;
+    Ok(())
+}
+
+/// The once-a-minute part: reminders, escalation, closing finished visitor links.
+pub async fn run_reminders(db: &PgPool) -> anyhow::Result<()> {
     ride_reminders(db).await?;
     event_reminders(db).await?;
     escalate_unmatched(db).await?;
-    housekeeping(db, cfg).await?;
     // Visitor links close for good once their journey is over.
     crate::routes::visitors::close_finished(db).await?;
     Ok(())
 }
 
 fn ts_in(minutes: i64) -> String {
-    (Local::now() + chrono::Duration::minutes(minutes))
-        .format("%Y-%m-%dT%H:%M:%S")
-        .to_string()
+    crate::util::in_minutes(minutes)
 }
 
 async fn ride_reminders(db: &PgPool) -> anyhow::Result<()> {
@@ -56,10 +74,14 @@ async fn ride_reminders(db: &PgPool) -> anyhow::Result<()> {
         i64,
         String,
     )> = sqlx::query_as(
-        "SELECT r.id, r.passenger_id, r.driver_id, r.pickup_at, a.name, p.name, COALESCE(d.name,''), p.readiness_prompt_mins,
+        "WITH due AS (
+             UPDATE rides SET reminder_sent=1
+             WHERE status='confirmed' AND reminder_sent=0 AND pickup_at <= $1 AND pickup_at >= $2
+             RETURNING id, passenger_id, driver_id, pickup_at, pickup_area_id, is_proxy, rider_name
+         )
+         SELECT r.id, r.passenger_id, r.driver_id, r.pickup_at, a.name, p.name, COALESCE(d.name,''), p.readiness_prompt_mins,
                 r.is_proxy, r.rider_name
-         FROM rides r JOIN areas a ON a.id=r.pickup_area_id JOIN users p ON p.id=r.passenger_id LEFT JOIN users d ON d.id=r.driver_id
-         WHERE r.status='confirmed' AND r.reminder_sent=0 AND r.pickup_at <= $1 AND r.pickup_at >= $2",
+         FROM due r JOIN areas a ON a.id=r.pickup_area_id JOIN users p ON p.id=r.passenger_id LEFT JOIN users d ON d.id=r.driver_id",
     )
     .bind(ts_in(60))
     .bind(ts_in(-10))
@@ -106,18 +128,15 @@ async fn ride_reminders(db: &PgPool) -> anyhow::Result<()> {
             )
             .await;
         }
-        sqlx::query("UPDATE rides SET reminder_sent=1 WHERE id=$1")
-            .bind(id)
-            .execute(db)
-            .await?;
     }
     Ok(())
 }
 
 async fn event_reminders(db: &PgPool) -> anyhow::Result<()> {
     let due: Vec<(i64, String, String, String)> = sqlx::query_as(
-        "SELECT id, title, starts_at, location FROM events
-         WHERE status='published' AND reminder_sent=0 AND starts_at <= $1 AND starts_at >= $2",
+        "UPDATE events SET reminder_sent=1
+         WHERE status='published' AND reminder_sent=0 AND starts_at <= $1 AND starts_at >= $2
+         RETURNING id, title, starts_at, location",
     )
     .bind(ts_in(24 * 60))
     .bind(ts_in(0))
@@ -130,51 +149,39 @@ async fn event_reminders(db: &PgPool) -> anyhow::Result<()> {
         .bind(id)
         .fetch_all(db)
         .await?;
-        for (u,) in users {
-            notify(
-                db,
-                u,
-                ("活动提醒", "Event reminder"),
-                (
-                    &format!("{title} · {} · {loc}", at.replace('T', " ")),
-                    &format!("{title} · {} · {loc}", at.replace('T', " ")),
-                ),
-                &format!("/events/{id}"),
-            )
-            .await;
-        }
-        sqlx::query("UPDATE events SET reminder_sent=1 WHERE id=$1")
-            .bind(id)
-            .execute(db)
-            .await?;
+        let ids: Vec<i64> = users.into_iter().map(|(u,)| u).collect();
+        let body = format!("{title} · {} · {loc}", at.replace('T', " "));
+        notify_many(
+            db,
+            &ids,
+            ("活动提醒", "Event reminder"),
+            (&body, &body),
+            &format!("/events/{id}"),
+        )
+        .await;
     }
     Ok(())
 }
 
 async fn escalate_unmatched(db: &PgPool) -> anyhow::Result<()> {
     let rows: Vec<(i64, String, String)> = sqlx::query_as(
-        "SELECT r.id, p.name, r.pickup_at FROM rides r JOIN users p ON p.id=r.passenger_id
-         WHERE r.status='pending_driver' AND r.needs_attention=0 AND r.pickup_at <= $1 AND r.pickup_at >= $2",
+        "WITH due AS (
+             UPDATE rides SET needs_attention=1,
+                    attention_reason='接送前 12 小时仍未有司机 / No driver confirmed 12h before pickup',
+                    updated_at=$3
+             WHERE status='pending_driver' AND needs_attention=0 AND pickup_at <= $1 AND pickup_at >= $2
+             RETURNING id, passenger_id, pickup_at
+         )
+         SELECT due.id, p.name, due.pickup_at FROM due JOIN users p ON p.id = due.passenger_id",
     )
     .bind(ts_in(12 * 60))
     .bind(ts_in(0))
+    .bind(now())
     .fetch_all(db)
     .await?;
+    let ids: Vec<i64> = rows.iter().map(|(id, _, _)| *id).collect();
+    audit_many(db, None, "ride.escalate", "ride", &ids, "no driver 12h before pickup").await?;
     for (id, name, at) in rows {
-        sqlx::query("UPDATE rides SET needs_attention=1, attention_reason='接送前 12 小时仍未有司机 / No driver confirmed 12h before pickup', updated_at=$1 WHERE id=$2")
-            .bind(now())
-            .bind(id)
-            .execute(db)
-            .await?;
-        audit(
-            db,
-            None,
-            "ride.escalate",
-            "ride",
-            Some(id),
-            "no driver 12h before pickup",
-        )
-        .await;
         notify_perm(
             db,
             Page::AdminRides,
@@ -259,9 +266,17 @@ async fn housekeeping(db: &PgPool, cfg: &Config) -> anyhow::Result<()> {
     .bind(t(-24 * 60))
     .execute(db)
     .await?;
-    sqlx::query("DELETE FROM notifications WHERE read_at IS NOT NULL AND created_at < $1")
-        .bind(ts_in(-90 * 24 * 60))
-        .execute(db)
-        .await?;
+    // Read notifications go after NOTIFICATION_RETENTION_DAYS; unread ones after a year
+    // (or that long, if it is longer), so the table cannot grow without end.
+    let read_days = cfg.notification_retention_days;
+    let unread_days = read_days.max(365);
+    sqlx::query(
+        "DELETE FROM notifications
+         WHERE (read_at IS NOT NULL AND created_at < $1) OR created_at < $2",
+    )
+    .bind(ts_in(-read_days * 24 * 60))
+    .bind(ts_in(-unread_days * 24 * 60))
+    .execute(db)
+    .await?;
     Ok(())
 }
