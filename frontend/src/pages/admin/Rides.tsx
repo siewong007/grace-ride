@@ -19,7 +19,8 @@ import {
   StatusPill,
 } from '../../components/ui';
 import { useTableParams } from '../../components/tableState';
-import { exportToCsv, fmtDay, RIDE_STATUS, todayStr, useFormatT } from '../../format';
+import { useExportAll } from '../../components/useExportAll';
+import { fmtDay, todayStr, RIDE_STATUS, useFormatT } from '../../format';
 import { ADMIN_HOME } from '../../staffNav';
 import { rideCompactRow } from './rideRows';
 
@@ -56,7 +57,7 @@ export default function AdminRides() {
     defaultPageSize: 50,
     // No column sort: the server lists upcoming rides first, then recent past rides.
     defaultSort: null,
-    filterKeys: ['status', 'date', 'attention'],
+    filterKeys: ['q', 'status', 'date', 'attention'],
   });
 
   const apiQuery = new URLSearchParams(queryString);
@@ -79,6 +80,7 @@ export default function AdminRides() {
   const totalPages = Array.isArray(data) ? 1 : data?.total_pages ?? 1;
 
   const filterDefs: TableFilter[] = [
+    { type: 'text', key: 'q', label: t('rides.search'), placeholder: t('rides.search') },
     {
       type: 'select',
       key: 'status',
@@ -93,20 +95,15 @@ export default function AdminRides() {
     { type: 'checkbox', key: 'attention', label: t('rides.onlyAttention') },
   ];
 
-  const handleExport = () => {
-    const headers = ['ID', 'Date/Time', 'Area', 'Destination', 'Passenger', 'Driver', 'Seats', 'Status'];
-    const rows = rides.map((r) => [
-      r.id,
-      r.pickup_at,
-      r.area.name,
-      r.destination,
-      r.passenger.name,
-      r.driver?.name ?? '',
-      r.seats,
-      r.status,
-    ]);
-    exportToCsv(`grace-ride-admin-rides-${todayStr()}`, headers, rows);
-  };
+  const exporter = useExportAll<Ride>();
+  const handleExport = () =>
+    exporter.run({
+      path: '/admin/rides',
+      query: apiQuery,
+      filename: `grace-ride-admin-rides-${todayStr()}`,
+      headers: ['ID', 'Date/Time', 'Area', 'Destination', 'Passenger', 'Driver', 'Seats', 'Status'],
+      row: (r) => [r.id, r.pickup_at, r.area.name, r.destination, r.passenger.name, r.driver?.name ?? '', r.seats, r.status],
+    });
 
   const columns: TableColumn<Ride>[] = [
     {
@@ -164,9 +161,9 @@ export default function AdminRides() {
         subtitle={t('rides.desc')}
         back={ADMIN_HOME}
         actions={
-          rides.length > 0 ? (
-            <Button variant="secondary" size="sm" onClick={handleExport} icon={<Download size={16} />}>
-              {t('common:exportCsv', 'Export CSV')}
+          total > 0 ? (
+            <Button variant="secondary" size="sm" onClick={handleExport} loading={exporter.busy} icon={<Download size={16} />}>
+              {t('common:exportAll', { count: total })}
             </Button>
           ) : undefined
         }

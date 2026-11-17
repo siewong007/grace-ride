@@ -11,3 +11,10 @@ export function auditActionLabel(action: string, t: TFunction): string {
     .map((word) => word.charAt(0).toUpperCase() + word.slice(1))
     .join(' ');
 }
+
+/** People-facing name for what an audit entry is about, e.g. "ride" -> "Ride". */
+export function auditEntityLabel(entity: string, t: TFunction): string {
+  return t(`audit.entities.${entity}`, {
+    defaultValue: (entity.charAt(0).toUpperCase() + entity.slice(1)).replace(/[_-]+/g, ' '),
+  }) as string;
+}

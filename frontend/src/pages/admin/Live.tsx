@@ -106,6 +106,8 @@ export default function AdminLive() {
                     key={d.driver_id}
                     type="button"
                     className={`item clickable text-left ${isSelected ? 'active' : ''}`}
+                    // Nothing to show on the map for a driver who has not shared a position.
+                    disabled={d.lat == null || d.lng == null}
                     onClick={() => selectDriver(d)}
                   >
                     <div className="grow">

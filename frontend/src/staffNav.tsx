@@ -126,7 +126,7 @@ export function useStaffNav() {
 
   const staff = staffGroups.flatMap((g) => g.items);
   const staffWaiting = staff.reduce((n, i) => n + (i.badge ?? 0), 0);
-  return { staffGroups, staff, staffWaiting, helpDesk };
+  return { staffGroups, staff, staffWaiting, helpDesk, counts };
 }
 
 /**

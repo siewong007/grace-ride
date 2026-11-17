@@ -1,7 +1,7 @@
 import { FormEvent, useState } from 'react';
 import { Pin } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
-import { del, post, useApi } from '../../api';
+import { del, post, put, useApi } from '../../api';
 import { useAuth } from '../../auth';
 import {
   Button,
@@ -10,6 +10,7 @@ import {
   EmptyState,
   ErrorBox,
   Field,
+  Modal,
   Page,
   PageHeader,
   Pill,
@@ -41,10 +42,28 @@ export default function Announcements() {
     pinned: false,
     notify_all: true,
   });
+  const [editing, setEditing] = useState<AnnouncementItem | null>(null);
   const { busy, error, run } = useAction();
+  const canWrite = can('admin_announcements', 'create');
 
-  const submit = (e: FormEvent) => {
+  const togglePin = (a: AnnouncementItem) =>
+    run(
+      () => put(`/announcements/${a.id}`, { title: a.title, body: a.body, pinned: !a.pinned }).then(reload),
+      a.pinned ? t('announcements.unpinned') : t('announcements.pinnedDone'),
+    );
+
+  const submit = async (e: FormEvent) => {
     e.preventDefault();
+    // Notifying everyone cannot be taken back, so say so before it happens.
+    if (f.notify_all) {
+      const ok = await confirm({
+        title: t('announcements.notifyConfirmTitle'),
+        body: t('announcements.notifyConfirmBody', { title: f.title.trim() }),
+        confirmLabel: t('announcements.add'),
+        tone: 'primary',
+      });
+      if (!ok) return;
+    }
     run(
       () =>
         post('/announcements', f).then(() => {
@@ -119,7 +138,7 @@ export default function Announcements() {
 
         <div className="stack">
           {/* What members will see */}
-          <Card className="stack-sm">
+          {canWrite && <Card className="stack-sm">
             <div className="row between">
               <span className="muted small">{t('announcements.preview')}</span>
               {f.pinned && (
@@ -133,7 +152,7 @@ export default function Announcements() {
             <span className="muted small">
               {t('announcements.by', { by: me?.name || 'Staff', ago: ft('format:justNow') })}
             </span>
-          </Card>
+          </Card>}
 
           {/* Published announcements */}
           <section>
@@ -147,7 +166,7 @@ export default function Announcements() {
             ) : (
               <div className="list">
                 {data.map((a) => (
-                  <div key={a.id} className="item announcement-item">
+                  <div key={a.id} className="item item-stack announcement-item">
                     <div className="grow min-w-0 stack-xs">
                       <strong className="row nowrap">
                         {a.pinned && <Pin size={14} aria-label={t('announcements.pinned')} />}
@@ -158,11 +177,23 @@ export default function Announcements() {
                         {t('announcements.by', { by: a.by, ago: fmtAgo(a.created_at, ft) })}
                       </span>
                     </div>
-                    {can('admin_announcements', 'delete') && (
-                      <Button variant="ghost" size="sm" className="text-danger" onClick={() => remove(a)}>
-                        {t('announcements.delete')}
-                      </Button>
-                    )}
+                    <div className="item-actions">
+                      {canWrite && (
+                        <div className="btn-row">
+                          <Button variant="ghost" size="sm" onClick={() => setEditing(a)}>
+                            {t('announcements.edit')}
+                          </Button>
+                          <Button variant="ghost" size="sm" disabled={busy} onClick={() => togglePin(a)}>
+                            {a.pinned ? t('announcements.unpin') : t('announcements.pin')}
+                          </Button>
+                        </div>
+                      )}
+                      {can('admin_announcements', 'delete') && (
+                        <Button variant="ghost" size="sm" className="text-danger" onClick={() => remove(a)}>
+                          {t('announcements.delete')}
+                        </Button>
+                      )}
+                    </div>
                   </div>
                 ))}
               </div>
@@ -170,6 +201,57 @@ export default function Announcements() {
           </section>
         </div>
       </div>
+
+      {editing && (
+        <EditAnnouncement
+          item={editing}
+          onClose={() => setEditing(null)}
+          onSaved={() => {
+            setEditing(null);
+            reload();
+          }}
+        />
+      )}
     </Page>
+  );
+}
+
+function EditAnnouncement({
+  item,
+  onClose,
+  onSaved,
+}: {
+  item: AnnouncementItem;
+  onClose: () => void;
+  onSaved: () => void;
+}) {
+  const { t } = useTranslation('admin');
+  const [f, setF] = useState({ title: item.title, body: item.body, pinned: item.pinned });
+  const { busy, error, run } = useAction();
+  return (
+    <Modal title={t('announcements.editTitle')} description={t('announcements.editHint')} onClose={onClose}>
+      <form
+        className="stack"
+        onSubmit={(e) => {
+          e.preventDefault();
+          run(() => put(`/announcements/${item.id}`, f).then(onSaved), t('announcements.updated'));
+        }}
+      >
+        <Field label={t('announcements.titleLabel')}>
+          <input className="input" required value={f.title} onChange={(e) => setF({ ...f, title: e.target.value })} />
+        </Field>
+        <Field label={t('announcements.bodyLabel')}>
+          <textarea className="input" required rows={5} value={f.body} onChange={(e) => setF({ ...f, body: e.target.value })} />
+        </Field>
+        <label className={`check ${f.pinned ? 'on' : ''}`}>
+          <input type="checkbox" checked={f.pinned} onChange={(e) => setF({ ...f, pinned: e.target.checked })} />
+          {t('announcements.pinned')}
+        </label>
+        <ErrorBox error={error} />
+        <Button variant="primary" type="submit" disabled={busy || !f.title.trim() || !f.body.trim()}>
+          {t('announcements.save')}
+        </Button>
+      </form>
+    </Modal>
   );
 }

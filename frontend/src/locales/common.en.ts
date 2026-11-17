@@ -47,6 +47,10 @@ export default {
     noMore: 'No more records',
   },
   backToTop: 'Back to top',
+  exportAll: 'Export all ({count})',
+  exportDone: 'Exported {count} rows',
+  exportCapped: 'Exported the first {count} rows. Narrow the filters to get the rest.',
+  exportFailed: 'Could not export. Try again.',
   exportCsv: 'Export CSV',
   table: {
     clearFilters: 'Clear filters',

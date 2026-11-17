@@ -41,3 +41,12 @@ it('always requests the paginated members response shape', async () => {
     expect(mocks.paths.some((path) => path.includes('/admin/users?') && path.includes('page=1') && path.includes('limit=50'))).toBe(true);
   });
 });
+
+it('sends the status and role filters to the server', async () => {
+  render(<MemoryRouter initialEntries={['/admin/members?status=pending&role=driver&q=lim']}><Members /></MemoryRouter>);
+  await waitFor(() => {
+    expect(
+      mocks.paths.some((p) => p.includes('/admin/users?') && p.includes('status=pending') && p.includes('role=driver') && p.includes('q=lim')),
+    ).toBe(true);
+  });
+});

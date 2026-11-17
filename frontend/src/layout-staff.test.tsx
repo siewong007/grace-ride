@@ -124,7 +124,7 @@ describe('Staff navigation', () => {
     expect(within(page).queryByRole('link', { name: /Roles & permissions/ })).toBeNull();
     expect(within(page).queryByRole('link', { name: /Member reports/ })).toBeNull();
     expect(within(page).queryByRole('link', { name: /Announcements/ })).toBeNull();
-    expect(within(page).queryByRole('link', { name: /Groups & areas/ })).toBeNull();
+    expect(within(page).queryByRole('link', { name: /Settings/ })).toBeNull();
     expect(within(page).queryByRole('link', { name: /Audit log/ })).toBeNull();
     expect(within(page).queryByRole('link', { name: /Plan transport/ })).toBeNull();
   });

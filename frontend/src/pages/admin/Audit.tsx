@@ -20,7 +20,7 @@ import {
   UniversalTable,
   useInfiniteScroll,
 } from '../../components/ui';
-import { auditActionLabel } from '../../auditLabel';
+import { auditActionLabel, auditEntityLabel } from '../../auditLabel';
 import { fmtDateTime, useFormatT } from '../../format';
 import { ADMIN_HOME } from '../../staffNav';
 
@@ -215,6 +215,7 @@ const ACTION_CATEGORIES = [
       'settings.rates',
       'settings.system',
       'announcement.create',
+      'announcement.update',
       'announcement.delete',
       'invite.create',
       'invite.revoke',
@@ -474,9 +475,7 @@ export default function Audit() {
   const hasFilters = Boolean(query);
   // A link may name an object this list doesn't know; keep it selectable.
   const entities = entity && !ENTITIES.includes(entity) ? [...ENTITIES, entity] : ENTITIES;
-  const entityLabel = (k: string) => t(`audit.entities.${k}`, {
-    defaultValue: (k.charAt(0).toUpperCase() + k.slice(1)).replace(/[_-]+/g, ' '),
-  });
+  const entityLabel = (k: string) => auditEntityLabel(k, t);
   const objectLabel = (item: AuditItem) => {
     const type = entityLabel(item.entity);
     const name = item.entity_name?.trim();
@@ -624,7 +623,7 @@ export default function Audit() {
     {
       key: 'time',
       header: t('audit.time'),
-      render: (a) => <span className="mono small">{fmtDateTime(a.created_at, ft)}</span>,
+      render: (a) => <span className="mono small no-wrap">{fmtDateTime(a.created_at, ft)}</span>,
     },
     {
       key: 'actor',
@@ -682,9 +681,9 @@ export default function Audit() {
                 to={targetUrl}
                 title={t('audit.viewObject')}
                 aria-label={`${t('audit.viewObject')} ${label}`}
-                style={{ color: 'var(--muted)', display: 'inline-flex' }}
+                className="icon-link"
               >
-                <ExternalLink size={12} />
+                <ExternalLink size={14} />
               </Link>
             )}
           </div>
@@ -975,8 +974,9 @@ export default function Audit() {
               <span className="muted">{t('audit.action')}</span>
               <div className="row gap-xs">
                 <Pill tone={getActionTone(selectedItem.action)}>
-                  {selectedItem.action}
+                  {auditActionLabel(selectedItem.action, t)}
                 </Pill>
+                <span className="mono tiny muted">{selectedItem.action}</span>
               </div>
             </div>
             <div className="audit-entry-row small">

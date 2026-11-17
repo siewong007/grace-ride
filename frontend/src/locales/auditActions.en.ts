@@ -93,6 +93,7 @@ export default {
   settings_rates: 'Updated reimbursement rates',
   settings_system: 'Updated system settings',
   announcement_create: 'Published an announcement',
+  announcement_update: 'Edited an announcement',
   announcement_delete: 'Deleted an announcement',
   help_create: 'Opened a help request',
   help_reply: 'Replied to a help request',

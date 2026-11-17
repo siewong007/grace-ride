@@ -139,11 +139,6 @@ function Groups() {
                       {t('settings.membersBtn')}
                     </Button>
                   )}
-                  {can('admin_groups', 'delete') && (
-                    <Button variant="danger" size="sm" onClick={() => removeGroup(g)}>
-                      {t('settings.delete')}
-                    </Button>
-                  )}
                 </div>
               )}
             </div>
@@ -190,6 +185,15 @@ function Groups() {
         <GroupEdit
           group={editing}
           choices={parentChoices(data ?? [], editing)}
+          onDelete={
+            can('admin_groups', 'delete')
+              ? () => {
+                  const g = editing;
+                  setEditing(null);
+                  removeGroup(g);
+                }
+              : undefined
+          }
           onClose={() => setEditing(null)}
           onSaved={() => {
             setEditing(null);
@@ -215,11 +219,14 @@ function GroupEdit({
   choices,
   onClose,
   onSaved,
+  onDelete,
 }: {
   group: Group;
   choices: Group[];
   onClose: () => void;
   onSaved: () => void;
+  /** Deleting sits here, apart from the everyday buttons, and only for who may delete. */
+  onDelete?: () => void;
 }) {
   const { t } = useTranslation('admin');
   const [name, setName] = useState(group.name);
@@ -256,6 +263,14 @@ function GroupEdit({
         <Button variant="primary" type="submit" disabled={busy}>
           {t('settings.save')}
         </Button>
+        {onDelete && (
+          <div className="stack-xs">
+            <Button variant="danger" type="button" onClick={onDelete}>
+              {t('settings.delete')}
+            </Button>
+            <p className="muted tiny">{t('settings.deleteGroupHint')}</p>
+          </div>
+        )}
       </form>
     </Modal>
   );
@@ -303,13 +318,15 @@ function GroupMembers({
     >
       <input
         className="input"
+        type="search"
+        aria-label={t('settings.search')}
         placeholder={t('settings.search')}
         value={q}
         onChange={(e) => setQ(e.target.value)}
       />
       <div className="stack-sm group-members-list">
         {all
-          ?.filter((u) => (u.status == null || u.status === 'active') && u.name.includes(q))
+          ?.filter((u) => (u.status == null || u.status === 'active') && u.name.toLowerCase().includes(q.trim().toLowerCase()))
           .map((u) => (
             <label
               key={u.id}
@@ -411,9 +428,11 @@ function Areas() {
             />
             {t('settings.openSignup')}
           </label>
+          <ErrorBox error={error} />
           <Button
             variant="primary"
             block
+            disabled={busy || !edit.name.trim()}
             onClick={() =>
               run(
                 () =>
@@ -453,20 +472,31 @@ function ReimbursementRates() {
   const [initialized, setInitialized] = useState(false);
   const { busy, error, run } = useAction();
 
+  // Stored as cents per km, shown and typed in ringgit.
+  const toRm = (cents: number) => (cents / 100).toFixed(2);
+  const parseRm = (v: string) => {
+    const n = Number(v);
+    return v.trim() !== '' && Number.isFinite(n) && n >= 0 ? Math.round(n * 100) : null;
+  };
+  const stdError = standardRate !== '' && parseRm(standardRate) === null ? t('settings.rateError') : undefined;
+  const othError = otherRate !== '' && parseRm(otherRate) === null ? t('settings.rateError') : undefined;
+  const ratesValid = parseRm(standardRate) !== null && parseRm(otherRate) !== null;
+
   useEffect(() => {
     if (data?.rates && !initialized) {
       const std = data.rates.find((r) => r.vehicle_type === 'standard');
       const oth = data.rates.find((r) => r.vehicle_type === 'other');
-      if (std) setStandardRate(String(std.rate_cents_per_km));
-      if (oth) setOtherRate(String(oth.rate_cents_per_km));
+      if (std) setStandardRate(toRm(std.rate_cents_per_km));
+      if (oth) setOtherRate(toRm(oth.rate_cents_per_km));
       setInitialized(true);
     }
   }, [data, initialized]);
 
   const save = (e: FormEvent) => {
     e.preventDefault();
-    const stdNum = Math.max(0, parseInt(standardRate, 10) || 0);
-    const othNum = Math.max(0, parseInt(otherRate, 10) || 0);
+    const stdNum = parseRm(standardRate);
+    const othNum = parseRm(otherRate);
+    if (stdNum === null || othNum === null) return;
     run(
       () =>
         put('/admin/settings/rates', {
@@ -491,24 +521,26 @@ function ReimbursementRates() {
       ) : (
         <form onSubmit={save} className="stack">
           <div className="grid cols-2">
-            <Field label={t('settings.rateStandard')}>
+            <Field label={t('settings.rateStandard')} error={stdError}>
               <input
                 className="input"
                 type="number"
+                inputMode="decimal"
                 min="0"
-                step="1"
+                step="0.01"
                 value={standardRate}
                 disabled={!canUpdate || busy}
                 onChange={(e) => setStandardRate(e.target.value)}
                 required
               />
             </Field>
-            <Field label={t('settings.rateOther')}>
+            <Field label={t('settings.rateOther')} error={othError}>
               <input
                 className="input"
                 type="number"
+                inputMode="decimal"
                 min="0"
-                step="1"
+                step="0.01"
                 value={otherRate}
                 disabled={!canUpdate || busy}
                 onChange={(e) => setOtherRate(e.target.value)}
@@ -521,7 +553,7 @@ function ReimbursementRates() {
 
           {canUpdate && (
             <div className="btn-row">
-              <Button variant="primary" type="submit" disabled={busy} loading={busy}>
+              <Button variant="primary" type="submit" disabled={busy || !ratesValid} loading={busy}>
                 {t('settings.saveRates')}
               </Button>
             </div>
@@ -561,20 +593,37 @@ function SystemRetentionSettings() {
     }
   }, [data, initialized]);
 
+  // Out-of-range numbers are explained, not silently changed to something else on save.
+  const limits = {
+    audit: { min: 30, max: 3650 },
+    chat: { min: 7, max: 3650 },
+    drivers: { min: 1, max: 100 },
+    timeout: { min: 0, max: 1440 },
+  };
+  const check = (value: string, { min, max }: { min: number; max: number }) => {
+    const n = Number(value);
+    return value.trim() !== '' && Number.isInteger(n) && n >= min && n <= max
+      ? undefined
+      : t('settings.rangeError', { min, max });
+  };
+  const errors = {
+    audit: check(auditDays, limits.audit),
+    chat: check(chatDays, limits.chat),
+    drivers: check(maxDrivers, limits.drivers),
+    timeout: check(sessionTimeout, limits.timeout),
+  };
+  const systemValid = !Object.values(errors).some(Boolean);
+
   const save = (e: FormEvent) => {
     e.preventDefault();
-    const auditNum = Math.max(30, Math.min(3650, parseInt(auditDays, 10) || 730));
-    const chatNum = Math.max(7, Math.min(3650, parseInt(chatDays, 10) || 180));
-    const driversNum = Math.max(1, Math.min(100, parseInt(maxDrivers, 10) || 10));
-    const timeoutNum = Math.max(0, Math.min(1440, parseInt(sessionTimeout, 10) ?? 15));
-
+    if (!systemValid) return;
     run(
       () =>
         put('/admin/settings/system', {
-          audit_retention_days: auditNum,
-          chat_retention_days: chatNum,
-          max_live_drivers: driversNum,
-          session_timeout_mins: timeoutNum,
+          audit_retention_days: Number(auditDays),
+          chat_retention_days: Number(chatDays),
+          max_live_drivers: Number(maxDrivers),
+          session_timeout_mins: Number(sessionTimeout),
         }).then(reload),
       t('settings.systemSaved'),
     );
@@ -595,6 +644,7 @@ function SystemRetentionSettings() {
             <Field
               label={t('settings.auditRetention')}
               hint={t('settings.auditRetentionHint')}
+              error={errors.audit}
             >
               <input
                 className="input"
@@ -612,6 +662,7 @@ function SystemRetentionSettings() {
             <Field
               label={t('settings.chatRetention')}
               hint={t('settings.chatRetentionHint')}
+              error={errors.chat}
             >
               <input
                 className="input"
@@ -629,6 +680,7 @@ function SystemRetentionSettings() {
             <Field
               label={t('settings.maxLiveDrivers')}
               hint={t('settings.maxLiveDriversHint')}
+              error={errors.drivers}
             >
               <input
                 className="input"
@@ -646,6 +698,7 @@ function SystemRetentionSettings() {
             <Field
               label={t('settings.sessionTimeout')}
               hint={t('settings.sessionTimeoutHint')}
+              error={errors.timeout}
             >
               <input
                 className="input"
@@ -665,7 +718,7 @@ function SystemRetentionSettings() {
 
           {canUpdate && (
             <div className="btn-row">
-              <Button variant="primary" type="submit" disabled={busy} loading={busy}>
+              <Button variant="primary" type="submit" disabled={busy || !systemValid} loading={busy}>
                 {t('settings.saveSystem')}
               </Button>
             </div>

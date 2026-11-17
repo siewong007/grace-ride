@@ -282,7 +282,7 @@ button, input, select, textarea { font: inherit; color: inherit; }
     padding: var(--space-4) var(--space-2); background: var(--bg); border-right: 1px solid var(--border);
   }
   .sidebar-brand { display: grid; place-items: center; margin-bottom: var(--space-4); }
-  .sidebar-brand-text, .sidebar .section-label { display: none; }
+  .sidebar .section-label { display: none; }
   .sidebar-link {
     position: relative;
     display: flex; flex-direction: column; align-items: center; justify-content: center;
@@ -302,6 +302,7 @@ button, input, select, textarea { font: inherit; color: inherit; }
 /* Tablet: icon rail with a tooltip for each label */
 @media (min-width: 768px) and (max-width: 1199px) {
   /* The label stays for screen readers (the link's only name once the icon is alone); the tooltip is for sighted hover. */
+  .sidebar-brand-text { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; border: 0; }
   .sidebar-label { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; border: 0; }
   .sidebar-tooltip {
     position: absolute;
@@ -2604,3 +2605,28 @@ body[data-walkthrough="min"] .main { padding-bottom: calc(var(--nav-h) + env(saf
 
 .no-wrap { white-space: nowrap; flex: none; }
 @media (max-width: 639px) { .report-filters > :first-child { grid-column: 1 / -1; } .report-filters { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+
+/* Links that sit inside a sentence or table cell are underlined, so colour is not the only cue. */
+main p a:not(.btn), main .small a:not(.btn), main td a:not(.btn):not(.table-filter-link) { text-decoration: underline; }
+/* A long status ("Alternative transport approved") wraps instead of squeezing the name beside it. */
+.item-status { max-width: 48%; }
+.item-status .pill { white-space: normal; text-align: center; }
+/* Small icon-only link beside a label (e.g. open the object an audit entry is about). */
+.icon-link { display: inline-flex; align-items: center; justify-content: center; min-width: 32px; min-height: 32px; color: var(--muted); }
+.list > button.item:disabled { cursor: default; opacity: 0.7; }
+@media (pointer: coarse) { .icon-link, .table-filter-link { min-width: 44px; min-height: 44px; } }
+
+/* Printing a page (e.g. a report) leaves out the app frame. */
+@media print {
+  .sidebar, .topbar, .bottom-nav, .page-head-actions, .report-filters, .toast-container, .shell-notice-container { display: none !important; }
+  .shell { display: block; }
+  .main { padding: 0; max-width: none; }
+  body { background: #fff; color: #000; }
+}
+
+/* Phones: the search box takes a full line and the other filters share lines, so filters do not push the list off screen. */
+@media (max-width: 767px) {
+  .table-toolbar .table-filter { flex: 1 1 40%; min-width: 0; }
+  .table-toolbar .table-filter:first-child { flex-basis: 100%; }
+  .table-toolbar .table-filter .input { width: 100%; }
+}

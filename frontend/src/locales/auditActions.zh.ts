@@ -93,6 +93,7 @@ export default {
   settings_rates: '更新了报销费率',
   settings_system: '更新了系统设置',
   announcement_create: '发布了公告',
+  announcement_update: '编辑了公告',
   announcement_delete: '删除了公告',
   help_create: '提出了求助',
   help_reply: '回复了求助',

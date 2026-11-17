@@ -46,6 +46,8 @@ function getPageTitle(pathname: string, t: (key: string) => string): string {
   if (pathname === '/me') return t('profile');
   if (pathname === '/admin/menu') return t('adminSheetTitle');
   if (pathname === '/admin/rides') return t('adminRides');
+  if (pathname.startsWith('/admin/rides/')) return t('rideDetail');
+  if (/^\/admin\/events\/[^/]+\/plan$/.test(pathname)) return t('planTransport');
   if (pathname === '/admin/live') return t('liveMap');
   if (pathname === '/admin/announcements') return t('announcements');
   if (pathname === '/admin/reimbursements') return t('reimbReview');
@@ -154,7 +156,7 @@ export default function Layout() {
   return (
     <div className="shell">
       <nav className="sidebar" aria-label={t('mainNav')}>
-        <Link to={pending ? '/me' : '/'} className="sidebar-brand" aria-label="Grace Ride">
+        <Link to={pending ? '/me' : '/'} className="sidebar-brand">
           <LogoMark />
           <span className="sidebar-brand-text">
             <Wordmark />

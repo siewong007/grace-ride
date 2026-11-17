@@ -47,6 +47,10 @@ export default {
     noMore: '没有更多了',
   },
   backToTop: '回到顶部',
+  exportAll: '导出全部（{count}）',
+  exportDone: '已导出 {count} 笔',
+  exportCapped: '已导出前 {count} 笔，请缩小筛选范围以取得其余资料。',
+  exportFailed: '无法导出，请再试一次。',
   exportCsv: '导出 CSV',
   table: {
     clearFilters: '清除筛选',

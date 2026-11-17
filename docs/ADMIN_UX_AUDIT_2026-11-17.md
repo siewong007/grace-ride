@@ -108,6 +108,8 @@ Effort: S ≈ under half a day, M ≈ 1–2 days, L ≈ 3+ days. Each phase is s
 
 ### Phase 3 — Finding and finishing work faster (about 1 week)
 
+**Status: implemented 2026-11-17.** Done: export of every matching row (client-side paging, capped at 5,000, so no new export endpoint was needed); ride search (`q`) and member status filter on the server, role filter in the UI; waiting counts on the Members "Account recovery" and Reimbursements "Transport review" tabs; dashboard previews trimmed to 3 rows each with "All" links; announcement edit, pin/unpin and a confirm before notifying everyone (new `PUT /announcements/{id}`, needs the create permission). Not done: a labelled tablet rail or drawer — the rail's links now have screen-reader names and keep hover tooltips, but sighted touch users still see icons only; and waiting counts on the Invites and Finance payout tabs, which the dashboard API does not provide.
+
 | Item | Fixes | Effort |
 |---|---|---|
 | Server-side "export all matching" for Rides, Members, Reimbursements; state the row count on the button | M3 | M (needs backend) |
@@ -117,6 +119,8 @@ Effort: S ≈ under half a day, M ≈ 1–2 days, L ≈ 3+ days. Each phase is s
 | Announcements: edit, pin/unpin, confirm before notifying everyone | M9 | M (needs backend) |
 
 ### Phase 4 — Consistency (about 2–3 days)
+
+**Status: implemented 2026-11-17.** Done: one name per screen (Transport dashboard, Settings) and top-bar titles for ride detail and the plan; settings validate inline instead of clamping, show rates in ringgit, keep errors inside the area dialog, search group members case-insensitively, and delete a group from its edit dialog; audit table time no longer wraps and its small targets are larger, and the detail dialog shows the readable action; report labels translated; in-text links underlined; Visitors group hidden from member group chips; live-map drivers without a position are not selectable; long status pills wrap on phone rows. Changed approach: the report PDF cannot draw Chinese with its built-in font, so when any text is not Latin the Export PDF button prints the page (save as PDF from the print dialog) instead of producing garbled text. Not done: bundling a CJK font into the PDF, and a visual/axe regression suite for admin screens.
 
 | Item | Fixes | Effort |
 |---|---|---|

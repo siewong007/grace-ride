@@ -17,7 +17,7 @@ import {
   TableColumn,
   UniversalTable,
 } from '../../components/ui';
-import { auditActionLabel } from '../../auditLabel';
+import { auditActionLabel, auditEntityLabel } from '../../auditLabel';
 import { fmtAgo, fmtDay, fmtTime, RIDE_STATUS, todayStr, useFormatT } from '../../format';
 import { ADMIN_HOME } from '../../staffNav';
 import { rideCompactRow } from './rideRows';
@@ -41,6 +41,9 @@ interface Dash {
   oldest_help_at: string | null;
   help_claimed_by_me?: number;
 }
+
+/** How many rides each preview card lists; the queue above is the place to work through the rest. */
+const PREVIEW_ROWS = 3;
 
 /** One line of the work queue: how many things wait, where, and the one action that clears them. */
 interface QueueRow {
@@ -262,11 +265,18 @@ export default function Dashboard() {
         {/* Right column: Pending approvals and Follow-ups */}
         <div className="stack">
           <Card className="stack">
-            <h3>
-              {t('dashboard.pendingApproval2', {
-                count: approvals.data?.length ?? 0,
-              })}
-            </h3>
+            <div className="row between">
+              <h3>
+                {t('dashboard.pendingApproval2', {
+                  count: approvals.data?.length ?? 0,
+                })}
+              </h3>
+              {(approvals.data?.length ?? 0) > PREVIEW_ROWS && (
+                <Link to="/admin/rides?status=pending_approval" className="small">
+                  {t('rides.all')}
+                </Link>
+              )}
+            </div>
             {approvals.loading ? (
               <CardSkeleton count={2} />
             ) : approvals.error ? (
@@ -275,11 +285,11 @@ export default function Dashboard() {
               <EmptyState title={t('dashboard.noPending')} />
             ) : (
               <div className="list">
-                {approvals.data.slice(0, 6).map((r) => (
+                {approvals.data.slice(0, PREVIEW_ROWS).map((r) => (
                   <Link key={r.id} to={`/admin/rides/${r.id}`} className="item">
                     <div className="grow">
                       <div className="bold">
-                        {r.passenger.name} ← {r.driver?.name}
+                        {r.driver ? `${r.passenger.name} ← ${r.driver.name}` : r.passenger.name}
                       </div>
                       <div className="muted tiny">
                         {fmtDay(r.pickup_at, ft)} {fmtTime(r.pickup_at, ft)} ·{' '}
@@ -294,7 +304,14 @@ export default function Dashboard() {
           </Card>
 
           <Card className="stack">
-            <h3>{t('dashboard.followUp')}</h3>
+            <div className="row between">
+              <h3>{t('dashboard.followUp')}</h3>
+              {(attention.data?.length ?? 0) > PREVIEW_ROWS && (
+                <Link to="/admin/rides?attention=true" className="small">
+                  {t('rides.all')}
+                </Link>
+              )}
+            </div>
             {attention.loading ? (
               <CardSkeleton count={2} />
             ) : attention.error ? (
@@ -303,7 +320,7 @@ export default function Dashboard() {
               <EmptyState title={t('dashboard.noFollowUp')} />
             ) : (
               <div className="list">
-                {attention.data.slice(0, 8).map((r) => (
+                {attention.data.slice(0, PREVIEW_ROWS).map((r) => (
                   <Link key={r.id} to={`/admin/rides/${r.id}`} className="item">
                     <div className="grow">
                       <div className="bold">
@@ -344,7 +361,7 @@ export default function Dashboard() {
                           {a.actor ?? t('audit.system')} · {auditActionLabel(a.action, t)}
                         </div>
                         <div className="muted tiny">
-                          {a.entity}{a.entity_id != null && ` #${a.entity_id}`} {a.detail && `· ${a.detail}`}
+                          {auditEntityLabel(a.entity, t)}{a.entity_id != null && ` #${a.entity_id}`} {a.detail && `· ${a.detail}`}
                         </div>
                       </div>
                       <span className="tiny mono muted">

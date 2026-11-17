@@ -25,9 +25,10 @@ import {
   useAction,
 } from '../../components/ui';
 import { useTableParams } from '../../components/tableState';
-import { exportToCsv, fmtDateTime, fmtDay, REIMB_STATUS, rm, todayStr, useFormatT } from '../../format';
+import { useExportAll } from '../../components/useExportAll';
+import { fmtDateTime, fmtDay, REIMB_STATUS, rm, todayStr, useFormatT } from '../../format';
 import type { Reimb } from '../Reimbursements';
-import { ADMIN_HOME } from '../../staffNav';
+import { ADMIN_HOME, useStaffNav } from '../../staffNav';
 
 interface PaginatedReimbursements {
   items: Reimb[];
@@ -41,6 +42,7 @@ export default function AdminReimbursements() {
   const { t } = useTranslation('admin');
   const { can } = useAuth();
   const [params, setParams] = useSearchParams();
+  const { counts } = useStaffNav();
   const canReview = can('admin_reimb_review');
   const canPay = can('admin_reimb_pay');
   const tabParam = params.get('tab') as 'review' | 'payout';
@@ -76,7 +78,7 @@ export default function AdminReimbursements() {
           value={tab}
           onChange={(v) => handleTabChange(v as 'review' | 'payout')}
           items={[
-            { value: 'review', label: t('reimb.review') },
+            { value: 'review', label: t('reimb.review'), count: counts?.pending_reimbursements || undefined },
             { value: 'payout', label: t('reimb.payout') },
           ]}
         />
@@ -144,33 +146,24 @@ function List({ scope }: { scope: 'review' | 'payout' }) {
     },
   ];
 
-  const handleExport = () => {
-    if (scope === 'payout') {
-      const headers = ['Claim ID', 'Payee Name', 'DuitNow / Account', 'Amount (MYR)', 'Applicant', 'Description', 'Status'];
-      const rows = items.map((r) => [
-        r.id,
-        r.payee_name || r.user.name,
-        r.payee_phone || '',
-        (r.amount_cents / 100).toFixed(2),
-        r.user.name,
-        r.description,
-        r.status,
-      ]);
-      exportToCsv(`grace-ride-duitnow-batch-${todayStr()}`, headers, rows);
-      return;
-    }
-    const headers = ['ID', 'Applicant', 'Amount (cents)', 'Description', 'Ride ID', 'Status', 'Submitted At'];
-    const rows = items.map((r) => [
-      r.id,
-      r.user.name,
-      r.amount_cents,
-      r.description,
-      r.ride_id ?? '',
-      r.status,
-      r.created_at,
-    ]);
-    exportToCsv(`grace-ride-reimbursements-${scope}-${todayStr()}`, headers, rows);
-  };
+  const exporter = useExportAll<Reimb>();
+  const handleExport = () =>
+    scope === 'payout'
+      ? exporter.run({
+          path: '/reimbursements',
+          query: apiQuery,
+          filename: `grace-ride-duitnow-batch-${todayStr()}`,
+          headers: ['Claim ID', 'Payee Name', 'DuitNow / Account', 'Amount (MYR)', 'Applicant', 'Description', 'Status'],
+          row: (r) => [r.id, r.payee_name || r.user.name, r.payee_phone || '', (r.amount_cents / 100).toFixed(2), r.user.name, r.description, r.status],
+        })
+      : exporter.run({
+          path: '/reimbursements',
+          query: apiQuery,
+          filename: `grace-ride-reimbursements-${scope}-${todayStr()}`,
+          // Amounts in ringgit here too, so the review and payout files agree.
+          headers: ['ID', 'Applicant', 'Amount (MYR)', 'Description', 'Ride ID', 'Status', 'Submitted At'],
+          row: (r) => [r.id, r.user.name, (r.amount_cents / 100).toFixed(2), r.description, r.ride_id ?? '', r.status, r.created_at],
+        });
 
   /** Review or Pay when this member may act on the claim now; otherwise the receipt. */
   const actionCell = (r: Reimb) =>
@@ -245,9 +238,9 @@ function List({ scope }: { scope: 'review' | 'payout' }) {
         <div className="notice info grow">
           {scope === 'payout' ? t('reimb.financeNotice') : t('reimb.transportNotice')}
         </div>
-        {items.length > 0 && (
-          <Button variant="secondary" size="sm" onClick={handleExport} icon={<Download size={16} />}>
-            {scope === 'payout' ? t('reimb.exportBatchDuitNow') : t('common:exportCsv', 'Export CSV')}
+        {total > 0 && (
+          <Button variant="secondary" size="sm" onClick={handleExport} loading={exporter.busy} icon={<Download size={16} />}>
+            {scope === 'payout' ? t('reimb.exportBatchDuitNow') : t('common:exportAll', { count: total })}
           </Button>
         )}
       </div>

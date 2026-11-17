@@ -5,6 +5,7 @@ import { Download } from 'lucide-react';
 import { del, post, put, useApi } from '../../api';
 import { useAuth } from '../../auth';
 import { useTableParams } from '../../components/tableState';
+import { useExportAll } from '../../components/useExportAll';
 import {
   Avatar,
   Button,
@@ -27,9 +28,9 @@ import {
   useConfirm,
   useToast,
 } from '../../components/ui';
-import { exportToCsv, fmtAgo, roleLabel, todayStr, useFormatT } from '../../format';
+import { fmtAgo, roleLabel, todayStr, useFormatT } from '../../format';
 import { useRoleOptions } from './roleData';
-import { ADMIN_HOME } from '../../staffNav';
+import { ADMIN_HOME, useStaffNav } from '../../staffNav';
 
 interface User {
   id: number;
@@ -47,6 +48,8 @@ interface Group {
   id: number;
   name: string;
   is_all: boolean;
+  /** The group visitors join events as: set by the system, not given to members by hand. */
+  is_visitor?: boolean;
 }
 
 interface InviteItem {
@@ -88,10 +91,11 @@ export default function Members() {
   const { can } = useAuth();
   // Each tab is its own page permission; a member sees the ones they hold.
   type Tab = 'members' | 'invites' | 'recovery';
+  const { counts } = useStaffNav();
   const tabs = [
     { value: 'members' as Tab, label: t('members.membersTab'), show: can('admin_members') },
     { value: 'invites' as Tab, label: t('members.invitesTab'), show: can('admin_invites') },
-    { value: 'recovery' as Tab, label: t('members.recoveryTab'), show: can('admin_recovery') },
+    { value: 'recovery' as Tab, label: t('members.recoveryTab'), show: can('admin_recovery'), count: counts?.pending_recovery || undefined },
   ].filter((x) => x.show);
   const [params, setParams] = useSearchParams();
   const currentTab = params.get('tab') as Tab;
@@ -124,7 +128,7 @@ export default function Members() {
       <Tabs
         value={tab}
         onChange={(v) => handleTabChange(v as Tab)}
-        items={tabs.map(({ value, label }) => ({ value, label }))}
+        items={tabs.map(({ value, label, count }) => ({ value, label, count }))}
       />
       {tab === 'members' && <MemberList />}
       {tab === 'invites' && <Invites />}
@@ -149,7 +153,7 @@ function MemberList() {
   // A super admin's account is changed only by another super admin (the server enforces it).
   const isSuper = !!me?.roles?.includes('superadmin');
   const editable = (u: User) => isSuper || !u.roles.includes('superadmin');
-  const { names } = useRoleOptions();
+  const { names, assignable } = useRoleOptions();
   const {
     page,
     pageSize,
@@ -165,7 +169,7 @@ function MemberList() {
   } = useTableParams({
     defaultPageSize: 50,
     defaultSort: { key: 'name', dir: 'asc' },
-    filterKeys: ['q'],
+    filterKeys: ['q', 'status', 'role'],
   });
 
   // The API requires explicit pagination parameters to return totals.
@@ -191,23 +195,35 @@ function MemberList() {
 
   const filterDefs: TableFilter[] = [
     { type: 'text', key: 'q', label: t('members.search') },
+    {
+      type: 'select',
+      key: 'status',
+      label: t('members.status'),
+      allLabel: t('members.allStatus'),
+      options: [
+        { value: 'pending', label: t('members.pending') },
+        { value: 'active', label: t('members.active') },
+        { value: 'disabled', label: t('members.disabled') },
+      ],
+    },
+    {
+      type: 'select',
+      key: 'role',
+      label: t('members.role'),
+      allLabel: t('members.allRoles'),
+      options: assignable.map((r) => ({ value: r, label: roleLabel(r, ft, names) })),
+    },
   ];
 
-  const handleExport = () => {
-    const headers = ['ID', 'Name', 'Email', 'Phone', 'Roles', 'Status', 'Passkeys', 'Groups', 'Joined'];
-    const rows = users.map((u) => [
-      u.id,
-      u.name,
-      u.email,
-      u.phone,
-      u.roles.join('; '),
-      u.status,
-      u.passkeys,
-      u.groups,
-      u.created_at,
-    ]);
-    exportToCsv(`grace-ride-members-${todayStr()}`, headers, rows);
-  };
+  const exporter = useExportAll<User>();
+  const handleExport = () =>
+    exporter.run({
+      path: '/admin/users',
+      query: apiQuery,
+      filename: `grace-ride-members-${todayStr()}`,
+      headers: ['ID', 'Name', 'Email', 'Phone', 'Roles', 'Status', 'Passkeys', 'Groups', 'Joined'],
+      row: (u) => [u.id, u.name, u.email, u.phone, u.roles.join('; '), u.status, u.passkeys, u.groups, u.created_at],
+    });
 
   const columns: TableColumn<User>[] = [
     {
@@ -338,9 +354,9 @@ function MemberList() {
             filterValues={filters}
             onFilterChange={setFilter}
             onClearFilters={clearFilters}
-            toolbarActions={!loading && users.length > 0 ? (
-              <Button variant="secondary" size="sm" onClick={handleExport} icon={<Download size={16} />}>
-                {t('common:exportCsv', 'Export CSV')}
+            toolbarActions={!loading && total > 0 ? (
+              <Button variant="secondary" size="sm" onClick={handleExport} loading={exporter.busy} icon={<Download size={16} />}>
+                {t('common:exportAll', { count: total })}
               </Button>
             ) : undefined}
             emptyContent={loading ? <CardSkeleton count={4} /> : (
@@ -483,7 +499,7 @@ function MemberFormModal({
           <strong className="small">{t('members.group')}</strong>
           <div className="chips">
             {groups
-              ?.filter((g) => !g.is_all)
+              ?.filter((g) => !g.is_all && !g.is_visitor)
               .map((g) => (
                 <button
                   key={g.id}

@@ -243,7 +243,7 @@ describe('Admin Dashboard', () => {
       </MemoryRouter>
     );
 
-    expect(screen.getByText('Ride overview', { exact: false })).toBeInTheDocument();
+    expect(screen.getByText('Transport dashboard', { exact: false })).toBeInTheDocument();
     expect(screen.getByRole('heading', { name: 'Needs you now' })).toBeInTheDocument();
     const rows = screen.getAllByRole('listitem').filter((li) => li.classList.contains('work-queue-row'));
     expect(rows.map((r) => within(r).getByText(/Rides|requests|Reimbursements/).textContent)).toEqual([
@@ -389,7 +389,7 @@ describe('Admin Settings', () => {
       </MemoryRouter>
     );
 
-    expect(screen.getByRole('heading', { level: 1, name: /groups & areas/i })).toBeInTheDocument();
+    expect(screen.getByRole('heading', { level: 1, name: /^settings$/i })).toBeInTheDocument();
     expect(screen.getByText('Member groups')).toBeInTheDocument();
     expect(screen.getByText('Ride areas')).toBeInTheDocument();
     expect(screen.getByText('Data retention & system limits')).toBeInTheDocument();

@@ -140,6 +140,22 @@ export default function AdminReports() {
 
   const exportPdf = () => {
     if (!r) return;
+    // The PDF's built-in font cannot draw Chinese: print the page instead, which uses the
+    // device's own fonts and can be saved as a PDF from the print dialog.
+    const drawable = (s: string) => !/[^\u0000-\u024f\u2000-\u206f]/.test(s);
+    const texts = [
+      r.user.name,
+      t('reports.pdfTitle'),
+      t('reports.summary'),
+      t('reports.events_attended'),
+      ...r.events.map((e) => e.title),
+      ...r.by_kind.map((k) => ft(EVENT_KIND[k.kind]?.label ?? k.kind)),
+      ...r.badges.flatMap((b) => [b.name, b.rule]),
+    ];
+    if (!texts.every(drawable)) {
+      window.print();
+      return;
+    }
     const doc = new jsPDF();
     const pageW = doc.internal.pageSize.getWidth();
     const pageH = doc.internal.pageSize.getHeight();
@@ -178,7 +194,7 @@ export default function AdminReports() {
 
     if (r.by_kind.length > 0) {
       doc.setFontSize(14);
-      doc.text('By event kind', 20, y);
+      doc.text(t('reports.byKind'), 20, y);
       y += 8;
       for (const k of r.by_kind) {
         doc.text(
@@ -193,7 +209,7 @@ export default function AdminReports() {
 
     if (r.events.length > 0) {
       doc.setFontSize(14);
-      doc.text('Events', 20, y);
+      doc.text(t('reports.events'), 20, y);
       y += 8;
       for (const e of r.events) {
         if (y > pageH - 40) {
@@ -216,7 +232,7 @@ export default function AdminReports() {
           y = 20;
         }
         doc.text(
-          `${b.name} — ${b.rule} (${b.progress}/${b.target}) ${b.earned ? 'earned' : ''}`,
+          `${b.name} — ${b.rule} (${b.progress}/${b.target}) ${b.earned ? t('reports.earned') : ''}`,
           25,
           y,
         );
