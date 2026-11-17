@@ -1495,6 +1495,36 @@ async fn validate_reimb(st: &AppState, u: &CurrentUser, req: &ReimbIn) -> AppRes
     Ok(())
 }
 
+/// A receipt, or a ride, pays out once: refuse it while another request for it is still
+/// live (anything but rejected). Runs in the caller's transaction after taking a lock,
+/// so two requests sent together can't both pass.
+async fn ensure_not_claimed(
+    tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+    lang: Lang,
+    req: &ReimbIn,
+    except: Option<i64>,
+) -> AppResult<()> {
+    sqlx::query(
+        "SELECT pg_advisory_xact_lock(hashtextextended('grace_ride_reimbursement_claim', 0))",
+    )
+    .execute(&mut **tx)
+    .await?;
+    let (taken,): (i64,) = sqlx::query_as(
+        "SELECT COUNT(*) FROM reimbursements
+         WHERE status <> 'rejected' AND id IS DISTINCT FROM $1
+           AND (receipt_file_id = $2 OR ($3::BIGINT IS NOT NULL AND ride_id = $3))",
+    )
+    .bind(except)
+    .bind(req.receipt_file_id)
+    .bind(req.ride_id)
+    .fetch_one(&mut **tx)
+    .await?;
+    if taken > 0 {
+        return Err(bad(lang, ErrorKey::ReimbursementAlreadyClaimed));
+    }
+    Ok(())
+}
+
 async fn create_reimbursement(
     State(st): State<AppState>,
     u: CurrentUser,
@@ -1502,6 +1532,8 @@ async fn create_reimbursement(
 ) -> AppResult<Json<Value>> {
     require(&u, Page::Reimbursements, Act::Create)?;
     validate_reimb(&st, &u, &req).await?;
+    let mut tx = st.db.begin().await?;
+    ensure_not_claimed(&mut tx, u.lang, &req, None).await?;
     let (id,): (i64,) = sqlx::query_as(
         "INSERT INTO reimbursements (user_id, ride_id, amount_cents, description, receipt_file_id, payee_name, payee_phone, created_at, updated_at) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9) RETURNING id",
     )
@@ -1514,8 +1546,9 @@ async fn create_reimbursement(
     .bind(req.payee_phone.trim())
     .bind(now())
     .bind(now())
-    .fetch_one(&st.db)
+    .fetch_one(&mut *tx)
     .await?;
+    tx.commit().await?;
     notify_perm(
         &st.db,
         Page::AdminReimbReview,
@@ -1552,7 +1585,11 @@ async fn resubmit_reimbursement(
     }
     require(&u, Page::Reimbursements, Act::Update)?;
     validate_reimb(&st, &u, &req).await?;
-    sqlx::query("UPDATE reimbursements SET ride_id=$1, amount_cents=$2, description=$3, receipt_file_id=$4, payee_name=$5, payee_phone=$6, status='pending', payee_verified=0, updated_at=$7 WHERE id=$8")
+    let mut tx = st.db.begin().await?;
+    ensure_not_claimed(&mut tx, u.lang, &req, Some(id)).await?;
+    // Still sent back and still theirs at the moment of writing: a review or another
+    // resubmission in between wins, and this one is refused.
+    let changed = sqlx::query("UPDATE reimbursements SET ride_id=$1, amount_cents=$2, description=$3, receipt_file_id=$4, payee_name=$5, payee_phone=$6, status='pending', payee_verified=0, updated_at=$7 WHERE id=$8 AND user_id=$9 AND status='returned'")
         .bind(req.ride_id)
         .bind(req.amount_cents)
         .bind(req.description.trim())
@@ -1561,8 +1598,14 @@ async fn resubmit_reimbursement(
         .bind(req.payee_phone.trim())
         .bind(now())
         .bind(id)
-        .execute(&st.db)
-        .await?;
+        .bind(u.id)
+        .execute(&mut *tx)
+        .await?
+        .rows_affected();
+    if changed == 0 {
+        return Err(bad(u.lang, ErrorKey::OnlyReturnedReimbCanBeResubmitted));
+    }
+    tx.commit().await?;
     notify_perm(
         &st.db,
         Page::AdminReimbReview,
@@ -1694,6 +1737,15 @@ async fn pay_reimbursement(
     if r.user_id == u.id {
         return Err(forbidden(u.lang, ErrorKey::CannotPayOwnRequest));
     }
+    // Two people see every payout: whoever approved it doesn't also pay it.
+    let (reviewed_by,): (Option<i64>,) =
+        sqlx::query_as("SELECT reviewed_by FROM reimbursements WHERE id=$1")
+            .bind(id)
+            .fetch_one(&st.db)
+            .await?;
+    if reviewed_by == Some(u.id) {
+        return Err(forbidden(u.lang, ErrorKey::CannotPayOwnApproval));
+    }
     if !req.payee_verified {
         return Err(bad(u.lang, ErrorKey::PayeeVerificationRequired));
     }
@@ -1703,7 +1755,7 @@ async fn pay_reimbursement(
     // The status check above and this update are separate statements, so a second
     // finance admin can pass the check before the first commit. Transitioning from
     // 'approved' in the update itself makes exactly one payout win.
-    let paid = sqlx::query("UPDATE reimbursements SET status='paid', payee_verified=1, paid_ref=$1, paid_by=$2, paid_at=$3, updated_at=$4 WHERE id=$5 AND status='approved'")
+    let paid = sqlx::query("UPDATE reimbursements SET status='paid', payee_verified=1, paid_ref=$1, paid_by=$2, paid_at=$3, updated_at=$4 WHERE id=$5 AND status='approved' AND reviewed_by IS DISTINCT FROM $2")
         .bind(req.paid_ref.trim())
         .bind(u.id)
         .bind(now())

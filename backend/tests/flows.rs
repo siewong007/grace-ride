@@ -3903,3 +3903,313 @@ async fn settlement_revisions_keep_payments_and_settle_zero_shares() {
     .unwrap();
     assert_eq!(versions, [1, 2]);
 }
+
+#[tokio::test]
+async fn reimbursements_pay_out_once_and_need_two_people() {
+    let (app, st) = setup().await;
+    let c = cast(&app, &st).await;
+    let receipt = upload_png(&app, &c.member).await;
+    let body = json!({
+        "amount_cents": 1500,
+        "description": "Grab",
+        "receipt_file_id": receipt,
+        "payee_name": "陈法拉",
+        "payee_phone": "012-300 0006"
+    });
+    let first = must(
+        &app,
+        Method::POST,
+        "/api/reimbursements",
+        Some(&c.member),
+        Some(body.clone()),
+    )
+    .await["id"]
+        .as_i64()
+        .unwrap();
+
+    // The same receipt can't be claimed again while the first request is live.
+    deny(
+        &app,
+        Method::POST,
+        "/api/reimbursements",
+        Some(&c.member),
+        Some(body.clone()),
+        StatusCode::BAD_REQUEST,
+        "REIMBURSEMENT_ALREADY_CLAIMED",
+    )
+    .await;
+
+    // Whoever approves it doesn't also pay it.
+    must(
+        &app,
+        Method::POST,
+        &format!("/api/reimbursements/{first}/review"),
+        Some(&c.superadmin),
+        Some(json!({"action": "approve"})),
+    )
+    .await;
+    deny(
+        &app,
+        Method::POST,
+        &format!("/api/reimbursements/{first}/pay"),
+        Some(&c.superadmin),
+        Some(json!({"payee_verified": true, "paid_ref": "PAY-2001"})),
+        StatusCode::FORBIDDEN,
+        "CANNOT_PAY_OWN_APPROVAL",
+    )
+    .await;
+    must(
+        &app,
+        Method::POST,
+        &format!("/api/reimbursements/{first}/pay"),
+        Some(&c.finance),
+        Some(json!({"payee_verified": true, "paid_ref": "PAY-2001"})),
+    )
+    .await;
+
+    // A rejected request frees its receipt for a fresh one.
+    let receipt2 = upload_png(&app, &c.member).await;
+    let mut second = body.clone();
+    second["receipt_file_id"] = json!(receipt2);
+    let rejected = must(
+        &app,
+        Method::POST,
+        "/api/reimbursements",
+        Some(&c.member),
+        Some(second.clone()),
+    )
+    .await["id"]
+        .as_i64()
+        .unwrap();
+    must(
+        &app,
+        Method::POST,
+        &format!("/api/reimbursements/{rejected}/review"),
+        Some(&c.transport),
+        Some(json!({"action": "reject", "note": "看不清"})),
+    )
+    .await;
+    must(
+        &app,
+        Method::POST,
+        "/api/reimbursements",
+        Some(&c.member),
+        Some(second),
+    )
+    .await;
+}
+
+#[tokio::test]
+async fn rides_and_visitor_links_follow_a_moved_event() {
+    let (app, st) = setup().await;
+    let c = cast(&app, &st).await;
+    let event = make_event(&app, &c.admin, &[c.all_group], 0).await;
+    let (old_at,): (String,) = sqlx::query_as("SELECT starts_at FROM events WHERE id=$1")
+        .bind(event)
+        .fetch_one(&st.db)
+        .await
+        .unwrap();
+    let ride = |status: &'static str, destination: &'static str| {
+        let db = st.db.clone();
+        let (member, driver, area) = (c.member_id, c.driver_id, c.area_id);
+        async move {
+            sqlx::query_scalar::<_, i64>(
+                "INSERT INTO rides (passenger_id, driver_id, event_id, pickup_at, pickup_area_id, pickup_address, destination, seats, status, created_at, updated_at)
+                 VALUES ($1,$2,$3,$4,$5,'Lot 21',$6,1,$7,$8,$8) RETURNING id",
+            )
+            .bind(member)
+            .bind(driver)
+            .bind(event)
+            .bind(day(2, "09:00"))
+            .bind(area)
+            .bind(destination)
+            .bind(status)
+            .bind(grace_ride::util::now())
+            .fetch_one(&db)
+            .await
+            .unwrap()
+        }
+    };
+    let waiting = ride("confirmed", "Hall").await;
+    let elsewhere = ride("confirmed", "My office").await;
+    let done = ride("completed", "Hall").await;
+    let pass: i64 = sqlx::query_scalar(
+        "INSERT INTO visitor_passes (token_hash, event_id, host_id, host_group_id, ride_id, name, valid_from, valid_until)
+         VALUES ('moved-test', $1, $2, $3, $4, 'Guest', $5, $6) RETURNING id",
+    )
+    .bind(event)
+    .bind(c.member_id)
+    .bind(c.all_group)
+    .bind(waiting)
+    .bind(grace_ride::util::now())
+    .bind(day(2, "22:00:00"))
+    .fetch_one(&st.db)
+    .await
+    .unwrap();
+
+    let new_at = day(5, "19:30");
+    must(
+        &app,
+        Method::PUT,
+        &format!("/api/events/{event}"),
+        Some(&c.admin),
+        Some(event_body(
+            "团契聚会",
+            "other",
+            &new_at,
+            "",
+            &[c.all_group],
+            0,
+        )),
+    )
+    .await;
+    let mut moved = event_body("团契聚会", "other", &new_at, "", &[c.all_group], 0);
+    moved["location"] = json!("New Hall");
+    must(
+        &app,
+        Method::PUT,
+        &format!("/api/events/{event}"),
+        Some(&c.admin),
+        Some(moved),
+    )
+    .await;
+
+    let get = |id: i64| {
+        let db = st.db.clone();
+        async move {
+            sqlx::query_as::<_, (String, i64)>(
+                "SELECT destination, needs_attention FROM rides WHERE id=$1",
+            )
+            .bind(id)
+            .fetch_one(&db)
+            .await
+            .unwrap()
+        }
+    };
+    assert_eq!(get(waiting).await, ("New Hall".into(), 1));
+    assert_eq!(get(elsewhere).await, ("My office".into(), 1));
+    assert_eq!(get(done).await, ("Hall".into(), 0));
+    assert_ne!(old_at, new_at);
+
+    let told: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM notifications WHERE user_id=$1 AND link='/drive' AND body LIKE '%New Hall%'",
+    )
+    .bind(c.driver_id)
+    .fetch_one(&st.db)
+    .await
+    .unwrap();
+    assert_eq!(told, 1);
+
+    let until: String = sqlx::query_scalar("SELECT valid_until FROM visitor_passes WHERE id=$1")
+        .bind(pass)
+        .fetch_one(&st.db)
+        .await
+        .unwrap();
+    assert!(
+        until.as_str() > new_at.as_str(),
+        "{until} should be after {new_at}"
+    );
+}
+
+#[tokio::test]
+async fn reissuing_a_visitor_link_leaves_exactly_one_working() {
+    let (app, st) = setup().await;
+    let c = cast(&app, &st).await;
+    let event = make_event(&app, &c.admin, &[c.all_group], 0).await;
+    let ride = book(&app, &c.member, c.area_id, 1).await;
+    let pass: i64 = sqlx::query_scalar(
+        "INSERT INTO visitor_passes (token_hash, event_id, host_id, host_group_id, ride_id, name, valid_from, valid_until)
+         VALUES ('reissue-test', $1, $2, $3, $4, 'Guest', $5, $6) RETURNING id",
+    )
+    .bind(event)
+    .bind(c.member_id)
+    .bind(c.all_group)
+    .bind(ride)
+    .bind(grace_ride::util::now())
+    .bind(day(3, "22:00:00"))
+    .fetch_one(&st.db)
+    .await
+    .unwrap();
+    let path = format!("/api/visitor-passes/{pass}/reissue");
+    let (a, b) = tokio::join!(
+        call(&app, Method::POST, &path, Some(&c.member), None),
+        call(&app, Method::POST, &path, Some(&c.member), None),
+    );
+    let ok = [a.status, b.status]
+        .iter()
+        .filter(|s| **s == StatusCode::OK)
+        .count();
+    assert_eq!(ok, 1, "{} / {}", a.json, b.json);
+    let open: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM visitor_passes WHERE ride_id=$1 AND closed_at IS NULL",
+    )
+    .bind(ride)
+    .fetch_one(&st.db)
+    .await
+    .unwrap();
+    assert_eq!(open, 1);
+}
+
+/// Reopening a ride (driver drops out, passenger declines) while another driver claims
+/// it must never leave the ride waiting on a passenger with no driver.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn reopening_a_ride_never_drops_a_driver_who_just_claimed_it() {
+    let (app, st) = setup().await;
+    let c = cast(&app, &st).await;
+    for round in 0..12 {
+        let id = book(&app, &c.member, c.area_id, 1).await;
+        must(
+            &app,
+            Method::POST,
+            &format!("/api/rides/{id}/claim"),
+            Some(&c.driver),
+            None,
+        )
+        .await;
+        // Even rounds the driver drops out, odd rounds the passenger declines.
+        let (reopen_path, reopen_body, reopener) = if round % 2 == 0 {
+            (
+                format!("/api/rides/{id}/withdraw"),
+                json!({"reason": "车坏了"}),
+                &c.driver,
+            )
+        } else {
+            (
+                format!("/api/rides/{id}/respond"),
+                json!({"accept": false}),
+                &c.member,
+            )
+        };
+        let claim_path = format!("/api/rides/{id}/claim");
+        let reopen = call(
+            &app,
+            Method::POST,
+            &reopen_path,
+            Some(reopener),
+            Some(reopen_body),
+        );
+        let claim = call(&app, Method::POST, &claim_path, Some(&c.driver2), None);
+        let (reopened, _) = tokio::join!(reopen, claim);
+        assert_eq!(reopened.status, StatusCode::OK, "{}", reopened.json);
+        let (status, driver): (String, Option<i64>) =
+            sqlx::query_as("SELECT status, driver_id FROM rides WHERE id=$1")
+                .bind(id)
+                .fetch_one(&st.db)
+                .await
+                .unwrap();
+        match status.as_str() {
+            "pending_driver" => assert_eq!(driver, None, "round {round}"),
+            "pending_passenger" => assert_eq!(driver, Some(c.driver2_id), "round {round}"),
+            other => panic!("round {round}: unexpected status {other}"),
+        }
+        // Free driver2's seats for the next round.
+        must(
+            &app,
+            Method::POST,
+            &format!("/api/rides/{id}/cancel"),
+            Some(&c.member),
+            None,
+        )
+        .await;
+    }
+}

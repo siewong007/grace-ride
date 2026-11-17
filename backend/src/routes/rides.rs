@@ -721,11 +721,18 @@ async fn passenger_respond(
             .await;
         }
     } else {
-        set_status(&st, id, &["pending_passenger"], "pending_driver", u.lang).await?;
-        sqlx::query("UPDATE rides SET driver_id=NULL WHERE id=$1")
-            .bind(id)
-            .execute(&st.db)
-            .await?;
+        // Reopen and let the driver go in one statement (see `driver_withdraw`).
+        let declined = sqlx::query(
+            "UPDATE rides SET status='pending_driver', driver_id=NULL, updated_at=$1
+             WHERE id=$2 AND status='pending_passenger'",
+        )
+        .bind(now())
+        .bind(id)
+        .execute(&st.db)
+        .await?;
+        if declined.rows_affected() == 0 {
+            return Err(conflict(u.lang, ErrorKey::RideStatusChanged));
+        }
         if let Some(d) = r.driver_id {
             let line = format!("{} · {}", r.p_name, r.pickup_at.replace('T', " "));
             notify(
@@ -1256,27 +1263,27 @@ async fn driver_withdraw(
         return Err(forbidden(u.lang, ErrorKey::NotRideDriver));
     }
     require(&u, Page::Drive, Act::Delete)?;
-    let was_confirmed = matches!(r.status.as_str(), "confirmed" | "pending_driver_confirm");
-    set_status(
-        &st,
-        id,
-        &[
-            "pending_passenger",
-            "pending_approval",
-            "pending_driver_confirm",
-            "confirmed",
-        ],
-        "pending_driver",
-        u.lang,
-    )
-    .await?;
     let reason = req.reason.unwrap_or_else(|| "司机无法出车".into());
-    sqlx::query("UPDATE rides SET driver_id=NULL, trip_id=NULL, needs_attention=$1, attention_reason=$2 WHERE id=$3")
-        .bind(was_confirmed as i64)
-        .bind(format!("原司机 {} 无法出车：{}", u.name, reason))
-        .bind(id)
-        .execute(&st.db)
-        .await?;
+    // One statement, and only while this driver still holds the ride: reopening it and
+    // letting go of the driver as two steps let another driver claim it in between,
+    // and the second step then dropped the new driver, leaving the ride stuck.
+    // (`status` on the right-hand side is the value before this update.)
+    let released = sqlx::query(
+        "UPDATE rides SET status='pending_driver', driver_id=NULL, trip_id=NULL,
+                needs_attention = CASE WHEN status IN ('confirmed','pending_driver_confirm') THEN 1 ELSE 0 END,
+                attention_reason=$1, updated_at=$2
+         WHERE id=$3 AND driver_id=$4
+           AND status IN ('pending_passenger','pending_approval','pending_driver_confirm','confirmed')",
+    )
+    .bind(format!("原司机 {} 无法出车：{}", u.name, reason))
+    .bind(now())
+    .bind(id)
+    .bind(u.id)
+    .execute(&st.db)
+    .await?;
+    if released.rows_affected() == 0 {
+        return Err(conflict(u.lang, ErrorKey::RideStatusChanged));
+    }
     notify(
         &st.db,
         r.passenger_id,
@@ -2839,27 +2846,6 @@ async fn delete_proxy_rider(
     Ok(Json(json!({ "ok": true })))
 }
 
-#[cfg(test)]
-mod unable_reason_tests {
-    use super::{unable_reason, UNABLE_REASON_MAX};
-
-    #[test]
-    fn blank_reason_falls_back_to_standard_wording() {
-        assert_eq!(unable_reason(None), "乘客行前告知无法出席");
-        assert_eq!(unable_reason(Some("   ")), "乘客行前告知无法出席");
-    }
-
-    #[test]
-    fn reason_is_trimmed_and_capped() {
-        assert_eq!(unable_reason(Some("  fever  ")), "fever");
-        let long = "a".repeat(UNABLE_REASON_MAX + 50);
-        assert_eq!(
-            unable_reason(Some(&long)).chars().count(),
-            UNABLE_REASON_MAX
-        );
-    }
-}
-
 /// Ride states that have not started yet: these still follow the event they go to.
 const NOT_STARTED: &[&str] = &[
     "pending_driver",
@@ -2945,3 +2931,23 @@ pub async fn event_moved(
     Ok(())
 }
 
+#[cfg(test)]
+mod unable_reason_tests {
+    use super::{unable_reason, UNABLE_REASON_MAX};
+
+    #[test]
+    fn blank_reason_falls_back_to_standard_wording() {
+        assert_eq!(unable_reason(None), "乘客行前告知无法出席");
+        assert_eq!(unable_reason(Some("   ")), "乘客行前告知无法出席");
+    }
+
+    #[test]
+    fn reason_is_trimmed_and_capped() {
+        assert_eq!(unable_reason(Some("  fever  ")), "fever");
+        let long = "a".repeat(UNABLE_REASON_MAX + 50);
+        assert_eq!(
+            unable_reason(Some(&long)).chars().count(),
+            UNABLE_REASON_MAX
+        );
+    }
+}
