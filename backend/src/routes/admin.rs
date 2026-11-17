@@ -103,6 +103,17 @@ async fn dashboard(State(st): State<AppState>, u: CurrentUser) -> AppResult<Json
     )
     .fetch_one(&st.db)
     .await?;
+    // Invites still waiting to be used, and approved claims waiting for finance to pay them:
+    // the counts on the Members "Invites" and Reimbursements "Finance payout" tabs.
+    let (open_invites,): (i64,) =
+        sqlx::query_as("SELECT COUNT(*) FROM invites WHERE used_at IS NULL AND expires_at >= $1")
+            .bind(now())
+            .fetch_one(&st.db)
+            .await?;
+    let (awaiting_payment,): (i64,) =
+        sqlx::query_as("SELECT COUNT(*) FROM reimbursements WHERE status='approved'")
+            .fetch_one(&st.db)
+            .await?;
     // How long the oldest item in each queue has waited, for the work queue on the admin home.
     let (oldest_approval_at, next_no_driver_at): (Option<String>, Option<String>) = sqlx::query_as(
         "SELECT (SELECT MIN(created_at) FROM rides WHERE status='pending_approval'),
@@ -134,6 +145,7 @@ async fn dashboard(State(st): State<AppState>, u: CurrentUser) -> AppResult<Json
         "pending_approval": pending_approval, "no_driver": no_driver, "needs_attention": attention,
         "live_drivers": live, "max_live_drivers": max_live_drivers, "open_help": open_help,
         "pending_reimbursements": pending_reimb, "members": members, "pending_recovery": recovery,
+        "open_invites": open_invites, "awaiting_payment": awaiting_payment,
         "oldest_approval_at": oldest_approval_at, "next_no_driver_at": next_no_driver_at,
         "oldest_help_at": oldest_help_at, "help_claimed_by_me": help_claimed_by_me,
     })))

@@ -79,7 +79,7 @@ export default function AdminReimbursements() {
           onChange={(v) => handleTabChange(v as 'review' | 'payout')}
           items={[
             { value: 'review', label: t('reimb.review'), count: counts?.pending_reimbursements || undefined },
-            { value: 'payout', label: t('reimb.payout') },
+            { value: 'payout', label: t('reimb.payout'), count: counts?.awaiting_payment || undefined },
           ]}
         />
       )}

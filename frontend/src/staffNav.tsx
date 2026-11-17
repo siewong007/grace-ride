@@ -40,6 +40,10 @@ export interface AdminCounts {
   open_help: number;
   pending_reimbursements: number;
   pending_recovery: number;
+  /** Invite links not yet used or expired. */
+  open_invites: number;
+  /** Approved claims waiting for finance to pay them. */
+  awaiting_payment: number;
 }
 
 export function waitingBadge(count: number | undefined, label: string) {

@@ -329,6 +329,26 @@ button, input, select, textarea { font: inherit; color: inherit; }
   }
 }
 
+/* Tablet: the toggle opens the rail into the full sidebar, names and all. */
+.sidebar-toggle { display: none; }
+@media (min-width: 768px) and (max-width: 1199px) {
+  .sidebar-toggle {
+    display: flex; align-items: center; justify-content: center; min-height: var(--tap);
+    margin-bottom: var(--space-1); border: 0; border-radius: var(--radius); background: none; color: var(--muted); cursor: pointer;
+  }
+  .sidebar-toggle:hover { background: var(--surface-2); color: var(--text); }
+  .shell.rail-open { grid-template-columns: 264px 1fr; }
+  .rail-open .sidebar { padding: var(--space-5) var(--space-3); }
+  .rail-open .sidebar-toggle { justify-content: flex-start; padding: 0 var(--space-2); }
+  .rail-open .sidebar-brand { display: flex; align-items: center; gap: var(--space-2); place-items: initial; padding: 0 var(--space-2) var(--space-3); font-weight: 700; font-size: var(--fs-lg); }
+  .rail-open .sidebar-brand-text { position: static; width: auto; height: auto; margin: 0; overflow: visible; clip-path: none; white-space: normal; display: inline; color: var(--text); }
+  .rail-open .sidebar-brand-text small { display: block; font-size: var(--fs-sm); color: var(--muted); font-weight: 500; }
+  .rail-open .sidebar .section-label { display: block; padding: var(--space-4) var(--space-2) var(--space-1); }
+  .rail-open .sidebar-link { flex-direction: row; justify-content: flex-start; gap: var(--space-3); min-height: 40px; font-size: var(--fs-md); text-align: left; }
+  .rail-open .sidebar-label { position: static; width: auto; height: auto; margin: 0; clip-path: none; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .rail-open .sidebar-tooltip { display: none; }
+}
+
 /* Desktop: full sidebar, links left-aligned in one column */
 @media (min-width: 1200px) {
   .shell { grid-template-columns: 264px 1fr; }
@@ -2678,3 +2698,5 @@ main p a:not(.btn), main .small a:not(.btn), main td a:not(.btn):not(.table-filt
   padding: 8px;
   border-radius: 8px;
 }
+/* A phone number inside a line of text is a link; underline it like the other in-text links. */
+main a[href^="tel:"]:not(.btn) { text-decoration: underline; }

@@ -428,3 +428,52 @@ async fn unpaged_member_list_applies_the_status_filter() {
     assert_eq!(r.status, StatusCode::OK, "{}", r.json);
     assert_eq!(names(&r.json), ["Xanthe Gone"]);
 }
+
+#[tokio::test]
+async fn dashboard_counts_open_invites_and_claims_awaiting_payment() {
+    let (app, st) = setup().await;
+    let root = login(&st, "superadmin@example.org").await;
+
+    let before = call(&app, Method::GET, "/api/admin/dashboard", Some(&root), None).await;
+    assert_eq!(before.status, StatusCode::OK, "{}", before.json);
+    let invites0 = before.json["open_invites"].as_i64().unwrap();
+    let pay0 = before.json["awaiting_payment"].as_i64().unwrap();
+
+    let made = call(
+        &app,
+        Method::POST,
+        "/api/admin/invites",
+        Some(&root),
+        Some(json!({})),
+    )
+    .await;
+    assert_eq!(made.status, StatusCode::OK, "{}", made.json);
+
+    let file = upload_png(&app, &root).await;
+    sqlx::query(
+        "INSERT INTO reimbursements (user_id, amount_cents, receipt_file_id, status) \
+         VALUES ((SELECT id FROM users ORDER BY id LIMIT 1), 500, $1, 'approved')",
+    )
+    .bind(file)
+    .execute(&st.db)
+    .await
+    .unwrap();
+
+    let after = call(&app, Method::GET, "/api/admin/dashboard", Some(&root), None).await;
+    assert_eq!(after.json["open_invites"].as_i64().unwrap(), invites0 + 1);
+    let expected: (i64,) =
+        sqlx::query_as("SELECT COUNT(*) FROM reimbursements WHERE status='approved'")
+            .fetch_one(&st.db)
+            .await
+            .unwrap();
+    assert_eq!(after.json["awaiting_payment"].as_i64().unwrap(), expected.0);
+    assert!(expected.0 >= pay0);
+
+    // An invite that has expired stops counting.
+    sqlx::query("UPDATE invites SET expires_at = '2000-01-01T00:00:00' WHERE id = (SELECT MAX(id) FROM invites)")
+        .execute(&st.db)
+        .await
+        .unwrap();
+    let last = call(&app, Method::GET, "/api/admin/dashboard", Some(&root), None).await;
+    assert_eq!(last.json["open_invites"].as_i64().unwrap(), invites0);
+}

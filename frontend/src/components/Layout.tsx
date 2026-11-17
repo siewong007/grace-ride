@@ -2,7 +2,7 @@ import { ReactNode, useCallback, useEffect, useMemo, useRef, useState } from 're
 import { Link, NavLink, Navigate, Outlet, useLocation } from 'react-router-dom';
 import {
   ArrowLeft, Bell, Calendar, Car, CarFront, Clock, HandCoins, Home,
-  LayoutGrid, LifeBuoy, Search, Receipt, ShieldAlert, User, Wallet, BarChart3, WifiOff,
+  LayoutGrid, LifeBuoy, PanelLeftClose, PanelLeftOpen, Search, Receipt, ShieldAlert, User, Wallet, BarChart3, WifiOff,
 } from 'lucide-react';
 import { useAuth } from '../auth';
 import { LogoMark, Wordmark } from './Brand';
@@ -76,6 +76,23 @@ export default function Layout() {
   const openJump = useCallback(() => setJumpOpen(true), []);
   useQuickJumpShortcut(openJump);
   const { staffGroups, staff, staffWaiting, helpDesk } = useStaffNav();
+  // On tablets the sidebar is a rail of icons; this opens it to show the names. Remembered per device.
+  const [railOpen, setRailOpen] = useState(() => {
+    try {
+      return localStorage.getItem('gr.railOpen') === '1';
+    } catch {
+      return false;
+    }
+  });
+  const toggleRail = () =>
+    setRailOpen((open) => {
+      try {
+        localStorage.setItem('gr.railOpen', open ? '0' : '1');
+      } catch {
+        // Not remembered when storage is blocked; the toggle still works.
+      }
+      return !open;
+    });
 
   useEffect(() => {
     const onOnline = () => setIsOffline(false);
@@ -154,8 +171,17 @@ export default function Layout() {
   const pageTitle = getPageTitle(loc.pathname, t);
 
   return (
-    <div className="shell">
+    <div className={`shell${railOpen ? ' rail-open' : ''}`}>
       <nav className="sidebar" aria-label={t('mainNav')}>
+        <button
+          type="button"
+          className="sidebar-toggle"
+          aria-expanded={railOpen}
+          aria-label={railOpen ? t('collapseNav') : t('expandNav')}
+          onClick={toggleRail}
+        >
+          {railOpen ? <PanelLeftClose size={20} aria-hidden="true" /> : <PanelLeftOpen size={20} aria-hidden="true" />}
+        </button>
         <Link to={pending ? '/me' : '/'} className="sidebar-brand">
           <LogoMark animated />
           <span className="sidebar-brand-text">
