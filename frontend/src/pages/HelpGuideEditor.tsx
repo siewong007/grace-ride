@@ -593,6 +593,15 @@ export default function HelpGuideEditor() {
                               >
                                 {t('fmtWarning')}
                               </button>
+                              <button
+                                type="button"
+                                className="chip"
+                                onClick={() =>
+                                  setStep(idx, { body_en: `${s.body_en}${s.body_en ? ' ' : ''}\`code\`` })
+                                }
+                              >
+                                {t('fmtCode')}
+                              </button>
                             </div>
                             <textarea
                               className="input"
@@ -603,6 +612,28 @@ export default function HelpGuideEditor() {
                             />
                           </div>
                         </Field>
+                        <div className="form-grid two">
+                          <Field label={t('stepNoteKind')}>
+                            <select
+                              className="input"
+                              value={s.note_kind ?? 'tip'}
+                              onChange={(e) => setStep(idx, { note_kind: e.target.value as GuideStep['note_kind'] })}
+                            >
+                              <option value="tip">{t('noteKindTip')}</option>
+                              <option value="note">{t('noteKindNote')}</option>
+                              <option value="warning">{t('noteKindWarning')}</option>
+                              <option value="important">{t('noteKindImportant')}</option>
+                            </select>
+                          </Field>
+                          <Field label={t('stepNoteEn')}>
+                            <input
+                              className="input"
+                              value={s.note_en ?? ''}
+                              onChange={(e) => setStep(idx, { note_en: e.target.value })}
+                              placeholder={t('stepNotePlaceholder')}
+                            />
+                          </Field>
+                        </div>
                       </>
                     ) : (
                       <>
@@ -653,6 +684,15 @@ export default function HelpGuideEditor() {
                               >
                                 {t('fmtWarning')}
                               </button>
+                              <button
+                                type="button"
+                                className="chip"
+                                onClick={() =>
+                                  setStep(idx, { body_zh: `${s.body_zh}${s.body_zh ? ' ' : ''}\`code\`` })
+                                }
+                              >
+                                {t('fmtCode')}
+                              </button>
                             </div>
                             <textarea
                               className="input"
@@ -663,6 +703,28 @@ export default function HelpGuideEditor() {
                             />
                           </div>
                         </Field>
+                        <div className="form-grid two">
+                          <Field label={t('stepNoteKind')}>
+                            <select
+                              className="input"
+                              value={s.note_kind ?? 'tip'}
+                              onChange={(e) => setStep(idx, { note_kind: e.target.value as GuideStep['note_kind'] })}
+                            >
+                              <option value="tip">{t('noteKindTip')}</option>
+                              <option value="note">{t('noteKindNote')}</option>
+                              <option value="warning">{t('noteKindWarning')}</option>
+                              <option value="important">{t('noteKindImportant')}</option>
+                            </select>
+                          </Field>
+                          <Field label={t('stepNoteZh')}>
+                            <input
+                              className="input"
+                              value={s.note_zh ?? ''}
+                              onChange={(e) => setStep(idx, { note_zh: e.target.value })}
+                              placeholder={t('stepNotePlaceholder')}
+                            />
+                          </Field>
+                        </div>
                       </>
                     )}
 

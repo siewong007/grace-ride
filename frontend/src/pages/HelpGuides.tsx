@@ -25,6 +25,9 @@ export interface GuideStep {
   body_zh: string;
   link: string;
   image_file_id?: number | null;
+  note_kind?: 'tip' | 'warning' | 'important' | 'note';
+  note_en?: string;
+  note_zh?: string;
 }
 
 export interface GuideSummary {

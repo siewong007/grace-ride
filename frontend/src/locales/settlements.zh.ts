@@ -38,6 +38,7 @@ export default {
   splitCustom: '个别金额',
   payeeLabel: '付款给',
   payeeAccountLabel: '收款账号',
+  payeeQrLabel: 'DuitNow / TNG 收款二维码图片（可选）',
   participantsLabel: '参与人',
   totalLabel: '应付总额',
   saveDraft: '保存草稿',

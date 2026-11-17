@@ -288,6 +288,9 @@ async fn care_readiness(
     Json(req): Json<ReadinessReq>,
 ) -> AppResult<Json<Value>> {
     let lang = lang_of(&headers);
+    if !matches!(req.status.as_str(), "ready" | "delayed_5m" | "delayed_10m") {
+        return Err(bad(lang, ErrorKey::InvalidStatus));
+    }
     let (_pass, r) = load_care_pass(&st, &token, lang).await?;
     apply_readiness(&st, lang, &r, None, &req).await
 }

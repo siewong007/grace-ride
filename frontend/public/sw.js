@@ -1,3 +1,4 @@
+/* global self, caches, fetch, URL */
 const SHELL_CACHE = 'grace-ride-shell-v1';
 const STATIC_ASSETS = ['/', '/index.html'];
 
@@ -35,9 +36,13 @@ self.addEventListener('fetch', (event) => {
     event.respondWith(
       fetch(request)
         .then((res) => {
-          if (res.ok) {
+          const ct = res.headers.get('content-type') || '';
+          if (res.ok && ct.includes('text/html')) {
             const copy = res.clone();
-            caches.open(SHELL_CACHE).then((c) => c.put(request, copy));
+            // Store under canonical '/index.html' rather than request.url so bearer
+            // capability URLs (/care/:token, /visit/:token, /invite/:token, ?code=)
+            // are never persisted as CacheStorage keys.
+            caches.open(SHELL_CACHE).then((c) => c.put('/index.html', copy));
           }
           return res;
         })
@@ -92,15 +97,28 @@ self.addEventListener('message', (event) => {
   }
 });
 
+function safeTargetUrl(raw) {
+  try {
+    const resolved = new URL(typeof raw === 'string' && raw ? raw : '/notifications', self.location.origin);
+    if (resolved.origin === self.location.origin) {
+      return resolved.pathname + resolved.search + resolved.hash;
+    }
+  } catch {
+    // Fall back to /notifications below.
+  }
+  return '/notifications';
+}
+
 self.addEventListener('notificationclick', (event) => {
   event.notification.close();
-  const targetUrl = (event.notification.data && event.notification.data.url) || '/';
+  const targetUrl = safeTargetUrl(event.notification.data && event.notification.data.url);
   event.waitUntil(
     self.clients.matchAll({ type: 'window', includeUncontrolled: true }).then((clients) => {
       for (const client of clients) {
-        if ('focus' in client) {
-          client.navigate(targetUrl);
-          return client.focus();
+        if ('focus' in client && 'navigate' in client) {
+          return Promise.resolve(client.navigate(targetUrl))
+            .catch(() => undefined)
+            .then(() => client.focus());
         }
       }
       if (self.clients.openWindow) {

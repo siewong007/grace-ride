@@ -65,7 +65,7 @@ fn ts_in(minutes: i64) -> String {
 }
 
 async fn ride_reminders(db: &PgPool) -> anyhow::Result<()> {
-    let due: Vec<(
+    let candidates: Vec<(
         i64,
         i64,
         Option<i64>,
@@ -77,42 +77,64 @@ async fn ride_reminders(db: &PgPool) -> anyhow::Result<()> {
         i64,
         String,
     )> = sqlx::query_as(
-        "WITH due AS (
-             UPDATE rides SET reminder_sent=1
-             WHERE status='confirmed' AND reminder_sent=0 AND pickup_at <= $1 AND pickup_at >= $2
-             RETURNING id, passenger_id, driver_id, pickup_at, pickup_area_id, is_proxy, rider_name
-         )
-         SELECT r.id, r.passenger_id, r.driver_id, r.pickup_at, a.name, p.name, COALESCE(d.name,''), p.readiness_prompt_mins,
+        "SELECT r.id, r.passenger_id, r.driver_id, r.pickup_at, a.name, p.name, COALESCE(d.name,''), p.readiness_prompt_mins,
                 r.is_proxy, r.rider_name
-         FROM due r JOIN areas a ON a.id=r.pickup_area_id JOIN users p ON p.id=r.passenger_id LEFT JOIN users d ON d.id=r.driver_id",
+         FROM rides r
+         JOIN areas a ON a.id=r.pickup_area_id
+         JOIN users p ON p.id=r.passenger_id
+         LEFT JOIN users d ON d.id=r.driver_id
+         WHERE r.status='confirmed' AND r.reminder_sent=0 AND r.pickup_at <= $1 AND r.pickup_at >= $2",
     )
-    .bind(ts_in(60))
+    .bind(ts_in(180))
     .bind(ts_in(-10))
     .fetch_all(db)
     .await?;
-    for (id, passenger, driver, at, area, pname, dname, _prompt_mins, is_proxy, rider_name) in due {
-        let time = at.get(11..16).unwrap_or(&at);
-        let rider_disp = if is_proxy == 1 && !rider_name.is_empty() {
-            rider_name.clone()
+    for (id, passenger, driver, at, area, pname, dname, prompt_mins, is_proxy, rider_name) in
+        candidates
+    {
+        let prompt = prompt_mins.unwrap_or(45);
+        let lead = if prompt <= 0 {
+            60
         } else {
-            "您".to_string()
+            prompt.clamp(5, 180)
         };
-        let rider_disp_en = if is_proxy == 1 && !rider_name.is_empty() {
-            rider_name.clone()
-        } else {
-            "you".to_string()
-        };
-        notify(
-            db,
-            passenger,
-            ("接送提醒", "Ride reminder"),
-            (
-                &format!("司机 {dname} 将于 {time} 到 {area} 接 {rider_disp}。请确认长辈/乘车人是否准备就绪或告知需稍候/无法出行。"),
-                &format!("Driver {dname} will pick up {rider_disp_en} at {area} at {time}. Please tap to confirm readiness, delay, or inability to join."),
-            ),
-            &format!("/rides/{id}?action=readiness"),
+        if at > ts_in(lead) {
+            continue;
+        }
+        let claimed = sqlx::query(
+            "UPDATE rides SET reminder_sent=1 WHERE id=$1 AND status='confirmed' AND reminder_sent=0",
         )
-        .await;
+        .bind(id)
+        .execute(db)
+        .await?
+        .rows_affected();
+        if claimed == 0 {
+            continue;
+        }
+        let time = at.get(11..16).unwrap_or(&at);
+        if prompt > 0 {
+            let rider_disp = if is_proxy == 1 && !rider_name.is_empty() {
+                rider_name.clone()
+            } else {
+                "您".to_string()
+            };
+            let rider_disp_en = if is_proxy == 1 && !rider_name.is_empty() {
+                rider_name.clone()
+            } else {
+                "you".to_string()
+            };
+            notify(
+                db,
+                passenger,
+                ("接送提醒", "Ride reminder"),
+                (
+                    &format!("司机 {dname} 将于 {time} 到 {area} 接 {rider_disp}。请确认长辈/乘车人是否准备就绪或告知需稍候/无法出行。"),
+                    &format!("Driver {dname} will pick up {rider_disp_en} at {area} at {time}. Please tap to confirm readiness, delay, or inability to join."),
+                ),
+                &format!("/rides/{id}?action=readiness"),
+            )
+            .await;
+        }
         if let Some(d) = driver {
             let driver_target = if is_proxy == 1 && !rider_name.is_empty() {
                 format!("{rider_name} (由 {pname} 代订)")

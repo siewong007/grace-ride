@@ -130,6 +130,8 @@ export default function GuideSteps({
           const isLast = idx === total - 1;
           const stepTitle = pick(s.title_zh, s.title_en);
           const stepBody = pick(s.body_zh, s.body_en);
+          const stepNote = pick(s.note_zh ?? '', s.note_en ?? '');
+          const noteClass = s.note_kind === 'warning' || s.note_kind === 'important' ? 'warning' : s.note_kind === 'note' ? 'note' : 'tip';
           const page = s.link ? pageKey(s.link) : undefined;
 
           return (
@@ -154,6 +156,11 @@ export default function GuideSteps({
                 {isCurrent && doneCount > 0 && <span className="guide-step-kicker">{t('upNext')}</span>}
                 <h4 className="bold guide-step-title">{stepTitle || t('stepNumber', { n: idx + 1 })}</h4>
                 {stepBody && <StepText text={stepBody} className="guide-step-text" />}
+                {stepNote && (
+                  <p className={`guide-note ${noteClass}`}>
+                    <span>{stepNote}</span>
+                  </p>
+                )}
                 {s.image_file_id && (
                   <a
                     href={`/api/files/${s.image_file_id}`}

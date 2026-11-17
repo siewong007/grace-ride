@@ -38,6 +38,7 @@ export default {
   splitCustom: 'Custom amounts',
   payeeLabel: 'Pay to',
   payeeAccountLabel: 'Payee account',
+  payeeQrLabel: 'DuitNow / TNG QR image (optional)',
   participantsLabel: 'Participants',
   totalLabel: 'Total due',
   saveDraft: 'Save draft',

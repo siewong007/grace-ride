@@ -44,6 +44,7 @@ interface Settlement {
   subsidy_cents: number;
   payee_name: string;
   payee_account: string;
+  payee_qr_file_id?: number | null;
   due_date: string | null;
   status: string;
   version: number;
@@ -195,6 +196,7 @@ export function SettlementForm() {
   const [selected, setSelected] = useState<number[]>([]);
   const [custom, setCustom] = useState<Record<number, string>>({});
   const [payee, setPayee] = useState({ name: '', account: '' });
+  const [payeeQr, setPayeeQr] = useState<number | null>(null);
   const [review, setReview] = useState<ShareRow | null>(null);
   // Set once the first save makes a draft, so saving again updates it instead of
   // creating a second bill (say, when publishing is refused over attendance).
@@ -211,6 +213,7 @@ export function SettlementForm() {
       setSubsidy(String(existing.subsidy_cents / 100));
       setMode(existing.split_mode);
       setPayee({ name: existing.payee_name, account: existing.payee_account });
+      setPayeeQr(existing.payee_qr_file_id ?? null);
       setItems(
         existing.items.map((it) => ({
           label: it.label,
@@ -270,6 +273,7 @@ export function SettlementForm() {
       split_mode: mode,
       payee_name: payee.name,
       payee_account: payee.account,
+      payee_qr_file_id: payeeQr,
       // The server works out an equal split itself; custom amounts are sent as typed.
       participants:
         mode === 'equal'
@@ -363,6 +367,9 @@ export function SettlementForm() {
                 onChange={(e) => setPayee({ ...payee, account: e.target.value })}
               />
             </Field>
+            <div className="full">
+              <FileInput label={t('payeeQrLabel')} value={payeeQr} onChange={setPayeeQr} />
+            </div>
           </div>
 
           <div className="stack-sm">
@@ -647,6 +654,18 @@ export function SettlementDetail() {
             </dd>
             <dt>{t('settlementDetail.payee')}</dt>
             <dd>{s.payee_name} · {s.payee_account}</dd>
+            {s.payee_qr_file_id && (
+              <>
+                <dt>{t('payeeQrLabel')}</dt>
+                <dd>
+                  <img
+                    src={`/api/files/${s.payee_qr_file_id}`}
+                    alt={t('payeeQrLabel')}
+                    style={{ maxWidth: 200, borderRadius: 'var(--radius)', border: '1px solid var(--border)' }}
+                  />
+                </dd>
+              </>
+            )}
             <dt>{t('settlementDetail.subsidy')}</dt>
             <dd>{rm(s.subsidy_cents)}</dd>
             <dt>{t('settlementDetail.total')}</dt>

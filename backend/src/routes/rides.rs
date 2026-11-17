@@ -1042,6 +1042,9 @@ pub(crate) async fn apply_readiness(
     if !matches!(r.status.as_str(), "confirmed" | "in_progress") {
         return Err(conflict(lang, ErrorKey::TripAlreadyCompleted));
     }
+    if r.picked_up_at.is_some() {
+        return Err(conflict(lang, ErrorKey::PassengerAlreadyPickedUp));
+    }
 
     let valid_statuses = ["ready", "delayed_5m", "delayed_10m", "unable_to_join"];
     if !valid_statuses.contains(&req.status.as_str()) {
@@ -3704,7 +3707,8 @@ async fn create_recurring_schedule(
     let pickup_time =
         validate_hhmm(&req.pickup_time).ok_or_else(|| bad(u.lang, ErrorKey::InvalidPickupTime))?;
     let seats = req.seats.unwrap_or(1);
-    if !(1..=8).contains(&seats) {
+    let max_seats = if req.kind == "passenger" { 6 } else { 8 };
+    if !(1..=max_seats).contains(&seats) {
         return Err(bad(u.lang, ErrorKey::SeatsRange));
     }
     let area_ok: Option<(i64,)> = sqlx::query_as("SELECT id FROM areas WHERE id=$1 AND active=1")
@@ -3764,9 +3768,15 @@ async fn update_recurring_schedule(
     let pickup_time =
         validate_hhmm(&req.pickup_time).ok_or_else(|| bad(u.lang, ErrorKey::InvalidPickupTime))?;
     let seats = req.seats.unwrap_or(1);
-    if !(1..=8).contains(&seats) {
+    let max_seats = if req.kind == "passenger" { 6 } else { 8 };
+    if !(1..=max_seats).contains(&seats) {
         return Err(bad(u.lang, ErrorKey::SeatsRange));
     }
+    let area_ok: Option<(i64,)> = sqlx::query_as("SELECT id FROM areas WHERE id=$1 AND active=1")
+        .bind(req.area_id)
+        .fetch_optional(&st.db)
+        .await?;
+    area_ok.ok_or_else(|| bad(u.lang, ErrorKey::PickupAreaRequired))?;
     let pickup_address = req.pickup_address.unwrap_or_default().trim().to_string();
     let destination = req.destination.unwrap_or_default().trim().to_string();
     if req.kind == "passenger" && (pickup_address.is_empty() || destination.is_empty()) {
@@ -3991,7 +4001,7 @@ async fn generate_recurring_schedule(
     u: CurrentUser,
     Path(id): Path<i64>,
 ) -> AppResult<Json<Value>> {
-    let s: ActiveScheduleRow = sqlx::query_as(
+    let row: Option<(ActiveScheduleRow, i64)> = sqlx::query_as::<_, ActiveScheduleRow>(
         "SELECT s.id, s.user_id, u.name AS user_name, s.kind, s.label, s.weekday, s.pickup_time, s.area_id, a.name AS area_name,
                 s.pickup_address, s.destination, s.seats, s.assistance, s.notes, s.lead_days, s.last_generated_date
          FROM recurring_ride_schedules s
@@ -4003,7 +4013,24 @@ async fn generate_recurring_schedule(
     .bind(u.id)
     .fetch_optional(&st.db)
     .await?
-    .ok_or_else(|| not_found(u.lang))?;
+    .zip(
+        sqlx::query_scalar::<_, i64>(
+            "SELECT a.active FROM recurring_ride_schedules s JOIN areas a ON a.id = s.area_id WHERE s.id=$1 AND s.user_id=$2",
+        )
+        .bind(id)
+        .bind(u.id)
+        .fetch_optional(&st.db)
+        .await?,
+    );
+    let (s, area_active) = row.ok_or_else(|| not_found(u.lang))?;
+    match s.kind.as_str() {
+        "passenger" => require(&u, Page::Rides, Act::Create)?,
+        "driver" => require(&u, Page::Drive, Act::Update)?,
+        _ => return Err(bad(u.lang, ErrorKey::InvalidAction)),
+    }
+    if area_active != 1 {
+        return Err(bad(u.lang, ErrorKey::PickupAreaRequired));
+    }
 
     let today = crate::util::today_local();
     let now_hm = crate::util::local_now().format("%H:%M").to_string();

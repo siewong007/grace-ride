@@ -20,4 +20,10 @@ export default {
   privacy: 'The receipt is visible only to you, the payee and authorised finance staff. Mask unnecessary account details.',
   receiptModal: 'Upload receipt · {amount}',
   showMore: 'Show more ({count} remaining)',
+  copyAmount: 'Exact RM',
+  copiedAmount: 'Exact amount copied',
+  showQr: 'DuitNow QR',
+  payeeQrAlt: 'Payee DuitNow QR code',
+  pasteSmsPlaceholder: 'Optional: paste transfer SMS/note to extract ref',
+  extractRefBtn: 'Detect ref',
 };

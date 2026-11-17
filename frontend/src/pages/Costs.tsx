@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { Link } from 'react-router-dom';
-import { Copy, Upload } from 'lucide-react';
+import { Copy, QrCode, Sparkles, Upload } from 'lucide-react';
 import { post, useApi } from '../api';
 import { useAuth } from '../auth';
 import {
@@ -31,6 +31,7 @@ interface Share {
   status: string;
   payee_name: string;
   payee_account: string;
+  payee_qr_file_id?: number | null;
   due_date: string | null;
   note: string;
   txn_ref: string;
@@ -54,6 +55,13 @@ export default function Costs() {
     navigator.clipboard?.writeText(share.payee_account);
     toast.success(t('copied'));
   };
+
+  const copyAmount = (share: Share) => {
+    navigator.clipboard?.writeText((share.amount_cents / 100).toFixed(2));
+    toast.success(t('copiedAmount'));
+  };
+
+  const [showQrId, setShowQrId] = useState<number | null>(null);
 
   return (
     <Page width="medium">
@@ -79,21 +87,52 @@ export default function Costs() {
                     <StatusPill map={SHARE_STATUS} status={s.status} />
                   </div>
 
-                  <div className="costs-amount">{rm(s.amount_cents)}</div>
+                  <div className="row between nowrap gap-sm">
+                    <div className="costs-amount">{rm(s.amount_cents)}</div>
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      onClick={() => copyAmount(s)}
+                      icon={<Copy size={14} />}
+                    >
+                      {t('copyAmount')}
+                    </Button>
+                  </div>
 
                   <div className="card flat tight stack-sm">
                     <div className="small">{t('payee', { name: s.payee_name })}</div>
                     <div className="row between nowrap">
                       <span className="mono bold">{s.payee_account}</span>
-                      <Button
-                        variant="ghost"
-                        size="sm"
-                        onClick={() => copyAccount(s)}
-                        icon={<Copy size={16} />}
-                      >
-                        {t('copy')}
-                      </Button>
+                      <div className="row nowrap gap-xs">
+                        {s.payee_qr_file_id && (
+                          <Button
+                            variant="secondary"
+                            size="sm"
+                            icon={<QrCode size={15} />}
+                            onClick={() => setShowQrId(showQrId === s.id ? null : s.id)}
+                          >
+                            {t('showQr')}
+                          </Button>
+                        )}
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          onClick={() => copyAccount(s)}
+                          icon={<Copy size={16} />}
+                        >
+                          {t('copy')}
+                        </Button>
+                      </div>
                     </div>
+                    {showQrId === s.id && s.payee_qr_file_id && (
+                      <div className="center" style={{ paddingTop: 'var(--space-2)' }}>
+                        <img
+                          src={`/api/files/${s.payee_qr_file_id}`}
+                          alt={t('payeeQrAlt')}
+                          style={{ maxWidth: 200, borderRadius: 'var(--radius)', border: '1px solid var(--border)' }}
+                        />
+                      </div>
+                    )}
                     {s.due_date && <div className="small muted">{t('due', { date: s.due_date.includes('T') ? fmtDateTime(s.due_date, ft) : fmtDay(s.due_date, ft) })}</div>}
                   </div>
 
@@ -185,7 +224,27 @@ function ProofModal({
   const [file, setFile] = useState<number | null>(null);
   const [txn, setTxn] = useState('');
   const [date, setDate] = useState(todayStr());
+  const [pasteText, setPasteText] = useState('');
+  const [candidates, setCandidates] = useState<string[]>([]);
+  const [extracting, setExtracting] = useState(false);
   const { busy, error, run } = useAction();
+
+  const extractRef = async (fid: number | null, text = pasteText) => {
+    if (!fid) return;
+    setExtracting(true);
+    try {
+      const res = await post<{ ref?: string; candidates?: string[] }>(`/files/${fid}/extract-ref`, {
+        text: text.trim() || undefined,
+      });
+      const list = Array.isArray(res?.candidates) ? res.candidates : [];
+      setCandidates(list);
+      if (res?.ref && !txn.trim()) setTxn(res.ref);
+    } catch {
+      // helper is best-effort only
+    } finally {
+      setExtracting(false);
+    }
+  };
 
   const submit = () => {
     run(async () => {
@@ -196,7 +255,49 @@ function ProofModal({
 
   return (
     <Modal title={t('receiptModal', { amount: rm(share.amount_cents) })} onClose={onClose}>
-      <FileInput label={t('receiptLabel')} value={file} onChange={setFile} />
+      <FileInput
+        label={t('receiptLabel')}
+        value={file}
+        onChange={(fid) => {
+          setFile(fid);
+          if (fid) void extractRef(fid);
+        }}
+      />
+      {file && (
+        <div className="stack-xs">
+          <div className="row nowrap gap-xs">
+            <input
+              className="input grow"
+              value={pasteText}
+              onChange={(e) => setPasteText(e.target.value)}
+              placeholder={t('pasteSmsPlaceholder')}
+            />
+            <Button
+              variant="secondary"
+              size="sm"
+              disabled={extracting}
+              onClick={() => extractRef(file, pasteText)}
+              icon={<Sparkles size={14} />}
+            >
+              {t('extractRefBtn')}
+            </Button>
+          </div>
+          {candidates.length > 0 && (
+            <div className="chips">
+              {candidates.map((c) => (
+                <button
+                  key={c}
+                  type="button"
+                  className={`chip ${txn === c ? 'active' : ''}`}
+                  onClick={() => setTxn(c)}
+                >
+                  {c}
+                </button>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
       <Field label={t('txnLabel')} hint={t('txnHint')}>
         <input className="input" required value={txn} onChange={(e) => setTxn(e.target.value)} />
       </Field>

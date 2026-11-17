@@ -20,4 +20,10 @@ export default {
   privacy: '收据仅让您本人、收款者与获授权财务查看。请遮盖不必要的账号资料。',
   receiptModal: '上传收据 · {amount}',
   showMore: '显示更多（剩余 {count} 条）',
+  copyAmount: '准确金额',
+  copiedAmount: '已复制准确金额',
+  showQr: '收款码',
+  payeeQrAlt: '收款人 DuitNow / TNG 二维码',
+  pasteSmsPlaceholder: '可选：粘贴银行短信/转账说明以提取单号',
+  extractRefBtn: '提取编号',
 };

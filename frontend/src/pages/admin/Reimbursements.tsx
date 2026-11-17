@@ -245,6 +245,10 @@ function List({ scope }: { scope: 'review' | 'payout' }) {
 
       <ErrorBox error={error} />
 
+      {scope === 'payout' && can('admin_reimb_pay') && (
+        <MonthlyPayoutBatches onChanged={reload} />
+      )}
+
       <Card>
         {loading && !initialLoadComplete ? (
           <CardSkeleton count={3} />
@@ -466,5 +470,148 @@ function PayModal({
         </Button>
       </div>
     </Modal>
+  );
+}
+
+interface PayoutBatch {
+  id: number;
+  month: string;
+  title: string;
+  total_cents: number;
+  claim_count: number;
+  status: 'open' | 'paid';
+  paid_ref: string;
+  created_by: string;
+  paid_by: string | null;
+  paid_at: string | null;
+}
+
+function MonthlyPayoutBatches({ onChanged }: { onChanged: () => void }) {
+  const { t } = useTranslation('admin');
+  const { data: raw, reload } = useApi<PayoutBatch[]>('/reimbursements/batches');
+  const batches = Array.isArray(raw) ? raw : [];
+  const [month, setMonth] = useState(() => todayStr().slice(0, 7));
+  const [payBatch, setPayBatch] = useState<PayoutBatch | null>(null);
+  const [verified, setVerified] = useState(false);
+  const [paidRef, setPaidRef] = useState('');
+  const { busy, error, run } = useAction();
+
+  const createBatch = () => {
+    run(async () => {
+      await post('/reimbursements/batches', { month });
+      await reload();
+      onChanged();
+    }, t('reimb.batchCreated'));
+  };
+
+  const confirmPay = () => {
+    if (!payBatch) return;
+    run(async () => {
+      await post(`/reimbursements/batches/${payBatch.id}/pay`, {
+        payee_verified: verified,
+        paid_ref: paidRef.trim(),
+      });
+      setPayBatch(null);
+      setVerified(false);
+      setPaidRef('');
+      await reload();
+      onChanged();
+    }, t('reimb.batchPaidDone'));
+  };
+
+  return (
+    <Card className="stack-sm">
+      <div className="row between wrap gap-sm">
+        <div>
+          <h3 className="no-margin">{t('reimb.batchTitle')}</h3>
+          <p className="muted tiny no-margin">{t('reimb.batchDesc')}</p>
+        </div>
+        <div className="row nowrap gap-xs">
+          <input
+            type="month"
+            className="input"
+            aria-label={t('reimb.batchMonth')}
+            value={month}
+            onChange={(e) => setMonth(e.target.value)}
+          />
+          <Button variant="primary" size="sm" disabled={busy || !month} onClick={createBatch}>
+            {t('reimb.batchCreate')}
+          </Button>
+        </div>
+      </div>
+
+      <ErrorBox error={error} />
+
+      {batches.length > 0 && (
+        <div className="stack-sm">
+          {batches.map((b) => (
+            <div key={b.id} className="card flat tight row between wrap gap-sm">
+              <div className="min-w-0">
+                <div className="bold small">
+                  {b.title} · <span className="mono">{rm(b.total_cents)}</span> ({t('reimb.batchCount', { count: b.claim_count })})
+                </div>
+                <div className="muted tiny">
+                  {b.month} · {b.created_by}
+                  {b.status === 'paid' && b.paid_ref ? ` · ${b.paid_ref}` : ''}
+                </div>
+              </div>
+              <div className="row nowrap gap-xs">
+                <a className="btn secondary sm" href={`/api/reimbursements/batches/${b.id}/csv`}>
+                  <Download size={14} />
+                  {t('reimb.batchCsv')}
+                </a>
+                {b.status === 'open' && (
+                  <Button
+                    variant="primary"
+                    size="sm"
+                    onClick={() => {
+                      setPayBatch(b);
+                      setVerified(false);
+                      setPaidRef('');
+                    }}
+                  >
+                    {t('reimb.batchPayBtn')}
+                  </Button>
+                )}
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+
+      {payBatch && (
+        <Modal
+          title={t('reimb.batchPayTitle', { title: payBatch.title, amount: rm(payBatch.total_cents) })}
+          onClose={() => setPayBatch(null)}
+        >
+          <div className="stack-sm">
+            <label className={`check ${verified ? 'on' : ''}`}>
+              <input
+                type="checkbox"
+                checked={verified}
+                onChange={(e) => setVerified(e.target.checked)}
+              />
+              {t('reimb.verified')}
+            </label>
+            <Field label={t('reimb.txn')} hint={t('reimb.txnHint')}>
+              <input
+                className="input"
+                value={paidRef}
+                onChange={(e) => setPaidRef(e.target.value)}
+              />
+            </Field>
+            <ErrorBox error={error} />
+            <Button
+              variant="primary"
+              block
+              disabled={busy || !verified || paidRef.trim().length < 3}
+              onClick={confirmPay}
+            >
+              {t('reimb.record')}
+            </Button>
+          </div>
+        </Modal>
+      )}
+    </Card>
   );
 }

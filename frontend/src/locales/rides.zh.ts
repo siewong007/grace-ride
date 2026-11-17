@@ -14,6 +14,8 @@ export default {
   recurringDesc: '设置后系统会在每次活动前自动为您提交常规主日接送申请。',
   recurringEmpty: '暂无每周固定行程。',
   recurringPaused: '已暂停',
+  recurringPauseBtn: '暂停',
+  recurringResumeBtn: '恢复',
   recurringGenerateNow: '立即预约下次',
   recurringDelete: '删除安排',
   recurringDay: '星期',

@@ -8,14 +8,16 @@ import {
   LifeBuoy,
   Lock,
   LogOut,
+  MapPin,
   Receipt,
   RefreshCw,
   Shield,
   Sliders,
+  Trash2,
   User,
   Wallet,
 } from 'lucide-react';
-import { del, post, put, useApi } from '../api';
+import { api, del, post, put, useApi } from '../api';
 import { useAuth } from '../auth';
 import { useAutoLock } from '../components/AutoLock';
 import { DisplayPreferences } from '../components/AppChrome';
@@ -25,7 +27,7 @@ import { passkeySupported, registerPasskey, withRecentSignIn } from '../webauthn
 import QRCode from 'qrcode';
 import { useTranslation } from 'react-i18next';
 
-type SectionKey = 'personal' | 'preferences' | 'security';
+type SectionKey = 'personal' | 'preferences' | 'places' | 'security';
 
 export default function Profile() {
   const { t } = useTranslation('profile');
@@ -47,6 +49,10 @@ export default function Profile() {
   });
   const [readinessPrompt, setReadinessPrompt] = useState(me?.readiness_prompt_mins ?? 45);
   const [autoLockMins, setAutoLockMins] = useState(me?.auto_lock_mins ?? (parseInt(localStorage.getItem('gr_autolock_mins') || '0', 10) || 0));
+  const [telegramChatId, setTelegramChatId] = useState(me?.telegram_chat_id ?? '');
+  const [whatsappOptIn, setWhatsappOptIn] = useState(Boolean(me?.whatsapp_opt_in));
+  const [pushOptIn, setPushOptIn] = useState(me?.push_opt_in ?? true);
+  const [pushStatus, setPushStatus] = useState('');
   const [totp, setTotp] = useState<{ secret: string; url: string } | null>(null);
   const [showVerify2fa, setShowVerify2fa] = useState(false);
   const [showBackupCodes, setShowBackupCodes] = useState<string[] | null>(null);
@@ -54,16 +60,7 @@ export default function Profile() {
   if (!me) return null;
 
   const openSection = (section: SectionKey) => {
-    setF({
-      name: me.name ?? '',
-      phone: me.phone ?? '',
-      photo: me.photo_file_id ?? null,
-      optOut: me.badges_opt_out ?? false,
-    });
-    setReadinessPrompt(me.readiness_prompt_mins ?? 45);
-    setAutoLockMins(
-      me.auto_lock_mins ?? (parseInt(localStorage.getItem('gr_autolock_mins') || '0', 10) || 0),
-    );
+    setPushStatus('');
     setOpen(section);
   };
 
@@ -74,7 +71,49 @@ export default function Profile() {
 
   const savePersonal = () => put('/me', { name: f.name, phone: f.phone, photo_file_id: f.photo }).then(refresh);
   const savePreferences = () =>
-    put('/me', { badges_opt_out: f.optOut, readiness_prompt_mins: readinessPrompt }).then(refresh);
+    put('/me', {
+      badges_opt_out: f.optOut,
+      readiness_prompt_mins: readinessPrompt,
+      telegram_chat_id: telegramChatId.trim(),
+      whatsapp_opt_in: whatsappOptIn,
+      push_opt_in: pushOptIn,
+    }).then(refresh);
+
+  const enableBrowserPush = async () => {
+    setPushStatus('');
+    if (typeof Notification === 'undefined') {
+      setPushStatus(t('pushUnsupported'));
+      return;
+    }
+    const perm = await Notification.requestPermission();
+    if (perm !== 'granted') {
+      setPushStatus(t('pushDenied'));
+      return;
+    }
+    setPushOptIn(true);
+    try {
+      const cfg = await api<{ enabled?: boolean; vapid_public_key?: string }>('/push/config');
+      if ('serviceWorker' in navigator && cfg?.vapid_public_key) {
+        const reg = await navigator.serviceWorker.ready;
+        const pad = '='.repeat((4 - (cfg.vapid_public_key.length % 4)) % 4);
+        const b64 = (cfg.vapid_public_key + pad).replace(/-/g, '+').replace(/_/g, '/');
+        const raw = atob(b64);
+        const keyBytes = Uint8Array.from(raw, (c) => c.charCodeAt(0));
+        const sub = await reg.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: keyBytes });
+        const json = sub.toJSON();
+        if (json.endpoint) {
+          await post('/push/subscribe', {
+            endpoint: json.endpoint,
+            p256dh: json.keys?.p256dh ?? '',
+            auth: json.keys?.auth ?? '',
+          });
+        }
+      }
+      setPushStatus(t('pushEnabled'));
+    } catch {
+      setPushStatus(t('pushEnabledLocal'));
+    }
+  };
 
   const handleLogout = () =>
     run(async () => {
@@ -109,6 +148,7 @@ export default function Profile() {
   const sheetTitle: Record<SectionKey, string> = {
     personal: t('personalInfo'),
     preferences: t('preferences'),
+    places: t('placesAndCalendar'),
     security: t('security'),
   };
 
@@ -130,6 +170,9 @@ export default function Profile() {
           <div className="list">
             <SheetLink icon={<User size={iconSz} />} label={t('personalInfo')} aria-haspopup="dialog" onClick={() => openSection('personal')} />
             <SheetLink icon={<Sliders size={iconSz} />} label={t('preferences')} aria-haspopup="dialog" onClick={() => openSection('preferences')} />
+            {!isPending && (
+              <SheetLink icon={<MapPin size={iconSz} />} label={t('placesAndCalendar')} aria-haspopup="dialog" onClick={() => openSection('places')} />
+            )}
             <SheetLink icon={<Shield size={iconSz} />} label={t('security')} aria-haspopup="dialog" onClick={() => openSection('security')} />
           </div>
         </section>
@@ -223,6 +266,30 @@ export default function Profile() {
                 <input type="checkbox" checked={f.optOut} onChange={(e) => setF({ ...f, optOut: e.target.checked })} /> {t('optOut')}
               </label>
               <div className="divider" />
+              <div className="stack-sm">
+                <div className="bold">{t('alertChannels')}</div>
+                <label className={`check ${pushOptIn ? 'on' : ''}`}>
+                  <input type="checkbox" checked={pushOptIn} onChange={(e) => setPushOptIn(e.target.checked)} /> {t('pushOptIn')}
+                </label>
+                <div>
+                  <Button variant="secondary" size="sm" onClick={enableBrowserPush}>
+                    {t('enableBrowserPush')}
+                  </Button>
+                  {pushStatus && <p className="muted tiny">{pushStatus}</p>}
+                </div>
+                <label className={`check ${whatsappOptIn ? 'on' : ''}`}>
+                  <input type="checkbox" checked={whatsappOptIn} onChange={(e) => setWhatsappOptIn(e.target.checked)} /> {t('whatsappOptIn')}
+                </label>
+                <Field label={t('telegramChatId')} hint={t('telegramChatIdHint')}>
+                  <input
+                    className="input"
+                    value={telegramChatId}
+                    onChange={(e) => setTelegramChatId(e.target.value)}
+                    placeholder="123456789"
+                  />
+                </Field>
+              </div>
+              <div className="divider" />
               <DisplayPreferences />
               <div className="btn-row">
                 <Button variant="primary" onClick={() => run(savePreferences, t('saved'))} loading={busy}>
@@ -232,6 +299,8 @@ export default function Profile() {
               <ErrorBox error={error} />
             </div>
           )}
+
+          {open === 'places' && <PlacesAndCalendarSection />}
 
           {open === 'security' && (
             <div className="stack">
@@ -582,5 +651,191 @@ function Verify2faModal({ onClose, onDone }: { onClose: () => void; onDone: () =
         </Button>
       </div>
     </Modal>
+  );
+}
+
+interface SavedPlaceItem {
+  id: number;
+  label: string;
+  area_id: number | null;
+  area_name: string | null;
+  address: string;
+  gate_notes: string;
+  is_default: number;
+}
+
+interface AreaOpt {
+  id: number;
+  name: string;
+  active: boolean;
+}
+
+function PlacesAndCalendarSection() {
+  const { t } = useTranslation('profile');
+  const { data: placesRaw, reload: reloadPlaces } = useApi<SavedPlaceItem[]>('/saved-places');
+  const { data: areasRaw } = useApi<AreaOpt[]>('/areas');
+  const { data: calRaw, reload: reloadCal } = useApi<{ enabled?: boolean }>('/me/calendar-feed');
+  const places = Array.isArray(placesRaw) ? placesRaw : [];
+  const areas = (Array.isArray(areasRaw) ? areasRaw : []).filter((a) => a.active);
+  const calEnabled = Boolean(calRaw && !Array.isArray(calRaw) && calRaw.enabled);
+
+  const [newPlace, setNewPlace] = useState({ label: '', area_id: '', address: '', gate_notes: '' });
+  const [feedUrl, setFeedUrl] = useState<string | null>(null);
+  const [copiedFeed, setCopiedFeed] = useState(false);
+  const { busy, error, run } = useAction();
+
+  const addPlace = () => {
+    run(async () => {
+      await post('/saved-places', {
+        label: newPlace.label.trim(),
+        area_id: newPlace.area_id ? Number(newPlace.area_id) : null,
+        address: newPlace.address.trim(),
+        gate_notes: newPlace.gate_notes.trim(),
+      });
+      setNewPlace({ label: '', area_id: '', address: '', gate_notes: '' });
+      await reloadPlaces();
+    }, t('saved'));
+  };
+
+  const rotateFeed = () => {
+    run(async () => {
+      const res = await post<{ token: string; ics_path: string }>('/me/calendar-feed/rotate');
+      const origin = typeof window !== 'undefined' ? window.location.origin : '';
+      setFeedUrl(`${origin}${res.ics_path}`);
+      await reloadCal();
+    }, t('calendarFeedReady'));
+  };
+
+  const revokeFeed = () => {
+    run(async () => {
+      await del('/me/calendar-feed');
+      setFeedUrl(null);
+      await reloadCal();
+    }, t('calendarFeedRevoked'));
+  };
+
+  const webcalUrl = feedUrl ? feedUrl.replace(/^https?:\/\//, 'webcal://') : null;
+
+  return (
+    <div className="stack">
+      <div className="stack-sm">
+        <div className="bold">{t('savedPlacesTitle')}</div>
+        <p className="muted small">{t('savedPlacesHint')}</p>
+        {places.length > 0 && (
+          <div className="stack-sm">
+            {places.map((sp) => (
+              <div key={sp.id} className="card flat tight row between nowrap gap-sm">
+                <div className="min-w-0">
+                  <div className="bold small">{sp.label}{sp.area_name ? ` · ${sp.area_name}` : ''}</div>
+                  <div className="muted tiny ellipsis">{sp.address}</div>
+                  {sp.gate_notes && <div className="tiny muted">{sp.gate_notes}</div>}
+                </div>
+                <Button
+                  variant="danger"
+                  size="sm"
+                  disabled={busy}
+                  onClick={() => run(() => del(`/saved-places/${sp.id}`).then(reloadPlaces))}
+                >
+                  <Trash2 size={14} />
+                  {t('remove')}
+                </Button>
+              </div>
+            ))}
+          </div>
+        )}
+        <div className="form-grid two">
+          <Field label={t('placeLabel')}>
+            <input
+              className="input"
+              value={newPlace.label}
+              onChange={(e) => setNewPlace({ ...newPlace, label: e.target.value })}
+              placeholder={t('placeLabelPlaceholder')}
+            />
+          </Field>
+          <Field label={t('placeArea')}>
+            <select
+              className="input"
+              value={newPlace.area_id}
+              onChange={(e) => setNewPlace({ ...newPlace, area_id: e.target.value })}
+            >
+              <option value="">—</option>
+              {areas.map((a) => (
+                <option key={a.id} value={a.id}>{a.name}</option>
+              ))}
+            </select>
+          </Field>
+        </div>
+        <Field label={t('placeAddress')}>
+          <input
+            className="input"
+            value={newPlace.address}
+            onChange={(e) => setNewPlace({ ...newPlace, address: e.target.value })}
+          />
+        </Field>
+        <Field label={t('placeGateNotes')}>
+          <input
+            className="input"
+            value={newPlace.gate_notes}
+            onChange={(e) => setNewPlace({ ...newPlace, gate_notes: e.target.value })}
+            placeholder={t('placeGatePlaceholder')}
+          />
+        </Field>
+        <Button
+          variant="secondary"
+          disabled={busy || !newPlace.label.trim() || !newPlace.address.trim()}
+          onClick={addPlace}
+        >
+          {t('addSavedPlace')}
+        </Button>
+      </div>
+
+      <div className="divider" />
+
+      <div className="stack-sm">
+        <div className="row between">
+          <span className="bold">{t('calendarFeedTitle')}</span>
+          <Pill tone={calEnabled ? 'success' : 'neutral'}>
+            {calEnabled ? t('totpEnabled') : t('totpDisabled')}
+          </Pill>
+        </div>
+        <p className="muted small">{t('calendarFeedDesc')}</p>
+        {feedUrl && (
+          <div className="stack-xs">
+            <input className="input mono" readOnly value={feedUrl} />
+            <div className="btn-row">
+              <Button
+                variant="secondary"
+                size="sm"
+                onClick={() => {
+                  navigator.clipboard?.writeText(feedUrl);
+                  setCopiedFeed(true);
+                  setTimeout(() => setCopiedFeed(false), 2000);
+                }}
+              >
+                <Copy size={14} />
+                {copiedFeed ? t('calendarCopied') : t('calendarCopyUrl')}
+              </Button>
+              {webcalUrl && (
+                <a className="btn secondary sm" href={webcalUrl}>
+                  {t('calendarSubscribeApp')}
+                </a>
+              )}
+            </div>
+          </div>
+        )}
+        <div className="btn-row">
+          <Button variant="primary" size="sm" disabled={busy} onClick={rotateFeed}>
+            {calEnabled ? t('calendarRotateBtn') : t('calendarEnableBtn')}
+          </Button>
+          {calEnabled && (
+            <Button variant="danger" size="sm" disabled={busy} onClick={revokeFeed}>
+              {t('calendarRevokeBtn')}
+            </Button>
+          )}
+        </div>
+      </div>
+
+      <ErrorBox error={error} />
+    </div>
   );
 }

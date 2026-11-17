@@ -14,6 +14,8 @@ export default {
   recurringDesc: 'Automatically submit your regular weekly church ride ahead of time.',
   recurringEmpty: 'No standing schedules yet.',
   recurringPaused: 'Paused',
+  recurringPauseBtn: 'Pause',
+  recurringResumeBtn: 'Resume',
   recurringGenerateNow: 'Book next',
   recurringDelete: 'Remove schedule',
   recurringDay: 'Day of week',

@@ -220,7 +220,16 @@ export default {
   fmtNote: '+ Note',
   fmtTip: '+ Tip',
   fmtWarning: '+ Warning',
+  fmtCode: 'Code',
   stepScreenshot: 'Step screenshot (optional)',
+  stepNoteKind: 'Callout type (optional)',
+  stepNoteEn: 'Callout note (English)',
+  stepNoteZh: 'Callout note (Chinese)',
+  stepNotePlaceholder: 'Optional reminder box for this step',
+  noteKindTip: 'Tip',
+  noteKindNote: 'Note',
+  noteKindWarning: 'Warning',
+  noteKindImportant: 'Important',
   // Member help home and topic sheets
   hub: {
     todayRide: 'Your ride today',

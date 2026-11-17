@@ -70,6 +70,7 @@ export default function Settings() {
         )}
         {rates && <ReimbursementRates />}
         {rates && <SystemRetentionSettings />}
+        {rates && <AlertChannelSettings />}
       </div>
     </Page>
   );
@@ -720,6 +721,133 @@ function SystemRetentionSettings() {
             <div className="btn-row">
               <Button variant="primary" type="submit" disabled={busy || !systemValid} loading={busy}>
                 {t('settings.saveSystem')}
+              </Button>
+            </div>
+          )}
+        </form>
+      )}
+    </Card>
+  );
+}
+
+interface AlertSettingsData {
+  telegram_bot_configured?: boolean;
+  telegram_bot_username?: string;
+  alert_webhook_url?: string;
+  vapid_public_key?: string;
+}
+
+function AlertChannelSettings() {
+  const { t } = useTranslation('admin');
+  const { can } = useAuth();
+  const canUpdate = can('admin_settings', 'update');
+  const { data, loading, reload } = useApi<AlertSettingsData>('/admin/settings/alerts');
+  const cfg = data && !Array.isArray(data) ? data : null;
+  const [tgUser, setTgUser] = useState('');
+  const [tgToken, setTgToken] = useState('');
+  const [clearToken, setClearToken] = useState(false);
+  const [webhookUrl, setWebhookUrl] = useState('');
+  const [vapidKey, setVapidKey] = useState('');
+  const [initialized, setInitialized] = useState(false);
+  const { busy, error, run } = useAction();
+
+  useEffect(() => {
+    if (cfg && !initialized) {
+      setTgUser(cfg.telegram_bot_username ?? '');
+      setWebhookUrl(cfg.alert_webhook_url ?? '');
+      setVapidKey(cfg.vapid_public_key ?? '');
+      setInitialized(true);
+    }
+  }, [cfg, initialized]);
+
+  const save = (e: FormEvent) => {
+    e.preventDefault();
+    run(async () => {
+      await put('/admin/settings/alerts', {
+        telegram_bot_username: tgUser.trim(),
+        telegram_bot_token: tgToken.trim() || undefined,
+        clear_telegram_bot_token: clearToken,
+        alert_webhook_url: webhookUrl.trim(),
+        vapid_public_key: vapidKey.trim(),
+      });
+      setTgToken('');
+      setClearToken(false);
+      await reload();
+    }, t('settings.alertsSaved'));
+  };
+
+  return (
+    <Card className="stack">
+      <div className="row between wrap gap-sm">
+        <div>
+          <h3>{t('settings.alertsTitle')}</h3>
+          <p className="muted small">{t('settings.alertsDesc')}</p>
+        </div>
+        {cfg && (
+          <Pill tone={cfg.telegram_bot_configured ? 'success' : 'neutral'}>
+            {cfg.telegram_bot_configured ? t('settings.tgConfigured') : t('settings.tgNotConfigured')}
+          </Pill>
+        )}
+      </div>
+
+      {loading && !initialized ? (
+        <CardSkeleton count={2} />
+      ) : (
+        <form onSubmit={save} className="stack">
+          <div className="form-grid two">
+            <Field label={t('settings.tgBotUsername')}>
+              <input
+                className="input"
+                disabled={!canUpdate || busy}
+                value={tgUser}
+                onChange={(e) => setTgUser(e.target.value)}
+                placeholder="GraceRideBot"
+              />
+            </Field>
+            <Field label={t('settings.tgBotToken')} hint={t('settings.tgBotTokenHint')}>
+              <input
+                className="input"
+                type="password"
+                autoComplete="off"
+                disabled={!canUpdate || busy || clearToken}
+                value={tgToken}
+                onChange={(e) => setTgToken(e.target.value)}
+                placeholder={cfg?.telegram_bot_configured ? '••••••••' : ''}
+              />
+            </Field>
+          </div>
+          {canUpdate && cfg?.telegram_bot_configured && (
+            <label className="row gap-xs items-center small">
+              <input
+                type="checkbox"
+                checked={clearToken}
+                onChange={(e) => setClearToken(e.target.checked)}
+              />
+              <span>{t('settings.tgClearToken')}</span>
+            </label>
+          )}
+          <Field label={t('settings.webhookUrl')} hint={t('settings.webhookUrlHint')}>
+            <input
+              className="input"
+              disabled={!canUpdate || busy}
+              value={webhookUrl}
+              onChange={(e) => setWebhookUrl(e.target.value)}
+              placeholder="https://example.org/hooks/grace-ride"
+            />
+          </Field>
+          <Field label={t('settings.vapidPublicKey')}>
+            <input
+              className="input mono"
+              disabled={!canUpdate || busy}
+              value={vapidKey}
+              onChange={(e) => setVapidKey(e.target.value)}
+            />
+          </Field>
+          <ErrorBox error={error} />
+          {canUpdate && (
+            <div className="btn-row">
+              <Button variant="primary" type="submit" disabled={busy} loading={busy}>
+                {t('settings.saveAlerts')}
               </Button>
             </div>
           )}

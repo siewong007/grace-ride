@@ -322,6 +322,29 @@ function RecurringPassengerModal({
               <div className="row nowrap gap-xs">
                 <Button
                   size="sm"
+                  variant="ghost"
+                  disabled={busy}
+                  onClick={() =>
+                    run(
+                      () =>
+                        put(`/recurring-schedules/${s.id}`, {
+                          kind: s.kind,
+                          label: s.label,
+                          weekday: s.weekday,
+                          pickup_time: s.pickup_time,
+                          area_id: s.area_id,
+                          pickup_address: s.pickup_address,
+                          destination: s.destination,
+                          seats: s.seats,
+                          active: !s.active,
+                        }).then(reload),
+                    )
+                  }
+                >
+                  {s.active ? t('recurringPauseBtn') : t('recurringResumeBtn')}
+                </Button>
+                <Button
+                  size="sm"
                   variant="secondary"
                   disabled={busy}
                   onClick={() =>

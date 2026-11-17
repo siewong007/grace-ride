@@ -908,7 +908,7 @@ function MemberPassQrModal({
     <Modal title={t('myCheckinPass')} onClose={onClose}>
       <div className="stack items-center" style={{ padding: 'var(--space-2) 0' }}>
         {qrUrl && (
-          <div className="totp-qr" style={{ padding: 'var(--space-3)', background: '#fff', borderRadius: 'var(--radius-md)' }}>
+          <div className="totp-qr" style={{ padding: 'var(--space-3)', background: 'var(--surface)', borderRadius: 'var(--radius)' }}>
             <img src={qrUrl} width={240} height={240} alt={t('myCheckinPass')} />
           </div>
         )}
@@ -1014,7 +1014,7 @@ function ScanMemberPassModal({
       <div className="stack">
         <p className="muted small">{t('scanMemberPassDesc')}</p>
         {cameraOn && (
-          <div style={{ borderRadius: 'var(--radius-md)', overflow: 'hidden', background: '#000' }}>
+          <div style={{ borderRadius: 'var(--radius)', overflow: 'hidden', background: 'var(--surface-2)' }}>
             <video ref={videoRef} playsInline muted style={{ width: '100%', maxHeight: 240, display: 'block', objectFit: 'cover' }} />
           </div>
         )}

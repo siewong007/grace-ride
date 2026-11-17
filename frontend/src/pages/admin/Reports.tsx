@@ -13,6 +13,7 @@ import {
   PageHeader,
   CardSkeleton,
   Stat,
+  Tabs,
 } from '../../components/ui';
 import { EVENT_KIND, fmtDateTime, rm, useFormatT } from '../../format';
 import { useTranslation } from 'react-i18next';
@@ -87,6 +88,7 @@ export default function AdminReports() {
   );
   const [range, setRange] = useState<'monthly' | 'quarterly' | 'yearly'>('monthly');
   const [type, setType] = useState<'all' | 'driver' | 'passenger'>('all');
+  const [reportTab, setReportTab] = useState<'member' | 'demand'>('member');
   const [y, m] = month.split('-').map(Number);
 
   const { data: membersData } = useApi<Member[] | { items: Member[] }>('/admin/users?q=');
@@ -263,6 +265,19 @@ export default function AdminReports() {
         />
         <ErrorBox error={error} />
 
+        <Tabs
+          value={reportTab}
+          onChange={(v) => setReportTab(v as 'member' | 'demand')}
+          items={[
+            { value: 'member', label: t('reports.memberTab') },
+            { value: 'demand', label: t('reports.demandTab') },
+          ]}
+        />
+
+        {reportTab === 'demand' ? (
+          <DemandAnalyticsPanel month={month} onMonthChange={setMonth} />
+        ) : (
+          <>
         <Card className="report-filters">
           <Field label={t('reports.monthLabel')}>
             <input
@@ -432,7 +447,146 @@ export default function AdminReports() {
             </div>
           </>
         )}
+          </>
+        )}
       </div>
     </Page>
+  );
+}
+
+interface DemandReportData {
+  period: string;
+  totals: {
+    total_requests: number;
+    fulfilled: number;
+    unfilled: number;
+    completed: number;
+    cancelled_unassigned: number;
+    wheelchair_requests: number;
+    return_requests: number;
+    seats_unfilled: number;
+    active_drivers: number;
+    unique_passengers: number;
+    fulfillment_rate_pct: number;
+  };
+  by_area: {
+    area_id: number;
+    area_name_zh: string;
+    area_name_en: string;
+    total: number;
+    fulfilled: number;
+    unfilled: number;
+    cancelled_unassigned: number;
+    seats_needed: number;
+    seats_unfilled: number;
+    fulfillment_rate_pct: number;
+  }[];
+  by_slot: {
+    weekday: number;
+    slot: string;
+    total: number;
+    fulfilled: number;
+    unfilled: number;
+    cancelled_unassigned: number;
+    seats_needed: number;
+  }[];
+}
+
+const WEEKDAY_KEYS = ['sun', 'mon', 'tue', 'wed', 'thu', 'fri', 'sat'] as const;
+
+function DemandAnalyticsPanel({
+  month,
+  onMonthChange,
+}: {
+  month: string;
+  onMonthChange: (m: string) => void;
+}) {
+  const { t, i18n } = useTranslation('admin');
+  const isZh = i18n.language.startsWith('zh');
+  const { data, loading, error } = useApi<DemandReportData>(
+    `/admin/reports/demand?month=${encodeURIComponent(month)}`,
+  );
+  const d = data && 'totals' in data ? data : null;
+
+  return (
+    <div className="stack">
+      <Card className="report-filters">
+        <Field label={t('reports.monthLabel')}>
+          <input
+            className="input"
+            type="month"
+            value={month}
+            onChange={(e) => onMonthChange(e.target.value)}
+          />
+        </Field>
+      </Card>
+
+      <ErrorBox error={error} />
+
+      {loading ? (
+        <CardSkeleton count={3} />
+      ) : !d ? (
+        <EmptyState title={t('reports.none')} />
+      ) : (
+        <>
+          <div className="grid cols-4">
+            <Stat label={t('reports.demandTotal')} value={d.totals.total_requests} />
+            <Stat label={t('reports.demandFulfilled')} value={d.totals.fulfilled} />
+            <Stat label={t('reports.demandUnfilled')} value={d.totals.unfilled} />
+            <Stat label={t('reports.demandFulfillmentRate')} value={`${d.totals.fulfillment_rate_pct}%`} />
+            <Stat label={t('reports.demandActiveDrivers')} value={d.totals.active_drivers} />
+            <Stat label={t('reports.demandWheelchair')} value={d.totals.wheelchair_requests} />
+            <Stat label={t('reports.demandReturnLegs')} value={d.totals.return_requests} />
+            <Stat label={t('reports.demandCancelledUnassigned')} value={d.totals.cancelled_unassigned} />
+          </div>
+
+          <div className="grid cols-2">
+            <Card className="stack-sm">
+              <h3>{t('reports.demandByArea')}</h3>
+              {d.by_area.length === 0 ? (
+                <p className="muted small">{t('reports.none')}</p>
+              ) : (
+                <div className="list">
+                  {d.by_area.map((a) => (
+                    <div key={a.area_id} className="item row between nowrap gap-sm">
+                      <span className="bold ellipsis">
+                        {(isZh ? a.area_name_zh || a.area_name_en : a.area_name_en || a.area_name_zh) || `#${a.area_id}`}
+                      </span>
+                      <span className="small muted">
+                        {t('reports.demandAreaLine', {
+                          total: a.total,
+                          unfilled: a.unfilled,
+                          rate: a.fulfillment_rate_pct,
+                        })}
+                      </span>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </Card>
+
+            <Card className="stack-sm">
+              <h3>{t('reports.demandBySlot')}</h3>
+              {d.by_slot.length === 0 ? (
+                <p className="muted small">{t('reports.none')}</p>
+              ) : (
+                <div className="list">
+                  {d.by_slot.map((s) => (
+                    <div key={`${s.weekday}-${s.slot}`} className="item row between nowrap gap-sm">
+                      <span className="bold">
+                        {t(`reports.weekdays.${WEEKDAY_KEYS[s.weekday] ?? 'sun'}`)} · {s.slot}
+                      </span>
+                      <span className="small muted">
+                        {t('reports.demandSlotLine', { total: s.total, unfilled: s.unfilled })}
+                      </span>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </Card>
+          </div>
+        </>
+      )}
+    </div>
   );
 }

@@ -13,11 +13,20 @@ const ICON: Record<Kind, ReactNode> = {
   warning: <AlertTriangle size={16} aria-hidden="true" />,
 };
 
-/** **bold** becomes bold text. Built as React nodes, so nothing a guide editor types is ever run as HTML. */
+/** **bold**, *italic*, and `code` become formatted inline nodes. Built as React nodes, so nothing a guide editor types is ever run as HTML. */
 export function inline(text: string): ReactNode[] {
-  return text.split(/(\*\*[^*]+\*\*)/g).map((part, i) =>
-    part.startsWith('**') && part.endsWith('**') && part.length > 4 ? <strong key={i}>{part.slice(2, -2)}</strong> : <Fragment key={i}>{part}</Fragment>,
-  );
+  return text.split(/(\*\*[^*]+\*\*|`[^`]+`|\*[^*\n]+\*)/g).map((part, i) => {
+    if (part.startsWith('**') && part.endsWith('**') && part.length > 4) {
+      return <strong key={i}>{part.slice(2, -2)}</strong>;
+    }
+    if (part.startsWith('`') && part.endsWith('`') && part.length > 2) {
+      return <code key={i}>{part.slice(1, -1)}</code>;
+    }
+    if (part.startsWith('*') && part.endsWith('*') && part.length > 2) {
+      return <em key={i}>{part.slice(1, -1)}</em>;
+    }
+    return <Fragment key={i}>{part}</Fragment>;
+  });
 }
 
 /** Splits a step's text into lines; a line starting "Note:", "Tip:" or "Warning:" (or the Chinese equivalents) becomes a callout. */
@@ -29,15 +38,40 @@ export function parseStepText(text: string): { kind: Kind | null; text: string }
 }
 
 export default function StepText({ text, className = '' }: { text: string; className?: string }) {
-  return (
-    <div className={`step-text ${className}`}>
-      {parseStepText(text).map((l, i) =>
-        l.kind ? (
-          <p key={i} className={`guide-note ${l.kind}`}>{ICON[l.kind]}<span>{inline(l.text)}</span></p>
-        ) : (
-          <p key={i}>{inline(l.text)}</p>
-        ),
-      )}
-    </div>
-  );
+  const lines = parseStepText(text);
+  const blocks: ReactNode[] = [];
+  let bullets: { key: number; content: string }[] = [];
+  const flushBullets = () => {
+    if (!bullets.length) return;
+    blocks.push(
+      <ul key={`ul-${bullets[0].key}`} className="step-bullets">
+        {bullets.map((b) => (
+          <li key={b.key}>{inline(b.content)}</li>
+        ))}
+      </ul>,
+    );
+    bullets = [];
+  };
+
+  lines.forEach((l, i) => {
+    const trimmed = l.text.trimStart();
+    if (!l.kind && (trimmed.startsWith('- ') || trimmed.startsWith('* '))) {
+      bullets.push({ key: i, content: trimmed.slice(2).trim() });
+      return;
+    }
+    flushBullets();
+    if (l.kind) {
+      blocks.push(
+        <p key={i} className={`guide-note ${l.kind}`}>
+          {ICON[l.kind]}
+          <span>{inline(l.text)}</span>
+        </p>,
+      );
+    } else {
+      blocks.push(<p key={i}>{inline(l.text)}</p>);
+    }
+  });
+  flushBullets();
+
+  return <div className={`step-text ${className}`}>{blocks}</div>;
 }
