@@ -5,19 +5,22 @@ import { uploadFile } from '../api';
 import { Button } from './ui';
 
 /**
- * Attach one photo to a help message: pick (or take) an image, upload it, show a thumbnail.
- * The parent only sees the uploaded file id; the server checks it is the sender's own image.
+ * Attach one photo (a help message, an event cover): pick (or take) an image, upload it,
+ * show a thumbnail. The parent only sees the uploaded file id; the server checks it is
+ * the sender's own image. `ns` supplies photoAdd / photoAttached / photoRemove labels.
  */
 export default function PhotoAttach({
   fileId,
   onChange,
   disabled,
+  ns = 'help',
 }: {
   fileId: number | null;
   onChange: (id: number | null) => void;
   disabled?: boolean;
+  ns?: 'help' | 'eventForm';
 }) {
-  const { t } = useTranslation('help');
+  const { t } = useTranslation(ns);
   const inputRef = useRef<HTMLInputElement>(null);
   const [uploading, setUploading] = useState(false);
   const [err, setErr] = useState<string | null>(null);

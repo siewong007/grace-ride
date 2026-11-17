@@ -3760,3 +3760,146 @@ fn reachable_error_keys_match_handlers() {
         );
     }
 }
+
+#[tokio::test]
+async fn settlement_revisions_keep_payments_and_settle_zero_shares() {
+    let (app, st) = setup().await;
+    let c = cast(&app, &st).await;
+    let event = make_event(&app, &c.admin, &[c.all_group], 0).await;
+    let both = people(&[c.member_id, c.sophie_id]);
+    let sid = must(
+        &app,
+        Method::POST,
+        &format!("/api/events/{event}/settlements"),
+        Some(&c.admin),
+        Some(bill(
+            "午餐",
+            json!([{"label": "午餐", "amount_cents": 1000}]),
+            0,
+            "equal",
+            both.clone(),
+            "1234567890",
+        )),
+    )
+    .await["id"]
+        .as_i64()
+        .unwrap();
+    for uid in [c.member_id, c.sophie_id] {
+        must(
+            &app,
+            Method::POST,
+            &format!("/api/events/{event}/attendance"),
+            Some(&c.admin),
+            Some(json!({"user_id": uid, "attended": true})),
+        )
+        .await;
+    }
+    must(
+        &app,
+        Method::POST,
+        &format!("/api/settlements/{sid}/publish"),
+        Some(&c.admin),
+        None,
+    )
+    .await;
+    // The member has paid their RM5.00 and the organiser confirmed it.
+    sqlx::query("UPDATE settlement_shares SET status='confirmed', txn_ref='TXN-1' WHERE settlement_id=$1 AND user_id=$2")
+        .bind(sid)
+        .bind(c.member_id)
+        .execute(&st.db)
+        .await
+        .unwrap();
+    let share = |uid: i64| {
+        let db = st.db.clone();
+        async move {
+            sqlx::query_as::<_, (i64, String)>(
+                "SELECT amount_cents, status FROM settlement_shares WHERE settlement_id=$1 AND user_id=$2",
+            )
+            .bind(sid)
+            .bind(uid)
+            .fetch_optional(&db)
+            .await
+            .unwrap()
+        }
+    };
+    let revisions = || {
+        let db = st.db.clone();
+        async move {
+            sqlx::query_scalar::<_, i64>(
+                "SELECT COUNT(*) FROM settlement_revisions WHERE settlement_id=$1",
+            )
+            .bind(sid)
+            .fetch_one(&db)
+            .await
+            .unwrap()
+        }
+    };
+
+    // Removing a member who has paid is refused, and nothing is half-written.
+    let mut drop_member = bill(
+        "午餐",
+        json!([{"label": "午餐", "amount_cents": 1000}]),
+        0,
+        "equal",
+        people(&[c.sophie_id]),
+        "1234567890",
+    );
+    drop_member["reason"] = json!("算错人");
+    deny(
+        &app,
+        Method::PUT,
+        &format!("/api/settlements/{sid}"),
+        Some(&c.admin),
+        Some(drop_member),
+        StatusCode::BAD_REQUEST,
+        "PAID_MEMBERS_CANNOT_BE_REMOVED",
+    )
+    .await;
+    assert_eq!(share(c.member_id).await, Some((500, "confirmed".into())));
+    assert_eq!(revisions().await, 0);
+
+    // Cutting an unpaid share to nothing settles it.
+    let custom = |total: i64, sophie: i64| {
+        let mut b = bill(
+            "午餐",
+            json!([{"label": "午餐", "amount_cents": total}]),
+            0,
+            "custom",
+            json!([{"user_id": c.member_id, "amount_cents": 500}, {"user_id": c.sophie_id, "amount_cents": sophie}]),
+            "1234567890",
+        );
+        b["reason"] = json!("调整");
+        b
+    };
+    must(
+        &app,
+        Method::PUT,
+        &format!("/api/settlements/{sid}"),
+        Some(&c.admin),
+        Some(custom(500, 0)),
+    )
+    .await;
+    assert_eq!(share(c.sophie_id).await, Some((0, "confirmed".into())));
+    assert_eq!(share(c.member_id).await, Some((500, "confirmed".into())));
+
+    // Raising a share of nothing makes it owed, not "needs info".
+    must(
+        &app,
+        Method::PUT,
+        &format!("/api/settlements/{sid}"),
+        Some(&c.admin),
+        Some(custom(1000, 500)),
+    )
+    .await;
+    assert_eq!(share(c.sophie_id).await, Some((500, "unpaid".into())));
+
+    // Each revision saved its own version.
+    let versions: Vec<i64> = sqlx::query_scalar(
+        "SELECT version FROM settlement_revisions WHERE settlement_id=$1 ORDER BY version",
+    )
+    .bind(sid)
+    .fetch_all(&st.db)
+    .await
+    .unwrap();
+    assert_eq!(versions, [1, 2]);
+}

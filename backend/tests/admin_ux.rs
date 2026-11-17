@@ -253,3 +253,151 @@ async fn announcements_can_be_edited_and_pinned_without_notifying_again() {
     .await;
     assert_eq!(denied.status, StatusCode::FORBIDDEN, "{}", denied.json);
 }
+
+fn names(body: &Value) -> Vec<String> {
+    body.as_array()
+        .unwrap()
+        .iter()
+        .map(|u| u["name"].as_str().unwrap().to_string())
+        .collect()
+}
+
+async fn add_member(
+    st: &grace_ride::state::AppState,
+    name: &str,
+    email: &str,
+    phone: &str,
+    status: &str,
+) {
+    sqlx::query(
+        "INSERT INTO users (name, email, phone, status, webauthn_uuid) VALUES ($1,$2,$3,$4,$5)",
+    )
+    .bind(name)
+    .bind(email)
+    .bind(phone)
+    .bind(status)
+    .bind(format!("uuid-{email}"))
+    .execute(&st.db)
+    .await
+    .unwrap();
+}
+
+#[tokio::test]
+async fn member_search_ignores_case_and_matches_email_for_staff() {
+    let (app, st) = setup().await;
+    let root = login(&st, "superadmin@example.org").await;
+    add_member(
+        &st,
+        "Xanthe Pickwell",
+        "xanthe.p@example.org",
+        "0187776655",
+        "active",
+    )
+    .await;
+
+    for q in ["xanthe", "PICKWELL", "XANTHE.P@"] {
+        let r = call(
+            &app,
+            Method::GET,
+            &format!("/api/admin/users?q={q}"),
+            Some(&root),
+            None,
+        )
+        .await;
+        assert_eq!(r.status, StatusCode::OK, "{}", r.json);
+        assert_eq!(names(&r.json), ["Xanthe Pickwell"], "q={q}");
+    }
+}
+
+#[tokio::test]
+async fn member_picker_without_member_access_matches_names_of_active_members_only() {
+    let (app, st) = setup().await;
+    // driver@example.org leads events (Events · update) but cannot open 成员.
+    let leader = login(&st, "driver@example.org").await;
+    add_member(
+        &st,
+        "Xanthe Pickwell",
+        "xanthe.p@example.org",
+        "0187776655",
+        "active",
+    )
+    .await;
+    add_member(
+        &st,
+        "Xanthe Gone",
+        "xanthe.g@example.org",
+        "0187776600",
+        "disabled",
+    )
+    .await;
+
+    let by_name = call(
+        &app,
+        Method::GET,
+        "/api/admin/users?q=xanthe",
+        Some(&leader),
+        None,
+    )
+    .await;
+    assert_eq!(by_name.status, StatusCode::OK, "{}", by_name.json);
+    assert_eq!(names(&by_name.json), ["Xanthe Pickwell"]);
+    assert!(by_name.json[0].get("phone").is_none());
+
+    // Contact details can't be probed through the search.
+    for q in ["0187776", "xanthe.p%40"] {
+        let r = call(
+            &app,
+            Method::GET,
+            &format!("/api/admin/users?q={q}"),
+            Some(&leader),
+            None,
+        )
+        .await;
+        assert_eq!(r.status, StatusCode::OK, "{}", r.json);
+        assert!(names(&r.json).is_empty(), "q={q}: {}", r.json);
+    }
+
+    // Asking for another status doesn't widen it.
+    let disabled = call(
+        &app,
+        Method::GET,
+        "/api/admin/users?q=xanthe&status=disabled",
+        Some(&leader),
+        None,
+    )
+    .await;
+    assert_eq!(names(&disabled.json), ["Xanthe Pickwell"]);
+}
+
+#[tokio::test]
+async fn unpaged_member_list_applies_the_status_filter() {
+    let (app, st) = setup().await;
+    let root = login(&st, "superadmin@example.org").await;
+    add_member(
+        &st,
+        "Xanthe Pickwell",
+        "xanthe.p@example.org",
+        "0187776655",
+        "active",
+    )
+    .await;
+    add_member(
+        &st,
+        "Xanthe Gone",
+        "xanthe.g@example.org",
+        "0187776600",
+        "disabled",
+    )
+    .await;
+
+    let r = call(
+        &app,
+        Method::GET,
+        "/api/admin/users?q=xanthe&status=disabled",
+        Some(&root),
+        None,
+    )
+    .await;
+    assert_eq!(r.status, StatusCode::OK, "{}", r.json);
+    assert_eq!(names(&r.json), ["Xanthe Gone"]);
+}

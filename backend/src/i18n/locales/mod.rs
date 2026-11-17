@@ -180,6 +180,7 @@ pub fn render(lang: Lang, key: &ErrorKey) -> String {
         | ErrorKey::RevisionReasonRequired
         | ErrorKey::UnattendedMembers(_)
         | ErrorKey::OpenPaymentsRemain(_)
+        | ErrorKey::PaidMembersCannotBeRemoved(_)
         | ErrorKey::PayeeDetailsRequired
         | ErrorKey::OnlyPayeeCanVerify
         | ErrorKey::ProofOnlyForOwnShare
@@ -215,6 +216,8 @@ pub fn render(lang: Lang, key: &ErrorKey) -> String {
         | ErrorKey::CannotReviewOwnRequest
         | ErrorKey::OnlyApprovedReimbCanBePaid
         | ErrorKey::CannotPayOwnRequest
+        | ErrorKey::CannotPayOwnApproval
+        | ErrorKey::ReimbursementAlreadyClaimed
         | ErrorKey::PayeeVerificationRequired
         | ErrorKey::ReimbursementProcessed
         | ErrorKey::ReasonRequired
@@ -407,6 +410,7 @@ mod tests {
             ErrorKey::RevisionReasonRequired,
             ErrorKey::UnattendedMembers(1),
             ErrorKey::OpenPaymentsRemain(1),
+            ErrorKey::PaidMembersCannotBeRemoved(1),
             ErrorKey::PayeeDetailsRequired,
             ErrorKey::OnlyPayeeCanVerify,
             ErrorKey::ProofOnlyForOwnShare,
@@ -442,6 +446,8 @@ mod tests {
             ErrorKey::CannotReviewOwnRequest,
             ErrorKey::OnlyApprovedReimbCanBePaid,
             ErrorKey::CannotPayOwnRequest,
+            ErrorKey::CannotPayOwnApproval,
+            ErrorKey::ReimbursementAlreadyClaimed,
             ErrorKey::PayeeVerificationRequired,
             ErrorKey::ReimbursementProcessed,
             ErrorKey::ReasonRequired,
@@ -470,6 +476,7 @@ mod tests {
             "RevisionSplitMismatch",
             "UnattendedMembers",
             "OpenPaymentsRemain",
+            "PaidMembersCannotBeRemoved",
         ];
         let mut seen = std::collections::HashSet::new();
         for key in samples() {

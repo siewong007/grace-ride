@@ -99,6 +99,8 @@ pub fn render(lang: Lang, key: &ErrorKey) -> String {
             "只有已批准的申请可以付款",
             "Only approved requests can be paid",
         ),
+        ErrorKey::CannotPayOwnApproval => pair(lang, "批准与付款需由不同的人处理：此申请由您批准，请交给另一位财务同工付款", "Approving and paying need two people: you approved this request, so another finance member must pay it"),
+        ErrorKey::ReimbursementAlreadyClaimed => pair(lang, "此收据或此趟接送已有报销申请，请勿重复申请", "This receipt or ride already has a reimbursement request; please don't claim it twice"),
         ErrorKey::CannotPayOwnRequest => pair(
             lang,
             "不能为自己的申请付款",

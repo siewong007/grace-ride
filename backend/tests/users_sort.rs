@@ -76,7 +76,8 @@ async fn admin_users_sort_uses_allow_listed_fields() {
     assert_eq!(wildcard.status, StatusCode::OK, "{}", wildcard.json);
     assert_eq!(wildcard.json["total"], 3);
 
-    let case_sensitive = call(
+    // Search ignores letter case.
+    let any_case = call(
         &app,
         Method::GET,
         "/api/admin/users?q=sort&page=1&limit=50&sort=name&dir=asc",
@@ -84,11 +85,6 @@ async fn admin_users_sort_uses_allow_listed_fields() {
         None,
     )
     .await;
-    assert_eq!(
-        case_sensitive.status,
-        StatusCode::OK,
-        "{}",
-        case_sensitive.json
-    );
-    assert_eq!(case_sensitive.json["total"], 0);
+    assert_eq!(any_case.status, StatusCode::OK, "{}", any_case.json);
+    assert_eq!(any_case.json["total"], 3);
 }

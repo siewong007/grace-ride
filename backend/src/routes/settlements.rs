@@ -187,13 +187,14 @@ async fn ensure_all_attended(
     Ok(())
 }
 
+/// Writes the bill's fields, items and shares inside the caller's transaction, so a
+/// failure part-way leaves the bill as it was.
 async fn write_body(
-    st: &AppState,
+    tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
     sid: i64,
     req: &SettlementIn,
     shares: &[(i64, i64)],
 ) -> AppResult<()> {
-    let mut tx = st.db.begin().await?;
     sqlx::query("UPDATE settlements SET title=$1, split_mode=$2, subsidy_cents=$3, payee_name=$4, payee_account=$5, due_date=$6, updated_at=$7 WHERE id=$8")
         .bind(req.title.trim())
         .bind(&req.split_mode)
@@ -203,11 +204,11 @@ async fn write_body(
         .bind(req.due_date.clone().filter(|d| !d.is_empty()))
         .bind(now())
         .bind(sid)
-        .execute(&mut *tx)
+        .execute(&mut **tx)
         .await?;
     sqlx::query("DELETE FROM settlement_items WHERE settlement_id=$1")
         .bind(sid)
-        .execute(&mut *tx)
+        .execute(&mut **tx)
         .await?;
     for i in &req.items {
         sqlx::query("INSERT INTO settlement_items (settlement_id, label, amount_cents, receipt_file_id) VALUES ($1,$2,$3,$4)")
@@ -215,7 +216,7 @@ async fn write_body(
             .bind(i.label.trim())
             .bind(i.amount_cents)
             .bind(i.receipt_file_id)
-            .execute(&mut *tx)
+            .execute(&mut **tx)
             .await?;
     }
     // Upsert shares; keep payment state where the amount did not change.
@@ -223,7 +224,7 @@ async fn write_body(
         "SELECT user_id, amount_cents, status FROM settlement_shares WHERE settlement_id=$1",
     )
     .bind(sid)
-    .fetch_all(&mut *tx)
+    .fetch_all(&mut **tx)
     .await?;
     for (uid, old_amt, status) in &existing {
         match shares.iter().find(|s| s.0 == *uid) {
@@ -231,11 +232,15 @@ async fn write_body(
                 sqlx::query("DELETE FROM settlement_shares WHERE settlement_id=$1 AND user_id=$2")
                     .bind(sid)
                     .bind(uid)
-                    .execute(&mut *tx)
+                    .execute(&mut **tx)
                     .await?;
             }
             Some((_, amt)) if amt != old_amt => {
-                let (new_status, note) = if status == "confirmed" || status == "pending" {
+                // Money has changed hands only on a non-zero share that is confirmed or
+                // waiting for the payee to check. Anything else starts afresh: a share
+                // of nothing is settled, any other amount is owed.
+                let paid = *old_amt > 0 && (status == "confirmed" || status == "pending");
+                let (new_status, note) = if paid {
                     (
                         "needs_info",
                         format!(
@@ -244,6 +249,8 @@ async fn write_body(
                             fmt_rm(*amt)
                         ),
                     )
+                } else if *amt == 0 {
+                    ("confirmed", String::new())
                 } else {
                     ("unpaid", String::new())
                 };
@@ -254,7 +261,7 @@ async fn write_body(
                     .bind(now())
                     .bind(sid)
                     .bind(uid)
-                    .execute(&mut *tx)
+                    .execute(&mut **tx)
                     .await?;
             }
             _ => {}
@@ -268,11 +275,10 @@ async fn write_body(
                 .bind(amt)
                 .bind(if *amt == 0 { "confirmed" } else { "unpaid" })
                 .bind(now())
-                .execute(&mut *tx)
+                .execute(&mut **tx)
                 .await?;
         }
     }
-    tx.commit().await?;
     Ok(())
 }
 
@@ -291,6 +297,7 @@ async fn create(
     }
     let shares = compute_shares(u.lang, &req)?;
     check_receipts(&st, &u, &req).await?;
+    let mut tx = st.db.begin().await?;
     let (sid,): (i64,) = sqlx::query_as(
         "INSERT INTO settlements (event_id, created_by, title, created_at) VALUES ($1,$2,$3,$4) RETURNING id",
     )
@@ -298,9 +305,10 @@ async fn create(
     .bind(u.id)
     .bind(req.title.trim())
     .bind(now())
-    .fetch_one(&st.db)
+    .fetch_one(&mut *tx)
     .await?;
-    write_body(&st, sid, &req, &shares).await?;
+    write_body(&mut tx, sid, &req, &shares).await?;
+    tx.commit().await?;
     audit(
         &st.db,
         Some(u.id),
@@ -517,6 +525,40 @@ async fn update(
         )
         .await?;
         // 发布后若改金额，必须保留旧版并通知
+        // One transaction for the saved old version, the version bump and the new body,
+        // with the bill row locked so two revisions at once can't share a version number.
+        let mut tx = st.db.begin().await?;
+        sqlx::query("SELECT id FROM settlements WHERE id=$1 FOR UPDATE")
+            .bind(id)
+            .execute(&mut *tx)
+            .await?;
+        // Re-read now that the bill is ours: another revision may have just finished.
+        let s = load(&st, u.lang, id).await?;
+        if s.status != "published" {
+            return Err(bad(u.lang, ErrorKey::BillClosedCannotEdit));
+        }
+        let before: Vec<(i64, i64, String)> = sqlx::query_as(
+            "SELECT user_id, amount_cents, status FROM settlement_shares WHERE settlement_id=$1",
+        )
+        .bind(id)
+        .fetch_all(&mut *tx)
+        .await?;
+        // A member who has paid, or sent proof, keeps their record: removing them would
+        // delete the proof and the only sign that a refund is owed.
+        let paid_removed = before
+            .iter()
+            .filter(|(uid, amt, st)| {
+                *amt > 0
+                    && (st == "confirmed" || st == "pending")
+                    && !shares.iter().any(|x| x.0 == *uid)
+            })
+            .count() as i64;
+        if paid_removed > 0 {
+            return Err(bad(
+                u.lang,
+                ErrorKey::PaidMembersCannotBeRemoved(paid_removed),
+            ));
+        }
         let snap = snapshot(&st, &s).await?;
         sqlx::query("INSERT INTO settlement_revisions (settlement_id, version, snapshot, reason, created_by, created_at) VALUES ($1,$2,$3::jsonb,$4,$5,$6)")
             .bind(id)
@@ -525,20 +567,16 @@ async fn update(
             .bind(&reason)
             .bind(u.id)
             .bind(now())
-            .execute(&st.db)
+            .execute(&mut *tx)
             .await?;
         sqlx::query("UPDATE settlements SET version=version+1, updated_at=$1 WHERE id=$2")
             .bind(now())
             .bind(id)
-            .execute(&st.db)
+            .execute(&mut *tx)
             .await?;
-        let before: Vec<(i64, i64)> = sqlx::query_as(
-            "SELECT user_id, amount_cents FROM settlement_shares WHERE settlement_id=$1",
-        )
-        .bind(id)
-        .fetch_all(&st.db)
-        .await?;
-        write_body(&st, id, &req, &shares).await?;
+        write_body(&mut tx, id, &req, &shares).await?;
+        tx.commit().await?;
+        let before: Vec<(i64, i64)> = before.into_iter().map(|(uid, amt, _)| (uid, amt)).collect();
         for (uid, old) in &before {
             match shares.iter().find(|x| x.0 == *uid) {
                 Some((_, new)) if new != old => {
@@ -607,7 +645,9 @@ async fn update(
         )
         .await;
     } else {
-        write_body(&st, id, &req, &shares).await?;
+        let mut tx = st.db.begin().await?;
+        write_body(&mut tx, id, &req, &shares).await?;
+        tx.commit().await?;
         audit(
             &st.db,
             Some(u.id),

@@ -22,5 +22,9 @@ export default {
   publish: 'Publish event',
   updated: 'Event updated',
   published: 'Event published, invites sent to target groups',
+  photo: 'Photo (optional)',
+  photoAdd: 'Add photo',
+  photoAttached: 'Photo added',
+  photoRemove: 'Remove photo',
   peopleCount: 'people',
 };

@@ -43,6 +43,10 @@ pub fn render(lang: Lang, key: &ErrorKey) -> String {
             Lang::Zh => format!("尚有 {count} 位成员未确认付款"),
             Lang::En => format!("{count} member(s) have not confirmed payment yet"),
         },
+        ErrorKey::PaidMembersCannotBeRemoved(count) => match lang {
+            Lang::Zh => format!("有 {count} 位成员已付款或已提交付款凭证，不能从名单移除。请先与对方处理退款，再在付款记录中重设其状态。"),
+            Lang::En => format!("{count} member(s) have already paid or sent proof of payment, so they can't be removed. Sort out a refund with them first, then reset their payment."),
+        },
         ErrorKey::PayeeDetailsRequired => pair(lang, "请填写收款资料（TNG 手机号 / DuitNow / 银行）", "Please fill in payee details (TNG number / DuitNow / bank)"),
         ErrorKey::OnlyPayeeCanVerify => pair(lang, "只有收款者可以核对", "Only the payee can verify"),
         ErrorKey::ProofOnlyForOwnShare => pair(lang, "只能为自己的费用上传凭证", "You can only submit proof for your own share"),

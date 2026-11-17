@@ -5,6 +5,7 @@ import { Button, ErrorBox, Field, Page, PageHeader, useAction } from '../compone
 import { EVENT_KIND, useFormatT } from '../format';
 import { useTranslation } from 'react-i18next';
 import { AddressInput } from '../components/AddressInput';
+import PhotoAttach from '../components/PhotoAttach';
 import { ordinary, treeOrder, withDescendants } from '../groupTree';
 
 interface Group {
@@ -29,6 +30,7 @@ interface ExistingEvent {
   signup_deadline: string | null;
   group_ids: number[];
   as_group_ids: number[];
+  photo_file_id: number | null;
 }
 
 export default function EventForm() {
@@ -50,6 +52,7 @@ export default function EventForm() {
     deadline: '',
     group_ids: [] as number[],
     as_group_ids: [] as number[],
+    photo_file_id: null as number | null,
   });
   const [narrow, setNarrow] = useState(false);
   const { busy, error, run } = useAction();
@@ -69,6 +72,7 @@ export default function EventForm() {
       deadline: existing.signup_deadline ?? '',
       group_ids: existing.group_ids,
       as_group_ids: existing.as_group_ids ?? [],
+      photo_file_id: existing.photo_file_id ?? null,
     });
     setNarrow((existing.as_group_ids ?? []).length > 0);
   }, [existing]);
@@ -108,6 +112,7 @@ export default function EventForm() {
       cost_note: f.cost_note,
       signup_deadline: f.deadline || null,
       group_ids: f.group_ids,
+      photo_file_id: f.photo_file_id,
       // Empty: people choose from the audience groups and their sub-groups.
       as_group_ids: narrow ? f.as_group_ids.filter((g) => joinable.some((j) => j.id === g)) : [],
     };
@@ -211,6 +216,16 @@ export default function EventForm() {
                   value={f.description}
                   onChange={set('description')}
                   rows={3}
+                />
+              </Field>
+            </div>
+            <div className="full">
+              <Field label={t('photo')}>
+                <PhotoAttach
+                  ns="eventForm"
+                  fileId={f.photo_file_id}
+                  onChange={(photo_file_id) => setF({ ...f, photo_file_id })}
+                  disabled={busy}
                 />
               </Field>
             </div>

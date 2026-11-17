@@ -167,6 +167,36 @@ pub async fn close_finished(db: &PgPool) -> Result<(), sqlx::Error> {
     Ok(())
 }
 
+/// The event moved: open links close relative to the new time, as if issued now.
+pub async fn event_moved(db: &PgPool, event_id: i64, starts_at: &str) -> AppResult<()> {
+    let open: Vec<(i64, String)> = sqlx::query_as(
+        "SELECT vp.id, r.pickup_at FROM visitor_passes vp JOIN rides r ON r.id = vp.ride_id
+         WHERE vp.event_id = $1 AND vp.closed_at IS NULL",
+    )
+    .bind(event_id)
+    .fetch_all(db)
+    .await?;
+    for (pass, pickup) in open {
+        let latest = if pickup.as_str() > starts_at {
+            pickup
+        } else {
+            starts_at.to_string()
+        };
+        let until = shift(&latest, CLOSES_AFTER_HOURS);
+        sqlx::query("UPDATE visitor_passes SET valid_until=$1 WHERE id=$2")
+            .bind(&until)
+            .bind(pass)
+            .execute(db)
+            .await?;
+        sqlx::query("UPDATE visitor_sessions SET expires_at=$1 WHERE pass_id=$2")
+            .bind(&until)
+            .bind(pass)
+            .execute(db)
+            .await?;
+    }
+    Ok(())
+}
+
 // ---------------------------------------------------------------- visitor side
 
 /// The claimed browser's pass. Only `gr_visit` is read; a member session is never a pass,
@@ -325,10 +355,13 @@ async fn claim(
         "",
     )
     .await;
+    // The server ends the session at `valid_until`, which moves if the event does, so the
+    // cookie itself is kept a week longer and never runs out first.
     let secs = parse_dt(&p.valid_until)
         .and_then(|until| parse_dt(&now()).map(|n| (until - n).num_seconds()))
         .unwrap_or(3600)
-        .max(60);
+        .max(60)
+        + 7 * 24 * 3600;
     let cookie = Cookie::build((VISIT_COOKIE, session))
         .http_only(true)
         .same_site(SameSite::Lax)
@@ -693,10 +726,25 @@ async fn reissue(
     Path(id): Path<i64>,
 ) -> AppResult<Json<Value>> {
     let old = managed_pass(&st, &u, id).await?;
+    // Closing the old link and making the new one is one step, and only the first of two
+    // quick presses gets to close it, so there is never more than one working link.
     let mut tx = st.db.begin().await?;
+    let closed = sqlx::query(
+        "UPDATE visitor_passes SET closed_at=$1, closed_reason='reissued' WHERE id=$2 AND closed_at IS NULL",
+    )
+    .bind(now())
+    .bind(old.id)
+    .execute(&mut *tx)
+    .await?;
+    if closed.rows_affected() == 0 {
+        return Err(conflict(u.lang, ErrorKey::VisitorJourneyEnded));
+    }
+    sqlx::query("DELETE FROM visitor_sessions WHERE pass_id=$1")
+        .bind(old.id)
+        .execute(&mut *tx)
+        .await?;
     let (new_id, token) = insert_pass(&mut tx, &old).await?;
     tx.commit().await?;
-    close(&st.db, old.id, "reissued").await?;
     audit(
         &st.db,
         Some(u.id),

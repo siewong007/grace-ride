@@ -2859,3 +2859,89 @@ mod unable_reason_tests {
         );
     }
 }
+
+/// Ride states that have not started yet: these still follow the event they go to.
+const NOT_STARTED: &[&str] = &[
+    "pending_driver",
+    "pending_passenger",
+    "pending_approval",
+    "pending_driver_confirm",
+    "confirmed",
+];
+
+/// An event's time or venue changed: its rides that haven't started follow it.
+///
+/// - A ride headed for the old venue now goes to the new one.
+/// - A new time is not applied to pickups (each rider chose theirs), so the rides are
+///   flagged for the transport team to check.
+/// - Drivers are told; members going were already told by the event change.
+/// - Visitor links close relative to the new time.
+pub async fn event_moved(
+    st: &AppState,
+    event_id: i64,
+    (old_at, new_at): (&str, &str),
+    (old_place, new_place): (&str, &str),
+) -> AppResult<()> {
+    if old_at == new_at && old_place == new_place {
+        return Ok(());
+    }
+    let statuses: Vec<String> = NOT_STARTED.iter().map(|s| s.to_string()).collect();
+    let mut tx = st.db.begin().await?;
+    if old_place != new_place {
+        sqlx::query(
+            "UPDATE rides SET destination=$1, updated_at=$2
+             WHERE event_id=$3 AND status = ANY($4) AND destination=$5",
+        )
+        .bind(new_place)
+        .bind(now())
+        .bind(event_id)
+        .bind(&statuses)
+        .bind(old_place)
+        .execute(&mut *tx)
+        .await?;
+    }
+    if old_at != new_at {
+        sqlx::query(
+            "UPDATE rides SET needs_attention=1, attention_reason=$1, updated_at=$2
+             WHERE event_id=$3 AND status = ANY($4)",
+        )
+        .bind(format!(
+            "活动时间已由 {} 改为 {}，请核对接送时间",
+            old_at.replace('T', " "),
+            new_at.replace('T', " ")
+        ))
+        .bind(now())
+        .bind(event_id)
+        .bind(&statuses)
+        .execute(&mut *tx)
+        .await?;
+    }
+    let drivers: Vec<(i64,)> = sqlx::query_as(
+        "SELECT DISTINCT driver_id FROM rides
+         WHERE event_id=$1 AND status = ANY($2) AND driver_id IS NOT NULL",
+    )
+    .bind(event_id)
+    .bind(&statuses)
+    .fetch_all(&mut *tx)
+    .await?;
+    tx.commit().await?;
+
+    crate::routes::visitors::event_moved(&st.db, event_id, new_at).await?;
+
+    let (title,): (String,) = sqlx::query_as("SELECT title FROM events WHERE id=$1")
+        .bind(event_id)
+        .fetch_one(&st.db)
+        .await?;
+    let body = format!("{} · {} · {}", title, new_at.replace('T', " "), new_place);
+    let ids: Vec<i64> = drivers.into_iter().map(|(d,)| d).collect();
+    crate::util::notify_many(
+        &st.db,
+        &ids,
+        ("接送的活动已更改", "Event for your ride has changed"),
+        (&body, &body),
+        "/drive",
+    )
+    .await;
+    Ok(())
+}
+

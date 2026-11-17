@@ -135,6 +135,16 @@ pub async fn can_access_file(st: &AppState, u: &CurrentUser, file_id: i64) -> Ap
     if photo > 0 {
         return Ok(true);
     }
+    // Event cover photos: everyone who can see the event.
+    let events: Vec<i64> = sqlx::query_scalar("SELECT id FROM events WHERE photo_file_id=$1")
+        .bind(file_id)
+        .fetch_all(&st.db)
+        .await?;
+    for ev in events {
+        if crate::routes::events::can_see_event(st, u, ev).await? {
+            return Ok(true);
+        }
+    }
     // Settlement expense receipts: 账单查阅 (finance). The organiser attaches only their own
     // uploads (checked when the bill is saved) and reaches them through the owner
     // check above, so naming another member's file id on a bill opens nothing.

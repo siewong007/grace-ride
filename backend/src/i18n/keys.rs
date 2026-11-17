@@ -199,6 +199,7 @@ pub enum ErrorKey {
     RevisionReasonRequired,
     UnattendedMembers(i64),
     OpenPaymentsRemain(i64),
+    PaidMembersCannotBeRemoved(i64),
     PayeeDetailsRequired,
     OnlyPayeeCanVerify,
     ProofOnlyForOwnShare,
@@ -236,6 +237,8 @@ pub enum ErrorKey {
     CannotReviewOwnRequest,
     OnlyApprovedReimbCanBePaid,
     CannotPayOwnRequest,
+    CannotPayOwnApproval,
+    ReimbursementAlreadyClaimed,
     PayeeVerificationRequired,
     ReimbursementProcessed,
     ReasonRequired,
@@ -421,6 +424,7 @@ impl ErrorKey {
             Self::RevisionReasonRequired => "REVISION_REASON_REQUIRED",
             Self::UnattendedMembers(_) => "UNATTENDED_MEMBERS",
             Self::OpenPaymentsRemain(_) => "OPEN_PAYMENTS_REMAIN",
+            Self::PaidMembersCannotBeRemoved(_) => "PAID_MEMBERS_CANNOT_BE_REMOVED",
             Self::PayeeDetailsRequired => "PAYEE_DETAILS_REQUIRED",
             Self::OnlyPayeeCanVerify => "ONLY_PAYEE_CAN_VERIFY",
             Self::ProofOnlyForOwnShare => "PROOF_ONLY_FOR_OWN_SHARE",
@@ -457,6 +461,8 @@ impl ErrorKey {
             Self::CannotReviewOwnRequest => "CANNOT_REVIEW_OWN_REQUEST",
             Self::OnlyApprovedReimbCanBePaid => "ONLY_APPROVED_REIMB_CAN_BE_PAID",
             Self::CannotPayOwnRequest => "CANNOT_PAY_OWN_REQUEST",
+            Self::CannotPayOwnApproval => "CANNOT_PAY_OWN_APPROVAL",
+            Self::ReimbursementAlreadyClaimed => "REIMBURSEMENT_ALREADY_CLAIMED",
             Self::PayeeVerificationRequired => "PAYEE_VERIFICATION_REQUIRED",
             Self::ReimbursementProcessed => "REIMBURSEMENT_PROCESSED",
             Self::ReasonRequired => "REASON_REQUIRED",
@@ -500,9 +506,9 @@ impl ErrorKey {
                 new_total,
                 diff,
             } => Some(json!({ "sum": sum, "new_total": new_total, "diff": diff })),
-            Self::UnattendedMembers(count) | Self::OpenPaymentsRemain(count) => {
-                Some(json!({ "count": count }))
-            }
+            Self::UnattendedMembers(count)
+            | Self::OpenPaymentsRemain(count)
+            | Self::PaidMembersCannotBeRemoved(count) => Some(json!({ "count": count })),
             _ => None,
         }
     }

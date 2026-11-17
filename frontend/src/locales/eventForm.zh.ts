@@ -22,5 +22,9 @@ export default {
   publish: '发布活动',
   updated: '活动已更新',
   published: '活动已发布，邀请已发给目标群体',
+  photo: '活动图片（可选）',
+  photoAdd: '添加图片',
+  photoAttached: '已添加图片',
+  photoRemove: '移除图片',
   peopleCount: '人',
 };

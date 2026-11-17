@@ -1,4 +1,5 @@
 export default {
+  photoAlt: 'Event photo',
   edit: 'Edit event',
   groups: 'Target groups',
   quota: 'Quota',

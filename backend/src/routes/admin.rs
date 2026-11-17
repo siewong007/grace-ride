@@ -186,26 +186,62 @@ async fn list_users(
         "u.id ASC",
     );
 
+    // Search ignores letter case. Without 成员 · view the caller sees names only, so the
+    // search matches names only (matching email or phone would reveal them a character
+    // at a time) and only active members can be picked.
+    let mut conds = vec![if staff {
+        "(u.name ILIKE $1 OR u.email ILIKE $1 OR u.phone ILIKE $1)".to_string()
+    } else {
+        "u.name ILIKE $1".to_string()
+    }];
+    let status = if staff {
+        q.status.clone()
+    } else {
+        Some("active".to_string())
+    };
+    let mut n = 2;
+    if q.role.is_some() {
+        conds.push(format!(
+            "EXISTS (SELECT 1 FROM member_roles mr WHERE mr.user_id = u.id AND mr.role_key = ${n})"
+        ));
+        n += 1;
+    }
+    if status.is_some() {
+        conds.push(format!("u.status = ${n}"));
+        n += 1;
+    }
+    let where_sql = conds.join(" AND ");
+
+    type Row = (
+        i64,
+        String,
+        String,
+        String,
+        String,
+        String,
+        String,
+        i64,
+        Option<String>,
+    );
+    let to_json = |(id, name, email, phone, roles, status, created, pk, groups): Row| {
+        if staff {
+            json!({"id": id, "name": name, "email": email, "phone": phone, "roles": parse_roles(&roles), "status": status,
+                   "created_at": created, "passkeys": pk, "groups": groups.unwrap_or_default()})
+        } else {
+            json!({"id": id, "name": name})
+        }
+    };
+    let select = "SELECT u.id, u.name, u.email, u.phone, u.roles, u.status, u.created_at, (SELECT COUNT(*) FROM passkeys p WHERE p.user_id=u.id),
+                (SELECT string_agg(g.name, '、') FROM group_members gm JOIN groups g ON g.id=gm.group_id WHERE gm.user_id=u.id)
+             FROM users u";
+
     if q.page.is_some() || q.limit.is_some() {
-        let mut conds = vec!["(u.name LIKE $1 OR u.email LIKE $2 OR u.phone LIKE $3)".to_string()];
-        let mut n = 4;
-        if q.role.is_some() {
-            conds.push(format!("EXISTS (SELECT 1 FROM member_roles mr WHERE mr.user_id = u.id AND mr.role_key = ${n})"));
-            n += 1;
-        }
-        if q.status.is_some() {
-            conds.push(format!("u.status = ${n}"));
-            n += 1;
-        }
-        let count_sql = format!("SELECT COUNT(*) FROM users u WHERE {}", conds.join(" AND "));
-        let mut count_query = sqlx::query_as::<_, (i64,)>(&count_sql)
-            .bind(&like)
-            .bind(&like)
-            .bind(&like);
+        let count_sql = format!("SELECT COUNT(*) FROM users u WHERE {where_sql}");
+        let mut count_query = sqlx::query_as::<_, (i64,)>(&count_sql).bind(&like);
         if let Some(r) = &q.role {
             count_query = count_query.bind(r);
         }
-        if let Some(s) = &q.status {
+        if let Some(s) = &status {
             count_query = count_query.bind(s);
         }
         let (total,) = count_query.fetch_one(&st.db).await?;
@@ -215,47 +251,22 @@ async fn list_users(
         let offset = (page - 1) * limit;
 
         let sql = format!(
-            "SELECT u.id, u.name, u.email, u.phone, u.roles, u.status, u.created_at, (SELECT COUNT(*) FROM passkeys p WHERE p.user_id=u.id),
-                (SELECT string_agg(g.name, '、') FROM group_members gm JOIN groups g ON g.id=gm.group_id WHERE gm.user_id=u.id)
-             FROM users u WHERE {} ORDER BY {order} LIMIT ${n} OFFSET ${}",
-            conds.join(" AND "),
+            "{select} WHERE {where_sql} ORDER BY {order} LIMIT ${n} OFFSET ${}",
             n + 1
         );
-        let mut query = sqlx::query_as::<
-            _,
-            (
-                i64,
-                String,
-                String,
-                String,
-                String,
-                String,
-                String,
-                i64,
-                Option<String>,
-            ),
-        >(&sql)
-        .bind(&like)
-        .bind(&like)
-        .bind(&like);
+        let mut query = sqlx::query_as::<_, Row>(&sql).bind(&like);
         if let Some(r) = &q.role {
             query = query.bind(r);
         }
-        if let Some(s) = &q.status {
+        if let Some(s) = &status {
             query = query.bind(s);
         }
         query = query.bind(limit).bind(offset);
-        let rows = query.fetch_all(&st.db).await?;
-        let out: Vec<Value> = rows
+        let out: Vec<Value> = query
+            .fetch_all(&st.db)
+            .await?
             .into_iter()
-            .map(|(id, name, email, phone, roles, status, created, pk, groups)| {
-                if staff {
-                    json!({"id": id, "name": name, "email": email, "phone": phone, "roles": parse_roles(&roles), "status": status,
-                           "created_at": created, "passkeys": pk, "groups": groups.unwrap_or_default()})
-                } else {
-                    json!({"id": id, "name": name})
-                }
-            })
+            .map(to_json)
             .collect();
         let total_pages = if total == 0 {
             1
@@ -271,29 +282,20 @@ async fn list_users(
         })));
     }
 
-    let rows: Vec<(i64, String, String, String, String, String, String, i64, Option<String>)> = sqlx::query_as(
-        &format!(
-            "SELECT u.id, u.name, u.email, u.phone, u.roles, u.status, u.created_at, (SELECT COUNT(*) FROM passkeys p WHERE p.user_id=u.id),
-                (SELECT string_agg(g.name, '、') FROM group_members gm JOIN groups g ON g.id=gm.group_id WHERE gm.user_id=u.id)
-             FROM users u WHERE (u.name LIKE $1 OR u.email LIKE $2 OR u.phone LIKE $3) ORDER BY {order} LIMIT 500"
-        ),
-    )
-    .bind(&like)
-    .bind(&like)
-    .bind(&like)
-    .fetch_all(&st.db)
-    .await?;
-    let out: Vec<Value> = rows
+    // Unpaged (member pickers): the same filters, applied before the cap.
+    let sql = format!("{select} WHERE {where_sql} ORDER BY {order} LIMIT 2000");
+    let mut query = sqlx::query_as::<_, Row>(&sql).bind(&like);
+    if let Some(r) = &q.role {
+        query = query.bind(r);
+    }
+    if let Some(s) = &status {
+        query = query.bind(s);
+    }
+    let out: Vec<Value> = query
+        .fetch_all(&st.db)
+        .await?
         .into_iter()
-        .filter(|r| q.role.as_deref().map(|role| r.4.split(',').any(|x| x == role)).unwrap_or(true))
-        .map(|(id, name, email, phone, roles, status, created, pk, groups)| {
-            if staff {
-                json!({"id": id, "name": name, "email": email, "phone": phone, "roles": parse_roles(&roles), "status": status,
-                       "created_at": created, "passkeys": pk, "groups": groups.unwrap_or_default()})
-            } else {
-                json!({"id": id, "name": name})
-            }
-        })
+        .map(to_json)
         .collect();
     Ok(Json(json!(out)))
 }

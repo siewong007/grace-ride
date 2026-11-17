@@ -107,10 +107,11 @@ struct EventRow {
     my_as_group_id: Option<i64>,
     my_as_group: Option<String>,
     groups: Option<String>,
+    photo_file_id: Option<i64>,
 }
 
 const EVENT_SELECT: &str = "SELECT e.id, e.title, e.kind, e.description, e.starts_at, e.location, e.capacity, e.cost_note,
-    e.signup_deadline, e.status, e.created_by, c.name AS creator_name,
+    e.signup_deadline, e.status, e.created_by, c.name AS creator_name, e.photo_file_id,
     (SELECT COUNT(*) FROM event_signups s WHERE s.event_id=e.id AND s.status='going') AS going,
     (SELECT COUNT(*) FROM event_signups s WHERE s.event_id=e.id AND s.status='waitlist') AS waitlist,
     ms.status AS my_status, ms.need_ride AS my_need_ride, ms.offer_drive AS my_offer_drive, ms.attended AS my_attended,
@@ -129,6 +130,7 @@ fn event_json(e: &EventRow, u: &CurrentUser) -> Value {
         "my_signup": e.my_status.as_ref().map(|s| json!({"status": s, "need_ride": e.my_need_ride == Some(1), "offer_drive": e.my_offer_drive == Some(1), "attended": e.my_attended,
             "as_group": e.my_as_group_id.map(|id| json!({"id": id, "name": e.my_as_group}))})),
         "groups": e.groups.clone().unwrap_or_default(),
+        "photo_file_id": e.photo_file_id,
         "can_manage": can_manage(u, e.created_by, Act::Update),
         "can_cancel": can_manage(u, e.created_by, Act::Delete),
         "can_see_signups": can_see_signups(u, e.created_by),
@@ -267,6 +269,30 @@ struct EventIn {
     group_ids: Vec<i64>,
     /// Narrow the "joining as" choices. Empty or missing: the audience and its sub-groups.
     as_group_ids: Option<Vec<i64>>,
+    /// Optional cover photo: an image the saver uploaded (or the event's current photo).
+    photo_file_id: Option<i64>,
+}
+
+/// A cover photo must be an image the saver uploaded themselves, so nobody can surface
+/// someone else's receipt by naming its id. Keeping the event's current photo is always
+/// fine, so an admin editing another organiser's event doesn't lose it.
+async fn check_photo(
+    st: &AppState,
+    u: &CurrentUser,
+    file_id: Option<i64>,
+    current: Option<i64>,
+) -> AppResult<()> {
+    let Some(fid) = file_id else { return Ok(()) };
+    if Some(fid) == current {
+        return Ok(());
+    }
+    let ok: Option<(i64,)> =
+        sqlx::query_as("SELECT id FROM files WHERE id=$1 AND owner_id=$2 AND mime LIKE 'image/%'")
+            .bind(fid)
+            .bind(u.id)
+            .fetch_optional(&st.db)
+            .await?;
+    ok.map(|_| ()).ok_or(bad(u.lang, ErrorKey::InvalidPhoto))
 }
 
 /// Replace an event's audience and its narrowed "joining as" choices.
@@ -330,9 +356,10 @@ async fn create_event(
         return Err(forbidden(u.lang, ErrorKey::OnlyOrganiserCanCreate));
     }
     let (at, dl) = validate(&req, u.lang)?;
+    check_photo(&st, &u, req.photo_file_id, None).await?;
     let (id,): (i64,) = sqlx::query_as(
-        "INSERT INTO events (title, kind, description, starts_at, location, capacity, cost_note, signup_deadline, created_by, created_at)
-         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10) RETURNING id",
+        "INSERT INTO events (title, kind, description, starts_at, location, capacity, cost_note, signup_deadline, created_by, created_at, photo_file_id)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11) RETURNING id",
     )
     .bind(req.title.trim())
     .bind(&req.kind)
@@ -344,6 +371,7 @@ async fn create_event(
     .bind(&dl)
     .bind(u.id)
     .bind(now())
+    .bind(req.photo_file_id)
     .fetch_one(&st.db)
     .await?;
     save_event_groups(&st, id, &req).await?;
@@ -389,7 +417,8 @@ async fn update_event(
         return Err(forbidden(u.lang, ErrorKey::OnlyOrganiserCanEdit));
     }
     let (at, dl) = validate(&req, u.lang)?;
-    sqlx::query("UPDATE events SET title=$1, kind=$2, description=$3, starts_at=$4, location=$5, capacity=$6, cost_note=$7, signup_deadline=$8 WHERE id=$9")
+    check_photo(&st, &u, req.photo_file_id, e.photo_file_id).await?;
+    sqlx::query("UPDATE events SET title=$1, kind=$2, description=$3, starts_at=$4, location=$5, capacity=$6, cost_note=$7, signup_deadline=$8, photo_file_id=$9 WHERE id=$10")
         .bind(req.title.trim())
         .bind(&req.kind)
         .bind(req.description.clone().unwrap_or_default())
@@ -398,6 +427,7 @@ async fn update_event(
         .bind(req.capacity.unwrap_or(0).max(0))
         .bind(req.cost_note.clone().unwrap_or_default())
         .bind(&dl)
+        .bind(req.photo_file_id)
         .bind(id)
         .execute(&st.db)
         .await?;
@@ -417,6 +447,13 @@ async fn update_event(
         )
         .await?;
     }
+    crate::routes::rides::event_moved(
+        &st,
+        id,
+        (&e.starts_at, &at),
+        (&e.location, req.location.trim()),
+    )
+    .await?;
     let mut detail = req.title.trim().to_string();
     if at != e.starts_at {
         detail.push_str(&format!("; time {} → {at}", e.starts_at));
@@ -427,6 +464,12 @@ async fn update_event(
             e.location,
             req.location.trim()
         ));
+    }
+    if req.photo_file_id != e.photo_file_id {
+        detail.push_str(match req.photo_file_id {
+            Some(_) => "; photo changed",
+            None => "; photo removed",
+        });
     }
     audit(
         &st.db,

@@ -39,6 +39,8 @@ export interface EventItem {
   can_manage: boolean;
   /** May cancel it (the events page's delete permission). */
   can_cancel?: boolean;
+  /** Optional cover photo. */
+  photo_file_id?: number | null;
 }
 
 interface EventsPage {
@@ -153,10 +155,14 @@ export default function Events() {
 
               return (
                 <Link key={e.id} to={`/events/${e.id}`} className="item event-card">
-                  <div className="event-date-badge" aria-hidden="true">
-                    <span className="event-date-month">{monthName}</span>
-                    <span className="event-date-day">{dayNum}</span>
-                  </div>
+                  {e.photo_file_id ? (
+                    <img src={`/api/files/${e.photo_file_id}`} alt="" className="event-card-photo" loading="lazy" />
+                  ) : (
+                    <div className="event-date-badge" aria-hidden="true">
+                      <span className="event-date-month">{monthName}</span>
+                      <span className="event-date-day">{dayNum}</span>
+                    </div>
+                  )}
                   <div className="grow min-w-0 event-card-main">
                     <div className="bold clamp-2">{e.title}</div>
                     <div className="muted small clamp-2">

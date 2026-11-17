@@ -1,4 +1,5 @@
 export default {
+  photoAlt: '活动图片',
   edit: '编辑活动',
   groups: '目标群体',
   quota: '名额',

@@ -159,6 +159,11 @@ export default function EventDetail() {
           <div className="stack">
             {/* Event Hero Card */}
             <Card className="stack">
+              {e.photo_file_id && (
+                <a href={`/api/files/${e.photo_file_id}`} target="_blank" rel="noreferrer" className="event-photo-link">
+                  <img src={`/api/files/${e.photo_file_id}`} alt={t('photoAlt')} className="event-photo" />
+                </a>
+              )}
               <span className="muted small">{ft(EVENT_KIND[e.kind]?.label ?? e.kind)}</span>
 
               {e.description && (
