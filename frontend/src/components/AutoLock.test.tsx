@@ -1,7 +1,7 @@
 import { describe, expect, it, vi, beforeEach, afterEach } from 'vitest';
 import { fireEvent, render, screen, act, waitFor } from '@testing-library/react';
 import { MemoryRouter } from 'react-router-dom';
-import { AutoLockProvider, useAutoLock } from './AutoLock';
+import { AutoLockProvider, clearAutoLock, useAutoLock } from './AutoLock';
 
 let currentMe = {
   id: 1,
@@ -230,5 +230,87 @@ describe('AutoLockProvider', () => {
 
     expect(screen.getByTestId('status')).toHaveTextContent('unlocked');
     expect(screen.queryByRole('dialog')).toBeNull();
+  });
+
+  const renderProvider = () =>
+    render(
+      <MemoryRouter>
+        <AutoLockProvider>
+          <TestConsumer />
+        </AutoLockProvider>
+      </MemoryRouter>
+    );
+
+  it('stays locked after a reload', () => {
+    const first = renderProvider();
+    fireEvent.click(screen.getByText('Trigger Lock'));
+    first.unmount();
+
+    renderProvider();
+    expect(screen.getByTestId('status')).toHaveTextContent('locked');
+    expect(screen.getByRole('dialog')).toBeInTheDocument();
+  });
+
+  it('ignores a lock saved for another member', () => {
+    localStorage.setItem('gr_locked_user', '999');
+    renderProvider();
+    expect(screen.getByTestId('status')).toHaveTextContent('unlocked');
+  });
+
+  it('starts unlocked after a fresh sign-in clears the saved lock', () => {
+    const first = renderProvider();
+    fireEvent.click(screen.getByText('Trigger Lock'));
+    first.unmount();
+
+    clearAutoLock();
+    renderProvider();
+    expect(screen.getByTestId('status')).toHaveTextContent('unlocked');
+  });
+
+  it('forgets the lock when the session ends', () => {
+    renderProvider();
+    fireEvent.click(screen.getByText('Trigger Lock'));
+    act(() => {
+      window.dispatchEvent(new Event('gr:unauthorized'));
+    });
+    expect(screen.getByTestId('status')).toHaveTextContent('unlocked');
+    expect(localStorage.getItem('gr_locked_user')).toBeNull();
+  });
+
+  it('forgets the lock on log out', async () => {
+    vi.useRealTimers();
+    renderProvider();
+    fireEvent.click(screen.getByText('Trigger Lock'));
+    fireEvent.click(screen.getByRole('button', { name: /logout/ }));
+    await waitFor(() => expect(screen.getByTestId('status')).toHaveTextContent('unlocked'));
+    expect(localStorage.getItem('gr_locked_user')).toBeNull();
+  });
+
+  it('follows a lock or unlock made in another tab', () => {
+    renderProvider();
+    act(() => {
+      localStorage.setItem('gr_locked_user', '1');
+      window.dispatchEvent(new StorageEvent('storage', { key: 'gr_locked_user', newValue: '1' }));
+    });
+    expect(screen.getByTestId('status')).toHaveTextContent('locked');
+
+    act(() => {
+      localStorage.removeItem('gr_locked_user');
+      window.dispatchEvent(new StorageEvent('storage', { key: 'gr_locked_user', newValue: null }));
+    });
+    expect(screen.getByTestId('status')).toHaveTextContent('unlocked');
+  });
+
+  it('does not lock while another tab is in use', () => {
+    renderProvider();
+    act(() => {
+      vi.advanceTimersByTime(10 * 60 * 1000);
+    });
+    // Another tab reports fresh activity.
+    localStorage.setItem('gr_last_active', String(Date.now()));
+    act(() => {
+      vi.advanceTimersByTime(10 * 60 * 1000);
+    });
+    expect(screen.getByTestId('status')).toHaveTextContent('unlocked');
   });
 });

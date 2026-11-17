@@ -21,11 +21,40 @@ const Ctx = createContext<AutoLockCtx>({
 
 export const useAutoLock = () => useContext(Ctx);
 
+// The lock is kept in localStorage so a reload or a new tab doesn't open it, and tabs
+// share one idle clock so a forgotten background tab can't lock the tab in use.
+// It is a screen lock only: the session itself stays valid on the server.
+const LOCKED_KEY = 'gr_locked_user';
+const ACTIVE_KEY = 'gr_last_active';
+
+const readStore = (key: string): string | null => {
+  try {
+    return localStorage.getItem(key);
+  } catch {
+    return null;
+  }
+};
+
+const writeStore = (key: string, value: string | null) => {
+  try {
+    if (value === null) localStorage.removeItem(key);
+    else localStorage.setItem(key, value);
+  } catch {
+    /* storage blocked: the lock still works for this page */
+  }
+};
+
+/** Forgets a saved lock. Call after a fresh sign-in, which proves who is at the device. */
+export const clearAutoLock = () => writeStore(LOCKED_KEY, null);
+
 export function AutoLockProvider({ children }: { children: ReactNode }) {
   const { me, refresh } = useAuth();
   const { t } = useTranslation('common');
   const nav = useNavigate();
-  const [isLocked, setIsLocked] = useState(false);
+  const meId = me ? String(me.id) : null;
+  const [isLocked, setIsLocked] = useState(() => meId !== null && readStore(LOCKED_KEY) === meId);
+  const meIdRef = useRef(meId);
+  meIdRef.current = meId;
   const lastActiveRef = useRef<number>(Date.now());
   const unlockBtnRef = useRef<HTMLButtonElement>(null);
   const [unlocking, setUnlocking] = useState(false);
@@ -41,13 +70,43 @@ export function AutoLockProvider({ children }: { children: ReactNode }) {
   const timeoutMins = userPref > 0 ? userPref : userPref === -1 ? 0 : defaultTimeout;
 
   const lock = useCallback(() => {
+    if (meIdRef.current) writeStore(LOCKED_KEY, meIdRef.current);
     setIsLocked(true);
   }, []);
 
   const unlock = useCallback(() => {
     lastActiveRef.current = Date.now();
+    writeStore(ACTIVE_KEY, String(lastActiveRef.current));
+    writeStore(LOCKED_KEY, null);
     setUnlockError(null);
     setIsLocked(false);
+  }, []);
+
+  // `me` loads after the first render: pick up a lock saved for this member then.
+  useEffect(() => {
+    if (meId !== null && readStore(LOCKED_KEY) === meId) setIsLocked(true);
+  }, [meId]);
+
+  // Locking or unlocking in another tab applies here too.
+  useEffect(() => {
+    const onStorage = (e: StorageEvent) => {
+      if (e.key !== LOCKED_KEY && e.key !== null) return;
+      const locked = meIdRef.current !== null && readStore(LOCKED_KEY) === meIdRef.current;
+      if (!locked) lastActiveRef.current = Date.now();
+      setIsLocked(locked);
+    };
+    window.addEventListener('storage', onStorage);
+    return () => window.removeEventListener('storage', onStorage);
+  }, []);
+
+  // A session that has ended no longer needs guarding; the next sign-in starts unlocked.
+  useEffect(() => {
+    const onUnauth = () => {
+      clearAutoLock();
+      setIsLocked(false);
+    };
+    window.addEventListener('gr:unauthorized', onUnauth);
+    return () => window.removeEventListener('gr:unauthorized', onUnauth);
   }, []);
 
   // Activity listeners to reset the inactivity timer
@@ -63,9 +122,12 @@ export function AutoLockProvider({ children }: { children: ReactNode }) {
 
     // Check periodically for idle timeout (every 5 seconds)
     const interval = setInterval(() => {
-      const elapsed = Date.now() - lastActiveRef.current;
+      // Share this tab's latest activity, and count activity in other tabs.
+      const shared = Number(readStore(ACTIVE_KEY)) || 0;
+      if (lastActiveRef.current > shared) writeStore(ACTIVE_KEY, String(lastActiveRef.current));
+      const elapsed = Date.now() - Math.max(lastActiveRef.current, shared);
       if (elapsed >= timeoutMins * 60 * 1000) {
-        setIsLocked(true);
+        lock();
       }
     }, 5000);
 
@@ -73,7 +135,7 @@ export function AutoLockProvider({ children }: { children: ReactNode }) {
       events.forEach((ev) => window.removeEventListener(ev, onActivity));
       clearInterval(interval);
     };
-  }, [me, timeoutMins, isLocked]);
+  }, [me, timeoutMins, isLocked, lock]);
 
   // Focus lock button when locked
   useEffect(() => {
@@ -99,6 +161,7 @@ export function AutoLockProvider({ children }: { children: ReactNode }) {
 
   const handleLogout = async () => {
     await post('/auth/logout');
+    clearAutoLock();
     setIsLocked(false);
     setUnlockError(null);
     await refresh();

@@ -95,14 +95,16 @@ export const reauthWithPasskey = () =>
   assertPasskey('/auth/passkey/reauth/start', {}, '/auth/passkey/reauth/finish');
 
 /**
- * Runs a security change. If the server says the sign-in is too old, asks for the
- * passkey once and retries, so nobody has to sign out and in again.
+ * Runs a security change. If the server says the sign-in is too old and the member can
+ * use a passkey here, asks for it once and retries, so nobody has to sign out and in
+ * again. Without a usable passkey the server's error is passed on as is: it tells the
+ * member to sign out and back in instead.
  */
-export async function withRecentSignIn<T>(fn: () => Promise<T>): Promise<T> {
+export async function withRecentSignIn<T>(fn: () => Promise<T>, canPasskey: boolean): Promise<T> {
   try {
     return await fn();
   } catch (e) {
-    if ((e as ApiError).code !== 'RECENT_SIGN_IN_REQUIRED') throw e;
+    if (!canPasskey || (e as ApiError).code !== 'RECENT_SIGN_IN_REQUIRED') throw e;
     await reauthWithPasskey();
     return fn();
   }

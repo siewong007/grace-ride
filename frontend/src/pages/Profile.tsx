@@ -32,6 +32,9 @@ export default function Profile() {
   const ft = useFormatT();
   const confirm = useConfirm();
   const { me, refresh, can } = useAuth();
+  // A too-old sign-in can be renewed in place only with a passkey this browser can use.
+  const canReauth = passkeySupported() && (me?.passkey_count ?? 0) > 0;
+  const recentSignIn = <T,>(fn: () => Promise<T>) => withRecentSignIn(fn, canReauth);
   const nav = useNavigate();
   const { lock } = useAutoLock();
   const passkeys = useApi<{ id: number; label: string; created_at: string; last_used: string | null }[]>('/auth/passkeys');
@@ -241,7 +244,7 @@ export default function Profile() {
                               confirmLabel: t('remove'),
                               tone: 'danger',
                             });
-                            if (ok) run(() => withRecentSignIn(() => del(`/auth/passkeys/${p.id}`)).then(passkeys.reload).then(refresh), t('removed'));
+                            if (ok) run(() => recentSignIn(() => del(`/auth/passkeys/${p.id}`)).then(passkeys.reload).then(refresh), t('removed'));
                           }}
                         >
                           {t('remove')}
@@ -255,7 +258,7 @@ export default function Profile() {
                 <Button
                   variant="primary"
                   disabled={busy || !passkeySupported()}
-                  onClick={() => run(() => withRecentSignIn(() => registerPasskey(navigator.platform || t('myPhone'))).then(passkeys.reload).then(refresh), t('addPasskeyDone'))}
+                  onClick={() => run(() => recentSignIn(() => registerPasskey(navigator.platform || t('myPhone'))).then(passkeys.reload).then(refresh), t('addPasskeyDone'))}
                 >
                   <Fingerprint size={18} />
                   {t('addPasskey')}
@@ -277,7 +280,7 @@ export default function Profile() {
                       <Button
                         variant="secondary"
                         disabled={busy}
-                        onClick={() => run(async () => setTotp(await withRecentSignIn(() => post<{ secret: string; url: string }>('/auth/totp/setup'))))}
+                        onClick={() => run(async () => setTotp(await recentSignIn(() => post<{ secret: string; url: string }>('/auth/totp/setup'))))}
                       >
                         {t('setupTotp')}
                       </Button>
@@ -296,7 +299,7 @@ export default function Profile() {
                             });
                             if (ok) {
                               run(async () => {
-                                const res = await withRecentSignIn(() =>
+                                const res = await recentSignIn(() =>
                                   post<{ ok: boolean; backup_codes: string[] }>('/auth/totp/backup-codes/regenerate'),
                                 );
                                 setShowBackupCodes(res.backup_codes);

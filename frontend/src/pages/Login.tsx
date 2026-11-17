@@ -8,6 +8,7 @@ import { setLanguage, SupportedLanguage } from '../i18n';
 import { LogoMark, Wordmark } from '../components/Brand';
 import { Button, ErrorBox, Field, useAction } from '../components/ui';
 import { loginWithPasskey, passkeySupported } from '../webauthn';
+import { clearAutoLock } from '../components/AutoLock';
 
 type DevUser = { name: string; email: string; roles: string };
 
@@ -30,6 +31,7 @@ export default function Login() {
   if (me) return <Navigate to={from} replace />;
 
   const done = async () => {
+    clearAutoLock();
     await refresh();
     nav(from, { replace: true });
   };
