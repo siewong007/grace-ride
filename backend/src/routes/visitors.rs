@@ -331,10 +331,12 @@ async fn claim(
         "used" => return Err(conflict(lang, ErrorKey::VisitorLinkUsed)),
         _ => {}
     }
+    // Claim and session commit together: a failed session insert must not burn the one-use link.
+    let mut tx = st.db.begin().await?;
     let claimed = sqlx::query("UPDATE visitor_passes SET claimed_at=$1 WHERE id=$2 AND claimed_at IS NULL AND closed_at IS NULL")
         .bind(now())
         .bind(p.id)
-        .execute(&st.db)
+        .execute(&mut *tx)
         .await?;
     if claimed.rows_affected() == 0 {
         return Err(conflict(lang, ErrorKey::VisitorLinkUsed));
@@ -344,8 +346,9 @@ async fn claim(
         .bind(hash_token(&session))
         .bind(p.id)
         .bind(&p.valid_until)
-        .execute(&st.db)
+        .execute(&mut *tx)
         .await?;
+    tx.commit().await?;
     audit(
         &st.db,
         None,

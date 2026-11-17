@@ -718,6 +718,16 @@ async fn reply_ticket(
         return Err(bad(u.lang, ErrorKey::ReplyContentRequired));
     }
     check_attachment(&st, &u, req.file_id).await?;
+    // Lock the ticket and look at its status again: a close saved since the read above
+    // must not be undone by this reply flipping the ticket back to open/answered.
+    let mut tx = st.db.begin().await?;
+    let (current,): (String,) = sqlx::query_as("SELECT status FROM help_tickets WHERE id=$1 FOR UPDATE")
+        .bind(id)
+        .fetch_one(&mut *tx)
+        .await?;
+    if current == "closed" {
+        return Err(bad(u.lang, ErrorKey::RequestAlreadyClosed));
+    }
     sqlx::query(
         "INSERT INTO help_replies (ticket_id, user_id, body, file_id, created_at) VALUES ($1,$2,$3,$4,$5)",
     )
@@ -726,15 +736,16 @@ async fn reply_ticket(
     .bind(req.body.trim())
     .bind(req.file_id)
     .bind(now())
-    .execute(&st.db)
+    .execute(&mut *tx)
     .await?;
     let new_status = if u.id == owner { "open" } else { "answered" };
     sqlx::query("UPDATE help_tickets SET status=$1, updated_at=$2 WHERE id=$3")
         .bind(new_status)
         .bind(now())
         .bind(id)
-        .execute(&st.db)
+        .execute(&mut *tx)
         .await?;
+    tx.commit().await?;
     if u.id == owner {
         notify_perm(
             &st.db,

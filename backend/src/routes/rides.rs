@@ -642,6 +642,9 @@ async fn cancel_ride(
         .bind(id)
         .execute(&st.db)
         .await?;
+    if let (Some(d), Some(t)) = (r.driver_id, r.trip_id) {
+        st.routing.invalidate(d, t).await;
+    }
     if let Some(d) = r.driver_id {
         let line = format!(
             "{} · {} {}",
@@ -1322,6 +1325,9 @@ async fn driver_withdraw(
     if released.rows_affected() == 0 {
         return Err(conflict(u.lang, ErrorKey::RideStatusChanged));
     }
+    if let (Some(d), Some(t)) = (r.driver_id, r.trip_id) {
+        st.routing.invalidate(d, t).await;
+    }
     notify(
         &st.db,
         r.passenger_id,
@@ -1747,6 +1753,9 @@ async fn no_show(
     if let Some(d) = r.driver_id {
         clear_location_if_idle(&st, d).await?;
     }
+    if let (Some(d), Some(t)) = (r.driver_id, r.trip_id) {
+        st.routing.invalidate(d, t).await;
+    }
     clear_passenger_location(&st, id).await?;
     notify(
         &st.db,
@@ -1777,6 +1786,21 @@ async fn no_show(
             &format!("{} did not show up.", r.p_name),
         )
         .await;
+        let (open,): (i64,) = sqlx::query_as(
+            "SELECT COUNT(*) FROM rides WHERE trip_id=$1 AND status IN ('confirmed','in_progress')",
+        )
+        .bind(t)
+        .fetch_one(&st.db)
+        .await?;
+        if open == 0 {
+            system_message(
+                &st.db,
+                t,
+                "本趟接送已结束，群聊已关闭（只读）。",
+                "This ride is finished; the group chat is now closed (read-only).",
+            )
+            .await;
+        }
     }
     audit(&st.db, Some(u.id), "ride.no_show", "ride", Some(id), "").await;
     Ok(Json(json!({"ok": true})))
@@ -1808,16 +1832,22 @@ async fn complete(
         _ => 0,
     };
 
-    set_status(&st, id, &["in_progress"], "completed", u.lang).await?;
-    sqlx::query(
-        "UPDATE rides SET completed_at=$1, picked_up_at=COALESCE(picked_up_at, $2), reimbursement_amount_cents=$3 WHERE id=$4",
+    // One statement: status, completion time and reimbursement land together, and only
+    // while this driver's trip is still running.
+    let done = sqlx::query(
+        "UPDATE rides SET status='completed', updated_at=$1, completed_at=$1,
+                picked_up_at=COALESCE(picked_up_at, $1), reimbursement_amount_cents=$2
+         WHERE id=$3 AND driver_id=$4 AND status='in_progress'",
     )
-    .bind(now())
     .bind(now())
     .bind(reimbursement_cents)
     .bind(id)
+    .bind(u.id)
     .execute(&st.db)
     .await?;
+    if done.rows_affected() == 0 {
+        return Err(conflict(u.lang, ErrorKey::RideStatusChanged));
+    }
     clear_location_if_idle(&st, u.id).await?;
     clear_passenger_location(&st, id).await?;
     notify(
@@ -2399,16 +2429,31 @@ async fn staff_approve(
     let d = r
         .driver_id
         .ok_or_else(|| bad(u.lang, ErrorKey::NoDriverYet))?;
-    let (load, cap) = driver_load(&st, d, &r.pickup_at, Some(id)).await?;
+    // Same driver-row lock as `driver_claim` / `staff_reassign`, so two approvals for one
+    // driver can't both pass the capacity check and overbook the car.
+    let mut tx = st.db.begin().await?;
+    sqlx::query("SELECT id FROM users WHERE id=$1 FOR UPDATE")
+        .bind(d)
+        .fetch_optional(&mut *tx)
+        .await?;
+    let (load, cap) = driver_load_on(&mut tx, d, &r.pickup_at, Some(id)).await?;
     if load + r.seats > cap {
         return Err(bad(u.lang, ErrorKey::NotEnoughDriverSeats { load, cap }));
     }
-    set_status(&st, id, &["pending_approval"], "confirmed", u.lang).await?;
-    sqlx::query("UPDATE rides SET approved_by=$1, needs_attention=0 WHERE id=$2")
-        .bind(u.id)
-        .bind(id)
-        .execute(&st.db)
-        .await?;
+    let approved = sqlx::query(
+        "UPDATE rides SET status='confirmed', approved_by=$1, needs_attention=0, updated_at=$2
+         WHERE id=$3 AND driver_id=$4 AND status='pending_approval'",
+    )
+    .bind(u.id)
+    .bind(now())
+    .bind(id)
+    .bind(d)
+    .execute(&mut *tx)
+    .await?;
+    if approved.rows_affected() == 0 {
+        return Err(conflict(u.lang, ErrorKey::RideStatusChanged));
+    }
+    tx.commit().await?;
     let r = load_ride(&st, u.lang, id).await?;
     let trip = assign_trip(&st, &r).await?;
     announce_confirmed(&st, &r, trip, false).await;
@@ -2633,6 +2678,9 @@ async fn staff_alt_transport(
     .await?;
     if switched.rows_affected() == 0 {
         return Err(conflict(u.lang, ErrorKey::RideStatusChanged));
+    }
+    if let (Some(d), Some(t)) = (r.driver_id, r.trip_id) {
+        st.routing.invalidate(d, t).await;
     }
     if let Some(driver_id) = r.driver_id {
         notify(
