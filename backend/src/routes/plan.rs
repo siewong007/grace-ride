@@ -456,8 +456,20 @@ async fn save_plan(
             }
         }
     }
-    let other = other_load(&st, id, &rides, &ev.starts_at).await?;
     let touched: HashSet<i64> = changes.values().filter_map(|c| c.driver_id).collect();
+    // Hold the receiving drivers' rows (in a stable order) from the capacity check to the
+    // commit, the lock `driver_claim` and a single reassignment take, so a claim landing
+    // meanwhile can't push a car past its seats.
+    let mut tx = st.db.begin().await?;
+    let mut lock_order: Vec<i64> = touched.iter().copied().collect();
+    lock_order.sort_unstable();
+    for d in &lock_order {
+        sqlx::query("SELECT id FROM users WHERE id=$1 FOR UPDATE")
+            .bind(d)
+            .fetch_optional(&mut *tx)
+            .await?;
+    }
+    let other = other_load(&st, id, &rides, &ev.starts_at).await?;
     for d in &touched {
         let mine: Vec<&PlanRide> = rides
             .iter()
@@ -479,7 +491,6 @@ async fn save_plan(
 
     // Apply all or nothing; each update re-checks the state the board saw.
     let stamp = now();
-    let mut tx = st.db.begin().await?;
     for c in changes.values() {
         let res = match c.driver_id {
             Some(d) => sqlx::query(

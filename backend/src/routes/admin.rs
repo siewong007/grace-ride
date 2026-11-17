@@ -472,7 +472,7 @@ async fn update_user(
     }
     tx.commit().await?;
     for passenger in released {
-        notify(
+        crate::util::notify(
             &st.db,
             passenger,
             ("司机无法出车", "Driver cannot drive"),

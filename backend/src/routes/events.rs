@@ -448,6 +448,11 @@ async fn update_event(
             .bind(id)
             .fetch_one(&mut *tx)
             .await?;
+    // A cancelled event stays cancelled: editing it would re-notify members and move its
+    // (already cancelled) rides.
+    if event_status == "cancelled" {
+        return Err(bad(u.lang, ErrorKey::EventNotOpen));
+    }
     let capacity = req.capacity.unwrap_or(0).max(0);
     sqlx::query("UPDATE events SET title=$1, kind=$2, description=$3, starts_at=$4, location=$5, capacity=$6, cost_note=$7, signup_deadline=$8, photo_file_id=$9 WHERE id=$10")
         .bind(req.title.trim())
