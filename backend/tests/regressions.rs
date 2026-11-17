@@ -1056,3 +1056,202 @@ async fn cancelled_event_rejects_new_ride_booking() {
     assert_eq!(r.status, StatusCode::BAD_REQUEST, "{}", r.json);
     assert_eq!(r.json["code"], "EVENT_NOT_OPEN");
 }
+
+async fn reset_event_one(st: &grace_ride::state::AppState, capacity: i64) {
+    sqlx::query("DELETE FROM event_signups WHERE event_id=1")
+        .execute(&st.db)
+        .await
+        .unwrap();
+    sqlx::query(
+        "UPDATE events SET capacity=$1, starts_at=$2, signup_deadline=NULL, status='published' WHERE id=1",
+    )
+    .bind(capacity)
+    .bind(tomorrow("19:30"))
+    .execute(&st.db)
+    .await
+    .unwrap();
+}
+
+async fn signup_status(st: &grace_ride::state::AppState, email: &str) -> String {
+    let (s,): (String,) = sqlx::query_as(
+        "SELECT s.status FROM event_signups s JOIN users u ON u.id=s.user_id WHERE s.event_id=1 AND u.email=$1",
+    )
+    .bind(email)
+    .fetch_one(&st.db)
+    .await
+    .unwrap();
+    s
+}
+
+#[tokio::test]
+async fn raising_capacity_promotes_waitlist_before_newcomers() {
+    let (app, st) = setup().await;
+    reset_event_one(&st, 1).await;
+    for (i, (email, status)) in [
+        ("member@example.org", "going"),
+        ("amina@example.org", "waitlist"),
+    ]
+    .iter()
+    .enumerate()
+    {
+        sqlx::query(
+            "INSERT INTO event_signups (event_id, user_id, status, created_at)
+             SELECT 1, id, $2, $3 FROM users WHERE email=$1",
+        )
+        .bind(email)
+        .bind(status)
+        .bind(format!("2026-01-01T00:00:0{i}"))
+        .execute(&st.db)
+        .await
+        .unwrap();
+    }
+    let admin = login(&st, "admin@example.org").await;
+    let ev = call(&app, Method::GET, "/api/events/1", Some(&admin), None).await;
+    let groups: Vec<(i64,)> = sqlx::query_as("SELECT group_id FROM event_groups WHERE event_id=1")
+        .fetch_all(&st.db)
+        .await
+        .unwrap();
+    let saved = call(
+        &app,
+        Method::PUT,
+        "/api/events/1",
+        Some(&admin),
+        Some(json!({
+            "title": ev.json["title"], "kind": ev.json["kind"], "starts_at": tomorrow("19:30"),
+            "location": ev.json["location"], "capacity": 2,
+            "group_ids": groups.iter().map(|(g,)| *g).collect::<Vec<_>>(),
+        })),
+    )
+    .await;
+    assert_eq!(saved.status, StatusCode::OK, "{}", saved.json);
+    assert_eq!(
+        signup_status(&st, "amina@example.org").await,
+        "going",
+        "The waitlisted member must take the place a raised capacity opens"
+    );
+
+    let yawen = login(&st, "yawen@example.org").await;
+    let late = call(
+        &app,
+        Method::POST,
+        "/api/events/1/signup",
+        Some(&yawen),
+        Some(json!({"need_ride": false, "offer_drive": false})),
+    )
+    .await;
+    assert_eq!(late.status, StatusCode::OK, "{}", late.json);
+    assert_eq!(late.json["status"], "waitlist", "{}", late.json);
+}
+
+#[tokio::test]
+async fn withdrawn_member_recorded_as_attended_counts_as_going() {
+    let (app, st) = setup().await;
+    reset_event_one(&st, 0).await;
+    sqlx::query(
+        "INSERT INTO event_signups (event_id, user_id, status, created_at)
+         SELECT 1, id, 'going', $1 FROM users WHERE email='member@example.org'",
+    )
+    .bind(now())
+    .execute(&st.db)
+    .await
+    .unwrap();
+    let member = login(&st, "member@example.org").await;
+    let gone = call(
+        &app,
+        Method::POST,
+        "/api/events/1/withdraw",
+        Some(&member),
+        None,
+    )
+    .await;
+    assert_eq!(gone.status, StatusCode::OK, "{}", gone.json);
+    assert_eq!(signup_status(&st, "member@example.org").await, "cancelled");
+
+    let (uid,): (i64,) = sqlx::query_as("SELECT id FROM users WHERE email='member@example.org'")
+        .fetch_one(&st.db)
+        .await
+        .unwrap();
+    let admin = login(&st, "admin@example.org").await;
+    let marked = call(
+        &app,
+        Method::POST,
+        "/api/events/1/attendance",
+        Some(&admin),
+        Some(json!({"user_id": uid, "attended": true})),
+    )
+    .await;
+    assert_eq!(marked.status, StatusCode::OK, "{}", marked.json);
+    let (status, attended): (String, Option<i64>) = sqlx::query_as(
+        "SELECT status, attended FROM event_signups WHERE event_id=1 AND user_id=$1",
+    )
+    .bind(uid)
+    .fetch_one(&st.db)
+    .await
+    .unwrap();
+    assert_eq!((status.as_str(), attended), ("going", Some(1)));
+}
+
+#[tokio::test]
+async fn failed_concurrent_registration_leaves_its_invite_usable() {
+    let (app, st) = setup().await;
+    let admin = login(&st, "admin@example.org").await;
+    let mut tokens = Vec::new();
+    for _ in 0..2 {
+        let made = call(
+            &app,
+            Method::POST,
+            "/api/admin/invites",
+            Some(&admin),
+            Some(json!({})),
+        )
+        .await;
+        assert_eq!(made.status, StatusCode::OK, "{}", made.json);
+        tokens.push(made.json["token"].as_str().unwrap().to_string());
+    }
+
+    // Hold inserts into users so both acceptances pass the email check and then race.
+    let mut lock = st.db.begin().await.unwrap();
+    sqlx::query("LOCK TABLE users IN SHARE MODE")
+        .execute(&mut *lock)
+        .await
+        .unwrap();
+    let spawn = |token: String| {
+        let app = app.clone();
+        tokio::spawn(async move {
+            call(
+                &app,
+                Method::POST,
+                &format!("/api/invites/{token}/accept"),
+                None,
+                Some(json!({"name": "Same Person", "email": "same@example.org", "terms": true})),
+            )
+            .await
+        })
+    };
+    let f1 = spawn(tokens[0].clone());
+    let f2 = spawn(tokens[1].clone());
+    tokio::time::sleep(std::time::Duration::from_millis(250)).await;
+    lock.rollback().await.unwrap();
+    let (a, b) = tokio::join!(f1, f2);
+    let results = [a.unwrap(), b.unwrap()];
+    let ok: Vec<usize> = (0..2)
+        .filter(|&i| results[i].status == StatusCode::OK)
+        .collect();
+    assert_eq!(ok.len(), 1, "{} / {}", results[0].json, results[1].json);
+    let failed = 1 - ok[0];
+    assert_eq!(
+        results[failed].json["code"], "EMAIL_ALREADY_REGISTERED",
+        "{}",
+        results[failed].json
+    );
+
+    let retry = call(
+        &app,
+        Method::POST,
+        &format!("/api/invites/{}/accept", tokens[failed]),
+        None,
+        Some(json!({"name": "Other Person", "email": "other@example.org", "terms": true})),
+    )
+    .await;
+    assert_eq!(retry.status, StatusCode::OK, "{}", retry.json);
+}

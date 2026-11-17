@@ -418,19 +418,31 @@ async fn update_event(
     }
     let (at, dl) = validate(&req, u.lang)?;
     check_photo(&st, &u, req.photo_file_id, e.photo_file_id).await?;
+    // Same event lock as `signup` / `withdraw`: places a raised capacity opens go to the
+    // waitlist, in order, before any signup queued behind this save can take them.
+    let mut tx = st.db.begin().await?;
+    let (event_status,): (String,) =
+        sqlx::query_as("SELECT status FROM events WHERE id=$1 FOR UPDATE")
+            .bind(id)
+            .fetch_one(&mut *tx)
+            .await?;
+    let capacity = req.capacity.unwrap_or(0).max(0);
     sqlx::query("UPDATE events SET title=$1, kind=$2, description=$3, starts_at=$4, location=$5, capacity=$6, cost_note=$7, signup_deadline=$8, photo_file_id=$9 WHERE id=$10")
         .bind(req.title.trim())
         .bind(&req.kind)
         .bind(req.description.clone().unwrap_or_default())
         .bind(&at)
         .bind(req.location.trim())
-        .bind(req.capacity.unwrap_or(0).max(0))
+        .bind(capacity)
         .bind(req.cost_note.clone().unwrap_or_default())
         .bind(&dl)
         .bind(req.photo_file_id)
         .bind(id)
-        .execute(&st.db)
+        .execute(&mut *tx)
         .await?;
+    let promoted = promote_waitlist(&mut tx, id, capacity, &event_status).await?;
+    tx.commit().await?;
+    notify_promoted(&st, id, req.title.trim(), &promoted).await;
     save_event_groups(&st, id, &req).await?;
     if at != e.starts_at || req.location.trim() != e.location {
         let body = format!(
@@ -701,6 +713,62 @@ async fn signup(
     Ok(Json(json!({"ok": true, "status": status})))
 }
 
+/// Moves waitlisted members into every free place, oldest signup first. Unlimited
+/// capacity (0) frees them all. Runs inside the caller's transaction, which must hold the
+/// event row lock so concurrent signups and withdrawals see the same count.
+async fn promote_waitlist(
+    tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+    id: i64,
+    capacity: i64,
+    event_status: &str,
+) -> AppResult<Vec<i64>> {
+    if event_status != "published" {
+        return Ok(Vec::new());
+    }
+    let rows: Vec<(i64,)> = sqlx::query_as(
+        "UPDATE event_signups SET status='going'
+         WHERE id IN (
+           SELECT id FROM event_signups WHERE event_id=$1 AND status='waitlist'
+           ORDER BY created_at, id
+           LIMIT CASE WHEN $2 = 0 THEN NULL
+                      ELSE GREATEST(0, $2 - (SELECT COUNT(*) FROM event_signups WHERE event_id=$1 AND status='going'))
+                 END
+         )
+         RETURNING user_id",
+    )
+    .bind(id)
+    .bind(capacity)
+    .fetch_all(&mut **tx)
+    .await?;
+    Ok(rows.into_iter().map(|(uid,)| uid).collect())
+}
+
+/// Audits and tells each promoted member they have a place. No actor: the place passes
+/// on automatically.
+async fn notify_promoted(st: &AppState, id: i64, title: &str, promoted: &[i64]) {
+    for &uid in promoted {
+        audit(
+            &st.db,
+            None,
+            "event.waitlist_promote",
+            "event",
+            Some(id),
+            format!("user {uid} waitlist → going"),
+        )
+        .await;
+        let zh = format!("您已获得「{title}」的名额");
+        let en = format!("You now have a spot in \"{title}\"");
+        notify(
+            &st.db,
+            uid,
+            ("候补成功", "Off the waitlist"),
+            (&zh, &en),
+            &format!("/events/{id}"),
+        )
+        .await;
+    }
+}
+
 /// 乘客无法出席: cancel signup → release seat → promote waitlist → cancel linked rides → tell driver & organiser.
 async fn withdraw(
     State(st): State<AppState>,
@@ -724,46 +792,9 @@ async fn withdraw(
         .await?;
     // Fill every free place from the waitlist, in order, rather than exactly one per
     // withdrawal; this also heals any place left open earlier.
-    let promoted: Vec<(i64,)> = if capacity > 0 && event_status == "published" {
-        sqlx::query_as(
-            "UPDATE event_signups SET status='going'
-             WHERE id IN (
-               SELECT id FROM event_signups WHERE event_id=$1 AND status='waitlist'
-               ORDER BY created_at, id
-               LIMIT GREATEST(0, $2 - (SELECT COUNT(*) FROM event_signups WHERE event_id=$1 AND status='going'))
-             )
-             RETURNING user_id",
-        )
-        .bind(id)
-        .bind(capacity)
-        .fetch_all(&mut *tx)
-        .await?
-    } else {
-        Vec::new()
-    };
+    let promoted = promote_waitlist(&mut tx, id, capacity, &event_status).await?;
     tx.commit().await?;
-    for (uid,) in promoted {
-        // No actor: the seat passes on automatically when someone withdraws.
-        audit(
-            &st.db,
-            None,
-            "event.waitlist_promote",
-            "event",
-            Some(id),
-            format!("user {uid} waitlist → going"),
-        )
-        .await;
-        let zh = format!("您已获得「{}」的名额", e.title);
-        let en = format!("You now have a spot in \"{}\"", e.title);
-        notify(
-            &st.db,
-            uid,
-            ("候补成功", "Off the waitlist"),
-            (&zh, &en),
-            &format!("/events/{id}"),
-        )
-        .await;
-    }
+    notify_promoted(&st, id, &e.title, &promoted).await;
     let rides: Vec<(i64, Option<i64>)> = sqlx::query_as(
         // Only their own ride: a visitor they invited may still come, and the host can cancel
         // that ride from the ride page.
@@ -875,7 +906,14 @@ async fn mark_attendance(
         ));
     }
     let v = req.attended.map(|a| a as i64);
-    let r = sqlx::query("UPDATE event_signups SET attended=$1 WHERE event_id=$2 AND user_id=$3")
+    // Recording someone as attended also makes them a participant: a member who withdrew
+    // (or was still waitlisted) but came anyway is a walk-in and must show in the list
+    // and count, which only include 'going'.
+    let r = sqlx::query(
+        "UPDATE event_signups SET attended=$1,
+           status = CASE WHEN $1 = 1 AND status IN ('cancelled','waitlist') THEN 'going' ELSE status END
+         WHERE event_id=$2 AND user_id=$3",
+    )
         .bind(v)
         .bind(id)
         .bind(req.user_id)

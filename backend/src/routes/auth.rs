@@ -1305,7 +1305,11 @@ async fn invite_accept(
             return Err(bad(lang, ErrorKey::EmailAlreadyRegistered));
         }
     }
-    // Mark used first (single use, guards against double submit).
+    // Consuming the invite and opening the account happen together or not at all: an
+    // account insert that fails (e.g. a concurrent signup took the email) rolls the invite
+    // back to unused, so the person can retry with a corrected email. The conditional
+    // UPDATE still makes the link single use under double submit.
+    let mut tx = st.db.begin().await?;
     let r = sqlx::query(
         "UPDATE invites SET used_at=$1, email=$2, name=$3 WHERE id=$4 AND used_at IS NULL",
     )
@@ -1313,7 +1317,7 @@ async fn invite_accept(
     .bind(&joined_email)
     .bind(&joined_name)
     .bind(inv_id)
-    .execute(&st.db)
+    .execute(&mut *tx)
     .await?;
     if r.rows_affected() == 0 {
         return Err(bad(lang, ErrorKey::InviteAlreadyUsed));
@@ -1327,14 +1331,14 @@ async fn invite_accept(
             .bind(minutes_ago(1))
             .bind(id)
             .bind(inv_id)
-            .execute(&st.db)
+            .execute(&mut *tx)
             .await?;
         sqlx::query(
             "UPDATE users SET terms_accepted_at=COALESCE(terms_accepted_at, $1) WHERE id=$2",
         )
         .bind(now())
         .bind(id)
-        .execute(&st.db)
+        .execute(&mut *tx)
         .await?;
         id
     } else {
@@ -1348,11 +1352,12 @@ async fn invite_accept(
         .bind(None::<String>)
         .bind(uuid::Uuid::new_v4().to_string())
         .bind(now())
-        .fetch_one(&st.db)
+        .fetch_one(&mut *tx)
         .await
         .map_err(|_| bad(lang, ErrorKey::EmailAlreadyRegistered))?;
         id
     };
+    tx.commit().await?;
     let jar = create_session(&st, jar, uid, false).await?;
     audit(
         &st.db,
