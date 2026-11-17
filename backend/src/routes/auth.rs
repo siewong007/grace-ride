@@ -682,7 +682,10 @@ async fn touch_passkey(st: &AppState, uid: i64, res: &AuthenticationResult) -> A
 
 /// Starts a passkey check for the member who is already signed in, so they can renew
 /// their "recent sign-in" without signing out first.
-async fn passkey_reauth_start(State(st): State<AppState>, u: CurrentUser) -> AppResult<Json<Value>> {
+async fn passkey_reauth_start(
+    State(st): State<AppState>,
+    u: CurrentUser,
+) -> AppResult<Json<Value>> {
     let keys = load_passkeys(&st, u.id).await?;
     if keys.is_empty() {
         return Err(bad(u.lang, ErrorKey::PasskeyFailed));
@@ -718,7 +721,15 @@ async fn passkey_reauth_finish(
         .webauthn
         .finish_passkey_authentication(&req.credential, &auth_state)
     else {
-        audit(&st.db, Some(u.id), "login.failed", "user", Some(u.id), "passkey rejected on re-check").await;
+        audit(
+            &st.db,
+            Some(u.id),
+            "login.failed",
+            "user",
+            Some(u.id),
+            "passkey rejected on re-check",
+        )
+        .await;
         return Err(bad(u.lang, ErrorKey::PasskeyFailed));
     };
     touch_passkey(&st, u.id, &res).await?;
