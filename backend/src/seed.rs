@@ -1323,7 +1323,7 @@ async fn seed_core(db: &PgPool) -> anyhow::Result<()> {
         sqlx::query("INSERT INTO settlement_shares (id, settlement_id, user_id, amount_cents, status, proof_file_id, txn_ref, paid_date, note, updated_at, demo_batch) VALUES ($1,$2,$3,2800,$4,NULL,'',NULL,'',$5,$6) ON CONFLICT DO NOTHING")
             .bind(42000i64 + uid).bind(settle).bind(uid).bind(status).bind(now_kl()).bind(DEMO_BATCH).execute(db).await?;
     }
-    sqlx::query("INSERT INTO settlement_revisions (id, settlement_id, version, snapshot, reason, created_by, demo_batch, created_at) VALUES ($1,$2,1,$3,'首次发布',$4,$5,$6) ON CONFLICT DO NOTHING")
+    sqlx::query("INSERT INTO settlement_revisions (id, settlement_id, version, snapshot, reason, created_by, demo_batch, created_at) VALUES ($1,$2,1,$3::jsonb,'首次发布',$4,$5,$6) ON CONFLICT DO NOTHING")
         .bind(43001i64).bind(settle).bind(r#"{"title":"上周羽毛球费用","total_cents":16800}"#).bind(deming).bind(DEMO_BATCH).bind(now_kl()).execute(db).await?;
 
     audit(
@@ -2497,12 +2497,12 @@ pub async fn seed_edge(db: &PgPool) -> anyhow::Result<()> {
     }
     sqlx::query(
         "INSERT INTO settlement_revisions (id, settlement_id, version, snapshot, reason, created_by, demo_batch, created_at)
-         VALUES ($1,$2,$3,$4,$5,$6,$7,$8) ON CONFLICT (id) DO NOTHING",
+         VALUES ($1,$2,$3,$4::jsonb,$5,$6,$7,$8) ON CONFLICT (id) DO NOTHING",
     )
     .bind(63001i64)
     .bind(60001i64)
     .bind(1i64)
-    .bind("initial draft")
+    .bind(r#"{"title":"initial draft"}"#)
     .bind("created by staff")
     .bind(90001i64)
     .bind(EDGE_BATCH)

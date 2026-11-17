@@ -1187,7 +1187,7 @@ async fn invite_accept(
             .unwrap_or(""),
     );
     let row: Option<(i64, String, String, String, String, String, Option<i64>, String, Option<String>)> = sqlx::query_as(
-        &format!("SELECT id, kind, email, name, roles, group_ids, user_id, expires_at, used_at FROM invites WHERE {INVITE_BY_TOKEN}"),
+        &format!("SELECT id, kind, email, name, roles, group_ids::text, user_id, expires_at, used_at FROM invites WHERE {INVITE_BY_TOKEN}"),
     )
     .bind(&token)
     .bind(hash_token(&token))

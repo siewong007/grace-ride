@@ -42,7 +42,7 @@ async fn stale_migration_history_replays_the_schema_without_losing_rows() {
             .fetch_all(&db)
             .await
             .unwrap();
-    assert_eq!(versions, vec![1, 2, 3, 4]);
+    assert_eq!(versions, vec![1, 2, 3, 4, 5]);
     let kept: Option<(String,)> = sqlx::query_as("SELECT name FROM areas WHERE name = '历史区'")
         .fetch_optional(&db)
         .await
@@ -81,7 +81,7 @@ async fn stale_migration_history_replays_the_schema_without_losing_rows() {
             .fetch_all(&db)
             .await
             .unwrap();
-    assert_eq!(versions, vec![1, 2, 3, 4]);
+    assert_eq!(versions, vec![1, 2, 3, 4, 5]);
 }
 
 /// A database that has run 0001 only (every database before 2026-11-17) keeps its
@@ -112,7 +112,7 @@ async fn new_migration_files_run_once_after_the_frozen_schema() {
             .fetch_all(&db)
             .await
             .unwrap();
-    assert_eq!(versions, vec![1, 2, 3, 4]);
+    assert_eq!(versions, vec![1, 2, 3, 4, 5]);
     // 0001 was left alone (same row), not cleared and replayed.
     let (checksum, installed): (Vec<u8>, String) = sqlx::query_as(
         "SELECT checksum, installed_on::text FROM _sqlx_migrations WHERE version = 1",
@@ -374,4 +374,67 @@ async fn member_roles_follow_users_roles() {
         .unwrap();
     assert_eq!(held("member@example.org").await, ["ghost_team"]);
     common::assert_member_roles_in_step(&db).await;
+}
+
+/// 0005 on a seeded database whose JSON columns are still text: they become JSONB,
+/// valid JSON keeps its shape, text that isn't JSON is kept as a JSON string, and
+/// the database then refuses anything that isn't JSON.
+#[tokio::test]
+async fn json_columns_become_jsonb() {
+    let (_app, st) = common::setup().await;
+    common::seed_edge(&st).await;
+    // Undo 0005 as if this database had stopped at 0004, then upgrade it.
+    for sql in [
+        "ALTER TABLE invites DROP CONSTRAINT chk_invites_group_ids",
+        "ALTER TABLE invites ALTER COLUMN group_ids DROP DEFAULT",
+        "ALTER TABLE invites ALTER COLUMN group_ids TYPE text USING group_ids::text",
+        "ALTER TABLE invites ALTER COLUMN group_ids SET DEFAULT '[]'",
+        "ALTER TABLE settlement_revisions ALTER COLUMN snapshot TYPE text USING snapshot::text",
+        "UPDATE settlement_revisions SET snapshot = 'initial draft' WHERE id = 63001",
+        "DELETE FROM _sqlx_migrations WHERE version > 4",
+    ] {
+        sqlx::query(sql).execute(&st.db).await.unwrap();
+    }
+
+    let db = connect_db(&st.cfg.database_url).await.expect("upgrade");
+    let types: Vec<String> = sqlx::query_scalar(
+        "SELECT data_type::text FROM information_schema.columns WHERE table_schema = current_schema()
+         AND (table_name, column_name) IN (('settlement_revisions', 'snapshot'), ('invites', 'group_ids'))",
+    )
+    .fetch_all(&db)
+    .await
+    .unwrap();
+    assert_eq!(types, ["jsonb", "jsonb"]);
+    let (kept, parsed): (String, String) = sqlx::query_as(
+        "SELECT (SELECT jsonb_typeof(snapshot) FROM settlement_revisions WHERE id = 63001),
+                (SELECT snapshot->>'title' FROM settlement_revisions WHERE id = 43001)",
+    )
+    .fetch_one(&db)
+    .await
+    .unwrap();
+    assert_eq!((kept.as_str(), parsed.as_str()), ("string", "上周羽毛球费用"));
+    let validated: bool = sqlx::query_scalar(
+        "SELECT convalidated FROM pg_constraint WHERE conname = 'chk_invites_group_ids'",
+    )
+    .fetch_one(&db)
+    .await
+    .unwrap();
+    assert!(validated);
+
+    let bad = sqlx::query("UPDATE settlement_revisions SET snapshot = 'not json'::text::jsonb WHERE id = 43001")
+        .execute(&db)
+        .await;
+    assert!(bad.is_err(), "not JSON");
+    let bad = sqlx::query("INSERT INTO invites (token, email, group_ids, created_by, expires_at)
+         VALUES ('t-json', '', '{}', (SELECT MIN(id) FROM users), '2099-01-01T00:00:00')")
+        .execute(&db)
+        .await;
+    assert!(bad.is_err(), "groups are a list");
+    sqlx::query(
+        "INSERT INTO invites (token, email, created_by, expires_at)
+         VALUES ('t-json', '', (SELECT MIN(id) FROM users), '2099-01-01T00:00:00')",
+    )
+    .execute(&db)
+    .await
+    .expect("the default is an empty list");
 }

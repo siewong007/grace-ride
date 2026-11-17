@@ -518,7 +518,7 @@ async fn update(
         .await?;
         // 发布后若改金额，必须保留旧版并通知
         let snap = snapshot(&st, &s).await?;
-        sqlx::query("INSERT INTO settlement_revisions (settlement_id, version, snapshot, reason, created_by, created_at) VALUES ($1,$2,$3,$4,$5,$6)")
+        sqlx::query("INSERT INTO settlement_revisions (settlement_id, version, snapshot, reason, created_by, created_at) VALUES ($1,$2,$3::jsonb,$4,$5,$6)")
             .bind(id)
             .bind(s.version)
             .bind(snap.to_string())
@@ -775,7 +775,7 @@ async fn revisions(
         return Err(forbidden(u.lang, ErrorKey::Forbidden));
     }
     let rows: Vec<(i64, String, String, String, String)> = sqlx::query_as(
-        "SELECT r.version, r.snapshot, r.reason, u.name, r.created_at FROM settlement_revisions r JOIN users u ON u.id=r.created_by WHERE r.settlement_id=$1 ORDER BY r.version DESC",
+        "SELECT r.version, r.snapshot::text, r.reason, u.name, r.created_at FROM settlement_revisions r JOIN users u ON u.id=r.created_by WHERE r.settlement_id=$1 ORDER BY r.version DESC",
     )
     .bind(id)
     .fetch_all(&st.db)
