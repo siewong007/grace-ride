@@ -173,15 +173,22 @@ async fn list_users(
         )?;
     }
     let like = format!("%{}%", q.q.as_deref().unwrap_or_default().trim());
-    let order = crate::util::order_by(
-        q.sort.as_deref(),
-        q.dir.as_deref(),
+    // Without 成员 · view only the name can order the list: sorting by email would line
+    // names up by an address the caller can't see, leaking it the same way a search would.
+    let sortable: &[(&str, &str)] = if staff {
         &[
             ("name", "u.name"),
             ("email", "u.email"),
             ("status", "u.status"),
             ("created_at", "u.created_at"),
-        ],
+        ]
+    } else {
+        &[("name", "u.name")]
+    };
+    let order = crate::util::order_by(
+        q.sort.as_deref(),
+        q.dir.as_deref(),
+        sortable,
         "u.name ASC, u.id ASC",
         "u.id ASC",
     );

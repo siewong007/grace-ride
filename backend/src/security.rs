@@ -118,8 +118,8 @@ pub async fn rate_limit(State(st): State<AppState>, req: Request, next: Next) ->
         {
             Some(("login", 10, 60))
         } else if path == "/api/auth/totp/verify" || path == "/api/auth/totp/enable" {
-            // A 6-digit code has a million values: guesses are capped per session
-            // (below), so changing address doesn't buy more tries.
+            // A 6-digit code has a million values: guesses are capped per member
+            // (below), so neither a new address nor a new session buys more tries.
             Some(("totp", 10, 300))
         } else if path == "/api/auth/recovery-request" {
             Some(("recovery", 3, 3600))
@@ -138,13 +138,9 @@ pub async fn rate_limit(State(st): State<AppState>, req: Request, next: Next) ->
             .get::<ConnectInfo<SocketAddr>>()
             .map(|c| c.0);
         let ip = client_ip(req.headers(), peer, st.cfg.trust_proxy);
-        // Code checks count per signed-in session; everything else per address.
+        // Code checks count per member; everything else per address.
         let who = if bucket == "totp" {
-            let jar = CookieJar::from_headers(req.headers());
-            jar.get(SESSION_COOKIE_SECURE)
-                .or_else(|| jar.get(SESSION_COOKIE))
-                .map(|c| hash_token(c.value()))
-                .unwrap_or(ip.clone())
+            totp_owner(&st, req.headers()).await.unwrap_or(ip.clone())
         } else {
             ip.clone()
         };
@@ -158,6 +154,27 @@ pub async fn rate_limit(State(st): State<AppState>, req: Request, next: Next) ->
         }
     }
     next.run(req).await
+}
+
+/// Whose two-step code is being guessed: the member behind the session cookie. Keyed by
+/// member, not session, because anyone holding the password can sign in again for a
+/// fresh session, and per-session counting would hand them a new allowance each time.
+/// `None` (no cookie, or not a live session) falls back to the address; such requests
+/// are refused as unauthenticated anyway.
+async fn totp_owner(st: &AppState, headers: &HeaderMap) -> Option<String> {
+    let jar = CookieJar::from_headers(headers);
+    let token = jar
+        .get(SESSION_COOKIE_SECURE)
+        .or_else(|| jar.get(SESSION_COOKIE))?
+        .value()
+        .to_string();
+    let uid: Option<i64> = sqlx::query_scalar("SELECT user_id FROM sessions WHERE token=$1")
+        .bind(hash_token(&token))
+        .fetch_optional(&st.db)
+        .await
+        .ok()
+        .flatten();
+    uid.map(|id| format!("user:{id}"))
 }
 
 fn pending_profile_only(path: &str) -> bool {

@@ -2381,7 +2381,7 @@ async fn stream_session_check_sees_sign_out_and_disabling() {
 }
 
 #[tokio::test]
-async fn two_step_code_guesses_are_limited_per_session() {
+async fn two_step_code_guesses_are_limited_per_member() {
     let (app, st) = setup().await;
     let cookie = login(&st, "member@example.org").await;
     let mut limited_at = None;
@@ -2401,6 +2401,19 @@ async fn two_step_code_guesses_are_limited_per_session() {
         }
     }
     assert_eq!(limited_at, Some(10), "the 11th guess should be refused");
+
+    // Signing in again doesn't reset the allowance: it belongs to the member.
+    let again = login(&st, "member@example.org").await;
+    assert_ne!(again, cookie);
+    let r = call(
+        &app,
+        Method::POST,
+        "/api/auth/totp/verify",
+        Some(&again),
+        Some(json!({"code": "000000"})),
+    )
+    .await;
+    assert_eq!(r.status, StatusCode::TOO_MANY_REQUESTS);
 
     // Another member's session has its own allowance.
     let other = login(&st, "sophie@example.org").await;

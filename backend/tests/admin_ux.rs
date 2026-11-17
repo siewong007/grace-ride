@@ -367,6 +367,33 @@ async fn member_picker_without_member_access_matches_names_of_active_members_onl
     )
     .await;
     assert_eq!(names(&disabled.json), ["Xanthe Pickwell"]);
+
+    // Nor can contact details be read off the order: sorting by email falls back to
+    // name order. (By email this pair would come out Pickwell, Abbot.)
+    add_member(
+        &st,
+        "Xanthe Abbot",
+        "xanthe.z@example.org",
+        "0187776611",
+        "active",
+    )
+    .await;
+    for sort in ["email", "created_at"] {
+        let r = call(
+            &app,
+            Method::GET,
+            &format!("/api/admin/users?q=xanthe&sort={sort}"),
+            Some(&leader),
+            None,
+        )
+        .await;
+        assert_eq!(r.status, StatusCode::OK, "{}", r.json);
+        assert_eq!(
+            names(&r.json),
+            ["Xanthe Abbot", "Xanthe Pickwell"],
+            "sort={sort}"
+        );
+    }
 }
 
 #[tokio::test]
