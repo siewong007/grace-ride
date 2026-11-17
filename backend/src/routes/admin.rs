@@ -417,11 +417,26 @@ async fn update_user(
         .bind(id)
         .execute(&mut *tx)
         .await?;
+    let mut released: Vec<i64> = Vec::new();
     if req.status == "disabled" {
         sqlx::query("DELETE FROM sessions WHERE user_id=$1")
             .bind(id)
             .execute(&mut *tx)
             .await?;
+        // A disabled driver can no longer drive: rides not yet started go back to the
+        // pool, flagged for transport staff, instead of waiting on someone who can't act.
+        released = sqlx::query_scalar(
+            "UPDATE rides SET status='pending_driver', driver_id=NULL, trip_id=NULL,
+                    needs_attention = CASE WHEN status IN ('confirmed','pending_driver_confirm') THEN 1 ELSE 0 END,
+                    attention_reason='原司机账户已停用，需重新安排', updated_at=$2
+             WHERE driver_id=$1
+               AND status IN ('pending_passenger','pending_approval','pending_driver_confirm','confirmed')
+             RETURNING passenger_id",
+        )
+        .bind(id)
+        .bind(now())
+        .fetch_all(&mut *tx)
+        .await?;
     }
     let mut groups_note = String::new();
     if let Some(mut gids) = req.group_ids {
@@ -456,6 +471,19 @@ async fn update_user(
         }
     }
     tx.commit().await?;
+    for passenger in released {
+        notify(
+            &st.db,
+            passenger,
+            ("司机无法出车", "Driver cannot drive"),
+            (
+                "交通组正在为您安排其他司机，请留意通知。",
+                "Transport staff are arranging another driver for you; please watch for notifications.",
+            ),
+            "/rides",
+        )
+        .await;
+    }
     audit(
         &st.db,
         Some(u.id),

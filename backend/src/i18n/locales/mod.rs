@@ -96,6 +96,7 @@ pub fn render(lang: Lang, key: &ErrorKey) -> String {
         | ErrorKey::JoinAsNotAllowed
         | ErrorKey::InvalidParentGroup
         | ErrorKey::EventRideNeedsSignup
+        | ErrorKey::DuplicateEventRide
         | ErrorKey::DriverOutsideGroup
         | ErrorKey::VisitorLinkInvalid
         | ErrorKey::VisitorNotOpenYet
@@ -316,6 +317,7 @@ mod tests {
             ErrorKey::JoinAsNotAllowed,
             ErrorKey::InvalidParentGroup,
             ErrorKey::EventRideNeedsSignup,
+            ErrorKey::DuplicateEventRide,
             ErrorKey::DriverOutsideGroup,
             ErrorKey::VisitorLinkInvalid,
             ErrorKey::VisitorNotOpenYet,

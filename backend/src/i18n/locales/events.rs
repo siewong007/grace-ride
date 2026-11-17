@@ -93,6 +93,11 @@ pub fn render(lang: Lang, key: &ErrorKey) -> String {
             "请先报名参加此活动，再申请接送",
             "Sign up for the event before asking for a ride to it",
         ),
+        ErrorKey::DuplicateEventRide => pair(
+            lang,
+            "您已为此活动申请了接送，请在「我的接送」中查看",
+            "You already have a ride request for this event; check My rides",
+        ),
         ErrorKey::DriverOutsideGroup => pair(
             lang,
             "此接送只开放给该群体的司机，交通组可另行指派",

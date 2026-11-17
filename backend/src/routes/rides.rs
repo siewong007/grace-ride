@@ -377,6 +377,28 @@ async fn create_ride(
             return Err(bad(u.lang, ErrorKey::EventRideNeedsSignup));
         };
         as_group = g;
+        // One own ride per event: a double tap or a second tab must not book two cars.
+        // The lock serialises two submissions by the same member.
+        sqlx::query("SELECT pg_advisory_xact_lock($1, $2)")
+            .bind(eid as i32)
+            .bind(u.id as i32)
+            .execute(&mut *tx)
+            .await?;
+        if !req.is_proxy.unwrap_or(false)
+            && req.rider_name.as_deref().map_or(true, |s| s.trim().is_empty())
+        {
+            let (dup,): (i64,) = sqlx::query_as(
+                "SELECT COUNT(*) FROM rides WHERE event_id=$1 AND passenger_id=$2 AND is_proxy=0
+                 AND status IN ('pending_driver','pending_passenger','pending_approval','pending_driver_confirm','confirmed','in_progress')",
+            )
+            .bind(eid)
+            .bind(u.id)
+            .fetch_one(&mut *tx)
+            .await?;
+            if dup > 0 {
+                return Err(bad(u.lang, ErrorKey::DuplicateEventRide));
+            }
+        }
     }
 
     let is_proxy = req.is_proxy.unwrap_or(false)
