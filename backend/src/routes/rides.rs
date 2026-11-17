@@ -1347,6 +1347,28 @@ async fn driver_withdraw(
     Ok(Json(json!({"ok": true})))
 }
 
+/// A trip id no other trip has used. The ride's own id is the usual choice, but once a
+/// ride has started a carpool and then moved to another driver, its id still names the
+/// old car's trip (the other riders keep it, and so does its chat), so reusing it would
+/// put the new driver in the old car's chat. Then a fresh number comes from the rides
+/// id sequence, which no ride — and so no ride-id trip — will ever get.
+async fn new_trip_id(st: &AppState, ride_id: i64) -> AppResult<i64> {
+    let claimed: Option<i64> =
+        sqlx::query_scalar("INSERT INTO trips (id) VALUES ($1) ON CONFLICT (id) DO NOTHING RETURNING id")
+            .bind(ride_id)
+            .fetch_optional(&st.db)
+            .await?;
+    if let Some(t) = claimed {
+        return Ok(t);
+    }
+    let fresh: i64 = sqlx::query_scalar(
+        "INSERT INTO trips (id) VALUES (nextval(pg_get_serial_sequence('rides', 'id'))) RETURNING id",
+    )
+    .fetch_one(&st.db)
+    .await?;
+    Ok(fresh)
+}
+
 /// Assign a confirmed ride to a trip: same driver, same destination, within 60 minutes.
 async fn assign_trip(st: &AppState, r: &RideRow) -> AppResult<i64> {
     let existing: Option<(i64,)> = sqlx::query_as(
@@ -1359,7 +1381,10 @@ async fn assign_trip(st: &AppState, r: &RideRow) -> AppResult<i64> {
     .bind(&r.pickup_at)
     .fetch_optional(&st.db)
     .await?;
-    let trip = existing.map(|t| t.0).unwrap_or(r.id);
+    let trip = match existing {
+        Some((t,)) => t,
+        None => new_trip_id(st, r.id).await?,
+    };
     sqlx::query("UPDATE rides SET trip_id=$1 WHERE id=$2")
         .bind(trip)
         .bind(r.id)
@@ -1488,12 +1513,18 @@ async fn start_ride(
     if r.driver_id != Some(u.id) {
         return Err(forbidden(u.lang, ErrorKey::NotRideDriver));
     }
-    // 同一时间最多追踪 N 位司机
+    // 同一时间最多追踪 N 位司机. Counting the live drivers and starting this trip happen
+    // in one transaction behind one lock, so two drivers setting off at the same moment
+    // cannot both see room under the limit and both go live.
+    let mut tx = st.db.begin().await?;
+    sqlx::query("SELECT pg_advisory_xact_lock(hashtextextended('grace_ride_live_drivers', 0))")
+        .execute(&mut *tx)
+        .await?;
     let (live,): (i64,) = sqlx::query_as(
         "SELECT COUNT(DISTINCT driver_id) FROM rides WHERE status='in_progress' AND driver_id != $1",
     )
     .bind(u.id)
-    .fetch_one(&st.db)
+    .fetch_one(&mut *tx)
     .await?;
     let max_live_drivers: i64 = sqlx::query_scalar::<_, String>(
         "SELECT value FROM system_settings WHERE key='max_live_drivers'",
@@ -1514,10 +1545,21 @@ async fn start_ride(
             },
         ));
     }
-    set_status(&st, id, &["confirmed"], "in_progress", u.lang).await?;
+    let started_at = now();
+    let began = sqlx::query(
+        "UPDATE rides SET status='in_progress', started_at=$1, updated_at=$1
+         WHERE id=$2 AND driver_id=$3 AND status='confirmed'",
+    )
+    .bind(&started_at)
+    .bind(id)
+    .bind(u.id)
+    .execute(&mut *tx)
+    .await?;
+    if began.rows_affected() == 0 {
+        return Err(conflict(u.lang, ErrorKey::RideStatusChanged));
+    }
     // The driver sets off once for the whole carpool: every other confirmed passenger in
     // this trip starts too, so each of them can follow the car and see their ETA.
-    let started_at = now();
     let trip = r.trip_id.unwrap_or(id);
     let others: Vec<(i64,)> = sqlx::query_as(
         "UPDATE rides SET status='in_progress', started_at=$1, updated_at=$1
@@ -1527,13 +1569,9 @@ async fn start_ride(
     .bind(u.id)
     .bind(trip)
     .bind(id)
-    .fetch_all(&st.db)
+    .fetch_all(&mut *tx)
     .await?;
-    sqlx::query("UPDATE rides SET started_at=$1 WHERE id=$2")
-        .bind(&started_at)
-        .bind(id)
-        .execute(&st.db)
-        .await?;
+    tx.commit().await?;
     let mut started = vec![r.clone()];
     for (other,) in &others {
         started.push(load_ride(&st, u.lang, *other).await?);
