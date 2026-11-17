@@ -143,6 +143,8 @@ async fn dashboard(State(st): State<AppState>, u: CurrentUser) -> AppResult<Json
 struct UserQuery {
     q: Option<String>,
     role: Option<String>,
+    /// `active`, `pending` or `disabled`.
+    status: Option<String>,
     sort: Option<String>,
     dir: Option<String>,
     page: Option<i64>,
@@ -186,8 +188,14 @@ async fn list_users(
 
     if q.page.is_some() || q.limit.is_some() {
         let mut conds = vec!["(u.name LIKE $1 OR u.email LIKE $2 OR u.phone LIKE $3)".to_string()];
+        let mut n = 4;
         if q.role.is_some() {
-            conds.push("EXISTS (SELECT 1 FROM member_roles mr WHERE mr.user_id = u.id AND mr.role_key = $4)".to_string());
+            conds.push(format!("EXISTS (SELECT 1 FROM member_roles mr WHERE mr.user_id = u.id AND mr.role_key = ${n})"));
+            n += 1;
+        }
+        if q.status.is_some() {
+            conds.push(format!("u.status = ${n}"));
+            n += 1;
         }
         let count_sql = format!("SELECT COUNT(*) FROM users u WHERE {}", conds.join(" AND "));
         let mut count_query = sqlx::query_as::<_, (i64,)>(&count_sql)
@@ -197,13 +205,15 @@ async fn list_users(
         if let Some(r) = &q.role {
             count_query = count_query.bind(r);
         }
+        if let Some(s) = &q.status {
+            count_query = count_query.bind(s);
+        }
         let (total,) = count_query.fetch_one(&st.db).await?;
 
         let page = q.page.unwrap_or(1).max(1);
         let limit = q.limit.unwrap_or(50).clamp(1, 200);
         let offset = (page - 1) * limit;
 
-        let n = if q.role.is_some() { 5 } else { 4 };
         let sql = format!(
             "SELECT u.id, u.name, u.email, u.phone, u.roles, u.status, u.created_at, (SELECT COUNT(*) FROM passkeys p WHERE p.user_id=u.id),
                 (SELECT string_agg(g.name, '、') FROM group_members gm JOIN groups g ON g.id=gm.group_id WHERE gm.user_id=u.id)
@@ -230,6 +240,9 @@ async fn list_users(
         .bind(&like);
         if let Some(r) = &q.role {
             query = query.bind(r);
+        }
+        if let Some(s) = &q.status {
+            query = query.bind(s);
         }
         query = query.bind(limit).bind(offset);
         let rows = query.fetch_all(&st.db).await?;

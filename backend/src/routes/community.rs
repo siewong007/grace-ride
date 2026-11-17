@@ -27,7 +27,10 @@ pub fn router() -> Router<AppState> {
             "/announcements",
             get(list_announcements).post(create_announcement),
         )
-        .route("/announcements/{id}", delete(delete_announcement))
+        .route(
+            "/announcements/{id}",
+            delete(delete_announcement).put(update_announcement),
+        )
         .route("/help", get(list_tickets).post(create_ticket))
         .route("/help/{id}", get(get_ticket))
         .route("/help/{id}/replies", post(reply_ticket))
@@ -245,6 +248,13 @@ struct AnnIn {
     notify_all: Option<bool>,
 }
 
+#[derive(Deserialize)]
+struct AnnEdit {
+    title: String,
+    body: String,
+    pinned: bool,
+}
+
 async fn create_announcement(
     State(st): State<AppState>,
     u: CurrentUser,
@@ -288,6 +298,41 @@ async fn create_announcement(
     )
     .await;
     Ok(Json(json!({"id": id})))
+}
+
+/// Fix a typo, or pin and unpin, without publishing again: nobody is notified a second time.
+/// Editing is part of publishing, so it needs the same permission as creating.
+async fn update_announcement(
+    State(st): State<AppState>,
+    u: CurrentUser,
+    Path(id): Path<i64>,
+    Json(req): Json<AnnEdit>,
+) -> AppResult<Json<Value>> {
+    require(&u, Page::AdminAnnouncements, Act::Create)?;
+    if req.title.trim().is_empty() || req.body.trim().is_empty() {
+        return Err(bad(u.lang, ErrorKey::TitleAndContentRequired));
+    }
+    let changed = sqlx::query("UPDATE announcements SET title=$1, body=$2, pinned=$3 WHERE id=$4")
+        .bind(req.title.trim())
+        .bind(req.body.trim())
+        .bind(req.pinned as i64)
+        .bind(id)
+        .execute(&st.db)
+        .await?
+        .rows_affected();
+    if changed == 0 {
+        return Err(not_found(u.lang));
+    }
+    audit(
+        &st.db,
+        Some(u.id),
+        "announcement.update",
+        "announcement",
+        Some(id),
+        req.title.trim(),
+    )
+    .await;
+    Ok(Json(json!({"ok": true})))
 }
 
 async fn delete_announcement(

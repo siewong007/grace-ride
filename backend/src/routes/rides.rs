@@ -2556,6 +2556,8 @@ async fn staff_alt_transport(
 struct AdminRidesQuery {
     date: Option<String>,
     status: Option<String>,
+    /// Passenger, rider, driver or destination, in any letter case.
+    q: Option<String>,
     attention: Option<bool>,
     sort: Option<String>,
     dir: Option<String>,
@@ -2581,6 +2583,17 @@ async fn admin_rides(
     }
     if q.status.is_some() {
         conds.push(format!("r.status = ${n}"));
+        n += 1;
+    }
+    let search =
+        q.q.as_deref()
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+            .map(|s| format!("%{s}%"));
+    if search.is_some() {
+        conds.push(format!(
+            "(p.name ILIKE ${n} OR r.rider_name ILIKE ${n} OR d.name ILIKE ${n} OR r.destination ILIKE ${n})"
+        ));
         n += 1;
     }
     if q.attention.unwrap_or(false) {
@@ -2619,12 +2632,19 @@ async fn admin_rides(
     );
 
     if q.page.is_some() || q.limit.is_some() {
-        let count_sql = format!("SELECT COUNT(*) FROM rides r WHERE {}", conds.join(" AND "));
+        let count_sql = format!(
+            "SELECT COUNT(*) FROM rides r JOIN users p ON p.id = r.passenger_id \
+             LEFT JOIN users d ON d.id = r.driver_id WHERE {}",
+            conds.join(" AND ")
+        );
         let mut count_query = sqlx::query_as::<_, (i64,)>(&count_sql);
         if let Some(d) = &q.date {
             count_query = count_query.bind(d);
         }
         if let Some(s) = &q.status {
+            count_query = count_query.bind(s);
+        }
+        if let Some(s) = &search {
             count_query = count_query.bind(s);
         }
         let (total,) = count_query.fetch_one(&st.db).await?;
@@ -2643,6 +2663,9 @@ async fn admin_rides(
             query = query.bind(d);
         }
         if let Some(s) = &q.status {
+            query = query.bind(s);
+        }
+        if let Some(s) = &search {
             query = query.bind(s);
         }
         query = query.bind(limit).bind(offset);
@@ -2671,6 +2694,9 @@ async fn admin_rides(
         query = query.bind(d);
     }
     if let Some(s) = &q.status {
+        query = query.bind(s);
+    }
+    if let Some(s) = &search {
         query = query.bind(s);
     }
     let rows = query.fetch_all(&st.db).await?;
