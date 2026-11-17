@@ -157,7 +157,7 @@ export default function Layout() {
     <div className="shell">
       <nav className="sidebar" aria-label={t('mainNav')}>
         <Link to={pending ? '/me' : '/'} className="sidebar-brand">
-          <LogoMark />
+          <LogoMark animated />
           <span className="sidebar-brand-text">
             <Wordmark />
             <small>{t('brandSub')}</small>
@@ -182,8 +182,9 @@ export default function Layout() {
         <header className={`topbar ${scrolled ? 'is-scrolled' : ''}`}>
           <div className="topbar-left">
             {isHome ? (
-              <Link to="/" className="topbar-brand">
-                <LogoMark />
+              // Phones only: from tablet up the sidebar already carries the brand.
+              <Link to="/" className="topbar-brand hide-tablet-up">
+                <LogoMark animated />
                 <Wordmark className="topbar-brand-name" />
               </Link>
             ) : (
