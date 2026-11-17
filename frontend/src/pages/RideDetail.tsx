@@ -1100,7 +1100,7 @@ function StaffActions({ ride: r, reload }: { ride: Ride; reload: () => void }) {
         )}
         {edit && open && <Button variant="secondary" onClick={() => setModal('alt')}>{t('altTransport')}</Button>}
         {cancel && open && <Button variant="danger" onClick={() => setModal('cancel')}>{t('cancel')}</Button>}
-        {edit && r.status === 'in_progress' && (
+        {edit && r.status === 'in_progress' && !r.picked_up_at && (
           <Button variant="danger" disabled={busy} onClick={handleStaffNoShow}>{t('noShow')}</Button>
         )}
       </div>

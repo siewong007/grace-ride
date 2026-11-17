@@ -105,6 +105,7 @@ export default {
     "TRIP_ALREADY_COMPLETED": "This ride has been completed",
     "DRIVER_CANNOT_DRIVE": "Driver cannot drive",
     "START_TRIP_FIRST": "Start the trip first",
+    "PASSENGER_ALREADY_PICKED_UP": "The passenger has been picked up and can't be marked as a no-show",
     "INVALID_LOCATION": "Invalid location",
     "MAX_LIVE_DRIVERS_REACHED": "There are already {live} drivers on trips (limit {limit}); try again later or contact transport staff.",
     "RIDE_STATUS_CHANGED": "Ride status has changed, please refresh",

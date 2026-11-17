@@ -847,3 +847,212 @@ async fn concurrent_payouts_only_one_wins() {
         "unexpected winning reference: {paid_ref}"
     );
 }
+
+#[tokio::test]
+async fn concurrent_reassignments_respect_driver_capacity() {
+    let (app, st) = setup().await;
+    sqlx::query("UPDATE rides SET status='cancelled' WHERE driver_id=(SELECT id FROM users WHERE email='driver@example.org')")
+        .execute(&st.db)
+        .await
+        .unwrap();
+    sqlx::query(
+        "UPDATE users SET spare_seats=1, carpool_enabled=1 WHERE email='driver@example.org'",
+    )
+    .execute(&st.db)
+    .await
+    .unwrap();
+    let (driver_id,): (i64,) =
+        sqlx::query_as("SELECT id FROM users WHERE email='driver@example.org'")
+            .fetch_one(&st.db)
+            .await
+            .unwrap();
+
+    let yawen = login(&st, "yawen@example.org").await;
+    let member = login(&st, "member@example.org").await;
+    let admin = login(&st, "admin@example.org").await;
+    let body = json!({
+        "pickup_at": tomorrow("22:30"),
+        "pickup_area_id": 1,
+        "pickup_address": "race addr",
+        "destination": "社区中心",
+        "seats": 1,
+        "assistance": ""
+    });
+    let r1 = call(
+        &app,
+        Method::POST,
+        "/api/rides",
+        Some(&yawen),
+        Some(body.clone()),
+    )
+    .await;
+    let r2 = call(&app, Method::POST, "/api/rides", Some(&member), Some(body)).await;
+    assert_eq!(r1.status, StatusCode::OK, "{}", r1.json);
+    assert_eq!(r2.status, StatusCode::OK, "{}", r2.json);
+    let id1 = r1.json["id"].as_i64().unwrap();
+    let id2 = r2.json["id"].as_i64().unwrap();
+
+    // Force both handlers to read capacity before either writes.
+    let mut lock = st.db.begin().await.unwrap();
+    sqlx::query("LOCK TABLE rides IN SHARE MODE")
+        .execute(&mut *lock)
+        .await
+        .unwrap();
+    let spawn = |rid: i64| {
+        let (app, c) = (app.clone(), admin.clone());
+        tokio::spawn(async move {
+            call(
+                &app,
+                Method::POST,
+                &format!("/api/rides/{rid}/reassign"),
+                Some(&c),
+                Some(json!({ "driver_id": driver_id })),
+            )
+            .await
+        })
+    };
+    let f1 = spawn(id1);
+    let f2 = spawn(id2);
+    tokio::time::sleep(std::time::Duration::from_millis(250)).await;
+    lock.rollback().await.unwrap();
+    let (a, b) = tokio::join!(f1, f2);
+    let (a, b) = (a.unwrap(), b.unwrap());
+    println!(
+        "reassign: {} {} / {} {}",
+        a.status, a.json, b.status, b.json
+    );
+    let accepted = [&a, &b]
+        .iter()
+        .filter(|r| r.status == StatusCode::OK)
+        .count();
+    assert_eq!(
+        accepted, 1,
+        "A one-seat driver was reassigned two rides at once"
+    );
+    let (held,): (i64,) =
+        sqlx::query_as("SELECT COUNT(*) FROM rides WHERE driver_id=$1 AND id IN ($2,$3)")
+            .bind(driver_id)
+            .bind(id1)
+            .bind(id2)
+            .fetch_one(&st.db)
+            .await
+            .unwrap();
+    assert_eq!(held, 1);
+}
+
+#[tokio::test]
+async fn concurrent_withdrawals_promote_distinct_waitlisted_members() {
+    let (app, st) = setup().await;
+    sqlx::query("DELETE FROM event_signups WHERE event_id=1")
+        .execute(&st.db)
+        .await
+        .unwrap();
+    sqlx::query(
+        "UPDATE events SET capacity=2, starts_at=$1, signup_deadline=NULL, status='published' WHERE id=1",
+    )
+    .bind(tomorrow("19:30"))
+    .execute(&st.db)
+    .await
+    .unwrap();
+    for (i, (email, status)) in [
+        ("member@example.org", "going"),
+        ("amina@example.org", "going"),
+        ("yawen@example.org", "waitlist"),
+        ("zhiqiang@example.org", "waitlist"),
+    ]
+    .iter()
+    .enumerate()
+    {
+        sqlx::query(
+            "INSERT INTO event_signups (event_id, user_id, status, created_at)
+             SELECT 1, id, $2, $3 FROM users WHERE email=$1",
+        )
+        .bind(email)
+        .bind(status)
+        .bind(format!("2026-01-01T00:00:0{i}"))
+        .execute(&st.db)
+        .await
+        .unwrap();
+    }
+    let member = login(&st, "member@example.org").await;
+    let amina = login(&st, "amina@example.org").await;
+
+    let mut lock = st.db.begin().await.unwrap();
+    sqlx::query("LOCK TABLE event_signups IN SHARE MODE")
+        .execute(&mut *lock)
+        .await
+        .unwrap();
+    let spawn = |c: String| {
+        let app = app.clone();
+        tokio::spawn(async move {
+            call(&app, Method::POST, "/api/events/1/withdraw", Some(&c), None).await
+        })
+    };
+    let f1 = spawn(member);
+    let f2 = spawn(amina);
+    tokio::time::sleep(std::time::Duration::from_millis(250)).await;
+    lock.rollback().await.unwrap();
+    let (a, b) = tokio::join!(f1, f2);
+    let (a, b) = (a.unwrap(), b.unwrap());
+    assert_eq!(a.status, StatusCode::OK, "{}", a.json);
+    assert_eq!(b.status, StatusCode::OK, "{}", b.json);
+    let (going, waiting): (i64, i64) = sqlx::query_as(
+        "SELECT COUNT(*) FILTER (WHERE status='going'), COUNT(*) FILTER (WHERE status='waitlist')
+         FROM event_signups WHERE event_id=1",
+    )
+    .fetch_one(&st.db)
+    .await
+    .unwrap();
+    assert_eq!(
+        (going, waiting),
+        (2, 0),
+        "Both freed places must go to the two waitlisted members"
+    );
+}
+
+#[tokio::test]
+async fn cancelled_event_rejects_new_ride_booking() {
+    let (app, st) = setup().await;
+    let member = login(&st, "member@example.org").await;
+    sqlx::query("DELETE FROM event_signups WHERE event_id=1")
+        .execute(&st.db)
+        .await
+        .unwrap();
+    sqlx::query(
+        "UPDATE events SET capacity=0, starts_at=$1, signup_deadline=NULL, status='published' WHERE id=1",
+    )
+    .bind(tomorrow("19:30"))
+    .execute(&st.db)
+    .await
+    .unwrap();
+    sqlx::query(
+        "INSERT INTO event_signups (event_id, user_id, status, created_at)
+         SELECT 1, id, 'going', $1 FROM users WHERE email='member@example.org'",
+    )
+    .bind(now())
+    .execute(&st.db)
+    .await
+    .unwrap();
+    sqlx::query("UPDATE events SET status='cancelled' WHERE id=1")
+        .execute(&st.db)
+        .await
+        .unwrap();
+    let r = call(
+        &app,
+        Method::POST,
+        "/api/rides",
+        Some(&member),
+        Some(json!({
+            "event_id": 1,
+            "pickup_at": tomorrow("18:30"),
+            "pickup_area_id": 1,
+            "pickup_address": "addr",
+            "destination": "社区中心",
+            "seats": 1,
+            "assistance": ""
+        })),
+    )
+    .await;
+    assert_eq!(r.status, StatusCode::BAD_REQUEST, "{}", r.json);
+    assert_eq!(r.json["code"], "EVENT_NOT_OPEN");
+}

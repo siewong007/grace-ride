@@ -32,6 +32,7 @@ pub fn render(lang: Lang, key: &ErrorKey) -> String {
         ErrorKey::TripAlreadyCompleted => pair(lang, "行程已完成", "This ride has been completed"),
         ErrorKey::DriverCannotDrive => pair(lang, "司机无法出车", "Driver cannot drive"),
         ErrorKey::StartTripFirst => pair(lang, "请先开始行程", "Start the trip first"),
+        ErrorKey::PassengerAlreadyPickedUp => pair(lang, "乘客已上车，不能记录为未到场", "The passenger has been picked up and can't be marked as a no-show"),
         ErrorKey::InvalidLocation => pair(lang, "位置无效", "Invalid location"),
         ErrorKey::MaxLiveDriversReached { live, limit } => match lang {
             Lang::Zh => format!("目前已有 {live} 位司机在行程中（上限 {limit}），请稍后或联系交通组。"),

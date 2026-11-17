@@ -348,9 +348,21 @@ async fn create_ride(
         .await?;
     area.ok_or_else(|| bad(u.lang, ErrorKey::PickupAreaRequired))?;
     let mut as_group: Option<i64> = None;
+    // The event checks and the insert share one transaction holding a share lock on the
+    // event row: cancelling the event updates that row, so it either finishes first (and
+    // the booking is refused) or waits and then cancels this new ride with the rest.
+    let mut tx = st.db.begin().await?;
     if let Some(eid) = req.event_id {
         if !crate::routes::events::can_see_event(&st, &u, eid).await? {
             return Err(forbidden(u.lang, ErrorKey::CannotViewEvent));
+        }
+        let event_status: Option<(String,)> =
+            sqlx::query_as("SELECT status FROM events WHERE id=$1 FOR SHARE")
+                .bind(eid)
+                .fetch_optional(&mut *tx)
+                .await?;
+        if event_status.as_ref().map(|(s,)| s.as_str()) != Some("published") {
+            return Err(bad(u.lang, ErrorKey::EventNotOpen));
         }
         // A ride to an event goes with a place at it, and carries the group the member
         // joined as so the right drivers are asked.
@@ -359,7 +371,7 @@ async fn create_ride(
         )
         .bind(eid)
         .bind(u.id)
-        .fetch_optional(&st.db)
+        .fetch_optional(&mut *tx)
         .await?;
         let Some((g,)) = signup else {
             return Err(bad(u.lang, ErrorKey::EventRideNeedsSignup));
@@ -411,8 +423,9 @@ async fn create_ride(
     .bind(now())
     .bind(now())
     .bind(as_group)
-    .fetch_one(&st.db)
+    .fetch_one(&mut *tx)
     .await?;
+    tx.commit().await?;
 
     if is_proxy && req.save_proxy_rider.unwrap_or(false) && !rider_name.is_empty() {
         let exists: Option<(i64,)> =
@@ -1577,12 +1590,19 @@ async fn pickup(
     if r.status != "in_progress" {
         return Err(bad(u.lang, ErrorKey::StartTripFirst));
     }
-    sqlx::query("UPDATE rides SET picked_up_at=$1, updated_at=$2 WHERE id=$3")
-        .bind(now())
-        .bind(now())
-        .bind(id)
-        .execute(&st.db)
-        .await?;
+    // Only while the trip is still running: a no-show or completion saved since the read
+    // above has ended the ride.
+    let picked = sqlx::query(
+        "UPDATE rides SET picked_up_at=$1, updated_at=$2 WHERE id=$3 AND status='in_progress'",
+    )
+    .bind(now())
+    .bind(now())
+    .bind(id)
+    .execute(&st.db)
+    .await?;
+    if picked.rows_affected() == 0 {
+        return Err(conflict(u.lang, ErrorKey::RideStatusChanged));
+    }
     clear_passenger_location(&st, id).await?;
     if let Some(t) = r.trip_id {
         system_message(
@@ -1629,12 +1649,30 @@ async fn no_show(
     if r.driver_id != Some(u.id) && !u.can(Page::AdminRides, Act::Update) {
         return Err(forbidden(u.lang, ErrorKey::NotRideDriver));
     }
-    set_status(&st, id, &["in_progress", "confirmed"], "no_show", u.lang).await?;
-    sqlx::query("UPDATE rides SET completed_at=$1 WHERE id=$2")
-        .bind(now())
-        .bind(id)
-        .execute(&st.db)
-        .await?;
+    // A passenger who has been picked up showed up. Checked in the update itself too, so a
+    // pickup recorded between this read and the write still wins.
+    if r.picked_up_at.is_some() {
+        return Err(conflict(u.lang, ErrorKey::PassengerAlreadyPickedUp));
+    }
+    let ended = sqlx::query(
+        "UPDATE rides SET status='no_show', completed_at=$1, updated_at=$1
+         WHERE id=$2 AND status IN ('in_progress', 'confirmed') AND picked_up_at IS NULL",
+    )
+    .bind(now())
+    .bind(id)
+    .execute(&st.db)
+    .await?;
+    if ended.rows_affected() == 0 {
+        let picked: Option<(Option<String>,)> =
+            sqlx::query_as("SELECT picked_up_at FROM rides WHERE id=$1")
+                .bind(id)
+                .fetch_optional(&st.db)
+                .await?;
+        return Err(match picked {
+            Some((Some(_),)) => conflict(u.lang, ErrorKey::PassengerAlreadyPickedUp),
+            _ => conflict(u.lang, ErrorKey::RideStatusChanged),
+        });
+    }
     if let Some(d) = r.driver_id {
         clear_location_if_idle(&st, d).await?;
     }
@@ -2403,7 +2441,15 @@ async fn staff_reassign(
             .await;
         }
     }
-    let (load, cap) = driver_load(&st, req.driver_id, &r.pickup_at, Some(id)).await?;
+    // Lock the new driver's row for the capacity check + reassignment, the same lock
+    // `driver_claim` takes, so concurrent assignments to one driver serialise and the
+    // second sees the first booking in `load` instead of overbooking the car.
+    let mut tx = st.db.begin().await?;
+    sqlx::query("SELECT id FROM users WHERE id=$1 FOR UPDATE")
+        .bind(req.driver_id)
+        .fetch_optional(&mut *tx)
+        .await?;
+    let (load, cap) = driver_load_on(&mut tx, req.driver_id, &r.pickup_at, Some(id)).await?;
     if load + r.seats > cap {
         return Err(bad(
             u.lang,
@@ -2423,11 +2469,12 @@ async fn staff_reassign(
     .bind(now())
     .bind(id)
     .bind(r.driver_id)
-    .execute(&st.db)
+    .execute(&mut *tx)
     .await?;
     if reassigned.rows_affected() == 0 {
         return Err(conflict(u.lang, ErrorKey::RideStatusChanged));
     }
+    tx.commit().await?;
     if let (Some(old), Some(t)) = (r.driver_id, r.trip_id) {
         if old != req.driver_id {
             let line = format!("{} · {}", r.p_name, r.pickup_at.replace('T', " "));

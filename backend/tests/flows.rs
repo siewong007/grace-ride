@@ -2014,6 +2014,26 @@ async fn ride_trip_and_staff_branches() {
         None,
     )
     .await;
+    // A passenger who has been picked up showed up: neither the driver nor staff can
+    // record them as a no-show, and the ride stays in progress.
+    for who in [&c.driver, &c.transport] {
+        deny(
+            &app,
+            Method::POST,
+            &format!("/api/rides/{id}/no-show"),
+            Some(who),
+            None,
+            StatusCode::CONFLICT,
+            "PASSENGER_ALREADY_PICKED_UP",
+        )
+        .await;
+    }
+    let (status,): (String,) = sqlx::query_as("SELECT status FROM rides WHERE id=$1")
+        .bind(id)
+        .fetch_one(&st.db)
+        .await
+        .unwrap();
+    assert_eq!(status, "in_progress");
     must(
         &app,
         Method::POST,
@@ -4289,4 +4309,222 @@ async fn reminders_are_sent_again_after_a_new_time_or_a_new_driver() {
     )
     .await;
     assert_eq!(flag().await, 0, "the next driver gets the reminder");
+}
+
+/// A published bill with `member` and `sophie` on custom shares, both recorded as attended.
+async fn published_custom_bill(app: &Router, c: &Cast, member: i64, sophie: i64) -> i64 {
+    let event = make_event(app, &c.admin, &[c.all_group], 0).await;
+    let sid = must(
+        app,
+        Method::POST,
+        &format!("/api/events/{event}/settlements"),
+        Some(&c.admin),
+        Some(custom_bill(c, member, sophie)),
+    )
+    .await["id"]
+        .as_i64()
+        .unwrap();
+    for uid in [c.member_id, c.sophie_id] {
+        must(
+            app,
+            Method::POST,
+            &format!("/api/events/{event}/attendance"),
+            Some(&c.admin),
+            Some(json!({"user_id": uid, "attended": true})),
+        )
+        .await;
+    }
+    must(
+        app,
+        Method::POST,
+        &format!("/api/settlements/{sid}/publish"),
+        Some(&c.admin),
+        None,
+    )
+    .await;
+    sid
+}
+
+fn custom_bill(c: &Cast, member: i64, sophie: i64) -> Value {
+    let mut b = bill(
+        "晚餐",
+        json!([{"label": "晚餐", "amount_cents": member + sophie}]),
+        0,
+        "custom",
+        json!([{"user_id": c.member_id, "amount_cents": member}, {"user_id": c.sophie_id, "amount_cents": sophie}]),
+        "1234567890",
+    );
+    b["reason"] = json!("调整金额");
+    b
+}
+
+#[tokio::test]
+async fn repeated_revisions_keep_a_payment_recognised() {
+    let (app, st) = setup().await;
+    let c = cast(&app, &st).await;
+    let sid = published_custom_bill(&app, &c, 1000, 1000).await;
+    let share_id = |uid: i64| {
+        let db = st.db.clone();
+        async move {
+            sqlx::query_scalar::<_, i64>(
+                "SELECT id FROM settlement_shares WHERE settlement_id=$1 AND user_id=$2",
+            )
+            .bind(sid)
+            .bind(uid)
+            .fetch_one(&db)
+            .await
+            .unwrap()
+        }
+    };
+    let share = |uid: i64| {
+        let db = st.db.clone();
+        async move {
+            sqlx::query_as::<_, (i64, String, String)>(
+                "SELECT amount_cents, status, note FROM settlement_shares WHERE settlement_id=$1 AND user_id=$2",
+            )
+            .bind(sid)
+            .bind(uid)
+            .fetch_one(&db)
+            .await
+            .unwrap()
+        }
+    };
+    // The member pays RM10 by transfer with proof; sophie pays RM10 in cash, which the
+    // payee confirms directly.
+    let member_share = share_id(c.member_id).await;
+    let proof = upload_png(&app, &c.member).await;
+    must(
+        &app,
+        Method::POST,
+        &format!("/api/shares/{member_share}/proof"),
+        Some(&c.member),
+        Some(json!({"proof_file_id": proof, "txn_ref": "TXN-REV-1"})),
+    )
+    .await;
+    for share in [member_share, share_id(c.sophie_id).await] {
+        must(
+            &app,
+            Method::POST,
+            &format!("/api/shares/{share}/verify"),
+            Some(&c.admin),
+            Some(json!({"action": "confirm"})),
+        )
+        .await;
+    }
+
+    // RM10 → RM20 → RM30: each revision keeps the RM10 already paid on record.
+    for (amount, owed) in [(2000, "RM 20.00"), (3000, "RM 30.00")] {
+        must(
+            &app,
+            Method::PUT,
+            &format!("/api/settlements/{sid}"),
+            Some(&c.admin),
+            Some(custom_bill(&c, amount, amount)),
+        )
+        .await;
+        for uid in [c.member_id, c.sophie_id] {
+            let (amt, status, note) = share(uid).await;
+            assert_eq!((amt, status.as_str()), (amount, "needs_info"), "user {uid}");
+            assert!(note.contains("RM 10.00") && note.contains(owed), "{note}");
+        }
+    }
+    // A paid member still can't be dropped while their payment is being reconciled.
+    let mut drop_member = custom_bill(&c, 3000, 3000);
+    drop_member["participants"] = json!([{"user_id": c.sophie_id, "amount_cents": 3000}]);
+    drop_member["items"] = json!([{"label": "晚餐", "amount_cents": 3000}]);
+    deny(
+        &app,
+        Method::PUT,
+        &format!("/api/settlements/{sid}"),
+        Some(&c.admin),
+        Some(drop_member),
+        StatusCode::BAD_REQUEST,
+        "PAID_MEMBERS_CANNOT_BE_REMOVED",
+    )
+    .await;
+
+    // Back to what was paid: nothing to reconcile, the payee checks it again.
+    must(
+        &app,
+        Method::PUT,
+        &format!("/api/settlements/{sid}"),
+        Some(&c.admin),
+        Some(custom_bill(&c, 1000, 1000)),
+    )
+    .await;
+    assert_eq!(share(c.member_id).await, (1000, "pending".into(), String::new()));
+
+    // A reset says nothing was received, so the next revision makes the share owed.
+    let sophie_share = share_id(c.sophie_id).await;
+    must(
+        &app,
+        Method::POST,
+        &format!("/api/shares/{sophie_share}/verify"),
+        Some(&c.admin),
+        Some(json!({"action": "reset"})),
+    )
+    .await;
+    must(
+        &app,
+        Method::PUT,
+        &format!("/api/settlements/{sid}"),
+        Some(&c.admin),
+        Some(custom_bill(&c, 1500, 1500)),
+    )
+    .await;
+    assert_eq!(share(c.sophie_id).await, (1500, "unpaid".into(), String::new()));
+}
+
+#[tokio::test]
+async fn closing_races_a_revision_without_trapping_a_share() {
+    let (app, st) = setup().await;
+    let c = cast(&app, &st).await;
+    for round in 0..8 {
+        let sid = published_custom_bill(&app, &c, 1000, 1000).await;
+        sqlx::query("UPDATE settlement_shares SET status='confirmed', paid_cents=amount_cents WHERE settlement_id=$1")
+            .bind(sid)
+            .execute(&st.db)
+            .await
+            .unwrap();
+        let (bill_path, close_path) = (
+            format!("/api/settlements/{sid}"),
+            format!("/api/settlements/{sid}/close"),
+        );
+        let revise = call(
+            &app,
+            Method::PUT,
+            &bill_path,
+            Some(&c.admin),
+            Some(custom_bill(&c, 2000, 2000)),
+        );
+        let close = call(
+            &app,
+            Method::POST,
+            &close_path,
+            Some(&c.admin),
+            None,
+        );
+        let (revised, closed) = tokio::join!(revise, close);
+        let (status,): (String,) = sqlx::query_as("SELECT status FROM settlements WHERE id=$1")
+            .bind(sid)
+            .fetch_one(&st.db)
+            .await
+            .unwrap();
+        let (open,): (i64,) = sqlx::query_as(
+            "SELECT COUNT(*) FROM settlement_shares WHERE settlement_id=$1 AND status != 'confirmed'",
+        )
+        .bind(sid)
+        .fetch_one(&st.db)
+        .await
+        .unwrap();
+        // Exactly one wins: a closed bill has nothing open, and an open bill was revised.
+        if status == "closed" {
+            assert_eq!(open, 0, "round {round}: closed bill has open shares");
+            assert_eq!(closed.status, StatusCode::OK, "round {round}");
+            assert_eq!(revised.json["code"], "BILL_CLOSED_CANNOT_EDIT", "round {round}");
+        } else {
+            assert_eq!(revised.status, StatusCode::OK, "round {round} {}", revised.json);
+            assert_eq!(closed.json["code"], "OPEN_PAYMENTS_REMAIN", "round {round}");
+        }
+    }
 }

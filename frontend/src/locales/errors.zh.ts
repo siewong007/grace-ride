@@ -105,6 +105,7 @@ export default {
     "TRIP_ALREADY_COMPLETED": "行程已完成",
     "DRIVER_CANNOT_DRIVE": "司机无法出车",
     "START_TRIP_FIRST": "请先开始行程",
+    "PASSENGER_ALREADY_PICKED_UP": "乘客已上车，不能记录为未到场",
     "INVALID_LOCATION": "位置无效",
     "MAX_LIVE_DRIVERS_REACHED": "目前已有 {live} 位司机在行程中（上限 {limit}），请稍后或联系交通组。",
     "RIDE_STATUS_CHANGED": "接送状态已改变，请重新整理",

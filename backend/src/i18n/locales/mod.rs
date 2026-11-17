@@ -127,6 +127,7 @@ pub fn render(lang: Lang, key: &ErrorKey) -> String {
         | ErrorKey::TripAlreadyCompleted
         | ErrorKey::DriverCannotDrive
         | ErrorKey::StartTripFirst
+        | ErrorKey::PassengerAlreadyPickedUp
         | ErrorKey::InvalidLocation
         | ErrorKey::MaxLiveDriversReached { .. }
         | ErrorKey::RideStatusChanged
@@ -346,6 +347,7 @@ mod tests {
             ErrorKey::TripAlreadyCompleted,
             ErrorKey::DriverCannotDrive,
             ErrorKey::StartTripFirst,
+            ErrorKey::PassengerAlreadyPickedUp,
             ErrorKey::InvalidLocation,
             ErrorKey::MaxLiveDriversReached { live: 1, limit: 1 },
             ErrorKey::RideStatusChanged,

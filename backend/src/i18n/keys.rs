@@ -124,6 +124,7 @@ pub enum ErrorKey {
     TripAlreadyCompleted,
     DriverCannotDrive,
     StartTripFirst,
+    PassengerAlreadyPickedUp,
     InvalidLocation,
     MaxLiveDriversReached {
         live: i64,
@@ -370,6 +371,7 @@ impl ErrorKey {
             Self::TripAlreadyCompleted => "TRIP_ALREADY_COMPLETED",
             Self::DriverCannotDrive => "DRIVER_CANNOT_DRIVE",
             Self::StartTripFirst => "START_TRIP_FIRST",
+            Self::PassengerAlreadyPickedUp => "PASSENGER_ALREADY_PICKED_UP",
             Self::InvalidLocation => "INVALID_LOCATION",
             Self::MaxLiveDriversReached { .. } => "MAX_LIVE_DRIVERS_REACHED",
             Self::RideStatusChanged => "RIDE_STATUS_CHANGED",

@@ -187,6 +187,18 @@ async fn ensure_all_attended(
     Ok(())
 }
 
+/// What a member has paid towards a share, 0 if nothing. `paid_cents` is recorded when
+/// proof is sent or a payment confirmed, and kept through revisions; a confirmed or
+/// pending share from before it was recorded counts its own amount as paid.
+fn paid_amount(amount_cents: i64, status: &str, paid_cents: i64) -> i64 {
+    match status {
+        "unpaid" => 0,
+        _ if paid_cents > 0 => paid_cents,
+        "confirmed" | "pending" => amount_cents,
+        _ => 0,
+    }
+}
+
 /// Writes the bill's fields, items and shares inside the caller's transaction, so a
 /// failure part-way leaves the bill as it was.
 async fn write_body(
@@ -220,13 +232,13 @@ async fn write_body(
             .await?;
     }
     // Upsert shares; keep payment state where the amount did not change.
-    let existing: Vec<(i64, i64, String)> = sqlx::query_as(
-        "SELECT user_id, amount_cents, status FROM settlement_shares WHERE settlement_id=$1",
+    let existing: Vec<(i64, i64, String, i64)> = sqlx::query_as(
+        "SELECT user_id, amount_cents, status, paid_cents FROM settlement_shares WHERE settlement_id=$1",
     )
     .bind(sid)
     .fetch_all(&mut **tx)
     .await?;
-    for (uid, old_amt, status) in &existing {
+    for (uid, old_amt, status, paid_cents) in &existing {
         match shares.iter().find(|s| s.0 == *uid) {
             None => {
                 sqlx::query("DELETE FROM settlement_shares WHERE settlement_id=$1 AND user_id=$2")
@@ -236,16 +248,22 @@ async fn write_body(
                     .await?;
             }
             Some((_, amt)) if amt != old_amt => {
-                // Money has changed hands only on a non-zero share that is confirmed or
-                // waiting for the payee to check. Anything else starts afresh: a share
-                // of nothing is settled, any other amount is owed.
-                let paid = *old_amt > 0 && (status == "confirmed" || status == "pending");
-                let (new_status, note) = if paid {
+                // Once money has changed hands the share is reconciled against what was
+                // paid, not against the previous amount, and stays so through any number
+                // of revisions: a share already waiting on a reconciliation keeps its
+                // payment. Anything else starts afresh: a share of nothing is settled,
+                // any other amount is owed.
+                let paid = paid_amount(*old_amt, status, *paid_cents);
+                let (new_status, note) = if paid > 0 && paid == *amt {
+                    // Revised back to what was paid: nothing to reconcile, but the payee
+                    // checks it again rather than it being confirmed on their behalf.
+                    ("pending", String::new())
+                } else if paid > 0 {
                     (
                         "needs_info",
                         format!(
-                            "金额已由 {} 调整为 {}，请与发起者核对差额。",
-                            fmt_rm(*old_amt),
+                            "已付 {}，金额已调整为 {}，请与发起者核对差额。",
+                            fmt_rm(paid),
                             fmt_rm(*amt)
                         ),
                     )
@@ -254,10 +272,11 @@ async fn write_body(
                 } else {
                     ("unpaid", String::new())
                 };
-                sqlx::query("UPDATE settlement_shares SET amount_cents=$1, status=$2, note=$3, updated_at=$4 WHERE settlement_id=$5 AND user_id=$6")
+                sqlx::query("UPDATE settlement_shares SET amount_cents=$1, status=$2, note=$3, paid_cents=$4, updated_at=$5 WHERE settlement_id=$6 AND user_id=$7")
                     .bind(amt)
                     .bind(new_status)
                     .bind(note)
+                    .bind(paid)
                     .bind(now())
                     .bind(sid)
                     .bind(uid)
@@ -537,8 +556,8 @@ async fn update(
         if s.status != "published" {
             return Err(bad(u.lang, ErrorKey::BillClosedCannotEdit));
         }
-        let before: Vec<(i64, i64, String)> = sqlx::query_as(
-            "SELECT user_id, amount_cents, status FROM settlement_shares WHERE settlement_id=$1",
+        let before: Vec<(i64, i64, String, i64)> = sqlx::query_as(
+            "SELECT user_id, amount_cents, status, paid_cents FROM settlement_shares WHERE settlement_id=$1",
         )
         .bind(id)
         .fetch_all(&mut *tx)
@@ -547,10 +566,8 @@ async fn update(
         // delete the proof and the only sign that a refund is owed.
         let paid_removed = before
             .iter()
-            .filter(|(uid, amt, st)| {
-                *amt > 0
-                    && (st == "confirmed" || st == "pending")
-                    && !shares.iter().any(|x| x.0 == *uid)
+            .filter(|(uid, amt, st, paid)| {
+                paid_amount(*amt, st, *paid) > 0 && !shares.iter().any(|x| x.0 == *uid)
             })
             .count() as i64;
         if paid_removed > 0 {
@@ -576,7 +593,7 @@ async fn update(
             .await?;
         write_body(&mut tx, id, &req, &shares).await?;
         tx.commit().await?;
-        let before: Vec<(i64, i64)> = before.into_iter().map(|(uid, amt, _)| (uid, amt)).collect();
+        let before: Vec<(i64, i64)> = before.into_iter().map(|(uid, amt, _, _)| (uid, amt)).collect();
         for (uid, old) in &before {
             match shares.iter().find(|x| x.0 == *uid) {
                 Some((_, new)) if new != old => {
@@ -798,11 +815,23 @@ async fn close(
     if s.created_by != u.id || !u.can(Page::Settlements, Act::Update) {
         return Err(forbidden(u.lang, ErrorKey::OnlyOrganiserCanCloseBill));
     }
+    // Hold the bill, as a revision, proof or verification does, before counting what is
+    // still open. Otherwise a revision landing between the count and the close leaves a
+    // closed bill with a share that can no longer be resolved.
+    let mut tx = st.db.begin().await?;
+    let (status,): (String,) =
+        sqlx::query_as("SELECT status FROM settlements WHERE id=$1 FOR UPDATE")
+            .bind(id)
+            .fetch_one(&mut *tx)
+            .await?;
+    if status == "closed" {
+        return Err(bad(u.lang, ErrorKey::BillClosedCannotEdit));
+    }
     let (open,): (i64,) = sqlx::query_as(
         "SELECT COUNT(*) FROM settlement_shares WHERE settlement_id=$1 AND status != 'confirmed'",
     )
     .bind(id)
-    .fetch_one(&st.db)
+    .fetch_one(&mut *tx)
     .await?;
     if open > 0 {
         return Err(bad(u.lang, ErrorKey::OpenPaymentsRemain(open)));
@@ -810,8 +839,9 @@ async fn close(
     sqlx::query("UPDATE settlements SET status='closed', updated_at=$1 WHERE id=$2")
         .bind(now())
         .bind(id)
-        .execute(&st.db)
+        .execute(&mut *tx)
         .await?;
+    tx.commit().await?;
     audit(
         &st.db,
         Some(u.id),
@@ -924,7 +954,7 @@ async fn submit_proof(
     if dup > 0 {
         return Err(bad(u.lang, ErrorKey::DuplicateTxnOrProof));
     }
-    sqlx::query("UPDATE settlement_shares SET status='pending', proof_file_id=$1, txn_ref=$2, paid_date=$3, updated_at=$4 WHERE id=$5")
+    sqlx::query("UPDATE settlement_shares SET status='pending', proof_file_id=$1, txn_ref=$2, paid_date=$3, updated_at=$4, paid_cents=amount_cents WHERE id=$5")
         .bind(req.proof_file_id)
         .bind(txn)
         .bind(req.paid_date)
@@ -1012,7 +1042,13 @@ async fn verify(
         ),
         _ => return Err(bad(u.lang, ErrorKey::InvalidAction)),
     };
-    sqlx::query("UPDATE settlement_shares SET status=$1, note=$2, updated_at=$3 WHERE id=$4")
+    // Confirming records the share as paid in full; a reset says nothing was received.
+    // Asking for more information leaves what was paid as it stands.
+    sqlx::query(
+        "UPDATE settlement_shares SET status=$1, note=$2, updated_at=$3,
+            paid_cents = CASE $1 WHEN 'confirmed' THEN amount_cents WHEN 'unpaid' THEN 0 ELSE paid_cents END
+         WHERE id=$4",
+    )
         .bind(status)
         .bind(&note)
         .bind(now())

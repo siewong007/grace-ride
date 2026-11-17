@@ -708,43 +708,61 @@ async fn withdraw(
     Path(id): Path<i64>,
 ) -> AppResult<Json<Value>> {
     let e = load_event(&st, &u, id).await?;
-    let was_going = e.my_status.as_deref() == Some("going");
+    // Same event lock as `signup`: concurrent withdrawals (and signups) queue behind each
+    // other, so each sees the seats the others freed or took and the same waitlisted
+    // member is never promoted twice while others are left waiting.
+    let mut tx = st.db.begin().await?;
+    let (capacity, event_status): (i64, String) =
+        sqlx::query_as("SELECT capacity, status FROM events WHERE id=$1 FOR UPDATE")
+            .bind(id)
+            .fetch_one(&mut *tx)
+            .await?;
     sqlx::query("UPDATE event_signups SET status='cancelled' WHERE event_id=$1 AND user_id=$2")
         .bind(id)
         .bind(u.id)
-        .execute(&st.db)
+        .execute(&mut *tx)
         .await?;
-    if was_going && e.capacity > 0 {
-        let next: Option<(i64, i64)> = sqlx::query_as("SELECT id, user_id FROM event_signups WHERE event_id=$1 AND status='waitlist' ORDER BY created_at, id LIMIT 1")
-            .bind(id)
-            .fetch_optional(&st.db)
-            .await?;
-        if let Some((sid, uid)) = next {
-            sqlx::query("UPDATE event_signups SET status='going' WHERE id=$1")
-                .bind(sid)
-                .execute(&st.db)
-                .await?;
-            // No actor: the seat passes on automatically when someone withdraws.
-            audit(
-                &st.db,
-                None,
-                "event.waitlist_promote",
-                "event",
-                Some(id),
-                format!("user {uid} waitlist → going"),
-            )
-            .await;
-            let zh = format!("您已获得「{}」的名额", e.title);
-            let en = format!("You now have a spot in \"{}\"", e.title);
-            notify(
-                &st.db,
-                uid,
-                ("候补成功", "Off the waitlist"),
-                (&zh, &en),
-                &format!("/events/{id}"),
-            )
-            .await;
-        }
+    // Fill every free place from the waitlist, in order, rather than exactly one per
+    // withdrawal; this also heals any place left open earlier.
+    let promoted: Vec<(i64,)> = if capacity > 0 && event_status == "published" {
+        sqlx::query_as(
+            "UPDATE event_signups SET status='going'
+             WHERE id IN (
+               SELECT id FROM event_signups WHERE event_id=$1 AND status='waitlist'
+               ORDER BY created_at, id
+               LIMIT GREATEST(0, $2 - (SELECT COUNT(*) FROM event_signups WHERE event_id=$1 AND status='going'))
+             )
+             RETURNING user_id",
+        )
+        .bind(id)
+        .bind(capacity)
+        .fetch_all(&mut *tx)
+        .await?
+    } else {
+        Vec::new()
+    };
+    tx.commit().await?;
+    for (uid,) in promoted {
+        // No actor: the seat passes on automatically when someone withdraws.
+        audit(
+            &st.db,
+            None,
+            "event.waitlist_promote",
+            "event",
+            Some(id),
+            format!("user {uid} waitlist → going"),
+        )
+        .await;
+        let zh = format!("您已获得「{}」的名额", e.title);
+        let en = format!("You now have a spot in \"{}\"", e.title);
+        notify(
+            &st.db,
+            uid,
+            ("候补成功", "Off the waitlist"),
+            (&zh, &en),
+            &format!("/events/{id}"),
+        )
+        .await;
     }
     let rides: Vec<(i64, Option<i64>)> = sqlx::query_as(
         // Only their own ride: a visitor they invited may still come, and the host can cancel
