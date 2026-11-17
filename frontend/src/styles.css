@@ -976,26 +976,28 @@ p.empty-title { font-weight: 400; color: var(--muted); }
 }
 .spinner { display: grid; place-items: center; margin: var(--space-10) auto; }
 /* Fade the loading mark in after a beat, so quick loads never flash it. */
-.spinner { animation: spinner-in .3s .2s cubic-bezier(.4, 0, .2, 1) both; }
+.spinner { animation: spinner-in .2s .2s cubic-bezier(.4, 0, .2, 1) both; }
 @keyframes spinner-in { from { opacity: 0; } to { opacity: 1; } }
 @keyframes spin { to { transform: rotate(360deg); } }
 
-/* Animated loading mark, from the logo kit's animation/grace-ride-loading-mark.svg. */
-.loading-mark { display: block; overflow: visible; }
-.lm-arc { fill: none; stroke: var(--logo-blue); stroke-width: 5; stroke-dasharray: 94 94; animation: gr-arc .37s 1.2s linear both; }
-.lm-arc-r { animation-delay: 1.68s; }
-.lm-dot { fill: var(--logo-blue); transform-box: view-box; animation: gr-pop .2s 1.2s ease-out both; }
+/* Animated loading mark, from the logo kit's animation/grace-ride-loading-mark.svg.
+   The whole mark is on screen ~1s after it appears; nothing starts off-screen or is clipped.
+   --lm-d shifts the intro past the .spinner fade-in so a quick load never shows a half-built mark.
+   Keyframes are named gr-lm-* so they can't collide with the boot splash's gr-splash-* ones in index.html. */
+.loading-mark { display: block; overflow: visible; --lm-d: .2s; }
+.lm-arc { fill: none; stroke: var(--logo-blue); stroke-width: 5; stroke-dasharray: 94 94; animation: gr-lm-arc .55s calc(var(--lm-d) + .4s) cubic-bezier(.4, 0, .2, 1) both; }
+.lm-dot { fill: var(--logo-blue); transform-box: view-box; animation: gr-lm-pop .25s calc(var(--lm-d) + .4s) cubic-bezier(.2, .8, .2, 1) both; }
 .lm-dot-l { transform-origin: 41.76px 150.04px; }
-.lm-dot-r { transform-origin: 198.24px 150.04px; animation-delay: 2s; }
-.lm-ping { fill: none; stroke: var(--logo-blue); stroke-width: 2; transform-box: view-box; transform-origin: 120px 213px; animation: gr-ping 2.4s 1.12s infinite both; }
-.lm-ping-2 { animation-delay: 1.42s; }
-.lm-ground { fill: none; stroke: var(--logo-blue); stroke-width: 2.5; transform-box: view-box; transform-origin: 120px 213px; animation: gr-ground .5s 1.1s cubic-bezier(.2, .8, .2, 1) both; }
-.lm-drop { fill: var(--logo-red); animation: gr-drop-mark 1s .15s cubic-bezier(.25, .1, .15, 1) both; }
-@keyframes gr-drop-mark { 0% { transform: translateY(-70px); opacity: 0; } 35% { opacity: 1; } 100% { transform: none; opacity: 1; } }
-@keyframes gr-ground { from { transform: scaleX(0); opacity: 0; } to { transform: none; opacity: 1; } }
-@keyframes gr-ping { 0% { transform: scale(.5); opacity: 0; } 6% { opacity: .7; } 55%, 100% { transform: scale(2.8); opacity: 0; } }
-@keyframes gr-arc { from { stroke-dashoffset: 94; } to { stroke-dashoffset: 0; } }
-@keyframes gr-pop { from { transform: scale(0); } to { transform: none; } }
+.lm-dot-r { transform-origin: 198.24px 150.04px; }
+.lm-ping { fill: none; stroke: var(--logo-blue); stroke-width: 2; transform-box: view-box; transform-origin: 120px 213px; animation: gr-lm-ping 2.4s calc(var(--lm-d) + .95s) infinite both; }
+.lm-ping-2 { animation-delay: calc(var(--lm-d) + 2.15s); }
+.lm-ground { fill: none; stroke: var(--logo-blue); stroke-width: 2.5; transform-box: view-box; transform-origin: 120px 213px; animation: gr-lm-ground .45s calc(var(--lm-d) + .3s) cubic-bezier(.2, .8, .2, 1) both; }
+.lm-drop { fill: var(--logo-red); animation: gr-lm-drop .6s var(--lm-d) cubic-bezier(.2, .8, .2, 1) both; }
+@keyframes gr-lm-drop { from { transform: translateY(-24px); opacity: 0; } to { transform: none; opacity: 1; } }
+@keyframes gr-lm-ground { from { transform: scaleX(0); opacity: 0; } to { transform: none; opacity: 1; } }
+@keyframes gr-lm-ping { 0% { transform: scale(.6); opacity: 0; } 10% { opacity: .6; } 60%, 100% { transform: scale(2.6); opacity: 0; } }
+@keyframes gr-lm-arc { from { stroke-dashoffset: 94; } to { stroke-dashoffset: 0; } }
+@keyframes gr-lm-pop { from { transform: scale(0); } to { transform: none; } }
 @media (prefers-reduced-motion: reduce) {
   .lm-arc, .lm-dot, .lm-ping, .lm-ground, .lm-drop { animation: none; }
   .lm-arc { stroke-dasharray: none; }

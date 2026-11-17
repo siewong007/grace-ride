@@ -19,7 +19,7 @@ The cross's foot is pointed like a map pin (the old "cross fitchée" that pilgri
 - `svg/grace-ride-mark*.svg`: the symbol on its own (full colour, white, one colour). Pure vector shapes, no fonts needed.
 - `svg/grace-ride-app-icon*.svg` and `png/…app-icon…png`: 1024 × 1024 square icons (white and blue). iOS and Android round the corners for you.
 - `svg/grace-ride-logo-horizontal.svg` and `svg/grace-ride-logo-stacked.svg`: full logos with live, editable text. Install Jost, or open them in a browser while online, so the lettering shows correctly.
-- `animation/grace-ride-loading-mark.svg`: the animated symbol. The cross lands, ripples spread, the arc sweeps in, then the ripples keep pulsing while the app loads.
+- `animation/grace-ride-loading-mark.svg`: the animated symbol. The cross rises in, the ground ring opens, both arcs sweep in together (whole mark visible in about a second), then the ripples keep pulsing while the app loads.
 - `animation/grace-ride-loading-screen.html`: the full loading screen. Open it in a browser and tap the logo to replay.
 
 ## Using the logo

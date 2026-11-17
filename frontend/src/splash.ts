@@ -3,8 +3,8 @@
 // The app calls hideSplash() once it knows what to show; lazy pages hold it (holdSplash) until
 // their code has loaded, so the splash hands straight over to real content instead of a spinner.
 
-/** The mark has landed and the wordmark is fully revealed by ~2.75s into the animation. */
-const SPLASH_MIN_MS = 2800;
+/** The whole lockup (mark, wordmark, captions) is fully in by ~1.4s; hold a beat so it can be read. */
+const SPLASH_MIN_MS = 1700;
 /** Keep in sync with the #splash transition in index.html. */
 const FADE_MS = 500;
 
