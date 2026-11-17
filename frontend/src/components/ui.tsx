@@ -400,6 +400,8 @@ export function Modal({
   const { t } = useTranslation();
   const modalRef = useRef<HTMLDivElement>(null);
   const previousActiveElement = useRef<HTMLElement | null>(null);
+  const onCloseRef = useRef(onClose);
+  onCloseRef.current = onClose;
   const titleId = useId();
   const descId = useId();
 
@@ -432,7 +434,7 @@ export function Modal({
       if (!isTopModal()) return;
       if (e.key === 'Escape') {
         e.preventDefault();
-        onClose();
+        onCloseRef.current();
         return;
       }
       if (e.key === 'Tab') {
@@ -461,7 +463,7 @@ export function Modal({
       window.removeEventListener('keydown', onKeyDown, true);
       previousActiveElement.current?.focus();
     };
-  }, [onClose]);
+  }, []);
 
   return (
     <div className="modal-bg" onClick={onClose} role="presentation">

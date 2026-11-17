@@ -274,9 +274,10 @@ export default function RideNew() {
           {/* Section 0: Who is this ride for? */}
           <section className="form-section stack">
             <h3>{t('riderTypeSection')}</h3>
-            <div className="segmented-control wrap-phone" role="tablist">
+            <div className="segmented-control wrap-phone" role="group" aria-label={t('riderTypeSection')}>
               <button
                 type="button"
+                aria-pressed={!isProxy}
                 className={`segmented-item ${!isProxy ? 'active' : ''}`}
                 onClick={() => setIsProxy(false)}
               >
@@ -285,6 +286,7 @@ export default function RideNew() {
               </button>
               <button
                 type="button"
+                aria-pressed={isProxy}
                 className={`segmented-item ${isProxy ? 'active' : ''}`}
                 onClick={() => setIsProxy(true)}
               >

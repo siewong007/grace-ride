@@ -90,7 +90,7 @@ export default function EventDetail() {
   const isFull = e.capacity > 0 && e.going >= e.capacity;
   const attendanceEnabled = e.attendance_enabled !== false;
 
-  const active = signups?.filter((s) => s.status !== 'cancelled') ?? [];
+  const active = Array.isArray(signups) ? signups.filter((s) => s.status !== 'cancelled') : [];
   const signupsAttended = active.filter((s) => s.attended === 1).length;
   const mark = (uid: number, attended: boolean | null) =>
     run(() => post(`/events/${e.id}/attendance`, { user_id: uid, attended }).then(reloadS));

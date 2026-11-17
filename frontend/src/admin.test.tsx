@@ -237,7 +237,7 @@ vi.mock('./api', () => ({
 
 describe('Admin Dashboard', () => {
   it('lists waiting work most urgent first, each row linking to its filtered list', () => {
-    render(
+    const { container } = render(
       <MemoryRouter>
         <Dashboard />
       </MemoryRouter>
@@ -256,12 +256,26 @@ describe('Admin Dashboard', () => {
     ]);
     expect(within(rows[0]).getByRole('link')).toHaveAttribute('href', '/admin/rides?status=pending_driver');
     expect(within(rows[5]).getByRole('link')).toHaveAttribute('href', '/admin/members?tab=recovery');
-    expect(screen.getByText('Today: 5 rides, 4 confirmed')).toBeInTheDocument();
-    expect(screen.getByText('3 drivers out now')).toBeInTheDocument();
+
+    // Interactive KPI strip tiles replace plain-text paragraph links.
+    const kpiRegion = screen.getByRole('region', { name: 'Today’s transport overview' });
+    const kpiLinks = within(kpiRegion).getAllByRole('link');
+    expect(kpiLinks).toHaveLength(4);
+    expect(kpiLinks[0]).toHaveAttribute('href', '/admin/rides?date=2026-11-20');
+    expect(kpiLinks[0]).toHaveTextContent('4 of 5 confirmed');
+    expect(kpiLinks[1]).toHaveAttribute('href', '/admin/rides?date=2026-11-20&status=confirmed');
+    expect(kpiLinks[2]).toHaveAttribute('href', '/admin/live');
+    expect(kpiLinks[2]).toHaveTextContent('3 drivers out now');
+    expect(kpiLinks[3]).toHaveAttribute('href', '/admin/rides?attention=true');
 
     // Detail lists stay below the queue.
     expect(screen.getByText('Today’s rides')).toBeInTheDocument();
     expect(screen.getByText('Needs follow-up')).toBeInTheDocument();
+
+    // No plain-text paragraph or small inline links; permitted audit entities link directly.
+    expect(container.querySelectorAll('p a:not(.btn)')).toHaveLength(0);
+    expect(container.querySelectorAll('.small a:not(.btn), a.small:not(.btn)')).toHaveLength(0);
+    expect(screen.getByRole('link', { name: /Admin Paul/ })).toHaveAttribute('href', '/admin/rides/5');
   });
 });
 

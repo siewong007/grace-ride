@@ -109,7 +109,14 @@ export default function Invite() {
             <span className="stepper-counter">{t('stepOf', { current: stepIdx, total: 3 })}</span>
             <span className="stepper-name bold">{stepTitle}</span>
           </div>
-          <div className="progress-bar" role="progressbar" aria-valuenow={stepIdx} aria-valuemin={1} aria-valuemax={3}>
+          <div
+            className="progress-bar"
+            role="progressbar"
+            aria-label={stepTitle}
+            aria-valuenow={stepIdx}
+            aria-valuemin={1}
+            aria-valuemax={3}
+          >
             <div className={`progress-fill step-${stepIdx}`} />
           </div>
         </div>

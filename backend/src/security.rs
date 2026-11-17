@@ -31,7 +31,7 @@ use crate::util::{now, t, Lang};
 /// Fixed-window counter keyed by "bucket:ip". Single-process is fine: the app runs
 /// as one instance of this app. Move to Redis if it is ever scaled horizontally.
 pub struct RateLimiter {
-    windows: Mutex<HashMap<String, (Instant, u32)>>,
+    windows: Mutex<HashMap<String, (Instant, Duration, u32)>>,
 }
 
 impl Default for RateLimiter {
@@ -48,14 +48,14 @@ impl RateLimiter {
         let now = Instant::now();
         let mut map = self.windows.lock().unwrap_or_else(|e| e.into_inner());
         if map.len() > 50_000 {
-            map.retain(|_, (start, _)| now.duration_since(*start) < window);
+            map.retain(|_, (start, w, _)| now.duration_since(*start) < *w);
         }
-        let entry = map.entry(key.to_string()).or_insert((now, 0));
-        if now.duration_since(entry.0) >= window {
-            *entry = (now, 0);
+        let entry = map.entry(key.to_string()).or_insert((now, window, 0));
+        if now.duration_since(entry.0) >= window || entry.1 != window {
+            *entry = (now, window, 0);
         }
-        entry.1 += 1;
-        if entry.1 > limit {
+        entry.2 += 1;
+        if entry.2 > limit {
             Err(window
                 .saturating_sub(now.duration_since(entry.0))
                 .as_secs()
@@ -123,6 +123,8 @@ pub async fn rate_limit(State(st): State<AppState>, req: Request, next: Next) ->
         || path.starts_with("/api/auth/passkey/login")
     {
         Some(("login", 10, 60))
+    } else if path.starts_with("/api/auth/passkey/reauth/") {
+        Some(("reauth", 10, 60))
     } else if path == "/api/auth/totp/verify"
         || path == "/api/auth/totp/enable"
         || path == "/api/auth/unlock"
@@ -142,6 +144,8 @@ pub async fn rate_limit(State(st): State<AppState>, req: Request, next: Next) ->
         Some(("calendar", 30, 600))
     } else if path == "/api/files" {
         Some(("upload", 30, 600))
+    } else if path.starts_with("/api/files/") && path.ends_with("/extract-ref") {
+        Some(("extract_ref", 20, 600))
     } else {
         None
     };
@@ -151,15 +155,37 @@ pub async fn rate_limit(State(st): State<AppState>, req: Request, next: Next) ->
             .get::<ConnectInfo<SocketAddr>>()
             .map(|c| c.0);
         let ip = client_ip(req.headers(), peer, st.cfg.trust_proxy);
-        // Code checks count per member; everything else per address.
-        let who = if bucket == "totp" {
-            totp_owner(&st, req.headers()).await.unwrap_or(ip.clone())
-        } else {
-            ip.clone()
-        };
-        if let Err(wait) =
+        // Code checks count per member and per address; everything else per address.
+        if bucket == "totp" {
+            if let Some(owner) = totp_owner(&st, req.headers()).await {
+                if let Err(wait) =
+                    st.limiter
+                        .check(&format!("totp:{owner}"), limit, Duration::from_secs(secs))
+                {
+                    tracing::warn!(bucket, ip, "rate limited");
+                    let lang = visitor_lang(req.headers());
+                    return too_many(wait, lang);
+                }
+                if let Err(wait) = st.limiter.check(
+                    &format!("totp-ip:{ip}"),
+                    limit.saturating_mul(3),
+                    Duration::from_secs(secs),
+                ) {
+                    tracing::warn!(bucket = "totp-ip", ip, "rate limited");
+                    let lang = visitor_lang(req.headers());
+                    return too_many(wait, lang);
+                }
+            } else if let Err(wait) =
+                st.limiter
+                    .check(&format!("totp:{ip}"), limit, Duration::from_secs(secs))
+            {
+                tracing::warn!(bucket, ip, "rate limited");
+                let lang = visitor_lang(req.headers());
+                return too_many(wait, lang);
+            }
+        } else if let Err(wait) =
             st.limiter
-                .check(&format!("{bucket}:{who}"), limit, Duration::from_secs(secs))
+                .check(&format!("{bucket}:{ip}"), limit, Duration::from_secs(secs))
         {
             tracing::warn!(bucket, ip, "rate limited");
             let lang = visitor_lang(req.headers());
@@ -181,12 +207,14 @@ async fn totp_owner(st: &AppState, headers: &HeaderMap) -> Option<String> {
         .or_else(|| jar.get(SESSION_COOKIE))?
         .value()
         .to_string();
-    let uid: Option<i64> = sqlx::query_scalar("SELECT user_id FROM sessions WHERE token=$1")
-        .bind(hash_token(&token))
-        .fetch_optional(&st.db)
-        .await
-        .ok()
-        .flatten();
+    let uid: Option<i64> =
+        sqlx::query_scalar("SELECT user_id FROM sessions WHERE token=$1 AND expires_at > $2")
+            .bind(hash_token(&token))
+            .bind(crate::util::now())
+            .fetch_optional(&st.db)
+            .await
+            .ok()
+            .flatten();
     uid.map(|id| format!("user:{id}"))
 }
 
@@ -208,12 +236,10 @@ fn pending_profile_only(path: &str) -> bool {
 fn lock_bypass_path(path: &str) -> bool {
     let path = path.strip_prefix("/api").unwrap_or(path);
     path == "/health"
-        || path == "/stream"
         || path == "/auth/me"
         || path == "/auth/lock"
         || path == "/auth/unlock"
         || path == "/auth/logout"
-        || path == "/auth/logout-all"
         || path == "/auth/login"
         || path == "/auth/dev-users"
         || path == "/auth/dev-login"
@@ -243,23 +269,35 @@ pub async fn session_lock_guard(State(st): State<AppState>, req: Request, next: 
         return next.run(req).await;
     };
     let token_hash = hash_token(&token);
-    let row: Option<(Option<String>, String, i64, String, String)> = sqlx::query_as(
-        "SELECT s.locked_at, s.last_seen_at, u.auto_lock_mins, u.lang, s.expires_at
+    let row: Option<(Option<String>, String, i64, String, String, Option<String>)> =
+        sqlx::query_as(
+            "SELECT s.locked_at, s.last_seen_at, u.auto_lock_mins, u.lang, s.expires_at,
+                (SELECT value FROM system_settings WHERE key = 'session_timeout_mins')
          FROM sessions s JOIN users u ON u.id = s.user_id
          WHERE s.token = $1",
-    )
-    .bind(&token_hash)
-    .fetch_optional(&st.db)
-    .await
-    .ok()
-    .flatten();
-    if let Some((locked_at, last_seen_at, auto_lock_mins, lang, expires)) = row {
+        )
+        .bind(&token_hash)
+        .fetch_optional(&st.db)
+        .await
+        .ok()
+        .flatten();
+    if let Some((locked_at, last_seen_at, auto_lock_mins, lang, expires, org_timeout_str)) = row {
         let now_str = now();
         if expires >= now_str {
             if locked_at.is_some() {
                 return locked(Lang::from_code(&lang), ErrorKey::SessionLocked).into_response();
             }
-            if auto_lock_mins > 0 && last_seen_at < crate::util::minutes_ago(auto_lock_mins) {
+            let org_timeout = org_timeout_str
+                .and_then(|v| v.parse::<i64>().ok())
+                .unwrap_or(st.cfg.session_timeout_mins);
+            let effective_timeout = if auto_lock_mins > 0 {
+                auto_lock_mins
+            } else if auto_lock_mins == -1 {
+                0
+            } else {
+                org_timeout
+            };
+            if effective_timeout > 0 && last_seen_at < crate::util::minutes_ago(effective_timeout) {
                 let _ = sqlx::query(
                     "UPDATE sessions SET locked_at = $1 WHERE token = $2 AND locked_at IS NULL",
                 )
