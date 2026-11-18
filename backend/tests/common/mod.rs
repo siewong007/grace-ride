@@ -1,7 +1,7 @@
 //! Shared helpers for integration tests.
 #![allow(dead_code)]
 
-mod schema;
+pub mod schema;
 
 use axum::{
     body::Body,

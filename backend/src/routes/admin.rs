@@ -2146,7 +2146,6 @@ async fn update_alert_settings(
         .filter(|s| !s.is_empty())
     {
         if !req.clear_telegram_bot_token.unwrap_or(false) && !validate_telegram_bot_token(tok) {
-            println!("DEBUG: token validation failing, tok={:?}", tok);
             return Err(bad(u.lang, ErrorKey::InvalidAction));
         }
     }
@@ -2274,8 +2273,24 @@ async fn update_alert_settings(
                 .await?;
         }
     } else if let Some(vapid) = new_vapid_pub {
-        if !vapid.is_empty() && current_pub.as_deref().map(str::trim) != Some(vapid) {
-            return Err(bad(u.lang, ErrorKey::InvalidAction));
+        // Only block changing an already-stored public key without also providing the
+        // private key (mismatched keypair). On a fresh install (current_pub is None)
+        // the admin may store just the public key for client-side push config lookup
+        // while keeping the private key in an external signer.
+        if !vapid.is_empty() {
+            if let Some(current) = current_pub.as_deref().map(str::trim) {
+                if current != vapid {
+                    return Err(bad(u.lang, ErrorKey::InvalidAction));
+                }
+            } else {
+                sqlx::query(
+                    "INSERT INTO app_secrets (name, value) VALUES ('vapid_public_key', $1)
+                     ON CONFLICT (name) DO UPDATE SET value = EXCLUDED.value",
+                )
+                .bind(vapid)
+                .execute(&mut *tx)
+                .await?;
+            }
         }
     }
 

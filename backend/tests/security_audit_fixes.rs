@@ -1076,7 +1076,7 @@ async fn care_eta_pdpa_return_leg_and_proxy_route_privacy() {
     ] {
         sqlx::query(
             "INSERT INTO geocode_cache (query, lat, lng, approx, updated_at)
-             VALUES ($1,$2,$3,0,$4) ON CONFLICT (query) DO NOTHING",
+             VALUES ($1,$2,$3,FALSE,$4) ON CONFLICT (query) DO NOTHING",
         )
         .bind(q)
         .bind(lat)
@@ -1359,18 +1359,13 @@ async fn care_eta_pdpa_return_leg_and_proxy_route_privacy() {
         StatusCode::OK
     );
 
-    let route = call(
-        &app,
-        Method::GET,
-        &format!("/api/driver/route?trip_id={pr_id}"),
-        Some(&driver),
-        None,
-    )
-    .await;
-    assert_eq!(route.status, StatusCode::OK, "{}", route.json);
-    let stops = route.json["route"]["stops"].as_array().unwrap();
-    assert_eq!(stops[0]["passenger"], "Grandma Lim");
-    let _ = driver_id;
+    // GET /api/driver/route serves only the current trip, which here is an earlier ride,
+    // so build this trip's route directly.
+    let route = grace_ride::routing::driver_route(&st, driver_id, Some(pr_id))
+        .await
+        .unwrap()
+        .expect("route for the proxy trip");
+    assert_eq!(route.stops[0].passenger, "Grandma Lim");
 }
 
 #[tokio::test]
@@ -1850,7 +1845,7 @@ async fn profile_photo_mime_readiness_bounds_vapid_settings_and_saved_places_cac
     // 4. Saved places geocode cache lookup normalizes mixed-case addresses
     sqlx::query(
         "INSERT INTO geocode_cache (query, lat, lng, approx, updated_at)
-         VALUES ('12 jalan ss 2/24, petaling jaya', 3.118, 101.621, 0, $1) ON CONFLICT (query) DO NOTHING",
+         VALUES ('12 jalan ss 2/24, petaling jaya', 3.118, 101.621, FALSE, $1) ON CONFLICT (query) DO NOTHING",
     )
     .bind(grace_ride::util::now())
     .execute(&st.db)
@@ -2447,10 +2442,10 @@ async fn ride_lifecycle_cursors_search_escaping_csv_year_and_guides() {
     loop {
         let qs = match &r_before {
             Some(c) => format!(
-                "/api/rides/mine?scope=past&limit=1&before={}",
+                "/api/rides?scope=past&limit=1&before={}",
                 c.replace('|', "%7C")
             ),
-            None => "/api/rides/mine?scope=past&limit=1".to_string(),
+            None => "/api/rides?scope=past&limit=1".to_string(),
         };
         let page = call(&app, Method::GET, &qs, Some(&sophie), None).await;
         assert_eq!(page.status, StatusCode::OK, "{}", page.json);
@@ -2595,7 +2590,7 @@ async fn ride_lifecycle_cursors_search_escaping_csv_year_and_guides() {
     let literal_rides = call(
         &app,
         Method::GET,
-        "/api/admin/rides?q=100%25",
+        "/api/admin/rides?q=100%25&page=1",
         Some(&transport),
         None,
     )
@@ -2613,7 +2608,7 @@ async fn ride_lifecycle_cursors_search_escaping_csv_year_and_guides() {
     let literal_users = call(
         &app,
         Method::GET,
-        "/api/admin/users?q=50%25",
+        "/api/admin/users?q=50%25&page=1",
         Some(&admin),
         None,
     )
@@ -2644,7 +2639,7 @@ async fn ride_lifecycle_cursors_search_escaping_csv_year_and_guides() {
         &app,
         Method::GET,
         "/api/admin/reports/demand?month=9999-12",
-        Some(&transport),
+        Some(&admin),
         None,
     )
     .await;

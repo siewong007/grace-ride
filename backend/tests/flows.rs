@@ -485,7 +485,7 @@ async fn auth_session_password_and_totp_branches() {
         .await["ok"],
         true
     );
-    // Enable reports the replay. Verify swallows that error and answers INVALID_CODE instead.
+    // Once enabled, a second enable is refused before the code is checked (no silent re-keying).
     deny(
         &app,
         Method::POST,
@@ -493,7 +493,7 @@ async fn auth_session_password_and_totp_branches() {
         Some(&c.member),
         Some(json!({"code": code})),
         StatusCode::BAD_REQUEST,
-        "CODE_ALREADY_USED",
+        "TWO_FACTOR_ALREADY_ENABLED",
     )
     .await;
 
