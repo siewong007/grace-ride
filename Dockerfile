@@ -14,13 +14,21 @@ FROM rust:1-bookworm AS api
 WORKDIR /src
 # backend/Cargo.toml sets `license-file = "../LICENSE"`; place LICENSE at /LICENSE.
 COPY LICENSE /LICENSE
-# Cache dependencies separately from application code.
-COPY backend/Cargo.toml backend/Cargo.lock ./
+# Cache dependencies separately from application code. The toolchain pin comes first
+# so both builds below use the same rustc.
+COPY backend/Cargo.toml backend/Cargo.lock backend/rust-toolchain.toml ./
 RUN mkdir src && echo 'fn main() {}' > src/main.rs && echo '' > src/lib.rs \
   && cargo build --release --locked \
   && rm -rf src target/release/.fingerprint/grace-ride* target/release/deps/*grace_ride* target/release/grace-ride*
 COPY backend/ ./
-RUN cargo build --release --locked
+# COPY keeps the checkout's mtimes, which are older than the stub build above, so
+# cargo can treat the stub as fresh and ship `fn main() {}` (it did: the container
+# exited silently and every deploy rolled back). Touch forces a real rebuild, and
+# the size check fails the build if the stub binary ever slips through again.
+RUN touch src/main.rs src/lib.rs \
+  && cargo build --release --locked \
+  && size=$(stat -c%s target/release/grace-ride) \
+  && if [ "$size" -lt 5000000 ]; then echo "grace-ride binary is only $size bytes: stub build shipped" >&2; exit 1; fi
 
 # ---------- Runtime ----------
 FROM debian:bookworm-slim
