@@ -94,6 +94,13 @@
   in `PassengerShareLocation` using a ref for `onChange`. Frontend lint, typecheck, all
   314 tests (49 files), and production build pass.
 
+**Phase 3b — Secondary Mega-File Splits**
+- **Auth sub-module split (complete)** — converted `backend/src/routes/auth.rs`
+  (1 644 lines) into `backend/src/routes/auth/` (`mod.rs` core auth/session/router,
+  `passkeys.rs`, `totp.rs`, `invites_recovery.rs`) with zero behaviour changes;
+  re-exported `TERMS_VERSION`; `cargo fmt`, `cargo clippy`, and `cargo test --lib`
+  (43 passed) pass.
+
 **Phase 4 — Security, privacy and performance**
 - Verified `.env.example` covers every variable read by `Config::from_env()` and
   `RoutingConfig::from_env()`. No gaps found.
