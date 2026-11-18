@@ -1359,18 +1359,13 @@ async fn care_eta_pdpa_return_leg_and_proxy_route_privacy() {
         StatusCode::OK
     );
 
-    let route = call(
-        &app,
-        Method::GET,
-        &format!("/api/driver/route?trip_id={pr_id}"),
-        Some(&driver),
-        None,
-    )
-    .await;
-    assert_eq!(route.status, StatusCode::OK, "{}", route.json);
-    let stops = route.json["route"]["stops"].as_array().unwrap();
-    assert_eq!(stops[0]["passenger"], "Grandma Lim");
-    let _ = driver_id;
+    // GET /api/driver/route serves only the current trip, which here is an earlier ride,
+    // so build this trip's route directly.
+    let route = grace_ride::routing::driver_route(&st, driver_id, Some(pr_id))
+        .await
+        .unwrap()
+        .expect("route for the proxy trip");
+    assert_eq!(route.stops[0].passenger, "Grandma Lim");
 }
 
 #[tokio::test]
@@ -2595,7 +2590,7 @@ async fn ride_lifecycle_cursors_search_escaping_csv_year_and_guides() {
     let literal_rides = call(
         &app,
         Method::GET,
-        "/api/admin/rides?q=100%25",
+        "/api/admin/rides?q=100%25&page=1",
         Some(&transport),
         None,
     )
@@ -2613,7 +2608,7 @@ async fn ride_lifecycle_cursors_search_escaping_csv_year_and_guides() {
     let literal_users = call(
         &app,
         Method::GET,
-        "/api/admin/users?q=50%25",
+        "/api/admin/users?q=50%25&page=1",
         Some(&admin),
         None,
     )
@@ -2644,7 +2639,7 @@ async fn ride_lifecycle_cursors_search_escaping_csv_year_and_guides() {
         &app,
         Method::GET,
         "/api/admin/reports/demand?month=9999-12",
-        Some(&transport),
+        Some(&admin),
         None,
     )
     .await;

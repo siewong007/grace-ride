@@ -74,7 +74,8 @@ async fn admin_users_sort_uses_allow_listed_fields() {
     )
     .await;
     assert_eq!(wildcard.status, StatusCode::OK, "{}", wildcard.json);
-    assert_eq!(wildcard.json["total"], 3);
+    // `%` is escaped (de9df5a), so it matches a literal percent sign, not "anything".
+    assert_eq!(wildcard.json["total"], 0);
 
     // Search ignores letter case.
     let any_case = call(
