@@ -22,7 +22,7 @@ export function Tabs({ value, onChange, items, ariaLabel, className = '' }: Tabs
   const idPrefix = useId();
 
   const handleKeyDown = (e: React.KeyboardEvent<HTMLButtonElement>, index: number) => {
-    let nextIndex = index;
+    let nextIndex: number;
     if (e.key === 'ArrowRight') {
       nextIndex = (index + 1) % items.length;
     } else if (e.key === 'ArrowLeft') {

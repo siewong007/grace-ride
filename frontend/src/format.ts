@@ -4,12 +4,12 @@ import i18n from './i18n'
 /** Translator for format keys; takes interpolation values like `{ n: 5 }`. */
 export type FormatT = (key: string, values?: Record<string, unknown>) => string
 
-const globalT: FormatT = (key, values) => String(i18n.t(key, values))
+const globalT: FormatT = (key, values) => String(i18n.t(key, values ?? {}))
 
 /** Translate a format label key (e.g. 'format:rideStatus.pending_driver'). */
 export function useFormatT(): FormatT {
   const { t } = useTranslation()
-  return (key, values) => String(t(key, values))
+  return (key, values) => String(t(key, values ?? {}))
 }
 
 export type Tone =
