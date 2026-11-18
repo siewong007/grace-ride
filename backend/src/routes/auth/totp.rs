@@ -26,7 +26,7 @@ pub(super) async fn totp_setup(
         return Err(bad(u.lang, ErrorKey::TwoFactorAlreadyEnabled));
     }
     require_recent_sign_in(&st, &u).await?;
-    let secret = Secret::generate_secret().to_encoded().to_string();
+    let secret = Secret::generate().to_base32();
     sqlx::query("UPDATE users SET totp_secret=$1, totp_enabled=0 WHERE id=$2")
         .bind(&secret)
         .bind(u.id)
@@ -34,7 +34,10 @@ pub(super) async fn totp_setup(
         .await?;
     let totp = totp_for(&secret, &u.email, u.lang)?;
     audit(&st.db, Some(u.id), "totp.setup", "user", Some(u.id), "").await;
-    Ok(Json(json!({ "secret": secret, "url": totp.get_url() })))
+    let url = totp
+        .to_url()
+        .map_err(|e| AppError::Other(anyhow::anyhow!("totp url: {e}")))?;
+    Ok(Json(json!({ "secret": secret, "url": url })))
 }
 
 #[derive(Deserialize)]

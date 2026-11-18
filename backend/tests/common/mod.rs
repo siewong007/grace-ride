@@ -196,21 +196,15 @@ pub async fn upload_png(app: &Router, cookie: &str) -> i64 {
 }
 
 pub fn totp_code(secret_b32: &str, email: &str) -> String {
-    use totp_rs::{Algorithm, Secret, TOTP};
-    let secret = Secret::Encoded(secret_b32.to_string())
-        .to_bytes()
-        .expect("secret");
-    let totp = TOTP::new(
-        Algorithm::SHA1,
-        6,
-        1,
-        30,
-        secret,
-        Some("Grace Ride".into()),
-        email.into(),
-    )
-    .expect("totp");
-    totp.generate_current().expect("code")
+    use totp_rs::{Builder, Secret};
+    let secret = Secret::try_from_base32(secret_b32).expect("secret");
+    let totp = Builder::new()
+        .with_secret(secret)
+        .with_issuer(Some("Grace Ride"))
+        .with_account_name(email)
+        .build()
+        .expect("totp");
+    totp.generate_current().to_string()
 }
 
 /// `member_roles` (kept in step by triggers in 0001_init.sql) must hold exactly the names in each member's
