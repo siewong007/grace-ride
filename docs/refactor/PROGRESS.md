@@ -191,6 +191,8 @@
 |---|---|---|
 | Rides sub-module split | Completed (`mod.rs` 405 lines + 10 sub-modules) | Split across two passes with `pub use` / `pub(crate) use` re-exports |
 | Community & Admin splits | Completed (`community/` 10 sub-modules, `admin/` 6 sub-modules) | Broke apart 3 035-line and 2 312-line route files cleanly |
+| Auth & Events & Routing & Settlements splits | Completed (`auth/` 3 sub-modules, `events/` 3 sub-modules, `routing/` 4 sub-modules, `settlements/` 2 sub-modules) | Modularized all remaining backend route files |
+| Frontend mega-pages splits | Completed (`RideDetail.tsx`, `EventDetail.tsx`, `Drive.tsx`, `admin/Audit.tsx`) | Extracted focused sub-components & helper modules; 0 files > 1 000 lines |
 | `RideDetail.tsx` split | Completed (`components/ride/*` + ref fix for `exhaustive-deps`) | Reduced page file from 1 342 to 205 lines; removed lint suppression |
 | `cargo audit` chrono warnings | Suppressed in audit.toml | Transitive via SQLx; not actionable without major SQLx upgrade |
 | Sentry integration | Completed | Opt-in via env var; no PII in payloads |
@@ -202,7 +204,6 @@
 
 1. **Sentry DSN** — provide real `SENTRY_DSN` (backend) and `VITE_SENTRY_DSN` (Vite build env) for staging and production via `.env`.
 2. **Optional product enhancements** — automated driver/rider ID verification and self-service account deletion (`DELETE /api/me`, currently handled via Help Center / admin deactivation) remain product decisions.
-3. **Optional secondary file splits** — remaining larger files (`events.rs`, `auth.rs`, `EventDetail.tsx`, `Drive.tsx`, `Audit.tsx`) can be split incrementally in future work if desired.
 
 ---
 

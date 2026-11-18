@@ -23,7 +23,10 @@
 - **Dependency advisories:** chrono / chrono-tz unmaintained (transitive via SQLx). `RUSTSEC-2023-0071` (rsa, MySQL path only) and `RUSTSEC-2026-0459` (libsqlite3-sys) suppressed with justification in `backend/.cargo/audit.toml`.
 
 ### Low / Minor
-- **`RideDetail.tsx` modularity & `eslint-disable-line`:** ✅ Split `RideDetail.tsx` (1 342 → 205 lines) into `frontend/src/components/ride/` (`RideInfoCards.tsx`, `RideTracking.tsx`, `RideActionPanels.tsx`, `CareLinkModal.tsx`) and removed the `eslint-disable-line react-hooks/exhaustive-deps` suppression in `PassengerShareLocation` using a ref. Remaining secondary larger files (`events.rs`, `auth.rs`, `EventDetail.tsx`, `Drive.tsx`, `Audit.tsx`) can be split incrementally if needed later.
+- **Modular architecture & file size standards:** ✅ All large files modularized into domain sub-modules:
+  - Backend: `rides/` (10 sub-modules), `community/` (10 sub-modules), `admin/` (6 sub-modules), `auth/` (3 sub-modules), `events/` (3 sub-modules), `routing/` (4 sub-modules + tests), and `settlements/` (2 sub-modules).
+  - Frontend: `RideDetail.tsx` (1 342 → 205 lines via `components/ride/`), `EventDetail.tsx` (1 079 → 558 lines via `components/event/`), `Drive.tsx` (1 026 → 47 lines via `components/drive/`), and `admin/Audit.tsx` (1 017 → 689 lines via `admin/auditHelpers.tsx`).
+  - Zero application files in the entire repository now exceed 1 000 lines. All 67 permissions, 27 pages, and 597 tests (283 backend + 314 frontend) pass.
 
 ---
 

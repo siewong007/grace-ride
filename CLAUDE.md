@@ -66,7 +66,11 @@
 │   │   │   │   ├── members.rs       # member directory, roles, status & group assignments
 │   │   │   │   ├── reports.rs       # demand breakdown report & scope helpers
 │   │   │   │   └── settings.rs      # reimbursement rates, system & alert settings
-│   │   │   ├── auth.rs              # passkeys, TOTP, password, sessions
+│   │   │   ├── auth/                # directory module for authentication routes
+│   │   │   │   ├── mod.rs           # auth router, login, session, password, terms
+│   │   │   │   ├── passkeys.rs      # WebAuthn registration and authentication
+│   │   │   │   ├── totp.rs          # TOTP setup, verify, backup codes
+│   │   │   │   └── invites_recovery.rs # invitation accept & account recovery request
 │   │   │   ├── care.rs              # /care/:token safe-arrival links
 │   │   │   ├── community/           # directory module for community & finance routes
 │   │   │   │   ├── mod.rs           # router & LIKE escaping helper (120 lines)
@@ -80,7 +84,15 @@
 │   │   │   │   ├── push.rs          # VAPID config & web-push subscriptions
 │   │   │   │   ├── reimbursements.rs # Grab reimbursement claims, review & single payout
 │   │   │   │   └── reports.rs       # monthly activity reports & badges
-│   │   │   ├── events.rs            # events, RSVP, waitlist, QR check-in
+│   │   │   ├── events/              # directory module for events routes
+│   │   │   │   ├── mod.rs           # event listing, detail, visibility, router
+│   │   │   │   ├── manage.rs        # event CRUD, duplication, cancel, export
+│   │   │   │   ├── signups.rs       # RSVP signups, waitlist promotion, withdraw
+│   │   │   │   └── checkin.rs       # code, QR, and member pass scan check-in
+│   │   │   ├── settlements/         # directory module for fuel settlements
+│   │   │   │   ├── mod.rs           # settlement listing, detail, summary, router
+│   │   │   │   ├── manage.rs        # settlement CRUD, close, revise, publish
+│   │   │   │   └── shares.rs        # passenger share proof & confirmation
 │   │   │   ├── plan.rs              # transport planning board
 │   │   │   └── visitors.rs          # one-time guest ride pass
 │   │   ├── auth.rs          # session / credential helpers
@@ -91,7 +103,12 @@
 │   │   ├── lib.rs           # AppState wiring, top-level router
 │   │   ├── main.rs          # entry point
 │   │   ├── perms.rs         # 67 permissions, 27 pages, 5-tier role hierarchy
-│   │   ├── routing.rs       # OSRM geocoder / router integration
+│   │   ├── routing/         # OSRM geocoder / router integration directory module
+│   │   │   ├── mod.rs       # config, routing state, Haversine geometry
+│   │   │   ├── order.rs     # pickup/dropoff trip stop sequencing
+│   │   │   ├── geocode.rs   # geocoding client & Nominatim queries
+│   │   │   ├── trip.rs      # trip driving distance/duration calculations
+│   │   │   └── tests.rs     # geometry and ordering unit tests
 │   │   ├── seed.rs          # demo data for DEV_MODE
 │   │   ├── state.rs         # Config, AppState, DbConfig
 │   │   ├── util.rs          # audit log, notify, fmt helpers, ErrorKey
@@ -103,8 +120,11 @@
 │   └── .env.example         # all env vars with comments
 ├── frontend/
 │   ├── src/
-│   │   ├── pages/           # one file per route (PascalCase)
-│   │   ├── components/      # shared React components (incl. ride/ sub-components for RideDetail)
+│   │   ├── pages/           # one file per route (PascalCase, e.g. EventDetail, Drive, admin/Audit)
+│   │   ├── components/      # shared React components
+│   │   │   ├── ride/        # sub-components for RideDetail
+│   │   │   ├── event/       # QR & scanner modals and types for EventDetail
+│   │   │   └── drive/       # schedule, requests, and settings tabs for Drive
 │   │   ├── locales/         # i18next namespace JSON files (en, ms)
 │   │   ├── hooks/           # custom React hooks
 │   │   ├── types/           # TypeScript type declarations
