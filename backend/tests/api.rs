@@ -138,20 +138,15 @@ fn tomorrow(hhmm: &str) -> String {
 }
 
 fn totp_code(secret_b32: &str, email: &str) -> String {
-    use totp_rs::{Algorithm, Secret, TOTP};
-    let totp = TOTP::new(
-        Algorithm::SHA1,
-        6,
-        1,
-        30,
-        Secret::Encoded(secret_b32.to_string())
-            .to_bytes()
-            .expect("secret bytes"),
-        Some("Grace Ride".to_string()),
-        email.to_string(),
-    )
-    .expect("totp");
-    totp.generate_current().expect("code")
+    use totp_rs::{Builder, Secret};
+    let secret = Secret::try_from_base32(secret_b32).expect("secret bytes");
+    let totp = Builder::new()
+        .with_secret(secret)
+        .with_issuer(Some("Grace Ride"))
+        .with_account_name(email)
+        .build()
+        .expect("totp");
+    totp.generate_current().to_string()
 }
 
 #[tokio::test]

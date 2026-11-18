@@ -22,7 +22,7 @@ use axum::{
 use axum_extra::extract::cookie::{Cookie, CookieJar, SameSite};
 use serde::Deserialize;
 use serde_json::{json, Value};
-use totp_rs::{Algorithm, Secret, TOTP};
+use totp_rs::{Secret, Totp};
 
 use crate::auth::{hash_token, CurrentUser, SESSION_COOKIE, SESSION_COOKIE_SECURE};
 use crate::error::{bad, not_found, AppError, AppResult};
@@ -142,43 +142,35 @@ pub async fn verify_totp(
         .map_err(|e| AppError::Other(anyhow::anyhow!(e)))?
         .as_secs();
     let code = code.trim();
-    for skew in [-1i64, 0, 1] {
-        let t_slot = (now_s as i64 + skew * 30).max(0) as u64;
-        if totp.generate(t_slot) == code {
-            let step = (t_slot / 30) as i64;
-            if step <= last {
-                return Err(bad(lang, ErrorKey::CodeAlreadyUsed));
-            }
-            let updated = sqlx::query(
-                "UPDATE users SET totp_last_step=$1 WHERE id=$2 AND COALESCE(totp_last_step, -1) < $1",
-            )
-            .bind(step)
-            .bind(user_id)
-            .execute(&st.db)
-            .await?;
-            if updated.rows_affected() == 0 {
-                return Err(bad(lang, ErrorKey::CodeAlreadyUsed));
-            }
-            return Ok(());
+    if let Some(matched_step) = totp.check(code, now_s) {
+        let step = matched_step as i64;
+        if step <= last {
+            return Err(bad(lang, ErrorKey::CodeAlreadyUsed));
         }
+        let updated = sqlx::query(
+            "UPDATE users SET totp_last_step=$1 WHERE id=$2 AND COALESCE(totp_last_step, -1) < $1",
+        )
+        .bind(step)
+        .bind(user_id)
+        .execute(&st.db)
+        .await?;
+        if updated.rows_affected() == 0 {
+            return Err(bad(lang, ErrorKey::CodeAlreadyUsed));
+        }
+        return Ok(());
     }
     Err(bad(lang, ErrorKey::InvalidCode))
 }
 
-pub(super) fn totp_for(secret_b32: &str, email: &str, lang: Lang) -> AppResult<TOTP> {
-    let bytes = Secret::Encoded(secret_b32.to_string())
-        .to_bytes()
-        .map_err(|_| bad(lang, ErrorKey::Invalid2FaSecret))?;
-    TOTP::new(
-        Algorithm::SHA1,
-        6,
-        1,
-        30,
-        bytes,
-        Some("GraceRide".into()),
-        email.to_string(),
-    )
-    .map_err(|e| AppError::Other(anyhow::anyhow!("totp: {e}")))
+pub(super) fn totp_for(secret_b32: &str, email: &str, lang: Lang) -> AppResult<Totp> {
+    let secret =
+        Secret::try_from_base32(secret_b32).map_err(|_| bad(lang, ErrorKey::Invalid2FaSecret))?;
+    totp_rs::Builder::new()
+        .with_secret(secret)
+        .with_issuer(Some("GraceRide"))
+        .with_account_name(email)
+        .build()
+        .map_err(|e| AppError::Other(anyhow::anyhow!("totp: {e}")))
 }
 
 /// Members stay signed in for 30 days on their own phone; accounts that can see other
