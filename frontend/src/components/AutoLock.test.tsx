@@ -99,7 +99,7 @@ describe('AutoLockProvider', () => {
     expect(screen.getByText('Grace Member')).toBeInTheDocument();
     expect(screen.getByText('grace@example.com')).toBeInTheDocument();
 
-    fireEvent.click(screen.getByRole('button', { name: /unlockWithPasskey|Unlock with passkey/i }));
+    fireEvent.click(screen.getByRole('button', { name: /unlockWithPasskey|^Unlock$/i }));
 
     await waitFor(() => expect(screen.getByTestId('status')).toHaveTextContent('unlocked'));
     expect(reauth).toHaveBeenCalledTimes(1);
@@ -111,7 +111,7 @@ describe('AutoLockProvider', () => {
     reauth.mockRejectedValue(new Error('Passkey verification failed'));
     renderLocked();
 
-    fireEvent.click(screen.getByRole('button', { name: /unlockWithPasskey|Unlock with passkey/i }));
+    fireEvent.click(screen.getByRole('button', { name: /unlockWithPasskey|^Unlock$/i }));
 
     expect(await screen.findByRole('alert')).toHaveTextContent('Passkey verification failed');
     expect(screen.getByTestId('status')).toHaveTextContent('locked');
@@ -125,6 +125,30 @@ describe('AutoLockProvider', () => {
     expect(screen.queryByRole('button', { name: /unlock/i })).toBeNull();
     expect(screen.getByRole('button', { name: /logout|Log out/i })).toBeInTheDocument();
     expect(reauth).not.toHaveBeenCalled();
+  });
+
+  it('keeps the code form behind the link under the card and unlocks with a 6-digit code', async () => {
+    vi.useRealTimers();
+    currentMe = { ...defaultMockMe, totp_enabled: true } as typeof currentMe;
+    const { post } = await import('../api');
+    renderLocked();
+
+    expect(screen.queryByRole('textbox')).toBeNull();
+    fireEvent.click(screen.getByRole('button', { name: /unlockWithCode|backup code/i }));
+    fireEvent.change(screen.getByRole('textbox'), { target: { value: '123456' } });
+    fireEvent.click(screen.getByRole('button', { name: /^(unlock|Unlock)$/ }));
+
+    await waitFor(() => expect(screen.getByTestId('status')).toHaveTextContent('unlocked'));
+    expect(post).toHaveBeenCalledWith('/auth/unlock', { totp_code: '123456' });
+    expect(reauth).not.toHaveBeenCalled();
+  });
+
+  it('opens straight on the code form when a code is the only way in', () => {
+    currentMe = { ...defaultMockMe, passkey_count: 0, totp_enabled: true } as typeof currentMe;
+    renderLocked();
+
+    expect(screen.getByRole('textbox')).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /unlockUsePasskey|Use passkey/i })).toBeNull();
   });
 
   it('triggers lock when idle time exceeds configured auto_lock_mins', () => {

@@ -1,10 +1,10 @@
 import { createContext, ReactNode, useCallback, useContext, useEffect, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
-import { Fingerprint, Lock, LogOut } from 'lucide-react';
+import { Lock } from 'lucide-react';
 import { useAuth } from '../auth';
 import { post } from '../api';
-import { Avatar, Button } from './ui';
+import { Avatar } from './ui';
 import { passkeySupported, reauthWithPasskey } from '../webauthn';
 import { clearOfflineSnapshots } from '../offlineSnapshot';
 
@@ -58,13 +58,19 @@ export function AutoLockProvider({ children }: { children: ReactNode }) {
   meIdRef.current = meId;
   const lastActiveRef = useRef<number>(Date.now());
   const unlockBtnRef = useRef<HTMLButtonElement>(null);
+  const codeInputRef = useRef<HTMLInputElement>(null);
   const bgRef = useRef<HTMLDivElement>(null);
   const [unlocking, setUnlocking] = useState(false);
   const [unlockError, setUnlockError] = useState<string | null>(null);
   const [code, setCode] = useState('');
+  const [showCode, setShowCode] = useState(false);
+  // Set only when the idle timer locked this tab, so the card can say why.
+  const [idleLocked, setIdleLocked] = useState(false);
   const canPasskey = passkeySupported() && (me?.passkey_count ?? 0) > 0;
   const canTotp = Boolean(me?.totp_enabled);
   const canDevUnlock = Boolean(me?.dev_mode && (me?.passkey_count ?? 0) === 0 && !me?.totp_enabled);
+  // The code form is its own view, reached from the link under the card, unless it is the only way in.
+  const codeView = canTotp && (showCode || (!canPasskey && !canDevUnlock));
 
   // Inactivity timeout in minutes:
   // 1. If user set auto_lock_mins > 0: user's custom duration
@@ -87,6 +93,8 @@ export function AutoLockProvider({ children }: { children: ReactNode }) {
     writeStore(LOCKED_KEY, null);
     setUnlockError(null);
     setCode('');
+    setShowCode(false);
+    setIdleLocked(false);
     setIsLocked(false);
     window.dispatchEvent(new Event('gr:session-unlocked'));
   }, []);
@@ -155,6 +163,7 @@ export function AutoLockProvider({ children }: { children: ReactNode }) {
       if (lastActiveRef.current > shared) writeStore(ACTIVE_KEY, String(lastActiveRef.current));
       const elapsed = Date.now() - Math.max(lastActiveRef.current, shared);
       if (elapsed >= timeoutMins * 60 * 1000) {
+        setIdleLocked(true);
         lock();
       }
     }, 5000);
@@ -165,12 +174,12 @@ export function AutoLockProvider({ children }: { children: ReactNode }) {
     };
   }, [me, timeoutMins, isLocked, lock]);
 
-  // Focus lock button when locked
+  // Focus the code field in the code view, otherwise the unlock button.
   useEffect(() => {
-    if (isLocked) {
-      unlockBtnRef.current?.focus();
-    }
-  }, [isLocked]);
+    if (!isLocked) return;
+    if (codeView) codeInputRef.current?.focus();
+    else unlockBtnRef.current?.focus();
+  }, [isLocked, codeView]);
 
   // Unlocking needs a fresh passkey, TOTP/backup code, or dev-mode unlock; never opens on a plain click without auth.
   const handleUnlock = async () => {
@@ -245,78 +254,90 @@ export function AutoLockProvider({ children }: { children: ReactNode }) {
           aria-modal="true"
           aria-label={t('sessionLocked')}
         >
-          <div className="lock-card">
-            <div className="lock-icon-wrap" aria-hidden="true">
-              <Lock size={28} />
-            </div>
-            <Avatar name={me.name} fileId={me.photo_file_id} size="lg" />
-            <div>
-              <h3>{me.name}</h3>
-              <p className="muted small">{me.email}</p>
-            </div>
-            <div className="stack-sm">
-              <div className="bold">{t('sessionLocked')}</div>
-              <p className="muted small">{t('sessionLockedDesc')}</p>
+          <div className="lock-stack">
+            <div className="lock-card">
+              <div className="lock-avatar">
+                <Avatar name={me.name} fileId={me.photo_file_id} size="lg" />
+                <span className="lock-badge" aria-hidden="true">
+                  <Lock size={12} />
+                </span>
+              </div>
+              <div>
+                <h3>{me.name}</h3>
+                <p className="muted small">{me.email}</p>
+              </div>
               <p className="muted small">
-                {canPasskey ? t('unlockPasskeyDesc') : canTotp ? t('unlockCodeDesc') : canDevUnlock ? t('unlockPasskeyDesc') : t('unlockNoPasskey')}
+                {idleLocked ? t('sessionLockedDesc', { count: timeoutMins }) : t('sessionLocked')}
               </p>
               {unlockError && (
                 <div className="notice error" role="alert">
                   {unlockError}
                 </div>
               )}
-            </div>
-            {canTotp && (
-              <div className="stack-sm" style={{ width: '100%' }}>
+              {!canPasskey && !canTotp && !canDevUnlock && (
+                <p className="muted small">{t('unlockNoPasskey')}</p>
+              )}
+              {codeView && (
                 <input
                   className="input"
+                  ref={codeInputRef}
+                  inputMode="text"
+                  autoComplete="one-time-code"
                   value={code}
                   onChange={(e) => setCode(e.target.value)}
                   placeholder={t('unlockCodePlaceholder')}
                   aria-label={t('unlockCodePlaceholder')}
                   onKeyDown={(e) => e.key === 'Enter' && void handleCodeUnlock()}
                 />
-                <button
-                  type="button"
-                  className="btn secondary"
-                  onClick={handleCodeUnlock}
-                  disabled={unlocking || !code.trim()}
-                >
-                  {unlocking ? t('unlocking') : t('unlockWithCode')}
+              )}
+              <div className="lock-links">
+                {codeView ? (
+                  <button
+                    type="button"
+                    className="link-btn"
+                    onClick={handleCodeUnlock}
+                    disabled={unlocking || !code.trim()}
+                  >
+                    {unlocking ? t('unlocking') : t('unlock')}
+                  </button>
+                ) : (
+                  <>
+                    {canPasskey && (
+                      <button
+                        ref={unlockBtnRef}
+                        type="button"
+                        className="link-btn"
+                        onClick={handleUnlock}
+                        disabled={unlocking}
+                      >
+                        {unlocking ? t('unlocking') : t('unlockWithPasskey')}
+                      </button>
+                    )}
+                    {canDevUnlock && (
+                      <button type="button" className="link-btn" onClick={handleDevUnlock} disabled={unlocking}>
+                        {unlocking ? t('unlocking') : t('unlock')}
+                      </button>
+                    )}
+                  </>
+                )}
+                <button type="button" className="link-btn muted-link" onClick={handleLogout}>
+                  {t('logout')}
                 </button>
               </div>
-            )}
-            <div className="btn-row" style={{ marginTop: 'var(--space-2)' }}>
-              {canPasskey && (
-                <button
-                  ref={unlockBtnRef}
-                  type="button"
-                  className="btn primary"
-                  onClick={handleUnlock}
-                  disabled={unlocking}
-                >
-                  <Fingerprint size={16} />
-                  {unlocking ? t('unlocking') : t('unlockWithPasskey')}
-                </button>
-              )}
-              {canDevUnlock && (
-                <button
-                  type="button"
-                  className="btn primary"
-                  onClick={handleDevUnlock}
-                  disabled={unlocking}
-                >
-                  {unlocking ? t('unlocking') : t('unlock')}
-                </button>
-              )}
-              <Button
-                variant="ghost"
-                onClick={handleLogout}
-              >
-                <LogOut size={16} />
-                {t('logout')}
-              </Button>
             </div>
+            {canTotp && (canPasskey || canDevUnlock) && (
+              <button
+                type="button"
+                className="link-btn lock-switch"
+                onClick={() => {
+                  setShowCode((v) => !v);
+                  setCode('');
+                  setUnlockError(null);
+                }}
+              >
+                {codeView ? t('unlockUsePasskey') : t('unlockWithCode')}
+              </button>
+            )}
           </div>
         </div>
       )}
