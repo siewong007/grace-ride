@@ -116,6 +116,13 @@ async fn disabling_a_driver_releases_unstarted_rides() {
 #[tokio::test]
 async fn reminder_job_respects_passenger_readiness_prompt_mins() {
     let (app, st) = setup().await;
+    // Silence seeded rides so a run whose wall-clock time happens to sit within reminder
+    // window of a demo ride does not generate extra reminder notifications.
+    sqlx::query("UPDATE rides SET reminder_sent=1")
+        .execute(&st.db)
+        .await
+        .unwrap();
+
     let passenger = login(&st, "member@example.org").await;
     let passenger_id: i64 =
         sqlx::query_scalar("SELECT id FROM users WHERE email='member@example.org'")
@@ -170,16 +177,20 @@ async fn reminder_job_respects_passenger_readiness_prompt_mins() {
         .unwrap();
     assert_eq!(sent_after, 1);
 
-    let p_notifs: i64 = sqlx::query_scalar(
-        "SELECT COUNT(*) FROM notifications WHERE user_id=$1 AND link LIKE '%action=readiness%'",
-    )
-    .bind(passenger_id)
-    .fetch_one(&st.db)
-    .await
-    .unwrap();
+    let p_notifs: i64 =
+        sqlx::query_scalar("SELECT COUNT(*) FROM notifications WHERE user_id=$1 AND link=$2")
+            .bind(passenger_id)
+            .bind(format!("/rides/{ride_id}?action=readiness"))
+            .fetch_one(&st.db)
+            .await
+            .unwrap();
     assert_eq!(p_notifs, 1);
 
     // 2. Passenger disables readiness prompt (0): driver still gets notified at T-45m, passenger gets 0 new reminders.
+    sqlx::query("UPDATE rides SET reminder_sent=1")
+        .execute(&st.db)
+        .await
+        .unwrap();
     sqlx::query("UPDATE users SET readiness_prompt_mins=0 WHERE id=$1")
         .bind(passenger_id)
         .execute(&st.db)
