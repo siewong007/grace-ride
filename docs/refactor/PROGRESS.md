@@ -104,6 +104,10 @@
   (1 601 lines) into `backend/src/routes/events/` (`mod.rs` listing/lookup/visibility/router,
   `manage.rs`, `signups.rs`, `checkin.rs`); `cargo fmt` and `cargo clippy --all-targets`
   pass with zero issues.
+- **Routing sub-module split (complete)** — converted `backend/src/routing.rs`
+  (1 590 lines) into `backend/src/routing/` (`mod.rs` config/state/geometry, `order.rs`,
+  `geocode.rs`, `trip.rs`, `tests.rs`) preserving all `pub` / `pub(crate)` re-exports;
+  `cargo fmt`, `cargo clippy`, and `cargo test --lib` (43 passed) pass.
 
 **Phase 4 — Security, privacy and performance**
 - Verified `.env.example` covers every variable read by `Config::from_env()` and
