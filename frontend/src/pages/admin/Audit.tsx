@@ -1,4 +1,4 @@
-import { ReactNode, useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
 import { Download, ExternalLink, Eye, FileText, ShieldAlert } from 'lucide-react';
@@ -20,342 +20,31 @@ import {
   UniversalTable,
   useInfiniteScroll,
 } from '../../components/ui';
-import { auditActionLabel, auditEntityLabel, auditItemLabel, auditItemLine, auditItemParts, showAuditItemId } from '../../auditLabel';
 import { fmtDateTime, useFormatT } from '../../format';
 import { ADMIN_HOME } from '../../staffNav';
+import {
+  ACTION_CATEGORIES,
+  ENTITIES,
+  FILTERS,
+  SECURITY_ACTIONS,
+  auditHelpers,
+  getActionTone,
+  getDayOffset,
+  getFirstOfThisMonth,
+  getObjectLink,
+  highlightText,
+  showObjectId,
+  DetailDiff,
+} from './auditHelpers';
+import type { AuditItem, AuditPage } from './auditHelpers';
 
-interface AuditItem {
-  id: number;
-  actor_id?: number | null;
-  actor: string | null;
-  action: string;
-  entity: string;
-  entity_id: number | null;
-  entity_name?: string | null;
-  entity_at?: string | null;
-  detail: string;
-  attendance?: {
-    member_id: number;
-    member_name: string | null;
-    status: 'attended' | 'absent' | 'cleared';
-  } | null;
-  created_at: string;
-}
-
-const showObjectId = showAuditItemId;
-
-/** One page of the log, newest first. `next_before` is null on the last page. */
-interface AuditPage {
-  items: AuditItem[];
-  next_before: number | null;
-  retention_days?: number;
-}
-
-// What an entry can be about, as the server names it in `entity`.
-const ENTITIES = [
-  'user',
-  'ride',
-  'event',
-  'settlement',
-  'settlement_share',
-  'reimbursement',
-  'help_ticket',
-  'file',
-  'group',
-  'area',
-  'role',
-  'invite',
-  'announcement',
-  'recovery',
-  'guide_workflow',
-  'visitor_pass',
-  'reimbursement_rates',
-  'system_settings',
-];
-
-const SECURITY_ACTIONS = [
-  'login.failed',
-  'totp.failed',
-  'password.failed',
-  'recovery.reject',
-];
-
-const WARNING_ACTIONS = [
-  'ride.escalate',
-  'ride.no_show',
-  'ride.return',
-  'ride.cancel',
-  'group.delete',
-  'role.delete',
-  'invite.revoke',
-];
-
-const INFO_ACTIONS = [
-  'role.create',
-  'role.update',
-  'recovery.approve',
-  'recovery.await_second',
-  'reimbursement.pay',
-  'settlement.publish',
-];
-
-const getActionTone = (act: string): 'danger' | 'warning' | 'info' | 'neutral' => {
-  if (SECURITY_ACTIONS.includes(act)) return 'danger';
-  if (WARNING_ACTIONS.includes(act)) return 'warning';
-  if (INFO_ACTIONS.includes(act)) return 'info';
-  return 'neutral';
-};
-
-/** Predefined action groups for quick filtering. */
-const ACTION_CATEGORIES = [
-  {
-    category: 'security',
-    actions: [
-      'login.passkey',
-      'login.reauth',
-      'login.dev',
-      'login.failed',
-      'password.failed',
-      'logout',
-      'passkey.register',
-      'passkey.delete',
-      'totp.setup',
-      'totp.enable',
-      'totp.failed',
-      'password.set',
-      'recovery.request',
-      'recovery.use',
-      'recovery.approve',
-      'recovery.reject',
-      'recovery.await_second',
-      'invite.accept',
-      'terms.accept',
-      'totp.backup_code_used',
-      'totp.backup_codes_regenerated',
-      'totp.verify',
-      'logout.all',
-    ],
-  },
-  {
-    category: 'rides',
-    actions: [
-      'ride.create',
-      'ride.claim',
-      'ride.driver_confirm',
-      'ride.driver_withdraw',
-      'ride.passenger_accept',
-      'ride.passenger_decline',
-      'ride.ready',
-      'ride.approve',
-      'ride.reassign',
-      'ride.plan_assign',
-      'ride.alt_transport',
-      'ride.return',
-      'ride.delayed',
-      'ride.driver_delay',
-      'ride.arrived_gate',
-      'ride.unable_to_join',
-      'ride.start',
-      'ride.pickup',
-      'ride.no_show',
-      'ride.complete',
-      'ride.cancel',
-      'ride.escalate',
-      'location.share',
-      'location.stop',
-      'driver.profile_update',
-    ],
-  },
-  {
-    category: 'events',
-    actions: [
-      'event.create',
-      'events.create',
-      'event.update',
-      'event.cancel',
-      'event.finish',
-      'event.signup',
-      'event.withdraw',
-      'event.attendance',
-      'event.waitlist_promote',
-    ],
-  },
-  {
-    category: 'finance',
-    actions: [
-      'reimbursement.create',
-      'reimbursement.resubmit',
-      'reimbursement.review',
-      'reimbursement.approve',
-      'reimbursement.reject',
-      'reimbursement.pay',
-      'settlement.create',
-      'settlement.edit_draft',
-      'settlement.publish',
-      'settlement.close',
-      'settlement.delete',
-      'share.proof',
-      'share.confirm',
-      'share.needs_info',
-      'settlement.revise',
-    ],
-  },
-  {
-    category: 'admin',
-    actions: [
-      'user.update',
-      'role.create',
-      'role.update',
-      'role.delete',
-      'role.bootstrap',
-      'admin_roles.update',
-      'group.create',
-      'group.update',
-      'group.delete',
-      'group.members',
-      'area.create',
-      'area.update',
-      'settings.rates',
-      'settings.system',
-      'announcement.create',
-      'announcement.update',
-      'announcement.delete',
-      'invite.create',
-      'invite.revoke',
-      'help.create',
-      'help.reply',
-      'help.close',
-      'guide.create',
-      'guide.update',
-      'guide.delete',
-      'profile.update',
-      'file.upload',
-      'report.delete',
-    ],
-  },
-];
-
-/** The filters the server understands; anything else in the address is ignored. */
-const FILTERS = ['q', 'entity', 'entity_id', 'action', 'actor_id', 'from', 'to'];
-
-const formatIsoDate = (d: Date) => {
-  const y = d.getFullYear();
-  const m = String(d.getMonth() + 1).padStart(2, '0');
-  const day = String(d.getDate()).padStart(2, '0');
-  return `${y}-${m}-${day}`;
-};
-
-const getDayOffset = (days: number) => {
-  const d = new Date();
-  d.setDate(d.getDate() + days);
-  return formatIsoDate(d);
-};
-
-const getFirstOfThisMonth = () => {
-  const d = new Date();
-  d.setDate(1);
-  return formatIsoDate(d);
-};
-
-/**
- * Where an audit entry's item can be opened. `exact` is true when the page is that one
- * item; otherwise it is only the list the item lives in, and the link must say so.
- */
-export const getObjectLink = (
-  entity: string,
-  id: number | null,
-): { url: string; exact: boolean } | null => {
-  if (id == null) return null;
-  const item = (url: string) => ({ url, exact: true });
-  const list = (url: string) => ({ url, exact: false });
-  switch (entity) {
-    case 'ride':
-      return item(`/admin/rides/${id}`);
-    case 'event':
-      return item(`/events/${id}`);
-    case 'help_ticket':
-      return item(`/help/${id}`);
-    case 'settlement':
-      return item(`/settlements/${id}`);
-    case 'user':
-      return list('/admin/members');
-    case 'reimbursement':
-      return list('/admin/reimbursements');
-    case 'group':
-    case 'area':
-      return list('/admin/settings');
-    case 'role':
-      return list('/admin/roles');
-    case 'announcement':
-      return list('/admin/announcements');
-    default:
-      return null;
-  }
-};
-
-function highlightText(text: string, query: string): ReactNode {
-  if (!query.trim()) return text;
-  const qLower = query.trim().toLowerCase();
-  const textLower = text.toLowerCase();
-  const idx = textLower.indexOf(qLower);
-  if (idx === -1) return text;
-  const before = text.slice(0, idx);
-  const match = text.slice(idx, idx + query.trim().length);
-  const after = text.slice(idx + query.trim().length);
-  return (
-    <>
-      {before}
-      <mark className="search-hit">{match}</mark>
-      {highlightText(after, query)}
-    </>
-  );
-}
-
-function DetailDiff({ detail }: { detail: string }) {
-  const parts = detail.split(';').map((p) => p.trim()).filter(Boolean);
-  const diffs = parts.map((part) => {
-    const m = part.match(/^(.*?)(?:\s*(?:→|->)\s*)(.*)$/);
-    if (m) {
-      return { from: m[1], to: m[2], isDiff: true };
-    }
-    return { raw: part, isDiff: false };
-  });
-
-  const hasDiff = diffs.some((d) => d.isDiff);
-  if (!hasDiff) {
-    return (
-      <pre className="mono small" style={{ margin: 0, whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}>
-        {detail || '-'}
-      </pre>
-    );
-  }
-
-  return (
-    <div className="flow-xs">
-      {diffs.map((d, i) =>
-        d.isDiff ? (
-          <div key={i} className="row nowrap between small" style={{ padding: '4px 0', borderBottom: '1px solid var(--border)' }}>
-            <span className="mono" style={{ textDecoration: 'line-through', opacity: 0.7 }}>
-              {d.from}
-            </span>
-            <span style={{ margin: '0 8px' }}>→</span>
-            <span className="mono font-bold" style={{ color: 'var(--primary)' }}>
-              {d.to}
-            </span>
-          </div>
-        ) : (
-          <div key={i} className="small mono muted">
-            {d.raw}
-          </div>
-        ),
-      )}
-    </div>
-  );
-}
+// Re-export so Dashboard.tsx keeps working with its `import { getObjectLink } from './Audit'`
+export { getObjectLink } from './auditHelpers';
 
 export default function Audit() {
   const { t } = useTranslation('admin');
   const ft = useFormatT();
+  const h = auditHelpers(t);
   const [params, setParams] = useSearchParams();
 
   const q = params.get('q') ?? '';
@@ -487,26 +176,9 @@ export default function Audit() {
   const hasFilters = Boolean(query);
   // A link may name an object this list doesn't know; keep it selectable.
   const entities = entity && !ENTITIES.includes(entity) ? [...ENTITIES, entity] : ENTITIES;
-  const entityLabel = (k: string) => auditEntityLabel(k, t);
-  const objectLabel = (item: AuditItem) => auditItemLabel(item, t);
-  // The second line under a name: what kind of thing it is, its number, and for a ride
-  // its pick-up time, since one passenger has many rides.
-  const objectKind = (item: AuditItem) => {
-    const { kind } = auditItemParts(item, t);
-    return item.entity === 'ride' && item.entity_at
-      ? `${kind} · ${fmtDateTime(item.entity_at, ft)}`
-      : kind;
-  };
-  const showsKind = (item: AuditItem) =>
-    showObjectId(item.entity) && Boolean(item.entity_name?.trim());
   const filteredObject = items.find((item) =>
     item.entity === entity && String(item.entity_id) === entityId,
   );
-  const detailLabel = ({ detail, attendance }: AuditItem) => {
-    if (!attendance) return detail;
-    const member = attendance.member_name?.trim() || t('audit.attendance.member');
-    return t(`audit.attendance.${attendance.status}`, { member });
-  };
 
   const escapeCsv = (v: unknown): string => {
     const s = String(v ?? '');
@@ -573,17 +245,17 @@ export default function Audit() {
     if (!items.length) return;
     const heads = [t('audit.time'), t('audit.actor'), t('audit.action'), t('audit.object'), t('audit.detail')];
     const generated = t('audit.pdfGenerated', { time: new Date().toLocaleString() });
-    const filters = query ? t('audit.pdfFilters', { filters: query }) : '';
+    const pdfFilters = query ? t('audit.pdfFilters', { filters: query }) : '';
     const cells = items.map((a) => ({
       time: a.created_at.replace('T', ' ').slice(0, 19),
       actor: a.actor ?? t('audit.system'),
-      action: auditActionLabel(a.action, t),
-      object: objectLabel(a),
-      detail: detailLabel(a),
+      action: h.actionLabel(a.action),
+      object: h.objectLabel(a),
+      detail: h.detailLabel(a),
     }));
     // Chinese cannot be drawn with the PDF's own font; the writer switches to the device's fonts.
     const w = await createPdfWriter([
-      t('audit.pdfTitle'), generated, filters, ...heads,
+      t('audit.pdfTitle'), generated, pdfFilters, ...heads,
       ...cells.flatMap((c) => [c.actor, c.action, c.object, c.detail]),
     ]);
     // Column left edges and widths in mm.
@@ -593,12 +265,12 @@ export default function Audit() {
     let y = 20;
     y += w.text(t('audit.pdfTitle'), 20, y, { size: 18, bold: true }) + 3;
     y += w.text(generated, 20, y, { size: 10 }) + 1;
-    if (filters) y += w.text(filters, 20, y, { size: 10 }) + 1;
+    if (pdfFilters) y += w.text(pdfFilters, 20, y, { size: 10 }) + 1;
     y += 4;
 
     const header = () => {
       w.band(15, y, w.width - 30, 8);
-      heads.forEach((h, i) => w.text(h, cols[i].x, y + 1.8, { size: 9, bold: true, maxWidth: cols[i].w, maxLines: 1 }));
+      heads.forEach((hd, i) => w.text(hd, cols[i].x, y + 1.8, { size: 9, bold: true, maxWidth: cols[i].w, maxLines: 1 }));
       y += 10;
     };
     header();
@@ -656,7 +328,7 @@ export default function Audit() {
           title={t('audit.filterByAction')}
         >
           <Pill tone={getActionTone(a.action)}>
-            {highlightText(auditActionLabel(a.action, t), search)}
+            {highlightText(h.actionLabel(a.action), search)}
           </Pill>
         </button>
       ),
@@ -666,7 +338,7 @@ export default function Audit() {
       header: t('audit.object'),
       render: (a) => {
         const target = getObjectLink(a.entity, a.entity_id);
-        const label = objectLabel(a);
+        const label = h.objectLabel(a);
         return (
           <div style={{ display: 'inline-flex', flexDirection: 'column', alignItems: 'flex-start', minWidth: '11rem' }}>
             <div className="row gap-xs" style={{ display: 'inline-flex', alignItems: 'center', flexWrap: 'nowrap' }}>
@@ -691,7 +363,7 @@ export default function Audit() {
                 </Link>
               )}
             </div>
-            {showsKind(a) && <span className="muted tiny">{highlightText(objectKind(a), search)}</span>}
+            {h.showsKind(a) && <span className="muted tiny">{highlightText(h.objectKind(a, ft), search)}</span>}
           </div>
         );
       },
@@ -699,7 +371,7 @@ export default function Audit() {
     {
       key: 'detail',
       header: t('audit.detail'),
-      render: (a) => highlightText(detailLabel(a), search),
+      render: (a) => highlightText(h.detailLabel(a), search),
     },
     {
       key: 'viewDetail',
@@ -787,7 +459,7 @@ export default function Audit() {
           <option value="">{t('audit.allObjects')}</option>
           {entities.map((k) => (
             <option key={k} value={k}>
-              {entityLabel(k)}
+              {h.entityLabel(k)}
             </option>
           ))}
         </select>
@@ -886,8 +558,8 @@ export default function Audit() {
         {entity && entityId && (
           <Pill>
             {showObjectId(entity)
-              ? `${entityLabel(entity)} #${entityId}`
-              : filteredObject?.entity_name?.trim() || entityLabel(entity)}
+              ? `${h.entityLabel(entity)} #${entityId}`
+              : filteredObject?.entity_name?.trim() || h.entityLabel(entity)}
           </Pill>
         )}
         {action && (
@@ -930,10 +602,10 @@ export default function Audit() {
                     <span className="mono tiny muted">{fmtDateTime(a.created_at, ft)}</span>
                   </div>
                   <div>
-                    <Pill tone={getActionTone(a.action)}>{auditActionLabel(a.action, t)}</Pill>
+                    <Pill tone={getActionTone(a.action)}>{h.actionLabel(a.action)}</Pill>
                   </div>
-                  <div className="small ellipsis">{auditItemLine(a, t)}</div>
-                  <div className="muted tiny clamp-2">{detailLabel(a)}</div>
+                  <div className="small ellipsis">{h.itemLine(a)}</div>
+                  <div className="muted tiny clamp-2">{h.detailLabel(a)}</div>
                 </div>
               )}
             />
@@ -980,7 +652,7 @@ export default function Audit() {
               <span className="muted">{t('audit.action')}</span>
               <div className="row gap-xs">
                 <Pill tone={getActionTone(selectedItem.action)}>
-                  {auditActionLabel(selectedItem.action, t)}
+                  {h.actionLabel(selectedItem.action)}
                 </Pill>
                 <span className="mono tiny muted">{selectedItem.action}</span>
               </div>
@@ -989,8 +661,8 @@ export default function Audit() {
               <span className="muted">{t('audit.object')}</span>
               <div className="row gap-xs" style={{ alignItems: 'center' }}>
                 <div style={{ display: 'flex', flexDirection: 'column' }}>
-                  <span>{objectLabel(selectedItem)}</span>
-                  {showsKind(selectedItem) && <span className="muted tiny">{objectKind(selectedItem)}</span>}
+                  <span>{h.objectLabel(selectedItem)}</span>
+                  {h.showsKind(selectedItem) && <span className="muted tiny">{h.objectKind(selectedItem, ft)}</span>}
                 </div>
                 {selectedTarget && (
                   <Link to={selectedTarget.url} className="btn ghost sm" onClick={() => setSelectedItem(null)}>
@@ -1004,7 +676,7 @@ export default function Audit() {
               <span className="muted small">{t('audit.detail')}</span>
               <Card style={{ maxHeight: 240, overflowY: 'auto', background: 'var(--surface-2)' }}>
                 {selectedItem.attendance
-                  ? <span className="small">{detailLabel(selectedItem)}</span>
+                  ? <span className="small">{h.detailLabel(selectedItem)}</span>
                   : <DetailDiff detail={selectedItem.detail} />}
               </Card>
             </div>
