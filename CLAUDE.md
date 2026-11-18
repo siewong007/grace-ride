@@ -46,8 +46,11 @@
 ├── backend/
 │   ├── src/
 │   │   ├── routes/          # Axum route handlers (one file or dir per domain)
-│   │   │   ├── rides/       # rides/mod.rs — 4 608-line directory module
-│   │   │   │   └── mod.rs   # (sub-modules planned; see PROGRESS.md)
+│   │   │   ├── rides/           # directory module for all ride routes
+│   │   │   │   ├── mod.rs       # shared types, router, passenger/driver/chat/staff handlers (~3 512 lines)
+│   │   │   │   ├── proxy.rs     # frequent proxy-riders CRUD
+│   │   │   │   ├── places.rs    # saved-places CRUD
+│   │   │   │   └── schedules.rs # recurring schedules, event_moved, process_recurring_schedules
 │   │   │   ├── admin.rs     # admin panel routes (2 312 lines)
 │   │   │   ├── auth.rs      # passkeys, TOTP, password, sessions
 │   │   │   ├── care.rs      # /care/:token safe-arrival links
@@ -139,7 +142,7 @@
 
 ## Open Items (as of 2026-11-18)
 
-1. **LICENSE** — not yet chosen. Ask the user.
-2. **Sentry** — no error monitoring. Recommend `sentry-rust` (backend) + `@sentry/react` (frontend).
-3. **Rides sub-module split** — `rides/mod.rs` is 4 608 lines. See PROGRESS.md for the split plan and the external callers that need re-exporting.
+1. **LICENSE** ✅ — private proprietary, church-only use (PJ State CMC). Already in repo.
+2. **Sentry** ✅ — `sentry` crate (backend) + `@sentry/react` (frontend) integrated. Activate by setting `SENTRY_DSN` / `VITE_SENTRY_DSN` env vars.
+3. **Rides sub-module split** ✅ — `proxy.rs`, `places.rs`, `schedules.rs` extracted. `mod.rs` is now ~3 512 lines. Further splits (`driver.rs`, `passenger.rs`, `staff.rs`, `chat.rs`) deferred — see PROGRESS.md.
 4. **Driver/rider verification** — documented approach only; no automated ID check implemented yet.
