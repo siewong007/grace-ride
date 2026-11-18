@@ -1,4 +1,4 @@
-import { beforeAll, expect, it, vi } from 'vitest';
+import { beforeAll, expect, it, onTestFinished, vi } from 'vitest';
 import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { MemoryRouter, useSearchParams } from 'react-router-dom';
 import i18n from '../../i18n';
@@ -95,6 +95,12 @@ it('shows readable attendance changes in the audit table and details', async () 
 });
 
 it('leads with the name and keeps the kind, number and pick-up time beneath it', async () => {
+  // Pin the clock: fmtDay turns a date near today into "Tomorrow", which this check does not expect.
+  vi.useFakeTimers({ toFake: ['Date'] });
+  vi.setSystemTime(new Date('2026-11-01T10:00:00'));
+  onTestFinished(() => {
+    vi.useRealTimers();
+  });
   const base = { actor: 'Transport', detail: '', created_at: '2026-11-14T10:00:00' };
   mocks.api.mockResolvedValue({
     items: [

@@ -247,9 +247,9 @@ describe('Server-enforced AutoLock integration', () => {
     fireEvent(window, new Event('gr:session-locked'));
     expect(await screen.findByRole('dialog')).toBeInTheDocument();
 
-    const codeInput = screen.getByPlaceholderText('6-digit code or backup code');
+    const codeInput = screen.getByPlaceholderText('6-digit or backup code');
     fireEvent.change(codeInput, { target: { value: '123456' } });
-    fireEvent.click(screen.getByRole('button', { name: 'Unlock with code' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Unlock' }));
 
     await waitFor(() => expect(mocks.post).toHaveBeenCalledWith('/auth/unlock', { totp_code: '123456' }));
     await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());

@@ -210,7 +210,7 @@ export function InfiniteSentinel({
 }: {
   hasMore: boolean;
   loading: boolean;
-  sentinelRef?: React.RefObject<HTMLDivElement>;
+  sentinelRef?: React.RefObject<HTMLDivElement | null>;
   empty?: boolean;
   className?: string;
 }) {

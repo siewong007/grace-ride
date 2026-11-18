@@ -69,7 +69,7 @@ async fn passkey_sign_in_ignores_the_case_of_the_email() {
     assert_eq!(start.status, StatusCode::OK, "{}", start.json);
     let options: CreationChallengeResponse =
         serde_json::from_value(start.json["options"].clone()).unwrap();
-    let mut soft = WebauthnAuthenticator::new(SoftPasskey::new(true));
+    let mut soft = SoftPasskey::new(true);
     let origin = Url::parse(ORIGIN).unwrap();
     let credential = soft.do_registration(origin.clone(), options).unwrap();
     let finish = call(

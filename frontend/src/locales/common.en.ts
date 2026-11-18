@@ -65,7 +65,7 @@ export default {
   },
   offlineNotice: 'You are currently offline. Actions and location updates will resume when reconnected.',
   sessionLocked: 'Screen locked',
-  sessionLockedDesc: 'Locked after {{count}} min idle',
+  sessionLockedDesc: 'Locked after {count} min idle',
   unlock: 'Unlock',
   unlocking: 'Unlocking...',
   unlockWithPasskey: 'Unlock',

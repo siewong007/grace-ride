@@ -721,7 +721,7 @@ async fn passkey_challenge_branches() {
     let first_id = first["challenge_id"].as_str().unwrap().to_string();
     let options: CreationChallengeResponse =
         serde_json::from_value(first["options"].clone()).unwrap();
-    let mut soft = WebauthnAuthenticator::new(SoftPasskey::new(true));
+    let mut soft = SoftPasskey::new(true);
     let credential = soft
         .do_registration(origin, options)
         .expect("soft register");
@@ -742,7 +742,7 @@ async fn passkey_challenge_branches() {
     let second_id = second["challenge_id"].as_str().unwrap().to_string();
     let options: CreationChallengeResponse =
         serde_json::from_value(second["options"].clone()).unwrap();
-    let mut soft = WebauthnAuthenticator::new(SoftPasskey::new(true));
+    let mut soft = SoftPasskey::new(true);
     let credential = soft
         .do_registration(Url::parse(ORIGIN).unwrap(), options)
         .unwrap();
@@ -764,7 +764,7 @@ async fn passkey_challenge_branches() {
     let first_again = start(&c.member).await;
     let options: CreationChallengeResponse =
         serde_json::from_value(first_again["options"].clone()).unwrap();
-    let mut soft = WebauthnAuthenticator::new(SoftPasskey::new(true));
+    let mut soft = SoftPasskey::new(true);
     let foreign = soft
         .do_registration(Url::parse(ORIGIN).unwrap(), options)
         .unwrap();
@@ -786,7 +786,7 @@ async fn passkey_challenge_branches() {
     let enrolled_id = enrolled["challenge_id"].as_str().unwrap().to_string();
     let options: CreationChallengeResponse =
         serde_json::from_value(enrolled["options"].clone()).unwrap();
-    let mut soft = WebauthnAuthenticator::new(SoftPasskey::new(true));
+    let mut soft = SoftPasskey::new(true);
     let credential = soft
         .do_registration(Url::parse(ORIGIN).unwrap(), options)
         .unwrap();

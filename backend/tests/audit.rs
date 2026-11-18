@@ -58,7 +58,7 @@ async fn sign_in_and_account_security_events_are_logged() {
     .await;
     let options: CreationChallengeResponse =
         serde_json::from_value(start.json["options"].clone()).unwrap();
-    let mut soft = WebauthnAuthenticator::new(SoftPasskey::new(true));
+    let mut soft = SoftPasskey::new(true);
     let credential = soft
         .do_registration(Url::parse(ORIGIN).unwrap(), options)
         .unwrap();

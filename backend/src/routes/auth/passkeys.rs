@@ -8,6 +8,7 @@ use axum::{
     Json,
 };
 use axum_extra::extract::cookie::CookieJar;
+use base64::Engine as _;
 use serde::Deserialize;
 use serde_json::{json, Value};
 use webauthn_rs::fake::{FakePasskeyDistribution, WebauthnFakeCredentialGenerator};
@@ -179,10 +180,10 @@ async fn decoy_challenge(st: &AppState, email: &str) -> AppResult<Value> {
     // exactly what a real challenge serialises to.
     let options: RequestChallengeResponse = serde_json::from_value(json!({
         "publicKey": {
-            "challenge": Base64UrlSafeData::from(challenge.to_vec()),
+            "challenge": base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(challenge),
             "timeout": 300_000,
             "rpId": rp_id,
-            "allowCredentials": ids.iter().map(|id| json!({"type": "public-key", "id": id})).collect::<Vec<_>>(),
+            "allowCredentials": ids.iter().map(|id| json!({"type": "public-key", "id": base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(id.as_ref() as &[u8])})).collect::<Vec<_>>(),
             "userVerification": "required",
         }
     }))

@@ -1592,7 +1592,7 @@ async fn totp_enable_already_enabled_and_disabled_account_auth_blocks() {
     .await;
     let reg_opts: CreationChallengeResponse =
         serde_json::from_value(pk_start.json["options"].clone()).unwrap();
-    let mut soft = WebauthnAuthenticator::new(SoftPasskey::new(true));
+    let mut soft = SoftPasskey::new(true);
     let origin = Url::parse(ORIGIN).unwrap();
     let reg_cred = soft.do_registration(origin.clone(), reg_opts).unwrap();
     assert_eq!(

@@ -61,7 +61,7 @@ async fn passkey_register_and_login_soft_authenticator() {
     let options: CreationChallengeResponse =
         serde_json::from_value(start.json["options"].clone()).expect("ccr");
 
-    let mut soft = WebauthnAuthenticator::new(SoftPasskey::new(true));
+    let mut soft = SoftPasskey::new(true);
     let origin = Url::parse(ORIGIN).unwrap();
     let credential = soft
         .do_registration(origin.clone(), options)
@@ -166,7 +166,7 @@ async fn passkey_login_start_does_not_reveal_who_is_a_member() {
         None,
     )
     .await;
-    let mut soft = WebauthnAuthenticator::new(SoftPasskey::new(true));
+    let mut soft = SoftPasskey::new(true);
     let origin = Url::parse(ORIGIN).unwrap();
     let credential = soft
         .do_registration(
@@ -1760,7 +1760,7 @@ async fn adding_or_removing_a_sign_in_method_needs_a_recent_sign_in() {
             if start.status != StatusCode::OK {
                 return start;
             }
-            let mut soft = WebauthnAuthenticator::new(SoftPasskey::new(true));
+            let mut soft = SoftPasskey::new(true);
             let credential = soft
                 .do_registration(
                     Url::parse(ORIGIN).unwrap(),
@@ -1815,7 +1815,7 @@ async fn adding_or_removing_a_sign_in_method_needs_a_recent_sign_in() {
 async fn a_passkey_check_renews_the_recent_sign_in_without_signing_out() {
     let (app, st) = setup().await;
     let cookie = login(&st, "sophie@example.org").await;
-    let mut soft = WebauthnAuthenticator::new(SoftPasskey::new(true));
+    let mut soft = SoftPasskey::new(true);
     let origin = Url::parse(ORIGIN).unwrap();
     let start = call(
         &app,

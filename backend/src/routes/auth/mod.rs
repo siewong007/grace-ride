@@ -10,7 +10,7 @@ use std::net::SocketAddr;
 use std::sync::OnceLock;
 
 use argon2::{
-    password_hash::{rand_core::OsRng, PasswordHash, PasswordHasher, PasswordVerifier, SaltString},
+    password_hash::{phc::PasswordHash, PasswordHasher, PasswordVerifier},
     Argon2,
 };
 use axum::{
@@ -101,9 +101,8 @@ pub fn router() -> Router<AppState> {
 }
 
 pub fn hash_password(pw: &str) -> AppResult<String> {
-    let salt = SaltString::generate(&mut OsRng);
     Argon2::default()
-        .hash_password(pw.as_bytes(), &salt)
+        .hash_password(pw.as_bytes())
         .map(|h| h.to_string())
         .map_err(|e| AppError::Other(anyhow::anyhow!("hash: {e}")))
 }

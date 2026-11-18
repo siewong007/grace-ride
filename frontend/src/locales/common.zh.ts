@@ -65,7 +65,7 @@ export default {
   },
   offlineNotice: '当前处于离线状态。网络恢复后将自动同步数据与位置。',
   sessionLocked: '屏幕已锁定',
-  sessionLockedDesc: '闲置 {{count}} 分钟后已锁定',
+  sessionLockedDesc: '闲置 {count} 分钟后已锁定',
   unlock: '解锁',
   unlocking: '解锁中...',
   unlockWithPasskey: '解锁',

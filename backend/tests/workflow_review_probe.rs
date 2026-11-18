@@ -25,7 +25,7 @@ async fn pending_login() -> (Router, AppState, String, Value) {
     )
     .await;
     let opts: CreationChallengeResponse = serde_json::from_value(start["options"].clone()).unwrap();
-    let mut soft = WebauthnAuthenticator::new(SoftPasskey::new(true));
+    let mut soft = SoftPasskey::new(true);
     let origin = Url::parse(ORIGIN).unwrap();
     let cred = soft.do_registration(origin.clone(), opts).unwrap();
     ok(

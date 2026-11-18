@@ -371,8 +371,8 @@ test.describe('Terms gate and Session AutoLock security flows', () => {
 
     const dialog = page.getByRole('dialog');
     await expect(dialog).toBeVisible();
-    await dialog.getByPlaceholder('6-digit code or backup code').fill('654321');
-    await dialog.getByRole('button', { name: 'Unlock with code' }).click();
+    await dialog.getByPlaceholder('6-digit or backup code').fill('654321');
+    await dialog.getByRole('button', { name: 'Unlock', exact: true }).click();
 
     await expect.poll(() => unlockCalls.length).toBe(1);
     expect(unlockCalls[0]).toEqual({ totp_code: '654321' });

@@ -1,4 +1,4 @@
-import { ComponentType, lazy, ReactNode, Suspense, useEffect, useLayoutEffect } from 'react';
+import React, { ComponentType, lazy, ReactNode, Suspense, useEffect, useLayoutEffect } from 'react';
 import { Navigate, Route, Routes, useLocation } from 'react-router-dom';
 import { useAuth } from './auth';
 import { BackNavigationProvider } from './components/BackNavigation';
@@ -84,7 +84,7 @@ function Gate({ any, children }: { any: Need[]; children: ReactNode }) {
 
 const gated = (el: ReactNode, ...any: Need[]) => page(<Gate any={any}>{el}</Gate>);
 
-function RequireAuth({ children }: { children: JSX.Element }) {
+function RequireAuth({ children }: { children: React.JSX.Element }) {
   const { me, loading } = useAuth();
   const loc = useLocation();
   if (loading) return <Spinner />;
