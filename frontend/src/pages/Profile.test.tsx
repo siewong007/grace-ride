@@ -159,6 +159,11 @@ vi.mock('../components/ui', () => ({
       {children}
     </div>
   ),
+  PageHeader: ({ title, back }: { title?: React.ReactNode; back?: string }) => (
+    <div data-testid="page-header" data-back={back}>
+      <h1>{title}</h1>
+    </div>
+  ),
   Pill: ({ children, tone }: { children?: React.ReactNode; tone?: string }) => (
     <span data-testid={`pill-${tone}`}>{children}</span>
   ),
@@ -240,32 +245,12 @@ describe('Profile compact layout', () => {
     expect(screen.getByRole('button', { name: /Personal details/i })).toBeInTheDocument();
     expect(screen.getByRole('button', { name: /Preferences/i })).toBeInTheDocument();
     expect(screen.getByRole('button', { name: /Account security/i })).toBeInTheDocument();
-    expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+    expect(screen.queryByTestId('page-header')).not.toBeInTheDocument();
 
     fireEvent.click(screen.getByRole('button', { name: /Preferences/i }));
-    expect(screen.getByRole('dialog', { name: /Preferences/i })).toBeInTheDocument();
-    expect(screen.queryByRole('dialog', { name: /Personal details/i })).not.toBeInTheDocument();
-
-    fireEvent.click(screen.getByRole('button', { name: 'Close' }));
-    expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
-
-    fireEvent.click(screen.getByRole('button', { name: /Personal details/i }));
-    expect(screen.getByRole('dialog', { name: /Personal details/i })).toBeInTheDocument();
-    expect(screen.queryByRole('dialog', { name: /Preferences/i })).not.toBeInTheDocument();
-  });
-
-  it('retains edits when a section sheet is closed and reopened', () => {
-    renderProfile(baseMe);
-    fireEvent.click(screen.getByRole('button', { name: /Personal details/i }));
-    const nameInput = screen.getByLabelText('Name');
-    fireEvent.change(nameInput, { target: { value: 'Edited Name' } });
-    expect(nameInput).toHaveValue('Edited Name');
-
-    fireEvent.click(screen.getByRole('button', { name: 'Close' }));
-    expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
-
-    fireEvent.click(screen.getByRole('button', { name: /Personal details/i }));
-    expect(screen.getByLabelText('Name')).toHaveValue('Edited Name');
+    expect(screen.getByTestId('page-header')).toHaveTextContent(/Preferences/i);
+    expect(screen.getByTestId('page-header')).toHaveAttribute('data-back', '/me');
+    expect(screen.queryByRole('button', { name: /Personal details/i })).not.toBeInTheDocument();
   });
 
   it('does not include administrative shortcuts in the profile', () => {

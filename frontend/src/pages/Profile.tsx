@@ -1,5 +1,5 @@
 import { ReactNode, useEffect, useState } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, useSearchParams } from 'react-router-dom';
 import {
   BarChart3,
   Copy,
@@ -21,7 +21,7 @@ import { api, del, post, put, useApi } from '../api';
 import { useAuth } from '../auth';
 import { useAutoLock } from '../components/AutoLock';
 import { DisplayPreferences } from '../components/AppChrome';
-import { Avatar, Button, ErrorBox, Field, FileInput, Modal, Pill, SheetLink, useAction, useConfirm } from '../components/ui';
+import { Avatar, Button, ErrorBox, Field, FileInput, Modal, PageHeader, Pill, SheetLink, useAction, useConfirm } from '../components/ui';
 import { fmtAgo, roleLabel, useFormatT } from '../format';
 import { passkeySupported, registerPasskey, withRecentSignIn } from '../webauthn';
 import QRCode from 'qrcode';
@@ -40,7 +40,10 @@ export default function Profile() {
   const nav = useNavigate();
   const { lock } = useAutoLock();
   const passkeys = useApi<{ id: number; label: string; created_at: string; last_used: string | null }[]>('/auth/passkeys');
-  const [open, setOpen] = useState<SectionKey | null>(null);
+  // The open section lives in the URL so the header back button and swipe-back both return to the list.
+  const [searchParams] = useSearchParams();
+  const sectionParam = searchParams.get('section');
+  const open: SectionKey | null = (['personal', 'preferences', 'places', 'security'] as const).find((k) => k === sectionParam) ?? null;
   const pushCfg = useApi<{
     enabled?: boolean;
     configured?: boolean;
@@ -68,7 +71,7 @@ export default function Profile() {
 
   const openSection = (section: SectionKey) => {
     setPushStatus('');
-    setOpen(section);
+    nav(`/me?section=${section}`);
   };
 
   const isPending = me.status === 'pending';
@@ -218,6 +221,8 @@ export default function Profile() {
 
   return (
     <div className="stack profile-page">
+      {!open && (
+        <>
       <div className="profile-identity">
         <div className="row align-center gap-md">
           <Avatar name={me.name} fileId={me.photo_file_id} size="lg" />
@@ -261,9 +266,12 @@ export default function Profile() {
           onClick={handleLogout}
         />
       </div>
+        </>
+      )}
 
       {open && (
-        <Modal title={sheetTitle[open]} onClose={() => setOpen(null)} size="sm">
+        <>
+          <PageHeader title={sheetTitle[open]} back="/me" />
           {open === 'personal' && (
             <div className="stack">
               <form className="stack" onSubmit={(e) => {
@@ -523,7 +531,7 @@ export default function Profile() {
               <ErrorBox error={error} />
             </div>
           )}
-        </Modal>
+        </>
       )}
 
       {totp && (

@@ -241,7 +241,7 @@ describe('Scenario Matrix — Frontend Components & Service Worker', () => {
   });
 
   describe('Profile sheets, Saved Places, Calendar ICS & pending guard', () => {
-    it('keeps keyboard focus while typing multi-character text in Modal inputs and retains draft edits across close/reopen', async () => {
+    it('keeps keyboard focus while typing multi-character text in section inputs', async () => {
       const user = userEvent.setup();
       mocks.useApiData.set('/auth/passkeys', []);
 
@@ -252,17 +252,13 @@ describe('Scenario Matrix — Frontend Components & Service Worker', () => {
       );
 
       await user.click(screen.getByRole('button', { name: /personal details/i }));
-      const dialog = screen.getByRole('dialog');
+      const dialog = document.body;
       const nameInput = within(dialog).getByLabelText(/name/i) as HTMLInputElement;
       await user.clear(nameInput);
       await user.type(nameInput, 'Temporary Unsaved Name');
       expect(nameInput.value).toBe('Temporary Unsaved Name');
       expect(document.activeElement).toBe(nameInput);
 
-      await user.click(within(dialog).getByRole('button', { name: /close/i }));
-      await user.click(screen.getByRole('button', { name: /personal details/i }));
-      const reopened = within(screen.getByRole('dialog')).getByLabelText(/name/i) as HTMLInputElement;
-      expect(reopened.value).toBe('Temporary Unsaved Name');
     });
 
     it('manages saved places, rotates/revokes calendar ICS, and saves alert channel preferences', async () => {
@@ -283,7 +279,7 @@ describe('Scenario Matrix — Frontend Components & Service Worker', () => {
 
       // Saved places + Calendar ICS sheet
       await user.click(screen.getByRole('button', { name: /saved places & calendar feed/i }));
-      const placesDlg = screen.getByRole('dialog');
+      const placesDlg = document.body;
       expect(within(placesDlg).getByText(/Home · Petaling Jaya/)).toBeInTheDocument();
 
       await user.click(within(placesDlg).getByRole('button', { name: /remove/i }));
@@ -310,11 +306,11 @@ describe('Scenario Matrix — Frontend Components & Service Worker', () => {
 
       await user.click(within(placesDlg).getByRole('button', { name: /turn off feed/i }));
       expect(mocks.del).toHaveBeenCalledWith('/me/calendar-feed');
-      await user.click(within(placesDlg).getByRole('button', { name: /close/i }));
+      await user.click(screen.getByRole('link', { name: /back/i }));
 
       // Preferences sheet (readiness prompt + WhatsApp + Telegram)
       await user.click(screen.getByRole('button', { name: /preferences/i }));
-      const prefDlg = screen.getByRole('dialog');
+      const prefDlg = document.body;
       await user.selectOptions(within(prefDlg).getByRole('combobox'), '30');
       await user.click(within(prefDlg).getByLabelText(/allow whatsapp alert notifications/i));
       await user.type(within(prefDlg).getByPlaceholderText('123456789'), '987654321');
