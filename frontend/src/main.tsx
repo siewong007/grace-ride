@@ -1,6 +1,7 @@
 import React from 'react';
 import ReactDOM from 'react-dom/client';
 import { BrowserRouter } from 'react-router-dom';
+import * as Sentry from '@sentry/react';
 import App from './App';
 import { AuthProvider } from './auth';
 import { ConfirmProvider, ToastProvider } from './components/ui';
@@ -14,6 +15,26 @@ import '@fontsource/jost/latin-300.css';
 import '@fontsource/jost/latin-500.css';
 import '@fontsource/jost/latin-700.css';
 import './styles.css';
+
+// Sentry: opt-in error monitoring. Set VITE_SENTRY_DSN in the production environment.
+// Never send personal data (names, phone numbers, addresses) in Sentry events.
+if (import.meta.env.VITE_SENTRY_DSN) {
+  Sentry.init({
+    dsn: import.meta.env.VITE_SENTRY_DSN,
+    environment: import.meta.env.MODE,
+    integrations: [],
+    tracesSampleRate: 0.0, // Errors only; performance tracing is off.
+    beforeSend(event) {
+      // Strip any PII that may appear in breadcrumbs or extras.
+      if (event.user) {
+        delete event.user.email;
+        delete event.user.username;
+        delete event.user.ip_address;
+      }
+      return event;
+    },
+  });
+}
 
 // App normally hides the boot splash once auth resolves; never leave it covering a stuck or crashed load.
 window.setTimeout(() => hideSplash(true), 10_000);
