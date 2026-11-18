@@ -118,9 +118,12 @@ export default function AdminReports() {
   const fileBase = `grace-ride-admin-report-${range}-${month}-${selectedId ?? 'self'}`;
 
   const escapeCsv = (v: unknown) => {
-    const s = String(v ?? '');
-    if (/[",\n\r]/.test(s)) return `"${s.replace(/"/g, '""')}"`;
-    return s;
+    const raw =
+      typeof v === 'string' && (/^[=+\-@\t\r]/.test(v) || /^[=+\-@]/.test(v.trimStart()))
+        ? `'${v}`
+        : String(v ?? '');
+    if (/[",\n\r]/.test(raw)) return `"${raw.replace(/"/g, '""')}"`;
+    return raw;
   };
 
   const exportCsv = () => {
@@ -241,26 +244,28 @@ export default function AdminReports() {
           subtitle={t('reports.desc')}
           back={ADMIN_HOME}
           actions={
-            <>
-              <Button
-                variant="secondary"
-                size="sm"
-                onClick={exportCsv}
-                disabled={!r}
-                icon={<FileText size={16} />}
-              >
-                {t('reports.exportCsv')}
-              </Button>
-              <Button
-                variant="secondary"
-                size="sm"
-                onClick={exportPdf}
-                disabled={!r}
-                icon={<Download size={16} />}
-              >
-                {t('reports.exportPdf')}
-              </Button>
-            </>
+            reportTab === 'member' ? (
+              <>
+                <Button
+                  variant="secondary"
+                  size="sm"
+                  onClick={exportCsv}
+                  disabled={!r}
+                  icon={<FileText size={16} />}
+                >
+                  {t('reports.exportCsv')}
+                </Button>
+                <Button
+                  variant="secondary"
+                  size="sm"
+                  onClick={exportPdf}
+                  disabled={!r}
+                  icon={<Download size={16} />}
+                >
+                  {t('reports.exportPdf')}
+                </Button>
+              </>
+            ) : undefined
           }
         />
         <ErrorBox error={error} />

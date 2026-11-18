@@ -1,4 +1,4 @@
-import { FormEvent, useState } from 'react';
+import { FormEvent, useEffect, useRef, useState } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import {
   Accessibility,
@@ -93,17 +93,36 @@ export default function RideNew() {
   const [touched, setTouched] = useState<Record<string, boolean>>({});
   const [errors, setErrors] = useState<Record<string, string>>({});
   const { busy, error, run } = useAction();
+  const proxyAppliedRef = useRef<{ area?: string; address?: string; notes?: string }>({});
+
+  const defaultReturnFor = (hhmm: string): string => {
+    const parts = hhmm.split(':');
+    if (parts.length !== 2) return '12:30';
+    const h = Number(parts[0]);
+    const m = Number(parts[1]);
+    if (Number.isNaN(h) || Number.isNaN(m)) return '12:30';
+    const mins = h * 60 + m;
+    if (mins < 12 * 60 && returnTime > hhmm) return returnTime;
+    const retMins = Math.min(23 * 60 + 59, mins + 120);
+    return `${String(Math.floor(retMins / 60)).padStart(2, '0')}:${String(retMins % 60).padStart(2, '0')}`;
+  };
 
   const [prefilled, setPrefilled] = useState(false);
-  if (event && !prefilled) {
-    const [d, t2] = event.starts_at.split('T');
-    const [h, m] = t2.split(':').map(Number);
+  useEffect(() => {
+    if (!event || prefilled) return;
+    const [d = '', t2 = '09:00'] = event.starts_at.split(/[T ]/);
+    const [h = 9, m = 0] = t2.split(':').map(Number);
     const mins = Math.max(0, h * 60 + m - 40);
+    const hhmm = `${String(Math.floor(mins / 60)).padStart(2, '0')}:${String(mins % 60).padStart(2, '0')}`;
     setDate(d);
-    setTime(`${String(Math.floor(mins / 60)).padStart(2, '0')}:${String(mins % 60).padStart(2, '0')}`);
+    setTime(hhmm);
+    if (mins >= 12 * 60) {
+      const retMins = Math.min(23 * 60 + 59, mins + 120);
+      setReturnTime(`${String(Math.floor(retMins / 60)).padStart(2, '0')}:${String(retMins % 60).padStart(2, '0')}`);
+    }
     setDestination(event.location);
     setPrefilled(true);
-  }
+  }, [event, prefilled]);
 
   const validateField = (_name: string, val: string): string => {
     if (!val || !val.trim()) {
@@ -124,23 +143,58 @@ export default function RideNew() {
     );
   };
 
+  const stripAppliedNotes = (curNotes: string, applied: string) => {
+    if (!applied) return curNotes;
+    if (curNotes === applied) return '';
+    return curNotes
+      .split(/\n/)
+      .filter((line) => line.trim() !== applied.trim())
+      .join('\n')
+      .trim();
+  };
+
   const selectFrequentRider = (fr: ProxyRider) => {
+    const prev = proxyAppliedRef.current;
     setRiderName(fr.name);
-    // Always sync the phone from the selected rider: a rider with none must clear the
-    // field (and stop us from contacting the previous rider). Relationship/notes only
-    // update when the rider actually supplies them.
     setRiderPhone(fr.phone);
-    if (fr.relationship) setRiderRelationship(fr.relationship);
-    if (fr.area_id) {
-      setArea(String(fr.area_id));
+    setRiderRelationship(fr.relationship || 'parent');
+
+    const nextArea = fr.area_id ? String(fr.area_id) : '';
+    if (fr.area_id || prev.area === area) {
+      setArea(nextArea);
       setErrors((cur) => ({ ...cur, area: '' }));
     }
-    if (fr.pickup_address) {
-      setAddress(fr.pickup_address);
+
+    const nextAddr = fr.pickup_address || '';
+    if (fr.pickup_address || prev.address === address) {
+      setAddress(nextAddr);
       setErrors((cur) => ({ ...cur, address: '' }));
     }
+
     const extraNotes = [fr.gate_notes, fr.notes].filter(Boolean).join(' · ');
-    if (extraNotes && !notes) setNotes(extraNotes);
+    setNotes((cur) => {
+      const stripped = stripAppliedNotes(cur, prev.notes ?? '');
+      if (!extraNotes) return stripped;
+      if (stripped.includes(extraNotes)) return stripped;
+      return stripped ? `${stripped}\n${extraNotes}` : extraNotes;
+    });
+    proxyAppliedRef.current = {
+      area: nextArea || undefined,
+      address: nextAddr || undefined,
+      notes: extraNotes || undefined,
+    };
+  };
+
+  const switchToMyself = () => {
+    const prev = proxyAppliedRef.current;
+    setIsProxy(false);
+    setRiderName('');
+    setRiderPhone('');
+    setSaveProxyRider(false);
+    if (prev.area && area === prev.area) setArea('');
+    if (prev.address && address === prev.address) setAddress('');
+    if (prev.notes) setNotes((cur) => stripAppliedNotes(cur, prev.notes ?? ''));
+    proxyAppliedRef.current = {};
   };
 
   const applySavedPlace = (sp: SavedPlace) => {
@@ -180,9 +234,15 @@ export default function RideNew() {
   const submit = (e: FormEvent) => {
     e.preventDefault();
 
+    const returnInvalid = includeReturn && (!returnTime.trim() || (Boolean(time) && returnTime <= time));
     const newErrors: Record<string, string> = {
       date: validateField('date', date),
       time: validateField('time', time),
+      returnTime: returnInvalid
+        ? !returnTime.trim()
+          ? t('fieldRequired')
+          : t('rides.INVALID_PICKUP_TIME', { ns: 'errors' })
+        : '',
       area: validateField('area', area),
       address: validateField('address', address),
       destination: validateField('destination', destination),
@@ -192,6 +252,7 @@ export default function RideNew() {
     setTouched({
       date: true,
       time: true,
+      returnTime: includeReturn,
       area: true,
       address: true,
       destination: true,
@@ -203,6 +264,7 @@ export default function RideNew() {
       isProxy ? 'riderName' : '',
       'date',
       'time',
+      includeReturn ? 'returnTime' : '',
       'area',
       'address',
       'destination',
@@ -215,11 +277,37 @@ export default function RideNew() {
       return;
     }
 
-    const assistanceParts = [...selectedChips];
-    if (customAssistance.trim()) {
-      assistanceParts.push(customAssistance.trim());
+    const chipLabels: Record<string, string> = {
+      wheelchair: t('needWheelchair'),
+      walking: t('needWalkingAid'),
+      visual: t('needVisualAssistance'),
+      helpInOut: t('needHelpInOut'),
+    };
+    const trimmedCustom = customAssistance.trim();
+    const customLower = trimmedCustom.toLowerCase();
+    let canonicalAssistance = '';
+    if (selectedChips.includes('wheelchair') || /\bwheelchair\b/.test(customLower)) {
+      canonicalAssistance = 'wheelchair';
+    } else if (/\b(stroller|child\s*seat|infant|baby)\b/.test(customLower)) {
+      canonicalAssistance = 'stroller';
+    } else if (/\boxygen\b/.test(customLower)) {
+      canonicalAssistance = 'oxygen';
+    } else if (selectedChips.length > 0 || trimmedCustom) {
+      canonicalAssistance = 'other';
     }
-    const combinedAssistance = assistanceParts.join(', ');
+
+    const descParts = [
+      ...selectedChips.map((k) => chipLabels[k]).filter(Boolean),
+      trimmedCustom,
+    ];
+    const extraDesc = descParts.join(', ');
+    const cleanNotes = notes.trim();
+    const finalNotes =
+      extraDesc && !cleanNotes.includes(extraDesc)
+        ? cleanNotes
+          ? `${extraDesc} · ${cleanNotes}`
+          : extraDesc
+        : cleanNotes;
 
     run(async () => {
       const r = await post<{ id: number }>('/rides', {
@@ -228,8 +316,8 @@ export default function RideNew() {
         pickup_address: address,
         destination,
         seats,
-        assistance: combinedAssistance,
-        notes,
+        assistance: canonicalAssistance,
+        notes: finalNotes,
         event_id: eventId ? Number(eventId) : undefined,
         is_proxy: isProxy,
         rider_name: isProxy ? riderName.trim() : undefined,
@@ -279,7 +367,7 @@ export default function RideNew() {
                 type="button"
                 aria-pressed={!isProxy}
                 className={`segmented-item ${!isProxy ? 'active' : ''}`}
-                onClick={() => setIsProxy(false)}
+                onClick={switchToMyself}
               >
                 <User size={16} aria-hidden="true" />
                 <span>{t('forMyself')}</span>
@@ -449,20 +537,46 @@ export default function RideNew() {
               <input
                 type="checkbox"
                 checked={includeReturn}
-                onChange={(e) => setIncludeReturn(e.target.checked)}
+                onChange={(e) => {
+                  const checked = e.target.checked;
+                  setIncludeReturn(checked);
+                  if (checked && time) {
+                    setReturnTime((cur) => (cur && cur > time ? cur : defaultReturnFor(time)));
+                  }
+                }}
               />
               <span>{t('includeReturn')}</span>
             </label>
             {includeReturn && (
               <div className="form-grid two">
-                <Field label={t('returnTime')} hint={t('returnHint')}>
-                  <input
-                    className="input"
-                    type="time"
-                    value={returnTime}
-                    onChange={(e) => setReturnTime(e.target.value)}
-                  />
-                </Field>
+                <div>
+                  <Field label={t('returnTime')} hint={t('returnHint')}>
+                    <input
+                      id="field-returnTime"
+                      className="input"
+                      type="time"
+                      value={returnTime}
+                      onChange={(e) => {
+                        setReturnTime(e.target.value);
+                        if (touched.returnTime) {
+                          const bad = !e.target.value.trim() || (Boolean(time) && e.target.value <= time);
+                          setErrors((cur) => ({
+                            ...cur,
+                            returnTime: bad
+                              ? !e.target.value.trim()
+                                ? t('fieldRequired')
+                                : t('rides.INVALID_PICKUP_TIME', { ns: 'errors' })
+                              : '',
+                          }));
+                        }
+                      }}
+                      aria-invalid={touched.returnTime && !!errors.returnTime}
+                    />
+                  </Field>
+                  {touched.returnTime && errors.returnTime && (
+                    <div className="field-error-msg" role="alert">{errors.returnTime}</div>
+                  )}
+                </div>
               </div>
             )}
           </section>
@@ -609,36 +723,36 @@ export default function RideNew() {
               <div className="chips-grid">
                 <button
                   type="button"
-                  className={`chip-toggle ${selectedChips.includes(t('needWheelchair')) ? 'active' : ''}`}
-                  onClick={() => toggleChip(t('needWheelchair'))}
-                  aria-pressed={selectedChips.includes(t('needWheelchair'))}
+                  className={`chip-toggle ${selectedChips.includes('wheelchair') ? 'active' : ''}`}
+                  onClick={() => toggleChip('wheelchair')}
+                  aria-pressed={selectedChips.includes('wheelchair')}
                 >
                   <Accessibility size={16} aria-hidden="true" />
                   <span>{t('needWheelchair')}</span>
                 </button>
                 <button
                   type="button"
-                  className={`chip-toggle ${selectedChips.includes(t('needWalkingAid')) ? 'active' : ''}`}
-                  onClick={() => toggleChip(t('needWalkingAid'))}
-                  aria-pressed={selectedChips.includes(t('needWalkingAid'))}
+                  className={`chip-toggle ${selectedChips.includes('walking') ? 'active' : ''}`}
+                  onClick={() => toggleChip('walking')}
+                  aria-pressed={selectedChips.includes('walking')}
                 >
                   <Footprints size={16} aria-hidden="true" />
                   <span>{t('needWalkingAid')}</span>
                 </button>
                 <button
                   type="button"
-                  className={`chip-toggle ${selectedChips.includes(t('needVisualAssistance')) ? 'active' : ''}`}
-                  onClick={() => toggleChip(t('needVisualAssistance'))}
-                  aria-pressed={selectedChips.includes(t('needVisualAssistance'))}
+                  className={`chip-toggle ${selectedChips.includes('visual') ? 'active' : ''}`}
+                  onClick={() => toggleChip('visual')}
+                  aria-pressed={selectedChips.includes('visual')}
                 >
                   <Eye size={16} aria-hidden="true" />
                   <span>{t('needVisualAssistance')}</span>
                 </button>
                 <button
                   type="button"
-                  className={`chip-toggle ${selectedChips.includes(t('needHelpInOut')) ? 'active' : ''}`}
-                  onClick={() => toggleChip(t('needHelpInOut'))}
-                  aria-pressed={selectedChips.includes(t('needHelpInOut'))}
+                  className={`chip-toggle ${selectedChips.includes('helpInOut') ? 'active' : ''}`}
+                  onClick={() => toggleChip('helpInOut')}
+                  aria-pressed={selectedChips.includes('helpInOut')}
                 >
                   <HeartHandshake size={16} aria-hidden="true" />
                   <span>{t('needHelpInOut')}</span>

@@ -78,6 +78,7 @@ services:
       TZ: Asia/Kuala_Lumpur
       APP_TIMEZONE: Asia/Kuala_Lumpur
       MAX_LIVE_DRIVERS: "10"
+      GEOCODER_USER_AGENT: "GraceRide/0.1 (+https://graceride.saliminn.my)"
       CHAT_RETENTION_DAYS: "180"
       AUDIT_RETENTION_DAYS: "730"
       RUST_LOG: grace_ride=info,tower_http=warn

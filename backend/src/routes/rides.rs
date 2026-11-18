@@ -844,7 +844,7 @@ async fn is_active_caregiver_for_ride(st: &AppState, r: &RideRow, user_id: i64) 
         return Ok(false);
     }
     let hit: Option<i64> = sqlx::query_scalar(
-        "SELECT 1
+        "SELECT cg.id
          FROM users cg
          WHERE cg.id = $1 AND cg.status = 'active'
            AND (

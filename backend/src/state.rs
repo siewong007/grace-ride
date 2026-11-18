@@ -3,7 +3,7 @@ use std::{path::PathBuf, sync::Arc};
 use chrono_tz::Tz;
 
 use sqlx::PgPool;
-use tokio::sync::broadcast;
+use tokio::sync::{broadcast, watch};
 use url::Url;
 use webauthn_rs::prelude::*;
 
@@ -238,6 +238,8 @@ pub struct AppState {
     pub routing: Arc<RoutingState>,
     /// Live updates for open tabs (`/api/stream`).
     pub events: broadcast::Sender<Push>,
+    /// Signals open SSE streams and background tasks to drain on `SIGTERM`/`SIGINT`.
+    pub shutdown: watch::Sender<bool>,
 }
 
 pub fn build_webauthn(public_url: &str) -> anyhow::Result<Webauthn> {

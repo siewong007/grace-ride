@@ -107,6 +107,7 @@ export default function HelpGuideEditor() {
   });
 
   const [autoSlug, setAutoSlug] = useState(isNew);
+  const [isDuplicated, setIsDuplicated] = useState(false);
   const [isDirty, setIsDirty] = useState(false);
   const [checklistOpen, setChecklistOpen] = useState(false);
   // Steps whose link is being typed by hand ("Custom path…" chosen in the picker).
@@ -122,6 +123,7 @@ export default function HelpGuideEditor() {
   // Populate from fetched guide
   useEffect(() => {
     if (initialGuide) {
+      setIsDuplicated(false);
       setF({
         slug: initialGuide.slug,
         title_en: initialGuide.title_en,
@@ -130,7 +132,9 @@ export default function HelpGuideEditor() {
         summary_zh: initialGuide.summary_zh,
         published: initialGuide.published,
         audience: initialGuide.audience,
-        steps: initialGuide.steps?.length ? initialGuide.steps : [emptyStep()],
+        steps: initialGuide.steps?.length
+          ? initialGuide.steps.map((s) => ({ ...s, id: s.id || newStepId() }))
+          : [emptyStep()],
         sort_order: (initialGuide as { sort_order?: number }).sort_order ?? 0,
       });
       setAutoSlug(false);
@@ -200,9 +204,14 @@ export default function HelpGuideEditor() {
   };
 
   // Checklist validation
+  const validSlug = /^[a-z0-9]+(?:-[a-z0-9]+)*$/.test(f.slug);
+  const isInvalidStepLink = (link: string) =>
+    Boolean(link) && (!link.startsWith('/') || link.startsWith('//') || link.startsWith('/api/'));
+  const invalidStepLink = f.steps.some((s) => isInvalidStepLink(s.link));
   const missingEn = !f.title_en.trim() || !f.summary_en.trim() || f.steps.some((s) => !s.title_en.trim());
   const missingZh = !f.title_zh.trim() || !f.summary_zh.trim() || f.steps.some((s) => !s.title_zh.trim());
   const gaps: string[] = [];
+  if (!validSlug) gaps.push('URL slug must contain lowercase letters, numbers, and hyphens only');
   if (!f.title_en.trim()) gaps.push('English title is missing');
   if (!f.title_zh.trim()) gaps.push('Chinese title is missing');
   if (!f.summary_en.trim()) gaps.push('English summary is missing');
@@ -210,20 +219,30 @@ export default function HelpGuideEditor() {
   f.steps.forEach((s, i) => {
     if (!s.title_en.trim()) gaps.push(`Step ${i + 1} English title is missing`);
     if (!s.title_zh.trim()) gaps.push(`Step ${i + 1} Chinese title is missing`);
+    if (isInvalidStepLink(s.link)) gaps.push(`Step ${i + 1} link must be a valid in-app path starting with /`);
   });
 
   const saveGuide = async (shouldPublish?: boolean) => {
+    if (!validSlug || invalidStepLink) {
+      const msg = !validSlug
+        ? 'URL slug must contain lowercase letters, numbers, and hyphens only'
+        : 'Step links must be valid in-app paths starting with /';
+      toast(msg, 'error');
+      return;
+    }
     const payload = {
       ...f,
+      steps: f.steps.map((s) => ({ ...s, id: s.id || newStepId() })),
       published: shouldPublish !== undefined ? shouldPublish : f.published,
     };
 
     run(async () => {
-      if (initialGuide) {
+      if (initialGuide && !isDuplicated) {
         await put(`/help/guides/${initialGuide.id}`, payload);
       } else {
         await post('/help/guides', payload);
       }
+      setIsDuplicated(false);
       setIsDirty(false);
       toast(t('guideSaved'));
       nav(`/help/guides/${payload.slug}`);
@@ -257,12 +276,15 @@ export default function HelpGuideEditor() {
 
   const handleDuplicate = () => {
     const duplicatedSlug = `${f.slug}-copy`;
+    setIsDuplicated(true);
+    setAutoSlug(false);
     setF((prev) => ({
       ...prev,
       slug: duplicatedSlug,
       title_en: `${prev.title_en} (Copy)`,
       title_zh: `${prev.title_zh} (Copy)`,
       published: false,
+      steps: prev.steps.map((s) => ({ ...s, id: newStepId() })),
     }));
     setIsDirty(true);
     toast(t('guideDuplicated', 'Duplicated as new draft'));
@@ -270,7 +292,7 @@ export default function HelpGuideEditor() {
 
   const testWalkthrough = () => {
     startWalkthrough({
-      id: initialGuide?.id ?? 0,
+      id: initialGuide && !isDuplicated ? initialGuide.id : 0,
       slug: f.slug,
       title_en: f.title_en,
       title_zh: f.title_zh,
@@ -291,7 +313,7 @@ export default function HelpGuideEditor() {
     <Page width="wide">
       <form onSubmit={handleSubmit} className="stack">
         <PageHeader
-          title={isNew ? t('guideNew') : t('guideEditPage')}
+          title={isNew || isDuplicated ? t('guideNew') : t('guideEditPage')}
           back="/help?tab=guides"
           actions={
             <div className="btn-row nowrap align-center">
@@ -304,7 +326,7 @@ export default function HelpGuideEditor() {
               >
                 {t('testWalkthrough', 'Test walkthrough')}
               </Button>
-              {!isNew && (
+              {!isNew && !isDuplicated && (
                 <Button
                   variant="ghost"
                   size="sm"
@@ -315,7 +337,7 @@ export default function HelpGuideEditor() {
                   {t('duplicate', 'Duplicate')}
                 </Button>
               )}
-              {!isNew && (
+              {!isNew && !isDuplicated && (
                 <Button
                   variant="danger"
                   size="sm"
@@ -505,7 +527,7 @@ export default function HelpGuideEditor() {
 
               <div className="stack">
                 {f.steps.map((s, idx) => (
-                  <div key={idx} className="card tight stack-xs" style={{ background: 'var(--surface-2)' }}>
+                  <div key={s.id || idx} className="card tight stack-xs" style={{ background: 'var(--surface-2)' }}>
                     <div className="row between nowrap">
                       <span className="bold small ellipsis">
                         {idx + 1}. {(formLang === 'en' ? s.title_en : s.title_zh) || t('untitledStep')}

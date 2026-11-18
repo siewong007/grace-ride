@@ -41,6 +41,12 @@ export default function Profile() {
   const { lock } = useAutoLock();
   const passkeys = useApi<{ id: number; label: string; created_at: string; last_used: string | null }[]>('/auth/passkeys');
   const [open, setOpen] = useState<SectionKey | null>(null);
+  const pushCfg = useApi<{
+    enabled?: boolean;
+    configured?: boolean;
+    vapid_public_key?: string;
+    subscription_count?: number;
+  }>(open === 'preferences' && me?.status !== 'pending' ? '/push/config' : null);
   const [f, setF] = useState({
     name: me?.name ?? '',
     phone: me?.phone ?? '',
@@ -53,6 +59,7 @@ export default function Profile() {
   const [whatsappOptIn, setWhatsappOptIn] = useState(Boolean(me?.whatsapp_opt_in));
   const [pushOptIn, setPushOptIn] = useState(me?.push_opt_in ?? true);
   const [pushStatus, setPushStatus] = useState('');
+  const [pushBusy, setPushBusy] = useState(false);
   const [totp, setTotp] = useState<{ secret: string; url: string } | null>(null);
   const [showVerify2fa, setShowVerify2fa] = useState(false);
   const [showBackupCodes, setShowBackupCodes] = useState<string[] | null>(null);
@@ -91,15 +98,29 @@ export default function Profile() {
       return;
     }
     setPushOptIn(true);
+    setPushBusy(true);
     try {
+      await put('/me', { push_opt_in: true }).catch(() => {});
+      void refresh();
       const cfg = await api<{ enabled?: boolean; vapid_public_key?: string }>('/push/config');
-      if ('serviceWorker' in navigator && cfg?.vapid_public_key) {
-        const reg = await navigator.serviceWorker.ready;
+      const reg = 'serviceWorker' in navigator ? await navigator.serviceWorker.getRegistration() : undefined;
+      if (cfg?.vapid_public_key && reg?.pushManager) {
         const pad = '='.repeat((4 - (cfg.vapid_public_key.length % 4)) % 4);
         const b64 = (cfg.vapid_public_key + pad).replace(/-/g, '+').replace(/_/g, '/');
         const raw = atob(b64);
         const keyBytes = Uint8Array.from(raw, (c) => c.charCodeAt(0));
-        const sub = await reg.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: keyBytes });
+        let sub: PushSubscription;
+        try {
+          sub = await reg.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: keyBytes });
+        } catch (err) {
+          const existing = await reg.pushManager.getSubscription();
+          if (existing) {
+            await existing.unsubscribe();
+            sub = await reg.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: keyBytes });
+          } else {
+            throw err;
+          }
+        }
         const json = sub.toJSON();
         if (json.endpoint) {
           await post('/push/subscribe', {
@@ -107,11 +128,54 @@ export default function Profile() {
             p256dh: json.keys?.p256dh ?? '',
             auth: json.keys?.auth ?? '',
           });
+          pushCfg.reload();
         }
+        setPushStatus(t('pushEnabled'));
+      } else {
+        setPushStatus(t('pushEnabledLocal'));
       }
-      setPushStatus(t('pushEnabled'));
     } catch {
       setPushStatus(t('pushEnabledLocal'));
+    } finally {
+      setPushBusy(false);
+    }
+  };
+
+  const sendTestPush = async () => {
+    setPushStatus('');
+    setPushBusy(true);
+    try {
+      await post('/push/test');
+      setPushStatus(t('pushTestSent'));
+    } catch {
+      setPushStatus(t('pushTestFailed'));
+    } finally {
+      setPushBusy(false);
+    }
+  };
+
+  const disableBrowserPush = async () => {
+    setPushStatus('');
+    setPushBusy(true);
+    try {
+      let endpoint = '';
+      if ('serviceWorker' in navigator) {
+        const reg = await navigator.serviceWorker.ready;
+        const sub = await reg.pushManager?.getSubscription?.();
+        if (sub) {
+          endpoint = sub.endpoint;
+          await sub.unsubscribe();
+        }
+      }
+      if (endpoint) {
+        await api('/push/subscribe', { method: 'DELETE', body: { endpoint } });
+        pushCfg.reload();
+      }
+      setPushStatus(t('pushDisabledDevice'));
+    } catch {
+      setPushStatus(t('pushTestFailed'));
+    } finally {
+      setPushBusy(false);
     }
   };
 
@@ -271,12 +335,25 @@ export default function Profile() {
                 <label className={`check ${pushOptIn ? 'on' : ''}`}>
                   <input type="checkbox" checked={pushOptIn} onChange={(e) => setPushOptIn(e.target.checked)} /> {t('pushOptIn')}
                 </label>
-                <div>
-                  <Button variant="secondary" size="sm" onClick={enableBrowserPush}>
+                {(pushCfg.data?.subscription_count ?? 0) > 0 && (
+                  <p className="muted tiny">{t('pushConnectedCount', { count: pushCfg.data?.subscription_count ?? 0 })}</p>
+                )}
+                <div className="row wrap gap-xs">
+                  <Button variant="secondary" size="sm" disabled={pushBusy} onClick={enableBrowserPush}>
                     {t('enableBrowserPush')}
                   </Button>
-                  {pushStatus && <p className="muted tiny">{pushStatus}</p>}
+                  {(pushCfg.data?.subscription_count ?? 0) > 0 && (
+                    <>
+                      <Button variant="secondary" size="sm" disabled={pushBusy} onClick={sendTestPush}>
+                        {t('sendTestPush')}
+                      </Button>
+                      <Button variant="ghost" size="sm" disabled={pushBusy} onClick={disableBrowserPush}>
+                        {t('disableBrowserPush')}
+                      </Button>
+                    </>
+                  )}
                 </div>
+                {pushStatus && <p className="muted tiny">{pushStatus}</p>}
                 <label className={`check ${whatsappOptIn ? 'on' : ''}`}>
                   <input type="checkbox" checked={whatsappOptIn} onChange={(e) => setWhatsappOptIn(e.target.checked)} /> {t('whatsappOptIn')}
                 </label>

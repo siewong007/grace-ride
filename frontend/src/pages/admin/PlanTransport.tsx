@@ -186,6 +186,7 @@ export default function PlanTransport() {
   };
 
   const sameAsLast = () => {
+    if (!canUpdate) return;
     const res = applyLastTime(plan, draft);
     if (res.placed > 0) setUndoStack((s) => [...s.slice(-24), draft]);
     setDraft(res.draft);
@@ -195,6 +196,7 @@ export default function PlanTransport() {
 
   const hasReturnRides = plan.rides.some((r) => r.leg === 'return' && draft[r.id] == null);
   const matchReturns = () => {
+    if (!canUpdate) return;
     const res = applyMatchReturnDrivers(plan, draft);
     if (res.placed > 0) setUndoStack((s) => [...s.slice(-24), draft]);
     setDraft(res.draft);
@@ -203,11 +205,13 @@ export default function PlanTransport() {
   };
 
   const resetAll = () => {
+    if (!canUpdate) return;
     setUndoStack((s) => [...s.slice(-24), draft]);
     setDraft(savedDraft(plan));
   };
 
   const send = async () => {
+    if (!canUpdate) return;
     if (anyOver) {
       toast.error(t('fixOver'));
       return;
@@ -273,34 +277,36 @@ export default function PlanTransport() {
             <div className="plan-summary" aria-live="polite">
               {t('summary', { placed, total: plan.rides.length, seats: seatsUsed })}
             </div>
-            <div className="btn-row">
-              <Button
-                variant="secondary"
-                icon={<Sparkles size={16} />}
-                onClick={autoArrange}
-                loading={arranging}
-                disabled={unassigned.length === 0 || arranging}
-              >
-                {t('autoArrange')}
-              </Button>
-              <Button variant="secondary" icon={<History size={16} />} onClick={sameAsLast} disabled={unassigned.length === 0}>
-                {t('sameAsLast')}
-              </Button>
-              {hasReturnRides && (
-                <Button variant="secondary" icon={<Repeat size={16} />} onClick={matchReturns}>
-                  {t('matchReturns')}
+            {canUpdate && (
+              <div className="btn-row">
+                <Button
+                  variant="secondary"
+                  icon={<Sparkles size={16} />}
+                  onClick={autoArrange}
+                  loading={arranging}
+                  disabled={unassigned.length === 0 || arranging}
+                >
+                  {t('autoArrange')}
                 </Button>
-              )}
-              <Button variant="ghost" icon={<Undo2 size={16} />} onClick={undoStep} disabled={undoStack.length === 0}>
-                {t('undoStep')}
-              </Button>
-              <Button variant="ghost" icon={<RotateCcw size={16} />} onClick={resetAll} disabled={!dirty}>
-                {t('reset')}
-              </Button>
-              <Button variant="primary" className="plan-confirm" icon={<Send size={16} />} onClick={send} disabled={!dirty || busy} loading={busy}>
-                {t('confirm', { count: changes.length })}
-              </Button>
-            </div>
+                <Button variant="secondary" icon={<History size={16} />} onClick={sameAsLast} disabled={unassigned.length === 0}>
+                  {t('sameAsLast')}
+                </Button>
+                {hasReturnRides && (
+                  <Button variant="secondary" icon={<Repeat size={16} />} onClick={matchReturns}>
+                    {t('matchReturns')}
+                  </Button>
+                )}
+                <Button variant="ghost" icon={<Undo2 size={16} />} onClick={undoStep} disabled={undoStack.length === 0}>
+                  {t('undoStep')}
+                </Button>
+                <Button variant="ghost" icon={<RotateCcw size={16} />} onClick={resetAll} disabled={!dirty}>
+                  {t('reset')}
+                </Button>
+                <Button variant="primary" className="plan-confirm" icon={<Send size={16} />} onClick={send} disabled={!dirty || busy} loading={busy}>
+                  {t('confirm', { count: changes.length })}
+                </Button>
+              </div>
+            )}
           </div>
 
           <div className="chips plan-filters" role="group" aria-label={t('title')}>
@@ -427,7 +433,12 @@ export default function PlanTransport() {
               .filter((d) => d.id !== pickerRide.passenger.id)
               .sort((a, b) => Number(inGroup(b, pickerRide)) - Number(inGroup(a, pickerRide)))
               .map((d) => {
-                const l = driverLoad(plan, draft, d);
+                const l = driverLoad(
+                  plan,
+                  draft,
+                  d,
+                  pickerRide.leg === 'return' ? 'return' : 'outbound',
+                );
                 const sameGrp = inGroup(d, pickerRide);
                 const sameArea = servesArea(d, pickerRide);
                 return (
@@ -564,7 +575,7 @@ function PassengerCard({
             const list = plan.drivers.filter((d) => d.id !== r.passenger.id && inGroup(d, r) === inside);
             if (!list.length) return null;
             const options = list.map((d) => {
-              const l = driverLoad(plan, draft, d);
+              const l = driverLoad(plan, draft, d, r.leg === 'return' ? 'return' : 'outbound');
               return (
                 <option key={d.id} value={d.id}>
                   {t('driverOption', { name: d.name, used: l.seats, cap: d.cap })}

@@ -3,10 +3,13 @@ import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { MemoryRouter, Route, Routes } from 'react-router-dom';
 import i18n from './i18n';
 import CarePass from './pages/CarePass';
+import HelpGuideEditor from './pages/HelpGuideEditor';
 import StepText from './components/StepText';
 import { AutoLockProvider } from './components/AutoLock';
+import { exportToCsv } from './format';
 import {
   applyMatchReturnDrivers,
+  driverLoad,
   fits,
   Plan,
   PlanDriver,
@@ -248,5 +251,141 @@ describe('Server-enforced AutoLock integration', () => {
 
     await waitFor(() => expect(mocks.post).toHaveBeenCalledWith('/auth/unlock', { totp_code: '123456' }));
     await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
+  });
+});
+
+describe('Security & flow audit regressions', () => {
+  it('computes per-leg driverLoad and pairs non-carpool return legs safely', () => {
+    const nonCarpoolDriver: PlanDriver = {
+      id: 20,
+      name: 'Non-Carpool Driver',
+      carpool: false,
+      cap: 4,
+      other_seats: 0,
+      other_rides: 0,
+      area_ids: [1],
+      vehicle: { model: 'Myvi', plate: 'VXX 20', seats: 4, wheelchair_ok: false, low_step: false, child_seat: false },
+    };
+    const outRide: PlanRide = {
+      id: 201,
+      passenger: { id: 60, name: 'Brother Lee' },
+      seats: 2,
+      area: { id: 1, name: 'PJ' },
+      pickup_at: '2026-11-22T08:30',
+      pickup_address: 'Jalan 2',
+      assistance: '',
+      notes: '',
+      status: 'confirmed',
+      driver_id: 20,
+      leg: 'outbound',
+      paired_ride_id: 202,
+      last: null,
+    };
+    const retRide: PlanRide = {
+      ...outRide,
+      id: 202,
+      pickup_at: '2026-11-22T12:00',
+      status: 'pending_driver',
+      driver_id: null,
+      leg: 'return',
+      paired_ride_id: 201,
+    };
+    const plan: Plan = {
+      event: { id: 12, title: 'Worship', starts_at: '2026-11-22T09:30', location: 'Church', status: 'published' },
+      rides: [outRide, retRide],
+      drivers: [nonCarpoolDriver],
+    };
+
+    expect(driverLoad(plan, { 201: 20, 202: 20 }, nonCarpoolDriver, 'outbound')).toEqual({
+      seats: 2,
+      rides: 1,
+      over: false,
+    });
+    expect(driverLoad(plan, { 201: 20, 202: 20 }, nonCarpoolDriver, 'return')).toEqual({
+      seats: 2,
+      rides: 1,
+      over: false,
+    });
+
+    const res = applyMatchReturnDrivers(plan, { 201: 20, 202: null });
+    expect(res.placed).toBe(1);
+    expect(res.draft[202]).toBe(20);
+  });
+
+  it('neutralizes CSV formula prefixes in exportToCsv while preserving plain numbers and text', async () => {
+    let capturedBlob: Blob | null = null;
+    const origCreate = URL.createObjectURL;
+    const origRevoke = URL.revokeObjectURL;
+    URL.createObjectURL = vi.fn((b: Blob) => {
+      capturedBlob = b;
+      return 'blob:mock';
+    }) as typeof URL.createObjectURL;
+    URL.revokeObjectURL = vi.fn();
+
+    exportToCsv('audit-test', ['Name', 'Amount', 'Note'], [
+      ['=1+1', 25, '  @SUM(A1)'],
+      ['+cmd', -5, '-2+3'],
+      ['Alice', 10, 'Normal text'],
+    ]);
+
+    expect(capturedBlob).not.toBeNull();
+    const csvText = await new Promise<string>((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = () => resolve(String(reader.result));
+      reader.onerror = () => reject(reader.error);
+      reader.readAsText(capturedBlob!);
+    });
+    URL.createObjectURL = origCreate;
+    URL.revokeObjectURL = origRevoke;
+
+    expect(csvText).toContain('"\'=1+1","25","\'  @SUM(A1)"');
+    expect(csvText).toContain('"\'+cmd","-5","\'-2+3"');
+    expect(csvText).toContain('"Alice","10","Normal text"');
+  });
+
+  it('creates a new draft via POST instead of overwriting when duplicating a guide', async () => {
+    mocks.post.mockReset().mockResolvedValue({ id: 404 });
+    mocks.useApiData.set('/help/guides/welcome', {
+      id: 7,
+      slug: 'welcome',
+      title_en: 'Welcome Guide',
+      title_zh: 'Welcome Guide ZH',
+      summary_en: 'Start here',
+      summary_zh: 'Start here ZH',
+      published: true,
+      audience: 'member',
+      steps: [
+        {
+          id: 'orig_step_1',
+          title_en: 'Open home',
+          title_zh: 'Open home ZH',
+          body_en: 'Go home',
+          body_zh: 'Go home ZH',
+          link: '/',
+          image_file_id: null,
+        },
+      ],
+    });
+
+    render(
+      <MemoryRouter initialEntries={['/help/guides/welcome/edit']}>
+        <Routes>
+          <Route path="/help/guides/:slug/edit" element={<HelpGuideEditor />} />
+          <Route path="/help/guides/:slug" element={<div>guide-saved-route</div>} />
+        </Routes>
+      </MemoryRouter>,
+    );
+
+    const dupBtn = await screen.findByRole('button', { name: /duplicate/i });
+    fireEvent.click(dupBtn);
+
+    const saveDraftBtn = await screen.findByRole('button', { name: 'Save draft' });
+    fireEvent.click(saveDraftBtn);
+
+    await waitFor(() => expect(mocks.post).toHaveBeenCalledTimes(1));
+    expect(mocks.post.mock.calls[0][0]).toBe('/help/guides');
+    const submitted = mocks.post.mock.calls[0][1] as { slug: string; steps: { id: string }[] };
+    expect(submitted.slug).toBe('welcome-copy');
+    expect(submitted.steps[0].id).not.toBe('orig_step_1');
   });
 });

@@ -1,6 +1,7 @@
 import { FormEvent, useEffect, useState } from 'react';
 import { useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import { post, put, useApi } from '../api';
+import { useAuth } from '../auth';
 import { Button, ErrorBox, Field, Page, PageHeader, useAction } from '../components/ui';
 import { EVENT_KIND, useFormatT } from '../format';
 import { useTranslation } from 'react-i18next';
@@ -32,10 +33,12 @@ interface ExistingEvent {
   as_group_ids: number[];
   photo_file_id: number | null;
   attendance_enabled: boolean;
+  created_by?: { id: number };
 }
 
 export default function EventForm() {
   const { t } = useTranslation('eventForm');
+  const { me } = useAuth();
   const ft = useFormatT();
   const { id } = useParams();
   const [params] = useSearchParams();
@@ -67,7 +70,8 @@ export default function EventForm() {
 
   useEffect(() => {
     if (!existing) return;
-    const [d, t2] = existing.starts_at.split('T');
+    const [d = '', t2 = ''] = existing.starts_at.split(/[T ]/);
+    const keepPhoto = !duplicateId || (me?.id != null && existing.created_by?.id === me.id);
     setF({
       title: existing.title,
       kind: existing.kind,
@@ -80,13 +84,13 @@ export default function EventForm() {
       deadline: duplicateId ? '' : existing.signup_deadline ?? '',
       group_ids: existing.group_ids,
       as_group_ids: existing.as_group_ids ?? [],
-      photo_file_id: existing.photo_file_id ?? null,
+      photo_file_id: keepPhoto ? (existing.photo_file_id ?? null) : null,
       attendance_enabled: existing.attendance_enabled ?? true,
       repeat_frequency: 'none',
       repeat_count: '4',
     });
     setNarrow((existing.as_group_ids ?? []).length > 0);
-  }, [existing, duplicateId]);
+  }, [existing, duplicateId, me?.id]);
 
   const set = (k: keyof typeof f) => (e: { target: { value: string } }) =>
     setF({ ...f, [k]: e.target.value });

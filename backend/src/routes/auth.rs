@@ -428,6 +428,10 @@ async fn logout_all(
         .bind(u.id)
         .execute(&st.db)
         .await?;
+    sqlx::query("DELETE FROM push_subscriptions WHERE user_id=$1")
+        .bind(u.id)
+        .execute(&st.db)
+        .await?;
     audit(&st.db, Some(u.id), "logout.all", "user", Some(u.id), "").await;
     Ok((clear_cookies(jar), Json(json!({"ok": true}))))
 }

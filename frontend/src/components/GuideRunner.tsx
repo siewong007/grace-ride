@@ -1,9 +1,9 @@
 import { createContext, ReactNode, useContext, useEffect, useState } from 'react';
 import { useLocation, useNavigate, Link } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
-import { ChevronDown, ChevronUp, ExternalLink, HelpCircle, X } from 'lucide-react';
+import { AlertTriangle, ChevronDown, ChevronUp, ExternalLink, HelpCircle, Info, Lightbulb, X } from 'lucide-react';
 import { markDone } from '../guideProgress';
-import StepText from './StepText';
+import StepText, { inline } from './StepText';
 import { GuideDetailData, GuideStep, GuideSummary, usePick } from '../pages/HelpGuides';
 import { Button, useToast } from './ui';
 import { useApi } from '../api';
@@ -60,6 +60,13 @@ function WalkthroughCard({ active, minimised, onMinimise, onPrev, onNext, onStop
   const last = stepIndex === total - 1;
   const stepTitle = pick(step?.title_zh ?? '', step?.title_en ?? '');
   const stepBody = pick(step?.body_zh ?? '', step?.body_en ?? '');
+  const stepNote = pick(step?.note_zh ?? '', step?.note_en ?? '');
+  const noteClass =
+    step?.note_kind === 'warning' || step?.note_kind === 'important'
+      ? 'warning'
+      : step?.note_kind === 'note'
+        ? 'note'
+        : 'tip';
   const counter = t('stepOfTotal', { n: stepIndex + 1, total });
 
   return (
@@ -84,6 +91,18 @@ function WalkthroughCard({ active, minimised, onMinimise, onPrev, onNext, onStop
           <div className="guide-card-body">
             <h2 className="guide-card-title">{stepTitle || t('stepNumber', { n: stepIndex + 1 })}</h2>
             {stepBody && <StepText text={stepBody} />}
+            {stepNote && (
+              <p className={`guide-note ${noteClass}`}>
+                {noteClass === 'warning' ? (
+                  <AlertTriangle size={16} aria-hidden="true" />
+                ) : noteClass === 'note' ? (
+                  <Info size={16} aria-hidden="true" />
+                ) : (
+                  <Lightbulb size={16} aria-hidden="true" />
+                )}
+                <span>{inline(stepNote)}</span>
+              </p>
+            )}
             {step?.image_file_id && (
               <a
                 href={`/api/files/${step.image_file_id}`}

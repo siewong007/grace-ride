@@ -248,9 +248,13 @@ export function ReimbursementForm() {
             {f.file && (
               <div className="receipt-drop-preview">
                 <img
+                  key={f.file}
                   className="receipt-drop-thumb"
                   src={`/api/files/${f.file}`}
                   alt={t('receipt')}
+                  onError={(e) => {
+                    e.currentTarget.style.display = 'none';
+                  }}
                 />
                 <span className="small muted">{t('receipt')} #{f.file}</span>
               </div>

@@ -14,7 +14,7 @@ lint:               ## Formatting and clippy (what CI enforces)
 	cd backend && ../$(CARGO) fmt --check && ../$(CARGO) clippy --all-targets -- -D warnings
 audit:              ## Known-vulnerability scan for both stacks
 	cd backend && ../$(CARGO) audit
-	cd frontend && npm audit --audit-level=high
+	cd frontend && npm audit --omit=dev --audit-level=high
 build:              ## Release binary + production web bundle
 	cd frontend && npm run build
 	cd backend && ../$(CARGO) build --release

@@ -2,7 +2,7 @@ import { useState } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
 import { Download } from 'lucide-react';
-import { post, useApi } from '../../api';
+import { del, post, useApi } from '../../api';
 import { useAuth } from '../../auth';
 import {
   Button,
@@ -361,6 +361,9 @@ function ReviewModal({
           className="receipt-thumb"
           src={`/api/files/${r.receipt_file_id}`}
           alt={t('reimb.receiptAlt')}
+          onError={(e) => {
+            e.currentTarget.style.display = 'none';
+          }}
         />
         <ReceiptLink id={r.receipt_file_id} label={t('reimb.openReceipt')} />
         <p className="small">{r.description}</p>
@@ -454,13 +457,13 @@ function PayModal({
         <Button
           variant="primary"
           block
-          disabled={busy || !verified || ref.length < 4}
+          disabled={busy || !verified || ref.trim().length < 4}
           onClick={() =>
             run(
               () =>
                 post(`/reimbursements/${r.id}/pay`, {
                   payee_verified: verified,
-                  paid_ref: ref,
+                  paid_ref: ref.trim(),
                 }).then(onDone),
               t('reimb.recorded'),
             )
@@ -488,6 +491,8 @@ interface PayoutBatch {
 
 function MonthlyPayoutBatches({ onChanged }: { onChanged: () => void }) {
   const { t } = useTranslation('admin');
+  const { can } = useAuth();
+  const canPay = can('admin_reimb_pay', 'update');
   const { data: raw, reload } = useApi<PayoutBatch[]>('/reimbursements/batches');
   const batches = Array.isArray(raw) ? raw : [];
   const [month, setMonth] = useState(() => todayStr().slice(0, 7));
@@ -502,6 +507,33 @@ function MonthlyPayoutBatches({ onChanged }: { onChanged: () => void }) {
       await reload();
       onChanged();
     }, t('reimb.batchCreated'));
+  };
+
+  const cancelBatch = (id: number) => {
+    run(async () => {
+      await del(`/reimbursements/batches/${id}`);
+      await reload();
+      onChanged();
+    }, t('reimb.batchCancelled'));
+  };
+
+  const downloadCsv = (b: PayoutBatch) => {
+    run(async () => {
+      const res = await fetch(`/api/reimbursements/batches/${b.id}/csv`, { credentials: 'same-origin' });
+      if (!res.ok) {
+        const err = await res.json().catch(() => null);
+        throw new Error(err?.error || res.statusText);
+      }
+      const blob = await res.blob();
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `payout-batch-${b.month}-${b.id}.csv`;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+    });
   };
 
   const confirmPay = () => {
@@ -526,18 +558,20 @@ function MonthlyPayoutBatches({ onChanged }: { onChanged: () => void }) {
           <h3 className="no-margin">{t('reimb.batchTitle')}</h3>
           <p className="muted tiny no-margin">{t('reimb.batchDesc')}</p>
         </div>
-        <div className="row nowrap gap-xs">
-          <input
-            type="month"
-            className="input"
-            aria-label={t('reimb.batchMonth')}
-            value={month}
-            onChange={(e) => setMonth(e.target.value)}
-          />
-          <Button variant="primary" size="sm" disabled={busy || !month} onClick={createBatch}>
-            {t('reimb.batchCreate')}
-          </Button>
-        </div>
+        {canPay && (
+          <div className="row nowrap gap-xs">
+            <input
+              type="month"
+              className="input"
+              aria-label={t('reimb.batchMonth')}
+              value={month}
+              onChange={(e) => setMonth(e.target.value)}
+            />
+            <Button variant="primary" size="sm" disabled={busy || !month} onClick={createBatch}>
+              {t('reimb.batchCreate')}
+            </Button>
+          </div>
+        )}
       </div>
 
       <ErrorBox error={error} />
@@ -556,22 +590,37 @@ function MonthlyPayoutBatches({ onChanged }: { onChanged: () => void }) {
                 </div>
               </div>
               <div className="row nowrap gap-xs">
-                <a className="btn secondary sm" href={`/api/reimbursements/batches/${b.id}/csv`}>
-                  <Download size={14} />
+                <Button
+                  variant="secondary"
+                  size="sm"
+                  disabled={busy}
+                  onClick={() => downloadCsv(b)}
+                  icon={<Download size={14} />}
+                >
                   {t('reimb.batchCsv')}
-                </a>
-                {b.status === 'open' && (
-                  <Button
-                    variant="primary"
-                    size="sm"
-                    onClick={() => {
-                      setPayBatch(b);
-                      setVerified(false);
-                      setPaidRef('');
-                    }}
-                  >
-                    {t('reimb.batchPayBtn')}
-                  </Button>
+                </Button>
+                {b.status === 'open' && canPay && (
+                  <>
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      disabled={busy}
+                      onClick={() => cancelBatch(b.id)}
+                    >
+                      {t('reimb.batchCancel')}
+                    </Button>
+                    <Button
+                      variant="primary"
+                      size="sm"
+                      onClick={() => {
+                        setPayBatch(b);
+                        setVerified(false);
+                        setPaidRef('');
+                      }}
+                    >
+                      {t('reimb.batchPayBtn')}
+                    </Button>
+                  </>
                 )}
               </div>
             </div>
@@ -604,7 +653,7 @@ function MonthlyPayoutBatches({ onChanged }: { onChanged: () => void }) {
             <Button
               variant="primary"
               block
-              disabled={busy || !verified || paidRef.trim().length < 3}
+              disabled={busy || !verified || paidRef.trim().length < 4}
               onClick={confirmPay}
             >
               {t('reimb.record')}

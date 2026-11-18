@@ -1246,10 +1246,6 @@ async fn mark_attendance(
     }
     let v = req.attended.map(|a| a as i64);
     let mut tx = st.db.begin().await?;
-    let (capacity,): (i64,) = sqlx::query_as("SELECT capacity FROM events WHERE id=$1 FOR UPDATE")
-        .bind(id)
-        .fetch_one(&mut *tx)
-        .await?;
     let target_status: Option<(String,)> = sqlx::query_as("SELECT status FROM users WHERE id=$1")
         .bind(req.user_id)
         .fetch_optional(&mut *tx)
@@ -1264,19 +1260,6 @@ async fn mark_attendance(
     .bind(req.user_id)
     .fetch_optional(&mut *tx)
     .await?;
-    let promoting_to_going =
-        v == Some(1) && existing.as_ref().map(|(s,)| s.as_str()) != Some("going");
-    if promoting_to_going && capacity > 0 {
-        let (going,): (i64,) = sqlx::query_as(
-            "SELECT COUNT(*) FROM event_signups WHERE event_id=$1 AND status='going'",
-        )
-        .bind(id)
-        .fetch_one(&mut *tx)
-        .await?;
-        if going >= capacity {
-            return Err(bad(u.lang, ErrorKey::SignupClosed));
-        }
-    }
     // Recording someone as attended also makes them a participant: a member who withdrew
     // (or was still waitlisted) but came anyway is a walk-in and must show in the list
     // and count, which only include 'going'.

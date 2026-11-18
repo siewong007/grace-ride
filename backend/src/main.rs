@@ -29,7 +29,8 @@ async fn main() -> anyhow::Result<()> {
     }
 
     let state = init(cfg.clone()).await?;
-    jobs::spawn(state.db.clone(), cfg.clone());
+    let shutdown_tx = state.shutdown.clone();
+    jobs::spawn_with_shutdown(state.db.clone(), cfg.clone(), shutdown_tx.subscribe());
     let app = router(state);
 
     let addr: SocketAddr = cfg.bind.parse()?;
@@ -43,7 +44,7 @@ async fn main() -> anyhow::Result<()> {
         listener,
         app.into_make_service_with_connect_info::<SocketAddr>(),
     )
-    .with_graceful_shutdown(shutdown())
+    .with_graceful_shutdown(shutdown(shutdown_tx))
     .await?;
 
     tracing::info!("shut down cleanly");
@@ -71,7 +72,7 @@ async fn healthcheck() -> anyhow::Result<()> {
     }
 }
 
-async fn shutdown() {
+async fn shutdown(shutdown_tx: tokio::sync::watch::Sender<bool>) {
     let ctrl_c = async {
         let _ = tokio::signal::ctrl_c().await;
     };
@@ -86,4 +87,5 @@ async fn shutdown() {
     let term = std::future::pending::<()>();
     tokio::select! { _ = ctrl_c => {}, _ = term => {} }
     tracing::info!("shutdown signal received");
+    let _ = shutdown_tx.send(true);
 }

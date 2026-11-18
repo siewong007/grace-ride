@@ -26,6 +26,10 @@ export interface PlanDriver {
   cap: number;
   other_seats: number;
   other_rides: number;
+  other_outbound_seats?: number;
+  other_outbound_rides?: number;
+  other_return_seats?: number;
+  other_return_rides?: number;
   area_ids: number[];
   /** Groups this driver may drive for: their groups and every group below them. */
   drive_group_ids?: number[];
@@ -62,18 +66,46 @@ export interface Load {
   over: boolean;
 }
 
-export function driverLoad(plan: Plan, draft: Draft, d: PlanDriver): Load {
-  const mine = plan.rides.filter((r) => draft[r.id] === d.id);
-  const seats = d.other_seats + mine.reduce((n, r) => n + r.seats, 0);
-  const rides = d.other_rides + mine.length;
-  return { seats, rides, over: seats > d.cap || (!d.carpool && rides > 1) };
+export function driverLoad(plan: Plan, draft: Draft, d: PlanDriver, leg?: 'outbound' | 'return'): Load {
+  if (leg) {
+    const mine = plan.rides.filter(
+      (r) => draft[r.id] === d.id && (r.leg === 'return' ? 'return' : 'outbound') === leg,
+    );
+    const baseSeats =
+      leg === 'return' ? (d.other_return_seats ?? 0) : (d.other_outbound_seats ?? d.other_seats ?? 0);
+    const baseRides =
+      leg === 'return' ? (d.other_return_rides ?? 0) : (d.other_outbound_rides ?? d.other_rides ?? 0);
+    const seats = baseSeats + mine.reduce((n, r) => n + r.seats, 0);
+    const rides = baseRides + mine.length;
+    return { seats, rides, over: seats > d.cap || (!d.carpool && rides > 1) };
+  }
+  const out = driverLoad(plan, draft, d, 'outbound');
+  const hasReturn = plan.rides.some((r) => r.leg === 'return') || (d.other_return_rides ?? 0) > 0;
+  if (!hasReturn) return out;
+  const ret = driverLoad(plan, draft, d, 'return');
+  return {
+    seats: Math.max(out.seats, ret.seats),
+    rides: out.rides + ret.rides,
+    over: out.over || ret.over,
+  };
 }
 
 /** Check whether a driver's vehicle supports the rider's mobility/equipment requirements. */
 export function vehicleCompatible(d: PlanDriver, ride: PlanRide): boolean {
-  const lower = (ride.assistance || '').toLowerCase();
-  if (lower.includes('wheelchair') && !d.vehicle.wheelchair_ok) return false;
-  if ((lower.includes('stroller') || lower.includes('child seat')) && !d.vehicle.child_seat) {
+  const raw = ride.assistance || '';
+  const lower = raw.toLowerCase();
+  if ((lower.includes('wheelchair') || raw.includes('\u8f6e\u6905')) && !d.vehicle.wheelchair_ok) {
+    return false;
+  }
+  if (
+    (lower.includes('stroller') ||
+      lower.includes('child seat') ||
+      lower.includes('child_seat') ||
+      raw.includes('\u5a74\u513f\u8f66') ||
+      raw.includes('\u513f\u7ae5\u5ea7\u6905') ||
+      raw.includes('\u5b89\u5168\u5ea7\u6905')) &&
+    !d.vehicle.child_seat
+  ) {
     return false;
   }
   return true;
@@ -83,7 +115,8 @@ export function vehicleCompatible(d: PlanDriver, ride: PlanRide): boolean {
 export function fits(plan: Plan, draft: Draft, d: PlanDriver, ride: PlanRide): boolean {
   if (ride.passenger.id === d.id) return false;
   if (!vehicleCompatible(d, ride)) return false;
-  return !driverLoad(plan, { ...draft, [ride.id]: d.id }, d).over;
+  const leg = ride.leg === 'return' ? 'return' : 'outbound';
+  return !driverLoad(plan, { ...draft, [ride.id]: d.id }, d, leg).over;
 }
 
 export const servesArea = (d: PlanDriver, ride: PlanRide) => d.area_ids.includes(ride.area.id);

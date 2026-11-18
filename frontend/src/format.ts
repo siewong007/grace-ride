@@ -205,7 +205,11 @@ export function exportToCsv(
 ) {
   const escapeCell = (val: unknown): string => {
     if (val === null || val === undefined) return '""';
-    const str = String(val).replace(/"/g, '""');
+    const raw =
+      typeof val === 'string' && (/^[=+\-@\t\r]/.test(val) || /^[=+\-@]/.test(val.trimStart()))
+        ? `'${val}`
+        : String(val);
+    const str = raw.replace(/"/g, '""');
     return `"${str}"`;
   };
 

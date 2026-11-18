@@ -734,12 +734,16 @@ interface AlertSettingsData {
   telegram_bot_configured?: boolean;
   telegram_bot_username?: string;
   alert_webhook_url?: string;
+  alert_webhook_configured?: boolean;
   vapid_public_key?: string;
+  vapid_private_configured?: boolean;
+  push_subscriptions_count?: number;
 }
 
 function AlertChannelSettings() {
   const { t } = useTranslation('admin');
   const { can } = useAuth();
+  const confirm = useConfirm();
   const canUpdate = can('admin_settings', 'update');
   const { data, loading, reload } = useApi<AlertSettingsData>('/admin/settings/alerts');
   const cfg = data && !Array.isArray(data) ? data : null;
@@ -747,14 +751,15 @@ function AlertChannelSettings() {
   const [tgToken, setTgToken] = useState('');
   const [clearToken, setClearToken] = useState(false);
   const [webhookUrl, setWebhookUrl] = useState('');
+  const [clearWebhook, setClearWebhook] = useState(false);
   const [vapidKey, setVapidKey] = useState('');
+  const [vapidPrivateKey, setVapidPrivateKey] = useState('');
   const [initialized, setInitialized] = useState(false);
   const { busy, error, run } = useAction();
 
   useEffect(() => {
     if (cfg && !initialized) {
       setTgUser(cfg.telegram_bot_username ?? '');
-      setWebhookUrl(cfg.alert_webhook_url ?? '');
       setVapidKey(cfg.vapid_public_key ?? '');
       setInitialized(true);
     }
@@ -767,13 +772,35 @@ function AlertChannelSettings() {
         telegram_bot_username: tgUser.trim(),
         telegram_bot_token: tgToken.trim() || undefined,
         clear_telegram_bot_token: clearToken,
-        alert_webhook_url: webhookUrl.trim(),
+        alert_webhook_url: webhookUrl.trim() || undefined,
+        clear_alert_webhook_url: clearWebhook,
         vapid_public_key: vapidKey.trim(),
+        vapid_private_key: vapidPrivateKey.trim() || undefined,
       });
       setTgToken('');
+      setVapidPrivateKey('');
       setClearToken(false);
+      setWebhookUrl('');
+      setClearWebhook(false);
+      setInitialized(false);
       await reload();
     }, t('settings.alertsSaved'));
+  };
+
+  const rotateVapidKeys = async () => {
+    const ok = await confirm({
+      title: t('settings.rotateVapidConfirmTitle'),
+      body: t('settings.rotateVapidConfirmBody'),
+      confirmLabel: t('settings.rotateVapid'),
+      tone: 'danger',
+    });
+    if (!ok) return;
+    run(async () => {
+      await put('/admin/settings/alerts', { rotate_vapid_keys: true });
+      setVapidPrivateKey('');
+      setInitialized(false);
+      await reload();
+    }, t('settings.vapidRotated'));
   };
 
   return (
@@ -784,9 +811,16 @@ function AlertChannelSettings() {
           <p className="muted small">{t('settings.alertsDesc')}</p>
         </div>
         {cfg && (
-          <Pill tone={cfg.telegram_bot_configured ? 'success' : 'neutral'}>
-            {cfg.telegram_bot_configured ? t('settings.tgConfigured') : t('settings.tgNotConfigured')}
-          </Pill>
+          <div className="row wrap gap-xs">
+            <Pill tone={cfg.telegram_bot_configured ? 'success' : 'neutral'}>
+              {cfg.telegram_bot_configured ? t('settings.tgConfigured') : t('settings.tgNotConfigured')}
+            </Pill>
+            <Pill tone={cfg.vapid_private_configured ? 'success' : 'neutral'}>
+              {cfg.vapid_private_configured
+                ? t('settings.pushConfiguredCount', { count: cfg.push_subscriptions_count ?? 0 })
+                : t('settings.pushNotConfigured')}
+            </Pill>
+          </div>
         )}
       </div>
 
@@ -829,25 +863,51 @@ function AlertChannelSettings() {
           <Field label={t('settings.webhookUrl')} hint={t('settings.webhookUrlHint')}>
             <input
               className="input"
-              disabled={!canUpdate || busy}
+              disabled={!canUpdate || busy || clearWebhook}
               value={webhookUrl}
               onChange={(e) => setWebhookUrl(e.target.value)}
-              placeholder="https://example.org/hooks/grace-ride"
+              placeholder={cfg?.alert_webhook_url || 'https://example.org/hooks/grace-ride'}
             />
           </Field>
-          <Field label={t('settings.vapidPublicKey')}>
-            <input
-              className="input mono"
-              disabled={!canUpdate || busy}
-              value={vapidKey}
-              onChange={(e) => setVapidKey(e.target.value)}
-            />
-          </Field>
+          {canUpdate && (cfg?.alert_webhook_configured || Boolean(cfg?.alert_webhook_url)) && (
+            <label className="row gap-xs items-center small">
+              <input
+                type="checkbox"
+                checked={clearWebhook}
+                onChange={(e) => setClearWebhook(e.target.checked)}
+              />
+              <span>{t('settings.webhookClear')}</span>
+            </label>
+          )}
+          <div className="form-grid two">
+            <Field label={t('settings.vapidPublicKey')}>
+              <input
+                className="input mono"
+                disabled={!canUpdate || busy}
+                value={vapidKey}
+                onChange={(e) => setVapidKey(e.target.value)}
+              />
+            </Field>
+            <Field label={t('settings.vapidPrivateKey')} hint={t('settings.vapidPrivateKeyHint')}>
+              <input
+                className="input mono"
+                type="password"
+                autoComplete="off"
+                disabled={!canUpdate || busy}
+                value={vapidPrivateKey}
+                onChange={(e) => setVapidPrivateKey(e.target.value)}
+                placeholder={cfg?.vapid_private_configured ? '••••••••' : ''}
+              />
+            </Field>
+          </div>
           <ErrorBox error={error} />
           {canUpdate && (
             <div className="btn-row">
               <Button variant="primary" type="submit" disabled={busy} loading={busy}>
                 {t('settings.saveAlerts')}
+              </Button>
+              <Button variant="secondary" type="button" disabled={busy} onClick={rotateVapidKeys}>
+                {t('settings.rotateVapid')}
               </Button>
             </div>
           )}

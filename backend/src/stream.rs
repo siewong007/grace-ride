@@ -18,7 +18,7 @@ use axum::{
 };
 use tokio::sync::broadcast;
 use tokio_stream::{
-    wrappers::{BroadcastStream, IntervalStream},
+    wrappers::{BroadcastStream, IntervalStream, WatchStream},
     Stream, StreamExt,
 };
 
@@ -135,8 +135,11 @@ pub async fn handler(
         let session_id = session_id.clone();
         async move { Tick::Session(session_alive_checked(&state, &session_id).await) }
     });
+    let shutdown = WatchStream::new(st.shutdown.subscribe())
+        .filter_map(|stop| stop.then_some(Tick::Session(false)));
     let stream = pushes
         .merge(checks)
+        .merge(shutdown)
         .take_while(|t| !matches!(t, Tick::Session(false)))
         .filter_map(move |t| {
             let _hold = &guard;

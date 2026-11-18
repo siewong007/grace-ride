@@ -327,8 +327,9 @@ function Schedule() {
             size="sm"
             disabled={busy}
             onClick={async () => {
-              await run(() => post(`/rides/${r.id}/arrived-gate`).then(reload));
-              toast.success(t('arrivedGateSent'));
+              if (await run(() => post(`/rides/${r.id}/arrived-gate`).then(reload))) {
+                toast.success(t('arrivedGateSent'));
+              }
             }}
           >
             {t('arrivedGate')}
@@ -342,8 +343,9 @@ function Schedule() {
               size="sm"
               disabled={busy}
               onClick={async () => {
-                await run(() => post(`/rides/${r.id}/driver-delay`, { delay_minutes: 5 }).then(reload));
-                toast.success(t('delayToast', { mins: 5 }));
+                if (await run(() => post(`/rides/${r.id}/driver-delay`, { delay_minutes: 5 }).then(reload))) {
+                  toast.success(t('delayToast', { mins: 5 }));
+                }
               }}
             >
               {t('delayPlus5')}
@@ -353,8 +355,9 @@ function Schedule() {
               size="sm"
               disabled={busy}
               onClick={async () => {
-                await run(() => post(`/rides/${r.id}/driver-delay`, { delay_minutes: 10 }).then(reload));
-                toast.success(t('delayToast', { mins: 10 }));
+                if (await run(() => post(`/rides/${r.id}/driver-delay`, { delay_minutes: 10 }).then(reload))) {
+                  toast.success(t('delayToast', { mins: 10 }));
+                }
               }}
             >
               {t('delayPlus10')}
@@ -617,7 +620,10 @@ function Settings() {
           color: profile.vehicle?.color ?? '',
           plate: profile.vehicle?.plate ?? '',
           seats: Number(profile.vehicle?.seats) || 5,
-          vehicle_type: profile.vehicle?.vehicle_type ?? 'standard',
+          vehicle_type:
+            profile.vehicle?.vehicle_type ??
+            (profile.vehicle as { type?: string } | null)?.type ??
+            'standard',
           wheelchair_ok: !!profile.vehicle?.wheelchair_ok,
           low_step: !!profile.vehicle?.low_step,
           child_seat: !!profile.vehicle?.child_seat,
@@ -925,12 +931,15 @@ const WEEKDAYS_DRIVE = ['sun', 'mon', 'tue', 'wed', 'thu', 'fri', 'sat'] as cons
 
 function StandingDriverSchedules({ areas }: { areas: Area[] }) {
   const { t } = useTranslation('drive');
+  const { can } = useAuth();
+  const canUpdate = can('drive', 'update');
   const { data: listRaw, reload } = useApi<DriverStanding[]>('/recurring-schedules');
   const rows = (Array.isArray(listRaw) ? listRaw : []).filter((r) => r.kind === 'driver');
   const { busy, error, run } = useAction();
   const [f, setF] = useState({ weekday: 0, pickup_time: '08:30', area_id: '', destination: '', label: '' });
 
   const add = () => {
+    if (!canUpdate) return;
     run(async () => {
       await post('/recurring-schedules', {
         kind: 'driver',
@@ -966,44 +975,50 @@ function StandingDriverSchedules({ areas }: { areas: Area[] }) {
                   {s.area_name}{s.destination ? ` → ${s.destination}` : ''}
                 </div>
               </div>
-              <IconButton
-                size="sm"
-                variant="danger"
-                label={t('standingDelete')}
-                icon={<Trash2 size={15} />}
-                onClick={() => run(() => del(`/recurring-schedules/${s.id}`).then(reload))}
-              />
+              {canUpdate && (
+                <IconButton
+                  size="sm"
+                  variant="danger"
+                  label={t('standingDelete')}
+                  icon={<Trash2 size={15} />}
+                  onClick={() => run(() => del(`/recurring-schedules/${s.id}`).then(reload))}
+                />
+              )}
             </div>
           ))}
         </div>
       )}
-      <div className="form-grid two">
-        <Field label={t('standingDay')}>
-          <select className="input" value={f.weekday} onChange={(e) => setF({ ...f, weekday: Number(e.target.value) })}>
-            {WEEKDAYS_DRIVE.map((w, idx) => (
-              <option key={w} value={idx}>{t(`weekdays.${w}`)}</option>
-            ))}
-          </select>
-        </Field>
-        <Field label={t('standingTime')}>
-          <input type="time" className="input" value={f.pickup_time} onChange={(e) => setF({ ...f, pickup_time: e.target.value })} />
-        </Field>
-        <Field label={t('standingArea')}>
-          <select className="input" value={f.area_id} onChange={(e) => setF({ ...f, area_id: e.target.value })}>
-            <option value="">—</option>
-            {areas.map((a) => (
-              <option key={a.id} value={a.id}>{a.name}</option>
-            ))}
-          </select>
-        </Field>
-        <Field label={t('standingLabel')}>
-          <input className="input" value={f.label} onChange={(e) => setF({ ...f, label: e.target.value })} placeholder={t('standingLabelPlaceholder')} />
-        </Field>
-      </div>
-      <ErrorBox error={error} />
-      <Button variant="secondary" disabled={busy || !f.area_id} onClick={add}>
-        {t('standingAdd')}
-      </Button>
+      {canUpdate && (
+        <>
+          <div className="form-grid two">
+            <Field label={t('standingDay')}>
+              <select className="input" value={f.weekday} onChange={(e) => setF({ ...f, weekday: Number(e.target.value) })}>
+                {WEEKDAYS_DRIVE.map((w, idx) => (
+                  <option key={w} value={idx}>{t(`weekdays.${w}`)}</option>
+                ))}
+              </select>
+            </Field>
+            <Field label={t('standingTime')}>
+              <input type="time" className="input" value={f.pickup_time} onChange={(e) => setF({ ...f, pickup_time: e.target.value })} />
+            </Field>
+            <Field label={t('standingArea')}>
+              <select className="input" value={f.area_id} onChange={(e) => setF({ ...f, area_id: e.target.value })}>
+                <option value="">—</option>
+                {areas.map((a) => (
+                  <option key={a.id} value={a.id}>{a.name}</option>
+                ))}
+              </select>
+            </Field>
+            <Field label={t('standingLabel')}>
+              <input className="input" value={f.label} onChange={(e) => setF({ ...f, label: e.target.value })} placeholder={t('standingLabelPlaceholder')} />
+            </Field>
+          </div>
+          <ErrorBox error={error} />
+          <Button variant="secondary" disabled={busy || !f.area_id} onClick={add}>
+            {t('standingAdd')}
+          </Button>
+        </>
+      )}
     </Card>
   );
 }

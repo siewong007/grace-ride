@@ -510,8 +510,8 @@ describe('Scenario Matrix — Frontend Components & Service Worker', () => {
       });
       expect(apiRespond).not.toHaveBeenCalled();
 
-      // 2. Navigation to /care/<secret> must cache under '/index.html', not '/care/<secret>'
-      let navPromise: Promise<unknown> | undefined;
+      // 2. Navigation to /care/<secret> must never be cached; normal SPA navigation caches under '/index.html'
+      let careNavPromise: Promise<unknown> | undefined;
       onFetch({
         request: {
           method: 'GET',
@@ -519,10 +519,25 @@ describe('Scenario Matrix — Frontend Components & Service Worker', () => {
           mode: 'navigate',
         },
         respondWith: (p: Promise<unknown>) => {
-          navPromise = p;
+          careNavPromise = p;
         },
       });
-      await navPromise;
+      await careNavPromise;
+      await Promise.resolve();
+      expect(mockCache.put).not.toHaveBeenCalled();
+
+      let appNavPromise: Promise<unknown> | undefined;
+      onFetch({
+        request: {
+          method: 'GET',
+          url: 'https://graceride.org/rides',
+          mode: 'navigate',
+        },
+        respondWith: (p: Promise<unknown>) => {
+          appNavPromise = p;
+        },
+      });
+      await appNavPromise;
       await Promise.resolve();
 
       expect(mockCache.put).toHaveBeenCalled();
@@ -544,7 +559,7 @@ describe('Scenario Matrix — Frontend Components & Service Worker', () => {
           },
         });
         await waitP;
-        expect(fakeWindow.navigate).toHaveBeenCalledWith('/notifications');
+        expect(fakeWindow.navigate).toHaveBeenCalledWith('https://graceride.org/notifications');
       }
 
       fakeWindow.navigate.mockClear();
@@ -556,7 +571,36 @@ describe('Scenario Matrix — Frontend Components & Service Worker', () => {
         },
       });
       await safeWait;
-      expect(fakeWindow.navigate).toHaveBeenCalledWith('/rides/42?action=readiness');
+      expect(fakeWindow.navigate).toHaveBeenCalledWith('https://graceride.org/rides/42?action=readiness');
+    });
+
+    it('parses JSON push payload and shows notification with icon and target URL', async () => {
+      const { listeners, mockSelf } = loadSwHarness();
+      const onPush = listeners.get('push')!;
+      expect(onPush).toBeTypeOf('function');
+
+      let waitP: Promise<unknown> | undefined;
+      onPush({
+        data: {
+          json: () => ({
+            title: 'Ride reminder',
+            body: 'Driver arriving at 09:00',
+            url: '/rides/42?action=readiness',
+          }),
+          text: () => 'fallback',
+        },
+        waitUntil: (p: Promise<unknown>) => {
+          waitP = p;
+        },
+      });
+      await waitP;
+
+      expect(mockSelf.registration.showNotification).toHaveBeenCalledWith('Ride reminder', {
+        body: 'Driver arriving at 09:00',
+        icon: '/icon-192.png',
+        badge: '/icon-192.png',
+        data: { url: '/rides/42?action=readiness' },
+      });
     });
   });
 });

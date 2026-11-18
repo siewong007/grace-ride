@@ -1,11 +1,11 @@
 import { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
-import { Check, CheckCircle2, ChevronRight, ThumbsDown, ThumbsUp } from 'lucide-react';
+import { AlertTriangle, Check, CheckCircle2, ChevronRight, Info, Lightbulb, ThumbsDown, ThumbsUp } from 'lucide-react';
 import { GuideStep } from '../pages/HelpGuides';
 import { Button, useAction, useToast } from './ui';
 import { post } from '../api';
-import StepText from './StepText';
+import StepText, { inline } from './StepText';
 import { readDone, readFeedback, writeDone, writeFeedback } from '../guideProgress';
 
 /** The app page a step links to, named as the menu names it ("My rides", "Events"). */
@@ -136,7 +136,7 @@ export default function GuideSteps({
 
           return (
             <li
-              key={idx}
+              key={s.id || idx}
               id={`step-${idx}`}
               className={`guide-step-item ${isDone ? 'done' : ''} ${isCurrent ? 'current' : ''}`}
               aria-current={isCurrent ? 'step' : undefined}
@@ -158,7 +158,14 @@ export default function GuideSteps({
                 {stepBody && <StepText text={stepBody} className="guide-step-text" />}
                 {stepNote && (
                   <p className={`guide-note ${noteClass}`}>
-                    <span>{stepNote}</span>
+                    {noteClass === 'warning' ? (
+                      <AlertTriangle size={16} aria-hidden="true" />
+                    ) : noteClass === 'note' ? (
+                      <Info size={16} aria-hidden="true" />
+                    ) : (
+                      <Lightbulb size={16} aria-hidden="true" />
+                    )}
+                    <span>{inline(stepNote)}</span>
                   </p>
                 )}
                 {s.image_file_id && (

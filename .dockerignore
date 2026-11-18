@@ -8,3 +8,5 @@ frontend/dist
 .git
 .claude
 *.pdf
+*.log
+frontend/.vitest

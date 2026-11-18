@@ -19,6 +19,7 @@ pub mod seed;
 pub mod state;
 pub mod stream;
 pub mod util;
+pub mod web_push;
 
 use std::sync::Arc;
 
@@ -221,10 +222,12 @@ pub async fn init(cfg: Config) -> anyhow::Result<AppState> {
     std::fs::create_dir_all(&cfg.upload_dir)?;
     util::set_timezone(cfg.db.timezone);
     util::set_dev_mode(cfg.dev_mode);
+    util::set_public_url(&cfg.public_url);
     let db = connect_db_with(&cfg.database_url, &cfg.db).await?;
     // Built-in roles and their default permissions must exist before anyone signs in.
     perms::sync(&db).await?;
     seed::run(&db, &cfg).await?;
+    web_push::ensure_vapid_keys(&db).await?;
     // There is always one super admin: on a first run, or on a database from before
     // the role existed, the original administrator becomes it.
     let first_admin = std::env::var("ADMIN_EMAIL").ok();
@@ -241,6 +244,7 @@ pub async fn init(cfg: Config) -> anyhow::Result<AppState> {
         .await;
     }
     let webauthn = Arc::new(build_webauthn(&cfg.public_url)?);
+    let (shutdown, _) = tokio::sync::watch::channel(false);
     Ok(AppState {
         db,
         webauthn,
@@ -249,6 +253,7 @@ pub async fn init(cfg: Config) -> anyhow::Result<AppState> {
         http_client: reqwest::Client::new(),
         routing: Arc::new(routing::RoutingState::default()),
         events: stream::channel(),
+        shutdown,
     })
 }
 

@@ -7,11 +7,13 @@ backend/data/
 frontend/node_modules/
 frontend/dist/
 *.tsbuildinfo
+*.log
 .DS_Store
 
-# Playwright
+# Playwright & Vitest
 frontend/test-results/
 frontend/playwright-report/
+frontend/.vitest/
 frontend/public/third-party-licenses.txt
 
 # CodeGraph local index

@@ -17,6 +17,7 @@ pub const DEFAULT_TIMEZONE: Tz = chrono_tz::Asia::Kuala_Lumpur;
 
 static ZONE: OnceLock<Tz> = OnceLock::new();
 static DEV_MODE: AtomicBool = AtomicBool::new(false);
+static PUBLIC_URL: std::sync::RwLock<String> = std::sync::RwLock::new(String::new());
 
 /// Record whether the server runs in development mode so background helpers know whether
 /// plaintext HTTP / loopback webhook URLs are allowed without threading `Config`.
@@ -26,6 +27,22 @@ pub fn set_dev_mode(dev: bool) {
 
 pub fn is_dev_mode() -> bool {
     DEV_MODE.load(Ordering::Relaxed)
+}
+
+/// Record the configured `PUBLIC_URL` so background Web Push tasks can derive a valid VAPID `sub`.
+pub fn set_public_url(url: &str) {
+    if let Ok(mut guard) = PUBLIC_URL.write() {
+        *guard = url.trim().trim_end_matches('/').to_string();
+    }
+}
+
+pub fn vapid_subject() -> String {
+    if let Ok(guard) = PUBLIC_URL.read() {
+        if guard.starts_with("https://") {
+            return guard.clone();
+        }
+    }
+    "mailto:noreply@example.org".to_string()
 }
 
 /// Set the app's time zone (`APP_TIMEZONE`). Stored times are local text in this
@@ -281,7 +298,7 @@ pub async fn notify_many(
 
 static ALERT_HTTP: OnceLock<reqwest::Client> = OnceLock::new();
 
-fn alert_client() -> &'static reqwest::Client {
+pub fn alert_client() -> &'static reqwest::Client {
     ALERT_HTTP.get_or_init(|| {
         reqwest::Client::builder()
             .redirect(reqwest::redirect::Policy::none())
@@ -350,10 +367,9 @@ fn is_non_global_ip(ip: std::net::IpAddr) -> bool {
     }
 }
 
-/// Validates an external alert webhook URL against SSRF targets.
-pub async fn validate_webhook_target(raw: &str, dev_mode: bool) -> bool {
+async fn validate_http_target(raw: &str, max_len: usize, dev_mode: bool) -> bool {
     let trimmed = raw.trim();
-    if trimmed.is_empty() || trimmed.len() > 500 {
+    if trimmed.is_empty() || trimmed.len() > max_len {
         return false;
     }
     let Ok(parsed) = url::Url::parse(trimmed) else {
@@ -431,6 +447,68 @@ pub async fn validate_webhook_target(raw: &str, dev_mode: bool) -> bool {
     }
 }
 
+const DEFAULT_PUSH_HOST_RULES: &[&str] = &[
+    "fcm.googleapis.com",
+    "push.googleapis.com",
+    "android.googleapis.com",
+    "updates.push.services.mozilla.com",
+    ".push.services.mozilla.com",
+    ".push.apple.com",
+    ".notify.windows.com",
+    ".push.samsungosp.com",
+];
+
+fn matches_host_rule(host: &str, rule: &str) -> bool {
+    let r = rule.trim().trim_end_matches('.').to_ascii_lowercase();
+    if r.is_empty() {
+        return false;
+    }
+    if let Some(suffix) = r.strip_prefix('.') {
+        !suffix.is_empty() && host.len() > r.len() && host.ends_with(&r)
+    } else {
+        host == r
+    }
+}
+
+/// True when `host` belongs to a known browser Web Push vendor (or `PUSH_ALLOWED_HOSTS` override).
+pub fn is_allowed_push_host(host: &str) -> bool {
+    let h = host.trim().trim_end_matches('.').to_ascii_lowercase();
+    if h.is_empty() || h.parse::<std::net::IpAddr>().is_ok() {
+        return false;
+    }
+    if let Ok(custom) = std::env::var("PUSH_ALLOWED_HOSTS") {
+        let trimmed = custom.trim();
+        if !trimmed.is_empty() {
+            return trimmed.split(',').any(|rule| matches_host_rule(&h, rule));
+        }
+    }
+    DEFAULT_PUSH_HOST_RULES
+        .iter()
+        .any(|rule| matches_host_rule(&h, rule))
+}
+
+/// Validates an external alert webhook URL against SSRF targets.
+pub async fn validate_webhook_target(raw: &str, dev_mode: bool) -> bool {
+    validate_http_target(raw, 500, dev_mode).await
+}
+
+/// Validates a browser Web Push subscription endpoint against SSRF targets and,
+/// outside `DEV_MODE`, restricts destinations to known Web Push service domains.
+pub async fn validate_push_endpoint(raw: &str, dev_mode: bool) -> bool {
+    if !dev_mode {
+        let Ok(parsed) = url::Url::parse(raw.trim()) else {
+            return false;
+        };
+        let Some(url::Host::Domain(domain)) = parsed.host() else {
+            return false;
+        };
+        if !is_allowed_push_host(domain) {
+            return false;
+        }
+    }
+    validate_http_target(raw, 1000, dev_mode).await
+}
+
 async fn dispatch_external_alerts(db: PgPool, recipients: Vec<(i64, String, String, String)>) {
     if recipients.is_empty() {
         return;
@@ -451,18 +529,23 @@ async fn dispatch_external_alerts(db: PgPool, recipients: Vec<(i64, String, Stri
             _ => {}
         }
     }
+    let dev_mode = is_dev_mode();
     let webhook_ok =
-        !webhook_url.is_empty() && validate_webhook_target(&webhook_url, is_dev_mode()).await;
+        !webhook_url.is_empty() && validate_webhook_target(&webhook_url, dev_mode).await;
     if !webhook_url.is_empty() && !webhook_ok {
         tracing::warn!("blocked alert webhook URL failing SSRF policy");
     }
-    if tg_token.is_empty() && !webhook_ok {
+    let vapid_signer = crate::web_push::load_vapid_signer(&db)
+        .await
+        .map(std::sync::Arc::new);
+
+    if tg_token.is_empty() && !webhook_ok && vapid_signer.is_none() {
         return;
     }
 
     let ids: Vec<i64> = recipients.iter().map(|(id, _, _, _)| *id).collect();
-    let prefs: Vec<(i64, String, String, String, i64)> = sqlx::query_as(
-        "SELECT id, name, phone, COALESCE(telegram_chat_id, ''), whatsapp_opt_in
+    let prefs: Vec<(i64, String, String, String, i64, i64)> = sqlx::query_as(
+        "SELECT id, name, phone, COALESCE(telegram_chat_id, ''), whatsapp_opt_in, push_opt_in
          FROM users WHERE id = ANY($1) AND status = 'active'",
     )
     .bind(&ids)
@@ -470,61 +553,126 @@ async fn dispatch_external_alerts(db: PgPool, recipients: Vec<(i64, String, Stri
     .await
     .unwrap_or_default();
 
-    let pref_map: std::collections::HashMap<i64, (String, String, String, i64)> = prefs
+    let pref_map: std::collections::HashMap<i64, (String, String, String, i64, i64)> = prefs
         .into_iter()
-        .map(|(id, name, phone, tg, wa)| (id, (name, phone, tg, wa)))
+        .map(|(id, name, phone, tg, wa, push)| (id, (name, phone, tg, wa, push)))
         .collect();
 
+    let mut push_map: std::collections::HashMap<i64, Vec<(i64, String, String, String)>> =
+        std::collections::HashMap::new();
+    if vapid_signer.is_some() {
+        let push_ids: Vec<i64> = pref_map
+            .iter()
+            .filter_map(|(uid, (_, _, _, _, push_opt_in))| (*push_opt_in == 1).then_some(*uid))
+            .collect();
+        if !push_ids.is_empty() {
+            let subs: Vec<(i64, i64, String, String, String)> = sqlx::query_as(
+                "SELECT id, user_id, endpoint, p256dh, auth
+                 FROM push_subscriptions WHERE user_id = ANY($1)",
+            )
+            .bind(&push_ids)
+            .fetch_all(&db)
+            .await
+            .unwrap_or_default();
+            for (sub_id, uid, endpoint, p256dh, auth) in subs {
+                push_map
+                    .entry(uid)
+                    .or_default()
+                    .push((sub_id, endpoint, p256dh, auth));
+            }
+        }
+    }
+
     let client = alert_client().clone();
+    let subject = vapid_subject();
     let sem = std::sync::Arc::new(tokio::sync::Semaphore::new(8));
     let mut join_set = tokio::task::JoinSet::new();
     for (uid, title, body, link) in recipients {
-        let Some((name, phone, tg_chat_id, wa_opt_in)) = pref_map.get(&uid).cloned() else {
+        let Some((name, phone, tg_chat_id, wa_opt_in, push_opt_in)) = pref_map.get(&uid).cloned()
+        else {
             continue;
         };
-        let tg_token = tg_token.clone();
-        let webhook_url = if webhook_ok && wa_opt_in == 1 {
+        let has_tg = !tg_token.is_empty() && !tg_chat_id.trim().is_empty();
+        let hook_opt = if webhook_ok && wa_opt_in == 1 {
             Some(webhook_url.clone())
         } else {
             None
         };
-        if (tg_token.is_empty() || tg_chat_id.trim().is_empty()) && webhook_url.is_none() {
-            continue;
+        if has_tg || hook_opt.is_some() {
+            let tg_token = tg_token.clone();
+            let client = client.clone();
+            let sem = sem.clone();
+            let title_c = title.clone();
+            let body_c = body.clone();
+            let link_c = link.clone();
+            join_set.spawn(async move {
+                let Ok(_permit) = sem.acquire_owned().await else {
+                    return;
+                };
+                if !tg_token.is_empty() && !tg_chat_id.trim().is_empty() {
+                    let text = format!("{title_c}\n{body_c}\n{link_c}");
+                    let url = format!("https://api.telegram.org/bot{tg_token}/sendMessage");
+                    let _ = client
+                        .post(&url)
+                        .json(&serde_json::json!({
+                            "chat_id": tg_chat_id.trim(),
+                            "text": text,
+                        }))
+                        .send()
+                        .await;
+                }
+                if let Some(hook) = hook_opt {
+                    let _ = client
+                        .post(&hook)
+                        .json(&serde_json::json!({
+                            "channel": "whatsapp",
+                            "user_id": uid,
+                            "name": name,
+                            "phone": phone,
+                            "title": title_c,
+                            "body": body_c,
+                            "link": link_c,
+                        }))
+                        .send()
+                        .await;
+                }
+            });
         }
-        let client = client.clone();
-        let sem = sem.clone();
-        join_set.spawn(async move {
-            let Ok(_permit) = sem.acquire_owned().await else {
-                return;
-            };
-            if !tg_token.is_empty() && !tg_chat_id.trim().is_empty() {
-                let text = format!("{title}\n{body}\n{link}");
-                let url = format!("https://api.telegram.org/bot{tg_token}/sendMessage");
-                let _ = client
-                    .post(&url)
-                    .json(&serde_json::json!({
-                        "chat_id": tg_chat_id.trim(),
-                        "text": text,
-                    }))
-                    .send()
-                    .await;
+
+        if push_opt_in == 1 {
+            if let (Some(signer), Some(subs)) = (vapid_signer.as_ref(), push_map.get(&uid)) {
+                for (sub_id, endpoint, p256dh, auth) in subs.iter().cloned() {
+                    let signer = signer.clone();
+                    let client = client.clone();
+                    let db = db.clone();
+                    let sem = sem.clone();
+                    let subject = subject.clone();
+                    let title_c = title.clone();
+                    let body_c = body.clone();
+                    let link_c = link.clone();
+                    join_set.spawn(async move {
+                        let Ok(_permit) = sem.acquire_owned().await else {
+                            return;
+                        };
+                        if !validate_push_endpoint(&endpoint, dev_mode).await {
+                            return;
+                        }
+                        if crate::web_push::send_push_message(
+                            &client, &signer, &subject, &endpoint, &p256dh, &auth, &title_c,
+                            &body_c, &link_c,
+                        )
+                        .await
+                            == crate::web_push::PushOutcome::Gone
+                        {
+                            let _ = sqlx::query("DELETE FROM push_subscriptions WHERE id=$1")
+                                .bind(sub_id)
+                                .execute(&db)
+                                .await;
+                        }
+                    });
+                }
             }
-            if let Some(hook) = webhook_url {
-                let _ = client
-                    .post(&hook)
-                    .json(&serde_json::json!({
-                        "channel": "whatsapp",
-                        "user_id": uid,
-                        "name": name,
-                        "phone": phone,
-                        "title": title,
-                        "body": body,
-                        "link": link,
-                    }))
-                    .send()
-                    .await;
-            }
-        });
+        }
     }
     while join_set.join_next().await.is_some() {}
 }

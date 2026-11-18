@@ -67,6 +67,12 @@ export async function api<T = unknown>(path: string, opts: { method?: string; bo
   }
   if (path.startsWith('/auth/logout')) {
     clearOfflineSnapshots();
+    try {
+      localStorage.removeItem('gr_autolock_mins');
+      localStorage.removeItem('gr_locked_user');
+    } catch {
+      /* ignore storage errors */
+    }
   }
   return data as T;
 }

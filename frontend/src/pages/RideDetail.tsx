@@ -153,7 +153,10 @@ export default function RideDetail() {
           <Notice tone="info" icon={<Repeat size={18} />}>
             <div className="row between wrap gap-sm">
               <span>{r.leg === 'return' ? t('pairedOutboundInfo') : t('pairedReturnInfo')}</span>
-              <Link to={`/rides/${r.paired_ride_id}`} className="bold">
+              <Link
+                to={`${loc.pathname.startsWith('/admin/') ? '/admin/rides' : '/rides'}/${r.paired_ride_id}`}
+                className="bold"
+              >
                 {r.leg === 'return' ? t('openOutboundRide') : t('openReturnRide')}
               </Link>
             </div>
@@ -213,7 +216,7 @@ export default function RideDetail() {
                 {t('needHelp')}
               </Button>
             )}
-            {(r.viewer.is_passenger || r.viewer.is_staff) &&
+            {(r.viewer.is_passenger || (r.viewer.is_staff && canAct('admin_rides', 'update'))) &&
               !['completed', 'cancelled', 'no_show', 'alt_transport'].includes(r.status) && (
                 <Button variant="ghost" size="sm" onClick={() => setCareModal(true)} icon={<ShieldCheck size={16} />}>
                   {t('careLinkBtn')}
@@ -1249,6 +1252,7 @@ export { ReasonModal };
 
 function CareLinkModal({ ride, onClose }: { ride: Ride; onClose: () => void }) {
   const { t } = useTranslation('rideDetail');
+  const ft = useFormatT();
   const toast = useToast();
   const { busy, error, run } = useAction();
   const [label, setLabel] = useState('');
@@ -1274,7 +1278,10 @@ function CareLinkModal({ ride, onClose }: { ride: Ride; onClose: () => void }) {
 
   const copy = () => {
     if (!link || typeof navigator === 'undefined' || !navigator.clipboard) return;
-    navigator.clipboard.writeText(link.url).then(() => toast.success(t('careLinkCopied')));
+    navigator.clipboard
+      .writeText(link.url)
+      .then(() => toast.success(t('careLinkCopied')))
+      .catch(() => {});
   };
 
   return (
@@ -1303,6 +1310,9 @@ function CareLinkModal({ ride, onClose }: { ride: Ride; onClose: () => void }) {
       ) : (
         <div className="stack-sm">
           <input className="input mono" readOnly value={link.url} />
+          {link.valid_until && (
+            <p className="muted tiny no-margin">{fmtDateTime(link.valid_until, ft)}</p>
+          )}
           <ErrorBox error={error} />
           <div className="btn-row">
             <Button variant="primary" icon={<Copy size={16} />} onClick={copy}>

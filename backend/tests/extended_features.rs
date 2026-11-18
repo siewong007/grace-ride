@@ -1173,3 +1173,382 @@ async fn server_session_lock_and_rich_help_guides() {
     assert_eq!(fetched.json["steps"][0]["note_kind"], "tip");
     assert_eq!(fetched.json["steps"][0]["note_en"], "Helpful tip");
 }
+
+struct TestHkdfLen(usize);
+
+impl ring::hkdf::KeyType for TestHkdfLen {
+    fn len(&self) -> usize {
+        self.0
+    }
+}
+
+fn verify_vapid_and_decrypt(
+    headers: &[(String, String)],
+    body: &[u8],
+    expected_pub_b64: &str,
+    sub_priv: ring::agreement::EphemeralPrivateKey,
+    sub_pub: &[u8],
+    sub_auth: &[u8],
+) -> Value {
+    use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine as _};
+    use ring::{
+        aead::{self, LessSafeKey, UnboundKey},
+        agreement::{self, UnparsedPublicKey, ECDH_P256},
+        hkdf::{Salt, HKDF_SHA256},
+        signature::{UnparsedPublicKey as SigPublicKey, ECDSA_P256_SHA256_FIXED},
+    };
+
+    let hdr = |name: &str| {
+        headers
+            .iter()
+            .find(|(k, _)| k.eq_ignore_ascii_case(name))
+            .map(|(_, v)| v.as_str())
+    };
+    assert_eq!(hdr("content-encoding"), Some("aes128gcm"));
+    assert_eq!(hdr("ttl"), Some("86400"));
+
+    let authz = hdr("authorization").expect("vapid Authorization header");
+    let rest = authz.strip_prefix("vapid ").expect("vapid prefix");
+    let (t_part, k_part) = rest.split_once(", ").expect("vapid t and k parts");
+    assert_eq!(k_part.strip_prefix("k="), Some(expected_pub_b64));
+    let jwt = t_part.strip_prefix("t=").expect("jwt token");
+    let jwt_parts: Vec<&str> = jwt.split('.').collect();
+    assert_eq!(jwt_parts.len(), 3);
+    let signing_input = format!("{}.{}", jwt_parts[0], jwt_parts[1]);
+    let sig = URL_SAFE_NO_PAD.decode(jwt_parts[2]).unwrap();
+    let pub_bytes = URL_SAFE_NO_PAD.decode(expected_pub_b64).unwrap();
+    SigPublicKey::new(&ECDSA_P256_SHA256_FIXED, &pub_bytes)
+        .verify(signing_input.as_bytes(), &sig)
+        .expect("VAPID ES256 signature must verify");
+
+    assert!(body.len() > 86);
+    let salt = &body[..16];
+    assert_eq!(u32::from_be_bytes(body[16..20].try_into().unwrap()), 4096);
+    let idlen = body[20] as usize;
+    assert_eq!(idlen, 65);
+    let as_pub = &body[21..21 + idlen];
+    let mut record = body[21 + idlen..].to_vec();
+
+    let ecdh =
+        agreement::agree_ephemeral(sub_priv, &UnparsedPublicKey::new(&ECDH_P256, as_pub), |s| {
+            s.to_vec()
+        })
+        .unwrap();
+    let ikm_prk = Salt::new(HKDF_SHA256, sub_auth).extract(&ecdh);
+    let mut ikm = [0u8; 32];
+    ikm_prk
+        .expand(&[b"WebPush: info\0", sub_pub, as_pub], TestHkdfLen(32))
+        .unwrap()
+        .fill(&mut ikm)
+        .unwrap();
+    let content_prk = Salt::new(HKDF_SHA256, salt).extract(&ikm);
+    let mut cek = [0u8; 16];
+    content_prk
+        .expand(&[b"Content-Encoding: aes128gcm\0"], TestHkdfLen(16))
+        .unwrap()
+        .fill(&mut cek)
+        .unwrap();
+    let mut nonce = [0u8; 12];
+    content_prk
+        .expand(&[b"Content-Encoding: nonce\0"], TestHkdfLen(12))
+        .unwrap()
+        .fill(&mut nonce)
+        .unwrap();
+
+    let dec_key = LessSafeKey::new(UnboundKey::new(&aead::AES_128_GCM, &cek).unwrap());
+    let plain_padded = dec_key
+        .open_in_place(
+            aead::Nonce::assume_unique_for_key(nonce),
+            aead::Aad::empty(),
+            &mut record,
+        )
+        .unwrap();
+    assert_eq!(plain_padded.last().copied(), Some(0x02));
+    serde_json::from_slice(&plain_padded[..plain_padded.len() - 1]).unwrap()
+}
+
+#[tokio::test]
+async fn web_push_end_to_end_encryption_test_endpoint_and_410_pruning() {
+    use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine as _};
+    use ring::{
+        agreement::{EphemeralPrivateKey, ECDH_P256},
+        rand::{SecureRandom, SystemRandom},
+    };
+
+    let (app, st) = setup().await;
+    let admin = login(&st, "admin@example.org").await;
+    let member = login(&st, "member@example.org").await;
+    let member_id = user_id(&st, "member@example.org").await;
+
+    let me = call(&app, Method::GET, "/api/auth/me", Some(&member), None).await;
+    let is_en = me.json["lang"].as_str() == Some("en");
+
+    // 1. Auto-generated VAPID keypair is active right out of setup()
+    let cfg = call(&app, Method::GET, "/api/push/config", Some(&member), None).await;
+    assert_eq!(cfg.status, StatusCode::OK, "{}", cfg.json);
+    assert_eq!(cfg.json["configured"], true);
+    let orig_pub = cfg.json["vapid_public_key"].as_str().unwrap().to_string();
+    assert_eq!(orig_pub.len(), 87);
+
+    let admin_alerts = call(
+        &app,
+        Method::GET,
+        "/api/admin/settings/alerts",
+        Some(&admin),
+        None,
+    )
+    .await;
+    assert_eq!(admin_alerts.status, StatusCode::OK);
+    assert_eq!(admin_alerts.json["vapid_private_configured"], true);
+
+    // 2. Local Web Push receiver with /push/ok1, /push/ok2, and /push/gone (410)
+    type CapturedPush = Vec<(Vec<(String, String)>, Vec<u8>)>;
+    let ok1_reqs: Arc<Mutex<CapturedPush>> = Arc::new(Mutex::new(Vec::new()));
+    let ok2_reqs: Arc<Mutex<CapturedPush>> = Arc::new(Mutex::new(Vec::new()));
+    let gone_hits: Arc<Mutex<usize>> = Arc::new(Mutex::new(0));
+
+    let ok1_store = ok1_reqs.clone();
+    let ok2_store = ok2_reqs.clone();
+    let gone_store = gone_hits.clone();
+    let push_app = Router::new()
+        .route(
+            "/push/ok1",
+            post(
+                move |headers: axum::http::HeaderMap, body: axum::body::Bytes| {
+                    let store = ok1_store.clone();
+                    async move {
+                        let hdrs = headers
+                            .iter()
+                            .map(|(k, v)| {
+                                (k.as_str().to_string(), v.to_str().unwrap_or("").to_string())
+                            })
+                            .collect();
+                        store.lock().unwrap().push((hdrs, body.to_vec()));
+                        StatusCode::CREATED
+                    }
+                },
+            ),
+        )
+        .route(
+            "/push/ok2",
+            post(
+                move |headers: axum::http::HeaderMap, body: axum::body::Bytes| {
+                    let store = ok2_store.clone();
+                    async move {
+                        let hdrs = headers
+                            .iter()
+                            .map(|(k, v)| {
+                                (k.as_str().to_string(), v.to_str().unwrap_or("").to_string())
+                            })
+                            .collect();
+                        store.lock().unwrap().push((hdrs, body.to_vec()));
+                        StatusCode::CREATED
+                    }
+                },
+            ),
+        )
+        .route(
+            "/push/gone",
+            post(move || {
+                let store = gone_store.clone();
+                async move {
+                    *store.lock().unwrap() += 1;
+                    StatusCode::GONE
+                }
+            }),
+        );
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    tokio::spawn(async move {
+        let _ = axum::serve(listener, push_app).await;
+    });
+
+    // Generate subscriber P-256 ECDH keypairs
+    let rng = SystemRandom::new();
+    let gen_sub = || {
+        let priv_k = EphemeralPrivateKey::generate(&ECDH_P256, &rng).unwrap();
+        let pub_k = priv_k.compute_public_key().unwrap();
+        let mut auth = [0u8; 16];
+        rng.fill(&mut auth).unwrap();
+        (priv_k, pub_k, auth)
+    };
+    let (sub1_priv, sub1_pub, sub1_auth) = gen_sub();
+    let (sub2_priv, sub2_pub, sub2_auth) = gen_sub();
+    let (_gone_priv, gone_pub, gone_auth) = gen_sub();
+
+    for (path, p256dh, auth) in [
+        (
+            "/push/ok1",
+            URL_SAFE_NO_PAD.encode(sub1_pub.as_ref()),
+            URL_SAFE_NO_PAD.encode(sub1_auth),
+        ),
+        (
+            "/push/gone",
+            URL_SAFE_NO_PAD.encode(gone_pub.as_ref()),
+            URL_SAFE_NO_PAD.encode(gone_auth),
+        ),
+    ] {
+        assert_eq!(
+            call(
+                &app,
+                Method::POST,
+                "/api/push/subscribe",
+                Some(&member),
+                Some(json!({
+                    "endpoint": format!("http://{addr}{path}"),
+                    "p256dh": p256dh,
+                    "auth": auth,
+                })),
+            )
+            .await
+            .status,
+            StatusCode::OK
+        );
+    }
+
+    // 3. Trigger notify() and verify RFC 8291 ciphertext, VAPID ES256 signature, and 410 pruning
+    grace_ride::util::notify(
+        &st.db,
+        member_id,
+        ("接送提醒", "Ride reminder"),
+        ("司机已出发", "Driver departed"),
+        "/rides/7?action=readiness",
+    )
+    .await;
+
+    for _ in 0..40 {
+        if !ok1_reqs.lock().unwrap().is_empty() && *gone_hits.lock().unwrap() > 0 {
+            break;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+    }
+    assert_eq!(ok1_reqs.lock().unwrap().len(), 1);
+    assert_eq!(*gone_hits.lock().unwrap(), 1);
+
+    // Wait briefly for 410 deletion inside async dispatch task
+    let mut sub_count = 2;
+    for _ in 0..20 {
+        let c = call(&app, Method::GET, "/api/push/config", Some(&member), None).await;
+        sub_count = c.json["subscription_count"].as_i64().unwrap();
+        if sub_count == 1 {
+            break;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(25)).await;
+    }
+    assert_eq!(sub_count, 1, "410 Gone endpoint should be pruned");
+
+    let (hdrs1, body1) = ok1_reqs.lock().unwrap()[0].clone();
+    let payload1 = verify_vapid_and_decrypt(
+        &hdrs1,
+        &body1,
+        &orig_pub,
+        sub1_priv,
+        sub1_pub.as_ref(),
+        &sub1_auth,
+    );
+    assert_eq!(
+        payload1["title"],
+        if is_en {
+            "Ride reminder"
+        } else {
+            "接送提醒"
+        }
+    );
+    assert_eq!(
+        payload1["body"],
+        if is_en {
+            "Driver departed"
+        } else {
+            "司机已出发"
+        }
+    );
+    assert_eq!(payload1["url"], "/rides/7?action=readiness");
+
+    // 4. Subscribe second device and exercise POST /api/push/test
+    assert_eq!(
+        call(
+            &app,
+            Method::POST,
+            "/api/push/subscribe",
+            Some(&member),
+            Some(json!({
+                "endpoint": format!("http://{addr}/push/ok2"),
+                "p256dh": URL_SAFE_NO_PAD.encode(sub2_pub.as_ref()),
+                "auth": URL_SAFE_NO_PAD.encode(sub2_auth),
+            })),
+        )
+        .await
+        .status,
+        StatusCode::OK
+    );
+
+    let test_res = call(
+        &app,
+        Method::POST,
+        "/api/push/test",
+        Some(&member),
+        Some(json!({})),
+    )
+    .await;
+    assert_eq!(test_res.status, StatusCode::OK, "{}", test_res.json);
+    assert_eq!(test_res.json["ok"], true);
+    assert_eq!(test_res.json["delivered"], 2);
+    assert_eq!(test_res.json["total"], 2);
+
+    assert_eq!(ok2_reqs.lock().unwrap().len(), 1);
+    let (hdrs2, body2) = ok2_reqs.lock().unwrap()[0].clone();
+    let payload2 = verify_vapid_and_decrypt(
+        &hdrs2,
+        &body2,
+        &orig_pub,
+        sub2_priv,
+        sub2_pub.as_ref(),
+        &sub2_auth,
+    );
+    assert_eq!(payload2["url"], "/me");
+    assert!(!payload2["title"].as_str().unwrap_or("").is_empty());
+
+    // 5. Unsubscribe one endpoint and then rotate VAPID keys as admin
+    assert_eq!(
+        call(
+            &app,
+            Method::DELETE,
+            "/api/push/subscribe",
+            Some(&member),
+            Some(json!({ "endpoint": format!("http://{addr}/push/ok1") })),
+        )
+        .await
+        .status,
+        StatusCode::OK
+    );
+    let cfg_mid = call(&app, Method::GET, "/api/push/config", Some(&member), None).await;
+    assert_eq!(cfg_mid.json["subscription_count"], 1);
+
+    let rot = call(
+        &app,
+        Method::PUT,
+        "/api/admin/settings/alerts",
+        Some(&admin),
+        Some(json!({ "rotate_vapid_keys": true })),
+    )
+    .await;
+    assert_eq!(rot.status, StatusCode::OK, "{}", rot.json);
+
+    let cfg_after = call(&app, Method::GET, "/api/push/config", Some(&member), None).await;
+    assert_eq!(cfg_after.json["configured"], true);
+    assert_eq!(cfg_after.json["subscription_count"], 0);
+    let new_pub = cfg_after.json["vapid_public_key"].as_str().unwrap();
+    assert_eq!(new_pub.len(), 87);
+    assert_ne!(new_pub, orig_pub);
+
+    let admin_after = call(
+        &app,
+        Method::GET,
+        "/api/admin/settings/alerts",
+        Some(&admin),
+        None,
+    )
+    .await;
+    assert_eq!(admin_after.json["vapid_private_configured"], true);
+    assert_eq!(admin_after.json["push_subscriptions_count"], 0);
+}

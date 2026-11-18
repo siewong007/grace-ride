@@ -2063,8 +2063,9 @@ fn validate_telegram_bot_token(tok: &str) -> bool {
 
 async fn get_alert_settings(State(st): State<AppState>, u: CurrentUser) -> AppResult<Json<Value>> {
     require(&u, Page::AdminSettings, Act::View)?;
+    let _ = crate::web_push::ensure_vapid_keys(&st.db).await;
     let rows: Vec<(String, String)> = sqlx::query_as(
-        "SELECT name, value FROM app_secrets WHERE name IN ('telegram_bot_token', 'telegram_bot_username', 'alert_webhook_url', 'vapid_public_key')",
+        "SELECT name, value FROM app_secrets WHERE name IN ('telegram_bot_token', 'telegram_bot_username', 'alert_webhook_url', 'vapid_public_key', 'vapid_private_key')",
     )
     .fetch_all(&st.db)
     .await?;
@@ -2073,15 +2074,23 @@ async fn get_alert_settings(State(st): State<AppState>, u: CurrentUser) -> AppRe
     let mut tg_username = String::new();
     let mut webhook_url = String::new();
     let mut vapid_public_key = String::new();
+    let mut vapid_private_key = String::new();
     for (k, v) in rows {
         match k.as_str() {
             "telegram_bot_token" => tg_configured = !v.trim().is_empty(),
             "telegram_bot_username" => tg_username = v,
             "alert_webhook_url" => webhook_url = v,
             "vapid_public_key" => vapid_public_key = v,
+            "vapid_private_key" => vapid_private_key = v,
             _ => {}
         }
     }
+    let vapid_private_configured =
+        crate::web_push::VapidSigner::from_stored(&vapid_public_key, &vapid_private_key).is_ok();
+    let push_subscriptions_count: i64 =
+        sqlx::query_scalar("SELECT COUNT(*) FROM push_subscriptions")
+            .fetch_one(&st.db)
+            .await?;
 
     Ok(Json(json!({
         "telegram_bot_configured": tg_configured,
@@ -2089,6 +2098,8 @@ async fn get_alert_settings(State(st): State<AppState>, u: CurrentUser) -> AppRe
         "alert_webhook_configured": !webhook_url.trim().is_empty(),
         "alert_webhook_url": mask_webhook_url(&webhook_url),
         "vapid_public_key": vapid_public_key,
+        "vapid_private_configured": vapid_private_configured,
+        "push_subscriptions_count": push_subscriptions_count,
     })))
 }
 
@@ -2100,6 +2111,8 @@ struct UpdateAlertSettingsIn {
     alert_webhook_url: Option<String>,
     clear_alert_webhook_url: Option<bool>,
     vapid_public_key: Option<String>,
+    vapid_private_key: Option<String>,
+    rotate_vapid_keys: Option<bool>,
 }
 
 async fn update_alert_settings(
@@ -2129,6 +2142,26 @@ async fn update_alert_settings(
             }
         }
     }
+
+    let rotate_vapid = req.rotate_vapid_keys.unwrap_or(false);
+    let new_vapid_pub = req.vapid_public_key.as_deref().map(str::trim);
+    let new_vapid_priv = req
+        .vapid_private_key
+        .as_deref()
+        .map(str::trim)
+        .filter(|s| !s.is_empty());
+    let validated_signer = if !rotate_vapid {
+        if let Some(priv_str) = new_vapid_priv {
+            let pub_hint = new_vapid_pub.unwrap_or("");
+            let signer = crate::web_push::VapidSigner::from_stored(pub_hint, priv_str)
+                .map_err(|_| bad(u.lang, ErrorKey::InvalidAction))?;
+            Some(signer)
+        } else {
+            None
+        }
+    } else {
+        None
+    };
 
     let mut tx = st.db.begin().await?;
     if req.clear_telegram_bot_token.unwrap_or(false) {
@@ -2175,14 +2208,66 @@ async fn update_alert_settings(
         .await?;
     }
 
-    if let Some(vapid) = req.vapid_public_key.as_deref() {
+    let current_pub: Option<String> =
+        sqlx::query_scalar("SELECT value FROM app_secrets WHERE name='vapid_public_key'")
+            .fetch_optional(&mut *tx)
+            .await?;
+
+    if rotate_vapid {
+        let (gen_pub, gen_priv) =
+            crate::web_push::generate_vapid_keypair().map_err(AppError::Other)?;
         sqlx::query(
             "INSERT INTO app_secrets (name, value) VALUES ('vapid_public_key', $1)
              ON CONFLICT (name) DO UPDATE SET value = EXCLUDED.value",
         )
-        .bind(vapid.trim())
+        .bind(&gen_pub)
         .execute(&mut *tx)
         .await?;
+        sqlx::query(
+            "INSERT INTO app_secrets (name, value) VALUES ('vapid_private_key', $1)
+             ON CONFLICT (name) DO UPDATE SET value = EXCLUDED.value",
+        )
+        .bind(&gen_priv)
+        .execute(&mut *tx)
+        .await?;
+        sqlx::query("DELETE FROM push_subscriptions")
+            .execute(&mut *tx)
+            .await?;
+    } else if let Some(signer) = validated_signer {
+        let pub_key = signer.public_key_b64();
+        let priv_key = new_vapid_priv.unwrap_or_default();
+        sqlx::query(
+            "INSERT INTO app_secrets (name, value) VALUES ('vapid_public_key', $1)
+             ON CONFLICT (name) DO UPDATE SET value = EXCLUDED.value",
+        )
+        .bind(pub_key)
+        .execute(&mut *tx)
+        .await?;
+        sqlx::query(
+            "INSERT INTO app_secrets (name, value) VALUES ('vapid_private_key', $1)
+             ON CONFLICT (name) DO UPDATE SET value = EXCLUDED.value",
+        )
+        .bind(priv_key)
+        .execute(&mut *tx)
+        .await?;
+        if current_pub.as_deref().map(str::trim) != Some(pub_key) {
+            sqlx::query("DELETE FROM push_subscriptions")
+                .execute(&mut *tx)
+                .await?;
+        }
+    } else if let Some(vapid) = new_vapid_pub {
+        if !vapid.is_empty() && current_pub.as_deref().map(str::trim) != Some(vapid) {
+            sqlx::query(
+                "INSERT INTO app_secrets (name, value) VALUES ('vapid_public_key', $1)
+                 ON CONFLICT (name) DO UPDATE SET value = EXCLUDED.value",
+            )
+            .bind(vapid)
+            .execute(&mut *tx)
+            .await?;
+            sqlx::query("DELETE FROM app_secrets WHERE name='vapid_private_key'")
+                .execute(&mut *tx)
+                .await?;
+        }
     }
 
     tx.commit().await?;
@@ -2192,7 +2277,11 @@ async fn update_alert_settings(
         "settings.alerts",
         "app_secrets",
         None,
-        "updated alert channels",
+        if rotate_vapid {
+            "rotated VAPID push keys"
+        } else {
+            "updated alert channels"
+        },
     )
     .await;
     Ok(Json(json!({ "ok": true })))

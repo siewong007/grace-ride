@@ -149,6 +149,8 @@ pub async fn rate_limit(State(st): State<AppState>, req: Request, next: Next) ->
         Some(("upload", 30, 600))
     } else if path.starts_with("/api/files/") && path.ends_with("/extract-ref") {
         Some(("extract_ref", 30, 600))
+    } else if path == "/api/push/test" {
+        Some(("push_test", 10, 600))
     } else {
         None
     };

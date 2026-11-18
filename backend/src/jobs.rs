@@ -20,13 +20,35 @@ use crate::state::Config;
 use crate::util::{audit_many, notify, notify_many, notify_perm, now};
 
 pub fn spawn(db: PgPool, cfg: Config) {
+    let (_tx, rx) = tokio::sync::watch::channel(false);
+    spawn_with_shutdown(db, cfg, rx);
+}
+
+pub fn spawn_with_shutdown(
+    db: PgPool,
+    cfg: Config,
+    mut shutdown: tokio::sync::watch::Receiver<bool>,
+) {
     tokio::spawn(async move {
         let mut tick = tokio::time::interval(Duration::from_secs(60));
         tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
         let every = Duration::from_secs(cfg.housekeeping_interval_mins.max(1) as u64 * 60);
         let mut last_housekeeping: Option<Instant> = None;
         loop {
-            tick.tick().await;
+            tokio::select! {
+                biased;
+                res = shutdown.changed() => {
+                    if res.is_err() || *shutdown.borrow() {
+                        tracing::info!("background jobs stopping for shutdown");
+                        break;
+                    }
+                    continue;
+                }
+                _ = tick.tick() => {}
+            }
+            if *shutdown.borrow() {
+                break;
+            }
             if let Err(e) = run_reminders(&db).await {
                 tracing::error!("background job failed: {e:?}");
             }

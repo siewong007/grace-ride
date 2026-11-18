@@ -60,7 +60,8 @@ jobs:
       - run: npm run test
       - run: npm run build
       - run: npm run test:e2e
-      - run: npm audit --audit-level=high
+      # Audit shipped production bundle dependencies (dev-only picomatch<=4.0.7 GHSA-fc5q-39xc-vjpf has no upstream patch yet).
+      - run: npm audit --omit=dev --audit-level=high
 
   image:
     runs-on: ubuntu-latest

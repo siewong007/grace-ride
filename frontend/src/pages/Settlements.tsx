@@ -197,6 +197,7 @@ export function SettlementForm() {
   const [custom, setCustom] = useState<Record<number, string>>({});
   const [payee, setPayee] = useState({ name: '', account: '' });
   const [payeeQr, setPayeeQr] = useState<number | null>(null);
+  const [dueDate, setDueDate] = useState('');
   const [review, setReview] = useState<ShareRow | null>(null);
   // Set once the first save makes a draft, so saving again updates it instead of
   // creating a second bill (say, when publishing is refused over attendance).
@@ -214,6 +215,7 @@ export function SettlementForm() {
       setMode(existing.split_mode);
       setPayee({ name: existing.payee_name, account: existing.payee_account });
       setPayeeQr(existing.payee_qr_file_id ?? null);
+      setDueDate(existing.due_date ?? '');
       setItems(
         existing.items.map((it) => ({
           label: it.label,
@@ -274,6 +276,7 @@ export function SettlementForm() {
       payee_name: payee.name,
       payee_account: payee.account,
       payee_qr_file_id: payeeQr,
+      due_date: dueDate || null,
       // The server works out an equal split itself; custom amounts are sent as typed.
       participants:
         mode === 'equal'
@@ -367,8 +370,23 @@ export function SettlementForm() {
                 onChange={(e) => setPayee({ ...payee, account: e.target.value })}
               />
             </Field>
-            <div className="full">
-              <FileInput label={t('payeeQrLabel')} value={payeeQr} onChange={setPayeeQr} />
+            <Field label={t('dueDateLabel')}>
+              <input
+                className="input"
+                type="date"
+                value={dueDate}
+                onChange={(e) => setDueDate(e.target.value)}
+              />
+            </Field>
+            <div className="full row wrap gap-xs items-end">
+              <div className="grow">
+                <FileInput label={t('payeeQrLabel')} accept="image/*" value={payeeQr} onChange={setPayeeQr} />
+              </div>
+              {payeeQr !== null && (
+                <Button variant="ghost" size="sm" type="button" onClick={() => setPayeeQr(null)}>
+                  {t('delete')}
+                </Button>
+              )}
             </div>
           </div>
 

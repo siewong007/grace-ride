@@ -39,6 +39,7 @@ export default {
   payeeLabel: '付款给',
   payeeAccountLabel: '收款账号',
   payeeQrLabel: 'DuitNow / TNG 收款二维码图片（可选）',
+  dueDateLabel: '截止日期（可选）',
   participantsLabel: '参与人',
   totalLabel: '应付总额',
   saveDraft: '保存草稿',

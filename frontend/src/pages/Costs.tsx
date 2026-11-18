@@ -260,6 +260,7 @@ function ProofModal({
         value={file}
         onChange={(fid) => {
           setFile(fid);
+          setCandidates([]);
           if (fid) void extractRef(fid);
         }}
       />
