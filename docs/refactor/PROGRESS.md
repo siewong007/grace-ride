@@ -82,6 +82,11 @@
   `push.rs`, `notifications.rs`, `announcements.rs`, `help.rs`, `guides.rs`,
   `reimbursements.rs`, `payout_batches.rs`, `reports.rs`) and `community/mod.rs` (120 lines);
   removed 4 redundant local `#[allow(clippy::type_complexity)]` attributes.
+- **Admin sub-module split (complete)** — converted `admin.rs` (2 312 lines) into
+  `backend/src/routes/admin/` with 6 domain sub-modules (`members.rs` 526,
+  `invites_recovery.rs` 276, `groups_areas.rs` 331, `audit.rs` 358, `reports.rs` 307,
+  `settings.rs` 473) and `admin/mod.rs` (165 lines). All 283 backend tests across 35
+  suites pass.
 
 **Phase 4 — Security, privacy and performance**
 - Verified `.env.example` covers every variable read by `Config::from_env()` and
