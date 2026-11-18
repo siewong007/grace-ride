@@ -5,14 +5,10 @@ name: Deploy production
 # forwarded port 20049. The pinned host key is
 # SHA256:HV6OszvuYmwmWRLEY7z7jm8GojWZJppJlDBHIhJVUxw.
 #
-# Required GitHub Environment (`production`) configuration:
-#   Secrets:
-#     - VPS_SSH_PRIVATE_KEY  (Ed25519/RSA private key for the deploy user)
-#     - VPS_HOST_KEY         (pinned known_hosts line matching SHA256:HV6OszvuYmwmWRLEY7z7jm8GojWZJppJlDBHIhJVUxw)
-#   Variables:
-#     - VPS_HOST             (public IPv4 / hostname of the AIC VPS)
-#     - VPS_PORT             (optional; defaults to `20049`)
-#     - VPS_USER             (optional; defaults to `deploy`)
+# Required GitHub Environment (`production`) secret:
+#   - VPS_SSH_PRIVATE_KEY  (private key accepted for root@162.19.81.122:20049;
+#                           the same key the hotel-app deploy uses)
+# Host, port, user and the pinned host key are public and live in `env:` below.
 #
 # The database container and its volume stay in place across upgrades; on a brand-new VPS
 # where `grace-ride-db` is not running yet, it is started and awaited first.
@@ -37,10 +33,12 @@ concurrency:
   cancel-in-progress: false
 
 env:
-  VPS_HOST: ${{ vars.VPS_HOST }}
-  VPS_PORT: ${{ vars.VPS_PORT || '20049' }}
-  VPS_USER: ${{ vars.VPS_USER || 'deploy' }}
-  VPS_HOST_KEY: ${{ secrets.VPS_HOST_KEY }}
+  # Public connection details are pinned in the workflow (same as the hotel-app
+  # and online-shopping deploys) so a lost repo variable cannot break the deploy.
+  VPS_HOST: 162.19.81.122
+  VPS_PORT: "20049"
+  VPS_USER: root
+  VPS_HOST_KEY: "[162.19.81.122]:20049 ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIIxenH95jfg3hxfkumJpZJyV7phwCNDrXrAL0wUXnta9"
   PUBLIC_URL: https://graceride.saliminn.my
 
 jobs:
