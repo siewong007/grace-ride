@@ -100,6 +100,10 @@
   `passkeys.rs`, `totp.rs`, `invites_recovery.rs`) with zero behaviour changes;
   re-exported `TERMS_VERSION`; `cargo fmt`, `cargo clippy`, and `cargo test --lib`
   (43 passed) pass.
+- **Events sub-module split (complete)** — converted `backend/src/routes/events.rs`
+  (1 601 lines) into `backend/src/routes/events/` (`mod.rs` listing/lookup/visibility/router,
+  `manage.rs`, `signups.rs`, `checkin.rs`); `cargo fmt` and `cargo clippy --all-targets`
+  pass with zero issues.
 
 **Phase 4 — Security, privacy and performance**
 - Verified `.env.example` covers every variable read by `Config::from_env()` and
