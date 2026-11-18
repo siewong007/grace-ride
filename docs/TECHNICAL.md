@@ -25,25 +25,33 @@ Complete engineering, operational, security, legal/compliance, licensing, and br
 
 ### Prerequisites
 
-- **PostgreSQL 18** (or compatible local PostgreSQL)
+- **PostgreSQL 18** (native install, or containerized via `docker-compose.dev.yml` / `make db-up`)
 - **Rust** stable toolchain (`cargo`, `rustfmt`, `clippy`, plus `cargo-audit` for advisory scans)
-- **Node.js 22+** and `npm`
+- **Node.js 22+** (`.nvmrc` pins `22`) and `npm`
 
 ### Local Environment Setup
 
-From the repository root, create the development database and start the API server:
+From the repository root, create or boot the development database and start the API server:
 
 ```bash
+# Option A: Native local PostgreSQL
 createdb grace_ride_dev                 # once, if it does not exist
 cp backend/.env.example backend/.env
+
+# Option B: Docker PostgreSQL 18 (creates both grace_ride_dev & grace_ride_test on volume grace-ride-dev-pg)
+make db-up
+cp backend/.env.example backend/.env
+# When using docker-compose.dev.yml, point backend/.env at:
+#   DATABASE_URL=postgres://grace:grace@127.0.0.1:5432/grace_ride_dev
+
 cd backend
-cargo run                              # API on http://127.0.0.1:8080
+cargo run                              # API on http://127.0.0.1:8080 (or `make dev-api` from root)
 ```
 
 > [!NOTE]
-> If using the maintainer's external-SSD toolchain wrapper, replace `cargo ...` with `../dev-env.sh cargo ...` (used by `Makefile` targets).
+> `./dev-env.sh` wraps Rust commands (`Makefile` defaults `CARGO ?= ./dev-env.sh cargo`): if the maintainer's external SSD toolchain (`/Volumes/APPLE EXTERNAL SSD /Rust`) is mounted, it uses that `CARGO_HOME`/`RUSTUP_HOME`; otherwise it falls back transparently to the standard host Rust toolchain on macOS/Linux.
 
-In a second terminal, start the Vite frontend server:
+In a second terminal, start the Vite frontend server (`tsconfig.json` uses TypeScript project references across `tsconfig.app.json`, `tsconfig.test.json`, and `tsconfig.node.json`):
 
 ```bash
 cd frontend
@@ -58,23 +66,34 @@ Startup automatically applies numbered SQLx migrations (`backend/migrations/`) a
 - **Shared demo password:** `GraceRide2026!` (in `DEV_MODE`, password logins also satisfy the staff MFA gate)
 - **Simulated TOTP secret:** `MFRGGZDF73DGXYP3`
 - **Seeded synthetic accounts (`@example.org` — RFC 2606 reserved):**
+  - **Superadmin:** `superadmin@example.org` (holds every permission, including `/admin/settings` and `superadmin` role management)
   - **Leadership & Admin:** `admin@example.org`, `president@example.org`, `vicepresident@example.org`, `secretary@example.org`
   - **Operations & Finance:** `traffichead@example.org`, `cellleader@example.org`, `transport@example.org`, `finance@example.org`, `auditor@example.org`
   - **Drivers & Members:** `driver@example.org`, `driver2@example.org`, `member@example.org`, `amina@example.org`, `sophie@example.org`, `yawen@example.org`, `zhiqiang@example.org`, `meiling@example.org`, `enci@example.org`, `guorong@example.org`
 
 ### `Makefile` Shortcuts
 
+Run `make` (or `make help`) to list all documented targets:
+
 | Target | Action |
 |---|---|
 | `make dev-api` | Run the Rust API in dev mode (`./dev-env.sh cargo run`) |
 | `make dev-web` | Run Vite dev server on `:5173` |
-| `make test` | Run backend tests + frontend `tsc -b` (subset of CI; see [Section 6](#6-testing--verification) for full suite) |
-| `make lint` | Run `cargo fmt --check` and `cargo clippy --all-targets -- -D warnings` |
-| `make audit` | Run `cargo audit` and `npm audit --omit=dev --audit-level=high` |
-| `make build` | Build production frontend bundle (including `/third-party-licenses.txt`) + release Rust binary |
+| `make db-up` / `make db-down` | Start / stop local PostgreSQL 18 (`grace_ride_dev` + `grace_ride_test`) via `docker-compose.dev.yml` |
+| `make fmt` | Format backend Rust code (`cargo fmt`) |
+| `make lint` | Run `cargo fmt --check`, `cargo clippy --all-targets --locked -- -D warnings`, and `npm run lint` |
+| `make test` | Run `cargo test --locked`, `npm run typecheck` (`tsc -b`), and `npm test` (Vitest) |
+| `make test-api` / `make test-web` | Run backend Cargo tests or frontend typecheck + Vitest suites individually |
+| `make test-e2e` | Run Playwright browser end-to-end suites (`npm run test:e2e`) |
+| `make audit` | Run `cargo audit` (`backend/.cargo/audit.toml`) and `npm audit --omit=dev --audit-level=high` |
+| `make build` | Build production frontend bundle (including `/third-party-licenses.txt`) + `cargo build --release --locked` |
 | `make image` | Build `grace-ride:latest` Docker image |
 | `make up` | Start generic Docker Compose production stack with `.env.production` |
-| `make backup` | Snapshot database + uploads into `./backups` via `scripts/backup.sh` |
+| `make backup` | Snapshot database + uploads into `./backups` via `scripts/backup.sh` (auto-sources `.env.production` or `backend/.env` if needed) |
+| `make restore` | Restore an archive (`ARCHIVE=backups/grace-ride-….tar.gz[.age]`) via `scripts/restore.sh` |
+| `make restore-drill` | Non-destructive restore + upload reconciliation drill (`ARCHIVE=…`) via `scripts/restore_drill.sh` |
+| `make osrm-setup` | Download & build Malaysia/Singapore/Brunei OSRM MLD graph via `scripts/setup_osrm_malaysia.sh` |
+| `make capacity` | Run the 1,000-member / 10-driver capacity baseline (`scripts/capacity_baseline.sh`) |
 
 ---
 
@@ -85,7 +104,7 @@ Paths below are repository-relative. "Implemented" means present in source code;
 | Module & Routes | Implemented Behavior | Primary Source |
 |---|---|---|
 | **Identity & Onboarding**<br>`/login`, `/invite/:token`, `/terms`, `/me` | Invite-only onboarding (14-day single-use token), Terms & PDPA v2 consent gate (`TERMS_VERSION`, English/Chinese/Malay), member approval, profile & language (`Accept-Language` fallback), WebAuthn passkeys, password + TOTP MFA, single-use hashed backup codes, passkey in-place re-auth, server-enforced idle/manual session lock (`session_lock_guard`, `/api/auth/lock` & `/api/auth/unlock`), alert channel preferences (`push_subscriptions`, Telegram/WhatsApp opt-ins), admin-reviewed account recovery (dual-admin for privileged accounts) | `backend/src/routes/auth.rs`, `backend/src/auth.rs`, `backend/src/security.rs`, `frontend/src/pages/Login.tsx`, `Invite.tsx`, `Profile.tsx`, `components/Terms.tsx` |
-| **Roles, Permissions & Members**<br>`/admin/members`, `/admin/roles` | 25 page keys across 4 areas (`Member`, `Transport`, `Finance`, `Admin`) totaling 67 page/action permissions; 13 built-in roles + custom roles; 5-tier ranked chain of command (`superadmin > president > vice_president > finance > auditor`); hierarchical groups & sub-groups (`groups.parent_id`, max depth 3, cycle-checked, built-in `Visitor` group); member approval/disable, invites, and recovery | `backend/src/perms.rs`, `backend/src/routes/roles.rs`, `backend/src/routes/admin.rs`, `frontend/src/pages/admin/Members.tsx`, `Roles.tsx` |
+| **Roles, Permissions & Members**<br>`/admin/members`, `/admin/roles` | 27 page keys across 4 areas (`8 Member + 9 Transport + 2 Finance + 8 Admin = 27 pages`) totaling 67 page/action permissions; 13 built-in roles + custom roles; 5-tier ranked chain of command (`superadmin > president > vice_president > finance > auditor`); hierarchical groups & sub-groups (`groups.parent_id`, max depth 3, cycle-checked, built-in `Visitor` group); member approval/disable, invites, and recovery | `backend/src/perms.rs`, `backend/src/routes/roles`, `backend/src/routes/admin`, `frontend/src/pages/admin/Members.tsx`, `Roles.tsx` |
 | **Passenger Rides & Caregiver Links**<br>`/rides`, `/rides/new`, `/rides/:id`, `/care/:token` | Outbound & paired return-leg round-trip requests (`leg`, `paired_ride_id`), saved places (`saved_places`) & proxy rider presets (`gate_notes`, `caregiver_user_id`), standing recurring schedules (`recurring_ride_schedules`), driver offer accept/decline, cancellation, seat count & assistance needs, approximate-area pickup privacy prior to approval, pickup-day readiness updates, single-own-ride-per-event guard (`DUPLICATE_EVENT_RIDE`), scoped zero-login Caregiver "Safe Arrival" links (`caregiver_passes`, `routes/care.rs`, `CarePass.tsx` — hides street address while showing status/driver/ETA and readiness toggle), local read-only snapshot of today's own active rides (`offlineSnapshot.ts`) | `backend/src/routes/rides.rs`, `backend/src/routes/care.rs`, `frontend/src/pages/Rides.tsx`, `RideNew.tsx`, `RideDetail.tsx`, `CarePass.tsx`, `offlineSnapshot.ts` |
 | **Volunteer Driving**<br>`/drive` | Driver profile (vehicle, type, seats, accessibility capabilities `wheelchair_ok` / `low_step` / `child_seat`, service areas), standing driver schedules, carpool trip grouping, open-request claiming, withdrawal, staff reassignment confirmation, trip lifecycle (`start` → `pickup` / `no_show` → `complete`), driver delay & arrival-at-gate alerts; event rides restrict visibility and claiming to drivers in the rider's group or an ancestor group (`audience::MATCH_GROUP_SQL`), while non-event rides match by service area | `backend/src/routes/rides.rs`, `frontend/src/pages/Drive.tsx`, `frontend/src/components/TripActions.tsx` |
 | **Maps, Routing & Chat**<br>Embedded on ride & admin views | Leaflet + OpenStreetMap tiles, server-proxied Photon address autocomplete (signed-in only), cached Nominatim geocoding, OSRM pickup ordering & ETA calculation, active-trip driver GPS + opt-in passenger GPS, concurrent live-driver cap (`MAX_LIVE_DRIVERS`), amber stale-location indicator, Google Maps / Waze handoff links, trip-scoped chat (`ride_messages` linked to `trips`) | `backend/src/routing.rs`, `backend/src/routes/rides.rs`, `frontend/src/components/LiveMap.tsx`, `Chat.tsx` |
@@ -98,8 +117,8 @@ Paths below are repository-relative. "Implemented" means present in source code;
 | **Community, Help & Guides**<br>`/`, `/help`, `/help/guides/*`, `/notifications`, `/admin/announcements` | Announcements, answer-first member Help centre (prioritizing today's active ride and awaiting replies before ticket creation), support threads with claim/reply/close, SSE live updates (`/api/stream`) with polling fallback, encrypted native Web Push delivery (RFC 8291 `aes128gcm` + RFC 8292 `ES256` VAPID with self-test `/api/push/test` and automatic `404`/`410` stale-endpoint pruning), per-passenger `readiness_prompt_mins` pickup reminders (30/45/60 min or passenger-muted, auto-rearmed when `driver_id` changes) & escalation jobs, volunteer badges with opt-out, and bilingual step-by-step guides (member & staff audiences, formatted step text, optional step screenshots, stable step IDs, and persistent floating walkthrough card) | `backend/src/routes/community.rs`, `backend/src/web_push.rs`, `backend/src/jobs.rs`, `backend/src/stream.rs`, `frontend/src/pages/Help.tsx`, `HelpGuides.tsx`, `HelpGuideDetail.tsx`, `HelpGuideEditor.tsx`, `components/GuideRunner.tsx`, `components/GuideSteps.tsx`, `guideProgress.ts` |
 | **Reports & Exports**<br>`/report`, `/admin/reports` | Monthly member activity/driving/ride summaries, staff attendance/ride/cost reports, unmet-demand & driver shortage analytics (`GET /admin/reports/demand`, Demand & Shortages tab), CSV exports, and client-side CJK-capable PDF generation (`pdfWriter.ts`) for Chinese and English reports and audit trails | `backend/src/routes/community.rs`, `backend/src/routes/admin.rs`, `frontend/src/pages/Report.tsx`, `admin/Reports.tsx`, `pdfWriter.ts` |
 | **Administration & Settings**<br>`/admin`, `/admin/menu`, `/admin/audit`, `/admin/settings` | Operational dashboard & tab counts, filterable/exportable audit log, hierarchical groups & service areas, vehicle reimbursement rates, external alert channel settings (`GET/PUT /admin/settings/alerts` storing auto-generated/rotatable P-256 VAPID keys, Telegram bot, and WhatsApp webhook secrets in `app_secrets` for async `util::dispatch_external_alerts`), data-retention settings, and organization auto-lock timeout defaults (`admin_settings` restricted to `superadmin`) | `backend/src/routes/admin.rs`, `backend/src/web_push.rs`, `backend/src/jobs.rs`, `frontend/src/pages/admin/Dashboard.tsx`, `Audit.tsx`, `Settings.tsx`, `Menu.tsx` |
-| **Shared UI, PWA Shell & Large Lists**<br>App-wide | Minimalist white/neutral surfaces with logo-blue (`#1F5DB4`) primary actions, dark mode, adjustable text size, responsive mobile bottom-nav / tablet icon-rail / desktop sidebar, route-level lazy code splitting with animated boot splash handoff, numbered & keyset pagination, `@tanstack/react-virtual` list primitive, PWA manifest/icons, and privacy-safe Service Worker (`frontend/public/sw.js` — caches static app shell & handles push/notification clicks while never caching `/api/*` in `CacheStorage`) | `frontend/src/App.tsx`, `styles.css`, `components/Layout.tsx`, `components/ui.tsx`, `public/sw.js`, `locales/` |
-| **Capacity & Operations**<br>Backend & `scripts/` | PostgreSQL connection pool with timezone & statement timeouts, 60 s reminder/escalation/schedule loop, periodic housekeeping job, `/api/health` + binary `healthcheck` subcommand, backup/restore scripts, synthetic 1,000-member capacity test harness | `backend/src/lib.rs`, `jobs.rs`, `backend/tests/capacity.rs`, `scripts/backup.sh`, `scripts/restore.sh`, `scripts/capacity_baseline.sh` |
+| **Shared UI, PWA Shell & Large Lists**<br>App-wide | Minimalist white/neutral surfaces with logo-blue (`#1F5DB4`) primary actions, dark mode, adjustable text size, responsive mobile bottom-nav / tablet icon-rail / desktop sidebar, route-level lazy code splitting with animated boot splash handoff, numbered & keyset pagination, `@tanstack/react-virtual` list primitive, PWA manifest/icons, and privacy-safe Service Worker (`frontend/public/sw.js` — caches static app shell & handles push/notification clicks while never caching `/api/*` in `CacheStorage`) | `frontend/src/App.tsx`, `styles.css`, `components/Layout.tsx`, `components/ui/` (`components/ui.tsx`), `public/sw.js`, `locales/` |
+| **Capacity & Operations**<br>Backend & `scripts/` | PostgreSQL connection pool with timezone & statement timeouts, 60 s reminder/escalation/schedule loop, periodic housekeeping job, `/api/health` + binary `healthcheck` subcommand, `age`/`gpg`-capable backup/restore/drill scripts, self-hosted OSRM setup script, synthetic 1,000-member capacity test harness | `backend/src/lib.rs`, `jobs.rs`, `backend/tests/capacity.rs`, `scripts/backup.sh`, `scripts/restore.sh`, `scripts/restore_drill.sh`, `scripts/setup_osrm_malaysia.sh`, `scripts/capacity_baseline.sh` |
 
 ### Boundaries & Outstanding Work
 
@@ -183,18 +202,18 @@ Browser: React 18 + TypeScript + Vite SPA, Leaflet, Service Worker (sw.js), i18n
 |---|---|
 | `backend/src/main.rs`, `state.rs` | CLI entry (`healthcheck` mode or server), env validation, tracing logs, WebAuthn setup, graceful `SIGTERM`/`SIGINT` shutdown |
 | `backend/src/lib.rs` | PostgreSQL connection & migration history classifier, startup initialization, Axum router & middleware stack |
-| `backend/src/auth.rs`, `perms.rs`, `security.rs` | Session & visitor extractors, 25-page / 67-permission catalog & 5-tier rank rules, `session_lock_guard`, CSRF/CSP headers, IP rate limiters |
-| `backend/src/routes/` | Domain HTTP handlers: `auth`, `rides`, `care`, `events`, `visitors`, `plan`, `settlements`, `files`, `community`, `admin`, `roles` |
+| `backend/src/auth.rs`, `perms.rs`, `security.rs` | Session & visitor extractors, 27-page / 67-permission catalog & 5-tier rank rules, `session_lock_guard`, CSRF/CSP headers, IP rate limiters |
+| `backend/src/routes/` | Modularized domain HTTP handlers (`auth`, `rides`, `care`, `events`, `visitors`, `plan`, `settlements`, `files`, `community`, `admin`, `roles` — organized into domain submodules under `backend/src/routes/*/`) |
 | `backend/src/audience.rs` | Shared recursive group-tree visibility SQL (`visible_events_sql`), joining-as validation, driver group matching (`MATCH_GROUP_SQL`) |
 | `backend/src/arrange.rs`, `routing.rs` | Accessibility-aware event transport auto-arrange heuristics; Photon autocomplete proxy, Nominatim geocoding, and OSRM route caching |
-| `backend/src/jobs.rs`, `stream.rs` | 1-minute reminder/escalation/stale-ride/visitor-expiry/recurring-schedule tick, periodic retention cleanup, and SSE fan-out |
+| `backend/src/jobs.rs`, `stream.rs`, `web_push.rs` | 1-minute reminder/escalation/stale-ride/visitor-expiry/recurring-schedule tick, periodic retention cleanup, SSE fan-out, and RFC 8291/8292 Web Push encryption |
 | `backend/src/i18n/`, `error.rs`, `util.rs`, `seed.rs` | Bilingual backend error/notification catalogs, `Accept-Language` negotiation, audit helpers, KL-time helpers, dev demo seeding |
-| `backend/migrations/` | Frozen baseline `0001_init.sql` + additive numbered migrations `0002`–`0008` |
+| `backend/migrations/` | Frozen baseline `0001_init.sql` + additive numbered migrations `0002`–`0009` |
 | `frontend/src/App.tsx`, `auth.tsx`, `perms.ts`, `staffNav.tsx` | Lazy client routing, session context, permission gates, boot splash handoff, staff navigation |
-| `frontend/src/pages/`, `components/` | Member, visitor, caregiver, and admin screens; `LiveMap`, `Chat`, `Terms`, `AutoLock`, `GuideRunner`, `GuideSteps`, shared UI primitives |
+| `frontend/src/pages/`, `components/`, `components/ui/` | Member, visitor, caregiver, and admin screens; `LiveMap`, `Chat`, `Terms`, `AutoLock`, `BackNavigation`, `GuideRunner`, `GuideSteps`, and modularized shared UI primitives (`components/ui/` re-exported via `components/ui.tsx`) |
 | `frontend/src/styles.css`, `prefs.ts`, `locales/`, `pdfWriter.ts`, `offlineSnapshot.ts` | CSS design tokens, theme/font-size preferences, `en`/`zh`/`ms` locale bundles, CJK PDF writer, today's active ride cache |
 | `frontend/public/sw.js`, `frontend/scripts/third-party-licenses.mjs` | Privacy-safe app-shell/push service worker; prebuild licence generator producing `/third-party-licenses.txt` |
-| `deploy/`, `Dockerfile`, `docker-compose.yml`, `scripts/` | Multi-stage container build, generic & AIC Compose configs, Caddyfiles, `backup.sh`, `restore.sh`, `capacity_baseline.sh` |
+| `deploy/`, `Dockerfile`, `docker-compose*.yml`, `scripts/`, `SECURITY.md` | Multi-stage container build, generic/dev/AIC/OSRM Compose configs, Caddyfiles, `backup.sh`, `restore.sh`, `restore_drill.sh`, `setup_osrm_malaysia.sh`, `capacity_baseline.sh`, and vulnerability reporting policy |
 
 ### Permission Catalog (`backend/src/perms.rs`)
 
@@ -223,6 +242,7 @@ SQLx runs `backend/migrations/` at startup (`lib.rs::connect_db_with`) on a dedi
 | `0006_attendance_module.sql` | Adds `events.attendance_enabled` (default `1`) and backfilled 10-char `events.checkin_code` for QR self-check-in. |
 | `0007_terms_version.sql` | Adds `users.terms_version` (default `2`) and marks prior acceptances as `1` to trigger PDPA v2 re-consent. |
 | `0008_extended_features.sql` | Adds server-enforced session lock (`sessions.locked_at`, `last_seen_at`), round-trip ride pairing (`leg`, `paired_ride_id`), `saved_places` & caregiver/proxy defaults, vehicle accessibility flags (`wheelchair_ok`, `low_step`, `child_seat`), `recurring_ride_schedules`, `push_subscriptions` & alert opt-ins, `caregiver_passes`, recurring `events.series_id` & `event_signups.pass_code`, `users.calendar_token_hash`, `settlements.payee_qr_file_id`, and `payout_batches` / `reimbursements.batch_id`. |
+| `0009_schema_hardening.sql` | Additive schema hardening: partial B-tree indexes backing `files::can_access_file`, GIN index on `guide_workflows.steps`, event `checkin_code` / `pass_code` lookup indexes, and guarded `NOT VALID` + validated `ON DELETE SET NULL` foreign keys on `users.photo_file_id` and `events.photo_file_id`. |
 
 **Migration & Data Conventions:**
 - **Upgrade safety (`lib.rs::classify_history`):** Every schema change must be a new numbered `000N_….sql` file. Databases from pre-squash histories whose version 1 checksum differs automatically clear `_sqlx_migrations` and replay idempotent `0001_init.sql` + subsequent migrations without losing rows. If version 1 matches but a later applied file was modified or is missing from the binary, startup halts with an error.
@@ -266,10 +286,18 @@ SQLx runs `backend/migrations/` at startup (`lib.rs::connect_db_with`) on a dedi
 | `GEOCODER_USER_AGENT` | `GraceRide/0.1` | Set contact URL/email for Nominatim policy compliance (e.g. `GraceRide/0.1 (+https://…)`) |
 | `GEOCODER_COUNTRY` | `my` | ISO country bias/filter for geocoding and autocomplete |
 | `PUSH_ALLOWED_HOSTS` | *(built-in browser push hosts)* | Optional comma-separated host or `.suffix` override for Web Push subscription endpoints outside `DEV_MODE` |
+| `TEST_DATABASE_URL` | `postgres://localhost/grace_ride_test` | Test-only PostgreSQL URL used by Cargo integration tests and `scripts/capacity_baseline.sh` (**never** point at production) |
+| `PG_CONTAINER` / `DOCKER_DB_CONTAINER` | *(unset)* | Optional running PostgreSQL container name (e.g. `grace-ride-db`) used by `scripts/backup.sh`, `scripts/restore.sh`, and `scripts/restore_drill.sh` via `docker exec` |
+| `BACKUP_SCHEMA` | *(all schemas)* | Optional PostgreSQL `--schema` filter for `scripts/backup.sh` (used by isolated integration test schemas) |
+| `REQUIRE_ENCRYPTION` | `false` | When `true`, `scripts/backup.sh` refuses to run unless `BACKUP_AGE_RECIPIENT` or `BACKUP_GPG_RECIPIENT` is set |
+| `BACKUP_AGE_RECIPIENT` / `BACKUP_GPG_RECIPIENT` | *(unset)* | Public `age` recipient (`age1…`) or GPG recipient used by `scripts/backup.sh` to encrypt archives at rest |
+| `BACKUP_AGE_KEY_FILE` | *(unset)* | Path to private `age` identity key used by `scripts/restore.sh` and `scripts/restore_drill.sh` to decrypt `.tar.gz.age` archives |
+| `ADMIN_DATABASE_URL` | *(unset)* | Maintenance PostgreSQL URL (e.g. `postgres://localhost/postgres`) used by `scripts/restore_drill.sh` to create/drop disposable drill databases |
+| `OSRM_DATA_DIR` | `./osrm-data` (`/opt/grace-ride/osrm-data` in Compose) | Host directory storing pre-processed Malaysia/Singapore/Brunei OSRM MLD graph files |
 
 ### Option A: Standard Single-VM Deployment (`docker-compose.yml`)
 
-Suitable for a standalone Linux VM (e.g. 1 vCPU / 1–2 GB RAM) where Docker Compose runs PostgreSQL 18, the Grace Ride container, and Caddy (automatic Let's Encrypt HTTPS):
+Suitable for a standalone Linux VM (e.g. 1 vCPU / 1–2 GB RAM) where Docker Compose runs PostgreSQL 18 (`database` internal network only), the Grace Ride container (`init: true`, `512m` memory / `512` PID caps), and Caddy (`frontend` network only, automatic Let's Encrypt HTTPS with `X-Forwarded-For` overwritten from `{client_ip}`):
 
 1. Point DNS `A`/`AAAA` records (e.g. `ride.pjstatecmc.org`) at the server and open TCP `80`/`443` (plus UDP `443` for HTTP/3).
 2. Install Docker + Compose plugin, copy the repository, and configure `.env.production`:
@@ -295,26 +323,35 @@ Suitable for a standalone Linux VM (e.g. 1 vCPU / 1–2 GB RAM) where Docker Com
 
 Production deploys to `https://graceride.saliminn.my` on the shared AIC VPS (`deploy/docker-compose.aic.yml` + `deploy/graceride.Caddyfile`):
 
-- **Architecture:** Host Caddy owns ports `80`/`443` and reverse-proxies `graceride.saliminn.my` to `127.0.0.1:8090` (with SSE buffering disabled on `/api/stream` and `X-Forwarded-For` overwritten from `{client_ip}`). PostgreSQL (`grace-ride-db`, tuned to `max_connections=20`) stays internal on the Docker `database` network. Secrets live in `/opt/grace-ride/secrets.env`.
-- **CI-Gated Rollout:** Pushing to `master` runs `.github/workflows/ci.yml`. Only when CI succeeds (or via manual `workflow_dispatch` on `master`) does `deploy.yml` build a `linux/amd64` image, verify ≥1.5 GB free disk, upload the tarball over SSH (default port `20049`, pinned host key `SHA256:HV6OszvuYmwmWRLEY7z7jm8GojWZJppJlDBHIhJVUxw`), swap only the `grace-ride` app container, and verify `/api/health`.
+- **Architecture:** Host Caddy owns ports `80`/`443` and reverse-proxies `graceride.saliminn.my` to `127.0.0.1:8090` using a Cloudflare Origin CA certificate (`/etc/caddy/certs/graceride-origin.{pem,key}` under Cloudflare **Full (strict)** mode, with SSE buffering disabled on `/api/stream` and `X-Forwarded-For` overwritten from `{client_ip}`). PostgreSQL (`grace-ride-db`, tuned to `max_connections=20`) stays internal on the Docker `database` network. Secrets live in `/opt/grace-ride/secrets.env`.
+- **Self-Hosted Malaysia Routing (`deploy/docker-compose.osrm.yml`):** Run `scripts/setup_osrm_malaysia.sh /opt/grace-ride/osrm-data` once to download and checksum-verify Geofabrik's Malaysia/Singapore/Brunei extract and build an MLD routing graph, set `OSRM_URL=http://grace-ride-osrm:5000` in `/opt/grace-ride/secrets.env`, and launch with `-f /opt/grace-ride/docker-compose.aic.yml -f /opt/grace-ride/docker-compose.osrm.yml`. Alternatively, set `ROUTING_ENABLED=false` in `secrets.env` to keep all addresses in-house using straight-line GPS estimates.
+- **CI-Gated Rollout:** Pushing to `master` runs `.github/workflows/ci.yml`. Only when CI succeeds (or via manual `workflow_dispatch` on `master`) does `deploy.yml` build a `linux/amd64` image, verify ≥1.5 GB free disk, sync `deploy/docker-compose.aic.yml` and `deploy/docker-compose.osrm.yml` into `/opt/grace-ride/`, ensure `grace-ride-db` is running and healthy (supporting first boot on a fresh VPS), upload and load the image tarball over SSH (default port `20049`, pinned host key `SHA256:HV6OszvuYmwmWRLEY7z7jm8GojWZJppJlDBHIhJVUxw`), swap the `grace-ride` app container, and verify both local `127.0.0.1:8090/api/health` and public `$PUBLIC_URL/api/health` (automatically rolling back to `old_tag` if either check fails).
 - **GitHub Environment Configuration (`production`):** Secrets `VPS_SSH_PRIVATE_KEY` and `VPS_HOST_KEY`; variables `VPS_HOST` (plus optional `VPS_PORT`, `VPS_USER`).
 - **Skipping Deploy:** Include `[skip ci]` in a commit message to skip CI and deployment (note: `ci.yml` has no Markdown path filter, so regular doc commits to `master` trigger CI and deploy).
 - **Rollback Caveat:** Failed rollout health checks automatically restore the previous container image tag, which does **not** undo additive SQL migrations. Always write backward-compatible additive migrations.
 
 ### Backups, Restore Drills & Monitoring
 
-- **Nightly Backups (`scripts/backup.sh`):** Dumps PostgreSQL (`pg_dump -Fc`) and tars the upload volume, pruning archives older than `KEEP_DAYS` (default `30`):
+- **Nightly Encrypted Backups (`scripts/backup.sh`):** Dumps PostgreSQL (`pg_dump -Fc` via `DATABASE_URL` or `PG_CONTAINER=grace-ride-db`), tars the upload volume, optionally encrypts with `age` (`BACKUP_AGE_RECIPIENT=age1…`, enforceable via `REQUIRE_ENCRYPTION=true`) or `gpg` (`BACKUP_GPG_RECIPIENT`), and prunes archives older than `KEEP_DAYS` (default `30`):
   ```bash
-  scripts/backup.sh /var/lib/docker/volumes/grace-ride_app-data/_data /srv/backups 30
+  PG_CONTAINER=grace-ride-db REQUIRE_ENCRYPTION=true BACKUP_AGE_RECIPIENT="age1..." \
+    scripts/backup.sh /var/lib/docker/volumes/grace-ride_app-data/_data /srv/backups 30
   ```
-  Run inside or with authorized access to the Compose database network (on AIC, `grace-ride-db` is not published to the host). Stop or quiesce app writes if strict DB-to-upload point-in-time consistency is needed, and **encrypt backup archives (`age` or `gpg`)** before off-site transfer.
-- **Restore Drill (`scripts/restore.sh`) — run at least once before launch:**
+  Store the `age` private key offline (the host only needs the public recipient key) and sync `/srv/backups/*.age` off-site.
+- **Non-Destructive Restore Drill (`scripts/restore_drill.sh`) — run before launch and quarterly:**
+  ```bash
+  PG_CONTAINER=grace-ride-db BACKUP_AGE_KEY_FILE=/root/.config/grace-ride/backup-age.key \
+    scripts/restore_drill.sh /srv/backups/grace-ride-YYYYMMDD-HHMMSS.tar.gz.age
+  ```
+  `restore_drill.sh` decrypts and restores into a disposable `grace_ride_drill_*` database and temporary directory without touching production, reconciles every `files.stored_name` row against extracted files on disk, prints table counts, and drops the temporary database on exit.
+- **Full Production Restore (`scripts/restore.sh`):**
   ```bash
   docker compose stop app
-  scripts/restore.sh /srv/backups/grace-ride-YYYYMMDD-HHMMSS.tar.gz /var/lib/docker/volumes/grace-ride_app-data/_data
+  PG_CONTAINER=grace-ride-db BACKUP_AGE_KEY_FILE=/root/.config/grace-ride/backup-age.key \
+    scripts/restore.sh /srv/backups/grace-ride-YYYYMMDD-HHMMSS.tar.gz.age /var/lib/docker/volumes/grace-ride_app-data/_data
   docker compose start app
   ```
-  `restore.sh` runs `pg_restore --clean --if-exists` against `DATABASE_URL` and extracts uploads without deleting extra existing files. Drill against a disposable database and empty upload directory first; always take a fresh backup before restoring over production.
+  Always take a fresh backup before restoring over production.
 - **Monitoring:** Point an external uptime monitor at `GET /api/health` (returns `200` with `{ status, db, version }` or `503` on DB failure; container `HEALTHCHECK` runs `/app/grace-ride healthcheck`). Monitor Docker JSON logs for `background job failed`, HTTP `5xx`, `rate limited`, and `blocked cross-origin request`.
 
 ---
@@ -328,13 +365,13 @@ Production deploys to `https://graceride.saliminn.my` on the shared AIC VPS (`de
 **Backend** (uses disposable per-test schemas inside `TEST_DATABASE_URL` and cleans up stale test schemas automatically—**never** point `TEST_DATABASE_URL` at a real database):
 
 ```bash
-createdb grace_ride_test                 # once, if it does not exist
+createdb grace_ride_test                 # once (or `make db-up` via docker-compose.dev.yml)
 cd backend
 export TEST_DATABASE_URL=postgres://localhost/grace_ride_test
 cargo fmt --check
 cargo clippy --all-targets --locked -- -D warnings
 cargo test --locked
-cargo audit --ignore RUSTSEC-2023-0071 --ignore RUSTSEC-2026-0459
+cargo audit                              # advisory ignores live in backend/.cargo/audit.toml
 
 # Optional helper: print the default permission matrix for all 13 built-in roles
 cargo run --example role_matrix
@@ -345,7 +382,8 @@ cargo run --example role_matrix
 ```bash
 cd frontend
 npm ci
-npm run lint                             # ESLint + jsx-a11y + react-hooks
+npm run lint                             # ESLint + jsx-a11y + react-hooks (--max-warnings 0)
+npm run typecheck                        # tsc -b across app, test, and node project references
 npm run test                             # Vitest + Testing Library suites
 npm run build                            # prebuild license bundle + tsc -b + vite build
 npm run test:e2e                         # Playwright suites against vite preview (:4173)
@@ -364,7 +402,7 @@ npm audit --omit=dev --audit-level=high
 | **Events, Attendance & Visitors** | `backend/tests/audience.rs`, `attendance.rs`, `event_photo.rs`, `event_update_atomic.rs`, `visitors.rs` | Recursive sub-group visibility, single-source `audience.rs` SQL guard, masked event titles, QR check-in & walk-in attendance, cover photo access, transactional audience updates, one-time visitor pass lifecycle & cookie isolation |
 | **Rides, Planning & Concurrency** | `backend/tests/plan.rs`, `routing.rs`, `trip_integrity.rs`, `workflow_fixes.rs`, `workflow_review_probe.rs` | Transport planning board batch locks, geocoding/OSRM routing & privacy, carpool trip triggers, stale-assignment guards, duplicate event ride block, driver-disable ride release, readiness reminder timing & care-pass guards |
 | **Admin, Help & Sorting** | `backend/tests/admin_ux.rs`, `help_desk.rs`, `guides.rs`, `rides_sort.rs`, `users_sort.rs`, `reimbursements_sort.rs` | Admin UX endpoints, support ticket claiming/closing races, step-by-step guide CRUD & step validation, allowlisted sort columns |
-| **Schema & Capacity** | `backend/tests/schema_baseline.rs`, `db_audit_fixes.rs`, `capacity.rs`, `scripts/capacity_baseline.sh` | Frozen `0001_init.sql` checksum, pre-squash upgrade replay without row loss, `0002`–`0008` migrations, constraint/index integrity, synthetic 1,000-member / 10-driver fixture & reminder timing |
+| **Schema & Capacity** | `backend/tests/schema_baseline.rs`, `db_audit_fixes.rs`, `capacity.rs`, `scripts/capacity_baseline.sh` | Frozen `0001_init.sql` checksum, pre-squash upgrade replay without row loss, `0002`–`0009` migrations, constraint/index integrity, synthetic 1,000-member / 10-driver fixture & reminder timing |
 | **Frontend Unit (Vitest)** | `frontend/src/**/*.test.{ts,tsx}` (including `ux-enhancements.test.tsx`, `extended-features.test.tsx`, `bugfixes.test.tsx`, `scenario-matrix.test.tsx`) | Auth/public gates, permissions, member/driver/rider/visit/care/attendance/report flows, admin pages/consistency/tab-counts, modal focus retention, Service Worker privacy/redirect guards, transport plan logic, help guides & `guideProgress` step-ID persistence, i18n key parity (`en`/`zh`), date formatting, calendar links, CSS tokens, WebAuthn helpers, CJK `pdfWriter` |
 | **Browser E2E (Playwright)** | `frontend/e2e/smoke.spec.ts`, `visual.spec.ts`, `admin-a11y.spec.ts`, `help-guides.spec.ts`, `full-scenarios.spec.ts` | Mocked-API routing/login smoke tests, public `/care/:token` & `/visit/:token` & `/invite/:token` journeys, Terms v2 & AutoLock unlock flows, mobile & desktop light/dark visual regression snapshots, axe accessibility scans across member and admin screens, and step-by-step guide / walkthrough navigation |
 
@@ -409,22 +447,22 @@ Grace Ride holds home/pickup addresses, phone numbers, live trip GPS, health-rel
 
 ### Accepted Risks & Known Technical Gaps
 
-1. **Ignored Rust Advisories:** CI currently passes `--ignore RUSTSEC-2023-0071 --ignore RUSTSEC-2026-0459` (transitive advisories; re-evaluate on every dependency update).
+1. **Ignored Rust Advisories (`backend/.cargo/audit.toml`):** `RUSTSEC-2023-0071` (`rsa` via unused `sqlx-mysql`) and `RUSTSEC-2026-0459` (`libsqlite3-sys` via unused `sqlx-sqlite` in `Cargo.lock` only) are ignored in `backend/.cargo/audit.toml` because neither crate is compiled into the PostgreSQL-only binary; re-evaluate on every SQLx upgrade.
 2. **Inline Styles in CSP:** `style-src 'unsafe-inline'` is required by Leaflet marker positioning; script execution remains locked to `'self'`.
 3. **In-Memory Rate Limiter:** Per-IP rate buckets live in memory and reset on container restart (per-account auth lockouts are persisted in PostgreSQL).
-4. **Encryption at Rest & Secret Storage:** PostgreSQL volumes and `scripts/backup.sh` archives are not encrypted by the application, TOTP secrets are stored in plaintext, and 40-bit backup codes are salted only with `user_id`. Host disk encryption + external backup encryption (`age`/`gpg`) are mandatory; full hardening requires an external KMS/env key to encrypt TOTP secrets and HMAC backup codes.
+4. **Encryption at Rest & Secret Storage:** `scripts/backup.sh` supports `age` (`BACKUP_AGE_RECIPIENT`) and `gpg` (`BACKUP_GPG_RECIPIENT`) archive encryption enforced via `REQUIRE_ENCRYPTION=true`, while live PostgreSQL volumes rely on host disk encryption, TOTP secrets are stored in plaintext, and 40-bit backup codes are salted only with `user_id`. Host disk encryption + `REQUIRE_ENCRYPTION=true` are mandatory in production; full column-level hardening requires an external KMS/env key to encrypt TOTP secrets and HMAC backup codes.
 5. **Multi-Account Admin Collusion:** Self-finance restrictions block single-account escalation (`id == u.id`), but an admin with invite + member + role permissions could theoretically create a sockpuppet account. Mitigate organizationally via multiple active admins and periodic review of `user.update`, `role.update`, and `recovery.approve` audit logs.
-6. **Cloudflare-to-Origin TLS (`deploy/graceride.Caddyfile`):** Currently uses `tls internal` behind Cloudflare "Full" mode. Before production launch with real member data, install a Cloudflare Origin CA certificate (or Authenticated Origin Pulls) and switch Cloudflare SSL/TLS to **Full (strict)**.
+6. **Cloudflare-to-Origin TLS (`deploy/graceride.Caddyfile`):** Configured to load a Cloudflare Origin CA certificate (`/etc/caddy/certs/graceride-origin.{pem,key}`, overridable via `ORIGIN_CERT`/`ORIGIN_KEY`). Before production launch with real member data, provision that certificate on the host Caddy, switch Cloudflare SSL/TLS to **Full (strict)**, and optionally enable Authenticated Origin Pulls (`client_auth` block in `deploy/graceride.Caddyfile`).
 7. **API-Level Terms Gate:** `TermsGate` blocks the React UI when `terms_version < TERMS_VERSION`, but authenticated non-`/auth/*` API handlers do not yet reject direct HTTP calls from an active member who has not yet accepted the latest version.
 
 ### Security Pre-Launch Checklist & Vulnerability Reporting
 
-- [ ] Host volume encryption enabled and off-site encrypted backup + `restore.sh` drill completed
+- [ ] Host volume encryption enabled and off-site encrypted backup (`REQUIRE_ENCRYPTION=true`) + `scripts/restore_drill.sh` drill completed
 - [ ] Cloudflare Origin CA certificate installed and SSL/TLS set to **Full (strict)**, verified with an external TLS scan (e.g. SSL Labs)
 - [ ] At least two distinct administrators enrolled with hardware/phone passkeys
 - [ ] Full backend, frontend, E2E, and dependency audit suites green ([Section 6](#6-testing--verification))
 
-**Reporting a Vulnerability:** Email the PJ State CMC IT contact configured in `.env.production` (`ACME_EMAIL`). Do not open public GitHub issues for security vulnerabilities.
+**Reporting a Vulnerability:** Follow [`../SECURITY.md`](../SECURITY.md) and email the PJ State CMC IT contact configured in `.env.production` (`ACME_EMAIL`). Do not open public GitHub issues for security vulnerabilities.
 
 ---
 

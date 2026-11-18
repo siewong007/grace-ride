@@ -2,7 +2,8 @@ import { Link } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
 import { BookOpen, ChevronRight } from 'lucide-react';
 import { guideStatus } from '../guideProgress';
-import { GuideSummary, usePick } from '../pages/HelpGuides';
+import type { GuideSummary } from '../types/help';
+import { usePick } from '../hooks/usePick';
 import { Pill } from './ui';
 
 /** One guide in a list: the same row for members and staff. */

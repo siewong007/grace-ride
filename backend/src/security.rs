@@ -89,22 +89,20 @@ pub fn client_ip(headers: &HeaderMap, req_ip: Option<SocketAddr>, trust_proxy: b
 fn too_many(retry_after: u64, lang: Lang) -> Response {
     let mut res = (
         StatusCode::TOO_MANY_REQUESTS,
-        Json(json!({ "error": t(lang, &format!("尝试次数过多，请 {retry_after} 秒后再试"), &format!("Too many attempts, try again in {retry_after} seconds")) })),
+        Json(json!({
+            "error": t(
+                lang,
+                &format!("尝试次数过多，请 {retry_after} 秒后再试"),
+                &format!("Too many attempts, try again in {retry_after} seconds"),
+            ),
+            "code": "TOO_MANY_REQUESTS",
+        })),
     )
         .into_response();
     if let Ok(v) = HeaderValue::from_str(&retry_after.to_string()) {
         res.headers_mut().insert(header::RETRY_AFTER, v);
     }
     res
-}
-
-/// Unauthenticated paths use Accept-Language (default 中文).
-fn visitor_lang(headers: &HeaderMap) -> Lang {
-    headers
-        .get(header::ACCEPT_LANGUAGE)
-        .and_then(|v| v.to_str().ok())
-        .map(Lang::from_accept_language)
-        .unwrap_or(Lang::Zh)
 }
 
 /// Rate limits for unauthenticated / credential endpoints.
@@ -168,8 +166,7 @@ pub async fn rate_limit(State(st): State<AppState>, req: Request, next: Next) ->
                         .check(&format!("totp:{owner}"), limit, Duration::from_secs(secs))
                 {
                     tracing::warn!(bucket, ip, "rate limited");
-                    let lang = visitor_lang(req.headers());
-                    return too_many(wait, lang);
+                    return too_many(wait, Lang::from_headers(req.headers()));
                 }
                 if let Err(wait) = st.limiter.check(
                     &format!("totp-ip:{ip}"),
@@ -177,24 +174,21 @@ pub async fn rate_limit(State(st): State<AppState>, req: Request, next: Next) ->
                     Duration::from_secs(secs),
                 ) {
                     tracing::warn!(bucket = "totp-ip", ip, "rate limited");
-                    let lang = visitor_lang(req.headers());
-                    return too_many(wait, lang);
+                    return too_many(wait, Lang::from_headers(req.headers()));
                 }
             } else if let Err(wait) =
                 st.limiter
                     .check(&format!("totp:{ip}"), limit, Duration::from_secs(secs))
             {
                 tracing::warn!(bucket, ip, "rate limited");
-                let lang = visitor_lang(req.headers());
-                return too_many(wait, lang);
+                return too_many(wait, Lang::from_headers(req.headers()));
             }
         } else if let Err(wait) =
             st.limiter
                 .check(&format!("{bucket}:{ip}"), limit, Duration::from_secs(secs))
         {
             tracing::warn!(bucket, ip, "rate limited");
-            let lang = visitor_lang(req.headers());
-            return too_many(wait, lang);
+            return too_many(wait, Lang::from_headers(req.headers()));
         }
     }
     next.run(req).await
@@ -261,6 +255,19 @@ fn lock_bypass_path(path: &str) -> bool {
         || path.starts_with("/calendar/")
 }
 
+#[derive(sqlx::FromRow)]
+struct LockRow {
+    locked_at: Option<String>,
+    last_seen_at: String,
+    auto_lock_mins: i64,
+    lang: String,
+    expires_at: String,
+    status: String,
+    totp_enabled: i64,
+    passkey_count: i64,
+    org_timeout: Option<String>,
+}
+
 /// Evaluates whether a session is currently locked (or has exceeded its idle timeout),
 /// engaging `sessions.locked_at` when idle and updating `last_seen_at` if `touch` is true.
 /// Returns `Some((lang, is_locked_without_mfa))` when the session is locked.
@@ -269,17 +276,6 @@ pub async fn evaluate_session_lock(
     token_hash: &str,
     touch: bool,
 ) -> Option<(Lang, bool)> {
-    type LockRow = (
-        Option<String>,
-        String,
-        i64,
-        String,
-        String,
-        String,
-        i64,
-        i64,
-        Option<String>,
-    );
     let row: Option<LockRow> = sqlx::query_as(
         "SELECT s.locked_at, s.last_seen_at, u.auto_lock_mins, u.lang, s.expires_at,
                 u.status, u.totp_enabled,
@@ -293,55 +289,51 @@ pub async fn evaluate_session_lock(
     .await
     .ok()
     .flatten();
-    let (
-        locked_at,
-        last_seen_at,
-        auto_lock_mins,
-        lang,
-        expires,
-        status,
-        totp_enabled,
-        passkey_count,
-        org_timeout_str,
-    ) = row?;
+    let row = row?;
     let now_str = now();
-    if expires < now_str {
+    if row.expires_at < now_str {
         return None;
     }
-    let has_unlock_method = passkey_count > 0 || totp_enabled == 1 || st.cfg.dev_mode;
-    if locked_at.is_some() {
-        return Some((Lang::from_code(&lang), !has_unlock_method));
+    let has_unlock_method = row.passkey_count > 0 || row.totp_enabled == 1 || st.cfg.dev_mode;
+    if row.locked_at.is_some() {
+        return Some((Lang::from_code(&row.lang), !has_unlock_method));
     }
-    let org_timeout = org_timeout_str
+    let org_timeout = row
+        .org_timeout
         .and_then(|v| v.parse::<i64>().ok())
         .unwrap_or(st.cfg.session_timeout_mins);
-    let effective_mins = if auto_lock_mins > 0 {
-        auto_lock_mins
-    } else if auto_lock_mins == 0 {
+    let effective_mins = if row.auto_lock_mins > 0 {
+        row.auto_lock_mins
+    } else if row.auto_lock_mins == 0 {
         org_timeout
     } else {
         0
     };
     if effective_mins > 0
-        && status == "active"
+        && row.status == "active"
         && has_unlock_method
-        && last_seen_at < crate::util::minutes_ago(effective_mins)
+        && row.last_seen_at < crate::util::minutes_ago(effective_mins)
     {
-        let _ = sqlx::query(
-            "UPDATE sessions SET locked_at = $1 WHERE token = $2 AND locked_at IS NULL",
-        )
-        .bind(&now_str)
-        .bind(token_hash)
-        .execute(&st.db)
-        .await;
-        return Some((Lang::from_code(&lang), false));
+        if let Err(e) =
+            sqlx::query("UPDATE sessions SET locked_at = $1 WHERE token = $2 AND locked_at IS NULL")
+                .bind(&now_str)
+                .bind(token_hash)
+                .execute(&st.db)
+                .await
+        {
+            tracing::warn!("failed to set session locked_at: {e}");
+        }
+        return Some((Lang::from_code(&row.lang), false));
     }
-    if touch && last_seen_at < crate::util::minutes_ago(1) {
-        let _ = sqlx::query("UPDATE sessions SET last_seen_at = $1 WHERE token = $2")
+    if touch && row.last_seen_at < crate::util::minutes_ago(1) {
+        if let Err(e) = sqlx::query("UPDATE sessions SET last_seen_at = $1 WHERE token = $2")
             .bind(&now_str)
             .bind(token_hash)
             .execute(&st.db)
-            .await;
+            .await
+        {
+            tracing::warn!("failed to touch session last_seen_at: {e}");
+        }
     }
     None
 }
@@ -420,11 +412,15 @@ pub async fn origin_guard(State(st): State<AppState>, req: Request, next: Next) 
         if !ok {
             tracing::warn!(?origin, ?fetch_site, path = %req.uri().path(), "blocked cross-origin request");
             let accept = crate::util::t(
-                visitor_lang(req.headers()),
+                Lang::from_headers(req.headers()),
                 "请求来源不被允许",
                 "Request origin not allowed",
             );
-            return (StatusCode::FORBIDDEN, Json(json!({ "error": accept }))).into_response();
+            return (
+                StatusCode::FORBIDDEN,
+                Json(json!({ "error": accept, "code": "FORBIDDEN" })),
+            )
+                .into_response();
         }
     }
     next.run(req).await

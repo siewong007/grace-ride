@@ -1,10 +1,6 @@
 //! 恩典同行 Grace Ride — library crate. `main.rs` only reads config and serves;
 //! everything here is reusable by the integration tests in `tests/`.
 
-// SQL rows are read into tuples next to the query that defines them; naming every
-// tuple as a type alias would hide the column list from the reader.
-#![allow(clippy::type_complexity)]
-
 pub mod arrange;
 pub mod audience;
 pub mod auth;
@@ -21,20 +17,21 @@ pub mod stream;
 pub mod util;
 pub mod web_push;
 
+use std::str::FromStr;
 use std::sync::Arc;
+use std::time::Duration;
 
 use axum::{
-    extract::{DefaultBodyLimit, State},
-    http::StatusCode,
-    middleware::from_fn_with_state,
+    extract::{DefaultBodyLimit, Request, State},
+    http::{HeaderName, HeaderValue, StatusCode},
+    middleware::{from_fn, from_fn_with_state, Next},
+    response::Response,
     routing::get,
     Json, Router,
 };
 use serde_json::{json, Value};
 use sqlx::postgres::{PgConnectOptions, PgConnection, PgPoolOptions};
 use sqlx::{Connection, Executor, PgPool};
-use std::str::FromStr;
-use std::time::Duration;
 use tower_http::{
     compression::CompressionLayer,
     services::{ServeDir, ServeFile},
@@ -250,7 +247,6 @@ pub async fn init(cfg: Config) -> anyhow::Result<AppState> {
         webauthn,
         cfg: Arc::new(cfg),
         limiter: Arc::new(RateLimiter::default()),
-        http_client: reqwest::Client::new(),
         routing: Arc::new(routing::RoutingState::default()),
         events: stream::channel(),
         shutdown,
@@ -258,7 +254,12 @@ pub async fn init(cfg: Config) -> anyhow::Result<AppState> {
 }
 
 async fn health(State(st): State<AppState>) -> (StatusCode, Json<Value>) {
-    let db_ok = sqlx::query("SELECT 1").execute(&st.db).await.is_ok();
+    let db_ok = tokio::time::timeout(
+        Duration::from_secs(2),
+        sqlx::query("SELECT 1").execute(&st.db),
+    )
+    .await
+    .is_ok_and(|r| r.is_ok());
     let status = if db_ok {
         StatusCode::OK
     } else {
@@ -275,17 +276,39 @@ async fn health(State(st): State<AppState>) -> (StatusCode, Json<Value>) {
 async fn api_not_found(headers: axum::http::HeaderMap) -> (StatusCode, Json<Value>) {
     (
         StatusCode::NOT_FOUND,
-        Json(json!({ "error": crate::util::t(
-            crate::util::Lang::from_accept_language(
-                headers
-                    .get(axum::http::header::ACCEPT_LANGUAGE)
-                    .and_then(|v| v.to_str().ok())
-                    .unwrap_or("")
+        Json(json!({
+            "error": crate::util::t(
+                crate::i18n::Lang::from_headers(&headers),
+                "找不到此功能",
+                "Not found",
             ),
-            "找不到此功能",
-            "Not found",
-        ) })),
+            "code": "NOT_FOUND",
+        })),
     )
+}
+
+async fn request_id_middleware(mut req: Request, next: Next) -> Response {
+    static REQ_ID: HeaderName = HeaderName::from_static("x-request-id");
+    let incoming = req
+        .headers()
+        .get(&REQ_ID)
+        .and_then(|v| v.to_str().ok())
+        .map(str::trim)
+        .filter(|s| {
+            !s.is_empty()
+                && s.len() <= 128
+                && s.bytes()
+                    .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'-' | b'_' | b'.' | b':'))
+        })
+        .and_then(|s| HeaderValue::from_str(s).ok());
+    let id_val = incoming.unwrap_or_else(|| {
+        HeaderValue::from_str(&uuid::Uuid::new_v4().to_string())
+            .unwrap_or_else(|_| HeaderValue::from_static("req"))
+    });
+    req.headers_mut().insert(REQ_ID.clone(), id_val.clone());
+    let mut res = next.run(req).await;
+    res.headers_mut().insert(REQ_ID.clone(), id_val);
+    res
 }
 
 pub fn router(state: AppState) -> Router {
@@ -306,7 +329,7 @@ pub fn router(state: AppState) -> Router {
             .fallback_service(ServeDir::new(dir).fallback(ServeFile::new(dir.join("index.html"))));
     }
 
-    // Layers run bottom-up on the way in: trace → headers → compression → body limit → origin → rate limit.
+    // Layers run bottom-up on the way in: request_id → trace → headers → compression → body limit → origin → rate limit.
     app.layer(from_fn_with_state(state.clone(), security::rate_limit))
         .layer(from_fn_with_state(state.clone(), security::origin_guard))
         .layer(DefaultBodyLimit::max(MAX_JSON_BODY))
@@ -316,6 +339,7 @@ pub fn router(state: AppState) -> Router {
             security::security_headers,
         ))
         .layer(TraceLayer::new_for_http())
+        .layer(from_fn(request_id_middleware))
         .with_state(state)
 }
 

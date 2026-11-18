@@ -31,9 +31,11 @@ pub enum AppError {
 
 pub type AppResult<T> = Result<T, AppError>;
 
-pub fn bad(lang: Lang, key: ErrorKey) -> AppError {
+pub fn bad_request(lang: Lang, key: ErrorKey) -> AppError {
     AppError::BadRequest { lang, key }
 }
+
+pub use bad_request as bad;
 
 pub fn forbidden(lang: Lang, key: ErrorKey) -> AppError {
     AppError::Forbidden { lang, key }

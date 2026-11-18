@@ -1,6 +1,7 @@
 export default {
   save: 'Save',
   cancel: 'Cancel',
+  clear: 'Clear',
   close: 'Close',
   submit: 'Submit',
   edit: 'Edit',

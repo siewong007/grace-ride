@@ -92,11 +92,7 @@ fn compute_shares(lang: Lang, req: &SettlementIn) -> AppResult<Vec<(i64, i64)>> 
     {
         return Err(bad(lang, ErrorKey::ExpenseItemNegativeOrBlank));
     }
-    if req
-        .items
-        .iter()
-        .any(|i| i.amount_cents > MAX_AMOUNT_CENTS)
-    {
+    if req.items.iter().any(|i| i.amount_cents > MAX_AMOUNT_CENTS) {
         return Err(bad(lang, ErrorKey::InvalidAction));
     }
     let subsidy = req.subsidy_cents.unwrap_or(0);
@@ -650,7 +646,7 @@ async fn update(
                 ErrorKey::PaidMembersCannotBeRemoved(paid_removed),
             ));
         }
-        let snap = snapshot_on(&mut *tx, &s).await?;
+        let snap = snapshot_on(&mut tx, &s).await?;
         sqlx::query("INSERT INTO settlement_revisions (settlement_id, version, snapshot, reason, created_by, created_at) VALUES ($1,$2,$3::jsonb,$4,$5,$6)")
             .bind(id)
             .bind(s.version)

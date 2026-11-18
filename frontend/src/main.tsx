@@ -18,6 +18,28 @@ import './styles.css';
 // App normally hides the boot splash once auth resolves; never leave it covering a stuck or crashed load.
 window.setTimeout(() => hideSplash(true), 10_000);
 
+if (typeof window !== 'undefined') {
+  const preloadKey = 'gr-preload-reload';
+  window.addEventListener('vite:preloadError', (event) => {
+    try {
+      if (!sessionStorage.getItem(preloadKey)) {
+        sessionStorage.setItem(preloadKey, '1');
+        event.preventDefault();
+        window.location.reload();
+      }
+    } catch {
+      /* storage blocked */
+    }
+  });
+  window.setTimeout(() => {
+    try {
+      sessionStorage.removeItem(preloadKey);
+    } catch {
+      /* storage blocked */
+    }
+  }, 15_000);
+}
+
 if (typeof window !== 'undefined' && 'serviceWorker' in navigator && import.meta.env.PROD) {
   window.addEventListener('load', () => {
     navigator.serviceWorker.register('/sw.js').catch(() => {});

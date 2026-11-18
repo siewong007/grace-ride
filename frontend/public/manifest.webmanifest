@@ -1,7 +1,10 @@
 {
+  "id": "/",
   "name": "恩典同行 Grace Ride",
   "short_name": "恩典同行",
+  "description": "恩典同行 — PJ State CMC 会员接送与活动应用",
   "start_url": "/",
+  "scope": "/",
   "display": "standalone",
   "background_color": "#FFFFFF",
   "theme_color": "#1F5DB4",

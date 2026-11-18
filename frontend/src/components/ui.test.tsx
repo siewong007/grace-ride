@@ -419,12 +419,12 @@ describe('BackToTop primitive', () => {
 
 describe('InfiniteSentinel primitive', () => {
   it('renders loading state when loading is true', () => {
-    render(<InfiniteSentinel loading={true} hasMore={true} />);
+    render(<InfiniteSentinel loading={true} hasMore={true} sentinelRef={{ current: null }} />);
     expect(screen.getByText(/Loading more/i)).toBeInTheDocument();
   });
 
   it('renders end-of-list message when hasMore is false and not loading', () => {
-    render(<InfiniteSentinel loading={false} hasMore={false} />);
+    render(<InfiniteSentinel loading={false} hasMore={false} sentinelRef={{ current: null }} />);
     expect(screen.getByText(/No more records/i)).toBeInTheDocument();
   });
 });

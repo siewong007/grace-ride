@@ -32,6 +32,7 @@ jobs:
           --health-retries 10
     steps:
       - uses: actions/checkout@v4
+        with: { persist-credentials: false }
       - uses: dtolnay/rust-toolchain@stable
         with: { components: "clippy, rustfmt" }
       - uses: Swatinem/rust-cache@v2
@@ -40,9 +41,10 @@ jobs:
       - run: cargo clippy --all-targets --locked -- -D warnings
       - run: cargo test --locked
       - name: Dependency advisories
+        # Advisory ignores are maintained in backend/.cargo/audit.toml (single source of truth).
         run: |
           cargo install cargo-audit --locked
-          cargo audit --ignore RUSTSEC-2023-0071 --ignore RUSTSEC-2026-0459
+          cargo audit
 
   frontend:
     runs-on: ubuntu-latest
@@ -53,10 +55,22 @@ jobs:
     defaults: { run: { working-directory: frontend } }
     steps:
       - uses: actions/checkout@v4
+        with: { persist-credentials: false }
       - uses: actions/setup-node@v4
         with: { node-version: 22, cache: npm, cache-dependency-path: frontend/package-lock.json }
+      - name: Verify Playwright container tag matches package-lock.json
+        run: |
+          node -e '
+            const lock = require("./package-lock.json");
+            const ver = lock.packages?.["node_modules/@playwright/test"]?.version;
+            if (ver !== "1.65.0") {
+              console.error(`@playwright/test in package-lock.json is ${ver}, expected 1.65.0 to match container image`);
+              process.exit(1);
+            }
+          '
       - run: npm ci
       - run: npm run lint
+      - run: npm run typecheck
       - run: npm run test
       - run: npm run build
       - run: npm run test:e2e
@@ -68,6 +82,7 @@ jobs:
     needs: [backend, frontend]
     steps:
       - uses: actions/checkout@v4
+        with: { persist-credentials: false }
       - uses: docker/setup-buildx-action@v3
       - uses: docker/build-push-action@v6
         with:

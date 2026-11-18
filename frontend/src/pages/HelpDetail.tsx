@@ -1,10 +1,11 @@
 import { FormEvent, useEffect, useRef, useState } from 'react';
-import { Link, useNavigate, useParams } from 'react-router-dom';
+import { Link, useParams } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
 import { BookOpen, CheckCircle, ExternalLink, Hand, HelpCircle, Phone, RefreshCw, Send } from 'lucide-react';
 import { post, useApi } from '../api';
 import { useAuth } from '../auth';
-import { GuideSummary, usePick } from './HelpGuides';
+import type { GuideSummary } from '../types/help';
+import { usePick } from '../hooks/usePick';
 import PhotoAttach, { MessagePhoto } from '../components/PhotoAttach';
 import {
   Button,
@@ -76,7 +77,6 @@ export default function HelpDetail({
   const ft = useFormatT();
   const pick = usePick();
   const params = useParams();
-  const nav = useNavigate();
   const { me, can } = useAuth();
   const toast = useToast();
 
@@ -489,7 +489,10 @@ export default function HelpDetail({
             {tk.ride_id && (
               <div className="stack-xs">
                 <span className="muted tiny">{t('relatedRide', { rideId: tk.ride_id })}</span>
-                <Link to={`/admin/rides/${tk.ride_id}`} className="small bold">
+                <Link
+                  to={can('admin_rides') ? `/admin/rides/${tk.ride_id}` : `/rides/${tk.ride_id}`}
+                  className="small bold"
+                >
                   {t('viewAdminRide', 'View ride #{rideId}', { rideId: tk.ride_id })} →
                 </Link>
               </div>
@@ -504,16 +507,7 @@ export default function HelpDetail({
                 </span>
                 <div className="list">
                   {tk.member.other_open.map((otherId) => (
-                    <Link
-                      key={otherId}
-                      to={isTwoPane ? `/help/${otherId}` : `/help/${otherId}`}
-                      onClick={() => {
-                        if (isTwoPane) {
-                          nav(`/help/${otherId}`);
-                        }
-                      }}
-                      className="item small"
-                    >
+                    <Link key={otherId} to={`/help/${otherId}`} className="item small">
                       <span>#{otherId}</span>
                     </Link>
                   ))}

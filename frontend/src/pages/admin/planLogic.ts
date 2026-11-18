@@ -94,15 +94,24 @@ export function driverLoad(plan: Plan, draft: Draft, d: PlanDriver, leg?: 'outbo
 export function vehicleCompatible(d: PlanDriver, ride: PlanRide): boolean {
   const raw = ride.assistance || '';
   const lower = raw.toLowerCase();
-  if ((lower.includes('wheelchair') || raw.includes('\u8f6e\u6905')) && !d.vehicle.wheelchair_ok) {
+  if (
+    (lower.includes('wheelchair') ||
+      lower.includes('kerusi roda') ||
+      raw.includes('\u8f6e\u6905') ||
+      raw.includes('\u8f2a\u6905')) &&
+    !d.vehicle.wheelchair_ok
+  ) {
     return false;
   }
   if (
     (lower.includes('stroller') ||
       lower.includes('child seat') ||
       lower.includes('child_seat') ||
+      lower.includes('kereta sorong') ||
       raw.includes('\u5a74\u513f\u8f66') ||
+      raw.includes('\u5b30\u5152\u8eca') ||
       raw.includes('\u513f\u7ae5\u5ea7\u6905') ||
+      raw.includes('\u5152\u7ae5\u5ea7\u6905') ||
       raw.includes('\u5b89\u5168\u5ea7\u6905')) &&
     !d.vehicle.child_seat
   ) {

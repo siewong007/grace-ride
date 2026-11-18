@@ -8,7 +8,8 @@ import { Button, Card, CardSkeleton, EmptyState, ErrorBox, Notice, Page, PageHea
 import GuideSteps from '../components/GuideSteps';
 import { useGuideRunner } from '../components/GuideRunner';
 import HelpComposer from '../components/HelpComposer';
-import { GuideDetailData, GuideSummary, usePick } from './HelpGuides';
+import type { GuideDetailData, GuideSummary } from '../types/help';
+import { usePick } from '../hooks/usePick';
 
 export default function HelpGuideDetail() {
   const { t } = useTranslation('help');

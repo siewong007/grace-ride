@@ -1,4 +1,4 @@
-import { FormEvent, useEffect, useState } from 'react';
+import { FormEvent, useEffect, useRef, useState } from 'react';
 import PhotoAttach from './PhotoAttach';
 import { useNavigate, Link } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
@@ -8,7 +8,8 @@ import { useAuth } from '../auth';
 import { Ride } from './RideCard';
 import { Button, ErrorBox, Field, Modal, useAction, useToast } from './ui';
 import { fmtDay, fmtTime, useFormatT } from '../format';
-import { GuideSummary, usePick } from '../pages/HelpGuides';
+import type { GuideSummary } from '../types/help';
+import { usePick } from '../hooks/usePick';
 
 const DRAFT_KEY = 'graceride_help_draft';
 
@@ -52,6 +53,8 @@ export default function HelpComposer({
   const [onBehalf, setOnBehalf] = useState(false);
   const [memberQuery, setMemberQuery] = useState('');
   const [selectedMember, setSelectedMember] = useState<MemberUser | null>(null);
+  const subjectInputRef = useRef<HTMLInputElement>(null);
+  const memberInputRef = useRef<HTMLInputElement>(null);
 
   // Load member's recent rides for the ride picker
   const ridesApi = useApi<Ride[]>(can('rides') ? '/rides' : null);
@@ -150,6 +153,7 @@ export default function HelpComposer({
       title={isStaffEditor && onBehalf ? t('raiseForMember') : t('ask')}
       onClose={onClose}
       size="md"
+      initialFocusRef={subjectInputRef}
     >
       <form onSubmit={handleSubmit} className="stack">
         {isStaffEditor && (
@@ -159,8 +163,13 @@ export default function HelpComposer({
                 type="checkbox"
                 checked={onBehalf}
                 onChange={(e) => {
-                  setOnBehalf(e.target.checked);
-                  if (!e.target.checked) setSelectedMember(null);
+                  const checked = e.target.checked;
+                  setOnBehalf(checked);
+                  if (!checked) {
+                    setSelectedMember(null);
+                  } else {
+                    requestAnimationFrame(() => memberInputRef.current?.focus());
+                  }
                 }}
               />
               <span>{t('raiseForMember')}</span>
@@ -185,11 +194,12 @@ export default function HelpComposer({
                 ) : (
                   <div>
                     <input
+                      ref={memberInputRef}
                       className="input"
+                      aria-label={t('memberSearchPlaceholder')}
                       placeholder={t('memberSearchPlaceholder')}
                       value={memberQuery}
                       onChange={(e) => setMemberQuery(e.target.value)}
-                      autoFocus
                     />
                     {memberResults.length > 0 && (
                       <div className="card tight stack-xs" style={{ marginTop: 'var(--space-1)', maxHeight: 150, overflowY: 'auto' }}>
@@ -219,6 +229,7 @@ export default function HelpComposer({
 
         <Field label={t('subject')}>
           <input
+            ref={subjectInputRef}
             className="input"
             required
             value={subject}

@@ -2,7 +2,7 @@ import { beforeEach, describe, expect, it } from 'vitest';
 import { render, screen } from '@testing-library/react';
 import { guideStatus, markDone, readDone, stepIds, writeDone } from './guideProgress';
 import StepText, { parseStepText } from './components/StepText';
-import type { GuideStep } from './pages/HelpGuides';
+import type { GuideStep } from './types/help';
 
 const step = (title: string, link = ''): GuideStep => ({ title_en: title, title_zh: '', body_en: '', body_zh: '', link });
 const A = step('Find the event', '/events');

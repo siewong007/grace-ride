@@ -4,7 +4,10 @@
 //! Only their SHA-256 hash is stored, so a leaked database or backup cannot be replayed
 //! as live sessions.
 
-use axum::{extract::FromRequestParts, http::request::Parts};
+use axum::{
+    extract::FromRequestParts,
+    http::{header, request::Parts},
+};
 use axum_extra::extract::CookieJar;
 use serde::Serialize;
 use sha2::{Digest, Sha256};
@@ -67,6 +70,20 @@ impl CurrentUser {
     }
 }
 
+#[derive(sqlx::FromRow)]
+struct SessionRow {
+    id: i64,
+    name: String,
+    email: String,
+    roles: String,
+    status: String,
+    mfa_ok: i64,
+    expires_at: String,
+    created_at: String,
+    lang: String,
+    granted: String,
+}
+
 impl FromRequestParts<AppState> for CurrentUser {
     type Rejection = AppError;
 
@@ -74,14 +91,13 @@ impl FromRequestParts<AppState> for CurrentUser {
         parts: &mut Parts,
         state: &AppState,
     ) -> Result<Self, Self::Rejection> {
-        let accept_lang_hdr = parts
+        let explicit_lang = parts
             .headers
-            .get(axum::http::header::ACCEPT_LANGUAGE)
+            .get(header::ACCEPT_LANGUAGE)
             .and_then(|v| v.to_str().ok())
-            .filter(|s| !s.trim().is_empty());
-        let accept_lang = accept_lang_hdr
-            .map(Lang::from_accept_language)
-            .unwrap_or(Lang::Zh);
+            .and_then(Lang::parse_accept_language);
+        let unauth_lang = explicit_lang.unwrap_or(Lang::Zh);
+
         // The session cookie is the only credential. `security::pending_guard` reads the
         // same cookie to keep unapproved members out; a second way to present the token
         // (it used to be accepted as a Bearer header) would walk straight past that guard.
@@ -90,31 +106,19 @@ impl FromRequestParts<AppState> for CurrentUser {
             .get(SESSION_COOKIE_SECURE)
             .or_else(|| jar.get(SESSION_COOKIE))
             .map(|c| c.value().to_string())
-            .ok_or(unauthorized(accept_lang))?;
+            .ok_or(unauthorized(unauth_lang))?;
         if token.len() != 48 {
-            return Err(unauthorized(accept_lang));
+            return Err(unauthorized(unauth_lang));
         }
         let session_id = hash_token(&token);
 
         // Permissions are read with the session on every request, so a change to a role
         // or to a member's roles applies to their very next call.
-        type Row = (
-            i64,
-            String,
-            String,
-            String,
-            String,
-            i64,
-            String,
-            String,
-            String,
-            String,
-        );
-        let row: Option<Row> = sqlx::query_as(
+        let row: Option<SessionRow> = sqlx::query_as(
             "SELECT u.id, u.name, u.email, u.roles, u.status, s.mfa_ok, s.expires_at, s.created_at, u.lang,
                     COALESCE((SELECT string_agg(rp.permission, ',') FROM role_permissions rp
                               WHERE rp.role_key = $2
-                                 OR rp.role_key IN (SELECT role_key FROM member_roles WHERE user_id = u.id)), '')
+                                 OR rp.role_key IN (SELECT role_key FROM member_roles WHERE user_id = u.id)), '') AS granted
              FROM sessions s JOIN users u ON u.id = s.user_id
              WHERE s.token = $1 AND u.status IN ('active', 'pending')",
         )
@@ -123,44 +127,42 @@ impl FromRequestParts<AppState> for CurrentUser {
         .fetch_optional(&state.db)
         .await?;
 
-        let (id, name, email, roles, status, mfa_ok, expires, created_at, lang, granted) =
-            row.ok_or(unauthorized(accept_lang))?;
-        if expires < now() {
-            return Err(unauthorized(accept_lang));
+        let srow = row.ok_or(unauthorized(unauth_lang))?;
+        let user_lang = explicit_lang.unwrap_or_else(|| Lang::from_code(&srow.lang));
+        if srow.expires_at < now() {
+            return Err(unauthorized(user_lang));
         }
-        let perms = if status == "active" {
-            PermSet::from_keys(granted.split(','))
+        let perms = if srow.status == "active" {
+            PermSet::from_keys(srow.granted.split(','))
         } else {
             PermSet::default()
         };
         let privileged = perms.privileged();
         // Staff sessions that can access sensitive/other members' data must be capped at 12 hours.
-        if privileged && created_at < crate::util::minutes_ago(12 * 60) {
-            return Err(unauthorized(accept_lang));
+        if privileged && srow.created_at < crate::util::minutes_ago(12 * 60) {
+            return Err(unauthorized(user_lang));
         }
-        let (group_scope, drive_scope) = if status == "active" {
-            crate::audience::group_scopes(&state.db, id).await?
+        let (group_scope, drive_scope) = if srow.status == "active" {
+            crate::audience::group_scopes(&state.db, srow.id).await?
         } else {
             (Vec::new(), Vec::new())
         };
         Ok(CurrentUser {
-            id,
-            name,
-            email,
-            roles: perms::parse_roles(&roles),
+            id: srow.id,
+            name: srow.name,
+            email: srow.email,
+            roles: perms::parse_roles(&srow.roles),
             perms,
-            status,
+            status: srow.status,
             // Accounts that reach staff pages always honour the session MFA flag (even in
             // DEV_MODE), so demos via /auth/dev-login (mfa_ok=1) still work while tests
             // can assert mfa_ok=0 is denied on staff routes.
             mfa_ok: if privileged {
-                mfa_ok == 1
+                srow.mfa_ok == 1
             } else {
-                mfa_ok == 1 || state.cfg.dev_mode
+                srow.mfa_ok == 1 || state.cfg.dev_mode
             },
-            lang: accept_lang_hdr
-                .map(Lang::from_accept_language)
-                .unwrap_or_else(|| Lang::from_code(&lang)),
+            lang: user_lang,
             session_id,
             group_scope,
             drive_scope,

@@ -8,10 +8,9 @@ import { Ride } from './RideCard';
 import { StatusPill } from './ui';
 import { TOPICS, TopicKey } from './HelpTopicSheet';
 import { fmtAgo, fmtTime, HELP_STATUS, RIDE_STATUS, RIDE_STATUS_PASSENGER, todayStr, useFormatT } from '../format';
-import type { GuideSummary } from '../pages/HelpGuides';
+import type { GuideSummary, TicketSummary } from '../types/help';
 import GuideListRow from './GuideListRow';
 import { guideStatus } from '../guideProgress';
-import type { TicketSummary } from '../pages/Help';
 
 const SHOW = 3;
 const ENDED = ['completed', 'cancelled', 'no_show', 'alt_transport'];

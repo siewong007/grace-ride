@@ -3,32 +3,238 @@ import tseslint from 'typescript-eslint';
 import reactHooks from 'eslint-plugin-react-hooks';
 import jsxA11y from 'eslint-plugin-jsx-a11y';
 
-const jsxA11yRulesWarn = Object.fromEntries(
-  Object.entries(jsxA11y.flatConfigs.recommended.rules).map(([key, value]) => {
-    if (value === 'error') return [key, 'warn'];
-    if (Array.isArray(value) && value[0] === 'error') {
-      return [key, ['warn', ...value.slice(1)]];
-    }
-    return [key, value];
-  })
-);
+const readonlyGlobals = (names) =>
+  Object.fromEntries(names.map((name) => [name, 'readonly']));
+
+const sharedTimersAndWebGlobals = readonlyGlobals([
+  'AbortController',
+  'AbortSignal',
+  'Blob',
+  'BroadcastChannel',
+  'CompressionStream',
+  'Crypto',
+  'CustomEvent',
+  'DOMException',
+  'DecompressionStream',
+  'Event',
+  'EventTarget',
+  'File',
+  'FileReader',
+  'FormData',
+  'Headers',
+  'MessageChannel',
+  'MessageEvent',
+  'MessagePort',
+  'Performance',
+  'ReadableStream',
+  'Request',
+  'Response',
+  'TextDecoder',
+  'TextEncoder',
+  'TransformStream',
+  'URL',
+  'URLSearchParams',
+  'WebSocket',
+  'WritableStream',
+  'atob',
+  'btoa',
+  'clearInterval',
+  'clearTimeout',
+  'console',
+  'crypto',
+  'fetch',
+  'performance',
+  'queueMicrotask',
+  'setInterval',
+  'setTimeout',
+  'structuredClone',
+]);
+
+const browserGlobals = {
+  ...sharedTimersAndWebGlobals,
+  ...readonlyGlobals([
+    'Audio',
+    'BarcodeDetector',
+    'BeforeInstallPromptEvent',
+    'CSS',
+    'CanvasRenderingContext2D',
+    'ClipboardItem',
+    ' CustomElementRegistry'.trim(),
+    'DOMParser',
+    'Document',
+    'Element',
+    'EventSource',
+    'FocusEvent',
+    'GeolocationPosition',
+    'HTMLAnchorElement',
+    'HTMLButtonElement',
+    'HTMLCanvasElement',
+    'HTMLDivElement',
+    'HTMLElement',
+    'HTMLFormElement',
+    'HTMLHeadingElement',
+    'HTMLImageElement',
+    'HTMLInputElement',
+    'HTMLLabelElement',
+    'HTMLSelectElement',
+    'HTMLTextAreaElement',
+    'HTMLVideoElement',
+    'History',
+    'IDBDatabase',
+    'Image',
+    'IntersectionObserver',
+    'KeyboardEvent',
+    'Location',
+    'MediaQueryList',
+    'MediaStream',
+    'MouseEvent',
+    'MutationObserver',
+    'Navigator',
+    'Node',
+    'NodeList',
+    'Notification',
+    'PointerEvent',
+    'PublicKeyCredential',
+    'PushSubscription',
+    'ResizeObserver',
+    'Screen',
+    'ServiceWorkerRegistration',
+    'Storage',
+    'StorageEvent',
+    'SVGElement',
+    'TouchEvent',
+    'UIEvent',
+    'VisualViewport',
+    'Window',
+    'XMLHttpRequest',
+    'alert',
+    'cancelAnimationFrame',
+    'confirm',
+    'devicePixelRatio',
+    'document',
+    'frames',
+    'getComputedStyle',
+    'history',
+    'indexedDB',
+    'innerHeight',
+    'innerWidth',
+    'localStorage',
+    'location',
+    'matchMedia',
+    'navigator',
+    'open',
+    'outerHeight',
+    'outerWidth',
+    'pageXOffset',
+    'pageYOffset',
+    'parent',
+    'print',
+    'prompt',
+    'requestAnimationFrame',
+    'screen',
+    'scrollBy',
+    'scrollTo',
+    'scrollX',
+    'scrollY',
+    'self',
+    'sessionStorage',
+    'top',
+    'visualViewport',
+    'window',
+  ]),
+};
+
+const swGlobals = {
+  ...sharedTimersAndWebGlobals,
+  ...readonlyGlobals([
+    'Cache',
+    'CacheStorage',
+    'Client',
+    'Clients',
+    'ExtendableEvent',
+    'ExtendableMessageEvent',
+    'FetchEvent',
+    'NotificationEvent',
+    'PushEvent',
+    'ServiceWorkerGlobalScope',
+    'WindowClient',
+    'caches',
+    'clients',
+    'indexedDB',
+    'location',
+    'navigator',
+    'origin',
+    'registration',
+    'self',
+    'skipWaiting',
+  ]),
+};
+
+const nodeGlobals = {
+  ...sharedTimersAndWebGlobals,
+  ...readonlyGlobals([
+    'Buffer',
+    '__dirname',
+    '__filename',
+    'clearImmediate',
+    'global',
+    'process',
+    'setImmediate',
+  ]),
+};
 
 export default tseslint.config(
+  {
+    ignores: ['dist/**', 'node_modules/**', 'test-results/**', 'playwright-report/**', '.vitest/**'],
+  },
   js.configs.recommended,
   ...tseslint.configs.recommended,
+  {
+    files: ['src/**/*.{ts,tsx}', 'public/theme-boot.js'],
+    languageOptions: {
+      globals: browserGlobals,
+    },
+  },
+  {
+    files: ['src/**/*.test.{ts,tsx}', 'src/test/**/*.{ts,tsx}', 'e2e/**/*.{ts,tsx}'],
+    languageOptions: {
+      globals: {
+        ...browserGlobals,
+        ...nodeGlobals,
+      },
+    },
+  },
+  {
+    files: ['public/sw.js'],
+    languageOptions: {
+      globals: swGlobals,
+    },
+  },
+  {
+    files: ['scripts/**/*.{js,mjs,cjs}', 'vite.config.ts', 'playwright.config.ts', 'eslint.config.js'],
+    languageOptions: {
+      globals: nodeGlobals,
+    },
+  },
   {
     plugins: {
       'react-hooks': reactHooks,
       'jsx-a11y': jsxA11y,
     },
     rules: {
-      ...jsxA11yRulesWarn,
+      ...jsxA11y.flatConfigs.recommended.rules,
       'react-hooks/rules-of-hooks': 'error',
       'react-hooks/exhaustive-deps': 'warn',
-      '@typescript-eslint/no-explicit-any': 'warn',
+      '@typescript-eslint/no-explicit-any': 'error',
+      '@typescript-eslint/no-unused-vars': [
+        'error',
+        {
+          argsIgnorePattern: '^_',
+          varsIgnorePattern: '^_',
+          caughtErrorsIgnorePattern: '^_',
+          ignoreRestSiblings: true,
+        },
+      ],
     },
   },
-  {
-    ignores: ['dist/**', 'node_modules/**', 'test-results/**'],
-  }
 );

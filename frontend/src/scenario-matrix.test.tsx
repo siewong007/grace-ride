@@ -597,8 +597,8 @@ describe('Scenario Matrix — Frontend Components & Service Worker', () => {
 
       expect(mockSelf.registration.showNotification).toHaveBeenCalledWith('Ride reminder', {
         body: 'Driver arriving at 09:00',
-        icon: '/icon-192.png',
-        badge: '/icon-192.png',
+        icon: '/icon-192.png?v=2',
+        badge: '/icon-192.png?v=2',
         data: { url: '/rides/42?action=readiness' },
       });
     });

@@ -5,12 +5,19 @@ name: Deploy production
 # forwarded port 20049. The pinned host key is
 # SHA256:HV6OszvuYmwmWRLEY7z7jm8GojWZJppJlDBHIhJVUxw.
 #
-# Required environment secret (production):
-#   VPS_SSH_PRIVATE_KEY
+# Required GitHub Environment (`production`) configuration:
+#   Secrets:
+#     - VPS_SSH_PRIVATE_KEY  (Ed25519/RSA private key for the deploy user)
+#     - VPS_HOST_KEY         (pinned known_hosts line matching SHA256:HV6OszvuYmwmWRLEY7z7jm8GojWZJppJlDBHIhJVUxw)
+#   Variables:
+#     - VPS_HOST             (public IPv4 / hostname of the AIC VPS)
+#     - VPS_PORT             (optional; defaults to `20049`)
+#     - VPS_USER             (optional; defaults to `deploy`)
 #
-# The database container and its volume normally stay in place; only the app
-# container is replaced. Fresh/empty DBs are allowed (user count may grow from
-# first-boot seed). Host Caddy keeps ports 80 and 443.
+# The database container and its volume stay in place across upgrades; on a brand-new VPS
+# where `grace-ride-db` is not running yet, it is started and awaited first.
+# `deploy/docker-compose.aic.yml` and `deploy/docker-compose.osrm.yml` are synced to
+# `/opt/grace-ride/` on every roll.
 # Manual dispatch: Actions → Deploy production → Run workflow.
 
 # Deploys only after CI has passed for the pushed commit. A push that fails lint,
@@ -79,6 +86,8 @@ jobs:
         run: |
           set -euo pipefail
           test -n "$VPS_SSH_PRIVATE_KEY"
+          test -n "$VPS_HOST_KEY"
+          test -n "$VPS_HOST"
           install -m 0600 /dev/null "$RUNNER_TEMP/vps-key"
           printf '%s\n' "$VPS_SSH_PRIVATE_KEY" > "$RUNNER_TEMP/vps-key"
           install -m 0600 /dev/null "$RUNNER_TEMP/vps-known-hosts"
@@ -91,26 +100,37 @@ jobs:
         run: |
           set -euo pipefail
           [[ "$SHA" =~ ^[0-9a-f]{40}$ ]]
-          scp \
-            -i "$RUNNER_TEMP/vps-key" \
-            -P "$VPS_PORT" \
-            -o BatchMode=yes \
-            -o ConnectTimeout=20 \
-            -o IdentitiesOnly=yes \
-            -o StrictHostKeyChecking=yes \
-            -o "UserKnownHostsFile=$RUNNER_TEMP/vps-known-hosts" \
+          ssh_opts=(
+            -i "$RUNNER_TEMP/vps-key"
+            -o BatchMode=yes
+            -o ConnectTimeout=20
+            -o IdentitiesOnly=yes
+            -o StrictHostKeyChecking=yes
+            -o "UserKnownHostsFile=$RUNNER_TEMP/vps-known-hosts"
+          )
+          prev_image=$(ssh "${ssh_opts[@]}" -p "$VPS_PORT" "$VPS_USER@$VPS_HOST" \
+            "docker inspect -f '{{.Config.Image}}' grace-ride 2>/dev/null || true")
+          prev_tag="${prev_image#grace-ride:}"
+          if [[ -z "$prev_image" || ! "$prev_tag" =~ ^[A-Za-z0-9._-]+$ ]]; then
+            prev_tag="none"
+          fi
+          echo "OLD_TAG=$prev_tag" >> "$GITHUB_ENV"
+
+          scp "${ssh_opts[@]}" -P "$VPS_PORT" \
+            deploy/docker-compose.aic.yml \
+            "$VPS_USER@$VPS_HOST:/tmp/docker-compose.aic.$SHA.yml"
+          if [[ -f deploy/docker-compose.osrm.yml ]]; then
+            scp "${ssh_opts[@]}" -P "$VPS_PORT" \
+              deploy/docker-compose.osrm.yml \
+              "$VPS_USER@$VPS_HOST:/tmp/docker-compose.osrm.$SHA.yml"
+          fi
+          scp "${ssh_opts[@]}" -P "$VPS_PORT" \
             "$RUNNER_TEMP/grace-ride-$SHA.tar.gz" \
             "$VPS_USER@$VPS_HOST:/tmp/grace-ride-$SHA.tar.gz.part"
-          ssh \
-            -i "$RUNNER_TEMP/vps-key" \
-            -p "$VPS_PORT" \
-            -o BatchMode=yes \
-            -o ConnectTimeout=20 \
-            -o IdentitiesOnly=yes \
+
+          ssh "${ssh_opts[@]}" -p "$VPS_PORT" \
             -o ServerAliveInterval=15 \
             -o ServerAliveCountMax=8 \
-            -o StrictHostKeyChecking=yes \
-            -o "UserKnownHostsFile=$RUNNER_TEMP/vps-known-hosts" \
             "$VPS_USER@$VPS_HOST" \
             "SHA='$SHA' bash -s" <<'REMOTE'
           set -euo pipefail
@@ -121,35 +141,82 @@ jobs:
             df -h / >&2
             exit 1
           fi
-          # Empty/fresh DBs may not have a users table yet (pre-migrate).
-          users_before=$(docker exec grace-ride-db psql -U grace -d grace_ride -tAc 'SELECT COUNT(*) FROM users' 2>/dev/null || echo 0)
-          users_before=${users_before:-0}
-          db_before=$(docker inspect -f '{{.Id}}' grace-ride-db)
+
+          install -m 0644 "/tmp/docker-compose.aic.$SHA.yml" /opt/grace-ride/docker-compose.aic.yml
+          rm -f "/tmp/docker-compose.aic.$SHA.yml"
+          if [[ -f "/tmp/docker-compose.osrm.$SHA.yml" ]]; then
+            install -m 0644 "/tmp/docker-compose.osrm.$SHA.yml" /opt/grace-ride/docker-compose.osrm.yml
+            rm -f "/tmp/docker-compose.osrm.$SHA.yml"
+          fi
+
           old_image=$(docker inspect -f '{{.Config.Image}}' grace-ride 2>/dev/null || echo '')
           if [[ -z "$old_image" ]]; then
             echo "No existing app container; will start fresh."
             old_image="grace-ride:none"
           fi
           old_tag=${old_image#grace-ride:}
+
+          set_image_tag() {
+            local tag="$1"
+            if grep -q '^IMAGE_TAG=' /opt/grace-ride/secrets.env; then
+              sed -i "s/^IMAGE_TAG=.*/IMAGE_TAG=${tag}/" /opt/grace-ride/secrets.env
+            else
+              [[ -s /opt/grace-ride/secrets.env && -n "$(tail -c 1 /opt/grace-ride/secrets.env)" ]] \
+                && printf '\n' >> /opt/grace-ride/secrets.env
+              printf 'IMAGE_TAG=%s\n' "$tag" >> /opt/grace-ride/secrets.env
+            fi
+          }
+
+          # Ensure grace-ride-db is running and healthy (handles first boot on a fresh VPS).
+          if [[ "$(docker inspect -f '{{.State.Running}}' grace-ride-db 2>/dev/null || echo false)" != "true" ]]; then
+            echo "grace-ride-db is not running; booting database container first..."
+            IMAGE_TAG="${SHA}" docker compose \
+              --env-file /opt/grace-ride/secrets.env \
+              -f /opt/grace-ride/docker-compose.aic.yml \
+              up -d db
+          fi
+          db_healthy=0
+          for i in $(seq 1 30); do
+            if [[ "$(docker inspect -f '{{if .State.Health}}{{.State.Health.Status}}{{else}}none{{end}}' grace-ride-db 2>/dev/null || echo none)" == "healthy" ]]; then
+              db_healthy=1
+              break
+            fi
+            sleep 2
+          done
+          if [[ "$db_healthy" != 1 ]]; then
+            echo "grace-ride-db failed to reach healthy state" >&2
+            docker logs grace-ride-db --tail 30 >&2 || true
+            exit 1
+          fi
+
+          # Empty/fresh DBs may not have a users table yet (pre-migrate).
+          users_before=$(docker exec grace-ride-db psql -U grace -d grace_ride -tAc 'SELECT COUNT(*) FROM users' 2>/dev/null || echo 0)
+          users_before=${users_before//[$'\t\r\n ']/}
+          users_before=${users_before:-0}
+          db_before=$(docker inspect -f '{{.Id}}' grace-ride-db)
           echo "users_before=$users_before"
           echo "old_image=$old_image"
+
           mv "/tmp/grace-ride-$SHA.tar.gz.part" "/tmp/grace-ride-$SHA.tar.gz"
           gzip -t "/tmp/grace-ride-$SHA.tar.gz"
           gunzip -c "/tmp/grace-ride-$SHA.tar.gz" | docker load
           rm -f "/tmp/grace-ride-$SHA.tar.gz"
+
           rollback() {
             trap - ERR
             if [[ "$old_tag" == "none" || -z "$old_tag" ]]; then
               echo "No previous image to restore" >&2
               return 0
             fi
-            sed -i "s/^IMAGE_TAG=.*/IMAGE_TAG=${old_tag}/" /opt/grace-ride/secrets.env
+            set_image_tag "$old_tag"
             docker compose --env-file /opt/grace-ride/secrets.env -f /opt/grace-ride/docker-compose.aic.yml up -d --no-deps app
           }
           trap rollback ERR
-          sed -i "s/^IMAGE_TAG=.*/IMAGE_TAG=${SHA}/" /opt/grace-ride/secrets.env
+
+          set_image_tag "$SHA"
           grep -q "^IMAGE_TAG=${SHA}$" /opt/grace-ride/secrets.env
           docker compose --env-file /opt/grace-ride/secrets.env -f /opt/grace-ride/docker-compose.aic.yml up -d --no-deps app
+
           ok=0
           for i in $(seq 1 30); do
             if curl -fsS http://127.0.0.1:8090/api/health; then
@@ -162,8 +229,10 @@ jobs:
           done
           db_after=$(docker inspect -f '{{.Id}}' grace-ride-db)
           users_after=$(docker exec grace-ride-db psql -U grace -d grace_ride -tAc 'SELECT COUNT(*) FROM users' 2>/dev/null || echo 0)
+          users_after=${users_after//[$'\t\r\n ']/}
           users_after=${users_after:-0}
           echo "users_after=$users_after"
+
           # Allow first-boot seed growth (0→1 admin) or unchanged counts.
           # Reject unexpected shrinkage; keep health + same DB container checks.
           if [[ "$ok" != 1 || "$db_before" != "$db_after" ]]; then
@@ -197,6 +266,7 @@ jobs:
           REMOTE
 
       - name: Check the public site
+        id: public_check
         shell: bash
         run: |
           set -euo pipefail
@@ -207,7 +277,39 @@ jobs:
           echo
           echo "Public health check passed."
 
-      - name: Remove the uploaded archive
+      - name: Roll back app if public check failed
+        if: failure() && steps.public_check.outcome == 'failure'
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ -z "${OLD_TAG:-}" || "$OLD_TAG" == "none" ]]; then
+            echo "Public health check failed, and no previous image existed on VPS to restore." >&2
+            exit 0
+          fi
+          [[ "$OLD_TAG" =~ ^[A-Za-z0-9._-]+$ ]]
+          echo "Public health check failed; restoring grace-ride:$OLD_TAG on VPS..." >&2
+          ssh \
+            -i "$RUNNER_TEMP/vps-key" \
+            -p "$VPS_PORT" \
+            -o BatchMode=yes \
+            -o ConnectTimeout=20 \
+            -o IdentitiesOnly=yes \
+            -o StrictHostKeyChecking=yes \
+            -o "UserKnownHostsFile=$RUNNER_TEMP/vps-known-hosts" \
+            "$VPS_USER@$VPS_HOST" \
+            "OLD_TAG='$OLD_TAG' bash -s" <<'REMOTE'
+          set -euo pipefail
+          [[ "$OLD_TAG" =~ ^[A-Za-z0-9._-]+$ ]]
+          if grep -q '^IMAGE_TAG=' /opt/grace-ride/secrets.env; then
+            sed -i "s/^IMAGE_TAG=.*/IMAGE_TAG=${OLD_TAG}/" /opt/grace-ride/secrets.env
+          else
+            printf 'IMAGE_TAG=%s\n' "$OLD_TAG" >> /opt/grace-ride/secrets.env
+          fi
+          docker compose --env-file /opt/grace-ride/secrets.env -f /opt/grace-ride/docker-compose.aic.yml up -d --no-deps app
+          echo "Rolled back app_image=$(docker inspect -f '{{.Config.Image}}' grace-ride)"
+          REMOTE
+
+      - name: Remove temporary deploy artifacts
         if: always()
         shell: bash
         run: |
@@ -221,7 +323,7 @@ jobs:
               -o StrictHostKeyChecking=yes \
               -o "UserKnownHostsFile=$RUNNER_TEMP/vps-known-hosts" \
               "$VPS_USER@$VPS_HOST" \
-              "rm -f -- /tmp/grace-ride-$SHA.tar.gz.part /tmp/grace-ride-$SHA.tar.gz" \
+              "rm -f -- /tmp/grace-ride-$SHA.tar.gz.part /tmp/grace-ride-$SHA.tar.gz /tmp/docker-compose.aic.$SHA.yml /tmp/docker-compose.osrm.$SHA.yml" \
               || true
           fi
           rm -f "$RUNNER_TEMP/vps-key" "$RUNNER_TEMP/vps-known-hosts" "$RUNNER_TEMP/grace-ride-$SHA.tar.gz"

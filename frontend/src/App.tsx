@@ -35,7 +35,7 @@ const Reimbursements = lazy(() => import('./pages/Reimbursements'));
 const ReimbursementDetail = named(() => import('./pages/Reimbursements'), 'ReimbursementDetail');
 const ReimbursementForm = named(() => import('./pages/Reimbursements'), 'ReimbursementForm');
 const Help = lazy(() => import('./pages/Help'));
-const HelpDetail = named(() => import('./pages/Help'), 'HelpDetail');
+const HelpDetail = lazy(() => import('./pages/HelpDetail'));
 const HelpGuideDetail = lazy(() => import('./pages/HelpGuideDetail'));
 const HelpGuideEditor = lazy(() => import('./pages/HelpGuideEditor'));
 const Report = lazy(() => import('./pages/Report'));

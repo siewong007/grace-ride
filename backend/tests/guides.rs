@@ -39,8 +39,6 @@ async fn setup() -> (Router, AppState) {
         audit_retention_days: 730,
         session_timeout_mins: 15,
         json_logs: false,
-        google_client_id: None,
-        google_client_secret: None,
         routing: Default::default(),
         db: Default::default(),
         housekeeping_interval_mins: 60,

@@ -119,8 +119,8 @@ export function DriverRouteCard({ refreshKey }: { refreshKey?: string }) {
       first.current = false;
       return;
     }
-    reload();
-  }, [refreshKey]); // eslint-disable-line react-hooks/exhaustive-deps
+    void reload();
+  }, [refreshKey, reload]);
 
   const route = data?.route ?? cachedRoute;
   if (!route) return null;

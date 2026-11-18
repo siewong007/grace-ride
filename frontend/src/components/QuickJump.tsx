@@ -4,7 +4,8 @@ import { useTranslation } from 'react-i18next';
 import { BookOpen, LifeBuoy, Search } from 'lucide-react';
 import { useApi } from '../api';
 import { useAuth } from '../auth';
-import { GuideSummary, usePick } from '../pages/HelpGuides';
+import type { GuideSummary } from '../types/help';
+import { usePick } from '../hooks/usePick';
 import { Modal } from './ui';
 
 interface JumpPage {
@@ -53,11 +54,6 @@ export default function QuickJump({ pages, onClose }: { pages: JumpPage[]; onClo
   const requestsData = useApi<{ id: number; subject: string; user_name: string }[]>(
     can('help') || helpDesk ? `/help${helpDesk ? '?all=true' : ''}` : null,
   ).data;
-
-  useEffect(() => {
-    const id = window.setTimeout(() => inputRef.current?.focus(), 0);
-    return () => window.clearTimeout(id);
-  }, []);
 
   const results = useMemo<Result[]>(() => {
     const needle = q.trim().toLowerCase();
@@ -108,7 +104,7 @@ export default function QuickJump({ pages, onClose }: { pages: JumpPage[]; onClo
   let lastGroup = '';
 
   return (
-    <Modal title={t('jumpTitle')} onClose={onClose} size="md">
+    <Modal title={t('jumpTitle')} onClose={onClose} size="md" initialFocusRef={inputRef}>
       <div className="stack">
         <div className="help-search-box">
           <Search size={18} className="help-search-icon" aria-hidden="true" />
@@ -117,8 +113,8 @@ export default function QuickJump({ pages, onClose }: { pages: JumpPage[]; onClo
             className="input help-search-input"
             type="search"
             role="combobox"
-            aria-expanded="true"
-            aria-controls="jump-results"
+            aria-expanded={results.length > 0}
+            aria-controls={results.length > 0 ? 'jump-results' : undefined}
             aria-activedescendant={activeId}
             aria-label={t('jumpPlaceholder')}
             placeholder={t('jumpPlaceholder')}

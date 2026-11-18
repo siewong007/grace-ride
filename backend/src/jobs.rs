@@ -86,20 +86,25 @@ fn ts_in(minutes: i64) -> String {
     crate::util::in_minutes(minutes)
 }
 
+#[derive(sqlx::FromRow)]
+struct ReminderCandidate {
+    id: i64,
+    passenger_id: i64,
+    driver_id: Option<i64>,
+    pickup_at: String,
+    area_name: String,
+    passenger_name: String,
+    driver_name: String,
+    readiness_prompt_mins: Option<i64>,
+    is_proxy: i64,
+    rider_name: String,
+}
+
 async fn ride_reminders(db: &PgPool) -> anyhow::Result<()> {
-    let candidates: Vec<(
-        i64,
-        i64,
-        Option<i64>,
-        String,
-        String,
-        String,
-        String,
-        Option<i64>,
-        i64,
-        String,
-    )> = sqlx::query_as(
-        "SELECT r.id, r.passenger_id, r.driver_id, r.pickup_at, a.name, p.name, COALESCE(d.name,''), p.readiness_prompt_mins,
+    let candidates: Vec<ReminderCandidate> = sqlx::query_as(
+        "SELECT r.id, r.passenger_id, r.driver_id, r.pickup_at,
+                a.name AS area_name, p.name AS passenger_name,
+                COALESCE(d.name, '') AS driver_name, p.readiness_prompt_mins,
                 r.is_proxy, r.rider_name
          FROM rides r
          JOIN areas a ON a.id=r.pickup_area_id
@@ -111,67 +116,81 @@ async fn ride_reminders(db: &PgPool) -> anyhow::Result<()> {
     .bind(ts_in(-10))
     .fetch_all(db)
     .await?;
-    for (id, passenger, driver, at, area, pname, dname, prompt_mins, is_proxy, rider_name) in
-        candidates
-    {
-        let prompt = prompt_mins.unwrap_or(45);
+    for c in candidates {
+        let prompt = c.readiness_prompt_mins.unwrap_or(45);
         let lead = if prompt <= 0 {
             60
         } else {
             prompt.clamp(5, 180)
         };
-        if at > ts_in(lead) {
+        if c.pickup_at > ts_in(lead) {
             continue;
         }
         let claimed = sqlx::query(
             "UPDATE rides SET reminder_sent=1 WHERE id=$1 AND status='confirmed' AND reminder_sent=0",
         )
-        .bind(id)
+        .bind(c.id)
         .execute(db)
         .await?
         .rows_affected();
         if claimed == 0 {
             continue;
         }
-        let time = at.get(11..16).unwrap_or(&at);
+        let time = c.pickup_at.get(11..16).unwrap_or(&c.pickup_at);
         if prompt > 0 {
-            let rider_disp = if is_proxy == 1 && !rider_name.is_empty() {
-                rider_name.clone()
+            let rider_disp = if c.is_proxy == 1 && !c.rider_name.is_empty() {
+                c.rider_name.clone()
             } else {
                 "您".to_string()
             };
-            let rider_disp_en = if is_proxy == 1 && !rider_name.is_empty() {
-                rider_name.clone()
+            let rider_disp_en = if c.is_proxy == 1 && !c.rider_name.is_empty() {
+                c.rider_name.clone()
             } else {
                 "you".to_string()
             };
             notify(
                 db,
-                passenger,
+                c.passenger_id,
                 ("接送提醒", "Ride reminder"),
                 (
-                    &format!("司机 {dname} 将于 {time} 到 {area} 接 {rider_disp}。请确认长辈/乘车人是否准备就绪或告知需稍候/无法出行。"),
-                    &format!("Driver {dname} will pick up {rider_disp_en} at {area} at {time}. Please tap to confirm readiness, delay, or inability to join."),
+                    &format!(
+                        "司机 {} 将于 {time} 到 {} 接 {rider_disp}。请确认长辈/乘车人是否准备就绪或告知需稍候/无法出行。",
+                        c.driver_name, c.area_name
+                    ),
+                    &format!(
+                        "Driver {} will pick up {rider_disp_en} at {} at {time}. Please tap to confirm readiness, delay, or inability to join.",
+                        c.driver_name, c.area_name
+                    ),
                 ),
-                &format!("/rides/{id}?action=readiness"),
+                &format!("/rides/{}?action=readiness", c.id),
             )
             .await;
         }
-        if let Some(d) = driver {
-            let driver_target = if is_proxy == 1 && !rider_name.is_empty() {
-                format!("{rider_name} (由 {pname} 代订)")
-            } else {
-                pname.clone()
-            };
+        if let Some(d) = c.driver_id {
+            let (driver_target_zh, driver_target_en) =
+                if c.is_proxy == 1 && !c.rider_name.is_empty() {
+                    (
+                        format!("{} (由 {} 代订)", c.rider_name, c.passenger_name),
+                        format!("{} (booked by {})", c.rider_name, c.passenger_name),
+                    )
+                } else {
+                    (c.passenger_name.clone(), c.passenger_name.clone())
+                };
             notify(
                 db,
                 d,
                 ("接送提醒", "Ride reminder"),
                 (
-                    &format!("{time} 接载 {driver_target}（{area}）。出发时请按「开始行程」。"),
-                    &format!("{time} pick up {driver_target} ({area}). Tap \"Start trip\" when departing."),
+                    &format!(
+                        "{time} 接载 {driver_target_zh}（{}）。出发时请按「开始行程」。",
+                        c.area_name
+                    ),
+                    &format!(
+                        "{time} pick up {driver_target_en} ({}). Tap \"Start trip\" when departing.",
+                        c.area_name
+                    ),
                 ),
-                &format!("/rides/{id}"),
+                &format!("/rides/{}", c.id),
             )
             .await;
         }

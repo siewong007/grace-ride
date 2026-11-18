@@ -847,7 +847,6 @@ function EventScannerModal({
             value={code}
             onChange={(e) => setCode(e.target.value)}
             disabled={busy}
-            autoFocus={!cameraActive}
           />
           <Button variant="primary" block type="submit" loading={busy} disabled={!code.trim()}>
             {t('submitCheckin')}

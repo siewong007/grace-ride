@@ -4,7 +4,8 @@ import { useTranslation } from 'react-i18next';
 import { AlertTriangle, ChevronDown, ChevronUp, ExternalLink, HelpCircle, Info, Lightbulb, X } from 'lucide-react';
 import { markDone } from '../guideProgress';
 import StepText, { inline } from './StepText';
-import { GuideDetailData, GuideStep, GuideSummary, usePick } from '../pages/HelpGuides';
+import type { GuideDetailData, GuideStep, GuideSummary } from '../types/help';
+import { usePick } from '../hooks/usePick';
 import { Button, useToast } from './ui';
 import { useApi } from '../api';
 

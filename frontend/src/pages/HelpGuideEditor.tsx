@@ -14,7 +14,7 @@ import { del, post, put, useApi } from '../api';
 import GuideSteps from '../components/GuideSteps';
 import { useGuideRunner } from '../components/GuideRunner';
 import PhotoAttach from '../components/PhotoAttach';
-import { GuideDetailData, GuideStep } from './HelpGuides';
+import type { GuideDetailData, GuideStep } from '../types/help';
 import {
   Button,
   Card,
@@ -446,14 +446,16 @@ export default function HelpGuideEditor() {
                   <div className="segmented-control">
                     <button
                       type="button"
+                      aria-pressed={formLang === 'en'}
                       className={`segmented-item ${formLang === 'en' ? 'active' : ''}`}
                       onClick={() => setFormLang('en')}
                     >
-                      <span>English</span>
+                      <span>{t('langEn')}</span>
                       {missingEn && <span className="dot" style={{ background: 'var(--danger)' }} />}
                     </button>
                     <button
                       type="button"
+                      aria-pressed={formLang === 'zh'}
                       className={`segmented-item ${formLang === 'zh' ? 'active' : ''}`}
                       onClick={() => setFormLang('zh')}
                     >
@@ -471,7 +473,7 @@ export default function HelpGuideEditor() {
                         required
                         value={f.title_en}
                         onChange={(e) => handleTitleEnChange(e.target.value)}
-                        placeholder="e.g. Plan transport for an event"
+                        placeholder={t('titleEnPlaceholder')}
                       />
                     </Field>
                     <Field label={t('guideSummaryEn')}>
@@ -483,7 +485,7 @@ export default function HelpGuideEditor() {
                           setIsDirty(true);
                           setF({ ...f, summary_en: e.target.value });
                         }}
-                        placeholder="Brief summary shown on guide card"
+                        placeholder={t('summaryEnPlaceholder')}
                       />
                     </Field>
                   </>
@@ -574,10 +576,10 @@ export default function HelpGuideEditor() {
                             className="input"
                             value={s.title_en}
                             onChange={(e) => setStep(idx, { title_en: e.target.value })}
-                            placeholder="Step action, e.g. Open the planning board"
+                            placeholder={t('stepTitleEnPlaceholder')}
                           />
                         </Field>
-                        <Field label={t('guideStepBodyEn')}>
+                        <Field as="div" label={t('guideStepBodyEn')}>
                           <div className="stack-xs">
                             <div className="chips">
                               <button
@@ -628,10 +630,11 @@ export default function HelpGuideEditor() {
                             </div>
                             <textarea
                               className="input"
+                              aria-label={t('guideStepBodyEn')}
                               rows={2}
                               value={s.body_en}
                               onChange={(e) => setStep(idx, { body_en: e.target.value })}
-                              placeholder="Detailed instructions for this step"
+                              placeholder={t('stepBodyEnPlaceholder')}
                             />
                           </div>
                         </Field>
@@ -668,7 +671,7 @@ export default function HelpGuideEditor() {
                             placeholder={t('stepTitleZhPlaceholder')}
                           />
                         </Field>
-                        <Field label={t('guideStepBodyZh')}>
+                        <Field as="div" label={t('guideStepBodyZh')}>
                           <div className="stack-xs">
                             <div className="chips">
                               <button
@@ -719,6 +722,7 @@ export default function HelpGuideEditor() {
                             </div>
                             <textarea
                               className="input"
+                              aria-label={t('guideStepBodyZh')}
                               rows={2}
                               value={s.body_zh}
                               onChange={(e) => setStep(idx, { body_zh: e.target.value })}
@@ -752,7 +756,7 @@ export default function HelpGuideEditor() {
                     )}
 
                     {/* Optional Step Screenshot */}
-                    <Field label={t('stepScreenshot')}>
+                    <Field as="div" label={t('stepScreenshot')}>
                       <PhotoAttach
                         fileId={s.image_file_id ?? null}
                         onChange={(fid) => setStep(idx, { image_file_id: fid })}
@@ -760,10 +764,11 @@ export default function HelpGuideEditor() {
                     </Field>
 
                     {/* Link Picker */}
-                    <Field label={t('guideStepLink')}>
+                    <Field as="div" label={t('guideStepLink')}>
                       <div className="stack-xs">
                         <select
                           className="input"
+                          aria-label={t('guideStepLink')}
                           value={
                             !customLinks.has(idx) && APP_PAGES.some((p) => p.value === s.link)
                               ? s.link
@@ -811,13 +816,15 @@ export default function HelpGuideEditor() {
                 <div className="segmented-control">
                   <button
                     type="button"
+                    aria-pressed={previewLang === 'en'}
                     className={`segmented-item ${previewLang === 'en' ? 'active' : ''}`}
                     onClick={() => setPreviewLang('en')}
                   >
-                    English
+                    {t('langEn')}
                   </button>
                   <button
                     type="button"
+                    aria-pressed={previewLang === 'zh'}
                     className={`segmented-item ${previewLang === 'zh' ? 'active' : ''}`}
                     onClick={() => setPreviewLang('zh')}
                   >
@@ -827,9 +834,9 @@ export default function HelpGuideEditor() {
               </div>
 
               <div className="stack-xs" style={{ borderBottom: '1px solid var(--border)', paddingBottom: 'var(--space-3)' }}>
-                <h2>{previewLang === 'en' ? f.title_en || 'Guide Title' : f.title_zh || t('previewTitleZh')}</h2>
+                <h2>{previewLang === 'en' ? f.title_en || t('previewTitleEn') : f.title_zh || t('previewTitleZh')}</h2>
                 <p className="muted small">
-                  {previewLang === 'en' ? f.summary_en || 'Guide summary will appear here.' : f.summary_zh || t('previewSummaryZh')}
+                  {previewLang === 'en' ? f.summary_en || t('previewSummaryEn') : f.summary_zh || t('previewSummaryZh')}
                 </p>
                 <div className="row nowrap gap-xs">
                   <span className="pill tone-blue tiny">{f.audience === 'member' ? t('audienceMembers') : t('audienceStaff')}</span>

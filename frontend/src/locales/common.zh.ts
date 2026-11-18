@@ -1,6 +1,7 @@
 export default {
   save: '保存',
   cancel: '取消',
+  clear: '清除',
   close: '关闭',
   submit: '提交',
   edit: '编辑',

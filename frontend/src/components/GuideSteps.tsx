@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
 import { AlertTriangle, Check, CheckCircle2, ChevronRight, Info, Lightbulb, ThumbsDown, ThumbsUp } from 'lucide-react';
-import { GuideStep } from '../pages/HelpGuides';
+import type { GuideStep } from '../types/help';
 import { Button, useAction, useToast } from './ui';
 import { post } from '../api';
 import StepText, { inline } from './StepText';

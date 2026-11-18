@@ -13,7 +13,8 @@
 	}
 	reverse_proxy app:8080 {
 		flush_interval -1
-		# Caddy replaces any client-supplied X-Forwarded-For, so TRUST_PROXY=true is safe here.
+		# Overwrite any client-supplied X-Forwarded-For with the direct peer IP so TRUST_PROXY=true is safe.
+		header_up X-Forwarded-For {client_ip}
 		health_uri /api/health
 		health_interval 30s
 	}

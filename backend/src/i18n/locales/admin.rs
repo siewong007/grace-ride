@@ -1,114 +1,140 @@
 //! Admin errors. Both languages live next to each other.
 
 use super::pair;
-use crate::i18n::{keys::ErrorKey, Lang};
+use crate::i18n::Lang;
 
-pub fn render(lang: Lang, key: &ErrorKey) -> String {
+pub enum AdminError {
+    CannotDisableSelf,
+    CannotGrantSelfFinance,
+    SecondAdminRequired,
+    CannotDeleteAllMembersGroup,
+    GroupNameRequired,
+    GroupNameExists,
+    AreaNameRequired,
+    AreaExists,
+    RequestAlreadyHandled,
+    EmailInvalid,
+    UnknownRole,
+    RoleNameRequired,
+    RoleNameExists,
+    InvalidPermission,
+    RolePermissionLocked,
+    SystemRoleCannotBeDeleted,
+    CannotRemoveOwnRoleAccess,
+    SuperadminOnly,
+    LastSuperadmin,
+    AdminAppointmentRestricted,
+    RankTooLow,
+    CannotGrantUnheldPermission,
+    AppointNextLevelOnly,
+    PresidentAcknowledgementRequired,
+    SettingsSuperadminOnly,
+}
+
+pub fn render(lang: Lang, key: AdminError) -> String {
     match key {
-        ErrorKey::CannotDisableSelf => pair(
+        AdminError::CannotDisableSelf => pair(
             lang,
             "不能停用自己或移除自己管理角色的权限",
             "You cannot disable yourself or remove your own right to manage roles",
         ),
-        ErrorKey::CannotGrantSelfFinance => pair(
+        AdminError::CannotGrantSelfFinance => pair(
             lang,
             "不能自行授予财务权限，请由另一位管理员操作",
             "You cannot grant yourself finance permissions; another admin must do it",
         ),
-        ErrorKey::UnknownRole => pair(
+        AdminError::UnknownRole => pair(
             lang,
             "所选角色已不存在，请刷新后重试",
             "A selected role no longer exists; please reload and try again",
         ),
-        ErrorKey::RoleNameRequired => pair(
+        AdminError::RoleNameRequired => pair(
             lang,
             "请填写角色名称（最多 40 个字）",
             "Please enter a role name (up to 40 characters)",
         ),
-        ErrorKey::RoleNameExists => pair(lang, "角色名称已存在", "This role name already exists"),
-        ErrorKey::InvalidPermission => pair(
+        AdminError::RoleNameExists => pair(lang, "角色名称已存在", "This role name already exists"),
+        AdminError::InvalidPermission => pair(
             lang,
             "权限项目无效，请刷新后重试",
             "Unknown permission; please reload and try again",
         ),
-        ErrorKey::RolePermissionLocked => pair(
+        AdminError::RolePermissionLocked => pair(
             lang,
             "超级管理员角色固定拥有全部权限，不能修改",
             "The super admin role always holds every permission and cannot be changed",
         ),
-        ErrorKey::SystemRoleCannotBeDeleted => pair(
+        AdminError::SystemRoleCannotBeDeleted => pair(
             lang,
             "内置角色不能删除，可改为调整其权限",
             "Built-in roles cannot be deleted; change their permissions instead",
         ),
-        ErrorKey::CannotRemoveOwnRoleAccess => pair(
+        AdminError::CannotRemoveOwnRoleAccess => pair(
             lang,
             "不能移除自己管理角色的权限",
             "You cannot remove your own right to manage roles",
         ),
-        ErrorKey::SuperadminOnly => pair(
+        AdminError::SuperadminOnly => pair(
             lang,
             "只有超级管理员可以授予超级管理员角色或变更其账号",
             "Only a super admin can give the super admin role or change a super admin's account",
         ),
-        ErrorKey::LastSuperadmin => pair(
+        AdminError::LastSuperadmin => pair(
             lang,
             "必须保留至少一位启用中的超级管理员",
             "There must always be one active super admin",
         ),
-        ErrorKey::AdminAppointmentRestricted => pair(
+        AdminError::AdminAppointmentRestricted => pair(
             lang,
             "只有超级管理员、会长或副会长可以委任或卸任管理员",
             "Only the super admin, President or Vice-President can appoint or demote an administrator",
         ),
-        ErrorKey::RankTooLow => pair(
+        AdminError::RankTooLow => pair(
             lang,
             "只能管理职级低于自己的成员和角色",
             "You can only manage members and roles ranked below you",
         ),
-        ErrorKey::CannotGrantUnheldPermission => pair(
+        AdminError::CannotGrantUnheldPermission => pair(
             lang,
             "不能授予自己不具备的权限",
             "You can't grant a permission you don't hold yourself",
         ),
-        ErrorKey::AppointNextLevelOnly => pair(
+        AdminError::AppointNextLevelOnly => pair(
             lang,
             "只能委任比自己低一级的职务",
             "You can only appoint the level directly below your own",
         ),
-        ErrorKey::PresidentAcknowledgementRequired => pair(
+        AdminError::PresidentAcknowledgementRequired => pair(
             lang,
             "副会长将普通会员升为管理员前，必须先取得会长确认并勾选确认",
             "A Vice-President must confirm the President has acknowledged the appointment before making an ordinary member an administrator",
         ),
-        ErrorKey::SettingsSuperadminOnly => pair(
+        AdminError::SettingsSuperadminOnly => pair(
             lang,
             "只有超级管理员可以授予系统设置权限",
             "Only the super admin can grant system settings access",
         ),
-        ErrorKey::SecondAdminRequired => pair(
+        AdminError::SecondAdminRequired => pair(
             lang,
             "恢复管理职务账号需要另一位管理员确认",
             "Recovering a privileged account requires a second, different admin to confirm",
         ),
-        ErrorKey::CannotDeleteAllMembersGroup => pair(
+        AdminError::CannotDeleteAllMembersGroup => pair(
             lang,
             "不能删除“全体会员”群体",
             "The \"All members\" group cannot be deleted",
         ),
-        ErrorKey::GroupNameRequired => pair(lang, "请填写群体名称", "Please enter a group name"),
-        ErrorKey::GroupNameExists => pair(lang, "群体名称已存在", "This group name already exists"),
-        ErrorKey::AreaNameRequired => pair(lang, "请填写地区名称", "Please enter an area name"),
-        ErrorKey::AreaExists => pair(lang, "地区已存在", "This area already exists"),
-        ErrorKey::RequestAlreadyHandled => pair(
+        AdminError::GroupNameRequired => pair(lang, "请填写群体名称", "Please enter a group name"),
+        AdminError::GroupNameExists => {
+            pair(lang, "群体名称已存在", "This group name already exists")
+        }
+        AdminError::AreaNameRequired => pair(lang, "请填写地区名称", "Please enter an area name"),
+        AdminError::AreaExists => pair(lang, "地区已存在", "This area already exists"),
+        AdminError::RequestAlreadyHandled => pair(
             lang,
             "此申请已处理",
             "This request has already been handled",
         ),
-        ErrorKey::EmailInvalid => pair(lang, "电邮格式不正确", "Invalid email address"),
-        ErrorKey::EmailAlreadyMember => {
-            pair(lang, "此电邮已是会员", "This email is already a member")
-        }
-        other => panic!("{} is not an admin error", other.code()),
+        AdminError::EmailInvalid => pair(lang, "电邮格式不正确", "Invalid email address"),
     }
 }

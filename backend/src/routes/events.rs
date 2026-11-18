@@ -179,7 +179,10 @@ async fn list_events(
 
     if q.scope.as_deref() == Some("past") && (q.before.is_some() || q.limit.is_some()) {
         let limit = q.limit.unwrap_or(25).clamp(1, 100);
-        let mut conds = vec![visibility, "(e.starts_at < $3 OR e.status='finished')".to_string()];
+        let mut conds = vec![
+            visibility,
+            "(e.starts_at < $3 OR e.status='finished')".to_string(),
+        ];
         let cursor = q.before.as_deref().map(crate::util::split_cursor);
         let mut next_param = 4usize;
         if let Some((_, Some(_))) = cursor {

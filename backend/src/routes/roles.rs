@@ -165,10 +165,6 @@ async fn role_perms_on<'e, E: sqlx::PgExecutor<'e>>(db: E, key: &str) -> AppResu
     Ok(PermSet::from_keys(rows.iter().map(|r| r.0.as_str())))
 }
 
-async fn role_perms(st: &AppState, key: &str) -> AppResult<PermSet> {
-    role_perms_on(&st.db, key).await
-}
-
 fn holds_settings(set: &PermSet) -> bool {
     set.has(Page::AdminSettings, Act::View) || set.has(Page::AdminSettings, Act::Update)
 }
@@ -452,9 +448,7 @@ async fn remove(
         .await?;
     let caller_roles = perms::parse_roles(&raw_caller);
     let power = perms::admin_power_keys();
-    if !perms::can_manage_admins(&caller_roles)
-        && before.keys().iter().any(|k| power.contains(k))
-    {
+    if !perms::can_manage_admins(&caller_roles) && before.keys().iter().any(|k| power.contains(k)) {
         return Err(forbidden(u.lang, ErrorKey::AdminAppointmentRestricted));
     }
     guard_own_access(&st, &u, &key, None).await?;

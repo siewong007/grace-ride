@@ -42,8 +42,6 @@ async fn setup() -> (Router, AppState) {
         audit_retention_days: 730,
         session_timeout_mins: 15,
         json_logs: false,
-        google_client_id: None,
-        google_client_secret: None,
         routing: Default::default(),
         db: Default::default(),
         housekeeping_interval_mins: 60,
@@ -1464,8 +1462,6 @@ fn production_config_rejects_dev_mode_and_plain_http() {
         audit_retention_days: 730,
         session_timeout_mins: 15,
         json_logs: true,
-        google_client_id: None,
-        google_client_secret: None,
         routing: Default::default(),
         db: Default::default(),
         housekeeping_interval_mins: 60,
@@ -2366,6 +2362,20 @@ async fn disaster_recovery_backup_restore_drill() {
         StatusCode::OK
     );
 
+    // Upload a file and insert a custom DB row before taking the snapshot so restore.sh
+    // proves both DB rows and uploaded files round-trip cleanly.
+    let uploaded_id = upload_png(&app, &admin).await;
+    let stored_name: String = sqlx::query_scalar("SELECT stored_name FROM files WHERE id=$1")
+        .bind(uploaded_id)
+        .fetch_one(&st.db)
+        .await
+        .unwrap();
+    let orig_bytes = std::fs::read(st.cfg.upload_dir.join(&stored_name)).unwrap();
+    sqlx::query("INSERT INTO areas (name, active) VALUES ('备份恢复演练区', 1)")
+        .execute(&st.db)
+        .await
+        .unwrap();
+
     let database_url = std::env::var("TEST_DATABASE_URL")
         .unwrap_or_else(|_| "postgres://localhost/grace_ride_test".into());
     let repo = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
@@ -2375,20 +2385,17 @@ async fn disaster_recovery_backup_restore_drill() {
     let backup_dir = std::env::temp_dir().join(format!("gr-backups-{}", uuid::Uuid::new_v4()));
     std::fs::create_dir_all(&backup_dir).unwrap();
     let data_dir = st.cfg.upload_dir.parent().expect("upload parent");
-    // Prefer the portable Postgres tools when present (CI / agent boxes).
-    let pg_bin = std::env::var("PATH").unwrap_or_default();
+    let test_schema = st
+        .cfg
+        .database_url
+        .split("options[search_path]=")
+        .nth(1)
+        .and_then(|search_path| search_path.split(',').next())
+        .expect("test database schema")
+        .to_string();
     let out = Command::new("bash")
         .env("DATABASE_URL", &database_url)
-        .env(
-            "BACKUP_SCHEMA",
-            st.cfg
-                .database_url
-                .split("options[search_path]=")
-                .nth(1)
-                .and_then(|search_path| search_path.split(',').next())
-                .expect("test database schema"),
-        )
-        .env("PATH", format!("/workspace/pgsql/bin:{pg_bin}"))
+        .env("BACKUP_SCHEMA", &test_schema)
         .current_dir(&repo)
         .arg("./scripts/backup.sh")
         .arg(data_dir)
@@ -2416,7 +2423,53 @@ async fn disaster_recovery_backup_restore_drill() {
         newest.metadata().unwrap().len() > 0,
         "backup artifact is non-empty"
     );
-    let _ = app;
+
+    // Mutate DB and wipe uploads into a fresh restore target, close active pool connections
+    // on `test_schema`, then run scripts/restore.sh and verify full round-trip recovery.
+    sqlx::query("DELETE FROM areas WHERE name='备份恢复演练区'")
+        .execute(&st.db)
+        .await
+        .unwrap();
+    st.db.close().await;
+    drop(app);
+
+    let restore_data_dir =
+        std::env::temp_dir().join(format!("gr-restored-{}", uuid::Uuid::new_v4()));
+    std::fs::create_dir_all(&restore_data_dir).unwrap();
+    let restore_out = Command::new("bash")
+        .env("DATABASE_URL", &database_url)
+        .current_dir(&repo)
+        .arg("./scripts/restore.sh")
+        .arg(newest.path())
+        .arg(&restore_data_dir)
+        .output()
+        .expect("restore script failed to start");
+    assert!(
+        restore_out.status.success(),
+        "restore.sh exit: stdout={} stderr={}",
+        String::from_utf8_lossy(&restore_out.stdout),
+        String::from_utf8_lossy(&restore_out.stderr)
+    );
+
+    let restored_file = restore_data_dir.join("uploads").join(&stored_name);
+    assert_eq!(
+        std::fs::read(&restored_file).expect("restored upload file"),
+        orig_bytes
+    );
+    let verify_db = sqlx::postgres::PgPoolOptions::new()
+        .max_connections(1)
+        .connect(&st.cfg.database_url)
+        .await
+        .unwrap();
+    let area_count: i64 =
+        sqlx::query_scalar("SELECT COUNT(*) FROM areas WHERE name='备份恢复演练区'")
+            .fetch_one(&verify_db)
+            .await
+            .unwrap();
+    assert_eq!(area_count, 1, "restore.sh recovered custom DB row");
+    verify_db.close().await;
+
+    let _ = std::fs::remove_dir_all(&restore_data_dir);
     let _ = std::fs::remove_dir_all(&backup_dir);
 }
 

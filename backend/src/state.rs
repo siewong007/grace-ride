@@ -1,7 +1,6 @@
 use std::{path::PathBuf, sync::Arc};
 
 use chrono_tz::Tz;
-
 use sqlx::PgPool;
 use tokio::sync::{broadcast, watch};
 use url::Url;
@@ -35,10 +34,6 @@ pub struct Config {
     pub session_timeout_mins: i64,
     /// Emit JSON logs (for log shippers).
     pub json_logs: bool,
-    /// Google OAuth client id (empty ⇒ Google sign-in is disabled).
-    pub google_client_id: Option<String>,
-    /// Google OAuth client secret (empty ⇒ Google sign-in is disabled).
-    pub google_client_secret: Option<String>,
     /// Pickup routing and ETAs (OpenStreetMap geocoder + router).
     pub routing: RoutingConfig,
     /// Database connection pool and session settings, including the time zone.
@@ -122,19 +117,28 @@ impl DbConfig {
 
 impl Config {
     pub fn from_env() -> anyhow::Result<Self> {
-        let env = |k: &str, d: &str| std::env::var(k).unwrap_or_else(|_| d.to_string());
+        let env = |k: &str, d: &str| {
+            std::env::var(k)
+                .ok()
+                .filter(|v| !v.trim().is_empty())
+                .unwrap_or_else(|| d.to_string())
+        };
         let num = |k: &str, d: i64| -> anyhow::Result<i64> {
             env(k, &d.to_string())
+                .trim()
                 .parse()
                 .map_err(|_| anyhow::anyhow!("{k} must be a number"))
         };
         let cfg = Config {
             dev_mode: env("DEV_MODE", "false") == "true",
-            database_url: env("DATABASE_URL", "postgres://localhost/grace_ride_dev"),
+            database_url: std::env::var("DATABASE_URL")
+                .ok()
+                .filter(|v| !v.trim().is_empty())
+                .unwrap_or_else(|| "postgres://localhost/grace_ride_dev".to_string()),
             upload_dir: PathBuf::from(env("UPLOAD_DIR", "./data/uploads")),
             static_dir: std::env::var("STATIC_DIR")
                 .ok()
-                .filter(|s| !s.is_empty())
+                .filter(|s| !s.trim().is_empty())
                 .map(PathBuf::from),
             public_url: env("PUBLIC_URL", "http://localhost:5173")
                 .trim_end_matches('/')
@@ -146,22 +150,6 @@ impl Config {
             audit_retention_days: num("AUDIT_RETENTION_DAYS", 730)?,
             session_timeout_mins: num("SESSION_TIMEOUT_MINS", 15)?,
             json_logs: env("LOG_FORMAT", "text") == "json",
-            google_client_id: {
-                let v = env("GOOGLE_CLIENT_ID", "");
-                if v.is_empty() {
-                    None
-                } else {
-                    Some(v)
-                }
-            },
-            google_client_secret: {
-                let v = env("GOOGLE_CLIENT_SECRET", "");
-                if v.is_empty() {
-                    None
-                } else {
-                    Some(v)
-                }
-            },
             routing: RoutingConfig::from_env(),
             db: DbConfig::from_env()?,
             housekeeping_interval_mins: num("HOUSEKEEPING_INTERVAL_MINS", 60)?,
@@ -172,6 +160,9 @@ impl Config {
     }
 
     pub fn validate(&self) -> anyhow::Result<()> {
+        if self.database_url.trim().is_empty() {
+            anyhow::bail!("DATABASE_URL must not be empty");
+        }
         let url = Url::parse(&self.public_url)
             .map_err(|_| anyhow::anyhow!("PUBLIC_URL is not a valid URL"))?;
         let host = url.host_str().unwrap_or_default();
@@ -185,6 +176,15 @@ impl Config {
         }
         if !(1..=100).contains(&self.max_live_drivers) {
             anyhow::bail!("MAX_LIVE_DRIVERS must be between 1 and 100");
+        }
+        if !(7..=3650).contains(&self.chat_retention_days) {
+            anyhow::bail!("CHAT_RETENTION_DAYS must be between 7 and 3650");
+        }
+        if !(30..=3650).contains(&self.audit_retention_days) {
+            anyhow::bail!("AUDIT_RETENTION_DAYS must be between 30 and 3650");
+        }
+        if !(0..=1440).contains(&self.session_timeout_mins) {
+            anyhow::bail!("SESSION_TIMEOUT_MINS must be between 0 and 1440");
         }
         self.db.validate()?;
         if !(1..=1440).contains(&self.housekeeping_interval_mins) {
@@ -215,16 +215,6 @@ impl Config {
             .map(|u| u.origin().ascii_serialization())
             .unwrap_or_else(|_| self.public_url.clone())
     }
-
-    /// Callback URL that Google redirects to after the user signs in.
-    pub fn google_redirect_uri(&self) -> String {
-        format!("{}/api/auth/google/callback", self.origin())
-    }
-
-    /// True when Google sign-in is configured (both client id and secret set).
-    pub fn google_configured(&self) -> bool {
-        self.google_client_id.is_some() && self.google_client_secret.is_some()
-    }
 }
 
 #[derive(Clone)]
@@ -233,7 +223,6 @@ pub struct AppState {
     pub webauthn: Arc<Webauthn>,
     pub cfg: Arc<Config>,
     pub limiter: Arc<RateLimiter>,
-    pub http_client: reqwest::Client,
     /// Route and geocoder caches for pickup routing.
     pub routing: Arc<RoutingState>,
     /// Live updates for open tabs (`/api/stream`).

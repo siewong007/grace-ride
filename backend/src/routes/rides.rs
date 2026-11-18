@@ -799,7 +799,10 @@ async fn my_rides(
         let cursor = q.before.as_deref().map(split_cursor);
         let mut n = 2;
         if let Some((_, Some(_))) = cursor {
-            conds.push(format!("(r.pickup_at < ${n} OR (r.pickup_at = ${n} AND r.id < ${}))", n + 1));
+            conds.push(format!(
+                "(r.pickup_at < ${n} OR (r.pickup_at = ${n} AND r.id < ${}))",
+                n + 1
+            ));
             n += 2;
         } else if cursor.is_some() {
             conds.push(format!("r.pickup_at < ${n}"));
@@ -1392,9 +1395,7 @@ async fn post_driver_delay(
                 &st.db,
                 t,
                 &format!("系统：司机预计推迟约 {mins} 分钟到达。"),
-                &format!(
-                    "System: Driver estimated to arrive ~{mins} mins later than planned.",
-                ),
+                &format!("System: Driver estimated to arrive ~{mins} mins later than planned.",),
             )
             .await;
         }

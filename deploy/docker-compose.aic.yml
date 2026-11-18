@@ -4,7 +4,9 @@
 # Payroll uses :8080, saliminn :3030/:8081, shopping :4000/:8082.
 # Postgres is not published. Maintenance: docker exec grace-ride-db.
 #
-# /opt/grace-ride/secrets.env supplies POSTGRES_PASSWORD, ADMIN_EMAIL, and IMAGE_TAG.
+# /opt/grace-ride/secrets.env supplies POSTGRES_PASSWORD, ADMIN_EMAIL, IMAGE_TAG,
+# and optional runtime tunables (OSRM_URL, ROUTING_ENABLED, SESSION_TIMEOUT_MINS,
+# PUSH_ALLOWED_HOSTS, DB_MAX_CONNECTIONS, NOTIFICATION_RETENTION_DAYS, etc.).
 # The image is loaded on the host; this file does not build it.
 
 name: grace-ride
@@ -65,9 +67,15 @@ services:
         condition: service_healthy
     ports:
       - "127.0.0.1:8090:8080"
+    env_file:
+      - path: /opt/grace-ride/secrets.env
+        required: false
+    # Explicit keys in `environment` take precedence over `env_file` in Docker Compose,
+    # keeping production security invariants (DEV_MODE=false, TRUST_PROXY=true) locked
+    # while allowing operator tunables in /opt/grace-ride/secrets.env to apply.
     environment:
       DATABASE_URL: "postgres://grace:${POSTGRES_PASSWORD}@db/grace_ride"
-      PUBLIC_URL: https://graceride.saliminn.my
+      PUBLIC_URL: "${PUBLIC_URL:-https://graceride.saliminn.my}"
       ADMIN_EMAIL: "${ADMIN_EMAIL:?ADMIN_EMAIL is required}"
       DEV_MODE: "false"
       TRUST_PROXY: "true"
@@ -76,12 +84,19 @@ services:
       UPLOAD_DIR: /data/uploads
       STATIC_DIR: /app/web
       TZ: Asia/Kuala_Lumpur
-      APP_TIMEZONE: Asia/Kuala_Lumpur
-      MAX_LIVE_DRIVERS: "10"
-      GEOCODER_USER_AGENT: "GraceRide/0.1 (+https://graceride.saliminn.my)"
-      CHAT_RETENTION_DAYS: "180"
-      AUDIT_RETENTION_DAYS: "730"
-      RUST_LOG: grace_ride=info,tower_http=warn
+      APP_TIMEZONE: "${APP_TIMEZONE:-Asia/Kuala_Lumpur}"
+      MAX_LIVE_DRIVERS: "${MAX_LIVE_DRIVERS:-10}"
+      SESSION_TIMEOUT_MINS: "${SESSION_TIMEOUT_MINS:-15}"
+      DB_MAX_CONNECTIONS: "${DB_MAX_CONNECTIONS:-10}"
+      NOTIFICATION_RETENTION_DAYS: "${NOTIFICATION_RETENTION_DAYS:-90}"
+      ROUTING_ENABLED: "${ROUTING_ENABLED:-true}"
+      OSRM_URL: "${OSRM_URL:-https://router.project-osrm.org}"
+      NOMINATIM_URL: "${NOMINATIM_URL:-https://nominatim.openstreetmap.org}"
+      PHOTON_URL: "${PHOTON_URL:-https://photon.komoot.io}"
+      GEOCODER_USER_AGENT: "${GEOCODER_USER_AGENT:-GraceRide/0.1 (+https://graceride.saliminn.my)}"
+      CHAT_RETENTION_DAYS: "${CHAT_RETENTION_DAYS:-180}"
+      AUDIT_RETENTION_DAYS: "${AUDIT_RETENTION_DAYS:-730}"
+      RUST_LOG: "${RUST_LOG:-grace_ride=info,tower_http=warn}"
     volumes:
       - app-data:/data
     read_only: true

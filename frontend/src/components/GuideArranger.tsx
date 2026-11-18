@@ -2,7 +2,8 @@ import { useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { ArrowDown, ArrowUp } from 'lucide-react';
 import { post } from '../api';
-import { GuideSummary, usePick } from '../pages/HelpGuides';
+import type { GuideSummary } from '../types/help';
+import { usePick } from '../hooks/usePick';
 import { Button, ErrorBox, Pill, useAction } from './ui';
 
 /**

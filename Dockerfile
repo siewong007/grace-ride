@@ -12,26 +12,28 @@ RUN npm run build
 # ---------- Backend ----------
 FROM rust:1-bookworm AS api
 WORKDIR /src
+# backend/Cargo.toml sets `license-file = "../LICENSE"`; place LICENSE at /LICENSE.
+COPY LICENSE /LICENSE
 # Cache dependencies separately from application code.
 COPY backend/Cargo.toml backend/Cargo.lock ./
 RUN mkdir src && echo 'fn main() {}' > src/main.rs && echo '' > src/lib.rs \
- && cargo build --release --locked && rm -rf src
+  && cargo build --release --locked \
+  && rm -rf src target/release/.fingerprint/grace-ride* target/release/deps/*grace_ride* target/release/grace-ride*
 COPY backend/ ./
-RUN touch src/main.rs src/lib.rs && cargo build --release --locked
+RUN cargo build --release --locked
 
 # ---------- Runtime ----------
 FROM debian:bookworm-slim
 RUN apt-get update \
- && apt-get install -y --no-install-recommends ca-certificates libssl3 tzdata \
- && rm -rf /var/lib/apt/lists/* \
- && useradd --system --uid 10001 --home /app --shell /usr/sbin/nologin grace \
- && mkdir -p /data/uploads && chown -R grace /data
+  && apt-get install -y --no-install-recommends ca-certificates libssl3 tzdata \
+  && rm -rf /var/lib/apt/lists/* \
+  && useradd --system --uid 10001 --home /app --shell /usr/sbin/nologin grace \
+  && mkdir -p /data/uploads && chown -R grace /data
 WORKDIR /app
 COPY --from=api /src/target/release/grace-ride /app/grace-ride
 COPY --from=web /web/dist /app/web
 ENV TZ=Asia/Kuala_Lumpur \
     BIND=0.0.0.0:8080 \
-    DATABASE_URL="" \
     UPLOAD_DIR=/data/uploads \
     STATIC_DIR=/app/web \
     DEV_MODE=false \

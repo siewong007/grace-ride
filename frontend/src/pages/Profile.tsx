@@ -714,7 +714,6 @@ function Verify2faModal({ onClose, onDone }: { onClose: () => void; onDone: () =
           placeholder="123456 or ABCD-1234"
           value={code}
           onChange={(e) => setCode(e.target.value)}
-          autoFocus
         />
       </Field>
       <ErrorBox error={error} />

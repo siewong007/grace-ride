@@ -197,25 +197,26 @@ export const greeting = (t: (k: string) => string) => {
   return h < 12 ? t('format:morning') : h < 18 ? t('format:afternoon') : t('format:evening');
 };
 
+/** Escapes a single CSV cell and neutralizes spreadsheet formula-injection prefixes. */
+export function escapeCsvCell(val: unknown): string {
+  if (val === null || val === undefined) return '""';
+  const raw =
+    typeof val === 'string' && (/^[=+\-@\t\r]/.test(val) || /^[=+\-@]/.test(val.trimStart()))
+      ? `'${val}`
+      : String(val);
+  const str = raw.replace(/"/g, '""');
+  return `"${str}"`;
+}
+
 /** Formats tabular data as CSV and triggers a client-side download. */
 export function exportToCsv(
   filename: string,
   headers: string[],
   rows: (string | number | null | undefined)[][],
 ) {
-  const escapeCell = (val: unknown): string => {
-    if (val === null || val === undefined) return '""';
-    const raw =
-      typeof val === 'string' && (/^[=+\-@\t\r]/.test(val) || /^[=+\-@]/.test(val.trimStart()))
-        ? `'${val}`
-        : String(val);
-    const str = raw.replace(/"/g, '""');
-    return `"${str}"`;
-  };
-
   const csvContent = [
-    headers.map(escapeCell).join(','),
-    ...rows.map((row) => row.map(escapeCell).join(',')),
+    headers.map(escapeCsvCell).join(','),
+    ...rows.map((row) => row.map(escapeCsvCell).join(',')),
   ].join('\r\n');
 
   const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });

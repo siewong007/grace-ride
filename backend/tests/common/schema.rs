@@ -58,11 +58,10 @@ async fn drop_stale(pool: &sqlx::PgPool) {
                 .await;
         }
     }
-    let _ = sqlx::query(
-        "SELECT pg_advisory_unlock(hashtextextended('grace_ride_test_drop_stale', 0))",
-    )
-    .execute(pool)
-    .await;
+    let _ =
+        sqlx::query("SELECT pg_advisory_unlock(hashtextextended('grace_ride_test_drop_stale', 0))")
+            .execute(pool)
+            .await;
 }
 
 /// Database URL whose search_path is a fresh schema named `{prefix}{uuid}`.

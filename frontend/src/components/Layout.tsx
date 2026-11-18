@@ -8,6 +8,7 @@ import { useAuth } from '../auth';
 import { BackNavigationProvider, getDefaultBack, SwipeBackGesture, useSmartBack } from './BackNavigation';
 import { LogoMark, Wordmark } from './Brand';
 import { GuideHeaderActionContext, PageChromeContext } from './PageChrome';
+import { ErrorBoundary } from './AppChrome';
 import { TermsGate } from './Terms';
 import { Avatar, IconButton, Notice } from './ui';
 import { GuideRunnerProvider, PageHeaderGuideButton } from './GuideRunner';
@@ -317,7 +318,9 @@ function LayoutInner() {
           <PageChromeContext.Provider value={chrome}>
             <GuideRunnerProvider>
               <GuideHeaderActionContext.Provider value={<PageHeaderGuideButton />}>
-                <Outlet />
+                <ErrorBoundary key={loc.pathname}>
+                  <Outlet />
+                </ErrorBoundary>
               </GuideHeaderActionContext.Provider>
             </GuideRunnerProvider>
           </PageChromeContext.Provider>

@@ -258,8 +258,6 @@ async fn prod_app() -> Router {
         audit_retention_days: 730,
         session_timeout_mins: 15,
         json_logs: false,
-        google_client_id: None,
-        google_client_secret: None,
         routing: Default::default(),
         db: Default::default(),
         housekeeping_interval_mins: 60,
@@ -3757,30 +3755,22 @@ fn reachable_error_keys_match_handlers() {
         "PASSKEY_NOT_FOUND",
         "TOO_MANY_FAILED_LOGINS",
     ];
-    let src = std::fs::read_to_string(concat!(env!("CARGO_MANIFEST_DIR"), "/src/routes/auth.rs"))
-        .unwrap()
-        + &std::fs::read_to_string(concat!(env!("CARGO_MANIFEST_DIR"), "/src/routes/rides.rs"))
-            .unwrap()
-        + &std::fs::read_to_string(concat!(env!("CARGO_MANIFEST_DIR"), "/src/routes/events.rs"))
-            .unwrap()
-        + &std::fs::read_to_string(concat!(
-            env!("CARGO_MANIFEST_DIR"),
-            "/src/routes/settlements.rs"
-        ))
-        .unwrap()
-        + &std::fs::read_to_string(concat!(
-            env!("CARGO_MANIFEST_DIR"),
-            "/src/routes/community.rs"
-        ))
-        .unwrap()
-        + &std::fs::read_to_string(concat!(env!("CARGO_MANIFEST_DIR"), "/src/routes/admin.rs"))
-            .unwrap()
-        + &std::fs::read_to_string(concat!(env!("CARGO_MANIFEST_DIR"), "/src/routes/files.rs"))
-            .unwrap()
-        + &std::fs::read_to_string(concat!(env!("CARGO_MANIFEST_DIR"), "/src/routes/plan.rs"))
-            .unwrap()
-        + &std::fs::read_to_string(concat!(env!("CARGO_MANIFEST_DIR"), "/src/routes/roles.rs"))
-            .unwrap();
+    let mut src = String::new();
+    let mut stack = vec![std::path::PathBuf::from(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/src/routes"
+    ))];
+    while let Some(dir) = stack.pop() {
+        for entry in std::fs::read_dir(dir).unwrap() {
+            let p = entry.unwrap().path();
+            if p.is_dir() {
+                stack.push(p);
+            } else if p.extension().is_some_and(|e| e == "rs") {
+                src.push_str(&std::fs::read_to_string(&p).unwrap());
+                src.push('\n');
+            }
+        }
+    }
     for key in retired {
         let variant: String = key
             .split('_')

@@ -22,7 +22,8 @@ import GuideArranger from '../components/GuideArranger';
 import GuideListRow from '../components/GuideListRow';
 import { PageChromeContext } from '../components/PageChrome';
 import HelpDetail from './HelpDetail';
-import { GuideStep, GuideSummary, usePick } from './HelpGuides';
+import type { GuideStep, GuideSummary, TicketSummary } from '../types/help';
+import { usePick } from '../hooks/usePick';
 import {
   Button,
   Card,
@@ -35,23 +36,7 @@ import {
 } from '../components/ui';
 import { fmtAgo, HELP_STATUS, HELP_STATUS_STAFF, useFormatT } from '../format';
 
-export { HelpDetail };
-
-export interface TicketSummary {
-  id: number;
-  subject: string;
-  user_id: number;
-  user_name: string;
-  status: string;
-  ride_id: number | null;
-  created_at: string;
-  updated_at: string;
-  last_body?: string | null;
-  last_staff?: boolean | null;
-  last_at?: string | null;
-  assignee_id?: number | null;
-  assignee_name?: string | null;
-}
+export type { TicketSummary };
 
 interface TicketCounts {
   open: number;
@@ -441,6 +426,7 @@ export default function Help() {
                     <div className="segmented-control">
                       <button
                         type="button"
+                        aria-pressed={allStaffScope}
                         className={`segmented-item ${allStaffScope ? 'active' : ''}`}
                         onClick={() => setAllStaffScope(true)}
                       >
@@ -448,6 +434,7 @@ export default function Help() {
                       </button>
                       <button
                         type="button"
+                        aria-pressed={!allStaffScope}
                         className={`segmented-item ${!allStaffScope ? 'active' : ''}`}
                         onClick={() => setAllStaffScope(false)}
                       >
@@ -471,6 +458,7 @@ export default function Help() {
                 <div className="chips">
                   <button
                     type="button"
+                    aria-pressed={staffFilter === 'open'}
                     className={`chip ${staffFilter === 'open' ? 'on' : ''}`}
                     onClick={() => setStaffFilter('open')}
                   >
@@ -478,6 +466,7 @@ export default function Help() {
                   </button>
                   <button
                     type="button"
+                    aria-pressed={staffFilter === 'answered'}
                     className={`chip ${staffFilter === 'answered' ? 'on' : ''}`}
                     onClick={() => setStaffFilter('answered')}
                   >
@@ -485,6 +474,7 @@ export default function Help() {
                   </button>
                   <button
                     type="button"
+                    aria-pressed={staffFilter === 'closed'}
                     className={`chip ${staffFilter === 'closed' ? 'on' : ''}`}
                     onClick={() => setStaffFilter('closed')}
                   >
@@ -492,6 +482,7 @@ export default function Help() {
                   </button>
                   <button
                     type="button"
+                    aria-pressed={staffFilter === 'all'}
                     className={`chip ${staffFilter === 'all' ? 'on' : ''}`}
                     onClick={() => setStaffFilter('all')}
                   >
@@ -502,6 +493,7 @@ export default function Help() {
                 {/* Search input for inbox */}
                 <input
                   className="input"
+                  aria-label={t('searchInboxPlaceholder')}
                   placeholder={t('searchInboxPlaceholder')}
                   value={inboxQuery}
                   onChange={(e) => setInboxQuery(e.target.value)}
@@ -616,6 +608,7 @@ export default function Help() {
                 <div className="card stack-xs" style={{ marginTop: 'var(--space-2)' }}>
                   <button
                     type="button"
+                    aria-expanded={myOwnOpen}
                     className="row between nowrap"
                     style={{ background: 'none', border: 'none', cursor: 'pointer', width: '100%', padding: 'var(--space-2) 0' }}
                     onClick={() => setMyOwnOpen(!myOwnOpen)}
@@ -672,6 +665,7 @@ export default function Help() {
                     <div className="segmented-control">
                       <button
                         type="button"
+                        aria-pressed={guideAudienceFilter === 'all'}
                         className={`segmented-item ${guideAudienceFilter === 'all' ? 'active' : ''}`}
                         onClick={() => setGuideAudienceFilter('all')}
                       >
@@ -679,6 +673,7 @@ export default function Help() {
                       </button>
                       <button
                         type="button"
+                        aria-pressed={guideAudienceFilter === 'member'}
                         className={`segmented-item ${guideAudienceFilter === 'member' ? 'active' : ''}`}
                         onClick={() => setGuideAudienceFilter('member')}
                       >
@@ -686,6 +681,7 @@ export default function Help() {
                       </button>
                       <button
                         type="button"
+                        aria-pressed={guideAudienceFilter === 'staff'}
                         className={`segmented-item ${guideAudienceFilter === 'staff' ? 'active' : ''}`}
                         onClick={() => setGuideAudienceFilter('staff')}
                       >

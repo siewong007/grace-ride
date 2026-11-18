@@ -25,7 +25,7 @@ export class ErrorBoundary extends Component<{ children: ReactNode }, { failed: 
           <h2>{i18n.t('chrome:errTitle')}</h2>
           <p className="muted">{i18n.t('chrome:errBody')}</p>
           <div className="btn-row">
-            <button className="btn primary" onClick={() => window.location.reload()}>{i18n.t('chrome:reload')}</button>
+            <button type="button" className="btn primary" onClick={() => window.location.reload()}>{i18n.t('chrome:reload')}</button>
             <a className="btn" href="/">{i18n.t('chrome:home')}</a>
           </div>
         </div>
@@ -109,6 +109,30 @@ export function DisplayPreferences() {
     { value: 'en', label: t('en') },
   ];
 
+  const handleRadioKeyDown = <T,>(
+    e: React.KeyboardEvent<HTMLButtonElement>,
+    items: { value: T }[],
+    index: number,
+    onSelect: (val: T) => void,
+  ) => {
+    let nextIndex = -1;
+    if (e.key === 'ArrowRight' || e.key === 'ArrowDown') {
+      nextIndex = (index + 1) % items.length;
+    } else if (e.key === 'ArrowLeft' || e.key === 'ArrowUp') {
+      nextIndex = (index - 1 + items.length) % items.length;
+    } else if (e.key === 'Home') {
+      nextIndex = 0;
+    } else if (e.key === 'End') {
+      nextIndex = items.length - 1;
+    }
+    if (nextIndex >= 0) {
+      e.preventDefault();
+      onSelect(items[nextIndex].value);
+      const buttons = e.currentTarget.parentElement?.querySelectorAll<HTMLButtonElement>('[role="radio"]');
+      buttons?.[nextIndex]?.focus();
+    }
+  };
+
   return (
     <div className="stack">
       <p className="muted small">{t('displayHint')}</p>
@@ -117,14 +141,16 @@ export function DisplayPreferences() {
       <div className="stack-sm" role="radiogroup" aria-label={t('theme')}>
         <span className="bold small">{t('theme')}</span>
         <div className="segmented-control">
-          {themes.map((item) => (
+          {themes.map((item, idx) => (
             <button
               key={item.value}
               type="button"
               role="radio"
+              tabIndex={p.theme === item.value ? 0 : -1}
               aria-checked={p.theme === item.value}
               className={`segmented-item ${p.theme === item.value ? 'active' : ''}`}
               onClick={() => update({ theme: item.value })}
+              onKeyDown={(e) => handleRadioKeyDown(e, themes, idx, (val) => update({ theme: val }))}
             >
               {item.icon}
               <span>{item.label}</span>
@@ -137,14 +163,16 @@ export function DisplayPreferences() {
       <div className="stack-sm" role="radiogroup" aria-label={t('textSize')}>
         <span className="bold small">{t('textSize')}</span>
         <div className="segmented-control">
-          {sizes.map((item) => (
+          {sizes.map((item, idx) => (
             <button
               key={item.value}
               type="button"
               role="radio"
+              tabIndex={p.textSize === item.value ? 0 : -1}
               aria-checked={p.textSize === item.value}
               className={`segmented-item ${p.textSize === item.value ? 'active' : ''}`}
               onClick={() => update({ textSize: item.value })}
+              onKeyDown={(e) => handleRadioKeyDown(e, sizes, idx, (val) => update({ textSize: val }))}
             >
               <span>{item.label}</span>
             </button>
@@ -162,14 +190,16 @@ export function DisplayPreferences() {
       <div className="stack-sm" role="radiogroup" aria-label={t('language')}>
         <span className="bold small">{t('language')}</span>
         <div className="segmented-control">
-          {languages.map((item) => (
+          {languages.map((item, idx) => (
             <button
               key={item.value}
               type="button"
               role="radio"
+              tabIndex={currentLang === item.value ? 0 : -1}
               aria-checked={currentLang === item.value}
               className={`segmented-item ${currentLang === item.value ? 'active' : ''}`}
               onClick={() => setLanguage(item.value)}
+              onKeyDown={(e) => handleRadioKeyDown(e, languages, idx, setLanguage)}
             >
               <Globe size={16} aria-hidden="true" />
               <span>{item.label}</span>

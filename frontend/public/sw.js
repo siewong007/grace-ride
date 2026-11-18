@@ -1,6 +1,39 @@
-/* global self, caches, fetch, URL */
-const SHELL_CACHE = 'grace-ride-shell-v1';
-const STATIC_ASSETS = ['/', '/index.html'];
+const SHELL_CACHE = 'grace-ride-shell-v2';
+const STATIC_ASSETS = [
+  '/',
+  '/index.html',
+  '/theme-boot.js',
+  '/manifest.webmanifest',
+  '/icon.svg?v=2',
+  '/icon-192.png?v=2',
+  '/apple-touch-icon.png?v=2',
+];
+const MAX_RUNTIME_ASSETS = 80;
+const NOTIFICATION_ICON = '/icon-192.png?v=2';
+
+function isCacheableStaticPath(pathname) {
+  return (
+    pathname.startsWith('/assets/') ||
+    pathname === '/theme-boot.js' ||
+    pathname === '/manifest.webmanifest' ||
+    pathname.startsWith('/icon') ||
+    pathname === '/apple-touch-icon.png'
+  );
+}
+
+function trimRuntimeCache(cache) {
+  if (typeof cache.keys !== 'function' || typeof cache.delete !== 'function') return;
+  const pinned = new Set(
+    STATIC_ASSETS.map((p) => new URL(p, self.location.origin).href),
+  );
+  cache.keys().then((requests) => {
+    const runtime = requests.filter((req) => !pinned.has(req.url));
+    const excess = runtime.length - MAX_RUNTIME_ASSETS;
+    for (let i = 0; i < excess; i++) {
+      cache.delete(runtime[i]);
+    }
+  });
+}
 
 self.addEventListener('install', (event) => {
   event.waitUntil(
@@ -34,7 +67,7 @@ self.addEventListener('fetch', (event) => {
 
   if (request.mode === 'navigate') {
     const isSensitiveRoute =
-      /^\/(care|visit|invite|recover)\//.test(url.pathname) || url.searchParams.has('code');
+      /^\/(care|visit|invite)\//.test(url.pathname) || url.searchParams.has('code');
     event.respondWith(
       fetch(request)
         .then((res) => {
@@ -53,7 +86,7 @@ self.addEventListener('fetch', (event) => {
     return;
   }
 
-  if (url.pathname.startsWith('/assets/')) {
+  if (isCacheableStaticPath(url.pathname)) {
     event.respondWith(
       caches.match(request).then(
         (cached) =>
@@ -61,7 +94,10 @@ self.addEventListener('fetch', (event) => {
           fetch(request).then((res) => {
             if (res.ok) {
               const copy = res.clone();
-              caches.open(SHELL_CACHE).then((c) => c.put(request, copy));
+              caches.open(SHELL_CACHE).then((c) => {
+                c.put(request, copy);
+                trimRuntimeCache(c);
+              });
             }
             return res;
           }),
@@ -82,8 +118,8 @@ self.addEventListener('push', (event) => {
   event.waitUntil(
     self.registration.showNotification(payload.title || 'Grace Ride', {
       body: payload.body || '',
-      icon: '/icon-192.png',
-      badge: '/icon-192.png',
+      icon: NOTIFICATION_ICON,
+      badge: NOTIFICATION_ICON,
       data: { url: payload.url || '/notifications' },
     }),
   );
@@ -95,8 +131,8 @@ self.addEventListener('message', (event) => {
     event.waitUntil(
       self.registration.showNotification(msg.title || 'Grace Ride', {
         body: msg.body || '',
-        icon: '/icon-192.png',
-        badge: '/icon-192.png',
+        icon: NOTIFICATION_ICON,
+        badge: NOTIFICATION_ICON,
         data: { url: msg.url || '/notifications' },
       }),
     );

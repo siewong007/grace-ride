@@ -9,7 +9,7 @@ import EventDetail from './pages/EventDetail';
 import Costs from './pages/Costs';
 import Settlements from './pages/Settlements';
 import { ReimbursementDetail } from './pages/Reimbursements';
-import { HelpDetail } from './pages/Help';
+import HelpDetail from './pages/HelpDetail';
 import Notifications from './pages/Notifications';
 import Report from './pages/Report';
 import Home from './pages/Home';

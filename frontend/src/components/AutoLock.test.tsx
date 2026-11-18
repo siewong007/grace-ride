@@ -99,7 +99,7 @@ describe('AutoLockProvider', () => {
     expect(screen.getByText('Grace Member')).toBeInTheDocument();
     expect(screen.getByText('grace@example.com')).toBeInTheDocument();
 
-    fireEvent.click(screen.getByRole('button', { name: /unlockWithPasskey/ }));
+    fireEvent.click(screen.getByRole('button', { name: /unlockWithPasskey|Unlock with passkey/i }));
 
     await waitFor(() => expect(screen.getByTestId('status')).toHaveTextContent('unlocked'));
     expect(reauth).toHaveBeenCalledTimes(1);
@@ -111,7 +111,7 @@ describe('AutoLockProvider', () => {
     reauth.mockRejectedValue(new Error('Passkey verification failed'));
     renderLocked();
 
-    fireEvent.click(screen.getByRole('button', { name: /unlockWithPasskey/ }));
+    fireEvent.click(screen.getByRole('button', { name: /unlockWithPasskey|Unlock with passkey/i }));
 
     expect(await screen.findByRole('alert')).toHaveTextContent('Passkey verification failed');
     expect(screen.getByTestId('status')).toHaveTextContent('locked');
@@ -123,7 +123,7 @@ describe('AutoLockProvider', () => {
 
     expect(screen.getByTestId('status')).toHaveTextContent('locked');
     expect(screen.queryByRole('button', { name: /unlock/i })).toBeNull();
-    expect(screen.getByRole('button', { name: /logout/ })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /logout|Log out/i })).toBeInTheDocument();
     expect(reauth).not.toHaveBeenCalled();
   });
 
@@ -281,7 +281,7 @@ describe('AutoLockProvider', () => {
     vi.useRealTimers();
     renderProvider();
     fireEvent.click(screen.getByText('Trigger Lock'));
-    fireEvent.click(screen.getByRole('button', { name: /logout/ }));
+    fireEvent.click(screen.getByRole('button', { name: /logout|Log out/i }));
     await waitFor(() => expect(screen.getByTestId('status')).toHaveTextContent('unlocked'));
     expect(localStorage.getItem('gr_locked_user')).toBeNull();
   });

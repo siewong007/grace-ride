@@ -71,15 +71,26 @@ function Fit({
   focusPoint?: { lat: number; lng: number } | null;
 }) {
   const map = useMap();
-  const all: [number, number][] = [...points.map((p): [number, number] => [p.lat, p.lng]), ...(route ?? [])];
+  const focusLat = focusPoint?.lat;
+  const focusLng = focusPoint?.lng;
+  const allKey = [
+    ...points.map((p) => `${p.lat},${p.lng}`),
+    ...(route ?? []).map((p) => `${p[0]},${p[1]}`),
+  ].join('|');
   useEffect(() => {
-    if (focusPoint) {
-      map.setView([focusPoint.lat, focusPoint.lng], 16, { animate: true });
+    if (focusLat !== undefined && focusLng !== undefined) {
+      map.setView([focusLat, focusLng], 16, { animate: true });
       return;
     }
+    const all: [number, number][] = allKey
+      ? allKey.split('|').map((pair) => {
+          const [lat, lng] = pair.split(',').map(Number);
+          return [lat, lng];
+        })
+      : [];
     if (all.length === 1) map.setView(all[0], 15);
     else if (all.length > 1) map.fitBounds(L.latLngBounds(all), { padding: [40, 40] });
-  }, [map, focusPoint?.lat, focusPoint?.lng, all.map((p) => p.join(',')).join('|')]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [map, focusLat, focusLng, allKey]);
   return null;
 }
 

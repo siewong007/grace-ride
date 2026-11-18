@@ -2,7 +2,7 @@
 const doneKey = (slug: string) => `graceride_guide_${slug}_done`;
 const feedbackKey = (slug: string) => `graceride_guide_${slug}_fb`;
 
-import type { GuideStep } from './pages/HelpGuides';
+import type { GuideStep } from './types/help';
 
 const idsKey = (slug: string) => `graceride_guide_${slug}_ids`;
 

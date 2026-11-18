@@ -32,9 +32,13 @@ export class ApiError extends Error {
 }
 
 export async function api<T = unknown>(path: string, opts: { method?: string; body?: unknown } = {}): Promise<T> {
+  const acceptLanguage = i18n.language || 'zh';
   const res = await fetch(`/api${path}`, {
     method: opts.method ?? (opts.body !== undefined ? 'POST' : 'GET'),
-    headers: opts.body !== undefined ? { 'content-type': 'application/json' } : undefined,
+    headers:
+      opts.body !== undefined
+        ? { 'Accept-Language': acceptLanguage, 'content-type': 'application/json' }
+        : { 'Accept-Language': acceptLanguage },
     body: opts.body !== undefined ? JSON.stringify(opts.body) : undefined,
     credentials: 'same-origin',
   });
@@ -84,7 +88,12 @@ export const del = <T = unknown>(path: string) => api<T>(path, { method: 'DELETE
 export async function uploadFile(file: File): Promise<{ id: number; mime: string; name: string }> {
   const fd = new FormData();
   fd.append('file', file);
-  const res = await fetch('/api/files', { method: 'POST', body: fd, credentials: 'same-origin' });
+  const res = await fetch('/api/files', {
+    method: 'POST',
+    headers: { 'Accept-Language': i18n.language || 'zh' },
+    body: fd,
+    credentials: 'same-origin',
+  });
   const data = await res.json().catch(() => null);
   if (!res.ok) throw new ApiError(res.status, apiMessage(data, 'uploadFailed'));
   return data;

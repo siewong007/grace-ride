@@ -68,7 +68,7 @@ async fn an_older_history_replays_the_schema_without_losing_rows() {
     db.close().await;
 
     let db = connect_db(&url).await.expect("replay");
-    assert_eq!(versions(&db).await, vec![1, 2, 3, 4, 5, 6, 7, 8]);
+    assert_eq!(versions(&db).await, vec![1, 2, 3, 4, 5, 6, 7, 8, 9]);
     let kept: Option<(String,)> = sqlx::query_as("SELECT name FROM areas WHERE name = '历史区'")
         .fetch_optional(&db)
         .await
@@ -103,7 +103,7 @@ async fn an_older_history_replays_the_schema_without_losing_rows() {
 
     // The next start keeps the new history as it is.
     let db = connect_db(&url).await.expect("second start");
-    assert_eq!(versions(&db).await, vec![1, 2, 3, 4, 5, 6, 7, 8]);
+    assert_eq!(versions(&db).await, vec![1, 2, 3, 4, 5, 6, 7, 8, 9]);
 }
 
 /// A later file that was edited after it ran (or that this build doesn't ship) must
@@ -557,6 +557,7 @@ async fn trigger_functions_pin_their_search_path() {
         "users_sync_member_roles",
         "roles_attach_members",
         "rides_ensure_trip",
+        "rides_rearm_reminder",
     ])
     .fetch_all(&db)
     .await

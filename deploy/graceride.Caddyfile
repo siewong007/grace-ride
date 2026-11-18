@@ -2,11 +2,18 @@
 # app's first-hop trust sees the visitor Caddy already resolved
 # (global trusted_proxies + Cf-Connecting-Ip), not a client-supplied chain.
 graceride.saliminn.my {
-	# Origin protection: in production, use a Cloudflare Origin CA certificate
-	# with Cloudflare SSL/TLS mode set to "Full (strict)", or Authenticated Origin Pulls,
-	# so that the connection between Cloudflare and Caddy is verified and cannot be intercepted:
-	# tls /etc/caddy/certs/origin.pem /etc/caddy/certs/origin.key
-	tls internal
+	# Cloudflare SSL/TLS mode MUST be set to "Full (strict)".
+	# Install the 15-year Cloudflare Origin CA certificate and key (0640 root:caddy):
+	#   /etc/caddy/certs/graceride-origin.pem
+	#   /etc/caddy/certs/graceride-origin.key
+	# Optional mTLS defense-in-depth (enable "Authenticated Origin Pulls" in Cloudflare first):
+	#   tls {$ORIGIN_CERT:/etc/caddy/certs/graceride-origin.pem} {$ORIGIN_KEY:/etc/caddy/certs/graceride-origin.key} {
+	#       client_auth {
+	#           mode require_and_verify
+	#           trust_pool file /etc/caddy/certs/cloudflare-origin-pull-ca.pem
+	#       }
+	#   }
+	tls {$ORIGIN_CERT:/etc/caddy/certs/graceride-origin.pem} {$ORIGIN_KEY:/etc/caddy/certs/graceride-origin.key}
 	# Server-sent events (/api/stream) must not be buffered or compressed.
 	@notsse not path /api/stream
 	encode @notsse zstd gzip

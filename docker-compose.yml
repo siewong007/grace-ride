@@ -12,16 +12,21 @@ services:
     volumes:
       - pg-data:/var/lib/postgresql
     shm_size: 128m
+    stop_grace_period: 60s
+    security_opt: ["no-new-privileges:true"]
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U grace -d grace_ride"]
       interval: 10s
       timeout: 5s
       retries: 5
+    networks:
+      - database
 
   app:
     build: .
     image: grace-ride:latest
     restart: unless-stopped
+    init: true
     depends_on:
       db: { condition: service_healthy }
     environment:
@@ -34,12 +39,15 @@ services:
     cap_drop: [ALL]
     security_opt: ["no-new-privileges:true"]
     expose: ["8080"]
-    deploy:
-      resources:
-        limits: { memory: 512m }
+    mem_limit: 512m
+    pids_limit: 512
+    stop_grace_period: 20s
     logging:
       driver: json-file
       options: { max-size: "10m", max-file: "5" }
+    networks:
+      - frontend
+      - database
 
   caddy:
     image: caddy:2-alpine
@@ -54,6 +62,13 @@ services:
       - ./deploy/Caddyfile:/etc/caddy/Caddyfile:ro
       - caddy-data:/data
       - caddy-config:/config
+    networks:
+      - frontend
+
+networks:
+  frontend:
+  database:
+    internal: true
 
 volumes:
   pg-data:

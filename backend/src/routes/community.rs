@@ -744,7 +744,14 @@ async fn create_announcement(
             .fetch_all(&st.db)
             .await?;
         let title = req.title.trim();
-        notify_many(&st.db, &ids, ("新公告", "New announcement"), (title, title), "/").await;
+        notify_many(
+            &st.db,
+            &ids,
+            ("新公告", "New announcement"),
+            (title, title),
+            "/",
+        )
+        .await;
     }
     audit(
         &st.db,
@@ -1609,7 +1616,11 @@ fn validate_guide(
         let link = s.link.as_deref().map(str::trim).filter(|l| !l.is_empty());
         if let Some(l) = link {
             // Internal app paths only: must start with '/', no protocol-relative or /api URLs.
-            if !l.starts_with('/') || l.starts_with("//") || l.starts_with("/api/") || l.contains(':') {
+            if !l.starts_with('/')
+                || l.starts_with("//")
+                || l.starts_with("/api/")
+                || l.contains(':')
+            {
                 return Err(bad(lang, ErrorKey::GuideLinkInvalid));
             }
         }
@@ -2029,7 +2040,7 @@ struct ReimbIn {
 
 async fn validate_reimb(st: &AppState, u: &CurrentUser, req: &ReimbIn) -> AppResult<()> {
     if req.amount_cents <= 0 || req.amount_cents > 50_000 {
-        return Err(bad(u.lang, ErrorKey::AmountRangeRM001to500));
+        return Err(bad(u.lang, ErrorKey::AmountRangeInvalid));
     }
     if req.payee_name.trim().is_empty() || req.payee_phone.trim().is_empty() {
         return Err(bad(u.lang, ErrorKey::PayeeNameAndPhoneRequired));
