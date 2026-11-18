@@ -2146,7 +2146,6 @@ async fn update_alert_settings(
         .filter(|s| !s.is_empty())
     {
         if !req.clear_telegram_bot_token.unwrap_or(false) && !validate_telegram_bot_token(tok) {
-            println!("DEBUG: token validation failing, tok={:?}", tok);
             return Err(bad(u.lang, ErrorKey::InvalidAction));
         }
     }

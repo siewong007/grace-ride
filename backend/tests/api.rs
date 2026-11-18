@@ -2,8 +2,7 @@
 //! Each test builds its own app (own schema, own rate limiter).
 
 mod common;
-#[path = "common/schema.rs"]
-mod schema;
+use common::schema;
 
 use crate::common::upload_png;
 use axum::{

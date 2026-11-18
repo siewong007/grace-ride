@@ -1076,7 +1076,7 @@ async fn care_eta_pdpa_return_leg_and_proxy_route_privacy() {
     ] {
         sqlx::query(
             "INSERT INTO geocode_cache (query, lat, lng, approx, updated_at)
-             VALUES ($1,$2,$3,0,$4) ON CONFLICT (query) DO NOTHING",
+             VALUES ($1,$2,$3,FALSE,$4) ON CONFLICT (query) DO NOTHING",
         )
         .bind(q)
         .bind(lat)
@@ -1850,7 +1850,7 @@ async fn profile_photo_mime_readiness_bounds_vapid_settings_and_saved_places_cac
     // 4. Saved places geocode cache lookup normalizes mixed-case addresses
     sqlx::query(
         "INSERT INTO geocode_cache (query, lat, lng, approx, updated_at)
-         VALUES ('12 jalan ss 2/24, petaling jaya', 3.118, 101.621, 0, $1) ON CONFLICT (query) DO NOTHING",
+         VALUES ('12 jalan ss 2/24, petaling jaya', 3.118, 101.621, FALSE, $1) ON CONFLICT (query) DO NOTHING",
     )
     .bind(grace_ride::util::now())
     .execute(&st.db)
@@ -2447,10 +2447,10 @@ async fn ride_lifecycle_cursors_search_escaping_csv_year_and_guides() {
     loop {
         let qs = match &r_before {
             Some(c) => format!(
-                "/api/rides/mine?scope=past&limit=1&before={}",
+                "/api/rides?scope=past&limit=1&before={}",
                 c.replace('|', "%7C")
             ),
-            None => "/api/rides/mine?scope=past&limit=1".to_string(),
+            None => "/api/rides?scope=past&limit=1".to_string(),
         };
         let page = call(&app, Method::GET, &qs, Some(&sophie), None).await;
         assert_eq!(page.status, StatusCode::OK, "{}", page.json);

@@ -797,7 +797,6 @@ async fn live_calendar_feed_and_alert_channels() {
             "telegram_bot_username": "@GraceTestBot",
             "telegram_bot_token": "",
             "alert_webhook_url": format!("http://{addr}/hook"),
-            "vapid_public_key": "BTestVapidKey"
         })),
     )
     .await;
@@ -805,7 +804,10 @@ async fn live_calendar_feed_and_alert_channels() {
 
     let push_cfg = call(&app, Method::GET, "/api/push/config", Some(&member), None).await;
     assert_eq!(push_cfg.status, StatusCode::OK);
-    assert_eq!(push_cfg.json["vapid_public_key"], "BTestVapidKey");
+    // A bare public key without its private half is rejected, so the server-generated key stays.
+    assert!(push_cfg.json["vapid_public_key"]
+        .as_str()
+        .is_some_and(|k| !k.is_empty()));
 
     assert_eq!(
         call(

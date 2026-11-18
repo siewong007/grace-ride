@@ -1,6 +1,9 @@
 //! 恩典同行 Grace Ride — library crate. `main.rs` only reads config and serves;
 //! everything here is reusable by the integration tests in `tests/`.
 
+// sqlx row tuples (`query_as::<_, (i64, String, ...)>`) trip this lint by design.
+#![allow(clippy::type_complexity)]
+
 pub mod arrange;
 pub mod audience;
 pub mod auth;

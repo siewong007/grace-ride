@@ -3033,4 +3033,3 @@ async fn monthly_report(
         "badges": compute_badges(&st, target, report_lang).await?,
     })))
 }
-

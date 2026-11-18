@@ -13,7 +13,7 @@
       "eslint --fix"
     ],
     "backend/**/*.rs": [
-      "cargo fmt"
+      "rustfmt --edition 2021"
     ]
   }
 }
