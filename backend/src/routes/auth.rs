@@ -680,6 +680,25 @@ async fn passkey_login_finish(
         .await;
         return Err(bad(lang, ErrorKey::PasskeyFailed));
     };
+    let u_status: Option<(String,)> = sqlx::query_as("SELECT status FROM users WHERE id=$1")
+        .bind(uid)
+        .fetch_optional(&st.db)
+        .await?;
+    if !matches!(
+        u_status.as_ref().map(|s| s.0.as_str()),
+        Some("active" | "pending")
+    ) {
+        audit(
+            &st.db,
+            None,
+            "login.failed",
+            "user",
+            Some(uid),
+            format!("account disabled; from {ip}"),
+        )
+        .await;
+        return Err(forbidden(lang, ErrorKey::AuthDisabled));
+    }
     let key_found = touch_passkey(&st, uid, &res).await?;
     if !key_found {
         audit(
@@ -977,10 +996,15 @@ async fn totp_enable(
     u: CurrentUser,
     Json(req): Json<CodeReq>,
 ) -> AppResult<Json<Value>> {
-    let (secret,): (Option<String>,) = sqlx::query_as("SELECT totp_secret FROM users WHERE id=$1")
-        .bind(u.id)
-        .fetch_one(&st.db)
-        .await?;
+    require_recent_sign_in(&st, &u).await?;
+    let (secret, enabled): (Option<String>, i64) =
+        sqlx::query_as("SELECT totp_secret, totp_enabled FROM users WHERE id=$1")
+            .bind(u.id)
+            .fetch_one(&st.db)
+            .await?;
+    if enabled == 1 {
+        return Err(bad(u.lang, ErrorKey::TwoFactorAlreadyEnabled));
+    }
     let secret = secret.ok_or_else(|| bad(u.lang, ErrorKey::StartSetupFirst))?;
     if let Err(e) = verify_totp(&st, u.id, &secret, &u.email, &req.code, u.lang).await {
         audit(&st.db, Some(u.id), "totp.failed", "user", Some(u.id), "").await;
@@ -1528,6 +1552,16 @@ async fn invite_accept(
 
     let uid = if kind == "recovery" {
         let id = rec_user.ok_or_else(|| bad(lang, ErrorKey::RecoveryLinkInvalid))?;
+        let u_status: Option<(String,)> = sqlx::query_as("SELECT status FROM users WHERE id=$1")
+            .bind(id)
+            .fetch_optional(&mut *tx)
+            .await?;
+        if !matches!(
+            u_status.as_ref().map(|s| s.0.as_str()),
+            Some("active" | "pending")
+        ) {
+            return Err(forbidden(lang, ErrorKey::AuthDisabled));
+        }
         // A recovery link signs in as the member. Once one is used, no sibling
         // recovery link may remain live (e.g. one issued before a replacement).
         sqlx::query("UPDATE invites SET expires_at=$1 WHERE kind='recovery' AND user_id=$2 AND id<>$3 AND used_at IS NULL")

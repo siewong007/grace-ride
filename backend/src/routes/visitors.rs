@@ -667,7 +667,8 @@ async fn list_passes(
         .bind(event_id)
         .fetch_one(&st.db)
         .await?;
-    let all = can_manage(&u, created_by, Act::View) || u.can(Page::AdminRides, Act::View);
+    let all = can_manage(&u, created_by, Act::View)
+        || (u.can(Page::AdminRides, Act::View) && (u.traffic_is_global() || created_by == u.id));
     let mut passes: Vec<Pass> = sqlx::query_as(&format!(
         "SELECT {PASS_COLS} FROM visitor_passes p
          WHERE p.event_id = $1 AND ($2 OR p.host_id = $3) AND p.closed_reason IS DISTINCT FROM 'reissued'
@@ -720,10 +721,9 @@ async fn managed_pass(st: &AppState, u: &CurrentUser, id: i64) -> AppResult<Pass
         .bind(p.event_id)
         .fetch_one(&st.db)
         .await?;
-    if p.host_id != u.id
-        && !can_manage(u, created_by, Act::Update)
-        && !u.can(Page::AdminRides, Act::Update)
-    {
+    let staff_for_event =
+        u.can(Page::AdminRides, Act::Update) && (u.traffic_is_global() || created_by == u.id);
+    if p.host_id != u.id && !can_manage(u, created_by, Act::Update) && !staff_for_event {
         return Err(forbidden(u.lang, ErrorKey::OnlyGoingCanInviteVisitor));
     }
     close_if_done(&st.db, &mut p).await?;

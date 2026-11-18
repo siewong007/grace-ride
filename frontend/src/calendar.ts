@@ -2,11 +2,13 @@
  * RFC 5545 iCalendar (.ics) generation helper for events and rides.
  */
 
+import { parseLocal } from './format';
+
 export interface CalendarEvent {
   title: string;
   description?: string;
   location?: string;
-  startsAt: string; // ISO string e.g. "2026-11-15T09:30:00"
+  startsAt: string; // Local/ISO string e.g. "2026-11-15T09:30:00" or "2026-11-15 09:30"
   durationMinutes?: number;
 }
 
@@ -14,12 +16,15 @@ function pad(n: number): string {
   return n < 10 ? `0${n}` : String(n);
 }
 
-export function formatIcsDate(isoStr: string): string {
-  const d = new Date(isoStr);
-  if (isNaN(d.getTime())) {
-    // If not parseable as Date, strip non-alphanumeric
-    return isoStr.replace(/[-:]/g, '').slice(0, 15);
+function parseIcsDate(raw: string): Date {
+  const s = raw.trim();
+  if (/^\d{4}-\d{2}-\d{2}([T ]\d{2}:\d{2}(:\d{2}(\.\d+)?)?)?$/.test(s)) {
+    return parseLocal(s);
   }
+  return new Date(s);
+}
+
+function formatLocalIcsDate(d: Date): string {
   return (
     d.getFullYear() +
     pad(d.getMonth() + 1) +
@@ -31,22 +36,46 @@ export function formatIcsDate(isoStr: string): string {
   );
 }
 
+function formatUtcIcsDate(d: Date): string {
+  return (
+    d.getUTCFullYear() +
+    pad(d.getUTCMonth() + 1) +
+    pad(d.getUTCDate()) +
+    'T' +
+    pad(d.getUTCHours()) +
+    pad(d.getUTCMinutes()) +
+    pad(d.getUTCSeconds()) +
+    'Z'
+  );
+}
+
+export function formatIcsDate(isoStr: string): string {
+  const d = parseIcsDate(isoStr);
+  if (isNaN(d.getTime())) {
+    const digits = isoStr.replace(/\D/g, '');
+    if (digits.length >= 8) {
+      return `${digits.slice(0, 8)}T${digits.slice(8, 14).padEnd(6, '0')}`;
+    }
+    return isoStr.replace(/[^A-Za-z0-9]/g, '').slice(0, 15);
+  }
+  return formatLocalIcsDate(d);
+}
+
 function escapeIcsText(text: string): string {
   return text
     .replace(/\\/g, '\\\\')
     .replace(/;/g, '\\;')
     .replace(/,/g, '\\,')
-    .replace(/\n/g, '\\n');
+    .replace(/\r?\n/g, '\\n');
 }
 
 export function generateIcs(event: CalendarEvent): string {
+  const startDate = parseIcsDate(event.startsAt);
   const dtStart = formatIcsDate(event.startsAt);
   const durationMs = (event.durationMinutes ?? 120) * 60 * 1000;
-  const startDate = new Date(event.startsAt);
-  const endDate = isNaN(startDate.getTime())
-    ? startDate
-    : new Date(startDate.getTime() + durationMs);
-  const dtEnd = formatIcsDate(endDate.toISOString());
+  const dtEnd = isNaN(startDate.getTime())
+    ? dtStart
+    : formatLocalIcsDate(new Date(startDate.getTime() + durationMs));
 
   const uid = `gr-${Date.now()}-${Math.random().toString(36).slice(2, 9)}@graceride.cmc`;
 
@@ -58,7 +87,7 @@ export function generateIcs(event: CalendarEvent): string {
     'METHOD:PUBLISH',
     'BEGIN:VEVENT',
     `UID:${uid}`,
-    `DTSTAMP:${formatIcsDate(new Date().toISOString())}`,
+    `DTSTAMP:${formatUtcIcsDate(new Date())}`,
     `DTSTART:${dtStart}`,
     `DTEND:${dtEnd}`,
     `SUMMARY:${escapeIcsText(event.title)}`,

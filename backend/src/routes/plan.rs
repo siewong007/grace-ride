@@ -595,6 +595,7 @@ async fn save_plan(
             *gained.entry(d).or_default() += 1;
         }
         if let Some(old) = r.driver_id {
+            st.routing.invalidate(old, r.trip_id.unwrap_or(r.id)).await;
             lost.entry(old).or_default().push(r.p_name.as_str());
             if let Some(t) = r.trip_id {
                 system_message(

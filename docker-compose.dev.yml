@@ -1,0 +1,50 @@
+# Local development & integration-test PostgreSQL 18 instance.
+# Boots both `grace_ride_dev` (default DB) and `grace_ride_test` (Cargo integration tests).
+#
+# Start:  make db-up    (or: docker compose -f docker-compose.dev.yml up -d --wait)
+# Stop:   make db-down  (or: docker compose -f docker-compose.dev.yml down)
+#
+# Connection URLs when using this container:
+#   DATABASE_URL=postgres://grace:grace@127.0.0.1:5432/grace_ride_dev
+#   TEST_DATABASE_URL=postgres://grace:grace@127.0.0.1:5432/grace_ride_test
+
+name: grace-ride-dev
+
+services:
+  db:
+    image: postgres:18-alpine
+    container_name: grace-ride-dev-db
+    restart: unless-stopped
+    ports:
+      - "${PG_PORT:-5432}:5432"
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-grace}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-grace}
+      POSTGRES_DB: ${POSTGRES_DB:-grace_ride_dev}
+    entrypoint:
+      - /bin/sh
+      - -ec
+      - |
+        cat <<'SQL' > /docker-entrypoint-initdb.d/01-create-test-db.sql
+        SELECT 'CREATE DATABASE grace_ride_test'
+        WHERE NOT EXISTS (SELECT FROM pg_database WHERE datname = 'grace_ride_test')\gexec
+        SQL
+        exec docker-entrypoint.sh postgres
+    volumes:
+      - grace-ride-dev-pg:/var/lib/postgresql
+    shm_size: 128m
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - >-
+          pg_isready -U "$${POSTGRES_USER:-grace}" -d "$${POSTGRES_DB:-grace_ride_dev}" &&
+          psql -U "$${POSTGRES_USER:-grace}" -d "$${POSTGRES_DB:-grace_ride_dev}" -tAc
+          "SELECT 1 FROM pg_database WHERE datname = 'grace_ride_test'" | grep -q 1
+      interval: 5s
+      timeout: 5s
+      retries: 10
+      start_period: 5s
+
+volumes:
+  grace-ride-dev-pg:
+    name: grace-ride-dev-pg

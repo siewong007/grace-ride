@@ -18,8 +18,8 @@ use crate::error::{bad, conflict, forbidden, not_found, AppResult};
 use crate::perms::{self, Act, Page, Perm};
 use crate::state::AppState;
 use crate::util::{
-    audit, fmt_rm, norm_dt, notify, notify_perm, notify_trip, now, require, system_message,
-    ErrorKey, Lang,
+    audit, escape_like, fmt_rm, norm_dt, notify, notify_perm, notify_trip, now, require,
+    split_cursor, system_message, ErrorKey, Lang,
 };
 
 pub fn router() -> Router<AppState> {
@@ -796,8 +796,12 @@ async fn my_rides(
             "r.passenger_id=$1".to_string(),
             "r.status IN ('completed','cancelled','no_show','alt_transport')".to_string(),
         ];
+        let cursor = q.before.as_deref().map(split_cursor);
         let mut n = 2;
-        if q.before.is_some() {
+        if let Some((_, Some(_))) = cursor {
+            conds.push(format!("(r.pickup_at < ${n} OR (r.pickup_at = ${n} AND r.id < ${}))", n + 1));
+            n += 2;
+        } else if cursor.is_some() {
             conds.push(format!("r.pickup_at < ${n}"));
             n += 1;
         }
@@ -806,15 +810,17 @@ async fn my_rides(
             conds.join(" AND ")
         );
         let mut query = sqlx::query_as::<_, RideRow>(&sql).bind(u.id);
-        if let Some(b) = &q.before {
-            query = query.bind(b);
+        if let Some((ts, Some(bid))) = cursor {
+            query = query.bind(ts).bind(bid);
+        } else if let Some((ts, None)) = cursor {
+            query = query.bind(ts);
         }
         query = query.bind(limit + 1);
         let mut rows = query.fetch_all(&st.db).await?;
         let more = rows.len() as i64 > limit;
         rows.truncate(limit as usize);
         let next_before = if more {
-            rows.last().map(|r| r.pickup_at.clone())
+            rows.last().map(|r| format!("{}|{}", r.pickup_at, r.id))
         } else {
             None
         };
@@ -1346,6 +1352,9 @@ async fn post_driver_delay(
     if !matches!(r.status.as_str(), "confirmed" | "in_progress") {
         return Err(conflict(u.lang, ErrorKey::TripAlreadyCompleted));
     }
+    if r.picked_up_at.is_some() {
+        return Err(conflict(u.lang, ErrorKey::PassengerAlreadyPickedUp));
+    }
 
     if req.delay_minutes < 0 || req.delay_minutes > 120 {
         return Err(bad(u.lang, ErrorKey::InvalidAction));
@@ -1357,6 +1366,7 @@ async fn post_driver_delay(
         .await?;
 
     let mins = req.delay_minutes;
+    let drv_name = r.d_name.as_deref().unwrap_or(&u.name);
     let note = req
         .reason
         .as_deref()
@@ -1364,29 +1374,30 @@ async fn post_driver_delay(
         .filter(|s| !s.is_empty())
         .map(|s| s.chars().take(300).collect::<String>())
         .unwrap_or_default();
-    notify(
-        &st.db,
-        r.passenger_id,
-        ("司机稍有延误", "Driver slightly delayed"),
-        (
-            &format!("司机 {} 因路况稍有延误，预计推迟约 {} 分钟到达。车到门前时会再次通知您，请在屋内稍候。", u.name, mins),
-            &format!("Driver {} is delayed by ~{} mins due to road conditions. We will notify you when outside, please wait indoors.", u.name, mins),
-        ),
-        &format!("/rides/{id}"),
-    )
-    .await;
-
-    if let Some(t) = r.trip_id {
-        system_message(
+    if mins > 0 {
+        notify(
             &st.db,
-            t,
-            &format!("系统：司机预计推迟约 {} 分钟到达。", mins),
-            &format!(
-                "System: Driver estimated to arrive ~{} mins later than planned.",
-                mins
+            r.passenger_id,
+            ("司机稍有延误", "Driver slightly delayed"),
+            (
+                &format!("司机 {drv_name} 因路况稍有延误，预计推迟约 {mins} 分钟到达。车到门前时会再次通知您，请在屋内稍候。"),
+                &format!("Driver {drv_name} is delayed by ~{mins} mins due to road conditions. We will notify you when outside, please wait indoors."),
             ),
+            &format!("/rides/{id}"),
         )
         .await;
+
+        if let Some(t) = r.trip_id {
+            system_message(
+                &st.db,
+                t,
+                &format!("系统：司机预计推迟约 {mins} 分钟到达。"),
+                &format!(
+                    "System: Driver estimated to arrive ~{mins} mins later than planned.",
+                ),
+            )
+            .await;
+        }
     }
     audit(
         &st.db,
@@ -1418,6 +1429,9 @@ async fn post_arrived_gate(
     if !matches!(r.status.as_str(), "confirmed" | "in_progress") {
         return Err(conflict(u.lang, ErrorKey::TripAlreadyCompleted));
     }
+    if r.picked_up_at.is_some() {
+        return Err(conflict(u.lang, ErrorKey::PassengerAlreadyPickedUp));
+    }
 
     let timestamp = now();
     sqlx::query("UPDATE rides SET arrived_at_gate_at=$1 WHERE id=$2")
@@ -1426,6 +1440,7 @@ async fn post_arrived_gate(
         .execute(&st.db)
         .await?;
 
+    let drv_name = r.d_name.as_deref().unwrap_or(&u.name);
     let veh = format!(
         "{} {} · {}",
         r.v_color.clone().unwrap_or_default(),
@@ -1435,20 +1450,19 @@ async fn post_arrived_gate(
     let (msg_zh, msg_en) = if r.is_proxy == 1 && !r.rider_name.is_empty() {
         (
             format!(
-                "司机 {} 已到达大门外（{}），请通知 {} 出门上车。",
-                u.name, veh, r.rider_name
+                "司机 {drv_name} 已到达大门外（{veh}），请通知 {} 出门上车。",
+                r.rider_name
             ),
             format!(
-                "Driver {} has arrived outside ({}). Please notify {} to come out to board.",
-                u.name, veh, r.rider_name
+                "Driver {drv_name} has arrived outside ({veh}). Please notify {} to come out to board.",
+                r.rider_name
             ),
         )
     } else {
         (
-            format!("司机 {} 已到达您的大门外（{}），请出门上车。", u.name, veh),
+            format!("司机 {drv_name} 已到达您的大门外（{veh}），请出门上车。"),
             format!(
-                "Driver {} has arrived outside your gate ({}). Please come out to board.",
-                u.name, veh
+                "Driver {drv_name} has arrived outside your gate ({veh}). Please come out to board."
             ),
         )
     };
@@ -1571,12 +1585,22 @@ async fn driver_claim(
         .bind(u.id)
         .fetch_optional(&mut *tx)
         .await?;
-    let has_vehicle: Option<(i64,)> = sqlx::query_as("SELECT seats FROM vehicles WHERE user_id=$1")
-        .bind(u.id)
-        .fetch_optional(&mut *tx)
-        .await?;
-    if has_vehicle.is_none() {
+    let Some((_v_seats, wheelchair_ok, child_seat)): Option<(i64, i64, i64)> =
+        sqlx::query_as("SELECT seats, wheelchair_ok, child_seat FROM vehicles WHERE user_id=$1")
+            .bind(u.id)
+            .fetch_optional(&mut *tx)
+            .await?
+    else {
         return Err(bad(u.lang, ErrorKey::FillVehicleDetailsFirst));
+    };
+    let assist = r.assistance.trim().to_ascii_lowercase();
+    let needs_wheelchair = assist.contains("wheelchair") || r.assistance.contains("轮椅");
+    let needs_child_seat = assist.contains("stroller")
+        || assist.contains("child")
+        || r.assistance.contains("婴儿车")
+        || r.assistance.contains("安全座椅");
+    if (needs_wheelchair && wheelchair_ok == 0) || (needs_child_seat && child_seat == 0) {
+        return Err(bad(u.lang, ErrorKey::InvalidAction));
     }
     let (load, cap) = driver_load_on(&mut tx, u.id, &r.pickup_at, Some(id)).await?;
     if load + r.seats > cap {
@@ -1870,6 +1894,10 @@ async fn driver_confirm_assignment(
         .bind(u.id)
         .fetch_optional(&mut *tx)
         .await?;
+    let (load, cap) = driver_load_on(&mut tx, u.id, &r.pickup_at, Some(id)).await?;
+    if load + r.seats > cap {
+        return Err(bad(u.lang, ErrorKey::NotEnoughSeatsSlot { load, cap }));
+    }
     let confirmed = sqlx::query(
         "UPDATE rides SET status='confirmed', needs_attention=0, reminder_sent=0, updated_at=$1
          WHERE id=$2 AND driver_id=$3 AND status='pending_driver_confirm'",
@@ -2171,7 +2199,7 @@ async fn no_show(
         return Err(conflict(u.lang, ErrorKey::PassengerAlreadyPickedUp));
     }
     let ended = sqlx::query(
-        "UPDATE rides SET status='no_show', completed_at=$1, updated_at=$1
+        "UPDATE rides SET status='no_show', needs_attention=0, completed_at=$1, updated_at=$1
          WHERE id=$2 AND status IN ('in_progress', 'confirmed') AND picked_up_at IS NULL",
     )
     .bind(now())
@@ -2188,6 +2216,18 @@ async fn no_show(
             Some((Some(_),)) => conflict(u.lang, ErrorKey::PassengerAlreadyPickedUp),
             _ => conflict(u.lang, ErrorKey::RideStatusChanged),
         });
+    }
+    if r.leg == "outbound" {
+        if let Some(pair_id) = r.paired_ride_id {
+            sqlx::query(
+                "UPDATE rides SET needs_attention=1, attention_reason='去程未到场，请确认回程是否仍需接送', updated_at=$1
+                 WHERE id=$2 AND status NOT IN ('completed','cancelled','no_show','alt_transport')",
+            )
+            .bind(now())
+            .bind(pair_id)
+            .execute(&st.db)
+            .await?;
+        }
     }
     if let Some(d) = r.driver_id {
         clear_location_if_idle(&st, d).await?;
@@ -2727,9 +2767,12 @@ async fn ride_location(
         let trip = r.trip_id.unwrap_or(r.id);
         let full_view = r.driver_id == Some(u.id) || traffic_can(&u, &r, Act::View);
         if let Ok(Some(route)) = crate::routing::driver_route(&st, driver, Some(trip)).await {
-            if let Some(eta) =
+            if let Some(mut eta) =
                 crate::routing::ride_eta(&route, id, r.picked_up_at.is_some(), full_view)
             {
+                if r.picked_up_at.is_some() && !full_view {
+                    eta["destination"] = json!(r.destination);
+                }
                 out["eta"] = eta;
             }
         }
@@ -3268,10 +3311,10 @@ async fn admin_rides(
         q.q.as_deref()
             .map(str::trim)
             .filter(|s| !s.is_empty())
-            .map(|s| format!("%{s}%"));
+            .map(|s| format!("%{}%", escape_like(s)));
     if search.is_some() {
         conds.push(format!(
-            "(p.name ILIKE ${n} OR r.rider_name ILIKE ${n} OR d.name ILIKE ${n} OR r.destination ILIKE ${n})"
+            "(p.name ILIKE ${n} ESCAPE '\\' OR r.rider_name ILIKE ${n} ESCAPE '\\' OR d.name ILIKE ${n} ESCAPE '\\' OR r.destination ILIKE ${n} ESCAPE '\\')"
         ));
         n += 1;
     }
@@ -3280,7 +3323,7 @@ async fn admin_rides(
         // so it is safe to interpolate (and never depends on the session's time zone).
         let within_a_day = crate::util::in_hours(24);
         conds.push(format!(
-            "(r.needs_attention = 1 OR (r.status='pending_driver' AND r.pickup_at < '{within_a_day}'))"
+            "((r.needs_attention = 1 AND r.status NOT IN ('cancelled','completed','no_show','alt_transport')) OR (r.status='pending_driver' AND r.pickup_at < '{within_a_day}'))"
         ));
     }
     let today = crate::util::today_local().format("%Y-%m-%d").to_string();
@@ -3759,7 +3802,7 @@ async fn create_saved_place(
     }
     let cached: Option<(Option<f64>, Option<f64>)> =
         sqlx::query_as("SELECT lat, lng FROM geocode_cache WHERE query=$1")
-            .bind(address)
+            .bind(crate::routing::cache_key(address))
             .fetch_optional(&st.db)
             .await?;
     let (lat, lng) = cached.unwrap_or((None, None));
@@ -3824,7 +3867,7 @@ async fn update_saved_place(
     }
     let cached: Option<(Option<f64>, Option<f64>)> =
         sqlx::query_as("SELECT lat, lng FROM geocode_cache WHERE query=$1")
-            .bind(address)
+            .bind(crate::routing::cache_key(address))
             .fetch_optional(&st.db)
             .await?;
     let (lat, lng) = cached.unwrap_or((None, None));
@@ -4071,7 +4114,8 @@ async fn update_recurring_schedule(
     );
     let res = sqlx::query(
         "UPDATE recurring_ride_schedules
-         SET kind=$1, label=$2, weekday=$3, pickup_time=$4, area_id=$5, pickup_address=$6, destination=$7,
+         SET last_generated_date = CASE WHEN weekday <> $3 OR pickup_time <> $4 THEN NULL ELSE last_generated_date END,
+             kind=$1, label=$2, weekday=$3, pickup_time=$4, area_id=$5, pickup_address=$6, destination=$7,
              seats=$8, assistance=$9, notes=$10, lead_days=$11, active=$12, updated_at=$13
          WHERE id=$14 AND user_id=$15",
     )
@@ -4503,8 +4547,8 @@ pub async fn event_moved(
             }
         }
     }
-    let drivers: Vec<(i64,)> = sqlx::query_as(
-        "SELECT DISTINCT driver_id FROM rides
+    let driver_trips: Vec<(i64, i64)> = sqlx::query_as(
+        "SELECT DISTINCT driver_id, COALESCE(trip_id, id) FROM rides
          WHERE event_id=$1 AND status = ANY($2) AND driver_id IS NOT NULL",
     )
     .bind(event_id)
@@ -4513,6 +4557,10 @@ pub async fn event_moved(
     .await?;
     tx.commit().await?;
 
+    for &(d, t) in &driver_trips {
+        st.routing.invalidate(d, t).await;
+    }
+
     crate::routes::visitors::event_moved(&st.db, event_id, new_at).await?;
 
     let (title,): (String,) = sqlx::query_as("SELECT title FROM events WHERE id=$1")
@@ -4520,7 +4568,12 @@ pub async fn event_moved(
         .fetch_one(&st.db)
         .await?;
     let body = format!("{} · {} · {}", title, new_at.replace('T', " "), new_place);
-    let ids: Vec<i64> = drivers.into_iter().map(|(d,)| d).collect();
+    let ids: Vec<i64> = driver_trips
+        .into_iter()
+        .map(|(d, _)| d)
+        .collect::<std::collections::BTreeSet<_>>()
+        .into_iter()
+        .collect();
     crate::util::notify_many(
         &st.db,
         &ids,

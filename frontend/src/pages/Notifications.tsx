@@ -100,8 +100,17 @@ export default function Notifications() {
       setOlderItems((prev) => prev.map((x) => (x.id === n.id ? { ...x, read: true } : x)));
     }
     refresh();
-    if (n.link) nav(n.link);
-    else reload();
+    if (
+      n.link &&
+      n.link.startsWith('/') &&
+      !n.link.startsWith('//') &&
+      !n.link.startsWith('/api/') &&
+      !n.link.includes(':')
+    ) {
+      nav(n.link);
+    } else {
+      reload();
+    }
   };
 
   const markAllRead = async () => {

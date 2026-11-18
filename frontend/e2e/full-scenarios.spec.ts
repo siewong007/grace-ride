@@ -305,7 +305,7 @@ async function openAndAudit(page: Page, path: string, headingSelector = 'main h1
 }
 
 test.describe('Public zero-login journeys (iPhone 13)', () => {
-  test.use({ ...(phone as never) });
+  test.use(phone);
 
   test('caregiver /care/:token safe-arrival status, display controls, readiness post & a11y', async ({ context, page }) => {
     const calls: unknown[] = [];

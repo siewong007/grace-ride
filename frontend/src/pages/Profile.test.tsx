@@ -9,11 +9,11 @@ const baseMe = {
   name: 'Grace Member',
   email: 'grace@example.com',
   phone: '0123456789',
-  photo_file_id: null,
+  photo_file_id: null as number | null,
   roles: ['member'],
   role_names: {},
   permissions: ['costs', 'reimbursements', 'help', 'report'],
-  status: 'active' as const,
+  status: 'active' as 'active' | 'pending' | 'suspended',
   terms_accepted: true,
   mfa_ok: true,
   totp_enabled: false,
@@ -113,8 +113,20 @@ vi.mock('../components/ui', () => ({
   Button: ({
     children,
     type = 'button',
+    loading: _loading,
+    variant: _variant,
+    size: _size,
+    block: _block,
+    icon: _icon,
     ...rest
-  }: React.ButtonHTMLAttributes<HTMLButtonElement> & { children?: React.ReactNode }) => (
+  }: React.ButtonHTMLAttributes<HTMLButtonElement> & {
+    children?: React.ReactNode;
+    loading?: boolean;
+    variant?: string;
+    size?: string;
+    block?: boolean;
+    icon?: React.ReactNode;
+  }) => (
     <button type={type} data-testid="button" {...rest}>
       {children}
     </button>
@@ -122,7 +134,7 @@ vi.mock('../components/ui', () => ({
   Card: ({ children }: { children?: React.ReactNode }) => <div data-testid="card">{children}</div>,
   ErrorBox: ({ error }: { error?: string | null }) =>
     error ? <div data-testid="error-box">{error}</div> : null,
-  Field: ({ label, children }: { label: string; children: unknown }) => (
+  Field: ({ label, children }: { label: string; children: React.ReactNode }) => (
     <label data-testid="field">{label}{children}</label>
   ),
   FileInput: ({ label }: { label: string }) => (
@@ -136,6 +148,8 @@ vi.mock('../components/ui', () => ({
     children?: React.ReactNode;
     title?: string;
     onClose?: () => void;
+    size?: string;
+    initialFocusRef?: React.RefObject<HTMLElement | null>;
   }) => (
     <div data-testid="modal" role="dialog" aria-label={title}>
       <h2>{title}</h2>
@@ -155,12 +169,20 @@ vi.mock('../components/ui', () => ({
     icon,
     label,
     onClick,
+    chevron: _chevron,
+    hint: _hint,
+    badge: _badge,
+    danger: _danger,
     ...rest
   }: {
     to?: string;
     icon?: React.ReactNode;
     label?: React.ReactNode;
     onClick?: () => void;
+    chevron?: boolean;
+    hint?: React.ReactNode;
+    badge?: React.ReactNode;
+    danger?: boolean;
     [k: string]: unknown;
   }) => {
     const content = (

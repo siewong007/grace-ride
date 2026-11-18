@@ -156,13 +156,17 @@ fn description(req: &RoleIn) -> String {
         .collect()
 }
 
-async fn role_perms(st: &AppState, key: &str) -> AppResult<PermSet> {
+async fn role_perms_on<'e, E: sqlx::PgExecutor<'e>>(db: E, key: &str) -> AppResult<PermSet> {
     let rows: Vec<(String,)> =
         sqlx::query_as("SELECT permission FROM role_permissions WHERE role_key = $1")
             .bind(key)
-            .fetch_all(&st.db)
+            .fetch_all(db)
             .await?;
     Ok(PermSet::from_keys(rows.iter().map(|r| r.0.as_str())))
+}
+
+async fn role_perms(st: &AppState, key: &str) -> AppResult<PermSet> {
+    role_perms_on(&st.db, key).await
 }
 
 fn holds_settings(set: &PermSet) -> bool {
@@ -210,7 +214,13 @@ async fn guard_rank(
         }
     }
     let power = perms::admin_power_keys();
-    if !perms::can_manage_admins(&roles) && added.iter().any(|p| power.contains(&p.key())) {
+    let old_keys = before.keys();
+    let new_keys = set.keys();
+    let touches_power = added.iter().any(|p| power.contains(&p.key()))
+        || old_keys
+            .iter()
+            .any(|k| !new_keys.contains(k) && power.contains(k));
+    if !perms::can_manage_admins(&roles) && touches_power {
         return Err(forbidden(u.lang, ErrorKey::AdminAppointmentRestricted));
     }
     Ok(())
@@ -337,18 +347,7 @@ async fn update(
     Json(req): Json<RoleIn>,
 ) -> AppResult<Json<Value>> {
     require(&u, Page::AdminRoles, Act::Update)?;
-    let (old_name, is_system): (String, i64) =
-        sqlx::query_as("SELECT name, is_system FROM roles WHERE key = $1")
-            .bind(&key)
-            .fetch_optional(&st.db)
-            .await?
-            .ok_or(not_found(u.lang))?;
     let set = parse_permissions(u.lang, &req.permissions)?;
-    let before = role_perms(&st, &key).await?;
-    // Only the super admin adds system-configuration access to a role.
-    if !perms::is_superadmin(&u.roles) && adds_settings(&set, &before) {
-        return Err(forbidden(u.lang, ErrorKey::SettingsSuperadminOnly));
-    }
     // The super admin role is fixed: it holds every permission and nothing else is stored.
     if key == SUPERADMIN_ROLE || perms::locked(&key).into_iter().any(|p| !set.contains(p)) {
         return Err(bad(u.lang, ErrorKey::RolePermissionLocked));
@@ -357,6 +356,22 @@ async fn update(
     sqlx::query("SELECT pg_advisory_xact_lock(hashtextextended('grace_ride_roles_mutation', 0))")
         .execute(&mut *tx)
         .await?;
+    let (old_name, is_system): (String, i64) =
+        sqlx::query_as("SELECT name, is_system FROM roles WHERE key = $1")
+            .bind(&key)
+            .fetch_optional(&mut *tx)
+            .await?
+            .ok_or(not_found(u.lang))?;
+    let before = role_perms_on(&mut *tx, &key).await?;
+    let (raw_caller,): (String,) = sqlx::query_as("SELECT roles FROM users WHERE id = $1")
+        .bind(u.id)
+        .fetch_one(&mut *tx)
+        .await?;
+    let caller_roles = perms::parse_roles(&raw_caller);
+    // Only the super admin adds system-configuration access to a role.
+    if !perms::is_superadmin(&caller_roles) && adds_settings(&set, &before) {
+        return Err(forbidden(u.lang, ErrorKey::SettingsSuperadminOnly));
+    }
     guard_own_access(&st, &u, &key, Some(&set)).await?;
     guard_rank(&st, &u, &key, &set, &before).await?;
     // Built-in roles are named by the app in each member's language.
@@ -375,6 +390,17 @@ async fn update(
         .execute(&mut *tx)
         .await?;
     write_permissions(&mut tx, &key, &set).await?;
+    if set.privileged() && !before.privileged() {
+        sqlx::query(
+            "UPDATE sessions SET expires_at = $1
+             WHERE expires_at > $1
+               AND user_id IN (SELECT user_id FROM member_roles WHERE role_key = $2)",
+        )
+        .bind(crate::util::in_hours(12))
+        .bind(&key)
+        .execute(&mut *tx)
+        .await?;
+    }
     tx.commit().await?;
 
     let (old, new) = (before.keys(), set.keys());
@@ -406,19 +432,31 @@ async fn remove(
     Path(key): Path<String>,
 ) -> AppResult<Json<Value>> {
     require(&u, Page::AdminRoles, Act::Delete)?;
+    let mut tx = st.db.begin().await?;
+    sqlx::query("SELECT pg_advisory_xact_lock(hashtextextended('grace_ride_roles_mutation', 0))")
+        .execute(&mut *tx)
+        .await?;
     let (name, is_system): (String, i64) =
         sqlx::query_as("SELECT name, is_system FROM roles WHERE key = $1")
             .bind(&key)
-            .fetch_optional(&st.db)
+            .fetch_optional(&mut *tx)
             .await?
             .ok_or(not_found(u.lang))?;
     if is_system == 1 || key == ADMIN_ROLE {
         return Err(bad(u.lang, ErrorKey::SystemRoleCannotBeDeleted));
     }
-    let mut tx = st.db.begin().await?;
-    sqlx::query("SELECT pg_advisory_xact_lock(hashtextextended('grace_ride_roles_mutation', 0))")
-        .execute(&mut *tx)
+    let before = role_perms_on(&mut *tx, &key).await?;
+    let (raw_caller,): (String,) = sqlx::query_as("SELECT roles FROM users WHERE id = $1")
+        .bind(u.id)
+        .fetch_one(&mut *tx)
         .await?;
+    let caller_roles = perms::parse_roles(&raw_caller);
+    let power = perms::admin_power_keys();
+    if !perms::can_manage_admins(&caller_roles)
+        && before.keys().iter().any(|k| power.contains(k))
+    {
+        return Err(forbidden(u.lang, ErrorKey::AdminAppointmentRestricted));
+    }
     guard_own_access(&st, &u, &key, None).await?;
     // Members who held the role simply lose it.
     let held = sqlx::query(

@@ -1,0 +1,41 @@
+# Security Policy
+
+Grace Ride (恩典同行) coordinates volunteer carpooling, fellowship events, and activity cost-sharing for **PJ State CMC**, handling sensitive member personal data (home/pickup addresses, live trip GPS, mobility/health assistance flags, phone numbers, and reimbursement receipts).
+
+## Supported Versions
+
+Grace Ride runs as a continuously deployed single-tenant production service for PJ State CMC. Only the latest `master` deployment is actively supported with security updates:
+
+| Version / Branch | Supported |
+|---|---|
+| `master` (`0.1.x` active deployment) | Yes |
+| Older commits / snapshots | No (upgrade to `master`) |
+
+## Reporting a Vulnerability Privately
+
+**Do not open public GitHub issues, discussions, or pull requests for suspected security or privacy vulnerabilities.**
+
+Report vulnerabilities privately to the PJ State CMC IT / Grace Ride maintainers:
+
+1. **Email:** Contact the PJ State CMC IT / DPO address configured in `.env.production` (`ACME_EMAIL`, e.g. `it@pjstatecmc.org`) or reach out directly to the repository owner via GitHub private security reporting if enabled.
+2. **Include:**
+   - Affected route, endpoint, role, or component (e.g. `/api/rides`, `/visit/:token`, `frontend/public/sw.js`).
+   - Step-by-step reproduction against a local `DEV_MODE=true` synthetic instance (`@example.org` demo accounts—never test against live member accounts or real personal data).
+   - Expected vs. actual authorization, privacy projection, or state behavior, and potential impact.
+3. **Response Targets:**
+   - Initial acknowledgement within **48 hours**.
+   - Triage and remediation plan within **7 days** (immediate containment within **24 hours** for active data exposure; see the PDPA breach runbook).
+
+## Security Architecture Summary
+
+Full control specifications and source pointers are maintained in [`docs/TECHNICAL.md`](docs/TECHNICAL.md):
+
+- **Authentication & Step-Up MFA:** Invite-only onboarding (single-use 14-day hashed tokens, no public self-registration). WebAuthn passkeys are primary, alongside password + single-use TOTP and salted SHA-256 backup codes. Accessing any non-Member area (`Transport`, `Finance`, `Admin`) requires a passkey- or 2FA-verified session (`util::require`), and idle or manually locked sessions return HTTP `423` server-side (`security::evaluate_session_lock`).
+- **Granular RBAC & Chain of Command:** 27 page keys and 67 page/action permissions across 13 built-in roles plus custom roles, governed by a 5-tier leadership rank hierarchy (`superadmin > president > vice_president > finance > auditor`). `Finance` permissions can never be self-granted, monthly payout batches enforce two-person separation (`created_by != paid_by`), and privileged account recovery requires two distinct administrators.
+- **Scoped Capability Passes:** Zero-account guest links (`/visit/:token`) bind to an isolated `gr_visit` `HttpOnly` cookie scoped to `/api/visit` that never yields an authenticated member session (`CurrentUser`). Caregiver Safe Arrival links (`/care/:token`) store SHA-256 token hashes and omit street addresses and raw coordinates while surfacing trip status and readiness controls.
+- **Browser, CSRF, CSP & SSRF Hardening:** `__Host-`-prefixed `Secure` `HttpOnly` `SameSite=Lax` session cookies (12 h TTL for staff, 30 d for members), mandatory `Origin` / `Sec-Fetch-Site` checks on all state-changing requests, strict CSP (`script-src 'self'`, `frame-ancestors 'none'`, `CSP: sandbox` on uploaded files), magic-byte upload verification, outbound webhook/Web Push host allowlists with private/loopback IP and redirect blocking, viewer-scoped pickup area masking prior to staff approval, and a privacy-safe Service Worker that never caches `/api/*` responses.
+
+## Further Reading
+
+- [Security Model — Threat Model, Controls & Accepted Risks](docs/TECHNICAL.md#7-security-model)
+- [Compliance, PDPA & Malaysian Law — Data Inventory & 72-Hour Breach Runbook](docs/TECHNICAL.md#8-compliance-pdpa--malaysian-law)

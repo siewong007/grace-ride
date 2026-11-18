@@ -356,7 +356,7 @@ pub fn choose_order(
 
 // ---------------- Geocoding ----------------
 
-fn cache_key(addr: &str) -> String {
+pub(crate) fn cache_key(addr: &str) -> String {
     addr.split_whitespace()
         .collect::<Vec<_>>()
         .join(" ")
@@ -877,6 +877,8 @@ pub struct Destination {
     pub eta: Option<String>,
     #[serde(skip)]
     path_end: Option<usize>,
+    #[serde(skip)]
+    pub shared: bool,
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -958,7 +960,9 @@ pub async fn driver_route(
         },
     };
     let rows: Vec<TripRide> = sqlx::query_as(
-        "SELECT r.id, p.name AS p_name, r.pickup_address, r.destination, r.status, r.picked_up_at, r.pickup_at, r.seats,
+        "SELECT r.id,
+                CASE WHEN r.is_proxy = 1 AND r.rider_name <> '' THEN r.rider_name ELSE p.name END AS p_name,
+                r.pickup_address, r.destination, r.status, r.picked_up_at, r.pickup_at, r.seats,
                 pl.lat AS plat, pl.lng AS plng
          FROM rides r JOIN users p ON p.id = r.passenger_id
          LEFT JOIN passenger_locations pl ON pl.ride_id = r.id
@@ -995,12 +999,13 @@ pub async fn driver_route(
         rows[0].destination,
         rows.iter()
             .map(|r| format!(
-                "{}:{}:{}:{}:{}",
+                "{}:{}:{}:{}:{}:{}",
                 r.id,
                 r.status,
                 r.picked_up_at.is_some(),
                 r.plat.is_some(),
-                r.pickup_address
+                r.pickup_address,
+                r.destination
             ))
             .collect::<Vec<_>>()
             .join(",")
@@ -1087,6 +1092,7 @@ async fn compute(
             path_end: None,
         });
     }
+    let shared_dest = rows.iter().all(|r| r.destination == rows[0].destination);
     let dest_name = rows[0].destination.clone();
     let dest_pt = geocode(st, &dest_name).await;
 
@@ -1200,6 +1206,7 @@ async fn compute(
         duration_s: None,
         eta: None,
         path_end: None,
+        shared: shared_dest,
     };
     if dest_pt.is_some() && pi > 0 {
         let (d, t) = road.legs[pi - 1];
@@ -1284,6 +1291,15 @@ pub fn ride_eta(
     } else {
         let d = &route.destination;
         let before = route.stops.len();
+        if !d.shared && !full_view {
+            return Some(json!({
+                "phase": "dropoff",
+                "located": false,
+                "stops_before": before,
+                "approximate": route.approximate,
+                "computed_at": route.computed_at,
+            }));
+        }
         let mut out = base(before);
         out["phase"] = json!("dropoff");
         out["destination"] = json!(d.name);
@@ -1503,6 +1519,7 @@ mod tests {
                 duration_s: Some(600.0),
                 eta: Some("2026-11-12T09:12:00".into()),
                 path_end: Some(3),
+                shared: true,
             },
             distance_m: 5000.0,
             duration_s: 600.0,
@@ -1547,5 +1564,27 @@ mod tests {
         let mut no_origin = sample_route();
         no_origin.origin = None;
         assert!(ride_eta(&no_origin, 10, false, false).is_none());
+    }
+
+    #[test]
+    fn rider_eta_hides_unshared_return_destination() {
+        let mut r = sample_route();
+        r.stops.clear();
+        r.destination.name = "12 Jalan Secret Home".into();
+        r.destination.shared = false;
+
+        let hidden = ride_eta(&r, 99, true, false).unwrap();
+        assert_eq!(hidden["phase"], "dropoff");
+        assert_eq!(hidden["located"], false);
+        assert!(hidden.get("destination").is_none());
+        assert!(hidden.get("target").is_none());
+        assert!(hidden.get("eta").is_none());
+        assert!(hidden.get("path").is_none());
+
+        let driver = ride_eta(&r, 99, true, true).unwrap();
+        assert_eq!(driver["located"], true);
+        assert_eq!(driver["destination"], "12 Jalan Secret Home");
+        assert!(driver.get("target").is_some());
+        assert!(driver.get("path").is_some());
     }
 }

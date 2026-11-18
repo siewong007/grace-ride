@@ -206,7 +206,8 @@ export default function HelpGuideEditor() {
   // Checklist validation
   const validSlug = /^[a-z0-9]+(?:-[a-z0-9]+)*$/.test(f.slug);
   const isInvalidStepLink = (link: string) =>
-    Boolean(link) && (!link.startsWith('/') || link.startsWith('//') || link.startsWith('/api/'));
+    Boolean(link) &&
+    (!link.startsWith('/') || link.startsWith('//') || link.startsWith('/api/') || link.includes(':'));
   const invalidStepLink = f.steps.some((s) => isInvalidStepLink(s.link));
   const missingEn = !f.title_en.trim() || !f.summary_en.trim() || f.steps.some((s) => !s.title_en.trim());
   const missingZh = !f.title_zh.trim() || !f.summary_zh.trim() || f.steps.some((s) => !s.title_zh.trim());

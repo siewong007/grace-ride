@@ -249,9 +249,14 @@ async fn care_status(
                 if let Ok(Some(route)) =
                     crate::routing::driver_route(&st, driver_id, Some(trip)).await
                 {
-                    if let Some(eta) =
+                    if let Some(mut eta) =
                         crate::routing::ride_eta(&route, r.id, r.picked_up_at.is_some(), false)
                     {
+                        if let Some(obj) = eta.as_object_mut() {
+                            obj.remove("target");
+                            obj.remove("path");
+                            obj.remove("destination");
+                        }
                         l["eta"] = eta;
                     }
                 }

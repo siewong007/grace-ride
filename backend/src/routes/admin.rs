@@ -21,14 +21,9 @@ use crate::error::{bad, conflict, forbidden, not_found, AppError, AppResult};
 use crate::i18n::ErrorKey;
 use crate::perms::{self, parse_roles, Act, Page};
 use crate::state::AppState;
-use crate::util::{audit, in_days, minutes_ago, now, random_token, require, require_one, Lang};
-
-fn escape_like(value: &str) -> String {
-    value
-        .replace('\\', "\\\\")
-        .replace('%', "\\%")
-        .replace('_', "\\_")
-}
+use crate::util::{
+    audit, escape_like, in_days, minutes_ago, now, random_token, require, require_one, Lang,
+};
 
 pub fn router() -> Router<AppState> {
     Router::new()
@@ -87,7 +82,7 @@ async fn dashboard(State(st): State<AppState>, u: CurrentUser) -> AppResult<Json
     let no_driver =
         count("SELECT COUNT(*) FROM rides WHERE status='pending_driver' AND pickup_at >= $1")
             .await?;
-    let attention = count("SELECT COUNT(*) FROM rides WHERE needs_attention=1 AND status NOT IN ('cancelled','completed') AND $1 != ''").await?;
+    let attention = count("SELECT COUNT(*) FROM rides WHERE needs_attention=1 AND status NOT IN ('cancelled','completed','no_show','alt_transport') AND $1 != ''").await?;
     let (live,): (i64,) =
         sqlx::query_as("SELECT COUNT(DISTINCT driver_id) FROM rides WHERE status='in_progress'")
             .fetch_one(&st.db)
@@ -189,7 +184,10 @@ async fn list_users(
             ],
         )?;
     }
-    let like = format!("%{}%", q.q.as_deref().unwrap_or_default().trim());
+    let like = format!(
+        "%{}%",
+        escape_like(q.q.as_deref().unwrap_or_default().trim())
+    );
     // Without 成员 · view only the name can order the list: sorting by email would line
     // names up by an address the caller can't see, leaking it the same way a search would.
     let sortable: &[(&str, &str)] = if staff {
@@ -214,9 +212,9 @@ async fn list_users(
     // search matches names only (matching email or phone would reveal them a character
     // at a time) and only active members can be picked.
     let mut conds = vec![if staff {
-        "(u.name ILIKE $1 OR u.email ILIKE $1 OR u.phone ILIKE $1)".to_string()
+        "(u.name ILIKE $1 ESCAPE '\\' OR u.email ILIKE $1 ESCAPE '\\' OR u.phone ILIKE $1 ESCAPE '\\')".to_string()
     } else {
-        "u.name ILIKE $1".to_string()
+        "u.name ILIKE $1 ESCAPE '\\'".to_string()
     }];
     let status = if staff {
         q.status.clone()
@@ -564,6 +562,17 @@ async fn update_user(
             .bind(id)
             .execute(&mut *tx)
             .await?;
+        sqlx::query("DELETE FROM auth_challenges WHERE user_id=$1")
+            .bind(id)
+            .execute(&mut *tx)
+            .await?;
+        sqlx::query(
+            "UPDATE invites SET expires_at=$2 WHERE kind='recovery' AND user_id=$1 AND used_at IS NULL",
+        )
+        .bind(id)
+        .bind(minutes_ago(1))
+        .execute(&mut *tx)
+        .await?;
         sqlx::query("UPDATE users SET calendar_token_hash=NULL WHERE id=$1")
             .bind(id)
             .execute(&mut *tx)
@@ -838,12 +847,13 @@ async fn delete_group(
     Path(id): Path<i64>,
 ) -> AppResult<Json<Value>> {
     require(&u, Page::AdminGroups, Act::Delete)?;
-    let (is_all,): (i64,) = sqlx::query_as("SELECT is_all FROM groups WHERE id=$1")
-        .bind(id)
-        .fetch_optional(&st.db)
-        .await?
-        .ok_or(not_found(u.lang))?;
-    if is_all == 1 {
+    let (is_all, is_visitor): (i64, i64) =
+        sqlx::query_as("SELECT is_all, is_visitor FROM groups WHERE id=$1")
+            .bind(id)
+            .fetch_optional(&st.db)
+            .await?
+            .ok_or(not_found(u.lang))?;
+    if is_all == 1 || is_visitor == 1 {
         return Err(bad(u.lang, ErrorKey::CannotDeleteAllMembersGroup));
     }
     let (name,): (String,) = sqlx::query_as("DELETE FROM groups WHERE id=$1 RETURNING name")
@@ -1338,7 +1348,7 @@ async fn audit_log(
          FROM audit_logs a LEFT JOIN users u ON u.id=a.actor_id
          WHERE ($1::text IS NULL OR a.entity = $1)
            AND ($2::bigint IS NULL OR a.entity_id = $2)
-           AND ($3::text IS NULL OR a.action ILIKE $3 OR a.entity ILIKE $3 OR a.detail ILIKE $3 OR u.name ILIKE $3 OR {name} ILIKE $3)
+           AND ($3::text IS NULL OR a.action ILIKE $3 ESCAPE '\\' OR a.entity ILIKE $3 ESCAPE '\\' OR a.detail ILIKE $3 ESCAPE '\\' OR u.name ILIKE $3 ESCAPE '\\' OR {name} ILIKE $3 ESCAPE '\\')
            AND ($4::text IS NULL OR a.created_at >= $4)
            AND ($5::text IS NULL OR a.created_at < $5)
            AND ($6::bigint IS NULL OR a.id < $6)
@@ -1429,12 +1439,12 @@ struct AuditExportQuery {
 fn escape_csv_field(s: &str) -> String {
     // Prefix single quote on formula triggers (=, +, -, @, \t, \r, |, %) to prevent spreadsheet injection.
     let trimmed = s.trim_start();
-    let sanitized = if trimmed.starts_with('=')
+    let sanitized = if s.starts_with('\t')
+        || s.starts_with('\r')
+        || trimmed.starts_with('=')
         || trimmed.starts_with('+')
         || trimmed.starts_with('-')
         || trimmed.starts_with('@')
-        || trimmed.starts_with('\t')
-        || trimmed.starts_with('\r')
         || trimmed.starts_with('|')
         || trimmed.starts_with('%')
     {
@@ -1493,7 +1503,7 @@ async fn audit_export(
          FROM audit_logs a LEFT JOIN users u ON u.id=a.actor_id \
          WHERE ($1::text IS NULL OR a.entity = $1) \
            AND ($2::bigint IS NULL OR a.entity_id = $2) \
-           AND ($3::text IS NULL OR a.action ILIKE $3 OR a.entity ILIKE $3 OR a.detail ILIKE $3 OR u.name ILIKE $3 OR {name} ILIKE $3) \
+           AND ($3::text IS NULL OR a.action ILIKE $3 ESCAPE '\\' OR a.entity ILIKE $3 ESCAPE '\\' OR a.detail ILIKE $3 ESCAPE '\\' OR u.name ILIKE $3 ESCAPE '\\' OR {name} ILIKE $3 ESCAPE '\\') \
            AND ($4::text IS NULL OR a.created_at >= $4) \
            AND ($5::text IS NULL OR a.created_at < $5) \
            AND ($6::text IS NULL OR a.action = $6) \
@@ -1762,10 +1772,17 @@ struct DemandQuery {
 }
 
 fn month_window(month: &str) -> Option<(String, String)> {
-    let mut parts = month.split('-');
-    let y: i32 = parts.next()?.parse().ok()?;
-    let m: u32 = parts.next()?.parse().ok()?;
-    if parts.next().is_some() || !(1..=12).contains(&m) {
+    let b = month.as_bytes();
+    if b.len() != 7
+        || b[4] != b'-'
+        || !b[..4].iter().all(u8::is_ascii_digit)
+        || !b[5..].iter().all(u8::is_ascii_digit)
+    {
+        return None;
+    }
+    let y: i32 = month[..4].parse().ok()?;
+    let m: u32 = month[5..7].parse().ok()?;
+    if !(1900..=9998).contains(&y) || !(1..=12).contains(&m) {
         return None;
     }
     let (ey, em) = if m == 12 { (y + 1, 1) } else { (y, m + 1) };
@@ -2257,16 +2274,7 @@ async fn update_alert_settings(
         }
     } else if let Some(vapid) = new_vapid_pub {
         if !vapid.is_empty() && current_pub.as_deref().map(str::trim) != Some(vapid) {
-            sqlx::query(
-                "INSERT INTO app_secrets (name, value) VALUES ('vapid_public_key', $1)
-                 ON CONFLICT (name) DO UPDATE SET value = EXCLUDED.value",
-            )
-            .bind(vapid)
-            .execute(&mut *tx)
-            .await?;
-            sqlx::query("DELETE FROM app_secrets WHERE name='vapid_private_key'")
-                .execute(&mut *tx)
-                .await?;
+            return Err(bad(u.lang, ErrorKey::InvalidAction));
         }
     }
 

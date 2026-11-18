@@ -94,7 +94,7 @@ export function AutoLockProvider({ children }: { children: ReactNode }) {
   useEffect(() => {
     const el = bgRef.current;
     if (!el) return;
-    (el as unknown as { inert: boolean }).inert = Boolean(isLocked && me);
+    el.inert = Boolean(isLocked && me);
   }, [isLocked, me]);
 
   // `me` loads after the first render: pick up a local or server-enforced lock.

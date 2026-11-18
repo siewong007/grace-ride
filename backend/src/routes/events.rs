@@ -179,26 +179,37 @@ async fn list_events(
 
     if q.scope.as_deref() == Some("past") && (q.before.is_some() || q.limit.is_some()) {
         let limit = q.limit.unwrap_or(25).clamp(1, 100);
-        let cond = if q.before.is_some() {
-            "e.starts_at < $3"
-        } else {
-            "(e.starts_at < $3 OR e.status='finished')"
-        };
-        let cutoff = q.before.as_ref().unwrap_or(&now_str);
+        let mut conds = vec![visibility, "(e.starts_at < $3 OR e.status='finished')".to_string()];
+        let cursor = q.before.as_deref().map(crate::util::split_cursor);
+        let mut next_param = 4usize;
+        if let Some((_, Some(_))) = cursor {
+            conds.push(format!(
+                "(e.starts_at < ${next_param} OR (e.starts_at = ${next_param} AND e.id < ${}))",
+                next_param + 1
+            ));
+            next_param += 2;
+        } else if cursor.is_some() {
+            conds.push(format!("e.starts_at < ${next_param}"));
+            next_param += 1;
+        }
         let sql = format!(
-            "{EVENT_SELECT} WHERE {visibility} AND {cond} ORDER BY e.starts_at DESC LIMIT $4"
+            "{EVENT_SELECT} WHERE {} ORDER BY e.starts_at DESC, e.id DESC LIMIT ${next_param}",
+            conds.join(" AND ")
         );
-        let mut rows = sqlx::query_as::<_, EventRow>(&sql)
+        let mut query = sqlx::query_as::<_, EventRow>(&sql)
             .bind(u.id)
             .bind(&u.group_scope)
-            .bind(cutoff)
-            .bind(limit + 1)
-            .fetch_all(&st.db)
-            .await?;
+            .bind(&now_str);
+        if let Some((ts, Some(bid))) = cursor {
+            query = query.bind(ts).bind(bid);
+        } else if let Some((ts, None)) = cursor {
+            query = query.bind(ts);
+        }
+        let mut rows = query.bind(limit + 1).fetch_all(&st.db).await?;
         let more = rows.len() as i64 > limit;
         rows.truncate(limit as usize);
         let next_before = if more {
-            rows.last().map(|e| e.starts_at.clone())
+            rows.last().map(|e| format!("{}|{}", e.starts_at, e.id))
         } else {
             None
         };
@@ -835,16 +846,16 @@ async fn cancel_event(
     if cancelled.rows_affected() == 0 {
         return Err(bad(u.lang, ErrorKey::EventNotOpen));
     }
-    let rides: Vec<(i64, Option<i64>)> = sqlx::query_as(
-        "UPDATE rides SET status='cancelled', attention_reason='活动已取消', updated_at=$2
+    let rides: Vec<(i64, Option<i64>, Option<i64>)> = sqlx::query_as(
+        "UPDATE rides SET status='cancelled', needs_attention=0, attention_reason='活动已取消', updated_at=$2
          WHERE event_id=$1 AND status IN ('pending_driver','pending_passenger','pending_approval','pending_driver_confirm','confirmed')
-         RETURNING id, driver_id",
+         RETURNING id, driver_id, trip_id",
     )
     .bind(id)
     .bind(now())
     .fetch_all(&mut *tx)
     .await?;
-    let ride_ids: Vec<i64> = rides.iter().map(|(rid, _)| *rid).collect();
+    let ride_ids: Vec<i64> = rides.iter().map(|(rid, _, _)| *rid).collect();
     audit_many(
         &mut *tx,
         Some(u.id),
@@ -863,8 +874,9 @@ async fn cancel_event(
         (e.title.as_str(), e.title.as_str()),
     )
     .await?;
-    for (_, d) in rides {
+    for (rid, d, t) in rides {
         if let Some(d) = d {
+            st.routing.invalidate(d, t.unwrap_or(rid)).await;
             notify(
                 &st.db,
                 d,
@@ -1120,30 +1132,34 @@ async fn withdraw(
             .bind(id)
             .fetch_one(&mut *tx)
             .await?;
-    sqlx::query("UPDATE event_signups SET status='cancelled' WHERE event_id=$1 AND user_id=$2")
-        .bind(id)
-        .bind(u.id)
-        .execute(&mut *tx)
-        .await?;
+    let withdrew = sqlx::query(
+        "UPDATE event_signups SET status='cancelled' WHERE event_id=$1 AND user_id=$2 AND status <> 'cancelled'",
+    )
+    .bind(id)
+    .bind(u.id)
+    .execute(&mut *tx)
+    .await?
+    .rows_affected()
+        > 0;
     // Fill every free place from the waitlist, in order, rather than exactly one per
     // withdrawal; this also heals any place left open earlier.
     let promoted = promote_waitlist(&mut tx, id, capacity, &event_status).await?;
     tx.commit().await?;
     notify_promoted(&st, id, &e.title, &promoted).await;
-    let rides: Vec<(i64, Option<i64>)> = sqlx::query_as(
+    let rides: Vec<(i64, Option<i64>, Option<i64>)> = sqlx::query_as(
         // Only their own ride: a visitor they invited may still come, and the host can cancel
         // that ride from the ride page.
-        "UPDATE rides SET status='cancelled', attention_reason='乘客取消活动报名', updated_at=$3
+        "UPDATE rides SET status='cancelled', needs_attention=0, attention_reason='乘客取消活动报名', updated_at=$3
          WHERE event_id=$1 AND passenger_id=$2 AND is_proxy=0
            AND status IN ('pending_driver','pending_passenger','pending_approval','pending_driver_confirm','confirmed')
-         RETURNING id, driver_id",
+         RETURNING id, driver_id, trip_id",
     )
     .bind(id)
     .bind(u.id)
     .bind(now())
     .fetch_all(&st.db)
     .await?;
-    let ride_ids: Vec<i64> = rides.iter().map(|(rid, _)| *rid).collect();
+    let ride_ids: Vec<i64> = rides.iter().map(|(rid, _, _)| *rid).collect();
     audit_many(
         &st.db,
         Some(u.id),
@@ -1153,8 +1169,9 @@ async fn withdraw(
         &format!("withdrew from event {id}"),
     )
     .await?;
-    for (_, d) in rides {
+    for (rid, d, t) in rides {
         if let Some(d) = d {
+            st.routing.invalidate(d, t.unwrap_or(rid)).await;
             let body = format!("{} · {}", u.name, e.title);
             notify(
                 &st.db,
@@ -1169,7 +1186,7 @@ async fn withdraw(
             .await;
         }
     }
-    if e.created_by != u.id {
+    if withdrew && e.created_by != u.id {
         let body = format!("{} · {}", u.name, e.title);
         notify(
             &st.db,

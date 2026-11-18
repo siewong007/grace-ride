@@ -17,8 +17,8 @@ use crate::i18n::ErrorKey;
 use crate::perms::{Act, Page};
 use crate::state::AppState;
 use crate::util::{
-    audit, check_name, check_phone, fmt_rm, notify, notify_perm, now, parse_dt, random_token,
-    require, require_one, t, Lang,
+    audit, check_name, check_phone, fmt_rm, notify, notify_many, notify_perm, now, parse_dt,
+    random_token, require, require_one, t, Lang,
 };
 
 pub fn router() -> Router<AppState> {
@@ -122,19 +122,28 @@ async fn update_profile(
             return Err(bad(u.lang, ErrorKey::LanguageInvalid));
         }
     }
+    if let Some(m) = req.readiness_prompt_mins {
+        if !(0..=180).contains(&m) {
+            return Err(bad(u.lang, ErrorKey::InvalidAction));
+        }
+    }
     if let Some(m) = req.auto_lock_mins {
         if !(-1..=1440).contains(&m) {
             return Err(bad(u.lang, ErrorKey::InvalidAction));
         }
     }
     if let Some(f) = req.photo_file_id {
-        let (owner,): (i64,) = sqlx::query_as("SELECT owner_id FROM files WHERE id=$1")
-            .bind(f)
-            .fetch_optional(&st.db)
-            .await?
-            .ok_or(not_found(u.lang))?;
+        let (owner, mime): (i64, String) =
+            sqlx::query_as("SELECT owner_id, mime FROM files WHERE id=$1")
+                .bind(f)
+                .fetch_optional(&st.db)
+                .await?
+                .ok_or(not_found(u.lang))?;
         if owner != u.id {
             return Err(forbidden(u.lang, ErrorKey::InvalidPhoto));
+        }
+        if !mime.starts_with("image/") {
+            return Err(bad(u.lang, ErrorKey::InvalidPhoto));
         }
     }
     if let Some(cg) = req.caregiver_user_id {
@@ -199,6 +208,7 @@ async fn update_profile(
         ("photo", req.photo_file_id.is_some()),
         ("badges_opt_out", req.badges_opt_out.is_some()),
         ("lang", req.lang.is_some()),
+        ("readiness_prompt", req.readiness_prompt_mins.is_some()),
         ("auto_lock", req.auto_lock_mins.is_some()),
         (
             "alerts",
@@ -730,20 +740,11 @@ async fn create_announcement(
         .fetch_one(&st.db)
         .await?;
     if req.notify_all.unwrap_or(false) {
-        let users: Vec<(i64,)> = sqlx::query_as("SELECT id FROM users WHERE status='active'")
+        let ids: Vec<i64> = sqlx::query_scalar("SELECT id FROM users WHERE status='active'")
             .fetch_all(&st.db)
             .await?;
         let title = req.title.trim();
-        for (uid,) in users {
-            notify(
-                &st.db,
-                uid,
-                ("新公告", "New announcement"),
-                (title, title),
-                "/",
-            )
-            .await;
-        }
+        notify_many(&st.db, &ids, ("新公告", "New announcement"), (title, title), "/").await;
     }
     audit(
         &st.db,
@@ -1607,8 +1608,8 @@ fn validate_guide(
         }
         let link = s.link.as_deref().map(str::trim).filter(|l| !l.is_empty());
         if let Some(l) = link {
-            // Internal app paths only: must start with '/', no protocol-relative URLs.
-            if !l.starts_with('/') || l.starts_with("//") || l.contains(':') {
+            // Internal app paths only: must start with '/', no protocol-relative or /api URLs.
+            if !l.starts_with('/') || l.starts_with("//") || l.starts_with("/api/") || l.contains(':') {
                 return Err(bad(lang, ErrorKey::GuideLinkInvalid));
             }
         }
@@ -2761,7 +2762,7 @@ fn parse_report_month(raw: &str) -> Option<(i32, u32)> {
     }
     let year: i32 = raw[..4].parse().ok()?;
     let month: u32 = raw[5..7].parse().ok()?;
-    if !(1..=9999).contains(&year) || !(1..=12).contains(&month) {
+    if !(1900..=9998).contains(&year) || !(1..=12).contains(&month) {
         return None;
     }
     Some((year, month))

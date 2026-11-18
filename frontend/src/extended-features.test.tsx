@@ -4,6 +4,7 @@ import { MemoryRouter, Route, Routes } from 'react-router-dom';
 import i18n from './i18n';
 import CarePass from './pages/CarePass';
 import HelpGuideEditor from './pages/HelpGuideEditor';
+import Notifications from './pages/Notifications';
 import StepText from './components/StepText';
 import { AutoLockProvider } from './components/AutoLock';
 import { exportToCsv } from './format';
@@ -20,6 +21,7 @@ import {
 const mocks = vi.hoisted(() => ({
   api: vi.fn(),
   post: vi.fn(),
+  reload: vi.fn(),
   useApiData: new Map<string, unknown>(),
 }));
 
@@ -32,7 +34,7 @@ vi.mock('./api', () => ({
     data: path ? mocks.useApiData.get(path) ?? null : null,
     loading: false,
     error: null,
-    reload: vi.fn(),
+    reload: mocks.reload,
   }),
   subscribe: () => () => {},
 }));
@@ -387,5 +389,103 @@ describe('Security & flow audit regressions', () => {
     const submitted = mocks.post.mock.calls[0][1] as { slug: string; steps: { id: string }[] };
     expect(submitted.slug).toBe('welcome-copy');
     expect(submitted.steps[0].id).not.toBe('orig_step_1');
+  });
+
+  it('stops polling and hides active notices on terminal CarePass statuses', async () => {
+    vi.useFakeTimers();
+    try {
+      mocks.reload.mockReset();
+      Object.defineProperty(document, 'visibilityState', { value: 'visible', configurable: true });
+      mocks.useApiData.set('/care/caretok-cancel', {
+        ride_id: 88,
+        label: 'Care',
+        rider_name: 'Uncle Tan',
+        booker_name: 'Sister Mei',
+        status: 'cancelled',
+        leg: 'outbound',
+        pickup_at: '2026-11-22T09:00:00',
+        area: { id: 1, name: 'PJ' },
+        destination: 'Church',
+        readiness_status: 'unconfirmed',
+        delay_minutes: 10,
+        arrived_at_gate_at: '2026-11-22T08:55:00',
+        started_at: '2026-11-22T08:45:00',
+        picked_up_at: '2026-11-22T08:58:00',
+        completed_at: null,
+        driver: { name: 'Driver', vehicle: { model: 'Myvi', color: 'White', plate: 'VXX 1' } },
+        location: { sharing: true, lat: 3.1, lng: 101.6, updated_at: '2026-11-22T08:50:00' },
+      });
+
+      render(
+        <MemoryRouter initialEntries={['/care/caretok-cancel']}>
+          <Routes>
+            <Route path="/care/:token" element={<CarePass />} />
+          </Routes>
+        </MemoryRouter>,
+      );
+
+      expect(screen.queryByTestId('live-map')).toBeNull();
+      expect(screen.queryByRole('button', { name: /ready/i })).toBeNull();
+
+      await vi.advanceTimersByTimeAsync(20_000);
+      expect(mocks.reload).not.toHaveBeenCalled();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('ignores unsafe notification links and navigates to safe internal paths', async () => {
+    mocks.post.mockReset().mockResolvedValue({ ok: true });
+    mocks.reload.mockReset();
+    mocks.useApiData.set('/notifications', {
+      items: [
+        {
+          id: 1,
+          title: 'Bad API Link',
+          body: 'Should not navigate',
+          link: '/api/admin/audit',
+          read: true,
+          created_at: '2026-11-18T08:00:00',
+        },
+        {
+          id: 2,
+          title: 'Protocol Relative Link',
+          body: 'Should not navigate',
+          link: '//evil.example/phish',
+          read: true,
+          created_at: '2026-11-18T08:01:00',
+        },
+        {
+          id: 3,
+          title: 'Safe Ride Link',
+          body: 'Navigate cleanly',
+          link: '/rides/12',
+          read: true,
+          created_at: '2026-11-18T08:02:00',
+        },
+      ],
+      next_before: null,
+    });
+
+    render(
+      <MemoryRouter initialEntries={['/notifications']}>
+        <Routes>
+          <Route path="/notifications" element={<Notifications />} />
+          <Route path="/rides/12" element={<div>safe-ride-dest</div>} />
+          <Route path="*" element={<div>unexpected-route</div>} />
+        </Routes>
+      </MemoryRouter>,
+    );
+
+    fireEvent.click(screen.getByText('Bad API Link'));
+    expect(mocks.reload).toHaveBeenCalledTimes(1);
+    expect(screen.queryByText('unexpected-route')).toBeNull();
+
+    fireEvent.click(screen.getByText('Protocol Relative Link'));
+    expect(mocks.reload).toHaveBeenCalledTimes(2);
+    expect(screen.queryByText('unexpected-route')).toBeNull();
+
+    fireEvent.click(screen.getByText('Safe Ride Link'));
+    expect(await screen.findByText('safe-ride-dest')).toBeInTheDocument();
   });
 });

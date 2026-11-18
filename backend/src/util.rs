@@ -743,6 +743,25 @@ pub fn fmt_rm(cents: i64) -> String {
     format!("RM {}.{:02}", cents / 100, (cents % 100).abs())
 }
 
+/// Escape `%`, `_`, and `\` for `ILIKE ... ESCAPE '\'`.
+pub fn escape_like(value: &str) -> String {
+    value
+        .replace('\\', "\\\\")
+        .replace('%', "\\%")
+        .replace('_', "\\_")
+}
+
+/// Split an opaque `"timestamp|id"` pagination cursor, falling back to plain `"timestamp"`.
+pub fn split_cursor(raw: &str) -> (&str, Option<i64>) {
+    match raw.rsplit_once('|') {
+        Some((ts, id_str)) => match id_str.parse::<i64>() {
+            Ok(id) => (ts, Some(id)),
+            Err(_) => (raw, None),
+        },
+        None => (raw, None),
+    }
+}
+
 /// Build an `ORDER BY` body from an allow-list of `(client_key, SQL expression)`.
 /// Unknown keys use `default`; any direction other than `desc` sorts ascending.
 /// `tiebreak` keeps paginated results stable when the sort value repeats.

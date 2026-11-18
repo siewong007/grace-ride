@@ -29,6 +29,15 @@ fn now_secs() -> u64 {
 }
 
 async fn drop_stale(pool: &sqlx::PgPool) {
+    let locked: bool = sqlx::query_scalar(
+        "SELECT pg_try_advisory_lock(hashtextextended('grace_ride_test_drop_stale', 0))",
+    )
+    .fetch_one(pool)
+    .await
+    .unwrap_or(false);
+    if !locked {
+        return;
+    }
     let rows: Vec<(String, Option<String>)> = sqlx::query_as(
         "SELECT nspname::text, obj_description(oid, 'pg_namespace')
          FROM pg_namespace WHERE nspname ~ '^gr_(cap_)?[0-9a-f]{32}$'",
@@ -49,12 +58,21 @@ async fn drop_stale(pool: &sqlx::PgPool) {
                 .await;
         }
     }
+    let _ = sqlx::query(
+        "SELECT pg_advisory_unlock(hashtextextended('grace_ride_test_drop_stale', 0))",
+    )
+    .execute(pool)
+    .await;
 }
 
 /// Database URL whose search_path is a fresh schema named `{prefix}{uuid}`.
 pub async fn fresh_schema(prefix: &str) -> String {
     let base = base_url();
-    let pool = sqlx::PgPool::connect(&base).await.unwrap();
+    let pool = sqlx::postgres::PgPoolOptions::new()
+        .max_connections(1)
+        .connect(&base)
+        .await
+        .unwrap();
     CLEANED.get_or_init(|| drop_stale(&pool)).await;
     let schema = format!("{prefix}{}", uuid::Uuid::new_v4().simple());
     sqlx::query(&format!("CREATE SCHEMA \"{schema}\""))

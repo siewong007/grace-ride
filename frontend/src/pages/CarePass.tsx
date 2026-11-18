@@ -62,7 +62,10 @@ export default function CarePass() {
   const { data, error, loading, reload } = useApi<CareStatus>(token ? `/care/${token}` : null);
   const { busy, error: actErr, run } = useAction();
 
-  const stopped = Boolean(error) || data?.status === 'completed';
+  const terminal = Boolean(
+    data && ['completed', 'cancelled', 'no_show', 'alt_transport'].includes(data.status),
+  );
+  const stopped = Boolean(error) || terminal;
   useEffect(() => {
     if (!token || stopped) return;
     const id = setInterval(() => {
@@ -86,7 +89,7 @@ export default function CarePass() {
   const aboard = !!data.picked_up_at;
   const completed = data.status === 'completed';
   const canRespond =
-    !completed &&
+    !terminal &&
     !aboard &&
     (data.status === 'in_progress' ||
       (data.status === 'confirmed' && data.pickup_at.slice(0, 10) <= todayStr()));
@@ -119,15 +122,15 @@ export default function CarePass() {
           {t('care.arrivedSafely', { dest: data.destination })}
         </Notice>
       )}
-      {!completed && aboard && (
+      {!terminal && aboard && (
         <Notice tone="info" icon={<Car size={18} />}>
           {t('care.pickedUpOnWay', { dest: data.destination })}
         </Notice>
       )}
-      {!completed && data.arrived_at_gate_at && !aboard && (
+      {!terminal && data.arrived_at_gate_at && !aboard && (
         <Notice tone="success">{t('atGate')}</Notice>
       )}
-      {!completed && data.delay_minutes > 0 && !aboard && (
+      {!terminal && data.delay_minutes > 0 && !aboard && (
         <Notice tone="warning" icon={<Clock size={18} />}>
           {t('driverLate', { mins: data.delay_minutes })}
         </Notice>
@@ -161,7 +164,7 @@ export default function CarePass() {
         )}
       </dl>
 
-      {loc.sharing && loc.lat != null && loc.lng != null && !completed && (
+      {loc.sharing && loc.lat != null && loc.lng != null && !terminal && (
         <div className="stack-xs visit-spot-wrap">
           {isStale && ageLabel && (
             <Notice tone="warning">{t('staleLocation', { when: ageLabel })}</Notice>

@@ -75,6 +75,8 @@ struct SettlementIn {
     reason: Option<String>,
 }
 
+const MAX_AMOUNT_CENTS: i64 = 1_000_000_000;
+
 /// Validates the request and returns (user_id, amount) pairs.
 fn compute_shares(lang: Lang, req: &SettlementIn) -> AppResult<Vec<(i64, i64)>> {
     if req.title.trim().is_empty() {
@@ -90,11 +92,28 @@ fn compute_shares(lang: Lang, req: &SettlementIn) -> AppResult<Vec<(i64, i64)>> 
     {
         return Err(bad(lang, ErrorKey::ExpenseItemNegativeOrBlank));
     }
+    if req
+        .items
+        .iter()
+        .any(|i| i.amount_cents > MAX_AMOUNT_CENTS)
+    {
+        return Err(bad(lang, ErrorKey::InvalidAction));
+    }
     let subsidy = req.subsidy_cents.unwrap_or(0);
     if subsidy < 0 {
         return Err(bad(lang, ErrorKey::SubsidyCannotBeNegative));
     }
-    let gross: i64 = req.items.iter().map(|i| i.amount_cents).sum();
+    if subsidy > MAX_AMOUNT_CENTS {
+        return Err(bad(lang, ErrorKey::InvalidAction));
+    }
+    let gross: i64 = req
+        .items
+        .iter()
+        .try_fold(0i64, |acc, i| acc.checked_add(i.amount_cents))
+        .ok_or_else(|| bad(lang, ErrorKey::InvalidAction))?;
+    if gross > MAX_AMOUNT_CENTS {
+        return Err(bad(lang, ErrorKey::InvalidAction));
+    }
     let total = gross - subsidy;
     if total < 0 {
         return Err(bad(lang, ErrorKey::SubsidyExceedsTotal));
@@ -118,6 +137,7 @@ fn compute_shares(lang: Lang, req: &SettlementIn) -> AppResult<Vec<(i64, i64)>> 
         }
         "custom" => {
             let mut out = vec![];
+            let mut sum = 0i64;
             for p in &req.participants {
                 let a = p
                     .amount_cents
@@ -125,9 +145,14 @@ fn compute_shares(lang: Lang, req: &SettlementIn) -> AppResult<Vec<(i64, i64)>> 
                 if a < 0 {
                     return Err(bad(lang, ErrorKey::AmountCannotBeNegative));
                 }
+                if a > MAX_AMOUNT_CENTS {
+                    return Err(bad(lang, ErrorKey::InvalidAction));
+                }
+                sum = sum
+                    .checked_add(a)
+                    .ok_or_else(|| bad(lang, ErrorKey::InvalidAction))?;
                 out.push((p.user_id, a));
             }
-            let sum: i64 = out.iter().map(|x| x.1).sum();
             if sum != total {
                 return Err(bad(
                     lang,
@@ -399,29 +424,33 @@ struct SRow {
     creator_name: String,
 }
 
-async fn load(st: &AppState, lang: Lang, id: i64) -> AppResult<SRow> {
+async fn load_on<'e, E: sqlx::PgExecutor<'e>>(db: E, lang: Lang, id: i64) -> AppResult<SRow> {
     sqlx::query_as::<_, SRow>(
         "SELECT s.id, s.event_id, s.created_by, s.title, s.split_mode, s.subsidy_cents, s.payee_name, s.payee_account, s.payee_qr_file_id, s.due_date,
                 s.status, s.version, s.created_at, e.title AS event_title, e.starts_at AS event_starts_at, u.name AS creator_name
          FROM settlements s JOIN events e ON e.id=s.event_id JOIN users u ON u.id=s.created_by WHERE s.id=$1",
     )
     .bind(id)
-    .fetch_optional(&st.db)
+    .fetch_optional(db)
     .await?
     .ok_or(not_found(lang))
 }
 
-async fn snapshot(st: &AppState, s: &SRow) -> AppResult<Value> {
+async fn load(st: &AppState, lang: Lang, id: i64) -> AppResult<SRow> {
+    load_on(&st.db, lang, id).await
+}
+
+async fn snapshot_on(db: &mut sqlx::PgConnection, s: &SRow) -> AppResult<Value> {
     let items: Vec<(i64, String, i64, Option<i64>)> = sqlx::query_as("SELECT id, label, amount_cents, receipt_file_id FROM settlement_items WHERE settlement_id=$1 ORDER BY id")
         .bind(s.id)
-        .fetch_all(&st.db)
+        .fetch_all(&mut *db)
         .await?;
     let shares: Vec<(i64, i64, String, i64, String, Option<i64>, String, Option<String>, String, String)> = sqlx::query_as(
         "SELECT sh.id, sh.user_id, u.name, sh.amount_cents, sh.status, sh.proof_file_id, sh.txn_ref, sh.paid_date, sh.note, sh.updated_at
          FROM settlement_shares sh JOIN users u ON u.id=sh.user_id WHERE sh.settlement_id=$1 ORDER BY u.name",
     )
     .bind(s.id)
-    .fetch_all(&st.db)
+    .fetch_all(&mut *db)
     .await?;
     let gross: i64 = items.iter().map(|i| i.2).sum();
     Ok(json!({
@@ -437,6 +466,11 @@ async fn snapshot(st: &AppState, s: &SRow) -> AppResult<Value> {
             "txn_ref": txn, "paid_date": pd, "note": note, "updated_at": upd,
         })).collect::<Vec<_>>(),
     }))
+}
+
+async fn snapshot(st: &AppState, s: &SRow) -> AppResult<Value> {
+    let mut conn = st.db.acquire().await?;
+    snapshot_on(&mut conn, s).await
 }
 
 async fn get_one(
@@ -592,7 +626,7 @@ async fn update(
             .execute(&mut *tx)
             .await?;
         // Re-read now that the bill is ours: another revision may have just finished.
-        let s = load(&st, u.lang, id).await?;
+        let s = load_on(&mut *tx, u.lang, id).await?;
         if s.status != "published" {
             return Err(bad(u.lang, ErrorKey::BillClosedCannotEdit));
         }
@@ -616,7 +650,7 @@ async fn update(
                 ErrorKey::PaidMembersCannotBeRemoved(paid_removed),
             ));
         }
-        let snap = snapshot(&st, &s).await?;
+        let snap = snapshot_on(&mut *tx, &s).await?;
         sqlx::query("INSERT INTO settlement_revisions (settlement_id, version, snapshot, reason, created_by, created_at) VALUES ($1,$2,$3::jsonb,$4,$5,$6)")
             .bind(id)
             .bind(s.version)
@@ -773,7 +807,7 @@ async fn publish(
         .bind(id)
         .execute(&mut *tx)
         .await?;
-    let s = load(&st, u.lang, id).await?;
+    let s = load_on(&mut *tx, u.lang, id).await?;
     if s.created_by != u.id || !u.can(Page::Settlements, Act::Update) {
         return Err(forbidden(u.lang, ErrorKey::OnlyOrganiserCanPublish));
     }
@@ -1121,7 +1155,10 @@ async fn verify(
     // Asking for more information leaves what was paid as it stands.
     sqlx::query(
         "UPDATE settlement_shares SET status=$1, note=$2, updated_at=$3,
-            paid_cents = CASE $1 WHEN 'confirmed' THEN amount_cents WHEN 'unpaid' THEN 0 ELSE paid_cents END
+            paid_cents = CASE $1 WHEN 'confirmed' THEN amount_cents WHEN 'unpaid' THEN 0 ELSE paid_cents END,
+            proof_file_id = CASE WHEN $1 = 'unpaid' THEN NULL ELSE proof_file_id END,
+            txn_ref = CASE WHEN $1 = 'unpaid' THEN '' ELSE txn_ref END,
+            paid_date = CASE WHEN $1 = 'unpaid' THEN NULL ELSE paid_date END
          WHERE id=$4",
     )
         .bind(status)

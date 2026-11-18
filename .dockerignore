@@ -1,12 +1,46 @@
+# Dependencies & build outputs
 **/node_modules
 **/target
 **/data
+frontend/dist
+*.tsbuildinfo
+
+# Secrets & environment files
 **/.env
 **/.env.*
 !**/.env.example
-frontend/dist
-.git
-.claude
+
+# Local backups, archives & indexes
+backups
+.codegraph
+*.zip
 *.pdf
 *.log
+.DS_Store
+
+# Python caches
+__pycache__
+**/__pycache__
+*.py[cod]
+**/*.py[cod]
+
+# Test suites & reports (not needed for production image build)
 frontend/.vitest
+frontend/test-results
+frontend/playwright-report
+frontend/blob-report
+frontend/e2e
+backend/tests
+
+# Repo metadata, docs & ops tooling
+.git
+.github
+.claude
+.vscode
+docs
+deploy
+scripts
+!frontend/scripts
+
+# Keep root LICENSE available for backend/Cargo.toml (license-file = "../LICENSE")
+!LICENSE

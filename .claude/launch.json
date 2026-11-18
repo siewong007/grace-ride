@@ -4,13 +4,16 @@
     {
       "name": "api",
       "runtimeExecutable": "bash",
-      "runtimeArgs": ["-c", "cd backend && ./target/debug/grace-ride"],
+      "runtimeArgs": ["-c", "cd backend && ../dev-env.sh cargo run"],
       "port": 8080
     },
     {
       "name": "api-pg",
       "runtimeExecutable": "bash",
-      "runtimeArgs": ["-c", "cd '/Users/goaltosuceed/Documents/Grace Ride/backend' && DATABASE_URL=postgres://localhost/grace_ride_ui_audit DEV_MODE=true ./target/debug/grace-ride"],
+      "runtimeArgs": [
+        "-c",
+        "cd backend && DATABASE_URL=\"${DATABASE_URL:-postgres://localhost/grace_ride_dev}\" DEV_MODE=true ../dev-env.sh cargo run"
+      ],
       "port": 8080
     },
     {

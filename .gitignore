@@ -4,15 +4,20 @@
 backups/
 backend/target/
 backend/data/
-frontend/node_modules/
+**/node_modules/
 frontend/dist/
 *.tsbuildinfo
 *.log
 .DS_Store
 
+# Python caches
+__pycache__/
+*.py[cod]
+
 # Playwright & Vitest
 frontend/test-results/
 frontend/playwright-report/
+frontend/blob-report/
 frontend/.vitest/
 frontend/public/third-party-licenses.txt
 
