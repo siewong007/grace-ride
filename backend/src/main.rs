@@ -12,6 +12,19 @@ async fn main() -> anyhow::Result<()> {
     if std::env::args().nth(1).as_deref() == Some("healthcheck") {
         return healthcheck().await;
     }
+
+    // Sentry: opt-in error and panic monitoring. Set SENTRY_DSN to enable.
+    // Never log personal data (names, phone numbers, addresses) in Sentry events.
+    // The guard must stay alive for the duration of main to flush events on exit.
+    let _sentry = sentry::init((
+        std::env::var("SENTRY_DSN").unwrap_or_default(),
+        sentry::ClientOptions {
+            release: sentry::release_name!(),
+            traces_sample_rate: 0.0, // Errors only; performance tracing is off.
+            ..Default::default()
+        },
+    ));
+
     let cfg = Config::from_env()?;
 
     let filter = EnvFilter::try_from_default_env()
