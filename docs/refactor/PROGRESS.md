@@ -87,6 +87,12 @@
   `invites_recovery.rs` 276, `groups_areas.rs` 331, `audit.rs` 358, `reports.rs` 307,
   `settings.rs` 473) and `admin/mod.rs` (165 lines). All 283 backend tests across 35
   suites pass.
+- **`RideDetail.tsx` modularization (complete)** — extracted sub-components into
+  `frontend/src/components/ride/` (`RideInfoCards.tsx` 342, `RideTracking.tsx` 276,
+  `RideActionPanels.tsx` 487, `CareLinkModal.tsx` 98), reducing `pages/RideDetail.tsx`
+  from 1 342 lines to 205 lines. Removed `// eslint-disable-line react-hooks/exhaustive-deps`
+  in `PassengerShareLocation` using a ref for `onChange`. Frontend lint, typecheck, all
+  314 tests (49 files), and production build pass.
 
 **Phase 4 — Security, privacy and performance**
 - Verified `.env.example` covers every variable read by `Config::from_env()` and
