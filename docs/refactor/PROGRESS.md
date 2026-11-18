@@ -60,17 +60,23 @@
 - `refactor: convert rides.rs to directory module (rides/mod.rs)` —
   renamed `backend/src/routes/rides.rs` → `backend/src/routes/rides/mod.rs` to
   prepare for sub-module extraction. Zero code changes; all 283 tests still pass.
-- **Rides sub-module split** — extracted three self-contained sections from
-  `rides/mod.rs` (was 4 608 lines):
-  - `rides/proxy.rs` — Frequent Proxy Riders CRUD (242 lines)
-  - `rides/places.rs` — Saved Places CRUD (196 lines)
+- **Rides sub-module split (complete)** — extracted `rides/` into 10 focused domain
+  sub-modules:
+  - `rides/proxy.rs` — Frequent Proxy Riders CRUD (260 lines)
+  - `rides/places.rs` — Saved Places CRUD (213 lines)
   - `rides/schedules.rs` — Recurring ride & driver schedules + `event_moved` +
-    `process_recurring_schedules` (662 lines)
-  - `rides/mod.rs` now **3 512 lines** (down from 4 608 — 24 % reduction).
-  - Public symbols (`process_recurring_schedules`, `event_moved`) re-exported via
-    `pub use` so callers (`jobs.rs`, `events.rs`) are untouched.
-  - `#[cfg(test)] mod unable_reason_tests` correctly retained in `mod.rs`.
-  - All 283 tests pass after each extraction.
+    `process_recurring_schedules` (681 lines)
+  - `rides/chat.rs` — Trip group chat messages (106 lines)
+  - `rides/location.rs` — Live driver & passenger location sharing (239 lines)
+  - `rides/readiness.rs` — Passenger readiness, driver delay, gate arrival + unit tests (438 lines)
+  - `rides/driver.rs` — Driver claim, withdraw, confirm, start, pickup, no-show, complete (893 lines)
+  - `rides/driver_profile.rs` — Driver request board, schedule, route, vehicle profile (284 lines)
+  - `rides/passenger.rs` — Booking, listing, detail, cancel, respond (747 lines)
+  - `rides/staff.rs` — Transport-staff approve, return, reassign, alt-transport, admin views (557 lines)
+  - `rides/mod.rs` now **405 lines** (down from 4 608 — 91 % reduction), holding only
+    the router, shared `RideRow`/`RIDE_SELECT`, visibility helpers, and `/areas` + `/places`.
+  - All external callers (`care.rs`, `visitors.rs`, `plan.rs`, `events.rs`, `jobs.rs`, tests)
+    preserved via `pub use` / `pub(crate) use` re-exports in `rides/mod.rs`.
 
 **Phase 4 — Security, privacy and performance**
 - Verified `.env.example` covers every variable read by `Config::from_env()` and
