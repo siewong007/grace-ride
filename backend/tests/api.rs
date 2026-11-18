@@ -3,12 +3,15 @@
 
 #[path = "common/schema.rs"]
 mod schema;
+mod common;
+
 
 use axum::{
     body::Body,
     http::{header, HeaderMap, Method, Request, StatusCode},
     Router,
 };
+use crate::common::upload_png;
 use grace_ride::{
     auth::{hash_token, SESSION_COOKIE},
     init, jobs, router,
