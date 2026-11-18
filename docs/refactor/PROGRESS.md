@@ -108,6 +108,10 @@
   (1 590 lines) into `backend/src/routing/` (`mod.rs` config/state/geometry, `order.rs`,
   `geocode.rs`, `trip.rs`, `tests.rs`) preserving all `pub` / `pub(crate)` re-exports;
   `cargo fmt`, `cargo clippy`, and `cargo test --lib` (43 passed) pass.
+- **Settlements sub-module split (complete)** — converted `backend/src/routes/settlements.rs`
+  (1 075 lines) into `backend/src/routes/settlements/` (`mod.rs` router/listing/summary,
+  `manage.rs`, `shares.rs`); `cargo fmt`, `cargo clippy --all-targets`, and full backend
+  tests (283 passed across 35 suites) pass with zero issues.
 
 **Phase 4 — Security, privacy and performance**
 - Verified `.env.example` covers every variable read by `Config::from_env()` and
