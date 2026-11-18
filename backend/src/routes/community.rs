@@ -84,6 +84,7 @@ pub fn router() -> Router<AppState> {
         .route("/reimbursements/{id}/pay", post(pay_reimbursement))
         .route("/reports/monthly", get(monthly_report))
         .route("/badges", get(my_badges))
+        .route("/volunteer/stats", get(volunteer_stats))
 }
 
 // ---------------- Profile ----------------
@@ -3031,5 +3032,25 @@ async fn monthly_report(
         "events": events.into_iter().map(|(id, t, k, at)| json!({"id": id, "title": t, "kind": k, "starts_at": at})).collect::<Vec<_>>(),
         "costs_paid_cents": paid,
         "badges": compute_badges(&st, target, report_lang).await?,
+    })))
+}
+
+async fn volunteer_stats(State(st): State<AppState>, u: CurrentUser) -> AppResult<Json<Value>> {
+    let (total_trips, total_mins): (i64, i64) = sqlx::query_as(
+        "SELECT COUNT(*), COALESCE(SUM(EXTRACT(EPOCH FROM (arrival_at - pickup_at))/60), 0) FROM rides WHERE driver_id=$1 AND status='completed'"
+    )
+    .bind(u.id)
+    .fetch_one(&st.db)
+    .await?;
+
+    let (created_at,): (String,) = sqlx::query_scalar("SELECT created_at FROM users WHERE id=$1")
+        .bind(u.id)
+        .fetch_one(&st.db)
+        .await?;
+
+    Ok(Json(json!({
+        "total_trips": total_trips,
+        "total_hours": total_mins / 60,
+        "active_since": created_at.split('T').next().unwrap_or(&created_at)
     })))
 }

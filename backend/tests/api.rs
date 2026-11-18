@@ -1,17 +1,16 @@
 //! End-to-end API tests against a fresh PostgreSQL schema with demo data.
 //! Each test builds its own app (own schema, own rate limiter).
 
+mod common;
 #[path = "common/schema.rs"]
 mod schema;
-mod common;
 
-
+use crate::common::upload_png;
 use axum::{
     body::Body,
     http::{header, HeaderMap, Method, Request, StatusCode},
     Router,
 };
-use crate::common::upload_png;
 use grace_ride::{
     auth::{hash_token, SESSION_COOKIE},
     init, jobs, router,
