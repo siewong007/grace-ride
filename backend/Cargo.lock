@@ -1366,7 +1366,7 @@ dependencies = [
  "futures-util",
  "hex",
  "http-body-util",
- "rand 0.8.8",
+ "rand 0.10.3",
  "reqwest",
  "ring",
  "sentry",
