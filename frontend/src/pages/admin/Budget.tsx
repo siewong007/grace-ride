@@ -3,7 +3,7 @@ import { useApi } from '../../api';
 
 export default function BudgetDashboard() {
   const { t } = useTranslation('admin');
-  const { data } = useApi('/budget/summary');
+  const { _data } = useApi('/budget/summary');
   return (
     <div className="page">
       <h1>{t('budget.title')}</h1>
