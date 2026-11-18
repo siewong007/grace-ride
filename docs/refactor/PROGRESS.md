@@ -3,7 +3,7 @@
 ## Phases
 - [x] Phase 0: Understand the project (Audit completed)
 - [x] Phase 1: Tooling and standards
-- [ ] Phase 2: Structure and naming
+- [x] Phase 2: Structure and naming
 - [ ] Phase 3: Code quality
 - [ ] Phase 4: Security, privacy and performance
 - [ ] Phase 5: Fill the gaps
