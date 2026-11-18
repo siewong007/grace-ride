@@ -112,6 +112,11 @@
   (1 075 lines) into `backend/src/routes/settlements/` (`mod.rs` router/listing/summary,
   `manage.rs`, `shares.rs`); `cargo fmt`, `cargo clippy --all-targets`, and full backend
   tests (283 passed across 35 suites) pass with zero issues.
+- **Frontend mega-pages modularization (complete)** — split remaining >1 000-line frontend pages:
+  - `EventDetail.tsx` (1 079 → 558 lines) via `components/event/` (`types.ts`, `EventQrModals.tsx`, `EventScannerModals.tsx`).
+  - `Drive.tsx` (1 026 → 47 lines) via `components/drive/` (`types.ts`, `DriveSchedule.tsx`, `DriveRequests.tsx`, `DriveSettings.tsx`).
+  - `admin/Audit.tsx` (1 017 → 689 lines) via `admin/auditHelpers.tsx` with `getObjectLink` re-exported.
+  - Zero application files in the entire repository now exceed 1 000 lines. All 314 frontend tests pass and lint/typecheck/build are clean.
 
 **Phase 4 — Security, privacy and performance**
 - Verified `.env.example` covers every variable read by `Config::from_env()` and
