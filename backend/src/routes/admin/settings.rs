@@ -166,7 +166,7 @@ pub(super) async fn update_system_settings(
     if !(1..=100).contains(&req.max_live_drivers) {
         return Err(bad(u.lang, ErrorKey::InvalidAction));
     }
-    if !(1..=1440).contains(&session_timeout) {
+    if !(0..=1440).contains(&session_timeout) {
         return Err(bad(u.lang, ErrorKey::InvalidAction));
     }
 
