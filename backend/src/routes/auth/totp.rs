@@ -50,17 +50,17 @@ fn hash_backup_code(user_id: i64, norm: &str) -> String {
 }
 
 fn generate_backup_codes(user_id: i64) -> (Vec<String>, Vec<String>) {
-    use rand::Rng;
+    use rand::RngExt;
     const CHARSET: &[u8] = b"ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
-    let mut rng = rand::thread_rng();
+    let mut rng = rand::rng();
     let mut plain = Vec::with_capacity(8);
     let mut hashed = Vec::with_capacity(8);
     for _ in 0..8 {
         let p1: String = (0..4)
-            .map(|_| CHARSET[rng.gen_range(0..CHARSET.len())] as char)
+            .map(|_| CHARSET[rng.random_range(0..CHARSET.len())] as char)
             .collect();
         let p2: String = (0..4)
-            .map(|_| CHARSET[rng.gen_range(0..CHARSET.len())] as char)
+            .map(|_| CHARSET[rng.random_range(0..CHARSET.len())] as char)
             .collect();
         let code = format!("{p1}-{p2}");
         let norm = format!("{p1}{p2}");

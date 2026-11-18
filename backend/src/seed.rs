@@ -18,8 +18,8 @@
 #![allow(dead_code, clippy::too_many_arguments, clippy::needless_borrow)]
 use chrono::{Datelike, Duration, NaiveDate, Weekday};
 use rand::rngs::StdRng;
-use rand::seq::SliceRandom;
-use rand::{Rng as _, SeedableRng};
+use rand::seq::{IndexedRandom, SliceRandom};
+use rand::{RngExt as _, SeedableRng};
 use serde_json::json;
 use sqlx::PgPool;
 use std::collections::HashSet;
@@ -169,10 +169,10 @@ impl Rng {
         vals.choose(&mut self.inner).unwrap().clone()
     }
     fn bool(&mut self, p: f64) -> bool {
-        self.inner.gen_bool(p)
+        self.inner.random_bool(p)
     }
     fn range(&mut self, lo: i64, hi: i64) -> i64 {
-        self.inner.gen_range(lo..hi)
+        self.inner.random_range(lo..hi)
     }
     fn shuffle<T>(&mut self, vals: &mut [T]) {
         vals.shuffle(&mut self.inner);
@@ -180,7 +180,7 @@ impl Rng {
     fn unique_plate(&mut self, used: &mut HashSet<String>) -> String {
         loop {
             let letters: String = (&mut self.inner)
-                .sample_iter(&rand::distributions::Alphanumeric)
+                .sample_iter(&rand::distr::Alphanumeric)
                 .take(3)
                 .map(char::from)
                 .collect();

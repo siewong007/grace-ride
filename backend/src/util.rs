@@ -5,7 +5,7 @@ use std::sync::OnceLock;
 
 use chrono::{DateTime, Duration, NaiveDate, NaiveDateTime, Utc};
 use chrono_tz::Tz;
-use rand::{distributions::Alphanumeric, Rng};
+use rand::{distr::Alphanumeric, RngExt};
 use sqlx::PgPool;
 
 use crate::auth::CurrentUser;
@@ -120,7 +120,7 @@ pub fn check_phone(lang: Lang, phone: &str) -> AppResult<()> {
 }
 
 pub fn random_token(len: usize) -> String {
-    rand::thread_rng()
+    rand::rng()
         .sample_iter(&Alphanumeric)
         .take(len)
         .map(char::from)
