@@ -1,5 +1,5 @@
 import { ReactNode, useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { Link, NavLink, Navigate, Outlet, useLocation } from 'react-router-dom';
+import { Link, NavLink, Navigate, Outlet, useLocation, useNavigate } from 'react-router-dom';
 import {
   ArrowLeft, Bell, Calendar, Car, CarFront, Clock, HandCoins, Home,
   LayoutGrid, LifeBuoy, PanelLeftClose, PanelLeftOpen, Search, Receipt, ShieldAlert, User, Wallet, BarChart3, WifiOff,
@@ -12,6 +12,7 @@ import { ErrorBoundary } from './AppChrome';
 import { TermsGate } from './Terms';
 import { Avatar, IconButton, Notice } from './ui';
 import { GuideRunnerProvider, PageHeaderGuideButton } from './GuideRunner';
+import { SwipeNextGesture } from './SwipeNext';
 import QuickJump, { useQuickJumpShortcut } from './QuickJump';
 import { useTranslation } from 'react-i18next';
 import { useStaffNav, waitingBadge } from '../staffNav';
@@ -75,6 +76,7 @@ function LayoutInner() {
   const { t: tc } = useTranslation();
   const { me, can } = useAuth();
   const loc = useLocation();
+  const navigate = useNavigate();
   const [scrolled, setScrolled] = useState(false);
   const sentinelRef = useRef<HTMLDivElement>(null);
   // Set by the page's PageHeader: its back target, and whether its heading is on screen.
@@ -188,6 +190,14 @@ function LayoutInner() {
       <span className="sidebar-tooltip" role="tooltip">{n.label}</span>
     </NavLink>
   );
+
+  // Swipe left on any top-level page to open the next one in menu order (same order as quick jump).
+  const pageOrder = [...member, ...service, ...staff, profileTab]
+    .map((p) => p.to)
+    .filter((to, i, all) => all.indexOf(to) === i);
+  const curPath = loc.pathname.length > 1 ? loc.pathname.replace(/\/$/, '') : loc.pathname;
+  const curIdx = pageOrder.indexOf(curPath);
+  const nextPage = curIdx >= 0 ? pageOrder[curIdx + 1] : undefined;
 
   const unreadLabel = me.unread ? t('unread', { count: me.unread }) : '';
   const pageTitle = getPageTitle(loc.pathname, t);
@@ -369,6 +379,7 @@ function LayoutInner() {
         />
       )}
       <SwipeBackGesture enabled={Boolean(effectiveBack)} onBack={smartBack.goBack} />
+      <SwipeNextGesture enabled={Boolean(nextPage)} onNext={() => nextPage && navigate(nextPage)} />
     </div>
   );
 }
