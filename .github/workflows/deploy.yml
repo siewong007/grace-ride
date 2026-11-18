@@ -235,8 +235,9 @@ jobs:
           # Reject unexpected shrinkage; keep health + same DB container checks.
           if [[ "$ok" != 1 || "$db_before" != "$db_after" ]]; then
             echo "roll failed (health/db); restoring $old_image" >&2
+            # Capture the failed container's logs BEFORE rollback replaces it.
+            docker logs grace-ride 2>&1 | grep -v -e 'one-time' -e '/invite/' | tail -60 >&2 || true
             rollback
-            docker logs grace-ride 2>&1 | grep -v -e 'one-time' -e '/invite/' | tail -30 >&2 || true
             exit 1
           fi
           if ! [[ "$users_after" =~ ^[0-9]+$ && "$users_before" =~ ^[0-9]+$ ]]; then
@@ -246,8 +247,8 @@ jobs:
           fi
           if (( users_after < users_before )); then
             echo "roll failed (users shrank $users_before → $users_after); restoring $old_image" >&2
+            docker logs grace-ride 2>&1 | grep -v -e 'one-time' -e '/invite/' | tail -60 >&2 || true
             rollback
-            docker logs grace-ride 2>&1 | grep -v -e 'one-time' -e '/invite/' | tail -30 >&2 || true
             exit 1
           fi
           if (( users_before == 0 && users_after > 0 )); then
