@@ -17,14 +17,13 @@
 - None identified. Auth model is explicit and comprehensive; no unauthenticated routes beyond `/api/health`, `/api/push/config`, and passkey registration. Field-level data masking in `ride_json` by role (addresses, phone numbers).
 
 ### Medium
-- **Large files:** `rides.rs` (now `rides/mod.rs`) 4 608 lines; `community.rs` 3 035 lines; `admin.rs` 2 312 lines. All exceed the 300-line guideline. The `rides/` module has been converted to a directory module; full sub-module split deferred due to dense cross-references.
-- **Sentry / error monitoring missing.** Errors are logged to stdout (tracing) but not aggregated in a monitoring service.
-- **LICENSE file absent.** Repo shows a proprietary badge but no LICENSE file exists.
+- **Large files:** Earlier mega-files (`rides.rs` 4 608 lines, `community.rs` 3 035 lines, `admin.rs` 2 312 lines) have been split into domain directory modules (`rides/` `mod.rs` 405 + 10 sub-modules; `community/` `mod.rs` 120 + 10 sub-modules; `admin/` `mod.rs` 165 + 6 sub-modules).
+- **Sentry / error monitoring:** ✅ Integrated opt-in Sentry in backend (`sentry` crate v0.34 via `SENTRY_DSN`) and frontend (`@sentry/react` v11.14 via `VITE_SENTRY_DSN`, with PII-stripping `beforeSend`).
+- **LICENSE file:** ✅ Private proprietary church-only licence (`LICENSE`) confirmed in repo (PJ State CMC).
 - **Dependency advisories:** chrono / chrono-tz unmaintained (transitive via SQLx). `RUSTSEC-2023-0071` (rsa, MySQL path only) and `RUSTSEC-2026-0459` (libsqlite3-sys) suppressed with justification in `backend/.cargo/audit.toml`.
 
 ### Low / Minor
-- `eslint-disable-line react-hooks/exhaustive-deps` in `RideDetail.tsx` line 762 — has comment but could be refactored to avoid suppression.
-- `community.rs` and `admin.rs` both over 2 000 lines — sub-module extraction recommended as follow-up.
+- **`RideDetail.tsx` modularity & `eslint-disable-line`:** ✅ Split `RideDetail.tsx` (1 342 → 205 lines) into `frontend/src/components/ride/` (`RideInfoCards.tsx`, `RideTracking.tsx`, `RideActionPanels.tsx`, `CareLinkModal.tsx`) and removed the `eslint-disable-line react-hooks/exhaustive-deps` suppression in `PassengerShareLocation` using a ref. Remaining secondary larger files (`events.rs`, `auth.rs`, `EventDetail.tsx`, `Drive.tsx`, `Audit.tsx`) can be split incrementally if needed later.
 
 ---
 
@@ -35,14 +34,14 @@
 | README (stack, setup, env vars, scripts, deploy, folder structure) | ✅ Present |
 | `.env.example` (all vars with comments) | ✅ Present |
 | CHANGELOG | ✅ Present |
-| LICENSE | ⚠️ **Missing** — pending user decision |
+| LICENSE | ✅ Private proprietary — PJ State CMC church use (`LICENSE`) |
 | CI workflow (install, lint, typecheck, test, build on push + PR) | ✅ Present |
-| Backend unit tests | ✅ 283 tests pass |
-| Frontend unit tests | ✅ 315 tests pass |
+| Backend unit tests | ✅ 283 tests across 35 suites pass |
+| Frontend unit tests | ✅ 314 tests across 49 files pass |
 | E2E tests (Playwright) | ✅ Present; run in CI under matching container |
 | Database migrations committed | ✅ `backend/migrations/0001–0030` |
 | Seed data committed | ✅ `backend/src/seed.rs` (DEV_MODE) |
-| Error monitoring | ⚠️ **Missing** — Sentry not integrated |
+| Error monitoring | ✅ Sentry integrated (backend `sentry` crate + frontend `@sentry/react`; opt-in via DSN) |
 | Health-check endpoint | ✅ `/api/health` + Docker HEALTHCHECK CLI |
 | Documented environments and deployment | ✅ README + Makefile + deploy.yml |
 | `CLAUDE.md` | ✅ Present |
@@ -57,11 +56,11 @@
 | Push / email notifications | ✅ Web push + Telegram + webhook alert channels |
 | Ride lifecycle (all states + edge cases) | ✅ Full state machine implemented |
 | Driver/rider verification approach | Partial — documented in TECHNICAL.md; no automated ID check |
-| Report / block a user | Partial — `Report.tsx` frontend exists; backend review pending |
+| Report / block a user | Partial — Help Center tickets (`/help`, `help_tickets` linked to `ride_id`); no standalone user-block workflow (`Report.tsx` is monthly ministry summary) |
 | Event lifecycle (RSVP, waitlist, reminders) | ✅ Implemented |
 | Organiser/admin tools | ✅ 27 admin pages with explicit permission checks |
-| Terms of use, privacy policy | ✅ `/terms` page with PDPA notice |
-| In-app account deletion | ✅ `DELETE /api/me` in community.rs |
+| Terms of use, privacy policy | ✅ 16-section trilingual (EN/ZH/MS) Terms & Privacy Notice in `Terms.tsx` with `TermsGate` sign-in enforcement |
+| Account closure / data retention | Partial — handled via staff deactivation (`PUT /api/admin/users/:id`) / Help Center request per church retention policy; self-service `DELETE /api/me` optional product decision |
 
 ---
 
@@ -72,7 +71,7 @@
 | Phase 0: Understand the project | ✅ Complete |
 | Phase 1: Tooling and standards | ✅ Complete |
 | Phase 2: Structure and naming | ✅ Complete |
-| Phase 3: Code quality | ✅ Complete (rides module converted to directory; sub-module split deferred) |
+| Phase 3: Code quality | ✅ Complete (`rides/`, `community/`, `admin/`, and `RideDetail.tsx` split into sub-modules) |
 | Phase 4: Security, privacy and performance | ✅ Complete |
-| Phase 5: Fill the gaps | ✅ Complete (LICENSE and Sentry pending user decisions) |
-| Phase 6: Final check | 🔄 In progress |
+| Phase 5: Fill the gaps | ✅ Complete |
+| Phase 6: Final check | ✅ Complete |

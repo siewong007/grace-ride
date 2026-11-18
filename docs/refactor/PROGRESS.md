@@ -1,17 +1,17 @@
 # Refactor Progress
 
-## ✅ COMPLETE — Branch `refactor/standards` ready for review
+## ✅ COMPLETE — Branch `refactor/modularize-routes` ready for review
 
 **Final status (2026-11-18):**
 - `cargo fmt --check` ✅
 - `cargo clippy --all-targets -- -D warnings` ✅
-- `cargo test` → 283 passed, 35 suites ✅
-- `npm run lint` → No issues ✅
+- `DEV_MODE=true cargo test` → 283 passed, 35 suites ✅
+- `npm run lint` → ESLint: No issues ✅
 - `npm run typecheck` → No errors ✅
-- `npm test` → 315 passed, 49 files ✅
+- `npm test -- --run` → 314 passed, 49 files ✅
 - `npm run build` → dist built ✅
 
-**15 commits ahead of master** (all Conventional Commits, no squash needed).
+**5 commits ahead of `master`** on `refactor/modularize-routes` (prior refactor work `#41` + initial `rides/` split + Sentry were already merged into `origin/master`).
 
 ---
 
@@ -110,7 +110,7 @@
   beyond `/api/health`, `/api/push/config`, and public passkey registration endpoints.
 - Removed stray `println!("DEBUG: ...")` from `admin.rs` (`update_alert_settings`).
 - Personal data handling: pickup addresses and phone numbers are field-masked by role
-  in `ride_json` (confirmed in `backend/src/routes/rides/mod.rs` lines 198–293);
+  in `ride_json` (`backend/src/routes/rides/mod.rs`);
   passenger phone shown to driver only once approved.
 
 **Phase 5 — Fill the gaps**
@@ -123,7 +123,7 @@
 - CI workflow (`.github/workflows/ci.yml`): covers install + lint + typecheck + test +
   build + Docker image for both backend and frontend on every push to master and all
   PRs. ✅
-- Tests: 283 backend + 315 frontend unit/integration tests all pass. E2E (Playwright)
+- Tests: 283 backend + 314 frontend unit/integration tests all pass. E2E (Playwright)
   tests exist in `frontend/` and run in CI under the matching Playwright container.
   Core flows covered: auth, rides, events, settlements, notifications, audit. ✅
 - Database migrations: all in `backend/migrations/`, numbered `0001–0030`. ✅
@@ -140,22 +140,23 @@
 - Loading / empty / error states: present in React components (each data-fetching
   page has loading spinner, empty message, and error boundary). ✅
 - Push notifications: web push implemented (`web_push.rs`), WhatsApp/Telegram/webhook
-  alert channels in `admin.rs`. Reminder jobs in `jobs.rs`. ✅
+  alert channels in `admin/settings.rs`. Reminder jobs in `jobs.rs`. ✅
 - Ride lifecycle: implemented — requested → accepted → approved → in_progress →
   picked_up → completed, plus cancelled / no_show / alt_transport states. ✅
 - Event lifecycle: create / edit / cancel / RSVP / waitlist / reminders. ✅
-- Terms / Privacy / Account deletion:
-  - Terms and Privacy pages exist in frontend (`/terms`).
-  - Account deletion via `DELETE /api/me` confirmed in `community.rs`. ✅
-  - PDPA notice referenced in README and terms. ✅
+- Terms / Privacy / Account closure:
+  - 16-section trilingual (EN/ZH/MS) Terms and Privacy Notice in
+    `frontend/src/components/Terms.tsx` (`/terms`), enforced via `TermsGate`. ✅
+  - Account closure is handled via staff deactivation (`PUT /api/admin/users/:id`) or
+    Help Center request per church record-retention policy in `terms.*.ts`.
 
 **Phase 6 — Final check** ✅
 - `cargo fmt --check` ✅
-- `cargo clippy --all-targets -- -D warnings` ✅ (fixed two stale imports after schedules extraction)
-- `DEV_MODE=true cargo test` → 283 passed ✅
-- `npm run lint` → No issues ✅
+- `cargo clippy --all-targets -- -D warnings` ✅
+- `DEV_MODE=true cargo test` → 283 passed (35 suites) ✅
+- `npm run lint` → ESLint: No issues ✅
 - `npm run typecheck` ✅
-- `npm test -- --run` → 315 passed ✅
+- `npm test -- --run` → 314 passed (49 files) ✅
 - `npm run build` ✅
 
 ---
@@ -164,7 +165,9 @@
 
 | Decision | Chosen | Reason |
 |---|---|---|
-| Rides sub-module split | Completed (proxy, places, schedules) | Done incrementally; driver/passenger/staff deferred (heavy cross-refs) |
+| Rides sub-module split | Completed (`mod.rs` 405 lines + 10 sub-modules) | Split across two passes with `pub use` / `pub(crate) use` re-exports |
+| Community & Admin splits | Completed (`community/` 10 sub-modules, `admin/` 6 sub-modules) | Broke apart 3 035-line and 2 312-line route files cleanly |
+| `RideDetail.tsx` split | Completed (`components/ride/*` + ref fix for `exhaustive-deps`) | Reduced page file from 1 342 to 205 lines; removed lint suppression |
 | `cargo audit` chrono warnings | Suppressed in audit.toml | Transitive via SQLx; not actionable without major SQLx upgrade |
 | Sentry integration | Completed | Opt-in via env var; no PII in payloads |
 | LICENSE file | Private proprietary — PJ State CMC church only | User confirmed |
@@ -173,16 +176,9 @@
 
 ## Open Questions / Items Waiting on User Decision
 
-1. **Further rides splits** — `rides/mod.rs` is still 3 512 lines. The remaining hard splits:
-   - `driver.rs` (~1 357 lines) — calls `assign_trip`/`announce_confirmed` shared with `staff.rs`
-   - `passenger.rs` (~1 127 lines)
-   - `staff.rs` (~533 lines) — calls `assign_trip` from driver section
-   - `chat.rs` (~90 lines) — cleanest to extract, low risk
-   Recommendation: extract `chat.rs` first if further splitting is desired.
-
-2. **community.rs / admin.rs** — both > 2 000 lines. Same incremental split approach applies.
-
-3. **Sentry DSN** — provide real DSNs for staging and production via `.env`.
+1. **Sentry DSN** — provide real `SENTRY_DSN` (backend) and `VITE_SENTRY_DSN` (Vite build env) for staging and production via `.env`.
+2. **Optional product enhancements** — automated driver/rider ID verification and self-service account deletion (`DELETE /api/me`, currently handled via Help Center / admin deactivation) remain product decisions.
+3. **Optional secondary file splits** — remaining larger files (`events.rs`, `auth.rs`, `EventDetail.tsx`, `Drive.tsx`, `Audit.tsx`) can be split incrementally in future work if desired.
 
 ---
 
