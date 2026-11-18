@@ -77,6 +77,11 @@
     the router, shared `RideRow`/`RIDE_SELECT`, visibility helpers, and `/areas` + `/places`.
   - All external callers (`care.rs`, `visitors.rs`, `plan.rs`, `events.rs`, `jobs.rs`, tests)
     preserved via `pub use` / `pub(crate) use` re-exports in `rides/mod.rs`.
+- **Community sub-module split (complete)** — converted `community.rs` (3 035 lines) into
+  `backend/src/routes/community/` with 10 domain sub-modules (`profile.rs`, `calendar.rs`,
+  `push.rs`, `notifications.rs`, `announcements.rs`, `help.rs`, `guides.rs`,
+  `reimbursements.rs`, `payout_batches.rs`, `reports.rs`) and `community/mod.rs` (120 lines);
+  removed 4 redundant local `#[allow(clippy::type_complexity)]` attributes.
 
 **Phase 4 — Security, privacy and performance**
 - Verified `.env.example` covers every variable read by `Config::from_env()` and
