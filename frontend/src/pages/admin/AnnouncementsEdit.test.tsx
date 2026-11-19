@@ -60,7 +60,7 @@ describe('Announcements', () => {
     fireEvent.change(within(dialog).getByLabelText('Content'), { target: { value: 'Use the back gate.' } });
     fireEvent.click(within(dialog).getByRole('button', { name: 'Save changes' }));
     await waitFor(() =>
-      expect(mocks.put).toHaveBeenCalledWith('/announcements/4', { title: 'Car park closed', body: 'Use the back gate.', pinned: false, group_ids: [] }),
+      expect(mocks.put).toHaveBeenCalledWith('/announcements/4', { title: 'Car park closed', body: 'Use the back gate.', pinned: false }),
     );
   });
 

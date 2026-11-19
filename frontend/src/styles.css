@@ -738,7 +738,8 @@ textarea.input { min-height: 96px; resize: vertical; }
 }
 .passkey-row:last-child { border-bottom: none; }
 .auth-header-row { margin-bottom: var(--space-2); }
-.lang-toggle { gap: var(--space-1); font-weight: 600; margin-left: auto; }
+.lang-toggle { gap: var(--space-1); font-weight: 600; margin-left: auto; align-items: center; flex-wrap: wrap; justify-content: flex-end; }
+.lang-toggle button[aria-pressed='true'] { background: var(--surface-2); text-decoration: underline; }
 
 /* ---------- Tabs ---------- */
 .tabs { display: flex; gap: var(--space-4); border-bottom: 1px solid var(--border); overflow-x: auto; scrollbar-width: none; }

@@ -7,6 +7,7 @@ import { SwipeBackGesture, useSmartBack } from './BackNavigation';
 import { Globe } from 'lucide-react';
 import { Button, ErrorBox, useAction } from './ui';
 import { useTranslation } from 'react-i18next';
+import ms from '../locales/terms.ms';
 import i18n, { setLanguage, SupportedLanguage } from '../i18n';
 
 export const TERMS_SECTIONS = [
@@ -22,35 +23,53 @@ export const TERMS_SECTIONS = [
 export function TermsText({ heading: Heading = 'h2' }: { heading?: 'h1' | 'h2' | 'h3' }) {
   const { t: tUi } = useTranslation('terms');
   const { t: tC } = useTranslation('chrome');
-  const currentLang: SupportedLanguage = i18n.language?.startsWith('zh') ? 'zh' : 'en';
-  const nextLangLabel = currentLang === 'zh' ? tC('en') : tC('zh');
+  const appLang: SupportedLanguage = i18n.language?.startsWith('zh') ? 'zh' : 'en';
+  // Malay is only a reading language for this notice (PDPA s.7(3)); the app stays zh/en.
+  const [malay, setMalay] = useState(false);
+  const t = (key: keyof typeof ms) => (malay ? ms[key] : tUi(key));
+  const options: { value: SupportedLanguage | 'ms'; label: string }[] = [
+    { value: 'zh', label: tC('zh') },
+    { value: 'en', label: tC('en') },
+    { value: 'ms', label: 'Bahasa Malaysia' },
+  ];
+  const active = malay ? 'ms' : appLang;
+  const choose = (v: SupportedLanguage | 'ms') => {
+    setMalay(v === 'ms');
+    if (v !== 'ms') setLanguage(v);
+  };
 
   return (
-    <div className="terms-measure stack" lang={currentLang}>
+    <div className="terms-measure stack" lang={malay ? 'ms' : appLang}>
       <div className="row between">
         <div>
-          <Heading className="terms-title">{tUi('title')}</Heading>
-          <p className="muted small">{tUi('updated')}</p>
+          <Heading className="terms-title">{t('title')}</Heading>
+          <p className="muted small">{t('updated')}</p>
         </div>
-        <button
-          type="button"
-          className="btn sm ghost lang-toggle"
-          aria-label={`${nextLangLabel} (${tC('switchLang')})`}
-          onClick={() => setLanguage(currentLang === 'zh' ? 'en' : 'zh')}
-        >
+        <div className="row nowrap lang-toggle" role="group" aria-label={tC('switchLang')}>
           <Globe size={16} aria-hidden="true" />
-          <span>{nextLangLabel}</span>
-        </button>
+          {options.map((o) => (
+            <button
+              key={o.value}
+              type="button"
+              className="btn sm ghost"
+              aria-pressed={active === o.value}
+              lang={o.value === 'ms' ? 'ms' : undefined}
+              onClick={() => choose(o.value)}
+            >
+              {o.label}
+            </button>
+          ))}
+        </div>
       </div>
-      <p className="terms-intro">{tUi('intro')}</p>
+      <p className="terms-intro">{t('intro')}</p>
       {TERMS_SECTIONS.map((key) => (
         <section key={key} className="stack-sm">
-          <h3>{tUi(`${key}Title`)}</h3>
-          <p className="muted">{tUi(`${key}Body`)}</p>
+          <h3>{t(`${key}Title`)}</h3>
+          <p className="muted">{t(`${key}Body`)}</p>
         </section>
       ))}
       <p className="small">
-        <Link to="/licences">{tUi('licences')}</Link>
+        <Link to="/licences">{t('licences')}</Link>
       </p>
     </div>
   );

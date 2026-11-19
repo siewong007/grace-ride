@@ -302,7 +302,12 @@ function EditAnnouncement({
         className="stack"
         onSubmit={(e) => {
           e.preventDefault();
-          run(() => put(`/announcements/${item.id}`, f).then(onSaved), t('announcements.updated'));
+          // Send the audience only when it was changed: an announcement whose groups were
+          // all deleted is hidden, and a typo fix must not quietly open it to everyone.
+          const original = groupIdsOf(item);
+          const same = f.group_ids.length === original.length && f.group_ids.every((g) => original.includes(g));
+          const { group_ids, ...rest } = f;
+          run(() => put(`/announcements/${item.id}`, same ? rest : { ...rest, group_ids }).then(onSaved), t('announcements.updated'));
         }}
       >
         <Field label={t('announcements.titleLabel')}>
