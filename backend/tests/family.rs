@@ -657,3 +657,161 @@ async fn another_familys_open_link_blocks_the_number() {
     .await;
     assert_eq!(again.json["url"], link.json["url"]);
 }
+
+#[tokio::test]
+async fn family_link_accept_creates_a_pending_member_and_keeps_the_link_without_terms() {
+    let (app, st) = setup().await;
+    let before_notes: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM notifications WHERE link='/admin/members?status=pending'",
+    )
+    .fetch_one(&st.db)
+    .await
+    .unwrap();
+    let owner = login(&st, "member@example.org").await;
+    call(
+        &app,
+        Method::POST,
+        "/api/me/family",
+        Some(&owner),
+        Some(json!({"name": "陈家"})),
+    )
+    .await;
+    let link = call(
+        &app,
+        Method::POST,
+        "/api/me/family/people",
+        Some(&owner),
+        Some(json!({"phone": "019-700 4001"})),
+    )
+    .await;
+    let url = link.json["url"].as_str().unwrap();
+    let token = url.rsplit('/').next().unwrap();
+    let preview = call(
+        &app,
+        Method::GET,
+        &format!("/api/invites/{token}"),
+        None,
+        None,
+    )
+    .await;
+    assert_eq!(preview.status, StatusCode::OK, "{}", preview.json);
+    assert_eq!(preview.json["kind"], "family");
+    assert_eq!(preview.json["family_name"], "陈家");
+    assert_eq!(preview.json["phone"], "019-700 4001");
+    assert!(preview.json.get("members").is_none());
+
+    let no_terms = call(
+        &app,
+        Method::POST,
+        &format!("/api/invites/{token}/accept"),
+        None,
+        Some(json!({
+            "name": "新人",
+            "email": "new-kin@example.org",
+            "phone": "000",
+            "terms": false
+        })),
+    )
+    .await;
+    assert_eq!(no_terms.json["code"], "TERMS_REQUIRED");
+    let (still,): (Option<String>,) =
+        sqlx::query_as("SELECT used_at FROM invites WHERE kind='family'")
+            .fetch_one(&st.db)
+            .await
+            .unwrap();
+    assert!(still.is_none());
+
+    let accepted = call(
+        &app,
+        Method::POST,
+        &format!("/api/invites/{token}/accept"),
+        None,
+        Some(json!({
+            "name": "新人",
+            "email": "new-kin@example.org",
+            "phone": "000",
+            "terms": true
+        })),
+    )
+    .await;
+    assert_eq!(accepted.status, StatusCode::OK, "{}", accepted.json);
+    let (status, phone, roles): (String, String, String) =
+        sqlx::query_as("SELECT status, phone, roles FROM users WHERE email='new-kin@example.org'")
+            .fetch_one(&st.db)
+            .await
+            .unwrap();
+    assert_eq!(status, "pending");
+    assert_eq!(phone, "019-700 4001");
+    assert_eq!(roles, "");
+    let (church,): (i64,) = sqlx::query_as(
+        "SELECT COUNT(*) FROM group_members gm JOIN users u ON u.id=gm.user_id WHERE u.email='new-kin@example.org'",
+    )
+    .fetch_one(&st.db)
+    .await
+    .unwrap();
+    assert_eq!(church, 0);
+    let view = call(&app, Method::GET, "/api/me/family", Some(&owner), None).await;
+    let names: Vec<_> = view.json["members"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|m| m["name"].as_str().unwrap())
+        .collect();
+    assert!(names.contains(&"新人"));
+    let after_notes: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM notifications WHERE link='/admin/members?status=pending'",
+    )
+    .fetch_one(&st.db)
+    .await
+    .unwrap();
+    assert!(after_notes > before_notes);
+}
+
+#[tokio::test]
+async fn accepting_after_delete_does_not_create_a_user() {
+    let (app, st) = setup().await;
+    let owner = login(&st, "member@example.org").await;
+    call(
+        &app,
+        Method::POST,
+        "/api/me/family",
+        Some(&owner),
+        Some(json!({"name": "陈家"})),
+    )
+    .await;
+    let link = call(
+        &app,
+        Method::POST,
+        "/api/me/family/people",
+        Some(&owner),
+        Some(json!({"phone": "019-700 4002"})),
+    )
+    .await;
+    let token = link.json["url"]
+        .as_str()
+        .unwrap()
+        .rsplit('/')
+        .next()
+        .unwrap()
+        .to_string();
+    call(&app, Method::DELETE, "/api/me/family", Some(&owner), None).await;
+    let accepted = call(
+        &app,
+        Method::POST,
+        &format!("/api/invites/{token}/accept"),
+        None,
+        Some(json!({
+            "name": "新人",
+            "email": "ghost-kin@example.org",
+            "terms": true
+        })),
+    )
+    .await;
+    assert_eq!(accepted.status, StatusCode::NOT_FOUND);
+    let (n,): (i64,) =
+        sqlx::query_as("SELECT COUNT(*) FROM users WHERE email='ghost-kin@example.org'")
+            .fetch_one(&st.db)
+            .await
+            .unwrap();
+    assert_eq!(n, 0);
+}

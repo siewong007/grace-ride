@@ -79,19 +79,39 @@ pub(super) async fn invite_preview(
     Path(token): Path<String>,
 ) -> AppResult<Json<Value>> {
     let lang = visitor_lang(&headers);
-    let row: Option<(String, String, String, String, Option<String>)> =
-        sqlx::query_as(crate::dyn_sql!(
-            "SELECT kind, email, name, expires_at, used_at FROM invites WHERE {INVITE_BY_TOKEN}"
-        ))
-        .bind(&token)
-        .bind(hash_token(&token))
-        .fetch_optional(&st.db)
-        .await?;
-    let Some((kind, email, name, expires, used)) = row else {
+    let row: Option<(
+        String,
+        String,
+        String,
+        String,
+        Option<String>,
+        String,
+        Option<String>,
+    )> = sqlx::query_as(crate::dyn_sql!(
+        "SELECT invites.kind, invites.email, invites.name, invites.expires_at, invites.used_at,
+                invites.phone, f.name
+         FROM invites
+         LEFT JOIN families f ON f.id = invites.family_id
+         WHERE {INVITE_BY_TOKEN}"
+    ))
+    .bind(&token)
+    .bind(hash_token(&token))
+    .fetch_optional(&st.db)
+    .await?;
+    let Some((kind, email, name, expires, used, phone, family_name)) = row else {
         return Err(not_found(lang));
     };
     if used.is_some() || expires < now() {
         return Err(bad(lang, ErrorKey::InviteExpired));
+    }
+    if kind == "family" {
+        return Ok(Json(json!({
+            "kind": kind,
+            "email": email,
+            "name": name,
+            "family_name": family_name.unwrap_or_default(),
+            "phone": phone,
+        })));
     }
     Ok(Json(json!({ "kind": kind, "email": email, "name": name })))
 }
@@ -149,14 +169,38 @@ pub(super) async fn invite_accept(
     Json(req): Json<AcceptReq>,
 ) -> AppResult<(CookieJar, Json<Value>)> {
     let lang = visitor_lang(&headers);
-    let row: Option<(i64, String, String, String, String, String, Option<i64>, String, Option<String>)> = sqlx::query_as(
-        crate::dyn_sql!("SELECT id, kind, email, name, roles, group_ids::text, user_id, expires_at, used_at FROM invites WHERE {INVITE_BY_TOKEN}"),
+    let row: Option<(
+        i64,
+        String,
+        String,
+        String,
+        String,
+        String,
+        Option<i64>,
+        String,
+        Option<String>,
+        String,
+        Option<i64>,
+    )> = sqlx::query_as(
+        crate::dyn_sql!("SELECT id, kind, email, name, roles, group_ids::text, user_id, expires_at, used_at, phone, family_id FROM invites WHERE {INVITE_BY_TOKEN}"),
     )
     .bind(&token)
     .bind(hash_token(&token))
     .fetch_optional(&st.db)
     .await?;
-    let Some((inv_id, kind, email, inv_name, _roles, _group_ids, rec_user, expires, used)) = row
+    let Some((
+        inv_id,
+        kind,
+        email,
+        inv_name,
+        _roles,
+        _group_ids,
+        rec_user,
+        expires,
+        used,
+        invite_phone,
+        family_id,
+    )) = row
     else {
         return Err(not_found(lang));
     };
@@ -181,9 +225,13 @@ pub(super) async fn invite_accept(
             .to_string();
         joined_email = req.email.unwrap_or_default().trim().to_lowercase();
         check_name(lang, &joined_name)?;
-        // Checked before the invite is marked used: a value the database would refuse
-        // used to burn the single-use link and then report a misleading error.
-        check_phone(lang, req.phone.as_deref().unwrap_or(""))?;
+        // A family link locks the phone the owner typed. The form value is ignored, so a
+        // short or empty body phone must not reject the link or be stored.
+        if kind != "family" {
+            // Checked before the invite is marked used: a value the database would refuse
+            // used to burn the single-use link and then report a misleading error.
+            check_phone(lang, req.phone.as_deref().unwrap_or(""))?;
+        }
         if !joined_email.contains('@') {
             return Err(bad(lang, ErrorKey::EmailInvalid));
         }
@@ -195,6 +243,11 @@ pub(super) async fn invite_accept(
             return Err(bad(lang, ErrorKey::EmailAlreadyRegistered));
         }
     }
+    let stored_phone = if kind == "family" {
+        invite_phone
+    } else {
+        req.phone.as_deref().unwrap_or("").trim().to_string()
+    };
     // Consuming the invite and opening the account happen together or not at all: an
     // account insert that fails (e.g. a concurrent signup took the email) rolls the invite
     // back to unused, so the person can retry with a corrected email. The conditional
@@ -211,6 +264,41 @@ pub(super) async fn invite_accept(
     .await?;
     if r.rows_affected() == 0 {
         return Err(bad(lang, ErrorKey::InviteAlreadyUsed));
+    }
+
+    if kind == "family" {
+        let Some(family_id) = family_id else {
+            return Err(not_found(lang));
+        };
+        let locked: Option<i64> =
+            sqlx::query_scalar("SELECT id FROM families WHERE id=$1 FOR UPDATE")
+                .bind(family_id)
+                .fetch_optional(&mut *tx)
+                .await?;
+        if locked.is_none() {
+            return Err(not_found(lang));
+        }
+        let counted: i64 = sqlx::query_scalar(
+            "SELECT
+                (SELECT COUNT(*) FROM family_members WHERE family_id = $1)
+              + (SELECT COUNT(*) FROM family_requests WHERE family_id = $1)
+              + (SELECT COUNT(*) FROM invites
+                 WHERE family_id = $1 AND kind = 'family' AND used_at IS NULL AND expires_at > $2
+                   AND id <> $3)",
+        )
+        .bind(family_id)
+        .bind(now())
+        .bind(inv_id)
+        .fetch_one(&mut *tx)
+        .await?;
+        if counted + 1 > crate::routes::community::FAMILY_CAP {
+            return Err(bad(
+                lang,
+                ErrorKey::FamilyFull {
+                    max: crate::routes::community::FAMILY_CAP,
+                },
+            ));
+        }
     }
 
     let uid = if kind == "recovery" {
@@ -247,7 +335,7 @@ pub(super) async fn invite_accept(
         )
         .bind(&joined_name)
         .bind(&joined_email)
-        .bind(req.phone.unwrap_or_default().trim())
+        .bind(&stored_phone)
         .bind(None::<String>)
         .bind(uuid::Uuid::new_v4().to_string())
         .bind(now())
@@ -255,6 +343,19 @@ pub(super) async fn invite_accept(
         .fetch_one(&mut *tx)
         .await
         .map_err(|_| bad(lang, ErrorKey::EmailAlreadyRegistered))?;
+        if kind == "family" {
+            let Some(family_id) = family_id else {
+                return Err(not_found(lang));
+            };
+            sqlx::query(
+                "INSERT INTO family_members (family_id, user_id, created_at) VALUES ($1, $2, $3)",
+            )
+            .bind(family_id)
+            .bind(id)
+            .bind(now())
+            .execute(&mut *tx)
+            .await?;
+        }
         id
     };
     tx.commit().await?;

@@ -19,6 +19,7 @@ mod push;
 mod reimbursements;
 mod reports;
 
+pub(crate) use family::FAMILY_CAP;
 pub(crate) use guides::any_admin_page;
 pub use reports::compute_badges;
 
