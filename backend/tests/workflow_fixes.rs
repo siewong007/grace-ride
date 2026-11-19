@@ -348,3 +348,149 @@ async fn past_events_first_paginated_page_includes_finished_events() {
         "finished event should appear on first paginated past page"
     );
 }
+
+#[tokio::test]
+async fn rides_and_driving_exist_only_for_events_the_member_joined() {
+    let (app, st) = setup().await;
+    let passenger = login(&st, "member@example.org").await;
+    let driver = login(&st, "driver@example.org").await;
+    let body = json!({"pickup_at": tomorrow("09:00"), "pickup_area_id": 2,
+                      "pickup_address": "x", "destination": "教会", "seats": 1});
+
+    // A ride with no event is refused outright.
+    let r = call_exact(
+        &app,
+        Method::POST,
+        "/api/rides",
+        Some(&passenger),
+        Some(body.clone()),
+        Some(ORIGIN),
+    )
+    .await;
+    assert_eq!(r.status, StatusCode::BAD_REQUEST, "{}", r.json);
+    assert_eq!(r.json["code"], "EVENT_RIDE_NEEDS_SIGNUP");
+
+    // Two events, each with one ride (the shim gives each its own event, everyone signed up).
+    let a = book(&app, &passenger).await;
+    let b = book(&app, &passenger).await;
+    let event_of = |id: i64| {
+        let db = st.db.clone();
+        async move {
+            sqlx::query_scalar::<_, i64>("SELECT event_id FROM rides WHERE id=$1")
+                .bind(id)
+                .fetch_one(&db)
+                .await
+                .unwrap()
+        }
+    };
+    let (ea, eb) = (event_of(a).await, event_of(b).await);
+    assert_ne!(ea, eb);
+
+    // The requests list can be narrowed to one event.
+    let list = call(
+        &app,
+        Method::GET,
+        &format!("/api/driver/requests?event_id={ea}"),
+        Some(&driver),
+        None,
+    )
+    .await;
+    assert_eq!(list.status, StatusCode::OK, "{}", list.json);
+    let ids: Vec<i64> = list
+        .json
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|r| r["id"].as_i64().unwrap())
+        .collect();
+    assert!(ids.contains(&a) && !ids.contains(&b), "{ids:?}");
+
+    // A driver who has not signed up for the event cannot claim its ride...
+    sqlx::query("DELETE FROM event_signups WHERE event_id=$1 AND user_id=(SELECT id FROM users WHERE email='driver@example.org')")
+        .bind(ea)
+        .execute(&st.db)
+        .await
+        .unwrap();
+    let claim = format!("/api/rides/{a}/claim");
+    let r = call_exact(
+        &app,
+        Method::POST,
+        &claim,
+        Some(&driver),
+        None,
+        Some(ORIGIN),
+    )
+    .await;
+    assert_eq!(r.status, StatusCode::BAD_REQUEST, "{}", r.json);
+    assert_eq!(r.json["code"], "EVENT_DRIVE_NEEDS_SIGNUP");
+
+    // ...and can once they have.
+    sqlx::query("INSERT INTO event_signups (event_id, user_id, status, created_at) SELECT $1, id, 'going', '2026-01-01 00:00' FROM users WHERE email='driver@example.org'")
+        .bind(ea)
+        .execute(&st.db)
+        .await
+        .unwrap();
+    let r = call_exact(
+        &app,
+        Method::POST,
+        &claim,
+        Some(&driver),
+        None,
+        Some(ORIGIN),
+    )
+    .await;
+    assert_eq!(r.status, StatusCode::OK, "{}", r.json);
+}
+
+#[tokio::test]
+async fn a_driver_leaving_the_event_releases_their_rides_and_standing_rides_are_refused() {
+    let (app, st) = setup().await;
+    let passenger = login(&st, "member@example.org").await;
+    let driver = login(&st, "driver@example.org").await;
+    let id = book(&app, &passenger).await;
+    let event: i64 = sqlx::query_scalar("SELECT event_id FROM rides WHERE id=$1")
+        .bind(id)
+        .fetch_one(&st.db)
+        .await
+        .unwrap();
+    let r = call(
+        &app,
+        Method::POST,
+        &format!("/api/rides/{id}/claim"),
+        Some(&driver),
+        None,
+    )
+    .await;
+    assert_eq!(r.status, StatusCode::OK, "{}", r.json);
+
+    let r = call(
+        &app,
+        Method::POST,
+        &format!("/api/events/{event}/withdraw"),
+        Some(&driver),
+        None,
+    )
+    .await;
+    assert_eq!(r.status, StatusCode::OK, "{}", r.json);
+    let (status, driver_id): (String, Option<i64>) =
+        sqlx::query_as("SELECT status, driver_id FROM rides WHERE id=$1")
+            .bind(id)
+            .fetch_one(&st.db)
+            .await
+            .unwrap();
+    assert_eq!((status.as_str(), driver_id), ("pending_driver", None));
+
+    // A standing weekly passenger ride has no event, so it can no longer be set up.
+    let r = call(
+        &app,
+        Method::POST,
+        "/api/recurring-schedules",
+        Some(&passenger),
+        Some(json!({
+            "kind": "passenger", "label": "Sunday", "weekday": 0, "pickup_time": "08:30",
+            "area_id": 2, "pickup_address": "x", "destination": "教会", "seats": 1
+        })),
+    )
+    .await;
+    assert_eq!(r.status, StatusCode::BAD_REQUEST, "{}", r.json);
+}

@@ -57,7 +57,7 @@ describe('GettingStarted', () => {
     inRouter(<GettingStarted hasRide={false} hasEvent={false} />);
     expect(screen.getByRole('heading', { name: 'Getting started' })).toBeInTheDocument();
     expect(screen.getByText('1 of 4 done')).toBeInTheDocument();
-    expect(screen.getByRole('link', { name: /book your first ride/i })).toHaveAttribute('href', '/rides/new');
+    expect(screen.getByRole('link', { name: /book your first ride/i })).toHaveAttribute('href', '/events');
     expect(screen.getByRole('link', { name: /save your pickup address/i })).toHaveAttribute('href', '/me?section=places');
     // Not a driver: no car step.
     expect(screen.queryByText(/add your car/i)).toBeNull();

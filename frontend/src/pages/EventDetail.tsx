@@ -33,6 +33,7 @@ import {
 import { EVENT_KIND, fmtDateTime, RIDE_STATUS, useFormatT } from '../format';
 import { useTranslation } from 'react-i18next';
 import VisitorInvites from '../components/VisitorInvites';
+import { DriveRequests } from '../components/drive/DriveRequests';
 import type { EventFull, Signup } from '../components/event/types';
 import {
   AttendanceQrModal,
@@ -62,6 +63,7 @@ export default function EventDetail() {
   const [joinAs, setJoinAs] = useState<number | null>(null);
   const [joinAsMissing, setJoinAsMissing] = useState(false);
   const [showTransportPrompt, setShowTransportPrompt] = useState(false);
+  const [showDriveRequests, setShowDriveRequests] = useState(false);
   const { data: signups, reload: reloadS } = useApi<Signup[]>(id ? `/events/${id}/signups` : null);
 
   if (error) return <ErrorBox error={error} />;
@@ -323,7 +325,7 @@ export default function EventDetail() {
                       </Button>
                     )}
                     {can('drive', 'create') && (
-                      <Button variant="secondary" size="sm" to="/drive">
+                      <Button variant="secondary" size="sm" onClick={() => { setShowDriveRequests(true); setShowTransportPrompt(false); }}>
                         {t('offerDrive')}
                       </Button>
                     )}
@@ -364,9 +366,9 @@ export default function EventDetail() {
                     </Button>
                   )}
 
-                  {can('drive', 'create') && (
-                    <Button variant="ghost" block to="/drive">
-                      {t('offerDrive')}
+                  {going && can('drive', 'create') && (
+                    <Button variant="ghost" block onClick={() => setShowDriveRequests((v) => !v)}>
+                      {showDriveRequests ? t('hideDriveRequests') : t('offerDrive')}
                     </Button>
                   )}
                 </div>
@@ -374,6 +376,18 @@ export default function EventDetail() {
 
               <ErrorBox error={actErr} />
             </Card>
+
+            {/* A driver volunteers per event: only once signed up, and only for this event's requests. */}
+            {open && going && can('drive', 'create') && showDriveRequests && (
+              <Card className="stack">
+                <div className="row between">
+                  <h3>{t('driveRequestsTitle')}</h3>
+                  <Link to="/drive?tab=settings" className="small">{t('driverSetup')}</Link>
+                </div>
+                <p className="muted small">{t('driveRequestsHint')}</p>
+                <DriveRequests eventId={e.id} />
+              </Card>
+            )}
 
             {/* Members who are going, and the organiser, can bring a visitor. */}
             {open && (going || e.can_manage) && can('rides', 'create') && <VisitorInvites event={e} />}

@@ -206,7 +206,7 @@ export default function Home() {
             {canRequest && (
               <>
                 <p className="muted">{t('noRideHint')}</p>
-                <Button variant="primary" block to="/rides/new" icon={<CalendarPlus size={20} />}>
+                <Button variant="primary" block to="/events" icon={<CalendarPlus size={20} />}>
                   {t('signupRide')}
                 </Button>
               </>
@@ -307,7 +307,7 @@ export default function Home() {
 
         {/* With a ride already booked, requesting another is a quiet secondary action. */}
         {next && canRequest && (
-          <Button variant="secondary" block to="/rides/new" icon={<CalendarPlus size={20} />}>
+          <Button variant="secondary" block to="/events" icon={<CalendarPlus size={20} />}>
             {t('signupRide')}
           </Button>
         )}

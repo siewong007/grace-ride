@@ -120,9 +120,9 @@ export function useOptionalBackNavigation(): BackNavigationContextValue | null {
 export function getDefaultBack(pathname: string, can?: Can): string {
   const path = pathname.length > 1 && pathname.endsWith('/') ? pathname.slice(0, -1) : pathname;
   if (!path || path === '/') return '/';
-  if (path === '/rides') return '/';
+  if (path === '/rides') return '/me';
   if (path.startsWith('/rides/')) return '/rides';
-  if (path === '/drive') return '/';
+  if (path === '/drive') return '/me';
   if (path === '/events') return '/';
   if (path === '/events/new') return '/events';
   const eventSub = path.match(/^\/events\/([^/]+)\/(checkin|edit)$/);

@@ -1,6 +1,6 @@
 export default {
   title: 'Driving',
-  desc: 'Pick up ride requests by your preferred areas and spare seats.',
+  desc: 'Your driving history, vehicle and areas. Offer to drive from an event you’ve signed up for.',
   schedule: 'Schedule',
   requests: 'Requests',
   settings: 'Settings',
@@ -9,7 +9,7 @@ export default {
   today: 'Today',
   week7: 'Next 7 days',
   count: '{count} rides',
-  noTasks: 'No driving tasks in this period. Check “Available ride requests” to see if any member needs help.',
+  noTasks: 'No driving tasks in this period. Open an event you’ve signed up for to see who needs a ride.',
   areas: 'Areas I’m willing to drive',
   areasHint: 'Tick areas you often pass through; you’ll be notified of new requests.',
   carpool: 'Grace Ride carpool mode',

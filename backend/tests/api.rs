@@ -50,6 +50,7 @@ async fn setup() -> (Router, AppState) {
     };
     cfg.validate().unwrap();
     let state = init(cfg).await.unwrap();
+    common::register_test_db(&state);
     (router(state.clone()), state)
 }
 
@@ -77,6 +78,7 @@ async fn call_with(
     body: Option<Value>,
     origin: Option<&str>,
 ) -> Res {
+    let body = common::with_event_shim(&method, path, body).await;
     let mut b = Request::builder().method(method).uri(path);
     if let Some(c) = cookie {
         b = b.header(header::COOKIE, c);

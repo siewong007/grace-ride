@@ -554,7 +554,7 @@ async fn caregiver_pass_lifecycle_privacy_reissue_revoke_and_expiry() {
 }
 
 #[tokio::test]
-async fn recurring_schedules_rbac_seat_bounds_inactive_area_and_idempotency() {
+async fn recurring_schedules_are_driver_only_with_rbac_and_seat_bounds() {
     let (app, st) = setup().await;
     let member = login(&st, "member@example.org").await;
     let driver = login(&st, "driver@example.org").await;
@@ -588,33 +588,7 @@ async fn recurring_schedules_rbac_seat_bounds_inactive_area_and_idempotency() {
         StatusCode::FORBIDDEN
     );
 
-    // Seat bounds: passenger 1..=6, driver 1..=8
-    for bad_seats in [0, 7] {
-        let r = call(
-            &app,
-            Method::POST,
-            "/api/recurring-schedules",
-            Some(&member),
-            Some(json!({
-                "kind": "passenger",
-                "weekday": 0,
-                "pickup_time": "08:30",
-                "area_id": area,
-                "pickup_address": "1 Jalan Test",
-                "destination": "Church",
-                "seats": bad_seats
-            })),
-        )
-        .await;
-        assert_eq!(
-            r.status,
-            StatusCode::BAD_REQUEST,
-            "seats={bad_seats}: {}",
-            r.json
-        );
-        assert_eq!(r.json["code"], "SEATS_RANGE");
-    }
-
+    // Seat bounds: driver 1..=8
     assert_eq!(
         call(
             &app,
@@ -655,14 +629,12 @@ async fn recurring_schedules_rbac_seat_bounds_inactive_area_and_idempotency() {
         &app,
         Method::POST,
         "/api/recurring-schedules",
-        Some(&member),
+        Some(&driver),
         Some(json!({
-            "kind": "passenger",
+            "kind": "driver",
             "weekday": 0,
             "pickup_time": "08:30",
             "area_id": inactive_area,
-            "pickup_address": "1 Jalan Test",
-            "destination": "Church",
             "seats": 2
         })),
     )
@@ -670,8 +642,8 @@ async fn recurring_schedules_rbac_seat_bounds_inactive_area_and_idempotency() {
     assert_eq!(bad_area_create.status, StatusCode::BAD_REQUEST);
     assert_eq!(bad_area_create.json["code"], "PICKUP_AREA_REQUIRED");
 
-    // Create valid passenger schedule
-    let created = call(
+    // Rides exist only for events, so a standing weekly passenger ride is refused.
+    let passenger = call(
         &app,
         Method::POST,
         "/api/recurring-schedules",
@@ -684,36 +656,23 @@ async fn recurring_schedules_rbac_seat_bounds_inactive_area_and_idempotency() {
             "area_id": area,
             "pickup_address": "1 Jalan Test",
             "destination": "Church",
-            "seats": 2,
-            "lead_days": 7
-        })),
-    )
-    .await;
-    assert_eq!(created.status, StatusCode::OK, "{}", created.json);
-    let sched_id = created.json["id"].as_i64().unwrap();
-
-    // Update with inactive area fails
-    let bad_area_update = call(
-        &app,
-        Method::PUT,
-        &format!("/api/recurring-schedules/{sched_id}"),
-        Some(&member),
-        Some(json!({
-            "kind": "passenger",
-            "label": "Sunday Worship",
-            "weekday": 0,
-            "pickup_time": "08:30",
-            "area_id": inactive_area,
-            "pickup_address": "1 Jalan Test",
-            "destination": "Church",
             "seats": 2
         })),
     )
     .await;
-    assert_eq!(bad_area_update.status, StatusCode::BAD_REQUEST);
-    assert_eq!(bad_area_update.json["code"], "PICKUP_AREA_REQUIRED");
+    assert_eq!(
+        passenger.status,
+        StatusCode::BAD_REQUEST,
+        "{}",
+        passenger.json
+    );
+    assert_eq!(passenger.json["code"], "EVENT_RIDE_NEEDS_SIGNUP");
 
-    // Other member receives 404 on PUT / DELETE / generate
+    // Another member cannot touch someone else's schedule.
+    let (sched_id,): (i64,) = sqlx::query_as("SELECT id FROM recurring_ride_schedules LIMIT 1")
+        .fetch_one(&st.db)
+        .await
+        .unwrap();
     assert_eq!(
         call(
             &app,
@@ -726,60 +685,6 @@ async fn recurring_schedules_rbac_seat_bounds_inactive_area_and_idempotency() {
         .status,
         StatusCode::NOT_FOUND
     );
-    assert_eq!(
-        call(
-            &app,
-            Method::POST,
-            &format!("/api/recurring-schedules/{sched_id}/generate"),
-            Some(&other),
-            Some(json!({})),
-        )
-        .await
-        .status,
-        StatusCode::NOT_FOUND
-    );
-
-    // First generate succeeds; second generate for the same week is idempotent
-    let g1 = call(
-        &app,
-        Method::POST,
-        &format!("/api/recurring-schedules/{sched_id}/generate"),
-        Some(&member),
-        Some(json!({})),
-    )
-    .await;
-    assert_eq!(g1.status, StatusCode::OK, "{}", g1.json);
-    assert!(g1.json["ride_id"].as_i64().is_some());
-    assert_eq!(g1.json["already_generated"], false);
-
-    let g2 = call(
-        &app,
-        Method::POST,
-        &format!("/api/recurring-schedules/{sched_id}/generate"),
-        Some(&member),
-        Some(json!({})),
-    )
-    .await;
-    assert_eq!(g2.status, StatusCode::OK);
-    assert_eq!(g2.json["already_generated"], true);
-    assert!(g2.json["ride_id"].is_null());
-
-    // Deactivating the schedule's area blocks future generation
-    sqlx::query("UPDATE areas SET active=0 WHERE id=$1")
-        .bind(area)
-        .execute(&st.db)
-        .await
-        .unwrap();
-    let gen_after_deactivate = call(
-        &app,
-        Method::POST,
-        &format!("/api/recurring-schedules/{sched_id}/generate"),
-        Some(&member),
-        Some(json!({})),
-    )
-    .await;
-    assert_eq!(gen_after_deactivate.status, StatusCode::BAD_REQUEST);
-    assert_eq!(gen_after_deactivate.json["code"], "PICKUP_AREA_REQUIRED");
 }
 
 #[tokio::test]

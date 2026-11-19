@@ -20,6 +20,8 @@ import {
   Trash2,
   User,
   Wallet,
+  Car,
+  CarFront,
 } from 'lucide-react';
 import { api, del, post, put, useApi } from '../api';
 import { useAuth } from '../auth';
@@ -238,6 +240,8 @@ export default function Profile() {
   };
 
   const related = [
+    can('rides') && { to: '/rides', label: t('myRideHistory'), icon: <Car size={iconSz} /> },
+    can('drive') && { to: '/drive', label: t('myDrivingHistory'), icon: <CarFront size={iconSz} /> },
     can('costs') && { to: '/costs', label: t('myCosts'), icon: <Wallet size={iconSz} /> },
     can('reimbursements') && { to: '/reimbursements', label: t('myReimb'), icon: <Receipt size={iconSz} /> },
     can('report') && { to: '/report', label: t('myReport'), icon: <BarChart3 size={iconSz} /> },

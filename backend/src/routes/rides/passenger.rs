@@ -146,12 +146,16 @@ pub(super) async fn create_ride(
         ret_area.ok_or_else(|| bad(u.lang, ErrorKey::PickupAreaRequired))?;
     }
 
-    let mut as_group: Option<i64> = None;
+    // Rides exist only for events: a member signs up for the event first, then asks for a car.
+    let Some(eid) = req.event_id else {
+        return Err(bad(u.lang, ErrorKey::EventRideNeedsSignup));
+    };
+    let as_group: Option<i64>;
     // The event checks and the insert share one transaction holding a share lock on the
     // event row: cancelling the event updates that row, so it either finishes first (and
     // the booking is refused) or waits and then cancels this new ride with the rest.
     let mut tx = st.db.begin().await?;
-    if let Some(eid) = req.event_id {
+    {
         if !crate::routes::events::can_see_event(&st, &u, eid).await? {
             return Err(forbidden(u.lang, ErrorKey::CannotViewEvent));
         }

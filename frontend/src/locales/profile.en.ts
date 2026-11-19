@@ -10,6 +10,8 @@ export default {
   preferences: 'Preferences',
   relatedPages: 'Related pages',
   roles: 'Roles',
+  myRideHistory: 'My ride history',
+  myDrivingHistory: 'My driving history',
   myCosts: 'My costs',
   myReimb: 'Grab reimbursement',
   myReport: 'My report',

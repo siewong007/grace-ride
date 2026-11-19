@@ -1,7 +1,8 @@
 export default {
   title: 'My rides',
-  desc: 'Request → driver picks → you confirm → transport team approves',
+  desc: 'Your rides. To ask for a new one, sign up for an event and request it there.',
   signupRide: 'Request a ride',
+  findEvent: 'Browse events',
   upcoming: 'Ongoing / Upcoming',
   past: 'Past records',
   noUpcoming: 'No ride requests at the moment.',

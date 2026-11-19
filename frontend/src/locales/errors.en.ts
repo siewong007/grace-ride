@@ -95,6 +95,7 @@ export default {
     "JOIN_AS_NOT_ALLOWED": "You can’t join this event as that group",
     "INVALID_PARENT_GROUP": "That parent group isn’t allowed: no loops, and at most three levels",
     "EVENT_RIDE_NEEDS_SIGNUP": "Sign up for the event before asking for a ride to it",
+    "EVENT_DRIVE_NEEDS_SIGNUP": "Sign up for the event before volunteering to drive for it",
     "DUPLICATE_EVENT_RIDE": "You already have a ride request for this event; check My rides",
     "DRIVER_OUTSIDE_GROUP": "Only drivers from this rider’s group can take this ride; transport staff can assign others",
     "VISITOR_LINK_INVALID": "This link isn’t valid",

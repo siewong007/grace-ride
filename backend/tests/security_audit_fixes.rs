@@ -1871,16 +1871,13 @@ async fn profile_photo_mime_readiness_bounds_vapid_settings_and_saved_places_cac
 }
 
 #[tokio::test]
-async fn settlement_overflow_reset_proof_and_recurring_schedule_edit() {
-    use chrono::Datelike;
-
+async fn settlement_overflow_and_reset_proof() {
     let (app, st) = setup().await;
     let admin = login(&st, "admin@example.org").await;
     let member = login(&st, "member@example.org").await;
     let admin_id = user_id(&st, "admin@example.org").await;
     let member_id = user_id(&st, "member@example.org").await;
     let all_group = all_group_id(&st).await;
-    let area = first_area_id(&st).await;
 
     let ev = call(
         &app,
@@ -2020,75 +2017,6 @@ async fn settlement_overflow_reset_proof_and_recurring_schedule_edit() {
         StatusCode::OK,
         "reset failed to clear old proof: {}",
         reuse.json
-    );
-
-    // 3. Updating a recurring schedule's weekday resets last_generated_date so earlier date generates
-    let today = grace_ride::util::today_local();
-    let wd5 = (today + chrono::Duration::days(5))
-        .weekday()
-        .num_days_from_sunday() as i64;
-    let wd4 = (today + chrono::Duration::days(4))
-        .weekday()
-        .num_days_from_sunday() as i64;
-    let sched = call(
-        &app,
-        Method::POST,
-        "/api/recurring-schedules",
-        Some(&member),
-        Some(json!({
-            "kind": "passenger",
-            "label": "Midweek",
-            "weekday": wd5,
-            "pickup_time": "07:45",
-            "area_id": area,
-            "pickup_address": "10 Jalan Maju",
-            "destination": "Hall",
-            "seats": 1,
-            "lead_days": 7
-        })),
-    )
-    .await;
-    assert_eq!(sched.status, StatusCode::OK, "{}", sched.json);
-    let sched_id = sched.json["id"].as_i64().unwrap();
-    let g1 = call(
-        &app,
-        Method::POST,
-        &format!("/api/recurring-schedules/{sched_id}/generate"),
-        Some(&member),
-        Some(json!({})),
-    )
-    .await;
-    assert!(g1.json["ride_id"].as_i64().is_some(), "{}", g1.json);
-
-    assert_eq!(
-        call(
-            &app,
-            Method::PUT,
-            &format!("/api/recurring-schedules/{sched_id}"),
-            Some(&member),
-            Some(json!({
-                "kind": "passenger",
-                "label": "Earlier Day",
-                "weekday": wd4,
-                "pickup_time": "07:45",
-                "area_id": area,
-                "pickup_address": "10 Jalan Maju",
-                "destination": "Hall",
-                "seats": 1,
-                "lead_days": 7,
-                "active": true
-            }))
-        )
-        .await
-        .status,
-        StatusCode::OK
-    );
-    let generated = grace_ride::routes::rides::process_recurring_schedules(&st.db)
-        .await
-        .unwrap();
-    assert!(
-        generated >= 1,
-        "expected earlier weekday ride generation after edit"
     );
 }
 

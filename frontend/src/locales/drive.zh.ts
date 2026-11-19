@@ -1,6 +1,6 @@
 export default {
   title: '司机',
-  desc: '按方便的地区和空余座位挑选接送报名。',
+  desc: '您的接送记录、车辆与路线。请在已报名的活动页面自愿接送。',
   schedule: '接送安排',
   requests: '可接送报名',
   settings: '司机设置',
@@ -9,7 +9,7 @@ export default {
   today: '今天',
   week7: '未来 7 天',
   count: '{count} 项接送',
-  noTasks: '这段时间没有接送任务。到「可接送报名」看看有没有需要帮助的会员吧！',
+  noTasks: '这段时间没有接送任务。打开您已报名的活动，看看有没有需要接送的会员吧！',
   areas: '我愿意接送的地区',
   areasHint: '勾选平时方便经过的地区，有新报名时会通知您。',
   carpool: '恩典同行共乘模式',

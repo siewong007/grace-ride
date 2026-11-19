@@ -14,7 +14,7 @@ use crate::error::{bad, forbidden, AppResult};
 use crate::i18n::ErrorKey;
 use crate::perms::{Act, Page};
 use crate::state::AppState;
-use crate::util::{audit, audit_many, notify, now, random_token};
+use crate::util::{audit, audit_many, notify, notify_perm, now, random_token};
 
 pub(super) async fn allocate_pass_code(
     conn: &mut sqlx::PgConnection,
@@ -281,6 +281,46 @@ pub(super) async fn withdraw(
             )
             .await;
         }
+    }
+    // A driver who leaves the event can no longer drive for it: hand their unstarted rides
+    // back to the pool and tell the passengers and transport staff.
+    let released: Vec<(i64, i64, Option<i64>)> = sqlx::query_as(
+        "UPDATE rides SET status='pending_driver', driver_id=NULL, trip_id=NULL,
+                needs_attention = CASE WHEN status IN ('confirmed','pending_driver_confirm') THEN 1 ELSE 0 END,
+                attention_reason=$3, updated_at=$4
+         WHERE event_id=$1 AND driver_id=$2
+           AND status IN ('pending_passenger','pending_approval','pending_driver_confirm','confirmed')
+         RETURNING id, passenger_id, trip_id",
+    )
+    .bind(id)
+    .bind(u.id)
+    .bind(format!("司机 {} 已退出活动报名", u.name))
+    .bind(now())
+    .fetch_all(&st.db)
+    .await?;
+    for (rid, passenger, trip) in released {
+        st.routing.invalidate(u.id, trip.unwrap_or(rid)).await;
+        notify(
+            &st.db,
+            passenger,
+            ("司机无法出车", "Driver cannot drive"),
+            (
+                "交通组正在为您安排其他司机，请留意通知。",
+                "Transport staff are arranging another driver for you; please watch for notifications.",
+            ),
+            &format!("/rides/{rid}"),
+        )
+        .await;
+        let line = format!("{} · {}", u.name, e.title);
+        notify_perm(
+            &st.db,
+            Page::AdminRides,
+            Act::Update,
+            ("需要重新安排司机", "Driver needs reassignment"),
+            (&line, &line),
+            &format!("/admin/rides/{rid}"),
+        )
+        .await;
     }
     if withdrew && e.created_by != u.id {
         let body = format!("{} · {}", u.name, e.title);

@@ -137,8 +137,10 @@ describe('Home page', () => {
     );
 
     expect(screen.getByRole('heading', { level: 1 })).toBeInTheDocument();
-    // One "Request a ride" action, not a tile plus a header button plus a footer button.
-    expect(screen.getAllByRole('link', { name: /request a ride/i })).toHaveLength(1);
+    // One ride action, and it leads to events: a ride is asked for from an event page.
+    const rideLinks = screen.getAllByRole('link', { name: /find an event to ride to/i });
+    expect(rideLinks).toHaveLength(1);
+    expect(rideLinks[0]).toHaveAttribute('href', '/events');
     expect(screen.getByRole('region', { name: /upcoming ride/i })).toBeInTheDocument();
     expect(screen.getAllByText(/David Driver/i).length).toBeGreaterThan(0);
     expect(screen.getAllByText(/Grace Community Church/i).length).toBeGreaterThan(0);
@@ -160,9 +162,19 @@ describe('Rides page', () => {
 });
 
 describe('RideNew page', () => {
+  it('without an event sends the member to the events list instead of a form that cannot be saved', () => {
+    render(
+      <MemoryRouter initialEntries={['/rides/new']}>
+        <RideNew />
+      </MemoryRouter>
+    );
+    expect(screen.queryByRole('button', { name: /submit ride request/i })).not.toBeInTheDocument();
+    expect(screen.getByRole('link', { name: /browse events/i })).toHaveAttribute('href', '/events');
+  });
+
   it('renders sections When, Where, Who, Needs and passenger stepper', () => {
     render(
-      <MemoryRouter>
+      <MemoryRouter initialEntries={['/rides/new?event=1']}>
         <RideNew />
       </MemoryRouter>
     );
@@ -191,7 +203,7 @@ describe('RideNew page', () => {
 
   it('allows toggling proxy booking mode in RideNew', () => {
     render(
-      <MemoryRouter>
+      <MemoryRouter initialEntries={['/rides/new?event=1']}>
         <RideNew />
       </MemoryRouter>
     );
@@ -205,7 +217,7 @@ describe('RideNew page', () => {
 
   it('validates fields and shows error on empty submission', () => {
     render(
-      <MemoryRouter>
+      <MemoryRouter initialEntries={['/rides/new?event=1']}>
         <RideNew />
       </MemoryRouter>
     );

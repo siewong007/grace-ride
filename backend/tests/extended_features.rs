@@ -555,7 +555,7 @@ async fn accessibility_arrange_and_recurring_schedules() {
         arr.json
     );
 
-    // Standing passenger recurring schedule + generate
+    // Rides exist only for events, so a standing weekly passenger ride can't be set up.
     let sched = call(
         &app,
         Method::POST,
@@ -574,33 +574,8 @@ async fn accessibility_arrange_and_recurring_schedules() {
         })),
     )
     .await;
-    assert_eq!(sched.status, StatusCode::OK, "{}", sched.json);
-    let sched_id = sched.json["id"].as_i64().unwrap();
-
-    let gen1 = call(
-        &app,
-        Method::POST,
-        &format!("/api/recurring-schedules/{sched_id}/generate"),
-        Some(&member),
-        Some(json!({})),
-    )
-    .await;
-    assert_eq!(gen1.status, StatusCode::OK, "{}", gen1.json);
-    assert!(gen1.json["ride_id"].as_i64().is_some(), "{}", gen1.json);
-    assert_eq!(gen1.json["already_generated"], false, "{}", gen1.json);
-
-    // Second generate in same week is idempotent (creates nothing)
-    let gen2 = call(
-        &app,
-        Method::POST,
-        &format!("/api/recurring-schedules/{sched_id}/generate"),
-        Some(&member),
-        Some(json!({})),
-    )
-    .await;
-    assert_eq!(gen2.status, StatusCode::OK);
-    assert!(gen2.json["ride_id"].is_null(), "{}", gen2.json);
-    assert_eq!(gen2.json["already_generated"], true, "{}", gen2.json);
+    assert_eq!(sched.status, StatusCode::BAD_REQUEST, "{}", sched.json);
+    assert_eq!(sched.json["code"], "EVENT_RIDE_NEEDS_SIGNUP");
 }
 
 #[tokio::test]

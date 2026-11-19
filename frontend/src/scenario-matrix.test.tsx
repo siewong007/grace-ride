@@ -344,26 +344,8 @@ describe('Scenario Matrix — Frontend Components & Service Worker', () => {
   });
 
   describe('Rides recurring schedules & offline snapshot fallback', () => {
-    it('manages recurring schedules CRUD and generate inside Rides modal', async () => {
-      const user = userEvent.setup();
+    it('is history only: no recurring modal or new-ride button, empty state points to events', () => {
       mocks.useApiData.set('/rides?scope=upcoming', []);
-      mocks.useApiData.set('/areas', [{ id: 1, name: 'Petaling Jaya', active: true }]);
-      mocks.useApiData.set('/recurring-schedules', [
-        {
-          id: 5,
-          kind: 'passenger',
-          label: 'Sunday Service',
-          weekday: 0,
-          pickup_time: '08:30',
-          area_id: 1,
-          area_name: 'Petaling Jaya',
-          pickup_address: '12 Jalan SS2',
-          destination: 'PJ State CMC',
-          seats: 1,
-          active: 1,
-          last_generated_date: null,
-        },
-      ]);
 
       render(
         <TestWrap>
@@ -371,37 +353,9 @@ describe('Scenario Matrix — Frontend Components & Service Worker', () => {
         </TestWrap>,
       );
 
-      await user.click(screen.getByRole('button', { name: /recurring/i }));
-      const dlg = screen.getByRole('dialog');
-      expect(within(dlg).getByText(/Sunday Service/)).toBeInTheDocument();
-
-      await user.click(within(dlg).getByRole('button', { name: /^pause$/i }));
-      expect(mocks.put).toHaveBeenCalledWith(
-        '/recurring-schedules/5',
-        expect.objectContaining({ active: false, weekday: 0, pickup_time: '08:30' }),
-      );
-
-      await user.click(within(dlg).getByRole('button', { name: /book next/i }));
-      expect(mocks.post).toHaveBeenCalledWith('/recurring-schedules/5/generate');
-
-      await user.click(within(dlg).getByRole('button', { name: /remove schedule/i }));
-      expect(mocks.del).toHaveBeenCalledWith('/recurring-schedules/5');
-
-      await user.selectOptions(within(dlg).getByLabelText(/pickup area/i), '1');
-      await user.type(within(dlg).getByLabelText(/label/i), 'Prayer Night');
-      await user.type(within(dlg).getByLabelText(/pickup address/i), '99 Jalan Barat');
-      await user.type(within(dlg).getByLabelText(/destination/i), 'Prayer Hall');
-      await user.click(within(dlg).getByRole('button', { name: /save weekly schedule/i }));
-      expect(mocks.post).toHaveBeenCalledWith('/recurring-schedules', {
-        kind: 'passenger',
-        label: 'Prayer Night',
-        weekday: 0,
-        pickup_time: '08:30',
-        area_id: 1,
-        pickup_address: '99 Jalan Barat',
-        destination: 'Prayer Hall',
-        seats: 1,
-      });
+      expect(screen.queryByRole('button', { name: /recurring/i })).toBeNull();
+      expect(screen.queryByRole('link', { name: /request a ride/i })).toBeNull();
+      expect(screen.getByRole('link', { name: /browse events/i })).toHaveAttribute('href', '/events');
     });
 
     it('falls back to saved today ride snapshot when upcoming API fails offline', () => {

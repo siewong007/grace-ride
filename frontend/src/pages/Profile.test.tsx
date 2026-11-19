@@ -37,7 +37,7 @@ vi.mock('../auth', () => ({
   useAuth: () => ({
     me: currentMe,
     can: (page: string) =>
-      ['costs', 'reimbursements', 'help', 'report', 'rides', 'events'].includes(page),
+      ['costs', 'reimbursements', 'help', 'report', 'rides', 'events', 'drive'].includes(page),
     refresh: vi.fn(),
   }),
 }));
@@ -89,6 +89,8 @@ const profileStrings: Record<string, string> = {
   account: 'Account',
   relatedPages: 'Related pages',
   myCosts: 'My costs',
+  myRideHistory: 'My ride history',
+  myDrivingHistory: 'My driving history',
   myReimb: 'My reimbursements',
   myReport: 'My report',
   myHelp: 'Help centre',
@@ -290,6 +292,12 @@ describe('Profile compact layout', () => {
     for (const label of ['My costs', 'My reimbursements', 'Help centre']) {
       expect(screen.getByText(label)).toBeInTheDocument();
     }
+  });
+
+  it('keeps ride and driving history reachable from the profile', () => {
+    renderProfile(baseMe);
+    expect(screen.getByText('My ride history').closest('a')).toHaveAttribute('href', '/rides');
+    expect(screen.getByText('My driving history').closest('a')).toHaveAttribute('href', '/drive');
   });
 
   it('hides related pages shortcuts for pending accounts', () => {

@@ -17,7 +17,7 @@ export default {
   place: '保存接载地址',
   placeHint: '之后预约用车只需一键。',
   ride: '预约第一次用车',
-  rideHint: '预约接送去教会或参加活动。',
+  rideHint: '先报名活动，再为该活动申请接送。',
   event: '报名一个活动',
   eventHint: '看看近期活动并报名参加。',
   car: '添加你的车辆',

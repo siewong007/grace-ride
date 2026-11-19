@@ -279,6 +279,32 @@ describe('EventDetail page', () => {
     expect(screen.getByText(/manage event/i)).toBeInTheDocument();
   });
 
+  it('shows driver requests for this event only once the member is going and opens them', async () => {
+    const user = userEvent.setup();
+    render(
+      <MemoryRouter initialEntries={['/events/10']}>
+        <Routes>
+          <Route path="/events/:id" element={<EventDetail />} />
+        </Routes>
+      </MemoryRouter>
+    );
+    expect(screen.queryByText(/ride requests for this event/i)).not.toBeInTheDocument();
+    await user.click(screen.getByRole('button', { name: /i can drive passengers/i }));
+    expect(screen.getByText(/ride requests for this event/i)).toBeInTheDocument();
+  });
+
+  it('offers no driving before the member has signed up', () => {
+    render(
+      <MemoryRouter initialEntries={['/events/11']}>
+        <Routes>
+          <Route path="/events/:id" element={<EventDetail />} />
+        </Routes>
+      </MemoryRouter>
+    );
+    expect(screen.queryByRole('button', { name: /i can drive passengers/i })).not.toBeInTheDocument();
+    expect(screen.queryByRole('link', { name: /drive/i })).not.toBeInTheDocument();
+  });
+
   it('asks a member in two of the event groups which one they join as', async () => {
     const user = userEvent.setup();
     render(

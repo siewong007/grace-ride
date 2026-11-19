@@ -131,7 +131,7 @@ export function GettingStarted({ hasRide, hasEvent }: HomeData) {
     });
   }
   if (can('rides', 'create')) {
-    steps.push({ key: 'ride', title: t('ride'), hint: t('rideHint'), to: '/rides/new', state: hasRide ? 'done' : 'todo' });
+    steps.push({ key: 'ride', title: t('ride'), hint: t('rideHint'), to: '/events', state: hasRide ? 'done' : 'todo' });
   }
   if (can('events')) {
     steps.push({ key: 'event', title: t('event'), hint: t('eventHint'), to: '/events', state: hasEvent ? 'done' : 'todo' });

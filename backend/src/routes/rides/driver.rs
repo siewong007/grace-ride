@@ -85,6 +85,20 @@ pub(super) async fn driver_claim(
     if !crate::audience::drives_for(&u, r.match_group_id) {
         return Err(forbidden(u.lang, ErrorKey::DriverOutsideGroup));
     }
+    // Driving is volunteered per event: the driver must hold a place at it first.
+    let Some(event_id) = r.event_id else {
+        return Err(bad(u.lang, ErrorKey::EventDriveNeedsSignup));
+    };
+    let signed: Option<(i64,)> = sqlx::query_as(
+        "SELECT id FROM event_signups WHERE event_id=$1 AND user_id=$2 AND status='going'",
+    )
+    .bind(event_id)
+    .bind(u.id)
+    .fetch_optional(&st.db)
+    .await?;
+    if signed.is_none() {
+        return Err(bad(u.lang, ErrorKey::EventDriveNeedsSignup));
+    }
     // The request list already hides past pickups; the claim itself must refuse them too.
     if r.pickup_at.as_str() < &now()[..16] {
         return Err(bad(u.lang, ErrorKey::PickupTimeInPast));

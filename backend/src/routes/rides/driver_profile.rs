@@ -21,6 +21,7 @@ pub(super) struct RequestsQuery {
     area_id: Option<i64>,
     date: Option<String>,
     mine_areas: Option<bool>,
+    event_id: Option<i64>,
 }
 
 pub(super) async fn driver_requests(
@@ -48,6 +49,10 @@ pub(super) async fn driver_requests(
         ));
         n += 1;
     }
+    if q.event_id.is_some() {
+        conds.push(format!("r.event_id = ${n}"));
+        n += 1;
+    }
     if q.date.is_some() {
         // Same rows as `substr(pickup_at,1,10) = date`, written as a range so the pickup
         // index can serve it: every time on that day sorts between "dateT" and "dateU".
@@ -67,6 +72,9 @@ pub(super) async fn driver_requests(
         query = query.bind(a);
     } else if q.mine_areas.unwrap_or(false) {
         query = query.bind(u.id);
+    }
+    if let Some(e) = q.event_id {
+        query = query.bind(e);
     }
     if let Some(d) = &q.date {
         query = query.bind(d);

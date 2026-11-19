@@ -95,6 +95,7 @@ export default {
     "JOIN_AS_NOT_ALLOWED": "您不能以这个群体参加此活动",
     "INVALID_PARENT_GROUP": "上级群体无效：不能形成循环，且最多三层",
     "EVENT_RIDE_NEEDS_SIGNUP": "请先报名参加此活动，再申请接送",
+    "EVENT_DRIVE_NEEDS_SIGNUP": "请先报名参加此活动，再自愿接送",
     "DUPLICATE_EVENT_RIDE": "您已为此活动申请了接送，请在「我的接送」中查看",
     "DRIVER_OUTSIDE_GROUP": "此接送只开放给该群体的司机，交通组可另行指派",
     "VISITOR_LINK_INVALID": "此链接无效",

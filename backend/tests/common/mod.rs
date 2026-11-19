@@ -57,7 +57,74 @@ pub async fn setup() -> (Router, AppState) {
     };
     cfg.validate().unwrap();
     let state = init(cfg).await.unwrap();
+    register_test_db(&state);
     (router(state.clone()), state)
+}
+
+/// Lets a suite with its own `setup()` opt into [`with_event_shim`].
+pub fn register_test_db(state: &AppState) {
+    TEST_DB.with(|d| *d.borrow_mut() = Some(state.db.clone()));
+}
+
+thread_local! {
+    /// The pool of the test running on this thread (each `#[tokio::test]` has its own thread).
+    static TEST_DB: std::cell::RefCell<Option<sqlx::PgPool>> = const { std::cell::RefCell::new(None) };
+}
+
+/// Rides now exist only for events, and a driver may claim only for an event they joined.
+/// Most workflow tests just need *a* ride, so a `POST /api/rides` without an `event_id`
+/// gets a fresh published event (everyone signed up as going) and the body is pointed at it;
+/// a claim re-signs everyone up first. Tests of the event rules pass `event_id` themselves.
+pub async fn with_event_shim(method: &Method, path: &str, body: Option<Value>) -> Option<Value> {
+    let pool = TEST_DB.with(|d| d.borrow().clone())?;
+    let is_claim =
+        *method == Method::POST && path.starts_with("/api/rides/") && path.ends_with("/claim");
+    let is_book = *method == Method::POST && path == "/api/rides";
+    if !is_claim && !is_book {
+        return body;
+    }
+    if is_book {
+        let mut v = body?;
+        if v.get("event_id").is_some_and(|e| !e.is_null()) {
+            return Some(v);
+        }
+        let (event,): (i64,) = sqlx::query_as(
+            "INSERT INTO events (title, starts_at, location, created_by, reminder_sent)
+             VALUES ('Test event', $1, 'Church hall', (SELECT MIN(id) FROM users), 1) RETURNING id",
+        )
+        .bind(tomorrow("19:30"))
+        .fetch_one(&pool)
+        .await
+        .ok()?;
+        sqlx::query(
+            "INSERT INTO event_groups (event_id, group_id) SELECT $1, id FROM groups WHERE is_all = 1",
+        )
+        .bind(event)
+        .execute(&pool)
+        .await
+        .ok()?;
+        sqlx::query(
+            "INSERT INTO event_signups (event_id, user_id, status, created_at)
+             SELECT $1, id, 'going', '2026-01-01 00:00' FROM users ON CONFLICT DO NOTHING",
+        )
+        .bind(event)
+        .execute(&pool)
+        .await
+        .ok()?;
+        v["event_id"] = Value::from(event);
+        return Some(v);
+    }
+    // Claim: sign every user up to the ride's event.
+    let id: i64 = path.split('/').nth(3)?.parse().ok()?;
+    let _ = sqlx::query(
+        "INSERT INTO event_signups (event_id, user_id, status, created_at)
+         SELECT r.event_id, u.id, 'going', '2026-01-01 00:00' FROM users u, rides r
+         WHERE r.id = $1 AND r.event_id IS NOT NULL ON CONFLICT DO NOTHING",
+    )
+    .bind(id)
+    .execute(&pool)
+    .await;
+    body
 }
 
 /// Seed the edge-case fixtures (`EDGE_BATCH`) into a fresh test DB.
@@ -81,6 +148,19 @@ pub async fn call(
 }
 
 pub async fn call_with(
+    app: &Router,
+    method: Method,
+    path: &str,
+    cookie: Option<&str>,
+    body: Option<Value>,
+    origin: Option<&str>,
+) -> Res {
+    let body = with_event_shim(&method, path, body).await;
+    call_exact(app, method, path, cookie, body, origin).await
+}
+
+/// Like [`call_with`] but sends the request untouched, for tests of the event rules.
+pub async fn call_exact(
     app: &Router,
     method: Method,
     path: &str,

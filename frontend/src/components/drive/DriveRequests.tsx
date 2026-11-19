@@ -16,16 +16,19 @@ import {
 import { fmtDay, fmtTime, useFormatT } from '../../format';
 import type { Area } from './types';
 
-export function DriveRequests() {
+/** Open ride requests. With `eventId` the list is that event's requests only: a driver
+ *  volunteers per event, after signing up for it. */
+export function DriveRequests({ eventId }: { eventId?: number } = {}) {
   const { t } = useTranslation('drive');
   const ft = useFormatT();
   const toast = useToast();
   const { can } = useAuth();
   const { data: areas } = useApi<Area[]>('/areas');
-  const [area, setArea] = useState<string>('mine');
+  const [area, setArea] = useState<string>(eventId ? '' : 'mine');
   const [date, setDate] = useState('');
 
   const q = new URLSearchParams();
+  if (eventId) q.set('event_id', String(eventId));
   if (area === 'mine') q.set('mine_areas', 'true');
   else if (area) q.set('area_id', area);
   if (date) q.set('date', date);
@@ -66,14 +69,14 @@ export function DriveRequests() {
               <option key={a.id} value={String(a.id)}>{a.name}</option>
             ))}
         </select>
-        <input
+        {!eventId && <input
           className="input driver-date-input"
           type="date"
           value={date}
           onChange={(e) => setDate(e.target.value)}
           aria-label={t('dateLabel')}
-        />
-        {date && (
+        />}
+        {!eventId && date && (
           <Button variant="ghost" size="sm" onClick={() => setDate('')}>
             {t('clearDate')}
           </Button>

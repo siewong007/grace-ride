@@ -132,7 +132,8 @@ describe('General Back Button & Smart History', () => {
       expect(backLinks).toHaveLength(1);
       expect(backLinks[0]).toHaveClass('topbar-back');
       expect(backLinks[0]).not.toHaveClass('hide-tablet-up');
-      expect(backLinks[0]).toHaveAttribute('href', '/');
+      // Ride and driving history are reached from the profile, so back goes there.
+      expect(backLinks[0]).toHaveAttribute('href', path === '/rides' || path === '/drive' ? '/me' : '/');
       unmount();
     }
   });
@@ -180,12 +181,12 @@ describe('General Back Button & Smart History', () => {
               path="/login"
               element={
                 <div>
-                  <Link to="/rides">Enter app</Link>
+                  <Link to="/events">Enter app</Link>
                 </div>
               }
             />
             <Route element={<Layout />}>
-              <Route path="/rides" element={<div><LocationProbe /><PageHeader title="My rides" /></div>} />
+              <Route path="/events" element={<div><LocationProbe /><PageHeader title="Events" /></div>} />
               <Route path="/" element={<div data-testid="home-landed"><LocationProbe />Home</div>} />
             </Route>
           </Routes>
@@ -194,7 +195,7 @@ describe('General Back Button & Smart History', () => {
     );
 
     fireEvent.click(screen.getByRole('link', { name: 'Enter app' }));
-    expect(screen.getByTestId('location')).toHaveTextContent('/rides');
+    expect(screen.getByTestId('location')).toHaveTextContent('/events');
 
     const backLink = screen.getByRole('link', { name: 'Back' });
     expect(backLink).toHaveAttribute('href', '/');

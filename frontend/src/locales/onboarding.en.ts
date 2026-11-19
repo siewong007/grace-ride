@@ -17,7 +17,7 @@ export default {
   place: 'Save your pickup address',
   placeHint: 'Then booking a ride takes one tap.',
   ride: 'Book your first ride',
-  rideHint: 'Ask for a lift to church or an event.',
+  rideHint: 'Sign up for an event, then ask for a lift to it.',
   event: 'Sign up for an event',
   eventHint: 'See what’s coming up and say you’re going.',
   car: 'Add your car',

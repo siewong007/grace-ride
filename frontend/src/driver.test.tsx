@@ -3,6 +3,7 @@ import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { MemoryRouter } from 'react-router-dom';
 import i18n from './i18n';
 import Drive from './pages/Drive';
+import { DriveRequests } from './components/drive/DriveRequests';
 
 beforeAll(async () => {
   await i18n.changeLanguage('en');
@@ -79,7 +80,7 @@ const mockProfile = {
 const mockApiMap: Record<string, unknown> = {
   '/driver/schedule?from=2026-11-12&to=2026-11-12': mockScheduleRides,
   '/driver/schedule?from=2026-11-12&to=2026-11-18': mockScheduleRides,
-  '/driver/requests?mine_areas=true': mockRequests,
+  '/driver/requests?event_id=7': mockRequests,
   '/areas': mockAreas,
   '/driver/profile': mockProfile,
 };
@@ -129,17 +130,26 @@ describe('Drive page - Schedule tab', () => {
   });
 });
 
-describe('Drive page - Available requests tab', () => {
-  it('renders area filter chips, request cards with locked address notice, and offer button', async () => {
+describe('Drive page - no generic requests tab', () => {
+  it('offers only schedule and settings; requests are volunteered for from an event', () => {
     render(
       <MemoryRouter>
         <Drive />
       </MemoryRouter>
     );
+    expect(screen.queryByRole('tab', { name: /requests/i })).toBeNull();
+    expect(screen.getByRole('tab', { name: /schedule/i })).toBeInTheDocument();
+    expect(screen.getByRole('tab', { name: /^settings$/i })).toBeInTheDocument();
+  });
+});
 
-    // Switch to requests tab
-    const requestsTab = screen.getByRole('tab', { name: /requests/i });
-    fireEvent.click(requestsTab);
+describe('Event driver requests', () => {
+  it('lists that event\'s requests with locked address notice and offer button', async () => {
+    render(
+      <MemoryRouter>
+        <DriveRequests eventId={7} />
+      </MemoryRouter>
+    );
 
     await waitFor(() => {
       expect(screen.getByText('Elder John')).toBeInTheDocument();

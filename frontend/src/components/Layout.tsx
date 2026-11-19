@@ -1,7 +1,7 @@
 import { ReactNode, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Link, NavLink, Navigate, Outlet, useLocation, useNavigate } from 'react-router-dom';
 import {
-  ArrowLeft, Bell, Calendar, Car, CarFront, Clock, Fingerprint, HandCoins, Home,
+  ArrowLeft, Bell, Calendar, Clock, Fingerprint, HandCoins, Home,
   LayoutGrid, LifeBuoy, PanelLeftClose, PanelLeftOpen, Search, Receipt, ShieldAlert, User, Wallet, BarChart3, WifiOff,
 } from 'lucide-react';
 import { useAuth } from '../auth';
@@ -156,7 +156,6 @@ function LayoutInner() {
     items.filter((n) => n.show && !pending).map(({ to, label, icon, end, badge }) => ({ to, label, icon, end, badge }));
   const member = links([
     { to: '/', label: t('home'), icon: <Home size={sz} />, end: true, show: true },
-    { to: '/rides', label: t('myRides'), icon: <Car size={sz} />, show: can('rides') },
     { to: '/events', label: t('events'), icon: <Calendar size={sz} />, show: can('events') },
     { to: '/costs', label: t('myCosts'), icon: <Wallet size={sz} />, show: can('costs') },
     { to: '/reimbursements', label: t('reimbursements'), icon: <Receipt size={sz} />, show: can('reimbursements') },
@@ -165,17 +164,16 @@ function LayoutInner() {
     { to: '/help', label: t('help'), icon: <LifeBuoy size={sz} />, show: can('help') && !helpDesk },
   ]);
   const service = links([
-    { to: '/drive', label: t('drive'), icon: <CarFront size={sz} />, show: can('drive') },
     { to: '/settlements', label: t('settlements'), icon: <HandCoins size={sz} />, show: can('settlements') || can('admin_bills') },
   ]);
   const profileTab: NavItem = { to: '/me', label: t('profile'), icon: <User size={sz} /> };
   const tab = (to: string) => [...member, ...service].filter((n) => n.to === to);
-  // Phone tab bar: home, rides, then driving for drivers, events. Staff give up the last of
-  // those for an Admin tab that opens the staff menu. Five at most, profile always last.
+  // Phone tab bar: home, events. Rides and driving are asked for from an event, and their
+  // history lives in the profile. Staff get an Admin tab that opens the staff menu.
   const showAdminTab = !pending && staff.length > 0;
   const bottom: NavItem[] = pending
     ? []
-    : [...tab('/'), ...tab('/rides'), ...tab('/drive'), ...tab('/events')].slice(0, showAdminTab ? 3 : 4);
+    : [...tab('/'), ...tab('/events')];
   const onAdminPage = loc.pathname.startsWith('/admin') || (helpDesk && loc.pathname.startsWith('/help'));
   const badge = (n?: number) => waitingBadge(n, t('waitingCount', { count: n ?? 0 }));
 

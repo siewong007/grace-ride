@@ -27,6 +27,7 @@ pub enum EventsError {
     JoinAsNotAllowed,
     InvalidParentGroup,
     EventRideNeedsSignup,
+    EventDriveNeedsSignup,
     DuplicateEventRide,
     DriverOutsideGroup,
     VisitorLinkInvalid,
@@ -141,6 +142,11 @@ pub fn render(lang: Lang, key: EventsError) -> String {
             lang,
             "上级群体无效：不能形成循环，且最多三层",
             "That parent group isn't allowed: no loops, and at most three levels",
+        ),
+        EventsError::EventDriveNeedsSignup => pair(
+            lang,
+            "请先报名参加此活动，再自愿接送",
+            "Sign up for the event before volunteering to drive for it",
         ),
         EventsError::EventRideNeedsSignup => pair(
             lang,

@@ -1,5 +1,8 @@
 export default {
   title: '申请接送',
+  eventFirstTitle: '请从活动页面申请接送',
+  eventFirstDesc: '先报名您要参加的活动，再在该活动页面申请接送。',
+  browseEvents: '浏览活动',
   eventLabel: '活动：{title}',
   desc: '填写日期、接送地区、时间及乘车人数。',
   submitted: '接送申请已提交',

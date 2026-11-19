@@ -1,5 +1,8 @@
 export default {
   title: 'Request a ride',
+  eventFirstTitle: 'Rides are requested from an event',
+  eventFirstDesc: 'Sign up for the event you’re going to, then ask for a ride from its page.',
+  browseEvents: 'Browse events',
   eventLabel: 'Event: {title}',
   desc: 'Fill in date, pickup area, time and number of passengers.',
   submitted: 'Ride request submitted',

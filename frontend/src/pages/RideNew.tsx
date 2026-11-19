@@ -15,6 +15,7 @@ import {
 import { post, useApi } from '../api';
 import {
   Button,
+  EmptyState,
   ErrorBox,
   Field,
   IconButton,
@@ -56,7 +57,26 @@ interface SavedPlace {
   is_default: number;
 }
 
+/** A ride is asked for from an event page. Opened without `?event=` (an old link or
+ *  bookmark) there is nothing to attach it to, so point the member at the events list. */
 export default function RideNew() {
+  const { t } = useTranslation('rideNew');
+  const [params] = useSearchParams();
+  if (!params.get('event')) {
+    return (
+      <Page width="narrow">
+        <EmptyState
+          title={t('eventFirstTitle')}
+          description={t('eventFirstDesc')}
+          action={<Button variant="primary" to="/events">{t('browseEvents')}</Button>}
+        />
+      </Page>
+    );
+  }
+  return <RideNewForm />;
+}
+
+function RideNewForm() {
   const { t } = useTranslation('rideNew');
   const nav = useNavigate();
   const [params] = useSearchParams();

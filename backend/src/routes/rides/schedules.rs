@@ -99,7 +99,8 @@ pub(super) async fn create_recurring_schedule(
     Json(req): Json<RecurringScheduleIn>,
 ) -> AppResult<Json<Value>> {
     match req.kind.as_str() {
-        "passenger" => require(&u, Page::Rides, Act::Create)?,
+        // Rides exist only for events now; a standing weekly ride has no event to attach to.
+        "passenger" => return Err(bad(u.lang, ErrorKey::EventRideNeedsSignup)),
         "driver" => {
             if !u.can(Page::Drive, Act::Create) && !u.can(Page::Drive, Act::Update) {
                 return Err(forbidden(u.lang, ErrorKey::OnlyVolunteerDriversCanSet));
@@ -436,8 +437,7 @@ pub async fn process_recurring_schedules(db: &PgPool) -> anyhow::Result<usize> {
          JOIN users u ON u.id = s.user_id
          JOIN areas a ON a.id = s.area_id
          WHERE s.active = 1 AND u.status = 'active' AND a.active = 1
-           AND ((s.kind = 'passenger' AND {}) OR (s.kind = 'driver' AND {}))",
-        perms::sql_holds("u", Perm(Page::Rides, Act::Create)),
+           AND s.kind = 'driver' AND {}",
         perms::sql_holds("u", Perm(Page::Drive, Act::Create)),
     );
     let rows: Vec<ActiveScheduleRow> = sqlx::query_as(sqlx::AssertSqlSafe(&*query_sql))
@@ -501,7 +501,8 @@ pub(super) async fn generate_recurring_schedule(
     );
     let (s, area_active) = row.ok_or_else(|| not_found(u.lang))?;
     match s.kind.as_str() {
-        "passenger" => require(&u, Page::Rides, Act::Create)?,
+        // Rides exist only for events now; a standing weekly ride has no event to attach to.
+        "passenger" => return Err(bad(u.lang, ErrorKey::EventRideNeedsSignup)),
         "driver" => {
             if !u.can(Page::Drive, Act::Create) && !u.can(Page::Drive, Act::Update) {
                 return Err(forbidden(u.lang, ErrorKey::OnlyVolunteerDriversCanSet));

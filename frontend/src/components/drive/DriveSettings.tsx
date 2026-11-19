@@ -1,8 +1,8 @@
 import { FormEvent, useEffect, useMemo, useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
-import { Check, Minus, Plus, Repeat, Trash2 } from 'lucide-react';
+import { Check, Minus, Plus } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
-import { del, post, put, useApi } from '../../api';
+import { put, useApi } from '../../api';
 import { useAuth } from '../../auth';
 import {
   Button,
@@ -13,8 +13,7 @@ import {
   Spinner,
   useAction,
 } from '../ui';
-import type { Area, DriverStanding, Profile } from './types';
-import { WEEKDAYS_DRIVE } from './types';
+import type { Area, Profile } from './types';
 
 export function DriveSettings() {
   const { t } = useTranslation('drive');
@@ -329,101 +328,6 @@ export function DriveSettings() {
         </div>
       </div>
     </form>
-      <StandingDriverSchedules areas={(areas ?? []).filter((a) => a.active)} />
     </div>
-  );
-}
-
-function StandingDriverSchedules({ areas }: { areas: Area[] }) {
-  const { t } = useTranslation('drive');
-  const { can } = useAuth();
-  const canUpdate = can('drive', 'update');
-  const { data: listRaw, reload } = useApi<DriverStanding[]>('/recurring-schedules');
-  const rows = (Array.isArray(listRaw) ? listRaw : []).filter((r) => r.kind === 'driver');
-  const { busy, error, run } = useAction();
-  const [f, setF] = useState({ weekday: 0, pickup_time: '08:30', area_id: '', destination: '', label: '' });
-
-  const add = () => {
-    if (!canUpdate) return;
-    run(async () => {
-      await post('/recurring-schedules', {
-        kind: 'driver',
-        label: f.label.trim(),
-        weekday: Number(f.weekday),
-        pickup_time: f.pickup_time,
-        area_id: Number(f.area_id),
-        destination: f.destination.trim(),
-        seats: 1,
-      });
-      setF({ weekday: 0, pickup_time: '08:30', area_id: '', destination: '', label: '' });
-      await reload();
-    }, t('standingAdded'));
-  };
-
-  return (
-    <Card className="stack" style={{ marginTop: 'var(--space-4)' }}>
-      <div className="row nowrap gap-xs items-center">
-        <Repeat size={18} aria-hidden="true" />
-        <h3 className="no-margin">{t('standingTitle')}</h3>
-      </div>
-      <p className="muted small no-margin">{t('standingDesc')}</p>
-      {rows.length > 0 && (
-        <div className="stack-sm">
-          {rows.map((s) => (
-            <div key={s.id} className="card flat tight row between nowrap gap-sm">
-              <div className="min-w-0">
-                <div className="bold small">
-                  {t(`weekdays.${WEEKDAYS_DRIVE[s.weekday] ?? 'sun'}`)} · {s.pickup_time}
-                  {s.label ? ` · ${s.label}` : ''}
-                </div>
-                <div className="muted tiny">
-                  {s.area_name}{s.destination ? ` → ${s.destination}` : ''}
-                </div>
-              </div>
-              {canUpdate && (
-                <IconButton
-                  size="sm"
-                  variant="danger"
-                  label={t('standingDelete')}
-                  icon={<Trash2 size={15} />}
-                  onClick={() => run(() => del(`/recurring-schedules/${s.id}`).then(reload))}
-                />
-              )}
-            </div>
-          ))}
-        </div>
-      )}
-      {canUpdate && (
-        <>
-          <div className="form-grid two">
-            <Field label={t('standingDay')}>
-              <select className="input" value={f.weekday} onChange={(e) => setF({ ...f, weekday: Number(e.target.value) })}>
-                {WEEKDAYS_DRIVE.map((w, idx) => (
-                  <option key={w} value={idx}>{t(`weekdays.${w}`)}</option>
-                ))}
-              </select>
-            </Field>
-            <Field label={t('standingTime')}>
-              <input type="time" className="input" value={f.pickup_time} onChange={(e) => setF({ ...f, pickup_time: e.target.value })} />
-            </Field>
-            <Field label={t('standingArea')}>
-              <select className="input" value={f.area_id} onChange={(e) => setF({ ...f, area_id: e.target.value })}>
-                <option value="">—</option>
-                {areas.map((a) => (
-                  <option key={a.id} value={a.id}>{a.name}</option>
-                ))}
-              </select>
-            </Field>
-            <Field label={t('standingLabel')}>
-              <input className="input" value={f.label} onChange={(e) => setF({ ...f, label: e.target.value })} placeholder={t('standingLabelPlaceholder')} />
-            </Field>
-          </div>
-          <ErrorBox error={error} />
-          <Button variant="secondary" disabled={busy || !f.area_id} onClick={add}>
-            {t('standingAdd')}
-          </Button>
-        </>
-      )}
-    </Card>
   );
 }

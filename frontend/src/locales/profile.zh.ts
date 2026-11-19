@@ -10,6 +10,8 @@ export default {
   preferences: '偏好设置',
   relatedPages: '相關頁面',
   roles: '职务',
+  myRideHistory: '我的乘车记录',
+  myDrivingHistory: '我的接送记录',
   myCosts: '我的费用',
   myReimb: 'Grab 报销',
   myReport: '我的月报',
