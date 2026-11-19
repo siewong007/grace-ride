@@ -2454,6 +2454,7 @@ async fn disaster_recovery_backup_restore_drill() {
     );
     let verify_db = sqlx::postgres::PgPoolOptions::new()
         .max_connections(1)
+        .acquire_timeout(std::time::Duration::from_secs(60))
         .connect(&st.cfg.database_url)
         .await
         .unwrap();

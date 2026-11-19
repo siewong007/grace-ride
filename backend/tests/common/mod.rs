@@ -47,7 +47,11 @@ pub async fn setup() -> (Router, AppState) {
         session_timeout_mins: 15,
         json_logs: false,
         routing: Default::default(),
-        db: Default::default(),
+        db: grace_ride::state::DbConfig {
+            max_connections: 3,
+            acquire_timeout_secs: 60,
+            ..Default::default()
+        },
         housekeeping_interval_mins: 60,
         notification_retention_days: 90,
     };

@@ -71,6 +71,7 @@ pub async fn fresh_schema(prefix: &str) -> String {
     let base = base_url();
     let pool = sqlx::postgres::PgPoolOptions::new()
         .max_connections(1)
+        .acquire_timeout(std::time::Duration::from_secs(60))
         .connect(&base)
         .await
         .unwrap();
