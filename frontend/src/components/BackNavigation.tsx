@@ -4,6 +4,7 @@ import React, {
   useCallback,
   useContext,
   useEffect,
+  useLayoutEffect,
   useMemo,
   useRef,
   useState,
@@ -21,6 +22,7 @@ export interface BackHistoryEntry {
 
 interface BackNavigationContextValue {
   previousEntry: BackHistoryEntry | null;
+  nextEntry: BackHistoryEntry | null;
 }
 
 const BackNavigationContext = createContext<BackNavigationContextValue | null>(null);
@@ -37,7 +39,7 @@ function BackNavigationTracker({ children }: { children: ReactNode }) {
     index: 0,
   }));
 
-  useEffect(() => {
+  useLayoutEffect(() => {
     const nextTo = loc.pathname + loc.search;
     const entry: BackHistoryEntry = { key: loc.key, to: nextTo, pathname: loc.pathname };
 
@@ -94,7 +96,8 @@ function BackNavigationTracker({ children }: { children: ReactNode }) {
   }, [loc.key, loc.pathname, loc.search, navType]);
 
   const previousEntry = state.index > 0 ? state.entries[state.index - 1] : null;
-  const value = useMemo(() => ({ previousEntry }), [previousEntry]);
+  const nextEntry = state.index < state.entries.length - 1 ? state.entries[state.index + 1] : null;
+  const value = useMemo(() => ({ previousEntry, nextEntry }), [previousEntry, nextEntry]);
 
   return <BackNavigationContext.Provider value={value}>{children}</BackNavigationContext.Provider>;
 }
@@ -249,7 +252,16 @@ function hasScrolledHorizontalAncestor(target: Element): boolean {
  * Global touch swipe-right-to-go-back handler with a floating left-edge arrow indicator.
  * Supports left-edge swipes and horizontal right-drags on non-scrollable content.
  */
-export function SwipeBackGesture({ enabled, onBack }: { enabled: boolean; onBack: () => void }) {
+export function SwipeBackGesture({
+  enabled,
+  onBack,
+  edgeOnly = false,
+}: {
+  enabled: boolean;
+  onBack: () => void;
+  /** When set, only left-edge swipes go back, so mid-screen swipes can switch tabs. */
+  edgeOnly?: boolean;
+}) {
   const loc = useLocation();
   const indicatorRef = useRef<HTMLDivElement>(null);
   const gestureRef = useRef<GestureState>({ ...IDLE_GESTURE });
@@ -259,6 +271,8 @@ export function SwipeBackGesture({ enabled, onBack }: { enabled: boolean; onBack
   const [armed, setArmed] = useState(false);
   const onBackRef = useRef(onBack);
   onBackRef.current = onBack;
+  const edgeOnlyRef = useRef(edgeOnly);
+  edgeOnlyRef.current = edgeOnly;
 
   const resetGesture = useCallback(() => {
     gestureRef.current = { ...IDLE_GESTURE };
@@ -304,6 +318,7 @@ export function SwipeBackGesture({ enabled, onBack }: { enabled: boolean; onBack
 
       const touch = e.touches[0];
       const isEdge = touch.clientX <= EDGE_ZONE_PX;
+      if (!isEdge && edgeOnlyRef.current) return;
       if (!isEdge) {
         if (target.closest('input, textarea, select, [contenteditable]:not([contenteditable="false"])')) {
           return;
