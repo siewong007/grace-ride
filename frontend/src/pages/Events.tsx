@@ -125,18 +125,18 @@ export default function Events() {
           title={t('title')}
           subtitle={t('desc')}
           actions={
-            <div className="row nowrap gap-sm">
+            <div className="page-head-action-pair">
               <Button
                 variant="secondary"
                 size="sm"
                 icon={<QrCode size={16} />}
                 onClick={() => setShowScanModal(true)}
               >
-                {t('scanToAttend', { ns: 'eventDetail' })}
+                <span className="page-head-action-label">{t('scanToAttend', { ns: 'eventDetail' })}</span>
               </Button>
               {can('events', 'create') && (
                 <Button variant="primary" to="/events/new" icon={<Plus size={18} />}>
-                  {t('create')}
+                  <span className="page-head-action-label">{t('create')}</span>
                 </Button>
               )}
             </div>
