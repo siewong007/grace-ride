@@ -210,7 +210,7 @@ describe('Invite details match the server rules', () => {
       kind: 'family',
       email: '',
       name: '',
-      family_name: '陈家',
+      family_name: 'Chen Home',
       phone: '019-700 4001',
     };
     renderInvite();
@@ -219,8 +219,8 @@ describe('Invite details match the server rules', () => {
     expect(phone).toHaveAttribute('readonly');
     expect(screen.getByLabelText(/name/i)).toHaveValue('');
     expect(screen.getByLabelText(/email/i)).toHaveValue('');
-    expect(screen.getByText('陈家')).toBeInTheDocument();
-    fireEvent.change(screen.getByLabelText(/name/i), { target: { value: '新人' } });
+    expect(screen.getByText('Chen Home')).toBeInTheDocument();
+    fireEvent.change(screen.getByLabelText(/name/i), { target: { value: 'New Kin' } });
     fireEvent.change(screen.getByLabelText(/email/i), { target: { value: 'new-kin@example.org' } });
     fireEvent.click(screen.getByRole('button', { name: /continue/i }));
     expect(screen.getByRole('checkbox')).not.toBeChecked();
