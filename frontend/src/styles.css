@@ -483,7 +483,9 @@ button, input, select, textarea { font: inherit; color: inherit; }
 .btn.danger:hover { background: var(--danger-soft); }
 .btn.ghost { background: transparent; border-color: transparent; color: var(--primary); }
 .btn.ghost:hover { background: var(--surface-2); }
-.btn.block { width: 100%; min-width: 0; white-space: normal; text-align: center; padding-block: var(--space-2); }
+/* `display` is repeated because the global `.block` utility would otherwise win on order
+   and turn the button back into a block, leaving icons baseline-aligned above the text. */
+.btn.block { display: inline-flex; width: 100%; min-width: 0; white-space: normal; text-align: center; padding-block: var(--space-2); }
 .btn.sm { min-height: 44px; padding: 0 var(--space-3); font-size: var(--fs-sm); }
 .btn.lg { min-height: 56px; padding: 0 var(--space-6); font-size: var(--fs-lg); }
 .btn-row { display: flex; gap: var(--space-2); flex-wrap: wrap; }
