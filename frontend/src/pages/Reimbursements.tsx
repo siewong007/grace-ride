@@ -1,4 +1,4 @@
-import { FormEvent, useEffect, useState } from 'react';
+import { FormEvent, useEffect, useMemo, useState } from 'react';
 import { Link, useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import { AlertCircle, CheckCircle2, Circle, CircleDot, Plus } from 'lucide-react';
 import { post, put, useApi } from '../api';
@@ -166,7 +166,10 @@ export function ReimbursementForm() {
   const editId = params.get('edit');
   const { me } = useAuth();
   const past = useApi<PastRide[] | { items: PastRide[] }>('/rides?scope=past');
-  const pastRides = Array.isArray(past.data) ? past.data : past.data?.items ?? [];
+  const pastRides = useMemo(
+    () => (Array.isArray(past.data) ? past.data : past.data?.items ?? []),
+    [past.data]
+  );
   const registeredEventsApi = useApi<RegisteredEvent[]>('/events?scope=registered');
   const registeredEvents = Array.isArray(registeredEventsApi.data) ? registeredEventsApi.data : [];
   const existing = useApi<Reimb>(editId ? `/reimbursements/${editId}` : null);
