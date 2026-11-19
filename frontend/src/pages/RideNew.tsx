@@ -65,11 +65,18 @@ export default function RideNew() {
   if (!params.get('event')) {
     return (
       <Page width="narrow">
-        <EmptyState
-          title={t('eventFirstTitle')}
-          description={t('eventFirstDesc')}
-          action={<Button variant="primary" to="/events">{t('browseEvents')}</Button>}
-        />
+        <div className="stack">
+          <PageHeader
+            title={t('title')}
+            subtitle={t('desc')}
+            back="/events"
+          />
+          <EmptyState
+            title={t('eventFirstTitle')}
+            description={t('eventFirstDesc')}
+            action={<Button variant="primary" to="/events">{t('browseEvents')}</Button>}
+          />
+        </div>
       </Page>
     );
   }

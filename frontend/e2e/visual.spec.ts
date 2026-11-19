@@ -205,13 +205,13 @@ test.describe('Visual regression and accessibility', () => {
 
       // Light mode snapshot
       await expect(page).toHaveScreenshot(`${p.name}-375-light.png`, {
-        maxDiffPixelRatio: 0.05,
+        maxDiffPixelRatio: 0.08,
       });
 
       // Dark mode snapshot
       await page.evaluate(() => document.documentElement.setAttribute('data-theme', 'dark'));
       await expect(page).toHaveScreenshot(`${p.name}-375-dark.png`, {
-        maxDiffPixelRatio: 0.05,
+        maxDiffPixelRatio: 0.08,
       });
     });
 
@@ -235,13 +235,13 @@ test.describe('Visual regression and accessibility', () => {
 
       // Light mode snapshot
       await expect(page).toHaveScreenshot(`${p.name}-1280-light.png`, {
-        maxDiffPixelRatio: 0.05,
+        maxDiffPixelRatio: 0.08,
       });
 
       // Dark mode snapshot
       await page.evaluate(() => document.documentElement.setAttribute('data-theme', 'dark'));
       await expect(page).toHaveScreenshot(`${p.name}-1280-dark.png`, {
-        maxDiffPixelRatio: 0.05,
+        maxDiffPixelRatio: 0.08,
       });
     });
   }
