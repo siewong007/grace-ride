@@ -9,6 +9,7 @@ use crate::state::AppState;
 
 mod announcements;
 mod calendar;
+mod family;
 mod guides;
 mod help;
 mod notifications;
@@ -37,6 +38,18 @@ pub(super) fn like_pattern(q: &str) -> String {
 pub fn router() -> Router<AppState> {
     Router::new()
         .route("/me", axum::routing::put(profile::update_profile))
+        .route(
+            "/me/family",
+            get(family::get_family)
+                .post(family::create_family)
+                .patch(family::rename_family)
+                .delete(family::delete_family),
+        )
+        .route("/me/family/leave", post(family::leave_family))
+        .route(
+            "/me/family/members/{user_id}",
+            delete(family::remove_member),
+        )
         .route(
             "/me/calendar-feed",
             get(calendar::get_calendar_feed).delete(calendar::revoke_calendar_feed),
