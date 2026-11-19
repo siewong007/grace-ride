@@ -27,7 +27,7 @@ import { useAutoLock } from '../components/AutoLock';
 import { DisplayPreferences } from '../components/AppChrome';
 import { Avatar, Button, ErrorBox, Field, Modal, Notice, PageHeader, Pill, SheetLink, useAction, useConfirm } from '../components/ui';
 import { fmtAgo, roleLabel, useFormatT } from '../format';
-import { passkeySupported, registerPasskey, withRecentSignIn } from '../webauthn';
+import { clearDevicePasskey, passkeySupported, registerPasskey, withRecentSignIn } from '../webauthn';
 import { WaitingRoom } from '../components/Onboarding';
 import AvatarEditor from '../components/AvatarEditor';
 import { PwaInstallModal } from '../components/PwaInstallModal';
@@ -536,7 +536,9 @@ export default function Profile() {
                               confirmLabel: t('remove'),
                               tone: 'danger',
                             });
-                            if (ok) run(() => recentSignIn(() => del(`/auth/passkeys/${p.id}`)).then(passkeys.reload).then(refresh), t('removed'));
+                            if (ok) run(() => recentSignIn(() => del(`/auth/passkeys/${p.id}`)).then(() => {
+                              if (passkeys.data?.length === 1) clearDevicePasskey();
+                            }).then(passkeys.reload).then(refresh), t('removed'));
                           }}
                         >
                           {t('remove')}
@@ -550,7 +552,7 @@ export default function Profile() {
                 <Button
                   variant="primary"
                   disabled={busy || !passkeySupported()}
-                  onClick={() => run(() => recentSignIn(() => registerPasskey(navigator.platform || t('myPhone'))).then(passkeys.reload).then(refresh), t('addPasskeyDone'))}
+                  onClick={() => run(() => recentSignIn(() => registerPasskey(navigator.platform || t('myPhone'), me.email)).then(passkeys.reload).then(refresh), t('addPasskeyDone'))}
                 >
                   <Fingerprint size={18} />
                   {t('addPasskey')}

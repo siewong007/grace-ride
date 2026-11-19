@@ -21,4 +21,9 @@ export default {
   welcomeBilingual: '让关爱一路相伴 · Care that walks with you',
   emailRecovery: '电邮恢复账号',
   devBadge: 'DEV / 仅本地',
+  passkeyDetected: '此设备已注册通行密钥',
+  passkeyReadyHint: '您的设备已为此账号绑定通行密钥。可直接刷脸、指纹或锁屏密码登入。',
+  thisDevice: '此设备',
+  switchAccount: '使用其他电邮',
+  useSavedPasskey: '使用已保存的通行密钥（{email}）',
 };

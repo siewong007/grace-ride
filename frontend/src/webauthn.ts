@@ -32,7 +32,7 @@ interface ServerPasskeyOptions {
 
 export const passkeySupported = () => typeof window !== 'undefined' && !!window.PublicKeyCredential;
 
-export async function registerPasskey(label?: string) {
+export async function registerPasskey(label?: string, email?: string) {
   const { challenge_id, options } = await post<{ challenge_id: string; options: ServerPasskeyOptions }>('/auth/passkey/register/start');
   const pk = options.publicKey;
   const cred = (await navigator.credentials.create({
@@ -57,6 +57,9 @@ export async function registerPasskey(label?: string) {
     extensions: cred.getClientExtensionResults(),
   };
   await post('/auth/passkey/register/finish', { challenge_id, credential, label });
+  if (email) {
+    saveDevicePasskey(email);
+  }
 }
 
 /** Asks the browser for a passkey assertion and posts it to `finishPath`. */
@@ -87,8 +90,11 @@ async function assertPasskey(startPath: string, startBody: unknown, finishPath: 
   await post(finishPath, { challenge_id, credential });
 }
 
-export const loginWithPasskey = (email: string) =>
-  assertPasskey('/auth/passkey/login/start', { email }, '/auth/passkey/login/finish');
+export const loginWithPasskey = async (email: string) => {
+  const normEmail = email.trim().toLowerCase();
+  await assertPasskey('/auth/passkey/login/start', { email: normEmail }, '/auth/passkey/login/finish');
+  saveDevicePasskey(normEmail);
+};
 
 /** Confirms the signed-in member with their passkey, without signing out. */
 export const reauthWithPasskey = () =>
@@ -109,3 +115,61 @@ export async function withRecentSignIn<T>(fn: () => Promise<T>, canPasskey: bool
     return fn();
   }
 }
+
+const DEVICE_PASSKEY_KEY = 'gr_device_passkey';
+
+export interface DevicePasskeyInfo {
+  email: string;
+  savedAt: number;
+}
+
+export function getDevicePasskey(): DevicePasskeyInfo | null {
+  if (typeof localStorage === 'undefined') return null;
+  try {
+    const raw = localStorage.getItem(DEVICE_PASSKEY_KEY);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw);
+    if (parsed && typeof parsed.email === 'string' && parsed.email.trim()) {
+      return {
+        email: parsed.email.trim().toLowerCase(),
+        savedAt: typeof parsed.savedAt === 'number' ? parsed.savedAt : Date.now(),
+      };
+    }
+  } catch {
+    /* ignore parsing errors */
+  }
+  return null;
+}
+
+export function saveDevicePasskey(email: string): void {
+  if (typeof localStorage === 'undefined' || !email || !email.trim()) return;
+  try {
+    const info: DevicePasskeyInfo = {
+      email: email.trim().toLowerCase(),
+      savedAt: Date.now(),
+    };
+    localStorage.setItem(DEVICE_PASSKEY_KEY, JSON.stringify(info));
+  } catch {
+    /* ignore storage errors */
+  }
+}
+
+export function clearDevicePasskey(): void {
+  if (typeof localStorage === 'undefined') return;
+  try {
+    localStorage.removeItem(DEVICE_PASSKEY_KEY);
+  } catch {
+    /* ignore storage errors */
+  }
+}
+
+export const platformAuthenticatorAvailable = async (): Promise<boolean> => {
+  if (typeof window === 'undefined' || !window.PublicKeyCredential || !PublicKeyCredential.isUserVerifyingPlatformAuthenticatorAvailable) {
+    return false;
+  }
+  try {
+    return await PublicKeyCredential.isUserVerifyingPlatformAuthenticatorAvailable();
+  } catch {
+    return false;
+  }
+};

@@ -1,10 +1,15 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { ApiError } from './api';
+import {
+  clearDevicePasskey,
+  getDevicePasskey,
+  loginWithPasskey,
+  saveDevicePasskey,
+  withRecentSignIn,
+} from './webauthn';
 
 const { post } = vi.hoisted(() => ({ post: vi.fn() }));
 vi.mock('./api', async (orig) => ({ ...(await orig<typeof import('./api')>()), post }));
-
-import { withRecentSignIn } from './webauthn';
 
 const tooOld = () => new ApiError(403, 'sign in again', 'RECENT_SIGN_IN_REQUIRED');
 
@@ -47,6 +52,65 @@ describe('withRecentSignIn', () => {
     expect(fn).toHaveBeenCalledTimes(2);
     expect(post).toHaveBeenCalledWith('/auth/passkey/reauth/start', {});
     expect(post.mock.calls[1][0]).toBe('/auth/passkey/reauth/finish');
+    vi.unstubAllGlobals();
+  });
+});
+
+describe('device passkey helpers', () => {
+  beforeEach(() => {
+    localStorage.clear();
+  });
+
+  it('saves and reads device passkey info with lowercased email', () => {
+    expect(getDevicePasskey()).toBeNull();
+    saveDevicePasskey('Alice@example.com');
+    const info = getDevicePasskey();
+    expect(info).not.toBeNull();
+    expect(info?.email).toBe('alice@example.com');
+    expect(info?.savedAt).toBeTypeOf('number');
+  });
+
+  it('clears device passkey info', () => {
+    saveDevicePasskey('alice@example.com');
+    expect(getDevicePasskey()).not.toBeNull();
+    clearDevicePasskey();
+    expect(getDevicePasskey()).toBeNull();
+  });
+
+  it('ignores empty email strings', () => {
+    saveDevicePasskey('');
+    expect(getDevicePasskey()).toBeNull();
+  });
+});
+
+describe('loginWithPasskey', () => {
+  beforeEach(() => {
+    post.mockReset();
+    localStorage.clear();
+  });
+
+  it('saves device passkey on successful login', async () => {
+    post
+      .mockResolvedValueOnce({ challenge_id: 'c1', options: { publicKey: { challenge: 'AA', allowCredentials: [] } } })
+      .mockResolvedValueOnce({ ok: true });
+    const cred = {
+      id: 'cred1',
+      rawId: new Uint8Array([1]).buffer,
+      type: 'public-key',
+      response: {
+        authenticatorData: new Uint8Array([1]).buffer,
+        clientDataJSON: new Uint8Array([1]).buffer,
+        signature: new Uint8Array([1]).buffer,
+        userHandle: new Uint8Array([1]).buffer,
+      },
+      getClientExtensionResults: () => ({}),
+    };
+    vi.stubGlobal('navigator', { ...navigator, credentials: { get: vi.fn().mockResolvedValue(cred) } });
+
+    await loginWithPasskey('Bob@example.com');
+    expect(post).toHaveBeenCalledWith('/auth/passkey/login/start', { email: 'bob@example.com' });
+    expect(post).toHaveBeenCalledWith('/auth/passkey/login/finish', expect.anything());
+    expect(getDevicePasskey()?.email).toBe('bob@example.com');
     vi.unstubAllGlobals();
   });
 });

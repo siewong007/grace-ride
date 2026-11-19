@@ -21,4 +21,9 @@ export default {
   welcomeBilingual: 'Care that walks with you · 让关爱一路相伴',
   emailRecovery: 'Email recovery',
   devBadge: 'DEV / LOCAL ONLY',
+  passkeyDetected: 'Passkey ready on this device',
+  passkeyReadyHint: 'You have a passkey registered on this device. Sign in with face, fingerprint or screen lock.',
+  thisDevice: 'This device',
+  switchAccount: 'Use another email',
+  useSavedPasskey: 'Use saved passkey ({email})',
 };

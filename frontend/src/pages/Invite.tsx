@@ -122,7 +122,7 @@ export default function Invite() {
 
   const addPasskey = () =>
     run(async () => {
-      await registerPasskey(t('myPhone'));
+      await registerPasskey(t('myPhone'), email);
       await refresh();
       nav('/', { replace: true });
     }, t('passkeySet'));

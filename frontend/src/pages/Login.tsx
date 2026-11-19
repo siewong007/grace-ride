@@ -7,7 +7,7 @@ import { useTranslation } from 'react-i18next';
 import { LogoMark, Wordmark } from '../components/Brand';
 import { PublicDisplayBar } from '../components/AppChrome';
 import { Button, ErrorBox, Field, useAction } from '../components/ui';
-import { loginWithPasskey, passkeySupported } from '../webauthn';
+import { getDevicePasskey, loginWithPasskey, passkeySupported, type DevicePasskeyInfo } from '../webauthn';
 import { clearAutoLock } from '../components/AutoLock';
 
 type DevUser = { name: string; email: string; roles: string };
@@ -18,7 +18,9 @@ export default function Login() {
   const nav = useNavigate();
   const loc = useLocation();
   const from = (loc.state as { from?: string } | null)?.from ?? '/';
-  const [email, setEmail] = useState('');
+  const [devicePasskey] = useState<DevicePasskeyInfo | null>(() => getDevicePasskey());
+  const [switchingAccount, setSwitchingAccount] = useState(false);
+  const [email, setEmail] = useState(() => getDevicePasskey()?.email ?? '');
   const [who, setWho] = useState('');
   const [devUsers, setDevUsers] = useState<DevUser[] | null>(null);
   const { busy, error, run } = useAction();
@@ -35,10 +37,13 @@ export default function Login() {
     nav(from, { replace: true });
   };
 
+  const hasRecognizedDevicePasskey = passkeySupported() && Boolean(devicePasskey) && !switchingAccount;
+
   const onPasskey = (e: FormEvent) => {
     e.preventDefault();
+    const targetEmail = (hasRecognizedDevicePasskey && devicePasskey ? devicePasskey.email : email).trim();
     run(async () => {
-      await loginWithPasskey(email.trim());
+      await loginWithPasskey(targetEmail);
       await done();
     });
   };
@@ -52,8 +57,9 @@ export default function Login() {
   };
 
   const onEmailRecovery = () => {
+    const targetEmail = (hasRecognizedDevicePasskey && devicePasskey ? devicePasskey.email : email).trim();
     run(async () => {
-      await post('/auth/recovery-request', { email: email.trim(), reason: '' });
+      await post('/auth/recovery-request', { email: targetEmail, reason: '' });
     }, t('recoveryReceived'));
   };
 
@@ -79,16 +85,36 @@ export default function Login() {
 
           {/* Passkey primary login form */}
           <form className="stack" onSubmit={onPasskey}>
-            <Field label={t('email')}>
-              <input
-                className="input"
-                type="email"
-                autoComplete="username webauthn"
-                required
-                value={email}
-                onChange={(e) => setEmail(e.target.value)}
-              />
-            </Field>
+            {hasRecognizedDevicePasskey && devicePasskey ? (
+              <div className="card passkey-device-card stack-sm">
+                <div className="row items-center gap-sm">
+                  <span className="notice-icon text-primary">
+                    <Fingerprint size={24} />
+                  </span>
+                  <div className="stack-none" style={{ minWidth: 0, flex: 1 }}>
+                    <div className="bold small row items-center gap-xs">
+                      <span>{t('passkeyDetected')}</span>
+                      <span className="pill success tiny">{t('thisDevice')}</span>
+                    </div>
+                    <div className="text-ellipsis bold" style={{ fontSize: 'var(--fs-md)' }}>
+                      {devicePasskey.email}
+                    </div>
+                  </div>
+                </div>
+                <p className="muted tiny">{t('passkeyReadyHint')}</p>
+              </div>
+            ) : (
+              <Field label={t('email')}>
+                <input
+                  className="input"
+                  type="email"
+                  autoComplete="username webauthn"
+                  required
+                  value={email}
+                  onChange={(e) => setEmail(e.target.value)}
+                />
+              </Field>
+            )}
 
             {passkeySupported() ? (
               <Button variant="primary" size="lg" type="submit" block loading={busy} disabled={busy}>
@@ -98,6 +124,34 @@ export default function Login() {
             ) : (
               <div className="notice warning">{t('noPasskey')}</div>
             )}
+
+            {hasRecognizedDevicePasskey ? (
+              <Button
+                variant="ghost"
+                type="button"
+                block
+                disabled={busy}
+                onClick={() => {
+                  setSwitchingAccount(true);
+                  setEmail('');
+                }}
+              >
+                {t('switchAccount')}
+              </Button>
+            ) : devicePasskey && switchingAccount ? (
+              <Button
+                variant="ghost"
+                type="button"
+                block
+                disabled={busy}
+                onClick={() => {
+                  setSwitchingAccount(false);
+                  setEmail(devicePasskey.email);
+                }}
+              >
+                {t('useSavedPasskey', { email: devicePasskey.email })}
+              </Button>
+            ) : null}
 
             <Button
               variant="ghost"
