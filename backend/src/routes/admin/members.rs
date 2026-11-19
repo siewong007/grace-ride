@@ -110,6 +110,7 @@ pub(super) async fn list_users(
         Option<i64>,
         Option<String>,
         Option<String>,
+        Option<String>,
     );
     let to_json = |(
         id,
@@ -124,18 +125,21 @@ pub(super) async fn list_users(
         photo,
         color,
         icon,
+        family_name,
     ): Row| {
         if staff {
             json!({"id": id, "name": name, "email": email, "phone": phone, "roles": parse_roles(&roles), "status": status,
                    "created_at": created, "passkeys": pk, "groups": groups.unwrap_or_default(),
-                   "photo_file_id": photo, "avatar_color": color, "avatar_icon": icon})
+                   "photo_file_id": photo, "avatar_color": color, "avatar_icon": icon,
+                   "family_name": family_name})
         } else {
             json!({"id": id, "name": name})
         }
     };
     let select = "SELECT u.id, u.name, u.email, u.phone, u.roles, u.status, u.created_at, (SELECT COUNT(*) FROM passkeys p WHERE p.user_id=u.id),
                 (SELECT string_agg(g.name, '、') FROM group_members gm JOIN groups g ON g.id=gm.group_id WHERE gm.user_id=u.id),
-                u.photo_file_id, u.avatar_color, u.avatar_icon
+                u.photo_file_id, u.avatar_color, u.avatar_icon,
+                (SELECT f.name FROM family_members fm JOIN families f ON f.id = fm.family_id WHERE fm.user_id = u.id)
              FROM users u";
 
     if q.page.is_some() || q.limit.is_some() {

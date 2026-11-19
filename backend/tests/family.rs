@@ -815,3 +815,54 @@ async fn accepting_after_delete_does_not_create_a_user() {
             .unwrap();
     assert_eq!(n, 0);
 }
+
+#[tokio::test]
+async fn family_name_is_visible_only_to_member_staff() {
+    let (app, st) = setup().await;
+    let owner = login(&st, "member@example.org").await;
+    call(
+        &app,
+        Method::POST,
+        "/api/me/family",
+        Some(&owner),
+        Some(json!({"name": "陈家"})),
+    )
+    .await;
+    let staff = login(&st, "admin@example.org").await;
+    let listed = call(
+        &app,
+        Method::GET,
+        "/api/admin/users?page=1&limit=50",
+        Some(&staff),
+        None,
+    )
+    .await;
+    assert_eq!(listed.status, StatusCode::OK, "{}", listed.json);
+    let row = listed.json["items"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|u| u["id"] == 6)
+        .unwrap();
+    assert_eq!(row["email"], "member@example.org");
+    assert_eq!(row["family_name"], "陈家");
+
+    let leader = login(&st, "enci@example.org").await;
+    let picker = call(
+        &app,
+        Method::GET,
+        "/api/admin/users?page=1&limit=50",
+        Some(&leader),
+        None,
+    )
+    .await;
+    assert_eq!(picker.status, StatusCode::OK, "{}", picker.json);
+    let item = picker.json["items"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|u| u["id"] == 6)
+        .unwrap();
+    assert!(item.get("family_name").is_none());
+    assert!(item.get("email").is_none());
+}
