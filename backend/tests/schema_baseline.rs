@@ -40,6 +40,20 @@ async fn mark_history_as_pre_squash(db: &PgPool) {
     }
 }
 
+/// Every migration this build ships, by version: a full replay must end with exactly these.
+fn shipped_versions() -> Vec<i64> {
+    let dir = concat!(env!("CARGO_MANIFEST_DIR"), "/migrations");
+    let mut v: Vec<i64> = std::fs::read_dir(dir)
+        .unwrap()
+        .filter_map(|e| {
+            let name = e.ok()?.file_name().into_string().ok()?;
+            name.strip_suffix(".sql")?.split('_').next()?.parse().ok()
+        })
+        .collect();
+    v.sort_unstable();
+    v
+}
+
 async fn versions(db: &PgPool) -> Vec<i64> {
     sqlx::query_scalar("SELECT version FROM _sqlx_migrations ORDER BY version")
         .fetch_all(db)
@@ -68,7 +82,7 @@ async fn an_older_history_replays_the_schema_without_losing_rows() {
     db.close().await;
 
     let db = connect_db(&url).await.expect("replay");
-    assert_eq!(versions(&db).await, vec![1, 2, 3, 4, 5, 6, 7, 8, 9]);
+    assert_eq!(versions(&db).await, shipped_versions());
     let kept: Option<(String,)> = sqlx::query_as("SELECT name FROM areas WHERE name = '历史区'")
         .fetch_optional(&db)
         .await
@@ -103,7 +117,7 @@ async fn an_older_history_replays_the_schema_without_losing_rows() {
 
     // The next start keeps the new history as it is.
     let db = connect_db(&url).await.expect("second start");
-    assert_eq!(versions(&db).await, vec![1, 2, 3, 4, 5, 6, 7, 8, 9]);
+    assert_eq!(versions(&db).await, shipped_versions());
 }
 
 /// A later file that was edited after it ran (or that this build doesn't ship) must

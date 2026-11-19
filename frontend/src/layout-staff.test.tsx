@@ -10,7 +10,7 @@ vi.mock('./api', () => ({
   post: vi.fn(),
   useApi: (path: string | null) => ({
     data: path === '/admin/dashboard'
-      ? { pending_approval: 2, no_driver: 1, open_help: 4, pending_reimbursements: 3, pending_recovery: 0 }
+      ? { pending_approval: 2, no_driver: 1, open_help: 4, pending_reimbursements: 3, pending_recovery: 0, pending_members: 2 }
       : null,
     loading: false,
     error: null,
@@ -169,6 +169,16 @@ describe('Staff navigation', () => {
     for (const link of within(page).getAllByRole('link')) {
       expect(link).not.toHaveClass('active');
     }
+  });
+
+  it('counts members waiting for approval on the Members link, only for member admins', () => {
+    granted = [...allAdminGranted];
+    const { page, unmount } = openAdminMenu('/admin/menu');
+    expect(within(page).getByRole('link', { name: /Members/ })).toHaveAccessibleName(/2 waiting/);
+    unmount();
+    granted = [...transportGranted, 'admin_recovery'];
+    const second = openAdminMenu('/admin/menu');
+    expect(within(second.page).getByRole('link', { name: /Members/ })).not.toHaveAccessibleName(/waiting/);
   });
 
   it('names the page for assistive tech and keeps waiting counts on badges only', () => {

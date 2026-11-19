@@ -1,7 +1,7 @@
 import { ReactNode, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Link, NavLink, Navigate, Outlet, useLocation, useNavigate } from 'react-router-dom';
 import {
-  ArrowLeft, Bell, Calendar, Car, CarFront, Clock, HandCoins, Home,
+  ArrowLeft, Bell, Calendar, Car, CarFront, Clock, Fingerprint, HandCoins, Home,
   LayoutGrid, LifeBuoy, PanelLeftClose, PanelLeftOpen, Search, Receipt, ShieldAlert, User, Wallet, BarChart3, WifiOff,
 } from 'lucide-react';
 import { useAuth } from '../auth';
@@ -97,6 +97,8 @@ function LayoutInner() {
   const { staffGroups, staff, staffWaiting, helpDesk } = useStaffNav();
   const isHome = loc.pathname === '/';
   const pending = me?.status === 'pending';
+  // The profile page itself, where a pending member's waiting-room checklist says what the banners would.
+  const onMeRoot = loc.pathname === '/me' && !new URLSearchParams(loc.search).get('section');
   const effectiveBack = !isHome && !pending ? (back ?? getDefaultBack(loc.pathname, can)) : null;
   const smartBack = useSmartBack(effectiveBack, {
     disabled: !effectiveBack,
@@ -303,10 +305,18 @@ function LayoutInner() {
           </div>
         </header>
 
-        {pending && (
+        {pending && !onMeRoot && (
           <div className="shell-notice-container">
             <Notice tone="warning" icon={<Clock size={20} />}>
               {t('pendingNotice')}
+            </Notice>
+          </div>
+        )}
+        {me.passkey_count === 0 && !me.dev_mode && !(pending && onMeRoot) && !(loc.pathname === '/me' && loc.search.includes('section=security')) && (
+          <div className="shell-notice-container">
+            <Notice tone="warning" icon={<Fingerprint size={20} />}>
+              {t('noPasskeyNotice')}{' '}
+              <Link to="/me?section=security" className="bold">{t('noPasskeyAction')}</Link>
             </Notice>
           </div>
         )}

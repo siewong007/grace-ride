@@ -477,3 +477,111 @@ async fn dashboard_counts_open_invites_and_claims_awaiting_payment() {
     let last = call(&app, Method::GET, "/api/admin/dashboard", Some(&root), None).await;
     assert_eq!(last.json["open_invites"].as_i64().unwrap(), invites0);
 }
+
+#[tokio::test]
+async fn invite_signup_notifies_approvers_and_approval_notifies_member() {
+    let (app, st) = setup().await;
+    let root = login(&st, "superadmin@example.org").await;
+    let (root_id,): (i64,) =
+        sqlx::query_as("SELECT id FROM users WHERE email='superadmin@example.org'")
+            .fetch_one(&st.db)
+            .await
+            .unwrap();
+    let notes_to = |uid: i64, link: &'static str| {
+        let db = st.db.clone();
+        async move {
+            let (n,): (i64,) =
+                sqlx::query_as("SELECT COUNT(*) FROM notifications WHERE user_id=$1 AND link=$2")
+                    .bind(uid)
+                    .bind(link)
+                    .fetch_one(&db)
+                    .await
+                    .unwrap();
+            n
+        }
+    };
+    let pending_count = || async {
+        let d = call(&app, Method::GET, "/api/admin/dashboard", Some(&root), None).await;
+        assert_eq!(d.status, StatusCode::OK, "{}", d.json);
+        d.json["pending_members"].as_i64().unwrap()
+    };
+
+    let pending0 = pending_count().await;
+    let approver_notes0 = notes_to(root_id, "/admin/members?status=pending").await;
+
+    let made = call(
+        &app,
+        Method::POST,
+        "/api/admin/invites",
+        Some(&root),
+        Some(json!({})),
+    )
+    .await;
+    assert_eq!(made.status, StatusCode::OK, "{}", made.json);
+    let token = made.json["token"].as_str().unwrap();
+    let joined = call(
+        &app,
+        Method::POST,
+        &format!("/api/invites/{token}/accept"),
+        None,
+        Some(json!({"name": "Onboard Newbie", "email": "onboard@example.org", "phone": "012-300 0042", "terms": true})),
+    )
+    .await;
+    assert_eq!(joined.status, StatusCode::OK, "{}", joined.json);
+
+    // The approver hears about the new profile, and the queue counts it.
+    assert_eq!(
+        notes_to(root_id, "/admin/members?status=pending").await,
+        approver_notes0 + 1
+    );
+    assert_eq!(pending_count().await, pending0 + 1);
+
+    let (uid,): (i64,) = sqlx::query_as("SELECT id FROM users WHERE email='onboard@example.org'")
+        .fetch_one(&st.db)
+        .await
+        .unwrap();
+    assert_eq!(notes_to(uid, "/").await, 0);
+    let approve = call(
+        &app,
+        Method::PUT,
+        &format!("/api/admin/users/{uid}"),
+        Some(&root),
+        Some(json!({"roles": [], "status": "active", "group_ids": []})),
+    )
+    .await;
+    assert_eq!(approve.status, StatusCode::OK, "{}", approve.json);
+
+    // The member is told, and leaves the queue.
+    assert_eq!(notes_to(uid, "/").await, 1);
+    assert_eq!(pending_count().await, pending0);
+
+    // A later edit of an already-active member does not repeat the welcome.
+    let again = call(
+        &app,
+        Method::PUT,
+        &format!("/api/admin/users/{uid}"),
+        Some(&root),
+        Some(json!({"roles": [], "status": "active", "group_ids": []})),
+    )
+    .await;
+    assert_eq!(again.status, StatusCode::OK, "{}", again.json);
+    assert_eq!(notes_to(uid, "/").await, 1);
+
+    // A new member sees the Getting started checklist until they hide it, and it stays hidden.
+    let member = login(&st, "onboard@example.org").await;
+    let me = call(&app, Method::GET, "/api/auth/me", Some(&member), None).await;
+    assert_eq!(me.json["onboarding_dismissed"], false, "{}", me.json);
+    for (send, expect) in [(true, true), (false, true)] {
+        let r = call(
+            &app,
+            Method::PUT,
+            "/api/me",
+            Some(&member),
+            Some(json!({"onboarding_dismissed": send})),
+        )
+        .await;
+        assert_eq!(r.status, StatusCode::OK, "{}", r.json);
+        let me = call(&app, Method::GET, "/api/auth/me", Some(&member), None).await;
+        assert_eq!(me.json["onboarding_dismissed"], expect, "{}", me.json);
+    }
+}

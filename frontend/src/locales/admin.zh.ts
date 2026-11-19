@@ -57,6 +57,7 @@ export default {
       help: '待回复的求助',
       reimb: '待审核的报销',
       payout: '已批报销待拨款',
+      newMembers: '待审核的新成员',
       recovery: '账号恢复申请',
       nextPickup: '下一个接送：{when}',
       oldest: '最早一项提交于{ago}',

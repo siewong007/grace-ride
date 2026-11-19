@@ -493,6 +493,20 @@ pub(super) async fn update_user(
         }
     }
     tx.commit().await?;
+    if old_status == "pending" && req.status == "active" {
+        // The member is waiting on the pending screen; this also refreshes their session live.
+        crate::util::notify(
+            &st.db,
+            id,
+            ("账号已通过审核", "Your account is approved"),
+            (
+                "欢迎加入 Grace Ride！现在你可以预约用车和报名活动了。",
+                "Welcome to Grace Ride! You can now book rides and sign up for events.",
+            ),
+            "/",
+        )
+        .await;
+    }
     for passenger in released {
         crate::util::notify(
             &st.db,

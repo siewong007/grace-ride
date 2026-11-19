@@ -10,12 +10,15 @@ import { clearOfflineSnapshots } from '../offlineSnapshot';
 
 interface AutoLockCtx {
   isLocked: boolean;
+  /** False when this device has no way to unlock (no usable passkey, no 2FA): locking would strand the member. */
+  canLock: boolean;
   lock: () => void;
   unlock: () => void;
 }
 
 const Ctx = createContext<AutoLockCtx>({
   isLocked: false,
+  canLock: false,
   lock: () => {},
   unlock: () => {},
 });
@@ -70,6 +73,9 @@ export function AutoLockProvider({ children }: { children: ReactNode }) {
   const canTotp = Boolean(me?.totp_enabled);
   const canDevUnlock = Boolean(me?.dev_mode && (me?.passkey_count ?? 0) === 0 && !me?.totp_enabled);
   // The code form is its own view, reached from the link under the card, unless it is the only way in.
+  // With no unlock method the lock screen offers only Log out, and with no passkey the member
+  // can't sign back in, so the idle lock would push them into account recovery. Skip it.
+  const canLock = canPasskey || canTotp || canDevUnlock;
   const codeView = canTotp && (showCode || (!canPasskey && !canDevUnlock));
 
   // Inactivity timeout in minutes:
@@ -147,7 +153,7 @@ export function AutoLockProvider({ children }: { children: ReactNode }) {
 
   // Activity listeners to reset the inactivity timer
   useEffect(() => {
-    if (!me || timeoutMins <= 0 || isLocked) return;
+    if (!me || timeoutMins <= 0 || isLocked || !canLock) return;
 
     const onActivity = () => {
       lastActiveRef.current = Date.now();
@@ -172,7 +178,7 @@ export function AutoLockProvider({ children }: { children: ReactNode }) {
       events.forEach((ev) => window.removeEventListener(ev, onActivity));
       clearInterval(interval);
     };
-  }, [me, timeoutMins, isLocked, lock]);
+  }, [me, timeoutMins, isLocked, canLock, lock]);
 
   // Focus the code field in the code view, otherwise the unlock button.
   useEffect(() => {
@@ -239,7 +245,7 @@ export function AutoLockProvider({ children }: { children: ReactNode }) {
   };
 
   return (
-    <Ctx.Provider value={{ isLocked, lock, unlock }}>
+    <Ctx.Provider value={{ isLocked, canLock, lock, unlock }}>
       <div
         ref={bgRef}
         aria-hidden={Boolean(isLocked && me) || undefined}

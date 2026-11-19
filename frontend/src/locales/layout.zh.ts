@@ -39,6 +39,8 @@ export default {
   ticketDetail: '求助详情',
   adminNotice: '您拥有管理权限。请到 我的 → 账号安全 设置通行密钥或双重验证（2FA），才能使用管理功能。',
   pendingNotice: '管理员核对资料后才会分配职务与群体。在此之前你可以更新个人资料和通行密钥。',
+  noPasskeyNotice: '你还没有设置通行密钥。没有它，登出后将无法在这部手机上重新登录。',
+  noPasskeyAction: '设置通行密钥',
   mainNav: '主选单',
   expandNav: '显示选单名称',
   collapseNav: '隐藏选单名称',

@@ -4,9 +4,10 @@ import { ArrowLeft } from 'lucide-react';
 import { post } from '../api';
 import { useAuth } from '../auth';
 import { SwipeBackGesture, useSmartBack } from './BackNavigation';
+import { Globe } from 'lucide-react';
 import { Button, ErrorBox, useAction } from './ui';
 import { useTranslation } from 'react-i18next';
-import ms from '../locales/terms.ms';
+import i18n, { setLanguage, SupportedLanguage } from '../i18n';
 
 export const TERMS_SECTIONS = [
   'service', 'who', 'controller', 'info', 'sensitive', 'purpose', 'location', 'see', 'third',
@@ -15,31 +16,41 @@ export const TERMS_SECTIONS = [
 
 /**
  * The terms and privacy notice. `heading` is h1 on a page of its own, lower when shown
- * inside another step. The Malay text is one tap away because PDPA s.7(3) requires the
- * notice in Malay and English; the app itself stays Chinese/English.
+ * inside another step. The notice is rendered in the app language (Chinese/English).
+ * A Globe icon in the header switches and saves the language, like on the login screen.
  */
 export function TermsText({ heading: Heading = 'h2' }: { heading?: 'h1' | 'h2' | 'h3' }) {
   const { t: tUi } = useTranslation('terms');
-  const [malay, setMalay] = useState(false);
-  const t = (key: keyof typeof ms) => (malay ? ms[key] : tUi(key));
+  const { t: tC } = useTranslation('chrome');
+  const currentLang: SupportedLanguage = i18n.language?.startsWith('zh') ? 'zh' : 'en';
+  const nextLangLabel = currentLang === 'zh' ? tC('en') : tC('zh');
+
   return (
-    <div className="terms-measure stack" lang={malay ? 'ms' : undefined}>
-      <div>
-        <Heading className="terms-title">{t('title')}</Heading>
-        <p className="muted small">{t('updated')}</p>
-        <button type="button" className="link-btn small" lang={malay ? undefined : 'ms'} onClick={() => setMalay(!malay)}>
-          {malay ? tUi('readOwn') : tUi('readMalay')}
+    <div className="terms-measure stack" lang={currentLang}>
+      <div className="row between">
+        <div>
+          <Heading className="terms-title">{tUi('title')}</Heading>
+          <p className="muted small">{tUi('updated')}</p>
+        </div>
+        <button
+          type="button"
+          className="btn sm ghost lang-toggle"
+          aria-label={`${nextLangLabel} (${tC('switchLang')})`}
+          onClick={() => setLanguage(currentLang === 'zh' ? 'en' : 'zh')}
+        >
+          <Globe size={16} aria-hidden="true" />
+          <span>{nextLangLabel}</span>
         </button>
       </div>
-      <p className="terms-intro">{t('intro')}</p>
+      <p className="terms-intro">{tUi('intro')}</p>
       {TERMS_SECTIONS.map((key) => (
         <section key={key} className="stack-sm">
-          <h3>{t(`${key}Title`)}</h3>
-          <p className="muted">{t(`${key}Body`)}</p>
+          <h3>{tUi(`${key}Title`)}</h3>
+          <p className="muted">{tUi(`${key}Body`)}</p>
         </section>
       ))}
       <p className="small">
-        <Link to="/licences">{t('licences')}</Link>
+        <Link to="/licences">{tUi('licences')}</Link>
       </p>
     </div>
   );

@@ -151,6 +151,21 @@ describe('AutoLockProvider', () => {
     expect(screen.queryByRole('button', { name: /unlockUsePasskey|Use passkey/i })).toBeNull();
   });
 
+  it('does not idle-lock a member with no way to unlock (no passkey, no 2FA)', () => {
+    currentMe = { ...defaultMockMe, passkey_count: 0 };
+    render(
+      <MemoryRouter>
+        <AutoLockProvider>
+          <TestConsumer />
+        </AutoLockProvider>
+      </MemoryRouter>
+    );
+    act(() => {
+      vi.advanceTimersByTime(60 * 60 * 1000);
+    });
+    expect(screen.getByTestId('status')).toHaveTextContent('unlocked');
+  });
+
   it('triggers lock when idle time exceeds configured auto_lock_mins', () => {
     render(
       <MemoryRouter>

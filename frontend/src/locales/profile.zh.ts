@@ -67,6 +67,7 @@ export default {
   groups: '群体',
   autoLock: '闲置自动锁定',
   autoLockDesc: '长时间无操作后自动锁定屏幕，以保护个人资料与隐私。',
+  autoLockNeedsPasskey: '设置通行密钥或双重验证（2FA）后才会启用屏幕锁定，确保你随时能解锁。',
   autoLockDefault: '系统默认（{mins} 分钟）',
   autoLockNever: '从不（停用）',
   autoLock15m: '15 分钟',

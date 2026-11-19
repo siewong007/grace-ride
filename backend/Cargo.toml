@@ -38,7 +38,7 @@ hex = "0.4"
 chrono-tz = "0.10"
 ring = "0.17"
 # Error monitoring. Set SENTRY_DSN env var to enable; leave blank to disable.
-# rustls: consistent with reqwest's rustls-tls feature; avoids linking native-tls.
+# rustls: same TLS stack as reqwest; avoids linking native-tls.
 sentry = { version = "0.49", default-features = false, features = ["anyhow", "backtrace", "contexts", "panic", "tracing", "rustls"] }
 
 [dev-dependencies]

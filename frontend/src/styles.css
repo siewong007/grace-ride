@@ -2994,3 +2994,15 @@ main a[href^="tel:"]:not(.btn) { text-decoration: underline; }
   color: var(--btn-ink);
   border-color: var(--btn-bg);
 }
+
+/* New-member checklists (waiting room on /me, Getting started on Home). */
+.onboard-card { border-color: var(--primary); }
+.onboard-steps { list-style: none; margin: 0; padding: 0; }
+.onboard-step, .onboard-link { display: flex; align-items: center; gap: var(--space-3); }
+.onboard-link { flex: 1; min-height: 44px; color: inherit; text-decoration: none; }
+.onboard-link:hover .bold { text-decoration: underline; }
+.onboard-text { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.onboard-icon { flex: none; color: var(--muted); }
+.onboard-icon.done { color: var(--success); }
+.onboard-icon.waiting { color: var(--warning); }
+.onboard-done-title { color: var(--muted); text-decoration: line-through; }

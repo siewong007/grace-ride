@@ -24,6 +24,7 @@ import { DisplayPreferences } from '../components/AppChrome';
 import { Avatar, Button, ErrorBox, Field, FileInput, Modal, PageHeader, Pill, SheetLink, useAction, useConfirm } from '../components/ui';
 import { fmtAgo, roleLabel, useFormatT } from '../format';
 import { passkeySupported, registerPasskey, withRecentSignIn } from '../webauthn';
+import { WaitingRoom } from '../components/Onboarding';
 import QRCode from 'qrcode';
 import { useTranslation } from 'react-i18next';
 
@@ -38,7 +39,7 @@ export default function Profile() {
   const canReauth = passkeySupported() && (me?.passkey_count ?? 0) > 0;
   const recentSignIn = <T,>(fn: () => Promise<T>) => withRecentSignIn(fn, canReauth);
   const nav = useNavigate();
-  const { lock } = useAutoLock();
+  const { lock, canLock } = useAutoLock();
   const passkeys = useApi<{ id: number; label: string; created_at: string; last_used: string | null }[]>('/auth/passkeys');
   // The open section lives in the URL so the header back button and swipe-back both return to the list.
   const [searchParams] = useSearchParams();
@@ -232,6 +233,8 @@ export default function Profile() {
           </div>
         </div>
       </div>
+
+      {isPending && <WaitingRoom />}
 
       <div className="stack">
         <section className="stack-xs" aria-label={t('account')}>
@@ -511,11 +514,14 @@ export default function Profile() {
                         <option value={30}>{t('autoLock30m')}</option>
                         <option value={60}>{t('autoLock60m')}</option>
                       </select>
-                      <Button variant="ghost" size="sm" onClick={lock}>
-                        <Lock size={16} />
-                        {t('lockNow')}
-                      </Button>
+                      {canLock && (
+                        <Button variant="ghost" size="sm" onClick={lock}>
+                          <Lock size={16} />
+                          {t('lockNow')}
+                        </Button>
+                      )}
                     </div>
+                    {!canLock && <p className="muted small">{t('autoLockNeedsPasskey')}</p>}
                   </div>
 
                   <div className="divider" />

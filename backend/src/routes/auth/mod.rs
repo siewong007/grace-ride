@@ -247,11 +247,12 @@ struct MeRow {
     whatsapp_opt_in: i64,
     push_opt_in: i64,
     caregiver_user_id: Option<i64>,
+    onboarding_dismissed_at: Option<String>,
 }
 
 async fn me(State(st): State<AppState>, u: CurrentUser) -> AppResult<Json<Value>> {
     let row: MeRow = sqlx::query_as(
-        "SELECT phone, photo_file_id, totp_enabled, password_hash, badges_opt_out, carpool_enabled, spare_seats, terms_accepted_at, readiness_prompt_mins, gate_wait_mins, auto_lock_mins, totp_backup_codes, terms_version, telegram_chat_id, whatsapp_opt_in, push_opt_in, caregiver_user_id FROM users WHERE id=$1",
+        "SELECT phone, photo_file_id, totp_enabled, password_hash, badges_opt_out, carpool_enabled, spare_seats, terms_accepted_at, readiness_prompt_mins, gate_wait_mins, auto_lock_mins, totp_backup_codes, terms_version, telegram_chat_id, whatsapp_opt_in, push_opt_in, caregiver_user_id, onboarding_dismissed_at FROM users WHERE id=$1",
     )
     .bind(u.id)
     .fetch_one(&st.db)
@@ -316,6 +317,7 @@ async fn me(State(st): State<AppState>, u: CurrentUser) -> AppResult<Json<Value>
         "whatsapp_opt_in": row.whatsapp_opt_in == 1,
         "push_opt_in": row.push_opt_in == 1,
         "caregiver_user_id": row.caregiver_user_id,
+        "onboarding_dismissed": row.onboarding_dismissed_at.is_some(),
         "terms_accepted": row.terms_accepted_at.is_some() && row.terms_version >= TERMS_VERSION,
         "terms_version": TERMS_VERSION,
         "privileged": u.perms.privileged(), "unread": unread.0,

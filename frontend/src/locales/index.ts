@@ -54,6 +54,8 @@ import zhChrome from './chrome.zh'
 import enChrome from './chrome.en'
 import zhPlan from './plan.zh'
 import enPlan from './plan.en'
+import zhOnboarding from './onboarding.zh'
+import enOnboarding from './onboarding.en'
 
 export const namespaces = [
   'common',
@@ -84,6 +86,7 @@ export const namespaces = [
   'notFound',
   'chrome',
   'plan',
+  'onboarding',
 ] as const
 
 export type Namespace = (typeof namespaces)[number]
@@ -118,6 +121,7 @@ export const resources = {
     notFound: enNotFound,
     chrome: enChrome,
     plan: enPlan,
+    onboarding: enOnboarding,
   },
   zh: {
     common: zhCommon,
@@ -148,5 +152,6 @@ export const resources = {
     notFound: zhNotFound,
     chrome: zhChrome,
     plan: zhPlan,
+    onboarding: zhOnboarding,
   },
 } as const

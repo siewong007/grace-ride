@@ -25,6 +25,8 @@ const mockMe = {
   privileged: false,
   mfa_ok: true,
   unread: 15,
+  passkey_count: 1 as number,
+  dev_mode: false,
 };
 
 vi.mock('./auth', () => ({
@@ -106,6 +108,25 @@ describe('Notice primitive', () => {
 });
 
 describe('Layout and Navigation', () => {
+  it('nudges a member without a passkey to set one up', () => {
+    mockMe.passkey_count = 0;
+    try {
+      render(
+        <MemoryRouter initialEntries={['/']}>
+          <Routes>
+            <Route element={<Layout />}>
+              <Route path="/" element={<div>Home content</div>} />
+            </Route>
+          </Routes>
+        </MemoryRouter>
+      );
+      expect(screen.getByText(/haven’t set up a passkey/i)).toBeInTheDocument();
+      expect(screen.getByRole('link', { name: /set up passkey/i })).toHaveAttribute('href', '/me?section=security');
+    } finally {
+      mockMe.passkey_count = 1;
+    }
+  });
+
   it('caps unread notification badge display at 9+', () => {
     render(
       <MemoryRouter initialEntries={['/']}>

@@ -11,6 +11,7 @@ import {
   KeyRound,
   LifeBuoy,
   MapPinned,
+  UserPlus,
   Wallet,
 } from 'lucide-react';
 import { Link, useNavigate } from 'react-router-dom';
@@ -52,6 +53,7 @@ interface Dash {
   pending_reimbursements: number;
   members: number;
   pending_recovery: number;
+  pending_members?: number;
   open_invites?: number;
   awaiting_payment?: number;
   oldest_approval_at: string | null;
@@ -235,6 +237,11 @@ export default function Dashboard() {
       key: 'payout', count: can('admin_reimb_pay') ? (d.awaiting_payment ?? 0) : 0, icon: <Wallet size={20} />, tone: 'warn' as const,
       title: t('dashboard.q.payout'),
       to: '/admin/reimbursements?tab=payout', action: t('dashboard.q.pay'),
+    },
+    {
+      key: 'newMembers', count: can('admin_members') ? (d.pending_members ?? 0) : 0, icon: <UserPlus size={20} />, tone: 'warn' as const,
+      title: t('dashboard.q.newMembers'),
+      to: '/admin/members?status=pending', action: t('dashboard.q.review'),
     },
     {
       key: 'recovery', count: can('admin_recovery') ? d.pending_recovery : 0, icon: <KeyRound size={20} />, tone: 'warn' as const,

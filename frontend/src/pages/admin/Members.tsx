@@ -93,7 +93,7 @@ export default function Members() {
   type Tab = 'members' | 'invites' | 'recovery';
   const { counts } = useStaffNav();
   const tabs = [
-    { value: 'members' as Tab, label: t('members.membersTab'), show: can('admin_members') },
+    { value: 'members' as Tab, label: t('members.membersTab'), show: can('admin_members'), count: counts?.pending_members || undefined },
     { value: 'invites' as Tab, label: t('members.invitesTab'), show: can('admin_invites'), count: counts?.open_invites || undefined },
     { value: 'recovery' as Tab, label: t('members.recoveryTab'), show: can('admin_recovery'), count: counts?.pending_recovery || undefined },
   ].filter((x) => x.show);

@@ -40,6 +40,8 @@ export interface AdminCounts {
   open_help: number;
   pending_reimbursements: number;
   pending_recovery: number;
+  /** Members who joined from an invite and are waiting for approval. */
+  pending_members?: number;
   /** Invite links not yet used or expired. */
   open_invites: number;
   /** Approved claims waiting for finance to pay them. */
@@ -93,7 +95,9 @@ export function useStaffNav() {
         {
           to: '/admin/members', label: t('members'), icon: <Users size={sz} />,
           show: can('admin_members') || can('admin_invites') || can('admin_recovery'),
-          badge: can('admin_recovery') ? counts?.pending_recovery : 0,
+          badge:
+            (can('admin_recovery') ? counts?.pending_recovery ?? 0 : 0) +
+            (can('admin_members') ? counts?.pending_members ?? 0 : 0),
         },
         { to: '/admin/roles', label: t('roles'), icon: <KeyRound size={sz} />, show: can('admin_roles') },
       ]),

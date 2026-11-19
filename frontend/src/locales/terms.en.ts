@@ -1,6 +1,6 @@
 // Terms of use and privacy notice. Changing the meaning of any section is a new version:
 // bump TERMS_VERSION in backend/src/routes/auth.rs so every member is asked to opt in again,
-// and update `updated` here and in terms.zh.ts and terms.ms.ts (PDPA s.7(3): Malay and English).
+// and update `updated` here and in terms.zh.ts (the app is Chinese/English).
 export default {
   title: 'Terms of use and privacy notice',
   updated: 'Version 2 · Effective 17 November 2026',
@@ -37,8 +37,6 @@ export default {
   changesBody: 'When these terms change in a way that matters, the version number changes and you are asked to opt in again before you continue.',
   acceptTitle: 'How you opt in',
   acceptBody: 'Tick the box only after you have read these terms. We record the time and the version you agree to.',
-  readMalay: 'Baca dalam Bahasa Malaysia',
-  readOwn: 'Read in English',
   licences: 'Open-source software notices',
   licencesCount: '{n} packages',
   licencesIntro: 'Grace Ride is built with open-source software. Below is the full licence text of every package in the web app, in the same form that travels with the code. Map data © OpenStreetMap contributors, available under the Open Database License.',

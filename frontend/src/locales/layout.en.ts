@@ -39,6 +39,8 @@ export default {
   ticketDetail: 'Help request',
   adminNotice: 'You have admin privileges. Go to Profile → Account Security to set up a passkey or two-factor authentication (2FA) before using admin functions.',
   pendingNotice: 'An admin will assign your role and group after checking your profile. Until then you can update your details and passkey.',
+  noPasskeyNotice: 'You haven’t set up a passkey yet. Without one you can’t sign back in on this phone after you log out.',
+  noPasskeyAction: 'Set up passkey',
   mainNav: 'Main navigation',
   expandNav: 'Show menu names',
   collapseNav: 'Hide menu names',

@@ -12,6 +12,7 @@ import { fmtAgo, fmtDay, fmtTime, greeting, RIDE_STATUS, RIDE_STATUS_PASSENGER, 
 import { loadTodayRidesSnapshot, saveTodayRidesSnapshot } from '../offlineSnapshot';
 import { loadPrefs, savePrefs, TextSize } from '../prefs';
 import type { EventItem } from './Events';
+import { GettingStarted } from '../components/Onboarding';
 
 interface Share {
   id: number;
@@ -184,6 +185,14 @@ export default function Home() {
               ))}
             </div>
           </Section>
+        )}
+
+        {/* New members: first steps, until done or hidden. */}
+        {!rides.loading && !events.loading && (
+          <GettingStarted
+            hasRide={myRides.length > 0}
+            hasEvent={(events.data ?? []).some((e) => !!e.my_signup)}
+          />
         )}
 
         {/* 2. Next ride — or, with nothing booked, the one blue button. */}

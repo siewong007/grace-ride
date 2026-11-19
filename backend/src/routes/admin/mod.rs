@@ -111,6 +111,11 @@ async fn dashboard(State(st): State<AppState>, u: CurrentUser) -> AppResult<Json
     let (members,): (i64,) = sqlx::query_as("SELECT COUNT(*) FROM users WHERE status='active'")
         .fetch_one(&st.db)
         .await?;
+    // Members who joined from an invite and are waiting for an admin to assign a role and group.
+    let (pending_members,): (i64,) =
+        sqlx::query_as("SELECT COUNT(*) FROM users WHERE status='pending'")
+            .fetch_one(&st.db)
+            .await?;
     let (recovery,): (i64,) = sqlx::query_as(
         "SELECT COUNT(*) FROM recovery_requests WHERE status IN ('pending','awaiting_second')",
     )
@@ -157,7 +162,7 @@ async fn dashboard(State(st): State<AppState>, u: CurrentUser) -> AppResult<Json
         "today": today, "today_total": today_total, "today_confirmed": today_confirmed, "today_changes": today_changes,
         "pending_approval": pending_approval, "no_driver": no_driver, "needs_attention": attention,
         "live_drivers": live, "max_live_drivers": max_live_drivers, "open_help": open_help,
-        "pending_reimbursements": pending_reimb, "members": members, "pending_recovery": recovery,
+        "pending_reimbursements": pending_reimb, "members": members, "pending_members": pending_members, "pending_recovery": recovery,
         "open_invites": open_invites, "awaiting_payment": awaiting_payment,
         "oldest_approval_at": oldest_approval_at, "next_no_driver_at": next_no_driver_at,
         "oldest_help_at": oldest_help_at, "help_claimed_by_me": help_claimed_by_me,

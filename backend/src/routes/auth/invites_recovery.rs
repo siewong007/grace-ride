@@ -259,6 +259,21 @@ pub(super) async fn invite_accept(
     };
     tx.commit().await?;
     let jar = create_session(&st, jar, uid, false).await?;
+    if kind != "recovery" {
+        // A new profile can do nothing until it is approved, so tell the people who approve it.
+        notify_perm(
+            &st.db,
+            Page::AdminMembers,
+            Act::Update,
+            ("新成员等待审核", "New member waiting for approval"),
+            (
+                &format!("{joined_name} 已通过邀请链接加入，请分配职务与群体。"),
+                &format!("{joined_name} joined from an invite link. Assign their role and group."),
+            ),
+            "/admin/members?status=pending",
+        )
+        .await;
+    }
     audit(
         &st.db,
         Some(uid),

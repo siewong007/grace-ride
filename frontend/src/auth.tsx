@@ -30,6 +30,8 @@ export interface Me {
   telegram_chat_id?: string;
   whatsapp_opt_in?: boolean;
   push_opt_in?: boolean;
+  /** The member hid the Getting started checklist on Home. */
+  onboarding_dismissed?: boolean;
   caregiver_user_id?: number | null;
   privileged: boolean;
   unread: number;

@@ -34,8 +34,6 @@ export default {
   changesBody: '当条款有重要变更时，版本号会更新，你需要再次选择加入才能继续使用。',
   acceptTitle: '如何选择加入',
   acceptBody: '请先阅读这些条款，再亲自勾选。我们会记录你同意的时间和版本。',
-  readMalay: 'Baca dalam Bahasa Malaysia',
-  readOwn: '阅读中文版',
   licences: '开源软件声明',
   licencesCount: '共 {n} 个软件包',
   licencesIntro: '恩典同行以开源软件构建。以下列出网页应用中每个软件包的完整许可证文本，与随代码一同分发的版本一致。地图数据 © OpenStreetMap 贡献者，按开放数据库许可证提供。',

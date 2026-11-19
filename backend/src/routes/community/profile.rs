@@ -8,7 +8,7 @@ use crate::auth::CurrentUser;
 use crate::error::{bad, forbidden, not_found, AppResult};
 use crate::i18n::ErrorKey;
 use crate::state::AppState;
-use crate::util::{audit, check_name, check_phone};
+use crate::util::{audit, check_name, check_phone, now};
 
 // ---------------- Profile ----------------
 
@@ -28,6 +28,8 @@ pub(super) struct ProfileIn {
     push_opt_in: Option<bool>,
     caregiver_user_id: Option<i64>,
     clear_caregiver: Option<bool>,
+    /// Hides the Getting started checklist on Home. Only `true` does anything: it is not un-hidden.
+    onboarding_dismissed: Option<bool>,
 }
 
 pub(super) async fn update_profile(
@@ -107,7 +109,8 @@ pub(super) async fn update_profile(
             telegram_chat_id=COALESCE($8, telegram_chat_id),
             whatsapp_opt_in=COALESCE($9, whatsapp_opt_in),
             push_opt_in=COALESCE($10, push_opt_in),
-            caregiver_user_id=CASE WHEN $11 THEN NULL ELSE COALESCE($12, caregiver_user_id) END
+            caregiver_user_id=CASE WHEN $11 THEN NULL ELSE COALESCE($12, caregiver_user_id) END,
+            onboarding_dismissed_at=CASE WHEN $14 THEN COALESCE(onboarding_dismissed_at, $15) ELSE onboarding_dismissed_at END
          WHERE id=$13",
     )
     .bind(req.name.as_deref().map(str::trim))
@@ -123,6 +126,8 @@ pub(super) async fn update_profile(
     .bind(req.clear_caregiver.unwrap_or(false))
     .bind(req.caregiver_user_id)
     .bind(u.id)
+    .bind(req.onboarding_dismissed == Some(true))
+    .bind(now())
     .execute(&st.db)
     .await?;
     // Which fields were sent, not their values: the log is read by staff.
@@ -144,6 +149,7 @@ pub(super) async fn update_profile(
             "caregiver",
             req.caregiver_user_id.is_some() || req.clear_caregiver.unwrap_or(false),
         ),
+        ("onboarding", req.onboarding_dismissed.is_some()),
     ]
     .into_iter()
     .filter_map(|(k, sent)| sent.then_some(k))

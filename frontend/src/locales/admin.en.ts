@@ -57,6 +57,7 @@ export default {
       help: 'Help requests waiting',
       reimb: 'Reimbursements to review',
       payout: 'Approved claims awaiting payout',
+      newMembers: 'New members to approve',
       recovery: 'Account recovery requests',
       nextPickup: 'Next pickup {when}',
       oldest: 'Oldest one came in {ago}',
