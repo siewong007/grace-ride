@@ -48,7 +48,7 @@ pub async fn setup() -> (Router, AppState) {
         json_logs: false,
         routing: Default::default(),
         db: grace_ride::state::DbConfig {
-            max_connections: 3,
+            max_connections: 5,
             acquire_timeout_secs: 60,
             ..Default::default()
         },

@@ -48,6 +48,12 @@ http-body-util = "0.1"
 webauthn-authenticator-rs = { version = "0.6", default-features = false, features = ["softpasskey"] }
 url = "2"
 
+[profile.dev]
+debug = 1
+
+[profile.test]
+debug = 1
+
 [profile.release]
 lto = "thin"
 codegen-units = 1
