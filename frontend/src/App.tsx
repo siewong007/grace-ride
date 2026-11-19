@@ -42,6 +42,7 @@ const Report = lazy(() => import('./pages/Report'));
 const Notifications = lazy(() => import('./pages/Notifications'));
 const Profile = lazy(() => import('./pages/Profile'));
 const NotFound = lazy(() => import('./pages/NotFound'));
+const Licenses = lazy(() => import('./pages/Licenses'));
 const AdminDashboard = lazy(() => import('./pages/admin/Dashboard'));
 const AdminRides = lazy(() => import('./pages/admin/Rides'));
 const AdminLive = lazy(() => import('./pages/admin/Live'));
@@ -104,6 +105,7 @@ export default function App() {
       <Routes>
         <Route path="/login" element={<Login />} />
         <Route path="/terms" element={<TermsPage />} />
+        <Route path="/licences" element={page(<Licenses />)} />
         <Route path="/invite/:token" element={page(<Invite />)} />
         {/* A visitor's ride: no account, outside the signed-in app. */}
         <Route path="/visit/:token" element={page(<Visit />)} />

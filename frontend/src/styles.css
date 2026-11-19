@@ -972,6 +972,50 @@ p.empty-title { font-weight: 400; color: var(--muted); }
   padding: var(--space-3);
 }
 
+/* Open-source notices: one folded row per package, the licence text in a readable pre. */
+.licence-item {
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--surface);
+}
+.licence-item > summary {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-height: 44px;
+  padding: var(--space-2) var(--space-3);
+  cursor: pointer;
+  list-style: none;
+}
+.licence-item > summary::-webkit-details-marker { display: none; }
+.licence-item > summary::after {
+  content: '›';
+  color: var(--muted);
+  transition: transform .15s;
+}
+.licence-item[open] > summary { border-bottom: 1px solid var(--border); }
+.licence-item[open] > summary::after { transform: rotate(90deg); }
+.licence-name { min-width: 0; overflow-wrap: anywhere; }
+/* Long SPDX expressions ("MIT OR SEE LICENSE IN FEEL-FREE.md") get one line, then an ellipsis. */
+.licence-item > summary .pill {
+  display: inline-block;
+  flex: none;
+  max-width: 45%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  vertical-align: middle;
+}
+.licence-text {
+  margin: 0;
+  padding: var(--space-3);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  font-family: var(--font);
+  font-size: var(--fs-sm);
+  line-height: 1.5;
+  color: var(--text);
+}
+
 /* Not Found page */
 .not-found-page {
   display: grid;

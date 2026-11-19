@@ -20,6 +20,7 @@ frontend/playwright-report/
 frontend/blob-report/
 frontend/.vitest/
 frontend/public/third-party-licenses.txt
+frontend/public/third-party-licenses.json
 
 # CodeGraph local index
 .codegraph/

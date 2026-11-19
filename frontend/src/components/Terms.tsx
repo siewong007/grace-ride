@@ -39,7 +39,7 @@ export function TermsText({ heading: Heading = 'h2' }: { heading?: 'h1' | 'h2' |
         </section>
       ))}
       <p className="small">
-        <a href="/third-party-licenses.txt" target="_blank" rel="noopener noreferrer">{t('licences')}</a>
+        <Link to="/licences">{t('licences')}</Link>
       </p>
     </div>
   );
