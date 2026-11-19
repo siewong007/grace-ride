@@ -1,6 +1,8 @@
 .env.production
 .env
 *.zip
+*.pdf
+*.mp4
 backups/
 backend/target/
 backend/data/
