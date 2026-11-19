@@ -330,3 +330,224 @@ async fn auto_arrange_suggests_without_saving_and_keeps_pinned_rides() {
     .await;
     assert_eq!(r.status, StatusCode::FORBIDDEN);
 }
+
+#[tokio::test]
+async fn traffic_group_member_can_save_draft_and_request_traffic_lead_approval() {
+    let (app, st) = setup().await;
+    let f = fixture(&st).await;
+
+    // Create a traffic group member user with role 'traffic_member'
+    let (tmember_id,): (i64,) = sqlx::query_as(
+        "INSERT INTO users (name, email, phone, roles, status, password_hash, webauthn_uuid)
+         VALUES ('Traffic Member Bob', 'tmember@example.org', '012-300 0088', 'traffic_member', 'active', 'hash', 'uuid-tmember')
+         RETURNING id",
+    )
+    .fetch_one(&st.db)
+    .await
+    .unwrap();
+
+    let tmember = login(&st, "tmember@example.org").await;
+    let tlead = login(&st, "traffichead@example.org").await;
+    let tlead_id = id_of(&st, "traffichead@example.org").await;
+
+    // 1. Traffic member views the plan board: can_approve should be false
+    let r = call(
+        &app,
+        Method::GET,
+        &format!("/api/admin/events/{}/plan", f.event),
+        Some(&tmember),
+        None,
+    )
+    .await;
+    assert_eq!(r.status, StatusCode::OK, "{}", r.json);
+    assert_eq!(r.json["can_approve"], false);
+    assert!(r.json["draft"].is_null());
+
+    // 2. Traffic member cannot directly approve / apply plan: forbidden!
+    let direct_apply = call(
+        &app,
+        Method::POST,
+        &format!("/api/admin/events/{}/plan", f.event),
+        Some(&tmember),
+        Some(json!({
+            "changes": [
+                change(f.rides[0], None, Some(f.driver)),
+                change(f.rides[1], None, Some(f.driver)),
+            ]
+        })),
+    )
+    .await;
+    assert_eq!(direct_apply.status, StatusCode::FORBIDDEN);
+    assert_eq!(direct_apply.json["code"], "ONLY_TRAFFIC_LEAD_CAN_APPROVE");
+
+    // 3. Traffic member saves draft
+    let draft_body = json!({
+        "assignments": [
+            { "ride_id": f.rides[0], "driver_id": f.driver },
+            { "ride_id": f.rides[1], "driver_id": f.driver },
+            { "ride_id": f.rides[2], "driver_id": f.driver },
+            { "ride_id": f.rides[3], "driver_id": f.driver2 },
+        ]
+    });
+    let save_draft_res = call(
+        &app,
+        Method::POST,
+        &format!("/api/admin/events/{}/plan/draft", f.event),
+        Some(&tmember),
+        Some(draft_body.clone()),
+    )
+    .await;
+    assert_eq!(
+        save_draft_res.status,
+        StatusCode::OK,
+        "{}",
+        save_draft_res.json
+    );
+    assert_eq!(save_draft_res.json["status"], "draft");
+
+    // Verify rides are untouched
+    assert_eq!(
+        ride_state(&st, f.rides[0]).await,
+        ("pending_driver".into(), None)
+    );
+
+    // 4. Traffic member requests traffic lead to approve
+    let lead_notif_before: (i64,) =
+        sqlx::query_as("SELECT COUNT(*) FROM notifications WHERE user_id=$1")
+            .bind(tlead_id)
+            .fetch_one(&st.db)
+            .await
+            .unwrap();
+
+    let req_res = call(
+        &app,
+        Method::POST,
+        &format!("/api/admin/events/{}/plan/request-approval", f.event),
+        Some(&tmember),
+        Some(json!({})),
+    )
+    .await;
+    assert_eq!(req_res.status, StatusCode::OK, "{}", req_res.json);
+    assert_eq!(req_res.json["status"], "pending_approval");
+
+    // Verify traffic lead received notification
+    let lead_notif_after: (i64,) =
+        sqlx::query_as("SELECT COUNT(*) FROM notifications WHERE user_id=$1")
+            .bind(tlead_id)
+            .fetch_one(&st.db)
+            .await
+            .unwrap();
+    assert_eq!(
+        lead_notif_after.0 - lead_notif_before.0,
+        1,
+        "traffic lead received approval request notification"
+    );
+
+    // 5. Traffic lead views the plan board: can_approve is true, draft is pending_approval
+    let lead_view = call(
+        &app,
+        Method::GET,
+        &format!("/api/admin/events/{}/plan", f.event),
+        Some(&tlead),
+        None,
+    )
+    .await;
+    assert_eq!(lead_view.status, StatusCode::OK);
+    assert_eq!(lead_view.json["can_approve"], true);
+    assert_eq!(lead_view.json["draft"]["status"], "pending_approval");
+    assert_eq!(lead_view.json["draft"]["submitted_by"]["id"], tmember_id);
+
+    // 6. Traffic lead returns draft with notes
+    let tmember_notif_before: (i64,) =
+        sqlx::query_as("SELECT COUNT(*) FROM notifications WHERE user_id=$1")
+            .bind(tmember_id)
+            .fetch_one(&st.db)
+            .await
+            .unwrap();
+
+    let ret_res = call(
+        &app,
+        Method::POST,
+        &format!("/api/admin/events/{}/plan/return", f.event),
+        Some(&tlead),
+        Some(json!({ "notes": "Please check driver 2 capacity" })),
+    )
+    .await;
+    assert_eq!(ret_res.status, StatusCode::OK, "{}", ret_res.json);
+    assert_eq!(ret_res.json["status"], "returned");
+
+    // Verify traffic member received return notification
+    let tmember_notif_after: (i64,) =
+        sqlx::query_as("SELECT COUNT(*) FROM notifications WHERE user_id=$1")
+            .bind(tmember_id)
+            .fetch_one(&st.db)
+            .await
+            .unwrap();
+    assert_eq!(
+        tmember_notif_after.0 - tmember_notif_before.0,
+        1,
+        "traffic member received returned notification"
+    );
+
+    // 7. Traffic member re-submits for approval
+    let resubmit = call(
+        &app,
+        Method::POST,
+        &format!("/api/admin/events/{}/plan/request-approval", f.event),
+        Some(&tmember),
+        Some(draft_body),
+    )
+    .await;
+    assert_eq!(resubmit.status, StatusCode::OK);
+
+    // 8. Traffic lead approves the plan
+    let approve_body = json!({
+        "changes": [
+            change(f.rides[0], None, Some(f.driver)),
+            change(f.rides[1], None, Some(f.driver)),
+            change(f.rides[2], None, Some(f.driver)),
+            change(f.rides[3], None, Some(f.driver2)),
+        ]
+    });
+    let approve_res = call(
+        &app,
+        Method::POST,
+        &format!("/api/admin/events/{}/plan", f.event),
+        Some(&tlead),
+        Some(approve_body),
+    )
+    .await;
+    assert_eq!(approve_res.status, StatusCode::OK, "{}", approve_res.json);
+
+    // Verify rides are now confirmed
+    for id in &f.rides[..3] {
+        assert_eq!(
+            ride_state(&st, *id).await,
+            ("pending_driver_confirm".into(), Some(f.driver))
+        );
+    }
+
+    // Verify draft status is approved
+    let final_view = call(
+        &app,
+        Method::GET,
+        &format!("/api/admin/events/{}/plan", f.event),
+        Some(&tlead),
+        None,
+    )
+    .await;
+    assert_eq!(final_view.json["draft"]["status"], "approved");
+
+    // Verify traffic member received approval notification
+    let tmember_notif_final: (i64,) =
+        sqlx::query_as("SELECT COUNT(*) FROM notifications WHERE user_id=$1")
+            .bind(tmember_id)
+            .fetch_one(&st.db)
+            .await
+            .unwrap();
+    assert_eq!(
+        tmember_notif_final.0 - tmember_notif_after.0,
+        1,
+        "traffic member notified of approval"
+    );
+}

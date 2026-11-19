@@ -39,6 +39,8 @@ pub const VICE_PRESIDENT_ROLE: &str = "vice_president";
 /// and no power to appoint or demote administrators.
 pub const SECRETARY_ROLE: &str = "secretary";
 pub const TRAFFIC_HEAD_ROLE: &str = "traffic_head";
+pub const TRAFFIC_MEMBER_ROLE: &str = "traffic_member";
+pub const TRANSPORT_ROLE: &str = "transport";
 pub const CELL_LEADER_ROLE: &str = "cell_leader";
 /// 查账: reads the financial records and member reports without paying or editing.
 pub const AUDITOR_ROLE: &str = "auditor";
@@ -54,8 +56,9 @@ pub const SYSTEM_ROLES: &[&str] = &[
     VICE_PRESIDENT_ROLE,
     SECRETARY_ROLE,
     TRAFFIC_HEAD_ROLE,
+    TRAFFIC_MEMBER_ROLE,
     CELL_LEADER_ROLE,
-    "transport",
+    TRANSPORT_ROLE,
     FINANCE_ROLE,
     AUDITOR_ROLE,
     "leader",
@@ -324,6 +327,12 @@ pub fn defaults(role: &str) -> Vec<Perm> {
             (AdminAreas, &[View, Create, Update]),
             (AdminAudit, &[View]),
         ],
+        TRAFFIC_MEMBER_ROLE => &[
+            (AdminDashboard, &[View]),
+            (AdminPlan, &[View, Update]),
+            (AdminRides, &[View]),
+            (AdminLive, &[View]),
+        ],
         FINANCE_ROLE => &[
             (AdminReimbPay, &[View, Update]),
             (AdminBills, &[View]),
@@ -437,6 +446,17 @@ pub fn can_authorise_event_mileage(roles: &[String]) -> bool {
     roles
         .iter()
         .any(|r| r == SUPERADMIN_ROLE || r == PRESIDENT_ROLE || r == VICE_PRESIDENT_ROLE)
+}
+
+/// Whether these roles include authority to approve transport arrangements as traffic lead.
+pub fn can_approve_transport_plan(roles: &[String]) -> bool {
+    roles.iter().any(|r| {
+        r == TRAFFIC_HEAD_ROLE
+            || r == ADMIN_ROLE
+            || r == SUPERADMIN_ROLE
+            || r == PRESIDENT_ROLE
+            || r == VICE_PRESIDENT_ROLE
+    })
 }
 
 /// Chain of command, highest authority first. A member's rank is the strongest ranked

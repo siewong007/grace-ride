@@ -47,10 +47,24 @@ export interface PlanDriver {
 export const inGroup = (d: PlanDriver, r: PlanRide): boolean =>
   r.match_group_id == null || (d.drive_group_ids ?? []).includes(r.match_group_id);
 
+export interface PlanDraft {
+  status: 'draft' | 'pending_approval' | 'approved' | 'returned';
+  assignments: Array<{ ride_id: number; driver_id: number | null }>;
+  updated_by?: { id: number; name: string };
+  updated_at?: string;
+  submitted_by?: { id: number; name: string } | null;
+  submitted_at?: string | null;
+  reviewed_by?: { id: number; name: string } | null;
+  reviewed_at?: string | null;
+  review_notes?: string;
+}
+
 export interface Plan {
   event: { id: number; title: string; starts_at: string; location: string; status: string };
   rides: PlanRide[];
   drivers: PlanDriver[];
+  draft?: PlanDraft | null;
+  can_approve?: boolean;
 }
 
 /** Draft assignment: ride id → driver id, or null for "no driver yet". */

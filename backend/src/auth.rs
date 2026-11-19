@@ -68,6 +68,11 @@ impl CurrentUser {
     pub fn traffic_is_global(&self) -> bool {
         self.can(Page::AdminDashboard, Act::View)
     }
+
+    /// Whether the user has authority to approve transport arrangement plans as traffic lead.
+    pub fn is_traffic_lead(&self) -> bool {
+        perms::can_approve_transport_plan(&self.roles)
+    }
 }
 
 #[derive(sqlx::FromRow)]

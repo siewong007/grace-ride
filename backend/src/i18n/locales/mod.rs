@@ -253,6 +253,10 @@ pub fn render(lang: Lang, key: &ErrorKey) -> String {
         ErrorKey::OnlyVolunteerDriversCanChoose => {
             rides::render(lang, RidesError::OnlyVolunteerDriversCanChoose)
         }
+        ErrorKey::OnlyTrafficLeadCanApprove => {
+            rides::render(lang, RidesError::OnlyTrafficLeadCanApprove)
+        }
+        ErrorKey::PlanDraftNotFound => rides::render(lang, RidesError::PlanDraftNotFound),
 
         ErrorKey::SettlementNameRequired => {
             settlements::render(lang, SettlementsError::SettlementNameRequired)
@@ -585,6 +589,8 @@ mod tests {
             ErrorKey::OnlyPassengerOrStaffCanCancel => ErrorKey::OnlyPassengerOrStaffCanCancel,
             ErrorKey::OnlyVolunteerDriversCanView => ErrorKey::OnlyVolunteerDriversCanView,
             ErrorKey::OnlyVolunteerDriversCanChoose => ErrorKey::OnlyVolunteerDriversCanChoose,
+            ErrorKey::OnlyTrafficLeadCanApprove => ErrorKey::OnlyTrafficLeadCanApprove,
+            ErrorKey::PlanDraftNotFound => ErrorKey::PlanDraftNotFound,
 
             ErrorKey::SettlementNameRequired => ErrorKey::SettlementNameRequired,
             ErrorKey::AtLeastOneExpenseItem => ErrorKey::AtLeastOneExpenseItem,

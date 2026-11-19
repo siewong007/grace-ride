@@ -103,6 +103,7 @@ export const ROLE_LABEL: Record<string, string> = {
   vice_president: 'format:role.vice_president',
   secretary: 'format:role.secretary',
   traffic_head: 'format:role.traffic_head',
+  traffic_member: 'format:role.traffic_member',
   cell_leader: 'format:role.cell_leader',
   transport: 'format:role.transport',
   finance: 'format:role.finance',

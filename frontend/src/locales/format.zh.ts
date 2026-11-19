@@ -7,7 +7,7 @@ export default {
   settlementStatus: { draft: '草稿', published: '收款中', closed: '已结清归档' },
   helpStatus: { open: '等待处理', answered: '已回复（等待您回应）', closed: '已解决' },
   helpStatusStaff: { open: '待回复', answered: '等待会员回应', closed: '已解决' },
-  role: { member: '会员', superadmin: '超级管理员', admin: '管理员', president: '会长', vice_president: '副会长', secretary: '秘书', traffic_head: '交通组组长', cell_leader: '小组组长', transport: '交通组', finance: '财政', auditor: '查账', leader: '活动负责人', driver: '志愿司机' },
+  role: { member: '会员', superadmin: '超级管理员', admin: '管理员', president: '会长', vice_president: '副会长', secretary: '秘书', traffic_head: '交通组组长', traffic_member: '交通组成员', cell_leader: '小组组长', transport: '交通组', finance: '财政', auditor: '查账', leader: '活动负责人', driver: '志愿司机' },
   weekday: ['周日', '周一', '周二', '周三', '周四', '周五', '周六'],
   period: { am: '上午', pm: '下午', evening: '晚上' },
   clock: '{period} {time}',

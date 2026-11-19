@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { ADMIN_PAGES, canAnyAdminPage, canAuthoriseMileage, Can, PageKey } from './perms';
+import { ADMIN_PAGES, canAnyAdminPage, canApprovePlan, canAuthoriseMileage, Can, PageKey, SYSTEM_ROLES } from './perms';
 
 describe('canAnyAdminPage', () => {
   it('is false for a plain member', () => {
@@ -35,5 +35,31 @@ describe('canAuthoriseMileage', () => {
     expect(canAuthoriseMileage(['cell_leader'])).toBe(false);
     expect(canAuthoriseMileage(['leader'])).toBe(false);
     expect(canAuthoriseMileage(['finance'])).toBe(false);
+  });
+});
+
+describe('canApprovePlan', () => {
+  it('returns true for traffic lead, admin, superadmin, president, and vice_president', () => {
+    expect(canApprovePlan(['traffic_head'])).toBe(true);
+    expect(canApprovePlan(['admin'])).toBe(true);
+    expect(canApprovePlan(['superadmin'])).toBe(true);
+    expect(canApprovePlan(['president'])).toBe(true);
+    expect(canApprovePlan(['vice_president'])).toBe(true);
+    expect(canApprovePlan(['member', 'traffic_head'])).toBe(true);
+  });
+
+  it('returns false for traffic group member, driver, or other non-lead roles', () => {
+    expect(canApprovePlan(undefined)).toBe(false);
+    expect(canApprovePlan([])).toBe(false);
+    expect(canApprovePlan(['traffic_member'])).toBe(false);
+    expect(canApprovePlan(['transport'])).toBe(false);
+    expect(canApprovePlan(['driver'])).toBe(false);
+    expect(canApprovePlan(['secretary'])).toBe(false);
+    expect(canApprovePlan(['cell_leader'])).toBe(false);
+  });
+
+  it('includes traffic_member in SYSTEM_ROLES', () => {
+    expect(SYSTEM_ROLES).toContain('traffic_member');
+    expect(SYSTEM_ROLES).toContain('traffic_head');
   });
 });

@@ -150,6 +150,8 @@ pub enum ErrorKey {
     OnlyPassengerOrStaffCanCancel,
     OnlyVolunteerDriversCanView,
     OnlyVolunteerDriversCanChoose,
+    OnlyTrafficLeadCanApprove,
+    PlanDraftNotFound,
 
     // === Settlements ===
     SettlementNameRequired,
@@ -371,6 +373,8 @@ impl ErrorKey {
             Self::OnlyPassengerOrStaffCanCancel => "ONLY_PASSENGER_OR_STAFF_CAN_CANCEL",
             Self::OnlyVolunteerDriversCanView => "ONLY_VOLUNTEER_DRIVERS_CAN_VIEW",
             Self::OnlyVolunteerDriversCanChoose => "ONLY_VOLUNTEER_DRIVERS_CAN_CHOOSE",
+            Self::OnlyTrafficLeadCanApprove => "ONLY_TRAFFIC_LEAD_CAN_APPROVE",
+            Self::PlanDraftNotFound => "PLAN_DRAFT_NOT_FOUND",
 
             Self::SettlementNameRequired => "SETTLEMENT_NAME_REQUIRED",
             Self::AtLeastOneExpenseItem => "AT_LEAST_ONE_EXPENSE_ITEM",

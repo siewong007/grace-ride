@@ -68,8 +68,12 @@ export const ADMIN_PAGES: PageKey[] = [
 export const canAnyAdminPage = (can: Can): boolean => ADMIN_PAGES.some((p) => can(p));
 
 /** Built-in roles are named by the app; anything else carries its own name. */
-export const SYSTEM_ROLES = ['member', 'superadmin', 'admin', 'president', 'vice_president', 'secretary', 'traffic_head', 'cell_leader', 'transport', 'finance', 'auditor', 'leader', 'driver'];
+export const SYSTEM_ROLES = ['member', 'superadmin', 'admin', 'president', 'vice_president', 'secretary', 'traffic_head', 'traffic_member', 'cell_leader', 'transport', 'finance', 'auditor', 'leader', 'driver'];
 
 /** Only superadmin, president, or vice president can authorise an event to be claimable for mileage. */
 export const canAuthoriseMileage = (roles: string[] | undefined): boolean =>
   !!roles?.some((r) => r === 'superadmin' || r === 'president' || r === 'vice_president');
+
+/** Only traffic lead (traffic_head, admin, superadmin, president, vice_president) can approve transport arrangement plans. */
+export const canApprovePlan = (roles: string[] | undefined): boolean =>
+  !!roles?.some((r) => ['traffic_head', 'admin', 'superadmin', 'president', 'vice_president'].includes(r));

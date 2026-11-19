@@ -9,7 +9,7 @@ export default {
   helpStatus: { open: 'Waiting for help centre', answered: 'Replied — waiting for you', closed: 'Resolved' },
   // The same statuses as the help desk sees them.
   helpStatusStaff: { open: 'Needs reply', answered: 'Waiting for member', closed: 'Resolved' },
-  role: { member: 'Member', superadmin: 'Super admin', admin: 'Admin', president: 'President', vice_president: 'Vice-President', secretary: 'Secretary', traffic_head: 'Head of Traffic', cell_leader: 'Cell group leader', transport: 'Transport', finance: 'Treasurer', auditor: 'Financial auditor', leader: 'Event leader', driver: 'Volunteer driver' },
+  role: { member: 'Member', superadmin: 'Super admin', admin: 'Admin', president: 'President', vice_president: 'Vice-President', secretary: 'Secretary', traffic_head: 'Head of Traffic', traffic_member: 'Traffic Group Member', cell_leader: 'Cell group leader', transport: 'Transport', finance: 'Treasurer', auditor: 'Financial auditor', leader: 'Event leader', driver: 'Volunteer driver' },
   weekday: ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'],
   period: { am: 'am', pm: 'pm', evening: 'pm' },
   // Word order differs: "10:00 am" in English, "上午 10:00" in Chinese.

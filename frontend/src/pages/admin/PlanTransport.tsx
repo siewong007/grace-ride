@@ -4,9 +4,10 @@
 import { DragEvent, useCallback, useEffect, useMemo, useState } from 'react';
 import { useParams } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
-import { Accessibility, Car, History, Repeat, RotateCcw, Send, Sparkles, Undo2, UserRound } from 'lucide-react';
+import { Accessibility, AlertCircle, Car, CheckCircle2, Clock, History, Repeat, RotateCcw, Save, Send, Sparkles, Undo2, UserRound } from 'lucide-react';
 import { ApiError, post, useApi } from '../../api';
 import { useAuth } from '../../auth';
+import { canApprovePlan } from '../../perms';
 import {
   Button,
   Card,
@@ -15,6 +16,7 @@ import {
   ErrorBox,
   IconButton,
   Modal,
+  Notice,
   Page,
   PageHeader,
   Pill,
@@ -47,9 +49,10 @@ export default function PlanTransport() {
   const ft = useFormatT();
   const toast = useToast();
   const confirm = useConfirm();
-  const { can } = useAuth();
+  const { can, me } = useAuth();
   const canUpdate = can('admin_plan', 'update');
   const { data, error, loading, reload } = useApi<Plan>(`/admin/events/${id}/plan`);
+  const canApprove = data?.can_approve ?? canApprovePlan(me?.roles);
   const [draft, setDraft] = useState<Draft>({});
   const [undoStack, setUndoStack] = useState<Draft[]>([]);
   const [filter, setFilter] = useState<string>('all');
@@ -64,7 +67,13 @@ export default function PlanTransport() {
   // A fresh board (first load, after sending, after a conflict) resets the draft.
   useEffect(() => {
     if (data) {
-      setDraft(savedDraft(data));
+      const base = savedDraft(data);
+      if (data.draft?.assignments && data.draft.assignments.length > 0) {
+        for (const a of data.draft.assignments) {
+          base[a.ride_id] = a.driver_id;
+        }
+      }
+      setDraft(base);
       setUndoStack([]);
       setReasons({});
       setNoRoom(new Set());
@@ -210,6 +219,65 @@ export default function PlanTransport() {
     setDraft(savedDraft(plan));
   };
 
+  const saveDraft = async () => {
+    if (!canUpdate) return;
+    setBusy(true);
+    try {
+      await post(`/admin/events/${plan.event.id}/plan/draft`, {
+        assignments: draftEntries(plan, draft),
+      });
+      toast.success(t('draftSaved'));
+      reload();
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : String(e));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const askLeadApproval = async () => {
+    if (!canUpdate) return;
+    if (anyOver) {
+      toast.error(t('fixOver'));
+      return;
+    }
+    const ok = await confirm({
+      title: t('askLeadApprovalTitle'),
+      body: <p>{t('askLeadApprovalBody')}</p>,
+      confirmLabel: t('askLeadApprovalGo'),
+      tone: 'primary',
+    });
+    if (!ok) return;
+    setBusy(true);
+    try {
+      await post(`/admin/events/${plan.event.id}/plan/request-approval`, {
+        assignments: draftEntries(plan, draft),
+      });
+      toast.success(t('submittedForApproval'));
+      reload();
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : String(e));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const returnDraft = async () => {
+    if (!canApprove) return;
+    const notes = window.prompt(t('returnDraftPrompt')) ?? '';
+    if (!notes.trim()) return;
+    setBusy(true);
+    try {
+      await post(`/admin/events/${plan.event.id}/plan/return`, { notes: notes.trim() });
+      toast.success(t('returnedSuccess'));
+      reload();
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : String(e));
+    } finally {
+      setBusy(false);
+    }
+  };
+
   const send = async () => {
     if (!canUpdate) return;
     if (anyOver) {
@@ -218,21 +286,21 @@ export default function PlanTransport() {
     }
     const reconfirm = changes.filter((c) => plan.rides.find((r) => r.id === c.ride_id)?.status === 'confirmed').length;
     const ok = await confirm({
-      title: t('confirmTitle'),
+      title: canApprove ? t('approveTitle') : t('confirmTitle'),
       body: (
         <div className="stack">
-          <p>{t('confirmBody', { count: changes.length })}</p>
+          <p>{canApprove ? t('approveBody', { count: changes.length }) : t('confirmBody', { count: changes.length })}</p>
           {reconfirm > 0 && <p className="muted">{t('confirmReconfirm', { count: reconfirm })}</p>}
         </div>
       ),
-      confirmLabel: t('confirmGo'),
+      confirmLabel: canApprove ? t('approveGo') : t('confirmGo'),
       tone: 'primary',
     });
     if (!ok) return;
     setBusy(true);
     try {
       await post(`/admin/events/${plan.event.id}/plan`, { changes });
-      toast.success(t('saved'));
+      toast.success(canApprove ? t('approvedSuccess') : t('saved'));
       reload();
     } catch (e) {
       if (e instanceof ApiError && e.status === 409) {
@@ -269,7 +337,45 @@ export default function PlanTransport() {
         title={t('title')}
         subtitle={t('subtitle', { event: plan.event.title, when: fmtDateTime(plan.event.starts_at, ft) })}
         back={`/events/${plan.event.id}`}
+        actions={
+          plan.draft?.status ? (
+            <Pill
+              tone={
+                plan.draft.status === 'pending_approval'
+                  ? 'warning'
+                  : plan.draft.status === 'returned'
+                  ? 'danger'
+                  : plan.draft.status === 'approved'
+                  ? 'success'
+                  : 'info'
+              }
+            >
+              {plan.draft.status === 'pending_approval'
+                ? t('statusPendingApproval')
+                : plan.draft.status === 'returned'
+                ? t('statusReturned')
+                : plan.draft.status === 'approved'
+                ? t('statusApproved')
+                : t('statusDraft')}
+            </Pill>
+          ) : undefined
+        }
       />
+
+      {plan.draft?.status === 'pending_approval' && (
+        <Notice tone="warning" icon={<Clock size={16} />}>
+          {t('bannerPendingApproval', {
+            name: plan.draft.submitted_by?.name || '',
+            time: plan.draft.submitted_at ? fmtDateTime(plan.draft.submitted_at, ft) : '',
+          })}
+        </Notice>
+      )}
+
+      {plan.draft?.status === 'returned' && (
+        <Notice tone="danger" icon={<AlertCircle size={16} />}>
+          {t('bannerReturned', { notes: plan.draft.review_notes || '' })}
+        </Notice>
+      )}
 
       {plan.rides.length > 0 && (
         <>
@@ -302,9 +408,25 @@ export default function PlanTransport() {
                 <Button variant="ghost" icon={<RotateCcw size={16} />} onClick={resetAll} disabled={!dirty}>
                   {t('reset')}
                 </Button>
-                <Button variant="primary" className="plan-confirm" icon={<Send size={16} />} onClick={send} disabled={!dirty || busy} loading={busy}>
-                  {t('confirm', { count: changes.length })}
+                <Button variant="secondary" icon={<Save size={16} />} onClick={saveDraft} disabled={busy} loading={busy}>
+                  {t('saveDraft')}
                 </Button>
+                {!canApprove ? (
+                  <Button variant="primary" icon={<Send size={16} />} onClick={askLeadApproval} disabled={busy} loading={busy}>
+                    {t('askLeadApproval')}
+                  </Button>
+                ) : (
+                  <>
+                    {plan.draft?.status === 'pending_approval' && (
+                      <Button variant="danger" icon={<RotateCcw size={16} />} onClick={returnDraft} disabled={busy}>
+                        {t('returnDraft')}
+                      </Button>
+                    )}
+                    <Button variant="primary" className="plan-confirm" icon={<CheckCircle2 size={16} />} onClick={send} disabled={!dirty || busy} loading={busy}>
+                      {t('approveAndNotify', { count: changes.length })}
+                    </Button>
+                  </>
+                )}
               </div>
             )}
           </div>

@@ -44,6 +44,8 @@ pub enum RidesError {
     OnlyPassengerOrStaffCanCancel,
     OnlyVolunteerDriversCanView,
     OnlyVolunteerDriversCanChoose,
+    OnlyTrafficLeadCanApprove,
+    PlanDraftNotFound,
 }
 
 pub fn render(lang: Lang, key: RidesError) -> String {
@@ -195,6 +197,16 @@ pub fn render(lang: Lang, key: RidesError) -> String {
             lang,
             "只有志愿司机可以选择接送",
             "Only volunteer drivers can choose rides",
+        ),
+        RidesError::OnlyTrafficLeadCanApprove => pair(
+            lang,
+            "只有交通组组长可以审批接送安排",
+            "Only the traffic lead can approve transport arrangements",
+        ),
+        RidesError::PlanDraftNotFound => pair(
+            lang,
+            "未找到接送安排草稿",
+            "Transport arrangement draft not found",
         ),
     }
 }

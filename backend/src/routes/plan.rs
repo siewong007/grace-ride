@@ -19,7 +19,7 @@ use axum::{
     routing::{get, post},
     Json, Router,
 };
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 
 use crate::arrange::{arrange, Car, Rider};
@@ -33,6 +33,13 @@ use crate::util::{audit, notify, now, require, system_message, ErrorKey};
 pub fn router() -> Router<AppState> {
     Router::new()
         .route("/admin/events/{id}/plan", get(get_plan).post(save_plan))
+        .route("/admin/events/{id}/plan/draft", post(save_draft))
+        .route(
+            "/admin/events/{id}/plan/request-approval",
+            post(request_approval),
+        )
+        .route("/admin/events/{id}/plan/return", post(return_draft))
+        .route("/admin/events/{id}/plan/approve", post(save_plan))
         .route("/admin/events/{id}/plan/arrange", post(arrange_plan))
 }
 
@@ -288,8 +295,56 @@ async fn get_plan(
         scopes,
     } = load_board(&st, &u, id).await?;
 
+    #[derive(sqlx::FromRow)]
+    struct DraftRow {
+        status: String,
+        assignments: String,
+        updated_by: i64,
+        updated_by_name: String,
+        submitted_by: Option<i64>,
+        submitted_by_name: Option<String>,
+        submitted_at: Option<String>,
+        reviewed_by: Option<i64>,
+        reviewed_by_name: Option<String>,
+        reviewed_at: Option<String>,
+        review_notes: String,
+        updated_at: String,
+    }
+
+    let draft_row: Option<DraftRow> = sqlx::query_as(
+        "SELECT d.status, d.assignments, d.updated_by, u1.name AS updated_by_name,
+                d.submitted_by, u2.name AS submitted_by_name, d.submitted_at,
+                d.reviewed_by, u3.name AS reviewed_by_name, d.reviewed_at,
+                d.review_notes, d.updated_at
+         FROM event_plan_drafts d
+         JOIN users u1 ON u1.id = d.updated_by
+         LEFT JOIN users u2 ON u2.id = d.submitted_by
+         LEFT JOIN users u3 ON u3.id = d.reviewed_by
+         WHERE d.event_id = $1",
+    )
+    .bind(id)
+    .fetch_optional(&st.db)
+    .await?;
+
+    let draft_json = draft_row.map(|d| {
+        let parsed_assignments: Value = serde_json::from_str(&d.assignments).unwrap_or_else(|_| json!([]));
+        json!({
+            "status": d.status,
+            "assignments": parsed_assignments,
+            "updated_by": { "id": d.updated_by, "name": d.updated_by_name },
+            "updated_at": d.updated_at,
+            "submitted_by": d.submitted_by.map(|sid| json!({ "id": sid, "name": d.submitted_by_name })),
+            "submitted_at": d.submitted_at,
+            "reviewed_by": d.reviewed_by.map(|rid| json!({ "id": rid, "name": d.reviewed_by_name })),
+            "reviewed_at": d.reviewed_at,
+            "review_notes": d.review_notes,
+        })
+    });
+
     Ok(Json(json!({
         "event": { "id": id, "title": ev.title, "starts_at": ev.starts_at, "location": ev.location, "status": ev.status },
+        "draft": draft_json,
+        "can_approve": u.is_traffic_lead(),
         "rides": rides.iter().map(|r| json!({
             "id": r.id,
             "passenger": { "id": r.passenger_id, "name": r.p_name },
@@ -337,7 +392,7 @@ async fn get_plan(
     })))
 }
 
-#[derive(Deserialize)]
+#[derive(Deserialize, Serialize, Clone)]
 struct DraftEntry {
     ride_id: i64,
     driver_id: Option<i64>,
@@ -454,6 +509,246 @@ async fn arrange_plan(
 }
 
 #[derive(Deserialize)]
+struct SaveDraftReq {
+    assignments: Vec<DraftEntry>,
+}
+
+async fn save_draft(
+    State(st): State<AppState>,
+    u: CurrentUser,
+    Path(id): Path<i64>,
+    Json(req): Json<SaveDraftReq>,
+) -> AppResult<Json<Value>> {
+    require(&u, Page::AdminPlan, Act::Update)?;
+    let _ev = load_event(&st, &u, id).await?;
+    let assignments_json =
+        serde_json::to_string(&req.assignments).unwrap_or_else(|_| "[]".to_string());
+    let stamp = now();
+
+    sqlx::query(
+        "INSERT INTO event_plan_drafts (event_id, status, assignments, updated_by, updated_at)
+         VALUES ($1, 'draft', $2, $3, $4)
+         ON CONFLICT (event_id) DO UPDATE SET
+             status = 'draft',
+             assignments = EXCLUDED.assignments,
+             updated_by = EXCLUDED.updated_by,
+             updated_at = EXCLUDED.updated_at",
+    )
+    .bind(id)
+    .bind(&assignments_json)
+    .bind(u.id)
+    .bind(&stamp)
+    .execute(&st.db)
+    .await?;
+
+    audit(
+        &st.db,
+        Some(u.id),
+        "plan.save_draft",
+        "event",
+        Some(id),
+        format!(
+            "event {id}: saved draft with {} assignments",
+            req.assignments.len()
+        ),
+    )
+    .await;
+
+    Ok(Json(json!({
+        "ok": true,
+        "status": "draft",
+        "assignments": req.assignments.len(),
+    })))
+}
+
+#[derive(Deserialize)]
+struct RequestApprovalReq {
+    assignments: Option<Vec<DraftEntry>>,
+}
+
+async fn request_approval(
+    State(st): State<AppState>,
+    u: CurrentUser,
+    Path(id): Path<i64>,
+    Json(req): Json<RequestApprovalReq>,
+) -> AppResult<Json<Value>> {
+    require(&u, Page::AdminPlan, Act::Update)?;
+    let ev = load_event(&st, &u, id).await?;
+    let stamp = now();
+
+    let assignments_json = req
+        .assignments
+        .as_ref()
+        .map(|a| serde_json::to_string(a).unwrap_or_else(|_| "[]".to_string()));
+
+    if let Some(json_str) = assignments_json {
+        sqlx::query(
+            "INSERT INTO event_plan_drafts (event_id, status, assignments, updated_by, submitted_by, submitted_at, updated_at)
+             VALUES ($1, 'pending_approval', $2, $3, $3, $4, $4)
+             ON CONFLICT (event_id) DO UPDATE SET
+                 status = 'pending_approval',
+                 assignments = EXCLUDED.assignments,
+                 updated_by = EXCLUDED.updated_by,
+                 submitted_by = EXCLUDED.submitted_by,
+                 submitted_at = EXCLUDED.submitted_at,
+                 updated_at = EXCLUDED.updated_at",
+        )
+        .bind(id)
+        .bind(&json_str)
+        .bind(u.id)
+        .bind(&stamp)
+        .execute(&st.db)
+        .await?;
+    } else {
+        let res = sqlx::query(
+            "UPDATE event_plan_drafts
+             SET status = 'pending_approval', submitted_by = $1, submitted_at = $2, updated_by = $1, updated_at = $2
+             WHERE event_id = $3",
+        )
+        .bind(u.id)
+        .bind(&stamp)
+        .bind(id)
+        .execute(&st.db)
+        .await?;
+        if res.rows_affected() == 0 {
+            return Err(bad(u.lang, ErrorKey::PlanDraftNotFound));
+        }
+    }
+
+    // Notify traffic lead(s)
+    let mut lead_rows: Vec<(i64,)> = sqlx::query_as(
+        "SELECT id FROM users WHERE status = 'active' AND roles LIKE '%traffic_head%'",
+    )
+    .fetch_all(&st.db)
+    .await?;
+
+    if lead_rows.is_empty() {
+        lead_rows = sqlx::query_as(
+            "SELECT id FROM users WHERE status = 'active' AND (roles LIKE '%admin%' OR roles LIKE '%superadmin%')",
+        )
+        .fetch_all(&st.db)
+        .await?;
+    }
+
+    let lead_ids: Vec<i64> = lead_rows
+        .into_iter()
+        .map(|(lid,)| lid)
+        .filter(|&lid| lid != u.id)
+        .collect();
+
+    crate::util::notify_many(
+        &st.db,
+        &lead_ids,
+        ("接送安排待审批", "Transport arrangement awaiting approval"),
+        (
+            &format!(
+                "{} 提交了「{}」的接送安排草稿，等待您审批。",
+                u.name, ev.title
+            ),
+            &format!(
+                "{} submitted a transport arrangement draft for \"{}\" for approval.",
+                u.name, ev.title
+            ),
+        ),
+        &format!("/admin/events/{}/plan", id),
+    )
+    .await;
+
+    audit(
+        &st.db,
+        Some(u.id),
+        "plan.request_approval",
+        "event",
+        Some(id),
+        format!("event {id}: submitted draft for traffic lead approval"),
+    )
+    .await;
+
+    Ok(Json(json!({ "ok": true, "status": "pending_approval" })))
+}
+
+#[derive(Deserialize)]
+struct ReturnDraftReq {
+    notes: Option<String>,
+}
+
+async fn return_draft(
+    State(st): State<AppState>,
+    u: CurrentUser,
+    Path(id): Path<i64>,
+    Json(req): Json<ReturnDraftReq>,
+) -> AppResult<Json<Value>> {
+    require(&u, Page::AdminPlan, Act::Update)?;
+    if !u.is_traffic_lead() {
+        return Err(forbidden(u.lang, ErrorKey::OnlyTrafficLeadCanApprove));
+    }
+    let ev = load_event(&st, &u, id).await?;
+    let stamp = now();
+    let notes = req.notes.unwrap_or_default();
+
+    let prev: Option<(Option<i64>,)> = sqlx::query_as(
+        "UPDATE event_plan_drafts
+         SET status = 'returned', reviewed_by = $1, reviewed_at = $2, review_notes = $3, updated_at = $2
+         WHERE event_id = $4
+         RETURNING submitted_by",
+    )
+    .bind(u.id)
+    .bind(&stamp)
+    .bind(&notes)
+    .bind(id)
+    .fetch_optional(&st.db)
+    .await?;
+
+    let Some((submitted_by,)) = prev else {
+        return Err(bad(u.lang, ErrorKey::PlanDraftNotFound));
+    };
+
+    if let Some(sub) = submitted_by {
+        if sub != u.id {
+            let reason_zh = if notes.is_empty() {
+                String::new()
+            } else {
+                format!("：{}", notes)
+            };
+            let reason_en = if notes.is_empty() {
+                String::new()
+            } else {
+                format!(": {}", notes)
+            };
+            notify(
+                &st.db,
+                sub,
+                ("接送安排草稿已退回", "Transport arrangement draft returned"),
+                (
+                    &format!(
+                        "交通组组长退回了「{}」的接送安排草稿{}",
+                        ev.title, reason_zh
+                    ),
+                    &format!(
+                        "Traffic lead returned the transport draft for \"{}\"{}",
+                        ev.title, reason_en
+                    ),
+                ),
+                &format!("/admin/events/{}/plan", id),
+            )
+            .await;
+        }
+    }
+
+    audit(
+        &st.db,
+        Some(u.id),
+        "plan.return_draft",
+        "event",
+        Some(id),
+        format!("event {id}: returned draft with notes: {notes}"),
+    )
+    .await;
+
+    Ok(Json(json!({ "ok": true, "status": "returned" })))
+}
+
+#[derive(Deserialize)]
 struct Change {
     ride_id: i64,
     /// The driver the board showed for this ride; must still be current.
@@ -474,6 +769,9 @@ async fn save_plan(
     Json(req): Json<SavePlan>,
 ) -> AppResult<Json<Value>> {
     require(&u, Page::AdminPlan, Act::Update)?;
+    if u.roles.contains(&"traffic_member".to_string()) && !u.is_traffic_lead() {
+        return Err(forbidden(u.lang, ErrorKey::OnlyTrafficLeadCanApprove));
+    }
     let ev = load_event(&st, &u, id).await?;
     let rides = plan_rides(&st, id).await?;
     let by_id: HashMap<i64, &PlanRide> = rides.iter().map(|r| (r.id, r)).collect();
@@ -692,6 +990,41 @@ async fn save_plan(
             "/drive",
         )
         .await;
+    }
+
+    // Mark draft approved if one exists
+    let draft_info: Option<(Option<i64>,)> = sqlx::query_as(
+        "UPDATE event_plan_drafts
+         SET status = 'approved', reviewed_by = $1, reviewed_at = $2, updated_at = $2
+         WHERE event_id = $3
+         RETURNING submitted_by",
+    )
+    .bind(u.id)
+    .bind(&stamp)
+    .bind(id)
+    .fetch_optional(&st.db)
+    .await?;
+
+    if let Some((Some(sub),)) = draft_info {
+        if sub != u.id {
+            notify(
+                &st.db,
+                sub,
+                ("接送安排已审批通过", "Transport arrangement approved"),
+                (
+                    &format!(
+                        "{} 审批通过了「{}」的接送安排，已通知司机确认。",
+                        u.name, ev.title
+                    ),
+                    &format!(
+                        "{} approved the transport arrangement for \"{}\", drivers notified.",
+                        u.name, ev.title
+                    ),
+                ),
+                &format!("/admin/events/{}/plan", id),
+            )
+            .await;
+        }
     }
 
     Ok(Json(json!({ "ok": true, "changed": changes.len() })))
