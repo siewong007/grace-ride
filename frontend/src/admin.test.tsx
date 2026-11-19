@@ -179,6 +179,7 @@ const mockApiMap: Record<string, unknown> = {
   '/groups': mockGroups,
   '/areas': mockAreas,
   '/announcements': mockAnnouncements,
+  '/announcements?manage=true': mockAnnouncements,
   '/reimbursements?scope=review': mockReimbs,
   '/reimbursements?scope=payout': mockReimbs,
   '/reimbursements?scope=review&page=1&limit=25': mockReimbs,

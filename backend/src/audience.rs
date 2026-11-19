@@ -66,6 +66,33 @@ pub fn visible_events_sql(me: &str, scope: &str) -> String {
     )
 }
 
+/// SQL condition: announcement `a` is for the member whose id is bound at `me` and whose
+/// `group_scope` is bound at `scope`. The same rule as events: untargeted (for everyone),
+/// its author, the `is_all` group, or a targeted group in scope. Announcement admins
+/// managing every announcement are let through in Rust, not here.
+pub fn visible_announcements_sql(me: &str, scope: &str) -> String {
+    format!(
+        "(a.targeted = 0 OR a.created_by = {me} OR EXISTS (SELECT 1 FROM announcement_groups ag JOIN groups g ON g.id = ag.group_id
+            WHERE ag.announcement_id = a.id AND (g.is_all = 1 OR ag.group_id = ANY({scope}))))"
+    )
+}
+
+/// SQL: the ids of every active member an announcement (bound at `ann`) is for, including
+/// members of sub-groups. Used to notify them.
+pub fn announcement_users_sql(ann: &str) -> String {
+    format!(
+        "WITH RECURSIVE aud AS (
+             SELECT ag.group_id AS id FROM announcement_groups ag WHERE ag.announcement_id = {ann}
+             UNION
+             SELECT g.id FROM groups g JOIN aud ON g.parent_id = aud.id
+         )
+         SELECT DISTINCT u.id FROM users u WHERE u.status = 'active' AND (
+             EXISTS (SELECT 1 FROM announcements a WHERE a.id = {ann} AND a.targeted = 0)
+             OR EXISTS (SELECT 1 FROM announcement_groups ag JOIN groups g ON g.id = ag.group_id WHERE ag.announcement_id = {ann} AND g.is_all = 1)
+             OR u.id IN (SELECT gm.user_id FROM group_members gm WHERE gm.group_id IN (SELECT id FROM aud)))"
+    )
+}
+
 /// SQL: the ids of every active member an event (bound at `event`) is for, including
 /// members of sub-groups. Used to invite them.
 pub fn audience_users_sql(event: &str) -> String {

@@ -283,7 +283,8 @@ async fn sub_groups_drivers_and_masked_titles() {
     }
 }
 
-/// Every "who can see this event" check must go through `audience::visible_events_sql`.
+/// Every "who can see this event" check must go through `audience::visible_events_sql`
+/// (and every announcement check through `audience::visible_announcements_sql`).
 #[test]
 fn event_visibility_is_written_only_in_audience() {
     let mut offenders = Vec::new();
@@ -299,6 +300,7 @@ fn event_visibility_is_written_only_in_audience() {
             } else if p.extension().is_some_and(|e| e == "rs") && !p.ends_with("audience.rs") {
                 let src = std::fs::read_to_string(&p).unwrap();
                 if src.contains("eg.event_id = e.id AND (g.is_all")
+                    || src.contains("ag.announcement_id = a.id AND (g.is_all")
                     || src.contains("gm.group_id = g.id AND gm.user_id")
                 {
                     offenders.push(p.display().to_string());
@@ -310,4 +312,153 @@ fn event_visibility_is_written_only_in_audience() {
         offenders.is_empty(),
         "event visibility written outside audience.rs: {offenders:?}"
     );
+}
+
+/// Announcements for chosen groups: members of those groups (and their sub-groups) see it
+/// and are notified; others neither see it nor hear about it. No groups: everyone.
+#[tokio::test]
+async fn announcements_reach_only_their_groups() {
+    let (app, st) = setup().await;
+    let admin = login(&st, "admin@example.org").await;
+    let youth: i64 = sqlx::query_scalar("SELECT id FROM groups WHERE name='青年团契'")
+        .fetch_one(&st.db)
+        .await
+        .unwrap();
+    let r = call(
+        &app,
+        Method::POST,
+        "/api/admin/groups",
+        Some(&admin),
+        Some(json!({"name": "青年同工", "parent_id": youth})),
+    )
+    .await;
+    assert_eq!(r.status, StatusCode::OK, "{}", r.json);
+    let staff: i64 = sqlx::query_scalar("SELECT id FROM groups WHERE name='青年同工'")
+        .fetch_one(&st.db)
+        .await
+        .unwrap();
+
+    let member = id_of(&st, "member@example.org").await;
+    let sophie = id_of(&st, "sophie@example.org").await;
+    let amina = id_of(&st, "amina@example.org").await;
+    only_in(&st, member, &[youth]).await;
+    only_in(&st, sophie, &[staff]).await;
+    only_in(&st, amina, &[]).await;
+
+    // A group that doesn't exist is a 400, and nothing is published.
+    let r = call(
+        &app,
+        Method::POST,
+        "/api/announcements",
+        Some(&admin),
+        Some(json!({"title": "Bad", "body": "x", "group_ids": [999_999]})),
+    )
+    .await;
+    assert_eq!(r.status, StatusCode::BAD_REQUEST, "{}", r.json);
+    assert_eq!(r.json["code"], "SELECT_VISIBLE_GROUP");
+
+    let r = call(
+        &app,
+        Method::POST,
+        "/api/announcements",
+        Some(&admin),
+        Some(json!({"title": "Youth retreat", "body": "Sign up", "notify_all": true, "group_ids": [youth]})),
+    )
+    .await;
+    assert_eq!(r.status, StatusCode::OK, "{}", r.json);
+    let ann = r.json["id"].as_i64().unwrap();
+    let r = call(
+        &app,
+        Method::POST,
+        "/api/announcements",
+        Some(&admin),
+        Some(json!({"title": "For everyone", "body": "Hello"})),
+    )
+    .await;
+    assert_eq!(r.status, StatusCode::OK, "{}", r.json);
+
+    let notified = |user: i64| {
+        let db = st.db.clone();
+        async move {
+            let n: i64 = sqlx::query_scalar(
+                "SELECT COUNT(*) FROM notifications WHERE user_id=$1 AND body='Youth retreat'",
+            )
+            .bind(user)
+            .fetch_one(&db)
+            .await
+            .unwrap();
+            n > 0
+        }
+    };
+    assert!(notified(member).await);
+    assert!(notified(sophie).await, "sub-group members are notified");
+    assert!(!notified(amina).await, "members outside the group are not");
+
+    let titles = |cookie: String| {
+        let app = app.clone();
+        async move {
+            let r = call(&app, Method::GET, "/api/announcements", Some(&cookie), None).await;
+            assert_eq!(r.status, StatusCode::OK, "{}", r.json);
+            r.json
+                .as_array()
+                .unwrap()
+                .iter()
+                .map(|a| a["title"].as_str().unwrap().to_string())
+                .collect::<Vec<_>>()
+        }
+    };
+    let seen = titles(login(&st, "member@example.org").await).await;
+    assert!(
+        seen.contains(&"Youth retreat".into()) && seen.contains(&"For everyone".into()),
+        "{seen:?}"
+    );
+    let seen = titles(login(&st, "sophie@example.org").await).await;
+    assert!(seen.contains(&"Youth retreat".into()), "{seen:?}");
+    let seen = titles(login(&st, "amina@example.org").await).await;
+    assert!(!seen.contains(&"Youth retreat".into()), "{seen:?}");
+    assert!(seen.contains(&"For everyone".into()), "{seen:?}");
+
+    // The admin page lists every announcement with its groups.
+    let r = call(
+        &app,
+        Method::GET,
+        "/api/announcements?manage=true",
+        Some(&admin),
+        None,
+    )
+    .await;
+    let row = r
+        .json
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|a| a["id"] == ann)
+        .cloned()
+        .unwrap();
+    assert_eq!(row["targeted"], true);
+    assert_eq!(row["groups"][0]["id"], youth);
+
+    // Pinning keeps the audience; sending groups changes it.
+    let r = call(
+        &app,
+        Method::PUT,
+        &format!("/api/announcements/{ann}"),
+        Some(&admin),
+        Some(json!({"title": "Youth retreat", "body": "Sign up", "pinned": true})),
+    )
+    .await;
+    assert_eq!(r.status, StatusCode::OK, "{}", r.json);
+    let seen = titles(login(&st, "amina@example.org").await).await;
+    assert!(!seen.contains(&"Youth retreat".into()), "{seen:?}");
+    let r = call(
+        &app,
+        Method::PUT,
+        &format!("/api/announcements/{ann}"),
+        Some(&admin),
+        Some(json!({"title": "Youth retreat", "body": "Sign up", "pinned": true, "group_ids": []})),
+    )
+    .await;
+    assert_eq!(r.status, StatusCode::OK, "{}", r.json);
+    let seen = titles(login(&st, "amina@example.org").await).await;
+    assert!(seen.contains(&"Youth retreat".into()), "{seen:?}");
 }

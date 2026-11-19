@@ -113,7 +113,7 @@
 │   │   ├── state.rs         # Config, AppState, DbConfig
 │   │   ├── util.rs          # audit log, notify, fmt helpers, ErrorKey
 │   │   └── web_push.rs      # VAPID web-push implementation
-│   ├── migrations/          # numbered SQL migrations (0001–0030)
+│   ├── migrations/          # numbered SQL migrations (0001–0012)
 │   ├── tests/               # integration tests (DEV_MODE=true required)
 │   ├── .cargo/audit.toml    # suppressed cargo-audit advisories with justification
 │   ├── rust-toolchain.toml  # pins Rust stable + clippy + rustfmt

@@ -1,5 +1,5 @@
 import { FormEvent, useState } from 'react';
-import { Pin } from 'lucide-react';
+import { Pin, Users } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import { del, post, put, useApi } from '../../api';
 import { useAuth } from '../../auth';
@@ -18,6 +18,7 @@ import {
   useConfirm,
 } from '../../components/ui';
 import { fmtAgo, useFormatT } from '../../format';
+import { ordinary, treeOrder, type TreeGroup } from '../../groupTree';
 import { ADMIN_HOME } from '../../staffNav';
 
 interface AnnouncementItem {
@@ -27,7 +28,16 @@ interface AnnouncementItem {
   pinned: boolean;
   by: string;
   created_at: string;
+  /** Only for `groups` (and their sub-groups). False: for every member. */
+  targeted?: boolean;
+  groups?: { id: number; name: string }[];
 }
+
+interface Group extends TreeGroup {
+  member_count: number;
+}
+
+const groupIdsOf = (a: AnnouncementItem) => (a.groups ?? []).map((g) => g.id);
 
 export default function Announcements() {
   const { t } = useTranslation('admin');
@@ -35,13 +45,12 @@ export default function Announcements() {
   const confirm = useConfirm();
   const { me, can } = useAuth();
 
-  const { data, loading, reload } = useApi<AnnouncementItem[]>('/announcements');
-  const [f, setF] = useState({
-    title: '',
-    body: '',
-    pinned: false,
-    notify_all: true,
-  });
+  const { data, loading, reload } = useApi<AnnouncementItem[]>('/announcements?manage=true');
+  const { data: groupData } = useApi<Group[]>('/groups');
+  const groups = ordinary(groupData ?? []);
+  const blank = { title: '', body: '', pinned: false, notify_all: true, group_ids: [] as number[] };
+  const [f, setF] = useState(blank);
+  const audienceNames = groups.filter((g) => f.group_ids.includes(g.id)).map((g) => g.name).join(', ');
   const [editing, setEditing] = useState<AnnouncementItem | null>(null);
   const { busy, error, run } = useAction();
   const canWrite = can('admin_announcements', 'create');
@@ -54,11 +63,13 @@ export default function Announcements() {
 
   const submit = async (e: FormEvent) => {
     e.preventDefault();
-    // Notifying everyone cannot be taken back, so say so before it happens.
+    // Notifying cannot be taken back, so say who will hear about it before it happens.
     if (f.notify_all) {
       const ok = await confirm({
-        title: t('announcements.notifyConfirmTitle'),
-        body: t('announcements.notifyConfirmBody', { title: f.title.trim() }),
+        title: f.group_ids.length ? t('announcements.notifyGroupsConfirmTitle') : t('announcements.notifyConfirmTitle'),
+        body: f.group_ids.length
+          ? t('announcements.notifyGroupsConfirmBody', { title: f.title.trim(), groups: audienceNames })
+          : t('announcements.notifyConfirmBody', { title: f.title.trim() }),
         confirmLabel: t('announcements.add'),
         tone: 'primary',
       });
@@ -67,7 +78,7 @@ export default function Announcements() {
     run(
       () =>
         post('/announcements', f).then(() => {
-          setF({ title: '', body: '', pinned: false, notify_all: true });
+          setF(blank);
           reload();
         }),
       t('announcements.addDone'),
@@ -114,6 +125,7 @@ export default function Announcements() {
               onChange={(e) => setF({ ...f, body: e.target.value })}
             />
           </Field>
+          <AudiencePicker groups={groups} value={f.group_ids} onChange={(group_ids) => setF({ ...f, group_ids })} />
           <label className={`check ${f.pinned ? 'on' : ''}`}>
             <input
               type="checkbox"
@@ -128,7 +140,7 @@ export default function Announcements() {
               checked={f.notify_all}
               onChange={(e) => setF({ ...f, notify_all: e.target.checked })}
             />
-            {t('announcements.notifyAll')}
+            {f.group_ids.length ? t('announcements.notifyGroups') : t('announcements.notifyAll')}
           </label>
           <ErrorBox error={error} />
           <Button variant="primary" disabled={busy} type="submit">
@@ -141,11 +153,14 @@ export default function Announcements() {
           {canWrite && <Card className="stack-sm">
             <div className="row between">
               <span className="muted small">{t('announcements.preview')}</span>
-              {f.pinned && (
-                <Pill tone="amber" icon={<Pin size={12} />}>
-                  {t('announcements.pinned')}
-                </Pill>
-              )}
+              <div className="row">
+                <AudiencePill names={audienceNames} />
+                {f.pinned && (
+                  <Pill tone="amber" icon={<Pin size={12} />}>
+                    {t('announcements.pinned')}
+                  </Pill>
+                )}
+              </div>
             </div>
             <h3>{f.title || t('announcements.titleLabel')}</h3>
             <p className="pre-wrap">{f.body || t('announcements.bodyLabel')}</p>
@@ -173,9 +188,15 @@ export default function Announcements() {
                         <span>{a.title}</span>
                       </strong>
                       <p className="pre-wrap">{a.body}</p>
-                      <span className="muted small">
-                        {t('announcements.by', { by: a.by, ago: fmtAgo(a.created_at, ft) })}
-                      </span>
+                      <div className="row">
+                        <AudiencePill
+                          names={(a.groups ?? []).map((g) => g.name).join(', ')}
+                          hidden={a.targeted && !a.groups?.length}
+                        />
+                        <span className="muted small">
+                          {t('announcements.by', { by: a.by, ago: fmtAgo(a.created_at, ft) })}
+                        </span>
+                      </div>
                     </div>
                     <div className="item-actions">
                       {canWrite && (
@@ -205,6 +226,7 @@ export default function Announcements() {
       {editing && (
         <EditAnnouncement
           item={editing}
+          groups={groups}
           onClose={() => setEditing(null)}
           onSaved={() => {
             setEditing(null);
@@ -216,17 +238,63 @@ export default function Announcements() {
   );
 }
 
+/** Who an announcement is for: chosen groups (and their sub-groups), or nobody chosen for everyone. */
+function AudiencePicker({
+  groups,
+  value,
+  onChange,
+}: {
+  groups: Group[];
+  value: number[];
+  onChange: (ids: number[]) => void;
+}) {
+  const { t } = useTranslation('admin');
+  const toggle = (id: number) => onChange(value.includes(id) ? value.filter((x) => x !== id) : [...value, id]);
+  return (
+    <fieldset className="stack-sm">
+      <legend>
+        <strong>{t('announcements.audience')}</strong>
+      </legend>
+      <p className="muted small">{t('announcements.audienceHint')}</p>
+      <div className="grid cols-2">
+        {treeOrder(groups).map(({ group: g, depth }) => (
+          <label key={g.id} className={`check ${value.includes(g.id) ? 'on' : ''}`}>
+            <input type="checkbox" checked={value.includes(g.id)} onChange={() => toggle(g.id)} />
+            <span>
+              {depth > 0 && <span className="muted" aria-hidden="true">{'↳ '.repeat(depth)}</span>}
+              {g.name}
+              {!g.is_all && <span className="muted tiny"> · {t('announcements.peopleCount', { n: g.member_count })}</span>}
+            </span>
+          </label>
+        ))}
+      </div>
+    </fieldset>
+  );
+}
+
+/** "Everyone", or the groups an announcement is for. `hidden`: its groups were all deleted. */
+function AudiencePill({ names, hidden = false }: { names: string; hidden?: boolean }) {
+  const { t } = useTranslation('admin');
+  return (
+    <Pill tone={names || hidden ? 'blue' : 'gray'} icon={<Users size={12} />}>
+      {hidden ? t('announcements.audienceGone') : names ? t('announcements.forGroups', { groups: names }) : t('announcements.forEveryone')}
+    </Pill>
+  );
+}
+
 function EditAnnouncement({
   item,
+  groups,
   onClose,
   onSaved,
 }: {
   item: AnnouncementItem;
+  groups: Group[];
   onClose: () => void;
   onSaved: () => void;
 }) {
   const { t } = useTranslation('admin');
-  const [f, setF] = useState({ title: item.title, body: item.body, pinned: item.pinned });
+  const [f, setF] = useState({ title: item.title, body: item.body, pinned: item.pinned, group_ids: groupIdsOf(item) });
   const { busy, error, run } = useAction();
   return (
     <Modal title={t('announcements.editTitle')} description={t('announcements.editHint')} onClose={onClose}>
@@ -247,6 +315,7 @@ function EditAnnouncement({
           <input type="checkbox" checked={f.pinned} onChange={(e) => setF({ ...f, pinned: e.target.checked })} />
           {t('announcements.pinned')}
         </label>
+        <AudiencePicker groups={groups} value={f.group_ids} onChange={(group_ids) => setF({ ...f, group_ids })} />
         <ErrorBox error={error} />
         <Button variant="primary" type="submit" disabled={busy || !f.title.trim() || !f.body.trim()}>
           {t('announcements.save')}

@@ -82,6 +82,8 @@ async fn list_groups(State(st): State<AppState>, u: CurrentUser) -> AppResult<Js
         (Page::AdminEvents, Act::View),
         (Page::AdminGroups, Act::View),
         (Page::AdminMembers, Act::View),
+        // Announcements can be for any group.
+        (Page::AdminAnnouncements, Act::Create),
     ]
     .iter()
     .any(|(p, a)| u.can(*p, *a));
