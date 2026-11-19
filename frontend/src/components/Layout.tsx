@@ -148,7 +148,8 @@ function LayoutInner() {
 
   if (!me) return null;
   if (!me.terms_accepted) return <TermsGate />;
-  if (pending && loc.pathname !== '/me') return <Navigate to="/me" replace />;
+  const onMe = loc.pathname === '/me' || loc.pathname === '/me/family';
+  if (pending && !onMe) return <Navigate to="/me" replace />;
   const sz = 20;
 
   // Each link shows only when the member may open that page; the server enforces the same.

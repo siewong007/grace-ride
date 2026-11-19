@@ -9,6 +9,7 @@ use crate::state::AppState;
 
 mod announcements;
 mod calendar;
+mod family;
 mod guides;
 mod help;
 mod notifications;
@@ -18,6 +19,7 @@ mod push;
 mod reimbursements;
 mod reports;
 
+pub(crate) use family::FAMILY_CAP;
 pub(crate) use guides::any_admin_page;
 pub use reports::compute_badges;
 
@@ -37,6 +39,29 @@ pub(super) fn like_pattern(q: &str) -> String {
 pub fn router() -> Router<AppState> {
     Router::new()
         .route("/me", axum::routing::put(profile::update_profile))
+        .route(
+            "/me/family",
+            get(family::get_family)
+                .post(family::create_family)
+                .patch(family::rename_family)
+                .delete(family::delete_family),
+        )
+        .route("/me/family/leave", post(family::leave_family))
+        .route(
+            "/me/family/members/{user_id}",
+            delete(family::remove_member),
+        )
+        .route("/me/family/people", post(family::add_person))
+        .route(
+            "/me/family/requests/{id}/accept",
+            post(family::accept_request),
+        )
+        .route(
+            "/me/family/requests/{id}/decline",
+            post(family::decline_request),
+        )
+        .route("/me/family/requests/{id}", delete(family::cancel_request))
+        .route("/me/family/invites/{id}", delete(family::revoke_invite))
         .route(
             "/me/calendar-feed",
             get(calendar::get_calendar_feed).delete(calendar::revoke_calendar_feed),

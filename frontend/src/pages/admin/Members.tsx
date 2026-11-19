@@ -45,6 +45,7 @@ interface User {
   photo_file_id?: number | null;
   avatar_color?: string | null;
   avatar_icon?: string | null;
+  family_name?: string | null;
 }
 
 interface Group {
@@ -487,6 +488,11 @@ function MemberFormModal({
     <Modal title={modalTitle} onClose={onClose}>
       <div className="stack-sm">
         <p className="muted small">{user.email}</p>
+        {user.family_name ? (
+          <p className="muted small">
+            {t('members.family')}: {user.family_name}
+          </p>
+        ) : null}
 
         {mode === 'edit' && (
           <Field label={t('members.status')}>

@@ -248,5 +248,15 @@ export default {
     "INVALID_RECEIPT": "Invalid receipt",
     "INVALID_PHOTO": "Invalid photo",
     "CANNOT_VIEW_FILE": "You cannot view this file"
+  },
+  "family": {
+    "FAMILY_ACTIVE_ONLY": "You can create a family or add someone after an admin approves your account",
+    "ALREADY_IN_FAMILY": "Already in a family",
+    "FAMILY_REQUEST_PENDING": "This number already has an open request from another family",
+    "FAMILY_OWN_PHONE": "That is your own number",
+    "FAMILY_PHONE_AMBIGUOUS": "This number matches more than one member. Ask an admin",
+    "FAMILY_PHONE_UNAVAILABLE": "This number cannot be added. Ask an admin",
+    "FAMILY_FULL": "A family can have at most {max} people",
+    "FAMILY_OWNER_CANNOT_LEAVE": "The owner deletes the family instead of leaving"
   }
 }

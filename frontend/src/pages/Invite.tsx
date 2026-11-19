@@ -13,6 +13,14 @@ import { Button, ErrorBox, Field, Spinner, useAction, useConfirm } from '../comp
 import { passkeySupported, registerPasskey } from '../webauthn';
 import { useTranslation } from 'react-i18next';
 
+type InvitePreview = {
+  kind: string;
+  email: string;
+  name: string;
+  family_name?: string;
+  phone?: string;
+};
+
 type Step = 'details' | 'terms' | 'passkey';
 type DetailField = 'name' | 'email' | 'phone';
 
@@ -35,7 +43,7 @@ export default function Invite() {
   const nav = useNavigate();
   const { refresh } = useAuth();
   const confirm = useConfirm();
-  const { data, error, loading } = useApi<{ kind: string; email: string; name: string }>(`/invites/${token}`);
+  const { data, error, loading } = useApi<InvitePreview>(`/invites/${token}`);
   const [name, setName] = useState('');
   const [email, setEmail] = useState('');
   const [phone, setPhone] = useState('');
@@ -50,6 +58,7 @@ export default function Invite() {
     if (!data || data.kind === 'recovery') return;
     if (data.name) setName((v) => v || data.name);
     if (data.email) setEmail((v) => v || data.email);
+    if (data.kind === 'family' && data.phone) setPhone(data.phone);
   }, [data]);
 
   if (loading) return <div className="auth-page"><Spinner /></div>;
@@ -77,8 +86,12 @@ export default function Invite() {
     if (!emailTrimmed || !/\S+@\S+\.\S+/.test(emailTrimmed)) {
       errs.email = t('emailInvalid');
     }
+    const familyPhone = data.kind === 'family';
     const phoneChars = [...phone.trim()].length;
-    if (phoneChars < PHONE_CHARS.min || phoneChars > PHONE_CHARS.max || phone.replace(/\D/g, '').length < 8) {
+    if (
+      !familyPhone &&
+      (phoneChars < PHONE_CHARS.min || phoneChars > PHONE_CHARS.max || phone.replace(/\D/g, '').length < 8)
+    ) {
       errs.phone = t('phoneInvalid');
     }
     setFieldErrors(errs);
@@ -180,6 +193,7 @@ export default function Invite() {
           <form className="stack" onSubmit={handleDetailsNext}>
             <div>
               <h1 className="auth-title">{t('join')}</h1>
+              {data.kind === 'family' && data.family_name ? <p>{data.family_name}</p> : null}
             </div>
 
             <Field label={t('name')}>
@@ -218,15 +232,17 @@ export default function Invite() {
               )}
             </Field>
 
-            <Field label={t('phone')} hint={t('phoneHint')}>
+            <Field label={t('phone')} hint={data.kind === 'family' ? undefined : t('phoneHint')}>
               <input
                 className={`input ${fieldErrors.phone ? 'invalid' : ''}`}
                 type="tel"
                 required
                 autoComplete="tel"
                 maxLength={PHONE_CHARS.max}
+                readOnly={data.kind === 'family'}
                 value={phone}
                 onChange={(e) => {
+                  if (data.kind === 'family') return;
                   setPhone(e.target.value);
                   if (fieldErrors.phone) setFieldErrors({ ...fieldErrors, phone: undefined });
                 }}

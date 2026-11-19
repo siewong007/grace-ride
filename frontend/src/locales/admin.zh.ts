@@ -129,6 +129,7 @@ export default {
     passkey: '通行密钥',
     name: '姓名',
     email: '电邮',
+    family: '家庭',
     update: '保存',
     inviteLog: '邀请记录',
     createInvite: '建立邀请连结',
