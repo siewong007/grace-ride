@@ -116,7 +116,7 @@ async fn load_event(st: &AppState, u: &CurrentUser, id: i64) -> AppResult<EventR
 }
 
 async fn plan_rides(st: &AppState, event: i64) -> AppResult<Vec<PlanRide>> {
-    Ok(sqlx::query_as(&format!(
+    Ok(sqlx::query_as(crate::dyn_sql!(
         "SELECT r.id, r.passenger_id,
                 CASE WHEN r.is_proxy = 1 AND r.rider_name != '' THEN r.rider_name || ' (' || p.name || ' 代订)' ELSE p.name END AS p_name,
                 r.seats, r.pickup_area_id AS area_id,
@@ -135,7 +135,7 @@ async fn plan_rides(st: &AppState, event: i64) -> AppResult<Vec<PlanRide>> {
 
 /// Active members who may take rides (接送 · create) and have a vehicle on file.
 async fn plan_drivers(st: &AppState) -> AppResult<Vec<PlanDriver>> {
-    Ok(sqlx::query_as::<_, PlanDriver>(&format!(
+    Ok(sqlx::query_as::<_, PlanDriver>(crate::dyn_sql!(
         "SELECT u.id, u.name, u.carpool_enabled, u.spare_seats, v.model AS v_model, v.plate AS v_plate, v.seats AS v_seats,
                 v.wheelchair_ok, v.low_step, v.child_seat
          FROM users u JOIN vehicles v ON v.user_id = u.id WHERE {} ORDER BY u.name",

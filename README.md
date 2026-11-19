@@ -62,7 +62,7 @@ Password for all demo accounts: `GraceRide2026!` · Simulated TOTP secret: `MFRG
 | Layer | Technology | Path |
 |---|---|---|
 | **API & Jobs** | Rust, Axum, SQLx, WebAuthn, Tokio, SSE | [`backend/`](backend/) |
-| **Web App** | React 18, TypeScript, Vite, Leaflet, i18next | [`frontend/`](frontend/) |
+| **Web App** | React 19, TypeScript, Vite, Leaflet, i18next | [`frontend/`](frontend/) |
 | **Database** | PostgreSQL 18 (numbered SQLx migrations) | [`backend/migrations/`](backend/migrations/) |
 | **Ops & Deploy** | Docker, Caddy, OSRM, GitHub Actions, encrypted backup/restore scripts | [`deploy/`](deploy/), [`scripts/`](scripts/) |
 

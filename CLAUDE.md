@@ -9,9 +9,9 @@
 
 | Layer | Technology |
 |---|---|
-| Backend | Rust stable · Axum 0.8 · SQLx 0.8 · Tokio |
+| Backend | Rust stable · Axum 0.8 · SQLx 0.9 · Tokio |
 | Database | PostgreSQL 18 · integer cents · KL local-time text timestamps |
-| Frontend | React 18 · TypeScript 5 · Vite 6 · i18next · Leaflet |
+| Frontend | React 19 · TypeScript 6 · Vite 8 · i18next · Leaflet |
 | Auth | WebAuthn passkeys · TOTP · backup codes · Argon2 password hash |
 | Infra | Docker (multi-stage) · Caddy · GitHub Actions CI/CD |
 | Package managers | cargo (backend) · npm (frontend) |
@@ -181,6 +181,7 @@
 - **Secrets:** Telegram token, VAPID keys stored in `app_secrets` DB table, never in env or source.
 - **i18n:** all user-facing text in `frontend/src/locales/`. Backend error messages in `backend/src/i18n/`.
 - **Booleans in SQL:** stored as `INTEGER 0/1`.
+- **Dynamic SQL (sqlx 0.9):** `sqlx::query*` only accepts `&'static str`. Build SQL that interpolates fixed fragments (column lists, placeholders, visibility clauses) with `crate::dyn_sql!(...)`; keep every user value in `.bind()`. Use `sqlx::AssertSqlSafe(...)` for an already-built `String`.
 - **Stubs:** all stub files have been deleted. Do not add new stub-only files.
 
 ---

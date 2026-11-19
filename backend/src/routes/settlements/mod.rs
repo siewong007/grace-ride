@@ -227,7 +227,7 @@ pub(super) async fn ensure_all_attended(
         // Attendance is not tracked, but a bill must still only reach people connected
         // to the event: the organiser, a real 'going' signup, or the event's audience.
         // Without this the organiser could switch tracking off and bill any member.
-        let (outside,): (i64,) = sqlx::query_as(&format!(
+        let (outside,): (i64,) = sqlx::query_as(crate::dyn_sql!(
             "SELECT COUNT(*) FROM unnest($2::BIGINT[]) AS u(user_id) WHERE NOT (
                 EXISTS (SELECT 1 FROM events ev WHERE ev.id=$1 AND ev.created_by=u.user_id)
                 OR EXISTS (SELECT 1 FROM event_signups es WHERE es.event_id=$1 AND es.user_id=u.user_id AND es.status='going')

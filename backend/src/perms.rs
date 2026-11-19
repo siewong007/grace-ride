@@ -507,7 +507,7 @@ pub async fn ensure_superadmin(
     let holds = |role: &str| {
         format!("EXISTS (SELECT 1 FROM member_roles mr WHERE mr.user_id = users.id AND mr.role_key = '{role}')")
     };
-    let existing: Option<(i64,)> = sqlx::query_as(&format!(
+    let existing: Option<(i64,)> = sqlx::query_as(crate::dyn_sql!(
         "SELECT id FROM users WHERE status = 'active' AND {} LIMIT 1",
         holds(SUPERADMIN_ROLE)
     ))
@@ -516,7 +516,7 @@ pub async fn ensure_superadmin(
     if existing.is_some() {
         return Ok(None);
     }
-    let promoted: Option<(i64, String)> = sqlx::query_as(&format!(
+    let promoted: Option<(i64, String)> = sqlx::query_as(crate::dyn_sql!(
         "UPDATE users SET roles = '{SUPERADMIN_ROLE},' || roles
          WHERE id = (SELECT id FROM users WHERE status = 'active' AND {}
                      ORDER BY (email = $1) DESC, id LIMIT 1)

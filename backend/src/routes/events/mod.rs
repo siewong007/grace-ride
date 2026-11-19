@@ -51,7 +51,7 @@ pub const KINDS: &[&str] = &["badminton", "bowling", "kayak", "walk", "other"];
 /// A member sees an event if it targets one of their groups or a group above one of
 /// theirs (or the 全体会员 group), or if they created it / are staff. See `crate::audience`.
 pub async fn can_see_event(st: &AppState, u: &CurrentUser, event_id: i64) -> AppResult<bool> {
-    let (n,): (i64,) = sqlx::query_as(&format!(
+    let (n,): (i64,) = sqlx::query_as(crate::dyn_sql!(
         "SELECT COUNT(*) FROM events e WHERE e.id = $1 AND {}",
         visible_events_sql("$2", "$3")
     ))
@@ -207,7 +207,7 @@ async fn list_events(
             "{EVENT_SELECT} WHERE {} ORDER BY e.starts_at DESC, e.id DESC LIMIT ${next_param}",
             conds.join(" AND ")
         );
-        let mut query = sqlx::query_as::<_, EventRow>(&sql)
+        let mut query = sqlx::query_as::<_, EventRow>(sqlx::AssertSqlSafe(&*sql))
             .bind(u.id)
             .bind(&u.group_scope)
             .bind(&now_str);
@@ -237,12 +237,12 @@ async fn list_events(
     };
     let cutoff = now_str;
     let rows = if q.scope.as_deref() == Some("managing") {
-        sqlx::query_as::<_, EventRow>(&sql)
+        sqlx::query_as::<_, EventRow>(sqlx::AssertSqlSafe(&*sql))
             .bind(u.id)
             .fetch_all(&st.db)
             .await?
     } else {
-        sqlx::query_as::<_, EventRow>(&sql)
+        sqlx::query_as::<_, EventRow>(sqlx::AssertSqlSafe(&*sql))
             .bind(u.id)
             .bind(&u.group_scope)
             .bind(&cutoff)
@@ -256,7 +256,7 @@ async fn list_events(
 }
 
 pub(super) async fn load_event(st: &AppState, u: &CurrentUser, id: i64) -> AppResult<EventRow> {
-    sqlx::query_as::<_, EventRow>(&format!("{EVENT_SELECT} WHERE e.id = $2"))
+    sqlx::query_as::<_, EventRow>(crate::dyn_sql!("{EVENT_SELECT} WHERE e.id = $2"))
         .bind(u.id)
         .bind(id)
         .fetch_optional(&st.db)

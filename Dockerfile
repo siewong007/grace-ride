@@ -11,6 +11,11 @@ RUN npm run build
 
 # ---------- Backend ----------
 FROM rust:1-bookworm AS api
+# rustls' crypto backend (aws-lc-sys, pulled in by reqwest and sentry) compiles AWS-LC
+# with CMake. The rust image ships a C toolchain but not cmake.
+RUN apt-get update \
+  && apt-get install -y --no-install-recommends cmake \
+  && rm -rf /var/lib/apt/lists/*
 WORKDIR /src
 # backend/Cargo.toml sets `license-file = "../LICENSE"`; place LICENSE at /LICENSE.
 COPY LICENSE /LICENSE

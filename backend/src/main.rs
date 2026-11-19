@@ -16,13 +16,13 @@ async fn main() -> anyhow::Result<()> {
     // Sentry: opt-in error and panic monitoring. Set SENTRY_DSN to enable.
     // Never log personal data (names, phone numbers, addresses) in Sentry events.
     // The guard must stay alive for the duration of main to flush events on exit.
+    // ClientOptions is `#[non_exhaustive]`, so set the release on a default value instead
+    // of building the struct literally. Performance tracing stays off (the default).
+    let mut sentry_options = sentry::ClientOptions::default();
+    sentry_options.release = sentry::release_name!();
     let _sentry = sentry::init((
         std::env::var("SENTRY_DSN").unwrap_or_default(),
-        sentry::ClientOptions {
-            release: sentry::release_name!(),
-            traces_sample_rate: 0.0, // Errors only; performance tracing is off.
-            ..Default::default()
-        },
+        sentry_options,
     ));
 
     let cfg = Config::from_env()?;

@@ -59,7 +59,7 @@ pub(super) async fn driver_requests(
         "{RIDE_SELECT} WHERE {} ORDER BY r.pickup_at LIMIT 100",
         conds.join(" AND ")
     );
-    let mut query = sqlx::query_as::<_, RideRow>(&sql)
+    let mut query = sqlx::query_as::<_, RideRow>(sqlx::AssertSqlSafe(&*sql))
         .bind(u.id)
         .bind(now()[..16].to_string())
         .bind(&u.drive_scope);
@@ -92,7 +92,7 @@ pub(super) async fn driver_schedule(
     require(&u, Page::Drive, Act::View)?;
     let from = q.from.unwrap_or_else(|| now()[..10].to_string());
     let to = q.to.unwrap_or_else(|| from.clone());
-    let rows = sqlx::query_as::<_, RideRow>(&format!(
+    let rows = sqlx::query_as::<_, RideRow>(crate::dyn_sql!(
         "{RIDE_SELECT} WHERE r.driver_id=$1 AND substr(r.pickup_at,1,10) BETWEEN $2 AND $3
          AND r.status NOT IN ('cancelled') ORDER BY r.pickup_at"
     ))

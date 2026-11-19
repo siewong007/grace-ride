@@ -141,7 +141,7 @@ pub(super) async fn staff_reassign(
     if !traffic_scope_ok(&u, r.event_created_by) {
         return Err(forbidden(u.lang, ErrorKey::CannotViewRide));
     }
-    let (can_drive,): (bool,) = sqlx::query_as(&format!(
+    let (can_drive,): (bool,) = sqlx::query_as(crate::dyn_sql!(
         "SELECT {} FROM users u WHERE u.id=$1 AND u.status='active'",
         perms::sql_holds("u", Perm(Page::Drive, Act::Create))
     ))
@@ -428,7 +428,7 @@ pub(super) async fn admin_rides(
              LEFT JOIN users d ON d.id = r.driver_id WHERE {}",
             conds.join(" AND ")
         );
-        let mut count_query = sqlx::query_as::<_, (i64,)>(&count_sql);
+        let mut count_query = sqlx::query_as::<_, (i64,)>(sqlx::AssertSqlSafe(&*count_sql));
         if let Some(d) = &q.date {
             count_query = count_query.bind(d);
         }
@@ -449,7 +449,7 @@ pub(super) async fn admin_rides(
             conds.join(" AND "),
             n + 1
         );
-        let mut query = sqlx::query_as::<_, RideRow>(&sql);
+        let mut query = sqlx::query_as::<_, RideRow>(sqlx::AssertSqlSafe(&*sql));
         if let Some(d) = &q.date {
             query = query.bind(d);
         }
@@ -480,7 +480,7 @@ pub(super) async fn admin_rides(
         "{RIDE_SELECT} WHERE {} ORDER BY {order} LIMIT 300",
         conds.join(" AND ")
     );
-    let mut query = sqlx::query_as::<_, RideRow>(&sql);
+    let mut query = sqlx::query_as::<_, RideRow>(sqlx::AssertSqlSafe(&*sql));
     if let Some(d) = &q.date {
         query = query.bind(d);
     }
@@ -517,7 +517,7 @@ pub(super) async fn admin_live(
     } else {
         format!(" AND {}", traffic_owned_events_sql(&u))
     };
-    let rows: Vec<(i64, String, Option<f64>, Option<f64>, Option<String>, i64, String)> = sqlx::query_as(&format!(
+    let rows: Vec<(i64, String, Option<f64>, Option<f64>, Option<String>, i64, String)> = sqlx::query_as(crate::dyn_sql!(
         "SELECT d.id, d.name, l.lat, l.lng, l.updated_at, COUNT(r.id), MIN(r.pickup_at)
          FROM rides r JOIN users d ON d.id = r.driver_id LEFT JOIN driver_locations l ON l.driver_id = d.id
          WHERE r.status = 'in_progress'{scope} GROUP BY d.id, l.driver_id",
@@ -539,7 +539,7 @@ pub(super) async fn admin_drivers(
 ) -> AppResult<Json<Value>> {
     require(&u, Page::AdminRides, Act::View)?;
     let _ = q;
-    let rows: Vec<(i64, String, i64, i64, Option<String>, Option<String>, Option<i64>, Option<String>)> = sqlx::query_as(&format!(
+    let rows: Vec<(i64, String, i64, i64, Option<String>, Option<String>, Option<i64>, Option<String>)> = sqlx::query_as(crate::dyn_sql!(
         "SELECT u.id, u.name, u.carpool_enabled, u.spare_seats, v.model, v.plate, v.seats,
                 (SELECT string_agg(a.name, ', ') FROM driver_areas da JOIN areas a ON a.id = da.area_id WHERE da.user_id = u.id)
          FROM users u LEFT JOIN vehicles v ON v.user_id = u.id WHERE {} ORDER BY u.name",

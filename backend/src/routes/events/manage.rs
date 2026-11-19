@@ -230,7 +230,7 @@ pub(super) async fn create_event(
     tx.commit().await?;
     let first_id = created_ids[0];
     // Invite members of the target groups and their sub-groups (相关活动邀请).
-    let members: Vec<(i64,)> = sqlx::query_as(&audience_users_sql("$1"))
+    let members: Vec<(i64,)> = sqlx::query_as(sqlx::AssertSqlSafe(audience_users_sql("$1")))
         .bind(first_id)
         .fetch_all(&st.db)
         .await?;
@@ -382,7 +382,7 @@ pub(super) async fn duplicate_event(
     .await?;
     tx.commit().await?;
 
-    let members: Vec<(i64,)> = sqlx::query_as(&audience_users_sql("$1"))
+    let members: Vec<(i64,)> = sqlx::query_as(sqlx::AssertSqlSafe(audience_users_sql("$1")))
         .bind(new_id)
         .fetch_all(&st.db)
         .await?;

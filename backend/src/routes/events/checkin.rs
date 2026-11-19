@@ -73,7 +73,7 @@ pub(super) async fn mark_attendance(
         // Walk-in: organiser may record someone who attended without signing up, but
         // only a member the event is for (or the organiser): otherwise this would let any
         // member id be marked present and then billed.
-        let (in_audience,): (i64,) = sqlx::query_as(&format!(
+        let (in_audience,): (i64,) = sqlx::query_as(crate::dyn_sql!(
             "SELECT COUNT(*) FROM users u WHERE u.id=$2 AND u.status='active' AND (
                 u.id=$3 OR u.id IN ({}))",
             audience_users_sql("$1")

@@ -61,7 +61,8 @@ pub async fn connect_db_with(url: &str, cfg: &DbConfig) -> anyhow::Result<PgPool
     let session = session_settings(cfg);
 
     let mut conn = PgConnection::connect_with(&opts).await?;
-    conn.execute(set_time_zone(cfg).as_str()).await?;
+    conn.execute(sqlx::AssertSqlSafe(set_time_zone(cfg)))
+        .await?;
     clear_squashed_migration_history(&mut conn).await?;
     sqlx::migrate!("./migrations").run(&mut conn).await?;
     sync_timezone(&mut conn, cfg).await?;
@@ -74,7 +75,7 @@ pub async fn connect_db_with(url: &str, cfg: &DbConfig) -> anyhow::Result<PgPool
         .after_connect(move |conn, _meta| {
             let session = session.clone();
             Box::pin(async move {
-                conn.execute(session.as_str()).await?;
+                conn.execute(sqlx::AssertSqlSafe(session)).await?;
                 Ok(())
             })
         })

@@ -1855,7 +1855,7 @@ async fn insert_driver_session(st: &AppState, n: i64) -> (i64, String) {
         token.push('0');
     }
     token.truncate(48);
-    let hash = format!("{:x}", Sha256::digest(token.as_bytes()));
+    let hash = hex::encode(Sha256::digest(token.as_bytes()));
     let pw_hash = grace_ride::routes::auth::hash_password("GraceRide2026!").unwrap();
     let (id,): (i64,) = sqlx::query_as(
         "INSERT INTO users (name, email, phone, roles, password_hash, webauthn_uuid, status) VALUES ($1,$2,$3,$4,$5,$6,$7) RETURNING id",

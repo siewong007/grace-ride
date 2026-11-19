@@ -453,7 +453,7 @@ pub(super) async fn my_rides(
             "{RIDE_SELECT} WHERE {} ORDER BY r.pickup_at DESC, r.id DESC LIMIT ${n}",
             conds.join(" AND ")
         );
-        let mut query = sqlx::query_as::<_, RideRow>(&sql).bind(u.id);
+        let mut query = sqlx::query_as::<_, RideRow>(sqlx::AssertSqlSafe(&*sql)).bind(u.id);
         if let Some((ts, Some(bid))) = cursor {
             query = query.bind(ts).bind(bid);
         } else if let Some((ts, None)) = cursor {
@@ -479,7 +479,7 @@ pub(super) async fn my_rides(
     } else {
         format!("{RIDE_SELECT} WHERE r.passenger_id=$1 AND r.status NOT IN ('completed','cancelled','no_show','alt_transport') ORDER BY r.pickup_at")
     };
-    let rows = sqlx::query_as::<_, RideRow>(&sql)
+    let rows = sqlx::query_as::<_, RideRow>(sqlx::AssertSqlSafe(&*sql))
         .bind(u.id)
         .fetch_all(&st.db)
         .await?;

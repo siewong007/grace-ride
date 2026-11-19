@@ -223,7 +223,7 @@ impl FromRequestParts<AppState> for VisitorPass {
         if token.len() != TOKEN_LEN {
             return Err(unauthorized(lang));
         }
-        let pass: Option<Pass> = sqlx::query_as(&format!(
+        let pass: Option<Pass> = sqlx::query_as(crate::dyn_sql!(
             "SELECT {PASS_COLS} FROM visitor_sessions s JOIN visitor_passes p ON p.id = s.pass_id
              WHERE s.token_hash = $1 AND s.expires_at > $2"
         ))
@@ -244,7 +244,7 @@ async fn pass_by_token(st: &AppState, lang: Lang, token: &str) -> AppResult<Pass
     if token.len() != TOKEN_LEN {
         return Err(bad(lang, ErrorKey::VisitorLinkInvalid));
     }
-    let pass: Option<Pass> = sqlx::query_as(&format!(
+    let pass: Option<Pass> = sqlx::query_as(crate::dyn_sql!(
         "SELECT {PASS_COLS} FROM visitor_passes p WHERE p.token_hash = $1"
     ))
     .bind(hash_token(token))
@@ -669,7 +669,7 @@ async fn list_passes(
         .await?;
     let all = can_manage(&u, created_by, Act::View)
         || (u.can(Page::AdminRides, Act::View) && (u.traffic_is_global() || created_by == u.id));
-    let mut passes: Vec<Pass> = sqlx::query_as(&format!(
+    let mut passes: Vec<Pass> = sqlx::query_as(crate::dyn_sql!(
         "SELECT {PASS_COLS} FROM visitor_passes p
          WHERE p.event_id = $1 AND ($2 OR p.host_id = $3) AND p.closed_reason IS DISTINCT FROM 'reissued'
          ORDER BY p.id DESC"
@@ -710,7 +710,7 @@ async fn list_passes(
 
 /// A pass the caller may manage: its host, the event's organiser, or transport staff.
 async fn managed_pass(st: &AppState, u: &CurrentUser, id: i64) -> AppResult<Pass> {
-    let mut p: Pass = sqlx::query_as(&format!(
+    let mut p: Pass = sqlx::query_as(crate::dyn_sql!(
         "SELECT {PASS_COLS} FROM visitor_passes p WHERE p.id = $1"
     ))
     .bind(id)

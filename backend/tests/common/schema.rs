@@ -53,9 +53,11 @@ async fn drop_stale(pool: &sqlx::PgPool) {
             .and_then(|t| t.parse::<u64>().ok());
         if created.is_none_or(|t| t < cutoff) {
             // One schema per statement keeps each drop's lock count small.
-            let _ = sqlx::query(&format!("DROP SCHEMA IF EXISTS \"{name}\" CASCADE"))
-                .execute(pool)
-                .await;
+            let _ = sqlx::query(grace_ride::dyn_sql!(
+                "DROP SCHEMA IF EXISTS \"{name}\" CASCADE"
+            ))
+            .execute(pool)
+            .await;
         }
     }
     let _ =
@@ -74,11 +76,11 @@ pub async fn fresh_schema(prefix: &str) -> String {
         .unwrap();
     CLEANED.get_or_init(|| drop_stale(&pool)).await;
     let schema = format!("{prefix}{}", uuid::Uuid::new_v4().simple());
-    sqlx::query(&format!("CREATE SCHEMA \"{schema}\""))
+    sqlx::query(grace_ride::dyn_sql!("CREATE SCHEMA \"{schema}\""))
         .execute(&pool)
         .await
         .unwrap();
-    sqlx::query(&format!(
+    sqlx::query(grace_ride::dyn_sql!(
         "COMMENT ON SCHEMA \"{schema}\" IS '{LABEL}{}'",
         now_secs()
     ))

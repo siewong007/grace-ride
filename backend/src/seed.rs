@@ -1646,7 +1646,7 @@ pub async fn seed_edge(db: &PgPool) -> anyhow::Result<()> {
         let sql = format!(
             "UPDATE users SET spare_seats={spare}, carpool_enabled={carpool}, lang='{lang}', {terms_sql} WHERE id={id}"
         );
-        sqlx::query(&sql).execute(db).await?;
+        sqlx::query(sqlx::AssertSqlSafe(&*sql)).execute(db).await?;
         if totp {
             sqlx::query("UPDATE users SET totp_secret=$1, totp_enabled=1 WHERE id=$2")
                 .bind(SIMULATED_TOTP_SECRET)
@@ -2889,7 +2889,7 @@ async fn sync_identity_sequences(db: &PgPool) -> anyhow::Result<()> {
         let sql = format!(
             "SELECT setval(pg_get_serial_sequence('{table}', 'id'), COALESCE((SELECT MAX(id) FROM {table}), 1))"
         );
-        sqlx::query(&sql).execute(db).await?;
+        sqlx::query(sqlx::AssertSqlSafe(&*sql)).execute(db).await?;
     }
     Ok(())
 }

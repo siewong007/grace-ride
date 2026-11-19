@@ -79,13 +79,14 @@ pub(super) async fn invite_preview(
     Path(token): Path<String>,
 ) -> AppResult<Json<Value>> {
     let lang = visitor_lang(&headers);
-    let row: Option<(String, String, String, String, Option<String>)> = sqlx::query_as(&format!(
-        "SELECT kind, email, name, expires_at, used_at FROM invites WHERE {INVITE_BY_TOKEN}"
-    ))
-    .bind(&token)
-    .bind(hash_token(&token))
-    .fetch_optional(&st.db)
-    .await?;
+    let row: Option<(String, String, String, String, Option<String>)> =
+        sqlx::query_as(crate::dyn_sql!(
+            "SELECT kind, email, name, expires_at, used_at FROM invites WHERE {INVITE_BY_TOKEN}"
+        ))
+        .bind(&token)
+        .bind(hash_token(&token))
+        .fetch_optional(&st.db)
+        .await?;
     let Some((kind, email, name, expires, used)) = row else {
         return Err(not_found(lang));
     };
@@ -149,7 +150,7 @@ pub(super) async fn invite_accept(
 ) -> AppResult<(CookieJar, Json<Value>)> {
     let lang = visitor_lang(&headers);
     let row: Option<(i64, String, String, String, String, String, Option<i64>, String, Option<String>)> = sqlx::query_as(
-        &format!("SELECT id, kind, email, name, roles, group_ids::text, user_id, expires_at, used_at FROM invites WHERE {INVITE_BY_TOKEN}"),
+        crate::dyn_sql!("SELECT id, kind, email, name, roles, group_ids::text, user_id, expires_at, used_at FROM invites WHERE {INVITE_BY_TOKEN}"),
     )
     .bind(&token)
     .bind(hash_token(&token))

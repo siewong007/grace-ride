@@ -204,7 +204,7 @@ pub(super) const RIDE_SELECT: &str = "SELECT r.id, r.passenger_id, r.driver_id, 
     LEFT JOIN groups ag ON ag.id = r.as_group_id";
 
 pub async fn load_ride(st: &AppState, lang: Lang, id: i64) -> AppResult<RideRow> {
-    sqlx::query_as::<_, RideRow>(&format!("{RIDE_SELECT} WHERE r.id = $1"))
+    sqlx::query_as::<_, RideRow>(crate::dyn_sql!("{RIDE_SELECT} WHERE r.id = $1"))
         .bind(id)
         .fetch_optional(&st.db)
         .await?
@@ -354,7 +354,10 @@ pub(super) async fn set_status(
     let sql = format!(
         "UPDATE rides SET status=$1, updated_at=$2 WHERE id=$3 AND status IN ({placeholders})"
     );
-    let mut q = sqlx::query(&sql).bind(to).bind(now()).bind(id);
+    let mut q = sqlx::query(sqlx::AssertSqlSafe(&*sql))
+        .bind(to)
+        .bind(now())
+        .bind(id);
     for f in from {
         q = q.bind(*f);
     }

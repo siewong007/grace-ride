@@ -391,7 +391,7 @@ async fn apply_recurring_schedule_for_date(
                AND substr(r.pickup_at,1,10)=$2 AND r.passenger_id != $3
                AND ({MATCH_GROUP_SQL} IS NULL OR {MATCH_GROUP_SQL} = ANY($4))"
         );
-        let (open,): (i64,) = sqlx::query_as(&open_sql)
+        let (open,): (i64,) = sqlx::query_as(sqlx::AssertSqlSafe(&*open_sql))
             .bind(s.area_id)
             .bind(target_date)
             .bind(s.user_id)
@@ -440,7 +440,9 @@ pub async fn process_recurring_schedules(db: &PgPool) -> anyhow::Result<usize> {
         perms::sql_holds("u", Perm(Page::Rides, Act::Create)),
         perms::sql_holds("u", Perm(Page::Drive, Act::Create)),
     );
-    let rows: Vec<ActiveScheduleRow> = sqlx::query_as(&query_sql).fetch_all(db).await?;
+    let rows: Vec<ActiveScheduleRow> = sqlx::query_as(sqlx::AssertSqlSafe(&*query_sql))
+        .fetch_all(db)
+        .await?;
 
     let mut count = 0usize;
     for s in rows {

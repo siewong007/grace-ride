@@ -136,7 +136,7 @@ pub(super) async fn list_reimbursements(
             "SELECT COUNT(*) FROM reimbursements r JOIN users u ON u.id=r.user_id {where_sql}"
         );
         Some(
-            sqlx::query_scalar::<_, i64>(&count_sql)
+            sqlx::query_scalar::<_, i64>(sqlx::AssertSqlSafe(&*count_sql))
                 .bind(u.id)
                 .bind(finance)
                 .bind(search.as_deref())
@@ -149,7 +149,7 @@ pub(super) async fn list_reimbursements(
     };
 
     let sql = format!("{REIMB_SELECT} {where_sql} ORDER BY {order} LIMIT $5 OFFSET $6");
-    let rows = sqlx::query_as::<_, ReimbRow>(&sql)
+    let rows = sqlx::query_as::<_, ReimbRow>(sqlx::AssertSqlSafe(&*sql))
         .bind(u.id)
         .bind(finance)
         .bind(search.as_deref())
@@ -174,7 +174,7 @@ pub(super) async fn list_reimbursements(
 }
 
 async fn load_reimb(st: &AppState, lang: Lang, id: i64) -> AppResult<ReimbRow> {
-    sqlx::query_as::<_, ReimbRow>(&format!("{REIMB_SELECT} WHERE r.id=$1"))
+    sqlx::query_as::<_, ReimbRow>(crate::dyn_sql!("{REIMB_SELECT} WHERE r.id=$1"))
         .bind(id)
         .fetch_optional(&st.db)
         .await?

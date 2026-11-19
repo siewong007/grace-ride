@@ -122,7 +122,8 @@ pub(super) async fn list_users(
 
     if q.page.is_some() || q.limit.is_some() {
         let count_sql = format!("SELECT COUNT(*) FROM users u WHERE {where_sql}");
-        let mut count_query = sqlx::query_as::<_, (i64,)>(&count_sql).bind(&like);
+        let mut count_query =
+            sqlx::query_as::<_, (i64,)>(sqlx::AssertSqlSafe(&*count_sql)).bind(&like);
         if let Some(r) = &q.role {
             count_query = count_query.bind(r);
         }
@@ -139,7 +140,7 @@ pub(super) async fn list_users(
             "{select} WHERE {where_sql} ORDER BY {order} LIMIT ${n} OFFSET ${}",
             n + 1
         );
-        let mut query = sqlx::query_as::<_, Row>(&sql).bind(&like);
+        let mut query = sqlx::query_as::<_, Row>(sqlx::AssertSqlSafe(&*sql)).bind(&like);
         if let Some(r) = &q.role {
             query = query.bind(r);
         }
@@ -169,7 +170,7 @@ pub(super) async fn list_users(
 
     // Unpaged (member pickers): the same filters, applied before the cap.
     let sql = format!("{select} WHERE {where_sql} ORDER BY {order} LIMIT 2000");
-    let mut query = sqlx::query_as::<_, Row>(&sql).bind(&like);
+    let mut query = sqlx::query_as::<_, Row>(sqlx::AssertSqlSafe(&*sql)).bind(&like);
     if let Some(r) = &q.role {
         query = query.bind(r);
     }

@@ -61,6 +61,32 @@ npm run dev                            # http://localhost:5173 (proxies /api to 
 
 Startup automatically applies numbered SQLx migrations (`backend/migrations/`) and, when `DEV_MODE=true` on `localhost`, seeds deterministic synthetic demo fixtures (`seed::run`). Never drop a database as a routine update procedure, and **never** set `DEV_MODE=true` in production (startup aborts if `DEV_MODE=true` on a non-localhost `PUBLIC_URL`).
 
+### Pinned Toolchain & Dependency Versions
+
+Versions below are the ones the lockfiles resolve to. Bump them in `backend/Cargo.toml` / `frontend/package.json`, then re-run `make lint test audit` and the Docker image build before merging.
+
+| Layer | Version |
+|---|---|
+| Rust | stable (`backend/rust-toolchain.toml`) |
+| Axum / `axum-extra` | 0.8 / 0.12 |
+| SQLx | 0.9 (PostgreSQL only) |
+| Tokio | 1.x |
+| `reqwest` | 0.13 (`json`, `query`, `rustls`; TLS 1.3 via AWS-LC) |
+| `sentry` | 0.49 (`default-features = false`, no transport unless enabled) |
+| `base64` / `sha2` / `hex` | 0.23 / 0.11 / 0.4 |
+| Node.js | 22 (`.nvmrc`) |
+| React / React DOM | 19.3 |
+| React Router | 7.x |
+| TypeScript / `@typescript/native` | 6.0 / 7.0 (`typescript-eslint` 8.72.2 is held: 8.73+ requires a TypeScript 7.1 nightly peer) |
+| Vite / Vitest | 8.x / 5.x |
+| i18next / `react-i18next` | 27.x / 18.x |
+| Leaflet / `react-leaflet` | 1.9 / 5.0 |
+| `lucide-react` | 1.75 |
+| `@playwright/test` | 1.65.0 exactly (CI asserts it matches the `mcr.microsoft.com/playwright:v1.65.0-noble` image; bumping needs fresh Linux screenshot baselines) |
+
+> [!IMPORTANT]
+> **Dynamic SQL (SQLx 0.9):** `sqlx::query*` accepts only `&'static str`. SQL assembled from fixed fragments (column lists, placeholders, visibility clauses) must be wrapped in `crate::dyn_sql!(...)`; user values always travel through `.bind()`. `sqlx::AssertSqlSafe(...)` is the escape hatch for an already-built `String`. See `backend/src/util.rs`.
+
 ### Demo Accounts (`DEV_MODE=true` only)
 
 - **Shared demo password:** `GraceRide2026!` (in `DEV_MODE`, password logins also satisfy the staff MFA gate)
@@ -182,7 +208,7 @@ terminal alternatives: cancelled, no_show, alt_transport
 ### Runtime Topology
 
 ```text
-Browser: React 18 + TypeScript + Vite SPA, Leaflet, Service Worker (sw.js), i18next (zh/en terms)
+Browser: React 19 + TypeScript + Vite SPA, Leaflet, Service Worker (sw.js), i18next (zh/en terms)
   -> HTTPS / Caddy (or Cloudflare -> Host Caddy -> loopback on AIC VPS)
      -> Single Axum Rust binary (/app/grace-ride)
         ├── /api/*            JSON REST routes + cookie auth + session_lock_guard + CSRF/rate limits

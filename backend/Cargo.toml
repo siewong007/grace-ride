@@ -8,13 +8,13 @@ description = "恩典同行 Grace Ride — invite-only ride & fellowship app for
 
 [dependencies]
 axum = { version = "0.8", features = ["multipart", "macros"] }
-axum-extra = { version = "0.10", features = ["cookie"] }
+axum-extra = { version = "0.12", features = ["cookie"] }
 tokio = { version = "1", features = ["full"] }
 tokio-stream = { version = "0.1", features = ["sync", "time"] }
 futures-util = "0.3"
 async-stream = "0.3"
-tower-http = { version = "0.6", features = ["fs", "trace", "limit", "compression-gzip", "compression-br"] }
-sqlx = { version = "0.8", features = ["runtime-tokio", "postgres", "migrate", "chrono"] }
+tower-http = { version = "0.7", features = ["fs", "trace", "limit", "compression-gzip", "compression-br"] }
+sqlx = { version = "0.9", features = ["runtime-tokio", "postgres", "migrate", "chrono"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 chrono = { version = "0.4", features = ["serde"] }
@@ -28,18 +28,18 @@ thiserror = "2"
 anyhow = "1"
 tracing = "0.1"
 # rustls: TLS 1.3 on every platform (macOS's native TLS stops at 1.2; the public OSRM server requires 1.3).
-reqwest = { version = "0.12", features = ["json", "rustls-tls"] }
+reqwest = { version = "0.13.2", features = ["json", "query", "rustls"] }
 tracing-subscriber = { version = "0.3", features = ["env-filter", "json"] }
 dotenvy = "0.15"
-base64 = "0.22"
+base64 = "0.23"
 time = "0.3"
-sha2 = "0.10"
+sha2 = "0.11"
 hex = "0.4"
 chrono-tz = "0.10"
 ring = "0.17"
 # Error monitoring. Set SENTRY_DSN env var to enable; leave blank to disable.
 # rustls: consistent with reqwest's rustls-tls feature; avoids linking native-tls.
-sentry = { version = "0.34", default-features = false, features = ["anyhow", "backtrace", "contexts", "panic", "tracing", "rustls"] }
+sentry = { version = "0.49", default-features = false, features = ["anyhow", "backtrace", "contexts", "panic", "tracing", "rustls"] }
 
 [dev-dependencies]
 tower = { version = "0.5", features = ["util"] }

@@ -12,6 +12,19 @@ use crate::auth::CurrentUser;
 use crate::error::{bad, forbidden, AppResult};
 use crate::perms::{self, Act, Page, Perm};
 
+/// Build a dynamically assembled SQL string for `sqlx::query*`.
+///
+/// sqlx 0.9 only accepts `&'static str` unless the caller asserts the string is safe
+/// (see `sqlx::SqlSafeStr`). Every call site using this macro interpolates fixed
+/// fragments — column lists, placeholders, `EXISTS`/visibility clauses — and passes
+/// any user value through `.bind()`, so the assertion is sound.
+#[macro_export]
+macro_rules! dyn_sql {
+    ($($arg:tt)*) => {
+        ::sqlx::AssertSqlSafe(format!($($arg)*))
+    };
+}
+
 /// The zone every stored time is written in when nothing else is configured.
 pub const DEFAULT_TIMEZONE: Tz = chrono_tz::Asia::Kuala_Lumpur;
 
@@ -687,7 +700,7 @@ pub async fn notify_perm(
     body: (&str, &str),
     link: &str,
 ) {
-    let users: Vec<(i64,)> = sqlx::query_as(&format!(
+    let users: Vec<(i64,)> = sqlx::query_as(crate::dyn_sql!(
         "SELECT u.id FROM users u WHERE {}",
         perms::sql_holds("u", Perm(page, act))
     ))

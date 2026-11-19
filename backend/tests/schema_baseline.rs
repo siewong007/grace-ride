@@ -193,10 +193,12 @@ async fn every_rule_holds_for_existing_seeded_data() {
     .unwrap();
     assert_eq!(added.len(), LATER_RULES.len(), "0001 added every rule");
     for (table, name) in &added {
-        sqlx::query(&format!("ALTER TABLE {table} DROP CONSTRAINT {name}"))
-            .execute(&st.db)
-            .await
-            .unwrap();
+        sqlx::query(grace_ride::dyn_sql!(
+            "ALTER TABLE {table} DROP CONSTRAINT {name}"
+        ))
+        .execute(&st.db)
+        .await
+        .unwrap();
     }
     mark_history_as_pre_squash(&st.db).await;
     let db = connect_db(&st.cfg.database_url).await.expect("upgrade");
@@ -574,7 +576,7 @@ async fn trigger_functions_pin_their_search_path() {
         .unwrap();
     // The insert fires roles_attach_members (member_roles, users) and app_now()
     // (system_settings), all named without a schema.
-    sqlx::query(&format!(
+    sqlx::query(grace_ride::dyn_sql!(
         "INSERT INTO \"{schema}\".roles (key, name) VALUES ('restore_check', 'Restore check')"
     ))
     .execute(&mut *tx)

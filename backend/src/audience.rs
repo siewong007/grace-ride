@@ -89,7 +89,7 @@ pub async fn member_sees_event(
     event_id: i64,
 ) -> Result<bool, sqlx::Error> {
     let (scope, _) = group_scopes(db, user_id).await?;
-    let n: i64 = sqlx::query_scalar(&format!(
+    let n: i64 = sqlx::query_scalar(crate::dyn_sql!(
         "SELECT COUNT(*) FROM events e WHERE e.id = $1 AND {}",
         visible_events_sql("$2", "$3")
     ))

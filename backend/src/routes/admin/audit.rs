@@ -159,7 +159,7 @@ pub(super) async fn audit_log(
         Option<String>,
         String,
         String,
-    )> = sqlx::query_as(&sql)
+    )> = sqlx::query_as(sqlx::AssertSqlSafe(&*sql))
         .bind(&entity)
         .bind(q.entity_id)
         .bind(&like)
@@ -305,7 +305,7 @@ pub(super) async fn audit_export(
         // UTF-8 BOM so Excel and spreadsheet viewers recognize UTF-8 encoding (CJK text).
         yield Ok::<String, std::io::Error>("\u{FEFF}ID,Timestamp,Actor ID,Actor,Action,Entity,Entity ID,Entity Name,Detail\r\n".to_string());
 
-        let mut rows = sqlx::query_as::<_, (i64, Option<i64>, Option<String>, String, String, Option<i64>, Option<String>, String, String)>(&sql)
+        let mut rows = sqlx::query_as::<_, (i64, Option<i64>, Option<String>, String, String, Option<i64>, Option<String>, String, String)>(sqlx::AssertSqlSafe(&*sql))
         .bind(&entity)
         .bind(q.entity_id)
         .bind(&like)
