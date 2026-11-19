@@ -5,14 +5,15 @@ import {
   LayoutGrid, LifeBuoy, PanelLeftClose, PanelLeftOpen, Search, Receipt, ShieldAlert, User, Wallet, BarChart3, WifiOff,
 } from 'lucide-react';
 import { useAuth } from '../auth';
-import { BackNavigationProvider, getDefaultBack, SwipeBackGesture, useSmartBack } from './BackNavigation';
+import { BackNavigationProvider, getDefaultBack, SwipeBackGesture, useOptionalBackNavigation, useSmartBack } from './BackNavigation';
 import { LogoMark, Wordmark } from './Brand';
 import { GuideHeaderActionContext, PageChromeContext } from './PageChrome';
 import { ErrorBoundary } from './AppChrome';
 import { TermsGate } from './Terms';
 import { Avatar, IconButton, Notice } from './ui';
 import { GuideRunnerProvider, PageHeaderGuideButton } from './GuideRunner';
-import { SwipeNextGesture } from './SwipeNext';
+import { SwipeTabsGesture, useMobileNav } from './SwipeTabs';
+import { getBottomNavTabs } from '../bottomNav';
 import QuickJump, { useQuickJumpShortcut } from './QuickJump';
 import { useTranslation } from 'react-i18next';
 import { useStaffNav, waitingBadge } from '../staffNav';
@@ -77,6 +78,8 @@ function LayoutInner() {
   const { me, can } = useAuth();
   const loc = useLocation();
   const navigate = useNavigate();
+  const mobileNav = useMobileNav();
+  const inAppHistory = useOptionalBackNavigation();
   const [scrolled, setScrolled] = useState(false);
   const sentinelRef = useRef<HTMLDivElement>(null);
   // Set by the page's PageHeader: its back target, and whether its heading is on screen.
@@ -168,13 +171,20 @@ function LayoutInner() {
     { to: '/settlements', label: t('settlements'), icon: <HandCoins size={sz} />, show: can('settlements') || can('admin_bills') },
   ]);
   const profileTab: NavItem = { to: '/me', label: t('profile'), icon: <User size={sz} /> };
-  const tab = (to: string) => [...member, ...service].filter((n) => n.to === to);
   // Phone tab bar: home, events. Rides and driving are asked for from an event, and their
   // history lives in the profile. Staff get an Admin tab that opens the staff menu.
-  const showAdminTab = !pending && staff.length > 0;
-  const bottom: NavItem[] = pending
-    ? []
-    : [...tab('/'), ...tab('/events')];
+  // Swipe uses this same list so it cannot wander onto sidebar-only pages.
+  const bottomTabs = getBottomNavTabs({
+    pending,
+    canEvents: can('events'),
+    hasStaffNav: !pending && staff.length > 0,
+  });
+  const showAdminTab = bottomTabs.some((tab) => tab.id === 'admin');
+  const bottom: NavItem[] = bottomTabs
+    .filter((tab) => tab.id === 'home' || tab.id === 'events')
+    .map((tab) => (tab.id === 'home'
+      ? { to: '/', label: t('home'), icon: <Home size={sz} />, end: true }
+      : { to: '/events', label: t('events'), icon: <Calendar size={sz} /> }));
   const onAdminPage = loc.pathname.startsWith('/admin') || (helpDesk && loc.pathname.startsWith('/help'));
   const badge = (n?: number) => waitingBadge(n, t('waitingCount', { count: n ?? 0 }));
 
@@ -192,13 +202,14 @@ function LayoutInner() {
     </NavLink>
   );
 
-  // Swipe left on any top-level page to open the next one in menu order (same order as quick jump).
-  const pageOrder = [...member, ...service, ...staff, profileTab]
-    .map((p) => p.to)
-    .filter((to, i, all) => all.indexOf(to) === i);
-  const curPath = loc.pathname.length > 1 ? loc.pathname.replace(/\/$/, '') : loc.pathname;
-  const curIdx = pageOrder.indexOf(curPath);
-  const nextPage = curIdx >= 0 ? pageOrder[curIdx + 1] : undefined;
+  const prevInApp = inAppHistory?.previousEntry;
+  const canSwipeBack = Boolean(
+    prevInApp && !(prevInApp.pathname === '/login' || prevInApp.pathname.startsWith('/invite/')),
+  );
+  const nextInApp = inAppHistory?.nextEntry;
+  const canSwipeForward = Boolean(
+    nextInApp && !(nextInApp.pathname === '/login' || nextInApp.pathname.startsWith('/invite/')),
+  );
 
   const unreadLabel = me.unread ? t('unread', { count: me.unread }) : '';
   const pageTitle = getPageTitle(loc.pathname, t);
@@ -387,8 +398,21 @@ function LayoutInner() {
           onClose={() => setJumpOpen(false)}
         />
       )}
-      <SwipeBackGesture enabled={Boolean(effectiveBack)} onBack={smartBack.goBack} />
-      <SwipeNextGesture enabled={Boolean(nextPage)} onNext={() => nextPage && navigate(nextPage)} />
+      <SwipeBackGesture enabled={Boolean(effectiveBack)} onBack={smartBack.goBack} edgeOnly={mobileNav} />
+      <SwipeTabsGesture
+        enabled={mobileNav && bottomTabs.length > 1}
+        tabs={bottomTabs}
+        helpDesk={helpDesk}
+        pathname={loc.pathname}
+        search={loc.search}
+        canGoBack={canSwipeBack}
+        canGoForward={canSwipeForward}
+        onAction={(action) => {
+          if (action.type === 'history-back') navigate(-1);
+          else if (action.type === 'history-forward') navigate(1);
+          else navigate(action.to);
+        }}
+      />
     </div>
   );
 }
