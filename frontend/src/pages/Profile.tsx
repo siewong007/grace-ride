@@ -3,7 +3,9 @@ import { useNavigate, useSearchParams } from 'react-router-dom';
 import {
   BarChart3,
   Camera,
+  Check,
   Copy,
+  Download,
   Fingerprint,
   KeyRound,
   LifeBuoy,
@@ -14,6 +16,7 @@ import {
   RefreshCw,
   Shield,
   Sliders,
+  Smartphone,
   Trash2,
   User,
   Wallet,
@@ -22,11 +25,13 @@ import { api, del, post, put, useApi } from '../api';
 import { useAuth } from '../auth';
 import { useAutoLock } from '../components/AutoLock';
 import { DisplayPreferences } from '../components/AppChrome';
-import { Avatar, Button, ErrorBox, Field, Modal, PageHeader, Pill, SheetLink, useAction, useConfirm } from '../components/ui';
+import { Avatar, Button, ErrorBox, Field, Modal, Notice, PageHeader, Pill, SheetLink, useAction, useConfirm } from '../components/ui';
 import { fmtAgo, roleLabel, useFormatT } from '../format';
 import { passkeySupported, registerPasskey, withRecentSignIn } from '../webauthn';
 import { WaitingRoom } from '../components/Onboarding';
 import AvatarEditor from '../components/AvatarEditor';
+import { PwaInstallModal } from '../components/PwaInstallModal';
+import { usePwaInstall } from '../pwaInstall';
 import QRCode from 'qrcode';
 import { useTranslation } from 'react-i18next';
 
@@ -69,8 +74,20 @@ export default function Profile() {
   const [showVerify2fa, setShowVerify2fa] = useState(false);
   const [showBackupCodes, setShowBackupCodes] = useState<string[] | null>(null);
   const [editAvatar, setEditAvatar] = useState(false);
+  const pwa = usePwaInstall();
+  const [showInstallModal, setShowInstallModal] = useState(false);
   const { busy, error, run } = useAction();
   if (!me) return null;
+
+  const handleInstallClick = async () => {
+    if (pwa.canPrompt) {
+      const outcome = await pwa.promptInstall();
+      if (outcome === 'accepted') {
+        return;
+      }
+    }
+    setShowInstallModal(true);
+  };
 
   const openSection = (section: SectionKey) => {
     setPushStatus('');
@@ -261,6 +278,27 @@ export default function Profile() {
       {isPending && <WaitingRoom />}
 
       <div className="stack">
+        {!pwa.isInstalled && (
+          <Notice tone="info" icon={<Smartphone size={18} />}>
+            <div className="row between align-center wrap gap-xs">
+              <div className="stack-xs">
+                <strong>{t('installAppBannerTitle')}</strong>
+                <span className="muted small">{t('installAppBannerDesc')}</span>
+              </div>
+              <Button variant="primary" size="sm" onClick={handleInstallClick}>
+                {pwa.canPrompt ? (
+                  <>
+                    <Download size={14} aria-hidden="true" />
+                    {t('installAppOneClick')}
+                  </>
+                ) : (
+                  t('installAppGuide')
+                )}
+              </Button>
+            </div>
+          </Notice>
+        )}
+
         <section className="stack-xs" aria-label={t('account')}>
           <div className="section-label">{t('account')}</div>
           <div className="list">
@@ -296,6 +334,29 @@ export default function Profile() {
               hint={securityHint}
               aria-haspopup="dialog"
               onClick={() => openSection('security')}
+            />
+            <SheetLink
+              tone={pwa.isInstalled ? 'green' : 'purple'}
+              icon={pwa.isInstalled ? <Check size={iconSz} /> : <Smartphone size={iconSz} />}
+              label={t('installApp')}
+              hint={
+                pwa.isInstalled
+                  ? t('installAppInstalledDesc')
+                  : pwa.canPrompt
+                    ? t('installAppOneClickPrompt')
+                    : t('installAppDesc')
+              }
+              badge={
+                pwa.isInstalled ? (
+                  <Pill tone="success">{t('installAppInstalled')}</Pill>
+                ) : (
+                  <Pill tone={pwa.canPrompt ? 'primary' : 'neutral'}>
+                    {pwa.canPrompt ? t('installAppOneClick') : t('installAppRecommended')}
+                  </Pill>
+                )
+              }
+              aria-haspopup="dialog"
+              onClick={handleInstallClick}
             />
           </div>
         </section>
@@ -633,6 +694,9 @@ export default function Profile() {
             refresh();
           }}
         />
+      )}
+      {showInstallModal && (
+        <PwaInstallModal onClose={() => setShowInstallModal(false)} />
       )}
     </div>
   );

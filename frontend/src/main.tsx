@@ -9,6 +9,7 @@ import { ErrorBoundary, OfflineBanner, SkipLink } from './components/AppChrome';
 import { hideSplash } from './splash';
 import './i18n';
 import './prefs';
+import './pwaInstall';
 // Jost for the Grace Ride wordmark (Light "Ride", Medium splash captions, Bold "Grace").
 // Self-hosted: the server CSP only allows fonts from 'self'.
 import '@fontsource/jost/latin-300.css';

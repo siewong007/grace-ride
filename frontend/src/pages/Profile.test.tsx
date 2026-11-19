@@ -2,6 +2,7 @@ import { describe, expect, it, vi, beforeEach } from 'vitest';
 import { render, screen, fireEvent, waitFor } from '@testing-library/react';
 import { MemoryRouter } from 'react-router-dom';
 import { put, post } from '../api';
+import { _setInstalledForTesting, _setDeferredPromptForTesting, BeforeInstallPromptEvent } from '../pwaInstall';
 import Profile from './Profile';
 
 const baseMe = {
@@ -104,6 +105,14 @@ const profileStrings: Record<string, string> = {
   totp: 'Two-factor authentication (2FA)',
   autoLockNever: 'Never (Disabled)',
   logoutAll: 'Log out all devices',
+  installApp: 'Add App to Home Screen',
+  installAppBannerTitle: 'Add Grace Ride to Home Screen',
+  installAppBannerDesc: 'No app store download needed — open instantly with one tap',
+  installAppOneClick: '1-Click Install to Desktop',
+  installAppGuide: 'Setup Guide',
+  installAppGuideTitle: 'Add App to Home Screen (No App Store Needed)',
+  installAppInstalled: 'Added to Home Screen',
+  installAppInstalledDesc: 'Currently running as a standalone mobile app with full-screen experience.',
 };
 
 vi.mock('react-i18next', () => ({
@@ -172,6 +181,9 @@ vi.mock('../components/ui', () => ({
       <h1>{title}</h1>
     </div>
   ),
+  Notice: ({ children }: { children?: React.ReactNode }) => (
+    <div data-testid="notice">{children}</div>
+  ),
   Pill: ({ children, tone }: { children?: React.ReactNode; tone?: string }) => (
     <span data-testid={`pill-${tone}`}>{children}</span>
   ),
@@ -185,7 +197,7 @@ vi.mock('../components/ui', () => ({
     chevron: _chevron,
     hint,
     tone: _tone,
-    badge: _badge,
+    badge,
     danger: _danger,
     ...rest
   }: {
@@ -205,6 +217,7 @@ vi.mock('../components/ui', () => ({
         {icon}
         {label}
         {hint && <span>{hint}</span>}
+        {badge}
       </>
     );
     if (to) return <a href={to}>{content}</a>;
@@ -364,5 +377,48 @@ describe('Profile compact layout', () => {
     const qr = await screen.findByAltText('totpQrAlt');
     expect(qr.getAttribute('src')).toMatch(/^data:image\/png;base64,/);
     expect(screen.getByText('JBSWY3DPEHPK3PXP')).toBeInTheDocument();
+  });
+
+  it('renders PWA install banner and row when not yet installed, and opens setup guide modal', () => {
+    _setInstalledForTesting(false);
+    _setDeferredPromptForTesting(null);
+    renderProfile(baseMe);
+
+    expect(screen.getByText('Add Grace Ride to Home Screen')).toBeInTheDocument();
+    const installRow = screen.getByRole('button', { name: /Add App to Home Screen/i });
+    expect(installRow).toBeInTheDocument();
+
+    fireEvent.click(installRow);
+    expect(screen.getByTestId('modal')).toBeInTheDocument();
+    expect(screen.getByText('Add App to Home Screen (No App Store Needed)')).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Close' }));
+    expect(screen.queryByTestId('modal')).not.toBeInTheDocument();
+  });
+
+  it('triggers prompt directly when 1-click install prompt is available', async () => {
+    _setInstalledForTesting(false);
+    const promptMock = vi.fn().mockResolvedValue(undefined);
+    const mockPromptEvent = {
+      platforms: ['web'],
+      userChoice: Promise.resolve({ outcome: 'accepted' as const, platform: 'web' }),
+      prompt: promptMock,
+    } as unknown as BeforeInstallPromptEvent;
+    _setDeferredPromptForTesting(mockPromptEvent);
+
+    renderProfile(baseMe);
+    const installRow = screen.getByRole('button', { name: /Add App to Home Screen/i });
+    fireEvent.click(installRow);
+
+    await waitFor(() => expect(promptMock).toHaveBeenCalled());
+  });
+
+  it('shows installed status badge and hides banner when already installed', () => {
+    _setInstalledForTesting(true);
+    _setDeferredPromptForTesting(null);
+    renderProfile(baseMe);
+
+    expect(screen.queryByText('Add Grace Ride to Home Screen')).not.toBeInTheDocument();
+    expect(screen.getByText('Added to Home Screen')).toBeInTheDocument();
   });
 });

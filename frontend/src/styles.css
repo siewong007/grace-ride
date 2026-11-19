@@ -909,6 +909,15 @@ p.empty-title { font-weight: 400; color: var(--muted); }
 .auth-title { font-size: var(--fs-2xl); }
 .terms-title { font-size: var(--fs-2xl); }
 
+/* Recognized device passkey banner */
+.passkey-device-card {
+  border: 1px solid var(--border);
+  border-left: 3px solid var(--primary);
+  border-radius: var(--radius);
+  padding: var(--space-4);
+  background: var(--surface-2);
+}
+
 /* Dev account picker dashed frame */
 .dev-account-frame {
   border: 2px dashed var(--border);
@@ -3082,3 +3091,38 @@ main a[href^="tel:"]:not(.btn) { text-decoration: underline; }
 .onboard-icon.done { color: var(--success); }
 .onboard-icon.waiting { color: var(--warning); }
 .onboard-done-title { color: var(--muted); text-decoration: line-through; }
+
+/* PWA Add to Home Screen step-by-step guides */
+.pwa-guide-steps {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  margin: var(--space-2) 0;
+}
+.pwa-guide-step {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-3);
+  padding: var(--space-3);
+  border-radius: var(--radius-md, 8px);
+  background: var(--surface-2);
+}
+.pwa-guide-step-num {
+  display: grid;
+  place-items: center;
+  width: 26px;
+  height: 26px;
+  border-radius: 50%;
+  background: var(--primary);
+  color: var(--primary-ink, #ffffff);
+  font-weight: 700;
+  font-size: var(--fs-xs, 12px);
+  flex-shrink: 0;
+  margin-top: 2px;
+}
+.pwa-guide-step-content {
+  flex: 1;
+  font-size: var(--fs-sm, 14px);
+  line-height: 1.5;
+}
+
