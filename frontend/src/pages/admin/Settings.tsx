@@ -53,14 +53,16 @@ interface Area {
   active: boolean;
 }
 
-interface RateEntry {
-  vehicle_type: string;
-  rate_cents_per_km: number;
+interface AreaFare {
+  id: number;
+  area_a: { id: number; name: string };
+  area_b: { id: number; name: string };
+  amount_cents: number;
   updated_at: string;
 }
 
-interface RatesResponse {
-  rates: RateEntry[];
+interface FaresResponse {
+  fares: AreaFare[];
 }
 
 interface SystemSettingsResponse {
@@ -154,7 +156,7 @@ export default function Settings() {
             className="tabpanel stack gap-lg"
             hidden={activeTab !== 'rates'}
           >
-            <ReimbursementRates />
+            <AreaFares />
             <SystemRetentionSettings />
           </div>
         )}
@@ -201,15 +203,14 @@ function SettingsSummaryStrip({
 }) {
   const { t } = useTranslation('admin');
   const areasData = useApi<Area[]>(areas ? '/areas' : null).data;
-  const ratesData = useApi<RatesResponse>(rates ? '/admin/settings/rates' : null).data;
+  const faresData = useApi<FaresResponse>(rates ? '/admin/settings/fares' : null).data;
   const systemData = useApi<SystemSettingsResponse>(rates ? '/admin/settings/system' : null).data;
   const alertsData = useApi<AlertSettingsData>(rates ? '/admin/settings/alerts' : null).data;
 
   const totalAreas = areasData?.length ?? 0;
   const activeAreas = (areasData ?? []).filter((a) => a.active).length;
 
-  const stdRate = ratesData?.rates?.find((r) => r.vehicle_type === 'standard');
-  const stdRateRm = stdRate ? (stdRate.rate_cents_per_km / 100).toFixed(2) : null;
+  const fareCount = faresData?.fares?.length ?? 0;
 
   const auditDays = systemData?.audit_retention_days;
   const sessionTimeout = systemData?.session_timeout_mins;
@@ -244,9 +245,9 @@ function SettingsSummaryStrip({
             className="card stat link text-left"
             onClick={() => onSelectTab('rates')}
           >
-            <div className="label">{t('settings.statStandardRate')}</div>
-            <div className="num">{stdRateRm ? `RM ${stdRateRm}` : '—'}</div>
-            <div className="muted tiny">/ km</div>
+            <div className="label">{t('settings.statFares')}</div>
+            <div className="num">{fareCount}</div>
+            <div className="muted tiny">{t('settings.statFaresHint')}</div>
           </button>
 
           <button
@@ -706,232 +707,137 @@ function Areas() {
   );
 }
 
-function ReimbursementRates() {
+function AreaFares() {
   const { t } = useTranslation('admin');
   const ft = useFormatT();
   const { can } = useAuth();
   const canUpdate = can('admin_settings', 'update');
-  const { data, loading, reload } = useApi<RatesResponse>('/admin/settings/rates');
-  const [standardRate, setStandardRate] = useState<string>('');
-  const [otherRate, setOtherRate] = useState<string>('');
-  const [initialized, setInitialized] = useState(false);
-  const initialRef = useRef({ std: '', oth: '' });
+  const confirm = useConfirm();
+  const { data, loading, reload } = useApi<FaresResponse>('/admin/settings/fares');
+  const { data: areas } = useApi<Area[]>('/areas');
+  const [a, setA] = useState('');
+  const [b, setB] = useState('');
+  const [amount, setAmount] = useState('');
   const { busy, error, run } = useAction();
 
-  // Stored as cents per km, shown and typed in ringgit.
+  // Typed in ringgit, stored in cents.
   const toRm = (cents: number) => (cents / 100).toFixed(2);
-  const parseRm = (v: string) => {
-    const n = Number(v);
-    return v.trim() !== '' && Number.isFinite(n) && n >= 0 ? Math.round(n * 100) : null;
-  };
-  const stdError =
-    standardRate !== '' && parseRm(standardRate) === null ? t('settings.rateError') : undefined;
-  const othError =
-    otherRate !== '' && parseRm(otherRate) === null ? t('settings.rateError') : undefined;
-  const ratesValid = parseRm(standardRate) !== null && parseRm(otherRate) !== null;
-
-  useEffect(() => {
-    if (data?.rates && !initialized) {
-      const std = data.rates.find((r) => r.vehicle_type === 'standard');
-      const oth = data.rates.find((r) => r.vehicle_type === 'other');
-      const stdStr = std ? toRm(std.rate_cents_per_km) : '';
-      const othStr = oth ? toRm(oth.rate_cents_per_km) : '';
-      setStandardRate(stdStr);
-      setOtherRate(othStr);
-      initialRef.current = { std: stdStr, oth: othStr };
-      setInitialized(true);
-    }
-  }, [data, initialized]);
-
-  const isDirty =
-    initialized &&
-    (standardRate !== initialRef.current.std || otherRate !== initialRef.current.oth);
+  const cents = amount.trim() !== '' && Number.isFinite(Number(amount)) && Number(amount) >= 0
+    ? Math.round(Number(amount) * 100)
+    : null;
+  const amountError = amount !== '' && cents === null ? t('settings.rateError') : undefined;
+  const canSave = a !== '' && b !== '' && cents !== null;
 
   const save = (e: FormEvent) => {
     e.preventDefault();
-    const stdNum = parseRm(standardRate);
-    const othNum = parseRm(otherRate);
-    if (stdNum === null || othNum === null) return;
+    if (!canSave) return;
     run(
       () =>
-        put('/admin/settings/rates', {
-          rates: [
-            { vehicle_type: 'standard', rate_cents_per_km: stdNum },
-            { vehicle_type: 'other', rate_cents_per_km: othNum },
-          ],
+        put('/admin/settings/fares', {
+          area_a_id: Number(a),
+          area_b_id: Number(b),
+          amount_cents: cents,
         }).then(() => {
-          initialRef.current = { std: standardRate, oth: otherRate };
+          setAmount('');
           reload();
         }),
-      t('settings.ratesSaved'),
+      t('settings.faresSaved'),
     );
   };
 
-  const stdNum = parseRm(standardRate);
-  const othNum = parseRm(otherRate);
-  const sampleStd = stdNum != null ? `RM ${((stdNum * 15) / 100).toFixed(2)}` : '—';
-  const sampleOth = othNum != null ? `RM ${((othNum * 15) / 100).toFixed(2)}` : '—';
+  const edit = (f: AreaFare) => {
+    setA(String(f.area_a.id));
+    setB(String(f.area_b.id));
+    setAmount(toRm(f.amount_cents));
+  };
 
+  const remove = async (f: AreaFare) => {
+    if (!(await confirm({ title: t('settings.fareDeleteConfirm', { a: f.area_a.name, b: f.area_b.name }), body: t('settings.fareDeleteBody') }))) return;
+    run(() => del(`/admin/settings/fares/${f.id}`).then(reload), t('settings.fareDeleted'));
+  };
+
+  const fares = data?.fares ?? [];
   return (
     <Card className="stack">
-      <div className="row between wrap gap-sm">
-        <div>
-          <h3>{t('settings.ratesTitle')}</h3>
-          <p className="muted small">{t('settings.ratesDesc')}</p>
-        </div>
-        {data?.rates?.[0]?.updated_at && (
-          <span className="muted tiny">
-            {t('settings.saved')} {fmtAgo(data.rates[0].updated_at, ft)}
-          </span>
-        )}
+      <div>
+        <h3>{t('settings.faresTitle')}</h3>
+        <p className="muted small">{t('settings.faresDesc')}</p>
       </div>
 
-      {loading && !initialized ? (
-        <CardSkeleton count={2} />
-      ) : (
+      {canUpdate && (
         <form onSubmit={save} className="stack">
-          <div className="grid cols-2">
-            <Field label={t('settings.rateStandard')} error={stdError}>
+          <div className="grid cols-3">
+            <Field label={t('settings.fareFrom')}>
+              <select className="input" value={a} onChange={(e) => setA(e.target.value)} disabled={busy}>
+                <option value="">—</option>
+                {(areas ?? []).map((x) => (
+                  <option key={x.id} value={x.id}>{x.name}</option>
+                ))}
+              </select>
+            </Field>
+            <Field label={t('settings.fareTo')}>
+              <select className="input" value={b} onChange={(e) => setB(e.target.value)} disabled={busy}>
+                <option value="">—</option>
+                {(areas ?? []).map((x) => (
+                  <option key={x.id} value={x.id}>{x.name}</option>
+                ))}
+              </select>
+            </Field>
+            <Field label={t('settings.fareAmount')} error={amountError}>
               <div className="input-affix-wrap">
                 <span className="input-affix">RM</span>
                 <input
-                  aria-label={t('settings.rateStandard')}
+                  aria-label={t('settings.fareAmount')}
                   className="input"
                   type="number"
                   inputMode="decimal"
                   min="0"
                   step="0.01"
-                  value={standardRate}
-                  disabled={!canUpdate || busy}
-                  onChange={(e) => setStandardRate(e.target.value)}
-                  required
+                  value={amount}
+                  disabled={busy}
+                  onChange={(e) => setAmount(e.target.value)}
                 />
-                <span className="input-affix">/ km</span>
-                <button
-                  type="button"
-                  className="input-affix-btn"
-                  disabled={!canUpdate || busy || (stdNum ?? 0) <= 0}
-                  onClick={() => {
-                    const next = Math.max(0, (stdNum ?? 0) - 5);
-                    setStandardRate(toRm(next));
-                  }}
-                  aria-label="Decrease standard rate"
-                >
-                  −
-                </button>
-                <button
-                  type="button"
-                  className="input-affix-btn"
-                  disabled={!canUpdate || busy}
-                  onClick={() => {
-                    const next = (stdNum ?? 0) + 5;
-                    setStandardRate(toRm(next));
-                  }}
-                  aria-label="Increase standard rate"
-                >
-                  +
-                </button>
-              </div>
-            </Field>
-
-            <Field label={t('settings.rateOther')} error={othError}>
-              <div className="input-affix-wrap">
-                <span className="input-affix">RM</span>
-                <input
-                  aria-label={t('settings.rateOther')}
-                  className="input"
-                  type="number"
-                  inputMode="decimal"
-                  min="0"
-                  step="0.01"
-                  value={otherRate}
-                  disabled={!canUpdate || busy}
-                  onChange={(e) => setOtherRate(e.target.value)}
-                  required
-                />
-                <span className="input-affix">/ km</span>
-                <button
-                  type="button"
-                  className="input-affix-btn"
-                  disabled={!canUpdate || busy || (othNum ?? 0) <= 0}
-                  onClick={() => {
-                    const next = Math.max(0, (othNum ?? 0) - 5);
-                    setOtherRate(toRm(next));
-                  }}
-                  aria-label="Decrease large vehicle rate"
-                >
-                  −
-                </button>
-                <button
-                  type="button"
-                  className="input-affix-btn"
-                  disabled={!canUpdate || busy}
-                  onClick={() => {
-                    const next = (othNum ?? 0) + 5;
-                    setOtherRate(toRm(next));
-                  }}
-                  aria-label="Increase large vehicle rate"
-                >
-                  +
-                </button>
               </div>
             </Field>
           </div>
-
-          <div className="sample-preview-card">
-            <span className="muted">
-              {t('settings.sampleTripPreview', { std: sampleStd, other: sampleOth })}
-            </span>
-          </div>
-
           <ErrorBox error={error} />
-
-          <div className="settings-submit-bar">
-            <div className="dirty-indicator-box">
-              {isDirty ? (
-                <span className="dirty-indicator dirty">
-                  <span className="dirty-dot" aria-hidden="true" />
-                  <span>{t('settings.unsavedChanges')}</span>
-                </span>
-              ) : (
-                <span className="dirty-indicator clean">
-                  <Check size={16} aria-hidden="true" />
-                  <span>{t('settings.allChangesSaved')}</span>
-                </span>
-              )}
-            </div>
-
-            {canUpdate && (
-              <div className="settings-submit-actions">
-                {isDirty && (
-                  <Button
-                    variant="ghost"
-                    type="button"
-                    disabled={busy}
-                    onClick={() => {
-                      setStandardRate(initialRef.current.std);
-                      setOtherRate(initialRef.current.oth);
-                    }}
-                  >
-                    {t('settings.reset')}
-                  </Button>
-                )}
-                <Button
-                  variant="primary"
-                  type="submit"
-                  disabled={busy || !ratesValid || !isDirty}
-                  loading={busy}
-                >
-                  {t('settings.saveRates')}
-                </Button>
-              </div>
-            )}
+          <div>
+            <Button type="submit" disabled={!canSave || busy}>
+              {t('settings.saveFare')}
+            </Button>
           </div>
         </form>
+      )}
+
+      {loading ? (
+        <CardSkeleton count={2} />
+      ) : fares.length === 0 ? (
+        <EmptyState title={t('settings.fareEmpty')} />
+      ) : (
+        <ul className="stack-sm" aria-label={t('settings.faresTitle')}>
+          {fares.map((f) => (
+            <li key={f.id} className="row between wrap gap-sm">
+              <span>
+                <strong>{f.area_a.name} ↔ {f.area_b.name}</strong>{' '}
+                <span className="muted tiny">{fmtAgo(f.updated_at, ft)}</span>
+              </span>
+              <span className="row gap-sm">
+                <strong className="nowrap">RM {toRm(f.amount_cents)}</strong>
+                {canUpdate && (
+                  <>
+                    <Button variant="ghost" size="sm" onClick={() => edit(f)}>{t('settings.fareEdit')}</Button>
+                    <Button variant="ghost" size="sm" onClick={() => remove(f)}>{t('settings.fareDelete')}</Button>
+                  </>
+                )}
+              </span>
+            </li>
+          ))}
+        </ul>
       )}
     </Card>
   );
 }
+
 
 function SystemRetentionSettings() {
   const { t } = useTranslation('admin');

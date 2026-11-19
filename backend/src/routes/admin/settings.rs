@@ -1,4 +1,4 @@
-//! Admin settings: reimbursement rates, system retention/concurrency settings, and alert channels.
+//! Admin settings: system retention/concurrency settings, and alert channels.
 
 use axum::{extract::State, Json};
 use serde::Deserialize;
@@ -10,94 +10,6 @@ use crate::i18n::ErrorKey;
 use crate::perms::{Act, Page};
 use crate::state::AppState;
 use crate::util::{audit, now, require};
-
-#[derive(Deserialize)]
-pub(super) struct UpdateRatesIn {
-    rates: Vec<RateEntryIn>,
-}
-
-#[derive(Deserialize)]
-struct RateEntryIn {
-    vehicle_type: String,
-    rate_cents_per_km: i64,
-}
-
-pub(super) async fn get_reimbursement_rates(
-    State(st): State<AppState>,
-    u: CurrentUser,
-) -> AppResult<Json<Value>> {
-    require(&u, Page::AdminSettings, Act::View)?;
-    let rows: Vec<(String, i64, String)> = sqlx::query_as(
-        "SELECT vehicle_type, rate_cents_per_km, updated_at FROM reimbursement_rates ORDER BY vehicle_type ASC",
-    )
-    .fetch_all(&st.db)
-    .await?;
-
-    let items: Vec<Value> = rows
-        .into_iter()
-        .map(|(vehicle_type, rate_cents_per_km, updated_at)| {
-            json!({
-                "vehicle_type": vehicle_type,
-                "rate_cents_per_km": rate_cents_per_km,
-                "updated_at": updated_at,
-            })
-        })
-        .collect();
-
-    Ok(Json(json!({ "rates": items })))
-}
-
-pub(super) async fn update_reimbursement_rates(
-    State(st): State<AppState>,
-    u: CurrentUser,
-    Json(req): Json<UpdateRatesIn>,
-) -> AppResult<Json<Value>> {
-    require(&u, Page::AdminSettings, Act::Update)?;
-    if req.rates.is_empty() {
-        return Err(bad(u.lang, ErrorKey::InvalidAction));
-    }
-
-    let mut tx = st.db.begin().await?;
-    let mut details = Vec::new();
-    let now_str = now();
-    for entry in &req.rates {
-        if entry.rate_cents_per_km < 0 {
-            return Err(bad(u.lang, ErrorKey::InvalidAction));
-        }
-        if entry.vehicle_type != "standard" && entry.vehicle_type != "other" {
-            return Err(bad(u.lang, ErrorKey::InvalidAction));
-        }
-        sqlx::query(
-            "INSERT INTO reimbursement_rates (vehicle_type, rate_cents_per_km, updated_at)
-             VALUES ($1, $2, $3)
-             ON CONFLICT (vehicle_type) DO UPDATE
-             SET rate_cents_per_km = EXCLUDED.rate_cents_per_km, updated_at = EXCLUDED.updated_at",
-        )
-        .bind(&entry.vehicle_type)
-        .bind(entry.rate_cents_per_km)
-        .bind(&now_str)
-        .execute(&mut *tx)
-        .await?;
-        details.push(format!(
-            "{}:{}c",
-            entry.vehicle_type, entry.rate_cents_per_km
-        ));
-    }
-    tx.commit().await?;
-
-    let detail_str = details.join(", ");
-    audit(
-        &st.db,
-        Some(u.id),
-        "settings.rates",
-        "reimbursement_rates",
-        None,
-        &detail_str,
-    )
-    .await;
-
-    Ok(Json(json!({ "ok": true })))
-}
 
 #[derive(Deserialize)]
 pub(super) struct UpdateSystemSettingsIn {

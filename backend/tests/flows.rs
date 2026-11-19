@@ -3598,21 +3598,11 @@ async fn files_admin_directory_and_plan_branches() {
     deny(
         &app,
         Method::PUT,
-        "/api/admin/settings/rates",
+        "/api/admin/settings/fares",
         Some(&c.admin),
-        Some(json!({"rates": []})),
+        Some(json!({"area_a_id": 1, "area_b_id": 1, "amount_cents": -5})),
         StatusCode::BAD_REQUEST,
-        "INVALID_ACTION",
-    )
-    .await;
-    deny(
-        &app,
-        Method::PUT,
-        "/api/admin/settings/rates",
-        Some(&c.admin),
-        Some(json!({"rates": [{"vehicle_type": "bus", "rate_cents_per_km": 10}]})),
-        StatusCode::BAD_REQUEST,
-        "INVALID_ACTION",
+        "AMOUNT_RANGE_INVALID",
     )
     .await;
     deny(

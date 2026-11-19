@@ -88,6 +88,7 @@ export default {
   startTrip: '开始行程（出发）',
   noShowBtn: '未到场',
   completedTrip: '已送达',
+  mileageReceiptNeeded: '这条路线还没有固定车费。请<receipt>提交里程收据</receipt>，让团队确认您的报销。',
   withdrawDriver: '无法出车？通知交通组',
   withdrawTitle: '无法出车',
   withdrawLabel: '原因（会通知乘客与交通组）',

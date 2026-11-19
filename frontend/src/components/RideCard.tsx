@@ -37,6 +37,8 @@ export interface Ride {
     } | null;
   } | null;
   needs_attention: boolean;
+  /** Completed for a claimable event on a route with no fare: the driver hands in a mileage receipt. */
+  mileage_receipt_needed?: boolean;
   attention_reason: string;
   started_at: string | null;
   picked_up_at: string | null;

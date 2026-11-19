@@ -26,6 +26,8 @@ struct ReimbRow {
     user_name: String,
     ride_id: Option<i64>,
     ride_at: Option<String>,
+    kind: String,
+    ride_route: Option<String>,
     amount_cents: i64,
     description: String,
     receipt_file_id: i64,
@@ -40,7 +42,9 @@ struct ReimbRow {
     created_at: String,
 }
 
-const REIMB_SELECT: &str = "SELECT r.id, r.user_id, u.name AS user_name, r.ride_id, rd.pickup_at AS ride_at, r.amount_cents, r.description,
+const REIMB_SELECT: &str = "SELECT r.id, r.user_id, u.name AS user_name, r.ride_id, rd.pickup_at AS ride_at, r.kind,
+    (SELECT pa.name || ' ↔ ' || COALESCE(ea.name, '?') FROM areas pa LEFT JOIN events ev ON ev.id = rd.event_id LEFT JOIN areas ea ON ea.id = ev.area_id WHERE pa.id = rd.pickup_area_id) AS ride_route,
+    r.amount_cents, r.description,
     r.receipt_file_id, r.payee_name, r.payee_phone, r.status, r.review_note, rv.name AS reviewer, r.payee_verified, r.paid_ref, r.paid_at, r.created_at
     FROM reimbursements r JOIN users u ON u.id=r.user_id LEFT JOIN rides rd ON rd.id=r.ride_id LEFT JOIN users rv ON rv.id=r.reviewed_by";
 
@@ -48,7 +52,7 @@ fn reimb_json(r: &ReimbRow, u: &CurrentUser) -> Value {
     let finance = u.can(Page::AdminReimbPay, Act::View);
     let own = r.user_id == u.id;
     json!({
-        "id": r.id, "user": {"id": r.user_id, "name": r.user_name}, "ride_id": r.ride_id, "ride_at": r.ride_at,
+        "id": r.id, "user": {"id": r.user_id, "name": r.user_name}, "ride_id": r.ride_id, "ride_at": r.ride_at, "kind": r.kind, "ride_route": r.ride_route,
         "amount_cents": r.amount_cents, "description": r.description, "receipt_file_id": r.receipt_file_id,
         // Payee details only to the claimant and finance.
         "payee_name": if own || finance { Some(r.payee_name.clone()) } else { None },
@@ -207,6 +211,12 @@ pub(super) struct ReimbIn {
     receipt_file_id: i64,
     payee_name: String,
     payee_phone: String,
+    /// 'grab' (default) or 'mileage' (a driver's receipt for a ride with no fare yet).
+    kind: Option<String>,
+}
+
+fn is_mileage(req: &ReimbIn) -> bool {
+    req.kind.as_deref() == Some("mileage")
 }
 
 async fn validate_reimb(st: &AppState, u: &CurrentUser, req: &ReimbIn) -> AppResult<()> {
@@ -224,7 +234,24 @@ async fn validate_reimb(st: &AppState, u: &CurrentUser, req: &ReimbIn) -> AppRes
     if owner != u.id {
         return Err(forbidden(u.lang, ErrorKey::InvalidReceipt));
     }
-    if let Some(rid) = req.ride_id {
+    if is_mileage(req) {
+        // A driver's mileage receipt: for a ride they drove, completed with no fare for its route.
+        let rid = req
+            .ride_id
+            .ok_or_else(|| bad(u.lang, ErrorKey::InvalidAction))?;
+        let (driver, needed): (Option<i64>, i64) =
+            sqlx::query_as("SELECT driver_id, mileage_receipt_needed FROM rides WHERE id=$1")
+                .bind(rid)
+                .fetch_optional(&st.db)
+                .await?
+                .ok_or(not_found(u.lang))?;
+        if driver != Some(u.id) {
+            return Err(forbidden(u.lang, ErrorKey::OnlyLinkOwnRides));
+        }
+        if needed != 1 {
+            return Err(bad(u.lang, ErrorKey::InvalidAction));
+        }
+    } else if let Some(rid) = req.ride_id {
         let (p,): (i64,) = sqlx::query_as("SELECT passenger_id FROM rides WHERE id=$1")
             .bind(rid)
             .fetch_optional(&st.db)
@@ -277,7 +304,7 @@ pub(super) async fn create_reimbursement(
     let mut tx = st.db.begin().await?;
     ensure_not_claimed(&mut tx, u.lang, &req, None).await?;
     let (id,): (i64,) = sqlx::query_as(
-        "INSERT INTO reimbursements (user_id, ride_id, amount_cents, description, receipt_file_id, payee_name, payee_phone, created_at, updated_at) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9) RETURNING id",
+        "INSERT INTO reimbursements (user_id, ride_id, amount_cents, description, receipt_file_id, payee_name, payee_phone, created_at, updated_at, kind) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10) RETURNING id",
     )
     .bind(u.id)
     .bind(req.ride_id)
@@ -288,6 +315,7 @@ pub(super) async fn create_reimbursement(
     .bind(req.payee_phone.trim())
     .bind(now())
     .bind(now())
+    .bind(if is_mileage(&req) { "mileage" } else { "grab" })
     .fetch_one(&mut *tx)
     .await?;
     tx.commit().await?;
@@ -295,7 +323,11 @@ pub(super) async fn create_reimbursement(
         &st.db,
         Page::AdminReimbReview,
         Act::Update,
-        ("新的 Grab 报销申请", "New Grab reimbursement request"),
+        if is_mileage(&req) {
+            ("新的里程报销收据", "New mileage receipt to confirm")
+        } else {
+            ("新的 Grab 报销申请", "New Grab reimbursement request")
+        },
         (
             &format!("{} · {}", u.name, fmt_rm(req.amount_cents)),
             &format!("{} · {}", u.name, fmt_rm(req.amount_cents)),
@@ -415,6 +447,18 @@ pub(super) async fn review_reimbursement(
     .rows_affected();
     if changed == 0 {
         return Err(conflict(u.lang, ErrorKey::ReimbAlreadyReviewed));
+    }
+    // Approving a mileage receipt confirms the ride's reimbursement.
+    if status == "approved" && r.kind == "mileage" {
+        if let Some(rid) = r.ride_id {
+            sqlx::query(
+                "UPDATE rides SET reimbursement_amount_cents=$1, mileage_receipt_needed=0 WHERE id=$2",
+            )
+            .bind(r.amount_cents)
+            .bind(rid)
+            .execute(&st.db)
+            .await?;
+        }
     }
     let title = match status {
         "approved" => ("报销申请已批准", "Reimbursement approved"),

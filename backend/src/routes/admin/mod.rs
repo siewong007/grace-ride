@@ -15,6 +15,7 @@ use crate::state::AppState;
 use crate::util::{now, require};
 
 mod audit;
+pub(crate) mod fares;
 mod groups_areas;
 mod invites_recovery;
 mod members;
@@ -59,9 +60,10 @@ pub fn router() -> Router<AppState> {
         .route("/admin/audit", get(audit::audit_log))
         .route("/admin/audit/export", get(audit::audit_export))
         .route(
-            "/admin/settings/rates",
-            get(settings::get_reimbursement_rates).put(settings::update_reimbursement_rates),
+            "/admin/settings/fares",
+            get(fares::list_fares).put(fares::put_fare),
         )
+        .route("/admin/settings/fares/{id}", delete(fares::delete_fare))
         .route(
             "/admin/settings/system",
             get(settings::get_system_settings).put(settings::update_system_settings),

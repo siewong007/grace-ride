@@ -36,4 +36,10 @@ export default {
   stepReviewed: 'Reviewed',
   stepPaid: 'Paid',
   viewRide: 'View ride',
+  mileageTitle: 'Hand in mileage receipt',
+  mileageNote: 'This route has no set fare yet. Attach your mileage receipt (toll, fuel or parking) and the amount; the team confirms it before payment.',
+  mileageReceipt: 'Mileage receipt',
+  kindMileage: 'Mileage',
+  kindGrab: 'Grab',
+  route: 'Route',
 };

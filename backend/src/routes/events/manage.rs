@@ -38,10 +38,26 @@ pub(super) struct EventIn {
     attendance_enabled: Option<bool>,
     /// Optional mileage claimability: whether rides for this event are claimable for mileage.
     mileage_claimable: Option<bool>,
+    /// The area the event is held in; with a rider's pickup area it sets the mileage fare.
+    area_id: Option<i64>,
     /// Optional recurring schedule: none | weekly | biweekly | monthly
     repeat_frequency: Option<String>,
     /// Number of occurrences to generate (1..=12)
     repeat_count: Option<i64>,
+}
+
+/// The event's area must be a real area.
+async fn check_area(st: &AppState, u: &CurrentUser, area_id: Option<i64>) -> AppResult<()> {
+    if let Some(id) = area_id {
+        let found: Option<i64> = sqlx::query_scalar("SELECT id FROM areas WHERE id=$1")
+            .bind(id)
+            .fetch_optional(&st.db)
+            .await?;
+        if found.is_none() {
+            return Err(bad(u.lang, ErrorKey::InvalidAction));
+        }
+    }
+    Ok(())
 }
 
 /// A cover photo must be an image the saver uploaded themselves, so nobody can surface
@@ -168,6 +184,7 @@ pub(super) async fn create_event(
     }
     let (at, dl) = validate(&req, u.lang)?;
     check_photo(&st, &u, req.photo_file_id, None).await?;
+    check_area(&st, &u, req.area_id).await?;
     let freq = req.repeat_frequency.as_deref().unwrap_or("none");
     if !matches!(freq, "none" | "weekly" | "biweekly" | "monthly") {
         return Err(bad(u.lang, ErrorKey::InvalidAction));
@@ -211,8 +228,8 @@ pub(super) async fn create_event(
             None
         };
         let (id,): (i64,) = sqlx::query_as(
-            "INSERT INTO events (title, kind, description, starts_at, location, capacity, cost_note, signup_deadline, created_by, created_at, photo_file_id, attendance_enabled, checkin_code, series_id, mileage_claimable)
-             VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15) RETURNING id",
+            "INSERT INTO events (title, kind, description, starts_at, location, capacity, cost_note, signup_deadline, created_by, created_at, photo_file_id, attendance_enabled, checkin_code, series_id, mileage_claimable, area_id)
+             VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16) RETURNING id",
         )
         .bind(req.title.trim())
         .bind(&req.kind)
@@ -229,6 +246,7 @@ pub(super) async fn create_event(
         .bind(checkin_code)
         .bind(&series_id)
         .bind(mileage_claimable as i64)
+        .bind(req.area_id)
         .fetch_one(&mut *tx)
         .await?;
         save_event_groups(&mut tx, id, &req, u.lang).await?;
@@ -352,8 +370,8 @@ pub(super) async fn duplicate_event(
 
     let mut tx = st.db.begin().await?;
     let (new_id,): (i64,) = sqlx::query_as(
-        "INSERT INTO events (title, kind, description, starts_at, location, capacity, cost_note, signup_deadline, created_by, created_at, photo_file_id, attendance_enabled, checkin_code, mileage_claimable)
-         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14) RETURNING id",
+        "INSERT INTO events (title, kind, description, starts_at, location, capacity, cost_note, signup_deadline, created_by, created_at, photo_file_id, attendance_enabled, checkin_code, mileage_claimable, area_id)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15) RETURNING id",
     )
     .bind(&title)
     .bind(&src.kind)
@@ -369,6 +387,7 @@ pub(super) async fn duplicate_event(
     .bind(att_enabled as i64)
     .bind(checkin_code)
     .bind(mileage_claimable as i64)
+    .bind(src.area_id)
     .fetch_one(&mut *tx)
     .await?;
     let groups_copied = sqlx::query(
@@ -439,6 +458,7 @@ pub(super) async fn update_event(
     }
     let (at, dl) = validate(&req, u.lang)?;
     check_photo(&st, &u, req.photo_file_id, e.photo_file_id).await?;
+    check_area(&st, &u, req.area_id).await?;
     // Same event lock as `signup` / `withdraw`: places a raised capacity opens go to the
     // waitlist, in order, before any signup queued behind this save can take them.
     let mut tx = st.db.begin().await?;
@@ -464,7 +484,7 @@ pub(super) async fn update_event(
     } else {
         e.checkin_code.clone()
     };
-    sqlx::query("UPDATE events SET title=$1, kind=$2, description=$3, starts_at=$4, location=$5, capacity=$6, cost_note=$7, signup_deadline=$8, photo_file_id=$9, attendance_enabled=$10, checkin_code=$11, mileage_claimable=$12 WHERE id=$13")
+    sqlx::query("UPDATE events SET title=$1, kind=$2, description=$3, starts_at=$4, location=$5, capacity=$6, cost_note=$7, signup_deadline=$8, photo_file_id=$9, attendance_enabled=$10, checkin_code=$11, mileage_claimable=$12, area_id=$13 WHERE id=$14")
         .bind(req.title.trim())
         .bind(&req.kind)
         .bind(req.description.clone().unwrap_or_default())
@@ -477,6 +497,7 @@ pub(super) async fn update_event(
         .bind(att_enabled as i64)
         .bind(checkin_code)
         .bind(target_mileage as i64)
+        .bind(req.area_id)
         .bind(id)
         .execute(&mut *tx)
         .await?;

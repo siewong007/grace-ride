@@ -88,11 +88,11 @@ async fn an_older_history_replays_the_schema_without_losing_rows() {
         .await
         .unwrap();
     assert!(kept.is_some());
-    let rates: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM reimbursement_rates")
+    let fares: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM area_fares")
         .fetch_one(&db)
         .await
         .unwrap();
-    assert_eq!(rates, 2);
+    assert_eq!(fares, 0);
     let settings: Vec<String> = sqlx::query_scalar("SELECT key FROM system_settings ORDER BY key")
         .fetch_all(&db)
         .await

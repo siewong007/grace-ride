@@ -411,7 +411,7 @@ describe('Admin Settings', () => {
     expect(screen.getByText('Audit log retention (days)')).toBeInTheDocument();
     expect(screen.getByText('Session auto-lock (minutes)')).toBeInTheDocument();
     expect(screen.getByText('Leaders')).toBeInTheDocument();
-    expect(screen.getByText('Petaling Jaya')).toBeInTheDocument();
+    expect(screen.getAllByText('Petaling Jaya').length).toBeGreaterThan(0);
   });
 });
 

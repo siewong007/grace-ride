@@ -48,7 +48,7 @@ export const ENTITIES = [
   'recovery',
   'guide_workflow',
   'visitor_pass',
-  'reimbursement_rates',
+  'area_fares',
   'system_settings',
 ];
 

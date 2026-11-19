@@ -215,6 +215,12 @@ export function DriverActions({ ride: r, reload }: { ride: Ride; reload: () => v
         <Notice tone="warning">{t('delayedConfirmed')}</Notice>
       )}
 
+      {r.status === 'completed' && r.mileage_receipt_needed && (
+        <Notice tone="warning">
+          <Trans t={t as TFunction} i18nKey="mileageReceiptNeeded" components={{ receipt: <Link to={`/reimbursements/new?kind=mileage&ride=${r.id}`} /> }} />
+        </Notice>
+      )}
+
       {r.status === 'pending_driver' && (
         <>
           <p className="muted">{t('driverClaimDesc')}</p>

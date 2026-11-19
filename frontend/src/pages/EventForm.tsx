@@ -35,6 +35,7 @@ interface ExistingEvent {
   photo_file_id: number | null;
   attendance_enabled: boolean;
   mileage_claimable?: boolean;
+  area?: { id: number; name: string } | null;
   created_by?: { id: number };
 }
 
@@ -48,6 +49,7 @@ export default function EventForm() {
   const duplicateId = !id ? params.get('duplicate') : null;
   const nav = useNavigate();
   const { data: groups } = useApi<Group[]>('/groups');
+  const { data: areas } = useApi<{ id: number; name: string; active: boolean }[]>('/areas');
   const { data: existing } = useApi<ExistingEvent>(
     id ? `/events/${id}` : duplicateId ? `/events/${duplicateId}` : null,
   );
@@ -66,6 +68,7 @@ export default function EventForm() {
     photo_file_id: null as number | null,
     attendance_enabled: true,
     mileage_claimable: false,
+    area_id: '',
     repeat_frequency: 'none' as 'none' | 'weekly' | 'biweekly' | 'monthly',
     repeat_count: '4',
   });
@@ -91,6 +94,7 @@ export default function EventForm() {
       photo_file_id: keepPhoto ? (existing.photo_file_id ?? null) : null,
       attendance_enabled: existing.attendance_enabled ?? true,
       mileage_claimable: existing.mileage_claimable ?? false,
+      area_id: existing.area ? String(existing.area.id) : '',
       repeat_frequency: 'none',
       repeat_count: '4',
     });
@@ -135,6 +139,7 @@ export default function EventForm() {
       photo_file_id: f.photo_file_id,
       attendance_enabled: f.attendance_enabled,
       mileage_claimable: f.mileage_claimable,
+      area_id: f.area_id ? Number(f.area_id) : null,
       // Empty: people choose from the audience groups and their sub-groups.
       as_group_ids: narrow ? f.as_group_ids.filter((g) => joinable.some((j) => j.id === g)) : [],
       repeat_frequency: !id && f.repeat_frequency !== 'none' ? f.repeat_frequency : undefined,
@@ -217,6 +222,14 @@ export default function EventForm() {
                 onChange={(v) => setF((cur) => ({ ...cur, location: v }))}
               />
             </div>
+            <Field label={t('area')} hint={t('areaHint')}>
+              <select className="input" value={f.area_id} onChange={set('area_id')}>
+                <option value="">{t('areaNone')}</option>
+                {(areas ?? []).map((a) => (
+                  <option key={a.id} value={a.id}>{a.name}</option>
+                ))}
+              </select>
+            </Field>
             <Field label={t('cost')}>
               <input
                 className="input"

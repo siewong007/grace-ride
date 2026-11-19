@@ -35,5 +35,11 @@ export default {
   stepSubmitted: '已提交',
   stepReviewed: '已审核',
   stepPaid: '已付款',
+  mileageTitle: '提交里程收据',
+  mileageNote: '这条路线还没有固定车费。请附上里程收据（过路费、油费或停车费）和金额，团队确认后才会付款。',
+  mileageReceipt: '里程收据',
+  kindMileage: '里程',
+  kindGrab: 'Grab',
+  route: '路线',
   viewRide: '查看接送',
 };

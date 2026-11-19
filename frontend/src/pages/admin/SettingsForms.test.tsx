@@ -13,8 +13,8 @@ vi.mock('../../api', () => ({
   del: vi.fn(),
   useApi: (path: string | null) => ({
     data:
-      path === '/admin/settings/rates'
-        ? { rates: [{ vehicle_type: 'standard', rate_cents_per_km: 60, updated_at: '' }, { vehicle_type: 'other', rate_cents_per_km: 40, updated_at: '' }] }
+      path === '/admin/settings/fares'
+        ? { fares: [{ id: 7, area_a: { id: 1, name: 'Cheras' }, area_b: { id: 2, name: 'PJ' }, amount_cents: 1500, updated_at: '' }] }
         : path === '/admin/settings/system'
           ? { audit_retention_days: 730, chat_retention_days: 180, max_live_drivers: 10, session_timeout_mins: 15 }
           : [],
@@ -40,18 +40,18 @@ const show = () =>
   );
 
 describe('Settings forms', () => {
-  it('shows and saves mileage rates in ringgit, stored as cents', async () => {
+  it('lists area fares and saves one in ringgit, stored as cents', async () => {
     show();
-    const std = screen.getByLabelText('Standard vehicle (RM per km)');
-    expect(std).toHaveValue(0.6);
-    fireEvent.change(std, { target: { value: '0.75' } });
-    fireEvent.click(screen.getByRole('button', { name: 'Save rates' }));
+    expect(screen.getByText('Cheras ↔ PJ')).toBeInTheDocument();
+    expect(screen.getByText('RM 15.00')).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: 'Edit' }));
+    fireEvent.change(screen.getByLabelText('Fare'), { target: { value: '18.50' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Save fare' }));
     await waitFor(() =>
-      expect(mocks.put).toHaveBeenCalledWith('/admin/settings/rates', {
-        rates: [
-          { vehicle_type: 'standard', rate_cents_per_km: 75 },
-          { vehicle_type: 'other', rate_cents_per_km: 40 },
-        ],
+      expect(mocks.put).toHaveBeenCalledWith('/admin/settings/fares', {
+        area_a_id: 1,
+        area_b_id: 2,
+        amount_cents: 1850,
       }),
     );
   });

@@ -88,6 +88,7 @@ export default {
   startTrip: 'Start trip (depart)',
   noShowBtn: 'No-show',
   completedTrip: 'Arrived',
+  mileageReceiptNeeded: 'This route has no set fare yet. <receipt>Hand in your mileage receipt</receipt> so the team can confirm your reimbursement.',
   withdrawDriver: 'Can’t drive? Notify transport team',
   withdrawTitle: 'Can’t drive',
   withdrawLabel: 'Reason (passenger and transport team will be notified)',

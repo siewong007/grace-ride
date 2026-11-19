@@ -9,6 +9,7 @@ import {
   ErrorBox,
   Field,
   FileInput,
+  Notice,
   Page,
   PageHeader,
   Pagination,
@@ -25,6 +26,8 @@ export interface Reimb {
   user: { id: number; name: string };
   ride_id: number | null;
   ride_at: string | null;
+  kind?: 'grab' | 'mileage';
+  ride_route?: string | null;
   amount_cents: number;
   description: string;
   receipt_file_id: number;
@@ -154,6 +157,7 @@ export function ReimbursementForm() {
   const past = useApi<PastRide[] | { items: PastRide[] }>('/rides?scope=past');
   const pastRides = Array.isArray(past.data) ? past.data : past.data?.items ?? [];
   const existing = useApi<Reimb>(editId ? `/reimbursements/${editId}` : null);
+  const mileage = params.get('kind') === 'mileage' || existing.data?.kind === 'mileage';
   const [f, setF] = useState({
     ride: params.get('ride') ?? '',
     amount: '',
@@ -181,6 +185,7 @@ export function ReimbursementForm() {
   const submit = (e: FormEvent) => {
     e.preventDefault();
     const body = {
+      kind: mileage ? 'mileage' : 'grab',
       ride_id: f.ride ? Number(f.ride) : null,
       amount_cents: toCents(f.amount),
       description: f.desc,
@@ -203,11 +208,21 @@ export function ReimbursementForm() {
     <Page width="narrow">
       <div className="stack">
         <PageHeader
-          title={editId ? t('editTitle') : t('applyTitle')}
+          title={editId ? t('editTitle') : mileage ? t('mileageTitle') : t('applyTitle')}
           back="/reimbursements"
         />
 
         <form className="card stack" onSubmit={submit}>
+          {mileage && <Notice tone="info">{t('mileageNote')}</Notice>}
+          {mileage ? (
+            <Field label={t('ride')}>
+              <div className="muted">
+                {existing.data?.ride_route ?? `#${f.ride}`}
+                {' · '}
+                <Link to={`/rides/${f.ride}`}>{t('viewRide')}</Link>
+              </div>
+            </Field>
+          ) : (
           <Field label={t('ride')}>
             <select
               className="input"
@@ -222,6 +237,7 @@ export function ReimbursementForm() {
               ))}
             </select>
           </Field>
+          )}
 
           <Field label={t('amount')}>
             <input
@@ -244,7 +260,7 @@ export function ReimbursementForm() {
           </Field>
 
           <div>
-            <FileInput label={t('receipt')} value={f.file} onChange={(id) => setF({ ...f, file: id })} />
+            <FileInput label={mileage ? t('mileageReceipt') : t('receipt')} value={f.file} onChange={(id) => setF({ ...f, file: id })} />
             {f.file && (
               <div className="receipt-drop-preview">
                 <img
@@ -394,6 +410,12 @@ export function ReimbursementDetail() {
             <dd>{r.user.name}</dd>
             <dt>{t('description')}</dt>
             <dd>{r.description || t('noneDesc')}</dd>
+            {r.kind === 'mileage' && (
+              <>
+                <dt>{t('route')}</dt>
+                <dd>{t('kindMileage')}{r.ride_route ? ` · ${r.ride_route}` : ''}</dd>
+              </>
+            )}
             {r.ride_id && (
               <>
                 <dt>{t('rideLink')}</dt>

@@ -537,95 +537,99 @@ async fn startup_sync_keeps_an_administrators_changes() {
 }
 
 #[tokio::test]
-async fn admin_settings_rates_crud_permissions_and_audit() {
+async fn admin_settings_area_fares_crud_permissions_and_audit() {
     let (app, st) = setup().await;
     let member = login(&st, "member@example.org").await;
     let admin = login(&st, "admin@example.org").await;
+    let (a,): (i64,) = sqlx::query_as("INSERT INTO areas (name) VALUES ('Cheras') RETURNING id")
+        .fetch_one(&st.db)
+        .await
+        .unwrap();
+    let (b,): (i64,) = sqlx::query_as("INSERT INTO areas (name) VALUES ('PJ') RETURNING id")
+        .fetch_one(&st.db)
+        .await
+        .unwrap();
 
-    // Member cannot view or update rates
+    // Member cannot view or change fares
     let get_forbidden = call(
         &app,
         Method::GET,
-        "/api/admin/settings/rates",
+        "/api/admin/settings/fares",
         Some(&member),
         None,
     )
     .await;
     assert_eq!(get_forbidden.status, StatusCode::FORBIDDEN);
-
     let put_forbidden = call(
         &app,
         Method::PUT,
-        "/api/admin/settings/rates",
+        "/api/admin/settings/fares",
         Some(&member),
-        Some(json!({
-            "rates": [
-                { "vehicle_type": "standard", "rate_cents_per_km": 40 }
-            ]
-        })),
+        Some(json!({"area_a_id": a, "area_b_id": b, "amount_cents": 1500})),
     )
     .await;
     assert_eq!(put_forbidden.status, StatusCode::FORBIDDEN);
 
-    // Admin can view rates
-    let get_ok = call(
-        &app,
-        Method::GET,
-        "/api/admin/settings/rates",
-        Some(&admin),
-        None,
-    )
-    .await;
-    assert_eq!(get_ok.status, StatusCode::OK);
-    assert!(get_ok.json["rates"].is_array());
-
-    // Admin updates rates
+    // Admin sets a fare; the pair is the same in either order
     let put_ok = call(
         &app,
         Method::PUT,
-        "/api/admin/settings/rates",
+        "/api/admin/settings/fares",
         Some(&admin),
-        Some(json!({
-            "rates": [
-                { "vehicle_type": "standard", "rate_cents_per_km": 45 },
-                { "vehicle_type": "other", "rate_cents_per_km": 65 }
-            ]
-        })),
+        Some(json!({"area_a_id": b, "area_b_id": a, "amount_cents": 1500})),
     )
     .await;
-    assert_eq!(put_ok.status, StatusCode::OK);
+    assert_eq!(put_ok.status, StatusCode::OK, "{}", put_ok.json);
+    let again = call(
+        &app,
+        Method::PUT,
+        "/api/admin/settings/fares",
+        Some(&admin),
+        Some(json!({"area_a_id": a, "area_b_id": b, "amount_cents": 1800})),
+    )
+    .await;
+    assert_eq!(again.status, StatusCode::OK);
 
-    // Verify rates were updated
-    let get_after = call(
+    let list = call(
         &app,
         Method::GET,
-        "/api/admin/settings/rates",
+        "/api/admin/settings/fares",
         Some(&admin),
         None,
     )
     .await;
-    assert_eq!(get_after.status, StatusCode::OK);
-    let rates = get_after.json["rates"].as_array().unwrap();
-    let std_rate = rates
-        .iter()
-        .find(|r| r["vehicle_type"] == "standard")
-        .unwrap();
-    assert_eq!(std_rate["rate_cents_per_km"], 45);
+    assert_eq!(list.status, StatusCode::OK);
+    let fares = list.json["fares"].as_array().unwrap();
+    assert_eq!(fares.len(), 1);
+    assert_eq!(fares[0]["amount_cents"], 1800);
 
-    // Negative rates rejected
-    let bad_rate = call(
+    // Negative amounts and unknown areas are rejected
+    for body in [
+        json!({"area_a_id": a, "area_b_id": b, "amount_cents": -10}),
+        json!({"area_a_id": a, "area_b_id": 999_999, "amount_cents": 100}),
+    ] {
+        let r = call(
+            &app,
+            Method::PUT,
+            "/api/admin/settings/fares",
+            Some(&admin),
+            Some(body),
+        )
+        .await;
+        assert_eq!(r.status, StatusCode::BAD_REQUEST);
+    }
+
+    // Delete
+    let id = fares[0]["id"].as_i64().unwrap();
+    let del = call(
         &app,
-        Method::PUT,
-        "/api/admin/settings/rates",
+        Method::DELETE,
+        &format!("/api/admin/settings/fares/{id}"),
         Some(&admin),
-        Some(json!({
-            "rates": [
-                { "vehicle_type": "standard", "rate_cents_per_km": -10 }
-            ]
-        })),
+        None,
     )
     .await;
-    assert_eq!(bad_rate.status, StatusCode::BAD_REQUEST);
+    assert_eq!(del.status, StatusCode::OK);
 }
 
 #[tokio::test]

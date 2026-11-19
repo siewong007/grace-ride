@@ -680,6 +680,24 @@ async fn only_leadership_can_authorise_event_mileage_and_mileage_is_event_specif
     .await
     .unwrap();
 
+    // Fares are flat per pair of areas: pickup area 1 <-> the event's area.
+    let (event_area,): (i64,) =
+        sqlx::query_as("INSERT INTO areas (name) VALUES ('Fare PJ') RETURNING id")
+            .fetch_one(&st.db)
+            .await
+            .unwrap();
+    sqlx::query("UPDATE events SET area_id=$1 WHERE id=$2")
+        .bind(event_area)
+        .bind(claimable_event_id)
+        .execute(&st.db)
+        .await
+        .unwrap();
+    sqlx::query("INSERT INTO area_fares (area_a_id, area_b_id, amount_cents) VALUES (1, $1, 1500)")
+        .bind(event_area)
+        .execute(&st.db)
+        .await
+        .unwrap();
+
     // (A) Ride for claimable event (claimable_event_id):
     let (ride1_id,): (i64,) = sqlx::query_as(
         "INSERT INTO rides (passenger_id, driver_id, event_id, pickup_at, pickup_area_id, pickup_address, destination, seats, assistance, notes, status, distance_km)
@@ -710,9 +728,9 @@ async fn only_leadership_can_authorise_event_mileage_and_mileage_is_event_specif
             .fetch_one(&st.db)
             .await
             .unwrap();
-    assert!(
-        reimb1 > 0,
-        "reimbursement for claimable event must be > 0, got {reimb1}"
+    assert_eq!(
+        reimb1, 1500,
+        "flat fare for the area pair, not distance based"
     );
 
     // (B) Ride for non-claimable event (non_claimable_event_id):
@@ -780,4 +798,181 @@ async fn only_leadership_can_authorise_event_mileage_and_mileage_is_event_specif
         reimb3, 0,
         "standalone ride must not be claimable (reimbursement 0)"
     );
+}
+
+#[tokio::test]
+async fn area_fare_is_paid_once_per_trip_and_missing_fare_needs_a_confirmed_receipt() {
+    let (app, st) = setup().await;
+    let president = login(&st, "president@example.org").await;
+    let driver = login(&st, "driver@example.org").await;
+    let admin = login(&st, "admin@example.org").await;
+    let driver_id = user_id(&st, "driver@example.org").await;
+    let passenger_id = user_id(&st, "member@example.org").await;
+
+    let mk_area = |name: &'static str| {
+        let db = st.db.clone();
+        async move {
+            sqlx::query_scalar::<_, i64>("INSERT INTO areas (name) VALUES ($1) RETURNING id")
+                .bind(name)
+                .fetch_one(&db)
+                .await
+                .unwrap()
+        }
+    };
+    let cheras = mk_area("Cheras").await;
+    let ampang = mk_area("Ampang").await;
+    let pj = mk_area("PJ").await;
+    let klang = mk_area("Klang").await;
+
+    let r = call(
+        &app,
+        Method::POST,
+        "/api/events",
+        Some(&president),
+        Some(json!({
+            "title": "Sunday Outing", "kind": "other", "starts_at": tomorrow("10:00"),
+            "location": "PJ hall", "group_ids": [1], "mileage_claimable": true, "area_id": pj
+        })),
+    )
+    .await;
+    assert_eq!(r.status, StatusCode::OK, "{}", r.json);
+    let event_id = r.json["id"].as_i64().unwrap();
+    let detail = call(
+        &app,
+        Method::GET,
+        &format!("/api/events/{event_id}"),
+        Some(&president),
+        None,
+    )
+    .await;
+    assert_eq!(detail.json["area"]["id"], pj);
+
+    // Cheras <-> PJ = RM15, Ampang <-> PJ = RM20 (stored once, either direction).
+    for (area, cents) in [(cheras, 1500), (ampang, 2000)] {
+        sqlx::query(
+            "INSERT INTO area_fares (area_a_id, area_b_id, amount_cents) VALUES ($1,$2,$3)",
+        )
+        .bind(area.min(pj))
+        .bind(area.max(pj))
+        .bind(cents)
+        .execute(&st.db)
+        .await
+        .unwrap();
+    }
+
+    let trip_id = 424_242_i64;
+    let mut rides = Vec::new();
+    for area in [cheras, ampang] {
+        let (id,): (i64,) = sqlx::query_as(
+            "INSERT INTO rides (passenger_id, driver_id, event_id, trip_id, pickup_at, pickup_area_id, pickup_address, destination, seats, assistance, notes, status)
+             VALUES ($1,$2,$3,$4,$5,$6,'Street','PJ hall',1,'','','in_progress') RETURNING id",
+        )
+        .bind(passenger_id)
+        .bind(driver_id)
+        .bind(event_id)
+        .bind(trip_id)
+        .bind(tomorrow("08:30"))
+        .bind(area)
+        .fetch_one(&st.db)
+        .await
+        .unwrap();
+        rides.push(id);
+    }
+    for id in &rides {
+        let r = call(
+            &app,
+            Method::POST,
+            &format!("/api/rides/{id}/complete"),
+            Some(&driver),
+            None,
+        )
+        .await;
+        assert_eq!(r.status, StatusCode::OK, "{}", r.json);
+    }
+    let paid: i64 = sqlx::query_scalar(
+        "SELECT COALESCE(SUM(reimbursement_amount_cents),0)::BIGINT FROM rides WHERE trip_id=$1",
+    )
+    .bind(trip_id)
+    .fetch_one(&st.db)
+    .await
+    .unwrap();
+    assert_eq!(paid, 2000, "one trip pays its highest fare once");
+
+    // A route with no fare pays nothing and asks for the mileage receipt.
+    let (ride,): (i64,) = sqlx::query_as(
+        "INSERT INTO rides (passenger_id, driver_id, event_id, pickup_at, pickup_area_id, pickup_address, destination, seats, assistance, notes, status)
+         VALUES ($1,$2,$3,$4,$5,'Street','PJ hall',1,'','','in_progress') RETURNING id",
+    )
+    .bind(passenger_id)
+    .bind(driver_id)
+    .bind(event_id)
+    .bind(tomorrow("08:45"))
+    .bind(klang)
+    .fetch_one(&st.db)
+    .await
+    .unwrap();
+    let r = call(
+        &app,
+        Method::POST,
+        &format!("/api/rides/{ride}/complete"),
+        Some(&driver),
+        None,
+    )
+    .await;
+    assert_eq!(r.status, StatusCode::OK, "{}", r.json);
+    let (amount, needed): (i64, i64) = sqlx::query_as(
+        "SELECT reimbursement_amount_cents, mileage_receipt_needed FROM rides WHERE id=$1",
+    )
+    .bind(ride)
+    .fetch_one(&st.db)
+    .await
+    .unwrap();
+    assert_eq!((amount, needed), (0, 1));
+
+    // The driver hands in the receipt; a ride that needs none is refused.
+    let receipt = upload_png(&app, &driver).await;
+    let claim = |ride_id: i64| {
+        json!({
+            "kind": "mileage", "ride_id": ride_id, "amount_cents": 2500, "description": "Klang to PJ",
+            "receipt_file_id": receipt, "payee_name": "Driver", "payee_phone": "012-345 6789"
+        })
+    };
+    let r = call(
+        &app,
+        Method::POST,
+        "/api/reimbursements",
+        Some(&driver),
+        Some(claim(rides[0])),
+    )
+    .await;
+    assert_eq!(r.status, StatusCode::BAD_REQUEST, "{}", r.json);
+    let r = call(
+        &app,
+        Method::POST,
+        "/api/reimbursements",
+        Some(&driver),
+        Some(claim(ride)),
+    )
+    .await;
+    assert_eq!(r.status, StatusCode::OK, "{}", r.json);
+    let claim_id = r.json["id"].as_i64().unwrap();
+
+    // Review confirms it, and the ride then carries the confirmed amount.
+    let r = call(
+        &app,
+        Method::POST,
+        &format!("/api/reimbursements/{claim_id}/review"),
+        Some(&admin),
+        Some(json!({"action": "approve"})),
+    )
+    .await;
+    assert_eq!(r.status, StatusCode::OK, "{}", r.json);
+    let (amount, needed): (i64, i64) = sqlx::query_as(
+        "SELECT reimbursement_amount_cents, mileage_receipt_needed FROM rides WHERE id=$1",
+    )
+    .bind(ride)
+    .fetch_one(&st.db)
+    .await
+    .unwrap();
+    assert_eq!((amount, needed), (2500, 0));
 }

@@ -799,43 +799,80 @@ pub(super) async fn complete(
         return Err(forbidden(u.lang, ErrorKey::NotRideDriver));
     }
 
-    // --- Auto reimbursement: distance × per-km rate for the driver's vehicle type ---
-    // Only rides for events with mileage_claimable = 1 are eligible for mileage reimbursement.
-    // Standalone rides (not linked to an event) or non-claimable events receive 0 cents.
-    let distance_km: Option<i64> = r.distance_km;
-    let reimbursement_cents: i64 = if r.event_id.is_some() && r.event_mileage_claimable == 1 {
-        match (distance_km, &r.v_type) {
-            (Some(km), Some(vt)) => {
-                let rate: Option<(i64,)> = sqlx::query_as(
-                    "SELECT rate_cents_per_km FROM reimbursement_rates WHERE vehicle_type = $1",
-                )
-                .bind(vt)
-                .fetch_optional(&st.db)
-                .await?;
-                km * rate.map(|r| r.0).unwrap_or(0)
+    // --- Auto reimbursement: a flat fare per pair of areas, once per driver trip ---
+    // Only rides for events with mileage_claimable = 1 are eligible. The fare is the one
+    // for (pickup area, event area), the same both ways. A trip picking up from several
+    // areas pays the highest of its fares once, so the rides of one trip share it.
+    // A pair with no fare yet pays nothing and asks the driver for their mileage receipt.
+    let mut tx = st.db.begin().await?;
+    if let Some(t) = r.trip_id {
+        sqlx::query("SELECT pg_advisory_xact_lock(hashtextextended('grace_ride_trip_fare', $1))")
+            .bind(t)
+            .execute(&mut *tx)
+            .await?;
+    }
+    let (reimbursement_cents, receipt_needed): (i64, i64) = if r.event_id.is_some()
+        && r.event_mileage_claimable == 1
+    {
+        // Rides still travelling in this trip count too, so the fare is the same
+        // whichever rider is dropped off first.
+        let fares: Vec<Option<i64>> = sqlx::query_scalar(
+            "SELECT (SELECT f.amount_cents FROM area_fares f
+                          WHERE f.area_a_id = LEAST(x.pickup_area_id, e.area_id)
+                            AND f.area_b_id = GREATEST(x.pickup_area_id, e.area_id))
+                 FROM rides x JOIN events e ON e.id = x.event_id
+                 WHERE x.id = $1
+                    OR ($2::BIGINT IS NOT NULL AND x.trip_id = $2 AND x.driver_id = $3
+                        AND x.status IN ('confirmed','in_progress','completed'))",
+        )
+        .bind(id)
+        .bind(r.trip_id)
+        .bind(u.id)
+        .fetch_all(&mut *tx)
+        .await?;
+        match fares.into_iter().flatten().max() {
+            Some(fare) => {
+                let paid: i64 = match r.trip_id {
+                        Some(t) => {
+                            sqlx::query_scalar(
+                                "SELECT COALESCE(SUM(reimbursement_amount_cents),0)::BIGINT
+                                 FROM rides WHERE trip_id=$1 AND id<>$2 AND driver_id=$3 AND status='completed'",
+                            )
+                            .bind(t)
+                            .bind(id)
+                            .bind(u.id)
+                            .fetch_one(&mut *tx)
+                            .await?
+                        }
+                        None => 0,
+                    };
+                ((fare - paid).max(0), 0)
             }
-            _ => 0,
+            None => (0, 1),
         }
     } else {
-        0
+        (0, 0)
     };
 
     // One statement: status, completion time and reimbursement land together, and only
     // while this driver's trip is still running.
     let done = sqlx::query(
         "UPDATE rides SET status='completed', updated_at=$1, completed_at=$1,
-                picked_up_at=COALESCE(picked_up_at, $1), reimbursement_amount_cents=$2
-         WHERE id=$3 AND driver_id=$4 AND status='in_progress'",
+                picked_up_at=COALESCE(picked_up_at, $1), reimbursement_amount_cents=$2,
+                mileage_receipt_needed=$3
+         WHERE id=$4 AND driver_id=$5 AND status='in_progress'",
     )
     .bind(now())
     .bind(reimbursement_cents)
+    .bind(receipt_needed)
     .bind(id)
     .bind(u.id)
-    .execute(&st.db)
+    .execute(&mut *tx)
     .await?;
     if done.rows_affected() == 0 {
         return Err(conflict(u.lang, ErrorKey::RideStatusChanged));
     }
+    tx.commit().await?;
     clear_location_if_idle(&st, u.id).await?;
     clear_passenger_location(&st, id).await?;
     notify(
@@ -903,9 +940,10 @@ pub(super) async fn complete(
         "ride.complete",
         "ride",
         Some(id),
-        match distance_km {
-            Some(km) => format!("{km} km; reimbursement {}", fmt_rm(reimbursement_cents)),
-            None => String::new(),
+        if receipt_needed == 1 {
+            "no fare for this route; mileage receipt needed".to_string()
+        } else {
+            format!("reimbursement {}", fmt_rm(reimbursement_cents))
         },
     )
     .await;

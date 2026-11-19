@@ -115,7 +115,7 @@ export async function mockAdminApi(context: BrowserContext) {
       { id: 2, name: 'Youth', description: 'Ages 13 to 25', is_all: false, member_count: 31, parent_id: null, is_visitor: false },
     ]);
     if (p === '/areas') return j([{ id: 1, name: 'Petaling Jaya', active: true }]);
-    if (p === '/admin/settings/rates') return j({ rates: [{ vehicle_type: 'standard', rate_cents_per_km: 60, updated_at: '' }, { vehicle_type: 'other', rate_cents_per_km: 40, updated_at: '' }] });
+    if (p === '/admin/settings/fares') return j({ fares: [{ id: 1, area_a: { id: 1, name: 'Petaling Jaya' }, area_b: { id: 1, name: 'Petaling Jaya' }, amount_cents: 1500, updated_at: '' }] });
     if (p === '/admin/settings/system') return j({ audit_retention_days: 730, chat_retention_days: 180, max_live_drivers: 10, session_timeout_mins: 15 });
     if (/^\/admin\/events\/\d+\/plan/.test(p)) return j(plan);
     if (p === '/announcements') return j([{ id: 1, title: 'Christmas service transport sign-up is open', body: 'Please request your ride by 15 December.', pinned: true, by: 'Sister Mary', created_at: '2026-11-19T08:00:00' }]);

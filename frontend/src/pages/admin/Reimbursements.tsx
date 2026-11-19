@@ -269,6 +269,7 @@ function List({ scope }: { scope: 'review' | 'payout' }) {
                     <div className="row tiny muted">
                       <StatusPill map={REIMB_STATUS} status={r.status} />
                       <span>{fmtDay(r.created_at, ft)}</span>
+                      {r.kind === 'mileage' && <span className="bold">{t('reimb.mileageKind')}</span>}
                       {r.ride_id && <Link to={`/admin/rides/${r.ride_id}`}>{t('reimb.rideLink')}</Link>}
                     </div>
                   </div>
@@ -367,6 +368,12 @@ function ReviewModal({
         />
         <ReceiptLink id={r.receipt_file_id} label={t('reimb.openReceipt')} />
         <p className="small">{r.description}</p>
+        {r.kind === 'mileage' && (
+          <p className="small">
+            <strong>{t('reimb.mileageKind')}</strong>
+            {r.ride_route ? ` · ${r.ride_route}` : ''}
+          </p>
+        )}
         {r.ride_at && (
           <p className="small muted">
             {t('reimb.ride', { time: fmtDateTime(r.ride_at, ft) })}
