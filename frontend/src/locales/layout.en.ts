@@ -58,4 +58,9 @@ export default {
   jumpRequests: 'Help requests',
   jumpNone: 'Nothing matches. Try another word.',
   jumpCount: '{count} results',
+  guideRidePage: 'A ride',
+  guideEventPage: 'An event',
+  guideEventSettle: 'An event’s cost split',
+  guideClaimPage: 'A reimbursement claim',
+  guidePlanBoard: 'Transport planning board',
 };

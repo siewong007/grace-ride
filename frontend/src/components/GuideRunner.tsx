@@ -8,16 +8,9 @@ import type { GuideDetailData, GuideStep, GuideSummary } from '../types/help';
 import { usePick } from '../hooks/usePick';
 import { Button, useToast } from './ui';
 import { useApi } from '../api';
+import { guideForPage, isHere, isPatternLink, navigableLink } from '../guideLinks';
 
 const STORAGE_KEY = 'graceride_walkthrough';
-
-/** The path part of an in-app link, without ?query or #hash. */
-const linkPath = (link: string) => link.split(/[?#]/)[0];
-/** True when the link points at the page the person is already on (a link with a ?query must match it too). */
-const isHere = (link: string, pathname: string, search: string) => {
-  const q = link.includes('?') ? `?${link.split('?')[1].split('#')[0]}` : '';
-  return linkPath(link) === pathname && (!q || q === search);
-};
 
 interface WalkthroughState {
   guide: GuideDetailData;
@@ -44,7 +37,7 @@ const GuideRunnerCtx = createContext<GuideRunnerContextType>({
 
 export const useGuideRunner = () => useContext(GuideRunnerCtx);
 
-function WalkthroughCard({ active, minimised, onMinimise, onPrev, onNext, onStop, hereLink }: {
+function WalkthroughCard({ active, minimised, onMinimise, onPrev, onNext, onStop, hereLink, pathname }: {
   active: WalkthroughState;
   minimised: boolean;
   onMinimise: (v: boolean) => void;
@@ -52,6 +45,7 @@ function WalkthroughCard({ active, minimised, onMinimise, onPrev, onNext, onStop
   onNext: () => void;
   onStop: () => void;
   hereLink: (link: string) => boolean;
+  pathname: string;
 }) {
   const { t } = useTranslation('help');
   const pick = usePick();
@@ -69,6 +63,10 @@ function WalkthroughCard({ active, minimised, onMinimise, onPrev, onNext, onStop
         ? 'note'
         : 'tip';
   const counter = t('stepOfTotal', { n: stepIndex + 1, total });
+  // An item-page step points at the list the item is picked from, unless the person is already in it.
+  const target = step?.link ? navigableLink(step.link) : null;
+  const listLink =
+    target && !(isPatternLink(step!.link) && (pathname === target || pathname.startsWith(`${target}/`))) ? target : null;
 
   return (
     <aside className={`guide-card ${minimised ? 'min' : ''}`} role="region" aria-label={t('walkthroughBar', 'Guide walkthrough')}>
@@ -120,8 +118,11 @@ function WalkthroughCard({ active, minimised, onMinimise, onPrev, onNext, onStop
               </a>
             )}
             {!step?.link && <p className="small">{t('stepHere')}</p>}
-            {step?.link && !hereLink(step.link) && (
-              <Link to={step.link} className="guide-step-link">
+            {step?.link && !hereLink(step.link) && isPatternLink(step.link) && (
+              <p className="small">{t('stepOpenItem')}</p>
+            )}
+            {step?.link && !hereLink(step.link) && listLink && (
+              <Link to={listLink} className="guide-step-link">
                 <ExternalLink size={14} aria-hidden="true" />
                 <span>{t('openStepLink', 'Open this step page')}</span>
               </Link>
@@ -181,34 +182,25 @@ export function GuideRunnerProvider({ children }: { children: ReactNode }) {
     };
   }, [active, minimised]);
 
-  // Find if any published guide has a step pointing to the current page
+  // The guide whose steps cover the current page (see guideForPage for which one wins).
   const guidesApi = useApi<(GuideSummary & { steps?: GuideStep[] })[]>('/help/guides?full=true');
-  const allGuides = guidesApi.data ?? [];
+  const matchingGuideForPage = guideForPage(guidesApi.data ?? [], loc.pathname);
 
-  const matchingGuideForPage = (() => {
-    const currentPath = loc.pathname;
-    if (currentPath === '/' || currentPath.startsWith('/help')) return null;
-
-    for (const g of allGuides) {
-      if (!g.published || !g.steps) continue;
-      const stepIdx = g.steps.findIndex((s) => s.link && linkPath(s.link) === currentPath);
-      if (stepIdx !== -1) {
-        return { guide: g, stepIndex: stepIdx };
-      }
-    }
-    return null;
-  })();
+  /** Go to a step's page. Item-page patterns are left to the person, except when a walkthrough starts. */
+  const goTo = (link: string | undefined, starting: boolean) => {
+    if (!link || isHere(link, loc.pathname, loc.search)) return;
+    if (isPatternLink(link) && !starting) return;
+    const target = navigableLink(link);
+    if (target && !isHere(target, loc.pathname, loc.search)) nav(target);
+  };
 
   const startWalkthrough = (guide: GuideDetailData, startAtStep = 0) => {
     const safeIdx = Math.max(0, Math.min(startAtStep, guide.steps.length - 1));
     setActive({ guide, stepIndex: safeIdx });
     setMinimised(false);
 
-    // If starting step has a link and we're not on it, navigate
-    const step = guide.steps[safeIdx];
-    if (step?.link && !isHere(step.link, loc.pathname, loc.search)) {
-      nav(step.link);
-    }
+    // If the starting step has a page and we're not on it, go there.
+    goTo(guide.steps[safeIdx]?.link, true);
   };
 
   const stopWalkthrough = () => {
@@ -223,10 +215,7 @@ export function GuideRunnerProvider({ children }: { children: ReactNode }) {
     if (stepIndex < guide.steps.length - 1) {
       const nextIdx = stepIndex + 1;
       setActive({ guide, stepIndex: nextIdx });
-      const nextStepObj = guide.steps[nextIdx];
-      if (nextStepObj?.link && !isHere(nextStepObj.link, loc.pathname, loc.search)) {
-        nav(nextStepObj.link);
-      }
+      goTo(guide.steps[nextIdx]?.link, false);
     } else {
       // Completed all steps
       toast(t('walkthroughDone', 'Walkthrough complete!'));
@@ -239,10 +228,7 @@ export function GuideRunnerProvider({ children }: { children: ReactNode }) {
     if (!active || active.stepIndex <= 0) return;
     const prevIdx = active.stepIndex - 1;
     setActive({ guide: active.guide, stepIndex: prevIdx });
-    const prevStepObj = active.guide.steps[prevIdx];
-    if (prevStepObj?.link && !isHere(prevStepObj.link, loc.pathname, loc.search)) {
-      nav(prevStepObj.link);
-    }
+    goTo(active.guide.steps[prevIdx]?.link, false);
   };
 
   return (
@@ -266,6 +252,7 @@ export function GuideRunnerProvider({ children }: { children: ReactNode }) {
         onNext={nextStep}
         onStop={stopWalkthrough}
         hereLink={(link) => isHere(link, loc.pathname, loc.search)}
+        pathname={loc.pathname}
       />}
     </GuideRunnerCtx.Provider>
   );

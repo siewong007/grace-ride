@@ -53,6 +53,12 @@ const APP_PAGES: { key: string; value: string }[] = [
   { key: 'roles', value: '/admin/roles' },
   { key: 'settings', value: '/admin/settings' },
   { key: 'audit', value: '/admin/audit' },
+  // Item pages: `*` stands for whichever ride/event the person has open.
+  { key: 'guideRidePage', value: '/rides/*' },
+  { key: 'guideEventPage', value: '/events/*' },
+  { key: 'guideEventSettle', value: '/events/*/settle' },
+  { key: 'guideClaimPage', value: '/reimbursements/*' },
+  { key: 'guidePlanBoard', value: '/admin/events/*/plan' },
 ];
 
 const newStepId = () => `s_${Math.random().toString(36).slice(2, 10)}`;
@@ -796,6 +802,9 @@ export default function HelpGuideEditor() {
                             placeholder="/admin/rides"
                             onChange={(e) => setStep(idx, { link: e.target.value })}
                           />
+                        )}
+                        {(customLinks.has(idx) || !APP_PAGES.some((p) => p.value === s.link)) && (
+                          <p className="small muted">{t('customPathHint')}</p>
                         )}
                       </div>
                     </Field>

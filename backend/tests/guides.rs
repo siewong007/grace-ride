@@ -529,7 +529,6 @@ async fn seeded_guide_coverage_and_links_match_app_routes() {
         ("manage-rides", "staff"),
         ("live-map", "staff"),
         ("manage-any-event", "staff"),
-        ("pay-reimbursements", "staff"),
         ("view-all-bills", "staff"),
         ("staff-reports", "staff"),
         ("invites", "staff"),
@@ -606,6 +605,14 @@ async fn seeded_guide_coverage_and_links_match_app_routes() {
                     && !path.starts_with("/invite/")
                     && !path.starts_with("/visit/"),
                 "{slug} links to {link}, which is not a page a person can open"
+            );
+            // `*` stands for an item ("/rides/*" = any ride's page); it fills a route's `:id`.
+            assert!(
+                path.split('/').all(|seg| seg != "*")
+                    || routes
+                        .iter()
+                        .any(|route| route_matches(route, path) && route.contains(':')),
+                "{slug} uses * in {link} where the route has no item"
             );
             assert!(
                 routes.iter().any(|route| route_matches(route, path)),
@@ -709,5 +716,89 @@ async fn migration_0002_repairs_broken_step_links_once() {
         assert_eq!(fixed[1]["body_zh"], "");
         assert_eq!(fixed[2], old_steps[2]);
         assert_eq!(steps_of("editor-guide").await, editor_steps);
+    }
+}
+
+/// 0010 moves seeded steps onto the item pages they are done on and folds duplicate
+/// guides, only on guides no editor has saved, and changes nothing the second time.
+#[tokio::test]
+async fn migration_0010_moves_seeded_steps_once() {
+    let (_app, st) = setup().await;
+    let migration = include_str!("../migrations/0010_guide_page_matching.sql");
+    // Put three seeded guides back the way 0010 found them.
+    let old_track = json!([
+        {"title_en": "Respond and get ready", "title_zh": "回应并准备", "link": "/rides"},
+        {"title_en": "Coordinate or cancel", "title_zh": "协调或取消", "body_en": "b", "link": "/rides"}
+    ]);
+    sqlx::query(
+        "UPDATE guide_workflows SET steps=$1::jsonb, updated_by=NULL WHERE slug='track-your-ride'",
+    )
+    .bind(old_track.to_string())
+    .execute(&st.db)
+    .await
+    .unwrap();
+    let old_members = json!([
+        {"title_en": "The directory", "title_zh": "会员名录", "link": "/admin/members"},
+        {"title_en": "Invites and recovery", "title_zh": "邀请与找回", "link": "/admin/members"}
+    ]);
+    sqlx::query(
+        "UPDATE guide_workflows SET title_en='Manage members and invites', steps=$1::jsonb, updated_by=NULL
+         WHERE slug='manage-members'",
+    )
+    .bind(old_members.to_string())
+    .execute(&st.db)
+    .await
+    .unwrap();
+    seed_guide(&st, "pay-reimbursements", true, "[]").await;
+    sqlx::query(
+        "UPDATE guide_workflows SET title_en='Pay reimbursements' WHERE slug='pay-reimbursements'",
+    )
+    .execute(&st.db)
+    .await
+    .unwrap();
+    // A guide an editor saved keeps its steps, even with the seeded shape.
+    let (editor_id,): (i64,) = sqlx::query_as("SELECT id FROM users ORDER BY id LIMIT 1")
+        .fetch_one(&st.db)
+        .await
+        .unwrap();
+    sqlx::query("UPDATE guide_workflows SET steps=$1::jsonb, updated_by=$2 WHERE slug='answer-a-driver-offer'")
+        .bind(
+            json!([
+                {"title_en": "Open the ride", "link": "/rides"},
+                {"title_en": "Accept or decline", "link": "/rides"}
+            ])
+            .to_string(),
+        )
+        .bind(editor_id)
+        .execute(&st.db)
+        .await
+        .unwrap();
+
+    let guide = |slug: &'static str| {
+        let db = st.db.clone();
+        async move {
+            let (title, published, s): (String, bool, String) = sqlx::query_as(
+                "SELECT title_en, published, steps::text FROM guide_workflows WHERE slug=$1",
+            )
+            .bind(slug)
+            .fetch_one(&db)
+            .await
+            .unwrap();
+            (title, published, serde_json::from_str::<Value>(&s).unwrap())
+        }
+    };
+    for _ in 0..2 {
+        sqlx::raw_sql(migration).execute(&st.db).await.unwrap();
+        let (_, _, track) = guide("track-your-ride").await;
+        assert_eq!(track[0], old_track[0]);
+        assert_eq!(track[1]["link"], "/rides/*");
+        assert_eq!(track[1]["body_en"], "b");
+        let (title, _, members) = guide("manage-members").await;
+        assert_eq!(title, "Manage members");
+        assert_eq!(members, json!([old_members[0]]));
+        let (_, published, _) = guide("pay-reimbursements").await;
+        assert!(!published);
+        let (_, _, edited) = guide("answer-a-driver-offer").await;
+        assert_eq!(edited[1]["link"], "/rides");
     }
 }

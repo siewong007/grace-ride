@@ -7,6 +7,7 @@ import { Button, useAction, useToast } from './ui';
 import { post } from '../api';
 import StepText, { inline } from './StepText';
 import { readDone, readFeedback, writeDone, writeFeedback } from '../guideProgress';
+import { navigableLink } from '../guideLinks';
 
 /** The app page a step links to, named as the menu names it ("My rides", "Events"). */
 const PAGE_LABELS: [string, string][] = [
@@ -132,7 +133,9 @@ export default function GuideSteps({
           const stepBody = pick(s.body_zh, s.body_en);
           const stepNote = pick(s.note_zh ?? '', s.note_en ?? '');
           const noteClass = s.note_kind === 'warning' || s.note_kind === 'important' ? 'warning' : s.note_kind === 'note' ? 'note' : 'tip';
-          const page = s.link ? pageKey(s.link) : undefined;
+          // An item-page step ("/rides/*") links to the list the item is picked from.
+          const target = navigableLink(s.link);
+          const page = target ? pageKey(target) : undefined;
 
           return (
             <li
@@ -183,10 +186,10 @@ export default function GuideSteps({
                     />
                   </a>
                 )}
-                {s.link && (
+                {target && (
                   <div style={{ marginTop: 'var(--space-2)' }}>
                     <Link
-                      to={s.link}
+                      to={target}
                       className={`guide-step-link ${isCurrent ? 'primary' : ''}`}
                       onClick={(e) => {
                         if (onFollow && !readOnly) {

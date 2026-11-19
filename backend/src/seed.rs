@@ -279,11 +279,11 @@ async fn insert_reference_data(db: &PgPool) -> anyhow::Result<()> {
                 {"title_en": "Find the event", "title_zh": "找到活动",
                  "body_en": "Open Events and pick the service or activity that needs transport.",
                  "body_zh": "打开「活动」页，选择需要安排交通的聚会或活动。",
-                 "link": "/events"},
+                 "link": "/events/*"},
                 {"title_en": "Open the planning board", "title_zh": "打开交通规划板",
                  "body_en": "From the event, open Plan transport. Review demand by area, auto-arrange or assign drivers manually, then save.",
                  "body_zh": "在活动里进入「规划交通」。按区域查看需求，自动编排或手动指派司机后保存。",
-                 "link": ""},
+                 "link": "/admin/events/*/plan"},
                 {"title_en": "Watch it run on the day", "title_zh": "当天跟踪",
                  "body_en": "On the day, use the live map to follow drivers sharing GPS and react to delays.",
                  "body_zh": "活动当天通过实时地图查看共享位置的司机，及时处理延误。",
@@ -323,24 +323,20 @@ async fn insert_reference_data(db: &PgPool) -> anyhow::Result<()> {
                 {"title_en": "Members get notified", "title_zh": "会员收到通知",
                  "body_en": "Members see it under Notifications with a badge; urgent notices can also trigger reminders.",
                  "body_zh": "会员会在「通知」页看到并显示角标；重要通知还会触发提醒。",
-                 "link": "/notifications"}
+                 "link": "/admin/announcements"}
             ]),
         ),
         (
             "manage-members",
-            "管理会员与邀请",
-            "Manage members and invites",
-            "审批新会员、发放邀请、处理账号找回。",
-            "Approve members, hand out invites and handle account recovery.",
+            "管理会员",
+            "Manage members",
+            "审批新会员、设置小组、停用或恢复账号。",
+            "Approve members, set groups, and disable or restore accounts.",
             "staff",
             json!([
                 {"title_en": "The directory", "title_zh": "会员名录",
                  "body_en": "Open Members to see everyone with contact details. Approve pending applicants, disable or restore accounts, and set groups.",
                  "body_zh": "打开「会员」查看名录与联系方式。审批待定申请人、停用或恢复账号、调整群体。",
-                 "link": "/admin/members"},
-                {"title_en": "Invites and recovery", "title_zh": "邀请与找回",
-                 "body_en": "Create single-use invite links for new members, and approve or reject recovery requests from the same area.",
-                 "body_zh": "为新会员创建一次性邀请链接；账号找回申请也在同一处审批。",
                  "link": "/admin/members"}
             ]),
         ),
@@ -364,20 +360,16 @@ async fn insert_reference_data(db: &PgPool) -> anyhow::Result<()> {
         ),
         (
             "audit-settings",
-            "审计与设置",
-            "Audit and settings",
-            "查看操作记录、调整系统设置。",
-            "Review the action log and adjust system settings.",
+            "查看审计日志",
+            "Read the audit log",
+            "查看谁做了什么，可筛选并导出。",
+            "See who did what, filter it and export it.",
             "staff",
             json!([
                 {"title_en": "The audit log", "title_zh": "审计日志",
                  "body_en": "Open Audit to see who did what, with filters and CSV export. Retention follows the configured window.",
                  "body_zh": "打开「审计」查看操作记录，可筛选并导出 CSV。保存期限按配置执行。",
-                 "link": "/admin/audit"},
-                {"title_en": "Settings", "title_zh": "系统设置",
-                 "body_en": "Settings holds groups, areas and app-wide configuration such as reimbursement rates.",
-                 "body_zh": "「设置」管理群体、区域及全局配置（如报销费率）。",
-                 "link": "/admin/settings"}
+                 "link": "/admin/audit"}
             ]),
         ),
         (
@@ -401,7 +393,7 @@ async fn insert_reference_data(db: &PgPool) -> anyhow::Result<()> {
             "member",
             json!([
                 {"title_en":"Create a ride request","title_zh":"新增接送申请","body_en":"Choose pickup, destination and time. Enter the proxy rider's details when requesting for someone else.","body_zh":"填写上车点、目的地和时间；代他人申请时填写代乘者资料。","link":"/rides/new"},
-                {"title_en":"Link an event","title_zh":"关联活动","body_en":"Select the related event so organisers can coordinate transport.","body_zh":"选择相关活动，方便负责人统筹交通。","link":"/events"}
+                {"title_en":"Link an event","title_zh":"关联活动","body_en":"Select the related event so organisers can coordinate transport.","body_zh":"选择相关活动，方便负责人统筹交通。","link":"/rides/new"}
             ]),
         ),
         (
@@ -413,7 +405,7 @@ async fn insert_reference_data(db: &PgPool) -> anyhow::Result<()> {
             "member",
             json!([
                 {"title_en":"Respond and get ready","title_zh":"回应并准备","body_en":"Open your ride to accept or decline the driver and confirm your readiness.","body_zh":"打开行程接受或拒绝司机安排，并确认已准备好。","link":"/rides"},
-                {"title_en":"Coordinate or cancel","title_zh":"联系或取消","body_en":"Share your location when asked, use ride chat for updates and cancel promptly if plans change.","body_zh":"按需要分享位置，用行程聊天更新情况；计划有变时尽早取消。","link":"/rides"}
+                {"title_en":"Coordinate or cancel","title_zh":"联系或取消","body_en":"Share your location when asked, use ride chat for updates and cancel promptly if plans change.","body_zh":"按需要分享位置，用行程聊天更新情况；计划有变时尽早取消。","link":"/rides/*"}
             ]),
         ),
         (
@@ -437,7 +429,7 @@ async fn insert_reference_data(db: &PgPool) -> anyhow::Result<()> {
             "member",
             json!([
                 {"title_en":"Browse and sign up","title_zh":"浏览并报名","body_en":"Browse upcoming events and open one to sign up or offer to drive.","body_zh":"浏览即将举行的活动，打开活动报名或表示愿意驾驶。","link":"/events"},
-                {"title_en":"Manage your place","title_zh":"管理报名","body_en":"Check signup or waitlist status and withdraw if plans change.","body_zh":"查看报名或候补状态；计划有变时退出活动。","link":"/events"}
+                {"title_en":"Manage your place","title_zh":"管理报名","body_en":"Check signup or waitlist status and withdraw if plans change.","body_zh":"查看报名或候补状态；计划有变时退出活动。","link":"/events/*"}
             ]),
         ),
         (
@@ -449,7 +441,7 @@ async fn insert_reference_data(db: &PgPool) -> anyhow::Result<()> {
             "member",
             json!([
                 {"title_en":"Create and manage signups","title_zh":"新增活动并管理报名","body_en":"Organisers create or edit events, review signups and driver offers.","body_zh":"活动负责人新增或编辑活动，并查看报名及驾驶意向。","link":"/events/new"},
-                {"title_en":"Record attendance and finish","title_zh":"记录出席并结束","body_en":"Record attendance, manage signups, cancel when needed or mark the event finished.","body_zh":"记录出席、管理报名；需要时取消活动或标记完成。","link":"/events"}
+                {"title_en":"Record attendance and finish","title_zh":"记录出席并结束","body_en":"Record attendance, manage signups, cancel when needed or mark the event finished.","body_zh":"记录出席、管理报名；需要时取消活动或标记完成。","link":"/events/*"}
             ]),
         ),
         (
@@ -460,7 +452,7 @@ async fn insert_reference_data(db: &PgPool) -> anyhow::Result<()> {
             "Create, publish and close an activity bill.",
             "member",
             json!([
-                {"title_en":"Create the bill","title_zh":"建立账单","body_en":"From an event, list expenses, choose participants and calculate each share.","body_zh":"从活动建立账单、列出费用、选择参与者并计算分摊。","link":"/events"},
+                {"title_en":"Create the bill","title_zh":"建立账单","body_en":"From an event, list expenses, choose participants and calculate each share.","body_zh":"从活动建立账单、列出费用、选择参与者并计算分摊。","link":"/events/*/settle"},
                 {"title_en":"Publish and close","title_zh":"发布并结账","body_en":"Review and publish the split, verify submitted payments and close the bill when settled.","body_zh":"核对并发布分摊，确认付款资料并在结清后关闭账单。","link":"/settlements"}
             ]),
         ),
@@ -485,7 +477,7 @@ async fn insert_reference_data(db: &PgPool) -> anyhow::Result<()> {
             "member",
             json!([
                 {"title_en":"Submit a claim","title_zh":"提交申请","body_en":"Choose an eligible ride, enter payee details and attach the receipt.","body_zh":"选择符合条件的行程，填写收款资料并附上收据。","link":"/reimbursements/new"},
-                {"title_en":"Resubmit a returned claim","title_zh":"补资料重新提交","body_en":"Read the staff note, correct the details and submit the returned claim again.","body_zh":"阅读职员备注、修正资料后重新提交退回的申请。","link":"/reimbursements"}
+                {"title_en":"Resubmit a returned claim","title_zh":"补资料重新提交","body_en":"Read the staff note, correct the details and submit the returned claim again.","body_zh":"阅读职员备注、修正资料后重新提交退回的申请。","link":"/reimbursements/*"}
             ]),
         ),
         (
@@ -497,7 +489,7 @@ async fn insert_reference_data(db: &PgPool) -> anyhow::Result<()> {
             "member",
             json!([
                 {"title_en":"Open the ride","title_zh":"打开接送","body_en":"Home shows “… offered to drive you”, and the ride says “Your reply needed”. Open it to see the driver and their car.","body_zh":"首页会显示「… 愿意接送您」，接送状态为「待您回复」。打开即可查看司机与车辆。","link":"/rides"},
-                {"title_en":"Accept or decline","title_zh":"接受或拒绝","body_en":"Accept and the transport team confirms the ride. Decline and the request goes back to other drivers.","body_zh":"接受后由交通组确认接送；拒绝则重新开放给其他司机。","link":"/rides"}
+                {"title_en":"Accept or decline","title_zh":"接受或拒绝","body_en":"Accept and the transport team confirms the ride. Decline and the request goes back to other drivers.","body_zh":"接受后由交通组确认接送；拒绝则重新开放给其他司机。","link":"/rides/*"}
             ]),
         ),
         (
@@ -509,8 +501,8 @@ async fn insert_reference_data(db: &PgPool) -> anyhow::Result<()> {
             "member",
             json!([
                 {"title_en":"Open today's ride","title_zh":"打开今天的接送","body_en":"On the day, your ride shows a readiness check right under the driver.","body_zh":"接送当天，司机资料下方会显示出行确认。","link":"/rides"},
-                {"title_en":"Ready or running late","title_zh":"准时或稍慢","body_en":"Tap “Ready on time”, or “Need 5-10 mins” so your driver can plan.","body_zh":"点「准时出发」，或点「稍慢 5-10 分钟」方便司机安排。","link":"/rides"},
-                {"title_en":"Can't join today","title_zh":"今天无法出行","body_en":"Tap “Can't join today” and add a reason if you like. Your driver skips your stop at once; the reason is seen by the driver and transport team. Days before, use “Cancel ride” instead.","body_zh":"点「今天无法出行」，可选填原因。司机会立即跳过您的站点，原因只有司机与交通组可见。提前几天请改用「取消接送」。","link":"/rides"}
+                {"title_en":"Ready or running late","title_zh":"准时或稍慢","body_en":"Tap “Ready on time”, or “Need 5-10 mins” so your driver can plan.","body_zh":"点「准时出发」，或点「稍慢 5-10 分钟」方便司机安排。","link":"/rides/*"},
+                {"title_en":"Can't join today","title_zh":"今天无法出行","body_en":"Tap “Can't join today” and add a reason if you like. Your driver skips your stop at once; the reason is seen by the driver and transport team. Days before, use “Cancel ride” instead.","body_zh":"点「今天无法出行」，可选填原因。司机会立即跳过您的站点，原因只有司机与交通组可见。提前几天请改用「取消接送」。","link":"/rides/*"}
             ]),
         ),
         (
@@ -522,8 +514,8 @@ async fn insert_reference_data(db: &PgPool) -> anyhow::Result<()> {
             "member",
             json!([
                 {"title_en":"Find events for you","title_zh":"找到适合您的活动","body_en":"Events lists what's open to your groups, including events for a group yours belongs to.","body_zh":"「活动」列出对您群体开放的活动，包括您所属上级群体的活动。","link":"/events"},
-                {"title_en":"Choose who you're joining as","title_zh":"选择以哪个群体参加","body_en":"If more than one of your groups fits, pick one before signing up. It decides which drivers can take your ride.","body_zh":"若您有多个群体适用，报名前请选择其一；这决定哪些司机可以接送您。","link":"/events"},
-                {"title_en":"Ask for a ride","title_zh":"申请接送","body_en":"Once you're going, “I need a ride to the event” appears on the event page.","body_zh":"报名成功后，活动页面会出现「我需要接送」。","link":"/events"}
+                {"title_en":"Choose who you're joining as","title_zh":"选择以哪个群体参加","body_en":"If more than one of your groups fits, pick one before signing up. It decides which drivers can take your ride.","body_zh":"若您有多个群体适用，报名前请选择其一；这决定哪些司机可以接送您。","link":"/events/*"},
+                {"title_en":"Ask for a ride","title_zh":"申请接送","body_en":"Once you're going, “I need a ride to the event” appears on the event page.","body_zh":"报名成功后，活动页面会出现「我需要接送」。","link":"/events/*"}
             ]),
         ),
         (
@@ -535,8 +527,8 @@ async fn insert_reference_data(db: &PgPool) -> anyhow::Result<()> {
             "member",
             json!([
                 {"title_en":"Invite them","title_zh":"邀请访客","body_en":"Sign up for the event, then under “Bringing a visitor” tap “Invite a visitor” and enter their name and pickup.","body_zh":"先报名活动，然后在「带访客同行」中点「邀请访客」，填写姓名与上车地点。","link":"/events"},
-                {"title_en":"Send the link","title_zh":"发送链接","body_en":"Share the link on WhatsApp. It opens 24 hours before pickup and works on the one phone that opens it first.","body_zh":"通过 WhatsApp 分享链接。链接于接送前 24 小时开放，只能在第一部打开它的手机上使用。","link":"/events"},
-                {"title_en":"If something changes","title_zh":"如有变动","body_en":"Send a new link if they change phone, or turn the link off. The link stops by itself when the journey ends; cancel their ride from the ride page if they aren't coming.","body_zh":"对方换手机可发送新链接，也可停用链接。行程结束后链接会自动失效；若对方不来，请在接送页面取消。","link":"/events"}
+                {"title_en":"Send the link","title_zh":"发送链接","body_en":"Share the link on WhatsApp. It opens 24 hours before pickup and works on the one phone that opens it first.","body_zh":"通过 WhatsApp 分享链接。链接于接送前 24 小时开放，只能在第一部打开它的手机上使用。","link":"/events/*"},
+                {"title_en":"If something changes","title_zh":"如有变动","body_en":"Send a new link if they change phone, or turn the link off. The link stops by itself when the journey ends; cancel their ride from the ride page if they aren't coming.","body_zh":"对方换手机可发送新链接，也可停用链接。行程结束后链接会自动失效；若对方不来，请在接送页面取消。","link":"/events/*"}
             ]),
         ),
         (
@@ -606,19 +598,7 @@ async fn insert_reference_data(db: &PgPool) -> anyhow::Result<()> {
             "staff",
             json!([
                 {"title_en":"Review events","title_zh":"查看活动","body_en":"With event permissions, review details, signups and attendance across events.","body_zh":"拥有活动权限的职员可查看各活动详情、报名和出席。","link":"/events"},
-                {"title_en":"Edit or finish","title_zh":"编辑或结束","body_en":"Update or cancel an event, record attendance or mark it finished.","body_zh":"更新或取消活动、记录出席或标记完成。","link":"/events"}
-            ]),
-        ),
-        (
-            "pay-reimbursements",
-            "支付报销",
-            "Pay reimbursements",
-            "财务记录已批准申请的付款。",
-            "Record finance payouts for approved claims.",
-            "staff",
-            json!([
-                {"title_en":"Open the payment queue","title_zh":"打开付款队列","body_en":"Review approved claims waiting for payment.","body_zh":"查看等待付款的已批准申请。","link":"/admin/reimbursements"},
-                {"title_en":"Record the transfer","title_zh":"记录转账","body_en":"After paying, record the reference and confirm the payout.","body_zh":"转账后记录参考编号并确认付款。","link":"/admin/reimbursements"}
+                {"title_en":"Edit or finish","title_zh":"编辑或结束","body_en":"Update or cancel an event, record attendance or mark it finished.","body_zh":"更新或取消活动、记录出席或标记完成。","link":"/events/*"}
             ]),
         ),
         (

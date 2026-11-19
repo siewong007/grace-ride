@@ -58,4 +58,9 @@ export default {
   jumpRequests: '求助',
   jumpNone: '没有匹配的结果，换个词试试。',
   jumpCount: '{count} 个结果',
+  guideRidePage: '某条接送',
+  guideEventPage: '某个活动',
+  guideEventSettle: '某个活动的费用分摊',
+  guideClaimPage: '某份报销申请',
+  guidePlanBoard: '交通规划板',
 };
