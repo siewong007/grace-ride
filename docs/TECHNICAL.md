@@ -86,7 +86,7 @@ Run `make` (or `make help`) to list all documented targets:
 | `make test-api` / `make test-web` | Run backend Cargo tests or frontend typecheck + Vitest suites individually |
 | `make test-e2e` | Run Playwright browser end-to-end suites (`npm run test:e2e`) |
 | `make audit` | Run `cargo audit` (`backend/.cargo/audit.toml`) and `npm audit --omit=dev --audit-level=high` |
-| `make build` | Build production frontend bundle (including `/third-party-licenses.txt`) + `cargo build --release --locked` |
+| `make build` | Build production frontend bundle (including `/third-party-licenses.txt` and `.json`) + `cargo build --release --locked` |
 | `make image` | Build `grace-ride:latest` Docker image |
 | `make up` | Start generic Docker Compose production stack with `.env.production` |
 | `make backup` | Snapshot database + uploads into `./backups` via `scripts/backup.sh` (auto-sources `.env.production` or `backend/.env` if needed) |
@@ -103,7 +103,7 @@ Paths below are repository-relative. "Implemented" means present in source code;
 
 | Module & Routes | Implemented Behavior | Primary Source |
 |---|---|---|
-| **Identity & Onboarding**<br>`/login`, `/invite/:token`, `/terms`, `/me` | Invite-only onboarding (14-day single-use token), Terms & PDPA v2 consent gate (`TERMS_VERSION`, English/Chinese/Malay), member approval, profile & language (`Accept-Language` fallback), WebAuthn passkeys, password + TOTP MFA, single-use hashed backup codes, passkey in-place re-auth, server-enforced idle/manual session lock (`session_lock_guard`, `/api/auth/lock` & `/api/auth/unlock`), alert channel preferences (`push_subscriptions`, Telegram/WhatsApp opt-ins), admin-reviewed account recovery (dual-admin for privileged accounts) | `backend/src/routes/auth.rs`, `backend/src/auth.rs`, `backend/src/security.rs`, `frontend/src/pages/Login.tsx`, `Invite.tsx`, `Profile.tsx`, `components/Terms.tsx` |
+| **Identity & Onboarding**<br>`/login`, `/invite/:token`, `/terms`, `/licences`, `/me` | Invite-only onboarding (14-day single-use token), Terms & PDPA v2 consent gate (`TERMS_VERSION`, English/Chinese), member approval, profile & language (`Accept-Language` fallback), WebAuthn passkeys, password + TOTP MFA, single-use hashed backup codes, passkey in-place re-auth, server-enforced idle/manual session lock (`session_lock_guard`, `/api/auth/lock` & `/api/auth/unlock`), alert channel preferences (`push_subscriptions`, Telegram/WhatsApp opt-ins), admin-reviewed account recovery (dual-admin for privileged accounts) | `backend/src/routes/auth.rs`, `backend/src/auth.rs`, `backend/src/security.rs`, `frontend/src/pages/Login.tsx`, `Invite.tsx`, `Profile.tsx`, `components/Terms.tsx`, `pages/Licenses.tsx` |
 | **Roles, Permissions & Members**<br>`/admin/members`, `/admin/roles` | 27 page keys across 4 areas (`8 Member + 9 Transport + 2 Finance + 8 Admin = 27 pages`) totaling 67 page/action permissions; 13 built-in roles + custom roles; 5-tier ranked chain of command (`superadmin > president > vice_president > finance > auditor`); hierarchical groups & sub-groups (`groups.parent_id`, max depth 3, cycle-checked, built-in `Visitor` group); member approval/disable, invites, and recovery | `backend/src/perms.rs`, `backend/src/routes/roles`, `backend/src/routes/admin`, `frontend/src/pages/admin/Members.tsx`, `Roles.tsx` |
 | **Passenger Rides & Caregiver Links**<br>`/rides`, `/rides/new`, `/rides/:id`, `/care/:token` | Outbound & paired return-leg round-trip requests (`leg`, `paired_ride_id`), saved places (`saved_places`) & proxy rider presets (`gate_notes`, `caregiver_user_id`), standing recurring schedules (`recurring_ride_schedules`), driver offer accept/decline, cancellation, seat count & assistance needs, approximate-area pickup privacy prior to approval, pickup-day readiness updates, single-own-ride-per-event guard (`DUPLICATE_EVENT_RIDE`), scoped zero-login Caregiver "Safe Arrival" links (`caregiver_passes`, `routes/care.rs`, `CarePass.tsx` — hides street address while showing status/driver/ETA and readiness toggle), local read-only snapshot of today's own active rides (`offlineSnapshot.ts`) | `backend/src/routes/rides.rs`, `backend/src/routes/care.rs`, `frontend/src/pages/Rides.tsx`, `RideNew.tsx`, `RideDetail.tsx`, `CarePass.tsx`, `offlineSnapshot.ts` |
 | **Volunteer Driving**<br>`/drive` | Driver profile (vehicle, type, seats, accessibility capabilities `wheelchair_ok` / `low_step` / `child_seat`, service areas), standing driver schedules, carpool trip grouping, open-request claiming, withdrawal, staff reassignment confirmation, trip lifecycle (`start` → `pickup` / `no_show` → `complete`), driver delay & arrival-at-gate alerts; event rides restrict visibility and claiming to drivers in the rider's group or an ancestor group (`audience::MATCH_GROUP_SQL`), while non-event rides match by service area | `backend/src/routes/rides.rs`, `frontend/src/pages/Drive.tsx`, `frontend/src/components/TripActions.tsx` |
@@ -126,7 +126,7 @@ Paths below are repository-relative. "Implemented" means present in source code;
 - **Privacy-scoped offline storage:** `frontend/public/sw.js` caches static SPA shell assets (`/` and `/assets/*`) and handles push/notification display, intentionally never caching `/api/*` responses in `CacheStorage`. Offline ride data is strictly limited to `frontend/src/offlineSnapshot.ts` (read-only cache of the signed-in user's own active rides for today, wiped immediately on logout, HTTP `401`, or Auto-Lock); offline write queues are not built.
 - **Deferred analytics & alerts:** `as_group_id` is stored on signups and event rides, but per-group headcount breakdowns in reports and a 24 h pre-pickup dashboard alert for unmatched in-group event rides are not yet built. Visitor pages link out to external maps rather than embedding `LiveMap`.
 - **Single-instance runtime assumptions:** Per-IP rate buckets, geocoding/route memory caches, SSE broadcast channels, and the 60 s background job loop run in-process. Running multiple API replicas requires moving SSE to PostgreSQL `LISTEN/NOTIFY` and guarding jobs with advisory locks.
-- **Pending church governance sign-off:** Legal review of PDPA notices/Malay translation, final retention periods for profiles/rides/receipts, motor insurance guidance, and written PJ State CMC logo permission remain pre-launch church actions (see [Section 8](#8-compliance-pdpa--malaysian-law)).
+- **Pending church governance sign-off:** Legal review of PDPA notices, final retention periods for profiles/rides/receipts, motor insurance guidance, and written PJ State CMC logo permission remain pre-launch church actions (see [Section 8](#8-compliance-pdpa--malaysian-law)).
 
 ---
 
@@ -182,14 +182,14 @@ terminal alternatives: cancelled, no_show, alt_transport
 ### Runtime Topology
 
 ```text
-Browser: React 18 + TypeScript + Vite SPA, Leaflet, Service Worker (sw.js), i18next (zh/en + ms terms)
+Browser: React 18 + TypeScript + Vite SPA, Leaflet, Service Worker (sw.js), i18next (zh/en terms)
   -> HTTPS / Caddy (or Cloudflare -> Host Caddy -> loopback on AIC VPS)
      -> Single Axum Rust binary (/app/grace-ride)
         ├── /api/*            JSON REST routes + cookie auth + session_lock_guard + CSRF/rate limits
         ├── /api/stream       Authenticated Server-Sent Events (SSE) push channel
         ├── /api/visit/*      Isolated visitor-pass endpoints (gr_visit cookie)
         ├── /api/care/*       Scoped caregiver Safe Arrival endpoints (hashed token)
-        └── /*                Compiled SPA static assets + sw.js + /third-party-licenses.txt
+        └── /*                Compiled SPA static assets + sw.js + /third-party-licenses.{txt,json}
      -> PostgreSQL 18 (SQLx pool, startup migrations, timezone & statement timeouts)
      -> Persistent upload directory (/data/uploads)
      -> Photon / Nominatim / OSRM (proxied autocomplete, cached geocoding & routing)
@@ -211,8 +211,8 @@ Browser: React 18 + TypeScript + Vite SPA, Leaflet, Service Worker (sw.js), i18n
 | `backend/migrations/` | Frozen baseline `0001_init.sql` + additive numbered migrations `0002`–`0009` |
 | `frontend/src/App.tsx`, `auth.tsx`, `perms.ts`, `staffNav.tsx` | Lazy client routing, session context, permission gates, boot splash handoff, staff navigation |
 | `frontend/src/pages/`, `components/`, `components/ui/` | Member, visitor, caregiver, and admin screens; `LiveMap`, `Chat`, `Terms`, `AutoLock`, `BackNavigation`, `GuideRunner`, `GuideSteps`, and modularized shared UI primitives (`components/ui/` re-exported via `components/ui.tsx`) |
-| `frontend/src/styles.css`, `prefs.ts`, `locales/`, `pdfWriter.ts`, `offlineSnapshot.ts` | CSS design tokens, theme/font-size preferences, `en`/`zh`/`ms` locale bundles, CJK PDF writer, today's active ride cache |
-| `frontend/public/sw.js`, `frontend/scripts/third-party-licenses.mjs` | Privacy-safe app-shell/push service worker; prebuild licence generator producing `/third-party-licenses.txt` |
+| `frontend/src/styles.css`, `prefs.ts`, `locales/`, `pdfWriter.ts`, `offlineSnapshot.ts` | CSS design tokens, theme/font-size preferences, `en`/`zh` locale bundles, CJK PDF writer, today's active ride cache |
+| `frontend/public/sw.js`, `frontend/scripts/third-party-licenses.mjs` | Privacy-safe app-shell/push service worker; prebuild licence generator producing `/third-party-licenses.txt` and `/third-party-licenses.json` (rendered as a list by `/licences`) |
 | `deploy/`, `Dockerfile`, `docker-compose*.yml`, `scripts/`, `SECURITY.md` | Multi-stage container build, generic/dev/AIC/OSRM Compose configs, Caddyfiles, `backup.sh`, `restore.sh`, `restore_drill.sh`, `setup_osrm_malaysia.sh`, `capacity_baseline.sh`, and vulnerability reporting policy |
 
 ### Permission Catalog (`backend/src/perms.rs`)
@@ -243,6 +243,7 @@ SQLx runs `backend/migrations/` at startup (`lib.rs::connect_db_with`) on a dedi
 | `0007_terms_version.sql` | Adds `users.terms_version` (default `2`) and marks prior acceptances as `1` to trigger PDPA v2 re-consent. |
 | `0008_extended_features.sql` | Adds server-enforced session lock (`sessions.locked_at`, `last_seen_at`), round-trip ride pairing (`leg`, `paired_ride_id`), `saved_places` & caregiver/proxy defaults, vehicle accessibility flags (`wheelchair_ok`, `low_step`, `child_seat`), `recurring_ride_schedules`, `push_subscriptions` & alert opt-ins, `caregiver_passes`, recurring `events.series_id` & `event_signups.pass_code`, `users.calendar_token_hash`, `settlements.payee_qr_file_id`, and `payout_batches` / `reimbursements.batch_id`. |
 | `0009_schema_hardening.sql` | Additive schema hardening: partial B-tree indexes backing `files::can_access_file`, GIN index on `guide_workflows.steps`, event `checkin_code` / `pass_code` lookup indexes, and guarded `NOT VALID` + validated `ON DELETE SET NULL` foreign keys on `users.photo_file_id` and `events.photo_file_id`. |
+| `0010_guide_page_matching.sql` | Repairs seeded help-guide step links so they point at the item page being worked on (`/events/*`, `/rides/*`, `/events/*/settle`, `/reimbursements/*`, `/admin/events/*/plan`), folds duplicate "Pay reimbursements" guide (unpublished, not deleted), and renames "Manage members and invites" → "Manage members" and "Audit and settings" → "Read the audit log". Matches only editor-untouched guides (`updated_by IS NULL`). |
 
 **Migration & Data Conventions:**
 - **Upgrade safety (`lib.rs::classify_history`):** Every schema change must be a new numbered `000N_….sql` file. Databases from pre-squash histories whose version 1 checksum differs automatically clear `_sqlx_migrations` and replay idempotent `0001_init.sql` + subsequent migrations without losing rows. If version 1 matches but a later applied file was modified or is missing from the binary, startup halts with an error.
@@ -469,15 +470,15 @@ Grace Ride holds home/pickup addresses, phone numbers, live trip GPS, health-rel
 ## 8. Compliance, PDPA & Malaysian Law
 
 > [!CAUTION]
-> **Draft Legal & Compliance Review (prepared from codebase and public Malaysian legal sources — NOT legal advice).** Before production launch, PJ State CMC must have this review, the in-app Terms & Privacy Notice (`TERMS_VERSION = 2`), and its Bahasa Malaysia translation reviewed by Malaysian legal counsel and formally approved by church leadership.
+> **Draft Legal & Compliance Review (prepared from codebase and public Malaysian legal sources — NOT legal advice).** Before production launch, PJ State CMC must have this review and the in-app Terms & Privacy Notice (`TERMS_VERSION = 2`) reviewed by Malaysian legal counsel and formally approved by church leadership.
 
 ### Compliance Summary & Action Owners
 
 | Area | Current Implementation | Next Step & Owner |
 |---|---|---|
-| **PDPA s.7 Notice (English & Malay)** | Terms v2 (`frontend/src/locales/terms.{en,zh,ms}.ts`) with `"Baca dalam Bahasa Malaysia"` toggle on `/terms` | **Church:** Have a qualified translator verify `terms.ms.ts` and insert a named DPO/office contact email/phone |
+| **PDPA s.7 Notice (English & Chinese)** | Terms v2 (`frontend/src/locales/terms.{en,zh}.ts`) on `/terms` | **Church:** Insert a named DPO/office contact email/phone |
 | **Sensitive Data Consent (PDPA s.40)** | Explicit "Sensitive information" section in Terms v2; opt-in records `terms_accepted_at`, `terms_version`, and `terms.accept` audit log; `rides.assistance` is optional | **Counsel:** Confirm whether one combined opt-in tick suffices or a separate sensitive-data checkbox is needed |
-| **Re-Consent on Material Changes** | `TERMS_VERSION = 2` (`routes/auth.rs` + migration `0007_terms_version.sql`) prompts existing v1 members via `TermsGate` | **Developer:** Increment `TERMS_VERSION`, update all 3 `terms.*.ts` files + migration default on future policy changes; optionally enforce in `CurrentUser` |
+| **Re-Consent on Material Changes** | `TERMS_VERSION = 2` (`routes/auth.rs` + migration `0007_terms_version.sql`) prompts existing v1 members via `TermsGate` | **Developer:** Increment `TERMS_VERSION`, update both `terms.*.ts` files + migration default on future policy changes; optionally enforce in `CurrentUser` |
 | **Visitors (No Account)** | Host invite sheet prompts host to obtain guest's consent first (`bringConsent`); `/visit/:token` displays `privacyNote` | **Counsel:** Confirm host-intermediated consent (or require a recorded host confirmation checkbox) |
 | **Minors (<18)** | Terms instruct a parent/guardian to consent on behalf of minors; app does not verify age | **Church:** Collect guardian consent on ministry registration forms where youth/children ride |
 | **Data Subject Rights (Access, Correction, Portability, Erasure)** | Self-service profile correction (`/me`); access, portability (in force 1 June 2025), and erasure are currently manual admin procedures (21-day statutory response window) | **Developer / Church:** Add self-service JSON data export and account anonymisation/closure, or document manual SOP |
@@ -506,7 +507,7 @@ Grace Ride holds home/pickup addresses, phone numbers, live trip GPS, health-rel
 1. **Contain immediately:** Disable compromised accounts in `/admin/members` (or run `DELETE FROM sessions;` in PostgreSQL to sign out all users), rotate `.env` / `/opt/grace-ride/secrets.env` credentials, and patch the vulnerability.
 2. **Assess within 24 hours:** Determine affected tables, record counts, and risk of significant harm (addresses, live location, financial details, and elderly health/assistance data carry high risk).
 3. **Notify JPDP (Personal Data Protection Commissioner):** Submit notification as soon as practicable within the statutory window (72 hours under the JPDP breach notification framework—verify current JPDP form and portal).
-4. **Notify affected members:** Where significant harm is likely, notify affected individuals without undue delay in plain Chinese, English, and Bahasa Malaysia with actionable protective steps.
+4. **Notify affected members:** Where significant harm is likely, notify affected individuals without undue delay in plain Chinese and English with actionable protective steps.
 5. **Preserve audit evidence:** Export relevant entries from `/admin/audit` and retain a permanent incident log of findings and decisions, even if notification thresholds were not triggered.
 
 ### Third-Party Map & Routing Service Policies
@@ -539,14 +540,15 @@ Grace Ride (恩典同行), including its source code, UI design, documentation, 
 
 #### Web Application Bundle (Distributed to Browsers)
 
-`npm run build` automatically runs `frontend/scripts/third-party-licenses.mjs` (`prebuild`), generating `/third-party-licenses.txt` (linked from `/terms`) with full licence texts for all production npm packages.
+`npm run build` automatically runs `frontend/scripts/third-party-licenses.mjs` (`prebuild`), generating `/third-party-licenses.txt` (the plain-text notice that travels with the bundle) and `/third-party-licenses.json` (the same data as `{ name, version, license, text }`) with full licence texts for all production npm packages. `/terms` links to the in-app `/licences` page, which reads the JSON and shows one folded row per package with a search box; the `.txt` stays available at its own URL for anyone who wants the raw notice.
 
-Production dependency licence summary (77 resolved packages):
+Production dependency licence summary (82 resolved packages):
 
 | Licence | Count | Notes |
 |---|---|---|
-| `MIT`, `ISC`, `BSD-2-Clause`, `Apache-2.0`, `MIT AND Zlib` | 72 | Permissive; notices bundled in `/third-party-licenses.txt`. |
-| `MPL-2.0 OR Apache-2.0` (`dompurify`) | 1 | Used under `Apache-2.0`. |
+| `MIT`, `ISC`, `BSD-2-Clause`, `Apache-2.0`, `MIT AND Zlib` | 77 | Permissive; notices bundled in `/third-party-licenses.txt`. |
+| `MIT OR SEE LICENSE IN FEEL-FREE.md` (`rgbcolor`) | 1 | Used under `MIT`; notice bundled. |
+| `MPL-2.0 OR Apache-2.0` (`dompurify`) | 1 | Used under `Apache-2.0`; both shipped texts are included. |
 | `OFL-1.1` (`@fontsource/jost`) | 1 | SIL Open Font License; may be bundled with the web app, never sold standalone. Noto Sans SC is used only as a system font fallback and is not bundled. |
 | `Hippocratic-2.1` (`react-leaflet`, `@react-leaflet/core`) | 2 | **Non-OSI ethical source licence** (human-rights compliance, indemnity & arbitration clauses). Compatible with a church ministry app; if legal counsel prefers pure OSI terms, replace the thin `react-leaflet` wrapper with direct `leaflet` (`BSD-2-Clause`). |
 
@@ -557,7 +559,7 @@ The Rust server runs on the church's infrastructure and is not distributed to en
 - `r-efi` (`MIT OR Apache-2.0 OR LGPL-2.1+`, used under `MIT`, UEFI-only target not compiled on Linux).
 - **Zero `GPL`, `AGPL`, or `SSPL` dependencies** are present in either stack.
 
-**Whenever dependencies change**, regenerate and inspect third-party notices:
+**Whenever dependencies change**, regenerate and inspect third-party notices (writes both the `.txt` and the `.json` the `/licences` page reads):
 
 ```bash
 cd frontend && node scripts/third-party-licenses.mjs

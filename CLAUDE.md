@@ -125,7 +125,7 @@
 │   │   │   ├── ride/        # sub-components for RideDetail
 │   │   │   ├── event/       # QR & scanner modals and types for EventDetail
 │   │   │   └── drive/       # schedule, requests, and settings tabs for Drive
-│   │   ├── locales/         # i18next namespace JSON files (en, ms)
+│   │   ├── locales/         # i18next namespace JSON files (en, zh)
 │   │   ├── hooks/           # custom React hooks
 │   │   ├── types/           # TypeScript type declarations
 │   │   ├── api.ts           # typed fetch wrappers
