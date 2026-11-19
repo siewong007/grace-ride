@@ -785,9 +785,15 @@ fn demo_user<'a>(
 ) -> sqlx::query::QueryAs<'a, sqlx::Postgres, (i64,), sqlx::postgres::PgArguments> {
     let active = status == "active";
     let password_hash = if active { Some(pw.to_string()) } else { None };
+    let terms_at = if active { Some(now()) } else { None };
+    let terms_v = if active {
+        crate::routes::auth::TERMS_VERSION
+    } else {
+        1
+    };
     sqlx::query_as::<_, (i64,)>(
-        "INSERT INTO users (id, name, email, phone, roles, status, password_hash, webauthn_uuid, totp_secret, totp_enabled, demo_batch, created_at)
-         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12) RETURNING id",
+        "INSERT INTO users (id, name, email, phone, roles, status, password_hash, webauthn_uuid, totp_secret, totp_enabled, demo_batch, created_at, terms_accepted_at, terms_version)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14) RETURNING id",
     )
     .bind(id)
     .bind(name)
@@ -801,6 +807,8 @@ fn demo_user<'a>(
     .bind(0i64)
     .bind(batch)
     .bind(now())
+    .bind(terms_at)
+    .bind(terms_v)
 }
 
 /// Seed one `users` row and optional TOTP/passkey simulation; returns id.

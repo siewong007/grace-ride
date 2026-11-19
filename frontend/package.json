@@ -30,6 +30,7 @@
     "@tanstack/react-virtual": "^3.14.26",
     "i18next": "^27.1.5",
     "jspdf": "^4.2.1",
+    "jsqr": "^1.4.0",
     "leaflet": "^1.9.4",
     "lucide-react": "^1.75.0",
     "qrcode": "^1.5.4",

@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
-import { Plus } from 'lucide-react';
+import { Plus, QrCode } from 'lucide-react';
 import { api, useApi } from '../api';
 import { useAuth } from '../auth';
 import {
@@ -18,6 +18,7 @@ import {
 } from '../components/ui';
 import { EVENT_KIND, fmtDateTime, useFormatT } from '../format';
 import { useTranslation } from 'react-i18next';
+import { UniversalCheckinScannerModal } from '../components/event/EventScannerModals';
 
 export interface EventItem {
   id: number;
@@ -57,6 +58,7 @@ export default function Events() {
   const ft = useFormatT();
   const { can } = useAuth();
   const [scope, setScope] = useState<'upcoming' | 'past' | 'managing'>('upcoming');
+  const [showScanModal, setShowScanModal] = useState(false);
   const upcomingOrManaging = useApi<EventItem[]>(scope !== 'past' ? `/events?scope=${scope}` : null);
 
   const [pastEvents, setPastEvents] = useState<EventItem[]>([]);
@@ -121,11 +123,21 @@ export default function Events() {
           title={t('title')}
           subtitle={t('desc')}
           actions={
-            can('events', 'create') ? (
-              <Button variant="primary" to="/events/new" icon={<Plus size={20} />}>
-                {t('create')}
+            <div className="row nowrap gap-sm">
+              <Button
+                variant="secondary"
+                size="sm"
+                icon={<QrCode size={16} />}
+                onClick={() => setShowScanModal(true)}
+              >
+                {t('scanToAttend', { ns: 'eventDetail' })}
               </Button>
-            ) : undefined
+              {can('events', 'create') && (
+                <Button variant="primary" to="/events/new" icon={<Plus size={18} />}>
+                  {t('create')}
+                </Button>
+              )}
+            </div>
           }
         />
 
@@ -211,6 +223,9 @@ export default function Events() {
           </div>
         )}
       </div>
+      {showScanModal && (
+        <UniversalCheckinScannerModal onClose={() => setShowScanModal(false)} />
+      )}
       <BackToTop />
     </Page>
   );

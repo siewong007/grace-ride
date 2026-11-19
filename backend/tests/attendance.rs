@@ -105,6 +105,19 @@ async fn event_attendance_module_lifecycle_and_checkin() {
     assert_eq!(repeat.status, StatusCode::OK);
     assert_eq!(repeat.json["already_attended"], true);
 
+    // 3b. Universal check-in by code endpoint also succeeds
+    let universal = call(
+        &app,
+        Method::POST,
+        "/api/events/checkin",
+        Some(&member),
+        Some(json!({ "code": code })),
+    )
+    .await;
+    assert_eq!(universal.status, StatusCode::OK);
+    assert_eq!(universal.json["event_id"], event_id);
+    assert_eq!(universal.json["already_attended"], true);
+
     // 4. Invalid check-in code is rejected
     let bad_code = call(
         &app,

@@ -36,6 +36,7 @@ pub fn router() -> Router<AppState> {
             "/events/{id}/checkin",
             get(checkin::get_checkin_info).post(checkin::self_checkin),
         )
+        .route("/events/checkin", post(checkin::checkin_by_code))
         .route(
             "/events/{id}/checkin/scan-member",
             post(checkin::scan_member_pass),

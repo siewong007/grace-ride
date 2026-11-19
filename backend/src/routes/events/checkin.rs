@@ -115,17 +115,18 @@ pub(super) struct CheckinIn {
     code: Option<String>,
 }
 
-pub(super) async fn self_checkin(
-    State(st): State<AppState>,
-    u: CurrentUser,
-    Path(id): Path<i64>,
-    Json(req): Json<CheckinIn>,
+#[derive(Deserialize)]
+pub(super) struct CheckinByCodeIn {
+    code: String,
+}
+
+async fn do_checkin(
+    st: &AppState,
+    u: &CurrentUser,
+    id: i64,
+    e: &crate::routes::events::EventRow,
+    code: Option<&str>,
 ) -> AppResult<Json<Value>> {
-    // Attendance is for members only!
-    if u.status != "active" {
-        return Err(forbidden(u.lang, ErrorKey::MembersOnlyAttendance));
-    }
-    let e = load_visible_event(&st, &u, id).await?;
     if e.status != "published" {
         return Err(bad(u.lang, ErrorKey::EventNotOpen));
     }
@@ -133,9 +134,7 @@ pub(super) async fn self_checkin(
         return Err(bad(u.lang, ErrorKey::AttendanceModuleDisabled));
     }
     if let Some(expected) = &e.checkin_code {
-        let matches = req
-            .code
-            .as_deref()
+        let matches = code
             .map(str::trim)
             .is_some_and(|c| c.eq_ignore_ascii_case(expected.trim()));
         if !matches {
@@ -183,7 +182,7 @@ pub(super) async fn self_checkin(
             .await?;
         } else {
             // Member participates directly via check-in without requiring a ride.
-            let choices = join_choices(&st.db, &u, id).await.unwrap_or_default();
+            let choices = join_choices(&st.db, u, id).await.unwrap_or_default();
             let as_group = choices.first().map(|c| c.0);
             let pass_code = allocate_pass_code(&mut tx, id).await?;
             sqlx::query(
@@ -215,10 +214,56 @@ pub(super) async fn self_checkin(
     Ok(Json(json!({
         "ok": true,
         "already_attended": already_attended,
+        "event_id": id,
         "title": e.title,
         "starts_at": e.starts_at,
         "location": e.location,
     })))
+}
+
+pub(super) async fn self_checkin(
+    State(st): State<AppState>,
+    u: CurrentUser,
+    Path(id): Path<i64>,
+    Json(req): Json<CheckinIn>,
+) -> AppResult<Json<Value>> {
+    // Attendance is for members only!
+    if u.status != "active" {
+        return Err(forbidden(u.lang, ErrorKey::MembersOnlyAttendance));
+    }
+    let e = load_visible_event(&st, &u, id).await?;
+    do_checkin(&st, &u, id, &e, req.code.as_deref()).await
+}
+
+pub(super) async fn checkin_by_code(
+    State(st): State<AppState>,
+    u: CurrentUser,
+    Json(req): Json<CheckinByCodeIn>,
+) -> AppResult<Json<Value>> {
+    if u.status != "active" {
+        return Err(forbidden(u.lang, ErrorKey::MembersOnlyAttendance));
+    }
+    let raw = req.code.trim();
+    if raw.is_empty() {
+        return Err(bad(u.lang, ErrorKey::InvalidCheckinCode));
+    }
+    let row: Option<(i64,)> = sqlx::query_as(
+        "SELECT id FROM events
+         WHERE status = 'published' AND attendance_enabled = 1
+           AND LOWER(TRIM(checkin_code)) = LOWER(TRIM($1))
+         ORDER BY starts_at ASC
+         LIMIT 1",
+    )
+    .bind(raw)
+    .fetch_optional(&st.db)
+    .await?;
+
+    let Some((id,)) = row else {
+        return Err(bad(u.lang, ErrorKey::InvalidCheckinCode));
+    };
+
+    let e = load_visible_event(&st, &u, id).await?;
+    do_checkin(&st, &u, id, &e, Some(raw)).await
 }
 
 pub(super) async fn get_checkin_info(

@@ -1,11 +1,21 @@
 import { FormEvent, useCallback, useEffect, useState } from 'react';
-import { useParams, useSearchParams } from 'react-router-dom';
+import { useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
-import { AlertTriangle, ArrowRight, Calendar, CheckCircle2, MapPin } from 'lucide-react';
+import {
+  AlertTriangle,
+  ArrowRight,
+  Calendar,
+  Camera,
+  CameraOff,
+  CheckCircle2,
+  MapPin,
+} from 'lucide-react';
 import { post, useApi } from '../api';
 import { useAuth } from '../auth';
 import { Button, Card, ErrorBox, Page, PageHeader, Spinner } from '../components/ui';
 import { fmtDateTime, useFormatT } from '../format';
+import { QrCameraScanner } from '../components/event/QrCameraScanner';
+import { extractCheckinDetails } from '../components/event/qrUtils';
 
 interface CheckinInfo {
   id: number;
@@ -19,6 +29,7 @@ interface CheckinInfo {
 
 export default function EventCheckin() {
   const { id } = useParams();
+  const navigate = useNavigate();
   const [params] = useSearchParams();
   const queryCode = params.get('code') || '';
   const { t } = useTranslation('eventDetail');
@@ -30,6 +41,7 @@ export default function EventCheckin() {
   const [alreadyAttended, setAlreadyAttended] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  const [cameraActive, setCameraActive] = useState(!queryCode);
 
   // Pending or disabled accounts cannot check in.
   const isNonMember = Boolean(me && me.status !== 'active');
@@ -39,10 +51,13 @@ export default function EventCheckin() {
       if (!id || !codeToSubmit.trim() || isNonMember) return;
       setBusy(true);
       setError(null);
-      post<{ ok: boolean; already_attended: boolean }>(`/events/${id}/checkin`, { code: codeToSubmit.trim() })
+      post<{ ok: boolean; already_attended: boolean }>(`/events/${id}/checkin`, {
+        code: codeToSubmit.trim(),
+      })
         .then((res) => {
           setCheckedIn(true);
           setAlreadyAttended(res.already_attended);
+          setCameraActive(false);
         })
         .catch((err) => {
           setError(err instanceof Error ? err.message : String(err));
@@ -57,11 +72,45 @@ export default function EventCheckin() {
     submitCheckin(queryCode);
   }, [id, queryCode, isNonMember, submitCheckin]);
 
+  const handleScan = useCallback(
+    (scanned: string) => {
+      const details = extractCheckinDetails(scanned);
+      if (!details.code && !details.eventId) return;
+
+      // If scanned QR belongs to another event, navigate to that event's check-in
+      if (details.eventId && String(details.eventId) !== String(id)) {
+        setCameraActive(false);
+        navigate(
+          `/events/${details.eventId}/checkin${
+            details.code ? `?code=${encodeURIComponent(details.code)}` : ''
+          }`,
+        );
+        return;
+      }
+
+      if (details.code) {
+        setCameraActive(false);
+        submitCheckin(details.code);
+      }
+    },
+    [id, navigate, submitCheckin],
+  );
+
   const title = info?.title || t('attendanceModule');
 
   const handleManualSubmit = (e: FormEvent) => {
     e.preventDefault();
-    submitCheckin(manualCode);
+    const details = extractCheckinDetails(manualCode);
+    if (details.eventId && String(details.eventId) !== String(id)) {
+      setCameraActive(false);
+      navigate(
+        `/events/${details.eventId}/checkin${
+          details.code ? `?code=${encodeURIComponent(details.code)}` : ''
+        }`,
+      );
+      return;
+    }
+    submitCheckin(details.code || manualCode);
   };
 
   return (
@@ -91,9 +140,7 @@ export default function EventCheckin() {
                 <CheckCircle2 size={64} />
               </div>
               <h2>{alreadyAttended || info?.my_attended ? t('alreadyAttendedNote') : t('checkinSuccess')}</h2>
-              <p className="muted small">
-                {t('participateNoRide')}
-              </p>
+              <p className="muted small">{t('participateNoRide')}</p>
               {info && (
                 <div className="card flat tight stack-sm text-left" style={{ width: '100%', margin: '1rem 0' }}>
                   <div className="bold">{info.title}</div>
@@ -128,6 +175,50 @@ export default function EventCheckin() {
               </div>
               <h3>{info?.attendance_enabled === false ? t('attendanceDisabled') : t('checkinFailedTitle')}</h3>
               <ErrorBox error={error || infoErr} />
+
+              {cameraActive ? (
+                <div className="stack items-center" style={{ width: '100%', marginTop: '0.5rem' }}>
+                  <QrCameraScanner active={cameraActive} onScan={handleScan} />
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    onClick={() => setCameraActive(false)}
+                    icon={<CameraOff size={16} />}
+                    style={{ marginTop: '0.5rem' }}
+                  >
+                    {t('stopCamera')}
+                  </Button>
+                </div>
+              ) : (
+                <Button
+                  variant="primary"
+                  block
+                  onClick={() => {
+                    setError(null);
+                    setCameraActive(true);
+                  }}
+                  icon={<Camera size={18} />}
+                  style={{ marginTop: '0.5rem' }}
+                >
+                  {t('scanAgain')}
+                </Button>
+              )}
+
+              <div
+                style={{
+                  width: '100%',
+                  display: 'flex',
+                  alignItems: 'center',
+                  margin: '1.25rem 0 0.75rem',
+                  color: 'var(--muted)',
+                  fontSize: 'var(--fs-xs, 0.75rem)',
+                }}
+              >
+                <div style={{ flex: 1, height: '1px', background: 'var(--border)' }} />
+                <span style={{ padding: '0 0.75rem' }}>{t('cannotScanPrompt')}</span>
+                <div style={{ flex: 1, height: '1px', background: 'var(--border)' }} />
+              </div>
+
               <form className="stack-sm" style={{ width: '100%' }} onSubmit={handleManualSubmit}>
                 <input
                   className="input"
@@ -137,17 +228,58 @@ export default function EventCheckin() {
                   value={manualCode}
                   onChange={(e) => setManualCode(e.target.value)}
                 />
-                <Button variant="primary" block type="submit" disabled={!manualCode.trim()}>
+                <Button variant="secondary" block type="submit" disabled={!manualCode.trim()}>
                   {t('submitCheckin')}
                 </Button>
               </form>
-              <Button variant="secondary" block to={`/events/${id}`}>
+              <Button variant="ghost" block to={`/events/${id}`}>
                 {t('backToEvent')}
               </Button>
             </div>
           ) : (
             <div className="stack items-center" style={{ width: '100%' }}>
               <p className="muted small">{t('scanQrModalDesc')}</p>
+
+              {cameraActive ? (
+                <div className="stack items-center" style={{ width: '100%', marginTop: '0.5rem' }}>
+                  <QrCameraScanner active={cameraActive} onScan={handleScan} />
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    onClick={() => setCameraActive(false)}
+                    icon={<CameraOff size={16} />}
+                    style={{ marginTop: '0.5rem' }}
+                  >
+                    {t('stopCamera')}
+                  </Button>
+                </div>
+              ) : (
+                <Button
+                  variant="primary"
+                  block
+                  onClick={() => setCameraActive(true)}
+                  icon={<Camera size={18} />}
+                  style={{ marginTop: '0.5rem' }}
+                >
+                  {t('startCamera')}
+                </Button>
+              )}
+
+              <div
+                style={{
+                  width: '100%',
+                  display: 'flex',
+                  alignItems: 'center',
+                  margin: '1.25rem 0 0.75rem',
+                  color: 'var(--muted)',
+                  fontSize: 'var(--fs-xs, 0.75rem)',
+                }}
+              >
+                <div style={{ flex: 1, height: '1px', background: 'var(--border)' }} />
+                <span style={{ padding: '0 0.75rem' }}>{t('cannotScanPrompt')}</span>
+                <div style={{ flex: 1, height: '1px', background: 'var(--border)' }} />
+              </div>
+
               <form className="stack-sm" style={{ width: '100%' }} onSubmit={handleManualSubmit}>
                 <input
                   className="input"
@@ -157,11 +289,11 @@ export default function EventCheckin() {
                   value={manualCode}
                   onChange={(e) => setManualCode(e.target.value)}
                 />
-                <Button variant="primary" block type="submit" disabled={!manualCode.trim()}>
+                <Button variant="secondary" block type="submit" disabled={!manualCode.trim()}>
                   {t('submitCheckin')}
                 </Button>
               </form>
-              <Button variant="secondary" block to={`/events/${id}`}>
+              <Button variant="ghost" block to={`/events/${id}`}>
                 {t('backToEvent')}
               </Button>
             </div>

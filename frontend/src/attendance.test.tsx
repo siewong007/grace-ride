@@ -6,6 +6,8 @@ import i18n from './i18n';
 import EventDetail from './pages/EventDetail';
 import EventCheckin from './pages/EventCheckin';
 import EventForm from './pages/EventForm';
+import Events from './pages/Events';
+import { extractCheckinDetails } from './components/event/qrUtils';
 import { post } from './api';
 
 beforeAll(async () => {
@@ -51,7 +53,7 @@ vi.mock('./api', async () => {
     ...actual,
     post: vi.fn().mockImplementation((path: string) => {
       if (path.includes('/checkin')) {
-        return Promise.resolve({ ok: true, already_attended: false });
+        return Promise.resolve({ ok: true, already_attended: false, event_id: 10 });
       }
       return Promise.resolve({ ok: true });
     }),
@@ -202,6 +204,107 @@ describe('EventCheckin page', () => {
 
     await waitFor(() => {
       expect(screen.getByText(/attendance check-in is for members only/i)).toBeInTheDocument();
+    });
+  });
+
+  it('renders camera QR scanner controls and manual input when no query code', async () => {
+    mockCurrentUser = {
+      id: 1,
+      name: 'Test Member',
+      roles: ['member'],
+      status: 'active',
+      perms: { has: () => true },
+    };
+
+    const user = userEvent.setup();
+    render(
+      <MemoryRouter initialEntries={['/events/10/checkin']}>
+        <Routes>
+          <Route path="/events/:id/checkin" element={<EventCheckin />} />
+        </Routes>
+      </MemoryRouter>
+    );
+
+    // Shows camera toggle controls or error fallback
+    await waitFor(() => {
+      expect(
+        screen.getByText(/cannot scan\? enter check-in code directly below/i),
+      ).toBeInTheDocument();
+    });
+
+    // Check manual submission
+    const input = screen.getByPlaceholderText(/enter check-in code/i);
+    expect(input).toBeInTheDocument();
+    await user.type(input, 'MANUAL123');
+    const submitBtn = screen.getByRole('button', { name: /^check in$/i });
+    expect(submitBtn).toBeEnabled();
+    await user.click(submitBtn);
+
+    await waitFor(() => {
+      expect(post).toHaveBeenCalledWith('/events/10/checkin', { code: 'MANUAL123' });
+    });
+  });
+});
+
+describe('extractCheckinDetails utility', () => {
+  it('extracts code and event ID from full event URLs', () => {
+    const res = extractCheckinDetails('https://grace-ride.app/events/10/checkin?code=EVENT_PASS_99');
+    expect(res.code).toBe('EVENT_PASS_99');
+    expect(res.eventId).toBe(10);
+  });
+
+  it('extracts code and event ID from relative URLs', () => {
+    const res = extractCheckinDetails('/events/25/checkin?code=REL789');
+    expect(res.code).toBe('REL789');
+    expect(res.eventId).toBe(25);
+  });
+
+  it('extracts pass code and event ID from GRPASS format', () => {
+    const res = extractCheckinDetails('GRPASS:15:MEMBERPASS77');
+    expect(res.code).toBe('MEMBERPASS77');
+    expect(res.eventId).toBe(15);
+  });
+
+  it('returns bare code when raw string provided', () => {
+    const res = extractCheckinDetails('PLAINCODE42');
+    expect(res.code).toBe('PLAINCODE42');
+    expect(res.eventId).toBeUndefined();
+  });
+});
+
+describe('Events list universal checkin button', () => {
+  it('renders Scan QR to check in button in header actions', async () => {
+    const user = userEvent.setup();
+    render(
+      <MemoryRouter initialEntries={['/events']}>
+        <Routes>
+          <Route path="/events" element={<Events />} />
+        </Routes>
+      </MemoryRouter>
+    );
+
+    const scanBtn = screen.getByRole('button', { name: /scan qr to check in/i });
+    expect(scanBtn).toBeInTheDocument();
+    await user.click(scanBtn);
+
+    expect(screen.getByRole('heading', { name: /scan qr to check in/i })).toBeInTheDocument();
+    expect(
+      screen.getByText(/point your camera at the event check-in qr code/i),
+    ).toBeInTheDocument();
+
+    // Allows entering code when cannot scan
+    expect(
+      screen.getByText(/cannot scan\? enter check-in code directly below/i),
+    ).toBeInTheDocument();
+    const codeInput = screen.getByPlaceholderText(/enter check-in code.*or link/i);
+    expect(codeInput).toBeInTheDocument();
+    await user.type(codeInput, 'CODE_GLOBAL_10');
+    const submitBtn = screen.getByRole('button', { name: /^check in$/i });
+    expect(submitBtn).toBeEnabled();
+    await user.click(submitBtn);
+
+    await waitFor(() => {
+      expect(post).toHaveBeenCalledWith('/events/checkin', { code: 'CODE_GLOBAL_10' });
     });
   });
 });

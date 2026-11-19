@@ -1,16 +1,18 @@
-import { useState, useEffect, useRef } from 'react';
+import { useState, type FormEvent } from 'react';
 import { useTranslation } from 'react-i18next';
-import { QrCode } from 'lucide-react';
+import { Camera, CameraOff, QrCode } from 'lucide-react';
+import { useNavigate } from 'react-router-dom';
 import { post } from '../../api';
 import {
   Button,
   ErrorBox,
   Modal,
-  Notice,
   useAction,
   useToast,
 } from '../ui';
 import type { EventFull } from './types';
+import { QrCameraScanner } from './QrCameraScanner';
+import { extractCheckinDetails } from './qrUtils';
 
 export function EventScannerModal({
   event,
@@ -24,88 +26,22 @@ export function EventScannerModal({
   const { t } = useTranslation('eventDetail');
   const [code, setCode] = useState('');
   const { busy, error, run } = useAction();
-  const videoRef = useRef<HTMLVideoElement | null>(null);
-  const [cameraActive, setCameraActive] = useState(false);
-
-  const extractCode = (input: string) => {
-    try {
-      if (input.includes('code=')) {
-        const u = new URL(input, window.location.origin);
-        return u.searchParams.get('code') || input;
-      }
-    } catch {
-      // not a full url
-    }
-    return input.trim();
-  };
+  const [cameraActive, setCameraActive] = useState(true);
 
   const handleCheckin = (codeToUse: string) => {
-    const clean = extractCode(codeToUse);
+    const details = extractCheckinDetails(codeToUse);
+    const clean = details.code;
+    if (!clean) return;
     run(async () => {
       await post(`/events/${event.id}/checkin`, { code: clean });
       onSuccess();
     }, t('checkinSuccess'));
   };
-  const checkinRef = useRef(handleCheckin);
-  checkinRef.current = handleCheckin;
 
-  useEffect(() => {
-    let cancelled = false;
-    let stream: MediaStream | null = null;
-    let timer: number | null = null;
-
-    if (navigator.mediaDevices && navigator.mediaDevices.getUserMedia) {
-      navigator.mediaDevices
-        .getUserMedia({ video: { facingMode: 'environment' } })
-        .then((s) => {
-          if (cancelled) {
-            s.getTracks().forEach((track) => track.stop());
-            return;
-          }
-          stream = s;
-          if (videoRef.current) {
-            videoRef.current.srcObject = s;
-            videoRef.current.play().catch(() => {});
-            setCameraActive(true);
-          }
-          if ('BarcodeDetector' in window) {
-            // @ts-expect-error BarcodeDetector browser standard
-            const detector = new window.BarcodeDetector({ formats: ['qr_code'] });
-            const scanLoop = async () => {
-              if (cancelled) return;
-              if (
-                videoRef.current &&
-                videoRef.current.readyState === videoRef.current.HAVE_ENOUGH_DATA
-              ) {
-                try {
-                  const barcodes = await detector.detect(videoRef.current);
-                  if (barcodes.length > 0) {
-                    const raw = barcodes[0].rawValue;
-                    checkinRef.current(raw);
-                    return;
-                  }
-                } catch {
-                  // ignore
-                }
-              }
-              if (!cancelled) timer = window.setTimeout(scanLoop, 250);
-            };
-            timer = window.setTimeout(scanLoop, 500);
-          }
-        })
-        .catch(() => {
-          if (!cancelled) setCameraActive(false);
-        });
-    }
-
-    return () => {
-      cancelled = true;
-      if (timer) clearTimeout(timer);
-      if (stream) {
-        stream.getTracks().forEach((track) => track.stop());
-      }
-    };
-  }, []);
+  const handleManualSubmit = (e: FormEvent) => {
+    e.preventDefault();
+    if (code.trim()) handleCheckin(code);
+  };
 
   return (
     <Modal title={t('scanQrModalTitle')} onClose={onClose}>
@@ -113,33 +49,39 @@ export function EventScannerModal({
         <p className="muted small">{t('scanQrModalDesc')}</p>
 
         {cameraActive && (
-          <div
-            style={{
-              position: 'relative',
-              width: '100%',
-              maxWidth: '320px',
-              margin: '0 auto',
-              overflow: 'hidden',
-              borderRadius: '12px',
-              background: 'var(--surface-2)',
-            }}
-          >
-            <video
-              ref={videoRef}
-              style={{ width: '100%', height: '240px', objectFit: 'cover' }}
-              muted
-              playsInline
-            />
-          </div>
+          <QrCameraScanner
+            active={cameraActive}
+            onScan={handleCheckin}
+          />
         )}
 
-        <form
-          className="stack-sm"
-          onSubmit={(e) => {
-            e.preventDefault();
-            if (code.trim()) handleCheckin(code);
+        <div className="row center">
+          <Button
+            variant="ghost"
+            size="sm"
+            onClick={() => setCameraActive((v) => !v)}
+            icon={cameraActive ? <CameraOff size={16} /> : <Camera size={16} />}
+          >
+            {cameraActive ? t('stopCamera') : t('startCamera')}
+          </Button>
+        </div>
+
+        <div
+          style={{
+            width: '100%',
+            display: 'flex',
+            alignItems: 'center',
+            margin: '0.5rem 0',
+            color: 'var(--muted)',
+            fontSize: 'var(--fs-xs, 0.75rem)',
           }}
         >
+          <div style={{ flex: 1, height: '1px', background: 'var(--border)' }} />
+          <span style={{ padding: '0 0.5rem' }}>{t('cannotScanPrompt')}</span>
+          <div style={{ flex: 1, height: '1px', background: 'var(--border)' }} />
+        </div>
+
+        <form className="stack-sm" onSubmit={handleManualSubmit}>
           <input
             className="input"
             type="text"
@@ -174,31 +116,15 @@ export function ScanMemberPassModal({
   const [rawCode, setRawCode] = useState('');
   const [scanError, setScanError] = useState<string | null>(null);
   const { busy, error, run } = useAction();
-  const videoRef = useRef<HTMLVideoElement | null>(null);
-  const streamRef = useRef<MediaStream | null>(null);
   const [cameraOn, setCameraOn] = useState(false);
-  const hasBarcodeDetector = typeof window !== 'undefined' && 'BarcodeDetector' in window;
-
-  const stopCamera = () => {
-    if (streamRef.current) {
-      streamRef.current.getTracks().forEach((tr) => tr.stop());
-      streamRef.current = null;
-    }
-    setCameraOn(false);
-  };
-
-  useEffect(() => () => stopCamera(), []);
 
   const submitCode = async (input: string): Promise<boolean> => {
-    const trimmed = input.trim();
-    const parts = trimmed.split(':');
-    if (parts[0] === 'GRPASS') {
-      if (parts.length !== 3 || parts[1] !== String(eventId) || !parts[2].trim()) {
-        setScanError(t('events.INVALID_PASS_CODE', { ns: 'errors' }));
-        return false;
-      }
+    const details = extractCheckinDetails(input);
+    const code = details.code;
+    if (details.eventId && String(details.eventId) !== String(eventId)) {
+      setScanError(t('events.INVALID_PASS_CODE', { ns: 'errors' }));
+      return false;
     }
-    const code = parts.length === 3 && parts[0] === 'GRPASS' ? parts[2].trim() : trimmed;
     if (!code) return false;
     setScanError(null);
     return run(async () => {
@@ -206,108 +132,188 @@ export function ScanMemberPassModal({
         `/events/${eventId}/checkin/scan-member`,
         { pass_code: code },
       );
-      stopCamera();
+      setCameraOn(false);
       toast.success(t('memberCheckedIn', { name: res.user?.name ?? '' }));
       onSuccess();
       onClose();
     });
   };
-  const submitCodeRef = useRef(submitCode);
-  submitCodeRef.current = submitCode;
-
-  useEffect(() => {
-    if (!cameraOn) return;
-    let cancelled = false;
-    let raf = 0;
-    let retryTimer = 0;
-    const start = async () => {
-      try {
-        const stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'environment' } });
-        if (cancelled) {
-          stream.getTracks().forEach((tr) => tr.stop());
-          return;
-        }
-        streamRef.current = stream;
-        if (videoRef.current) {
-          videoRef.current.srcObject = stream;
-          await videoRef.current.play();
-        }
-        if (cancelled) {
-          stream.getTracks().forEach((tr) => tr.stop());
-          streamRef.current = null;
-          return;
-        }
-        const Detector = (
-          window as Window & {
-            BarcodeDetector?: new (opts?: { formats?: string[] }) => {
-              detect(source: HTMLVideoElement): Promise<{ rawValue?: string }[]>;
-            };
-          }
-        ).BarcodeDetector;
-        if (Detector) {
-          const detector = new Detector({ formats: ['qr_code'] });
-          const scan = async () => {
-            if (cancelled || !videoRef.current) return;
-            try {
-              const codes = await detector.detect(videoRef.current);
-              if (codes.length > 0 && codes[0].rawValue) {
-                const ok = await submitCodeRef.current(codes[0].rawValue);
-                if (ok || cancelled) return;
-                retryTimer = window.setTimeout(() => {
-                  if (!cancelled) raf = requestAnimationFrame(scan);
-                }, 1500);
-                return;
-              }
-            } catch {
-              // skip frame
-            }
-            if (!cancelled) raf = requestAnimationFrame(scan);
-          };
-          raf = requestAnimationFrame(scan);
-        }
-      } catch {
-        if (!cancelled) setCameraOn(false);
-      }
-    };
-    void start();
-    return () => {
-      cancelled = true;
-      cancelAnimationFrame(raf);
-      if (retryTimer) window.clearTimeout(retryTimer);
-      stopCamera();
-    };
-  }, [cameraOn]);
 
   return (
     <Modal title={t('scanMemberPass')} onClose={onClose}>
       <div className="stack">
         <p className="muted small">{t('scanMemberPassDesc')}</p>
+
         {cameraOn && (
-          <div style={{ borderRadius: 'var(--radius)', overflow: 'hidden', background: 'var(--surface-2)' }}>
-            <video ref={videoRef} playsInline muted style={{ width: '100%', maxHeight: 240, display: 'block', objectFit: 'cover' }} />
-          </div>
+          <QrCameraScanner
+            active={cameraOn}
+            onScan={(val) => {
+              void submitCode(val);
+            }}
+            hint={t('scanMemberPassDesc')}
+          />
         )}
-        {cameraOn && !hasBarcodeDetector && (
-          <Notice tone="info">{t('scanMemberPassDesc')}</Notice>
-        )}
+
         <div className="btn-row">
-          <Button variant="secondary" size="sm" onClick={() => setCameraOn((v) => !v)} icon={<QrCode size={16} />}>
-            {t('scanQrCheckin')}
+          <Button
+            variant="secondary"
+            size="sm"
+            onClick={() => setCameraOn((v) => !v)}
+            icon={cameraOn ? <CameraOff size={16} /> : <QrCode size={16} />}
+          >
+            {cameraOn ? t('stopCamera') : t('scanQrCheckin')}
           </Button>
         </div>
-        <div className="row nowrap gap-sm">
+
+        <div
+          style={{
+            width: '100%',
+            display: 'flex',
+            alignItems: 'center',
+            margin: '0.5rem 0',
+            color: 'var(--muted)',
+            fontSize: 'var(--fs-xs, 0.75rem)',
+          }}
+        >
+          <div style={{ flex: 1, height: '1px', background: 'var(--border)' }} />
+          <span style={{ padding: '0 0.5rem' }}>{t('cannotScanPassPrompt')}</span>
+          <div style={{ flex: 1, height: '1px', background: 'var(--border)' }} />
+        </div>
+
+        <form
+          className="row nowrap gap-sm"
+          onSubmit={(e) => {
+            e.preventDefault();
+            if (rawCode.trim()) void submitCode(rawCode);
+          }}
+        >
           <input
             className="input grow mono"
             value={rawCode}
             onChange={(e) => setRawCode(e.target.value)}
             placeholder={t('memberPassPlaceholder')}
-            onKeyDown={(e) => e.key === 'Enter' && void submitCode(rawCode)}
+            disabled={busy}
           />
-          <Button variant="primary" disabled={busy || !rawCode.trim()} onClick={() => void submitCode(rawCode)}>
+          <Button variant="primary" type="submit" loading={busy} disabled={!rawCode.trim()}>
             {t('submitCheckin')}
           </Button>
-        </div>
+        </form>
+
         <ErrorBox error={scanError || error} />
+      </div>
+    </Modal>
+  );
+}
+
+export function UniversalCheckinScannerModal({
+  onClose,
+}: {
+  onClose: () => void;
+}) {
+  const { t } = useTranslation('eventDetail');
+  const navigate = useNavigate();
+  const [manualCode, setManualCode] = useState('');
+  const [cameraActive, setCameraActive] = useState(true);
+  const { busy, error, run } = useAction();
+
+  const handleScan = (scanned: string) => {
+    const details = extractCheckinDetails(scanned);
+    if (details.eventId) {
+      onClose();
+      navigate(
+        `/events/${details.eventId}/checkin${
+          details.code ? `?code=${encodeURIComponent(details.code)}` : ''
+        }`,
+      );
+      return;
+    }
+    if (details.code) {
+      submitByCode(details.code);
+      return;
+    }
+  };
+
+  const submitByCode = (input: string) => {
+    const details = extractCheckinDetails(input);
+    if (details.eventId) {
+      onClose();
+      navigate(
+        `/events/${details.eventId}/checkin${
+          details.code ? `?code=${encodeURIComponent(details.code)}` : ''
+        }`,
+      );
+      return;
+    }
+    const clean = details.code || input.trim();
+    if (!clean) return;
+
+    run(async () => {
+      const res = await post<{ ok: boolean; event_id: number; title: string }>('/events/checkin', {
+        code: clean,
+      });
+      onClose();
+      navigate(`/events/${res.event_id}/checkin`);
+    }, t('checkinSuccess'));
+  };
+
+  const handleManualSubmit = (e: FormEvent) => {
+    e.preventDefault();
+    submitByCode(manualCode);
+  };
+
+  return (
+    <Modal title={t('universalScanTitle')} onClose={onClose}>
+      <div className="stack">
+        <p className="muted small">{t('universalScanDesc')}</p>
+
+        {cameraActive && (
+          <QrCameraScanner
+            active={cameraActive}
+            onScan={handleScan}
+          />
+        )}
+
+        <div className="row center">
+          <Button
+            variant="ghost"
+            size="sm"
+            onClick={() => setCameraActive((v) => !v)}
+            icon={cameraActive ? <CameraOff size={16} /> : <Camera size={16} />}
+          >
+            {cameraActive ? t('stopCamera') : t('startCamera')}
+          </Button>
+        </div>
+
+        <div
+          style={{
+            width: '100%',
+            display: 'flex',
+            alignItems: 'center',
+            margin: '0.5rem 0',
+            color: 'var(--muted)',
+            fontSize: 'var(--fs-xs, 0.75rem)',
+          }}
+        >
+          <div style={{ flex: 1, height: '1px', background: 'var(--border)' }} />
+          <span style={{ padding: '0 0.5rem' }}>{t('cannotScanPrompt')}</span>
+          <div style={{ flex: 1, height: '1px', background: 'var(--border)' }} />
+        </div>
+
+        <form className="stack-sm" onSubmit={handleManualSubmit}>
+          <input
+            className="input"
+            type="text"
+            placeholder={t('enterCodeOrUrlPlaceholder')}
+            value={manualCode}
+            onChange={(e) => setManualCode(e.target.value)}
+            disabled={busy}
+          />
+          <Button variant="primary" block type="submit" loading={busy} disabled={!manualCode.trim()}>
+            {t('submitCheckin')}
+          </Button>
+        </form>
+
+        <ErrorBox error={error} />
       </div>
     </Modal>
   );
