@@ -2,7 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import i18n from './i18n';
 import { clearOfflineSnapshots } from './offlineSnapshot';
 
-const ERROR_GROUPS = ['common', 'admin', 'auth', 'events', 'rides', 'settlements', 'community', 'files'] as const
+const ERROR_GROUPS = ['common', 'admin', 'auth', 'events', 'rides', 'settlements', 'community', 'files', 'family'] as const
 
 type ErrorBody = { error?: string; code?: string; params?: Record<string, unknown> } | null
 

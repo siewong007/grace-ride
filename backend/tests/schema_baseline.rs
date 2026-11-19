@@ -231,6 +231,7 @@ const LATER_RULES: &[&str] = &[
     "chk_users_email_lower",
     "chk_recovery_requests_status",
     "chk_invites_kind",
+    "chk_invites_family",
     "chk_invites_group_ids",
     "chk_auth_challenges_kind",
     "chk_events_status",

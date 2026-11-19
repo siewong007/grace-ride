@@ -138,6 +138,7 @@ export default function App() {
           <Route path="report" element={gated(<Report />, 'report')} />
           <Route path="notifications" element={page(<Notifications />)} />
           <Route path="me" element={page(<Profile />)} />
+          <Route path="me/family" element={page(<Profile />)} />
           <Route path="admin/menu" element={gated(<AdminMenu />, ...ADMIN_MENU_PERMS)} />
           <Route path="admin" element={gated(<AdminDashboard />, 'admin_dashboard')} />
           <Route path="admin/rides" element={gated(<AdminRides />, 'admin_rides')} />

@@ -73,9 +73,7 @@ export default function PostEventReimbursementModal({
     const initialRows: Record<number, DriverRowState> = {};
     for (const d of data.drivers) {
       const isSupper = d.suggested_trip_type === 'supper';
-      const destAreaId = isSupper
-        ? (supperAreaId || d.default_area?.id || '')
-        : (d.default_area?.id || '');
+      const destAreaId = d.default_area?.id || '';
 
       const matchedArea = data.available_areas.find((a) => a.id === destAreaId);
       const amountCents = matchedArea?.fare_cents ?? 0;

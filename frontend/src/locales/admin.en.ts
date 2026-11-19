@@ -129,6 +129,7 @@ export default {
     passkey: 'Passkeys',
     name: 'Name',
     email: 'Email',
+    family: 'Family',
     update: 'Save',
     inviteLog: 'Invite log',
     createInvite: 'Create invite link',

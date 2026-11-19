@@ -225,6 +225,7 @@ fn pending_profile_only(path: &str) -> bool {
     path == "/health"
         || path == "/stream"
         || path == "/me"
+        || path.starts_with("/me/family")
         || path == "/auth"
         || path.starts_with("/auth/")
         || path == "/files"

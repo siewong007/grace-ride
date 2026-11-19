@@ -20,7 +20,13 @@ vi.mock('./webauthn', () => ({
   registerPasskey: vi.fn(),
 }));
 
-let inviteData = { kind: 'member', email: '', name: '' };
+let inviteData: {
+  kind: string;
+  email: string;
+  name: string;
+  family_name?: string;
+  phone?: string;
+} = { kind: 'member', email: '', name: '' };
 const post = vi.fn();
 vi.mock('./api', async (importOriginal) => ({
   ...(await importOriginal<typeof import('./api')>()),
@@ -197,6 +203,27 @@ describe('Invite details match the server rules', () => {
     renderInvite();
     expect(screen.getByLabelText(/name/i)).toHaveValue('Named Person');
     expect(screen.getByLabelText(/email/i)).toHaveValue('named@example.com');
+  });
+
+  it('locks a family invite phone and shows the family name', () => {
+    inviteData = {
+      kind: 'family',
+      email: '',
+      name: '',
+      family_name: 'Chen Home',
+      phone: '019-700 4001',
+    };
+    renderInvite();
+    const phone = screen.getByLabelText(/phone/i);
+    expect(phone).toHaveValue('019-700 4001');
+    expect(phone).toHaveAttribute('readonly');
+    expect(screen.getByLabelText(/name/i)).toHaveValue('');
+    expect(screen.getByLabelText(/email/i)).toHaveValue('');
+    expect(screen.getByText('Chen Home')).toBeInTheDocument();
+    fireEvent.change(screen.getByLabelText(/name/i), { target: { value: 'New Kin' } });
+    fireEvent.change(screen.getByLabelText(/email/i), { target: { value: 'new-kin@example.org' } });
+    fireEvent.click(screen.getByRole('button', { name: /continue/i }));
+    expect(screen.getByRole('checkbox')).not.toBeChecked();
   });
 
   it('runs account recovery in two steps, starting at the terms', () => {

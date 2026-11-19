@@ -1,6 +1,6 @@
 import { describe, expect, it, vi, beforeEach } from 'vitest';
 import { render, screen, fireEvent, waitFor } from '@testing-library/react';
-import { MemoryRouter } from 'react-router-dom';
+import { Link, MemoryRouter } from 'react-router-dom';
 import { put, post } from '../api';
 import { _setInstalledForTesting, _setDeferredPromptForTesting, BeforeInstallPromptEvent } from '../pwaInstall';
 import Profile from './Profile';
@@ -31,6 +31,14 @@ const baseMe = {
 };
 
 let currentMe = baseMe;
+const emptyFamily = {
+  family: null as { id: number; name: string; owner_id: number } | null,
+  members: [] as { user_id: number; name: string; status: string }[],
+  requests: [] as { id: number; user_id: number; name: string }[],
+  invites: [] as { id: number; phone: string; expires_at: string; url: string }[],
+  incoming: null as { id: number; family_name: string; owner_name: string } | null,
+};
+let familyData = { ...emptyFamily };
 const confirmMock = vi.fn().mockResolvedValue(false);
 
 vi.mock('../auth', () => ({
@@ -46,7 +54,12 @@ vi.mock('../api', () => ({
   del: vi.fn(),
   post: vi.fn().mockResolvedValue(undefined),
   put: vi.fn().mockResolvedValue(undefined),
-  useApi: () => ({ data: [], loading: false, error: null, reload: vi.fn() }),
+  useApi: (path: string | null) => ({
+    data: path === '/me/family' ? familyData : [],
+    loading: false,
+    error: null,
+    reload: vi.fn(),
+  }),
 }));
 
 vi.mock('../webauthn', () => ({
@@ -115,6 +128,13 @@ const profileStrings: Record<string, string> = {
   installAppGuideTitle: 'Add App to Home Screen (No App Store Needed)',
   installAppInstalled: 'Added to Home Screen',
   installAppInstalledDesc: 'Currently running as a standalone mobile app with full-screen experience.',
+  family: 'Family',
+  familyName: 'Family name',
+  createFamily: 'Create family',
+  addPhone: 'Phone number',
+  leaveFamily: 'Leave family',
+  waitingApproval: 'Waiting for approval',
+  copyLink: 'Copy link',
 };
 
 vi.mock('react-i18next', () => ({
@@ -222,7 +242,7 @@ vi.mock('../components/ui', () => ({
         {badge}
       </>
     );
-    if (to) return <a href={to}>{content}</a>;
+    if (to) return <Link to={to}>{content}</Link>;
     return (
       <button type="button" onClick={onClick} {...rest}>
         {content}
@@ -234,13 +254,20 @@ vi.mock('../components/ui', () => ({
 beforeEach(() => {
   vi.clearAllMocks();
   currentMe = baseMe;
+  familyData = {
+    family: null,
+    members: [],
+    requests: [],
+    invites: [],
+    incoming: null,
+  };
   confirmMock.mockResolvedValue(false);
 });
 
-const renderProfile = (me: typeof baseMe) => {
+const renderProfile = (me: typeof baseMe, path = '/me') => {
   currentMe = me;
   return render(
-    <MemoryRouter initialEntries={['/me']}>
+    <MemoryRouter initialEntries={[path]}>
       <Profile />
     </MemoryRouter>,
   );
@@ -428,5 +455,40 @@ describe('Profile compact layout', () => {
 
     expect(screen.queryByText('Add Grace Ride to Home Screen')).not.toBeInTheDocument();
     expect(screen.getByText('Added to Home Screen')).toBeInTheDocument();
+  });
+
+  it('opens an empty family form from the Family row', () => {
+    renderProfile(baseMe);
+    fireEvent.click(screen.getByRole('link', { name: /Family/i }));
+    expect(screen.getByLabelText('Family name')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Create family' })).toBeInTheDocument();
+    expect(screen.queryByText('0123456789')).not.toBeInTheDocument();
+  });
+
+  it('lists family names and the invite phone separately', () => {
+    familyData = {
+      family: { id: 9, name: 'Grace Home', owner_id: baseMe.id },
+      members: [
+        { user_id: 1, name: 'Grace Member', status: 'active' },
+        { user_id: 2, name: 'Kin Pending', status: 'pending' },
+      ],
+      requests: [],
+      invites: [{ id: 3, phone: '019-700 2001', expires_at: '2026-11-22T00:00:00', url: 'http://localhost/invite/abc' }],
+      incoming: null,
+    };
+    renderProfile(baseMe, '/me/family');
+    expect(screen.getByText('Grace Member')).toBeInTheDocument();
+    expect(screen.getByText('Kin Pending')).toBeInTheDocument();
+    expect(screen.getByText('Waiting for approval')).toBeInTheDocument();
+    expect(screen.getByText('019-700 2001')).toBeInTheDocument();
+    for (const row of screen.getAllByTestId('family-member')) {
+      expect(row).not.toHaveTextContent('019-700 2001');
+    }
+  });
+
+  it('hides the create form for a pending member with no family', () => {
+    currentMe = { ...baseMe, status: 'pending' };
+    renderProfile({ ...baseMe, status: 'pending' }, '/me/family');
+    expect(screen.queryByRole('button', { name: 'Create family' })).not.toBeInTheDocument();
   });
 });
