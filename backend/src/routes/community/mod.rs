@@ -50,6 +50,17 @@ pub fn router() -> Router<AppState> {
             "/me/family/members/{user_id}",
             delete(family::remove_member),
         )
+        .route("/me/family/people", post(family::add_person))
+        .route(
+            "/me/family/requests/{id}/accept",
+            post(family::accept_request),
+        )
+        .route(
+            "/me/family/requests/{id}/decline",
+            post(family::decline_request),
+        )
+        .route("/me/family/requests/{id}", delete(family::cancel_request))
+        .route("/me/family/invites/{id}", delete(family::revoke_invite))
         .route(
             "/me/calendar-feed",
             get(calendar::get_calendar_feed).delete(calendar::revoke_calendar_feed),

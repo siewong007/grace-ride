@@ -276,3 +276,384 @@ async fn pending_member_can_read_and_leave_but_not_open_rides() {
     .await;
     assert_eq!(left.status, StatusCode::OK, "{}", left.json);
 }
+
+async fn set_phone(st: &grace_ride::state::AppState, email: &str, phone: &str) {
+    sqlx::query("UPDATE users SET phone=$1 WHERE email=$2")
+        .bind(phone)
+        .bind(email)
+        .execute(&st.db)
+        .await
+        .unwrap();
+}
+
+#[tokio::test]
+async fn matching_member_gets_a_request_and_a_second_family_is_blocked() {
+    let (app, st) = setup().await;
+    set_phone(&st, "member@example.org", "012-300 0006").await;
+    set_phone(&st, "amina@example.org", "019-700 1001").await;
+    let owner = login(&st, "member@example.org").await;
+    call(
+        &app,
+        Method::POST,
+        "/api/me/family",
+        Some(&owner),
+        Some(json!({"name": "陈家"})),
+    )
+    .await;
+    let added = call(
+        &app,
+        Method::POST,
+        "/api/me/family/people",
+        Some(&owner),
+        Some(json!({"phone": "+60 19-700 1001"})),
+    )
+    .await;
+    assert_eq!(added.status, StatusCode::OK, "{}", added.json);
+    assert_eq!(added.json["kind"], "request");
+    assert_eq!(added.json["name"], "阿米娜");
+    let (users_before,): (i64,) = sqlx::query_as("SELECT COUNT(*) FROM users")
+        .fetch_one(&st.db)
+        .await
+        .unwrap();
+    let again = call(
+        &app,
+        Method::POST,
+        "/api/me/family/people",
+        Some(&owner),
+        Some(json!({"phone": "0197001001"})),
+    )
+    .await;
+    assert_eq!(again.json["id"], added.json["id"]);
+    let (notes,): (i64,) =
+        sqlx::query_as("SELECT COUNT(*) FROM notifications WHERE link='/me/family'")
+            .fetch_one(&st.db)
+            .await
+            .unwrap();
+    assert!(notes >= 1);
+    let (users_after,): (i64,) = sqlx::query_as("SELECT COUNT(*) FROM users")
+        .fetch_one(&st.db)
+        .await
+        .unwrap();
+    assert_eq!(users_before, users_after);
+
+    let amina = login(&st, "amina@example.org").await;
+    let incoming = call(&app, Method::GET, "/api/me/family", Some(&amina), None).await;
+    assert!(incoming.json["family"].is_null());
+    assert_eq!(incoming.json["incoming"]["family_name"], "陈家");
+    let id = added.json["id"].as_i64().unwrap();
+    let not_owner = call(
+        &app,
+        Method::POST,
+        "/api/me/family/people",
+        Some(&amina),
+        Some(json!({"phone": "019-700 1099"})),
+    )
+    .await;
+    assert_eq!(not_owner.json["code"], "NO_PERMISSION");
+    let accept = call(
+        &app,
+        Method::POST,
+        &format!("/api/me/family/requests/{id}/accept"),
+        Some(&amina),
+        None,
+    )
+    .await;
+    assert_eq!(accept.status, StatusCode::OK, "{}", accept.json);
+    let joined = call(&app, Method::GET, "/api/me/family", Some(&amina), None).await;
+    assert!(joined.json["incoming"].is_null());
+    assert_eq!(joined.json["family"]["name"], "陈家");
+
+    let owner2 = login(&st, "sophie@example.org").await;
+    call(
+        &app,
+        Method::POST,
+        "/api/me/family",
+        Some(&owner2),
+        Some(json!({"name": "林家"})),
+    )
+    .await;
+    let blocked = call(
+        &app,
+        Method::POST,
+        "/api/me/family/people",
+        Some(&owner2),
+        Some(json!({"phone": "019-700 1001"})),
+    )
+    .await;
+    assert_eq!(blocked.json["code"], "ALREADY_IN_FAMILY");
+}
+
+#[tokio::test]
+async fn decline_does_not_join_and_other_family_request_conflicts() {
+    let (app, st) = setup().await;
+    set_phone(&st, "amina@example.org", "019-700 1002").await;
+    let owner = login(&st, "member@example.org").await;
+    call(
+        &app,
+        Method::POST,
+        "/api/me/family",
+        Some(&owner),
+        Some(json!({"name": "陈家"})),
+    )
+    .await;
+    let added = call(
+        &app,
+        Method::POST,
+        "/api/me/family/people",
+        Some(&owner),
+        Some(json!({"phone": "019-700 1002"})),
+    )
+    .await;
+    let amina = login(&st, "amina@example.org").await;
+    let id = added.json["id"].as_i64().unwrap();
+    let declined = call(
+        &app,
+        Method::POST,
+        &format!("/api/me/family/requests/{id}/decline"),
+        Some(&amina),
+        None,
+    )
+    .await;
+    assert_eq!(declined.status, StatusCode::OK, "{}", declined.json);
+    let (members,): (i64,) = sqlx::query_as(
+        "SELECT COUNT(*) FROM family_members fm JOIN users u ON u.id=fm.user_id WHERE u.email='amina@example.org'",
+    )
+    .fetch_one(&st.db)
+    .await
+    .unwrap();
+    assert_eq!(members, 0);
+
+    let again = call(
+        &app,
+        Method::POST,
+        "/api/me/family/people",
+        Some(&owner),
+        Some(json!({"phone": "019-700 1002"})),
+    )
+    .await;
+    assert_eq!(again.status, StatusCode::OK, "{}", again.json);
+    let owner2 = login(&st, "sophie@example.org").await;
+    call(
+        &app,
+        Method::POST,
+        "/api/me/family",
+        Some(&owner2),
+        Some(json!({"name": "林家"})),
+    )
+    .await;
+    let race = call(
+        &app,
+        Method::POST,
+        "/api/me/family/people",
+        Some(&owner2),
+        Some(json!({"phone": "019-700 1002"})),
+    )
+    .await;
+    assert_eq!(race.json["code"], "FAMILY_REQUEST_PENDING");
+}
+
+#[tokio::test]
+async fn unknown_phone_returns_the_same_link_and_bad_numbers_do_not() {
+    let (app, st) = setup().await;
+    let before_users: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM users")
+        .fetch_one(&st.db)
+        .await
+        .unwrap();
+    let owner = login(&st, "member@example.org").await;
+    call(
+        &app,
+        Method::POST,
+        "/api/me/family",
+        Some(&owner),
+        Some(json!({"name": "陈家"})),
+    )
+    .await;
+    let link = call(
+        &app,
+        Method::POST,
+        "/api/me/family/people",
+        Some(&owner),
+        Some(json!({"phone": "019-700 2001"})),
+    )
+    .await;
+    assert_eq!(link.json["kind"], "invite");
+    assert!(link.json["url"].as_str().unwrap().contains("/invite/"));
+    let again = call(
+        &app,
+        Method::POST,
+        "/api/me/family/people",
+        Some(&owner),
+        Some(json!({"phone": "+60 19-700 2001"})),
+    )
+    .await;
+    assert_eq!(again.json["url"], link.json["url"]);
+    let after_users: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM users")
+        .fetch_one(&st.db)
+        .await
+        .unwrap();
+    assert_eq!(before_users, after_users);
+
+    let own = call(
+        &app,
+        Method::POST,
+        "/api/me/family/people",
+        Some(&owner),
+        Some(json!({"phone": "012-300 0006"})),
+    )
+    .await;
+    assert_eq!(own.json["code"], "FAMILY_OWN_PHONE");
+    let empty = call(
+        &app,
+        Method::POST,
+        "/api/me/family/people",
+        Some(&owner),
+        Some(json!({"phone": ""})),
+    )
+    .await;
+    assert_eq!(empty.json["code"], "PHONE_INVALID");
+
+    set_phone(&st, "amina@example.org", "019-700 1888").await;
+    set_phone(&st, "sophie@example.org", "019-700 1888").await;
+    let ambiguous = call(
+        &app,
+        Method::POST,
+        "/api/me/family/people",
+        Some(&owner),
+        Some(json!({"phone": "019-700 1888"})),
+    )
+    .await;
+    assert_eq!(ambiguous.json["code"], "FAMILY_PHONE_AMBIGUOUS");
+
+    set_phone(&st, "yawen@example.org", "019-700 1999").await;
+    sqlx::query("UPDATE users SET status='disabled' WHERE email='yawen@example.org'")
+        .execute(&st.db)
+        .await
+        .unwrap();
+    let disabled = call(
+        &app,
+        Method::POST,
+        "/api/me/family/people",
+        Some(&owner),
+        Some(json!({"phone": "019-700 1999"})),
+    )
+    .await;
+    assert_eq!(disabled.json["code"], "FAMILY_PHONE_UNAVAILABLE");
+    let (invites,): (i64,) = sqlx::query_as("SELECT COUNT(*) FROM invites WHERE kind='family'")
+        .fetch_one(&st.db)
+        .await
+        .unwrap();
+    assert_eq!(invites, 1);
+    let (detail,): (String,) = sqlx::query_as(
+        "SELECT detail FROM audit_logs WHERE action='family.invite' ORDER BY id DESC LIMIT 1",
+    )
+    .fetch_one(&st.db)
+    .await
+    .unwrap();
+    assert!(!detail.contains("019-700"));
+}
+
+#[tokio::test]
+async fn ninth_counted_person_is_full_and_groups_stay_put() {
+    let (app, st) = setup().await;
+    let before = groups(&st).await;
+    let owner = login(&st, "member@example.org").await;
+    call(
+        &app,
+        Method::POST,
+        "/api/me/family",
+        Some(&owner),
+        Some(json!({"name": "陈家"})),
+    )
+    .await;
+    let (fid,): (i64,) = sqlx::query_as("SELECT id FROM families")
+        .fetch_one(&st.db)
+        .await
+        .unwrap();
+    for i in 0..7 {
+        let (id,): (i64,) = sqlx::query_as(
+            "INSERT INTO users (name, email, phone, roles, status, webauthn_uuid) VALUES ($1,$2,'','','pending',$3) RETURNING id",
+        )
+        .bind(format!("Kin {i}"))
+        .bind(format!("kin-full-{i}@example.org"))
+        .bind(uuid::Uuid::new_v4().to_string())
+        .fetch_one(&st.db)
+        .await
+        .unwrap();
+        sqlx::query(
+            "INSERT INTO family_members (family_id, user_id, created_at) VALUES ($1,$2,$3)",
+        )
+        .bind(fid)
+        .bind(id)
+        .bind(grace_ride::util::now())
+        .execute(&st.db)
+        .await
+        .unwrap();
+    }
+    let full = call(
+        &app,
+        Method::POST,
+        "/api/me/family/people",
+        Some(&owner),
+        Some(json!({"phone": "019-700 3001"})),
+    )
+    .await;
+    assert_eq!(full.json["code"], "FAMILY_FULL");
+    assert_eq!(full.json["params"]["max"], 8);
+    assert_eq!(groups(&st).await, before);
+}
+
+#[tokio::test]
+async fn another_familys_open_link_blocks_the_number() {
+    let (app, st) = setup().await;
+    let owner = login(&st, "member@example.org").await;
+    call(
+        &app,
+        Method::POST,
+        "/api/me/family",
+        Some(&owner),
+        Some(json!({"name": "陈家"})),
+    )
+    .await;
+    let link = call(
+        &app,
+        Method::POST,
+        "/api/me/family/people",
+        Some(&owner),
+        Some(json!({"phone": "019-700 2100"})),
+    )
+    .await;
+    assert_eq!(link.json["kind"], "invite");
+    let sophie = login(&st, "sophie@example.org").await;
+    call(
+        &app,
+        Method::POST,
+        "/api/me/family",
+        Some(&sophie),
+        Some(json!({"name": "林家"})),
+    )
+    .await;
+    let blocked = call(
+        &app,
+        Method::POST,
+        "/api/me/family/people",
+        Some(&sophie),
+        Some(json!({"phone": "+60 19-700 2100"})),
+    )
+    .await;
+    assert_eq!(blocked.json["code"], "FAMILY_REQUEST_PENDING");
+    let (invites,): (i64,) =
+        sqlx::query_as("SELECT COUNT(*) FROM invites WHERE kind='family' AND used_at IS NULL")
+            .fetch_one(&st.db)
+            .await
+            .unwrap();
+    assert_eq!(invites, 1);
+    let again = call(
+        &app,
+        Method::POST,
+        "/api/me/family/people",
+        Some(&owner),
+        Some(json!({"phone": "019-700 2100"})),
+    )
+    .await;
+    assert_eq!(again.json["url"], link.json["url"]);
+}
