@@ -542,7 +542,7 @@ pub(super) async fn admin_drivers(
     let rows: Vec<(i64, String, i64, i64, Option<String>, Option<String>, Option<i64>, Option<String>)> = sqlx::query_as(crate::dyn_sql!(
         "SELECT u.id, u.name, u.carpool_enabled, u.spare_seats, v.model, v.plate, v.seats,
                 (SELECT string_agg(a.name, ', ') FROM driver_areas da JOIN areas a ON a.id = da.area_id WHERE da.user_id = u.id)
-         FROM users u LEFT JOIN vehicles v ON v.user_id = u.id WHERE {} ORDER BY u.name",
+         FROM users u LEFT JOIN vehicles v ON v.user_id = u.id AND v.is_active = 1 WHERE {} ORDER BY u.name",
         perms::sql_holds("u", Perm(Page::Drive, Act::Create))
     ))
     .fetch_all(&st.db)

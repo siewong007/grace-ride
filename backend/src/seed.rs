@@ -1104,15 +1104,17 @@ async fn seed_core(db: &PgPool) -> anyhow::Result<()> {
     }
 
     // --- vehicles + driver preferences ---
-    sqlx::query("INSERT INTO vehicles (user_id, model, color, plate, seats, demo_batch) VALUES ($1,'Perodua Myvi','白色','VXX 1234',5,$2) ON CONFLICT(user_id) DO UPDATE SET model=excluded.model, color=excluded.color, plate=excluded.plate, seats=excluded.seats, demo_batch=excluded.demo_batch")
+    sqlx::query("INSERT INTO vehicles (user_id, model, color, plate, seats, demo_batch, is_active) VALUES ($1,'Perodua Myvi','白色','VXX 1234',5,$2,1) ON CONFLICT(user_id, plate) DO UPDATE SET model=excluded.model, color=excluded.color, seats=excluded.seats, is_active=excluded.is_active, demo_batch=excluded.demo_batch")
         .bind(deming).bind(DEMO_BATCH).execute(db).await?;
-    sqlx::query("INSERT INTO vehicles (user_id, model, color, plate, seats, demo_batch) VALUES ($1,'Honda City','银色','WQA 8821',5,$2) ON CONFLICT(user_id) DO UPDATE SET model=excluded.model, color=excluded.color, plate=excluded.plate, seats=excluded.seats, demo_batch=excluded.demo_batch")
+    sqlx::query("INSERT INTO vehicles (user_id, model, color, plate, seats, demo_batch, is_active) VALUES ($1,'Toyota Innova','银色','WCC 1118',7,$2,0) ON CONFLICT(user_id, plate) DO UPDATE SET model=excluded.model, color=excluded.color, seats=excluded.seats, is_active=excluded.is_active, demo_batch=excluded.demo_batch")
+        .bind(deming).bind(DEMO_BATCH).execute(db).await?;
+    sqlx::query("INSERT INTO vehicles (user_id, model, color, plate, seats, demo_batch, is_active) VALUES ($1,'Honda City','银色','WQA 8821',5,$2,1) ON CONFLICT(user_id, plate) DO UPDATE SET model=excluded.model, color=excluded.color, plate=excluded.plate, seats=excluded.seats, is_active=excluded.is_active, demo_batch=excluded.demo_batch")
         .bind(jiale).bind(DEMO_BATCH).execute(db).await?;
-    sqlx::query("INSERT INTO vehicles (user_id, model, color, plate, seats, demo_batch) VALUES ($1,'Proton X50','灰色','BPM 3302',5,$2) ON CONFLICT(user_id) DO UPDATE SET model=excluded.model, color=excluded.color, plate=excluded.plate, seats=excluded.seats, demo_batch=excluded.demo_batch")
+    sqlx::query("INSERT INTO vehicles (user_id, model, color, plate, seats, demo_batch, is_active) VALUES ($1,'Proton X50','灰色','BPM 3302',5,$2,1) ON CONFLICT(user_id, plate) DO UPDATE SET model=excluded.model, color=excluded.color, plate=excluded.plate, seats=excluded.seats, is_active=excluded.is_active, demo_batch=excluded.demo_batch")
         .bind(transport).bind(DEMO_BATCH).execute(db).await?;
-    sqlx::query("INSERT INTO vehicles (user_id, model, color, plate, seats, demo_batch) VALUES ($1,'Toyota Vios','蓝色','BKS 4410',5,$2) ON CONFLICT(user_id) DO UPDATE SET model=excluded.model, color=excluded.color, plate=excluded.plate, seats=excluded.seats, demo_batch=excluded.demo_batch")
+    sqlx::query("INSERT INTO vehicles (user_id, model, color, plate, seats, demo_batch, is_active) VALUES ($1,'Toyota Vios','蓝色','BKS 4410',5,$2,1) ON CONFLICT(user_id, plate) DO UPDATE SET model=excluded.model, color=excluded.color, plate=excluded.plate, seats=excluded.seats, is_active=excluded.is_active, demo_batch=excluded.demo_batch")
         .bind(zhiqiang).bind(DEMO_BATCH).execute(db).await?;
-    sqlx::query("INSERT INTO vehicles (user_id, model, color, plate, seats, demo_batch) VALUES ($1,'Mazda 3','红色','VBE 7788',5,$2) ON CONFLICT(user_id) DO UPDATE SET model=excluded.model, color=excluded.color, plate=excluded.plate, seats=excluded.seats, demo_batch=excluded.demo_batch")
+    sqlx::query("INSERT INTO vehicles (user_id, model, color, plate, seats, demo_batch, is_active) VALUES ($1,'Mazda 3','红色','VBE 7788',5,$2,1) ON CONFLICT(user_id, plate) DO UPDATE SET model=excluded.model, color=excluded.color, plate=excluded.plate, seats=excluded.seats, is_active=excluded.is_active, demo_batch=excluded.demo_batch")
         .bind(guorong).bind(DEMO_BATCH).execute(db).await?;
     sqlx::query("UPDATE users SET carpool_enabled=1, spare_seats=2 WHERE id=$1")
         .bind(deming)
@@ -1369,6 +1371,18 @@ async fn seed_core(db: &PgPool) -> anyhow::Result<()> {
             "",
             "no_show",
         ),
+        (
+            20010i64,
+            yawen,
+            Some(zhiqiang),
+            kl_hm(tomorrow, 14, 0),
+            2,
+            "SS2, Jalan 21/1 门牌 12",
+            "社区中心礼堂",
+            2,
+            "",
+            "pending_driver_confirm",
+        ),
     ];
     for (id, p, d, at, area, addr, dest, seats, assistance, status) in rides {
         let completed = if status == "completed" {
@@ -1394,6 +1408,14 @@ async fn seed_core(db: &PgPool) -> anyhow::Result<()> {
                 .bind(id + 80001).bind(id).bind(d).bind(DEMO_BATCH).bind(now()).execute(db).await?;
         }
     }
+    // Staff assigned zhiqiang to ride 20010; he must confirm the assignment.
+    // The ride needs transport-staff attention until the driver confirms.
+    sqlx::query(
+        "UPDATE rides SET needs_attention=1, attention_reason='等待新司机确认 / awaiting new driver confirmation' WHERE id=20010",
+    )
+    .execute(db)
+    .await?;
+
     // --- announcements ---
     sqlx::query("INSERT INTO announcements (id, title, body, pinned, created_by, demo_batch, created_at) VALUES ($1,'欢迎使用恩典同行','接送、活动与重要消息，集中在同一个平台。如有问题，请到帮助中心提问。',1,$2,$3,$4) ON CONFLICT DO NOTHING")
         .bind(101i64).bind(admin).bind(DEMO_BATCH).bind(now()).execute(db).await?;
@@ -1675,10 +1697,10 @@ pub async fn seed_edge(db: &PgPool) -> anyhow::Result<()> {
     ];
     for (uid, model, color, plate, seats) in edge_vehicles {
         sqlx::query(
-            "INSERT INTO vehicles (user_id, model, color, plate, seats, demo_batch, vehicle_type)
-             VALUES ($1,$2,$3,$4,$5,$6,'standard')
-             ON CONFLICT(user_id) DO UPDATE SET model=excluded.model, color=excluded.color,
-             plate=excluded.plate, seats=excluded.seats, vehicle_type=excluded.vehicle_type,
+            "INSERT INTO vehicles (user_id, model, color, plate, seats, demo_batch, vehicle_type, is_active)
+             VALUES ($1,$2,$3,$4,$5,$6,'standard',1)
+             ON CONFLICT(user_id, plate) DO UPDATE SET model=excluded.model, color=excluded.color,
+             seats=excluded.seats, vehicle_type=excluded.vehicle_type, is_active=excluded.is_active,
              demo_batch=excluded.demo_batch",
         )
         .bind(uid)
@@ -1873,7 +1895,7 @@ pub async fn seed_edge(db: &PgPool) -> anyhow::Result<()> {
         .await?;
     }
 
-    // --- edge rides (ids 80001..=80010), every status + proxy / assistance / attention ---
+    // --- edge rides (ids 80001..=80011), every status + pending_driver_confirm ---
     let edge_rides = [
         (
             80001i64,
@@ -2142,6 +2164,34 @@ pub async fn seed_edge(db: &PgPool) -> anyhow::Result<()> {
             "pending_driver",
             1,
             "needs attention",
+            None,
+            None,
+            None,
+            None,
+            None,
+            0,
+            None,
+            None,
+            0,
+            "",
+            "",
+            "",
+        ),
+        (
+            80011,
+            90007i64,
+            Some(90005i64),
+            None,
+            &future,
+            1,
+            "12 Jalan Demo",
+            "PJ 室内羽球馆",
+            1,
+            "",
+            "",
+            "pending_driver_confirm",
+            1,
+            "awaiting driver confirmation",
             None,
             None,
             None,
@@ -2952,7 +3002,7 @@ async fn seed_scale(db: &PgPool, scale: i64) -> anyhow::Result<()> {
             let carpool = if rng.bool(0.40) { 1 } else { 0 };
             let spare = if carpool == 1 { rng.range(2, 4) } else { 1 };
             let plate = rng.unique_plate(&mut plate_pool);
-            sqlx::query("INSERT INTO vehicles (user_id, model, color, plate, seats, demo_batch) VALUES ($1,$2,$3,$4,5,$5) ON CONFLICT(user_id) DO UPDATE SET model=excluded.model, color=excluded.color, plate=excluded.plate, seats=excluded.seats, demo_batch=excluded.demo_batch")
+            sqlx::query("INSERT INTO vehicles (user_id, model, color, plate, seats, demo_batch, is_active) VALUES ($1,$2,$3,$4,5,$5,1) ON CONFLICT(user_id, plate) DO UPDATE SET model=excluded.model, color=excluded.color, seats=excluded.seats, is_active=excluded.is_active, demo_batch=excluded.demo_batch")
                 .bind(id).bind(rng.pick(VEHICLE_MODELS)).bind(rng.pick(VEHICLE_COLORS)).bind(plate).bind(DEMO_BATCH).execute(db).await?;
             sqlx::query("UPDATE users SET carpool_enabled=$1, spare_seats=$2 WHERE id=$3")
                 .bind(carpool)

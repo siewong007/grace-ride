@@ -28,6 +28,9 @@ export interface Reimb {
   ride_at: string | null;
   kind?: 'grab' | 'mileage';
   ride_route?: string | null;
+  event_id?: number | null;
+  event_title?: string | null;
+  event_starts_at?: string | null;
   amount_cents: number;
   description: string;
   receipt_file_id: number;
@@ -104,6 +107,7 @@ export default function Reimbursements() {
                     <div className="bold ellipsis">{r.description || t('noneDesc')}</div>
                     <div className="muted small">
                       {fmtDay(r.created_at, ft)}
+                      {r.event_title && ` · ${r.event_title}`}
                       {r.ride_at && ` · ${t('ridePrefix', { time: fmtDateTime(r.ride_at, ft) })}`}
                     </div>
                   </div>
@@ -145,6 +149,13 @@ interface PastRide {
   pickup_at: string;
   area: { name: string };
   destination: string;
+  event?: { id: number; title: string } | null;
+}
+
+interface RegisteredEvent {
+  id: number;
+  title: string;
+  starts_at: string;
 }
 
 export function ReimbursementForm() {
@@ -156,9 +167,12 @@ export function ReimbursementForm() {
   const { me } = useAuth();
   const past = useApi<PastRide[] | { items: PastRide[] }>('/rides?scope=past');
   const pastRides = Array.isArray(past.data) ? past.data : past.data?.items ?? [];
+  const registeredEventsApi = useApi<RegisteredEvent[]>('/events?scope=registered');
+  const registeredEvents = Array.isArray(registeredEventsApi.data) ? registeredEventsApi.data : [];
   const existing = useApi<Reimb>(editId ? `/reimbursements/${editId}` : null);
   const mileage = params.get('kind') === 'mileage' || existing.data?.kind === 'mileage';
   const [f, setF] = useState({
+    event_id: params.get('event') ?? '',
     ride: params.get('ride') ?? '',
     amount: '',
     desc: '',
@@ -172,6 +186,7 @@ export function ReimbursementForm() {
     const r = existing.data;
     if (r) {
       setF({
+        event_id: r.event_id ? String(r.event_id) : '',
         ride: r.ride_id ? String(r.ride_id) : '',
         amount: (r.amount_cents / 100).toFixed(2),
         desc: r.description,
@@ -182,10 +197,20 @@ export function ReimbursementForm() {
     }
   }, [existing.data]);
 
+  useEffect(() => {
+    if (!f.event_id && f.ride && pastRides.length > 0) {
+      const matched = pastRides.find((r) => String(r.id) === f.ride);
+      if (matched?.event?.id) {
+        setF((prev) => ({ ...prev, event_id: String(matched.event!.id) }));
+      }
+    }
+  }, [f.ride, f.event_id, pastRides]);
+
   const submit = (e: FormEvent) => {
     e.preventDefault();
     const body = {
       kind: mileage ? 'mileage' : 'grab',
+      event_id: !mileage && f.event_id ? Number(f.event_id) : undefined,
       ride_id: f.ride ? Number(f.ride) : null,
       amount_cents: toCents(f.amount),
       description: f.desc,
@@ -214,6 +239,40 @@ export function ReimbursementForm() {
 
         <form className="card stack" onSubmit={submit}>
           {mileage && <Notice tone="info">{t('mileageNote')}</Notice>}
+          {!mileage && (
+            <Field label={t('event')}>
+              <select
+                className="input"
+                required
+                value={f.event_id}
+                onChange={(e) => {
+                  const eid = e.target.value;
+                  setF((prev) => ({
+                    ...prev,
+                    event_id: eid,
+                    ride:
+                      prev.ride &&
+                      pastRides.find((r) => String(r.id) === prev.ride)?.event?.id !== Number(eid)
+                        ? ''
+                        : prev.ride,
+                  }));
+                }}
+              >
+                <option value="">{t('selectEvent')}</option>
+                {registeredEvents.map((ev) => (
+                  <option key={ev.id} value={ev.id}>
+                    {fmtDateTime(ev.starts_at, ft)} · {ev.title}
+                  </option>
+                ))}
+              </select>
+              {registeredEvents.length === 0 && !registeredEventsApi.loading && (
+                <div className="small muted text-accent" style={{ marginTop: '4px' }}>
+                  {t('noRegisteredEventsNotice')}
+                </div>
+              )}
+            </Field>
+          )}
+
           {mileage ? (
             <Field label={t('ride')}>
               <div className="muted">
@@ -223,20 +282,31 @@ export function ReimbursementForm() {
               </div>
             </Field>
           ) : (
-          <Field label={t('ride')}>
-            <select
-              className="input"
-              value={f.ride}
-              onChange={(e) => setF({ ...f, ride: e.target.value })}
-            >
-              <option value="">{t('noneRide')}</option>
-              {pastRides.map((r) => (
-                <option key={r.id} value={r.id}>
-                  {fmtDateTime(r.pickup_at, ft)} · {r.area.name} → {r.destination}
-                </option>
-              ))}
-            </select>
-          </Field>
+            <Field label={t('ride')} hint={t('rideOptional')}>
+              <select
+                className="input"
+                value={f.ride}
+                onChange={(e) => {
+                  const rid = e.target.value;
+                  const matched = pastRides.find((r) => String(r.id) === rid);
+                  setF((prev) => ({
+                    ...prev,
+                    ride: rid,
+                    event_id: matched?.event?.id ? String(matched.event.id) : prev.event_id,
+                  }));
+                }}
+              >
+                <option value="">{t('noneRide')}</option>
+                {(f.event_id
+                  ? pastRides.filter((r) => !r.event || r.event.id === Number(f.event_id))
+                  : pastRides
+                ).map((r) => (
+                  <option key={r.id} value={r.id}>
+                    {fmtDateTime(r.pickup_at, ft)} · {r.area.name} → {r.destination}
+                  </option>
+                ))}
+              </select>
+            </Field>
           )}
 
           <Field label={t('amount')}>
@@ -302,7 +372,7 @@ export function ReimbursementForm() {
             variant="primary"
             block
             type="submit"
-            disabled={busy || !f.file}
+            disabled={busy || !f.file || (!mileage && !f.event_id)}
             loading={busy}
             size="lg"
           >
@@ -410,6 +480,17 @@ export function ReimbursementDetail() {
             <dd>{r.user.name}</dd>
             <dt>{t('description')}</dt>
             <dd>{r.description || t('noneDesc')}</dd>
+            {r.event_title && (
+              <>
+                <dt>{t('event')}</dt>
+                <dd>
+                  <Link to={`/events/${r.event_id}`}>
+                    {r.event_title}
+                    {r.event_starts_at && ` · ${fmtDateTime(r.event_starts_at, ft)}`}
+                  </Link>
+                </dd>
+              </>
+            )}
             {r.kind === 'mileage' && (
               <>
                 <dt>{t('route')}</dt>

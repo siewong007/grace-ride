@@ -109,6 +109,8 @@ const mockReimb = {
   user: { id: 2, name: 'Grace Member' },
   ride_id: 42,
   ride_at: '2026-11-12T14:30:00',
+  event_id: 10,
+  event_title: 'Badminton Night',
   amount_cents: 2850,
   description: 'Grab alternative transport',
   receipt_file_id: 99,
@@ -363,6 +365,7 @@ describe('Reimbursements page & detail', () => {
 
     expect(screen.getByText(/reimbursement status/i)).toBeInTheDocument();
     expect(screen.getByText(/approved by transport team/i)).toBeInTheDocument();
+    expect(screen.getByRole('link', { name: /badminton night/i })).toBeInTheDocument();
   });
 });
 

@@ -4,21 +4,28 @@ export interface Area {
   active: boolean;
 }
 
+export interface Vehicle {
+  id?: number;
+  model: string;
+  color: string;
+  plate: string;
+  seats: number;
+  vehicle_type: string;
+  type?: string;
+  wheelchair_ok?: boolean;
+  low_step?: boolean;
+  child_seat?: boolean;
+  is_active?: boolean;
+}
+
 export interface Profile {
   carpool_enabled: boolean;
   spare_seats: number;
   gate_wait_mins?: number;
   area_ids: number[];
-  vehicle: {
-    model: string;
-    color: string;
-    plate: string;
-    seats: number;
-    vehicle_type: string;
-    wheelchair_ok?: boolean;
-    low_step?: boolean;
-    child_seat?: boolean;
-  } | null;
+  vehicle: Vehicle | null;
+  vehicles?: Vehicle[];
+  active_vehicle_id?: number | null;
 }
 
 export interface DriverStanding {

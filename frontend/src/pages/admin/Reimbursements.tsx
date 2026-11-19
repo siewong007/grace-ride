@@ -194,14 +194,18 @@ function List({ scope }: { scope: 'review' | 'payout' }) {
       header: t('reimb.description'),
       render: (r) => (
         <div className="small">
-          {r.description}
+          <div>{r.description}</div>
+          {r.event_title && (
+            <div className="muted tiny">
+              {r.event_title}
+            </div>
+          )}
           {r.ride_id && (
-            <>
-              {' · '}
+            <div className="tiny">
               <Link to={`/admin/rides/${r.ride_id}`}>
                 {t('reimb.rideLink')}
               </Link>
-            </>
+            </div>
           )}
         </div>
       ),
@@ -368,6 +372,12 @@ function ReviewModal({
         />
         <ReceiptLink id={r.receipt_file_id} label={t('reimb.openReceipt')} />
         <p className="small">{r.description}</p>
+        {r.event_title && (
+          <p className="small">
+            <strong>{t('reimb.event')}:</strong> {r.event_title}
+            {r.event_starts_at && <span className="muted"> ({fmtDateTime(r.event_starts_at, ft)})</span>}
+          </p>
+        )}
         {r.kind === 'mileage' && (
           <p className="small">
             <strong>{t('reimb.mileageKind')}</strong>

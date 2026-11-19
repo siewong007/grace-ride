@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { Link, useParams } from 'react-router-dom';
 import {
   Calendar,
+  Car,
   CarFront,
   Copy,
   Edit2,
@@ -44,17 +45,19 @@ import {
   EventScannerModal,
   ScanMemberPassModal,
 } from '../components/event/EventScannerModals';
+import PostEventReimbursementModal from '../components/events/PostEventReimbursementModal';
 
 export default function EventDetail() {
   const { t } = useTranslation('eventDetail');
   const ft = useFormatT();
   const { id } = useParams();
-  const { can } = useAuth();
+  const { can, me } = useAuth();
   // Planning the whole event's transport needs its own permission (the server checks too).
   const isStaff = can('admin_plan');
   const { data: e, error, reload } = useApi<EventFull>(id ? `/events/${id}` : null);
   const { busy, error: actErr, run } = useAction();
   const confirm = useConfirm();
+  const [showPostEventReimb, setShowPostEventReimb] = useState(false);
   const [walkIn, setWalkIn] = useState(false);
   const [showQrModal, setShowQrModal] = useState(false);
   const [showScanModal, setShowScanModal] = useState(false);
@@ -486,6 +489,16 @@ export default function EventDetail() {
                 {/* Event Actions & Settlements */}
                 <div className="divider" />
                 <h4>{t('afterEvent')}</h4>
+                {((e.created_by?.id === me?.id && can('events', 'update')) || can('admin_events') || can('admin_plan') || can('admin_rides')) && (
+                  <Button
+                    variant="secondary"
+                    block
+                    icon={<Car size={16} />}
+                    onClick={() => setShowPostEventReimb(true)}
+                  >
+                    {t('postEventReimbBtn')}
+                  </Button>
+                )}
                 {e.settlement ? (
                   <Button variant="secondary" block to={`/settlements/${e.settlement.id}`}>
                     {t('viewSettlement')}
@@ -568,6 +581,14 @@ export default function EventDetail() {
             eventId={e.id}
             onClose={() => setShowScanMember(false)}
             onSuccess={() => reloadS()}
+          />
+        )}
+
+        {showPostEventReimb && (
+          <PostEventReimbursementModal
+            eventId={e.id}
+            onClose={() => setShowPostEventReimb(false)}
+            onSuccess={() => reload()}
           />
         )}
       </div>

@@ -230,6 +230,8 @@ export default {
     "CANNOT_PAY_OWN_REQUEST": "You cannot pay your own request",
     "CANNOT_PAY_OWN_APPROVAL": "Approving and paying need two people: you approved this request, so another finance member must pay it",
     "REIMBURSEMENT_ALREADY_CLAIMED": "This receipt or ride already has a reimbursement request; please don't claim it twice",
+    "EVENT_REQUIRED_FOR_REIMBURSEMENT": "Grab reimbursement requires an event",
+    "EVENT_REIMBURSEMENT_NEEDS_SIGNUP": "You must be registered for the event to claim Grab reimbursement",
     "PAYEE_VERIFICATION_REQUIRED": "Please verify the payee name, phone and DuitNow destination first",
     "REIMBURSEMENT_PROCESSED": "This claim has already been handled",
     "REASON_REQUIRED": "Please provide a reason",

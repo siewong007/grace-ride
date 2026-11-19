@@ -80,8 +80,61 @@ pub async fn with_event_shim(method: &Method, path: &str, body: Option<Value>) -
     let is_claim =
         *method == Method::POST && path.starts_with("/api/rides/") && path.ends_with("/claim");
     let is_book = *method == Method::POST && path == "/api/rides";
-    if !is_claim && !is_book {
+    let is_reimb = (*method == Method::POST && path == "/api/reimbursements")
+        || (*method == Method::PUT && path.starts_with("/api/reimbursements/"));
+    if !is_claim && !is_book && !is_reimb {
         return body;
+    }
+    if is_reimb {
+        let mut v = body?;
+        let is_mileage = v.get("kind").and_then(|k| k.as_str()) == Some("mileage");
+        if is_mileage || v.get("event_id").is_some_and(|e| !e.is_null()) {
+            return Some(v);
+        }
+        if let Some(rid) = v.get("ride_id").and_then(|r| r.as_i64()) {
+            let row: Option<(Option<i64>,)> =
+                sqlx::query_as("SELECT event_id FROM rides WHERE id = $1")
+                    .bind(rid)
+                    .fetch_optional(&pool)
+                    .await
+                    .ok()?;
+            if let Some((Some(eid),)) = row {
+                let _ = sqlx::query(
+                    "INSERT INTO event_signups (event_id, user_id, status, created_at)
+                     SELECT $1, id, 'going', '2026-01-01 00:00' FROM users ON CONFLICT DO NOTHING",
+                )
+                .bind(eid)
+                .execute(&pool)
+                .await;
+                v["event_id"] = Value::from(eid);
+                return Some(v);
+            }
+        }
+        let (event,): (i64,) = sqlx::query_as(
+            "INSERT INTO events (title, starts_at, location, created_by, reminder_sent)
+             VALUES ('Test event for grab reimb', $1, 'Church hall', (SELECT MIN(id) FROM users), 1) RETURNING id",
+        )
+        .bind(tomorrow("19:30"))
+        .fetch_one(&pool)
+        .await
+        .ok()?;
+        sqlx::query(
+            "INSERT INTO event_groups (event_id, group_id) SELECT $1, id FROM groups WHERE is_all = 1",
+        )
+        .bind(event)
+        .execute(&pool)
+        .await
+        .ok()?;
+        sqlx::query(
+            "INSERT INTO event_signups (event_id, user_id, status, created_at)
+             SELECT $1, id, 'going', '2026-01-01 00:00' FROM users ON CONFLICT DO NOTHING",
+        )
+        .bind(event)
+        .execute(&pool)
+        .await
+        .ok()?;
+        v["event_id"] = Value::from(event);
+        return Some(v);
     }
     if is_book {
         let mut v = body?;

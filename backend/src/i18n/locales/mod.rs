@@ -402,6 +402,12 @@ pub fn render(lang: Lang, key: &ErrorKey) -> String {
         ErrorKey::ReimbursementAlreadyClaimed => {
             community::render(lang, CommunityError::ReimbursementAlreadyClaimed)
         }
+        ErrorKey::EventRequiredForReimbursement => {
+            community::render(lang, CommunityError::EventRequiredForReimbursement)
+        }
+        ErrorKey::EventReimbursementNeedsSignup => {
+            community::render(lang, CommunityError::EventReimbursementNeedsSignup)
+        }
         ErrorKey::PayeeVerificationRequired => {
             community::render(lang, CommunityError::PayeeVerificationRequired)
         }
@@ -651,6 +657,8 @@ mod tests {
             ErrorKey::CannotPayOwnRequest => ErrorKey::CannotPayOwnRequest,
             ErrorKey::CannotPayOwnApproval => ErrorKey::CannotPayOwnApproval,
             ErrorKey::ReimbursementAlreadyClaimed => ErrorKey::ReimbursementAlreadyClaimed,
+            ErrorKey::EventRequiredForReimbursement => ErrorKey::EventRequiredForReimbursement,
+            ErrorKey::EventReimbursementNeedsSignup => ErrorKey::EventReimbursementNeedsSignup,
             ErrorKey::PayeeVerificationRequired => ErrorKey::PayeeVerificationRequired,
             ErrorKey::ReimbursementProcessed => ErrorKey::ReimbursementProcessed,
             ErrorKey::ReasonRequired => ErrorKey::ReasonRequired,

@@ -28,9 +28,12 @@ struct ReimbRow {
     ride_at: Option<String>,
     kind: String,
     ride_route: Option<String>,
+    event_id: Option<i64>,
+    event_title: Option<String>,
+    event_starts_at: Option<String>,
     amount_cents: i64,
     description: String,
-    receipt_file_id: i64,
+    receipt_file_id: Option<i64>,
     payee_name: String,
     payee_phone: String,
     status: String,
@@ -44,15 +47,21 @@ struct ReimbRow {
 
 const REIMB_SELECT: &str = "SELECT r.id, r.user_id, u.name AS user_name, r.ride_id, rd.pickup_at AS ride_at, r.kind,
     (SELECT pa.name || ' ↔ ' || COALESCE(ea.name, '?') FROM areas pa LEFT JOIN events ev ON ev.id = rd.event_id LEFT JOIN areas ea ON ea.id = ev.area_id WHERE pa.id = rd.pickup_area_id) AS ride_route,
+    COALESCE(r.event_id, rd.event_id) AS event_id, ev.title AS event_title, ev.starts_at AS event_starts_at,
     r.amount_cents, r.description,
     r.receipt_file_id, r.payee_name, r.payee_phone, r.status, r.review_note, rv.name AS reviewer, r.payee_verified, r.paid_ref, r.paid_at, r.created_at
-    FROM reimbursements r JOIN users u ON u.id=r.user_id LEFT JOIN rides rd ON rd.id=r.ride_id LEFT JOIN users rv ON rv.id=r.reviewed_by";
+    FROM reimbursements r
+    JOIN users u ON u.id=r.user_id
+    LEFT JOIN rides rd ON rd.id=r.ride_id
+    LEFT JOIN events ev ON ev.id = COALESCE(r.event_id, rd.event_id)
+    LEFT JOIN users rv ON rv.id=r.reviewed_by";
 
 fn reimb_json(r: &ReimbRow, u: &CurrentUser) -> Value {
     let finance = u.can(Page::AdminReimbPay, Act::View);
     let own = r.user_id == u.id;
     json!({
         "id": r.id, "user": {"id": r.user_id, "name": r.user_name}, "ride_id": r.ride_id, "ride_at": r.ride_at, "kind": r.kind, "ride_route": r.ride_route,
+        "event_id": r.event_id, "event_title": r.event_title, "event_starts_at": r.event_starts_at,
         "amount_cents": r.amount_cents, "description": r.description, "receipt_file_id": r.receipt_file_id,
         // Payee details only to the claimant and finance.
         "payee_name": if own || finance { Some(r.payee_name.clone()) } else { None },
@@ -206,9 +215,10 @@ pub(super) async fn get_reimbursement(
 #[derive(Deserialize)]
 pub(super) struct ReimbIn {
     ride_id: Option<i64>,
+    event_id: Option<i64>,
     amount_cents: i64,
     description: String,
-    receipt_file_id: i64,
+    receipt_file_id: Option<i64>,
     payee_name: String,
     payee_phone: String,
     /// 'grab' (default) or 'mileage' (a driver's receipt for a ride with no fare yet).
@@ -219,7 +229,7 @@ fn is_mileage(req: &ReimbIn) -> bool {
     req.kind.as_deref() == Some("mileage")
 }
 
-async fn validate_reimb(st: &AppState, u: &CurrentUser, req: &ReimbIn) -> AppResult<()> {
+async fn validate_reimb(st: &AppState, u: &CurrentUser, req: &ReimbIn) -> AppResult<Option<i64>> {
     if req.amount_cents <= 0 || req.amount_cents > 50_000 {
         return Err(bad(u.lang, ErrorKey::AmountRangeInvalid));
     }
@@ -239,29 +249,73 @@ async fn validate_reimb(st: &AppState, u: &CurrentUser, req: &ReimbIn) -> AppRes
         let rid = req
             .ride_id
             .ok_or_else(|| bad(u.lang, ErrorKey::InvalidAction))?;
-        let (driver, needed): (Option<i64>, i64) =
-            sqlx::query_as("SELECT driver_id, mileage_receipt_needed FROM rides WHERE id=$1")
-                .bind(rid)
-                .fetch_optional(&st.db)
-                .await?
-                .ok_or(not_found(u.lang))?;
+        let (driver, needed, ride_event_id): (Option<i64>, i64, Option<i64>) = sqlx::query_as(
+            "SELECT driver_id, mileage_receipt_needed, event_id FROM rides WHERE id=$1",
+        )
+        .bind(rid)
+        .fetch_optional(&st.db)
+        .await?
+        .ok_or(not_found(u.lang))?;
         if driver != Some(u.id) {
             return Err(forbidden(u.lang, ErrorKey::OnlyLinkOwnRides));
         }
         if needed != 1 {
             return Err(bad(u.lang, ErrorKey::InvalidAction));
         }
-    } else if let Some(rid) = req.ride_id {
-        let (p,): (i64,) = sqlx::query_as("SELECT passenger_id FROM rides WHERE id=$1")
-            .bind(rid)
+        Ok(ride_event_id)
+    } else {
+        let ride_info: Option<(i64, Option<i64>)> = if let Some(rid) = req.ride_id {
+            let row: Option<(i64, Option<i64>)> =
+                sqlx::query_as("SELECT passenger_id, event_id FROM rides WHERE id=$1")
+                    .bind(rid)
+                    .fetch_optional(&st.db)
+                    .await?;
+            let (p, eid) = row.ok_or(not_found(u.lang))?;
+            if p != u.id {
+                return Err(forbidden(u.lang, ErrorKey::OnlyLinkOwnRides));
+            }
+            Some((p, eid))
+        } else {
+            None
+        };
+
+        let ride_event_id = ride_info.and_then(|(_, eid)| eid);
+        let target_event_id = match (req.event_id, ride_event_id) {
+            (Some(eid), Some(reid)) => {
+                if eid != reid {
+                    return Err(bad(u.lang, ErrorKey::InvalidAction));
+                }
+                eid
+            }
+            (Some(eid), None) => eid,
+            (None, Some(reid)) => reid,
+            (None, None) => return Err(bad(u.lang, ErrorKey::EventRequiredForReimbursement)),
+        };
+
+        let event_row: Option<(String,)> = sqlx::query_as("SELECT status FROM events WHERE id=$1")
+            .bind(target_event_id)
             .fetch_optional(&st.db)
-            .await?
-            .ok_or(not_found(u.lang))?;
-        if p != u.id {
-            return Err(forbidden(u.lang, ErrorKey::OnlyLinkOwnRides));
+            .await?;
+        let Some((status,)) = event_row else {
+            return Err(not_found(u.lang));
+        };
+        if status == "cancelled" {
+            return Err(bad(u.lang, ErrorKey::EventNotOpen));
         }
+
+        let signup: Option<(String,)> =
+            sqlx::query_as("SELECT status FROM event_signups WHERE event_id=$1 AND user_id=$2")
+                .bind(target_event_id)
+                .bind(u.id)
+                .fetch_optional(&st.db)
+                .await?;
+
+        if signup.as_ref().map(|(s,)| s.as_str()) != Some("going") {
+            return Err(bad(u.lang, ErrorKey::EventReimbursementNeedsSignup));
+        }
+
+        Ok(Some(target_event_id))
     }
-    Ok(())
 }
 
 /// A receipt, or a ride, pays out once: refuse it while another request for it is still
@@ -300,14 +354,15 @@ pub(super) async fn create_reimbursement(
     Json(req): Json<ReimbIn>,
 ) -> AppResult<Json<Value>> {
     require(&u, Page::Reimbursements, Act::Create)?;
-    validate_reimb(&st, &u, &req).await?;
+    let resolved_event_id = validate_reimb(&st, &u, &req).await?;
     let mut tx = st.db.begin().await?;
     ensure_not_claimed(&mut tx, u.lang, &req, None).await?;
     let (id,): (i64,) = sqlx::query_as(
-        "INSERT INTO reimbursements (user_id, ride_id, amount_cents, description, receipt_file_id, payee_name, payee_phone, created_at, updated_at, kind) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10) RETURNING id",
+        "INSERT INTO reimbursements (user_id, ride_id, event_id, amount_cents, description, receipt_file_id, payee_name, payee_phone, created_at, updated_at, kind) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11) RETURNING id",
     )
     .bind(u.id)
     .bind(req.ride_id)
+    .bind(resolved_event_id)
     .bind(req.amount_cents)
     .bind(req.description.trim())
     .bind(req.receipt_file_id)
@@ -358,13 +413,14 @@ pub(super) async fn resubmit_reimbursement(
         return Err(bad(u.lang, ErrorKey::OnlyReturnedReimbCanBeResubmitted));
     }
     require(&u, Page::Reimbursements, Act::Update)?;
-    validate_reimb(&st, &u, &req).await?;
+    let resolved_event_id = validate_reimb(&st, &u, &req).await?;
     let mut tx = st.db.begin().await?;
     ensure_not_claimed(&mut tx, u.lang, &req, Some(id)).await?;
     // Still sent back and still theirs at the moment of writing: a review or another
     // resubmission in between wins, and this one is refused.
-    let changed = sqlx::query("UPDATE reimbursements SET ride_id=$1, amount_cents=$2, description=$3, receipt_file_id=$4, payee_name=$5, payee_phone=$6, status='pending', payee_verified=0, updated_at=$7 WHERE id=$8 AND user_id=$9 AND status='returned'")
+    let changed = sqlx::query("UPDATE reimbursements SET ride_id=$1, event_id=$2, amount_cents=$3, description=$4, receipt_file_id=$5, payee_name=$6, payee_phone=$7, status='pending', payee_verified=0, updated_at=$8 WHERE id=$9 AND user_id=$10 AND status='returned'")
         .bind(req.ride_id)
+        .bind(resolved_event_id)
         .bind(req.amount_cents)
         .bind(req.description.trim())
         .bind(req.receipt_file_id)

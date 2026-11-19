@@ -145,7 +145,7 @@ async fn plan_drivers(st: &AppState) -> AppResult<Vec<PlanDriver>> {
     Ok(sqlx::query_as::<_, PlanDriver>(crate::dyn_sql!(
         "SELECT u.id, u.name, u.carpool_enabled, u.spare_seats, v.model AS v_model, v.plate AS v_plate, v.seats AS v_seats,
                 v.wheelchair_ok, v.low_step, v.child_seat
-         FROM users u JOIN vehicles v ON v.user_id = u.id WHERE {} ORDER BY u.name",
+         FROM users u JOIN vehicles v ON v.user_id = u.id AND v.is_active = 1 WHERE {} ORDER BY u.name",
         perms::sql_holds("u", Perm(Page::Drive, Act::Create))
     ))
     .fetch_all(&st.db)

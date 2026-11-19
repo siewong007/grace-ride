@@ -1529,3 +1529,159 @@ async fn web_push_end_to_end_encryption_test_endpoint_and_410_pruning() {
     assert_eq!(admin_after.json["vapid_private_configured"], true);
     assert_eq!(admin_after.json["push_subscriptions_count"], 0);
 }
+
+#[tokio::test]
+async fn driver_can_configure_multiple_vehicles_and_choose_active() {
+    let (app, st) = setup().await;
+    let driver = login(&st, "driver@example.org").await;
+
+    // Driver fetches vehicles
+    let res = call(
+        &app,
+        Method::GET,
+        "/api/driver/vehicles",
+        Some(&driver),
+        None,
+    )
+    .await;
+    assert_eq!(res.status, StatusCode::OK);
+    let initial_vehicles = res.json.as_array().unwrap();
+    assert!(!initial_vehicles.is_empty());
+
+    // Add a second vehicle (7-seater MPV with wheelchair access)
+    let add_res = call(
+        &app,
+        Method::POST,
+        "/api/driver/vehicles",
+        Some(&driver),
+        Some(json!({
+            "model": "Toyota Vellfire",
+            "color": "Black",
+            "plate": "VLL 7788",
+            "seats": 7,
+            "vehicle_type": "standard",
+            "wheelchair_ok": true,
+            "low_step": true,
+            "child_seat": true,
+            "is_active": false
+        })),
+    )
+    .await;
+    assert_eq!(add_res.status, StatusCode::OK);
+    let new_vehicle_id = add_res.json["id"].as_i64().unwrap();
+    assert_eq!(add_res.json["is_active"], false);
+
+    // Profile check
+    let prof = call(
+        &app,
+        Method::GET,
+        "/api/driver/profile",
+        Some(&driver),
+        None,
+    )
+    .await;
+    assert_eq!(prof.status, StatusCode::OK);
+    assert!(prof.json["vehicles"].as_array().unwrap().len() >= 2);
+    assert_ne!(prof.json["active_vehicle_id"], new_vehicle_id);
+
+    // Choose the new vehicle as active
+    let sel_res = call(
+        &app,
+        Method::POST,
+        &format!("/api/driver/vehicles/{new_vehicle_id}/select"),
+        Some(&driver),
+        None,
+    )
+    .await;
+    assert_eq!(sel_res.status, StatusCode::OK);
+    assert_eq!(sel_res.json["active_vehicle_id"], new_vehicle_id);
+
+    // Profile check: active vehicle is now Vellfire
+    let prof_after = call(
+        &app,
+        Method::GET,
+        "/api/driver/profile",
+        Some(&driver),
+        None,
+    )
+    .await;
+    assert_eq!(prof_after.json["active_vehicle_id"], new_vehicle_id);
+    assert_eq!(prof_after.json["vehicle"]["plate"], "VLL 7788");
+    assert_eq!(prof_after.json["vehicle"]["seats"], 7);
+    assert_eq!(prof_after.json["vehicle"]["wheelchair_ok"], true);
+
+    // Update the vehicle
+    let upd_res = call(
+        &app,
+        Method::PUT,
+        &format!("/api/driver/vehicles/{new_vehicle_id}"),
+        Some(&driver),
+        Some(json!({
+            "model": "Toyota Alphard",
+            "color": "White",
+            "plate": "VLL 7788",
+            "seats": 8,
+            "vehicle_type": "standard",
+            "wheelchair_ok": true,
+            "low_step": true,
+            "child_seat": true,
+        })),
+    )
+    .await;
+    assert_eq!(upd_res.status, StatusCode::OK);
+    assert_eq!(upd_res.json["model"], "Toyota Alphard");
+    assert_eq!(upd_res.json["seats"], 8);
+
+    // Switch active vehicle back using PUT /api/driver/profile
+    let original_id = initial_vehicles[0]["id"].as_i64().unwrap();
+    let prof_put = call(
+        &app,
+        Method::PUT,
+        "/api/driver/profile",
+        Some(&driver),
+        Some(json!({
+            "carpool_enabled": true,
+            "spare_seats": 2,
+            "area_ids": [1],
+            "active_vehicle_id": original_id
+        })),
+    )
+    .await;
+    assert_eq!(prof_put.status, StatusCode::OK);
+
+    let prof_check2 = call(
+        &app,
+        Method::GET,
+        "/api/driver/profile",
+        Some(&driver),
+        None,
+    )
+    .await;
+    assert_eq!(prof_check2.json["active_vehicle_id"], original_id);
+
+    // Delete the new vehicle
+    let del_res = call(
+        &app,
+        Method::DELETE,
+        &format!("/api/driver/vehicles/{new_vehicle_id}"),
+        Some(&driver),
+        None,
+    )
+    .await;
+    assert_eq!(del_res.status, StatusCode::OK);
+
+    let list_after = call(
+        &app,
+        Method::GET,
+        "/api/driver/vehicles",
+        Some(&driver),
+        None,
+    )
+    .await;
+    assert!(!list_after
+        .json
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|v| v["id"] == new_vehicle_id));
+}

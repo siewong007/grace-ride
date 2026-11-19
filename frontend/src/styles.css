@@ -1890,6 +1890,76 @@ main:focus { outline: none; }
   font-weight: 600;
 }
 
+.section-header-row {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: var(--space-3);
+  margin-bottom: var(--space-2);
+}
+
+.vehicle-active-tag {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  font-size: var(--fs-xs);
+  font-weight: 600;
+  color: var(--success);
+  background: var(--success-soft);
+  padding: 2px var(--space-2);
+  border-radius: var(--radius-sm);
+  margin-bottom: var(--space-1);
+}
+
+.vehicle-badges-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-1);
+  margin-top: var(--space-1);
+}
+
+.vehicle-list {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  margin-bottom: var(--space-3);
+}
+
+.vehicle-item-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+  padding: var(--space-3);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--surface);
+  transition: border-color 0.15s ease, background 0.15s ease;
+}
+
+.vehicle-item-row.active {
+  border-color: var(--primary);
+  background: var(--primary-soft);
+}
+
+.vehicle-item-info {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+}
+
+.vehicle-item-name {
+  font-size: var(--fs-sm);
+  font-weight: 500;
+}
+
+.vehicle-item-actions {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+
 .driver-settings-submit-bar {
   display: flex;
   align-items: center;
@@ -2292,6 +2362,9 @@ main:focus { outline: none; }
 .plan-select { min-height: 40px; padding-top: 6px; padding-bottom: 6px; font-size: var(--fs-sm); margin-top: 2px; }
 .plan-why { display: flex; gap: 6px; align-items: flex-start; margin: 0; font-size: var(--fs-sm); color: var(--primary); }
 .plan-why svg { flex: none; margin-top: 3px; }
+.plan-export-preview-container { max-height: 60vh; overflow-y: auto; border: 1px solid var(--border); border-radius: var(--radius); background: var(--surface-2); padding: var(--space-2); display: flex; justify-content: center; }
+.plan-export-preview-img { max-width: 100%; height: auto; border-radius: var(--radius-sm); box-shadow: 0 4px 12px rgba(0, 0, 0, 0.08); display: block; }
+
 
 /* Ride detail (minimalist pass, part 2) */
 .card h2 { font-size: var(--fs-xl); }

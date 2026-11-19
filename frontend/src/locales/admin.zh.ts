@@ -318,6 +318,7 @@ export default {
     receipt: '收据',
     reviewTitle: '{name} · {amount}',
     openReceipt: '打开原始收据',
+    event: '活动',
     ride: '关联接送：{time}',
     mileageKind: '里程收据（路线暂无车费）',
     rideLink: '接送详情',

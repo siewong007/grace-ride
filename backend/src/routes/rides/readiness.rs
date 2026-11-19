@@ -416,6 +416,95 @@ pub(super) async fn post_arrived_gate(
     Ok(Json(json!({"ok": true, "arrived_at_gate_at": timestamp})))
 }
 
+#[derive(Deserialize)]
+pub(crate) struct SupperChoiceReq {
+    pub choice: String, // 'supper' | 'direct_home' | 'unspecified'
+}
+
+pub(super) async fn post_supper_choice(
+    State(st): State<AppState>,
+    u: CurrentUser,
+    Path(id): Path<i64>,
+    Json(req): Json<SupperChoiceReq>,
+) -> AppResult<Json<Value>> {
+    let r = load_ride(&st, u.lang, id).await?;
+    let is_passenger = r.passenger_id == u.id;
+    let is_admin = traffic_can(&u, &r, Act::Update);
+    if !is_passenger && !is_admin {
+        return Err(forbidden(u.lang, ErrorKey::OnlyPassengerCanRespond));
+    }
+    if r.leg != "return" {
+        return Err(bad(u.lang, ErrorKey::InvalidAction));
+    }
+    let choice = req.choice.trim();
+    if !matches!(choice, "supper" | "direct_home" | "unspecified") {
+        return Err(bad(u.lang, ErrorKey::InvalidAction));
+    }
+
+    let timestamp = now();
+    sqlx::query("UPDATE rides SET supper_choice = $1, updated_at = $2 WHERE id = $3")
+        .bind(choice)
+        .bind(&timestamp)
+        .bind(id)
+        .execute(&st.db)
+        .await?;
+
+    let rider_disp = if r.is_proxy == 1 && !r.rider_name.is_empty() {
+        format!("{}（由 {} 代订）", r.rider_name, r.p_name)
+    } else {
+        r.p_name.clone()
+    };
+
+    if let Some(d) = r.driver_id {
+        let (title_zh, title_en, msg_zh, msg_en) = match choice {
+            "supper" => (
+                "乘客参加宵夜",
+                "Passenger joins supper",
+                format!("{} 确认聚会后【参加宵夜】。", rider_disp),
+                format!(
+                    "{} confirmed they will join for supper after the event.",
+                    rider_disp
+                ),
+            ),
+            "direct_home" => (
+                "乘客直接回家",
+                "Passenger heads directly home",
+                format!("{} 确认聚会后【直接回家】（不吃宵夜）。", rider_disp),
+                format!(
+                    "{} confirmed they will head directly home (no supper).",
+                    rider_disp
+                ),
+            ),
+            _ => (
+                "乘客更新宵夜意向",
+                "Passenger updated supper plan",
+                format!("{} 重置了宵夜安排意向。", rider_disp),
+                format!("{} reset their supper preference.", rider_disp),
+            ),
+        };
+        notify(
+            &st.db,
+            d,
+            (title_zh, title_en),
+            (&msg_zh, &msg_en),
+            &format!("/rides/{id}"),
+        )
+        .await;
+    }
+
+    audit(
+        &st.db,
+        Some(u.id),
+        "ride.supper_choice",
+        "ride",
+        Some(id),
+        choice,
+    )
+    .await;
+
+    Ok(Json(json!({"ok": true, "supper_choice": choice})))
+}
+
 #[cfg(test)]
 mod unable_reason_tests {
     use super::{unable_reason, UNABLE_REASON_MAX};

@@ -230,6 +230,8 @@ export default {
     "CANNOT_PAY_OWN_REQUEST": "不能为自己的申请付款",
     "CANNOT_PAY_OWN_APPROVAL": "批准与付款需由不同的人处理：此申请由您批准，请交给另一位财务同工付款",
     "REIMBURSEMENT_ALREADY_CLAIMED": "此收据或此趟接送已有报销申请，请勿重复申请",
+    "EVENT_REQUIRED_FOR_REIMBURSEMENT": "Grab 报销需关联活动",
+    "EVENT_REIMBURSEMENT_NEEDS_SIGNUP": "请先报名参加此活动，才能申请 Grab 报销",
     "PAYEE_VERIFICATION_REQUIRED": "请先核对收款人姓名、手机号及 DuitNow 收款去向",
     "REIMBURSEMENT_PROCESSED": "此报销已处理",
     "REASON_REQUIRED": "请填写原因",

@@ -34,6 +34,7 @@ export default {
   walkIn: '+ 记录未报名的出席者',
   walkInNote: '月报统计“实际出席”，不是只统计报名。',
   afterEvent: '活动结束后',
+  postEventReimbBtn: '登记散场/宵夜车贴',
   viewSettlement: '查看费用分摊',
   createSettlement: '发起费用分摊',
   finish: '标记为已结束',

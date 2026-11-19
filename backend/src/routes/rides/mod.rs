@@ -74,6 +74,10 @@ pub fn router() -> Router<AppState> {
         .route("/rides/{id}/respond", post(passenger::passenger_respond))
         .route("/rides/{id}/readiness", post(readiness::post_readiness))
         .route(
+            "/rides/{id}/supper-choice",
+            post(readiness::post_supper_choice),
+        )
+        .route(
             "/rides/{id}/driver-delay",
             post(readiness::post_driver_delay),
         )
@@ -115,6 +119,19 @@ pub fn router() -> Router<AppState> {
         .route(
             "/driver/profile",
             get(driver_profile::get_driver_profile).put(driver_profile::put_driver_profile),
+        )
+        .route(
+            "/driver/vehicles",
+            get(driver_profile::list_driver_vehicles).post(driver_profile::create_driver_vehicle),
+        )
+        .route(
+            "/driver/vehicles/{id}",
+            put(driver_profile::update_driver_vehicle)
+                .delete(driver_profile::delete_driver_vehicle),
+        )
+        .route(
+            "/driver/vehicles/{id}/select",
+            post(driver_profile::select_driver_vehicle),
         )
         .route(
             "/driver/location",
@@ -170,6 +187,7 @@ pub struct RideRow {
     pub readiness_updated_at: Option<String>,
     pub delay_minutes: Option<i64>,
     pub arrived_at_gate_at: Option<String>,
+    pub supper_choice: Option<String>,
     pub is_proxy: i64,
     pub rider_name: String,
     pub rider_phone: String,
@@ -196,6 +214,7 @@ pub(super) const RIDE_SELECT: &str = "SELECT r.id, r.passenger_id, r.driver_id, 
     v.wheelchair_ok AS v_wheelchair_ok, v.low_step AS v_low_step, v.child_seat AS v_child_seat,
     e.title AS event_title,
     r.readiness_status, r.readiness_updated_at, r.delay_minutes, r.arrived_at_gate_at,
+    COALESCE(r.supper_choice, 'unspecified') AS supper_choice,
     r.is_proxy, r.rider_name, r.rider_phone, r.rider_relationship,
     r.leg, r.paired_ride_id,
     r.as_group_id, ag.name AS as_group_name,
@@ -208,7 +227,7 @@ pub(super) const RIDE_SELECT: &str = "SELECT r.id, r.passenger_id, r.driver_id, 
     JOIN areas a ON a.id = r.pickup_area_id
     JOIN users p ON p.id = r.passenger_id
     LEFT JOIN users d ON d.id = r.driver_id
-    LEFT JOIN vehicles v ON v.user_id = r.driver_id
+    LEFT JOIN vehicles v ON v.user_id = r.driver_id AND v.is_active = 1
     LEFT JOIN events e ON e.id = r.event_id
     LEFT JOIN groups ag ON ag.id = r.as_group_id";
 
@@ -300,6 +319,7 @@ pub fn ride_json(r: &RideRow, u: &CurrentUser) -> Value {
         "readiness_updated_at": r.readiness_updated_at,
         "delay_minutes": r.delay_minutes.unwrap_or(0),
         "arrived_at_gate_at": r.arrived_at_gate_at,
+        "supper_choice": r.supper_choice.as_deref().unwrap_or("unspecified"),
         "is_proxy": is_proxy,
         "proxy": proxy,
         "passenger": {

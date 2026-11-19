@@ -171,15 +171,15 @@ async fn seed_edge_provides_every_ride_status() {
     let (_app, st) = setup().await;
     seed_edge(&st).await;
 
-    // 10 edge rides (ids 80001..=80010).
+    // 11 edge rides (ids 80001..=80011).
     let (n,): (i64,) = sqlx::query_as("SELECT COUNT(*) FROM rides WHERE demo_batch = $1")
         .bind(EDGE_BATCH)
         .fetch_one(&st.db)
         .await
         .unwrap();
-    assert_eq!(n, 10);
+    assert_eq!(n, 11);
 
-    // Every ride status is represented.
+    // Every ride status is represented, including the new pending_driver_confirm flow state.
     let statuses: Vec<String> = sqlx::query_scalar::<_, String>(
         "SELECT DISTINCT status FROM rides WHERE demo_batch = $1 ORDER BY status",
     )
@@ -196,6 +196,7 @@ async fn seed_edge_provides_every_ride_status() {
         "no_show",
         "pending_approval",
         "pending_driver",
+        "pending_driver_confirm",
         "pending_passenger",
     ];
     for s in expected {

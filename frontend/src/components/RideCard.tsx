@@ -48,6 +48,7 @@ export interface Ride {
   readiness_updated_at?: string | null;
   delay_minutes?: number;
   arrived_at_gate_at?: string | null;
+  supper_choice?: 'unspecified' | 'supper' | 'direct_home';
   is_proxy?: boolean;
   proxy?: {
     is_proxy: boolean;

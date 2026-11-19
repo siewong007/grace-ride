@@ -195,4 +195,91 @@ describe('Drive page - Settings tab', () => {
     const saveBtn = screen.getByRole('button', { name: /save settings/i });
     expect(saveBtn).not.toBeDisabled();
   });
+
+  it('allows volunteer driver to view multiple vehicles and choose active vehicle', async () => {
+    mockApiMap['/driver/profile'] = {
+      carpool_enabled: true,
+      spare_seats: 2,
+      area_ids: [1, 2],
+      active_vehicle_id: 1,
+      vehicle: {
+        id: 1,
+        model: 'Toyota Vios',
+        color: 'Silver',
+        plate: 'WXX 8888',
+        seats: 5,
+        is_active: true,
+      },
+      vehicles: [
+        {
+          id: 1,
+          model: 'Toyota Vios',
+          color: 'Silver',
+          plate: 'WXX 8888',
+          seats: 5,
+          is_active: true,
+        },
+        {
+          id: 2,
+          model: 'Nissan Serena',
+          color: 'Black',
+          plate: 'VYY 9999',
+          seats: 7,
+          is_active: false,
+        },
+      ],
+    };
+
+    render(
+      <MemoryRouter>
+        <Drive />
+      </MemoryRouter>
+    );
+
+    const settingsTab = screen.getByRole('tab', { name: /^settings$/i });
+    fireEvent.click(settingsTab);
+
+    await waitFor(() => {
+      expect(screen.getAllByText('WXX 8888').length).toBeGreaterThanOrEqual(1);
+      expect(screen.getByText('VYY 9999')).toBeInTheDocument();
+    });
+
+    // Both vehicles rendered in the list
+    expect(screen.getByText(/black nissan serena/i)).toBeInTheDocument();
+
+    // Vehicle 2 has "Select for driving" button
+    const selectBtn = screen.getByRole('button', { name: /select for driving/i });
+    expect(selectBtn).toBeInTheDocument();
+
+    // Click select for vehicle 2
+    fireEvent.click(selectBtn);
+
+    // Active vehicle plate preview should switch to VYY 9999
+    await waitFor(() => {
+      expect(screen.getByText(/black · nissan serena/i)).toBeInTheDocument();
+    });
+  });
+
+  it('allows volunteer driver to open add vehicle modal', async () => {
+    render(
+      <MemoryRouter>
+        <Drive />
+      </MemoryRouter>
+    );
+
+    const settingsTab = screen.getByRole('tab', { name: /^settings$/i });
+    fireEvent.click(settingsTab);
+
+    await waitFor(() => {
+      expect(screen.getByRole('button', { name: /add vehicle/i })).toBeInTheDocument();
+    });
+
+    const addBtn = screen.getByRole('button', { name: /add vehicle/i });
+    fireEvent.click(addBtn);
+
+    // Modal opens with dialog
+    await waitFor(() => {
+      expect(screen.getByRole('dialog', { name: /add vehicle/i })).toBeInTheDocument();
+    });
+  });
 });

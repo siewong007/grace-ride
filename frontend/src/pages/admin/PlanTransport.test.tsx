@@ -134,4 +134,133 @@ describe('PlanTransport draft & traffic lead approval', () => {
     await userEvent.click(returnBtn);
     expect(postSpy).toHaveBeenCalledWith('/admin/events/5/plan/return', { notes: 'Need to adjust route' });
   });
+
+  it('allows traffic group member to export assignment image and view high-quality preview modal', async () => {
+    (authMod.useAuth as unknown as ReturnType<typeof vi.fn>).mockReturnValue({
+      can: () => true,
+      me: { id: 2, name: 'Member Bob', roles: ['traffic_member'] },
+    });
+
+    vi.spyOn(apiMod, 'useApi').mockReturnValue({
+      data: {
+        ...planFixture,
+        can_approve: false,
+        draft: null,
+      },
+      error: null,
+      loading: false,
+      refreshing: false,
+      reload: vi.fn(),
+      setData: vi.fn(),
+    });
+
+    vi.spyOn(HTMLCanvasElement.prototype, 'getContext').mockReturnValue({
+      fillStyle: '',
+      strokeStyle: '',
+      lineWidth: 1,
+      font: '',
+      textAlign: '',
+      textBaseline: '',
+      fillRect: vi.fn(),
+      strokeRect: vi.fn(),
+      fillText: vi.fn(),
+      beginPath: vi.fn(),
+      moveTo: vi.fn(),
+      lineTo: vi.fn(),
+      arcTo: vi.fn(),
+      closePath: vi.fn(),
+      fill: vi.fn(),
+      stroke: vi.fn(),
+      roundRect: vi.fn(),
+      scale: vi.fn(),
+      measureText: vi.fn((str: string) => ({ width: str.length * 8 })),
+    } as unknown as CanvasRenderingContext2D);
+    vi.spyOn(HTMLCanvasElement.prototype, 'toDataURL').mockReturnValue('data:image/png;base64,mockImageDataUrl');
+
+    render(
+      <MemoryRouter initialEntries={['/admin/events/5/plan']}>
+        <Routes>
+          <Route path="/admin/events/:id/plan" element={<PlanTransport />} />
+        </Routes>
+      </MemoryRouter>,
+    );
+
+    const exportBtn = screen.getByRole('button', { name: /export.*image/i });
+    expect(exportBtn).toBeInTheDocument();
+
+    await userEvent.click(exportBtn);
+
+    // Modal opens with preview and action buttons
+    expect(screen.getByRole('dialog')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /download image/i })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /copy image/i })).toBeInTheDocument();
+
+    const previewImg = screen.getByRole('img', { name: /export.*image/i });
+    expect(previewImg).toHaveAttribute('src', 'data:image/png;base64,mockImageDataUrl');
+  });
+
+  it('allows traffic lead to export final assignment image when approved', async () => {
+    (authMod.useAuth as unknown as ReturnType<typeof vi.fn>).mockReturnValue({
+      can: () => true,
+      me: { id: 18, name: 'Lead Zhang', roles: ['traffic_head'] },
+    });
+
+    vi.spyOn(apiMod, 'useApi').mockReturnValue({
+      data: {
+        ...planFixture,
+        can_approve: true,
+        draft: {
+          status: 'approved',
+          assignments: [{ ride_id: 11, driver_id: 30 }],
+          reviewed_by: { id: 18, name: 'Lead Zhang' },
+          reviewed_at: '2026-11-20T11:00:00',
+        },
+      },
+      error: null,
+      loading: false,
+      refreshing: false,
+      reload: vi.fn(),
+      setData: vi.fn(),
+    });
+
+    vi.spyOn(HTMLCanvasElement.prototype, 'getContext').mockReturnValue({
+      fillStyle: '',
+      strokeStyle: '',
+      lineWidth: 1,
+      font: '',
+      textAlign: '',
+      textBaseline: '',
+      fillRect: vi.fn(),
+      strokeRect: vi.fn(),
+      fillText: vi.fn(),
+      beginPath: vi.fn(),
+      moveTo: vi.fn(),
+      lineTo: vi.fn(),
+      arcTo: vi.fn(),
+      closePath: vi.fn(),
+      fill: vi.fn(),
+      stroke: vi.fn(),
+      roundRect: vi.fn(),
+      scale: vi.fn(),
+      measureText: vi.fn((str: string) => ({ width: str.length * 8 })),
+    } as unknown as CanvasRenderingContext2D);
+    vi.spyOn(HTMLCanvasElement.prototype, 'toDataURL').mockReturnValue('data:image/png;base64,mockApprovedDataUrl');
+
+    render(
+      <MemoryRouter initialEntries={['/admin/events/5/plan']}>
+        <Routes>
+          <Route path="/admin/events/:id/plan" element={<PlanTransport />} />
+        </Routes>
+      </MemoryRouter>,
+    );
+
+    const exportBtn = screen.getByRole('button', { name: /export.*image/i });
+    expect(exportBtn).toBeInTheDocument();
+
+    await userEvent.click(exportBtn);
+
+    expect(screen.getByRole('dialog')).toBeInTheDocument();
+    const previewImg = screen.getByRole('img', { name: /export.*image/i });
+    expect(previewImg).toHaveAttribute('src', 'data:image/png;base64,mockApprovedDataUrl');
+  });
 });

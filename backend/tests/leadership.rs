@@ -670,10 +670,14 @@ async fn only_leadership_can_authorise_event_mileage_and_mileage_is_event_specif
 
     // 7. Verify ride completion reimbursement behavior:
     // Ensure driver has a standard vehicle registered
+    sqlx::query("DELETE FROM vehicles WHERE user_id = $1")
+        .bind(driver_id)
+        .execute(&st.db)
+        .await
+        .unwrap();
     sqlx::query(
-        "INSERT INTO vehicles (user_id, model, color, plate, vehicle_type, wheelchair_ok, low_step, child_seat)
-         VALUES ($1, 'Proton Saga', 'White', 'ABC1234', 'standard', 0, 0, 0)
-         ON CONFLICT (user_id) DO UPDATE SET vehicle_type = 'standard'",
+        "INSERT INTO vehicles (user_id, model, color, plate, vehicle_type, wheelchair_ok, low_step, child_seat, is_active)
+         VALUES ($1, 'Proton Saga', 'White', 'ABC1234', 'standard', 0, 0, 0, 1)",
     )
     .bind(driver_id)
     .execute(&st.db)

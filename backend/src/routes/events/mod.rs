@@ -2,6 +2,7 @@
 
 mod checkin;
 mod manage;
+mod post_event;
 mod signups;
 
 use axum::{
@@ -44,6 +45,14 @@ pub fn router() -> Router<AppState> {
         .route(
             "/events/{id}/checkin-code/reset",
             post(checkin::reset_checkin_code),
+        )
+        .route(
+            "/events/{id}/post-event-drivers",
+            get(post_event::get_post_event_drivers),
+        )
+        .route(
+            "/events/{id}/post-event-reimbursements",
+            post(post_event::create_post_event_reimbursements),
         )
 }
 
@@ -242,6 +251,7 @@ async fn list_events(
     let sql = match q.scope.as_deref() {
         Some("past") => format!("{EVENT_SELECT} WHERE {visibility} AND (e.starts_at < $3 OR e.status='finished') ORDER BY e.starts_at DESC LIMIT 50"),
         Some("managing") => format!("{EVENT_SELECT} WHERE e.created_by = $1 ORDER BY e.starts_at DESC LIMIT 100"),
+        Some("registered") => format!("{EVENT_SELECT} WHERE {visibility} AND ms.status = 'going' AND e.status != 'cancelled' AND ($3 != '' OR TRUE) ORDER BY e.starts_at DESC LIMIT 100"),
         _ => format!("{EVENT_SELECT} WHERE {visibility} AND e.starts_at >= $3 AND e.status = 'published' ORDER BY e.starts_at LIMIT 100"),
     };
     let cutoff = now_str;

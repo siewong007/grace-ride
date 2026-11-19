@@ -34,6 +34,7 @@ export default {
   walkIn: '+ Record walk-in attendee',
   walkInNote: 'The report counts “actual attendance”, not just signups.',
   afterEvent: 'After the event',
+  postEventReimbBtn: 'Log Post-Event Reimbursements',
   viewSettlement: 'View cost split',
   createSettlement: 'Start cost split',
   finish: 'Mark as ended',

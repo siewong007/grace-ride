@@ -170,6 +170,42 @@ export function PassengerActions({
           </div>
         </div>
       )}
+
+      {/* Return trip supper preference */}
+      {r.leg === 'return' && !['completed', 'cancelled', 'no_show', 'alt_transport'].includes(r.status) && can('rides', 'update') && (
+        <div className="card tight stack-sm">
+          <div className="bold small row items-center gap-xs">
+            <span>🌙 {t('supperChoiceTitle')}</span>
+          </div>
+          <p className="tiny muted no-margin">
+            {t('supperChoicePrompt')}
+          </p>
+          <div className="btn-row">
+            <Button
+              variant={r.supper_choice === 'supper' ? 'primary' : 'secondary'}
+              size="sm"
+              disabled={busy}
+              onClick={() => run(() => post(`/rides/${r.id}/supper-choice`, { choice: 'supper' }).then(reload), t('supperChoiceConfirmed'))}
+            >
+              🍜 {t('supperChoiceJoin')}
+            </Button>
+            <Button
+              variant={r.supper_choice === 'direct_home' ? 'primary' : 'secondary'}
+              size="sm"
+              disabled={busy}
+              onClick={() => run(() => post(`/rides/${r.id}/supper-choice`, { choice: 'direct_home' }).then(reload), t('supperChoiceHomeConfirmed'))}
+            >
+              🏠 {t('supperChoiceDirectHome')}
+            </Button>
+          </div>
+          {r.supper_choice === 'supper' && (
+            <span className="tiny text-success">✓ {t('supperChoiceJoinNote')}</span>
+          )}
+          {r.supper_choice === 'direct_home' && (
+            <span className="tiny muted">✓ {t('supperChoiceDirectHomeNote')}</span>
+          )}
+        </div>
+      )}
       <ErrorBox error={error} />
       {part === 'all' && cancelControls}
       {unable && (
@@ -208,6 +244,12 @@ export function DriverActions({ ride: r, reload }: { ride: Ride; reload: () => v
       <h2>{t('driverActions')}</h2>
 
       {/* Passenger readiness status notice for driver */}
+      {r.leg === 'return' && r.supper_choice === 'supper' && (
+        <Notice tone="info">🌙 {t('driverSupperNotice')}</Notice>
+      )}
+      {r.leg === 'return' && r.supper_choice === 'direct_home' && (
+        <Notice tone="info">🏠 {t('driverDirectHomeNotice')}</Notice>
+      )}
       {r.readiness_status === 'ready' && (
         <Notice tone="success">{t('readyConfirmed')}</Notice>
       )}

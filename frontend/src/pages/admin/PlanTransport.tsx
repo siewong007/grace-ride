@@ -4,7 +4,7 @@
 import { DragEvent, useCallback, useEffect, useMemo, useState } from 'react';
 import { useParams } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
-import { Accessibility, AlertCircle, Car, CheckCircle2, Clock, History, Repeat, RotateCcw, Save, Send, Sparkles, Undo2, UserRound } from 'lucide-react';
+import { Accessibility, AlertCircle, Car, Check, CheckCircle2, Clock, Copy, Download, History, Repeat, RotateCcw, Save, Send, Sparkles, Undo2, UserRound } from 'lucide-react';
 import { ApiError, post, useApi } from '../../api';
 import { useAuth } from '../../auth';
 import { canApprovePlan } from '../../perms';
@@ -24,7 +24,9 @@ import {
   useConfirm,
   useToast,
 } from '../../components/ui';
+import PostEventReimbursementModal from '../../components/events/PostEventReimbursementModal';
 import { fmtDateTime, fmtTime, RIDE_STATUS, useFormatT } from '../../format';
+import { copyCanvasToClipboard, downloadDataUrl, renderPlanToCanvas, sanitizeFilename } from './planImageExport';
 import {
   applyLastTime,
   applyMatchReturnDrivers,
@@ -63,6 +65,11 @@ export default function PlanTransport() {
   const [reasons, setReasons] = useState<Record<number, Reason>>({});
   const [noRoom, setNoRoom] = useState<Set<number>>(new Set());
   const [arranging, setArranging] = useState(false);
+  const [showPostEventReimb, setShowPostEventReimb] = useState(false);
+  const [exportModalOpen, setExportModalOpen] = useState(false);
+  const [previewDataUrl, setPreviewDataUrl] = useState<string | null>(null);
+  const [exporting, setExporting] = useState(false);
+  const [copied, setCopied] = useState(false);
 
   // A fresh board (first load, after sending, after a conflict) resets the draft.
   useEffect(() => {
@@ -314,6 +321,57 @@ export default function PlanTransport() {
     }
   };
 
+  const openExportModal = () => {
+    setExporting(true);
+    try {
+      const canvas = renderPlanToCanvas({
+        plan,
+        draft,
+        t: (k, o) => String(t(k as never, o as never)),
+        formatT: (k, o) => String(ft(k as never, o as never)),
+        scale: 2,
+        isApproved: plan.draft?.status === 'approved' || (!dirty && plan.event.status === 'confirmed'),
+      });
+      const url = canvas.toDataURL('image/png');
+      setPreviewDataUrl(url);
+      setExportModalOpen(true);
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : String(e));
+    } finally {
+      setExporting(false);
+    }
+  };
+
+  const handleDownloadImage = () => {
+    if (!previewDataUrl) return;
+    const filename = `${sanitizeFilename(plan.event.title)}-transport-assignments.png`;
+    downloadDataUrl(previewDataUrl, filename);
+  };
+
+  const handleCopyImage = async () => {
+    if (!previewDataUrl) return;
+    try {
+      const canvas = renderPlanToCanvas({
+        plan,
+        draft,
+        t: (k, o) => String(t(k as never, o as never)),
+        formatT: (k, o) => String(ft(k as never, o as never)),
+        scale: 2,
+        isApproved: plan.draft?.status === 'approved' || (!dirty && plan.event.status === 'confirmed'),
+      });
+      const success = await copyCanvasToClipboard(canvas);
+      if (success) {
+        setCopied(true);
+        toast.success(t('copyImageSuccess'));
+        setTimeout(() => setCopied(false), 2000);
+      } else {
+        toast.info(t('copyImageFailed'));
+      }
+    } catch {
+      toast.info(t('copyImageFailed'));
+    }
+  };
+
   const card = (r: PlanRide) => (
     <PassengerCard
       key={r.id}
@@ -383,17 +441,26 @@ export default function PlanTransport() {
             <div className="plan-summary" aria-live="polite">
               {t('summary', { placed, total: plan.rides.length, seats: seatsUsed })}
             </div>
-            {canUpdate && (
-              <div className="btn-row">
-                <Button
-                  variant="secondary"
-                  icon={<Sparkles size={16} />}
-                  onClick={autoArrange}
-                  loading={arranging}
-                  disabled={unassigned.length === 0 || arranging}
-                >
-                  {t('autoArrange')}
-                </Button>
+            <div className="btn-row">
+              <Button
+                variant="secondary"
+                icon={<Download size={16} />}
+                onClick={openExportModal}
+                loading={exporting}
+              >
+                {t('exportImage')}
+              </Button>
+              {canUpdate && (
+                <>
+                  <Button
+                    variant="secondary"
+                    icon={<Sparkles size={16} />}
+                    onClick={autoArrange}
+                    loading={arranging}
+                    disabled={unassigned.length === 0 || arranging}
+                  >
+                    {t('autoArrange')}
+                  </Button>
                 <Button variant="secondary" icon={<History size={16} />} onClick={sameAsLast} disabled={unassigned.length === 0}>
                   {t('sameAsLast')}
                 </Button>
@@ -411,6 +478,13 @@ export default function PlanTransport() {
                 <Button variant="secondary" icon={<Save size={16} />} onClick={saveDraft} disabled={busy} loading={busy}>
                   {t('saveDraft')}
                 </Button>
+                <Button
+                  variant="secondary"
+                  icon={<Car size={16} />}
+                  onClick={() => setShowPostEventReimb(true)}
+                >
+                  {t('postEventReimbBtn', { ns: 'events' })}
+                </Button>
                 {!canApprove ? (
                   <Button variant="primary" icon={<Send size={16} />} onClick={askLeadApproval} disabled={busy} loading={busy}>
                     {t('askLeadApproval')}
@@ -427,8 +501,9 @@ export default function PlanTransport() {
                     </Button>
                   </>
                 )}
-              </div>
+              </>
             )}
+          </div>
           </div>
 
           <div className="chips plan-filters" role="group" aria-label={t('title')}>
@@ -586,6 +661,58 @@ export default function PlanTransport() {
                   </button>
                 );
               })}
+          </div>
+        </Modal>
+      )}
+
+      {showPostEventReimb && (
+        <PostEventReimbursementModal
+          eventId={plan.event.id}
+          onClose={() => setShowPostEventReimb(false)}
+          onSuccess={() => reload()}
+        />
+      )}
+
+      {exportModalOpen && previewDataUrl && (
+        <Modal
+          title={t('exportModalTitle')}
+          onClose={() => setExportModalOpen(false)}
+        >
+          <div className="stack">
+            <p className="muted" style={{ margin: 0 }}>
+              {t('exportModalDesc')}
+            </p>
+            <div className="row between items-center gap-xs">
+              <Pill tone="info">{t('exportHint')}</Pill>
+            </div>
+            <div className="plan-export-preview-container">
+              <img
+                src={previewDataUrl}
+                alt={t('exportModalTitle')}
+                className="plan-export-preview-img"
+              />
+            </div>
+            <div className="row wrap between gap-sm">
+              <div className="row gap-xs">
+                <Button
+                  variant="primary"
+                  icon={<Download size={16} />}
+                  onClick={handleDownloadImage}
+                >
+                  {t('downloadImage')}
+                </Button>
+                <Button
+                  variant="secondary"
+                  icon={copied ? <Check size={16} /> : <Copy size={16} />}
+                  onClick={handleCopyImage}
+                >
+                  {copied ? t('copyImageSuccess') : t('copyImage')}
+                </Button>
+              </div>
+              <Button variant="ghost" onClick={() => setExportModalOpen(false)}>
+                {t('close', { ns: 'common' })}
+              </Button>
+            </div>
           </div>
         </Modal>
       )}

@@ -35,7 +35,7 @@ pub(super) async fn driver_load_on(
     .fetch_one(&mut *conn)
     .await?;
     let row: Option<(i64, i64, Option<i64>)> = sqlx::query_as(
-        "SELECT u.carpool_enabled, u.spare_seats, v.seats FROM users u LEFT JOIN vehicles v ON v.user_id=u.id WHERE u.id=$1",
+        "SELECT u.carpool_enabled, u.spare_seats, v.seats FROM users u LEFT JOIN vehicles v ON v.user_id=u.id AND v.is_active=1 WHERE u.id=$1",
     )
     .bind(driver)
     .fetch_optional(&mut *conn)
@@ -111,11 +111,12 @@ pub(super) async fn driver_claim(
         .bind(u.id)
         .fetch_optional(&mut *tx)
         .await?;
-    let Some((_v_seats, wheelchair_ok, child_seat)): Option<(i64, i64, i64)> =
-        sqlx::query_as("SELECT seats, wheelchair_ok, child_seat FROM vehicles WHERE user_id=$1")
-            .bind(u.id)
-            .fetch_optional(&mut *tx)
-            .await?
+    let Some((_v_seats, wheelchair_ok, child_seat)): Option<(i64, i64, i64)> = sqlx::query_as(
+        "SELECT seats, wheelchair_ok, child_seat FROM vehicles WHERE user_id=$1 AND is_active=1",
+    )
+    .bind(u.id)
+    .fetch_optional(&mut *tx)
+    .await?
     else {
         return Err(bad(u.lang, ErrorKey::FillVehicleDetailsFirst));
     };

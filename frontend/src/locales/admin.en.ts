@@ -318,6 +318,7 @@ export default {
     receipt: 'Receipt',
     reviewTitle: '{name} · {amount}',
     openReceipt: 'Open original receipt',
+    event: 'Event',
     ride: 'Related ride: {time}',
     mileageKind: 'Mileage receipt (route has no fare)',
     rideLink: 'Ride details',

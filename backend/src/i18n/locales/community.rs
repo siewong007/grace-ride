@@ -27,6 +27,8 @@ pub enum CommunityError {
     CannotPayOwnRequest,
     CannotPayOwnApproval,
     ReimbursementAlreadyClaimed,
+    EventRequiredForReimbursement,
+    EventReimbursementNeedsSignup,
     PayeeVerificationRequired,
     ReimbursementProcessed,
     ReasonRequired,
@@ -126,6 +128,16 @@ pub fn render(lang: Lang, key: CommunityError) -> String {
             lang,
             "此收据或此趟接送已有报销申请，请勿重复申请",
             "This receipt or ride already has a reimbursement request; please don't claim it twice",
+        ),
+        CommunityError::EventRequiredForReimbursement => pair(
+            lang,
+            "Grab 报销需关联活动",
+            "Grab reimbursement requires an event",
+        ),
+        CommunityError::EventReimbursementNeedsSignup => pair(
+            lang,
+            "请先报名参加此活动，才能申请 Grab 报销",
+            "You must be registered for the event to claim Grab reimbursement",
         ),
         CommunityError::CannotPayOwnRequest => {
             pair(lang, "不能为自己的申请付款", "You cannot pay your own request")
