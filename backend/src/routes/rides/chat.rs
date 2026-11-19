@@ -55,9 +55,11 @@ async fn chat_access(st: &AppState, u: &CurrentUser, ride_id: i64) -> AppResult<
         if s != "cancelled" && !members.contains(p) {
             members.push(*p);
         }
-        if let Some(d) = d {
-            if !members.contains(d) {
-                members.push(*d);
+        // A cancelled ride's driver is no longer on the trip; counting them would pin
+        // every receipt at "sent" because they never open the chat again.
+        if let Some(d) = (*d).filter(|_| s != "cancelled") {
+            if !members.contains(&d) {
+                members.push(d);
             }
         }
     }
