@@ -1,5 +1,5 @@
 import { ReactNode, useEffect, useState } from 'react';
-import { useNavigate, useSearchParams } from 'react-router-dom';
+import { useLocation, useNavigate, useSearchParams } from 'react-router-dom';
 import {
   BarChart3,
   Camera,
@@ -16,6 +16,7 @@ import {
   Sliders,
   Trash2,
   User,
+  Users,
   Wallet,
 } from 'lucide-react';
 import { api, del, post, put, useApi } from '../api';
@@ -27,6 +28,7 @@ import { fmtAgo, roleLabel, useFormatT } from '../format';
 import { passkeySupported, registerPasskey, withRecentSignIn } from '../webauthn';
 import { WaitingRoom } from '../components/Onboarding';
 import AvatarEditor from '../components/AvatarEditor';
+import FamilySection from './family/FamilySection';
 import QRCode from 'qrcode';
 import { useTranslation } from 'react-i18next';
 
@@ -41,6 +43,7 @@ export default function Profile() {
   const canReauth = passkeySupported() && (me?.passkey_count ?? 0) > 0;
   const recentSignIn = <T,>(fn: () => Promise<T>) => withRecentSignIn(fn, canReauth);
   const nav = useNavigate();
+  const loc = useLocation();
   const { lock, canLock } = useAutoLock();
   const passkeys = useApi<{ id: number; label: string; created_at: string; last_used: string | null }[]>('/auth/passkeys');
   // The open section lives in the URL so the header back button and swipe-back both return to the list.
@@ -71,6 +74,15 @@ export default function Profile() {
   const [editAvatar, setEditAvatar] = useState(false);
   const { busy, error, run } = useAction();
   if (!me) return null;
+
+  if (loc.pathname === '/me/family') {
+    return (
+      <div className="stack profile-page">
+        <PageHeader title={t('family')} back="/me" />
+        <FamilySection />
+      </div>
+    );
+  }
 
   const openSection = (section: SectionKey) => {
     setPushStatus('');
@@ -296,6 +308,12 @@ export default function Profile() {
               hint={securityHint}
               aria-haspopup="dialog"
               onClick={() => openSection('security')}
+            />
+            <SheetLink
+              tone="coral"
+              icon={<Users size={iconSz} />}
+              label={t('family')}
+              to="/me/family"
             />
           </div>
         </section>
