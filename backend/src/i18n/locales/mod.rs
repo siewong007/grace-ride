@@ -158,6 +158,9 @@ pub fn render(lang: Lang, key: &ErrorKey) -> String {
         }
         ErrorKey::InvalidPassCode => events::render(lang, EventsError::InvalidPassCode),
         ErrorKey::CarePassClosed => events::render(lang, EventsError::CarePassClosed),
+        ErrorKey::MileageAuthorisationRestricted => {
+            events::render(lang, EventsError::MileageAuthorisationRestricted)
+        }
 
         ErrorKey::InvalidPickupTime => rides::render(lang, RidesError::InvalidPickupTime),
         ErrorKey::PickupTimeInPast => rides::render(lang, RidesError::PickupTimeInPast),
@@ -538,6 +541,7 @@ mod tests {
             ErrorKey::OnlyGoingCanInviteVisitor => ErrorKey::OnlyGoingCanInviteVisitor,
             ErrorKey::InvalidPassCode => ErrorKey::InvalidPassCode,
             ErrorKey::CarePassClosed => ErrorKey::CarePassClosed,
+            ErrorKey::MileageAuthorisationRestricted => ErrorKey::MileageAuthorisationRestricted,
 
             ErrorKey::InvalidPickupTime => ErrorKey::InvalidPickupTime,
             ErrorKey::PickupTimeInPast => ErrorKey::PickupTimeInPast,
@@ -669,6 +673,7 @@ mod tests {
             "UnattendedMembers",
             "OpenPaymentsRemain",
             "PaidMembersCannotBeRemoved",
+            "FamilyFull",
         ];
         let mut seen = std::collections::HashSet::new();
         for key in samples() {

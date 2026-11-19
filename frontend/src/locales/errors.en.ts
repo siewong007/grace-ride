@@ -104,7 +104,8 @@ export default {
     "VISITOR_NAME_REQUIRED": "Enter the visitor’s name",
     "ONLY_GOING_CAN_INVITE_VISITOR": "Only members going to the event, or its organiser, can invite a visitor",
     "INVALID_PASS_CODE": "No matching member pass code found for this event",
-    "CARE_PASS_CLOSED": "This safe-arrival status link is closed or expired"
+    "CARE_PASS_CLOSED": "This safe-arrival status link is closed or expired",
+    "MILEAGE_AUTHORISATION_RESTRICTED": "Only the super admin, President or Vice-President can allow an event to be claimable for mileage"
   },
   "rides": {
     "PICKUP_TIME_REQUIRED": "Please enter a pickup time",

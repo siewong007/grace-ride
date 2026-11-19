@@ -183,6 +183,7 @@ pub struct RideRow {
     pub event_created_by: Option<i64>,
     pub event_is_all: bool,
     pub event_group_ids: Vec<i64>,
+    pub event_mileage_claimable: i64,
 }
 
 pub(super) const RIDE_SELECT: &str = "SELECT r.id, r.passenger_id, r.driver_id, r.event_id, r.trip_id, r.pickup_at, r.pickup_area_id,
@@ -200,7 +201,8 @@ pub(super) const RIDE_SELECT: &str = "SELECT r.id, r.passenger_id, r.driver_id, 
     COALESCE((SELECT vp.host_group_id FROM visitor_passes vp WHERE vp.ride_id = r.id ORDER BY vp.id DESC LIMIT 1), r.as_group_id) AS match_group_id,
     e.created_by AS event_created_by,
     COALESCE((SELECT bool_or(g.is_all = 1) FROM event_groups eg JOIN groups g ON g.id = eg.group_id WHERE eg.event_id = r.event_id), false) AS event_is_all,
-    COALESCE((SELECT array_agg(eg.group_id) FROM event_groups eg WHERE eg.event_id = r.event_id), '{}'::BIGINT[]) AS event_group_ids
+    COALESCE((SELECT array_agg(eg.group_id) FROM event_groups eg WHERE eg.event_id = r.event_id), '{}'::BIGINT[]) AS event_group_ids,
+    COALESCE(e.mileage_claimable, 0) AS event_mileage_claimable
     FROM rides r
     JOIN areas a ON a.id = r.pickup_area_id
     JOIN users p ON p.id = r.passenger_id
@@ -283,7 +285,7 @@ pub fn ride_json(r: &RideRow, u: &CurrentUser) -> Value {
                 || staff
                 || crate::audience::sees_event(u, r.event_created_by.unwrap_or(0), r.event_is_all, &r.event_group_ids);
             if sees {
-                json!({"id": id, "title": r.event_title})
+                json!({"id": id, "title": r.event_title, "mileage_claimable": r.event_mileage_claimable == 1})
             } else {
                 json!({"id": null, "title": null, "private": true})
             }

@@ -432,6 +432,13 @@ pub fn can_manage_admins(roles: &[String]) -> bool {
         .any(|r| r == SUPERADMIN_ROLE || r == PRESIDENT_ROLE || r == VICE_PRESIDENT_ROLE)
 }
 
+/// Only the super admin, President or Vice-President can allow an event to be claimable for mileage.
+pub fn can_authorise_event_mileage(roles: &[String]) -> bool {
+    roles
+        .iter()
+        .any(|r| r == SUPERADMIN_ROLE || r == PRESIDENT_ROLE || r == VICE_PRESIDENT_ROLE)
+}
+
 /// Chain of command, highest authority first. A member's rank is the strongest ranked
 /// role they hold. Each level appoints only the level directly below it, and commands
 /// (disables, edits, revokes) every level below. Roles outside the chain (admin,

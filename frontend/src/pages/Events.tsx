@@ -44,6 +44,8 @@ export interface EventItem {
   photo_file_id?: number | null;
   /** Whether the optional attendance module is enabled for this event. */
   attendance_enabled?: boolean;
+  /** Whether volunteer rides for this event are claimable for mileage reimbursement. */
+  mileage_claimable?: boolean;
   /** Check-in code for QR attendance (returned only to organiser). */
   checkin_code?: string | null;
 }

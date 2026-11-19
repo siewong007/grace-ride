@@ -106,6 +106,7 @@ pub enum ErrorKey {
     OnlyGoingCanInviteVisitor,
     InvalidPassCode,
     CarePassClosed,
+    MileageAuthorisationRestricted,
 
     // === Rides ===
     InvalidPickupTime,
@@ -326,6 +327,7 @@ impl ErrorKey {
             Self::OnlyGoingCanInviteVisitor => "ONLY_GOING_CAN_INVITE_VISITOR",
             Self::InvalidPassCode => "INVALID_PASS_CODE",
             Self::CarePassClosed => "CARE_PASS_CLOSED",
+            Self::MileageAuthorisationRestricted => "MILEAGE_AUTHORISATION_RESTRICTED",
 
             Self::InvalidPickupTime => "INVALID_PICKUP_TIME",
             Self::PickupTimeInPast => "PICKUP_TIME_IN_PAST",

@@ -8,6 +8,7 @@ import { useTranslation } from 'react-i18next';
 import { AddressInput } from '../components/AddressInput';
 import PhotoAttach from '../components/PhotoAttach';
 import { ordinary, treeOrder, withDescendants } from '../groupTree';
+import { canAuthoriseMileage } from '../perms';
 
 interface Group {
   id: number;
@@ -33,12 +34,14 @@ interface ExistingEvent {
   as_group_ids: number[];
   photo_file_id: number | null;
   attendance_enabled: boolean;
+  mileage_claimable?: boolean;
   created_by?: { id: number };
 }
 
 export default function EventForm() {
   const { t } = useTranslation('eventForm');
   const { me } = useAuth();
+  const canMileage = canAuthoriseMileage(me?.roles);
   const ft = useFormatT();
   const { id } = useParams();
   const [params] = useSearchParams();
@@ -62,6 +65,7 @@ export default function EventForm() {
     as_group_ids: [] as number[],
     photo_file_id: null as number | null,
     attendance_enabled: true,
+    mileage_claimable: false,
     repeat_frequency: 'none' as 'none' | 'weekly' | 'biweekly' | 'monthly',
     repeat_count: '4',
   });
@@ -86,6 +90,7 @@ export default function EventForm() {
       as_group_ids: existing.as_group_ids ?? [],
       photo_file_id: keepPhoto ? (existing.photo_file_id ?? null) : null,
       attendance_enabled: existing.attendance_enabled ?? true,
+      mileage_claimable: existing.mileage_claimable ?? false,
       repeat_frequency: 'none',
       repeat_count: '4',
     });
@@ -129,6 +134,7 @@ export default function EventForm() {
       group_ids: f.group_ids,
       photo_file_id: f.photo_file_id,
       attendance_enabled: f.attendance_enabled,
+      mileage_claimable: f.mileage_claimable,
       // Empty: people choose from the audience groups and their sub-groups.
       as_group_ids: narrow ? f.as_group_ids.filter((g) => joinable.some((j) => j.id === g)) : [],
       repeat_frequency: !id && f.repeat_frequency !== 'none' ? f.repeat_frequency : undefined,
@@ -256,6 +262,22 @@ export default function EventForm() {
                     onChange={(e) => setF({ ...f, attendance_enabled: e.target.checked })}
                   />
                   <span>{t('enableAttendance')}</span>
+                </label>
+              </Field>
+            </div>
+            <div className="full">
+              <Field
+                label={t('mileageClaimable')}
+                hint={canMileage ? t('mileageClaimableHint') : t('mileageClaimableRestrictedHint')}
+              >
+                <label className={`row nowrap gap-sm ${!canMileage ? 'opacity-70 cursor-not-allowed' : ''}`}>
+                  <input
+                    type="checkbox"
+                    checked={f.mileage_claimable}
+                    disabled={!canMileage}
+                    onChange={(e) => setF({ ...f, mileage_claimable: e.target.checked })}
+                  />
+                  <span>{t('enableMileageClaimable')}</span>
                 </label>
               </Field>
             </div>

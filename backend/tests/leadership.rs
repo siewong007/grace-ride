@@ -510,3 +510,274 @@ async fn only_the_superadmin_can_grant_system_configuration_access() {
     .await;
     assert_eq!(r.status, StatusCode::OK, "{}", r.json);
 }
+
+#[tokio::test]
+async fn only_leadership_can_authorise_event_mileage_and_mileage_is_event_specific() {
+    let (app, st) = setup().await;
+    let superadmin = login(&st, "superadmin@example.org").await;
+    let president = login(&st, "president@example.org").await;
+    let vp = login(&st, "vicepresident@example.org").await;
+    let cell_leader = login(&st, "cellleader@example.org").await;
+    let driver = login(&st, "driver@example.org").await;
+    let driver_id = user_id(&st, "driver@example.org").await;
+    let passenger_id = user_id(&st, "member@example.org").await;
+
+    // 1. Non-leadership (cell leader) cannot create an event with mileage_claimable: true
+    let r = call(
+        &app,
+        Method::POST,
+        "/api/events",
+        Some(&cell_leader),
+        Some(json!({
+            "title": "Cell Outing with Mileage",
+            "kind": "other",
+            "starts_at": tomorrow("10:00"),
+            "location": "Park",
+            "group_ids": [1],
+            "mileage_claimable": true
+        })),
+    )
+    .await;
+    assert_eq!(r.status, StatusCode::FORBIDDEN, "{}", r.json);
+    assert_eq!(r.json["code"], "MILEAGE_AUTHORISATION_RESTRICTED");
+
+    // 2. Cell leader creates event without mileage_claimable (defaults to false)
+    let r = call(
+        &app,
+        Method::POST,
+        "/api/events",
+        Some(&cell_leader),
+        Some(json!({
+            "title": "Cell Normal Outing",
+            "kind": "other",
+            "starts_at": tomorrow("10:00"),
+            "location": "Park",
+            "group_ids": [1]
+        })),
+    )
+    .await;
+    assert_eq!(r.status, StatusCode::OK, "{}", r.json);
+    let normal_event_id = r.json["id"].as_i64().unwrap();
+
+    // Verify detail shows mileage_claimable: false
+    let r = call(
+        &app,
+        Method::GET,
+        &format!("/api/events/{normal_event_id}"),
+        Some(&cell_leader),
+        None,
+    )
+    .await;
+    assert_eq!(r.status, StatusCode::OK);
+    assert_eq!(r.json["mileage_claimable"], false);
+
+    // 3. Cell leader cannot update normal event to mileage_claimable: true
+    let r = call(
+        &app,
+        Method::PUT,
+        &format!("/api/events/{normal_event_id}"),
+        Some(&cell_leader),
+        Some(json!({
+            "title": "Cell Normal Outing Updated",
+            "kind": "other",
+            "starts_at": tomorrow("10:00"),
+            "location": "Park",
+            "group_ids": [1],
+            "mileage_claimable": true
+        })),
+    )
+    .await;
+    assert_eq!(r.status, StatusCode::FORBIDDEN, "{}", r.json);
+    assert_eq!(r.json["code"], "MILEAGE_AUTHORISATION_RESTRICTED");
+
+    // 4. Vice-President can create an event with mileage_claimable: true
+    let r = call(
+        &app,
+        Method::POST,
+        "/api/events",
+        Some(&vp),
+        Some(json!({
+            "title": "Church Retreat by VP",
+            "kind": "other",
+            "starts_at": tomorrow("09:00"),
+            "location": "Camp",
+            "group_ids": [1],
+            "mileage_claimable": true
+        })),
+    )
+    .await;
+    assert_eq!(r.status, StatusCode::OK, "{}", r.json);
+    let claimable_event_id = r.json["id"].as_i64().unwrap();
+
+    let r = call(
+        &app,
+        Method::GET,
+        &format!("/api/events/{claimable_event_id}"),
+        Some(&vp),
+        None,
+    )
+    .await;
+    assert_eq!(r.status, StatusCode::OK);
+    assert_eq!(r.json["mileage_claimable"], true);
+
+    // 5. President can update the normal event to become mileage_claimable: true
+    let r = call(
+        &app,
+        Method::PUT,
+        &format!("/api/events/{normal_event_id}"),
+        Some(&president),
+        Some(json!({
+            "title": "Cell Normal Outing Approved by President",
+            "kind": "other",
+            "starts_at": tomorrow("10:00"),
+            "location": "Park",
+            "group_ids": [1],
+            "mileage_claimable": true
+        })),
+    )
+    .await;
+    assert_eq!(r.status, StatusCode::OK, "{}", r.json);
+
+    let r = call(
+        &app,
+        Method::GET,
+        &format!("/api/events/{normal_event_id}"),
+        Some(&president),
+        None,
+    )
+    .await;
+    assert_eq!(r.status, StatusCode::OK);
+    assert_eq!(r.json["mileage_claimable"], true);
+
+    // 6. Superadmin can create another non-claimable event
+    let r = call(
+        &app,
+        Method::POST,
+        "/api/events",
+        Some(&superadmin),
+        Some(json!({
+            "title": "Non-claimable Gathering",
+            "kind": "other",
+            "starts_at": tomorrow("14:00"),
+            "location": "Hall",
+            "group_ids": [1],
+            "mileage_claimable": false
+        })),
+    )
+    .await;
+    assert_eq!(r.status, StatusCode::OK, "{}", r.json);
+    let non_claimable_event_id = r.json["id"].as_i64().unwrap();
+
+    // 7. Verify ride completion reimbursement behavior:
+    // Ensure driver has a standard vehicle registered
+    sqlx::query(
+        "INSERT INTO vehicles (user_id, model, color, plate, vehicle_type, wheelchair_ok, low_step, child_seat)
+         VALUES ($1, 'Proton Saga', 'White', 'ABC1234', 'standard', 0, 0, 0)
+         ON CONFLICT (user_id) DO UPDATE SET vehicle_type = 'standard'",
+    )
+    .bind(driver_id)
+    .execute(&st.db)
+    .await
+    .unwrap();
+
+    // (A) Ride for claimable event (claimable_event_id):
+    let (ride1_id,): (i64,) = sqlx::query_as(
+        "INSERT INTO rides (passenger_id, driver_id, event_id, pickup_at, pickup_area_id, pickup_address, destination, seats, assistance, notes, status, distance_km)
+         VALUES ($1, $2, $3, $4, 1, 'Street 1', 'Camp', 1, '', '', 'in_progress', 20)
+         RETURNING id",
+    )
+    .bind(passenger_id)
+    .bind(driver_id)
+    .bind(claimable_event_id)
+    .bind(tomorrow("08:30"))
+    .fetch_one(&st.db)
+    .await
+    .unwrap();
+
+    let r = call(
+        &app,
+        Method::POST,
+        &format!("/api/rides/{ride1_id}/complete"),
+        Some(&driver),
+        None,
+    )
+    .await;
+    assert_eq!(r.status, StatusCode::OK, "{}", r.json);
+
+    let (reimb1,): (i64,) =
+        sqlx::query_as("SELECT reimbursement_amount_cents FROM rides WHERE id=$1")
+            .bind(ride1_id)
+            .fetch_one(&st.db)
+            .await
+            .unwrap();
+    assert!(
+        reimb1 > 0,
+        "reimbursement for claimable event must be > 0, got {reimb1}"
+    );
+
+    // (B) Ride for non-claimable event (non_claimable_event_id):
+    let (ride2_id,): (i64,) = sqlx::query_as(
+        "INSERT INTO rides (passenger_id, driver_id, event_id, pickup_at, pickup_area_id, pickup_address, destination, seats, assistance, notes, status, distance_km)
+         VALUES ($1, $2, $3, $4, 1, 'Street 2', 'Hall', 1, '', '', 'in_progress', 20)
+         RETURNING id",
+    )
+    .bind(passenger_id)
+    .bind(driver_id)
+    .bind(non_claimable_event_id)
+    .bind(tomorrow("13:30"))
+    .fetch_one(&st.db)
+    .await
+    .unwrap();
+
+    let r = call(
+        &app,
+        Method::POST,
+        &format!("/api/rides/{ride2_id}/complete"),
+        Some(&driver),
+        None,
+    )
+    .await;
+    assert_eq!(r.status, StatusCode::OK, "{}", r.json);
+
+    let (reimb2,): (i64,) =
+        sqlx::query_as("SELECT reimbursement_amount_cents FROM rides WHERE id=$1")
+            .bind(ride2_id)
+            .fetch_one(&st.db)
+            .await
+            .unwrap();
+    assert_eq!(reimb2, 0, "reimbursement for non-claimable event must be 0");
+
+    // (C) Standalone ride without event (event_id is NULL):
+    let (ride3_id,): (i64,) = sqlx::query_as(
+        "INSERT INTO rides (passenger_id, driver_id, event_id, pickup_at, pickup_area_id, pickup_address, destination, seats, assistance, notes, status, distance_km)
+         VALUES ($1, $2, NULL, $3, 1, 'Street 3', 'Church', 1, '', '', 'in_progress', 20)
+         RETURNING id",
+    )
+    .bind(passenger_id)
+    .bind(driver_id)
+    .bind(tomorrow("17:30"))
+    .fetch_one(&st.db)
+    .await
+    .unwrap();
+
+    let r = call(
+        &app,
+        Method::POST,
+        &format!("/api/rides/{ride3_id}/complete"),
+        Some(&driver),
+        None,
+    )
+    .await;
+    assert_eq!(r.status, StatusCode::OK, "{}", r.json);
+
+    let (reimb3,): (i64,) =
+        sqlx::query_as("SELECT reimbursement_amount_cents FROM rides WHERE id=$1")
+            .bind(ride3_id)
+            .fetch_one(&st.db)
+            .await
+            .unwrap();
+    assert_eq!(
+        reimb3, 0,
+        "standalone ride must not be claimable (reimbursement 0)"
+    );
+}

@@ -786,18 +786,24 @@ pub(super) async fn complete(
     }
 
     // --- Auto reimbursement: distance × per-km rate for the driver's vehicle type ---
+    // Only rides for events with mileage_claimable = 1 are eligible for mileage reimbursement.
+    // Standalone rides (not linked to an event) or non-claimable events receive 0 cents.
     let distance_km: Option<i64> = r.distance_km;
-    let reimbursement_cents: i64 = match (distance_km, &r.v_type) {
-        (Some(km), Some(vt)) => {
-            let rate: Option<(i64,)> = sqlx::query_as(
-                "SELECT rate_cents_per_km FROM reimbursement_rates WHERE vehicle_type = $1",
-            )
-            .bind(vt)
-            .fetch_optional(&st.db)
-            .await?;
-            km * rate.map(|r| r.0).unwrap_or(0)
+    let reimbursement_cents: i64 = if r.event_id.is_some() && r.event_mileage_claimable == 1 {
+        match (distance_km, &r.v_type) {
+            (Some(km), Some(vt)) => {
+                let rate: Option<(i64,)> = sqlx::query_as(
+                    "SELECT rate_cents_per_km FROM reimbursement_rates WHERE vehicle_type = $1",
+                )
+                .bind(vt)
+                .fetch_optional(&st.db)
+                .await?;
+                km * rate.map(|r| r.0).unwrap_or(0)
+            }
+            _ => 0,
         }
-        _ => 0,
+    } else {
+        0
     };
 
     // One statement: status, completion time and reimbursement land together, and only

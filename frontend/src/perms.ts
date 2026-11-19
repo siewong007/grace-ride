@@ -69,3 +69,7 @@ export const canAnyAdminPage = (can: Can): boolean => ADMIN_PAGES.some((p) => ca
 
 /** Built-in roles are named by the app; anything else carries its own name. */
 export const SYSTEM_ROLES = ['member', 'superadmin', 'admin', 'president', 'vice_president', 'secretary', 'traffic_head', 'cell_leader', 'transport', 'finance', 'auditor', 'leader', 'driver'];
+
+/** Only superadmin, president, or vice president can authorise an event to be claimable for mileage. */
+export const canAuthoriseMileage = (roles: string[] | undefined): boolean =>
+  !!roles?.some((r) => r === 'superadmin' || r === 'president' || r === 'vice_president');

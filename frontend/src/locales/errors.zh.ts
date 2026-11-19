@@ -104,7 +104,8 @@ export default {
     "VISITOR_NAME_REQUIRED": "请填写访客姓名",
     "ONLY_GOING_CAN_INVITE_VISITOR": "只有已报名参加的会员或活动负责人可以邀请访客",
     "INVALID_PASS_CODE": "找不到对应的活动通行码",
-    "CARE_PASS_CLOSED": "此平安接送追踪链接已关闭或过期"
+    "CARE_PASS_CLOSED": "此平安接送追踪链接已关闭或过期",
+    "MILEAGE_AUTHORISATION_RESTRICTED": "只有超级管理员、会长或副会长可以允许活动报销里程车费"
   },
   "rides": {
     "PICKUP_TIME_REQUIRED": "请填写接送时间",

@@ -36,6 +36,8 @@ pub(super) struct EventIn {
     photo_file_id: Option<i64>,
     /// Optional attendance module: members can scan QR code to check in without a ride.
     attendance_enabled: Option<bool>,
+    /// Optional mileage claimability: whether rides for this event are claimable for mileage.
+    mileage_claimable: Option<bool>,
     /// Optional recurring schedule: none | weekly | biweekly | monthly
     repeat_frequency: Option<String>,
     /// Number of occurrences to generate (1..=12)
@@ -181,6 +183,10 @@ pub(super) async fn create_event(
         None
     };
     let att_enabled = req.attendance_enabled.unwrap_or(true);
+    let mileage_claimable = req.mileage_claimable.unwrap_or(false);
+    if mileage_claimable && !crate::perms::can_authorise_event_mileage(&u.roles) {
+        return Err(forbidden(u.lang, ErrorKey::MileageAuthorisationRestricted));
+    }
 
     let dl_delta = dl.as_deref().and_then(|d| {
         crate::util::parse_dt(d)
@@ -205,8 +211,8 @@ pub(super) async fn create_event(
             None
         };
         let (id,): (i64,) = sqlx::query_as(
-            "INSERT INTO events (title, kind, description, starts_at, location, capacity, cost_note, signup_deadline, created_by, created_at, photo_file_id, attendance_enabled, checkin_code, series_id)
-             VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14) RETURNING id",
+            "INSERT INTO events (title, kind, description, starts_at, location, capacity, cost_note, signup_deadline, created_by, created_at, photo_file_id, attendance_enabled, checkin_code, series_id, mileage_claimable)
+             VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15) RETURNING id",
         )
         .bind(req.title.trim())
         .bind(&req.kind)
@@ -222,6 +228,7 @@ pub(super) async fn create_event(
         .bind(att_enabled as i64)
         .bind(checkin_code)
         .bind(&series_id)
+        .bind(mileage_claimable as i64)
         .fetch_one(&mut *tx)
         .await?;
         save_event_groups(&mut tx, id, &req, u.lang).await?;
@@ -318,6 +325,12 @@ pub(super) async fn duplicate_event(
         .unwrap_or(&src.title)
         .to_string();
     let att_enabled = src.attendance_enabled == 1;
+    let can_auth = crate::perms::can_authorise_event_mileage(&u.roles);
+    let mileage_claimable = if can_auth {
+        src.mileage_claimable == 1
+    } else {
+        false
+    };
     let checkin_code = if att_enabled {
         Some(random_token(10))
     } else {
@@ -339,8 +352,8 @@ pub(super) async fn duplicate_event(
 
     let mut tx = st.db.begin().await?;
     let (new_id,): (i64,) = sqlx::query_as(
-        "INSERT INTO events (title, kind, description, starts_at, location, capacity, cost_note, signup_deadline, created_by, created_at, photo_file_id, attendance_enabled, checkin_code)
-         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13) RETURNING id",
+        "INSERT INTO events (title, kind, description, starts_at, location, capacity, cost_note, signup_deadline, created_by, created_at, photo_file_id, attendance_enabled, checkin_code, mileage_claimable)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14) RETURNING id",
     )
     .bind(&title)
     .bind(&src.kind)
@@ -355,6 +368,7 @@ pub(super) async fn duplicate_event(
     .bind(photo_file_id)
     .bind(att_enabled as i64)
     .bind(checkin_code)
+    .bind(mileage_claimable as i64)
     .fetch_one(&mut *tx)
     .await?;
     let groups_copied = sqlx::query(
@@ -440,12 +454,17 @@ pub(super) async fn update_event(
     }
     let capacity = req.capacity.unwrap_or(0).max(0);
     let att_enabled = req.attendance_enabled.unwrap_or(e.attendance_enabled == 1);
+    let can_auth = crate::perms::can_authorise_event_mileage(&u.roles);
+    let target_mileage = req.mileage_claimable.unwrap_or(e.mileage_claimable == 1);
+    if target_mileage != (e.mileage_claimable == 1) && !can_auth {
+        return Err(forbidden(u.lang, ErrorKey::MileageAuthorisationRestricted));
+    }
     let checkin_code = if att_enabled && e.checkin_code.is_none() {
         Some(random_token(10))
     } else {
         e.checkin_code.clone()
     };
-    sqlx::query("UPDATE events SET title=$1, kind=$2, description=$3, starts_at=$4, location=$5, capacity=$6, cost_note=$7, signup_deadline=$8, photo_file_id=$9, attendance_enabled=$10, checkin_code=$11 WHERE id=$12")
+    sqlx::query("UPDATE events SET title=$1, kind=$2, description=$3, starts_at=$4, location=$5, capacity=$6, cost_note=$7, signup_deadline=$8, photo_file_id=$9, attendance_enabled=$10, checkin_code=$11, mileage_claimable=$12 WHERE id=$13")
         .bind(req.title.trim())
         .bind(&req.kind)
         .bind(req.description.clone().unwrap_or_default())
@@ -457,6 +476,7 @@ pub(super) async fn update_event(
         .bind(req.photo_file_id)
         .bind(att_enabled as i64)
         .bind(checkin_code)
+        .bind(target_mileage as i64)
         .bind(id)
         .execute(&mut *tx)
         .await?;

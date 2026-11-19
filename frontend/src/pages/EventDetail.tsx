@@ -116,6 +116,10 @@ export default function EventDetail() {
         : t('quotaUnlimited', { going: e.going }),
     },
     { label: t('cost'), value: e.cost_note || t('costNone') },
+    {
+      label: t('mileage'),
+      value: e.mileage_claimable ? t('mileageClaimable') : t('mileageNotClaimable'),
+    },
     { label: t('organiser'), value: e.created_by.name },
   ];
 

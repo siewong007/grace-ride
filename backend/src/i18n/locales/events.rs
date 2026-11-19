@@ -37,6 +37,7 @@ pub enum EventsError {
     OnlyGoingCanInviteVisitor,
     InvalidPassCode,
     CarePassClosed,
+    MileageAuthorisationRestricted,
 }
 
 pub fn render(lang: Lang, key: EventsError) -> String {
@@ -185,6 +186,11 @@ pub fn render(lang: Lang, key: EventsError) -> String {
             lang,
             "此平安接送追踪链接已关闭或过期",
             "This safe-arrival status link is closed or expired",
+        ),
+        EventsError::MileageAuthorisationRestricted => pair(
+            lang,
+            "只有超级管理员、会长或副会长可以允许活动报销里程车费",
+            "Only the super admin, President or Vice-President can allow an event to be claimable for mileage",
         ),
     }
 }
