@@ -9,6 +9,7 @@ pub mod auth;
 pub mod common;
 pub mod community;
 pub mod events;
+pub mod family;
 pub mod files;
 pub mod rides;
 pub mod settlements;
@@ -19,6 +20,7 @@ use auth::AuthError;
 use common::CommonError;
 use community::CommunityError;
 use events::EventsError;
+use family::FamilyError;
 use files::FilesError;
 use rides::RidesError;
 use settlements::SettlementsError;
@@ -413,6 +415,15 @@ pub fn render(lang: Lang, key: &ErrorKey) -> String {
         ErrorKey::InvalidReceipt => files::render(lang, FilesError::InvalidReceipt),
         ErrorKey::InvalidPhoto => files::render(lang, FilesError::InvalidPhoto),
         ErrorKey::CannotViewFile => files::render(lang, FilesError::CannotViewFile),
+
+        ErrorKey::FamilyActiveOnly => family::render(lang, FamilyError::ActiveOnly),
+        ErrorKey::AlreadyInFamily => family::render(lang, FamilyError::AlreadyInFamily),
+        ErrorKey::FamilyRequestPending => family::render(lang, FamilyError::RequestPending),
+        ErrorKey::FamilyOwnPhone => family::render(lang, FamilyError::OwnPhone),
+        ErrorKey::FamilyPhoneAmbiguous => family::render(lang, FamilyError::PhoneAmbiguous),
+        ErrorKey::FamilyPhoneUnavailable => family::render(lang, FamilyError::PhoneUnavailable),
+        ErrorKey::FamilyFull { max } => family::render(lang, FamilyError::Full(*max)),
+        ErrorKey::FamilyOwnerCannotLeave => family::render(lang, FamilyError::OwnerCannotLeave),
     }
 }
 
@@ -654,6 +665,15 @@ mod tests {
             ErrorKey::InvalidReceipt => ErrorKey::InvalidReceipt,
             ErrorKey::InvalidPhoto => ErrorKey::InvalidPhoto,
             ErrorKey::CannotViewFile => ErrorKey::CannotViewFile,
+
+            ErrorKey::FamilyActiveOnly => ErrorKey::FamilyActiveOnly,
+            ErrorKey::AlreadyInFamily => ErrorKey::AlreadyInFamily,
+            ErrorKey::FamilyRequestPending => ErrorKey::FamilyRequestPending,
+            ErrorKey::FamilyOwnPhone => ErrorKey::FamilyOwnPhone,
+            ErrorKey::FamilyPhoneAmbiguous => ErrorKey::FamilyPhoneAmbiguous,
+            ErrorKey::FamilyPhoneUnavailable => ErrorKey::FamilyPhoneUnavailable,
+            ErrorKey::FamilyFull { .. } => ErrorKey::FamilyFull { max: 8 },
+            ErrorKey::FamilyOwnerCannotLeave => ErrorKey::FamilyOwnerCannotLeave,
         }
     }
 
@@ -669,6 +689,7 @@ mod tests {
             "UnattendedMembers",
             "OpenPaymentsRemain",
             "PaidMembersCannotBeRemoved",
+            "FamilyFull",
         ];
         let mut seen = std::collections::HashSet::new();
         for key in samples() {

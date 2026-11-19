@@ -223,6 +223,16 @@ pub enum ErrorKey {
     InvalidReceipt,
     InvalidPhoto,
     CannotViewFile,
+
+    // === Family ===
+    FamilyActiveOnly,
+    AlreadyInFamily,
+    FamilyRequestPending,
+    FamilyOwnPhone,
+    FamilyPhoneAmbiguous,
+    FamilyPhoneUnavailable,
+    FamilyFull { max: i64 },
+    FamilyOwnerCannotLeave,
 }
 
 impl ErrorKey {
@@ -439,6 +449,15 @@ impl ErrorKey {
             Self::InvalidReceipt => "INVALID_RECEIPT",
             Self::InvalidPhoto => "INVALID_PHOTO",
             Self::CannotViewFile => "CANNOT_VIEW_FILE",
+
+            Self::FamilyActiveOnly => "FAMILY_ACTIVE_ONLY",
+            Self::AlreadyInFamily => "ALREADY_IN_FAMILY",
+            Self::FamilyRequestPending => "FAMILY_REQUEST_PENDING",
+            Self::FamilyOwnPhone => "FAMILY_OWN_PHONE",
+            Self::FamilyPhoneAmbiguous => "FAMILY_PHONE_AMBIGUOUS",
+            Self::FamilyPhoneUnavailable => "FAMILY_PHONE_UNAVAILABLE",
+            Self::FamilyFull { .. } => "FAMILY_FULL",
+            Self::FamilyOwnerCannotLeave => "FAMILY_OWNER_CANNOT_LEAVE",
         }
     }
 
@@ -464,6 +483,7 @@ impl ErrorKey {
             Self::UnattendedMembers(count)
             | Self::OpenPaymentsRemain(count)
             | Self::PaidMembersCannotBeRemoved(count) => Some(json!({ "count": count })),
+            Self::FamilyFull { max } => Some(json!({ "max": max })),
             _ => None,
         }
     }

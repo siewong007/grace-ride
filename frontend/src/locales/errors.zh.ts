@@ -244,5 +244,15 @@ export default {
     "INVALID_RECEIPT": "收据无效",
     "INVALID_PHOTO": "照片无效",
     "CANNOT_VIEW_FILE": "您无法查看此文件"
+  },
+  "family": {
+    "FAMILY_ACTIVE_ONLY": "账号通过审核后才能建立或邀请家人",
+    "ALREADY_IN_FAMILY": "已经在一个家庭里了",
+    "FAMILY_REQUEST_PENDING": "这个号码已有另一个家庭的待处理邀请",
+    "FAMILY_OWN_PHONE": "这是你自己的号码",
+    "FAMILY_PHONE_AMBIGUOUS": "这个号码对应多位会员，请联系管理员",
+    "FAMILY_PHONE_UNAVAILABLE": "这个号码无法加入，请联系管理员",
+    "FAMILY_FULL": "一个家庭最多 {max} 人",
+    "FAMILY_OWNER_CANNOT_LEAVE": "户主请删除整个家庭，而不能退出"
   }
 }

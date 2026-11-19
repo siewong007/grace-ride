@@ -132,6 +132,15 @@ pub fn check_phone(lang: Lang, phone: &str) -> AppResult<()> {
     Ok(())
 }
 
+/// Digits only. A single leading 0 is rewritten to 60 so 012… and +60 12… match.
+pub fn phone_key(phone: &str) -> String {
+    let digits: String = phone.chars().filter(|c| c.is_ascii_digit()).collect();
+    match digits.strip_prefix('0') {
+        Some(rest) => format!("60{rest}"),
+        None => digits,
+    }
+}
+
 pub fn random_token(len: usize) -> String {
     rand::rng()
         .sample_iter(&Alphanumeric)
@@ -848,5 +857,27 @@ mod order_by_tests {
             ),
             "u.created_at ASC NULLS LAST, u.id ASC"
         );
+    }
+}
+
+#[cfg(test)]
+mod phone_key_tests {
+    use super::{check_phone, phone_key};
+    use crate::i18n::Lang;
+
+    #[test]
+    fn phone_key_folds_a_single_leading_zero() {
+        assert_eq!(phone_key("012-345 6789"), "60123456789");
+        assert_eq!(phone_key("+60 12-345 6789"), "60123456789");
+        assert_eq!(phone_key("60123456789"), "60123456789");
+        assert_eq!(phone_key("1234567890"), "1234567890");
+    }
+
+    #[test]
+    fn check_phone_still_allows_empty_and_rejects_bad_lengths() {
+        assert!(check_phone(Lang::En, "").is_ok());
+        assert!(check_phone(Lang::En, "012-345 6789").is_ok());
+        assert!(check_phone(Lang::En, "123").is_err());
+        assert!(check_phone(Lang::En, &"1".repeat(21)).is_err());
     }
 }
