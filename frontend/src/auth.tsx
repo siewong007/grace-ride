@@ -9,6 +9,10 @@ export interface Me {
   email: string;
   phone: string;
   photo_file_id: number | null;
+  /** A key from `AVATAR_COLORS`, or null for the default background. */
+  avatar_color?: string | null;
+  /** A key from `AVATAR_ICONS`, or null to show the initial. */
+  avatar_icon?: string | null;
   /** Role keys. Built-in ones are named by the app, custom ones by `role_names`. */
   roles: string[];
   role_names: Record<string, string>;

@@ -525,6 +525,16 @@ button, input, select, textarea { font: inherit; color: inherit; }
 .avatar img { width: 100%; height: 100%; object-fit: cover; }
 .avatar.sm { width: 36px; height: 36px; font-size: var(--fs-sm); }
 .avatar.lg { width: 64px; height: 64px; font-size: var(--fs-2xl); }
+.avatar.xl { width: 120px; height: 120px; font-size: 48px; }
+.avatar .avatar-icon { width: 55%; height: 55%; }
+/* Chosen avatar colours: a tint of --av over the surface, with ink mixed toward the text
+   colour, so each one follows light and dark themes without per-theme overrides. */
+.av-purple { --av: #7F77DD; } .av-teal { --av: #1D9E75; } .av-coral { --av: #D85A30; } .av-pink { --av: #D4537E; }
+.av-blue { --av: #378ADD; } .av-green { --av: #639922; } .av-amber { --av: #BA7517; } .av-gray { --av: #888780; }
+.avatar[class*='av-'] {
+  background: color-mix(in srgb, var(--av) 24%, var(--surface));
+  color: color-mix(in srgb, var(--av) 70%, var(--text));
+}
 .plate { display: inline-block; padding: 1px var(--space-2); border: 1px solid currentColor; border-radius: 4px; font-weight: 700; letter-spacing: 0.06em; font-family: var(--font-mono); font-variant-numeric: tabular-nums; }
 
 /* ---------- Stats ---------- */
@@ -653,32 +663,73 @@ textarea.input { min-height: 96px; resize: vertical; }
   padding: var(--space-2) var(--space-2) var(--space-1);
 }
 
-/* ---------- Compact profile ---------- */
+/* ---------- Profile ---------- */
 .profile-page { display: flex; flex-direction: column; gap: var(--space-4); }
 @media (min-width: 768px) {
   .profile-page { max-width: 680px; margin: 0 auto; }
 }
 
-.profile-identity {
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-3);
-  padding: var(--space-3) var(--space-4);
-  background: var(--surface);
-  border: 1px solid var(--border);
-  border-radius: var(--radius);
+.profile-hero {
+  display: flex; flex-direction: column; align-items: center; text-align: center; gap: var(--space-2);
+  padding: var(--space-5) var(--space-4) var(--space-4);
+  background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius);
 }
-@media (min-width: 768px) {
-  .profile-identity {
-    flex-direction: row;
-    align-items: center;
-    padding: var(--space-4);
-  }
+.profile-hero h1 { margin: var(--space-1) 0 0; font-size: var(--fs-xl); font-weight: 700; }
+.profile-hero .profile-email { color: var(--muted); font-size: var(--fs-sm); word-break: break-all; }
+.profile-hero .profile-tags { display: flex; flex-wrap: wrap; justify-content: center; gap: var(--space-1); margin-top: var(--space-1); }
+.profile-avatar-btn {
+  position: relative; display: inline-flex; padding: 0; border: 0; background: none; border-radius: 50%; cursor: pointer;
 }
-.profile-identity .row { align-items: center; gap: var(--space-3); }
-.profile-identity h1 { margin: 0; font-size: var(--fs-lg); font-weight: 700; }
-.profile-identity .stack-sm { gap: var(--space-1); }
-.profile-identity .avatar.lg { width: 64px; height: 64px; font-size: var(--fs-2xl); }
+.profile-avatar-btn .avatar { width: 96px; height: 96px; font-size: 38px; }
+.profile-avatar-btn:hover .avatar { filter: brightness(0.96); }
+.profile-avatar-btn:focus-visible { outline: 2px solid var(--primary); outline-offset: 3px; }
+.profile-avatar-badge {
+  position: absolute; right: 0; bottom: 2px; width: 32px; height: 32px; border-radius: 50%;
+  display: grid; place-items: center; background: var(--surface); color: var(--text);
+  border: 1px solid var(--border); box-shadow: 0 1px 3px rgb(0 0 0 / 0.12);
+}
+.profile-hub .list { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); padding: 0 var(--space-3); }
+.profile-hub .list > button.item.admin-sheet-link { padding-block: var(--space-3); }
+.sheet-link-text { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.sheet-link-hint { color: var(--muted); font-size: var(--fs-sm); font-weight: 400; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.sheet-tile { width: 34px; height: 34px; border-radius: 10px; display: grid; place-items: center; }
+.sheet-tile[class*='av-'] {
+  background: color-mix(in srgb, var(--av) 18%, var(--surface));
+  color: color-mix(in srgb, var(--av) 75%, var(--text));
+}
+
+/* Avatar editor */
+.avatar-editor-preview { display: flex; justify-content: center; padding: var(--space-2) 0; }
+.avatar-crop {
+  position: relative; border-radius: 50%; overflow: hidden; touch-action: none; cursor: grab;
+  padding: 0; border: 0; background: var(--surface-2); box-shadow: 0 0 0 1px var(--border);
+}
+.avatar-crop:active { cursor: grabbing; }
+.avatar-crop:focus-visible { outline: 2px solid var(--primary); outline-offset: 3px; }
+.avatar-crop img { position: absolute; left: 50%; top: 50%; max-width: none; user-select: none; pointer-events: none; }
+.avatar-mode { justify-content: center; }
+.avatar-drop {
+  display: flex; flex-direction: column; align-items: center; gap: var(--space-1); width: 100%;
+  padding: var(--space-4); border: 1px dashed var(--border); border-radius: var(--radius);
+  background: none; color: inherit; cursor: pointer;
+}
+.avatar-drop:hover { background: var(--surface-2); }
+.avatar-zoom { display: flex; align-items: center; gap: var(--space-2); color: var(--muted); }
+.avatar-zoom input { flex: 1; }
+.avatar-swatches, .avatar-icon-grid { display: flex; flex-wrap: wrap; gap: var(--space-2); }
+.avatar-swatch {
+  width: 32px; height: 32px; border-radius: 50%; border: 2px solid transparent; cursor: pointer; padding: 0;
+  background: color-mix(in srgb, var(--av, var(--muted)) 35%, var(--surface));
+  box-shadow: inset 0 0 0 1px var(--border);
+}
+.avatar-swatch.av-none { background: var(--surface-2); }
+.avatar-swatch.on { border-color: var(--text); box-shadow: inset 0 0 0 2px var(--surface); }
+.avatar-icon-opt {
+  width: 44px; height: 44px; border-radius: 50%; display: grid; place-items: center; cursor: pointer;
+  border: 2px solid transparent; background: var(--surface-2); color: var(--text);
+}
+.avatar-icon-opt.on { border-color: var(--primary); color: var(--primary); }
+.avatar-editor-actions { justify-content: flex-end; }
 
 .passkey-list { width: 100%; }
 .passkey-row {

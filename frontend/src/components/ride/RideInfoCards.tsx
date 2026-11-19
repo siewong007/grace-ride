@@ -41,7 +41,7 @@ export function DriverCard({
   return (
     <Card className="ride-driver">
       <div className="row nowrap gap-md min-w-0">
-        <Avatar name={d.name} size="lg" />
+        <Avatar name={d.name} fileId={d.photo_file_id} color={d.avatar_color} icon={d.avatar_icon} size="lg" />
         <div className="min-w-0">
           <div className="muted small">
             {r.viewer.is_driver ? t('youAreDriver') : t('driver')}

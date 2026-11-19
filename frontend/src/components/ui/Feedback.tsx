@@ -4,6 +4,7 @@ import { Lock } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import { Tone } from '../../format';
 import { LoadingMark } from '../Brand';
+import { AVATAR_ICONS, isAvatarColor } from '../../avatarStyle';
 
 export interface EmptyStateProps {
   icon?: ReactNode;
@@ -207,10 +208,26 @@ export const Spinner = () => {
 export const ErrorBox = ({ error }: { error?: string | null }) =>
   error ? <div className="error" role="alert">{error}</div> : null;
 
-export function Avatar({ name, fileId, size }: { name: string; fileId?: number | null; size?: 'sm' | 'md' | 'lg' }) {
+export interface AvatarProps {
+  name: string;
+  fileId?: number | null;
+  /** A key from `AVATAR_COLORS`; unknown keys fall back to the neutral background. */
+  color?: string | null;
+  /** A key from `AVATAR_ICONS`; shown instead of the initial when there is no photo. */
+  icon?: string | null;
+  size?: 'sm' | 'md' | 'lg' | 'xl';
+  /** A local preview image (object URL) that overrides `fileId`. */
+  src?: string | null;
+}
+
+/** A member's picture: their photo, else their chosen icon, else their first initial, on their chosen colour. */
+export function Avatar({ name, fileId, color, icon, size, src }: AvatarProps) {
+  const Icon = icon ? AVATAR_ICONS[icon] : undefined;
+  const img = src ?? (fileId ? `/api/files/${fileId}` : null);
+  const cls = ['avatar', size ?? '', isAvatarColor(color) ? `av-${color}` : ''].filter(Boolean).join(' ');
   return (
-    <div className={`avatar ${size ?? ''}`.trim()} aria-hidden>
-      {fileId ? <img src={`/api/files/${fileId}`} alt="" /> : name.slice(0, 1)}
+    <div className={cls} aria-hidden>
+      {img ? <img src={img} alt="" /> : Icon ? <Icon className="avatar-icon" /> : Array.from(name.trim())[0] ?? '?'}
     </div>
   );
 }

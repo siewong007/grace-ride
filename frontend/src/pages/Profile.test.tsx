@@ -58,6 +58,14 @@ vi.mock('../components/AutoLock', () => ({
   useAutoLock: () => ({ lock: vi.fn() }),
 }));
 
+vi.mock('../components/AvatarEditor', () => ({
+  default: ({ onClose }: { onClose: () => void }) => (
+    <div data-testid="avatar-editor">
+      <button type="button" onClick={onClose}>close editor</button>
+    </div>
+  ),
+}));
+
 vi.mock('../components/AppChrome', () => ({
   DisplayPreferences: () => <div data-testid="display-preferences">Display preferences</div>,
 }));
@@ -175,7 +183,8 @@ vi.mock('../components/ui', () => ({
     label,
     onClick,
     chevron: _chevron,
-    hint: _hint,
+    hint,
+    tone: _tone,
     badge: _badge,
     danger: _danger,
     ...rest
@@ -186,6 +195,7 @@ vi.mock('../components/ui', () => ({
     onClick?: () => void;
     chevron?: boolean;
     hint?: React.ReactNode;
+    tone?: string;
     badge?: React.ReactNode;
     danger?: boolean;
     [k: string]: unknown;
@@ -194,6 +204,7 @@ vi.mock('../components/ui', () => ({
       <>
         {icon}
         {label}
+        {hint && <span>{hint}</span>}
       </>
     );
     if (to) return <a href={to}>{content}</a>;
@@ -280,10 +291,25 @@ describe('Profile compact layout', () => {
     fireEvent.click(screen.getByRole('button', { name: /Personal details/i }));
     fireEvent.change(screen.getByLabelText('Name'), { target: { value: 'New Name' } });
     fireEvent.click(screen.getByRole('button', { name: /^Save$/ }));
-    expect(putMock).toHaveBeenCalledWith(
-      '/me',
-      expect.objectContaining({ name: 'New Name', phone: '0123456789', photo_file_id: 42 }),
-    );
+    expect(putMock).toHaveBeenCalledWith('/me', { name: 'New Name', phone: '0123456789' });
+  });
+
+  it('summarises each section under its row', () => {
+    renderProfile({ ...baseMe, passkey_count: 2, totp_enabled: true });
+    expect(screen.getByText('0123456789')).toBeInTheDocument();
+    expect(screen.getByText('pushOnShort · remindShort')).toBeInTheDocument();
+    expect(screen.getByText('passkeyCount · twoFaOnShort')).toBeInTheDocument();
+  });
+
+  it('opens the avatar editor from the avatar and from personal details', () => {
+    renderProfile(baseMe);
+    expect(screen.queryByTestId('avatar-editor')).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: 'avatarEdit' }));
+    expect(screen.getByTestId('avatar-editor')).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: 'close editor' }));
+    fireEvent.click(screen.getByRole('button', { name: /Personal details/i }));
+    fireEvent.click(screen.getByRole('button', { name: 'avatarEdit' }));
+    expect(screen.getByTestId('avatar-editor')).toBeInTheDocument();
   });
 
   it('renders a Log out action below the sections', () => {

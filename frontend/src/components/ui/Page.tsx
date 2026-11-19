@@ -68,12 +68,14 @@ export function Page({ width = 'wide', className = '', children, ...rest }: Page
   );
 }
 
-/** A list row used by the profile page and the phone admin sheet: icon, label, optional badge, chevron. */
+/** A list row used by the profile page and the phone admin sheet: icon, label, optional summary line, badge, chevron. */
 export function SheetLink({
   to,
   end,
   icon,
   label,
+  hint,
+  tone,
   badge,
   chevron = true,
   onClick,
@@ -83,6 +85,10 @@ export function SheetLink({
   end?: boolean;
   icon: ReactNode;
   label: ReactNode;
+  /** A short summary under the label, such as the current setting. */
+  hint?: ReactNode;
+  /** Shows the icon on a tinted tile in one of the avatar colours (`purple`, `teal`, …). */
+  tone?: string;
   badge?: ReactNode;
   chevron?: boolean;
   onClick?: () => void;
@@ -90,8 +96,15 @@ export function SheetLink({
 }) {
   const body = (
     <>
-      <span className="sidebar-icon">{icon}</span>
-      <span className="grow">{label}</span>
+      <span className={tone ? `sheet-tile av-${tone}` : 'sidebar-icon'}>{icon}</span>
+      {hint ? (
+        <span className="grow sheet-link-text">
+          <span>{label}</span>
+          <span className="sheet-link-hint">{hint}</span>
+        </span>
+      ) : (
+        <span className="grow">{label}</span>
+      )}
       {badge}
       {chevron ? <ChevronRight size={18} className="muted sheet-link-chevron" aria-hidden="true" /> : null}
     </>

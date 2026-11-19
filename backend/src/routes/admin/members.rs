@@ -107,17 +107,35 @@ pub(super) async fn list_users(
         String,
         i64,
         Option<String>,
+        Option<i64>,
+        Option<String>,
+        Option<String>,
     );
-    let to_json = |(id, name, email, phone, roles, status, created, pk, groups): Row| {
+    let to_json = |(
+        id,
+        name,
+        email,
+        phone,
+        roles,
+        status,
+        created,
+        pk,
+        groups,
+        photo,
+        color,
+        icon,
+    ): Row| {
         if staff {
             json!({"id": id, "name": name, "email": email, "phone": phone, "roles": parse_roles(&roles), "status": status,
-                   "created_at": created, "passkeys": pk, "groups": groups.unwrap_or_default()})
+                   "created_at": created, "passkeys": pk, "groups": groups.unwrap_or_default(),
+                   "photo_file_id": photo, "avatar_color": color, "avatar_icon": icon})
         } else {
             json!({"id": id, "name": name})
         }
     };
     let select = "SELECT u.id, u.name, u.email, u.phone, u.roles, u.status, u.created_at, (SELECT COUNT(*) FROM passkeys p WHERE p.user_id=u.id),
-                (SELECT string_agg(g.name, '、') FROM group_members gm JOIN groups g ON g.id=gm.group_id WHERE gm.user_id=u.id)
+                (SELECT string_agg(g.name, '、') FROM group_members gm JOIN groups g ON g.id=gm.group_id WHERE gm.user_id=u.id),
+                u.photo_file_id, u.avatar_color, u.avatar_icon
              FROM users u";
 
     if q.page.is_some() || q.limit.is_some() {

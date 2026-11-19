@@ -220,6 +220,9 @@ test.describe('Visual regression and accessibility', () => {
       await page.goto(p.path);
       await page.waitForLoadState('networkidle');
       await splashGone(page);
+      await page.waitForTimeout(1500);
+      await page.screenshot({ path: `test-results/dbg-${p.name}-1280.png` });
+      console.log('DBG1280', p.name, await page.locator('.onboard-card').count());
       // A crash shows the error screen; never accept it as a baseline.
       await expect(page.getByRole('heading', { name: 'Something went wrong' })).toHaveCount(0);
 

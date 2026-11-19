@@ -24,6 +24,9 @@ export interface Ride {
     id: number;
     name: string;
     phone: string | null;
+    photo_file_id?: number | null;
+    avatar_color?: string | null;
+    avatar_icon?: string | null;
     vehicle: {
       model: string;
       color: string;

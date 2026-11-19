@@ -232,6 +232,8 @@ fn clear_cookies(jar: CookieJar) -> CookieJar {
 struct MeRow {
     phone: String,
     photo_file_id: Option<i64>,
+    avatar_color: Option<String>,
+    avatar_icon: Option<String>,
     totp_enabled: i64,
     password_hash: Option<String>,
     badges_opt_out: i64,
@@ -252,7 +254,7 @@ struct MeRow {
 
 async fn me(State(st): State<AppState>, u: CurrentUser) -> AppResult<Json<Value>> {
     let row: MeRow = sqlx::query_as(
-        "SELECT phone, photo_file_id, totp_enabled, password_hash, badges_opt_out, carpool_enabled, spare_seats, terms_accepted_at, readiness_prompt_mins, gate_wait_mins, auto_lock_mins, totp_backup_codes, terms_version, telegram_chat_id, whatsapp_opt_in, push_opt_in, caregiver_user_id, onboarding_dismissed_at FROM users WHERE id=$1",
+        "SELECT phone, photo_file_id, avatar_color, avatar_icon, totp_enabled, password_hash, badges_opt_out, carpool_enabled, spare_seats, terms_accepted_at, readiness_prompt_mins, gate_wait_mins, auto_lock_mins, totp_backup_codes, terms_version, telegram_chat_id, whatsapp_opt_in, push_opt_in, caregiver_user_id, onboarding_dismissed_at FROM users WHERE id=$1",
     )
     .bind(u.id)
     .fetch_one(&st.db)
@@ -301,6 +303,7 @@ async fn me(State(st): State<AppState>, u: CurrentUser) -> AppResult<Json<Value>
             .unwrap_or(st.cfg.session_timeout_mins);
     Ok(Json(json!({
         "id": u.id, "name": u.name, "email": u.email, "phone": row.phone, "photo_file_id": row.photo_file_id,
+        "avatar_color": row.avatar_color, "avatar_icon": row.avatar_icon,
         "status": u.status,
         "lang": u.lang.code(),
         "roles": u.roles, "role_names": role_names,

@@ -30,7 +30,7 @@ export {
   Spinner,
   StatusPill,
 } from './Feedback';
-export type { EmptyStateProps, NoticeProps, PillProps, PillTone, SkeletonProps } from './Feedback';
+export type { AvatarProps, EmptyStateProps, NoticeProps, PillProps, PillTone, SkeletonProps } from './Feedback';
 
 export { Field, FileInput, ReceiptLink } from './FormFields';
 export type { FieldProps } from './FormFields';

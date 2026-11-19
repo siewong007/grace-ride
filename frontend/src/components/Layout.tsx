@@ -300,7 +300,7 @@ function LayoutInner() {
               </IconButton>
             )}
             <Link to="/me" className="topbar-avatar" aria-label={t('profile')}>
-              <Avatar name={me.name} fileId={me.photo_file_id} size="sm" />
+              <Avatar name={me.name} fileId={me.photo_file_id} color={me.avatar_color} icon={me.avatar_icon} size="sm" />
             </Link>
           </div>
         </header>

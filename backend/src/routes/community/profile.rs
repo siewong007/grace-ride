@@ -12,6 +12,26 @@ use crate::util::{audit, check_name, check_phone, now};
 
 // ---------------- Profile ----------------
 
+/// Avatar background colours. The client maps each key to a themed CSS class, so no
+/// member-supplied colour ever reaches a style attribute.
+pub const AVATAR_COLORS: &[&str] = &[
+    "purple", "teal", "coral", "pink", "blue", "green", "amber", "gray",
+];
+/// Avatar icons, drawn by the client from its own icon set.
+pub const AVATAR_ICONS: &[&str] = &[
+    "car", "heart", "star", "music", "sun", "leaf", "coffee", "book", "church", "bike", "smile",
+    "flower",
+];
+
+/// Accepts "" (reset) or a key from `allowed`.
+fn check_key(lang: crate::i18n::Lang, v: &Option<String>, allowed: &[&str]) -> AppResult<()> {
+    match v.as_deref() {
+        None | Some("") => Ok(()),
+        Some(k) if allowed.contains(&k) => Ok(()),
+        Some(_) => Err(bad(lang, ErrorKey::InvalidAction)),
+    }
+}
+
 #[derive(Deserialize)]
 pub(super) struct ProfileIn {
     /// Roughly every field is optional; callers may only send what changes,
@@ -19,6 +39,12 @@ pub(super) struct ProfileIn {
     name: Option<String>,
     phone: Option<String>,
     photo_file_id: Option<i64>,
+    /// Removes the profile photo; the avatar falls back to the icon or initial.
+    clear_photo: Option<bool>,
+    /// A key from [`AVATAR_COLORS`]; "" resets to the default background.
+    avatar_color: Option<String>,
+    /// A key from [`AVATAR_ICONS`]; "" shows the initial instead.
+    avatar_icon: Option<String>,
     badges_opt_out: Option<bool>,
     lang: Option<String>,
     readiness_prompt_mins: Option<i64>,
@@ -58,6 +84,8 @@ pub(super) async fn update_profile(
             return Err(bad(u.lang, ErrorKey::InvalidAction));
         }
     }
+    check_key(u.lang, &req.avatar_color, AVATAR_COLORS)?;
+    check_key(u.lang, &req.avatar_icon, AVATAR_ICONS)?;
     if let Some(f) = req.photo_file_id {
         let (owner, mime): (i64, String) =
             sqlx::query_as("SELECT owner_id, mime FROM files WHERE id=$1")
@@ -101,7 +129,9 @@ pub(super) async fn update_profile(
         "UPDATE users SET
             name=COALESCE($1, name),
             phone=COALESCE($2, phone),
-            photo_file_id=COALESCE($3, photo_file_id),
+            photo_file_id=CASE WHEN $16 THEN NULL ELSE COALESCE($3, photo_file_id) END,
+            avatar_color=CASE WHEN $17::TEXT IS NULL THEN avatar_color ELSE NULLIF($17, '') END,
+            avatar_icon=CASE WHEN $18::TEXT IS NULL THEN avatar_icon ELSE NULLIF($18, '') END,
             badges_opt_out=COALESCE($4, badges_opt_out),
             lang=COALESCE($5, lang),
             readiness_prompt_mins=COALESCE($6, readiness_prompt_mins),
@@ -128,13 +158,23 @@ pub(super) async fn update_profile(
     .bind(u.id)
     .bind(req.onboarding_dismissed == Some(true))
     .bind(now())
+    .bind(req.clear_photo.unwrap_or(false))
+    .bind(req.avatar_color.as_deref())
+    .bind(req.avatar_icon.as_deref())
     .execute(&st.db)
     .await?;
     // Which fields were sent, not their values: the log is read by staff.
     let changed: Vec<&str> = [
         ("name", req.name.is_some()),
         ("phone", req.phone.is_some()),
-        ("photo", req.photo_file_id.is_some()),
+        (
+            "photo",
+            req.photo_file_id.is_some() || req.clear_photo.unwrap_or(false),
+        ),
+        (
+            "avatar",
+            req.avatar_color.is_some() || req.avatar_icon.is_some(),
+        ),
         ("badges_opt_out", req.badges_opt_out.is_some()),
         ("lang", req.lang.is_some()),
         ("readiness_prompt", req.readiness_prompt_mins.is_some()),

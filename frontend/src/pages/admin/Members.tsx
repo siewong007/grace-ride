@@ -42,6 +42,9 @@ interface User {
   created_at: string;
   passkeys: number;
   groups: string;
+  photo_file_id?: number | null;
+  avatar_color?: string | null;
+  avatar_icon?: string | null;
 }
 
 interface Group {
@@ -230,7 +233,7 @@ function MemberList() {
       sortable: true,
       render: (u) => (
         <div className="row nowrap">
-          <Avatar name={u.name} size="sm" />
+          <Avatar name={u.name} fileId={u.photo_file_id} color={u.avatar_color} icon={u.avatar_icon} size="sm" />
           <span>{u.name}</span>
         </div>
       ),
@@ -314,7 +317,7 @@ function MemberList() {
             itemKey={(u) => u.id}
             compactRow={(u) => (
               <>
-                <Avatar name={u.name} size="sm" />
+                <Avatar name={u.name} fileId={u.photo_file_id} color={u.avatar_color} icon={u.avatar_icon} size="sm" />
                 <div className="grow min-w-0">
                   <div className="bold ellipsis">{u.name}</div>
                   <div className="muted small ellipsis">{u.email}</div>

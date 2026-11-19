@@ -186,7 +186,7 @@ describe('Staff navigation', () => {
     const { page } = openAdminMenu('/admin/menu');
     const heading = screen.getByRole('heading', { name: 'Admin' });
     expect(heading).toHaveClass('sr-only');
-    expect(page.querySelector('.profile-identity')).toBeNull();
+    expect(page.querySelector('.profile-hero')).toBeNull();
     expect(within(page).queryByText('10 waiting')).not.toBeInTheDocument();
     expect(within(page).getByRole('link', { name: /Ride management/ })).toHaveAccessibleName(/3 waiting/);
     const bottom = screen.getByRole('navigation', { name: 'Bottom navigation' });

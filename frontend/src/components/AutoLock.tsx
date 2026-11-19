@@ -263,7 +263,7 @@ export function AutoLockProvider({ children }: { children: ReactNode }) {
           <div className="lock-stack">
             <div className="lock-card">
               <div className="lock-avatar">
-                <Avatar name={me.name} fileId={me.photo_file_id} size="lg" />
+                <Avatar name={me.name} fileId={me.photo_file_id} color={me.avatar_color} icon={me.avatar_icon} size="lg" />
                 <span className="lock-badge" aria-hidden="true">
                   <Lock size={12} />
                 </span>

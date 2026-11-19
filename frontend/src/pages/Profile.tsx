@@ -2,6 +2,7 @@ import { ReactNode, useEffect, useState } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import {
   BarChart3,
+  Camera,
   Copy,
   Fingerprint,
   KeyRound,
@@ -21,10 +22,11 @@ import { api, del, post, put, useApi } from '../api';
 import { useAuth } from '../auth';
 import { useAutoLock } from '../components/AutoLock';
 import { DisplayPreferences } from '../components/AppChrome';
-import { Avatar, Button, ErrorBox, Field, FileInput, Modal, PageHeader, Pill, SheetLink, useAction, useConfirm } from '../components/ui';
+import { Avatar, Button, ErrorBox, Field, Modal, PageHeader, Pill, SheetLink, useAction, useConfirm } from '../components/ui';
 import { fmtAgo, roleLabel, useFormatT } from '../format';
 import { passkeySupported, registerPasskey, withRecentSignIn } from '../webauthn';
 import { WaitingRoom } from '../components/Onboarding';
+import AvatarEditor from '../components/AvatarEditor';
 import QRCode from 'qrcode';
 import { useTranslation } from 'react-i18next';
 
@@ -54,7 +56,6 @@ export default function Profile() {
   const [f, setF] = useState({
     name: me?.name ?? '',
     phone: me?.phone ?? '',
-    photo: me?.photo_file_id ?? null,
     optOut: me?.badges_opt_out ?? false,
   });
   const [readinessPrompt, setReadinessPrompt] = useState(me?.readiness_prompt_mins ?? 45);
@@ -67,6 +68,7 @@ export default function Profile() {
   const [totp, setTotp] = useState<{ secret: string; url: string } | null>(null);
   const [showVerify2fa, setShowVerify2fa] = useState(false);
   const [showBackupCodes, setShowBackupCodes] = useState<string[] | null>(null);
+  const [editAvatar, setEditAvatar] = useState(false);
   const { busy, error, run } = useAction();
   if (!me) return null;
 
@@ -78,9 +80,21 @@ export default function Profile() {
   const isPending = me.status === 'pending';
   const isAdmin = me.privileged;
   const roleText = isPending ? t('pending') : isAdmin ? t('administrator') : t('member');
-  const iconSz = 20;
+  const iconSz = 18;
+  const avatarEl = (
+    <Avatar name={me.name} fileId={me.photo_file_id} color={me.avatar_color} icon={me.avatar_icon} size="lg" />
+  );
+  const readiness = me.readiness_prompt_mins ?? 45;
+  const prefsHint = [
+    me.push_opt_in === false ? t('pushOffShort') : t('pushOnShort'),
+    readiness > 0 ? t('remindShort', { mins: readiness }) : t('remindOffShort'),
+  ].join(' · ');
+  const securityHint = [
+    t('passkeyCount', { count: me.passkey_count }),
+    me.totp_enabled ? t('twoFaOnShort') : t('twoFaOffShort'),
+  ].join(' · ');
 
-  const savePersonal = () => put('/me', { name: f.name, phone: f.phone, photo_file_id: f.photo }).then(refresh);
+  const savePersonal = () => put('/me', { name: f.name, phone: f.phone }).then(refresh);
   const savePreferences = () =>
     put('/me', {
       badges_opt_out: f.optOut,
@@ -221,18 +235,28 @@ export default function Profile() {
   };
 
   return (
-    <div className="stack profile-page">
+    <div className="stack profile-page profile-hub">
       {!open && (
         <>
-      <div className="profile-identity">
-        <div className="row align-center gap-md">
-          <Avatar name={me.name} fileId={me.photo_file_id} size="lg" />
-          <div className="stack-sm">
-            <h1>{me.name}</h1>
-            <Pill tone={isPending ? 'warning' : 'primary'}>{roleText}</Pill>
-          </div>
+      <section className="profile-hero" aria-label={t('account')}>
+        <button
+          type="button"
+          className="profile-avatar-btn"
+          aria-label={t('avatarEdit')}
+          onClick={() => setEditAvatar(true)}
+        >
+          {avatarEl}
+          <span className="profile-avatar-badge" aria-hidden="true">
+            <Camera size={16} />
+          </span>
+        </button>
+        <h1>{me.name}</h1>
+        <div className="profile-email">{me.email}</div>
+        <div className="profile-tags">
+          <Pill tone={isPending ? 'warning' : 'primary'}>{roleText}</Pill>
+          {!isPending && me.groups.slice(0, 3).map((g) => <Pill key={g.id}>{g.name}</Pill>)}
         </div>
-      </div>
+      </section>
 
       {isPending && <WaitingRoom />}
 
@@ -240,12 +264,39 @@ export default function Profile() {
         <section className="stack-xs" aria-label={t('account')}>
           <div className="section-label">{t('account')}</div>
           <div className="list">
-            <SheetLink icon={<User size={iconSz} />} label={t('personalInfo')} aria-haspopup="dialog" onClick={() => openSection('personal')} />
-            <SheetLink icon={<Sliders size={iconSz} />} label={t('preferences')} aria-haspopup="dialog" onClick={() => openSection('preferences')} />
+            <SheetLink
+              tone="blue"
+              icon={<User size={iconSz} />}
+              label={t('personalInfo')}
+              hint={me.phone || t('personalHint')}
+              aria-haspopup="dialog"
+              onClick={() => openSection('personal')}
+            />
+            <SheetLink
+              tone="teal"
+              icon={<Sliders size={iconSz} />}
+              label={t('preferences')}
+              hint={prefsHint}
+              aria-haspopup="dialog"
+              onClick={() => openSection('preferences')}
+            />
             {!isPending && (
-              <SheetLink icon={<MapPin size={iconSz} />} label={t('placesAndCalendar')} aria-haspopup="dialog" onClick={() => openSection('places')} />
+              <SheetLink
+                tone="amber"
+                icon={<MapPin size={iconSz} />}
+                label={t('placesAndCalendar')}
+                aria-haspopup="dialog"
+                onClick={() => openSection('places')}
+              />
             )}
-            <SheetLink icon={<Shield size={iconSz} />} label={t('security')} aria-haspopup="dialog" onClick={() => openSection('security')} />
+            <SheetLink
+              tone="green"
+              icon={<Shield size={iconSz} />}
+              label={t('security')}
+              hint={securityHint}
+              aria-haspopup="dialog"
+              onClick={() => openSection('security')}
+            />
           </div>
         </section>
 
@@ -277,6 +328,16 @@ export default function Profile() {
           <PageHeader title={sheetTitle[open]} back="/me" />
           {open === 'personal' && (
             <div className="stack">
+              <div className="row align-center gap-md">
+                <Avatar name={me.name} fileId={me.photo_file_id} color={me.avatar_color} icon={me.avatar_icon} size="lg" />
+                <div className="stack-xs">
+                  <div className="bold">{t('photo')}</div>
+                  <Button variant="secondary" size="sm" onClick={() => setEditAvatar(true)}>
+                    <Camera size={16} aria-hidden="true" />
+                    {t('avatarEdit')}
+                  </Button>
+                </div>
+              </div>
               <form className="stack" onSubmit={(e) => {
                 e.preventDefault();
                 run(savePersonal, t('saved'));
@@ -287,7 +348,6 @@ export default function Profile() {
                 <Field label={t('phone')} hint={t('phoneHint')}>
                   <input className="input" type="tel" value={f.phone} onChange={(e) => setF({ ...f, phone: e.target.value })} />
                 </Field>
-                <FileInput label={t('photo')} accept="image/*" value={f.photo} onChange={(id) => setF({ ...f, photo: id })} />
                 <div className="btn-row">
                   <Button variant="primary" type="submit" loading={busy}>
                     {t('save')}
@@ -549,6 +609,14 @@ export default function Profile() {
             setTotp(null);
             refresh();
           }}
+        />
+      )}
+      {editAvatar && (
+        <AvatarEditor
+          name={me.name}
+          current={me}
+          onClose={() => setEditAvatar(false)}
+          onSaved={refresh}
         />
       )}
       {showBackupCodes && (
