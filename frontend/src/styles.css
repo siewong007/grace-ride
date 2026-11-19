@@ -17,6 +17,7 @@
   --primary: #1F5DB4;
   --primary-hover: #194E9C;
   --primary-ink: #FFFFFF;
+  --tick-read: #7CF2C4; /* read receipt on a primary chat bubble */
   /* Filled buttons. Dark mode keeps links on --primary (a light blue) and uses these
      so the main button stays a solid fill instead of a pale one that looks disabled. */
   --btn-bg: var(--primary);
@@ -116,6 +117,7 @@
     --primary: #7AA7EE;
     --primary-hover: #9ABDF3;
     --primary-ink: #0B1730;
+  --tick-read: #FFFFFF;
     --primary-soft: #1A2A44;
     --btn-bg: var(--brand-blue);
     --btn-ink: #FFFFFF;
@@ -145,6 +147,7 @@
   --primary: #7AA7EE;
   --primary-hover: #9ABDF3;
   --primary-ink: #0B1730;
+  --tick-read: #FFFFFF;
   --btn-bg: var(--brand-blue);
   --btn-ink: #FFFFFF;
   --btn-hover: #2B6EC4;
@@ -2955,6 +2958,27 @@ main a[href^="tel:"]:not(.btn) { text-decoration: underline; }
 .pending-bubble { opacity: 0.85; }
 .chat-retry-btn { background: none; border: none; padding: 0; color: inherit; font: inherit; text-decoration: underline; cursor: pointer; min-height: 32px; }
 .chat-new-pill { align-self: center; }
+
+/* Trip chat reactions & receipts */
+.chat-react-add { display: inline-flex; align-items: center; justify-content: center; width: 28px; height: 28px; margin: -6px -6px -6px 0; padding: 0; border: none; border-radius: 50%; background: transparent; color: inherit; opacity: 0.7; cursor: pointer; }
+.chat-react-add:hover, .chat-react-add[aria-expanded='true'] { opacity: 1; background: rgb(127 127 127 / 0.18); }
+.chat-react-add svg { width: 16px; height: 16px; }
+@media (pointer: coarse) { .chat-react-add { width: 36px; height: 36px; margin: -10px -10px -10px 0; } }
+.bubble .at { display: inline-flex; align-items: center; gap: 4px; }
+.chat-ticks { display: inline-flex; align-items: center; line-height: 0; opacity: 0.6; }
+.chat-ticks svg { width: 20px; height: 12px; }
+.chat-ticks.read { color: var(--tick-read); opacity: 1; }
+.chat-ticks.read svg { stroke-width: 2.2; }
+.chat-ticks.pending svg { width: 11px; height: 11px; }
+.chat-reacts { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 4px; }
+.chat-react-chip { display: inline-flex; align-items: center; gap: 2px; min-height: 28px; padding: 0 8px; border-radius: var(--radius-pill); border: 1px solid var(--border); background: var(--surface); color: var(--text); font: inherit; font-size: var(--fs-sm); cursor: pointer; }
+.chat-react-chip.on { border-color: var(--primary); background: var(--primary-soft); color: var(--primary); }
+.chat-react-chip:disabled { cursor: default; }
+.chat-react-picker { display: flex; gap: 2px; padding: 4px; border-radius: var(--radius-pill); border: 1px solid var(--border); background: var(--surface); box-shadow: 0 4px 14px rgb(0 0 0 / 0.15); align-self: flex-start; }
+.chat-react-picker.mine { align-self: flex-end; }
+.chat-react-picker button { width: 40px; height: 40px; border: none; border-radius: 50%; background: transparent; font-size: 22px; line-height: 1; cursor: pointer; }
+.chat-react-picker button:hover, .chat-react-picker button[aria-pressed='true'] { background: var(--surface-2); }
+@media (pointer: coarse) { .chat-react-chip { min-height: 36px; } }
 
 /* Planning board filters & driver picker options */
 .plan-filters { margin-bottom: var(--space-3); }

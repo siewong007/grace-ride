@@ -102,6 +102,8 @@ pub fn router() -> Router<AppState> {
             "/rides/{id}/messages",
             get(chat::list_messages).post(chat::post_message),
         )
+        .route("/rides/{id}/messages/read", post(chat::mark_read))
+        .route("/rides/{id}/messages/{mid}/reactions", post(chat::react))
         .route("/rides/{id}/location", get(location::ride_location))
         .route(
             "/rides/{id}/passenger-location",

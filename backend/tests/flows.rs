@@ -4548,3 +4548,248 @@ async fn closing_races_a_revision_without_trapping_a_share() {
         }
     }
 }
+
+#[tokio::test]
+async fn chat_reactions_and_receipts() {
+    let (app, st) = setup().await;
+    let c = cast(&app, &st).await;
+
+    // An approved trip: member is the passenger, driver drives.
+    let id = book(&app, &c.member, c.area_id, 1).await;
+    for (path, who, body) in [
+        ("claim", &c.driver, None),
+        ("respond", &c.member, Some(json!({"accept": true}))),
+        ("approve", &c.transport, None),
+    ] {
+        must(
+            &app,
+            Method::POST,
+            &format!("/api/rides/{id}/{path}"),
+            Some(who),
+            body,
+        )
+        .await;
+    }
+    let msgs = format!("/api/rides/{id}/messages");
+    let sent = must(
+        &app,
+        Method::POST,
+        &msgs,
+        Some(&c.member),
+        Some(json!({"body": "我在门口"})),
+    )
+    .await;
+    let mid = sent["id"].as_i64().unwrap();
+    let mine_status = |chat: &Value| -> String {
+        chat["messages"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|m| m["id"] == mid)
+            .unwrap()["status"]
+            .as_str()
+            .unwrap()
+            .to_string()
+    };
+
+    // Sent: the driver's app has not fetched it yet.
+    let chat = must(&app, Method::GET, &msgs, Some(&c.member), None).await;
+    assert_eq!(mine_status(&chat), "sent");
+    assert!(chat["reactions_allowed"].as_array().unwrap().len() >= 6);
+    // A staff viewer fetching the chat does not count as delivery.
+    must(&app, Method::GET, &msgs, Some(&c.transport), None).await;
+    let chat = must(&app, Method::GET, &msgs, Some(&c.member), None).await;
+    assert_eq!(mine_status(&chat), "sent");
+    // Delivered once the driver's app fetches it; others' messages carry no status.
+    let driver_view = must(&app, Method::GET, &msgs, Some(&c.driver), None).await;
+    let theirs = driver_view["messages"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|m| m["id"] == mid)
+        .unwrap()
+        .clone();
+    assert!(theirs.get("status").is_none());
+    let chat = must(&app, Method::GET, &msgs, Some(&c.member), None).await;
+    assert_eq!(mine_status(&chat), "delivered");
+    // Staff marking read is accepted but not recorded.
+    must(
+        &app,
+        Method::POST,
+        &format!("{msgs}/read"),
+        Some(&c.transport),
+        Some(json!({"up_to": mid})),
+    )
+    .await;
+    let chat = must(&app, Method::GET, &msgs, Some(&c.member), None).await;
+    assert_eq!(mine_status(&chat), "delivered");
+    // Read once the driver has it on screen; a too-high cursor is clamped.
+    must(
+        &app,
+        Method::POST,
+        &format!("{msgs}/read"),
+        Some(&c.driver),
+        Some(json!({"up_to": mid + 1000})),
+    )
+    .await;
+    let chat = must(&app, Method::GET, &msgs, Some(&c.member), None).await;
+    assert_eq!(mine_status(&chat), "read");
+    let (cursor,): (i64,) = sqlx::query_as(
+        "SELECT last_read_id FROM ride_chat_reads WHERE user_id=$1 AND trip_id=(SELECT trip_id FROM rides WHERE id=$2)",
+    )
+    .bind(c.driver_id)
+    .bind(id)
+    .fetch_one(&st.db)
+    .await
+    .unwrap();
+    assert_eq!(cursor, mid);
+    // An outsider cannot mark read.
+    deny(
+        &app,
+        Method::POST,
+        &format!("{msgs}/read"),
+        Some(&c.sophie),
+        Some(json!({"up_to": mid})),
+        StatusCode::FORBIDDEN,
+        "ONLY_TRIP_MEMBERS_CAN_VIEW_CHAT",
+    )
+    .await;
+
+    // Reactions: add, replace, toggle off.
+    let react = format!("{msgs}/{mid}/reactions");
+    let reactions_on = |chat: &Value| -> Value {
+        chat["messages"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|m| m["id"] == mid)
+            .unwrap()["reactions"]
+            .clone()
+    };
+    must(
+        &app,
+        Method::POST,
+        &react,
+        Some(&c.driver),
+        Some(json!({"emoji": "👍"})),
+    )
+    .await;
+    let chat = must(&app, Method::GET, &msgs, Some(&c.member), None).await;
+    let r = reactions_on(&chat);
+    assert_eq!(r.as_array().unwrap().len(), 1);
+    assert_eq!(r[0]["emoji"], "👍");
+    assert_eq!(r[0]["count"], 1);
+    assert_eq!(r[0]["mine"], false);
+    let chat = must(&app, Method::GET, &msgs, Some(&c.driver), None).await;
+    assert_eq!(reactions_on(&chat)[0]["mine"], true);
+    must(
+        &app,
+        Method::POST,
+        &react,
+        Some(&c.member),
+        Some(json!({"emoji": "👍"})),
+    )
+    .await;
+    let chat = must(&app, Method::GET, &msgs, Some(&c.member), None).await;
+    assert_eq!(reactions_on(&chat)[0]["count"], 2);
+    // A different emoji replaces the driver's reaction.
+    must(
+        &app,
+        Method::POST,
+        &react,
+        Some(&c.driver),
+        Some(json!({"emoji": "❤️"})),
+    )
+    .await;
+    let chat = must(&app, Method::GET, &msgs, Some(&c.member), None).await;
+    let r = reactions_on(&chat);
+    assert_eq!(r.as_array().unwrap().len(), 2);
+    assert_eq!(r[0]["count"], 1);
+    // The same emoji again removes it.
+    let off = must(
+        &app,
+        Method::POST,
+        &react,
+        Some(&c.driver),
+        Some(json!({"emoji": "❤️"})),
+    )
+    .await;
+    assert!(off["emoji"].is_null());
+    let chat = must(&app, Method::GET, &msgs, Some(&c.member), None).await;
+    assert_eq!(reactions_on(&chat).as_array().unwrap().len(), 1);
+
+    deny(
+        &app,
+        Method::POST,
+        &react,
+        Some(&c.driver),
+        Some(json!({"emoji": "🔥"})),
+        StatusCode::BAD_REQUEST,
+        "INVALID_REACTION",
+    )
+    .await;
+    deny(
+        &app,
+        Method::POST,
+        &react,
+        Some(&c.sophie),
+        Some(json!({"emoji": "👍"})),
+        StatusCode::FORBIDDEN,
+        "ONLY_TRIP_MEMBERS_CAN_VIEW_CHAT",
+    )
+    .await;
+    // System messages take no reactions.
+    let system: i64 = sqlx::query_scalar(
+        "SELECT MIN(id) FROM ride_messages WHERE user_id IS NULL AND trip_id=(SELECT trip_id FROM rides WHERE id=$1)",
+    )
+    .bind(id)
+    .fetch_one(&st.db)
+    .await
+    .unwrap();
+    deny(
+        &app,
+        Method::POST,
+        &format!("{msgs}/{system}/reactions"),
+        Some(&c.driver),
+        Some(json!({"emoji": "👍"})),
+        StatusCode::BAD_REQUEST,
+        "INVALID_REACTION",
+    )
+    .await;
+
+    // A message from another trip cannot be reached through this ride.
+    let other = book(&app, &c.sophie, c.area_id, 1).await;
+    for (path, who, body) in [
+        ("claim", &c.driver2, None),
+        ("respond", &c.sophie, Some(json!({"accept": true}))),
+        ("approve", &c.transport, None),
+    ] {
+        must(
+            &app,
+            Method::POST,
+            &format!("/api/rides/{other}/{path}"),
+            Some(who),
+            body,
+        )
+        .await;
+    }
+    let foreign = must(
+        &app,
+        Method::POST,
+        &format!("/api/rides/{other}/messages"),
+        Some(&c.sophie),
+        Some(json!({"body": "other car"})),
+    )
+    .await["id"]
+        .as_i64()
+        .unwrap();
+    let r = call(
+        &app,
+        Method::POST,
+        &format!("{msgs}/{foreign}/reactions"),
+        Some(&c.member),
+        Some(json!({"emoji": "👍"})),
+    )
+    .await;
+    assert_eq!(r.status, StatusCode::NOT_FOUND);
+}

@@ -48,7 +48,7 @@
 │   │   ├── routes/          # Axum route handlers (one file or dir per domain)
 │   │   │   ├── rides/               # directory module for all ride routes
 │   │   │   │   ├── mod.rs           # router, RideRow, visibility helpers, areas/places (405 lines)
-│   │   │   │   ├── chat.rs          # trip group chat messages
+│   │   │   │   ├── chat.rs          # trip group chat messages, emoji reactions, read receipts
 │   │   │   │   ├── driver.rs        # claim, withdraw, confirm, start, pickup, no-show, complete
 │   │   │   │   ├── driver_profile.rs # requests board, schedule, route, driver/vehicle profile
 │   │   │   │   ├── location.rs      # live driver & passenger location sharing
@@ -113,7 +113,7 @@
 │   │   ├── state.rs         # Config, AppState, DbConfig
 │   │   ├── util.rs          # audit log, notify, fmt helpers, ErrorKey
 │   │   └── web_push.rs      # VAPID web-push implementation
-│   ├── migrations/          # numbered SQL migrations (0001–0012)
+│   ├── migrations/          # numbered SQL migrations (0001–0013)
 │   ├── tests/               # integration tests (DEV_MODE=true required)
 │   ├── .cargo/audit.toml    # suppressed cargo-audit advisories with justification
 │   ├── rust-toolchain.toml  # pins Rust stable + clippy + rustfmt

@@ -138,6 +138,7 @@ export default {
     "GROUP_CHAT_NOT_APPROVED": "行程获批准后才开放群聊",
     "ONLY_TRIP_MEMBERS_CAN_VIEW_CHAT": "只有本趟成员可以查看群聊",
     "INVALID_MESSAGE_LENGTH": "讯息长度不正确",
+    "INVALID_REACTION": "无法使用此表情回应",
     "NO_DRIVER_YET": "尚未有司机",
     "DRIVER_NOT_FOUND": "找不到此司机",
     "DRIVER_SCHEDULE_MISMATCH": "司机的接送时间与您的需求不相符",

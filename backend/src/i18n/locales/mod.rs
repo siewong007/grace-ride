@@ -205,6 +205,7 @@ pub fn render(lang: Lang, key: &ErrorKey) -> String {
             rides::render(lang, RidesError::OnlyTripMembersCanViewChat)
         }
         ErrorKey::InvalidMessageLength => rides::render(lang, RidesError::InvalidMessageLength),
+        ErrorKey::InvalidReaction => rides::render(lang, RidesError::InvalidReaction),
         ErrorKey::NoDriverYet => rides::render(lang, RidesError::NoDriverYet),
         ErrorKey::DriverNotFound => rides::render(lang, RidesError::DriverNotFound),
         ErrorKey::NotEnoughDriverSeats { load, cap } => rides::render(
@@ -560,6 +561,7 @@ mod tests {
             ErrorKey::GroupChatNotApproved => ErrorKey::GroupChatNotApproved,
             ErrorKey::OnlyTripMembersCanViewChat => ErrorKey::OnlyTripMembersCanViewChat,
             ErrorKey::InvalidMessageLength => ErrorKey::InvalidMessageLength,
+            ErrorKey::InvalidReaction => ErrorKey::InvalidReaction,
             ErrorKey::NoDriverYet => ErrorKey::NoDriverYet,
             ErrorKey::DriverNotFound => ErrorKey::DriverNotFound,
             ErrorKey::NotEnoughDriverSeats { .. } => ErrorKey::NotEnoughDriverSeats { load: 1, cap: 1 },

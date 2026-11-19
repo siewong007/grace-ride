@@ -269,6 +269,8 @@ async fn trips_link_rides_and_chats() {
     common::seed_edge(&st).await;
     // Undo trips as if this database came from before they existed.
     for sql in [
+        // Chat read receipts (0013) came after trips and hang off them.
+        "DROP TABLE ride_chat_reads",
         "ALTER TABLE ride_messages DROP CONSTRAINT fk_ride_messages_trip",
         "ALTER TABLE rides DROP CONSTRAINT fk_rides_trip",
         "DROP TRIGGER trg_rides_ensure_trip ON rides",

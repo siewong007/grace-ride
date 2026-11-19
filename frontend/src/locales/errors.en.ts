@@ -138,6 +138,7 @@ export default {
     "GROUP_CHAT_NOT_APPROVED": "Group chat opens once the trip is approved",
     "ONLY_TRIP_MEMBERS_CAN_VIEW_CHAT": "Only members of this trip can view the chat",
     "INVALID_MESSAGE_LENGTH": "Message length is invalid",
+    "INVALID_REACTION": "That reaction isn’t available",
     "NO_DRIVER_YET": "No driver yet",
     "DRIVER_NOT_FOUND": "Driver not found",
     "DRIVER_SCHEDULE_MISMATCH": "The driver's time does not match your request",

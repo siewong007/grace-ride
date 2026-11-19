@@ -26,6 +26,7 @@ pub enum RidesError {
     GroupChatNotApproved,
     OnlyTripMembersCanViewChat,
     InvalidMessageLength,
+    InvalidReaction,
     NoDriverYet,
     DriverNotFound,
     NotEnoughDriverSeats { load: i64, cap: i64 },
@@ -129,6 +130,7 @@ pub fn render(lang: Lang, key: RidesError) -> String {
         RidesError::InvalidMessageLength => {
             pair(lang, "讯息长度不正确", "Message length is invalid")
         }
+        RidesError::InvalidReaction => pair(lang, "无法使用此表情回应", "That reaction isn't available"),
         RidesError::NoDriverYet => pair(lang, "尚未有司机", "No driver yet"),
         RidesError::DriverNotFound => pair(lang, "找不到此司机", "Driver not found"),
         RidesError::NotEnoughDriverSeats { load, cap } => match lang {
