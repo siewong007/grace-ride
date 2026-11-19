@@ -42,6 +42,9 @@ const mockMe = {
   // Without these the app shows the terms gate instead of the pages under test.
   status: 'active',
   terms_accepted: true,
+  // The Getting Started card on Home appears only after several async checks load,
+  // so it would flicker in and out of these baselines; it has unit tests of its own.
+  onboarding_dismissed: true,
   groups: [],
   unread: 0,
 };
