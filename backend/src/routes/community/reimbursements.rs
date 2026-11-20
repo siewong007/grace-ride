@@ -43,18 +43,26 @@ struct ReimbRow {
     paid_ref: String,
     paid_at: Option<String>,
     created_at: String,
+    plan_visitor_id: Option<i64>,
+    visitor_name: Option<String>,
+    special_reason: String,
+    requested_by: Option<i64>,
+    requester_name: Option<String>,
 }
 
 const REIMB_SELECT: &str = "SELECT r.id, r.user_id, u.name AS user_name, r.ride_id, rd.pickup_at AS ride_at, r.kind,
     (SELECT pa.name || ' ↔ ' || COALESCE(ea.name, '?') FROM areas pa LEFT JOIN events ev ON ev.id = rd.event_id LEFT JOIN areas ea ON ea.id = ev.area_id WHERE pa.id = rd.pickup_area_id) AS ride_route,
     COALESCE(r.event_id, rd.event_id) AS event_id, ev.title AS event_title, ev.starts_at AS event_starts_at,
     r.amount_cents, r.description,
-    r.receipt_file_id, r.payee_name, r.payee_phone, r.status, r.review_note, rv.name AS reviewer, r.payee_verified, r.paid_ref, r.paid_at, r.created_at
+    r.receipt_file_id, r.payee_name, r.payee_phone, r.status, r.review_note, rv.name AS reviewer, r.payee_verified, r.paid_ref, r.paid_at, r.created_at,
+    r.plan_visitor_id, pv.name AS visitor_name, r.special_reason, r.requested_by, rq.name AS requester_name
     FROM reimbursements r
     JOIN users u ON u.id=r.user_id
     LEFT JOIN rides rd ON rd.id=r.ride_id
     LEFT JOIN events ev ON ev.id = COALESCE(r.event_id, rd.event_id)
-    LEFT JOIN users rv ON rv.id=r.reviewed_by";
+    LEFT JOIN users rv ON rv.id=r.reviewed_by
+    LEFT JOIN plan_visitors pv ON pv.id=r.plan_visitor_id
+    LEFT JOIN users rq ON rq.id=r.requested_by";
 
 fn reimb_json(r: &ReimbRow, u: &CurrentUser) -> Value {
     let finance = u.can(Page::AdminReimbPay, Act::View);
@@ -68,6 +76,10 @@ fn reimb_json(r: &ReimbRow, u: &CurrentUser) -> Value {
         "payee_phone": if own || finance { Some(r.payee_phone.clone()) } else { None },
         "status": r.status, "review_note": r.review_note, "reviewer": r.reviewer, "payee_verified": r.payee_verified == 1,
         "paid_ref": if own || finance { Some(r.paid_ref.clone()) } else { None }, "paid_at": r.paid_at, "created_at": r.created_at,
+        // A traffic lead's special reimbursement for a visitor: who, why and who asked.
+        "visitor": r.plan_visitor_id.map(|id| json!({"id": id, "name": r.visitor_name})),
+        "special_reason": if r.kind == "visitor_special" { Some(r.special_reason.clone()) } else { None },
+        "requested_by": r.requested_by.map(|id| json!({"id": id, "name": r.requester_name})),
     })
 }
 
@@ -409,7 +421,8 @@ pub(super) async fn resubmit_reimbursement(
     Json(req): Json<ReimbIn>,
 ) -> AppResult<Json<Value>> {
     let r = load_reimb(&st, u.lang, id).await?;
-    if r.user_id != u.id || r.status != "returned" {
+    // A visitor special reimbursement is corrected by the traffic lead, not the driver.
+    if r.user_id != u.id || r.status != "returned" || r.kind == "visitor_special" {
         return Err(bad(u.lang, ErrorKey::OnlyReturnedReimbCanBeResubmitted));
     }
     require(&u, Page::Reimbursements, Act::Update)?;
@@ -418,7 +431,7 @@ pub(super) async fn resubmit_reimbursement(
     ensure_not_claimed(&mut tx, u.lang, &req, Some(id)).await?;
     // Still sent back and still theirs at the moment of writing: a review or another
     // resubmission in between wins, and this one is refused.
-    let changed = sqlx::query("UPDATE reimbursements SET ride_id=$1, event_id=$2, amount_cents=$3, description=$4, receipt_file_id=$5, payee_name=$6, payee_phone=$7, status='pending', payee_verified=0, updated_at=$8 WHERE id=$9 AND user_id=$10 AND status='returned'")
+    let changed = sqlx::query("UPDATE reimbursements SET ride_id=$1, event_id=$2, amount_cents=$3, description=$4, receipt_file_id=$5, payee_name=$6, payee_phone=$7, status='pending', payee_verified=0, updated_at=$8 WHERE id=$9 AND user_id=$10 AND status='returned' AND kind <> 'visitor_special'")
         .bind(req.ride_id)
         .bind(resolved_event_id)
         .bind(req.amount_cents)
@@ -477,7 +490,8 @@ pub(super) async fn review_reimbursement(
     if r.status != "pending" {
         return Err(bad(u.lang, ErrorKey::ReimbAlreadyReviewed));
     }
-    if r.user_id == u.id {
+    // Neither the payee nor whoever asked for it (a visitor special reimbursement) reviews it.
+    if r.user_id == u.id || r.requested_by == Some(u.id) {
         return Err(forbidden(u.lang, ErrorKey::CannotReviewOwnRequest));
     }
     let note = req.note.unwrap_or_default();
@@ -491,7 +505,8 @@ pub(super) async fn review_reimbursement(
         return Err(bad(u.lang, ErrorKey::ReasonRequired));
     }
     let changed = sqlx::query(
-        "UPDATE reimbursements SET status=$1, review_note=$2, reviewed_by=$3, updated_at=$4 WHERE id=$5 AND status='pending'",
+        "UPDATE reimbursements SET status=$1, review_note=$2, reviewed_by=$3, updated_at=$4
+         WHERE id=$5 AND status='pending' AND requested_by IS DISTINCT FROM $3",
     )
     .bind(status)
     .bind(&note)

@@ -45,6 +45,10 @@ export default {
   mileageNote: 'This route has no set fare yet. Attach your mileage receipt (toll, fuel or parking) and the amount; the team confirms it before payment.',
   mileageReceipt: 'Mileage receipt',
   kindMileage: 'Mileage',
+  kindVisitorSpecial: 'Visitor special reimbursement',
+  specialReason: 'Reason',
+  requestedBy: 'asked for by {name}',
+  visitorSpecialReturned: 'Sent back to the traffic lead, who will correct and resend it.',
   kindGrab: 'Grab',
   route: 'Route',
 };

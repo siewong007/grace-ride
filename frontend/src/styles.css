@@ -3256,6 +3256,15 @@ main a[href^="tel:"]:not(.btn) { text-decoration: underline; }
   padding: var(--space-3) 0; border-top: 1px solid var(--border);
 }
 .plan-visitor-line { display: grid; gap: 2px; min-width: 0; overflow-wrap: anywhere; }
+.plan-visitor-item { flex-wrap: wrap; }
+.plan-visitor-item > .plan-visitor-line { flex: 1 1 0; }
+.plan-visitor-reimb-action { flex-basis: 100%; display: flex; }
+.plan-visitor-reimb-action:empty { display: none; }
+.plan-visitor-reimb {
+  display: grid; gap: 2px; margin-top: var(--space-1); padding: var(--space-2);
+  border-radius: var(--radius); background: var(--surface-2);
+}
+.text-warn { color: var(--warning); }
 .plan-visitor-line.is-compact {
   padding: var(--space-2) var(--space-3); border: 1px dashed var(--border); border-radius: var(--radius);
   background: var(--surface-2);

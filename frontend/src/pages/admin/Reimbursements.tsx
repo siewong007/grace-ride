@@ -16,6 +16,7 @@ import {
   Page,
   PageHeader,
   Pagination,
+  Pill,
   ReceiptLink,
   StatusPill,
   TableColumn,
@@ -91,7 +92,7 @@ export default function AdminReimbursements() {
 function List({ scope }: { scope: 'review' | 'payout' }) {
   const { t } = useTranslation('admin');
   const ft = useFormatT();
-  const { can } = useAuth();
+  const { can, me } = useAuth();
   const canAct = can(scope === 'review' ? 'admin_reimb_review' : 'admin_reimb_pay', 'update');
   const {
     page,
@@ -165,7 +166,10 @@ function List({ scope }: { scope: 'review' | 'payout' }) {
 
   /** Review or Pay when this member may act on the claim now; otherwise the receipt. */
   const actionCell = (r: Reimb) =>
-    canAct &&
+    // Whoever asked for a visitor special reimbursement doesn't review it.
+    scope === 'review' && r.status === 'pending' && r.requested_by && r.requested_by.id === me?.id ? (
+      <span className="muted tiny">{t('reimb.ownRequest')}</span>
+    ) : canAct &&
     ((scope === 'review' && r.status === 'pending') || (scope === 'payout' && r.status === 'approved')) ? (
       <Button variant="primary" size="sm" onClick={() => setOpen(r)}>
         {scope === 'review' ? t('reimb.reviewBtn') : t('reimb.payBtn')}
@@ -194,7 +198,7 @@ function List({ scope }: { scope: 'review' | 'payout' }) {
       header: t('reimb.description'),
       render: (r) => (
         <div className="small">
-          <div>{r.description}</div>
+          {r.kind === 'visitor_special' ? <SpecialSummary r={r} /> : <div>{r.description}</div>}
           {r.event_title && (
             <div className="muted tiny">
               {r.event_title}
@@ -269,7 +273,11 @@ function List({ scope }: { scope: 'review' | 'payout' }) {
                       <span className="bold ellipsis">{r.user.name}</span>
                       <span className="mono bold no-wrap">{rm(r.amount_cents)}</span>
                     </div>
-                    <div className="small clamp-2">{r.description}</div>
+                    {r.kind === 'visitor_special' ? (
+                      <div className="small"><SpecialSummary r={r} /></div>
+                    ) : (
+                      <div className="small clamp-2">{r.description}</div>
+                    )}
                     <div className="row tiny muted">
                       <StatusPill map={REIMB_STATUS} status={r.status} />
                       <span>{fmtDay(r.created_at, ft)}</span>
@@ -362,16 +370,26 @@ function ReviewModal({
       onClose={onClose}
     >
       <div className="stack-sm">
-        <img
-          className="receipt-thumb"
-          src={`/api/files/${r.receipt_file_id}`}
-          alt={t('reimb.receiptAlt')}
-          onError={(e) => {
-            e.currentTarget.style.display = 'none';
-          }}
-        />
-        <ReceiptLink id={r.receipt_file_id} label={t('reimb.openReceipt')} />
-        <p className="small">{r.description}</p>
+        {r.receipt_file_id ? (
+          <>
+            <img
+              className="receipt-thumb"
+              src={`/api/files/${r.receipt_file_id}`}
+              alt={t('reimb.receiptAlt')}
+              onError={(e) => {
+                e.currentTarget.style.display = 'none';
+              }}
+            />
+            <ReceiptLink id={r.receipt_file_id} label={t('reimb.openReceipt')} />
+          </>
+        ) : r.kind === 'visitor_special' ? (
+          <p className="small muted">{t('reimb.noReceiptNeeded')}</p>
+        ) : null}
+        {r.kind === 'visitor_special' ? (
+          <div className="small"><SpecialSummary r={r} /></div>
+        ) : (
+          <p className="small">{r.description}</p>
+        )}
         {r.event_title && (
           <p className="small">
             <strong>{t('reimb.event')}:</strong> {r.event_title}
@@ -679,5 +697,22 @@ function MonthlyPayoutBatches({ onChanged }: { onChanged: () => void }) {
         </Modal>
       )}
     </Card>
+  );
+}
+
+/** A visitor special reimbursement, marked as such with its visitor, reason and requester. */
+function SpecialSummary({ r }: { r: Reimb }) {
+  const { t } = useTranslation('admin');
+  return (
+    <div className="stack-xs">
+      <div className="row wrap gap-xs">
+        <Pill tone="info">{t('reimb.visitorSpecialKind')}</Pill>
+        {r.visitor?.name && <span className="bold">{t('reimb.visitorSpecialFor', { name: r.visitor.name })}</span>}
+      </div>
+      <div>
+        <strong>{t('reimb.specialReason')}:</strong> {r.special_reason}
+      </div>
+      {r.requested_by?.name && <div className="muted tiny">{t('reimb.requestedBy', { name: r.requested_by.name })}</div>}
+    </div>
   );
 }

@@ -77,6 +77,17 @@ export interface PlanVisitor {
   updated_at: string;
   /** The recorder, or a traffic lead. */
   can_edit: boolean;
+  /** The latest special reimbursement asked for this visitor (paid to their driver). */
+  special_reimbursement?: VisitorReimb | null;
+}
+
+export interface VisitorReimb {
+  id: number;
+  status: 'pending' | 'returned' | 'rejected' | 'approved' | 'paid';
+  amount_cents: number;
+  reason: string;
+  review_note: string;
+  payee_name: string | null;
 }
 
 export interface Plan {
