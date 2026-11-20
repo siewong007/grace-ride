@@ -240,7 +240,8 @@ export default {
     "BATCH_ALREADY_PAID": "This payout batch has already been paid",
     "VISITOR_REIMB_NEEDS_DRIVER": "Choose the car this visitor rode in first: the special reimbursement pays that driver",
     "VISITOR_REIMB_ALREADY_LIVE": "This visitor already has a special reimbursement in progress or approved; a new one is only possible after it is rejected",
-    "VISITOR_HAS_REIMBURSEMENT": "This visitor has a special reimbursement on record and can't be removed"
+    "VISITOR_HAS_REIMBURSEMENT": "This visitor has a special reimbursement on record and can't be removed",
+    "AMOUNT_MUST_BE_POSITIVE": "The amount must be more than RM0"
   },
   "files": {
     "NO_FILE_RECEIVED": "No file received",

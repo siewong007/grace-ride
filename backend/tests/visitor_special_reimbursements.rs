@@ -373,11 +373,11 @@ async fn only_traffic_leads_ask_and_the_request_is_checked() {
     for (b, code) in [
         (
             json!({"amount_cents": 0, "reason": "x"}),
-            "AMOUNT_RANGE_INVALID",
+            "AMOUNT_MUST_BE_POSITIVE",
         ),
         (
-            json!({"amount_cents": 50_001, "reason": "x"}),
-            "AMOUNT_RANGE_INVALID",
+            json!({"amount_cents": -500, "reason": "x"}),
+            "AMOUNT_MUST_BE_POSITIVE",
         ),
         (
             json!({"amount_cents": 1000, "reason": "   "}),
@@ -399,6 +399,71 @@ async fn only_traffic_leads_ask_and_the_request_is_checked() {
     let long = json!({"amount_cents": 1000, "reason": "x".repeat(301)});
     let r = call(&app, Method::POST, &path(ev, vid), Some(&head), Some(long)).await;
     assert_eq!(r.status, StatusCode::BAD_REQUEST, "{}", r.json);
+
+    // No maximum: a large amount is accepted, and flagged as high to reviewers and on the plan.
+    let transport = login(&st, "transport@example.org").await;
+    let big = visitor(&app, &head, ev, "Long trip guest", Some(d)).await;
+    let r = call(
+        &app,
+        Method::POST,
+        &path(ev, big),
+        Some(&head),
+        Some(json!({"amount_cents": 120_000, "reason": "Fetched from Ipoh and back"})),
+    )
+    .await;
+    assert_eq!(r.status, StatusCode::OK, "{}", r.json);
+    let big_rid = r.json["id"].as_i64().unwrap();
+    let claim = call(
+        &app,
+        Method::GET,
+        &format!("/api/reimbursements/{big_rid}"),
+        Some(&transport),
+        None,
+    )
+    .await;
+    assert_eq!(claim.json["amount_cents"], 120_000);
+    assert_eq!(claim.json["high_amount"], true);
+    let flagged: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM notifications WHERE title LIKE '%over RM 100%' OR title LIKE '%超过 RM100%'")
+        .fetch_one(&st.db)
+        .await
+        .unwrap();
+    assert!(flagged > 0, "reviewers are told it is a high amount");
+    let plan = call(
+        &app,
+        Method::GET,
+        &format!("/api/admin/events/{ev}/plan"),
+        Some(&head),
+        None,
+    )
+    .await;
+    let guest = plan.json["visitors"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|v| v["name"] == "Long trip guest")
+        .unwrap()
+        .clone();
+    assert_eq!(guest["special_reimbursement"]["high_amount"], true);
+    // RM 100 exactly is not "over RM 100".
+    let edge = visitor(&app, &head, ev, "Edge guest", Some(d)).await;
+    let r = call(
+        &app,
+        Method::POST,
+        &path(ev, edge),
+        Some(&head),
+        Some(json!({"amount_cents": 10_000, "reason": "Exactly a hundred"})),
+    )
+    .await;
+    assert_eq!(r.status, StatusCode::OK, "{}", r.json);
+    let claim = call(
+        &app,
+        Method::GET,
+        &format!("/api/reimbursements/{}", r.json["id"]),
+        Some(&transport),
+        None,
+    )
+    .await;
+    assert_eq!(claim.json["high_amount"], false);
 
     // It pays the visitor's driver, so the visitor needs a car.
     let carless = visitor(&app, &head, ev, "No car yet", None).await;

@@ -135,6 +135,7 @@ pub(crate) async fn list(st: &AppState, u: &CurrentUser, event: i64) -> AppResul
                     "id": rid,
                     "status": v.reimb_status,
                     "amount_cents": v.reimb_amount_cents,
+                    "high_amount": v.reimb_amount_cents.is_some_and(|c| c > SPECIAL_HIGH_CENTS),
                     "reason": v.reimb_reason,
                     "review_note": v.reimb_review_note,
                     "payee_name": v.reimb_payee,
@@ -385,8 +386,9 @@ async fn delete_visitor(
 
 // ---------------- Special reimbursement for a visitor ----------------
 
-/// Largest special reimbursement, the same ceiling as other claims (RM 500).
-const SPECIAL_MAX_CENTS: i64 = 50_000;
+/// No ceiling on a special reimbursement (John: "no maximum"); above this the request
+/// form and reviewers are warned. A warning only, never a block.
+pub(crate) const SPECIAL_HIGH_CENTS: i64 = 10_000;
 const REASON_MAX: usize = 300;
 
 #[derive(Deserialize)]
@@ -397,8 +399,8 @@ struct SpecialIn {
 }
 
 fn clean_special(u: &CurrentUser, req: &SpecialIn) -> AppResult<String> {
-    if req.amount_cents <= 0 || req.amount_cents > SPECIAL_MAX_CENTS {
-        return Err(bad(u.lang, ErrorKey::AmountRangeInvalid));
+    if req.amount_cents <= 0 {
+        return Err(bad(u.lang, ErrorKey::AmountMustBePositive));
     }
     let reason = req.reason.trim().to_string();
     if reason.is_empty() {
@@ -419,10 +421,17 @@ async fn tell_reviewers(st: &AppState, payee: &str, visitor: &str, amount: i64, 
         &st.db,
         Page::AdminReimbReview,
         Act::Update,
-        (
-            "访客特别报销待审核",
-            "Visitor special reimbursement to review",
-        ),
+        if amount > SPECIAL_HIGH_CENTS {
+            (
+                "访客特别报销待审核（高额，超过 RM100）",
+                "Visitor special reimbursement to review (high amount, over RM 100)",
+            )
+        } else {
+            (
+                "访客特别报销待审核",
+                "Visitor special reimbursement to review",
+            )
+        },
         (
             &format!(
                 "{event_title} · 访客 {visitor} · 付给 {payee} · {}",

@@ -79,6 +79,9 @@ fn reimb_json(r: &ReimbRow, u: &CurrentUser) -> Value {
         // A traffic lead's special reimbursement for a visitor: who, why and who asked.
         "visitor": r.plan_visitor_id.map(|id| json!({"id": id, "name": r.visitor_name})),
         "special_reason": if r.kind == "visitor_special" { Some(r.special_reason.clone()) } else { None },
+        // Over RM 100: reviewers see a warning (no ceiling, never a block).
+        "high_amount": r.kind == "visitor_special"
+            && r.amount_cents > crate::routes::plan_visitors::SPECIAL_HIGH_CENTS,
         "requested_by": r.requested_by.map(|id| json!({"id": id, "name": r.requester_name})),
     })
 }

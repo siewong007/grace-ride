@@ -390,6 +390,9 @@ function ReviewModal({
         ) : (
           <p className="small">{r.description}</p>
         )}
+        {r.high_amount && (
+          <div className="notice warning small" role="status">{t('reimb.highAmountNote')}</div>
+        )}
         {r.event_title && (
           <p className="small">
             <strong>{t('reimb.event')}:</strong> {r.event_title}
@@ -707,6 +710,7 @@ function SpecialSummary({ r }: { r: Reimb }) {
     <div className="stack-xs">
       <div className="row wrap gap-xs">
         <Pill tone="info">{t('reimb.visitorSpecialKind')}</Pill>
+        {r.high_amount && <Pill tone="amber">{t('reimb.highAmount')}</Pill>}
         {r.visitor?.name && <span className="bold">{t('reimb.visitorSpecialFor', { name: r.visitor.name })}</span>}
       </div>
       <div>

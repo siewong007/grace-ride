@@ -162,6 +162,8 @@ export default {
   visitorReimbLine: '特别报销 {amount} 付给 {payee}',
   visitorReimbReturnedNote: '已退回：{note}',
   visitorReimbNeedsCar: '请先选好这位访客所乘的车，才能申请特别报销。',
-  visitorReimbAmountInvalid: '请输入 RM 0.01 至 RM 500 之间的金额。',
+  visitorReimbAmountInvalid: '请输入大于 RM 0 的金额。',
+  visitorReimbHigh: '高额（超过 RM 100）',
+  visitorReimbHighWarn: '高额提醒：{amount} 超过 RM 100。仍可提交，审核人会看到高额标记，请写清楚原因。',
   optional: '选填',
 };

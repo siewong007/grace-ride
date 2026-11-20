@@ -85,6 +85,8 @@ export interface VisitorReimb {
   id: number;
   status: 'pending' | 'returned' | 'rejected' | 'approved' | 'paid';
   amount_cents: number;
+  /** Over RM 100: a warning for the requester and reviewers, never a block. */
+  high_amount?: boolean;
   reason: string;
   review_note: string;
   payee_name: string | null;

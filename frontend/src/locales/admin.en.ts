@@ -344,6 +344,8 @@ export default {
     ride: 'Related ride: {time}',
     mileageKind: 'Mileage receipt (route has no fare)',
     visitorSpecialKind: 'Visitor special',
+    highAmount: 'High amount (over RM 100)',
+    highAmountNote: 'High amount: over RM 100. Check the reason before approving.',
     ownRequest: 'You asked for this; someone else reviews it.',
     visitorSpecialFor: 'For visitor {name}',
     specialReason: 'Reason',

@@ -4,7 +4,7 @@ import { MemoryRouter } from 'react-router-dom';
 import i18n from '../../i18n';
 import AdminReimbursements from './Reimbursements';
 
-const mocks = vi.hoisted(() => ({ post: vi.fn(), me: { id: 1 } as { id: number } }));
+const mocks = vi.hoisted(() => ({ post: vi.fn(), me: { id: 1 } as { id: number }, items: [] as unknown[] }));
 
 // A traffic lead's special reimbursement for a visitor: no receipt, a reason, paid to the driver.
 const claim = {
@@ -20,7 +20,7 @@ const claim = {
 vi.mock('../../api', () => ({
   post: mocks.post,
   useApi: () => ({
-    data: { items: [claim], total: 1, page: 1, page_size: 25, total_pages: 1 },
+    data: { items: mocks.items, total: 1, page: 1, page_size: 25, total_pages: 1 },
     loading: false,
     error: null,
     reload: vi.fn(),
@@ -38,6 +38,7 @@ beforeAll(async () => {
 beforeEach(() => {
   mocks.post.mockReset().mockResolvedValue({});
   mocks.me = { id: 1 };
+  mocks.items = [claim];
 });
 
 const show = () =>
@@ -64,6 +65,21 @@ describe('Visitor special reimbursements in review', () => {
     await waitFor(() =>
       expect(mocks.post).toHaveBeenCalledWith('/reimbursements/8/review', { action: 'approve', note: '' }),
     );
+  });
+
+  it('flags a high amount (over RM 100) to reviewers without blocking approval', async () => {
+    mocks.items = [{ ...claim, amount_cents: 15_000, high_amount: true }];
+    show();
+    expect(screen.getAllByText('High amount (over RM 100)').length).toBeGreaterThan(0);
+    fireEvent.click(screen.getAllByRole('button', { name: 'Review' })[0]);
+    const dialog = screen.getByRole('dialog');
+    expect(within(dialog).getByText(/High amount: over RM 100/)).toBeInTheDocument();
+    expect(within(dialog).getByRole('button', { name: 'Approve' })).toBeEnabled();
+  });
+
+  it('does not flag RM 100 or less', () => {
+    show();
+    expect(screen.queryByText('High amount (over RM 100)')).not.toBeInTheDocument();
   });
 
   it('is not offered for review to whoever asked for it', () => {

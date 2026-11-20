@@ -240,7 +240,8 @@ export default {
     "BATCH_ALREADY_PAID": "此付款批次已完成付款",
     "VISITOR_REIMB_NEEDS_DRIVER": "请先为这位访客选好所乘的车：特别报销付给该司机",
     "VISITOR_REIMB_ALREADY_LIVE": "这位访客已有一笔特别报销在处理中或已批准；只有被拒绝后才能再申请",
-    "VISITOR_HAS_REIMBURSEMENT": "这位访客有特别报销记录，不能删除"
+    "VISITOR_HAS_REIMBURSEMENT": "这位访客有特别报销记录，不能删除",
+    "AMOUNT_MUST_BE_POSITIVE": "金额需大于 RM0"
   },
   "files": {
     "NO_FILE_RECEIVED": "没有收到文件",

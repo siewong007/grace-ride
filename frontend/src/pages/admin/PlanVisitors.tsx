@@ -6,7 +6,7 @@ import { useTranslation } from 'react-i18next';
 import { HandCoins, Pencil, Plus, Trash2, UserRoundPlus } from 'lucide-react';
 import { del, post, put, useApi } from '../../api';
 import { Button, Card, ErrorBox, Field, IconButton, Modal, Pill, StatusPill, useAction, useConfirm } from '../../components/ui';
-import { REIMB_STATUS, rm, toCents } from '../../format';
+import { REIMB_STATUS, rm, SPECIAL_HIGH_CENTS, toCents } from '../../format';
 import type { PlanDriver, PlanVisitor } from './planLogic';
 
 interface AreaOpt {
@@ -46,6 +46,7 @@ export function VisitorLine({ v, compact = false }: { v: PlanVisitor; compact?: 
         <div className="plan-visitor-reimb small">
           <div className="row wrap gap-xs">
             <StatusPill map={REIMB_STATUS} status={v.special_reimbursement.status} />
+            {v.special_reimbursement.amount_cents > SPECIAL_HIGH_CENTS && <Pill tone="amber">{t('visitorReimbHigh')}</Pill>}
             <span className="bold">
               {t('visitorReimbLine', {
                 amount: rm(v.special_reimbursement.amount_cents),
@@ -303,8 +304,10 @@ function SpecialReimbForm({
   const [amount, setAmount] = useState(resend ? (resend.amount_cents / 100).toFixed(2) : '');
   const [reason, setReason] = useState(resend?.reason ?? '');
   const cents = toCents(amount);
-  const amountBad = amount.trim() !== '' && (!Number.isFinite(cents) || cents <= 0 || cents > 50_000);
-  const ready = Number.isFinite(cents) && cents > 0 && cents <= 50_000 && reason.trim() !== '';
+  // Any amount above RM 0; there is no maximum. Over RM 100 only warns.
+  const amountBad = amount.trim() !== '' && (!Number.isFinite(cents) || cents <= 0);
+  const high = Number.isFinite(cents) && cents > SPECIAL_HIGH_CENTS;
+  const ready = Number.isFinite(cents) && cents > 0 && reason.trim() !== '';
   const driver = (resend?.payee_name ?? visitor.driver_name) || '—';
 
   const submit = (e: FormEvent) => {
@@ -334,6 +337,11 @@ function SpecialReimbForm({
             aria-invalid={amountBad || undefined}
           />
         </Field>
+        {high && (
+          <div className="notice warning small" role="status">
+            {t('visitorReimbHighWarn', { amount: rm(cents) })}
+          </div>
+        )}
         <Field label={t('visitorReimbReason')} hint={t('visitorReimbReasonHint')}>
           <textarea
             aria-label={t('visitorReimbReason')}

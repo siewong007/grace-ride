@@ -181,6 +181,9 @@ export function fmtDuration(s: number, tt?: FormatT) {
   return t('format:hoursMinutes', { h: Math.floor(mins / 60), m: mins % 60 });
 }
 
+/** A visitor special reimbursement above this (RM 100) carries a warning; there is no maximum. */
+export const SPECIAL_HIGH_CENTS = 10_000;
+
 export const rm = (cents: number) => `RM ${(cents / 100).toFixed(2)}`;
 
 /** Parse "28.50" → 2850 cents. Returns NaN for invalid input. */

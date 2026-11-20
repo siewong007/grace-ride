@@ -162,6 +162,8 @@ export default {
   visitorReimbLine: 'Special reimbursement {amount} to {payee}',
   visitorReimbReturnedNote: 'Returned: {note}',
   visitorReimbNeedsCar: 'Choose the car this visitor rode in to apply a special reimbursement.',
-  visitorReimbAmountInvalid: 'Enter an amount between RM 0.01 and RM 500.',
+  visitorReimbAmountInvalid: 'Enter an amount above RM 0.',
+  visitorReimbHigh: 'High amount (over RM 100)',
+  visitorReimbHighWarn: 'High amount: {amount} is over RM 100. You can still send it; reviewers will see it flagged, so make the reason clear.',
   optional: 'Optional',
 };

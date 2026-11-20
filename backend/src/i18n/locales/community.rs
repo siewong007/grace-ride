@@ -38,6 +38,7 @@ pub enum CommunityError {
     VisitorReimbNeedsDriver,
     VisitorReimbAlreadyLive,
     VisitorHasReimbursement,
+    AmountMustBePositive,
 }
 
 pub fn render(lang: Lang, key: CommunityError) -> String {
@@ -136,6 +137,11 @@ pub fn render(lang: Lang, key: CommunityError) -> String {
             lang,
             "这位访客已有一笔特别报销在处理中或已批准；只有被拒绝后才能再申请",
             "This visitor already has a special reimbursement in progress or approved; a new one is only possible after it is rejected",
+        ),
+        CommunityError::AmountMustBePositive => pair(
+            lang,
+            "金额需大于 RM0",
+            "The amount must be more than RM0",
         ),
         CommunityError::VisitorHasReimbursement => pair(
             lang,

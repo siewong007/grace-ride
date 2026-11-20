@@ -407,6 +407,9 @@ pub fn render(lang: Lang, key: &ErrorKey) -> String {
         ErrorKey::VisitorReimbAlreadyLive => {
             community::render(lang, CommunityError::VisitorReimbAlreadyLive)
         }
+        ErrorKey::AmountMustBePositive => {
+            community::render(lang, CommunityError::AmountMustBePositive)
+        }
         ErrorKey::VisitorHasReimbursement => {
             community::render(lang, CommunityError::VisitorHasReimbursement)
         }
@@ -688,6 +691,7 @@ mod tests {
             ErrorKey::VisitorReimbNeedsDriver => ErrorKey::VisitorReimbNeedsDriver,
             ErrorKey::VisitorReimbAlreadyLive => ErrorKey::VisitorReimbAlreadyLive,
             ErrorKey::VisitorHasReimbursement => ErrorKey::VisitorHasReimbursement,
+            ErrorKey::AmountMustBePositive => ErrorKey::AmountMustBePositive,
 
             ErrorKey::NoFileReceived => ErrorKey::NoFileReceived,
             ErrorKey::FileTooLarge => ErrorKey::FileTooLarge,

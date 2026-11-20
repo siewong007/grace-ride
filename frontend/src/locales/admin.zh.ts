@@ -344,6 +344,8 @@ export default {
     ride: '关联接送：{time}',
     mileageKind: '里程收据（路线暂无车费）',
     visitorSpecialKind: '访客特别报销',
+    highAmount: '高额（超过 RM 100）',
+    highAmountNote: '高额提醒：超过 RM 100，批准前请核对原因。',
     ownRequest: '由您申请，需由他人审核。',
     visitorSpecialFor: '访客：{name}',
     specialReason: '原因',

@@ -46,6 +46,8 @@ export interface Reimb {
   /** A traffic lead's special reimbursement for a plan visitor: who it was for and why. */
   visitor?: { id: number; name: string | null } | null;
   special_reason?: string | null;
+  /** A visitor special reimbursement over RM 100 (a warning only). */
+  high_amount?: boolean;
   requested_by?: { id: number; name: string | null } | null;
 }
 
