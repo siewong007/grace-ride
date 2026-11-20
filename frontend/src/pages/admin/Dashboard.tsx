@@ -95,7 +95,7 @@ function canOpenAuditEntity(entity: string, can: Can): boolean {
       return can('admin_reimb_review') || can('admin_reimb_pay');
     case 'group':
     case 'area':
-      return can('admin_groups') || can('admin_areas') || can('admin_settings');
+      return can('admin_groups') || can('admin_areas') || can('admin_settings') || can('admin_fares');
     case 'role':
       return can('admin_roles');
     case 'announcement':

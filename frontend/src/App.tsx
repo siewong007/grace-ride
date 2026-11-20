@@ -145,7 +145,7 @@ export default function App() {
           <Route path="admin/rides/:id" element={gated(<RideDetail />, 'admin_rides')} />
           <Route path="admin/live" element={gated(<AdminLive />, 'admin_live')} />
           <Route path="admin/members" element={gated(<AdminMembers />, 'admin_members', 'admin_invites', 'admin_recovery')} />
-          <Route path="admin/settings" element={gated(<AdminSettings />, 'admin_groups', 'admin_areas', 'admin_settings')} />
+          <Route path="admin/settings" element={gated(<AdminSettings />, 'admin_groups', 'admin_areas', 'admin_settings', 'admin_fares')} />
           <Route path="admin/reimbursements" element={gated(<AdminReimbursements />, 'admin_reimb_review', 'admin_reimb_pay')} />
           <Route path="admin/announcements" element={gated(<AdminAnnouncements />, 'admin_announcements')} />
           <Route path="admin/audit" element={gated(<AdminAudit />, 'admin_audit')} />

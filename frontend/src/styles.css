@@ -3247,3 +3247,26 @@ main a[href^="tel:"]:not(.btn) { text-decoration: underline; }
   line-height: 1.5;
 }
 
+
+/* ---- Area fares editor (Settings → Fares) ---- */
+.fare-area-chips { flex-wrap: nowrap; overflow-x: auto; padding-bottom: var(--space-1); scrollbar-width: thin; }
+.fare-area-chips .chip { white-space: nowrap; flex: 0 0 auto; display: inline-flex; align-items: center; gap: var(--space-2); }
+.fare-chip-count {
+  min-width: 20px; height: 20px; padding: 0 6px; border-radius: var(--radius-pill);
+  background: color-mix(in srgb, var(--warning) 18%, transparent); color: var(--warning);
+  font-size: var(--fs-xs, 12px); display: inline-grid; place-items: center;
+}
+.fare-list { list-style: none; margin: 0; padding: 0; }
+.fare-row {
+  display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between;
+  gap: var(--space-2) var(--space-3); padding: var(--space-3) 0; border-top: 1px solid var(--border);
+}
+.fare-route { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-1) var(--space-2); flex: 1 1 7rem; min-width: 0; }
+.fare-route-name { font-weight: 600; overflow-wrap: anywhere; }
+.fare-edit { display: flex; align-items: center; gap: var(--space-2); flex: 0 0 auto; }
+.fare-edit .input-affix-wrap { width: 7rem; }
+.fare-edit .input-affix-wrap > .input { padding-left: var(--space-1); padding-right: var(--space-2); }
+.fare-edit .input-affix { padding: 0 var(--space-2); }
+.fare-edit button { min-width: 4rem; }
+.fare-row-error { flex-basis: 100%; margin: 0; color: var(--danger); }
+.fare-row > .error-box, .fare-row > [role='alert'] { flex-basis: 100%; }

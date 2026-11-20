@@ -39,6 +39,11 @@ export interface Ride {
   needs_attention: boolean;
   /** Completed for a claimable event on a route with no fare: the driver hands in a mileage receipt. */
   mileage_receipt_needed?: boolean;
+  /**
+   * Fixed driver fare for this route (pickup area ↔ event area) on a mileage-claimable
+   * event. Shown to drivers and staff only; `amount_cents` is null until it is priced.
+   */
+  route_fare?: { from: string; to: string; amount_cents: number | null } | null;
   attention_reason: string;
   started_at: string | null;
   picked_up_at: string | null;
@@ -106,6 +111,9 @@ export default function RideCard({
           <span>{ride.area.name}</span>
           {ride.seats > 1 && <span>· {ride.seats} {t('seats')}</span>}
           {ride.event && <span>· {ride.event.title ?? t('churchEvent')}</span>}
+          {perspective !== 'passenger' && ride.route_fare?.amount_cents != null && (
+            <span>· RM {(ride.route_fare.amount_cents / 100).toFixed(2)}</span>
+          )}
         </div>
         {ride.needs_attention && (
           <div className="small row nowrap ride-card-attention">
