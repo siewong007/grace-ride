@@ -3282,3 +3282,41 @@ main a[href^="tel:"]:not(.btn) { text-decoration: underline; }
 .fare-edit button { min-width: 4rem; }
 .fare-row-error { flex-basis: 100%; margin: 0; color: var(--danger); }
 .fare-row > .error-box, .fare-row > [role='alert'] { flex-basis: 100%; }
+
+/* ---- Pickup-area photos ---- */
+.area-photo-strip { list-style: none; margin: 0; padding: 0 0 var(--space-1); display: flex; gap: var(--space-2); overflow-x: auto; scroll-snap-type: x mandatory; -webkit-overflow-scrolling: touch; }
+.area-photo-strip li { flex: 0 0 auto; scroll-snap-align: start; }
+.area-photo-thumb { position: relative; display: block; width: 132px; height: 96px; padding: 0; border: 1px solid var(--border); border-radius: var(--radius); overflow: hidden; background: var(--surface-2, var(--surface)); cursor: zoom-in; }
+.area-photo-thumb img { width: 100%; height: 100%; object-fit: cover; display: block; }
+.area-photo-thumb:focus-visible { outline: 2px solid var(--primary); outline-offset: 2px; }
+.area-photo-caption { position: absolute; left: 0; right: 0; bottom: 0; padding: 3px 6px; font-size: 12px; line-height: 1.25; color: #fff; text-align: left; background: rgba(0, 0, 0, 0.62); max-height: calc(2.5em + 6px); display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+.photo-viewer { position: fixed; inset: 0; z-index: 400; background: rgb(0, 0, 0); display: flex; flex-direction: column; align-items: center; justify-content: center; padding: calc(56px + env(safe-area-inset-top, 0px)) 0 calc(16px + env(safe-area-inset-bottom, 0px)); touch-action: pan-y pinch-zoom; }
+.photo-viewer-bar { position: absolute; top: env(safe-area-inset-top, 0px); left: 0; right: 0; display: flex; align-items: center; justify-content: space-between; gap: var(--space-2); padding: var(--space-2) var(--space-2) var(--space-2) var(--space-4); color: #fff; }
+.photo-viewer-count { font-weight: 600; font-size: var(--fs-sm); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.photo-viewer-img { max-width: 100%; max-height: calc(100% - 64px); object-fit: contain; user-select: none; -webkit-user-drag: none; }
+.photo-viewer-caption { margin: var(--space-3) var(--space-4) 0; color: #fff; text-align: center; font-size: var(--fs-md, 16px); max-width: 640px; }
+.photo-viewer-btn { display: inline-flex; align-items: center; justify-content: center; width: 44px; height: 44px; border-radius: 50%; border: 0; background: rgba(255, 255, 255, 0.14); color: #fff; cursor: pointer; }
+.photo-viewer-btn:disabled { opacity: 0.3; cursor: default; }
+.photo-viewer-btn:focus-visible { outline: 2px solid #fff; outline-offset: 2px; }
+.photo-viewer-prev, .photo-viewer-next { position: absolute; top: 50%; transform: translateY(-50%); }
+.photo-viewer-prev { left: var(--space-2); }
+.photo-viewer-next { right: var(--space-2); }
+.area-photo-admin-grid { list-style: none; margin: 0; padding: 0; display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: var(--space-3); }
+.area-photo-admin-item { border: 1px solid var(--border); border-radius: var(--radius); overflow: hidden; background: var(--surface); display: flex; flex-direction: column; }
+.area-photo-admin-item .area-photo-thumb { width: 100%; height: 120px; border: 0; border-radius: 0; }
+.area-photo-admin-meta { padding: var(--space-2); display: flex; flex-direction: column; gap: var(--space-1); }
+.area-photo-admin-actions { display: flex; flex-wrap: wrap; gap: 2px; }
+.area-photo-edit-preview { width: 100%; max-height: 220px; object-fit: contain; border-radius: var(--radius); background: var(--surface-2); }
+@media (max-width: 560px) {
+  .area-photo-admin-grid { grid-template-columns: 1fr; }
+  .area-photo-admin-item { flex-direction: row; }
+  .area-photo-admin-item .area-photo-thumb { width: 128px; height: auto; min-height: 96px; flex: 0 0 128px; }
+  .area-photo-admin-meta { flex: 1; min-width: 0; }
+}
+.area-photo-admin-actions { gap: 0; }
+.area-photo-admin-actions .icon-btn { width: 44px; height: 44px; min-width: 44px; }
+@media (max-width: 560px) {
+  .area-photo-admin-item .area-photo-thumb { width: 112px; flex-basis: 112px; }
+}
+/* Never widen the form or card it sits in: the strip scrolls instead. */
+.area-photos { width: 0; min-width: 100%; }

@@ -173,6 +173,7 @@ catalog! {
     AdminHelp:          "admin_help",          Transport, [View, Update];         // every help request · reply, close
     AdminReports:       "admin_reports",       Transport, [View];                 // any member's monthly report
     AdminFares:         "admin_fares",         Transport, [View, Update];         // fixed area-to-area driver fares · set, change, clear
+    AdminAreaPhotos:    "admin_area_photos",   Transport, [View, Create, Update, Delete]; // pickup-area photos · add (and change / remove own) · change any caption, reorder · remove any
 
     // ---- 财务 ----
     AdminReimbPay: "admin_reimb_pay", Finance, [View, Update]; // approved claims with payee details · record payout
@@ -326,13 +327,16 @@ pub fn defaults(role: &str) -> Vec<Perm> {
             (AdminHelp, &[View, Update]),
             (AdminMembers, &[View]),
             (AdminAreas, &[View, Create, Update]),
+            (AdminAreaPhotos, &[View, Create, Update, Delete]),
             (AdminAudit, &[View]),
         ],
+        // 交通组组员: adds photos of pickup areas; changes or removes only their own.
         TRAFFIC_MEMBER_ROLE => &[
             (AdminDashboard, &[View]),
             (AdminPlan, &[View, Update]),
             (AdminRides, &[View]),
             (AdminLive, &[View]),
+            (AdminAreaPhotos, &[View, Create]),
         ],
         FINANCE_ROLE => &[
             (AdminReimbPay, &[View, Update]),

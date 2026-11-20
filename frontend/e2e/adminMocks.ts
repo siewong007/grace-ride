@@ -5,7 +5,7 @@ const ACTS = ['view', 'create', 'update', 'delete'];
 const PAGES = [
   'rides', 'drive', 'events', 'settlements', 'costs', 'reimbursements', 'help', 'report',
   'admin_dashboard', 'admin_rides', 'admin_live', 'admin_plan', 'admin_events', 'admin_reimb_review',
-  'admin_announcements', 'admin_help', 'admin_reports', 'admin_fares', 'admin_reimb_pay', 'admin_bills', 'admin_members',
+  'admin_announcements', 'admin_help', 'admin_reports', 'admin_fares', 'admin_area_photos', 'admin_reimb_pay', 'admin_bills', 'admin_members',
   'admin_invites', 'admin_recovery', 'admin_groups', 'admin_areas', 'admin_roles', 'admin_audit', 'admin_settings',
 ];
 const allPerms = PAGES.flatMap((p) => ACTS.map((a) => `${p}.${a}`));

@@ -16,6 +16,7 @@ import { downloadIcs } from '../../calendar';
 import { fmtAgo, fmtDateTime, RIDE_STATUS, useFormatT } from '../../format';
 import type { Ride } from '../RideCard';
 import { NavButtonGroup } from '../TripActions';
+import { AreaPhotoStrip } from '../AreaPhotos';
 import { Avatar, Button, Card, KeyValue, KeyValueItem, Notice, Pill } from '../ui';
 
 export function DriverCard({
@@ -305,6 +306,8 @@ export function Details({ ride: r }: { ride: Ride }) {
   return (
     <Card className="stack">
       <KeyValue items={kvItems} />
+
+      <AreaPhotoStrip areaId={r.area.id} areaName={r.area.name} />
 
       {r.pickup_address && (r.viewer.is_driver || r.viewer.is_staff) && (
         <NavButtonGroup address={r.pickup_address} />

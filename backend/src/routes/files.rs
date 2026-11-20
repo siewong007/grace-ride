@@ -141,6 +141,14 @@ pub async fn can_access_file(st: &AppState, u: &CurrentUser, file_id: i64) -> Ap
     if photo > 0 {
         return Ok(true);
     }
+    // Pickup-area photos: every active member (passengers recognise where to wait).
+    let (area_photo,): (i64,) = sqlx::query_as("SELECT COUNT(*) FROM area_photos WHERE file_id=$1")
+        .bind(file_id)
+        .fetch_one(&st.db)
+        .await?;
+    if area_photo > 0 {
+        return Ok(true);
+    }
     // Event cover photos: everyone who can see the event.
     let events: Vec<i64> = sqlx::query_scalar("SELECT id FROM events WHERE photo_file_id=$1")
         .bind(file_id)

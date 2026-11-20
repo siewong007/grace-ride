@@ -12,6 +12,8 @@ pub enum AdminError {
     GroupNameExists,
     AreaNameRequired,
     AreaExists,
+    AreaPhotoLimit,
+    AreaPhotoCaptionTooLong,
     RequestAlreadyHandled,
     EmailInvalid,
     UnknownRole,
@@ -130,6 +132,16 @@ pub fn render(lang: Lang, key: AdminError) -> String {
         }
         AdminError::AreaNameRequired => pair(lang, "请填写地区名称", "Please enter an area name"),
         AdminError::AreaExists => pair(lang, "地区已存在", "This area already exists"),
+        AdminError::AreaPhotoLimit => pair(
+            lang,
+            "每个地区最多 10 张照片，请先删除一张",
+            "An area can have up to 10 photos; remove one first",
+        ),
+        AdminError::AreaPhotoCaptionTooLong => pair(
+            lang,
+            "照片说明不能超过 120 个字",
+            "A photo caption can be up to 120 characters",
+        ),
         AdminError::RequestAlreadyHandled => pair(
             lang,
             "此申请已处理",

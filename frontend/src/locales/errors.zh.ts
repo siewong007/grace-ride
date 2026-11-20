@@ -22,6 +22,8 @@ export default {
     "GROUP_NAME_EXISTS": "群体名称已存在",
     "AREA_NAME_REQUIRED": "请填写地区名称",
     "AREA_EXISTS": "地区已存在",
+    "AREA_PHOTO_LIMIT": "每个地区最多 10 张照片，请先删除一张",
+    "AREA_PHOTO_CAPTION_TOO_LONG": "照片说明不能超过 120 个字",
     "REQUEST_ALREADY_HANDLED": "此申请已处理",
     "EMAIL_INVALID": "电邮格式不正确",
     "EMAIL_ALREADY_MEMBER": "此电邮已是会员",
