@@ -1,4 +1,5 @@
 pub mod admin;
+pub mod area_photos;
 pub mod auth;
 pub mod care;
 pub mod community;
@@ -19,6 +20,7 @@ pub fn api() -> Router<AppState> {
     Router::new()
         .merge(auth::router())
         .merge(rides::router())
+        .merge(area_photos::router())
         .merge(plan::router())
         .merge(plan_visitors::router())
         .merge(events::router())

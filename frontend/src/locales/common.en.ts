@@ -78,4 +78,11 @@ export default {
   logout: 'Log out',
   clearFilters: 'Clear filters',
   noAccessHome: 'Go to home',
+  areaPhotos: {
+    title: 'Where to wait in {area}',
+    open: 'Photo {n} of {count}: {caption}. Tap to enlarge',
+    counter: '{n} / {count}',
+    prev: 'Previous photo',
+    next: 'Next photo',
+  },
 };

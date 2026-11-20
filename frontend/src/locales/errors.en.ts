@@ -22,6 +22,8 @@ export default {
     "GROUP_NAME_EXISTS": "This group name already exists",
     "AREA_NAME_REQUIRED": "Please enter an area name",
     "AREA_EXISTS": "This area already exists",
+    "AREA_PHOTO_LIMIT": "An area can have up to 10 photos; remove one first",
+    "AREA_PHOTO_CAPTION_TOO_LONG": "A photo caption can be up to 120 characters",
     "REQUEST_ALREADY_HANDLED": "This request has already been handled",
     "EMAIL_INVALID": "Invalid email address",
     "EMAIL_ALREADY_MEMBER": "This email is already a member",

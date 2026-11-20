@@ -29,11 +29,13 @@ import type { Ride } from '../components/RideCard';
 import { todayStr } from '../format';
 import { useTranslation } from 'react-i18next';
 import { AddressInput } from '../components/AddressInput';
+import { AreaPhotoStrip } from '../components/AreaPhotos';
 
 interface Area {
   id: number;
   name: string;
   active: boolean;
+  photo_count?: number;
 }
 
 interface ProxyRider {
@@ -658,6 +660,12 @@ function RideNewForm() {
                 {touched.area && errors.area && (
                   <div className="field-error-msg" role="alert">{errors.area}</div>
                 )}
+                {(() => {
+                  const chosen = areas?.find((a) => String(a.id) === area);
+                  return chosen && (chosen.photo_count ?? 0) > 0 ? (
+                    <AreaPhotoStrip areaId={chosen.id} areaName={chosen.name} />
+                  ) : null;
+                })()}
               </div>
 
               <div className="full">

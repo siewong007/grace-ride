@@ -470,12 +470,17 @@ async fn search_places(
 }
 
 async fn list_areas(State(st): State<AppState>, _u: CurrentUser) -> AppResult<Json<Value>> {
-    let rows: Vec<(i64, String, i64)> =
-        sqlx::query_as("SELECT id, name, active FROM areas ORDER BY name")
-            .fetch_all(&st.db)
-            .await?;
+    let rows: Vec<(i64, String, i64, i64)> = sqlx::query_as(
+        "SELECT a.id, a.name, a.active,
+                (SELECT COUNT(*) FROM area_photos p WHERE p.area_id = a.id) AS photo_count
+         FROM areas a ORDER BY a.name",
+    )
+    .fetch_all(&st.db)
+    .await?;
     Ok(Json(json!(rows
         .into_iter()
-        .map(|(id, name, a)| json!({"id": id, "name": name, "active": a == 1}))
+        .map(|(id, name, a, photos)| json!({
+            "id": id, "name": name, "active": a == 1, "photo_count": photos
+        }))
         .collect::<Vec<_>>())))
 }

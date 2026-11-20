@@ -30,6 +30,7 @@ import {
 } from '../../components/ui';
 import { ADMIN_HOME } from '../../staffNav';
 import AreaFares, { fareCoverage, type FaresResponse } from './AreaFares';
+import AreaPhotos from './AreaPhotos';
 
 interface Group {
   id: number;
@@ -71,7 +72,7 @@ interface AlertSettingsData {
   push_subscriptions_count?: number;
 }
 
-type TabKey = 'fares' | 'rates' | 'org' | 'alerts';
+type TabKey = 'fares' | 'photos' | 'rates' | 'org' | 'alerts';
 
 export default function Settings() {
   const { t } = useTranslation('admin');
@@ -83,8 +84,9 @@ export default function Settings() {
   const areas = can('admin_areas');
   const rates = can('admin_settings');
   const fares = can('admin_fares');
+  const photos = can('admin_area_photos');
 
-  if (!groups && !areas && !rates && !fares) {
+  if (!groups && !areas && !rates && !fares && !photos) {
     return (
       <Page>
         <NoAccess />
@@ -95,6 +97,9 @@ export default function Settings() {
   const availableTabs: { value: TabKey; label: string }[] = [];
   if (fares) {
     availableTabs.push({ value: 'fares', label: t('settings.tabFares') });
+  }
+  if (photos) {
+    availableTabs.push({ value: 'photos', label: t('settings.tabAreaPhotos') });
   }
   if (rates) {
     availableTabs.push({ value: 'rates', label: t('settings.tabRatesLimits') });
@@ -151,6 +156,18 @@ export default function Settings() {
             hidden={activeTab !== 'fares'}
           >
             <AreaFares />
+          </div>
+        )}
+
+        {photos && (
+          <div
+            role="tabpanel"
+            id="panel-photos"
+            aria-labelledby="tab-photos"
+            className="tabpanel stack gap-lg"
+            hidden={activeTab !== 'photos'}
+          >
+            {activeTab === 'photos' && <AreaPhotos />}
           </div>
         )}
 

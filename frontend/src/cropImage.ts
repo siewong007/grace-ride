@@ -70,3 +70,45 @@ export function cropToFile(img: HTMLImageElement, c: CropView, name = 'avatar.jp
     ),
   );
 }
+
+/** Longest side of a saved pickup-area photo, in pixels. */
+export const PHOTO_MAX_SIDE = 1600;
+
+/** Width and height that fit within `max` on the longer side, never enlarged. */
+export function fitWithin(w: number, h: number, max: number): { w: number; h: number } {
+  const scale = Math.min(1, max / Math.max(w, h, 1));
+  return { w: Math.max(1, Math.round(w * scale)), h: Math.max(1, Math.round(h * scale)) };
+}
+
+/**
+ * Shrink a photo for upload: at most `max` pixels on the longer side, saved as JPEG.
+ * Drawing it on a canvas applies the camera's rotation and drops its metadata (GPS
+ * location included). A file the browser cannot read is returned unchanged; the server
+ * still checks its type and size and strips JPEG metadata.
+ */
+export async function shrinkPhoto(file: File, max = PHOTO_MAX_SIDE, quality = 0.82): Promise<File> {
+  let loaded: { img: HTMLImageElement; url: string };
+  try {
+    loaded = await loadImage(file);
+  } catch {
+    return file;
+  }
+  const { img, url } = loaded;
+  try {
+    const { w, h } = fitWithin(img.naturalWidth, img.naturalHeight, max);
+    const canvas = document.createElement('canvas');
+    canvas.width = w;
+    canvas.height = h;
+    const ctx = canvas.getContext('2d');
+    if (!ctx) return file;
+    ctx.fillStyle = '#fff';
+    ctx.fillRect(0, 0, w, h);
+    ctx.drawImage(img, 0, 0, w, h);
+    const blob = await new Promise<Blob | null>((res) => canvas.toBlob(res, 'image/jpeg', quality));
+    if (!blob) return file;
+    const base = file.name.replace(/\.[^.]*$/, '') || 'photo';
+    return new File([blob], `${base}.jpg`, { type: 'image/jpeg' });
+  } finally {
+    URL.revokeObjectURL(url);
+  }
+}

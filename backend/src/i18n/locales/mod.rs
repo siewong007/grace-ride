@@ -52,6 +52,10 @@ pub fn render(lang: Lang, key: &ErrorKey) -> String {
         ErrorKey::GroupNameExists => admin::render(lang, AdminError::GroupNameExists),
         ErrorKey::AreaNameRequired => admin::render(lang, AdminError::AreaNameRequired),
         ErrorKey::AreaExists => admin::render(lang, AdminError::AreaExists),
+        ErrorKey::AreaPhotoLimit => admin::render(lang, AdminError::AreaPhotoLimit),
+        ErrorKey::AreaPhotoCaptionTooLong => {
+            admin::render(lang, AdminError::AreaPhotoCaptionTooLong)
+        }
         ErrorKey::RequestAlreadyHandled => admin::render(lang, AdminError::RequestAlreadyHandled),
         ErrorKey::EmailInvalid => admin::render(lang, AdminError::EmailInvalid),
         ErrorKey::UnknownRole => admin::render(lang, AdminError::UnknownRole),
@@ -497,6 +501,8 @@ mod tests {
             ErrorKey::GroupNameExists => ErrorKey::GroupNameExists,
             ErrorKey::AreaNameRequired => ErrorKey::AreaNameRequired,
             ErrorKey::AreaExists => ErrorKey::AreaExists,
+            ErrorKey::AreaPhotoLimit => ErrorKey::AreaPhotoLimit,
+            ErrorKey::AreaPhotoCaptionTooLong => ErrorKey::AreaPhotoCaptionTooLong,
             ErrorKey::RequestAlreadyHandled => ErrorKey::RequestAlreadyHandled,
             ErrorKey::EmailInvalid => ErrorKey::EmailInvalid,
             ErrorKey::UnknownRole => ErrorKey::UnknownRole,

@@ -29,6 +29,7 @@ export type PageKey =
   | 'admin_help'
   | 'admin_reports'
   | 'admin_fares'
+  | 'admin_area_photos'
   | 'admin_reimb_pay'
   | 'admin_bills'
   | 'admin_members'
@@ -54,6 +55,7 @@ export const ADMIN_PAGES: PageKey[] = [
   'admin_help',
   'admin_reports',
   'admin_fares',
+  'admin_area_photos',
   'admin_reimb_pay',
   'admin_bills',
   'admin_members',

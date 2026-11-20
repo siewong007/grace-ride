@@ -126,7 +126,7 @@ export function useStaffNav() {
       key: 'system',
       label: t('groupSystem'),
       items: links([
-        { to: '/admin/settings', label: t('settings'), icon: <Settings size={sz} />, show: can('admin_groups') || can('admin_areas') || can('admin_settings') || can('admin_fares') },
+        { to: '/admin/settings', label: t('settings'), icon: <Settings size={sz} />, show: can('admin_groups') || can('admin_areas') || can('admin_settings') || can('admin_fares') || can('admin_area_photos') },
         { to: '/admin/audit', label: t('audit'), icon: <ScrollText size={sz} />, show: can('admin_audit') },
       ]),
     },
@@ -160,6 +160,7 @@ export const ADMIN_MENU_PERMS: PageKey[] = [
   'admin_groups',
   'admin_areas',
   'admin_fares',
+  'admin_area_photos',
   'admin_settings',
   'admin_audit',
 ];

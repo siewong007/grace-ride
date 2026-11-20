@@ -78,4 +78,11 @@ export default {
   logout: '登出',
   clearFilters: '清除筛选',
   noAccessHome: '回到首页',
+  areaPhotos: {
+    title: '{area} 的等车地点',
+    open: '第 {n} 张，共 {count} 张：{caption}。点击放大',
+    counter: '{n} / {count}',
+    prev: '上一张',
+    next: '下一张',
+  },
 };
