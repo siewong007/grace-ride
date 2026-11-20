@@ -9,6 +9,8 @@ export default {
   callDriver: '致电司机',
   passenger: '乘客',
   pickupArea: '上车地区',
+  routeFare: '固定车费',
+  routeFareNotSet: '尚未设定（需交里程收据）',
   pickupAddress: '上车地址',
   pickupAddressLocked: '批准后才显示详细地址',
   destination: '目的地',

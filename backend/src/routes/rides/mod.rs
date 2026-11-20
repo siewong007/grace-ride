@@ -203,6 +203,10 @@ pub struct RideRow {
     pub event_is_all: bool,
     pub event_group_ids: Vec<i64>,
     pub event_mileage_claimable: i64,
+    /// The area the event is held in: the other end of the route fare.
+    pub event_area_name: Option<String>,
+    /// The fixed fare for pickup area ↔ event area, if the traffic lead has set one.
+    pub route_fare_cents: Option<i64>,
 }
 
 pub(super) const RIDE_SELECT: &str = "SELECT r.id, r.passenger_id, r.driver_id, r.event_id, r.trip_id, r.pickup_at, r.pickup_area_id,
@@ -222,14 +226,19 @@ pub(super) const RIDE_SELECT: &str = "SELECT r.id, r.passenger_id, r.driver_id, 
     e.created_by AS event_created_by,
     COALESCE((SELECT bool_or(g.is_all = 1) FROM event_groups eg JOIN groups g ON g.id = eg.group_id WHERE eg.event_id = r.event_id), false) AS event_is_all,
     COALESCE((SELECT array_agg(eg.group_id) FROM event_groups eg WHERE eg.event_id = r.event_id), '{}'::BIGINT[]) AS event_group_ids,
-    COALESCE(e.mileage_claimable, 0) AS event_mileage_claimable
+    COALESCE(e.mileage_claimable, 0) AS event_mileage_claimable,
+    ea.name AS event_area_name,
+    (SELECT f.amount_cents FROM area_fares f
+      WHERE f.area_a_id = LEAST(r.pickup_area_id, e.area_id)
+        AND f.area_b_id = GREATEST(r.pickup_area_id, e.area_id)) AS route_fare_cents
     FROM rides r
     JOIN areas a ON a.id = r.pickup_area_id
     JOIN users p ON p.id = r.passenger_id
     LEFT JOIN users d ON d.id = r.driver_id
     LEFT JOIN vehicles v ON v.user_id = r.driver_id AND v.is_active = 1
     LEFT JOIN events e ON e.id = r.event_id
-    LEFT JOIN groups ag ON ag.id = r.as_group_id";
+    LEFT JOIN groups ag ON ag.id = r.as_group_id
+    LEFT JOIN areas ea ON ea.id = e.area_id";
 
 pub async fn load_ride(st: &AppState, lang: Lang, id: i64) -> AppResult<RideRow> {
     sqlx::query_as::<_, RideRow>(crate::dyn_sql!("{RIDE_SELECT} WHERE r.id = $1"))
@@ -237,6 +246,34 @@ pub async fn load_ride(st: &AppState, lang: Lang, id: i64) -> AppResult<RideRow>
         .fetch_optional(&st.db)
         .await?
         .ok_or(not_found(lang))
+}
+
+/// The fixed driver fare for a ride's route, for rides to a mileage-claimable event held
+/// in a known area. `amount_cents` is null while the traffic lead has not priced the pair.
+fn route_fare(
+    r: &RideRow,
+    is_passenger: bool,
+    is_driver: bool,
+    staff: bool,
+    u: &CurrentUser,
+) -> Value {
+    let sees_event = staff
+        || crate::audience::sees_event(
+            u,
+            r.event_created_by.unwrap_or(0),
+            r.event_is_all,
+            &r.event_group_ids,
+        );
+    let shown =
+        sees_event && (is_driver || staff || (!is_passenger && u.can(Page::Drive, Act::View)));
+    match (&r.event_area_name, r.event_mileage_claimable == 1 && shown) {
+        (Some(to), true) => json!({
+            "from": r.area_name,
+            "to": to,
+            "amount_cents": r.route_fare_cents,
+        }),
+        _ => Value::Null,
+    }
 }
 
 /// Role-aware projection. Implements 按身份保护个人资料:
@@ -312,6 +349,9 @@ pub fn ride_json(r: &RideRow, u: &CurrentUser) -> Value {
         }),
         "as_group": r.as_group_id.map(|id| json!({"id": id, "name": r.as_group_name})),
         "trip_id": r.trip_id,
+        // The fixed fare the church pays the driver for this route (pickup area ↔ event
+        // area). Shown to drivers and staff, not the rider: riders pay no fare.
+        "route_fare": route_fare(r, is_passenger, is_driver, staff, u),
         "distance_km": r.distance_km,
         "reimbursement_amount_cents": r.reimbursement_amount_cents,
         "mileage_receipt_needed": r.mileage_receipt_needed == 1,
