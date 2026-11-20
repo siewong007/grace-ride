@@ -559,7 +559,12 @@ function MonthlyPayoutBatches({ onChanged }: { onChanged: () => void }) {
     run(async () => {
       const res = await fetch(`/api/reimbursements/batches/${b.id}/csv`, { credentials: 'same-origin' });
       if (!res.ok) {
-        const err = await res.json().catch(() => null);
+        let err: { error?: string } | null = null;
+        try {
+          err = await res.json();
+        } catch {
+          /* fall through to statusText */
+        }
         throw new Error(err?.error || res.statusText);
       }
       const blob = await res.blob();

@@ -94,9 +94,23 @@ export async function uploadFile(file: File): Promise<{ id: number; mime: string
     body: fd,
     credentials: 'same-origin',
   });
-  const data = await res.json().catch(() => null);
-  if (!res.ok) throw new ApiError(res.status, apiMessage(data, 'uploadFailed'));
-  return data;
+  if (res.ok) {
+    let data: { id: number; mime: string; name: string };
+    try {
+      data = await res.json();
+    } catch {
+      throw new ApiError(res.status, apiMessage(null, 'uploadFailed'));
+    }
+    if (!data) throw new ApiError(res.status, apiMessage(null, 'uploadFailed'));
+    return data;
+  }
+  let errorBody: { error?: string; code?: string } | null = null;
+  try {
+    errorBody = await res.json();
+  } catch {
+    /* fall through to statusText */
+  }
+  throw new ApiError(res.status, apiMessage(errorBody, 'uploadFailed'), errorBody?.code);
 }
 
 /** One shared server-sent-events connection per tab. Polling stays as the
