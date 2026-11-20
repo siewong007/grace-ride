@@ -1,12 +1,15 @@
 //! Visitors on an event's transport plan, for the record.
 //!
-//! Traffic staff and cell leaders (anyone who may update the plan for this event, see
-//! `plan::load_event`) note down people without an account who travel to the event:
+//! The traffic lead (Head of Traffic, i.e. the traffic group's 组长, plus admin, President,
+//! Vice-President and super admin: `perms::can_approve_transport_plan`) notes down people
+//! without an account who travel to the event:
 //! name, optional phone, area, pickup address, seats and, if known, the car they ride in.
 //! Nothing is sent to anyone: no invite, no sign-in, no notification to the visitor or the
 //! driver. The board counts their seats in that car so the plan stays honest.
 //!
-//! Whoever recorded a visitor may change or remove it; a traffic lead may change any.
+//! Only a traffic lead may add, change or remove visitors; anyone who can see the plan
+//! sees them. Traffic group members, transport, secretary and cell leaders cannot record
+//! visitors even though they may edit the plan.
 
 use axum::{
     extract::{Path, State},
@@ -58,8 +61,9 @@ struct VisitorRow {
     updated_at: String,
 }
 
-fn may_edit(u: &CurrentUser, created_by: Option<i64>) -> bool {
-    created_by == Some(u.id) || u.is_traffic_lead()
+/// Recording visitors is for the traffic lead only (any visitor, whoever added it).
+fn may_edit(u: &CurrentUser) -> bool {
+    u.is_traffic_lead()
 }
 
 /// The event's recorded visitors, as the plan board shows them.
@@ -95,7 +99,7 @@ pub(crate) async fn list(st: &AppState, u: &CurrentUser, event: i64) -> AppResul
                 "created_by": v.created_by.map(|id| json!({"id": id, "name": v.created_by_name})),
                 "created_at": v.created_at,
                 "updated_at": v.updated_at,
-                "can_edit": may_edit(u, v.created_by),
+                "can_edit": may_edit(u),
             })
         })
         .collect())
@@ -196,10 +200,13 @@ async fn clean(st: &AppState, u: &CurrentUser, req: VisitorIn) -> AppResult<Clea
     })
 }
 
-/// The plan may be changed by this user for this event, and the event is not cancelled.
+/// This user may record visitors on this event's plan, and the event is not cancelled.
 async fn open_event(st: &AppState, u: &CurrentUser, id: i64) -> AppResult<()> {
     require(u, Page::AdminPlan, Act::Update)?;
     let ev = load_event(st, u, id).await?;
+    if !may_edit(u) {
+        return Err(forbidden(u.lang, ErrorKey::Forbidden));
+    }
     if ev.status == "cancelled" {
         return Err(conflict(u.lang, ErrorKey::InvalidStatus));
     }
@@ -245,17 +252,20 @@ async fn create_visitor(
     Ok(Json(json!({ "id": vid })))
 }
 
-/// The visitor's recorder, after checking it belongs to this event and this user may edit it.
+/// The visitor exists under this event, and this user may change it.
 async fn owned(st: &AppState, u: &CurrentUser, event: i64, vid: i64) -> AppResult<()> {
-    let row: Option<Option<i64>> =
-        sqlx::query_scalar("SELECT created_by FROM plan_visitors WHERE id = $1 AND event_id = $2")
-            .bind(vid)
-            .bind(event)
-            .fetch_optional(&st.db)
-            .await?;
-    let created_by = row.ok_or_else(|| not_found(u.lang))?;
-    if !may_edit(u, created_by) {
+    if !may_edit(u) {
         return Err(forbidden(u.lang, ErrorKey::Forbidden));
+    }
+    let found: bool = sqlx::query_scalar(
+        "SELECT EXISTS (SELECT 1 FROM plan_visitors WHERE id = $1 AND event_id = $2)",
+    )
+    .bind(vid)
+    .bind(event)
+    .fetch_one(&st.db)
+    .await?;
+    if !found {
+        return Err(not_found(u.lang));
     }
     Ok(())
 }

@@ -119,6 +119,7 @@ export default {
   paxTag_other: '{count} 人',
   visitorsTitle: '访客（仅作记录）',
   visitorsDesc: '没有账号、随行参加此活动的人。只在这里记录：不会发邀请、登录链接或任何通知给访客或司机。',
+  visitorsLeadOnly: '只有交通组组长可以新增或修改访客。',
   visitorsEmpty: '尚未记录访客。',
   visitorTag: '访客',
   visitorSummary: '{count} 位访客，{seats} 个座位',

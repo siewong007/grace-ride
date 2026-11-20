@@ -1,5 +1,5 @@
-//! Visitors recorded on an event's transport plan: traffic staff and cell leaders note
-//! people without an account. Record only: no rides, invites or notifications.
+//! Visitors recorded on an event's transport plan: the traffic lead notes people
+//! without an account. Record only: no rides, invites or notifications.
 
 mod common;
 
@@ -56,7 +56,7 @@ fn visitors(plan: &Value) -> &Vec<Value> {
 }
 
 #[tokio::test]
-async fn traffic_lead_and_cell_leader_record_visitors_without_side_effects() {
+async fn traffic_lead_records_visitors_without_side_effects() {
     let (app, st) = setup().await;
     let admin_id = user_id(&st, "admin@example.org").await;
     let cell_id = user_id(&st, "cellleader@example.org").await;
@@ -77,7 +77,7 @@ async fn traffic_lead_and_cell_leader_record_visitors_without_side_effects() {
         .unwrap();
     let before = counts(&st).await;
 
-    // Head of Traffic records a visitor in a driver's car on any event.
+    // Head of Traffic (the traffic group's lead) records a visitor in a driver's car.
     let head = login(&st, "traffichead@example.org").await;
     let r = call(
         &app,
@@ -111,22 +111,34 @@ async fn traffic_lead_and_cell_leader_record_visitors_without_side_effects() {
     assert_eq!(list[0]["area"]["id"], area);
     assert_eq!(list[0]["can_edit"], true);
 
-    // A cell leader records visitors on their own event, not on someone else's.
-    let leader = login(&st, "cellleader@example.org").await;
+    // The Head of Traffic records on a cell leader's event too.
     let r = call(
         &app,
         Method::POST,
         &format!("/api/admin/events/{cell}/plan/visitors"),
-        Some(&leader),
+        Some(&head),
         Some(json!({"name": "Auntie Lim", "leg": "return"})),
     )
     .await;
     assert_eq!(r.status, StatusCode::OK, "{}", r.json);
     let v2 = r.json["id"].as_i64().unwrap();
+
+    // The cell leader sees visitors on their own event's plan but cannot record or change them.
+    let leader = login(&st, "cellleader@example.org").await;
+    let r = call(
+        &app,
+        Method::GET,
+        &format!("/api/admin/events/{cell}/plan/visitors"),
+        Some(&leader),
+        None,
+    )
+    .await;
+    assert_eq!(r.status, StatusCode::OK);
+    assert_eq!(r.json["visitors"][0]["can_edit"], false);
     let r = call(
         &app,
         Method::POST,
-        &format!("/api/admin/events/{church}/plan/visitors"),
+        &format!("/api/admin/events/{cell}/plan/visitors"),
         Some(&leader),
         Some(json!({"name": "Nope"})),
     )
@@ -134,8 +146,8 @@ async fn traffic_lead_and_cell_leader_record_visitors_without_side_effects() {
     assert_eq!(r.status, StatusCode::FORBIDDEN);
     let r = call(
         &app,
-        Method::GET,
-        &format!("/api/admin/events/{church}/plan/visitors"),
+        Method::DELETE,
+        &format!("/api/admin/events/{cell}/plan/visitors/{v2}"),
         Some(&leader),
         None,
     )
@@ -145,12 +157,13 @@ async fn traffic_lead_and_cell_leader_record_visitors_without_side_effects() {
     // Record only: no ride, visitor pass or notification came of it.
     assert_eq!(counts(&st).await, before);
 
-    // The traffic lead may correct the cell leader's visitor; the creator removes it.
+    // An admin corrects the Head of Traffic's visitor; the Head of Traffic removes it.
+    let admin = login(&st, "admin@example.org").await;
     let r = call(
         &app,
         Method::PUT,
         &format!("/api/admin/events/{cell}/plan/visitors/{v2}"),
-        Some(&head),
+        Some(&admin),
         Some(json!({"name": "Auntie Lim Siew", "leg": "return", "seats": 1})),
     )
     .await;
@@ -159,7 +172,7 @@ async fn traffic_lead_and_cell_leader_record_visitors_without_side_effects() {
         &app,
         Method::DELETE,
         &format!("/api/admin/events/{cell}/plan/visitors/{v2}"),
-        Some(&leader),
+        Some(&head),
         None,
     )
     .await;
@@ -175,7 +188,6 @@ async fn traffic_lead_and_cell_leader_record_visitors_without_side_effects() {
     .await;
     assert_eq!(r.status, StatusCode::NOT_FOUND);
 
-    // Audit trail.
     let audited: i64 =
         sqlx::query_scalar("SELECT COUNT(*) FROM audit_logs WHERE action LIKE 'plan.visitor_%'")
             .fetch_one(&st.db)
@@ -185,10 +197,93 @@ async fn traffic_lead_and_cell_leader_record_visitors_without_side_effects() {
 }
 
 #[tokio::test]
-async fn members_without_plan_rights_cannot_record_visitors() {
+async fn only_traffic_leads_record_visitors() {
     let (app, st) = setup().await;
     let admin_id = user_id(&st, "admin@example.org").await;
-    let ev = event_by(&st, admin_id, "Retreat").await;
+    let ev = event_by(&st, admin_id, "Camp").await;
+    sqlx::query("UPDATE users SET roles = 'traffic_member' WHERE email = 'amina@example.org'")
+        .execute(&st.db)
+        .await
+        .unwrap();
+    let path = format!("/api/admin/events/{ev}/plan/visitors");
+
+    // Traffic leads: Head of Traffic, admin, President, Vice-President.
+    let mut ids = vec![];
+    for email in [
+        "traffichead@example.org",
+        "admin@example.org",
+        "president@example.org",
+        "vicepresident@example.org",
+    ] {
+        let who = login(&st, email).await;
+        let r = call(
+            &app,
+            Method::POST,
+            &path,
+            Some(&who),
+            Some(json!({"name": "Visitor"})),
+        )
+        .await;
+        assert_eq!(r.status, StatusCode::OK, "{email}: {}", r.json);
+        ids.push(r.json["id"].as_i64().unwrap());
+    }
+    // Any traffic lead may change a visitor another one added.
+    let head = login(&st, "traffichead@example.org").await;
+    let r = call(
+        &app,
+        Method::PUT,
+        &format!("{path}/{}", ids[1]),
+        Some(&head),
+        Some(json!({"name": "Visitor B"})),
+    )
+    .await;
+    assert_eq!(r.status, StatusCode::OK, "{}", r.json);
+
+    // Plan staff below the lead may see visitors but not record or change them.
+    for email in [
+        "amina@example.org",
+        "transport@example.org",
+        "secretary@example.org",
+    ] {
+        let who = login(&st, email).await;
+        let list = call(&app, Method::GET, &path, Some(&who), None).await;
+        assert_eq!(list.status, StatusCode::OK, "{email} sees the plan");
+        assert_eq!(list.json["visitors"][0]["can_edit"], false, "{email}");
+        let r = call(
+            &app,
+            Method::POST,
+            &path,
+            Some(&who),
+            Some(json!({"name": "Visitor"})),
+        )
+        .await;
+        assert_eq!(
+            r.status,
+            StatusCode::FORBIDDEN,
+            "{email} must not add visitors"
+        );
+        let one = format!("{path}/{}", ids[0]);
+        let r = call(
+            &app,
+            Method::PUT,
+            &one,
+            Some(&who),
+            Some(json!({"name": "Hijack"})),
+        )
+        .await;
+        assert_eq!(
+            r.status,
+            StatusCode::FORBIDDEN,
+            "{email} must not edit visitors"
+        );
+        let r = call(&app, Method::DELETE, &one, Some(&who), None).await;
+        assert_eq!(
+            r.status,
+            StatusCode::FORBIDDEN,
+            "{email} must not remove visitors"
+        );
+    }
+    // Without plan rights at all: no access.
     for email in [
         "member@example.org",
         "driver@example.org",
@@ -199,7 +294,7 @@ async fn members_without_plan_rights_cannot_record_visitors() {
         let r = call(
             &app,
             Method::POST,
-            &format!("/api/admin/events/{ev}/plan/visitors"),
+            &path,
             Some(&who),
             Some(json!({"name": "Visitor"})),
         )
@@ -209,14 +304,7 @@ async fn members_without_plan_rights_cannot_record_visitors() {
             StatusCode::FORBIDDEN,
             "{email} must not record visitors"
         );
-        let r = call(
-            &app,
-            Method::GET,
-            &format!("/api/admin/events/{ev}/plan/visitors"),
-            Some(&who),
-            None,
-        )
-        .await;
+        let r = call(&app, Method::GET, &path, Some(&who), None).await;
         assert_eq!(
             r.status,
             StatusCode::FORBIDDEN,
@@ -226,73 +314,12 @@ async fn members_without_plan_rights_cannot_record_visitors() {
 }
 
 #[tokio::test]
-async fn only_the_recorder_or_a_traffic_lead_edits_a_visitor() {
+async fn visitor_input_is_checked_and_follows_the_event() {
     let (app, st) = setup().await;
     let admin_id = user_id(&st, "admin@example.org").await;
-    let ev = event_by(&st, admin_id, "Camp").await;
-    // Two traffic group members.
-    for email in ["amina@example.org", "sophie@example.org"] {
-        sqlx::query("UPDATE users SET roles = 'traffic_member' WHERE email = $1")
-            .bind(email)
-            .execute(&st.db)
-            .await
-            .unwrap();
-    }
-    let amina = login(&st, "amina@example.org").await;
-    let sophie = login(&st, "sophie@example.org").await;
+    let ev = event_by(&st, admin_id, "Retreat").await;
+    let head = login(&st, "traffichead@example.org").await;
     let path = format!("/api/admin/events/{ev}/plan/visitors");
-    let r = call(
-        &app,
-        Method::POST,
-        &path,
-        Some(&amina),
-        Some(json!({"name": "Visitor A"})),
-    )
-    .await;
-    assert_eq!(r.status, StatusCode::OK, "{}", r.json);
-    let vid = r.json["id"].as_i64().unwrap();
-
-    // Sophie sees it but may not change or remove it.
-    let list = call(&app, Method::GET, &path, Some(&sophie), None).await;
-    assert_eq!(list.status, StatusCode::OK);
-    assert_eq!(list.json["visitors"][0]["can_edit"], false);
-    let one = format!("{path}/{vid}");
-    let r = call(
-        &app,
-        Method::PUT,
-        &one,
-        Some(&sophie),
-        Some(json!({"name": "Hijack"})),
-    )
-    .await;
-    assert_eq!(r.status, StatusCode::FORBIDDEN);
-    let r = call(&app, Method::DELETE, &one, Some(&sophie), None).await;
-    assert_eq!(r.status, StatusCode::FORBIDDEN);
-
-    // Amina edits her own; the Head of Traffic and an admin may too.
-    let r = call(
-        &app,
-        Method::PUT,
-        &one,
-        Some(&amina),
-        Some(json!({"name": "Visitor A2", "seats": 3})),
-    )
-    .await;
-    assert_eq!(r.status, StatusCode::OK, "{}", r.json);
-    for email in ["traffichead@example.org", "admin@example.org"] {
-        let who = login(&st, email).await;
-        let r = call(
-            &app,
-            Method::PUT,
-            &one,
-            Some(&who),
-            Some(json!({"name": "Visitor A3"})),
-        )
-        .await;
-        assert_eq!(r.status, StatusCode::OK, "{email}: {}", r.json);
-    }
-
-    // Bad input is refused.
     for body in [
         json!({"name": "   "}),
         json!({"name": "X", "seats": 9}),
@@ -303,9 +330,18 @@ async fn only_the_recorder_or_a_traffic_lead_edits_a_visitor() {
         json!({"name": "X", "driver_id": user_id(&st, "member@example.org").await}),
         json!({"name": "x".repeat(81)}),
     ] {
-        let r = call(&app, Method::POST, &path, Some(&amina), Some(body.clone())).await;
+        let r = call(&app, Method::POST, &path, Some(&head), Some(body.clone())).await;
         assert_eq!(r.status, StatusCode::BAD_REQUEST, "{body}: {}", r.json);
     }
+    let r = call(
+        &app,
+        Method::POST,
+        &path,
+        Some(&head),
+        Some(json!({"name": "Kept"})),
+    )
+    .await;
+    assert_eq!(r.status, StatusCode::OK);
 
     // Nothing more is recorded once the event is cancelled.
     sqlx::query("UPDATE events SET status='cancelled' WHERE id=$1")
@@ -317,7 +353,7 @@ async fn only_the_recorder_or_a_traffic_lead_edits_a_visitor() {
         &app,
         Method::POST,
         &path,
-        Some(&amina),
+        Some(&head),
         Some(json!({"name": "Late"})),
     )
     .await;

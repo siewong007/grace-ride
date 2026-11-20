@@ -76,6 +76,7 @@ export default function PlanVisitors({
             {t('visitorsTitle')} <span className="plan-count">{count}</span>
           </h2>
           <p className="muted small">{t('visitorsDesc')}</p>
+          {!canUpdate && <p className="muted small">{t('visitorsLeadOnly')}</p>}
         </div>
         {canUpdate && (
           <Button variant="secondary" icon={<UserRoundPlus size={16} />} onClick={() => setEditing('new')}>

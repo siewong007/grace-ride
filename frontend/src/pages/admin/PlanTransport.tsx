@@ -564,7 +564,8 @@ export default function PlanTransport() {
         eventId={plan.event.id}
         visitors={visitorList}
         drivers={plan.drivers}
-        canUpdate={canUpdate && plan.event.status !== 'cancelled'}
+        // Only the traffic lead records visitors (server: `can_approve_transport_plan`).
+        canUpdate={canUpdate && canApprove && plan.event.status !== 'cancelled'}
         onChanged={reloadVisitors}
       />
 

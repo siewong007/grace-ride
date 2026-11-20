@@ -119,6 +119,7 @@ export default {
   paxTag_other: '{count} pax',
   visitorsTitle: 'Visitors (for the record)',
   visitorsDesc: 'People without an account who travel to this event. Only noted here: no invite, sign-in or message goes to them or the driver.',
+  visitorsLeadOnly: 'Only the traffic lead can add or change visitors.',
   visitorsEmpty: 'No visitors recorded.',
   visitorTag: 'Visitor',
   visitorSummary: '{count} visitor, {seats} seats',

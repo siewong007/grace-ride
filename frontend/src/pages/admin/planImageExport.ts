@@ -163,14 +163,55 @@ function drawBadge(
   return badgeWidth;
 }
 
+/**
+ * Visitors (record only, no ride) join the sheet as passenger rows with negative ids, in
+ * the car they were recorded in, or under "no driver yet". They are tagged as visitors
+ * and have no pickup time.
+ */
+export function withVisitorRows(plan: Plan, draft: Draft): { plan: Plan; draft: Draft } {
+  const visitors = plan.visitors ?? [];
+  if (visitors.length === 0) return { plan, draft };
+  const rows: PlanRide[] = visitors.map((v) => ({
+    id: -v.id,
+    passenger: { id: -v.id, name: v.name },
+    seats: v.seats,
+    area: { id: v.area?.id ?? 0, name: v.area?.name ?? '' },
+    pickup_at: plan.event.starts_at,
+    pickup_address: v.pickup_address,
+    assistance: '',
+    notes: v.notes,
+    status: 'visitor',
+    driver_id: v.driver_id,
+    leg: v.leg,
+    last: null,
+  }));
+  return {
+    plan: { ...plan, rides: [...plan.rides, ...rows] },
+    draft: { ...draft, ...Object.fromEntries(rows.map((r) => [r.id, r.driver_id])) },
+  };
+}
+
+const isVisitorRow = (r: PlanRide) => r.id < 0;
+
+function rowHeader(r: PlanRide, t: TranslationFn, formatT: TranslationFn): string {
+  const legLabel = r.leg === 'return' ? ` [${t('returnTag')}]` : '';
+  const seatsLabel = ` (${t('passengerSeats', { count: r.seats })})`;
+  if (isVisitorRow(r)) return `${r.passenger.name} [${t('visitorTag')}]${seatsLabel}${legLabel}`;
+  return `${r.passenger.name}${seatsLabel}${legLabel} \u00b7 ${fmtTime(r.pickup_at, formatT)}`;
+}
+
+const rowAddress = (r: PlanRide) =>
+  [r.area.name, r.pickup_address].filter((x) => x && x.trim()).join(' \u00b7 ') || '\u2014';
+
 export function measurePlanLayout(
   ctx: CanvasRenderingContext2D,
-  plan: Plan,
-  draft: Draft,
+  basePlan: Plan,
+  baseDraft: Draft,
   t: TranslationFn,
   formatT: TranslationFn,
   isApprovedOverride?: boolean,
 ): MeasuredLayout {
+  const { plan, draft } = withVisitorRows(basePlan, baseDraft);
   const contentWidth = CANVAS_WIDTH - PAD * 2;
   const isApproved =
     isApprovedOverride ?? (plan.draft?.status === 'approved' || plan.event.status === 'confirmed');
@@ -241,13 +282,10 @@ export function measurePlanLayout(
     let itemsTotalHeight = 0;
 
     for (const r of rides) {
-      const legLabel = r.leg === 'return' ? ` [${t('returnTag')}]` : '';
-      const seatsLabel = ` (${t('passengerSeats', { count: r.seats })})`;
-      const timeLabel = ` \u00b7 ${fmtTime(r.pickup_at, formatT)}`;
-      const headerText = `${r.passenger.name}${seatsLabel}${legLabel}${timeLabel}`;
+      const headerText = rowHeader(r, t, formatT);
 
       ctx.font = `13px ${FONT_FAMILY}`;
-      const addrRaw = `${r.area.name} \u00b7 ${r.pickup_address || ''}`;
+      const addrRaw = rowAddress(r);
       const addrLines = wrapText(ctx, addrRaw, passengerInnerWidth);
 
       const noteRaw = [
@@ -281,7 +319,8 @@ export function measurePlanLayout(
     const cardPadding = 32;
     const cardHeight = cardHeaderHeight + itemsTotalHeight + cardPadding;
 
-    const chosenCol = colHeights[0] <= colHeights[1] ? 0 : 1;
+    // One column: always column 0 (there is no column 1 to compare against).
+    const chosenCol = colCount === 1 || colHeights[0] <= colHeights[1] ? 0 : 1;
     const x = colXs[chosenCol];
     const y = colHeights[chosenCol];
 
@@ -315,13 +354,10 @@ export function measurePlanLayout(
     const itemW = contentWidth - 32 - 24;
 
     for (const r of unassignedRides) {
-      const legLabel = r.leg === 'return' ? ` [${t('returnTag')}]` : '';
-      const seatsLabel = ` (${t('passengerSeats', { count: r.seats })})`;
-      const timeLabel = ` \u00b7 ${fmtTime(r.pickup_at, formatT)}`;
-      const headerText = `${r.passenger.name}${seatsLabel}${legLabel}${timeLabel}`;
+      const headerText = rowHeader(r, t, formatT);
 
       ctx.font = `13px ${FONT_FAMILY}`;
-      const addrRaw = `${r.area.name} \u00b7 ${r.pickup_address || ''}`;
+      const addrRaw = rowAddress(r);
       const addrLines = wrapText(ctx, addrRaw, itemW);
 
       const noteRaw = r.assistance ? `${t('assistance', { what: r.assistance })}` : '';

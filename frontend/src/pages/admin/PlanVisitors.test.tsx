@@ -41,7 +41,7 @@ const plan: Plan = {
   ],
   visitors: [
     visitor({ id: 1, name: 'Mr Tan', seats: 2, driver_id: 30, driver_name: 'Driver Grace' }),
-    visitor({ id: 2, name: 'Auntie Ho', leg: 'return', can_edit: false, created_by: { id: 9, name: 'Other' } }),
+    visitor({ id: 2, name: 'Auntie Ho', leg: 'return', created_by: { id: 9, name: 'Other' } }),
   ],
 };
 
@@ -60,11 +60,11 @@ describe('Visitors on the transport plan', () => {
     await i18n.changeLanguage('en');
     (authMod.useAuth as unknown as ReturnType<typeof vi.fn>).mockReturnValue({
       can: () => true,
-      me: { id: 2, name: 'Bob', roles: ['traffic_member'] },
+      me: { id: 2, name: 'Bob', roles: ['traffic_head'] },
     });
     // Stable answers: a fresh object every render would reset the board forever.
     const areas = { data: [{ id: 1, name: 'SS2', active: true }], error: null, loading: false, refreshing: false, reload: vi.fn(), setData: vi.fn() };
-    const board = { data: { ...plan, can_approve: false, draft: null }, error: null, loading: false, refreshing: false, reload: vi.fn(), setData: vi.fn() };
+    const board = { data: { ...plan, can_approve: true, draft: null }, error: null, loading: false, refreshing: false, reload: vi.fn(), setData: vi.fn() };
     vi.spyOn(apiMod, 'useApi').mockImplementation(((path: string | null) =>
       path === '/areas' ? areas : board) as unknown as typeof apiMod.useApi);
   });
@@ -77,9 +77,9 @@ describe('Visitors on the transport plan', () => {
     expect(within(card).getAllByText('Visitor')).toHaveLength(2);
     expect(within(card).getByText("SS2 · 2 passengers · In Driver Grace's car")).toBeInTheDocument();
     expect(screen.getAllByText(/2 visitors, 3 seats/).length).toBeGreaterThan(0);
-    // Only the visitor this member recorded can be changed.
+    // The traffic lead may change any visitor.
     expect(within(card).getByRole('button', { name: 'Edit Mr Tan' })).toBeInTheDocument();
-    expect(within(card).queryByRole('button', { name: 'Edit Auntie Ho' })).not.toBeInTheDocument();
+    expect(within(card).getByRole('button', { name: 'Remove Auntie Ho' })).toBeInTheDocument();
     // Mr Tan's two seats count in Driver Grace's car.
     expect(screen.getByText('2 / 4 seats')).toBeInTheDocument();
   });
@@ -99,6 +99,23 @@ describe('Visitors on the transport plan', () => {
       })),
     );
     await waitFor(() => expect(get).toHaveBeenCalledWith('/admin/events/5/plan/visitors'));
+  });
+
+  it('lets plan staff below the traffic lead see visitors but not add or change them', () => {
+    (authMod.useAuth as unknown as ReturnType<typeof vi.fn>).mockReturnValue({
+      can: () => true,
+      me: { id: 3, name: 'Amina', roles: ['traffic_member'] },
+    });
+    const board = {
+      data: { ...plan, can_approve: false, draft: null, visitors: plan.visitors!.map((v) => ({ ...v, can_edit: false })) },
+      error: null, loading: false, refreshing: false, reload: vi.fn(), setData: vi.fn(),
+    };
+    vi.spyOn(apiMod, 'useApi').mockReturnValue(board as unknown as ReturnType<typeof apiMod.useApi>);
+    show();
+    expect(screen.getAllByText('Mr Tan').length).toBeGreaterThan(0);
+    expect(screen.getByText('Only the traffic lead can add or change visitors.')).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Add visitor' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Edit Mr Tan' })).not.toBeInTheDocument();
   });
 
   it('counts visitor seats per trip in the driver load', () => {

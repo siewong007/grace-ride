@@ -228,6 +228,56 @@ describe('planImageExport', () => {
     });
   });
 
+  describe('visitors on the shared sheet', () => {
+    const ctx = {
+      measureText: (str: string) => ({ width: str.length * 8 }),
+      font: '',
+    } as unknown as CanvasRenderingContext2D;
+    const visitor = (id: number, driver_id: number | null, seats = 1) => ({
+      id, name: `Guest ${id}`, phone: '', notes: '', area: null, pickup_address: '', seats, leg: 'outbound' as const,
+      driver_id, driver_name: null, created_by: null, created_at: '', updated_at: '', can_edit: true,
+    });
+
+    it('puts visitors in their car or under no driver, tagged as visitors without a time', () => {
+      const plan = { ...mockPlan, visitors: [visitor(7, 3, 2), visitor(8, null)] };
+      const draft = { 101: 1, 102: 1, 103: 2, 104: 2 };
+      const layout = measurePlanLayout(ctx, plan, draft, mockT, mockFormatT, true);
+
+      // Brother Timothy (3) was standby; his recorded visitor now gives him a card.
+      const timothy = layout.driverCards.find((c) => c.driver.id === 3)!;
+      expect(timothy.passengers).toHaveLength(1);
+      expect(timothy.assignedSeats).toBe(2);
+      expect(timothy.passengers[0].headerText).toContain('Guest 7 [visitorTag]');
+      expect(timothy.passengers[0].headerText).not.toContain('\u00b7');
+      expect(timothy.passengers[0].addrLines).toEqual(['\u2014']);
+      expect(layout.standbyDrivers.map((d) => d.id)).not.toContain(3);
+
+      // A visitor with no car is listed under "no driver yet".
+      expect(layout.unassignedItems).toHaveLength(1);
+      expect(layout.unassignedItems[0].headerText).toContain('Guest 8 [visitorTag]');
+    });
+
+    it('draws the card of a lone active driver, with the visitor in it', () => {
+      const plan = { ...mockPlan, visitors: [visitor(7, 3, 2)] };
+      const draft = { 101: null, 102: null, 103: null, 104: null };
+      const layout = measurePlanLayout(ctx, plan, draft, mockT, mockFormatT, false);
+      expect(layout.driverCards).toHaveLength(1);
+      const card = layout.driverCards[0];
+      expect(Number.isFinite(card.x) && Number.isFinite(card.y)).toBe(true);
+      expect(card.passengers[0].headerText).toContain('Guest 7 [visitorTag]');
+      // The "no driver yet" list starts below the card, not on top of it.
+      expect(layout.unassignedY).toBeGreaterThanOrEqual(card.y + card.height);
+    });
+
+    it('leaves the sheet unchanged when there are no visitors', () => {
+      const draft = { 101: 1, 102: 1, 103: 2, 104: null };
+      const a = measurePlanLayout(ctx, mockPlan, draft, mockT, mockFormatT, false);
+      const b = measurePlanLayout(ctx, { ...mockPlan, visitors: [] }, draft, mockT, mockFormatT, false);
+      expect(b.height).toBe(a.height);
+      expect(b.driverCards.map((c) => c.passengers.length)).toEqual(a.driverCards.map((c) => c.passengers.length));
+    });
+  });
+
   describe('renderPlanToCanvas', () => {
     const mockCtx = {
       fillStyle: '',
