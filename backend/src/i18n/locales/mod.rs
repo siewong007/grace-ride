@@ -405,6 +405,18 @@ pub fn render(lang: Lang, key: &ErrorKey) -> String {
         ErrorKey::CannotPayOwnApproval => {
             community::render(lang, CommunityError::CannotPayOwnApproval)
         }
+        ErrorKey::VisitorReimbNeedsDriver => {
+            community::render(lang, CommunityError::VisitorReimbNeedsDriver)
+        }
+        ErrorKey::VisitorReimbAlreadyLive => {
+            community::render(lang, CommunityError::VisitorReimbAlreadyLive)
+        }
+        ErrorKey::AmountMustBePositive => {
+            community::render(lang, CommunityError::AmountMustBePositive)
+        }
+        ErrorKey::VisitorHasReimbursement => {
+            community::render(lang, CommunityError::VisitorHasReimbursement)
+        }
         ErrorKey::ReimbursementAlreadyClaimed => {
             community::render(lang, CommunityError::ReimbursementAlreadyClaimed)
         }
@@ -682,6 +694,10 @@ mod tests {
             ErrorKey::MonthFormatInvalid => ErrorKey::MonthFormatInvalid,
             ErrorKey::BatchEmpty => ErrorKey::BatchEmpty,
             ErrorKey::BatchAlreadyPaid => ErrorKey::BatchAlreadyPaid,
+            ErrorKey::VisitorReimbNeedsDriver => ErrorKey::VisitorReimbNeedsDriver,
+            ErrorKey::VisitorReimbAlreadyLive => ErrorKey::VisitorReimbAlreadyLive,
+            ErrorKey::VisitorHasReimbursement => ErrorKey::VisitorHasReimbursement,
+            ErrorKey::AmountMustBePositive => ErrorKey::AmountMustBePositive,
 
             ErrorKey::NoFileReceived => ErrorKey::NoFileReceived,
             ErrorKey::FileTooLarge => ErrorKey::FileTooLarge,

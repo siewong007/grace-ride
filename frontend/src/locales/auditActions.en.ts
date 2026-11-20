@@ -73,6 +73,8 @@ export default {
   reimbursement_approve: 'Approved a reimbursement',
   reimbursement_reject: 'Rejected a reimbursement',
   reimbursement_pay: 'Marked a reimbursement paid',
+  reimbursement_visitor_special: 'Asked for a visitor special reimbursement',
+  reimbursement_visitor_special_resubmit: 'Resent a visitor special reimbursement',
   settlement_create: 'Created a cost split',
   settlement_edit_draft: 'Edited a cost-split draft',
   settlement_publish: 'Published a cost split',

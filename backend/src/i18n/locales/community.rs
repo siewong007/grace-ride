@@ -35,6 +35,10 @@ pub enum CommunityError {
     MonthFormatInvalid,
     BatchEmpty,
     BatchAlreadyPaid,
+    VisitorReimbNeedsDriver,
+    VisitorReimbAlreadyLive,
+    VisitorHasReimbursement,
+    AmountMustBePositive,
 }
 
 pub fn render(lang: Lang, key: CommunityError) -> String {
@@ -123,6 +127,26 @@ pub fn render(lang: Lang, key: CommunityError) -> String {
             lang,
             "批准与付款需由不同的人处理：此申请由您批准，请交给另一位财务同工付款",
             "Approving and paying need two people: you approved this request, so another finance member must pay it",
+        ),
+        CommunityError::VisitorReimbNeedsDriver => pair(
+            lang,
+            "请先为这位访客选好所乘的车：特别报销付给该司机",
+            "Choose the car this visitor rode in first: the special reimbursement pays that driver",
+        ),
+        CommunityError::VisitorReimbAlreadyLive => pair(
+            lang,
+            "这位访客已有一笔特别报销在处理中或已批准；只有被拒绝后才能再申请",
+            "This visitor already has a special reimbursement in progress or approved; a new one is only possible after it is rejected",
+        ),
+        CommunityError::AmountMustBePositive => pair(
+            lang,
+            "金额需大于 RM0",
+            "The amount must be more than RM0",
+        ),
+        CommunityError::VisitorHasReimbursement => pair(
+            lang,
+            "这位访客有特别报销记录，不能删除",
+            "This visitor has a special reimbursement on record and can't be removed",
         ),
         CommunityError::ReimbursementAlreadyClaimed => pair(
             lang,

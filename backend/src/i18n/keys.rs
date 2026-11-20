@@ -221,6 +221,10 @@ pub enum ErrorKey {
     MonthFormatInvalid,
     BatchEmpty,
     BatchAlreadyPaid,
+    VisitorReimbNeedsDriver,
+    VisitorReimbAlreadyLive,
+    VisitorHasReimbursement,
+    AmountMustBePositive,
 
     // === Files ===
     NoFileReceived,
@@ -456,6 +460,10 @@ impl ErrorKey {
             Self::MonthFormatInvalid => "MONTH_FORMAT_INVALID",
             Self::BatchEmpty => "BATCH_EMPTY",
             Self::BatchAlreadyPaid => "BATCH_ALREADY_PAID",
+            Self::VisitorReimbNeedsDriver => "VISITOR_REIMB_NEEDS_DRIVER",
+            Self::VisitorReimbAlreadyLive => "VISITOR_REIMB_ALREADY_LIVE",
+            Self::VisitorHasReimbursement => "VISITOR_HAS_REIMBURSEMENT",
+            Self::AmountMustBePositive => "AMOUNT_MUST_BE_POSITIVE",
 
             Self::NoFileReceived => "NO_FILE_RECEIVED",
             Self::FileTooLarge => "FILE_TOO_LARGE",

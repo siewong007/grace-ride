@@ -73,6 +73,8 @@ export default {
   reimbursement_approve: '批准了报销',
   reimbursement_reject: '拒绝了报销',
   reimbursement_pay: '标记报销已支付',
+  reimbursement_visitor_special: '申请访客特别报销',
+  reimbursement_visitor_special_resubmit: '重新提交访客特别报销',
   settlement_create: '创建了费用分摊',
   settlement_edit_draft: '修改了费用分摊草稿',
   settlement_publish: '发布了费用分摊',

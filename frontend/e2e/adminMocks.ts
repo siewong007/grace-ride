@@ -38,7 +38,7 @@ const users = names.map((n, i) => ({
   groups: i % 2 ? 'Youth、Petaling Jaya Cell Group' : '',
 }));
 
-const reimbs = Array.from({ length: 5 }, (_, i) => ({
+export const reimbs = Array.from({ length: 5 }, (_, i) => ({
   id: 500 + i, user: { id: 10 + i, name: names[i] }, ride_id: i % 2 ? 100 + i : null, ride_at: '2026-11-18T09:00:00',
   amount_cents: 1250 + i * 730, description: 'Fuel and toll for Sunday service pickups across three areas', receipt_file_id: 9,
   payee_name: names[i], payee_phone: '+60123456789', status: ['pending', 'approved', 'paid', 'returned', 'rejected'][i],
@@ -71,7 +71,7 @@ const audit = {
   next_before: null, retention_days: 730,
 };
 
-const plan = {
+export const plan = {
   event: { id: 1, title: 'Sunday Worship Service & Fellowship Lunch', starts_at: '2026-11-22T10:00:00', location: 'Church', status: 'open' },
   rides: Array.from({ length: 4 }, (_, i) => ({
     id: 200 + i, passenger: { id: 10 + i, name: names[i] }, seats: 1, area: { id: 1, name: 'Petaling Jaya' }, pickup_at: '2026-11-22T09:00:00',

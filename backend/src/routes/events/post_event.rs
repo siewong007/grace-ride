@@ -258,6 +258,7 @@ pub(super) async fn get_post_event_drivers(
             "SELECT id, amount_cents, status, trip_type
              FROM reimbursements
              WHERE event_id = $1 AND user_id = $2 AND status <> 'rejected'
+               AND kind <> 'visitor_special'
              ORDER BY id DESC LIMIT 1",
         )
         .bind(event_id)
@@ -357,7 +358,7 @@ pub(super) async fn create_post_event_reimbursements(
 
         // Check if already claimed for this event
         let (existing_count,): (i64,) = sqlx::query_as(
-            "SELECT COUNT(*) FROM reimbursements WHERE event_id = $1 AND user_id = $2 AND status <> 'rejected'",
+            "SELECT COUNT(*) FROM reimbursements WHERE event_id = $1 AND user_id = $2 AND status <> 'rejected' AND kind <> 'visitor_special'",
         )
         .bind(event_id)
         .bind(claim.driver_id)
