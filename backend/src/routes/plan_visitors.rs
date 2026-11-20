@@ -10,10 +10,17 @@
 //! Only a traffic lead may add, change or remove visitors; anyone who can see the plan
 //! sees them. Traffic group members, transport, secretary and cell leaders cannot record
 //! visitors even though they may edit the plan.
+//!
+//! A traffic lead may also ask for a **special reimbursement** for a visitor: an amount and
+//! a required reason, paid to the driver the visitor rode with. It is an ordinary claim
+//! (`kind = 'visitor_special'`, status `pending`), so it goes through the usual review
+//! (approve / return / reject, not by whoever asked for it) and then finance payout. One
+//! live request per visitor: another only once the last one was rejected. A returned one
+//! is corrected and sent again here, by a traffic lead, not by the driver.
 
 use axum::{
     extract::{Path, State},
-    routing::{get, put},
+    routing::{get, post, put},
     Json, Router,
 };
 use serde::Deserialize;
@@ -25,7 +32,7 @@ use crate::i18n::ErrorKey;
 use crate::perms::{self, Act, Page, Perm};
 use crate::routes::plan::load_event;
 use crate::state::AppState;
-use crate::util::{audit, check_phone, now, require};
+use crate::util::{audit, check_phone, fmt_rm, notify, notify_perm, now, require};
 
 pub fn router() -> Router<AppState> {
     Router::new()
@@ -36,6 +43,14 @@ pub fn router() -> Router<AppState> {
         .route(
             "/admin/events/{id}/plan/visitors/{vid}",
             put(update_visitor).delete(delete_visitor),
+        )
+        .route(
+            "/admin/events/{id}/plan/visitors/{vid}/reimbursement",
+            post(request_special_reimbursement),
+        )
+        .route(
+            "/admin/events/{id}/plan/visitors/{vid}/reimbursement/{rid}",
+            put(resubmit_special_reimbursement),
         )
 }
 
@@ -59,6 +74,12 @@ struct VisitorRow {
     created_by_name: Option<String>,
     created_at: String,
     updated_at: String,
+    reimb_id: Option<i64>,
+    reimb_status: Option<String>,
+    reimb_amount_cents: Option<i64>,
+    reimb_reason: Option<String>,
+    reimb_review_note: Option<String>,
+    reimb_payee: Option<String>,
 }
 
 /// Recording visitors is for the traffic lead only (any visitor, whoever added it).
@@ -71,11 +92,21 @@ pub(crate) async fn list(st: &AppState, u: &CurrentUser, event: i64) -> AppResul
     let rows: Vec<VisitorRow> = sqlx::query_as(
         "SELECT v.id, v.name, v.phone, v.notes, v.area_id, a.name AS area_name, v.pickup_address,
                 v.seats, v.leg, v.driver_id, d.name AS driver_name, v.created_by,
-                c.name AS created_by_name, v.created_at, v.updated_at
+                c.name AS created_by_name, v.created_at, v.updated_at,
+                sr.id AS reimb_id, sr.status AS reimb_status, sr.amount_cents AS reimb_amount_cents,
+                sr.special_reason AS reimb_reason, sr.review_note AS reimb_review_note,
+                sr.payee_name AS reimb_payee
          FROM plan_visitors v
          LEFT JOIN areas a ON a.id = v.area_id
          LEFT JOIN users d ON d.id = v.driver_id
          LEFT JOIN users c ON c.id = v.created_by
+         -- The visitor's latest special reimbursement, if any.
+         LEFT JOIN LATERAL (
+             SELECT r.id, r.status, r.amount_cents, r.special_reason, r.review_note, r.payee_name
+             FROM reimbursements r
+             WHERE r.plan_visitor_id = v.id AND r.kind = 'visitor_special'
+             ORDER BY r.id DESC LIMIT 1
+         ) sr ON TRUE
          WHERE v.event_id = $1
          ORDER BY v.leg, v.name, v.id",
     )
@@ -100,6 +131,15 @@ pub(crate) async fn list(st: &AppState, u: &CurrentUser, event: i64) -> AppResul
                 "created_at": v.created_at,
                 "updated_at": v.updated_at,
                 "can_edit": may_edit(u),
+                "special_reimbursement": v.reimb_id.map(|rid| json!({
+                    "id": rid,
+                    "status": v.reimb_status,
+                    "amount_cents": v.reimb_amount_cents,
+                    "high_amount": v.reimb_amount_cents.is_some_and(|c| c > SPECIAL_HIGH_CENTS),
+                    "reason": v.reimb_reason,
+                    "review_note": v.reimb_review_note,
+                    "payee_name": v.reimb_payee,
+                })),
             })
         })
         .collect())
@@ -317,6 +357,16 @@ async fn delete_visitor(
     require(&u, Page::AdminPlan, Act::Update)?;
     load_event(&st, &u, id).await?;
     owned(&st, &u, id, vid).await?;
+    // A visitor with a live (not rejected) special reimbursement stays on record.
+    let live: bool = sqlx::query_scalar(
+        "SELECT EXISTS (SELECT 1 FROM reimbursements WHERE plan_visitor_id = $1 AND status <> 'rejected')",
+    )
+    .bind(vid)
+    .fetch_one(&st.db)
+    .await?;
+    if live {
+        return Err(conflict(u.lang, ErrorKey::VisitorHasReimbursement));
+    }
     sqlx::query("DELETE FROM plan_visitors WHERE id=$1 AND event_id=$2")
         .bind(vid)
         .bind(id)
@@ -331,5 +381,217 @@ async fn delete_visitor(
         format!("event {id}: visitor #{vid}"),
     )
     .await;
+    Ok(Json(json!({ "ok": true })))
+}
+
+// ---------------- Special reimbursement for a visitor ----------------
+
+/// No ceiling on a special reimbursement (John: "no maximum"); above this the request
+/// form and reviewers are warned. A warning only, never a block.
+pub(crate) const SPECIAL_HIGH_CENTS: i64 = 10_000;
+const REASON_MAX: usize = 300;
+
+#[derive(Deserialize)]
+struct SpecialIn {
+    amount_cents: i64,
+    #[serde(default)]
+    reason: String,
+}
+
+fn clean_special(u: &CurrentUser, req: &SpecialIn) -> AppResult<String> {
+    if req.amount_cents <= 0 {
+        return Err(bad(u.lang, ErrorKey::AmountMustBePositive));
+    }
+    let reason = req.reason.trim().to_string();
+    if reason.is_empty() {
+        return Err(bad(u.lang, ErrorKey::ReasonRequired));
+    }
+    if reason.chars().count() > REASON_MAX {
+        return Err(bad(u.lang, ErrorKey::InvalidAction));
+    }
+    Ok(reason)
+}
+
+fn special_description(visitor: &str, reason: &str) -> String {
+    format!("[访客特别报销 Visitor special] {visitor} · {reason}")
+}
+
+async fn tell_reviewers(st: &AppState, payee: &str, visitor: &str, amount: i64, event_title: &str) {
+    notify_perm(
+        &st.db,
+        Page::AdminReimbReview,
+        Act::Update,
+        if amount > SPECIAL_HIGH_CENTS {
+            (
+                "访客特别报销待审核（高额，超过 RM100）",
+                "Visitor special reimbursement to review (high amount, over RM 100)",
+            )
+        } else {
+            (
+                "访客特别报销待审核",
+                "Visitor special reimbursement to review",
+            )
+        },
+        (
+            &format!(
+                "{event_title} · 访客 {visitor} · 付给 {payee} · {}",
+                fmt_rm(amount)
+            ),
+            &format!(
+                "{event_title} · visitor {visitor} · pays {payee} · {}",
+                fmt_rm(amount)
+            ),
+        ),
+        "/admin/reimbursements",
+    )
+    .await;
+}
+
+/// A traffic lead asks for a special reimbursement for this visitor, paid to their driver.
+async fn request_special_reimbursement(
+    State(st): State<AppState>,
+    u: CurrentUser,
+    Path((id, vid)): Path<(i64, i64)>,
+    Json(req): Json<SpecialIn>,
+) -> AppResult<Json<Value>> {
+    open_event(&st, &u, id).await?;
+    owned(&st, &u, id, vid).await?;
+    let reason = clean_special(&u, &req)?;
+
+    let mut tx = st.db.begin().await?;
+    // Lock the visitor so two requests sent together can't both pass the live check.
+    let (visitor, driver, event_title): (String, Option<i64>, String) = sqlx::query_as(
+        "SELECT v.name, v.driver_id, e.title FROM plan_visitors v JOIN events e ON e.id = v.event_id
+         WHERE v.id = $1 AND v.event_id = $2 FOR UPDATE OF v",
+    )
+    .bind(vid)
+    .bind(id)
+    .fetch_optional(&mut *tx)
+    .await?
+    .ok_or_else(|| not_found(u.lang))?;
+    let driver = driver.ok_or_else(|| bad(u.lang, ErrorKey::VisitorReimbNeedsDriver))?;
+    let (payee, phone): (String, String) =
+        sqlx::query_as("SELECT name, phone FROM users WHERE id = $1 AND status = 'active'")
+            .bind(driver)
+            .fetch_optional(&mut *tx)
+            .await?
+            .ok_or_else(|| bad(u.lang, ErrorKey::VisitorReimbNeedsDriver))?;
+    let live: bool = sqlx::query_scalar(
+        "SELECT EXISTS (SELECT 1 FROM reimbursements WHERE plan_visitor_id = $1 AND status <> 'rejected')",
+    )
+    .bind(vid)
+    .fetch_one(&mut *tx)
+    .await?;
+    if live {
+        return Err(conflict(u.lang, ErrorKey::VisitorReimbAlreadyLive));
+    }
+    let stamp = now();
+    let rid: i64 = sqlx::query_scalar(
+        "INSERT INTO reimbursements (user_id, event_id, amount_cents, description, receipt_file_id,
+                                     payee_name, payee_phone, status, kind, plan_visitor_id,
+                                     special_reason, requested_by, created_at, updated_at)
+         VALUES ($1, $2, $3, $4, NULL, $5, $6, 'pending', 'visitor_special', $7, $8, $9, $10, $10)
+         RETURNING id",
+    )
+    .bind(driver)
+    .bind(id)
+    .bind(req.amount_cents)
+    .bind(special_description(&visitor, &reason))
+    .bind(&payee)
+    .bind(&phone)
+    .bind(vid)
+    .bind(&reason)
+    .bind(u.id)
+    .bind(&stamp)
+    .fetch_one(&mut *tx)
+    .await?;
+    tx.commit().await?;
+
+    audit(
+        &st.db,
+        Some(u.id),
+        "reimbursement.visitor_special",
+        "reimbursement",
+        Some(rid),
+        format!(
+            "event {id}: visitor #{vid} {visitor} · {} to {payee} · {reason}",
+            fmt_rm(req.amount_cents)
+        ),
+    )
+    .await;
+    notify(
+        &st.db,
+        driver,
+        ("访客特别报销已申请", "Visitor special reimbursement requested"),
+        (
+            &format!(
+                "交通组为您载送访客 {visitor} 申请了特别报销 {}：{reason}。审核后由财务付款。",
+                fmt_rm(req.amount_cents)
+            ),
+            &format!(
+                "The traffic team asked for a special reimbursement of {} for carrying visitor {visitor}: {reason}. Finance pays it once approved.",
+                fmt_rm(req.amount_cents)
+            ),
+        ),
+        &format!("/reimbursements/{rid}"),
+    )
+    .await;
+    tell_reviewers(&st, &payee, &visitor, req.amount_cents, &event_title).await;
+    Ok(Json(json!({ "id": rid })))
+}
+
+/// A traffic lead corrects a returned special reimbursement and sends it for review again.
+async fn resubmit_special_reimbursement(
+    State(st): State<AppState>,
+    u: CurrentUser,
+    Path((id, vid, rid)): Path<(i64, i64, i64)>,
+    Json(req): Json<SpecialIn>,
+) -> AppResult<Json<Value>> {
+    open_event(&st, &u, id).await?;
+    owned(&st, &u, id, vid).await?;
+    let reason = clean_special(&u, &req)?;
+    let row: Option<(String, String, String)> = sqlx::query_as(
+        "SELECT v.name, r.payee_name, e.title FROM reimbursements r
+         JOIN plan_visitors v ON v.id = r.plan_visitor_id
+         JOIN events e ON e.id = v.event_id
+         WHERE r.id = $1 AND r.plan_visitor_id = $2 AND v.event_id = $3 AND r.kind = 'visitor_special'",
+    )
+    .bind(rid)
+    .bind(vid)
+    .bind(id)
+    .fetch_optional(&st.db)
+    .await?;
+    let (visitor, payee, event_title) = row.ok_or_else(|| not_found(u.lang))?;
+    // Only a returned one, and only if nobody changed it in between.
+    let changed = sqlx::query(
+        "UPDATE reimbursements SET amount_cents = $1, special_reason = $2, description = $3,
+                status = 'pending', payee_verified = 0, requested_by = $4, updated_at = $5
+         WHERE id = $6 AND status = 'returned'",
+    )
+    .bind(req.amount_cents)
+    .bind(&reason)
+    .bind(special_description(&visitor, &reason))
+    .bind(u.id)
+    .bind(now())
+    .bind(rid)
+    .execute(&st.db)
+    .await?
+    .rows_affected();
+    if changed == 0 {
+        return Err(bad(u.lang, ErrorKey::OnlyReturnedReimbCanBeResubmitted));
+    }
+    audit(
+        &st.db,
+        Some(u.id),
+        "reimbursement.visitor_special_resubmit",
+        "reimbursement",
+        Some(rid),
+        format!(
+            "event {id}: visitor #{vid} {visitor} · {} to {payee} · {reason}",
+            fmt_rm(req.amount_cents)
+        ),
+    )
+    .await;
+    tell_reviewers(&st, &payee, &visitor, req.amount_cents, &event_title).await;
     Ok(Json(json!({ "ok": true })))
 }

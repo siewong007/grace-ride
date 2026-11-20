@@ -101,6 +101,86 @@ describe('Visitors on the transport plan', () => {
     await waitFor(() => expect(get).toHaveBeenCalledWith('/admin/events/5/plan/visitors'));
   });
 
+  it('lets the traffic lead ask for a special reimbursement for a visitor with a car', async () => {
+    const post = vi.spyOn(apiMod, 'post').mockResolvedValue({ id: 70 });
+    vi.spyOn(apiMod, 'api').mockResolvedValue({ visitors: [] });
+    show();
+    const card = screen.getByRole('heading', { name: /Visitors \(for the record\)/ }).closest('.plan-visitors') as HTMLElement;
+    // Auntie Ho has no car yet, so nobody to pay.
+    expect(within(card).queryByRole('button', { name: 'Special reimbursement for Auntie Ho' })).not.toBeInTheDocument();
+    expect(within(card).getByText(/Choose the car this visitor rode in/)).toBeInTheDocument();
+
+    await userEvent.click(within(card).getByRole('button', { name: 'Special reimbursement for Mr Tan' }));
+    const dialog = screen.getByRole('dialog');
+    expect(within(dialog).getByText(/Pays Driver Grace/)).toBeInTheDocument();
+    await userEvent.type(within(dialog).getByLabelText('Amount (RM)'), '0');
+    expect(within(dialog).getByText('Enter an amount above RM 0.')).toBeInTheDocument();
+    await userEvent.clear(within(dialog).getByLabelText('Amount (RM)'));
+    const send = within(dialog).getByRole('button', { name: 'Send for review' });
+    const amount = within(dialog).getByLabelText('Amount (RM)');
+    await userEvent.type(amount, '30');
+    expect(send).toBeDisabled(); // the reason is required
+    expect(within(dialog).queryByText(/is over RM 100/)).not.toBeInTheDocument();
+    await userEvent.type(within(dialog).getByLabelText('Reason'), 'Detour to Klang');
+    // No maximum: a large amount only warns, and can still be sent.
+    await userEvent.clear(amount);
+    await userEvent.type(amount, '650');
+    expect(within(dialog).getByText(/High amount: RM 650.00 is over RM 100/)).toBeInTheDocument();
+    expect(send).toBeEnabled();
+    await userEvent.click(send);
+    await waitFor(() =>
+      expect(post).toHaveBeenCalledWith('/admin/events/5/plan/visitors/1/reimbursement', {
+        amount_cents: 65_000, reason: 'Detour to Klang',
+      }),
+    );
+  });
+
+  it('shows a visitor special reimbursement and lets the lead correct a returned one', async () => {
+    const put = vi.spyOn(apiMod, 'put').mockResolvedValue({ ok: true });
+    vi.spyOn(apiMod, 'api').mockResolvedValue({ visitors: [] });
+    const withClaim = {
+      ...plan,
+      can_approve: true,
+      draft: null,
+      visitors: [
+        visitor({
+          id: 1, name: 'Mr Tan', driver_id: 30, driver_name: 'Driver Grace',
+          special_reimbursement: { id: 70, status: 'returned', amount_cents: 12_000, reason: 'Detour', review_note: 'Which road?', payee_name: 'Driver Grace' },
+        }),
+        visitor({
+          id: 2, name: 'Auntie Ho', driver_id: 30, driver_name: 'Driver Grace',
+          special_reimbursement: { id: 71, status: 'pending', amount_cents: 1500, reason: 'Late pickup', review_note: '', payee_name: 'Driver Grace' },
+        }),
+      ],
+    };
+    const areas = { data: [], error: null, loading: false, refreshing: false, reload: vi.fn(), setData: vi.fn() };
+    const board = { data: withClaim, error: null, loading: false, refreshing: false, reload: vi.fn(), setData: vi.fn() };
+    vi.spyOn(apiMod, 'useApi').mockImplementation(((path: string | null) =>
+      path === '/areas' ? areas : board) as unknown as typeof apiMod.useApi);
+    show();
+    const card = screen.getByRole('heading', { name: /Visitors \(for the record\)/ }).closest('.plan-visitors') as HTMLElement;
+    expect(within(card).getByText('Special reimbursement RM 15.00 to Driver Grace')).toBeInTheDocument();
+    expect(within(card).getByText('Late pickup')).toBeInTheDocument();
+    // Only Mr Tan's RM 120 is flagged as a high amount.
+    expect(within(card).getAllByText('High amount (over RM 100)')).toHaveLength(1);
+    // Pending: one live request per visitor, so nothing more to ask.
+    expect(within(card).queryByRole('button', { name: 'Special reimbursement for Auntie Ho' })).not.toBeInTheDocument();
+    expect(within(card).getByText('Returned: Which road?')).toBeInTheDocument();
+
+    await userEvent.click(within(card).getByRole('button', { name: 'Correct and resend the reimbursement for Mr Tan' }));
+    const dialog = screen.getByRole('dialog');
+    const reason = within(dialog).getByLabelText('Reason');
+    expect(reason).toHaveValue('Detour');
+    await userEvent.clear(reason);
+    await userEvent.type(reason, 'Detour via Jalan Klang Lama');
+    await userEvent.click(within(dialog).getByRole('button', { name: 'Send for review' }));
+    await waitFor(() =>
+      expect(put).toHaveBeenCalledWith('/admin/events/5/plan/visitors/1/reimbursement/70', {
+        amount_cents: 12_000, reason: 'Detour via Jalan Klang Lama',
+      }),
+    );
+  });
+
   it('lets plan staff below the traffic lead see visitors but not add or change them', () => {
     (authMod.useAuth as unknown as ReturnType<typeof vi.fn>).mockReturnValue({
       can: () => true,

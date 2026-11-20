@@ -26,14 +26,14 @@ export interface Reimb {
   user: { id: number; name: string };
   ride_id: number | null;
   ride_at: string | null;
-  kind?: 'grab' | 'mileage';
+  kind?: 'grab' | 'mileage' | 'visitor_special';
   ride_route?: string | null;
   event_id?: number | null;
   event_title?: string | null;
   event_starts_at?: string | null;
   amount_cents: number;
   description: string;
-  receipt_file_id: number;
+  receipt_file_id: number | null;
   payee_name: string | null;
   payee_phone: string | null;
   status: string;
@@ -43,6 +43,12 @@ export interface Reimb {
   paid_ref: string | null;
   paid_at: string | null;
   created_at: string;
+  /** A traffic lead's special reimbursement for a plan visitor: who it was for and why. */
+  visitor?: { id: number; name: string | null } | null;
+  special_reason?: string | null;
+  /** A visitor special reimbursement over RM 100 (a warning only). */
+  high_amount?: boolean;
+  requested_by?: { id: number; name: string | null } | null;
 }
 
 export interface PaginatedReimbursements {
@@ -494,6 +500,17 @@ export function ReimbursementDetail() {
                 </dd>
               </>
             )}
+            {r.kind === 'visitor_special' && (
+              <>
+                <dt>{t('kindVisitorSpecial')}</dt>
+                <dd>
+                  {r.visitor?.name ?? '—'}
+                  {r.requested_by?.name ? ` · ${t('requestedBy', { name: r.requested_by.name })}` : ''}
+                </dd>
+                <dt>{t('specialReason')}</dt>
+                <dd>{r.special_reason}</dd>
+              </>
+            )}
             {r.kind === 'mileage' && (
               <>
                 <dt>{t('route')}</dt>
@@ -533,7 +550,11 @@ export function ReimbursementDetail() {
           </dl>
 
           <ReceiptLink id={r.receipt_file_id} />
-          {r.status === 'returned' && can('reimbursements', 'update') && (
+          {/* A visitor special reimbursement is corrected by the traffic lead, not the payee. */}
+          {r.status === 'returned' && r.kind === 'visitor_special' && (
+            <p className="small muted">{t('visitorSpecialReturned')}</p>
+          )}
+          {r.status === 'returned' && r.kind !== 'visitor_special' && can('reimbursements', 'update') && (
             <Button variant="primary" block to={`/reimbursements/new?edit=${r.id}`}>
               {t('resubmit')}
             </Button>
