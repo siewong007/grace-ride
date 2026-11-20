@@ -95,14 +95,14 @@ struct PlanDriver {
     child_seat: i64,
 }
 
-struct EventRow {
+pub(crate) struct EventRow {
     title: String,
     starts_at: String,
     location: String,
-    status: String,
+    pub(crate) status: String,
 }
 
-async fn load_event(st: &AppState, u: &CurrentUser, id: i64) -> AppResult<EventRow> {
+pub(crate) async fn load_event(st: &AppState, u: &CurrentUser, id: i64) -> AppResult<EventRow> {
     let row: Option<(String, String, String, String, i64)> = sqlx::query_as(
         "SELECT title, starts_at, location, status, created_by FROM events WHERE id=$1",
     )
@@ -341,10 +341,12 @@ async fn get_plan(
         })
     });
 
+    let visitors = crate::routes::plan_visitors::list(&st, &u, id).await?;
     Ok(Json(json!({
         "event": { "id": id, "title": ev.title, "starts_at": ev.starts_at, "location": ev.location, "status": ev.status },
         "draft": draft_json,
         "can_approve": u.is_traffic_lead(),
+        "visitors": visitors,
         "rides": rides.iter().map(|r| json!({
             "id": r.id,
             "passenger": { "id": r.passenger_id, "name": r.p_name },
@@ -434,6 +436,22 @@ async fn arrange_plan(
         .count();
     crate::routing::warm_geocodes(&st, missing);
 
+    // Visitors recorded in a car take its seats too (they are not rides, so no booking).
+    let visitor_rows: Vec<(i64, String, i64)> = sqlx::query_as(
+        "SELECT driver_id, leg, COALESCE(SUM(seats), 0)::BIGINT FROM plan_visitors
+         WHERE event_id = $1 AND driver_id IS NOT NULL GROUP BY driver_id, leg",
+    )
+    .bind(id)
+    .fetch_all(&st.db)
+    .await?;
+    let visitor_seats = |driver: i64, want_return: bool| -> i64 {
+        visitor_rows
+            .iter()
+            .filter(|(d, leg, _)| *d == driver && (leg == "return") == want_return)
+            .map(|(_, _, n)| n)
+            .sum()
+    };
+
     let arrange_leg = |want_return: bool, other_map: &HashMap<i64, (i64, i64)>| {
         let leg_rides: Vec<&PlanRide> = b
             .rides
@@ -461,7 +479,9 @@ async fn arrange_plan(
                 let (o_seats, o_rides) = other_map.get(&d.id).copied().unwrap_or((0, 0));
                 Car {
                     driver_id: d.id,
-                    seats_left: seat_capacity(d.spare_seats, d.v_seats) - o_seats,
+                    seats_left: seat_capacity(d.spare_seats, d.v_seats)
+                        - o_seats
+                        - visitor_seats(d.id, want_return),
                     carpool: d.carpool_enabled == 1,
                     other_rides: o_rides,
                     area_ids: b.driver_areas.get(&d.id).cloned().unwrap_or_default(),

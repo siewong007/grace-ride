@@ -59,12 +59,33 @@ export interface PlanDraft {
   review_notes?: string;
 }
 
+/** Someone without an account noted on the plan for the record (no ride, no messages). */
+export interface PlanVisitor {
+  id: number;
+  name: string;
+  phone: string;
+  notes: string;
+  area: { id: number; name: string | null } | null;
+  pickup_address: string;
+  seats: number;
+  leg: 'outbound' | 'return';
+  /** The car they ride in, for the record; the driver is not notified. */
+  driver_id: number | null;
+  driver_name: string | null;
+  created_by: { id: number; name: string | null } | null;
+  created_at: string;
+  updated_at: string;
+  /** The recorder, or a traffic lead. */
+  can_edit: boolean;
+}
+
 export interface Plan {
   event: { id: number; title: string; starts_at: string; location: string; status: string };
   rides: PlanRide[];
   drivers: PlanDriver[];
   draft?: PlanDraft | null;
   can_approve?: boolean;
+  visitors?: PlanVisitor[];
 }
 
 /** Draft assignment: ride id → driver id, or null for "no driver yet". */
@@ -89,12 +110,19 @@ export function driverLoad(plan: Plan, draft: Draft, d: PlanDriver, leg?: 'outbo
       leg === 'return' ? (d.other_return_seats ?? 0) : (d.other_outbound_seats ?? d.other_seats ?? 0);
     const baseRides =
       leg === 'return' ? (d.other_return_rides ?? 0) : (d.other_outbound_rides ?? d.other_rides ?? 0);
-    const seats = baseSeats + mine.reduce((n, r) => n + r.seats, 0);
+    // Visitors recorded in this car take seats but are not bookings.
+    const visitorSeats = (plan.visitors ?? [])
+      .filter((v) => v.driver_id === d.id && v.leg === leg)
+      .reduce((n, v) => n + v.seats, 0);
+    const seats = baseSeats + visitorSeats + mine.reduce((n, r) => n + r.seats, 0);
     const rides = baseRides + mine.length;
     return { seats, rides, over: seats > d.cap || (!d.carpool && rides > 1) };
   }
   const out = driverLoad(plan, draft, d, 'outbound');
-  const hasReturn = plan.rides.some((r) => r.leg === 'return') || (d.other_return_rides ?? 0) > 0;
+  const hasReturn =
+    plan.rides.some((r) => r.leg === 'return') ||
+    (d.other_return_rides ?? 0) > 0 ||
+    (plan.visitors ?? []).some((v) => v.driver_id === d.id && v.leg === 'return');
   if (!hasReturn) return out;
   const ret = driverLoad(plan, draft, d, 'return');
   return {

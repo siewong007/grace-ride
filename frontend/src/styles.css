@@ -3247,3 +3247,16 @@ main a[href^="tel:"]:not(.btn) { text-decoration: underline; }
   line-height: 1.5;
 }
 
+
+/* ---- Visitors on the transport plan (record only) ---- */
+.plan-visitors { margin-bottom: var(--space-4); }
+.plan-visitor-list { list-style: none; margin: 0; padding: 0; }
+.plan-visitor-item {
+  display: flex; align-items: flex-start; justify-content: space-between; gap: var(--space-2);
+  padding: var(--space-3) 0; border-top: 1px solid var(--border);
+}
+.plan-visitor-line { display: grid; gap: 2px; min-width: 0; overflow-wrap: anywhere; }
+.plan-visitor-line.is-compact {
+  padding: var(--space-2) var(--space-3); border: 1px dashed var(--border); border-radius: var(--radius);
+  background: var(--surface-2);
+}

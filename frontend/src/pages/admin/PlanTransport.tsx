@@ -5,7 +5,7 @@ import { DragEvent, useCallback, useEffect, useMemo, useState } from 'react';
 import { useParams } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
 import { Accessibility, AlertCircle, Car, Check, CheckCircle2, Clock, Copy, Download, History, Repeat, RotateCcw, Save, Send, Sparkles, Undo2, UserRound } from 'lucide-react';
-import { ApiError, post, useApi } from '../../api';
+import { api, ApiError, post, useApi } from '../../api';
 import { useAuth } from '../../auth';
 import { canApprovePlan } from '../../perms';
 import {
@@ -37,11 +37,13 @@ import {
   driverLoad,
   Plan,
   PlanRide,
+  PlanVisitor,
   Reason,
   inGroup,
   savedDraft,
   servesArea,
 } from './planLogic';
+import PlanVisitors, { VisitorLine, visitorTotals } from './PlanVisitors';
 
 const DRAG_TYPE = 'application/x-grace-ride';
 
@@ -70,6 +72,14 @@ export default function PlanTransport() {
   const [previewDataUrl, setPreviewDataUrl] = useState<string | null>(null);
   const [exporting, setExporting] = useState(false);
   const [copied, setCopied] = useState(false);
+  // Visitors are saved straight away (they are records, not draft changes), so they
+  // refresh on their own without resetting the board's unsaved draft.
+  const [visitors, setVisitors] = useState<PlanVisitor[] | null>(null);
+  const reloadVisitors = useCallback(() => {
+    api<{ visitors: PlanVisitor[] }>(`/admin/events/${id}/plan/visitors`)
+      .then((r) => setVisitors(r.visitors))
+      .catch(() => undefined);
+  }, [id]);
 
   // A fresh board (first load, after sending, after a conflict) resets the draft.
   useEffect(() => {
@@ -81,6 +91,7 @@ export default function PlanTransport() {
         }
       }
       setDraft(base);
+      setVisitors(null);
       setUndoStack([]);
       setReasons({});
       setNoRoom(new Set());
@@ -135,7 +146,9 @@ export default function PlanTransport() {
     );
   }
 
-  const plan = data;
+  const plan: Plan = { ...data, visitors: visitors ?? data.visitors ?? [] };
+  const visitorList = plan.visitors ?? [];
+  const visitorCount = visitorTotals(visitorList);
   const assign = (rideId: number, driverId: number | null) => {
     if (!canUpdate) return;
     if ((draft[rideId] ?? null) === driverId) return;
@@ -440,6 +453,7 @@ export default function PlanTransport() {
           <div className="plan-toolbar">
             <div className="plan-summary" aria-live="polite">
               {t('summary', { placed, total: plan.rides.length, seats: seatsUsed })}
+              {visitorCount.count > 0 && <> · {t('visitorSummary', visitorCount)}</>}
             </div>
             <div className="btn-row">
               <Button
@@ -546,6 +560,14 @@ export default function PlanTransport() {
       )}
       {dirty && <p className="plan-unsaved">{t('unsaved')}</p>}
 
+      <PlanVisitors
+        eventId={plan.event.id}
+        visitors={visitorList}
+        drivers={plan.drivers}
+        canUpdate={canUpdate && plan.event.status !== 'cancelled'}
+        onChanged={reloadVisitors}
+      />
+
       {plan.rides.length === 0 ? (
         <EmptyState title={t('noRides')} />
       ) : (
@@ -573,6 +595,7 @@ export default function PlanTransport() {
               {plan.drivers.map((d) => {
                 const load = loads.get(d.id)!;
                 const mine = plan.rides.filter((r) => draft[r.id] === d.id && matchesFilter(r));
+                const carVisitors = visitorList.filter((v) => v.driver_id === d.id);
                 return (
                   <Card
                     key={d.id}
@@ -600,7 +623,10 @@ export default function PlanTransport() {
                     {d.other_seats > 0 && <p className="plan-note">{t('otherRides', { count: d.other_seats })}</p>}
                     {load.over && <p className="plan-note is-bad">{t('overLimit')}</p>}
                     <div className="plan-driver-rides">
-                      {mine.length === 0 ? <p className="plan-drop-hint">{t('dropHere')}</p> : mine.map(card)}
+                      {mine.length === 0 && carVisitors.length === 0 ? <p className="plan-drop-hint">{t('dropHere')}</p> : mine.map(card)}
+                      {carVisitors.map((v) => (
+                        <VisitorLine key={`v${v.id}`} v={v} compact />
+                      ))}
                     </div>
                   </Card>
                 );
