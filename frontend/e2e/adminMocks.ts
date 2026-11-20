@@ -5,7 +5,7 @@ const ACTS = ['view', 'create', 'update', 'delete'];
 const PAGES = [
   'rides', 'drive', 'events', 'settlements', 'costs', 'reimbursements', 'help', 'report',
   'admin_dashboard', 'admin_rides', 'admin_live', 'admin_plan', 'admin_events', 'admin_reimb_review',
-  'admin_announcements', 'admin_help', 'admin_reports', 'admin_reimb_pay', 'admin_bills', 'admin_members',
+  'admin_announcements', 'admin_help', 'admin_reports', 'admin_fares', 'admin_reimb_pay', 'admin_bills', 'admin_members',
   'admin_invites', 'admin_recovery', 'admin_groups', 'admin_areas', 'admin_roles', 'admin_audit', 'admin_settings',
 ];
 const allPerms = PAGES.flatMap((p) => ACTS.map((a) => `${p}.${a}`));
@@ -44,6 +44,13 @@ const reimbs = Array.from({ length: 5 }, (_, i) => ({
   payee_name: names[i], payee_phone: '+60123456789', status: ['pending', 'approved', 'paid', 'returned', 'rejected'][i],
   review_note: '', reviewer: null, payee_verified: false, paid_ref: null, paid_at: null, created_at: '2026-11-17T08:00:00',
 }));
+
+const areas = ['Petaling Jaya', 'UT', 'Sec 17', 'UM', 'KK', 'Pacific/RM'].map((name, i) => ({ id: i + 1, name, active: true }));
+const fare = (a: number, b: number, amount_cents: number) => ({
+  id: a * 10 + b, area_a: { id: a, name: areas[a - 1].name }, area_b: { id: b, name: areas[b - 1].name }, amount_cents, updated_at: '',
+});
+// Some routes priced, the rest left for the traffic lead to fill in.
+const fares = [fare(1, 1, 1500), fare(2, 3, 800), fare(2, 4, 1000), fare(2, 5, 1200), fare(3, 4, 600)];
 
 const catalog = ['rides', 'admin_roles', 'admin_audit'].map((p, i) => ({ page: p, area: ['member', 'admin', 'admin'][i], actions: ACTS }));
 const roles = {
@@ -121,8 +128,8 @@ export async function mockAdminApi(context: BrowserContext) {
       { id: 1, name: 'Everyone', description: '', is_all: true, member_count: 142, parent_id: null, is_visitor: false },
       { id: 2, name: 'Youth', description: 'Ages 13 to 25', is_all: false, member_count: 31, parent_id: null, is_visitor: false },
     ]);
-    if (p === '/areas') return j([{ id: 1, name: 'Petaling Jaya', active: true }]);
-    if (p === '/admin/settings/fares') return j({ fares: [{ id: 1, area_a: { id: 1, name: 'Petaling Jaya' }, area_b: { id: 1, name: 'Petaling Jaya' }, amount_cents: 1500, updated_at: '' }] });
+    if (p === '/areas') return j(areas);
+    if (p === '/admin/settings/fares') return j({ fares: fares });
     if (p === '/admin/settings/system') return j({ audit_retention_days: 730, chat_retention_days: 180, max_live_drivers: 10, session_timeout_mins: 15 });
     if (/^\/admin\/events\/\d+\/plan\/visitors/.test(p)) return j({ visitors: plan.visitors });
     if (/^\/admin\/events\/\d+\/plan/.test(p)) return j(plan);

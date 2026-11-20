@@ -15,7 +15,7 @@ pub(super) async fn list_fares(
     State(st): State<AppState>,
     u: CurrentUser,
 ) -> AppResult<Json<Value>> {
-    require(&u, Page::AdminSettings, Act::View)?;
+    require(&u, Page::AdminFares, Act::View)?;
     let rows: Vec<(i64, i64, String, i64, String, i64, String)> = sqlx::query_as(
         "SELECT f.id, f.area_a_id, a.name, f.area_b_id, b.name, f.amount_cents, f.updated_at
          FROM area_fares f JOIN areas a ON a.id = f.area_a_id JOIN areas b ON b.id = f.area_b_id
@@ -51,7 +51,7 @@ pub(super) async fn put_fare(
     u: CurrentUser,
     Json(req): Json<FareIn>,
 ) -> AppResult<Json<Value>> {
-    require(&u, Page::AdminSettings, Act::Update)?;
+    require(&u, Page::AdminFares, Act::Update)?;
     if req.amount_cents < 0 || req.amount_cents > 50_000 {
         return Err(bad(u.lang, ErrorKey::AmountRangeInvalid));
     }
@@ -97,7 +97,7 @@ pub(super) async fn delete_fare(
     u: CurrentUser,
     axum::extract::Path(id): axum::extract::Path<i64>,
 ) -> AppResult<Json<Value>> {
-    require(&u, Page::AdminSettings, Act::Update)?;
+    require(&u, Page::AdminFares, Act::Update)?;
     sqlx::query("DELETE FROM area_fares WHERE id = $1")
         .bind(id)
         .execute(&st.db)

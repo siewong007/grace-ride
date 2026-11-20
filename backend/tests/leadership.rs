@@ -109,6 +109,7 @@ async fn leadership_roles_have_admin_tools_but_not_system_configuration() {
         "admin_members.update",
         "admin_roles.update",
         "admin_settings.view",
+        "admin_fares.update",
     ] {
         assert!(
             !secretary.contains(&p.to_string()),
@@ -127,6 +128,8 @@ async fn leadership_roles_have_admin_tools_but_not_system_configuration() {
         "admin_events.update",
         "admin_reports.view",
         "admin_members.update",
+        "admin_fares.view",
+        "admin_fares.update",
     ] {
         assert!(
             head.contains(&p.to_string()),

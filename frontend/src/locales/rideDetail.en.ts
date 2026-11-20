@@ -9,6 +9,8 @@ export default {
   callDriver: 'Call driver',
   passenger: 'Passenger',
   pickupArea: 'Pickup area',
+  routeFare: 'Fixed fare',
+  routeFareNotSet: 'Not set yet (mileage receipt)',
   pickupAddress: 'Pickup address',
   pickupAddressLocked: 'Detailed address shown after approval',
   destination: 'Destination',

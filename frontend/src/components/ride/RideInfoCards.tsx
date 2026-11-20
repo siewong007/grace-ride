@@ -16,7 +16,7 @@ import { downloadIcs } from '../../calendar';
 import { fmtAgo, fmtDateTime, RIDE_STATUS, useFormatT } from '../../format';
 import type { Ride } from '../RideCard';
 import { NavButtonGroup } from '../TripActions';
-import { Avatar, Button, Card, KeyValue, KeyValueItem, Notice } from '../ui';
+import { Avatar, Button, Card, KeyValue, KeyValueItem, Notice, Pill } from '../ui';
 
 export function DriverCard({
   ride: r,
@@ -277,6 +277,22 @@ export function Details({ ride: r }: { ride: Ride }) {
       label: t('event'),
       // Someone outside the event's groups learns only that it is a church event.
       value: r.event.id != null ? <Link to={`/events/${r.event.id}`}>{r.event.title}</Link> : t('churchEvent', { ns: 'rideCard' }),
+    });
+  }
+  if (r.route_fare) {
+    const f = r.route_fare;
+    kvItems.push({
+      label: t('routeFare'),
+      value: (
+        <span className="row wrap gap-sm">
+          {f.amount_cents != null ? (
+            <strong>RM {(f.amount_cents / 100).toFixed(2)}</strong>
+          ) : (
+            <Pill tone="warning">{t('routeFareNotSet')}</Pill>
+          )}
+          <span className="muted small">{f.from} ↔ {f.to}</span>
+        </span>
+      ),
     });
   }
   if (r.picked_up_at) {

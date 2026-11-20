@@ -172,6 +172,7 @@ catalog! {
     AdminAnnouncements: "admin_announcements", Transport, [View, Create, Delete];
     AdminHelp:          "admin_help",          Transport, [View, Update];         // every help request · reply, close
     AdminReports:       "admin_reports",       Transport, [View];                 // any member's monthly report
+    AdminFares:         "admin_fares",         Transport, [View, Update];         // fixed area-to-area driver fares · set, change, clear
 
     // ---- 财务 ----
     AdminReimbPay: "admin_reimb_pay", Finance, [View, Update]; // approved claims with payee details · record payout
@@ -353,6 +354,7 @@ pub fn defaults(role: &str) -> Vec<Perm> {
                 (AdminEvents, &[View, Update, Delete]),
                 (AdminReports, &[View]),
                 (AdminSettings, &[View, Update]),
+                (AdminFares, &[View, Update]),
                 (AdminMembers, &[View, Update]),
                 (AdminInvites, &[View, Create, Delete]),
                 (AdminRecovery, &[View, Update]),
@@ -366,7 +368,12 @@ pub fn defaults(role: &str) -> Vec<Perm> {
         // no authority to change a super admin. Settings stay read-only.
         PRESIDENT_ROLE | VICE_PRESIDENT_ROLE => {
             let mut out = defaults(ADMIN_ROLE);
-            out.retain(|p| p.0 != AdminAudit && !(p.0 == AdminSettings && p.1 == Update));
+            // Area fares are set by the traffic lead and admins; leadership can read them.
+            out.retain(|p| {
+                p.0 != AdminAudit
+                    && !(p.0 == AdminSettings && p.1 == Update)
+                    && !(p.0 == AdminFares && p.1 == Update)
+            });
             out.extend(grid(AdminReimbPay, &[View]));
             out.extend(grid(AdminBills, &[View]));
             return trim(out);
@@ -387,13 +394,14 @@ pub fn defaults(role: &str) -> Vec<Perm> {
             return trim(out);
         }
         // 交通组组长: manages the transport dashboard, ride management and live map,
-        // plus member/event oversight for coordination.
+        // plus member/event oversight for coordination, pickup areas and their fares.
         TRAFFIC_HEAD_ROLE => {
             let mut out = defaults("transport");
             let own: &[(Page, &[Act])] = &[
                 (AdminEvents, &[View, Update, Delete]),
                 (AdminReports, &[View]),
                 (AdminMembers, &[View, Update]),
+                (AdminFares, &[View, Update]),
             ];
             out.extend(own.iter().flat_map(|(p, a)| grid(*p, a)));
             return trim(out);

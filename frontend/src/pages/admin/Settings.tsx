@@ -28,8 +28,8 @@ import {
   useConfirm,
   useToast,
 } from '../../components/ui';
-import { fmtAgo, useFormatT } from '../../format';
 import { ADMIN_HOME } from '../../staffNav';
+import AreaFares, { fareCoverage, type FaresResponse } from './AreaFares';
 
 interface Group {
   id: number;
@@ -53,17 +53,6 @@ interface Area {
   active: boolean;
 }
 
-interface AreaFare {
-  id: number;
-  area_a: { id: number; name: string };
-  area_b: { id: number; name: string };
-  amount_cents: number;
-  updated_at: string;
-}
-
-interface FaresResponse {
-  fares: AreaFare[];
-}
 
 interface SystemSettingsResponse {
   audit_retention_days: number;
@@ -82,7 +71,7 @@ interface AlertSettingsData {
   push_subscriptions_count?: number;
 }
 
-type TabKey = 'rates' | 'org' | 'alerts';
+type TabKey = 'fares' | 'rates' | 'org' | 'alerts';
 
 export default function Settings() {
   const { t } = useTranslation('admin');
@@ -93,8 +82,9 @@ export default function Settings() {
   const groups = can('admin_groups');
   const areas = can('admin_areas');
   const rates = can('admin_settings');
+  const fares = can('admin_fares');
 
-  if (!groups && !areas && !rates) {
+  if (!groups && !areas && !rates && !fares) {
     return (
       <Page>
         <NoAccess />
@@ -103,6 +93,9 @@ export default function Settings() {
   }
 
   const availableTabs: { value: TabKey; label: string }[] = [];
+  if (fares) {
+    availableTabs.push({ value: 'fares', label: t('settings.tabFares') });
+  }
   if (rates) {
     availableTabs.push({ value: 'rates', label: t('settings.tabRatesLimits') });
   }
@@ -136,6 +129,7 @@ export default function Settings() {
         <SettingsSummaryStrip
           rates={rates}
           areas={areas}
+          fares={fares}
           onSelectTab={(k) => handleTabChange(k)}
         />
 
@@ -148,6 +142,18 @@ export default function Settings() {
           />
         )}
 
+        {fares && (
+          <div
+            role="tabpanel"
+            id="panel-fares"
+            aria-labelledby="tab-fares"
+            className="tabpanel stack gap-lg"
+            hidden={activeTab !== 'fares'}
+          >
+            <AreaFares />
+          </div>
+        )}
+
         {rates && (
           <div
             role="tabpanel"
@@ -156,7 +162,6 @@ export default function Settings() {
             className="tabpanel stack gap-lg"
             hidden={activeTab !== 'rates'}
           >
-            <AreaFares />
             <SystemRetentionSettings />
           </div>
         )}
@@ -195,22 +200,24 @@ export default function Settings() {
 function SettingsSummaryStrip({
   rates,
   areas,
+  fares,
   onSelectTab,
 }: {
   rates: boolean;
   areas: boolean;
+  fares: boolean;
   onSelectTab: (tab: TabKey) => void;
 }) {
   const { t } = useTranslation('admin');
-  const areasData = useApi<Area[]>(areas ? '/areas' : null).data;
-  const faresData = useApi<FaresResponse>(rates ? '/admin/settings/fares' : null).data;
+  const areasData = useApi<Area[]>(areas || fares ? '/areas' : null).data;
+  const faresData = useApi<FaresResponse>(fares ? '/admin/settings/fares' : null).data;
   const systemData = useApi<SystemSettingsResponse>(rates ? '/admin/settings/system' : null).data;
   const alertsData = useApi<AlertSettingsData>(rates ? '/admin/settings/alerts' : null).data;
 
   const totalAreas = areasData?.length ?? 0;
   const activeAreas = (areasData ?? []).filter((a) => a.active).length;
 
-  const fareCount = faresData?.fares?.length ?? 0;
+  const coverage = fareCoverage(areasData ?? [], faresData?.fares ?? []);
 
   const auditDays = systemData?.audit_retention_days;
   const sessionTimeout = systemData?.session_timeout_mins;
@@ -238,18 +245,22 @@ function SettingsSummaryStrip({
         </button>
       )}
 
+      {fares && (
+        <button
+          type="button"
+          className="card stat link text-left"
+          onClick={() => onSelectTab('fares')}
+        >
+          <div className="label">{t('settings.statFares')}</div>
+          <div className="num">
+            {coverage.set}/{coverage.total}
+          </div>
+          <div className="muted tiny">{t('settings.statFaresHint')}</div>
+        </button>
+      )}
+
       {rates && (
         <>
-          <button
-            type="button"
-            className="card stat link text-left"
-            onClick={() => onSelectTab('rates')}
-          >
-            <div className="label">{t('settings.statFares')}</div>
-            <div className="num">{fareCount}</div>
-            <div className="muted tiny">{t('settings.statFaresHint')}</div>
-          </button>
-
           <button
             type="button"
             className="card stat link text-left"
@@ -706,138 +717,6 @@ function Areas() {
     </Card>
   );
 }
-
-function AreaFares() {
-  const { t } = useTranslation('admin');
-  const ft = useFormatT();
-  const { can } = useAuth();
-  const canUpdate = can('admin_settings', 'update');
-  const confirm = useConfirm();
-  const { data, loading, reload } = useApi<FaresResponse>('/admin/settings/fares');
-  const { data: areas } = useApi<Area[]>('/areas');
-  const [a, setA] = useState('');
-  const [b, setB] = useState('');
-  const [amount, setAmount] = useState('');
-  const { busy, error, run } = useAction();
-
-  // Typed in ringgit, stored in cents.
-  const toRm = (cents: number) => (cents / 100).toFixed(2);
-  const cents = amount.trim() !== '' && Number.isFinite(Number(amount)) && Number(amount) >= 0
-    ? Math.round(Number(amount) * 100)
-    : null;
-  const amountError = amount !== '' && cents === null ? t('settings.rateError') : undefined;
-  const canSave = a !== '' && b !== '' && cents !== null;
-
-  const save = (e: FormEvent) => {
-    e.preventDefault();
-    if (!canSave) return;
-    run(
-      () =>
-        put('/admin/settings/fares', {
-          area_a_id: Number(a),
-          area_b_id: Number(b),
-          amount_cents: cents,
-        }).then(() => {
-          setAmount('');
-          reload();
-        }),
-      t('settings.faresSaved'),
-    );
-  };
-
-  const edit = (f: AreaFare) => {
-    setA(String(f.area_a.id));
-    setB(String(f.area_b.id));
-    setAmount(toRm(f.amount_cents));
-  };
-
-  const remove = async (f: AreaFare) => {
-    if (!(await confirm({ title: t('settings.fareDeleteConfirm', { a: f.area_a.name, b: f.area_b.name }), body: t('settings.fareDeleteBody') }))) return;
-    run(() => del(`/admin/settings/fares/${f.id}`).then(reload), t('settings.fareDeleted'));
-  };
-
-  const fares = data?.fares ?? [];
-  return (
-    <Card className="stack">
-      <div>
-        <h3>{t('settings.faresTitle')}</h3>
-        <p className="muted small">{t('settings.faresDesc')}</p>
-      </div>
-
-      {canUpdate && (
-        <form onSubmit={save} className="stack">
-          <div className="grid cols-3">
-            <Field label={t('settings.fareFrom')}>
-              <select className="input" value={a} onChange={(e) => setA(e.target.value)} disabled={busy}>
-                <option value="">—</option>
-                {(areas ?? []).map((x) => (
-                  <option key={x.id} value={x.id}>{x.name}</option>
-                ))}
-              </select>
-            </Field>
-            <Field label={t('settings.fareTo')}>
-              <select className="input" value={b} onChange={(e) => setB(e.target.value)} disabled={busy}>
-                <option value="">—</option>
-                {(areas ?? []).map((x) => (
-                  <option key={x.id} value={x.id}>{x.name}</option>
-                ))}
-              </select>
-            </Field>
-            <Field label={t('settings.fareAmount')} error={amountError}>
-              <div className="input-affix-wrap">
-                <span className="input-affix">RM</span>
-                <input
-                  aria-label={t('settings.fareAmount')}
-                  className="input"
-                  type="number"
-                  inputMode="decimal"
-                  min="0"
-                  step="0.01"
-                  value={amount}
-                  disabled={busy}
-                  onChange={(e) => setAmount(e.target.value)}
-                />
-              </div>
-            </Field>
-          </div>
-          <ErrorBox error={error} />
-          <div>
-            <Button type="submit" disabled={!canSave || busy}>
-              {t('settings.saveFare')}
-            </Button>
-          </div>
-        </form>
-      )}
-
-      {loading ? (
-        <CardSkeleton count={2} />
-      ) : fares.length === 0 ? (
-        <EmptyState title={t('settings.fareEmpty')} />
-      ) : (
-        <ul className="stack-sm" aria-label={t('settings.faresTitle')}>
-          {fares.map((f) => (
-            <li key={f.id} className="row between wrap gap-sm">
-              <span>
-                <strong>{f.area_a.name} ↔ {f.area_b.name}</strong>{' '}
-                <span className="muted tiny">{fmtAgo(f.updated_at, ft)}</span>
-              </span>
-              <span className="row gap-sm">
-                <strong className="nowrap">RM {toRm(f.amount_cents)}</strong>
-                {canUpdate && (
-                  <>
-                    <Button variant="ghost" size="sm" onClick={() => edit(f)}>{t('settings.fareEdit')}</Button>
-                    <Button variant="ghost" size="sm" onClick={() => remove(f)}>{t('settings.fareDelete')}</Button>
-                  </>
-                )}
-              </span>
-            </li>
-          ))}
-        </ul>
-      )}
-    </Card>
-  );
-}
-
 
 function SystemRetentionSettings() {
   const { t } = useTranslation('admin');
