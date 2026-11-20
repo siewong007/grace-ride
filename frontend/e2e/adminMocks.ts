@@ -78,6 +78,13 @@ const plan = {
     pickup_address: '123 Jalan Damai', assistance: '', notes: '', status: 'pending_driver', driver_id: null, last: null, match_group_id: null,
   })),
   drivers: [{ id: 30, name: 'Brother Silas Tan', carpool: true, cap: 4, other_seats: 0, other_rides: 0, area_ids: [1], drive_group_ids: [], vehicle: { model: 'Vios', plate: 'WXX 8888', seats: 5 } }],
+  // Visitors recorded for the plan (no account, no ride).
+  visitors: [
+    { id: 1, name: 'Mr Tan Ah Kow (first visit)', phone: '012-345 6789', notes: 'Brought by Grace Lee', area: { id: 1, name: 'Petaling Jaya' }, pickup_address: '8 Jalan SS2/24',
+      seats: 2, leg: 'outbound', driver_id: 30, driver_name: 'Brother Silas Tan', created_by: { id: 1, name: 'Sister Mary Catherine Wong' }, created_at: '', updated_at: '', can_edit: true },
+    { id: 2, name: 'Auntie Ho', phone: '', notes: '', area: null, pickup_address: '',
+      seats: 1, leg: 'return', driver_id: null, driver_name: null, created_by: { id: 3, name: 'Grace Lee' }, created_at: '', updated_at: '', can_edit: false },
+  ],
 };
 
 const report = {
@@ -124,6 +131,7 @@ export async function mockAdminApi(context: BrowserContext) {
     if (p === '/areas') return j(areas);
     if (p === '/admin/settings/fares') return j({ fares: fares });
     if (p === '/admin/settings/system') return j({ audit_retention_days: 730, chat_retention_days: 180, max_live_drivers: 10, session_timeout_mins: 15 });
+    if (/^\/admin\/events\/\d+\/plan\/visitors/.test(p)) return j({ visitors: plan.visitors });
     if (/^\/admin\/events\/\d+\/plan/.test(p)) return j(plan);
     if (p === '/announcements') return j([{ id: 1, title: 'Christmas service transport sign-up is open', body: 'Please request your ride by 15 December.', pinned: true, by: 'Sister Mary', created_at: '2026-11-19T08:00:00' }]);
     if (p.startsWith('/files/')) return route.fulfill({ status: 200, contentType: 'image/svg+xml', body: '<svg xmlns="http://www.w3.org/2000/svg" width="300" height="400"><rect width="300" height="400" fill="#ddd"/></svg>' });

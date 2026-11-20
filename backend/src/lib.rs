@@ -172,8 +172,12 @@ fn classify_history(applied: &[(i64, Vec<u8>)], migrator: &sqlx::migrate::Migrat
     if !first_matches {
         return History::Squashed;
     }
-    for (i, (version, checksum)) in applied.iter().enumerate() {
-        let same = shipped.get(i).is_some_and(|migration| {
+    // Matched by version, not position: two branches may each add a numbered file, and
+    // the later number can reach the database first (e.g. 0023 before 0022). sqlx then
+    // runs the missing lower file on the next start. What must never happen is a file
+    // that ran being edited, or one this build doesn't ship.
+    for (version, checksum) in applied {
+        let same = shipped.iter().any(|migration| {
             migration.version == *version && migration.checksum.as_ref() == checksum.as_slice()
         });
         if !same {
@@ -374,6 +378,24 @@ mod history_tests {
         assert_eq!(
             classify_history(&[(16, vec![1])], &migrator),
             History::Squashed
+        );
+    }
+
+    #[test]
+    fn a_lower_numbered_file_from_another_branch_may_arrive_later() {
+        let migrator = sqlx::migrate!("./migrations");
+        // The newest file ran first; an earlier-numbered one ships afterwards.
+        let mut applied = shipped();
+        let skipped = applied.remove(applied.len() - 2);
+        assert!(skipped.0 > 1);
+        assert_eq!(classify_history(&applied, &migrator), History::Current);
+        // An edited file is still refused, wherever it sits.
+        let mut edited = shipped();
+        let i = edited.len() - 2;
+        edited[i].1 = vec![0u8; 48];
+        assert_eq!(
+            classify_history(&edited, &migrator),
+            History::Diverged(edited[i].0)
         );
     }
 
