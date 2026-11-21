@@ -50,7 +50,18 @@ impl RateLimiter {
         if map.len() > 50_000 {
             map.retain(|_, (start, w, _)| now.duration_since(*start) < *w);
             if !map.contains_key(key) && map.len() >= 50_000 {
-                return Err(window.as_secs().max(1));
+                // Full of live windows: evict the oldest batch to make room instead of
+                // rejecting every new address (which locked legitimate visitors out).
+                // Surviving counters keep their state; evicted keys start fresh, so a
+                // flood of new keys can at worst reset the oldest windows.
+                let mut oldest: Vec<(String, Instant)> = map
+                    .iter()
+                    .map(|(k, (start, _, _))| (k.clone(), *start))
+                    .collect();
+                oldest.sort_by_key(|(_, start)| *start);
+                for (k, _) in oldest.into_iter().take(5_000) {
+                    map.remove(&k);
+                }
             }
         }
         let entry = map.entry(key.to_string()).or_insert((now, window, 0));
@@ -481,6 +492,23 @@ mod tests {
         assert!(l.check("other", 3, Duration::from_millis(50)).is_ok());
         std::thread::sleep(Duration::from_millis(60));
         assert!(l.check("k", 3, Duration::from_millis(50)).is_ok());
+    }
+
+    #[test]
+    fn limiter_evicts_oldest_windows_instead_of_locking_out_new_keys() {
+        let l = RateLimiter::default();
+        let w = Duration::from_secs(3600);
+        for i in 0..50_001 {
+            assert!(l.check(&format!("b:{i}"), 10, w).is_ok());
+        }
+        // The map is full of live windows; brand-new keys must still be served.
+        assert!(l.check("fresh:1", 10, w).is_ok());
+        assert!(l.check("fresh:2", 10, w).is_ok());
+        // A surviving key keeps its counter (the newest windows are not evicted).
+        for _ in 0..9 {
+            assert!(l.check("b:50000", 10, w).is_ok());
+        }
+        assert!(l.check("b:50000", 10, w).is_err());
     }
 
     #[test]

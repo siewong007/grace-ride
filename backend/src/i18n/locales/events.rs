@@ -21,6 +21,8 @@ pub enum EventsError {
     OnlyOrganiserCanRecordAttendance,
     AttendanceModuleDisabled,
     InvalidCheckinCode,
+    CheckinOutsideWindow,
+    CheckinCodeAmbiguous,
     MembersOnlyAttendance,
     EventNotOpenToGroup,
     JoinAsRequired,
@@ -38,6 +40,7 @@ pub enum EventsError {
     OnlyGoingCanInviteVisitor,
     InvalidPassCode,
     CarePassClosed,
+    CarePassNotOpenYet,
     MileageAuthorisationRestricted,
 }
 
@@ -118,6 +121,16 @@ pub fn render(lang: Lang, key: EventsError) -> String {
             "签到码无效或已更新",
             "The check-in code is invalid or has expired",
         ),
+        EventsError::CheckinOutsideWindow => pair(
+            lang,
+            "签到于活动开始前 2 小时开放，至开始后 12 小时关闭",
+            "Check-in opens 2 hours before the event starts and closes 12 hours after it starts",
+        ),
+        EventsError::CheckinCodeAmbiguous => pair(
+            lang,
+            "此签到码对应多个活动，请扫描该活动页面上的二维码签到",
+            "This code matches more than one event; scan the QR code on the event's own page",
+        ),
         EventsError::MembersOnlyAttendance => pair(
             lang,
             "出席签到仅限正式会员",
@@ -192,6 +205,11 @@ pub fn render(lang: Lang, key: EventsError) -> String {
             lang,
             "此平安接送追踪链接已关闭或过期",
             "This safe-arrival status link is closed or expired",
+        ),
+        EventsError::CarePassNotOpenYet => pair(
+            lang,
+            "此链接将于接送前 24 小时开放",
+            "This link opens 24 hours before pickup",
         ),
         EventsError::MileageAuthorisationRestricted => pair(
             lang,

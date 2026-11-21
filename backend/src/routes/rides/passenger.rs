@@ -151,6 +151,28 @@ pub(super) async fn create_ride(
         return Err(bad(u.lang, ErrorKey::EventRideNeedsSignup));
     };
     let as_group: Option<i64>;
+    let is_proxy = req.is_proxy.unwrap_or(false)
+        || req
+            .rider_name
+            .as_ref()
+            .map(|s| !s.trim().is_empty())
+            .unwrap_or(false);
+    let rider_name = req
+        .rider_name
+        .map(|s| s.trim().to_string())
+        .unwrap_or_default();
+    let rider_phone = req
+        .rider_phone
+        .map(|s| s.trim().to_string())
+        .unwrap_or_default();
+    let rider_relationship = req
+        .rider_relationship
+        .map(|s| s.trim().to_string())
+        .unwrap_or_default();
+    if is_proxy && rider_name.is_empty() {
+        return Err(bad(u.lang, ErrorKey::RiderNameRequired));
+    }
+    let is_proxy_int = if is_proxy { 1i64 } else { 0i64 };
     // The event checks and the insert share one transaction holding a share lock on the
     // event row: cancelling the event updates that row, so it either finishes first (and
     // the booking is refused) or waits and then cancels this new ride with the rest.
@@ -180,70 +202,45 @@ pub(super) async fn create_ride(
             return Err(bad(u.lang, ErrorKey::EventRideNeedsSignup));
         };
         as_group = g;
-        // One own ride per leg per event: a double tap or a second tab must not book two cars.
-        // The lock serialises two submissions by the same member.
-        sqlx::query("SELECT pg_advisory_xact_lock($1, $2)")
-            .bind(eid as i32)
-            .bind(u.id as i32)
+        // One ride per rider per leg per event: a double tap or a second tab must not
+        // book two cars — for the member's own ride and for each proxy rider alike.
+        // The lock serialises two submissions by the same member; its key is hashed to
+        // a bigint so 64-bit ids never truncate into another pair's lock.
+        sqlx::query("SELECT pg_advisory_xact_lock(hashtextextended($1, 0))")
+            .bind(format!("grace_ride_ride_dedup:{eid}:{}", u.id))
             .execute(&mut *tx)
             .await?;
-        if !req.is_proxy.unwrap_or(false)
-            && req
-                .rider_name
-                .as_deref()
-                .is_none_or(|s| s.trim().is_empty())
-        {
-            let (dup,): (i64,) = sqlx::query_as(
-                "SELECT COUNT(*) FROM rides WHERE event_id=$1 AND passenger_id=$2 AND is_proxy=0 AND leg=$3
+        let (dup,): (i64,) = sqlx::query_as(
+            "SELECT COUNT(*) FROM rides WHERE event_id=$1 AND passenger_id=$2 AND is_proxy=$3 AND rider_name=$4 AND leg=$5
+             AND status IN ('pending_driver','pending_passenger','pending_approval','pending_driver_confirm','confirmed','in_progress')",
+        )
+        .bind(eid)
+        .bind(u.id)
+        .bind(is_proxy_int)
+        .bind(&rider_name)
+        .bind(&leg)
+        .fetch_one(&mut *tx)
+        .await?;
+        if dup > 0 {
+            return Err(bad(u.lang, ErrorKey::DuplicateEventRide));
+        }
+        if ret_at.is_some() {
+            let (dup_ret,): (i64,) = sqlx::query_as(
+                "SELECT COUNT(*) FROM rides WHERE event_id=$1 AND passenger_id=$2 AND is_proxy=$3 AND rider_name=$4 AND leg='return'
                  AND status IN ('pending_driver','pending_passenger','pending_approval','pending_driver_confirm','confirmed','in_progress')",
             )
             .bind(eid)
             .bind(u.id)
-            .bind(&leg)
+            .bind(is_proxy_int)
+            .bind(&rider_name)
             .fetch_one(&mut *tx)
             .await?;
-            if dup > 0 {
+            if dup_ret > 0 {
                 return Err(bad(u.lang, ErrorKey::DuplicateEventRide));
-            }
-            if ret_at.is_some() {
-                let (dup_ret,): (i64,) = sqlx::query_as(
-                    "SELECT COUNT(*) FROM rides WHERE event_id=$1 AND passenger_id=$2 AND is_proxy=0 AND leg='return'
-                     AND status IN ('pending_driver','pending_passenger','pending_approval','pending_driver_confirm','confirmed','in_progress')",
-                )
-                .bind(eid)
-                .bind(u.id)
-                .fetch_one(&mut *tx)
-                .await?;
-                if dup_ret > 0 {
-                    return Err(bad(u.lang, ErrorKey::DuplicateEventRide));
-                }
             }
         }
     }
 
-    let is_proxy = req.is_proxy.unwrap_or(false)
-        || req
-            .rider_name
-            .as_ref()
-            .map(|s| !s.trim().is_empty())
-            .unwrap_or(false);
-    let rider_name = req
-        .rider_name
-        .map(|s| s.trim().to_string())
-        .unwrap_or_default();
-    let rider_phone = req
-        .rider_phone
-        .map(|s| s.trim().to_string())
-        .unwrap_or_default();
-    let rider_relationship = req
-        .rider_relationship
-        .map(|s| s.trim().to_string())
-        .unwrap_or_default();
-
-    if is_proxy && rider_name.is_empty() {
-        return Err(bad(u.lang, ErrorKey::RiderNameRequired));
-    }
-    let is_proxy_int = if is_proxy { 1i64 } else { 0i64 };
     let (assistance, notes) = normalize_assistance(
         req.assistance.as_deref().unwrap_or_default(),
         req.notes.as_deref().unwrap_or_default(),

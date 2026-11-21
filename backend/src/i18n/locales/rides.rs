@@ -19,6 +19,7 @@ pub enum RidesError {
     TripAlreadyCompleted,
     StartTripFirst,
     PassengerAlreadyPickedUp,
+    NoShowTooEarly,
     InvalidLocation,
     MaxLiveDriversReached { live: i64, limit: i64 },
     RideStatusChanged,
@@ -103,6 +104,11 @@ pub fn render(lang: Lang, key: RidesError) -> String {
             lang,
             "乘客已上车，不能记录为未到场",
             "The passenger has been picked up and can't be marked as a no-show",
+        ),
+        RidesError::NoShowTooEarly => pair(
+            lang,
+            "接送时间未到，不能记录为未到场；请先开始行程并等候乘客",
+            "Pickup time has not passed yet; start the trip and wait for the passenger before recording a no-show",
         ),
         RidesError::InvalidLocation => pair(lang, "位置无效", "Invalid location"),
         RidesError::MaxLiveDriversReached { live, limit } => match lang {

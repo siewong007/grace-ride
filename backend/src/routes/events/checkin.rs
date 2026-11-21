@@ -15,7 +15,7 @@ use crate::error::{bad, forbidden, AppResult};
 use crate::i18n::ErrorKey;
 use crate::perms::Act;
 use crate::state::AppState;
-use crate::util::{audit, now, random_token};
+use crate::util::{audit, now, parse_dt, random_token};
 
 #[derive(Deserialize)]
 pub(super) struct AttendanceIn {
@@ -120,6 +120,17 @@ pub(super) struct CheckinByCodeIn {
     code: String,
 }
 
+/// Shift a stored local time by whole hours (same shape as care.rs::shift).
+fn shift_hours(at: &str, hours: i64) -> String {
+    parse_dt(at)
+        .map(|d| {
+            (d + chrono::Duration::hours(hours))
+                .format("%Y-%m-%dT%H:%M:%S")
+                .to_string()
+        })
+        .unwrap_or_else(|| at.to_string())
+}
+
 async fn do_checkin(
     st: &AppState,
     u: &CurrentUser,
@@ -132,6 +143,13 @@ async fn do_checkin(
     }
     if e.attendance_enabled != 1 {
         return Err(bad(u.lang, ErrorKey::AttendanceModuleDisabled));
+    }
+    // Self check-in belongs to the event itself: it opens 2 hours before the start
+    // and closes 12 hours after (events carry no end time). Organisers may record
+    // attendance outside this window via mark_attendance / scan_member_pass.
+    let n = now();
+    if n < shift_hours(&e.starts_at, -2) || n > shift_hours(&e.starts_at, 12) {
+        return Err(bad(u.lang, ErrorKey::CheckinOutsideWindow));
     }
     if let Some(expected) = &e.checkin_code {
         let matches = code
@@ -247,20 +265,24 @@ pub(super) async fn checkin_by_code(
     if raw.is_empty() {
         return Err(bad(u.lang, ErrorKey::InvalidCheckinCode));
     }
-    let row: Option<(i64,)> = sqlx::query_as(
+    let rows: Vec<(i64,)> = sqlx::query_as(
         "SELECT id FROM events
          WHERE status = 'published' AND attendance_enabled = 1
            AND LOWER(TRIM(checkin_code)) = LOWER(TRIM($1))
-         ORDER BY starts_at ASC
-         LIMIT 1",
+         ORDER BY starts_at ASC",
     )
     .bind(raw)
-    .fetch_optional(&st.db)
+    .fetch_all(&st.db)
     .await?;
-
-    let Some((id,)) = row else {
+    if rows.is_empty() {
         return Err(bad(u.lang, ErrorKey::InvalidCheckinCode));
-    };
+    }
+    // A code shared by several events must not silently check the member into the
+    // earliest one: ask for the event's own QR code instead.
+    if rows.len() > 1 {
+        return Err(bad(u.lang, ErrorKey::CheckinCodeAmbiguous));
+    }
+    let (id,) = rows[0];
 
     let e = load_visible_event(&st, &u, id).await?;
     do_checkin(&st, &u, id, &e, Some(raw)).await

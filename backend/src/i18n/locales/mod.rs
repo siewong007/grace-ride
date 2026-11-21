@@ -146,6 +146,8 @@ pub fn render(lang: Lang, key: &ErrorKey) -> String {
             events::render(lang, EventsError::AttendanceModuleDisabled)
         }
         ErrorKey::InvalidCheckinCode => events::render(lang, EventsError::InvalidCheckinCode),
+        ErrorKey::CheckinOutsideWindow => events::render(lang, EventsError::CheckinOutsideWindow),
+        ErrorKey::CheckinCodeAmbiguous => events::render(lang, EventsError::CheckinCodeAmbiguous),
         ErrorKey::MembersOnlyAttendance => events::render(lang, EventsError::MembersOnlyAttendance),
         ErrorKey::EventNotOpenToGroup => events::render(lang, EventsError::EventNotOpenToGroup),
         ErrorKey::JoinAsRequired => events::render(lang, EventsError::JoinAsRequired),
@@ -165,6 +167,7 @@ pub fn render(lang: Lang, key: &ErrorKey) -> String {
         }
         ErrorKey::InvalidPassCode => events::render(lang, EventsError::InvalidPassCode),
         ErrorKey::CarePassClosed => events::render(lang, EventsError::CarePassClosed),
+        ErrorKey::CarePassNotOpenYet => events::render(lang, EventsError::CarePassNotOpenYet),
         ErrorKey::MileageAuthorisationRestricted => {
             events::render(lang, EventsError::MileageAuthorisationRestricted)
         }
@@ -200,6 +203,7 @@ pub fn render(lang: Lang, key: &ErrorKey) -> String {
         ErrorKey::PassengerAlreadyPickedUp => {
             rides::render(lang, RidesError::PassengerAlreadyPickedUp)
         }
+        ErrorKey::NoShowTooEarly => rides::render(lang, RidesError::NoShowTooEarly),
         ErrorKey::InvalidLocation => rides::render(lang, RidesError::InvalidLocation),
         ErrorKey::MaxLiveDriversReached { live, limit } => rides::render(
             lang,
@@ -565,6 +569,8 @@ mod tests {
             ErrorKey::OnlyOrganiserCanRecordAttendance => ErrorKey::OnlyOrganiserCanRecordAttendance,
             ErrorKey::AttendanceModuleDisabled => ErrorKey::AttendanceModuleDisabled,
             ErrorKey::InvalidCheckinCode => ErrorKey::InvalidCheckinCode,
+            ErrorKey::CheckinOutsideWindow => ErrorKey::CheckinOutsideWindow,
+            ErrorKey::CheckinCodeAmbiguous => ErrorKey::CheckinCodeAmbiguous,
             ErrorKey::MembersOnlyAttendance => ErrorKey::MembersOnlyAttendance,
             ErrorKey::EventNotOpenToGroup => ErrorKey::EventNotOpenToGroup,
             ErrorKey::JoinAsRequired => ErrorKey::JoinAsRequired,
@@ -582,6 +588,7 @@ mod tests {
             ErrorKey::OnlyGoingCanInviteVisitor => ErrorKey::OnlyGoingCanInviteVisitor,
             ErrorKey::InvalidPassCode => ErrorKey::InvalidPassCode,
             ErrorKey::CarePassClosed => ErrorKey::CarePassClosed,
+            ErrorKey::CarePassNotOpenYet => ErrorKey::CarePassNotOpenYet,
             ErrorKey::MileageAuthorisationRestricted => ErrorKey::MileageAuthorisationRestricted,
 
             ErrorKey::InvalidPickupTime => ErrorKey::InvalidPickupTime,
@@ -599,6 +606,7 @@ mod tests {
             ErrorKey::TripAlreadyCompleted => ErrorKey::TripAlreadyCompleted,
             ErrorKey::StartTripFirst => ErrorKey::StartTripFirst,
             ErrorKey::PassengerAlreadyPickedUp => ErrorKey::PassengerAlreadyPickedUp,
+            ErrorKey::NoShowTooEarly => ErrorKey::NoShowTooEarly,
             ErrorKey::InvalidLocation => ErrorKey::InvalidLocation,
             ErrorKey::MaxLiveDriversReached { .. } => ErrorKey::MaxLiveDriversReached { live: 1, limit: 1 },
             ErrorKey::RideStatusChanged => ErrorKey::RideStatusChanged,

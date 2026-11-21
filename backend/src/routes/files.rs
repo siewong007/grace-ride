@@ -213,10 +213,13 @@ pub async fn can_access_file(st: &AppState, u: &CurrentUser, file_id: i64) -> Ap
         return Ok(true);
     }
     // Grab reimbursement receipts: claimant, 报销审核 (交通组), 报销付款 (finance).
+    // The claimant is named explicitly so a receipt uploaded by staff on their behalf
+    // stays visible to them too.
     let (reimb,): (i64,) = sqlx::query_as(
-        "SELECT COUNT(*) FROM reimbursements WHERE receipt_file_id=$1 AND ($2 OR $3)",
+        "SELECT COUNT(*) FROM reimbursements WHERE receipt_file_id=$1 AND (user_id=$2 OR $3 OR $4)",
     )
     .bind(file_id)
+    .bind(u.id)
     .bind(u.can(Page::AdminReimbReview, Act::View))
     .bind(u.can(Page::AdminReimbPay, Act::View))
     .fetch_one(&st.db)

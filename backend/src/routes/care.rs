@@ -23,6 +23,9 @@ use crate::util::{audit, now, parse_dt, random_token, Lang};
 
 const TOKEN_LEN: usize = 48;
 const CLOSES_AFTER_HOURS: i64 = 12;
+/// Like visitor passes, a care link opens 24 hours before pickup — a link created
+/// weeks ahead must not expose the ride immediately.
+const OPENS_BEFORE_HOURS: i64 = 24;
 
 pub fn router() -> Router<AppState> {
     Router::new()
@@ -193,6 +196,11 @@ async fn load_care_pass(
         return Err(bad(lang, ErrorKey::CarePassClosed));
     }
     let r = load_ride(st, lang, pass.ride_id).await?;
+    // Links created inside the 24-hour window work at once (now >= pickup - 24h
+    // already holds); links created earlier stay closed until the window opens.
+    if now() < shift(&r.pickup_at, -OPENS_BEFORE_HOURS) {
+        return Err(bad(lang, ErrorKey::CarePassNotOpenYet));
+    }
     if matches!(r.status.as_str(), "cancelled" | "no_show" | "alt_transport") {
         let _ = sqlx::query(
             "UPDATE caregiver_passes SET closed_at=$1 WHERE id=$2 AND closed_at IS NULL",
@@ -273,6 +281,7 @@ async fn care_status(
         "status": r.status,
         "leg": r.leg,
         "pickup_at": r.pickup_at,
+        "opens_at": shift(&r.pickup_at, -OPENS_BEFORE_HOURS),
         "area": { "id": r.pickup_area_id, "name": r.area_name },
         "destination": if r.leg == "return" { &r.area_name } else { &r.destination },
         "readiness_status": r.readiness_status.as_deref().unwrap_or("unconfirmed"),

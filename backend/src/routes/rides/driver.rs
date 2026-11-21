@@ -694,7 +694,8 @@ pub(super) async fn no_show(
     Path(id): Path<i64>,
 ) -> AppResult<Json<Value>> {
     let r = load_ride(&st, u.lang, id).await?;
-    if r.driver_id != Some(u.id) && !traffic_can(&u, &r, Act::Update) {
+    let is_driver = r.driver_id == Some(u.id);
+    if !is_driver && !traffic_can(&u, &r, Act::Update) {
         return Err(forbidden(u.lang, ErrorKey::NotRideDriver));
     }
     // A passenger who has been picked up showed up. Checked in the update itself too, so a
@@ -702,14 +703,32 @@ pub(super) async fn no_show(
     if r.picked_up_at.is_some() {
         return Err(conflict(u.lang, ErrorKey::PassengerAlreadyPickedUp));
     }
-    let ended = sqlx::query(
-        "UPDATE rides SET status='no_show', needs_attention=0, completed_at=$1, updated_at=$1
-         WHERE id=$2 AND status IN ('in_progress', 'confirmed') AND picked_up_at IS NULL",
-    )
-    .bind(now())
-    .bind(id)
-    .execute(&st.db)
-    .await?;
+    // A driver may only record a no-show once the trip is running and the pickup time
+    // has passed — before that the passenger cannot reasonably be late. Staff keep the
+    // override for pre-emptive cases (e.g. the member called to say they are not coming).
+    let ts = now();
+    if is_driver && (r.status != "in_progress" || ts < r.pickup_at) {
+        return Err(conflict(u.lang, ErrorKey::NoShowTooEarly));
+    }
+    let ended = if is_driver {
+        sqlx::query(
+            "UPDATE rides SET status='no_show', needs_attention=0, completed_at=$1, updated_at=$1
+             WHERE id=$2 AND status='in_progress' AND picked_up_at IS NULL AND pickup_at <= $1",
+        )
+        .bind(&ts)
+        .bind(id)
+        .execute(&st.db)
+        .await?
+    } else {
+        sqlx::query(
+            "UPDATE rides SET status='no_show', needs_attention=0, completed_at=$1, updated_at=$1
+             WHERE id=$2 AND status IN ('in_progress', 'confirmed') AND picked_up_at IS NULL",
+        )
+        .bind(&ts)
+        .bind(id)
+        .execute(&st.db)
+        .await?
+    };
     if ended.rows_affected() == 0 {
         let picked: Option<(Option<String>,)> =
             sqlx::query_as("SELECT picked_up_at FROM rides WHERE id=$1")
@@ -856,11 +875,11 @@ pub(super) async fn complete(
     };
 
     // One statement: status, completion time and reimbursement land together, and only
-    // while this driver's trip is still running.
+    // while this driver's trip is still running. picked_up_at is left as it was: a
+    // completion without a recorded pickup must not fabricate a pickup timestamp.
     let done = sqlx::query(
         "UPDATE rides SET status='completed', updated_at=$1, completed_at=$1,
-                picked_up_at=COALESCE(picked_up_at, $1), reimbursement_amount_cents=$2,
-                mileage_receipt_needed=$3
+                reimbursement_amount_cents=$2, mileage_receipt_needed=$3
          WHERE id=$4 AND driver_id=$5 AND status='in_progress'",
     )
     .bind(now())
