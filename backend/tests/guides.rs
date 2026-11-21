@@ -674,7 +674,7 @@ async fn every_seeded_guide_saves_back_unchanged() {
 #[tokio::test]
 async fn migration_0002_repairs_broken_step_links_once() {
     let (_app, st) = setup().await;
-    let migration = include_str!("../migrations/0002_guide_step_links.sql");
+    let migration = include_str!("fixtures/guide_step_links.sql");
     let old_steps = json!([
         {"title_en": "One", "title_zh": "一", "body_en": "b", "body_zh": "乙", "link": "/rides"},
         {"title_en": "Two", "title_zh": "二", "body_en": "", "body_zh": "", "link": "/rides/:id"},
@@ -724,7 +724,7 @@ async fn migration_0002_repairs_broken_step_links_once() {
 #[tokio::test]
 async fn migration_0010_moves_seeded_steps_once() {
     let (_app, st) = setup().await;
-    let migration = include_str!("../migrations/0010_guide_page_matching.sql");
+    let migration = include_str!("fixtures/guide_page_matching.sql");
     // Put three seeded guides back the way 0010 found them.
     let old_track = json!([
         {"title_en": "Respond and get ready", "title_zh": "回应并准备", "link": "/rides"},

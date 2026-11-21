@@ -382,21 +382,18 @@ mod history_tests {
     }
 
     #[test]
-    fn a_lower_numbered_file_from_another_branch_may_arrive_later() {
+    fn an_edited_initial_file_replays_as_an_older_schema() {
         let migrator = sqlx::migrate!("./migrations");
-        // The newest file ran first; an earlier-numbered one ships afterwards.
-        let mut applied = shipped();
-        let skipped = applied.remove(applied.len() - 2);
-        assert!(skipped.0 > 1);
-        assert_eq!(classify_history(&applied, &migrator), History::Current);
-        // An edited file is still refused, wherever it sits.
+        // With everything consolidated into 0001, a database whose 0001 differs
+        // (an older freeze, or a sibling branch's numbering) replays the whole file
+        // over its existing tables instead of refusing to start.
         let mut edited = shipped();
-        let i = edited.len() - 2;
-        edited[i].1 = vec![0u8; 48];
-        assert_eq!(
-            classify_history(&edited, &migrator),
-            History::Diverged(edited[i].0)
-        );
+        edited[0].1 = vec![0u8; 48];
+        assert_eq!(classify_history(&edited, &migrator), History::Squashed);
+        // A database migrated by a newer build (extra numbered files) still stops.
+        let mut newer = shipped();
+        newer.push((2, vec![2u8; 48]));
+        assert_eq!(classify_history(&newer, &migrator), History::Diverged(2));
     }
 
     #[test]

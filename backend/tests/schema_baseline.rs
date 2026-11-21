@@ -1,8 +1,9 @@
-//! Migrations: one squashed `0001_init.sql`, frozen from 2026-11-17. Later changes are
-//! new numbered files.
+//! Migrations: one squashed `0001_init.sql`, re-frozen 2026-11-21 when it absorbed
+//! every numbered file 0002–0025. Later changes are new numbered files again.
 //! - A history whose version 1 is this file is kept; later files run once.
 //! - A history from an older schema (its version 1 differs: the pre-November numbered
-//!   files, the first frozen 0001, or 0001–0005) is cleared and 0001 runs again over
+//!   files, the first frozen 0001, 0001–0005, or the 0001–0025 chain — including
+//!   databases numbered by a sibling branch) is cleared and 0001 runs again over
 //!   the existing tables, keeping every row.
 //! - A later file edited after it ran, or one this build doesn't ship, stops start-up.
 //!
@@ -185,7 +186,7 @@ fn the_initial_schema_is_frozen() {
     .unwrap();
     assert_eq!(
         hex::encode(Sha256::digest(&sql)),
-        "4b83742e84488e6cf8d4722d834b831a4043d4491ccccd8487a1a98e323745c6",
+        "d4bff3ec956a1ac4aba077b1402d8ecc4517d59b198f58d52941bc7c5d3b0748",
         "0001_init.sql changed; add a new migration file instead"
     );
 }
