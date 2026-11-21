@@ -228,7 +228,7 @@ export function DriveSchedule() {
             block
             className="driver-trip-primary-btn"
             disabled={busy}
-            onClick={() => act(r, 'confirm-assignment', t('respondedCompleted'))}
+            onClick={() => act(r, 'confirm-assignment', t('respondedConfirmed'))}
           >
             {t('confirmAssignment')}
           </Button>
@@ -302,7 +302,8 @@ export function DriveSchedule() {
           </div>
         )}
 
-        {r.status === 'in_progress' && !r.picked_up_at && (
+        {/* The backend refuses a no-show before the pickup time has passed. */}
+        {r.status === 'in_progress' && !r.picked_up_at && parseLocal(r.pickup_at).getTime() <= Date.now() && (
           <Button
             variant="danger"
             size="sm"

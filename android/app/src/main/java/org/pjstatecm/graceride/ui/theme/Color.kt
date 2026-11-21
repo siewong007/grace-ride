@@ -1,0 +1,42 @@
+package org.pjstatecm.graceride.ui.theme
+
+import androidx.compose.ui.graphics.Color
+
+// Tokens from frontend/src/styles.css — one background, one accent, borders not shadows.
+val GrPrimary = Color(0xFF1F5DB4)
+val GrPrimaryHover = Color(0xFF194E9C)
+val GrPrimarySoft = Color(0xFFEEF3FB)
+val GrBg = Color(0xFFFFFFFF)
+val GrSurface2 = Color(0xFFF4F4F3)
+val GrBorder = Color(0xFFE6E6E6)
+val GrText = Color(0xFF1A1A1A)
+val GrMuted = Color(0xFF6B6B6B)
+
+val GrPrimaryDark = Color(0xFF7AA7EE)
+val GrPrimaryHoverDark = Color(0xFF9ABDF3)
+val GrPrimaryInkDark = Color(0xFF0B1730)
+val GrBgDark = Color(0xFF141517)
+val GrSurface2Dark = Color(0xFF1F2124)
+val GrBorderDark = Color(0xFF2E3135)
+val GrTextDark = Color(0xFFEDEDED)
+val GrMutedDark = Color(0xFFA3A3A3)
+
+val GrSuccess = Color(0xFF2B7549)
+val GrSuccessSoft = Color(0xFFEEF6F1)
+val GrWarning = Color(0xFF8A5800)
+val GrWarningSoft = Color(0xFFFBF4E6)
+val GrDanger = Color(0xFFB4372F)
+val GrDangerSoft = Color(0xFFFBEEEC)
+val GrInfo = Color(0xFF2C5D9C)
+val GrInfoSoft = Color(0xFFEEF3FB)
+
+val GrSuccessDark = Color(0xFF8FD4AC)
+val GrSuccessSoftDark = Color(0xFF1B2A22)
+val GrWarningDark = Color(0xFFE0B36A)
+val GrWarningSoftDark = Color(0xFF2C2417)
+val GrDangerDark = Color(0xFFF0938B)
+val GrDangerSoftDark = Color(0xFF2E1D1B)
+val GrInfoDark = Color(0xFF9DBCE8)
+val GrInfoSoftDark = Color(0xFF1B2432)
+
+val BrandRed = Color(0xFFE8462F)

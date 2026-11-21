@@ -456,6 +456,13 @@ async fn pdpa_return_leg_caregiver_ics_masking_and_disable_revocation() {
         .status,
         StatusCode::OK
     );
+    // The care link opens 24 hours before pickup: bring the ride into that window.
+    sqlx::query("UPDATE rides SET pickup_at=$1 WHERE id=$2")
+        .bind(grace_ride::util::in_hours(-1))
+        .bind(out_id)
+        .execute(&st.db)
+        .await
+        .unwrap();
     let care_live = call(&app, Method::GET, &format!("/api/care/{token}"), None, None).await;
     assert_eq!(care_live.status, StatusCode::OK);
     assert!(care_live.json["location"].get("lat").is_none());
@@ -670,6 +677,14 @@ async fn plan_per_leg_capacity_duplicate_event_ownership_and_attendance_guards()
     )
     .await;
     let checkin_code = ev_info.json["checkin_code"].as_str().unwrap().to_string();
+    // Self check-in opens 2 hours before the start: bring the event to "now" so the
+    // capacity rule (not the window) is what refuses the waitlisted member.
+    sqlx::query("UPDATE events SET starts_at=$1 WHERE id=$2")
+        .bind(grace_ride::util::now())
+        .bind(ev_id)
+        .execute(&st.db)
+        .await
+        .unwrap();
     let self_ci = call(
         &app,
         Method::POST,
@@ -1235,6 +1250,13 @@ async fn care_eta_pdpa_return_leg_and_proxy_route_privacy() {
         StatusCode::OK
     );
 
+    // The care link opens 24 hours before pickup: bring the ride into that window.
+    sqlx::query("UPDATE rides SET pickup_at=$1 WHERE id=$2")
+        .bind(grace_ride::util::in_hours(-1))
+        .bind(r1_id)
+        .execute(&st.db)
+        .await
+        .unwrap();
     // Care pass status before pickup must strip eta.target, eta.path, and eta.destination
     let care_live = call(
         &app,
@@ -2209,6 +2231,26 @@ async fn ride_lifecycle_cursors_search_escaping_csv_year_and_guides() {
         "{gate_body}"
     );
 
+    // The driver starts the trip and waits at the gate; the pickup time passes
+    // without the passenger showing up.
+    assert_eq!(
+        call(
+            &app,
+            Method::POST,
+            &format!("/api/rides/{out_id}/start"),
+            Some(&driver),
+            None
+        )
+        .await
+        .status,
+        StatusCode::OK
+    );
+    sqlx::query("UPDATE rides SET pickup_at=$1 WHERE id=$2")
+        .bind(grace_ride::util::in_hours(-1))
+        .bind(out_id)
+        .execute(&st.db)
+        .await
+        .unwrap();
     assert_eq!(
         call(
             &app,

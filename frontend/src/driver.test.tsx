@@ -32,7 +32,9 @@ const mockScheduleRides = [
   {
     id: 102,
     status: 'in_progress',
-    pickup_at: '2026-11-20T11:00:00',
+    // Pickup time already passed (mocked "now" is 2026-11-12T09:00): the no-show
+    // button only appears once the passenger can actually be late.
+    pickup_at: '2026-11-12T08:30:00',
     seats: 1,
     pickup_address: '45 Jalan Masjid, KL',
     destination: 'Grace Community Church',

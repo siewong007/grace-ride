@@ -234,8 +234,10 @@ export default function Home() {
           </section>
         )}
 
-        {/* Today's driving (drivers only). */}
-        {can('drive') && (isDriverToday || !!next) && (
+        {/* Today's driving (drivers only). Always shown for drivers so the driving
+            pages stay one tap from Home even with nothing scheduled today — the
+            bottom tab bar no longer has a Drive tab. */}
+        {can('drive') && (
           <Section title={t('driveSchedule')} more={{ to: '/drive', label: t('seeAll') }}>
             {driving.loading ? (
               <ListSkeleton count={2} />

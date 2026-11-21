@@ -303,6 +303,14 @@ async fn round_trip_saved_places_proxy_defaults_and_care_links() {
     assert_eq!(cl.status, StatusCode::OK, "{}", cl.json);
     let token = cl.json["token"].as_str().unwrap().to_string();
 
+    // The care link opens 24 hours before pickup: bring the ride into that window.
+    sqlx::query("UPDATE rides SET pickup_at=$1 WHERE id=$2")
+        .bind(grace_ride::util::in_hours(2))
+        .bind(out_id)
+        .execute(&st.db)
+        .await
+        .unwrap();
+
     // Unauthenticated care link omits pickup_address for privacy
     let care_pub = call(&app, Method::GET, &format!("/api/care/{token}"), None, None).await;
     assert_eq!(care_pub.status, StatusCode::OK, "{}", care_pub.json);

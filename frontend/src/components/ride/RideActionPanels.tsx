@@ -8,6 +8,7 @@ import { useAuth } from '../../auth';
 import CantMakeItModal from '../CantMakeIt';
 import type { Ride } from '../RideCard';
 import { ReasonModal, StartTripButton } from '../TripActions';
+import { parseLocal } from '../../format';
 import { Button, Card, ErrorBox, Field, Modal, Notice, useAction, useConfirm } from '../ui';
 
 /** `part` splits the card when the passenger has something to do now: "respond" is the
@@ -276,7 +277,7 @@ export function DriverActions({ ride: r, reload }: { ride: Ride; reload: () => v
       {r.status === 'pending_driver_confirm' && (
         <>
           <p>{t('assignYou')}</p>
-          <Button variant="primary" disabled={busy} onClick={() => act('confirm-assignment', t('respondedCompleted'))}>
+          <Button variant="primary" disabled={busy} onClick={() => act('confirm-assignment', t('respondedConfirmed'))}>
             {t('confirmAssignment')}
           </Button>
         </>
@@ -298,7 +299,8 @@ export function DriverActions({ ride: r, reload }: { ride: Ride; reload: () => v
               {t('arrivedGateBtn')}
             </Button>
           )}
-          {!r.picked_up_at && (
+          {/* The backend refuses a no-show before the pickup time has passed. */}
+          {!r.picked_up_at && parseLocal(r.pickup_at).getTime() <= Date.now() && (
             <Button variant="danger" disabled={busy} onClick={handleNoShow}>
               {t('noShowBtn')}
             </Button>

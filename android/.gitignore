@@ -1,0 +1,10 @@
+*.iml
+.gradle/
+local.properties
+build/
+captures/
+.externalNativeBuild/
+.cxx/
+keystore.properties
+*.jks
+*.keystore

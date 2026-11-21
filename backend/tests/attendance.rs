@@ -37,6 +37,14 @@ async fn event_attendance_module_lifecycle_and_checkin() {
     assert_eq!(res.status, StatusCode::OK, "{}", res.json);
     let event_id = res.json["id"].as_i64().unwrap();
 
+    // Self check-in opens 2 hours before the start: bring the event to "now".
+    sqlx::query("UPDATE events SET starts_at=$1 WHERE id=$2")
+        .bind(grace_ride::util::now())
+        .bind(event_id)
+        .execute(&st.db)
+        .await
+        .unwrap();
+
     // Verify event detail has attendance_enabled: true and checkin_code for organiser
     let detail_org = call(
         &app,
@@ -322,6 +330,14 @@ async fn attendance_checkin_rejects_members_outside_event_groups() {
     .await;
     assert_eq!(res.status, StatusCode::OK, "{}", res.json);
     let event_id = res.json["id"].as_i64().unwrap();
+
+    // Self check-in opens 2 hours before the start: bring the event to "now".
+    sqlx::query("UPDATE events SET starts_at=$1 WHERE id=$2")
+        .bind(grace_ride::util::now())
+        .bind(event_id)
+        .execute(&st.db)
+        .await
+        .unwrap();
 
     let detail = call(
         &app,

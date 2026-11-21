@@ -102,6 +102,7 @@ export default {
   respondedStarted: 'Trip started, location sharing on',
   respondedPickedUp: 'Pickup recorded',
   respondedNoShow: 'No-show recorded',
+  respondedConfirmed: 'Assignment confirmed',
   respondedCompleted: 'Arrived, thank you for your service!',
   respondedWithdrew: 'Notified transport team to arrange another driver',
   tripMap: 'Trip map',

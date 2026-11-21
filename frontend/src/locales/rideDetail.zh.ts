@@ -102,6 +102,7 @@ export default {
   respondedStarted: '行程已开始，开始共享位置',
   respondedPickedUp: '已记录上车',
   respondedNoShow: '已记录未到场',
+  respondedConfirmed: '已确认接手',
   respondedCompleted: '已送达，感谢您的服事！',
   respondedWithdrew: '已通知交通组安排其他司机',
   tripMap: '行程地图',

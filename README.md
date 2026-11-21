@@ -73,7 +73,7 @@ All detailed engineering, operational, security, and legal documentation lives i
 - [Local Development & Tooling](docs/TECHNICAL.md#1-local-development--tooling) — setup, `docker-compose.dev.yml`, demo fixtures, and `Makefile` shortcuts
 - [Features & Module Inventory](docs/TECHNICAL.md#2-features--module-inventory) — all 16 modules, routes, and explicit boundaries
 - [User & Operational Workflows](docs/TECHNICAL.md#3-user--operational-workflows) — ride state machine, concurrency locks, and maintenance rules
-- [System Architecture & Database](docs/TECHNICAL.md#4-system-architecture--database) — topology, 27-page / 67-permission catalog, and migrations `0001`–`0009`
+- [System Architecture & Database](docs/TECHNICAL.md#4-system-architecture--database) — topology, 27-page / 67-permission catalog, and the consolidated `0001` migration baseline
 - [Configuration & Deployment](docs/TECHNICAL.md#5-configuration--deployment-runbook) — environment variables, Docker Compose, self-hosted OSRM, AIC VPS CI/CD, and encrypted backups
 - [Testing & Verification](docs/TECHNICAL.md#6-testing--verification) — Cargo, Vitest, and Playwright suites
 - [Security Model](docs/TECHNICAL.md#7-security-model) — auth, RBAC invariants, pass isolation, privacy projections, and accepted risks

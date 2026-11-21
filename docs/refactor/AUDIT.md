@@ -42,7 +42,7 @@
 | Backend unit tests | ✅ 283 tests across 35 suites pass |
 | Frontend unit tests | ✅ 314 tests across 49 files pass |
 | E2E tests (Playwright) | ✅ Present; run in CI under matching container |
-| Database migrations committed | ✅ `backend/migrations/0001–0030` |
+| Database migrations committed | ✅ `backend/migrations/0001` (consolidated baseline, absorbed 0002–0025 on 2026-11-21) |
 | Seed data committed | ✅ `backend/src/seed.rs` (DEV_MODE) |
 | Error monitoring | ✅ Sentry integrated (backend `sentry` crate + frontend `@sentry/react`; opt-in via DSN) |
 | Health-check endpoint | ✅ `/api/health` + Docker HEALTHCHECK CLI |

@@ -2116,6 +2116,21 @@ async fn ride_trip_and_staff_branches() {
         None,
     )
     .await;
+    // A driver may only call a no-show once the trip is running and pickup time passed.
+    must(
+        &app,
+        Method::POST,
+        &format!("/api/rides/{shown}/start"),
+        Some(&c.driver),
+        None,
+    )
+    .await;
+    sqlx::query("UPDATE rides SET pickup_at=$1 WHERE id=$2")
+        .bind(grace_ride::util::in_hours(-1))
+        .bind(shown)
+        .execute(&st.db)
+        .await
+        .unwrap();
     must(
         &app,
         Method::POST,

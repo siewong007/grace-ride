@@ -78,6 +78,7 @@ export default {
   confirmNoShowBtn: '记录未到场',
   respondedPickedUp: '已记录乘客上车',
   respondedNoShow: '已记录未到场',
+  respondedConfirmed: '已确认接手',
   respondedCompleted: '已送达，感谢您的服事！',
   respondedWithdrew: '已通知交通组安排其他司机',
   navigateToPickup: '导航到上车地点',

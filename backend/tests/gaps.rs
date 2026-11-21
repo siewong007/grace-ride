@@ -1291,6 +1291,13 @@ async fn ride_withdraw_reassign_alt_transport_and_no_show() {
         .status,
         StatusCode::OK
     );
+    // The pickup time must have passed before a driver can record a no-show.
+    sqlx::query("UPDATE rides SET pickup_at=$1 WHERE id=$2")
+        .bind(grace_ride::util::in_hours(-1))
+        .bind(rid)
+        .execute(&st.db)
+        .await
+        .unwrap();
     let ns = call(
         &app,
         Method::POST,
