@@ -4,7 +4,6 @@ import React, {
   useCallback,
   useContext,
   useEffect,
-  useLayoutEffect,
   useMemo,
   useRef,
   useState,
@@ -29,74 +28,86 @@ const BackNavigationContext = createContext<BackNavigationContextValue | null>(n
 
 const MAX_HISTORY_ENTRIES = 200;
 
+interface HistoryState {
+  entries: BackHistoryEntry[];
+  index: number;
+}
+
+function reduceBackHistory(
+  prev: HistoryState,
+  entry: BackHistoryEntry,
+  navType: ReturnType<typeof useNavigationType>,
+): HistoryState {
+  const current = prev.entries[prev.index];
+  if (current && current.key === entry.key && current.to === entry.to) {
+    return prev;
+  }
+
+  if (navType === 'PUSH') {
+    if (current && current.to === entry.to) {
+      const entries = prev.entries.slice();
+      entries[prev.index] = entry;
+      return { entries, index: prev.index };
+    }
+    let entries = prev.entries.slice(0, prev.index + 1);
+    entries.push(entry);
+    if (entries.length > MAX_HISTORY_ENTRIES) {
+      entries = entries.slice(entries.length - MAX_HISTORY_ENTRIES);
+    }
+    return { entries, index: entries.length - 1 };
+  }
+
+  if (navType === 'REPLACE') {
+    const entries = prev.entries.slice();
+    entries[prev.index] = entry;
+    return { entries, index: prev.index };
+  }
+
+  // POP: match backward from index - 1 first (back navigation), then forward (browser forward).
+  let matchIdx = -1;
+  for (let i = prev.index - 1; i >= 0; i--) {
+    if (prev.entries[i].key === entry.key) {
+      matchIdx = i;
+      break;
+    }
+  }
+  if (matchIdx === -1) {
+    for (let i = prev.index + 1; i < prev.entries.length; i++) {
+      if (prev.entries[i].key === entry.key) {
+        matchIdx = i;
+        break;
+      }
+    }
+  }
+  if (matchIdx !== -1) {
+    const entries = prev.entries.slice();
+    entries[matchIdx] = entry;
+    return { entries, index: matchIdx };
+  }
+
+  return { entries: [entry], index: 0 };
+}
+
 function BackNavigationTracker({ children }: { children: ReactNode }) {
   const loc = useLocation();
   const navType = useNavigationType();
-  const initialTo = loc.pathname + loc.search;
+  const nextTo = loc.pathname + loc.search;
+  const entry: BackHistoryEntry = { key: loc.key, to: nextTo, pathname: loc.pathname };
 
-  const [state, setState] = useState<{ entries: BackHistoryEntry[]; index: number }>(() => ({
-    entries: [{ key: loc.key, to: initialTo, pathname: loc.pathname }],
+  const [state, setState] = useState<HistoryState>(() => ({
+    entries: [{ key: loc.key, to: nextTo, pathname: loc.pathname }],
     index: 0,
   }));
 
-  useLayoutEffect(() => {
-    const nextTo = loc.pathname + loc.search;
-    const entry: BackHistoryEntry = { key: loc.key, to: nextTo, pathname: loc.pathname };
+  const current = state.entries[state.index];
+  let active = state;
+  if (!current || current.key !== entry.key || current.to !== entry.to) {
+    active = reduceBackHistory(state, entry, navType);
+    setState(active);
+  }
 
-    setState((prev) => {
-      const current = prev.entries[prev.index];
-      if (current && current.key === entry.key && current.to === entry.to) {
-        return prev;
-      }
-
-      if (navType === 'PUSH') {
-        if (current && current.to === entry.to) {
-          const entries = prev.entries.slice();
-          entries[prev.index] = entry;
-          return { entries, index: prev.index };
-        }
-        let entries = prev.entries.slice(0, prev.index + 1);
-        entries.push(entry);
-        if (entries.length > MAX_HISTORY_ENTRIES) {
-          entries = entries.slice(entries.length - MAX_HISTORY_ENTRIES);
-        }
-        return { entries, index: entries.length - 1 };
-      }
-
-      if (navType === 'REPLACE') {
-        const entries = prev.entries.slice();
-        entries[prev.index] = entry;
-        return { entries, index: prev.index };
-      }
-
-      // POP: match backward from index - 1 first (back navigation), then forward (browser forward).
-      let matchIdx = -1;
-      for (let i = prev.index - 1; i >= 0; i--) {
-        if (prev.entries[i].key === entry.key) {
-          matchIdx = i;
-          break;
-        }
-      }
-      if (matchIdx === -1) {
-        for (let i = prev.index + 1; i < prev.entries.length; i++) {
-          if (prev.entries[i].key === entry.key) {
-            matchIdx = i;
-            break;
-          }
-        }
-      }
-      if (matchIdx !== -1) {
-        const entries = prev.entries.slice();
-        entries[matchIdx] = entry;
-        return { entries, index: matchIdx };
-      }
-
-      return { entries: [entry], index: 0 };
-    });
-  }, [loc.key, loc.pathname, loc.search, navType]);
-
-  const previousEntry = state.index > 0 ? state.entries[state.index - 1] : null;
-  const nextEntry = state.index < state.entries.length - 1 ? state.entries[state.index + 1] : null;
+  const previousEntry = active.index > 0 ? active.entries[active.index - 1] : null;
+  const nextEntry = active.index < active.entries.length - 1 ? active.entries[active.index + 1] : null;
   const value = useMemo(() => ({ previousEntry, nextEntry }), [previousEntry, nextEntry]);
 
   return <BackNavigationContext.Provider value={value}>{children}</BackNavigationContext.Provider>;

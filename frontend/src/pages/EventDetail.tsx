@@ -5,7 +5,6 @@ import {
   Car,
   CarFront,
   Check,
-  ChevronRight,
   Copy,
   Edit2,
   Plus,
@@ -46,6 +45,10 @@ import {
   WalkIn,
 } from '../components/event/EventQrModals';
 import {
+  ScheduleTimeline,
+  type TimelineNode,
+} from '../components/event/EventScheduleTimeline';
+import {
   EventScannerModal,
   ScanMemberPassModal,
 } from '../components/event/EventScannerModals';
@@ -79,15 +82,96 @@ export default function EventDetail() {
   const myDrivingDay = useApi<Ride[]>(
     shouldLoadDriverDay ? `/driver/schedule?from=${eventDay}&to=${eventDay}` : null,
   );
+  const shouldLoadRiderUpcoming = Boolean(
+    e && can('rides') && e.my_signup?.status === 'going' && e.my_ride,
+  );
+  const myUpcomingRides = useApi<Ride[]>(shouldLoadRiderUpcoming ? '/rides?scope=upcoming' : null);
 
   if (error) return <Page width="medium"><ErrorBox error={error} onRetry={reload} /></Page>;
   if (!e) return <Spinner />;
 
   const signed = !!e.my_signup && e.my_signup.status !== 'cancelled';
+  const going = signed && e.my_signup!.status === 'going';
   const open = e.status === 'published';
   const isFull = e.capacity > 0 && e.going >= e.capacity;
   const attendanceEnabled = e.attendance_enabled !== false;
-  const myDrivingForEvent = (myDrivingDay.data ?? []).filter((r) => r.event?.id === e.id);
+  const myDrivingForEvent = (Array.isArray(myDrivingDay.data) ? myDrivingDay.data : []).filter((r) => r.event?.id === e.id);
+  const upcomingRidesList = Array.isArray(myUpcomingRides.data) ? myUpcomingRides.data : [];
+  const fullOutbound = e.my_ride ? upcomingRidesList.find((r) => r.id === e.my_ride!.id) : undefined;
+  const fullReturn = e.my_return_ride ? upcomingRidesList.find((r) => r.id === e.my_return_ride!.id) : undefined;
+
+  const eventTimelineNodes: TimelineNode[] = [];
+  if (going && (e.my_ride || myDrivingForEvent.length > 0)) {
+    const preDrives = myDrivingForEvent
+      .filter((r) => r.leg !== 'return' && r.pickup_at <= e.starts_at)
+      .sort((a, b) => a.pickup_at.localeCompare(b.pickup_at));
+    const postDrives = myDrivingForEvent
+      .filter((r) => r.leg === 'return' || r.pickup_at > e.starts_at)
+      .sort((a, b) => a.pickup_at.localeCompare(b.pickup_at));
+
+    if (e.my_ride) {
+      eventTimelineNodes.push({
+        id: `out-${e.my_ride.id}`,
+        timeLabel: fullOutbound ? fmtTime(fullOutbound.pickup_at, ft) : t('outboundStep'),
+        title: t('myRide'),
+        subtitle: fullOutbound?.driver?.name,
+        to: `/rides/${e.my_ride.id}`,
+        kind: 'ride',
+        state: e.my_ride.status === 'completed' ? 'done' : 'active',
+        badge: <StatusPill map={RIDE_STATUS_PASSENGER} status={e.my_ride.status} />,
+      });
+    }
+
+    for (const r of preDrives) {
+      const riderName = r.is_proxy && r.proxy ? r.proxy.rider_name : r.passenger.name;
+      eventTimelineNodes.push({
+        id: `drv-${r.id}`,
+        timeLabel: fmtTime(r.pickup_at, ft),
+        title: riderName,
+        subtitle: `${r.area.name} → ${r.destination}`,
+        to: `/rides/${r.id}`,
+        kind: 'drive',
+        state: r.status === 'completed' ? 'done' : 'active',
+        badge: <StatusPill map={RIDE_STATUS} status={r.status} />,
+      });
+    }
+
+    eventTimelineNodes.push({
+      id: `evt-${e.id}`,
+      timeLabel: fmtTime(e.starts_at, ft),
+      title: e.title,
+      subtitle: e.location,
+      kind: 'event',
+      state: 'active',
+    });
+
+    for (const r of postDrives) {
+      const riderName = r.is_proxy && r.proxy ? r.proxy.rider_name : r.passenger.name;
+      eventTimelineNodes.push({
+        id: `drv-${r.id}`,
+        timeLabel: fmtTime(r.pickup_at, ft),
+        title: riderName,
+        subtitle: `${r.area.name} → ${r.destination}`,
+        to: `/rides/${r.id}`,
+        kind: 'return',
+        state: r.status === 'completed' ? 'done' : 'upcoming',
+        badge: <StatusPill map={RIDE_STATUS} status={r.status} />,
+      });
+    }
+
+    if (e.my_return_ride && e.my_return_ride.id !== e.my_ride?.id) {
+      eventTimelineNodes.push({
+        id: `ret-${e.my_return_ride.id}`,
+        timeLabel: fullReturn ? fmtTime(fullReturn.pickup_at, ft) : t('returnStep'),
+        title: t('yourReturnRide'),
+        subtitle: fullReturn?.driver?.name,
+        to: `/rides/${e.my_return_ride.id}`,
+        kind: 'return',
+        state: e.my_return_ride.status === 'completed' ? 'done' : 'upcoming',
+        badge: <StatusPill map={RIDE_STATUS_PASSENGER} status={e.my_return_ride.status} />,
+      });
+    }
+  }
 
   const active = Array.isArray(signups) ? signups.filter((s) => s.status !== 'cancelled') : [];
   const signupsAttended = active.filter((s) => s.attended === 1).length;
@@ -98,7 +182,6 @@ export default function EventDetail() {
   const choices = e.join_as ?? [];
   const mustChoose = choices.length > 1;
   const myGroup = (e.my_signup as { as_group?: { name: string } | null } | null)?.as_group?.name;
-  const going = signed && e.my_signup!.status === 'going';
 
   const handleSignup = () => {
     if (mustChoose && joinAs == null) {
@@ -125,7 +208,7 @@ export default function EventDetail() {
   };
 
   const kvItems: KeyValueItem[] = [
-    { label: t('groups'), value: e.groups },
+    ...(e.groups ? [{ label: t('groups'), value: e.groups }] : []),
     {
       label: t('quota'),
       value: e.capacity
@@ -139,7 +222,7 @@ export default function EventDetail() {
           value: e.mileage_claimable ? t('mileageClaimable') : t('mileageNotClaimable'),
         }]
       : []),
-    { label: t('organiser'), value: e.created_by.name },
+    ...(e.created_by?.name ? [{ label: t('organiser'), value: e.created_by.name }] : []),
   ];
 
   if (e.signup_deadline) {
@@ -257,52 +340,23 @@ export default function EventDetail() {
               </Notice>
             )}
 
-            {e.my_ride ? (
+            {eventTimelineNodes.length > 0 ? (
               <div className="stack-xs">
-                <div className="list">
-                  <Link to={`/rides/${e.my_ride.id}`} className="item">
-                    <CarFront size={16} aria-hidden="true" className="muted" />
-                    <span className="grow bold">{t('myRide')}</span>
-                    <StatusPill map={RIDE_STATUS_PASSENGER} status={e.my_ride.status} />
-                    <ChevronRight size={16} className="muted" aria-hidden="true" />
-                  </Link>
-                  {e.my_return_ride && e.my_return_ride.id !== e.my_ride.id && (
-                    <Link to={`/rides/${e.my_return_ride.id}`} className="item">
-                      <CarFront size={16} aria-hidden="true" className="muted" />
-                      <span className="grow bold">{t('yourReturnRide')}</span>
-                      <StatusPill map={RIDE_STATUS_PASSENGER} status={e.my_return_ride.status} />
-                      <ChevronRight size={16} className="muted" aria-hidden="true" />
-                    </Link>
-                  )}
-                </div>
-                {can('rides', 'create') && (
-                  <div className="btn-row">
+                <span className="small muted">
+                  {myDrivingForEvent.length > 0 && !e.my_ride ? t('youAreDriving') : t('eventSchedule')}
+                </span>
+                <ScheduleTimeline compact items={eventTimelineNodes} />
+                <div className="btn-row">
+                  {can('rides', 'create') && (
                     <Button variant="ghost" size="sm" to={`/rides/new?event=${e.id}&proxy=1`} icon={<Users size={16} />}>
                       {t('bookForFamily')}
                     </Button>
-                  </div>
-                )}
-              </div>
-            ) : myDrivingForEvent.length > 0 ? (
-              <div className="stack-xs">
-                <div className="small muted">{t('youAreDriving')}</div>
-                <div className="list">
-                  {myDrivingForEvent.map((r) => (
-                    <Link key={r.id} to={`/rides/${r.id}`} className="item">
-                      <span className="timeline-time">{fmtTime(r.pickup_at, ft).replace(/^.. /, '')}</span>
-                      <div className="grow min-w-0">
-                        <div className="bold">{r.is_proxy && r.proxy ? r.proxy.rider_name : r.passenger.name}</div>
-                        <div className="muted small">{r.area.name} → {r.destination}</div>
-                      </div>
-                      <StatusPill map={RIDE_STATUS} status={r.status} />
-                      <ChevronRight size={16} className="muted" aria-hidden="true" />
-                    </Link>
-                  ))}
-                </div>
-                <div>
-                  <Button variant="secondary" size="sm" to="/drive">
-                    {t('openItinerary')}
-                  </Button>
+                  )}
+                  {myDrivingForEvent.length > 0 && (
+                    <Button variant="secondary" size="sm" to="/drive">
+                      {t('openItinerary')}
+                    </Button>
+                  )}
                 </div>
               </div>
             ) : (

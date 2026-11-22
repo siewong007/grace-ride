@@ -263,6 +263,128 @@ describe('Events page', () => {
     expect(screen.getByText('Badminton Night')).toBeInTheDocument();
     expect(screen.getByText(/signed up/i)).toBeInTheDocument();
   });
+
+  it('expands an event row inline to show contextual transport or 1-tap sign up', async () => {
+    const user = userEvent.setup();
+    const savedUpcoming = mockApiMap['/events?scope=upcoming'];
+    mockApiMap['/events?scope=upcoming'] = [
+      mockEvent,
+      {
+        ...mockEvent,
+        id: 12,
+        title: 'Choir Fellowship',
+        starts_at: '2099-11-28T18:30:00',
+        signup_deadline: '2099-11-27T23:59:59',
+        my_signup: null,
+      },
+    ];
+    try {
+      render(
+        <MemoryRouter>
+          <Events />
+        </MemoryRouter>
+      );
+
+      const expandBtns = screen.getAllByRole('button', { name: /show event actions/i });
+      expect(expandBtns).toHaveLength(2);
+
+      // First row is signed up without transport -> offers I need a ride + I can drive
+      await user.click(expandBtns[0]);
+      expect(screen.getByText(/transportation not arranged yet/i)).toBeInTheDocument();
+      expect(screen.getByRole('link', { name: /i need a ride/i })).toHaveAttribute('href', '/rides/new?event=10');
+
+      // Second row is open -> offers 1-tap Sign up
+      await user.click(expandBtns[1]);
+      await user.click(screen.getByRole('button', { name: /^sign up$/i }));
+      expect(post).toHaveBeenCalledWith('/events/12/signup', {});
+    } finally {
+      mockApiMap['/events?scope=upcoming'] = savedUpcoming;
+    }
+  });
+
+  it('shows month chips when events span multiple months and filters rows', async () => {
+    const user = userEvent.setup();
+    const savedUpcoming = mockApiMap['/events?scope=upcoming'];
+    mockApiMap['/events?scope=upcoming'] = [
+      { ...mockEvent, id: 10, title: 'November Gathering', starts_at: '2099-11-20T19:30:00' },
+      { ...mockEvent, id: 13, title: 'December Caroling', starts_at: '2099-12-24T19:30:00' },
+    ];
+    try {
+      render(
+        <MemoryRouter>
+          <Events />
+        </MemoryRouter>
+      );
+
+      expect(screen.getByText('November Gathering')).toBeInTheDocument();
+      expect(screen.getByText('December Caroling')).toBeInTheDocument();
+
+      await user.click(screen.getByRole('button', { name: /^dec$/i }));
+      expect(screen.queryByText('November Gathering')).not.toBeInTheDocument();
+      expect(screen.getByText('December Caroling')).toBeInTheDocument();
+    } finally {
+      mockApiMap['/events?scope=upcoming'] = savedUpcoming;
+    }
+  });
+
+  it('renders chronological My schedule day strip and vertical timeline with rides and events', async () => {
+    const user = userEvent.setup();
+    const savedUpcoming = mockApiMap['/events?scope=upcoming'];
+    const savedRides = mockApiMap['/rides?scope=upcoming'];
+    mockApiMap['/events?scope=upcoming'] = [
+      { ...mockEvent, id: 10, title: 'Badminton Night', starts_at: '2099-11-20T19:30:00' },
+      { ...mockEvent, id: 14, title: 'Sunday Worship', starts_at: '2099-11-22T09:00:00' },
+    ];
+    mockApiMap['/rides?scope=upcoming'] = [
+      {
+        id: 77,
+        status: 'confirmed',
+        pickup_at: '2099-11-20T18:45:00',
+        leg: 'outbound',
+        destination: 'Sports Complex',
+        area: { id: 1, name: 'PJ' },
+        pickup_address: null,
+        seats: 1,
+        assistance: '',
+        notes: '',
+        event: { id: 10, title: 'Badminton Night' },
+        trip_id: 9,
+        passenger: { id: 2, name: 'Grace Member', phone: null },
+        driver: { id: 3, name: 'Brother Silas', phone: null, vehicle: null },
+        needs_attention: false,
+        attention_reason: '',
+        started_at: null,
+        picked_up_at: null,
+        completed_at: null,
+        updated_at: '2099-11-19T10:00:00',
+        viewer: { is_passenger: true, is_driver: false, is_staff: false },
+      },
+    ];
+    try {
+      render(
+        <MemoryRouter>
+          <Events />
+        </MemoryRouter>
+      );
+
+      await user.click(screen.getByRole('tab', { name: /my schedule/i }));
+
+      expect(screen.getByText(/ride to sports complex/i)).toBeInTheDocument();
+      expect(screen.getByText(/brother silas · pj/i)).toBeInTheDocument();
+      expect(screen.getByText(/^confirmed$/i)).toBeInTheDocument();
+      expect(screen.getByText('Badminton Night')).toBeInTheDocument();
+      expect(screen.getByText('Sunday Worship')).toBeInTheDocument();
+
+      // Selecting Day 1 filters out Sunday Worship
+      await user.click(screen.getByRole('button', { name: /20 nov/i }));
+      expect(screen.getByText('Badminton Night')).toBeInTheDocument();
+      expect(screen.queryByText('Sunday Worship')).not.toBeInTheDocument();
+    } finally {
+      mockApiMap['/events?scope=upcoming'] = savedUpcoming;
+      if (savedRides === undefined) delete mockApiMap['/rides?scope=upcoming'];
+      else mockApiMap['/rides?scope=upcoming'] = savedRides;
+    }
+  });
 });
 
 describe('EventDetail page', () => {
@@ -324,6 +446,57 @@ describe('EventDetail page', () => {
     await user.click(screen.getByRole('radio', { name: 'Sports' }));
     await user.click(screen.getByRole('button', { name: /sign up/i }));
     expect(post).toHaveBeenCalledWith('/events/11/signup', { as_group_id: 3 });
+  });
+
+  it('shows event-day chronological schedule when a member has outbound and return rides', () => {
+    const saved = mockApiMap['/events/10'];
+    const savedUpcoming = mockApiMap['/rides?scope=upcoming'];
+    mockApiMap['/events/10'] = {
+      ...mockEvent,
+      my_ride: { id: 44, status: 'confirmed' },
+      my_return_ride: { id: 45, status: 'pending_driver' },
+    };
+    mockApiMap['/rides?scope=upcoming'] = [
+      {
+        id: 44,
+        status: 'confirmed',
+        pickup_at: '2026-11-20T18:50:00',
+        leg: 'outbound',
+        destination: 'Sports Complex',
+        area: { id: 1, name: 'PJ' },
+        pickup_address: null,
+        seats: 1,
+        assistance: '',
+        notes: '',
+        event: { id: 10, title: 'Badminton Night' },
+        trip_id: null,
+        passenger: { id: 2, name: 'Grace Member', phone: null },
+        driver: { id: 3, name: 'Brother Silas', phone: null, vehicle: null },
+        needs_attention: false,
+        attention_reason: '',
+        started_at: null,
+        picked_up_at: null,
+        completed_at: null,
+        updated_at: '2026-11-19T10:00:00',
+        viewer: { is_passenger: true, is_driver: false, is_staff: false },
+      },
+    ];
+    try {
+      render(
+        <MemoryRouter initialEntries={['/events/10']}>
+          <Routes>
+            <Route path="/events/:id" element={<EventDetail />} />
+          </Routes>
+        </MemoryRouter>
+      );
+      expect(screen.getByText(/your event schedule/i)).toBeInTheDocument();
+      expect(screen.getByRole('link', { name: /my ride/i })).toHaveAttribute('href', '/rides/44');
+      expect(screen.getByRole('link', { name: /return ride/i })).toHaveAttribute('href', '/rides/45');
+    } finally {
+      mockApiMap['/events/10'] = saved;
+      if (savedUpcoming === undefined) delete mockApiMap['/rides?scope=upcoming'];
+      else mockApiMap['/rides?scope=upcoming'] = savedUpcoming;
+    }
   });
 });
 

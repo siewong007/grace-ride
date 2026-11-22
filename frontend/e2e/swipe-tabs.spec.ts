@@ -146,6 +146,7 @@ test.describe('Mobile bottom-tab swipe (iPhone 13)', () => {
     await mockApi(page, 'member');
     await page.goto('/events/12');
     await expect(page).toHaveURL(/\/events\/12$/);
+    await expect(page.getByRole('heading', { level: 1, name: 'Sunday Fellowship Lunch' })).toBeVisible();
     await swipe(page, 'right');
     await expect(page).toHaveURL(/\/$/);
   });
@@ -155,6 +156,7 @@ test.describe('Mobile bottom-tab swipe (iPhone 13)', () => {
     await page.goto('/events');
     await page.getByRole('link', { name: /Sunday Fellowship Lunch/ }).first().click();
     await expect(page).toHaveURL(/\/events\/12$/);
+    await expect(page.getByRole('heading', { level: 1, name: 'Sunday Fellowship Lunch' })).toBeVisible();
     await expect(page.getByRole('link', { name: 'Back' })).toBeVisible();
     await swipe(page, 'right');
     await expect(page).toHaveURL(/\/events$/);
