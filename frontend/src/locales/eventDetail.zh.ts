@@ -108,4 +108,5 @@ export default {
   cannotScanPrompt: '若无法扫码，可直接输入签到码',
   cannotScanPassPrompt: '若无法扫码，可直接输入会员通行码',
   enterCodeOrUrlPlaceholder: '输入签到码（如 TESTCODE12）或签到链接',
+  transport: '交通',
 };

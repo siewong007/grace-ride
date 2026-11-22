@@ -67,6 +67,8 @@ export default function PlanTransport() {
   const [reasons, setReasons] = useState<Record<number, Reason>>({});
   const [noRoom, setNoRoom] = useState<Set<number>>(new Set());
   const [arranging, setArranging] = useState(false);
+  const [diagnosisOpen, setDiagnosisOpen] = useState(false);
+  const [lastArrangeResult, setLastArrangeResult] = useState<ArrangeResult | null>(null);
   const [showPostEventReimb, setShowPostEventReimb] = useState(false);
   const [exportModalOpen, setExportModalOpen] = useState(false);
   const [previewDataUrl, setPreviewDataUrl] = useState<string | null>(null);
@@ -197,6 +199,7 @@ export default function PlanTransport() {
       const res = await post<ArrangeResult>(`/admin/events/${plan.event.id}/plan/arrange`, {
         draft: draftEntries(plan, draft),
       });
+      setLastArrangeResult(res);
       if (res.placed.length > 0) {
         setUndoStack((s) => [...s.slice(-24), draft]);
         setDraft((d) => ({ ...d, ...Object.fromEntries(res.placed.map((p) => [p.ride_id, p.driver_id])) }));
@@ -207,6 +210,9 @@ export default function PlanTransport() {
       if (res.placed.length > 0) toast.success(t('autoArrangeDone', { count: res.placed.length }));
       if (res.unplaced.length > 0) toast.error(t('autoArrangeUnplaced', { count: res.unplaced.length }));
       if (res.approximate > 0 && res.placed.length > 0) toast.info(t('autoArrangeApprox', { count: res.approximate }));
+      if (res.placed.length > 0 || res.unplaced.length > 0) {
+        setDiagnosisOpen(true);
+      }
     } catch (e) {
       toast.error(e instanceof Error ? e.message : String(e));
     } finally {
@@ -474,6 +480,13 @@ export default function PlanTransport() {
                     disabled={unassigned.length === 0 || arranging}
                   >
                     {t('autoArrange')}
+                  </Button>
+                  <Button
+                    variant="secondary"
+                    icon={<Sparkles size={16} />}
+                    onClick={() => setDiagnosisOpen(true)}
+                  >
+                    {t('diagnosisBtn')}
                   </Button>
                 <Button variant="secondary" icon={<History size={16} />} onClick={sameAsLast} disabled={unassigned.length === 0}>
                   {t('sameAsLast')}
@@ -813,7 +826,195 @@ export default function PlanTransport() {
           </div>
         </aside>
       )}
+
+      {diagnosisOpen && (
+        <DiagnosisDrawerModal
+          plan={plan}
+          draft={draft}
+          reasons={reasons}
+          noRoom={noRoom}
+          lastResult={lastArrangeResult}
+          canUpdate={canUpdate}
+          onAssign={(rideId, driverId) => {
+            setUndoStack((s) => [...s.slice(-24), draft]);
+            setDraft((d) => ({ ...d, [rideId]: driverId }));
+          }}
+          onClose={() => setDiagnosisOpen(false)}
+        />
+      )}
     </Page>
+  );
+}
+
+/** Explainability drawer breaking down matching rationale, carpool clustering and unassigned bottlenecks */
+function DiagnosisDrawerModal({
+  plan,
+  draft,
+  reasons,
+  noRoom,
+  lastResult,
+  canUpdate,
+  onAssign,
+  onClose,
+}: {
+  plan: Plan;
+  draft: Draft;
+  reasons: Record<number, Reason>;
+  noRoom: Set<number>;
+  lastResult?: ArrangeResult | null;
+  canUpdate: boolean;
+  onAssign: (rideId: number, driverId: number | null) => void;
+  onClose: () => void;
+}) {
+  const { t } = useTranslation('plan');
+  const driversById = useMemo(() => new Map(plan.drivers.map((d) => [d.id, d])), [plan.drivers]);
+
+  const placedRides = useMemo(
+    () => plan.rides.filter((r) => draft[r.id] != null),
+    [plan.rides, draft],
+  );
+  const unassignedRides = useMemo(
+    () => plan.rides.filter((r) => draft[r.id] == null),
+    [plan.rides, draft],
+  );
+
+  const clusterCount = useMemo(
+    () => placedRides.filter((r) => reasons[r.id]?.near != null).length,
+    [placedRides, reasons],
+  );
+
+  return (
+    <Modal title={t('diagnosisTitle')} onClose={onClose} size="lg">
+      <div className="stack gap-md">
+        <p className="muted small">{t('diagnosisDesc')}</p>
+        {lastResult && lastResult.approximate > 0 && (
+          <Pill tone="info">{t('autoArrangeApprox', { count: lastResult.approximate })}</Pill>
+        )}
+
+        {/* Top metrics summary */}
+        <div className="row wrap gap-sm" role="region" aria-label="Summary statistics">
+          <div className="card flat tight flex-1 min-w-[120px]">
+            <div className="muted tiny">Placed Rides</div>
+            <div className="bold text-lg">{placedRides.length} / {plan.rides.length}</div>
+          </div>
+          <div className="card flat tight flex-1 min-w-[120px]">
+            <div className="muted tiny">Carpool Clusters</div>
+            <div className="bold text-lg text-success">{clusterCount} rides</div>
+          </div>
+          <div className="card flat tight flex-1 min-w-[120px]">
+            <div className="muted tiny">Unassigned</div>
+            <div className={`bold text-lg ${unassignedRides.length > 0 ? 'text-warning' : 'text-muted'}`}>
+              {unassignedRides.length}
+            </div>
+          </div>
+        </div>
+
+        {/* Unassigned Bottlenecks Section */}
+        <div className="stack-sm">
+          <h4 className="no-margin">{t('diagnosisUnassigned', { count: unassignedRides.length })}</h4>
+          {unassignedRides.length === 0 ? (
+            <p className="muted small">{t('diagnosisNoUnassigned')}</p>
+          ) : (
+            <ul className="stack-xs list-none p-0 m-0">
+              {unassignedRides.map((r) => {
+                const areaDrivers = plan.drivers.filter((d) => d.area_ids.includes(r.area.id));
+                const allFull =
+                  areaDrivers.length > 0 &&
+                  areaDrivers.every((d) => driverLoad(plan, draft, d).seats >= d.cap);
+                const diagnosisMsg = r.assistance
+                  ? t('diagnosisBottleneckAssistance', { assistance: r.assistance })
+                  : areaDrivers.length === 0
+                    ? t('diagnosisBottleneckNoDriver', { area: r.area.name })
+                    : allFull
+                      ? t('diagnosisBottleneckCapacity', {
+                          area: r.area.name,
+                          drivers: areaDrivers.map((d) => d.name).join(', '),
+                        })
+                      : t('noRoom');
+
+                return (
+                  <li key={r.id} className="card flat tight stack-xs border-warning">
+                    <div className="row between wrap gap-xs">
+                      <div className="bold small">
+                        <span>{r.passenger.name}</span> · <span className="muted">{r.area.name}</span>
+                        {r.assistance && <Pill tone="warning">{r.assistance}</Pill>}
+                        {noRoom.has(r.id) && <Pill tone="danger">{t('noRoom')}</Pill>}
+                      </div>
+                      <div className="muted tiny">{r.pickup_address}</div>
+                    </div>
+                    <p className="small text-warning no-margin">{diagnosisMsg}</p>
+                    {canUpdate && (
+                      <div className="row nowrap gap-xs align-center mt-xs">
+                        <span className="muted tiny">{t('diagnosisActionAssign')}</span>
+                        <select
+                          className="input input-sm"
+                          aria-label={`Driver for ${r.passenger.name}`}
+                          value=""
+                          onChange={(e) => {
+                            const val = e.target.value ? Number(e.target.value) : null;
+                            if (val != null) onAssign(r.id, val);
+                          }}
+                        >
+                          <option value="">-- Choose driver --</option>
+                          {plan.drivers.map((d) => {
+                            const used = driverLoad(plan, draft, d).seats;
+                            return (
+                              <option key={d.id} value={d.id} disabled={used >= d.cap}>
+                                {d.name} ({used}/{d.cap} seats{used >= d.cap ? ' - Full' : ''})
+                              </option>
+                            );
+                          })}
+                        </select>
+                      </div>
+                    )}
+                  </li>
+                );
+              })}
+            </ul>
+          )}
+        </div>
+
+        {/* Successfully Placed Clusters Section */}
+        {placedRides.length > 0 && (
+          <div className="stack-sm">
+            <h4 className="no-margin">{t('diagnosisMatched', { count: placedRides.length })}</h4>
+            <div className="grid gap-xs" style={{ maxHeight: '220px', overflowY: 'auto' }}>
+              {placedRides.map((r) => {
+                const driver = driversById.get(draft[r.id]!);
+                const reason = reasons[r.id];
+                return (
+                  <div key={r.id} className="card flat tight row between wrap gap-xs">
+                    <div>
+                      <span className="bold small">{r.passenger.name}</span>
+                      <span className="muted tiny"> ➔ {driver?.name ?? 'Assigned'}</span>
+                    </div>
+                    <div>
+                      {reason?.near ? (
+                        <Pill tone="success">
+                          {t('diagnosisClusterKm', { km: reason.near.km, name: reason.near.name })}
+                        </Pill>
+                      ) : reason?.in_area ? (
+                        <Pill tone="info">
+                          {t('diagnosisSameAreaDriver', { driver: driver?.name ?? '' })}
+                        </Pill>
+                      ) : (
+                        <Pill tone="gray">{t('assigned')}</Pill>
+                      )}
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        )}
+
+        <div className="row end">
+          <Button variant="primary" onClick={onClose}>
+            {t('common:close')}
+          </Button>
+        </div>
+      </div>
+    </Modal>
   );
 }
 

@@ -3797,3 +3797,745 @@ main a[href^="tel:"]:not(.btn) { text-decoration: underline; }
   }
 }
 
+
+/* ============================================================
+   PREMIUM MINIMALISM LAYER — Grace Ride UI/UX Redesign
+   "Maximum usefulness. Minimum interface."
+   These rules refine and override earlier declarations where
+   needed. They are additive and do not remove functionality.
+   ============================================================ */
+
+/* ---- Refined spacing scale on the Home page ---- */
+.home {
+  gap: var(--space-10);    /* More breathing room between home sections */
+}
+
+/* ---- Home greeting ---- */
+.home-greeting {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.home-greeting h1 {
+  font-size: var(--fs-2xl);
+  font-weight: 700;
+  letter-spacing: -0.015em;
+  line-height: 1.2;
+}
+.home-greeting .home-date {
+  color: var(--muted);
+  font-size: var(--fs-sm);
+  font-weight: 500;
+}
+
+/* ---- Section header: typography only, no container ---- */
+.home-section-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--space-3);
+  margin-bottom: var(--space-3);
+}
+.home-section-head h2 {
+  font-size: var(--fs-sm);
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+.home-section-head a {
+  font-size: var(--fs-sm);
+  color: var(--muted);
+  font-weight: 500;
+}
+.home-section-head a:hover {
+  color: var(--text);
+}
+
+/* ---- Needs-you item: clean row, no nested rounded rectangles ---- */
+.home-need-row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  padding: var(--space-3) 0;
+  border-bottom: 1px solid var(--border);
+  color: inherit;
+  text-decoration: none;
+  min-height: 52px;
+}
+.home-need-row:last-child { border-bottom: none; }
+.home-need-row:hover .home-need-row-cta { text-decoration: underline; }
+.home-need-row-body {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  flex: 1;
+  min-width: 0;
+}
+.home-need-row-title { font-weight: 600; }
+.home-need-row-sub {
+  font-size: var(--fs-sm);
+  color: var(--muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.home-need-row-cta {
+  font-size: var(--fs-sm);
+  font-weight: 600;
+  color: var(--primary);
+  white-space: nowrap;
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  flex-shrink: 0;
+}
+
+/* ---- Next-ride hero: refined card ---- */
+.home-next-hero {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+  padding: var(--space-5);
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+}
+.home-next-hero.is-today {
+  border-color: var(--primary);
+}
+.home-next-hero-label {
+  font-size: var(--fs-sm);
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+.home-next-hero-time {
+  font-size: var(--fs-3xl);
+  font-weight: 700;
+  line-height: 1.1;
+  letter-spacing: -0.02em;
+  font-variant-numeric: tabular-nums;
+  margin: 0;
+}
+.home-next-hero-time a {
+  color: inherit;
+  text-decoration: none;
+}
+.home-next-hero-time-link {
+  color: inherit;
+  text-decoration: none;
+}
+.home-next-hero-time a::after,
+.home-next-hero-time-link::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+}
+.home-next-hero-time a:focus-visible,
+.home-next-hero-time-link:focus-visible { outline: none; }
+.home-next-hero-time a:focus-visible::after,
+.home-next-hero-time-link:focus-visible::after { outline: 2px solid var(--primary); outline-offset: 2px; }
+.home-next-hero:hover .home-next-hero-time a,
+.home-next-hero:hover .home-next-hero-time-link { text-decoration: underline; }
+.home-next-hero-route {
+  font-size: var(--fs-md);
+  color: var(--muted);
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+.home-next-hero-route-sep { color: var(--border); }
+.home-next-hero-driver {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  padding-top: var(--space-3);
+  border-top: 1px solid var(--border);
+}
+.home-next-hero-driver-info { flex: 1; min-width: 0; }
+.home-next-hero-driver-name { font-weight: 600; }
+.home-next-hero-driver-vehicle {
+  font-size: var(--fs-sm);
+  color: var(--muted);
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  flex-wrap: wrap;
+}
+.home-next-hero-actions {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  position: relative;
+  z-index: 1;
+}
+/* Anything that must be tappable above the card's full-overlay link */
+.home-next-hero-above {
+  position: relative;
+  z-index: 1;
+}
+.home-ready-actions {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: var(--space-2);
+}
+.home-ready-actions > .btn { min-width: 0; white-space: normal; text-align: center; }
+
+/* ---- Coming-up list: typography-first rows ---- */
+.home-coming-list {
+  display: flex;
+  flex-direction: column;
+}
+.home-coming-row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  padding: var(--space-3) 0;
+  border-bottom: 1px solid var(--border);
+  color: inherit;
+  text-decoration: none;
+  min-height: 52px;
+}
+.home-coming-row:last-child { border-bottom: none; }
+.home-coming-row:hover .home-coming-row-title { text-decoration: underline; }
+.home-coming-row-body { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+.home-coming-row-title { font-weight: 600; }
+.home-coming-row-meta { font-size: var(--fs-sm); color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.home-coming-row-side { flex-shrink: 0; color: var(--muted); display: flex; align-items: center; }
+
+/* ---- Event list: calendar card style (reference design) ---- */
+.event-card-list {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+}
+
+/* Each event is a rounded card with its own soft background */
+.event-row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  padding: var(--space-3) var(--space-4);
+  border-radius: var(--radius);
+  background: var(--surface-2);
+  color: inherit;
+  text-decoration: none;
+  transition: background var(--dur-fast) var(--ease);
+  min-height: 72px;
+}
+.event-row:hover { background: color-mix(in srgb, var(--primary) 6%, var(--surface-2)); }
+.event-row:hover .event-row-title { text-decoration: underline; }
+
+/* Signed-up events get a very faint primary tint */
+.event-row.is-signed-up {
+  background: color-mix(in srgb, var(--primary) 8%, var(--surface));
+}
+.event-row.is-signed-up:hover {
+  background: color-mix(in srgb, var(--primary) 12%, var(--surface));
+}
+
+/* Left: large date number */
+.event-row-date {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  width: 48px;
+  min-width: 48px;
+}
+.event-row-date-day {
+  font-size: var(--fs-2xl);
+  font-weight: 800;
+  line-height: 1;
+  letter-spacing: -0.025em;
+  color: var(--text);
+}
+.event-row-date-month {
+  font-size: var(--fs-xs);
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--muted);
+  margin-top: 1px;
+}
+/* Photo thumbnail replaces date when present */
+.event-row-photo {
+  width: 48px;
+  height: 48px;
+  border-radius: var(--radius-sm);
+  object-fit: cover;
+  flex-shrink: 0;
+}
+
+/* Thin vertical divider between date and content */
+.event-row-sep {
+  width: 1px;
+  align-self: stretch;
+  background: var(--border);
+  flex-shrink: 0;
+  margin: 4px 0;
+}
+
+/* Right: time + title stacked */
+.event-row-body {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+.event-row-time {
+  font-size: var(--fs-sm);
+  color: var(--muted);
+  font-weight: 500;
+}
+.event-row-title {
+  font-weight: 700;
+  font-size: var(--fs-md);
+  line-height: 1.3;
+  /* Allow 2-line titles on small screens */
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+.event-row-location {
+  font-size: var(--fs-sm);
+  color: var(--muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.event-row-side {
+  flex-shrink: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: var(--space-1);
+  margin-left: auto;
+  padding-left: var(--space-2);
+}
+
+/* ---- Event detail: transport section ---- */
+.transport-section {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  padding: var(--space-4) 0;
+  border-top: 1px solid var(--border);
+}
+.transport-section-label {
+  font-size: var(--fs-sm);
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+.transport-status-row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  padding: var(--space-3) 0;
+  color: inherit;
+  text-decoration: none;
+  border-radius: var(--radius-sm);
+}
+.transport-status-row:hover .transport-status-title { text-decoration: underline; }
+.transport-status-info { flex: 1; min-width: 0; }
+.transport-status-title { font-weight: 600; }
+.transport-status-sub { font-size: var(--fs-sm); color: var(--muted); }
+
+/* ---- Profile: refined layout ---- */
+.profile-section-list {
+  display: flex;
+  flex-direction: column;
+}
+.profile-section-list > .item {
+  padding: var(--space-3) 0;
+  border-bottom: 1px solid var(--border);
+}
+.profile-section-list > .item:last-child { border-bottom: none; }
+
+/* ---- Minimal empty state ---- */
+.home-empty-state {
+  padding: var(--space-8) 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  align-items: flex-start;
+}
+.home-empty-state h2 {
+  font-size: var(--fs-xl);
+  font-weight: 700;
+}
+.home-empty-state p {
+  color: var(--muted);
+  max-width: 36ch;
+}
+
+/* ---- Quiet secondary action below the hero ---- */
+.home-secondary-action {
+  display: flex;
+  justify-content: center;
+  padding-top: var(--space-2);
+}
+
+/* ---- Announcement: single line, opens inline ---- */
+.home-ann {
+  border-top: 1px solid var(--border);
+}
+.home-ann > summary {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-height: 44px;
+  padding: var(--space-2) 0;
+  cursor: pointer;
+  list-style: none;
+  font-size: var(--fs-sm);
+  color: var(--muted);
+}
+.home-ann > summary::-webkit-details-marker { display: none; }
+.home-ann > summary::after { content: '›'; transition: transform .15s; margin-left: auto; }
+.home-ann[open] > summary::after { transform: rotate(90deg); }
+.home-ann-title {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-weight: 600;
+  color: var(--text);
+}
+.home-ann[open] .home-ann-title { white-space: normal; }
+.home-ann-body { padding: var(--space-2) 0 var(--space-4); display: flex; flex-direction: column; gap: var(--space-4); }
+.home-ann-article { display: flex; flex-direction: column; gap: var(--space-1); }
+.home-ann-article-head { display: flex; justify-content: space-between; align-items: baseline; gap: var(--space-3); }
+
+/* ---- Drive schedule on Home: minimal list ---- */
+.home-drive-empty { font-size: var(--fs-sm); color: var(--muted); padding: var(--space-2) 0; }
+
+/* ---- Comfort chooser (text size) ---- */
+.home-comfort-card {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  padding: var(--space-4) 0;
+  border-top: 1px solid var(--border);
+}
+
+/* ---- Ride detail: passenger actions inline ---- */
+.ride-passenger-inline {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  padding: var(--space-3) 0;
+  border-top: 1px solid var(--border);
+}
+
+/* ---- Mobile: tighten home sections ---- */
+@media (max-width: 767px) {
+  .home {
+    gap: var(--space-8);
+  }
+  .home-next-hero {
+    padding: var(--space-4);
+  }
+  .home-next-hero-time {
+    font-size: var(--fs-2xl);
+  }
+  .home-greeting h1 {
+    font-size: var(--fs-xl);
+  }
+}
+
+/* ---- Transitions for page-level enters (refine existing) ---- */
+.page-container {
+  animation: page-in .22s cubic-bezier(.2, .8, .2, 1) backwards;
+}
+
+/* ---- Bottom nav: 3-tab rule is enforced in JS; refine visual quality ---- */
+.bottom-tab {
+  gap: 3px;
+}
+.bottom-tab.active .bottom-tab-icon svg {
+  stroke-width: 2.5;
+}
+
+/* ---- Topbar: subtle refinement ---- */
+.topbar {
+  /* Keep existing sticky behaviour; add smooth border reveal */
+  transition: border-color 100ms ease-out;
+}
+
+/* ---- Event detail signup card: minimal ---- */
+.event-signup-transport {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  padding-top: var(--space-3);
+  border-top: 1px solid var(--border);
+}
+.event-signup-transport-label {
+  font-size: var(--fs-sm);
+  font-weight: 700;
+  color: var(--muted);
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+}
+
+/* ---- Suppress decorative over-animation on reduced-motion ---- */
+@media (prefers-reduced-motion: reduce) {
+  .page-container { animation: none; }
+}
+
+/* ============================================================
+   DRIVE SCHEDULE — Vertical timeline (reference design 2)
+   Time on the left · filled/hollow dot on a stem · name + sub
+   on the right · round icon badge far right.
+   ============================================================ */
+
+.driver-schedule-controls {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+  padding-bottom: var(--space-2);
+}
+
+.drive-schedule-body { gap: var(--space-5); }
+.drive-route-slot { /* DriverRouteCard wrapper — no extra padding */ }
+.drive-trips-slot { gap: var(--space-4); }
+
+/* ---- Focus / "next stop" card ---- */
+.driver-trip-card {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  padding: var(--space-4);
+  background: var(--surface-2);
+  border-radius: var(--radius);
+  border: 1px solid var(--border);
+}
+
+.driver-next-stop {
+  background: var(--surface);
+  border-color: var(--primary);
+  box-shadow: 0 0 0 1px var(--primary);
+}
+
+.driver-next-stop-head {
+  margin-bottom: var(--space-1);
+}
+
+/* Header row: time · name/route · status */
+.driver-trip-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: var(--space-3);
+}
+
+.driver-trip-title-row {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-3);
+  flex: 1;
+  min-width: 0;
+}
+
+.driver-trip-time {
+  font-size: var(--fs-xl);
+  font-weight: 700;
+  letter-spacing: -0.015em;
+  font-variant-numeric: tabular-nums;
+  flex-shrink: 0;
+  min-width: 56px;
+  color: var(--text);
+  line-height: 1.2;
+}
+
+.driver-trip-title {
+  font-weight: 700;
+  color: var(--text);
+  text-decoration: none;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  flex: 1;
+  min-width: 0;
+}
+.driver-trip-title:hover { text-decoration: underline; }
+
+.driver-trip-route {
+  font-size: var(--fs-sm);
+  color: var(--muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.driver-trip-route-lock {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+}
+
+.driver-trip-assistance {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  font-size: var(--fs-sm);
+  color: var(--muted);
+  padding: 2px 0;
+}
+
+.driver-trip-actions {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+.driver-trip-primary-btn {
+  /* Full-width primary action stays prominent */
+}
+
+.driver-trip-withdraw {
+  align-self: flex-start;
+  color: var(--muted);
+}
+
+/* ---- Vertical timeline list (day view) ---- */
+.drive-timeline {
+  display: flex;
+  flex-direction: column;
+  position: relative;
+  padding-left: 72px; /* room for time column */
+}
+
+/* The continuous stem behind all stops */
+.drive-timeline::before {
+  content: '';
+  position: absolute;
+  left: 56px; /* aligns with dot centre */
+  top: 20px;
+  bottom: 20px;
+  width: 2px;
+  background: var(--border);
+  border-radius: 1px;
+}
+
+.drive-timeline-stop {
+  position: relative;
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-3);
+  padding-bottom: var(--space-5);
+  text-decoration: none;
+  color: inherit;
+}
+.drive-timeline-stop:last-child { padding-bottom: 0; }
+
+/* Time label — absolutely positioned to the left */
+.drive-timeline-time {
+  position: absolute;
+  left: -72px;
+  top: 2px;
+  width: 48px;
+  text-align: right;
+  font-size: var(--fs-md);
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  color: var(--text);
+  line-height: 1.2;
+}
+
+/* Circle node on the stem */
+.drive-timeline-dot {
+  position: absolute;
+  left: -18px; /* stem is at left=56px inside the 72px offset; dot centre = 56px - 72px = -16px from padding edge */
+  top: 4px;
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  border: 2px solid var(--muted);
+  background: var(--surface);
+  flex-shrink: 0;
+  z-index: 1;
+  transition: background var(--dur-fast), border-color var(--dur-fast);
+}
+.drive-timeline-dot.is-active {
+  background: var(--primary);
+  border-color: var(--primary);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--primary) 20%, transparent);
+}
+.drive-timeline-dot.is-done {
+  background: var(--success);
+  border-color: var(--success);
+}
+
+/* Text block to the right of the dot */
+.drive-timeline-body {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.drive-timeline-name {
+  font-weight: 700;
+  font-size: var(--fs-md);
+  line-height: 1.3;
+}
+.drive-timeline-sub {
+  font-size: var(--fs-sm);
+  color: var(--muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* Round icon badge far right (like the reference design) */
+.drive-timeline-icon {
+  width: 40px;
+  height: 40px;
+  border-radius: 50%;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  display: grid;
+  place-items: center;
+  flex-shrink: 0;
+  color: var(--muted);
+}
+.drive-timeline-icon.is-active {
+  border-color: var(--primary);
+  color: var(--primary);
+  background: var(--primary-soft);
+}
+
+/* Hover: underline the name */
+.drive-timeline-stop:hover .drive-timeline-name { text-decoration: underline; }
+
+/* Date heading above a day's timeline */
+.drive-day-label {
+  font-size: var(--fs-sm);
+  font-weight: 700;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  color: var(--muted);
+  padding: var(--space-1) 0 var(--space-3);
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-2);
+}
+.drive-day-label-count {
+  font-weight: 500;
+  letter-spacing: 0;
+  text-transform: none;
+  color: var(--muted);
+}

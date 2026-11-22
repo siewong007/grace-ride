@@ -17,7 +17,7 @@ import {
   Tabs,
   useInfiniteScroll,
 } from '../components/ui';
-import { EVENT_KIND, fmtDateTime, useFormatT } from '../format';
+import { fmtDateTime, useFormatT } from '../format';
 import { useTranslation } from 'react-i18next';
 import { UniversalCheckinScannerModal } from '../components/event/EventScannerModals';
 
@@ -181,48 +181,73 @@ export default function Events() {
             }
           />
         ) : (
-          <div className="list event-list">
+          <div>
             {activeEvents.map((e) => {
               const d = new Date(e.starts_at);
               const monthName = d.toLocaleDateString(undefined, { month: 'short' });
               const dayNum = d.getDate();
 
               return (
-                <Link key={e.id} to={`/events/${e.id}`} className="item event-card">
+                <Link key={e.id} to={`/events/${e.id}`} className="event-row">
+                  {/* Date badge or photo thumbnail */}
                   {e.photo_file_id ? (
-                    <img src={`/api/files/${e.photo_file_id}`} alt="" className="event-card-photo" loading="lazy" />
+                    <img
+                      src={`/api/files/${e.photo_file_id}`}
+                      alt=""
+                      className="event-row-photo"
+                      loading="lazy"
+                    />
                   ) : (
-                    <div className="event-date-badge" aria-hidden="true">
-                      <span className="event-date-month">{monthName}</span>
-                      <span className="event-date-day">{dayNum}</span>
+                    <div className="event-row-date" aria-hidden="true">
+                      <span className="event-row-date-month">{monthName}</span>
+                      <span className="event-row-date-day">{dayNum}</span>
                     </div>
                   )}
-                  <div className="grow min-w-0 event-card-main">
-                    <div className="bold clamp-2">{e.title}</div>
-                    <div className="muted small clamp-2">
-                      {fmtDateTime(e.starts_at, ft)} · {e.location}
+
+                  {/* Main content */}
+                  <div className="event-row-body">
+                    <div className="event-row-title">{e.title}</div>
+                    <div className="event-row-meta">
+                      <span>{fmtDateTime(e.starts_at, ft)}</span>
+                      {e.location && (
+                        <>
+                          <span aria-hidden="true">·</span>
+                          <span>{e.location}</span>
+                        </>
+                      )}
                     </div>
-                    <div className="muted small ellipsis">
-                      {ft(EVENT_KIND[e.kind]?.label ?? e.kind)}{e.groups ? ` · ${e.groups}` : ''}
-                    </div>
+                    {e.groups && (
+                      <div className="event-row-meta">
+                        <span>{e.groups}</span>
+                      </div>
+                    )}
                   </div>
-                  <div className="event-card-side">
+
+                  {/* Status */}
+                  <div className="event-row-side">
                     {e.status !== 'published' ? (
-                      <Pill tone="neutral">{e.status === 'cancelled' ? t('cancelled') : t('finished')}</Pill>
+                      <Pill tone="neutral">
+                        {e.status === 'cancelled' ? t('cancelled') : t('finished')}
+                      </Pill>
                     ) : e.my_signup?.status === 'going' ? (
                       <Pill tone="success">{t('signedUp')}</Pill>
                     ) : e.my_signup?.status === 'waitlist' ? (
                       <Pill tone="warning">{t('waitlist')}</Pill>
                     ) : null}
                     {scope === 'upcoming' && can('drive') && openRequestsCountByEvent[e.id] ? (
-                      <Pill tone="blue">{t('ridesNeeded', { count: openRequestsCountByEvent[e.id] })}</Pill>
+                      <Pill tone="blue">
+                        {t('ridesNeeded', { count: openRequestsCountByEvent[e.id] })}
+                      </Pill>
                     ) : null}
-                    {e.my_signup?.need_ride && <span className="muted small">{t('needRide')}</span>}
                     {e.status === 'published' && !e.my_signup && (
                       e.capacity > 0 && e.spots_left != null ? (
-                        <span className="muted small nowrap">{e.spots_left > 0 ? t('spotsLeft', { n: e.spots_left }) : t('full')}</span>
+                        <span className="muted small nowrap">
+                          {e.spots_left > 0 ? t('spotsLeft', { n: e.spots_left }) : t('full')}
+                        </span>
                       ) : (
-                        <span className="muted small nowrap">{e.going} {t('peopleAttend')}</span>
+                        <span className="muted small nowrap">
+                          {e.going} {t('peopleAttend')}
+                        </span>
                       )
                     )}
                   </div>
@@ -239,6 +264,7 @@ export default function Events() {
             )}
           </div>
         )}
+
       </div>
       {showScanModal && (
         <UniversalCheckinScannerModal onClose={() => setShowScanModal(false)} />

@@ -8,6 +8,7 @@ import Members from './pages/admin/Members';
 import AdminReimbursements from './pages/admin/Reimbursements';
 import PlanTransport from './pages/admin/PlanTransport';
 import AreaFares from './pages/admin/AreaFares';
+import QuickJump from './components/QuickJump';
 import * as apiMod from './api';
 import * as authMod from './auth';
 
@@ -444,5 +445,122 @@ describe('Admin UX Enhancements', () => {
     expect(within(stepper).getByText('Bank CSV')).toBeInTheDocument();
     expect(within(stepper).getByText('Bank transfer')).toBeInTheDocument();
     expect(within(stepper).getByText('Checker signed')).toBeInTheDocument();
+  });
+
+  it('PlanTransport opens Explainability Drawer with bottleneck diagnosis and driver recommendations', async () => {
+    vi.spyOn(authMod, 'useAuth').mockReturnValue({
+      can: () => true,
+      me: { id: 1, name: 'Lead Zhang', roles: ['traffic_head'] },
+      refresh: vi.fn(),
+    } as any);
+
+    const planPayload = {
+      event: { id: 5, title: 'Sunday Worship', starts_at: '2026-11-22T09:00:00', location: 'Grace Hall', group_ids: [1] },
+      rides: [
+        {
+          id: 11,
+          status: 'pending_driver',
+          pickup_at: '2026-11-22T08:15:00',
+          pickup_address: '10 Jalan SS2',
+          seats: 1,
+          assistance: 'Wheelchair assistance required',
+          driver_id: null,
+          area: { id: 1, name: 'SS2' },
+          passenger: { id: 20, name: 'Grandma Mary' },
+          match_group_id: 1,
+          last: null,
+        },
+      ],
+      drivers: [
+        {
+          id: 30,
+          name: 'Driver Grace',
+          carpool: true,
+          cap: 4,
+          other_seats: 0,
+          area_ids: [1],
+          group_ids: [1],
+          vehicle: { model: 'Innova', plate: 'VAA 1111' },
+        },
+      ],
+    };
+
+    vi.spyOn(apiMod, 'useApi').mockReturnValue({
+      data: planPayload,
+      error: null,
+      loading: false,
+      reload: vi.fn(),
+    } as any);
+
+    render(
+      <MemoryRouter initialEntries={['/admin/events/5/plan']}>
+        <Routes>
+          <Route path="/admin/events/:id/plan" element={<PlanTransport />} />
+        </Routes>
+      </MemoryRouter>,
+    );
+
+    // Click on Insights & Diagnosis button
+    const diagBtn = screen.getByRole('button', { name: /Insights & Diagnosis/i });
+    fireEvent.click(diagBtn);
+
+    // Modal opens
+    const modal = screen.getByRole('dialog');
+    expect(modal).toBeInTheDocument();
+    expect(within(modal).getByText(/Auto-Arrange Insights & Diagnosis/i)).toBeInTheDocument();
+    expect(within(modal).getByText('Grandma Mary')).toBeInTheDocument();
+    expect(within(modal).getByText(/Passenger requires special assistance: Wheelchair assistance required/i)).toBeInTheDocument();
+
+    // Manual driver assignment in drawer
+    const assignSelect = within(modal).getByRole('combobox', { name: /Driver for Grandma Mary/i });
+    expect(assignSelect).toBeInTheDocument();
+    fireEvent.change(assignSelect, { target: { value: '30' } });
+
+    // Drawer closes and board reflects update
+    fireEvent.click(within(modal).getAllByRole('button', { name: /Close/i })[0]);
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+  });
+
+  it('QuickJump supports > prefix and provides instant administrative quick action jumps', async () => {
+    vi.spyOn(authMod, 'useAuth').mockReturnValue({
+      can: () => true,
+      me: { id: 1, name: 'Admin', roles: ['superadmin'] },
+      refresh: vi.fn(),
+    } as any);
+
+    vi.spyOn(apiMod, 'useApi').mockReturnValue({
+      data: [],
+      loading: false,
+      error: null,
+      reload: vi.fn(),
+    } as any);
+
+    const onClose = vi.fn();
+
+    render(
+      <MemoryRouter>
+        <QuickJump pages={[{ to: '/admin/dashboard', label: 'Dashboard', icon: null }]} onClose={onClose} />
+      </MemoryRouter>,
+    );
+
+    const input = screen.getByRole('combobox');
+
+    // Entering '>' enters command mode and lists quick actions
+    fireEvent.change(input, { target: { value: '>' } });
+    expect(screen.getByText('Quick Actions')).toBeInTheDocument();
+    expect(screen.getByText('Approve pending rides')).toBeInTheDocument();
+    expect(screen.getByText('Review pending member registrations')).toBeInTheDocument();
+    expect(screen.getByText('Audit driver travel reimbursements')).toBeInTheDocument();
+    expect(screen.getByText('Monthly payout batches & bank transfers')).toBeInTheDocument();
+    expect(screen.getByText('2D Area fares matrix & pricing')).toBeInTheDocument();
+
+    // Filtering by action keyword
+    fireEvent.change(input, { target: { value: '>payout' } });
+    expect(screen.getByText('Monthly payout batches & bank transfers')).toBeInTheDocument();
+    expect(screen.queryByText('Approve pending rides')).not.toBeInTheDocument();
+
+    // Clicking an action navigates and closes
+    fireEvent.click(screen.getByText('Monthly payout batches & bank transfers'));
+    expect(onClose).toHaveBeenCalled();
   });
 });
