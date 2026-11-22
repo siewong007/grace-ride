@@ -1,10 +1,31 @@
 // Transport planning board: arrange every ride request for one event at once.
 // Drag a passenger onto a driver (desktop) or pick the driver from the card's menu / sheet (phones,
 // keyboards, screen readers). Nothing is sent until "Confirm & notify".
-import { DragEvent, useCallback, useEffect, useMemo, useState } from 'react';
-import { useParams } from 'react-router-dom';
+import { DragEvent, FormEvent, useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useParams, useSearchParams } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
-import { Accessibility, AlertCircle, Car, Check, CheckCircle2, Clock, Copy, Download, History, Repeat, RotateCcw, Save, Send, Sparkles, Undo2, UserRound } from 'lucide-react';
+import {
+  Accessibility,
+  AlertCircle,
+  Car,
+  Check,
+  CheckCircle2,
+  Clock,
+  Copy,
+  Download,
+  History,
+  Lock,
+  Plus,
+  Repeat,
+  RotateCcw,
+  Save,
+  Send,
+  Sparkles,
+  Trash2,
+  Undo2,
+  Unlock,
+  UserRound,
+} from 'lucide-react';
 import { api, ApiError, post, useApi } from '../../api';
 import { useAuth } from '../../auth';
 import { canApprovePlan } from '../../perms';
@@ -14,6 +35,7 @@ import {
   CardSkeleton,
   EmptyState,
   ErrorBox,
+  Field,
   IconButton,
   Modal,
   Notice,
@@ -34,14 +56,18 @@ import {
   changesOf,
   Draft,
   draftEntries,
+  DraftVisitorEntry,
   driverLoad,
+  mergeEffectiveVisitors,
   Plan,
+  PlanDraft,
   PlanRide,
   PlanVisitor,
   Reason,
   inGroup,
   savedDraft,
   servesArea,
+  summarizeDraftDiff,
 } from './planLogic';
 import PlanVisitors, { VisitorLine, visitorTotals } from './PlanVisitors';
 
@@ -49,15 +75,21 @@ const DRAG_TYPE = 'application/x-grace-ride';
 
 export default function PlanTransport() {
   const { id } = useParams();
+  const [searchParams, setSearchParams] = useSearchParams();
   const { t } = useTranslation('plan');
   const ft = useFormatT();
   const toast = useToast();
   const confirm = useConfirm();
   const { can, me } = useAuth();
   const canUpdate = can('admin_plan', 'update');
+  const canEditRides = can('admin_rides', 'update');
   const { data, error, loading, reload } = useApi<Plan>(`/admin/events/${id}/plan`);
   const canApprove = data?.can_approve ?? canApprovePlan(me?.roles);
+  const [selectedDraftKey, setSelectedDraftKey] = useState<'live' | 'legacy' | number>('live');
   const [draft, setDraft] = useState<Draft>({});
+  const [draftVisitors, setDraftVisitors] = useState<DraftVisitorEntry[]>([]);
+  const [acquiredLocks, setAcquiredLocks] = useState<Set<number>>(new Set());
+  const lockInFlightRef = useRef<number | null>(null);
   const [undoStack, setUndoStack] = useState<Draft[]>([]);
   const [filter, setFilter] = useState<string>('all');
   const [pickerRideId, setPickerRideId] = useState<number | null>(null);
@@ -74,8 +106,12 @@ export default function PlanTransport() {
   const [previewDataUrl, setPreviewDataUrl] = useState<string | null>(null);
   const [exporting, setExporting] = useState(false);
   const [copied, setCopied] = useState(false);
-  // Visitors are saved straight away (they are records, not draft changes), so they
-  // refresh on their own without resetting the board's unsaved draft.
+  const [newDraftOpen, setNewDraftOpen] = useState(false);
+  const [newDraftLabel, setNewDraftLabel] = useState('');
+  const [newDraftBase, setNewDraftBase] = useState<'live' | 'clone'>('live');
+  const [returnModalOpen, setReturnModalOpen] = useState(false);
+  const [returnNotes, setReturnNotes] = useState('');
+  // Visitors are saved straight away in Live mode, or stored inside draftVisitors in Draft mode.
   const [visitors, setVisitors] = useState<PlanVisitor[] | null>(null);
   const reloadVisitors = useCallback(() => {
     api<{ visitors: PlanVisitor[] }>(`/admin/events/${id}/plan/visitors`)
@@ -83,25 +119,140 @@ export default function PlanTransport() {
       .catch(() => undefined);
   }, [id]);
 
-  // A fresh board (first load, after sending, after a conflict) resets the draft.
-  useEffect(() => {
-    if (data) {
-      const base = savedDraft(data);
-      if (data.draft?.assignments && data.draft.assignments.length > 0) {
-        for (const a of data.draft.assignments) {
-          base[a.ride_id] = a.driver_id;
-        }
-      }
-      setDraft(base);
-      setVisitors(null);
-      setUndoStack([]);
-      setReasons({});
-      setNoRoom(new Set());
-    }
+  const allDrafts = useMemo<PlanDraft[]>(() => {
+    if (data?.drafts && data.drafts.length > 0) return data.drafts;
+    if (data?.draft) return [data.draft];
+    return [];
   }, [data]);
 
+  const applySelectionToBoard = useCallback((planData: Plan, targetDraft: PlanDraft | null) => {
+    const base = savedDraft(planData);
+    if (
+      targetDraft &&
+      targetDraft.status !== 'approved' &&
+      targetDraft.status !== 'superseded' &&
+      targetDraft.assignments &&
+      targetDraft.assignments.length > 0
+    ) {
+      for (const a of targetDraft.assignments) {
+        base[a.ride_id] = a.driver_id;
+      }
+    }
+    setDraft(base);
+    setDraftVisitors(targetDraft?.visitors ?? []);
+    setUndoStack([]);
+    setReasons({});
+    setNoRoom(new Set());
+  }, []);
+
+  // A fresh board (first load, after sending, after a conflict) initializes selection & board state.
+  useEffect(() => {
+    if (!data) return;
+    const paramDraft = searchParams.get('draft');
+    const draftsList = data.drafts && data.drafts.length > 0 ? data.drafts : data.draft ? [data.draft] : [];
+    let nextKey: 'live' | 'legacy' | number = 'live';
+    let targetDraft: PlanDraft | null = null;
+    if (paramDraft === 'live') {
+      nextKey = 'live';
+      targetDraft = null;
+    } else if (paramDraft && draftsList.some((d) => d.id != null && String(d.id) === paramDraft)) {
+      const matched = draftsList.find((d) => d.id != null && String(d.id) === paramDraft)!;
+      nextKey = matched.id!;
+      targetDraft = matched;
+    } else if (data.draft && data.draft.status !== 'approved' && data.draft.status !== 'superseded') {
+      nextKey = data.draft.id ?? 'legacy';
+      targetDraft = data.draft;
+    }
+    setSelectedDraftKey(nextKey);
+    setVisitors(null);
+    setAcquiredLocks(new Set());
+    lockInFlightRef.current = null;
+    applySelectionToBoard(data, targetDraft);
+    // Intentionally keyed only on `data` so query-param switches do not clobber explicit switching or local mocks.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [data, applySelectionToBoard]);
+
+  const activeDraft = useMemo<PlanDraft | null>(() => {
+    if (selectedDraftKey === 'live') return null;
+    if (selectedDraftKey === 'legacy') return data?.draft ?? null;
+    return allDrafts.find((d) => d.id === selectedDraftKey) ?? null;
+  }, [allDrafts, data?.draft, selectedDraftKey]);
+
+  const isMyLock = Boolean(
+    activeDraft?.id != null && (activeDraft.lock_is_mine || acquiredLocks.has(activeDraft.id)),
+  );
+  const lockedByOther = Boolean(
+    activeDraft?.id != null && activeDraft.locked_by && !activeDraft.lock_is_mine && !acquiredLocks.has(activeDraft.id),
+  );
+  const draftStatusEditable = activeDraft
+    ? activeDraft.status === 'draft' ||
+      activeDraft.status === 'returned' ||
+      (activeDraft.status === 'pending_approval' && canApprove)
+    : true;
+  const canEditBoard = canUpdate && !lockedByOther && draftStatusEditable;
+
+  // Visibility-aware 3-minute lock heartbeat while editing a locked draft version.
+  useEffect(() => {
+    const lockedId = activeDraft?.id;
+    if (!lockedId || !isMyLock || !id) return;
+    const timer = window.setInterval(() => {
+      if (typeof document === 'undefined' || document.visibilityState === 'visible') {
+        post(`/admin/events/${id}/plan/drafts/${lockedId}/lock`, {}).catch(() => undefined);
+      }
+    }, 3 * 60 * 1000);
+    return () => window.clearInterval(timer);
+  }, [id, activeDraft?.id, isMyLock]);
+
+  const ensureLock = useCallback(() => {
+    const did = activeDraft?.id;
+    if (!did || !id || isMyLock || lockedByOther || lockInFlightRef.current === did) return;
+    lockInFlightRef.current = did;
+    post(`/admin/events/${id}/plan/drafts/${did}/lock`, {})
+      .then(() => {
+        setAcquiredLocks((prev) => new Set(prev).add(did));
+      })
+      .catch((e) => {
+        if (e instanceof ApiError && e.status === 423) {
+          toast.error(e.message);
+          reload();
+        }
+      })
+      .finally(() => {
+        if (lockInFlightRef.current === did) lockInFlightRef.current = null;
+      });
+  }, [activeDraft?.id, id, isMyLock, lockedByOther, toast, reload]);
+
+  const selectDraftView = useCallback(
+    (nextKey: 'live' | 'legacy' | number) => {
+      if (!data) return;
+      if (activeDraft?.id != null && isMyLock && id) {
+        api(`/admin/events/${id}/plan/drafts/${activeDraft.id}/lock`, { method: 'DELETE' }).catch(() => undefined);
+      }
+      const nextTarget =
+        nextKey === 'live'
+          ? null
+          : nextKey === 'legacy'
+          ? (data.draft ?? null)
+          : (allDrafts.find((d) => d.id === nextKey) ?? null);
+      setSelectedDraftKey(nextKey);
+      applySelectionToBoard(data, nextTarget);
+      const nextParams = new URLSearchParams(searchParams);
+      if (nextKey === 'live') nextParams.set('draft', 'live');
+      else if (typeof nextKey === 'number') nextParams.set('draft', String(nextKey));
+      else nextParams.delete('draft');
+      setSearchParams(nextParams, { replace: true });
+    },
+    [data, activeDraft?.id, isMyLock, id, allDrafts, applySelectionToBoard, searchParams, setSearchParams],
+  );
+
   const changes = useMemo(() => (data ? changesOf(data, draft) : []), [data, draft]);
-  const dirty = changes.length > 0;
+  const visitorsDirty = useMemo(
+    () =>
+      activeDraft != null &&
+      JSON.stringify(draftVisitors) !== JSON.stringify(activeDraft.visitors ?? []),
+    [activeDraft, draftVisitors],
+  );
+  const dirty = changes.length > 0 || visitorsDirty;
 
   useEffect(() => {
     if (!dirty) return;
@@ -121,7 +272,7 @@ export default function PlanTransport() {
 
   useEffect(() => {
     const onKeyDown = (e: KeyboardEvent) => {
-      if (!canUpdate || undoStack.length === 0) return;
+      if (!canEditBoard || undoStack.length === 0) return;
       const tag = (e.target as HTMLElement | null)?.tagName;
       if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT') return;
       if ((e.metaKey || e.ctrlKey) && !e.shiftKey && e.key.toLowerCase() === 'z') {
@@ -131,7 +282,7 @@ export default function PlanTransport() {
     };
     window.addEventListener('keydown', onKeyDown);
     return () => window.removeEventListener('keydown', onKeyDown);
-  }, [canUpdate, undoStack.length, undoStep]);
+  }, [canEditBoard, undoStack.length, undoStep]);
 
   if (loading && !data) {
     return (
@@ -148,15 +299,31 @@ export default function PlanTransport() {
     );
   }
 
-  const plan: Plan = { ...data, visitors: visitors ?? data.visitors ?? [] };
-  const visitorList = plan.visitors ?? [];
+  const baseVisitors = visitors ?? data.visitors ?? [];
+  const effectiveVisitors = mergeEffectiveVisitors(
+    baseVisitors,
+    activeDraft ? draftVisitors : [],
+    data.drivers,
+  );
+  const activeVisitorsForLoad = effectiveVisitors.filter((v) => v._draftOp !== 'delete');
+  const plan: Plan = { ...data, visitors: activeVisitorsForLoad };
+  const visitorList = activeVisitorsForLoad;
   const visitorCount = visitorTotals(visitorList);
+
   const assign = (rideId: number, driverId: number | null) => {
-    if (!canUpdate) return;
+    if (!canEditBoard) return;
     if ((draft[rideId] ?? null) === driverId) return;
+    ensureLock();
     setUndoStack((s) => [...s.slice(-24), draft]);
     setDraft((d) => ({ ...d, [rideId]: driverId }));
   };
+
+  const handleDraftVisitorsChange = (next: DraftVisitorEntry[]) => {
+    if (!canEditBoard) return;
+    ensureLock();
+    setDraftVisitors(next);
+  };
+
   const loads = new Map(plan.drivers.map((d) => [d.id, driverLoad(plan, draft, d)]));
   const anyOver = plan.drivers.some((d) => loads.get(d.id)!.over);
   const unassigned = plan.rides.filter((r) => draft[r.id] == null);
@@ -177,13 +344,13 @@ export default function PlanTransport() {
   const onDrop = (target: number | null) => (e: DragEvent) => {
     e.preventDefault();
     setDropTarget(null);
-    if (!canUpdate) return;
+    if (!canEditBoard) return;
     const rideId = Number(e.dataTransfer.getData(DRAG_TYPE));
     if (rideId) assign(rideId, target);
   };
   const dropProps = (key: string, target: number | null) => ({
     onDragOver: (e: DragEvent) => {
-      if (canUpdate && e.dataTransfer.types.includes(DRAG_TYPE)) {
+      if (canEditBoard && e.dataTransfer.types.includes(DRAG_TYPE)) {
         e.preventDefault();
         setDropTarget(key);
       }
@@ -193,7 +360,7 @@ export default function PlanTransport() {
   });
 
   const autoArrange = async () => {
-    if (!canUpdate) return;
+    if (!canEditBoard) return;
     setArranging(true);
     try {
       const res = await post<ArrangeResult>(`/admin/events/${plan.event.id}/plan/arrange`, {
@@ -201,6 +368,7 @@ export default function PlanTransport() {
       });
       setLastArrangeResult(res);
       if (res.placed.length > 0) {
+        ensureLock();
         setUndoStack((s) => [...s.slice(-24), draft]);
         setDraft((d) => ({ ...d, ...Object.fromEntries(res.placed.map((p) => [p.ride_id, p.driver_id])) }));
         setReasons((cur) => ({ ...cur, ...Object.fromEntries(res.placed.map((p) => [p.ride_id, p])) }));
@@ -221,9 +389,12 @@ export default function PlanTransport() {
   };
 
   const sameAsLast = () => {
-    if (!canUpdate) return;
+    if (!canEditBoard) return;
     const res = applyLastTime(plan, draft);
-    if (res.placed > 0) setUndoStack((s) => [...s.slice(-24), draft]);
+    if (res.placed > 0) {
+      ensureLock();
+      setUndoStack((s) => [...s.slice(-24), draft]);
+    }
     setDraft(res.draft);
     if (res.candidates === 0) toast.info(t('sameAsLastNone'));
     else toast.success(t('sameAsLastDone', { placed: res.placed, candidates: res.candidates }));
@@ -231,38 +402,58 @@ export default function PlanTransport() {
 
   const hasReturnRides = plan.rides.some((r) => r.leg === 'return' && draft[r.id] == null);
   const matchReturns = () => {
-    if (!canUpdate) return;
+    if (!canEditBoard) return;
     const res = applyMatchReturnDrivers(plan, draft);
-    if (res.placed > 0) setUndoStack((s) => [...s.slice(-24), draft]);
+    if (res.placed > 0) {
+      ensureLock();
+      setUndoStack((s) => [...s.slice(-24), draft]);
+    }
     setDraft(res.draft);
     if (res.candidates === 0) toast.info(t('matchReturnNone'));
     else toast.success(t('matchReturnDone', { placed: res.placed, candidates: res.candidates }));
   };
 
   const resetAll = () => {
-    if (!canUpdate) return;
+    if (!canEditBoard) return;
     setUndoStack((s) => [...s.slice(-24), draft]);
     setDraft(savedDraft(plan));
+    if (activeDraft) setDraftVisitors([]);
   };
 
   const saveDraft = async () => {
-    if (!canUpdate) return;
+    if (!canEditBoard) return;
     setBusy(true);
     try {
-      await post(`/admin/events/${plan.event.id}/plan/draft`, {
-        assignments: draftEntries(plan, draft),
-      });
+      if (activeDraft?.id != null) {
+        await api(`/admin/events/${plan.event.id}/plan/drafts/${activeDraft.id}`, {
+          method: 'PUT',
+          body: {
+            assignments: draftEntries(plan, draft),
+            visitors: draftVisitors,
+          },
+        });
+      } else {
+        await post(`/admin/events/${plan.event.id}/plan/draft`, {
+          assignments: draftEntries(plan, draft),
+          ...(draftVisitors.length > 0 ? { visitors: draftVisitors } : {}),
+        });
+      }
       toast.success(t('draftSaved'));
       reload();
     } catch (e) {
-      toast.error(e instanceof Error ? e.message : String(e));
+      if (e instanceof ApiError && e.status === 423) {
+        toast.error(e.message);
+        reload();
+      } else {
+        toast.error(e instanceof Error ? e.message : String(e));
+      }
     } finally {
       setBusy(false);
     }
   };
 
   const askLeadApproval = async () => {
-    if (!canUpdate) return;
+    if (!canEditBoard) return;
     if (anyOver) {
       toast.error(t('fixOver'));
       return;
@@ -277,35 +468,48 @@ export default function PlanTransport() {
     setBusy(true);
     try {
       await post(`/admin/events/${plan.event.id}/plan/request-approval`, {
+        ...(activeDraft?.id != null ? { draft_id: activeDraft.id } : {}),
         assignments: draftEntries(plan, draft),
+        ...(draftVisitors.length > 0 ? { visitors: draftVisitors } : {}),
       });
       toast.success(t('submittedForApproval'));
       reload();
     } catch (e) {
-      toast.error(e instanceof Error ? e.message : String(e));
+      if (e instanceof ApiError && e.status === 423) {
+        toast.error(e.message);
+        reload();
+      } else {
+        toast.error(e instanceof Error ? e.message : String(e));
+      }
     } finally {
       setBusy(false);
     }
   };
 
-  const returnDraft = async () => {
+  const submitReturnModal = async (e: FormEvent) => {
+    e.preventDefault();
     if (!canApprove) return;
-    const notes = window.prompt(t('returnDraftPrompt')) ?? '';
-    if (!notes.trim()) return;
+    const notes = returnNotes.trim();
+    if (!notes) return;
     setBusy(true);
     try {
-      await post(`/admin/events/${plan.event.id}/plan/return`, { notes: notes.trim() });
+      await post(`/admin/events/${plan.event.id}/plan/return`, {
+        ...(activeDraft?.id != null ? { draft_id: activeDraft.id } : {}),
+        notes,
+      });
       toast.success(t('returnedSuccess'));
+      setReturnModalOpen(false);
+      setReturnNotes('');
       reload();
-    } catch (e) {
-      toast.error(e instanceof Error ? e.message : String(e));
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : String(err));
     } finally {
       setBusy(false);
     }
   };
 
   const send = async () => {
-    if (!canUpdate) return;
+    if (!canEditBoard) return;
     if (anyOver) {
       toast.error(t('fixOver'));
       return;
@@ -325,12 +529,28 @@ export default function PlanTransport() {
     if (!ok) return;
     setBusy(true);
     try {
-      await post(`/admin/events/${plan.event.id}/plan`, { changes });
+      if (activeDraft?.id != null && visitorsDirty) {
+        await api(`/admin/events/${plan.event.id}/plan/drafts/${activeDraft.id}`, {
+          method: 'PUT',
+          body: {
+            assignments: draftEntries(plan, draft),
+            visitors: draftVisitors,
+          },
+        });
+      }
+      if (activeDraft != null) {
+        await post(`/admin/events/${plan.event.id}/plan/approve`, {
+          ...(activeDraft.id != null ? { draft_id: activeDraft.id } : {}),
+          changes,
+        });
+      } else {
+        await post(`/admin/events/${plan.event.id}/plan`, { changes });
+      }
       toast.success(canApprove ? t('approvedSuccess') : t('saved'));
       reload();
     } catch (e) {
-      if (e instanceof ApiError && e.status === 409) {
-        toast.error(t('stale'));
+      if (e instanceof ApiError && (e.status === 409 || e.status === 423)) {
+        toast.error(e.status === 409 ? t('stale') : e.message);
         reload();
       } else {
         toast.error(e instanceof Error ? e.message : String(e));
@@ -339,6 +559,135 @@ export default function PlanTransport() {
       setBusy(false);
     }
   };
+
+  const acquireExplicitLock = async (force = false) => {
+    if (!activeDraft?.id) return;
+    setBusy(true);
+    try {
+      await post(`/admin/events/${plan.event.id}/plan/drafts/${activeDraft.id}/lock`, force ? { force: true } : {});
+      if (force) toast.success(t('lockTakenOver'));
+      reload();
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : String(e));
+      if (e instanceof ApiError && e.status === 423) reload();
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const releaseExplicitLock = async () => {
+    if (!activeDraft?.id) return;
+    setBusy(true);
+    try {
+      await api(`/admin/events/${plan.event.id}/plan/drafts/${activeDraft.id}/lock`, { method: 'DELETE' });
+      setAcquiredLocks((prev) => {
+        const next = new Set(prev);
+        next.delete(activeDraft.id!);
+        return next;
+      });
+      toast.success(t('lockReleased'));
+      reload();
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : String(e));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const submitNewDraftModal = async (e: FormEvent) => {
+    e.preventDefault();
+    setBusy(true);
+    try {
+      const cloneSource = newDraftBase === 'clone' ? activeDraft : null;
+      const body: Record<string, unknown> = {
+        label: newDraftLabel.trim(),
+      };
+      if (cloneSource?.id != null) {
+        body.clone_from_draft_id = cloneSource.id;
+      } else if (newDraftBase === 'clone') {
+        body.assignments = draftEntries(plan, draft);
+        body.visitors = draftVisitors;
+      }
+      const res = await post<{ ok: boolean; draft: PlanDraft }>(
+        `/admin/events/${plan.event.id}/plan/drafts`,
+        body,
+      );
+      toast.success(t('draftCreated', { version: res.draft.version ?? '' }));
+      setNewDraftOpen(false);
+      setNewDraftLabel('');
+      if (res.draft.id != null) {
+        const nextParams = new URLSearchParams(searchParams);
+        nextParams.set('draft', String(res.draft.id));
+        setSearchParams(nextParams, { replace: true });
+      }
+      reload();
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : String(err));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const deleteActiveDraft = async () => {
+    if (!activeDraft?.id) return;
+    const ok = await confirm({
+      title: t('deleteDraftConfirmTitle', { version: activeDraft.version ?? '' }),
+      body: <p>{t('deleteDraftConfirmBody')}</p>,
+      confirmLabel: t('deleteDraft'),
+      tone: 'danger',
+    });
+    if (!ok) return;
+    setBusy(true);
+    try {
+      await api(`/admin/events/${plan.event.id}/plan/drafts/${activeDraft.id}`, { method: 'DELETE' });
+      toast.success(t('draftDeleted'));
+      const nextParams = new URLSearchParams(searchParams);
+      nextParams.delete('draft');
+      setSearchParams(nextParams, { replace: true });
+      reload();
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : String(e));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const toggleRideReimb = async (r: PlanRide) => {
+    const nextExcluded = !r.reimbursement_excluded;
+    setBusy(true);
+    try {
+      await api(`/rides/${r.id}/reimbursement-excluded`, {
+        method: 'PUT',
+        body: { excluded: nextExcluded },
+      });
+      toast.success(nextExcluded ? t('reimbExcludedSaved') : t('reimbIncludedSaved'));
+      reload();
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : String(e));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const draftStatusText = (status: PlanDraft['status']) => {
+    if (status === 'pending_approval') return t('statusPendingApproval');
+    if (status === 'returned') return t('statusReturned');
+    if (status === 'approved') return t('statusApproved');
+    if (status === 'superseded') return t('statusSuperseded');
+    return t('statusDraft');
+  };
+
+  const draftStatusTone = (status: PlanDraft['status']) => {
+    if (status === 'pending_approval') return 'warning' as const;
+    if (status === 'returned') return 'danger' as const;
+    if (status === 'approved') return 'success' as const;
+    if (status === 'superseded') return 'neutral' as const;
+    return 'info' as const;
+  };
+
+  const diffSummary = activeDraft ? summarizeDraftDiff(plan, draft, draftVisitors) : null;
+  const canApproveDraftNow = !busy && (dirty || activeDraft?.status === 'pending_approval');
+  const canToggleReimb = canApprove || canEditRides;
 
   const openExportModal = () => {
     setExporting(true);
@@ -402,56 +751,168 @@ export default function PlanTransport() {
       changed={(draft[r.id] ?? null) !== r.driver_id}
       reason={reasons[r.id]?.driver_id === draft[r.id] ? reasons[r.id] : undefined}
       noRoom={draft[r.id] == null && noRoom.has(r.id)}
-      canUpdate={canUpdate}
+      canUpdate={canEditBoard}
+      canToggleReimb={canToggleReimb}
+      onToggleReimb={() => toggleRideReimb(r)}
     />
   );
 
   const pickerRide = pickerRideId != null ? plan.rides.find((r) => r.id === pickerRideId) ?? null : null;
+  const displayedDraft = activeDraft ?? (selectedDraftKey === 'live' ? null : data.draft ?? null);
 
   return (
     <Page width="wide" className="plan-page">
       <PageHeader
         title={t('title')}
         subtitle={t('subtitle', { event: plan.event.title, when: fmtDateTime(plan.event.starts_at, ft) })}
-        back={`/events/${plan.event.id}`}
+        back={can('admin_dashboard') || canUpdate ? '/admin/traffic' : `/events/${plan.event.id}`}
         actions={
-          plan.draft?.status ? (
-            <Pill
-              tone={
-                plan.draft.status === 'pending_approval'
-                  ? 'warning'
-                  : plan.draft.status === 'returned'
-                  ? 'danger'
-                  : plan.draft.status === 'approved'
-                  ? 'success'
-                  : 'info'
-              }
-            >
-              {plan.draft.status === 'pending_approval'
-                ? t('statusPendingApproval')
-                : plan.draft.status === 'returned'
-                ? t('statusReturned')
-                : plan.draft.status === 'approved'
-                ? t('statusApproved')
-                : t('statusDraft')}
+          displayedDraft?.status ? (
+            <Pill tone={draftStatusTone(displayedDraft.status)}>
+              {draftStatusText(displayedDraft.status)}
             </Pill>
           ) : undefined
         }
       />
 
-      {plan.draft?.status === 'pending_approval' && (
+      {(allDrafts.length > 0 || canUpdate) && (
+        <div className="plan-draft-bar" role="region" aria-label={t('title')}>
+          <div className="chips">
+            <button
+              type="button"
+              className={`chip ${selectedDraftKey === 'live' ? 'on' : ''}`}
+              onClick={() => selectDraftView('live')}
+            >
+              {t('liveView')}
+            </button>
+            {allDrafts.map((d, idx) => {
+              const key = d.id ?? 'legacy';
+              const isSelected = selectedDraftKey === key;
+              return (
+                <button
+                  key={String(key) + '-' + idx}
+                  type="button"
+                  className={`chip plan-draft-chip ${isSelected ? 'on' : ''}`}
+                  onClick={() => selectDraftView(key)}
+                >
+                  <span>
+                    {d.version != null ? t('draftVersion', { version: d.version }) : t('statusDraft')}
+                    {d.label ? ` · ${d.label}` : ''}
+                  </span>
+                  <span className="muted tiny">({draftStatusText(d.status)})</span>
+                  {d.locked_by && <Lock size={12} aria-hidden="true" />}
+                </button>
+              );
+            })}
+          </div>
+          <div className="btn-row ml-auto">
+            {canUpdate && (
+              <Button
+                size="sm"
+                variant="secondary"
+                icon={<Plus size={14} />}
+                disabled={busy}
+                onClick={() => {
+                  setNewDraftLabel('');
+                  setNewDraftBase(activeDraft ? 'clone' : 'live');
+                  setNewDraftOpen(true);
+                }}
+              >
+                {t('newDraft')}
+              </Button>
+            )}
+            {activeDraft?.id != null && canUpdate && draftStatusEditable && !lockedByOther && (
+              isMyLock ? (
+                <>
+                  <Pill tone="info" className="plan-lock-pill" icon={<Lock size={12} />}>
+                    {t('lockedByYou')}
+                  </Pill>
+                  <Button size="sm" variant="ghost" icon={<Unlock size={14} />} disabled={busy} onClick={releaseExplicitLock}>
+                    {t('releaseLock')}
+                  </Button>
+                </>
+              ) : (
+                <Button size="sm" variant="secondary" icon={<Lock size={14} />} disabled={busy} onClick={() => acquireExplicitLock(false)}>
+                  {t('lockForEditing')}
+                </Button>
+              )
+            )}
+            {activeDraft?.id != null &&
+              activeDraft.status !== 'approved' &&
+              !lockedByOther &&
+              (canApprove || activeDraft.created_by?.id === me?.id) && (
+                <Button size="sm" variant="ghost" icon={<Trash2 size={14} />} disabled={busy} onClick={deleteActiveDraft}>
+                  {t('deleteDraft')}
+                </Button>
+              )}
+          </div>
+        </div>
+      )}
+
+      {lockedByOther && activeDraft?.locked_by && (
+        <Notice tone="warning" icon={<Lock size={16} />}>
+          <div className="row between items-center wrap gap-sm">
+            <span>
+              {t('lockedByOtherUntil', {
+                name: activeDraft.locked_by.name,
+                time: activeDraft.lock_expires_at ? fmtDateTime(activeDraft.lock_expires_at, ft) : '',
+              })}
+            </span>
+            <div className="btn-row">
+              {canUpdate && (
+                <Button
+                  size="sm"
+                  variant="secondary"
+                  disabled={busy}
+                  onClick={() => {
+                    setNewDraftLabel('');
+                    setNewDraftBase('clone');
+                    setNewDraftOpen(true);
+                  }}
+                >
+                  {t('cloneNewVersion')}
+                </Button>
+              )}
+              {canApprove && activeDraft.id != null && (
+                <Button size="sm" variant="primary" disabled={busy} onClick={() => acquireExplicitLock(true)}>
+                  {t('takeOverEditing')}
+                </Button>
+              )}
+            </div>
+          </div>
+        </Notice>
+      )}
+
+      {displayedDraft?.status === 'pending_approval' && (
         <Notice tone="warning" icon={<Clock size={16} />}>
           {t('bannerPendingApproval', {
-            name: plan.draft.submitted_by?.name || '',
-            time: plan.draft.submitted_at ? fmtDateTime(plan.draft.submitted_at, ft) : '',
+            name: displayedDraft.submitted_by?.name || '',
+            time: displayedDraft.submitted_at ? fmtDateTime(displayedDraft.submitted_at, ft) : '',
           })}
         </Notice>
       )}
 
-      {plan.draft?.status === 'returned' && (
+      {displayedDraft?.status === 'returned' && (
         <Notice tone="danger" icon={<AlertCircle size={16} />}>
-          {t('bannerReturned', { notes: plan.draft.review_notes || '' })}
+          {t('bannerReturned', { notes: displayedDraft.review_notes || '' })}
         </Notice>
+      )}
+
+      {canApprove && displayedDraft?.status === 'pending_approval' && diffSummary && (
+        <Card className="plan-diff-card stack-xs">
+          <div className="row between wrap gap-sm">
+            <strong>{t('diffSummaryTitle')}</strong>
+            <div className="row wrap gap-xs">
+              {diffSummary.assigned > 0 && <Pill tone="success">{t('diffAssigned', { count: diffSummary.assigned })}</Pill>}
+              {diffSummary.reassigned > 0 && <Pill tone="info">{t('diffReassigned', { count: diffSummary.reassigned })}</Pill>}
+              {diffSummary.unassigned > 0 && <Pill tone="warning">{t('diffUnassigned', { count: diffSummary.unassigned })}</Pill>}
+              {diffSummary.visitorChanges > 0 && <Pill tone="info">{t('diffVisitors', { count: diffSummary.visitorChanges })}</Pill>}
+            </div>
+          </div>
+          {diffSummary.totalRideChanges === 0 && diffSummary.visitorChanges === 0 && (
+            <p className="small muted no-margin">{t('diffNoRideChanges')}</p>
+          )}
+        </Card>
       )}
 
       {plan.rides.length > 0 && (
@@ -477,7 +938,7 @@ export default function PlanTransport() {
                     icon={<Sparkles size={16} />}
                     onClick={autoArrange}
                     loading={arranging}
-                    disabled={unassigned.length === 0 || arranging}
+                    disabled={!canEditBoard || unassigned.length === 0 || arranging}
                   >
                     {t('autoArrange')}
                   </Button>
@@ -488,21 +949,21 @@ export default function PlanTransport() {
                   >
                     {t('diagnosisBtn')}
                   </Button>
-                <Button variant="secondary" icon={<History size={16} />} onClick={sameAsLast} disabled={unassigned.length === 0}>
+                <Button variant="secondary" icon={<History size={16} />} onClick={sameAsLast} disabled={!canEditBoard || unassigned.length === 0}>
                   {t('sameAsLast')}
                 </Button>
                 {hasReturnRides && (
-                  <Button variant="secondary" icon={<Repeat size={16} />} onClick={matchReturns}>
+                  <Button variant="secondary" icon={<Repeat size={16} />} onClick={matchReturns} disabled={!canEditBoard}>
                     {t('matchReturns')}
                   </Button>
                 )}
-                <Button variant="ghost" icon={<Undo2 size={16} />} onClick={undoStep} disabled={undoStack.length === 0}>
+                <Button variant="ghost" icon={<Undo2 size={16} />} onClick={undoStep} disabled={!canEditBoard || undoStack.length === 0}>
                   {t('undoStep')}
                 </Button>
-                <Button variant="ghost" icon={<RotateCcw size={16} />} onClick={resetAll} disabled={!dirty}>
+                <Button variant="ghost" icon={<RotateCcw size={16} />} onClick={resetAll} disabled={!canEditBoard || !dirty}>
                   {t('reset')}
                 </Button>
-                <Button variant="secondary" icon={<Save size={16} />} onClick={saveDraft} disabled={busy} loading={busy}>
+                <Button variant="secondary" icon={<Save size={16} />} onClick={saveDraft} disabled={!canEditBoard || busy} loading={busy}>
                   {t('saveDraft')}
                 </Button>
                 <Button
@@ -513,17 +974,25 @@ export default function PlanTransport() {
                   {t('postEventReimbBtn', { ns: 'events' })}
                 </Button>
                 {!canApprove ? (
-                  <Button variant="primary" icon={<Send size={16} />} onClick={askLeadApproval} disabled={busy} loading={busy}>
+                  <Button variant="primary" icon={<Send size={16} />} onClick={askLeadApproval} disabled={!canEditBoard || busy} loading={busy}>
                     {t('askLeadApproval')}
                   </Button>
                 ) : (
                   <>
-                    {plan.draft?.status === 'pending_approval' && (
-                      <Button variant="danger" icon={<RotateCcw size={16} />} onClick={returnDraft} disabled={busy}>
+                    {displayedDraft?.status === 'pending_approval' && (
+                      <Button
+                        variant="danger"
+                        icon={<RotateCcw size={16} />}
+                        onClick={() => {
+                          setReturnNotes('');
+                          setReturnModalOpen(true);
+                        }}
+                        disabled={busy}
+                      >
                         {t('returnDraft')}
                       </Button>
                     )}
-                    <Button variant="primary" className="plan-confirm" icon={<CheckCircle2 size={16} />} onClick={send} disabled={!dirty || busy} loading={busy}>
+                    <Button variant="primary" className="plan-confirm" icon={<CheckCircle2 size={16} />} onClick={send} disabled={!canApproveDraftNow} loading={busy}>
                       {t('approveAndNotify', { count: changes.length })}
                     </Button>
                   </>
@@ -575,10 +1044,18 @@ export default function PlanTransport() {
 
       <PlanVisitors
         eventId={plan.event.id}
-        visitors={visitorList}
+        visitors={baseVisitors}
         drivers={plan.drivers}
-        // Only the traffic lead records visitors (server: `can_approve_transport_plan`).
-        canUpdate={canUpdate && canApprove && plan.event.status !== 'cancelled'}
+        draftMode={Boolean(activeDraft)}
+        draftVisitors={activeDraft ? draftVisitors : undefined}
+        onChangeDraftVisitors={activeDraft ? handleDraftVisitorsChange : undefined}
+        // On Live, only the traffic lead records visitors directly; inside a draft, members propose visitor changes too.
+        canUpdate={
+          activeDraft
+            ? canEditBoard && plan.event.status !== 'cancelled'
+            : canUpdate && canApprove && plan.event.status !== 'cancelled'
+        }
+        canManageReimb={canUpdate && canApprove && plan.event.status !== 'cancelled'}
         onChanged={reloadVisitors}
       />
 
@@ -757,7 +1234,7 @@ export default function PlanTransport() {
         </Modal>
       )}
 
-      {dirty && canUpdate && (
+      {dirty && canEditBoard && (
         <aside className="plan-floating-dock" aria-label={t('floatingDockLabel')}>
           <div className="plan-floating-dock-content">
             <div className="plan-floating-dock-status">
@@ -815,7 +1292,7 @@ export default function PlanTransport() {
                   size="sm"
                   icon={<CheckCircle2 size={16} />}
                   onClick={send}
-                  disabled={!dirty || busy}
+                  disabled={!canApproveDraftNow}
                   loading={busy}
                   aria-label={t('dockApprove', { count: changes.length })}
                 >
@@ -834,13 +1311,123 @@ export default function PlanTransport() {
           reasons={reasons}
           noRoom={noRoom}
           lastResult={lastArrangeResult}
-          canUpdate={canUpdate}
+          canUpdate={canEditBoard}
           onAssign={(rideId, driverId) => {
+            ensureLock();
             setUndoStack((s) => [...s.slice(-24), draft]);
             setDraft((d) => ({ ...d, [rideId]: driverId }));
           }}
           onClose={() => setDiagnosisOpen(false)}
         />
+      )}
+
+      {newDraftOpen && (
+        <Modal
+          title={t('newDraftTitle')}
+          onClose={() => {
+            setNewDraftOpen(false);
+            setNewDraftLabel('');
+          }}
+        >
+          <form className="stack" onSubmit={submitNewDraftModal}>
+            <Field label={t('newDraftLabel')}>
+              <input
+                className="input"
+                aria-label={t('newDraftLabel')}
+                maxLength={60}
+                value={newDraftLabel}
+                placeholder={t('newDraftLabelPlaceholder')}
+                onChange={(e) => setNewDraftLabel(e.target.value)}
+              />
+            </Field>
+            <Field label={t('newDraftBase')}>
+              <select
+                className="input"
+                aria-label={t('newDraftBase')}
+                value={newDraftBase}
+                onChange={(e) => setNewDraftBase(e.target.value as 'live' | 'clone')}
+              >
+                <option value="live">{t('newDraftFromLive')}</option>
+                {activeDraft && (
+                  <option value="clone">
+                    {t('newDraftCloneCurrent', { version: activeDraft.version ?? 1 })}
+                  </option>
+                )}
+              </select>
+            </Field>
+            <div className="btn-row end">
+              <Button
+                type="button"
+                variant="ghost"
+                onClick={() => {
+                  setNewDraftOpen(false);
+                  setNewDraftLabel('');
+                }}
+              >
+                {t('cancel', { ns: 'common' })}
+              </Button>
+              <Button type="submit" variant="primary" disabled={busy} loading={busy}>
+                {t('createDraft')}
+              </Button>
+            </div>
+          </form>
+        </Modal>
+      )}
+
+      {returnModalOpen && (
+        <Modal
+          title={t('returnModalTitle')}
+          onClose={() => {
+            setReturnModalOpen(false);
+            setReturnNotes('');
+          }}
+        >
+          <form className="stack" onSubmit={submitReturnModal}>
+            <div className="chips quick-reason-chips">
+              {[
+                t('returnChipRoute'),
+                t('returnChipCapacity'),
+                t('returnChipDriver'),
+                t('returnChipArea'),
+              ].map((chip) => (
+                <button
+                  key={chip}
+                  type="button"
+                  className="chip"
+                  onClick={() => setReturnNotes((prev) => (prev ? `${prev}; ${chip}` : chip))}
+                >
+                  {chip}
+                </button>
+              ))}
+            </div>
+            <Field label={t('returnModalLabel')}>
+              <textarea
+                className="input"
+                aria-label={t('returnModalLabel')}
+                rows={3}
+                value={returnNotes}
+                placeholder={t('returnModalPlaceholder')}
+                onChange={(e) => setReturnNotes(e.target.value)}
+                required
+              />
+            </Field>
+            <div className="btn-row end">
+              <Button
+                type="button"
+                variant="ghost"
+                onClick={() => {
+                  setReturnModalOpen(false);
+                  setReturnNotes('');
+                }}
+              >
+                {t('cancel', { ns: 'common' })}
+              </Button>
+              <Button type="submit" variant="danger" disabled={busy || !returnNotes.trim()} loading={busy}>
+                {t('returnModalSubmit')}
+              </Button>
+            </div>
+          </form>
+        </Modal>
       )}
     </Page>
   );
@@ -1040,6 +1627,8 @@ function PassengerCard({
   reason,
   noRoom,
   canUpdate = true,
+  canToggleReimb = false,
+  onToggleReimb,
 }: {
   ride: PlanRide;
   plan: Plan;
@@ -1050,6 +1639,8 @@ function PassengerCard({
   reason?: Reason;
   noRoom?: boolean;
   canUpdate?: boolean;
+  canToggleReimb?: boolean;
+  onToggleReimb?: () => void;
 }) {
   const { t } = useTranslation('plan');
   const ft = useFormatT();
@@ -1078,6 +1669,7 @@ function PassengerCard({
       {r.pickup_address && <div className="plan-passenger-addr">{r.pickup_address}</div>}
       <div className="plan-tags">
         {r.leg === 'return' && <Pill tone="info">{t('returnTag')}</Pill>}
+        {r.reimbursement_excluded && <Pill tone="warning">{t('noReimbTag')}</Pill>}
         {r.assistance && (
           <Pill tone="warning" icon={<Accessibility size={14} />}>
             {t('assistance', { what: r.assistance })}
@@ -1146,6 +1738,13 @@ function PassengerCard({
           />
         )}
       </div>
+      {canToggleReimb && onToggleReimb && (
+        <div className="row end">
+          <Button size="sm" variant="ghost" onClick={onToggleReimb}>
+            {r.reimbursement_excluded ? t('toggleReimbInclude') : t('toggleReimbExclude')}
+          </Button>
+        </div>
+      )}
     </article>
   );
 }

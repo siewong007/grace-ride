@@ -1,15 +1,16 @@
 import { useEffect, useState, type ReactNode } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
-import { AlertCircle, AlertTriangle, Check, CheckCircle2, Clock, MoreHorizontal } from 'lucide-react';
+import { AlertCircle, AlertTriangle, Check, CheckCircle2, Clock, FileEdit, Lock, MoreHorizontal } from 'lucide-react';
 import type { TFunction } from 'i18next';
 import { Trans, useTranslation } from 'react-i18next';
 import { api, post, useApi } from '../../api';
 import { useAuth } from '../../auth';
+import { canApprovePlan } from '../../perms';
 import CantMakeItModal from '../CantMakeIt';
 import type { Ride } from '../RideCard';
 import { ReasonModal, StartTripButton } from '../TripActions';
 import { parseLocal } from '../../format';
-import { Button, ErrorBox, Field, Modal, Notice, useAction, useConfirm } from '../ui';
+import { Button, ErrorBox, Field, Modal, Notice, Pill, useAction, useConfirm, type PillTone } from '../ui';
 
 /** `part` splits the card when the passenger has something to do now: "respond" is the
  *  answer/readiness block shown near the top, "cancel" the quieter cancel control below. */
@@ -429,6 +430,34 @@ interface DriverOpt {
   vehicle: { model: string; plate: string } | null;
 }
 
+type RideDraftAction = 'approve' | 'reassign' | 'return' | 'alt_transport' | 'reimbursement_excluded';
+
+interface RideDraftItem {
+  id: number;
+  ride_id: number;
+  version: number;
+  action: RideDraftAction;
+  driver_id: number | null;
+  driver_name: string | null;
+  reason: string;
+  reimbursement_excluded: boolean | null;
+  status: 'draft' | 'pending_approval' | 'approved' | 'returned' | 'superseded';
+  created_by: { id: number; name: string };
+  updated_by: { id: number; name: string };
+  submitted_by?: { id: number; name: string } | null;
+  review_notes: string;
+  locked_by?: { id: number; name: string } | null;
+  lock_is_mine?: boolean;
+}
+
+function rideDraftTone(status: string): PillTone {
+  if (status === 'pending_approval') return 'warning';
+  if (status === 'returned') return 'danger';
+  if (status === 'approved') return 'success';
+  if (status === 'superseded') return 'neutral';
+  return 'info';
+}
+
 export function StaffActions({ ride: r, reload }: { ride: Ride; reload: () => void }) {
   const { t } = useTranslation('rideDetail');
   const auth = useAuth();
@@ -436,10 +465,24 @@ export function StaffActions({ ride: r, reload }: { ride: Ride; reload: () => vo
   // Staff who may only view rides get the summary without the buttons.
   const edit = can('admin_rides', 'update');
   const cancel = can('admin_rides', 'delete');
+  const isLead = canApprovePlan(auth?.me?.roles);
+  const canProposeDraft = can('admin_plan', 'update') || edit;
   const confirm = useConfirm();
   const { busy, error, run } = useAction();
   const [modal, setModal] = useState<'reassign' | 'return' | 'alt' | 'cancel' | null>(null);
-  const drivers = useApi<DriverOpt[]>(modal === 'reassign' ? '/admin/drivers' : null);
+  const [proposeOpen, setProposeOpen] = useState(false);
+  const [editingDraft, setEditingDraft] = useState<RideDraftItem | null>(null);
+  const [draftAction, setDraftAction] = useState<RideDraftAction>('reassign');
+  const [draftDriverId, setDraftDriverId] = useState('');
+  const [draftReimbExcl, setDraftReimbExcl] = useState(true);
+  const [draftReason, setDraftReason] = useState('');
+  const [returningDraft, setReturningDraft] = useState<RideDraftItem | null>(null);
+  const [returnNotes, setReturnNotes] = useState('');
+
+  const drivers = useApi<DriverOpt[]>(modal === 'reassign' || proposeOpen ? '/admin/drivers' : null);
+  const rideDrafts = useApi<RideDraftItem[]>(r.viewer.is_staff ? `/rides/${r.id}/drafts` : null);
+  const draftList = Array.isArray(rideDrafts.data) ? rideDrafts.data : [];
+
   const [driverId, setDriverId] = useState('');
   const open = !['completed', 'cancelled', 'no_show', 'alt_transport', 'in_progress'].includes(r.status);
   // After an approval: the next ride still waiting (null when the queue is empty), so staff can keep going.
@@ -465,11 +508,92 @@ export function StaffActions({ ride: r, reload }: { ride: Ride; reload: () => vo
     }
   };
 
+  const toggleReimbExcluded = () =>
+    run(
+      () =>
+        api(`/rides/${r.id}/reimbursement-excluded`, {
+          method: 'PUT',
+          body: { excluded: !r.reimbursement_excluded },
+        }).then(reload),
+      t('reimbFlagUpdated'),
+    );
+
+  const openNewDraftModal = () => {
+    setEditingDraft(null);
+    setDraftAction(r.status === 'pending_approval' ? 'approve' : 'reassign');
+    setDraftDriverId('');
+    setDraftReimbExcl(!r.reimbursement_excluded);
+    setDraftReason('');
+    setProposeOpen(true);
+  };
+
+  const openEditDraftModal = async (d: RideDraftItem) => {
+    if (!d.lock_is_mine) {
+      const ok = await run(() => post(`/rides/${r.id}/drafts/${d.id}/lock`, {}).then(() => rideDrafts.reload()));
+      if (ok === undefined) return;
+    }
+    setEditingDraft(d);
+    setDraftAction(d.action);
+    setDraftDriverId(d.driver_id != null ? String(d.driver_id) : '');
+    setDraftReimbExcl(d.reimbursement_excluded ?? !r.reimbursement_excluded);
+    setDraftReason(d.reason ?? '');
+    setProposeOpen(true);
+  };
+
+  const submitDraftModal = async (andSubmit: boolean) => {
+    const payload = {
+      action: draftAction,
+      driver_id: draftAction === 'reassign' && draftDriverId ? Number(draftDriverId) : null,
+      reason: draftReason.trim(),
+      reimbursement_excluded: draftAction === 'reimbursement_excluded' ? draftReimbExcl : null,
+      submit: andSubmit,
+    };
+    const res = await run(async () => {
+      if (editingDraft) {
+        await api(`/rides/${r.id}/drafts/${editingDraft.id}`, {
+          method: 'PUT',
+          body: payload,
+        });
+        if (andSubmit) {
+          await post(`/rides/${r.id}/drafts/${editingDraft.id}/request-approval`, {});
+        }
+      } else {
+        await post(`/rides/${r.id}/drafts`, payload);
+      }
+      rideDrafts.reload();
+    }, andSubmit ? t('proposeSubmitted') : editingDraft ? t('proposeUpdated') : t('proposeCreated'));
+    if (res !== undefined) {
+      setProposeOpen(false);
+      setEditingDraft(null);
+    }
+  };
+
+  const draftStatusText = (status: RideDraftItem['status']) => {
+    if (status === 'pending_approval') return t('draftStatusPending');
+    if (status === 'returned') return t('draftStatusReturned');
+    if (status === 'approved') return t('draftStatusApproved');
+    if (status === 'superseded') return t('draftStatusSuperseded');
+    return t('draftStatusDraft');
+  };
+
+  const draftActionText = (d: RideDraftItem) => {
+    if (d.action === 'approve') return t('actionApprove');
+    if (d.action === 'reassign') return `${t('actionReassign')}: ${d.driver_name ?? '—'}`;
+    if (d.action === 'return') return t('actionReturn');
+    if (d.action === 'alt_transport') return t('actionAltTransport');
+    return d.reimbursement_excluded ? t('actionReimbExclude') : t('actionReimbInclude');
+  };
+
   return (
     <section className="detail-section stack">
       <h2>{t('staffActions')}</h2>
       {r.driver_load && (
         <p className="small">{t('driverLoad', { used: r.driver_load.seats_used, capacity: r.driver_load.capacity, seats: r.seats })}</p>
+      )}
+      {r.reimbursement_excluded && (
+        <Notice tone="warning" icon={<AlertTriangle size={16} />}>
+          <span>{t('noReimbDesc')}</span>
+        </Notice>
       )}
       {!!r.needs_attention && r.attention_reason && (
         <Notice tone="warning" icon={<AlertTriangle size={16} />}>
@@ -499,13 +623,276 @@ export function StaffActions({ ride: r, reload }: { ride: Ride; reload: () => vo
           <Button variant="secondary" onClick={() => setModal('return')}>{t('retur')}</Button>
         )}
         {edit && open && <Button variant="secondary" onClick={() => setModal('alt')}>{t('altTransport')}</Button>}
+        {(edit || isLead) && (
+          <Button variant="secondary" disabled={busy} onClick={toggleReimbExcluded}>
+            {r.reimbursement_excluded ? t('restoreReimb') : t('markNoReimb')}
+          </Button>
+        )}
+        {canProposeDraft && (
+          <Button variant="secondary" icon={<FileEdit size={16} />} disabled={busy} onClick={openNewDraftModal}>
+            {t('proposeChangeBtn')}
+          </Button>
+        )}
         {cancel && open && <Button variant="danger" onClick={() => setModal('cancel')}>{t('cancel')}</Button>}
         {edit && r.status === 'in_progress' && !r.picked_up_at && (
           <Button variant="danger" disabled={busy} onClick={handleStaffNoShow}>{t('noShow')}</Button>
         )}
       </div>
+
+      {draftList.length > 0 && (
+        <div className="stack-xs">
+          <h3 className="no-margin small muted">{t('proposedChangesTitle')}</h3>
+          {draftList.map((d) => {
+            const lockedByOther = Boolean(d.locked_by && !d.lock_is_mine);
+            const isDraftEditable = (d.status === 'draft' || d.status === 'returned') && !lockedByOther;
+            const canDelete = (d.created_by.id === auth?.me?.id || isLead) && d.status !== 'approved' && !lockedByOther;
+            return (
+              <div key={d.id} className="card flat tight stack-xs">
+                <div className="row between wrap gap-xs">
+                  <div className="row wrap items-center gap-xs">
+                    <strong>v{d.version}</strong>
+                    <Pill tone="info">{draftActionText(d)}</Pill>
+                    <Pill tone={rideDraftTone(d.status)}>{draftStatusText(d.status)}</Pill>
+                    {d.locked_by && (
+                      <Pill tone={d.lock_is_mine ? 'info' : 'warning'} icon={<Lock size={12} />}>
+                        {t('proposeLockedBy', { name: d.locked_by.name })}
+                      </Pill>
+                    )}
+                  </div>
+                  <span className="tiny muted">{d.submitted_by?.name ?? d.created_by.name}</span>
+                </div>
+                {d.reason && <div className="small">{d.reason}</div>}
+                {d.status === 'returned' && d.review_notes && (
+                  <div className="small text-danger">{d.review_notes}</div>
+                )}
+                <div className="btn-row">
+                  {lockedByOther && isLead && d.status !== 'approved' && d.status !== 'superseded' && (
+                    <Button
+                      size="sm"
+                      variant="secondary"
+                      disabled={busy}
+                      onClick={() => run(() => post(`/rides/${r.id}/drafts/${d.id}/lock`, { force: true }).then(() => rideDrafts.reload()))}
+                    >
+                      {t('proposeTakeOverBtn')}
+                    </Button>
+                  )}
+                  {d.lock_is_mine && (
+                    <Button
+                      size="sm"
+                      variant="ghost"
+                      disabled={busy}
+                      onClick={() => run(() => api(`/rides/${r.id}/drafts/${d.id}/lock`, { method: 'DELETE' }).then(() => rideDrafts.reload()))}
+                    >
+                      {t('proposeReleaseLockBtn')}
+                    </Button>
+                  )}
+                  {canProposeDraft && isDraftEditable && (
+                    <>
+                      <Button size="sm" variant="secondary" disabled={busy} onClick={() => openEditDraftModal(d)}>
+                        {t('proposeEditBtn')}
+                      </Button>
+                      <Button
+                        size="sm"
+                        variant="primary"
+                        disabled={busy}
+                        onClick={() =>
+                          run(
+                            () => post(`/rides/${r.id}/drafts/${d.id}/request-approval`, {}).then(() => rideDrafts.reload()),
+                            t('proposeSubmitted'),
+                          )
+                        }
+                      >
+                        {t('proposeSubmitLead')}
+                      </Button>
+                    </>
+                  )}
+                  {canDelete && (
+                    <Button
+                      size="sm"
+                      variant="ghost"
+                      disabled={busy}
+                      onClick={() =>
+                        run(
+                          () => api(`/rides/${r.id}/drafts/${d.id}`, { method: 'DELETE' }).then(() => rideDrafts.reload()),
+                          t('proposeDeleted'),
+                        )
+                      }
+                    >
+                      {t('proposeDeleteBtn')}
+                    </Button>
+                  )}
+                  {isLead && d.status === 'pending_approval' && (
+                    <>
+                      <Button
+                        size="sm"
+                        variant="danger"
+                        disabled={busy}
+                        onClick={() => {
+                          setReturningDraft(d);
+                          setReturnNotes('');
+                        }}
+                      >
+                        {t('proposeReturn')}
+                      </Button>
+                      <Button
+                        size="sm"
+                        variant="primary"
+                        disabled={busy}
+                        onClick={() =>
+                          run(async () => {
+                            await post(`/rides/${r.id}/drafts/${d.id}/approve`, {});
+                            rideDrafts.reload();
+                            reload();
+                          }, t('proposeApproved'))
+                        }
+                      >
+                        {t('proposeApprove')}
+                      </Button>
+                    </>
+                  )}
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      )}
+
       <Link className="small" to={`/admin/audit?entity=ride&entity_id=${r.id}`}>{t('auditLink')}</Link>
       <ErrorBox error={error} />
+      {proposeOpen && (
+        <Modal
+          title={t('proposeModalTitle')}
+          onClose={() => {
+            setProposeOpen(false);
+            setEditingDraft(null);
+          }}
+        >
+          <div className="stack">
+            <Field label={t('proposeActionLabel')}>
+              <select
+                className="input"
+                aria-label={t('proposeActionLabel')}
+                value={draftAction}
+                onChange={(e) => setDraftAction(e.target.value as RideDraftAction)}
+              >
+                {r.status === 'pending_approval' && <option value="approve">{t('actionApprove')}</option>}
+                <option value="reassign">{t('actionReassign')}</option>
+                <option value="return">{t('actionReturn')}</option>
+                <option value="alt_transport">{t('actionAltTransport')}</option>
+                <option value="reimbursement_excluded">
+                  {draftReimbExcl ? t('actionReimbExclude') : t('actionReimbInclude')}
+                </option>
+              </select>
+            </Field>
+            {draftAction === 'reassign' && (
+              <Field label={t('proposeDriverLabel')}>
+                <select
+                  className="input"
+                  aria-label={t('proposeDriverLabel')}
+                  value={draftDriverId}
+                  onChange={(e) => setDraftDriverId(e.target.value)}
+                >
+                  <option value="">{t('chooseDriver')}</option>
+                  {(drivers.data ?? []).filter((d) => d.id !== r.passenger.id).map((d) => (
+                    <option key={d.id} value={d.id}>
+                      {d.name} · {d.areas || t('noAreas')} · {d.vehicle?.model ?? t('noVehicle')}
+                    </option>
+                  ))}
+                </select>
+              </Field>
+            )}
+            {draftAction === 'reimbursement_excluded' && (
+              <label className="row items-center gap-xs small">
+                <input
+                  type="checkbox"
+                  checked={draftReimbExcl}
+                  onChange={(e) => setDraftReimbExcl(e.target.checked)}
+                />
+                <span>{t('proposeExcludeLabel')}</span>
+              </label>
+            )}
+            <Field label={t('proposeReasonLabel')}>
+              <textarea
+                className="input"
+                aria-label={t('proposeReasonLabel')}
+                rows={3}
+                value={draftReason}
+                placeholder={t('proposeReasonPlaceholder')}
+                onChange={(e) => setDraftReason(e.target.value)}
+              />
+            </Field>
+            <ErrorBox error={error} />
+            <div className="btn-row end">
+              <Button
+                variant="secondary"
+                disabled={busy || (draftAction === 'reassign' && !draftDriverId)}
+                onClick={() => submitDraftModal(false)}
+              >
+                {t('proposeSaveDraft')}
+              </Button>
+              <Button
+                variant="primary"
+                disabled={busy || (draftAction === 'reassign' && !draftDriverId)}
+                onClick={() => submitDraftModal(true)}
+              >
+                {t('proposeSubmitLead')}
+              </Button>
+            </div>
+          </div>
+        </Modal>
+      )}
+      {returningDraft && (
+        <Modal
+          title={t('proposeReturnTitle')}
+          onClose={() => {
+            setReturningDraft(null);
+            setReturnNotes('');
+          }}
+        >
+          <div className="stack">
+            <Field label={t('proposeReturnNotesLabel')}>
+              <textarea
+                className="input"
+                aria-label={t('proposeReturnNotesLabel')}
+                rows={3}
+                value={returnNotes}
+                placeholder={t('proposeReturnNotesPlaceholder')}
+                onChange={(e) => setReturnNotes(e.target.value)}
+              />
+            </Field>
+            <div className="btn-row end">
+              <Button
+                variant="ghost"
+                onClick={() => {
+                  setReturningDraft(null);
+                  setReturnNotes('');
+                }}
+              >
+                {t('cancel', { ns: 'common' })}
+              </Button>
+              <Button
+                variant="danger"
+                disabled={busy || !returnNotes.trim()}
+                onClick={async () => {
+                  const res = await run(
+                    () =>
+                      post(`/rides/${r.id}/drafts/${returningDraft.id}/return`, { notes: returnNotes.trim() }).then(() =>
+                        rideDrafts.reload(),
+                      ),
+                    t('proposeReturned'),
+                  );
+                  if (res !== undefined) {
+                    setReturningDraft(null);
+                    setReturnNotes('');
+                  }
+                }}
+              >
+                {t('proposeReturn')}
+              </Button>
+            </div>
+          </div>
+        </Modal>
+      )}
       {modal === 'reassign' && (
         <Modal title={t('reassignTitle')} onClose={() => setModal(null)}>
           <Field label={t('reassignDriver')} hint={t('reassignHint')}>

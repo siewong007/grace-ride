@@ -4648,3 +4648,40 @@ main a[href^="tel:"]:not(.btn) { text-decoration: underline; }
     to   { transform: none;                        opacity: 1; }
   }
 }
+
+/* ---- Traffic Hub & Multi-Draft Planning ---- */
+.traffic-next-event {
+  border-color: var(--accent);
+  background: var(--surface-2);
+}
+.plan-draft-bar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2);
+  padding: var(--space-2) var(--space-3);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--surface-2);
+}
+.plan-draft-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+.plan-diff-card {
+  border-color: var(--warning);
+  background: var(--surface-2);
+}
+.plan-lock-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+.quick-reason-chips {
+  margin-bottom: var(--space-2);
+}
+.plan-visitor-line.is-deleted {
+  opacity: 0.65;
+  text-decoration: line-through;
+}

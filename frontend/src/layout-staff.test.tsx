@@ -5,13 +5,25 @@ import Layout from './components/Layout';
 import AdminMenu from './pages/admin/Menu';
 import './i18n';
 
+const defaultDashData = {
+  pending_approval: 2,
+  no_driver: 1,
+  open_help: 4,
+  pending_reimbursements: 3,
+  pending_recovery: 0,
+  pending_members: 2,
+  pending_plan_drafts: 0,
+  pending_ride_drafts: 0,
+  my_returned_plan_drafts: 0,
+  my_returned_ride_drafts: 0,
+};
+let dashData = { ...defaultDashData };
+
 vi.mock('./api', () => ({
   api: vi.fn(),
   post: vi.fn(),
   useApi: (path: string | null) => ({
-    data: path === '/admin/dashboard'
-      ? { pending_approval: 2, no_driver: 1, open_help: 4, pending_reimbursements: 3, pending_recovery: 0, pending_members: 2 }
-      : null,
+    data: path === '/admin/dashboard' ? dashData : null,
     loading: false,
     error: null,
     reload: vi.fn(),
@@ -20,6 +32,7 @@ vi.mock('./api', () => ({
 
 // Default: transport staff — rides, live map, help desk and reimbursement review, but no roles or audit.
 const transportGranted = ['rides', 'events', 'help', 'admin_dashboard', 'admin_rides', 'admin_live', 'admin_help', 'admin_reimb_review'];
+const trafficOnlyGranted = ['rides', 'events', 'admin_dashboard', 'admin_plan', 'admin_rides', 'admin_live', 'admin_area_photos'];
 const allAdminGranted = [
   ...transportGranted,
   'admin_members', 'admin_invites', 'admin_recovery', 'admin_roles',
@@ -27,9 +40,10 @@ const allAdminGranted = [
   'admin_groups', 'admin_areas', 'admin_settings', 'admin_audit',
 ];
 let granted = [...transportGranted];
+let roles = ['transport'];
 vi.mock('./auth', () => ({
   useAuth: () => ({
-    me: { id: 1, name: 'Staff', email: 's@e.org', roles: ['transport'], groups: [], status: 'active', terms_accepted: true, privileged: false, mfa_ok: true, unread: 0 },
+    me: { id: 1, name: 'Staff', email: 's@e.org', roles, groups: [], status: 'active', terms_accepted: true, privileged: false, mfa_ok: true, unread: 0 },
     can: (page: string) => granted.includes(page),
     refresh: vi.fn(),
   }),
@@ -42,6 +56,7 @@ const renderShell = (path = '/') =>
         <Route element={<Layout />}>
           <Route path="/" element={<p>home</p>} />
           <Route path="/admin/menu" element={<AdminMenu />} />
+          <Route path="/admin/traffic" element={<p>traffic hub page</p>} />
           <Route path="/admin" element={<p>dashboard page</p>} />
           <Route path="/admin/rides" element={<p>rides page</p>} />
           <Route path="/admin/live" element={<p>live page</p>} />
@@ -131,9 +146,12 @@ describe('Staff navigation', () => {
 
   it('lists every permitted standalone admin page on the menu', () => {
     granted = [...allAdminGranted];
+    dashData = { ...defaultDashData };
+    roles = ['transport'];
     const { page } = openAdminMenu('/admin/menu');
     const hrefs = within(page).getAllByRole('link').map((a) => a.getAttribute('href'));
     expect(hrefs).toEqual([
+      '/admin/traffic',
       '/admin',
       '/admin/rides',
       '/admin/live',
@@ -191,5 +209,19 @@ describe('Staff navigation', () => {
     expect(within(page).getByRole('link', { name: /Ride management/ })).toHaveAccessibleName(/3 waiting/);
     const bottom = screen.getByRole('navigation', { name: 'Bottom navigation' });
     expect(within(bottom).getByRole('link', { name: /Admin/ })).toHaveAccessibleName(/10 waiting/);
+  });
+
+  it('gives traffic-only members a direct Traffic bottom tab landing on /admin/traffic with draft counts', () => {
+    granted = [...trafficOnlyGranted];
+    roles = ['traffic_member'];
+    dashData = { ...defaultDashData, my_returned_plan_drafts: 2, my_returned_ride_drafts: 1 };
+    renderShell('/');
+    const bottom = screen.getByRole('navigation', { name: 'Bottom navigation' });
+    expect(within(bottom).queryByRole('link', { name: /Admin/ })).toBeNull();
+    const trafficTab = within(bottom).getByRole('link', { name: /Traffic/ });
+    expect(trafficTab).toHaveAttribute('href', '/admin/traffic');
+    expect(trafficTab).toHaveAccessibleName(/3 waiting/);
+    fireEvent.click(trafficTab);
+    expect(screen.getByText('traffic hub page')).toBeInTheDocument();
   });
 });

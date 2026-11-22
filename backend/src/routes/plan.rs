@@ -963,23 +963,20 @@ async fn create_draft(
     .await?;
     let next_version = max_ver + 1;
 
-    let (cloned_assignments, cloned_visitors): (Option<String>, Option<String>) = if let Some(
-        src_id,
-    ) =
-        req.clone_from_draft_id
-    {
-        let row: Option<(String, String)> = sqlx::query_as(
+    let (cloned_assignments, cloned_visitors): (Option<String>, Option<String>) =
+        if let Some(src_id) = req.clone_from_draft_id {
+            let row: Option<(String, String)> = sqlx::query_as(
             "SELECT assignments, visitors FROM event_plan_drafts WHERE id = $1 AND event_id = $2",
         )
         .bind(src_id)
         .bind(id)
         .fetch_optional(&mut *tx)
         .await?;
-        let (a, v) = row.ok_or_else(|| bad(u.lang, ErrorKey::PlanDraftNotFound))?;
-        (Some(a), Some(v))
-    } else {
-        (None, None)
-    };
+            let (a, v) = row.ok_or_else(|| bad(u.lang, ErrorKey::PlanDraftNotFound))?;
+            (Some(a), Some(v))
+        } else {
+            (None, None)
+        };
 
     let assignments_json = if let Some(a) = &req.assignments {
         serde_json::to_string(a).unwrap_or_else(|_| "[]".to_string())

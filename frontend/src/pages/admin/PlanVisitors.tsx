@@ -3,11 +3,11 @@
 // for a special reimbursement for a visitor, paid to their driver via the usual review.
 import { FormEvent, useState } from 'react';
 import { useTranslation } from 'react-i18next';
-import { HandCoins, Pencil, Plus, Trash2, UserRoundPlus } from 'lucide-react';
+import { HandCoins, Pencil, Plus, RotateCcw, Trash2, UserRoundPlus } from 'lucide-react';
 import { del, post, put, useApi } from '../../api';
 import { Button, Card, ErrorBox, Field, IconButton, Modal, Pill, StatusPill, useAction, useConfirm } from '../../components/ui';
 import { REIMB_STATUS, rm, SPECIAL_HIGH_CENTS, toCents } from '../../format';
-import type { PlanDriver, PlanVisitor } from './planLogic';
+import { mergeEffectiveVisitors, type DraftVisitorEntry, type EffectiveVisitor, type PlanDriver, type PlanVisitor } from './planLogic';
 
 interface AreaOpt {
   id: number;
@@ -20,14 +20,18 @@ export function visitorTotals(visitors: PlanVisitor[]) {
 }
 
 /** One visitor line, as shown in the list and inside a driver's car on the board. */
-export function VisitorLine({ v, compact = false }: { v: PlanVisitor; compact?: boolean }) {
+export function VisitorLine({ v, compact = false }: { v: EffectiveVisitor; compact?: boolean }) {
   const { t } = useTranslation('plan');
+  const isDeleted = v._draftOp === 'delete';
   return (
-    <div className={`plan-visitor-line${compact ? ' is-compact' : ''}`}>
+    <div className={`plan-visitor-line${compact ? ' is-compact' : ''}${isDeleted ? ' is-deleted' : ''}`}>
       <div className="row wrap gap-sm">
         <strong>{v.name}</strong>
         <Pill tone="info">{t('visitorTag')}</Pill>
         {v.leg === 'return' && <Pill tone="neutral">{t('returnTag')}</Pill>}
+        {v._draftOp === 'add' && <Pill tone="info">{t('visitorDraftBadge')}</Pill>}
+        {v._draftOp === 'update' && <Pill tone="warning">{t('visitorDraftUpdateBadge')}</Pill>}
+        {v._draftOp === 'delete' && <Pill tone="danger">{t('visitorDraftDeleteBadge')}</Pill>}
       </div>
       <div className="muted small">
         {[
@@ -69,22 +73,68 @@ export default function PlanVisitors({
   visitors,
   drivers,
   canUpdate,
+  canManageReimb,
+  draftMode = false,
+  draftVisitors,
+  onChangeDraftVisitors,
   onChanged,
 }: {
   eventId: number;
   visitors: PlanVisitor[];
   drivers: PlanDriver[];
   canUpdate: boolean;
+  canManageReimb?: boolean;
+  draftMode?: boolean;
+  draftVisitors?: DraftVisitorEntry[];
+  onChangeDraftVisitors?: (next: DraftVisitorEntry[]) => void;
   onChanged: () => void;
 }) {
   const { t } = useTranslation('plan');
   const confirm = useConfirm();
   const { run } = useAction();
-  const [editing, setEditing] = useState<PlanVisitor | 'new' | null>(null);
+  const [editing, setEditing] = useState<EffectiveVisitor | 'new' | null>(null);
   const [claiming, setClaiming] = useState<PlanVisitor | null>(null);
-  const { count, seats } = visitorTotals(visitors);
 
-  const remove = async (v: PlanVisitor) => {
+  const effectiveVisitors: EffectiveVisitor[] = draftMode
+    ? mergeEffectiveVisitors(visitors, draftVisitors ?? [], drivers)
+    : visitors;
+  const activeVisitors = effectiveVisitors.filter((v) => v._draftOp !== 'delete');
+  const { count, seats } = visitorTotals(activeVisitors);
+  const showReimbActions = canManageReimb ?? canUpdate;
+
+  const remove = async (v: EffectiveVisitor) => {
+    if (draftMode && onChangeDraftVisitors) {
+      const current = draftVisitors ?? [];
+      if (v._draftOp === 'add' && v._tempId) {
+        onChangeDraftVisitors(current.filter((item) => item.temp_id !== v._tempId));
+        return;
+      }
+      if (v._draftOp === 'delete' && v.id > 0) {
+        onChangeDraftVisitors(current.filter((item) => !(item.op === 'delete' && item.live_visitor_id === v.id)));
+        return;
+      }
+      if (v.id > 0) {
+        const next = current.filter((item) => item.live_visitor_id !== v.id);
+        next.push({
+          temp_id: `del-${v.id}`,
+          op: 'delete',
+          live_visitor_id: v.id,
+          name: v.name,
+          phone: v.phone,
+          notes: v.notes,
+          area_id: v.area?.id ?? null,
+          area_name: v.area?.name ?? null,
+          pickup_address: v.pickup_address,
+          seats: v.seats,
+          leg: v.leg,
+          driver_id: v.driver_id,
+          driver_name: v.driver_name,
+        });
+        onChangeDraftVisitors(next);
+      }
+      return;
+    }
+
     if (!(await confirm({ title: t('visitorRemoveTitle', { name: v.name }), body: t('visitorRemoveBody') }))) return;
     run(() => del(`/admin/events/${eventId}/plan/visitors/${v.id}`).then(onChanged), t('visitorRemoved'));
   };
@@ -97,7 +147,8 @@ export default function PlanVisitors({
             {t('visitorsTitle')} <span className="plan-count">{count}</span>
           </h2>
           <p className="muted small">{t('visitorsDesc')}</p>
-          {!canUpdate && <p className="muted small">{t('visitorsLeadOnly')}</p>}
+          {draftMode && canUpdate && <p className="muted small">{t('visitorsDraftHint')}</p>}
+          {!draftMode && !canUpdate && <p className="muted small">{t('visitorsLeadOnly')}</p>}
         </div>
         {canUpdate && (
           <Button variant="secondary" icon={<UserRoundPlus size={16} />} onClick={() => setEditing('new')}>
@@ -105,28 +156,40 @@ export default function PlanVisitors({
           </Button>
         )}
       </div>
-      {count === 0 ? (
+      {effectiveVisitors.length === 0 ? (
         <p className="muted">{t('visitorsEmpty')}</p>
       ) : (
         <>
           <p className="small bold">{t('visitorSummary', { count, seats })}</p>
           <ul className="plan-visitor-list">
-            {visitors.map((v) => (
-              <li key={v.id} className="plan-visitor-item">
-                <VisitorLine v={v} />
-                {canUpdate && v.can_edit && (
-                  <div className="row nowrap gap-xs">
-                    <IconButton icon={<Pencil size={16} />} label={t('visitorEdit', { name: v.name })} onClick={() => setEditing(v)} />
-                    <IconButton icon={<Trash2 size={16} />} label={t('visitorRemove', { name: v.name })} onClick={() => remove(v)} />
-                  </div>
-                )}
-                {canUpdate && v.can_edit && (
-                  <div className="plan-visitor-reimb-action">
-                    <ReimbAction v={v} onOpen={() => setClaiming(v)} />
-                  </div>
-                )}
-              </li>
-            ))}
+            {effectiveVisitors.map((v) => {
+              const rowKey = v._tempId ? `draft-${v._tempId}` : `live-${v.id}`;
+              const canEditRow = draftMode ? canUpdate : (canUpdate && v.can_edit);
+              return (
+                <li key={rowKey} className="plan-visitor-item">
+                  <VisitorLine v={v} />
+                  {canEditRow && (
+                    <div className="row nowrap gap-xs">
+                      {v._draftOp !== 'delete' && (
+                        <IconButton icon={<Pencil size={16} />} label={t('visitorEdit', { name: v.name })} onClick={() => setEditing(v)} />
+                      )}
+                      {v._draftOp === 'delete' ? (
+                        <Button size="sm" variant="ghost" icon={<RotateCcw size={14} />} onClick={() => remove(v)}>
+                          {t('visitorUndoRemove')}
+                        </Button>
+                      ) : (
+                        <IconButton icon={<Trash2 size={16} />} label={t('visitorRemove', { name: v.name })} onClick={() => remove(v)} />
+                      )}
+                    </div>
+                  )}
+                  {!draftMode && showReimbActions && v.can_edit && v.id > 0 && (
+                    <div className="plan-visitor-reimb-action">
+                      <ReimbAction v={v} onOpen={() => setClaiming(v)} />
+                    </div>
+                  )}
+                </li>
+              );
+            })}
           </ul>
         </>
       )}
@@ -146,6 +209,21 @@ export default function PlanVisitors({
           eventId={eventId}
           visitor={editing === 'new' ? null : editing}
           drivers={drivers}
+          draftMode={draftMode}
+          onDraftSubmit={(entry) => {
+            if (!onChangeDraftVisitors) return;
+            const current = draftVisitors ?? [];
+            if (editing !== 'new' && editing._draftOp === 'add' && editing._tempId) {
+              onChangeDraftVisitors(current.map((item) => (item.temp_id === editing._tempId ? { ...entry, temp_id: editing._tempId, op: 'add' } : item)));
+            } else if (editing !== 'new' && editing.id > 0) {
+              const filtered = current.filter((item) => item.live_visitor_id !== editing.id);
+              filtered.push({ ...entry, temp_id: `upd-${editing.id}`, op: 'update', live_visitor_id: editing.id });
+              onChangeDraftVisitors(filtered);
+            } else {
+              onChangeDraftVisitors([...current, { ...entry, op: 'add' }]);
+            }
+            setEditing(null);
+          }}
           onClose={() => setEditing(null)}
           onSaved={() => {
             setEditing(null);
@@ -161,12 +239,16 @@ function VisitorForm({
   eventId,
   visitor,
   drivers,
+  draftMode = false,
+  onDraftSubmit,
   onClose,
   onSaved,
 }: {
   eventId: number;
-  visitor: PlanVisitor | null;
+  visitor: EffectiveVisitor | null;
   drivers: PlanDriver[];
+  draftMode?: boolean;
+  onDraftSubmit?: (entry: DraftVisitorEntry) => void;
   onClose: () => void;
   onSaved: () => void;
 }) {
@@ -187,14 +269,37 @@ function VisitorForm({
   const submit = (e: FormEvent) => {
     e.preventDefault();
     if (nameMissing) return;
+    const numericAreaId = areaId ? Number(areaId) : null;
+    const numericDriverId = driverId ? Number(driverId) : null;
+    if (draftMode && onDraftSubmit) {
+      const selectedArea = areaChoices.find((a) => a.id === numericAreaId);
+      const selectedDriver = drivers.find((d) => d.id === numericDriverId);
+      onDraftSubmit({
+        temp_id: visitor?._tempId ?? `d-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
+        op: visitor && visitor.id > 0 && visitor._draftOp !== 'add' ? 'update' : 'add',
+        live_visitor_id: visitor && visitor.id > 0 ? visitor.id : null,
+        name: name.trim(),
+        phone: phone.trim(),
+        area_id: numericAreaId,
+        area_name: selectedArea?.name ?? visitor?.area?.name ?? null,
+        pickup_address: pickup.trim(),
+        seats: Number(seats),
+        leg,
+        driver_id: numericDriverId,
+        driver_name: selectedDriver?.name ?? null,
+        notes: notes.trim(),
+      });
+      return;
+    }
+
     const body = {
       name: name.trim(),
       phone: phone.trim(),
-      area_id: areaId ? Number(areaId) : null,
+      area_id: numericAreaId,
       pickup_address: pickup.trim(),
       seats: Number(seats),
       leg,
-      driver_id: driverId ? Number(driverId) : null,
+      driver_id: numericDriverId,
       notes: notes.trim(),
     };
     const base = `/admin/events/${eventId}/plan/visitors`;

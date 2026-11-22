@@ -9,6 +9,7 @@ import {
 
 const memberTabs = getBottomNavTabs({ pending: false, canEvents: true, hasStaffNav: false });
 const staffTabs = getBottomNavTabs({ pending: false, canEvents: true, hasStaffNav: true });
+const trafficTabs = getBottomNavTabs({ pending: false, canEvents: true, hasStaffNav: true, trafficOnly: true });
 
 describe('getBottomNavTabs', () => {
   it('returns Home, Events and Profile for an ordinary member', () => {
@@ -147,5 +148,28 @@ describe('decideSwipeAction on sub-pages', () => {
     expect(decide('right', '/notifications', memberTabs, { canGoBack: true })).toEqual({
       type: 'history-back',
     });
+  });
+});
+
+describe('trafficOnly adaptive bottom tab', () => {
+  it('places Traffic pointing to /admin/traffic instead of Admin', () => {
+    expect(trafficTabs.map((t) => t.id)).toEqual(['home', 'events', 'traffic', 'profile']);
+    expect(trafficTabs.find((t) => t.id === 'traffic')?.to).toBe('/admin/traffic');
+  });
+
+  it('matches all traffic subpages to the Traffic tab and recognizes /admin/traffic as its root', () => {
+    expect(matchBottomTab('/admin/traffic', trafficTabs)?.id).toBe('traffic');
+    expect(matchBottomTab('/admin/events/5/plan', trafficTabs)?.id).toBe('traffic');
+    expect(matchBottomTab('/admin/rides/9', trafficTabs)?.id).toBe('traffic');
+    expect(matchBottomTab('/admin/live', trafficTabs)?.id).toBe('traffic');
+    expect(isBottomTabRoot('/admin/traffic', '', trafficTabs)).toBe(true);
+    expect(isBottomTabRoot('/admin/events/5/plan', '', trafficTabs)).toBe(false);
+  });
+
+  it('swipes smoothly across Home -> Events -> Traffic -> Profile', () => {
+    expect(decide('left', '/events', trafficTabs)).toEqual({ type: 'tab', to: '/admin/traffic' });
+    expect(decide('left', '/admin/traffic', trafficTabs)).toEqual({ type: 'tab', to: '/me' });
+    expect(decide('right', '/me', trafficTabs)).toEqual({ type: 'tab', to: '/admin/traffic' });
+    expect(decide('right', '/admin/traffic', trafficTabs)).toEqual({ type: 'tab', to: '/events' });
   });
 });

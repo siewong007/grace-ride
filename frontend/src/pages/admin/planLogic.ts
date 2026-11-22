@@ -17,6 +17,7 @@ export interface PlanRide {
   last: { driver_id: number; driver_name: string; times: number; at: string } | null;
   /** The group drivers are matched on (the host's for a visitor). None: any driver. */
   match_group_id?: number | null;
+  reimbursement_excluded?: boolean;
 }
 
 export interface PlanDriver {
@@ -47,9 +48,32 @@ export interface PlanDriver {
 export const inGroup = (d: PlanDriver, r: PlanRide): boolean =>
   r.match_group_id == null || (d.drive_group_ids ?? []).includes(r.match_group_id);
 
+export interface DraftVisitorEntry {
+  temp_id: string;
+  op: 'add' | 'update' | 'delete';
+  live_visitor_id?: number | null;
+  name: string;
+  phone: string;
+  notes: string;
+  area_id: number | null;
+  area_name?: string | null;
+  pickup_address: string;
+  seats: number;
+  leg: 'outbound' | 'return';
+  driver_id: number | null;
+  driver_name?: string | null;
+}
+
 export interface PlanDraft {
-  status: 'draft' | 'pending_approval' | 'approved' | 'returned';
+  id?: number;
+  event_id?: number;
+  version?: number;
+  label?: string;
+  status: 'draft' | 'pending_approval' | 'approved' | 'returned' | 'superseded';
   assignments: Array<{ ride_id: number; driver_id: number | null }>;
+  visitors?: DraftVisitorEntry[];
+  created_by?: { id: number; name: string };
+  created_at?: string;
   updated_by?: { id: number; name: string };
   updated_at?: string;
   submitted_by?: { id: number; name: string } | null;
@@ -57,6 +81,10 @@ export interface PlanDraft {
   reviewed_by?: { id: number; name: string } | null;
   reviewed_at?: string | null;
   review_notes?: string;
+  locked_by?: { id: number; name: string } | null;
+  locked_at?: string | null;
+  lock_expires_at?: string | null;
+  lock_is_mine?: boolean;
 }
 
 /** Someone without an account noted on the plan for the record (no ride, no messages). */
@@ -97,6 +125,7 @@ export interface Plan {
   rides: PlanRide[];
   drivers: PlanDriver[];
   draft?: PlanDraft | null;
+  drafts?: PlanDraft[];
   can_approve?: boolean;
   visitors?: PlanVisitor[];
 }
@@ -271,3 +300,119 @@ export interface ArrangeResult {
 
 export const draftEntries = (plan: Plan, draft: Draft) =>
   plan.rides.map((r) => ({ ride_id: r.id, driver_id: draft[r.id] ?? null }));
+
+export interface EffectiveVisitor extends PlanVisitor {
+  _draftOp?: 'add' | 'update' | 'delete';
+  _tempId?: string;
+}
+
+export function mergeEffectiveVisitors(
+  live: PlanVisitor[],
+  draftOps: DraftVisitorEntry[],
+  drivers: PlanDriver[],
+): EffectiveVisitor[] {
+  const driverMap = new Map(drivers.map((d) => [d.id, d.name]));
+  const byLiveId = new Map<number, DraftVisitorEntry>();
+  const added: DraftVisitorEntry[] = [];
+  for (const op of draftOps) {
+    if (op.op === 'add') added.push(op);
+    else if (op.live_visitor_id != null) byLiveId.set(op.live_visitor_id, op);
+  }
+  const mergedLive: EffectiveVisitor[] = live.map((v) => {
+    const patch = byLiveId.get(v.id);
+    if (!patch) return v;
+    if (patch.op === 'delete') {
+      return { ...v, _draftOp: 'delete', _tempId: patch.temp_id };
+    }
+    const driverId = patch.driver_id ?? null;
+    return {
+      ...v,
+      name: patch.name,
+      phone: patch.phone,
+      notes: patch.notes,
+      area: patch.area_id != null ? { id: patch.area_id, name: patch.area_name ?? v.area?.name ?? null } : null,
+      pickup_address: patch.pickup_address,
+      seats: patch.seats,
+      leg: patch.leg,
+      driver_id: driverId,
+      driver_name: driverId != null ? (patch.driver_name ?? driverMap.get(driverId) ?? null) : null,
+      _draftOp: 'update',
+      _tempId: patch.temp_id,
+    };
+  });
+  const syntheticAdded: EffectiveVisitor[] = added.map((a, idx) => {
+    const driverId = a.driver_id ?? null;
+    return {
+      id: -(idx + 1),
+      name: a.name,
+      phone: a.phone,
+      notes: a.notes,
+      area: a.area_id != null ? { id: a.area_id, name: a.area_name ?? null } : null,
+      pickup_address: a.pickup_address,
+      seats: a.seats,
+      leg: a.leg,
+      driver_id: driverId,
+      driver_name: driverId != null ? (a.driver_name ?? driverMap.get(driverId) ?? null) : null,
+      created_by: null,
+      created_at: '',
+      updated_at: '',
+      can_edit: true,
+      _draftOp: 'add',
+      _tempId: a.temp_id,
+    };
+  });
+  return [...mergedLive, ...syntheticAdded];
+}
+
+export interface DraftDiffItem {
+  rideId: number;
+  passengerName: string;
+  fromDriver: string | null;
+  toDriver: string | null;
+  kind: 'assigned' | 'reassigned' | 'unassigned';
+}
+
+export interface DraftDiffSummary {
+  assigned: number;
+  reassigned: number;
+  unassigned: number;
+  totalRideChanges: number;
+  visitorChanges: number;
+  items: DraftDiffItem[];
+}
+
+export function summarizeDraftDiff(
+  plan: Plan,
+  draft: Draft,
+  draftVisitors: DraftVisitorEntry[] = [],
+): DraftDiffSummary {
+  const driverNames = new Map(plan.drivers.map((d) => [d.id, d.name]));
+  const items: DraftDiffItem[] = [];
+  let assigned = 0;
+  let reassigned = 0;
+  let unassigned = 0;
+  for (const r of plan.rides) {
+    const nextDriver = draft[r.id] ?? null;
+    if (nextDriver === r.driver_id) continue;
+    const kind: DraftDiffItem['kind'] =
+      r.driver_id == null ? 'assigned' : nextDriver == null ? 'unassigned' : 'reassigned';
+    if (kind === 'assigned') assigned += 1;
+    else if (kind === 'reassigned') reassigned += 1;
+    else unassigned += 1;
+    items.push({
+      rideId: r.id,
+      passengerName: r.passenger.name,
+      fromDriver: r.driver_id != null ? (driverNames.get(r.driver_id) ?? `#${r.driver_id}`) : null,
+      toDriver: nextDriver != null ? (driverNames.get(nextDriver) ?? `#${nextDriver}`) : null,
+      kind,
+    });
+  }
+  return {
+    assigned,
+    reassigned,
+    unassigned,
+    totalRideChanges: items.length,
+    visitorChanges: draftVisitors.length,
+    items,
+  };
+}

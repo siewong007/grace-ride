@@ -97,4 +97,7 @@ export default {
   manageEdit: '编辑',
   joinedWaitlistSuccess: '已加入候补名单。',
   rsvpLoading: '正在加载报名选项…',
+  postEventReimbExcludedBadge: '不包报销',
+  postEventReimbExcludedHint: '该司机接送已标记不包报销；若勾选并提交，将转为待组长审批状态。',
+  postEventReimbPendingNote: '其中 {count} 笔标记不包报销的申请已转交交通组长审批。',
 };

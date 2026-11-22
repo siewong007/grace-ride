@@ -56,4 +56,12 @@ export default {
   noEventsYet: '暂时没有即将举行的活动',
   noEventsHint: '教会即将举行的活动与接送安排会显示在这里。',
   otherEvents: '其他即将举行的活动',
+  trafficPendingPlansTitle: '{count} 份接送排班草稿等待审批',
+  trafficPendingPlansSub: '交通组同工提交',
+  trafficPendingRidesTitle: '{count} 份单项接送修改草稿等待审批',
+  trafficPendingRidesSub: '接送调整建议',
+  trafficReturnedDraftsTitle: '{count} 份交通草稿被退回修改',
+  trafficReturnedDraftsSub: '请修改后重新提交审批',
+  trafficReviewCta: '去审批',
+  trafficReviseCta: '去修改',
 };

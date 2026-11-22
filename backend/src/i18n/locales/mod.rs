@@ -641,7 +641,7 @@ mod tests {
             ErrorKey::PlanDraftNotFound => ErrorKey::PlanDraftNotFound,
             ErrorKey::DraftLockedByOther { .. } => {
                 ErrorKey::DraftLockedByOther { name: "x".into() }
-            }
+            },
             ErrorKey::DraftNotEditable => ErrorKey::DraftNotEditable,
             ErrorKey::RideDraftNotFound => ErrorKey::RideDraftNotFound,
 
@@ -745,6 +745,7 @@ mod tests {
             "MaxLiveDriversReached",
             "NotEnoughDriverSeats",
             "NotEnoughDriverSeatsReassign",
+            "DraftLockedByOther",
             "CustomSplitMismatch",
             "UnattendedMembers",
             "OpenPaymentsRemain",

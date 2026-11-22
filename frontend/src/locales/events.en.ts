@@ -97,4 +97,7 @@ export default {
   manageEdit: 'Edit',
   joinedWaitlistSuccess: 'Added to the waitlist.',
   rsvpLoading: 'Loading signup options…',
+  postEventReimbExcludedBadge: 'No reimbursement included',
+  postEventReimbExcludedHint: 'Marked no reimbursement; selecting this driver submits a pending claim for traffic lead review.',
+  postEventReimbPendingNote: '{count} excluded-ride claim(s) submitted for traffic lead review.',
 };

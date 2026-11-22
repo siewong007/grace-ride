@@ -10,6 +10,8 @@ import type { Ride } from '../components/RideCard';
 import { Button, CardSkeleton, EmptyState, ErrorBox, ListSkeleton, Notice, Page, Pill, StatusPill, useAction } from '../components/ui';
 import { fmtAgo, fmtDateTime, fmtDay, fmtTime, greeting, localDate, RIDE_STATUS, RIDE_STATUS_PASSENGER, rm, todayStr, useFormatT } from '../format';
 import { loadTodayRidesSnapshot, saveTodayRidesSnapshot } from '../offlineSnapshot';
+import { canApprovePlan } from '../perms';
+import type { AdminCounts } from '../staffNav';
 import type { EventItem } from './Events';
 import { GettingStarted } from '../components/Onboarding';
 
@@ -81,6 +83,9 @@ export default function Home() {
   nextWeek.setDate(nextWeek.getDate() + 7);
   const nextWeekStr = localDate(nextWeek);
   const driving = useApi<Ride[]>(can('drive') ? `/driver/schedule?from=${today}&to=${nextWeekStr}` : null);
+  const adminCounts = useApi<AdminCounts>(
+    me && me.status !== 'pending' && can('admin_dashboard') ? '/admin/dashboard' : null,
+  );
 
   useEffect(() => {
     if (!me?.id) return;
@@ -106,6 +111,12 @@ export default function Home() {
   const awaitingReply = myRides.filter((r) => r.status === 'pending_passenger' && r.viewer?.is_passenger && r.driver);
   const awaitingDriveConfirm = allDriving.filter((r) => r.status === 'pending_driver_confirm');
   const toPay = (shares.data ?? []).filter((s) => TO_PAY.includes(s.status));
+  const isTrafficLead = canApprovePlan(me?.roles);
+  const pendingPlanDrafts = isTrafficLead ? (adminCounts.data?.pending_plan_drafts ?? 0) : 0;
+  const pendingRideDrafts = isTrafficLead ? (adminCounts.data?.pending_ride_drafts ?? 0) : 0;
+  const returnedDrafts = !isTrafficLead
+    ? (adminCounts.data?.my_returned_plan_drafts ?? 0) + (adminCounts.data?.my_returned_ride_drafts ?? 0)
+    : 0;
 
   // Single event-first hero commitment.
   const heroKind: 'ride' | 'drive' | 'goingEvent' | 'openEvent' | 'empty' =
@@ -185,9 +196,41 @@ export default function Home() {
         />
 
         {/* 1. Needs you — only when something is waiting on the member. */}
-        {(awaitingReply.length > 0 || awaitingDriveConfirm.length > 0 || toPay.length > 0) && (
+        {(awaitingReply.length > 0 ||
+          awaitingDriveConfirm.length > 0 ||
+          toPay.length > 0 ||
+          pendingPlanDrafts > 0 ||
+          pendingRideDrafts > 0 ||
+          returnedDrafts > 0) && (
           <Section title={t('needsYou')}>
             <div className="list">
+              {pendingPlanDrafts > 0 && (
+                <NeedRow
+                  key="tpd"
+                  to="/admin/traffic?tab=plans"
+                  title={t('trafficPendingPlansTitle', { count: pendingPlanDrafts })}
+                  sub={t('trafficPendingPlansSub')}
+                  cta={t('trafficReviewCta')}
+                />
+              )}
+              {pendingRideDrafts > 0 && (
+                <NeedRow
+                  key="trd"
+                  to="/admin/traffic?tab=rides&view=drafts"
+                  title={t('trafficPendingRidesTitle', { count: pendingRideDrafts })}
+                  sub={t('trafficPendingRidesSub')}
+                  cta={t('trafficReviewCta')}
+                />
+              )}
+              {returnedDrafts > 0 && (
+                <NeedRow
+                  key="retd"
+                  to="/admin/traffic?tab=plans"
+                  title={t('trafficReturnedDraftsTitle', { count: returnedDrafts })}
+                  sub={t('trafficReturnedDraftsSub')}
+                  cta={t('trafficReviseCta')}
+                />
+              )}
               {awaitingReply.map((r) => (
                 <NeedRow
                   key={`r${r.id}`}

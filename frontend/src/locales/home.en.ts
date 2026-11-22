@@ -56,4 +56,12 @@ export default {
   noEventsYet: 'No upcoming events yet',
   noEventsHint: 'Upcoming events and ride coordination will appear here.',
   otherEvents: 'Other upcoming events',
+  trafficPendingPlansTitle: '{count} transport plan draft(s) awaiting approval',
+  trafficPendingPlansSub: 'Submitted by traffic team',
+  trafficPendingRidesTitle: '{count} ride change draft(s) awaiting approval',
+  trafficPendingRidesSub: 'Single-ride change proposals',
+  trafficReturnedDraftsTitle: '{count} returned transport draft(s)',
+  trafficReturnedDraftsSub: 'Needs revision and resubmission',
+  trafficReviewCta: 'Review',
+  trafficReviseCta: 'Revise',
 };

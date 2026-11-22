@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { Check, UtensilsCrossed } from 'lucide-react';
 import { post, useApi } from '../../api';
-import { Button, ErrorBox, Modal, Spinner, useAction, useToast } from '../ui';
+import { Button, ErrorBox, Modal, Pill, Spinner, useAction, useToast } from '../ui';
 import { rm } from '../../format';
 
 export interface AreaFareOption {
@@ -29,6 +29,9 @@ export interface PostEventDriverItem {
   already_claimed: boolean;
   claimed_amount_cents: number | null;
   claimed_status: string | null;
+  reimbursement_excluded?: boolean;
+  excluded_ride_count?: number;
+  total_ride_count?: number;
 }
 
 export interface PostEventDriversResponse {
@@ -79,7 +82,7 @@ export default function PostEventReimbursementModal({
       const amountCents = matchedArea?.fare_cents ?? 0;
 
       initialRows[d.id] = {
-        selected: !d.already_claimed,
+        selected: !d.already_claimed && !d.reimbursement_excluded,
         tripType: isSupper ? 'supper' : 'direct_return',
         destAreaId,
         amountCents,
@@ -195,7 +198,7 @@ export default function PostEventReimbursementModal({
     }
 
     run(async () => {
-      await post(`/events/${eventId}/post-event-reimbursements`, {
+      const res = await post<{ pending_review_count?: number }>(`/events/${eventId}/post-event-reimbursements`, {
         supper_area_id: supperAreaId || undefined,
         supper_note: supperNote.trim() || undefined,
         claims,
@@ -206,6 +209,9 @@ export default function PostEventReimbursementModal({
           total: rm(totalCents),
         })
       );
+      if ((res?.pending_review_count ?? 0) > 0) {
+        toast.info(t('postEventReimbPendingNote', { count: res.pending_review_count! }));
+      }
       onSuccess?.();
       onClose();
     });
@@ -353,8 +359,14 @@ export default function PostEventReimbursementModal({
                               <span>{t('alreadyClaimedPill', { amount: rm(d.claimed_amount_cents || 0) })}</span>
                             </span>
                           )}
+                          {d.reimbursement_excluded && (
+                            <Pill tone="warning">{t('postEventReimbExcludedBadge')}</Pill>
+                          )}
                         </div>
                       </div>
+                      {!d.already_claimed && d.reimbursement_excluded && (
+                        <div className="tiny text-warn">{t('postEventReimbExcludedHint')}</div>
+                      )}
 
                       {/* Row Controls */}
                       {!d.already_claimed && (
