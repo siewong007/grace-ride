@@ -234,7 +234,10 @@ async fn care_pass_blocks_unable_to_join_and_post_pickup_readiness() {
     let (app, st) = setup().await;
     let passenger = login(&st, "member@example.org").await;
     let ride_id = book(&app, &passenger).await;
-    sqlx::query("UPDATE rides SET status='confirmed', driver_id=4 WHERE id=$1")
+    // Pickup inside the 24-hour care-link window whatever the time of day the test runs
+    // (`book` uses "tomorrow 09:00", more than 24 hours away before 09:00).
+    sqlx::query("UPDATE rides SET status='confirmed', driver_id=4, pickup_at=$1 WHERE id=$2")
+        .bind(grace_ride::util::in_hours(6))
         .bind(ride_id)
         .execute(&st.db)
         .await

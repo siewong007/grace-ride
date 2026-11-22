@@ -378,7 +378,12 @@ async fn caregiver_pass_lifecycle_privacy_reissue_revoke_and_expiry() {
         "/api/rides",
         Some(&member),
         Some(json!({
-            "pickup_at": future_dt(1, "09:30"),
+            // Inside the 24-hour window, whatever the time of day the test runs: a link
+            // works only from 24 hours before pickup (a fixed "tomorrow 09:30" was more
+            // than 24 hours away whenever the suite ran before 09:30).
+            "pickup_at": (grace_ride::util::local_now() + chrono::Duration::hours(6))
+                .format("%Y-%m-%dT%H:%M")
+                .to_string(),
             "pickup_area_id": area,
             "pickup_address": "88 Secret Home Street",
             "destination": "PJ State CMC",
