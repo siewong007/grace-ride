@@ -9,6 +9,7 @@ export default {
   search: '搜索',
   loading: '载入中',
   error: '错误',
+  tryAgain: '重试',
   success: '成功',
   back: '返回',
   confirm: '确定',

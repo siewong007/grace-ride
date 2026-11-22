@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { useTranslation } from 'react-i18next';
-import { UtensilsCrossed } from 'lucide-react';
+import { Check, UtensilsCrossed } from 'lucide-react';
 import { post, useApi } from '../../api';
 import { Button, ErrorBox, Modal, Spinner, useAction, useToast } from '../ui';
 import { rm } from '../../format';
@@ -329,12 +329,12 @@ export default function PostEventReimbursementModal({
                             <>
                               {d.passenger_stats.supper > 0 && (
                                 <span className="pill pill-success" title={t('passengerIntentSupperTooltip')}>
-                                  🍜 {d.passenger_stats.supper} {t('supperCountLabel')}
+                                  {d.passenger_stats.supper} {t('supperCountLabel')}
                                 </span>
                               )}
                               {d.passenger_stats.direct_home > 0 && (
                                 <span className="pill pill-muted" title={t('passengerIntentHomeTooltip')}>
-                                  🏠 {d.passenger_stats.direct_home} {t('directHomeCountLabel')}
+                                  {d.passenger_stats.direct_home} {t('directHomeCountLabel')}
                                 </span>
                               )}
                               {d.passenger_stats.unspecified > 0 && (
@@ -348,8 +348,9 @@ export default function PostEventReimbursementModal({
                           )}
 
                           {d.already_claimed && (
-                            <span className="pill pill-success">
-                              ✓ {t('alreadyClaimedPill', { amount: rm(d.claimed_amount_cents || 0) })}
+                            <span className="pill pill-success row nowrap gap-xs">
+                              <Check size={12} aria-hidden="true" />
+                              <span>{t('alreadyClaimedPill', { amount: rm(d.claimed_amount_cents || 0) })}</span>
                             </span>
                           )}
                         </div>
@@ -367,7 +368,7 @@ export default function PostEventReimbursementModal({
                               onClick={() => handleTripTypeChange(d.id, 'supper')}
                               disabled={!row.selected || busy}
                             >
-                              🍜 {t('tripSupperBtn')}
+                              {t('tripSupperBtn')}
                             </Button>
                             <Button
                               type="button"
@@ -376,7 +377,7 @@ export default function PostEventReimbursementModal({
                               onClick={() => handleTripTypeChange(d.id, 'direct_return')}
                               disabled={!row.selected || busy}
                             >
-                              🏠 {t('tripDirectHomeBtn')}
+                              {t('tripDirectHomeBtn')}
                             </Button>
                           </div>
 

@@ -13,7 +13,6 @@ import { useAuth } from '../auth';
 import {
   BackToTop,
   Button,
-  Card,
   EmptyState,
   InfiniteSentinel,
   Page,
@@ -163,7 +162,7 @@ export default function Notifications() {
           <EmptyState title={t('none')} />
         ) : (
           <>
-            <Card padding="sm" className="stack-none overflow-hidden">
+            <div className="stack">
               {todayNotifs.length > 0 && (
                 <div>
                   <div className="notif-date-header">{t('today')}</div>
@@ -215,7 +214,7 @@ export default function Notifications() {
                   </div>
                 </div>
               )}
-            </Card>
+            </div>
             <InfiniteSentinel
               hasMore={nextBefore != null}
               loading={loadingMore}

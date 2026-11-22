@@ -68,7 +68,7 @@ export default function Costs() {
       <div className="stack">
         <PageHeader title={t('title')} subtitle={t('desc')} back="/me" />
 
-        <ErrorBox error={error} />
+        <ErrorBox error={error} onRetry={reload} />
 
         {loading ? (
           <Spinner />
@@ -99,7 +99,7 @@ export default function Costs() {
                     </Button>
                   </div>
 
-                  <div className="card flat tight stack-sm">
+                  <div className="detail-section stack-sm">
                     <div className="small">{t('payee', { name: s.payee_name })}</div>
                     <div className="row between nowrap">
                       <span className="mono bold">{s.payee_account}</span>

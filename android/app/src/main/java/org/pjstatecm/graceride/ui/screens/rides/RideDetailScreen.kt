@@ -30,8 +30,10 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.navigation.NavHostController
@@ -41,6 +43,7 @@ import org.pjstatecm.graceride.domain.KlTime
 import org.pjstatecm.graceride.domain.RideStatus
 import org.pjstatecm.graceride.ui.components.ErrorView
 import org.pjstatecm.graceride.ui.components.LoadingView
+import org.pjstatecm.graceride.ui.components.MemberAvatar
 import org.pjstatecm.graceride.ui.components.RideStatusPill
 import org.pjstatecm.graceride.ui.theme.LocalStatusColors
 import org.pjstatecm.graceride.ui.theme.Spacing
@@ -109,8 +112,38 @@ fun RideDetailScreen(container: AppContainer, nav: NavHostController, id: Long) 
                             if (ride.assistance.isNotBlank()) InfoRow(stringResource(R.string.ride_assistance), ride.assistance)
                             if (ride.notes.isNotBlank()) InfoRow(stringResource(R.string.ride_notes), ride.notes)
                             ride.event?.title?.let { InfoRow(stringResource(R.string.ride_event), it) }
+                            if (ride.isProxy && ride.proxy != null) {
+                                val proxySummary = listOfNotNull(
+                                    ride.proxy.riderName.takeIf { it.isNotBlank() },
+                                    ride.proxy.riderRelationship.takeIf { it.isNotBlank() },
+                                ).joinToString(" · ")
+                                if (proxySummary.isNotBlank()) {
+                                    InfoRow(stringResource(R.string.ride_new_rider_name), proxySummary)
+                                }
+                                ride.proxy.riderPhone?.takeIf { it.isNotBlank() }?.let {
+                                    InfoRow(stringResource(R.string.ride_new_rider_phone), it)
+                                }
+                                if (!ride.viewer.isPassenger && ride.proxy.bookerName.isNotBlank()) {
+                                    InfoRow(
+                                        stringResource(R.string.ride_proxy_booker, ride.proxy.bookerName),
+                                        ride.proxy.bookerPhone ?: "",
+                                    )
+                                }
+                            }
                             ride.driver?.let { d ->
-                                InfoRow(stringResource(R.string.ride_driver), d.name ?: "—")
+                                Row(
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.spacedBy(Spacing.xs),
+                                ) {
+                                    MemberAvatar(
+                                        name = d.name ?: "",
+                                        photoUrl = d.photoFileId?.let(container::fileUrl),
+                                        avatarColor = d.avatarColor,
+                                        avatarIcon = d.avatarIcon,
+                                        size = 40.dp,
+                                    )
+                                    InfoRow(stringResource(R.string.ride_driver), d.name ?: "—")
+                                }
                                 d.vehicle?.let { v ->
                                     InfoRow(stringResource(R.string.ride_vehicle), listOfNotNull(v.model, v.color, v.plate).joinToString(" · "))
                                 }

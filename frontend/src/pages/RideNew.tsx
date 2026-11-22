@@ -1,4 +1,4 @@
-import { FormEvent, useEffect, useRef, useState } from 'react';
+import { FormEvent, useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import {
   Accessibility,
@@ -10,7 +10,6 @@ import {
   Plus,
   User,
   Users,
-  X,
 } from 'lucide-react';
 import { post, useApi } from '../api';
 import {
@@ -19,14 +18,13 @@ import {
   ErrorBox,
   Field,
   IconButton,
-  Notice,
   Page,
   PageHeader,
   useAction,
   useToast,
 } from '../components/ui';
 import type { Ride } from '../components/RideCard';
-import { todayStr } from '../format';
+import { fmtDateTime, todayStr, useFormatT } from '../format';
 import { useTranslation } from 'react-i18next';
 import { AddressInput } from '../components/AddressInput';
 import { AreaPhotoStrip } from '../components/AreaPhotos';
@@ -95,6 +93,7 @@ export default function RideNew() {
 
 function RideNewForm() {
   const { t } = useTranslation('rideNew');
+  const ft = useFormatT();
   const nav = useNavigate();
   const [params] = useSearchParams();
   const eventId = params.get('event');
@@ -104,7 +103,10 @@ function RideNewForm() {
   );
   const { data: frequentRiders } = useApi<ProxyRider[]>('/proxy-riders');
   const { data: savedPlacesRaw } = useApi<SavedPlace[]>('/saved-places');
-  const savedPlaces = Array.isArray(savedPlacesRaw) ? savedPlacesRaw : [];
+  const savedPlaces = useMemo(
+    () => (Array.isArray(savedPlacesRaw) ? savedPlacesRaw : []),
+    [savedPlacesRaw],
+  );
   const { data: recentRides } = useApi<Ride[]>('/rides');
   const toast = useToast();
 
@@ -127,11 +129,12 @@ function RideNewForm() {
   const [customAssistance, setCustomAssistance] = useState('');
   const [notes, setNotes] = useState('');
 
-  const [showEventNotice, setShowEventNotice] = useState(true);
+  const [autoFilledHint, setAutoFilledHint] = useState<string | null>(null);
   const [touched, setTouched] = useState<Record<string, boolean>>({});
   const [errors, setErrors] = useState<Record<string, string>>({});
   const { busy, error, run } = useAction();
   const proxyAppliedRef = useRef<{ area?: string; address?: string; notes?: string }>({});
+  const prefilledPlaceRef = useRef(false);
 
   const defaultReturnFor = (hhmm: string): string => {
     const parts = hhmm.split(':');
@@ -193,6 +196,30 @@ function RideNewForm() {
     setDestination(event.location);
     setPrefilled(true);
   }, [event, prefilled]);
+
+  useEffect(() => {
+    if (prefilledPlaceRef.current || isProxy || area || address || tripType === 'return') return;
+    const preferredPlace =
+      savedPlaces.find((sp) => sp.is_default === 1) ??
+      (savedPlaces.length === 1 ? savedPlaces[0] : null);
+    if (preferredPlace && (preferredPlace.area_id || preferredPlace.address)) {
+      prefilledPlaceRef.current = true;
+      if (preferredPlace.area_id) setArea(String(preferredPlace.area_id));
+      if (preferredPlace.address) setAddress(preferredPlace.address);
+      if (preferredPlace.gate_notes && !notes.includes(preferredPlace.gate_notes)) {
+        setNotes((cur) => (cur ? `${cur}\n${preferredPlace.gate_notes}` : preferredPlace.gate_notes));
+      }
+      setAutoFilledHint(t('autoPrefilledPlace', { label: preferredPlace.label }));
+      return;
+    }
+    const ownRide = (recentRides ?? []).find((r) => !r.is_proxy && r.area?.id && r.pickup_address);
+    if (ownRide) {
+      prefilledPlaceRef.current = true;
+      setArea(String(ownRide.area.id));
+      setAddress(ownRide.pickup_address ?? '');
+      setAutoFilledHint(t('autoPrefilledLast'));
+    }
+  }, [isProxy, area, address, tripType, savedPlaces, recentRides, notes, t]);
 
   const validateField = (_name: string, val: string): string => {
     if (!val || !val.trim()) {
@@ -432,25 +459,9 @@ function RideNewForm() {
       <div className="stack">
         <PageHeader
           title={t('title')}
-          subtitle={event ? t('eventLabel', { title: event.title }) : t('desc')}
+          subtitle={event ? `${event.title} · ${fmtDateTime(event.starts_at, ft)} · ${event.location}` : t('desc')}
           back={eventId ? `/events/${eventId}` : '/events'}
         />
-
-        {showEventNotice && event && (
-          <Notice tone="info" className="row between nowrap">
-            <div>
-              <strong>{t('eventLabel', { title: event.title })}</strong>
-              <div className="small muted">{t('timeHintEvent')}</div>
-            </div>
-            <IconButton
-              size="sm"
-              variant="ghost"
-              label={t('dismiss')}
-              icon={<X size={16} />}
-              onClick={() => setShowEventNotice(false)}
-            />
-          </Notice>
-        )}
 
         <form onSubmit={submit} noValidate className="stack ride-new-form">
           {/* Section 0: Who is this ride for? */}
@@ -478,14 +489,7 @@ function RideNewForm() {
             </div>
 
             {isProxy && (
-              <div
-                className="card inset stack gap-md"
-                style={{
-                  background: 'var(--surface-2)',
-                  padding: 'var(--space-3)',
-                  borderRadius: 'var(--radius)',
-                }}
-              >
+              <div className="proxy-panel stack">
                 {frequentRiders && frequentRiders.length > 0 && (
                   <div className="stack gap-xs">
                     <label className="small muted bold">{t('frequentRiders')}</label>
@@ -497,7 +501,7 @@ function RideNewForm() {
                           className={`chip ${riderName === fr.name ? 'active' : ''}`}
                           onClick={() => selectFrequentRider(fr)}
                         >
-                          👵 {fr.name} {fr.relationship ? `(${fr.relationship})` : ''}
+                          {fr.name} {fr.relationship ? `(${fr.relationship})` : ''}
                         </button>
                       ))}
                     </div>
@@ -690,7 +694,10 @@ function RideNewForm() {
           {/* Section 2: Where */}
           <section className="form-section stack">
             <div className="row between wrap gap-xs">
-              <h3>{t('whereSection')}</h3>
+              <div>
+                <h3>{t('whereSection')}</h3>
+                {autoFilledHint && !isProxy && <p className="muted tiny">{autoFilledHint}</p>}
+              </div>
               <div className="row wrap gap-xs">
                 {savedPlaces.map((sp) => (
                   <button

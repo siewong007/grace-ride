@@ -9,6 +9,7 @@ export default {
   search: 'Search',
   loading: 'Loading',
   error: 'Error',
+  tryAgain: 'Try again',
   success: 'Success',
   back: 'Back',
   confirm: 'Confirm',

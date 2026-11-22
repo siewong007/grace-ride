@@ -11,12 +11,12 @@ AGP 8.13.0 · Gradle 8.13 · Kotlin 2.2.20 · Compose BOM 2025.10.00.
 | Area | Screens |
 |---|---|
 | Session | Login (passkey via Credential Manager + dev accounts on debug), Unlock (TOTP/backup code, server 423 idle-lock), Pending approval |
-| Home | Next ride, unpaid shares, driving today, upcoming events, announcements; pull-to-refresh; per-section error degradation |
-| Rides | Upcoming/Past lists, ride detail (privacy-projected fields, readiness, accept/decline, cancel with optimistic-concurrency retry), booking form opened from an event (place search + saved places, seats, assistance, round trip) |
-| Events | Upcoming/Past lists, detail with RSVP (need ride / offer drive / join-as group), withdraw, check-in code display, "Request a ride" CTA |
+| Home | Next ride, unpaid shares, driving today + 7-day next-drive preview, offline ride snapshot fallback, upcoming events, announcements; pull-to-refresh; per-section error degradation |
+| Rides | Upcoming/Past lists, ride detail (privacy-projected fields, driver avatar, proxy details, readiness, accept/decline, cancel with optimistic-concurrency retry), booking form opened from an event (signup gate, trip direction outbound/round/return, family/proxy riders + saved riders, place search + saved places, seats, assistance) |
+| Events | Upcoming/Past lists (driver open-requests badge), detail with RSVP (need ride / offer drive / join-as group), withdraw, check-in code display, existing ride status card, "Request a ride" & "Book ride for family / proxy" CTAs |
 | Costs | My shares (integer cents → RM), DuitNow payee QR display, proof photo upload (multipart) + transaction reference submission |
 | History | Past rides |
-| Profile | Roles, passkey list/add/delete, auto-lock setting, language (zh/en, per-app locale + Accept-Language), sign out / sign out all |
+| Profile | Roles, editable personal details (name, phone, Telegram chat ID), avatar editor (photo/animated GIF, Grok/Muse animated bot avatars, static icons, initials, colors), passkey list/add/delete, auto-lock setting, language (zh/en, per-app locale + Accept-Language), sign out / sign out all |
 | Notifications | Inbox, mark all read, deep links to ride/event/costs |
 
 Architecture: `data/api` (Retrofit + kotlinx.serialization DTOs, error mapping,

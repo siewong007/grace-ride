@@ -4,7 +4,6 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.outlined.DirectionsCar
 import androidx.compose.material.icons.outlined.Event
 import androidx.compose.material.icons.outlined.Home
 import androidx.compose.material.icons.outlined.Person
@@ -123,12 +122,6 @@ fun GraceRideAppRoot(container: AppContainer) {
                         label = { Text(stringResource(R.string.nav_home)) },
                     )
                     NavigationBarItem(
-                        selected = currentRoute == Routes.RIDES,
-                        onClick = { navController.navigateTab(Routes.RIDES) },
-                        icon = { Icon(Icons.Outlined.DirectionsCar, contentDescription = null) },
-                        label = { Text(stringResource(R.string.nav_rides)) },
-                    )
-                    NavigationBarItem(
                         selected = currentRoute == Routes.EVENTS,
                         onClick = { navController.navigateTab(Routes.EVENTS) },
                         icon = { Icon(Icons.Outlined.Event, contentDescription = null) },
@@ -158,8 +151,19 @@ fun GraceRideAppRoot(container: AppContainer) {
             composable(Routes.RIDE_DETAIL) { entry ->
                 RideDetailScreen(container, navController, entry.arguments?.getString("id")?.toLongOrNull() ?: 0L)
             }
-            composable(Routes.RIDE_NEW) { entry ->
-                RideNewScreen(container, navController, entry.arguments?.getString("eventId")?.toLongOrNull())
+            composable(
+                route = Routes.RIDE_NEW,
+                arguments = listOf(
+                    androidx.navigation.navArgument("eventId") { nullable = true; defaultValue = null },
+                    androidx.navigation.navArgument("proxy") { nullable = true; defaultValue = null },
+                ),
+            ) { entry ->
+                RideNewScreen(
+                    container,
+                    navController,
+                    entry.arguments?.getString("eventId")?.toLongOrNull(),
+                    entry.arguments?.getString("proxy") == "1",
+                )
             }
             composable(Routes.EVENTS) { EventsScreen(container, navController) }
             composable(Routes.EVENT_DETAIL) { entry ->

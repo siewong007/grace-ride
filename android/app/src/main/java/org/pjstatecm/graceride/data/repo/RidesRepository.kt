@@ -7,6 +7,7 @@ import org.pjstatecm.graceride.data.api.CancelReq
 import org.pjstatecm.graceride.data.api.CreateRideReq
 import org.pjstatecm.graceride.data.api.CreateRideRes
 import org.pjstatecm.graceride.data.api.Place
+import org.pjstatecm.graceride.data.api.ProxyRider
 import org.pjstatecm.graceride.data.api.ReadinessReq
 import org.pjstatecm.graceride.data.api.RespondReq
 import org.pjstatecm.graceride.data.api.Ride
@@ -20,6 +21,7 @@ class RidesRepository(private val api: ApiService, private val bus: AuthEventBus
     suspend fun areas(): List<Area> = apiCall(bus) { api.areas() }
     suspend fun places(q: String): List<Place> = apiCall(bus) { api.places(q) }
     suspend fun savedPlaces(): List<SavedPlace> = apiCall(bus) { api.savedPlaces() }
+    suspend fun proxyRiders(): List<ProxyRider> = apiCall(bus) { api.proxyRiders() }
     suspend fun create(req: CreateRideReq): CreateRideRes = apiCall(bus) { api.createRide(req) }
     suspend fun cancel(id: Long, reason: String?) = apiCall(bus) { api.cancelRide(id, CancelReq(reason)) }
     suspend fun respond(id: Long, accept: Boolean) = apiCall(bus) { api.respondRide(id, RespondReq(accept)) }
@@ -27,4 +29,6 @@ class RidesRepository(private val api: ApiService, private val bus: AuthEventBus
         apiCall(bus) { api.readiness(id, ReadinessReq(status, notes)) }
     suspend fun drivingToday(from: String, to: String): List<Ride> =
         apiCall(bus) { api.driverSchedule(from, to) }
+    suspend fun driverRequests(mineAreas: Boolean? = null): List<Ride> =
+        apiCall(bus) { api.driverRequests(mineAreas) }
 }

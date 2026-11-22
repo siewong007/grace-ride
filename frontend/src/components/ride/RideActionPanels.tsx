@@ -1,6 +1,6 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useState, type ReactNode } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
-import { AlertCircle, AlertTriangle, CheckCircle2, Clock, MoreHorizontal } from 'lucide-react';
+import { AlertCircle, AlertTriangle, Check, CheckCircle2, Clock, MoreHorizontal } from 'lucide-react';
 import type { TFunction } from 'i18next';
 import { Trans, useTranslation } from 'react-i18next';
 import { api, post, useApi } from '../../api';
@@ -9,7 +9,7 @@ import CantMakeItModal from '../CantMakeIt';
 import type { Ride } from '../RideCard';
 import { ReasonModal, StartTripButton } from '../TripActions';
 import { parseLocal } from '../../format';
-import { Button, Card, ErrorBox, Field, Modal, Notice, useAction, useConfirm } from '../ui';
+import { Button, ErrorBox, Field, Modal, Notice, useAction, useConfirm } from '../ui';
 
 /** `part` splits the card when the passenger has something to do now: "respond" is the
  *  answer/readiness block shown near the top, "cancel" the quieter cancel control below. */
@@ -47,7 +47,7 @@ export function PassengerActions({
   const cancelControls = (
     <>
       {cancellable && can('rides', 'delete') && (
-        <Button variant={part === 'cancel' ? 'ghost' : 'danger'} className={part === 'cancel' ? 'text-danger' : undefined} onClick={() => setCancel(true)}>
+        <Button variant="ghost" className="quiet-danger" onClick={() => setCancel(true)}>
           {t('cancelRide')}
         </Button>
       )}
@@ -69,8 +69,25 @@ export function PassengerActions({
     return <div className="ride-cancel-row">{cancelControls}</div>;
   }
 
+  const hasReadiness =
+    (r.status === 'confirmed' || (r.status === 'in_progress' && !r.picked_up_at)) && can('rides', 'update');
+  const hasSupper =
+    r.leg === 'return' &&
+    !['completed', 'cancelled', 'no_show', 'alt_transport'].includes(r.status) &&
+    can('rides', 'update');
+  const hasContent =
+    (r.status === 'pending_passenger' && !!r.driver && can('rides', 'update')) ||
+    r.status === 'pending_driver' ||
+    r.status === 'pending_approval' ||
+    r.status === 'alt_transport' ||
+    hasReadiness ||
+    hasSupper ||
+    (part === 'all' && cancellable && can('rides', 'delete'));
+
+  if (!hasContent) return null;
+
   return (
-    <Card className="stack">
+    <section className="focus-surface stack">
       {r.status === 'pending_passenger' && r.driver && can('rides', 'update') && (
         <div className="stack">
           <h2>{t('driverInvite')}</h2>
@@ -173,10 +190,10 @@ export function PassengerActions({
       )}
 
       {/* Return trip supper preference */}
-      {r.leg === 'return' && !['completed', 'cancelled', 'no_show', 'alt_transport'].includes(r.status) && can('rides', 'update') && (
-        <div className="card tight stack-sm">
-          <div className="bold small row items-center gap-xs">
-            <span>🌙 {t('supperChoiceTitle')}</span>
+      {hasSupper && (
+        <div className="detail-section stack-sm">
+          <div className="bold small">
+            {t('supperChoiceTitle')}
           </div>
           <p className="tiny muted no-margin">
             {t('supperChoicePrompt')}
@@ -188,7 +205,7 @@ export function PassengerActions({
               disabled={busy}
               onClick={() => run(() => post(`/rides/${r.id}/supper-choice`, { choice: 'supper' }).then(reload), t('supperChoiceConfirmed'))}
             >
-              🍜 {t('supperChoiceJoin')}
+              {t('supperChoiceJoin')}
             </Button>
             <Button
               variant={r.supper_choice === 'direct_home' ? 'primary' : 'secondary'}
@@ -196,14 +213,20 @@ export function PassengerActions({
               disabled={busy}
               onClick={() => run(() => post(`/rides/${r.id}/supper-choice`, { choice: 'direct_home' }).then(reload), t('supperChoiceHomeConfirmed'))}
             >
-              🏠 {t('supperChoiceDirectHome')}
+              {t('supperChoiceDirectHome')}
             </Button>
           </div>
           {r.supper_choice === 'supper' && (
-            <span className="tiny text-success">✓ {t('supperChoiceJoinNote')}</span>
+            <span className="tiny text-success row items-center gap-xs">
+              <Check size={14} aria-hidden="true" />
+              <span>{t('supperChoiceJoinNote')}</span>
+            </span>
           )}
           {r.supper_choice === 'direct_home' && (
-            <span className="tiny muted">✓ {t('supperChoiceDirectHomeNote')}</span>
+            <span className="tiny muted row items-center gap-xs">
+              <Check size={14} aria-hidden="true" />
+              <span>{t('supperChoiceDirectHomeNote')}</span>
+            </span>
           )}
         </div>
       )}
@@ -217,7 +240,7 @@ export function PassengerActions({
           onDone={reload}
         />
       )}
-    </Card>
+    </section>
   );
 }
 
@@ -240,16 +263,62 @@ export function DriverActions({ ride: r, reload }: { ride: Ride; reload: () => v
     }
   };
 
+  const hasSupperNotice =
+    r.leg === 'return' && (r.supper_choice === 'supper' || r.supper_choice === 'direct_home');
+  const hasReadinessNotice =
+    r.readiness_status === 'ready' ||
+    r.readiness_status === 'delayed_5m' ||
+    r.readiness_status === 'delayed_10m';
+  const hasStatusContent =
+    ['pending_driver', 'pending_passenger', 'pending_approval', 'pending_driver_confirm', 'confirmed', 'in_progress'].includes(r.status) ||
+    (r.status === 'completed' && !!r.mileage_receipt_needed);
+  const canWithdraw =
+    ['pending_passenger', 'pending_approval', 'pending_driver_confirm', 'confirmed'].includes(r.status) &&
+    r.viewer.is_driver;
+
+  if (!hasSupperNotice && !hasReadinessNotice && !hasStatusContent && !canWithdraw) {
+    return null;
+  }
+
+  const delayButtons = (
+    <div className="btn-row">
+      <Button
+        variant="secondary"
+        size="sm"
+        disabled={busy}
+        onClick={() => run(() => post(`/rides/${r.id}/driver-delay`, { delay_minutes: 5 }).then(reload), t('driverDelaySent', { mins: 5 }))}
+      >
+        {t('driverDelay5m')}
+      </Button>
+      <Button
+        variant="secondary"
+        size="sm"
+        disabled={busy}
+        onClick={() => run(() => post(`/rides/${r.id}/driver-delay`, { delay_minutes: 10 }).then(reload), t('driverDelaySent', { mins: 10 }))}
+      >
+        {t('driverDelay10m')}
+      </Button>
+      <Button
+        variant="secondary"
+        size="sm"
+        disabled={busy}
+        onClick={() => run(() => post(`/rides/${r.id}/driver-delay`, { delay_minutes: 15 }).then(reload), t('driverDelaySent', { mins: 15 }))}
+      >
+        {t('driverDelay15m')}
+      </Button>
+    </div>
+  );
+
   return (
-    <Card className="stack">
+    <section className="focus-surface stack">
       <h2>{t('driverActions')}</h2>
 
       {/* Passenger readiness status notice for driver */}
       {r.leg === 'return' && r.supper_choice === 'supper' && (
-        <Notice tone="info">🌙 {t('driverSupperNotice')}</Notice>
+        <Notice tone="info">{t('driverSupperNotice')}</Notice>
       )}
       {r.leg === 'return' && r.supper_choice === 'direct_home' && (
-        <Notice tone="info">🏠 {t('driverDirectHomeNotice')}</Notice>
+        <Notice tone="info">{t('driverDirectHomeNotice')}</Notice>
       )}
       {r.readiness_status === 'ready' && (
         <Notice tone="success">{t('readyConfirmed')}</Notice>
@@ -282,15 +351,23 @@ export function DriverActions({ ride: r, reload }: { ride: Ride; reload: () => v
           </Button>
         </>
       )}
-      {r.status === 'confirmed' && <StartTripButton ride={r} onStarted={reload} label={t('startTrip')} />}
-      {r.status === 'in_progress' && (
-        <div className="btn-row">
-          {!r.picked_up_at && (
+      {r.status === 'confirmed' && (
+        <>
+          <StartTripButton ride={r} onStarted={reload} label={t('startTrip')} />
+          {r.viewer.is_driver && (
+            <details className="quiet-disclosure">
+              <summary>{t('runningLatePrompt')}</summary>
+              <div className="quiet-disclosure-body">{delayButtons}</div>
+            </details>
+          )}
+        </>
+      )}
+      {r.status === 'in_progress' && !r.picked_up_at && (
+        <>
+          <div className="btn-row">
             <Button variant="primary" disabled={busy} onClick={() => act('pickup', t('respondedPickedUp'))}>
               {t('pickedUp')}
             </Button>
-          )}
-          {!r.picked_up_at && (
             <Button
               variant="secondary"
               disabled={busy}
@@ -298,53 +375,33 @@ export function DriverActions({ ride: r, reload }: { ride: Ride; reload: () => v
             >
               {t('arrivedGateBtn')}
             </Button>
-          )}
-          {/* The backend refuses a no-show before the pickup time has passed. */}
-          {!r.picked_up_at && parseLocal(r.pickup_at).getTime() <= Date.now() && (
-            <Button variant="danger" disabled={busy} onClick={handleNoShow}>
-              {t('noShowBtn')}
-            </Button>
-          )}
-          <Button variant="secondary" className="btn accent" disabled={busy} onClick={() => act('complete', t('respondedCompleted'))}>
-            {t('completedTrip')}
-          </Button>
-        </div>
-      )}
-
-      {/* Driver Delay Broadcast Buttons */}
-      {(r.status === 'confirmed' || (r.status === 'in_progress' && !r.picked_up_at)) && r.viewer.is_driver && (
-        <div className="stack-sm">
-          <span className="small muted">{t('driverDelayBtn')}:</span>
-          <div className="btn-row">
-            <Button
-              variant="secondary"
-              size="sm"
-              disabled={busy}
-              onClick={() => run(() => post(`/rides/${r.id}/driver-delay`, { delay_minutes: 5 }).then(reload), t('driverDelaySent', { mins: 5 }))}
-            >
-              {t('driverDelay5m')}
-            </Button>
-            <Button
-              variant="secondary"
-              size="sm"
-              disabled={busy}
-              onClick={() => run(() => post(`/rides/${r.id}/driver-delay`, { delay_minutes: 10 }).then(reload), t('driverDelaySent', { mins: 10 }))}
-            >
-              {t('driverDelay10m')}
-            </Button>
-            <Button
-              variant="secondary"
-              size="sm"
-              disabled={busy}
-              onClick={() => run(() => post(`/rides/${r.id}/driver-delay`, { delay_minutes: 15 }).then(reload), t('driverDelaySent', { mins: 15 }))}
-            >
-              {t('driverDelay15m')}
-            </Button>
           </div>
-        </div>
+          <details className="quiet-disclosure">
+            <summary>{t('delayOrIssue')}</summary>
+            <div className="quiet-disclosure-body stack-sm">
+              {r.viewer.is_driver && delayButtons}
+              <div className="btn-row">
+                {/* The backend refuses a no-show before the pickup time has passed. */}
+                {parseLocal(r.pickup_at).getTime() <= Date.now() && (
+                  <Button variant="ghost" className="quiet-danger" size="sm" disabled={busy} onClick={handleNoShow}>
+                    {t('noShowBtn')}
+                  </Button>
+                )}
+                <Button variant="ghost" size="sm" disabled={busy} onClick={() => act('complete', t('respondedCompleted'))}>
+                  {t('completedTrip')}
+                </Button>
+              </div>
+            </div>
+          </details>
+        </>
       )}
-      {['pending_passenger', 'pending_approval', 'pending_driver_confirm', 'confirmed'].includes(r.status) && r.viewer.is_driver && (
-        <Button variant="danger" onClick={() => setWithdraw(true)}>
+      {r.status === 'in_progress' && r.picked_up_at && (
+        <Button variant="primary" disabled={busy} onClick={() => act('complete', t('respondedCompleted'))}>
+          {t('completedTrip')}
+        </Button>
+      )}
+      {canWithdraw && (
+        <Button variant="ghost" className="quiet-danger" onClick={() => setWithdraw(true)}>
           {t('withdrawDriver')}
         </Button>
       )}
@@ -359,7 +416,7 @@ export function DriverActions({ ride: r, reload }: { ride: Ride; reload: () => v
           onSubmit={(reason) => run(() => post(`/rides/${r.id}/withdraw`, { reason }).then(reload), t('respondedWithdrew'))}
         />
       )}
-    </Card>
+    </section>
   );
 }
 
@@ -409,7 +466,7 @@ export function StaffActions({ ride: r, reload }: { ride: Ride; reload: () => vo
   };
 
   return (
-    <Card className="stack">
+    <section className="detail-section stack">
       <h2>{t('staffActions')}</h2>
       {r.driver_load && (
         <p className="small">{t('driverLoad', { used: r.driver_load.seats_used, capacity: r.driver_load.capacity, seats: r.seats })}</p>
@@ -468,7 +525,7 @@ export function StaffActions({ ride: r, reload }: { ride: Ride; reload: () => vo
       {modal === 'return' && <ReasonModal error={error} title={t('returnTitle')} label={t('returnLabel')} confirm={t('returnConfirm')} onClose={() => setModal(null)} onSubmit={(reason) => run(() => post(`/rides/${r.id}/return`, { reason }).then(reload), t('returned'))} />}
       {modal === 'alt' && <ReasonModal error={error} title={t('altTitle')} label={t('altLabel')} initial={t('altInitial')} confirm={t('altConfirm')} onClose={() => setModal(null)} onSubmit={(reason) => run(() => post(`/rides/${r.id}/alt-transport`, { reason }).then(reload), t('altDone'))} />}
       {modal === 'cancel' && <ReasonModal error={error} title={t('cancelTitle')} label={t('cancelLabel')} confirm={t('cancelConfirm')} onClose={() => setModal(null)} onSubmit={(reason) => run(() => post(`/rides/${r.id}/cancel`, { reason }).then(reload), t('cancelled'))} />}
-    </Card>
+    </section>
   );
 }
 
@@ -482,39 +539,100 @@ export function MobileStickyActions({
   passengerTurn: boolean;
 }) {
   const { t } = useTranslation('rideDetail');
+  const auth = useAuth();
+  const can = auth?.can ?? (() => true);
+  const { busy, error, run } = useAction();
   const [showMore, setShowMore] = useState(false);
 
-  if (r.viewer.is_driver) {
+  const act = (path: string, msg: string) => run(() => post(`/rides/${r.id}/${path}`).then(reload), msg);
+
+  const isVolunteerClaimable =
+    !r.viewer.is_passenger && !r.viewer.is_driver && !r.viewer.is_staff && r.status === 'pending_driver';
+  const showDriverSticky = r.viewer.is_driver || isVolunteerClaimable;
+  const showStaffApprove =
+    r.viewer.is_staff && can('admin_rides', 'update') && r.status === 'pending_approval';
+
+  const modalContent = (
+    <Modal title={t('moreActions')} onClose={() => setShowMore(false)}>
+      {r.viewer.is_passenger && !passengerTurn && <PassengerActions ride={r} reload={reload} />}
+      {(r.viewer.is_driver || isVolunteerClaimable) && <DriverActions ride={r} reload={reload} />}
+      {r.viewer.is_staff && <StaffActions ride={r} reload={reload} />}
+    </Modal>
+  );
+
+  if (showDriverSticky) {
+    let primaryButton: ReactNode = null;
     if (r.status === 'pending_driver') {
-      return (
-        <div className="ride-detail-sticky-bar">
-          <DriverActions ride={r} reload={reload} />
-        </div>
+      primaryButton = (
+        <Button variant="primary" block disabled={busy} onClick={() => act('claim', t('respondedAccepted'))}>
+          {t('claimRide')}
+        </Button>
+      );
+    } else if (r.status === 'pending_driver_confirm') {
+      primaryButton = (
+        <Button variant="primary" block disabled={busy} onClick={() => act('confirm-assignment', t('respondedConfirmed'))}>
+          {t('confirmAssignment')}
+        </Button>
+      );
+    } else if (r.status === 'confirmed') {
+      primaryButton = <StartTripButton ride={r} onStarted={reload} block label={t('startTrip')} />;
+    } else if (r.status === 'in_progress' && !r.picked_up_at) {
+      primaryButton = (
+        <Button variant="primary" block disabled={busy} onClick={() => act('pickup', t('respondedPickedUp'))}>
+          {t('pickedUp')}
+        </Button>
+      );
+    } else if (r.status === 'in_progress' && r.picked_up_at) {
+      primaryButton = (
+        <Button variant="primary" block disabled={busy} onClick={() => act('complete', t('respondedCompleted'))}>
+          {t('completedTrip')}
+        </Button>
       );
     }
-    if (r.status === 'confirmed' || r.status === 'in_progress') {
+
+    if (primaryButton) {
       return (
-        <div className="ride-detail-sticky-bar">
-          <div className="grow">
-            <DriverActions ride={r} reload={reload} />
+        <>
+          {error && <ErrorBox error={error} />}
+          <div className="ride-detail-sticky-bar">
+            <div className="grow">{primaryButton}</div>
+            {r.viewer.is_driver && (
+              <Button variant="secondary" onClick={() => setShowMore(true)} icon={<MoreHorizontal size={18} />}>
+                {t('moreActions')}
+              </Button>
+            )}
           </div>
-        </div>
+          {showMore && modalContent}
+        </>
       );
     }
   }
 
-  if (r.viewer.is_staff && r.status === 'pending_approval') {
+  if (showStaffApprove) {
     return (
-      <div className="ride-detail-sticky-bar">
-        <StaffActions ride={r} reload={reload} />
-      </div>
+      <>
+        {error && <ErrorBox error={error} />}
+        <div className="ride-detail-sticky-bar">
+          <div className="grow">
+            <Button variant="primary" block disabled={busy} onClick={() => act('approve', t('respondedAccepted'))}>
+              {t('approve')}
+            </Button>
+          </div>
+          <Button variant="secondary" onClick={() => setShowMore(true)} icon={<MoreHorizontal size={18} />}>
+            {t('moreActions')}
+          </Button>
+        </div>
+        {showMore && modalContent}
+      </>
     );
   }
 
-  // A passenger whose controls are already on the page has nothing more to open.
+  // A passenger whose controls are already on the page or on a completed/terminal ride has nothing more to open.
   if (passengerTurn && !r.viewer.is_driver && !r.viewer.is_staff) return null;
+  if (r.viewer.is_passenger && !r.viewer.is_driver && !r.viewer.is_staff && ['completed', 'cancelled', 'no_show'].includes(r.status)) {
+    return null;
+  }
 
-  // If there's an action drawer / menu
   return (
     <>
       <div className="ride-detail-sticky-bar">
@@ -522,16 +640,7 @@ export function MobileStickyActions({
           {t('moreActions')}
         </Button>
       </div>
-      {showMore && (
-        <Modal title={t('moreActions')} onClose={() => setShowMore(false)}>
-          {r.viewer.is_passenger && !passengerTurn && <PassengerActions ride={r} reload={reload} />}
-          {r.viewer.is_driver && <DriverActions ride={r} reload={reload} />}
-          {r.viewer.is_staff && <StaffActions ride={r} reload={reload} />}
-          {!r.viewer.is_passenger && !r.viewer.is_driver && !r.viewer.is_staff && r.status === 'pending_driver' && (
-            <DriverActions ride={r} reload={reload} />
-          )}
-        </Modal>
-      )}
+      {showMore && modalContent}
     </>
   );
 }

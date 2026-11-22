@@ -175,4 +175,28 @@ describe('Layout and Navigation', () => {
     expect(backLinks[0]).toHaveAttribute('href', '/rides');
     expect(screen.getAllByRole('heading', { level: 1 })).toHaveLength(1);
   });
+
+  it('keeps member navigation minimal with Home, Events, and Profile only', () => {
+    render(
+      <MemoryRouter initialEntries={['/']}>
+        <Routes>
+          <Route element={<Layout />}>
+            <Route path="/" element={<div>Home content</div>} />
+          </Route>
+        </Routes>
+      </MemoryRouter>
+    );
+
+    const desktopNav = screen.getByRole('navigation', { name: 'Main navigation' });
+    expect(desktopNav).toHaveTextContent('Home');
+    expect(desktopNav).toHaveTextContent('Events');
+    expect(desktopNav).toHaveTextContent('Grace Member');
+    expect(desktopNav).not.toHaveTextContent('My costs');
+    expect(desktopNav).not.toHaveTextContent('Help centre');
+
+    const bottomNav = screen.getByRole('navigation', { name: 'Bottom navigation' });
+    expect(bottomNav).toHaveTextContent('Home');
+    expect(bottomNav).toHaveTextContent('Events');
+    expect(bottomNav).toHaveTextContent('Profile');
+  });
 });

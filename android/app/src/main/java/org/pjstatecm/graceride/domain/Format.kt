@@ -44,6 +44,16 @@ object KlTime {
         return dt.format(DateTimeFormatter.ofPattern("EEE, d MMM · HH:mm", Locale.getDefault()))
     }
 
+    fun displayDate(text: String): String {
+        val dt = parse(text) ?: return text
+        return dt.format(DateTimeFormatter.ofPattern("EEE, d MMM", Locale.getDefault()))
+    }
+
+    fun displayTime(text: String): String {
+        val dt = parse(text) ?: return text
+        return dt.format(DateTimeFormatter.ofPattern("HH:mm", Locale.getDefault()))
+    }
+
     fun displayZh(text: String): String {
         val dt = parse(text) ?: return text
         return dt.format(DateTimeFormatter.ofPattern("M月d日 EEE HH:mm", Locale.CHINESE))
@@ -65,6 +75,8 @@ object KlTime {
     }
 
     fun today(): String = LocalDate.now().format(dateOnly)
+
+    fun todayPlusDays(days: Long): String = LocalDate.now().plusDays(days).format(dateOnly)
 
     enum class DayLabel { TODAY, TOMORROW, OTHER }
 

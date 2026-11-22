@@ -5,8 +5,8 @@ import {
   Camera,
   Check,
   Copy,
-  Download,
   Fingerprint,
+  HandCoins,
   KeyRound,
   LifeBuoy,
   Lock,
@@ -28,7 +28,7 @@ import { api, del, post, put, useApi } from '../api';
 import { useAuth } from '../auth';
 import { useAutoLock } from '../components/AutoLock';
 import { DisplayPreferences } from '../components/AppChrome';
-import { Avatar, Button, ErrorBox, Field, Modal, Notice, PageHeader, Pill, SheetLink, useAction, useConfirm } from '../components/ui';
+import { Avatar, Button, ErrorBox, Field, Modal, PageHeader, Pill, SheetLink, useAction, useConfirm } from '../components/ui';
 import { fmtAgo, roleLabel, useFormatT } from '../format';
 import { clearDevicePasskey, passkeySupported, registerPasskey, withRecentSignIn } from '../webauthn';
 import { WaitingRoom } from '../components/Onboarding';
@@ -269,6 +269,7 @@ export default function Profile() {
     can('rides') && { to: '/rides', label: t('myRideHistory'), icon: <Car size={iconSz} /> },
     can('drive') && { to: '/drive', label: t('myDrivingHistory'), icon: <CarFront size={iconSz} /> },
     can('costs') && { to: '/costs', label: t('myCosts'), icon: <Wallet size={iconSz} /> },
+    (can('settlements') || can('admin_bills')) && { to: '/settlements', label: t('settlements'), icon: <HandCoins size={iconSz} /> },
     can('reimbursements') && { to: '/reimbursements', label: t('myReimb'), icon: <Receipt size={iconSz} /> },
     can('report') && { to: '/report', label: t('myReport'), icon: <BarChart3 size={iconSz} /> },
     can('help') && { to: '/help', label: t('myHelp'), icon: <LifeBuoy size={iconSz} /> },
@@ -299,41 +300,27 @@ export default function Profile() {
         </button>
         <h1>{me.name}</h1>
         <div className="profile-email">{me.email}</div>
-        <div className="profile-tags">
-          <Pill tone={isPending ? 'warning' : 'primary'}>{roleText}</Pill>
-          {!isPending && me.groups.slice(0, 3).map((g) => <Pill key={g.id}>{g.name}</Pill>)}
-        </div>
+        {isPending ? (
+          <div className="profile-tags">
+            <Pill tone="warning">{roleText}</Pill>
+          </div>
+        ) : (
+          <div className="profile-meta-line">
+            <span>{roleText}</span>
+            {me.groups.slice(0, 3).map((g) => (
+              <span key={g.id}> · {g.name}</span>
+            ))}
+          </div>
+        )}
       </section>
 
       {isPending && <WaitingRoom />}
 
       <div className="stack">
-        {!pwa.isInstalled && (
-          <Notice tone="info" icon={<Smartphone size={18} />}>
-            <div className="row between align-center wrap gap-xs">
-              <div className="stack-xs">
-                <strong>{t('installAppBannerTitle')}</strong>
-                <span className="muted small">{t('installAppBannerDesc')}</span>
-              </div>
-              <Button variant="primary" size="sm" onClick={handleInstallClick}>
-                {pwa.canPrompt ? (
-                  <>
-                    <Download size={14} aria-hidden="true" />
-                    {t('installAppOneClick')}
-                  </>
-                ) : (
-                  t('installAppGuide')
-                )}
-              </Button>
-            </div>
-          </Notice>
-        )}
-
         <section className="stack-xs" aria-label={t('account')}>
           <div className="section-label">{t('account')}</div>
           <div className="list">
             <SheetLink
-              tone="blue"
               icon={<User size={iconSz} />}
               label={t('personalInfo')}
               hint={me.phone || t('personalHint')}
@@ -341,7 +328,6 @@ export default function Profile() {
               onClick={() => openSection('personal')}
             />
             <SheetLink
-              tone="teal"
               icon={<Sliders size={iconSz} />}
               label={t('preferences')}
               hint={prefsHint}
@@ -350,7 +336,6 @@ export default function Profile() {
             />
             {!isPending && (
               <SheetLink
-                tone="amber"
                 icon={<MapPin size={iconSz} />}
                 label={t('placesAndCalendar')}
                 aria-haspopup="dialog"
@@ -358,7 +343,6 @@ export default function Profile() {
               />
             )}
             <SheetLink
-              tone="green"
               icon={<Shield size={iconSz} />}
               label={t('security')}
               hint={securityHint}
@@ -366,13 +350,11 @@ export default function Profile() {
               onClick={() => openSection('security')}
             />
             <SheetLink
-              tone="coral"
               icon={<Users size={iconSz} />}
               label={t('family')}
               to="/me/family"
             />
             <SheetLink
-              tone={pwa.isInstalled ? 'green' : 'purple'}
               icon={pwa.isInstalled ? <Check size={iconSz} /> : <Smartphone size={iconSz} />}
               label={t('installApp')}
               hint={
@@ -382,15 +364,7 @@ export default function Profile() {
                     ? t('installAppOneClickPrompt')
                     : t('installAppDesc')
               }
-              badge={
-                pwa.isInstalled ? (
-                  <Pill tone="success">{t('installAppInstalled')}</Pill>
-                ) : (
-                  <Pill tone={pwa.canPrompt ? 'primary' : 'neutral'}>
-                    {pwa.canPrompt ? t('installAppOneClick') : t('installAppRecommended')}
-                  </Pill>
-                )
-              }
+              badge={pwa.isInstalled ? <Pill tone="success">{t('installAppInstalled')}</Pill> : undefined}
               aria-haspopup="dialog"
               onClick={handleInstallClick}
             />

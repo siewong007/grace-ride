@@ -291,7 +291,7 @@ describe('EventDetail page', () => {
       </MemoryRouter>
     );
     expect(screen.queryByText(/ride requests for this event/i)).not.toBeInTheDocument();
-    await user.click(screen.getByRole('button', { name: /i can drive passengers/i }));
+    await user.click(screen.getByRole('button', { name: /^i can drive$/i }));
     expect(screen.getByText(/ride requests for this event/i)).toBeInTheDocument();
   });
 
@@ -303,7 +303,7 @@ describe('EventDetail page', () => {
         </Routes>
       </MemoryRouter>
     );
-    expect(screen.queryByRole('button', { name: /i can drive passengers/i })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /^i can drive$/i })).not.toBeInTheDocument();
     expect(screen.queryByRole('link', { name: /drive/i })).not.toBeInTheDocument();
   });
 

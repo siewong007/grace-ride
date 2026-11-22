@@ -110,24 +110,34 @@ export function DriveSchedule() {
     return map;
   }, [data, focusRide]);
 
-  const renderTripCard = (r: Ride, isNextStop = false) => (
-    <div key={r.id} className={`driver-trip-card${isNextStop ? ' driver-next-stop' : ''}`}>
-      {isNextStop && (
-        <div className="row between nowrap driver-next-stop-head">
-          <Pill tone={r.status === 'in_progress' ? 'primary' : 'info'}>
-            {r.status === 'in_progress' ? t('nextStopActive') : t('nextStopSoon')}
-          </Pill>
-          <Link to={`/rides/${r.id}`} className="small">
-            {t('openRideDetail')}
-          </Link>
-        </div>
-      )}
-      <div className="driver-trip-header">
-        <div className="driver-trip-title-row">
-          <div className="driver-trip-time">
-            {fmtTime(r.pickup_at, ft).replace(/^.. /, '')}
+  const renderTripCard = (r: Ride, isNextStop = false) => {
+    const canDelay = r.status === 'confirmed' || (r.status === 'in_progress' && !r.picked_up_at);
+    const canWithdraw =
+      (r.status === 'confirmed' || r.status === 'pending_driver_confirm') && can('drive', 'delete');
+    const canNoShow =
+      r.status === 'in_progress' && !r.picked_up_at && parseLocal(r.pickup_at).getTime() <= Date.now();
+    const hasUtility =
+      Boolean(r.is_proxy && r.proxy ? (r.proxy.rider_phone || r.proxy.booker_phone) : r.passenger.phone) ||
+      (r.status === 'in_progress' && !r.picked_up_at) ||
+      canNoShow;
+
+    return (
+      <div key={r.id} className={`driver-trip-card${isNextStop ? ' driver-next-stop' : ''}`}>
+        {isNextStop && (
+          <div className="row between nowrap driver-next-stop-head">
+            <Pill tone={r.status === 'in_progress' ? 'primary' : 'info'}>
+              {r.status === 'in_progress' ? t('nextStopActive') : t('nextStopSoon')}
+            </Pill>
+            <Link to={`/rides/${r.id}`} className="small">
+              {t('openRideDetail')}
+            </Link>
           </div>
-          <div>
+        )}
+        <div className="driver-trip-header">
+          <div className="driver-trip-title-row">
+            <div className="driver-trip-time">
+              {fmtTime(r.pickup_at, ft).replace(/^.. /, '')}
+            </div>
             <Link to={`/rides/${r.id}`} className="driver-trip-title">
               {r.is_proxy && r.proxy ? (
                 <span className="row gap-xs items-center wrap">
@@ -146,192 +156,204 @@ export function DriveSchedule() {
               )}
               <span className="muted small">· {t('seatCount', { count: r.seats })}</span>
             </Link>
-            <div className="driver-trip-route">
-              <span>
-                {r.pickup_address ? (
-                  r.pickup_address
-                ) : (
-                  <span className="driver-trip-route-lock">
-                    <Lock size={12} aria-hidden="true" />
-                    <span>{r.area.name}</span>
-                  </span>
-                )}
-                {' → '}
-                {r.destination}
+          </div>
+          <div className="row nowrap gap-xs">
+            {r.readiness_status === 'ready' && (
+              <Pill tone="success">{t('passengerReady')}</Pill>
+            )}
+            {(r.readiness_status === 'delayed_5m' || r.readiness_status === 'delayed_10m') && (
+              <Pill tone="warning">{t('passengerDelayed')}</Pill>
+            )}
+            <StatusPill map={RIDE_STATUS} status={r.status} />
+          </div>
+        </div>
+
+        <div className="driver-trip-route">
+          <span>
+            {r.pickup_address ? (
+              r.pickup_address
+            ) : (
+              <span className="driver-trip-route-lock">
+                <Lock size={12} aria-hidden="true" />
+                <span>{r.area.name}</span>
               </span>
+            )}
+            {' → '}
+            {r.destination}
+          </span>
+        </div>
+
+        {r.assistance && (
+          <div className="driver-trip-assistance">
+            <Accessibility size={14} aria-hidden="true" />
+            <span>{r.assistance}</span>
+          </div>
+        )}
+
+        {r.pickup_address && (
+          <NavButtonGroup address={r.pickup_address} />
+        )}
+
+        <div className="driver-trip-actions">
+          {r.status === 'confirmed' && (
+            <div className="driver-trip-primary-btn">
+              <StartTripButton
+                ride={r}
+                onStarted={reload}
+                block
+                label={t('startTrip')}
+                others={(data ?? [])
+                  .filter(
+                    (o) =>
+                      o.id !== r.id &&
+                      o.status === 'confirmed' &&
+                      o.trip_id != null &&
+                      o.trip_id === r.trip_id,
+                  )
+                  .map((o) => o.passenger.name)}
+              />
             </div>
-          </div>
-        </div>
-        <div className="row nowrap gap-xs">
-          {r.readiness_status === 'ready' && (
-            <Pill tone="success">{t('passengerReady')}</Pill>
           )}
-          {(r.readiness_status === 'delayed_5m' || r.readiness_status === 'delayed_10m') && (
-            <Pill tone="warning">{t('passengerDelayed')}</Pill>
-          )}
-          <StatusPill map={RIDE_STATUS} status={r.status} />
-        </div>
-      </div>
-
-      {r.assistance && (
-        <div className="driver-trip-assistance">
-          <Accessibility size={14} aria-hidden="true" />
-          <span>{r.assistance}</span>
-        </div>
-      )}
-
-      {r.pickup_address && (
-        <NavButtonGroup address={r.pickup_address} />
-      )}
-
-      <div className="driver-trip-actions">
-        {r.status === 'confirmed' && (
-          <div className="driver-trip-primary-btn">
-            <StartTripButton
-              ride={r}
-              onStarted={reload}
+          {r.status === 'in_progress' && !r.picked_up_at && (
+            <Button
+              variant="primary"
               block
-              label={t('startTrip')}
-              others={(data ?? [])
-                .filter(
-                  (o) =>
-                    o.id !== r.id &&
-                    o.status === 'confirmed' &&
-                    o.trip_id != null &&
-                    o.trip_id === r.trip_id,
+              className="driver-trip-primary-btn"
+              disabled={busy}
+              onClick={() => act(r, 'pickup', t('respondedPickedUp'))}
+            >
+              {t('pickedUp')}
+            </Button>
+          )}
+          {r.status === 'in_progress' && r.picked_up_at && (
+            <Button
+              variant="primary"
+              block
+              className="driver-trip-primary-btn"
+              disabled={busy}
+              onClick={() => act(r, 'complete', t('respondedCompleted'))}
+            >
+              {t('completed')}
+            </Button>
+          )}
+          {r.status === 'pending_driver_confirm' && (
+            <Button
+              variant="primary"
+              block
+              className="driver-trip-primary-btn"
+              disabled={busy}
+              onClick={() => act(r, 'confirm-assignment', t('respondedConfirmed'))}
+            >
+              {t('confirmAssignment')}
+            </Button>
+          )}
+
+          {hasUtility && (
+            <div className="driver-trip-utility-row">
+              {r.is_proxy && r.proxy ? (
+                <>
+                  {r.proxy.rider_phone && (
+                    <a className="btn secondary sm" href={`tel:${r.proxy.rider_phone}`}>
+                      <Phone size={14} aria-hidden="true" />
+                      <span>{t('callRider', { name: r.proxy.rider_name })}</span>
+                    </a>
+                  )}
+                  {r.proxy.booker_phone && (
+                    <a className="btn secondary sm" href={`tel:${r.proxy.booker_phone}`}>
+                      <Phone size={14} aria-hidden="true" />
+                      <span>{t('callBooker', { name: r.proxy.booker_name })}</span>
+                    </a>
+                  )}
+                </>
+              ) : (
+                r.passenger.phone && (
+                  <a className="btn secondary sm" href={`tel:${r.passenger.phone}`}>
+                    <Phone size={14} aria-hidden="true" />
+                    <span>{t('call')}</span>
+                  </a>
                 )
-                .map((o) => o.passenger.name)}
-            />
-          </div>
-        )}
-        {r.status === 'in_progress' && !r.picked_up_at && (
-          <Button
-            variant="primary"
-            block
-            className="driver-trip-primary-btn"
-            disabled={busy}
-            onClick={() => act(r, 'pickup', t('respondedPickedUp'))}
-          >
-            {t('pickedUp')}
-          </Button>
-        )}
-        {r.status === 'in_progress' && r.picked_up_at && (
-          <Button
-            variant="primary"
-            block
-            className="driver-trip-primary-btn"
-            disabled={busy}
-            onClick={() => act(r, 'complete', t('respondedCompleted'))}
-          >
-            {t('completed')}
-          </Button>
-        )}
-        {r.status === 'pending_driver_confirm' && (
-          <Button
-            variant="primary"
-            block
-            className="driver-trip-primary-btn"
-            disabled={busy}
-            onClick={() => act(r, 'confirm-assignment', t('respondedConfirmed'))}
-          >
-            {t('confirmAssignment')}
-          </Button>
-        )}
+              )}
 
-        {r.is_proxy && r.proxy ? (
-          <div className="row wrap gap-xs">
-            {r.proxy.rider_phone && (
-              <a className="btn secondary sm" href={`tel:${r.proxy.rider_phone}`}>
-                <Phone size={14} aria-hidden="true" />
-                <span>{t('callRider', { name: r.proxy.rider_name })}</span>
-              </a>
-            )}
-            {r.proxy.booker_phone && (
-              <a className="btn secondary sm" href={`tel:${r.proxy.booker_phone}`}>
-                <Phone size={14} aria-hidden="true" />
-                <span>{t('callBooker', { name: r.proxy.booker_name })}</span>
-              </a>
-            )}
-          </div>
-        ) : (
-          r.passenger.phone && (
-            <a className="btn secondary" href={`tel:${r.passenger.phone}`}>
-              <Phone size={14} aria-hidden="true" />
-              <span>{t('call')}</span>
-            </a>
-          )
-        )}
+              {r.status === 'in_progress' && !r.picked_up_at && (
+                <Button
+                  variant="secondary"
+                  size="sm"
+                  disabled={busy}
+                  onClick={async () => {
+                    if (await run(() => post(`/rides/${r.id}/arrived-gate`).then(reload))) {
+                      toast.success(t('arrivedGateSent'));
+                    }
+                  }}
+                >
+                  {t('arrivedGate')}
+                </Button>
+              )}
 
-        {r.status === 'in_progress' && !r.picked_up_at && (
-          <Button
-            variant="secondary"
-            size="sm"
-            disabled={busy}
-            onClick={async () => {
-              if (await run(() => post(`/rides/${r.id}/arrived-gate`).then(reload))) {
-                toast.success(t('arrivedGateSent'));
-              }
-            }}
-          >
-            {t('arrivedGate')}
-          </Button>
-        )}
+              {/* The backend refuses a no-show before the pickup time has passed. */}
+              {canNoShow && (
+                <Button
+                  variant="ghost"
+                  className="quiet-danger"
+                  size="sm"
+                  disabled={busy}
+                  onClick={() => handleNoShow(r)}
+                >
+                  {t('noShow')}
+                </Button>
+              )}
+            </div>
+          )}
 
-        {(r.status === 'confirmed' || (r.status === 'in_progress' && !r.picked_up_at)) && (
-          <div className="btn-row">
-            <Button
-              variant="secondary"
-              size="sm"
-              disabled={busy}
-              onClick={async () => {
-                if (await run(() => post(`/rides/${r.id}/driver-delay`, { delay_minutes: 5 }).then(reload))) {
-                  toast.success(t('delayToast', { mins: 5 }));
-                }
-              }}
-            >
-              {t('delayPlus5')}
-            </Button>
-            <Button
-              variant="secondary"
-              size="sm"
-              disabled={busy}
-              onClick={async () => {
-                if (await run(() => post(`/rides/${r.id}/driver-delay`, { delay_minutes: 10 }).then(reload))) {
-                  toast.success(t('delayToast', { mins: 10 }));
-                }
-              }}
-            >
-              {t('delayPlus10')}
-            </Button>
-          </div>
-        )}
-
-        {/* The backend refuses a no-show before the pickup time has passed. */}
-        {r.status === 'in_progress' && !r.picked_up_at && parseLocal(r.pickup_at).getTime() <= Date.now() && (
-          <Button
-            variant="danger"
-            size="sm"
-            disabled={busy}
-            onClick={() => handleNoShow(r)}
-          >
-            {t('noShow')}
-          </Button>
-        )}
-
-        {(r.status === 'confirmed' || r.status === 'pending_driver_confirm') && can('drive', 'delete') && (
-          <Button
-            variant="ghost"
-            size="sm"
-            className="driver-trip-withdraw"
-            disabled={busy}
-            onClick={() => setWithdrawRide(r)}
-          >
-            {t('withdrawDriver')}
-          </Button>
-        )}
+          {(canDelay || canWithdraw) && (
+            <details className="quiet-disclosure driver-trip-primary-btn">
+              <summary>{t('moreTripOptions')}</summary>
+              <div className="quiet-disclosure-body btn-row">
+                {canDelay && (
+                  <>
+                    <Button
+                      variant="secondary"
+                      size="sm"
+                      disabled={busy}
+                      onClick={async () => {
+                        if (await run(() => post(`/rides/${r.id}/driver-delay`, { delay_minutes: 5 }).then(reload))) {
+                          toast.success(t('delayToast', { mins: 5 }));
+                        }
+                      }}
+                    >
+                      {t('delayPlus5')}
+                    </Button>
+                    <Button
+                      variant="secondary"
+                      size="sm"
+                      disabled={busy}
+                      onClick={async () => {
+                        if (await run(() => post(`/rides/${r.id}/driver-delay`, { delay_minutes: 10 }).then(reload))) {
+                          toast.success(t('delayToast', { mins: 10 }));
+                        }
+                      }}
+                    >
+                      {t('delayPlus10')}
+                    </Button>
+                  </>
+                )}
+                {canWithdraw && (
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    className="quiet-danger"
+                    disabled={busy}
+                    onClick={() => setWithdrawRide(r)}
+                  >
+                    {t('withdrawDriver')}
+                  </Button>
+                )}
+              </div>
+            </details>
+          )}
+        </div>
       </div>
-    </div>
-  );
+    );
+  };
 
   return (
     <div className="stack">
@@ -367,7 +389,7 @@ export function DriveSchedule() {
         refreshKey={scheduleRides?.map((r) => `${r.id}:${r.status}:${r.picked_up_at ?? ''}`).join(',')}
       />
       </div>
-      <ErrorBox error={offlineSnap ? null : (error ?? actErr)} />
+      <ErrorBox error={offlineSnap ? null : (error ?? actErr)} onRetry={reload} />
 
       <div className="drive-trips-slot stack">
       {loading ? (

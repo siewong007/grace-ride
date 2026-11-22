@@ -161,13 +161,13 @@ function LayoutInner() {
   const member = links([
     { to: '/', label: t('home'), icon: <Home size={sz} />, end: true, show: true },
     { to: '/events', label: t('events'), icon: <Calendar size={sz} />, show: can('events') },
+  ]);
+  const quickJumpMember = links([
     { to: '/costs', label: t('myCosts'), icon: <Wallet size={sz} />, show: can('costs') },
     { to: '/reimbursements', label: t('reimbursements'), icon: <Receipt size={sz} />, show: can('reimbursements') },
     { to: '/report', label: t('myReport'), icon: <BarChart3 size={sz} />, show: can('report') },
     // Help-desk staff reach the same page as "Help desk" in their own section.
     { to: '/help', label: t('help'), icon: <LifeBuoy size={sz} />, show: can('help') && !helpDesk },
-  ]);
-  const service = links([
     { to: '/settlements', label: t('settlements'), icon: <HandCoins size={sz} />, show: can('settlements') || can('admin_bills') },
   ]);
   const profileTab: NavItem = { to: '/me', label: t('profile'), icon: <User size={sz} /> };
@@ -233,10 +233,8 @@ function LayoutInner() {
             <small>{t('brandSub')}</small>
           </span>
         </Link>
-        {member.length > 0 && <div className="section-label">{t('sectionMember')}</div>}
+        {member.length > 0 && staffGroups.length > 0 && <div className="section-label">{t('sectionMember')}</div>}
         {member.map(sidebarLink)}
-        {service.length > 0 && <div className="section-label">{t('sectionService')}</div>}
-        {service.map(sidebarLink)}
         {staffGroups.map((g) => (
           <div key={g.key} className="sidebar-group" role="group" aria-label={g.label}>
             <div className="section-label" aria-hidden="true">{g.label}</div>
@@ -279,20 +277,11 @@ function LayoutInner() {
 
           <div className="topbar-actions row nowrap">
             {!pending && (
-              <button type="button" className="btn sm secondary topbar-jump hide-phone" onClick={openJump}>
+              <button type="button" className="btn sm ghost topbar-jump hide-phone" onClick={openJump}>
                 <Search size={16} aria-hidden="true" />
                 <span>{t('jumpButton')}</span>
                 <kbd aria-hidden="true">{/Mac|iPhone|iPad/.test(navigator.platform) ? '⌘K' : 'Ctrl K'}</kbd>
               </button>
-            )}
-            {!pending && can('help') && (
-              <IconButton
-                to="/help"
-                icon={<LifeBuoy size={20} />}
-                label={t('help')}
-                variant="ghost"
-                className="topbar-help hide-tablet-up"
-              />
             )}
             {!pending && (
               <IconButton
@@ -309,7 +298,7 @@ function LayoutInner() {
                 )}
               </IconButton>
             )}
-            <Link to="/me" className="topbar-avatar" aria-label={t('profile')}>
+            <Link to="/me" className="topbar-avatar hide-mobile" aria-label={t('profile')}>
               <Avatar name={me.name} fileId={me.photo_file_id} color={me.avatar_color} icon={me.avatar_icon} size="sm" />
             </Link>
           </div>
@@ -394,7 +383,7 @@ function LayoutInner() {
         <QuickJump
           pages={[
             ...member,
-            ...service,
+            ...quickJumpMember,
             ...staff,
             ...(can('rides') ? [{ to: '/rides', label: t('myRides'), icon: <Car size={sz} /> }] : []),
             ...(can('drive') ? [{ to: '/drive', label: t('drive'), icon: <CarFront size={sz} /> }] : []),

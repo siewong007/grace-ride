@@ -86,7 +86,7 @@ export default function Login() {
           {/* Passkey primary login form */}
           <form className="stack" onSubmit={onPasskey}>
             {hasRecognizedDevicePasskey && devicePasskey ? (
-              <div className="card passkey-device-card stack-sm">
+              <div className="passkey-device-card stack-sm">
                 <div className="row items-center gap-sm">
                   <span className="notice-icon text-primary">
                     <Fingerprint size={24} />

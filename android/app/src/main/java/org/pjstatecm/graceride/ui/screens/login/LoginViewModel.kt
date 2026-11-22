@@ -30,13 +30,16 @@ data class LoginUiState(
     val devAvailable: Boolean = BuildConfig.DEV_LOGIN_AVAILABLE,
 )
 
-class LoginViewModel(private val container: AppContainer) : ViewModel() {
+class LoginViewModel(
+    private val container: AppContainer,
+    private val devAvailable: Boolean = BuildConfig.DEV_LOGIN_AVAILABLE,
+) : ViewModel() {
 
-    private val _state = MutableStateFlow(LoginUiState(serverUrl = container.baseUrl))
+    private val _state = MutableStateFlow(LoginUiState(serverUrl = container.baseUrl, devAvailable = devAvailable))
     val state: StateFlow<LoginUiState> = _state.asStateFlow()
 
     init {
-        if (BuildConfig.DEV_LOGIN_AVAILABLE) loadDevUsers()
+        if (devAvailable) loadDevUsers()
     }
 
     fun loadDevUsers() {

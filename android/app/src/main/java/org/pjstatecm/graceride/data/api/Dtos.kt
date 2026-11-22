@@ -39,6 +39,10 @@ data class Me(
     @SerialName("dev_mode") val devMode: Boolean = false,
     @SerialName("push_opt_in") val pushOptIn: Boolean = true,
     @SerialName("onboarding_dismissed") val onboardingDismissed: Boolean = false,
+    @SerialName("telegram_chat_id") val telegramChatId: String? = null,
+    @SerialName("whatsapp_opt_in") val whatsappOptIn: Boolean = false,
+    @SerialName("badges_opt_out") val badgesOptOut: Boolean = false,
+    @SerialName("readiness_prompt_mins") val readinessPromptMins: Int? = null,
 ) {
     fun can(page: String, act: String = "view"): Boolean = permissions.contains("$page.$act")
 }
@@ -185,6 +189,11 @@ data class CreateRideReq(
     val notes: String? = null,
     val event_id: Long? = null,
     val leg: String? = null,
+    val is_proxy: Boolean? = null,
+    val rider_name: String? = null,
+    val rider_phone: String? = null,
+    val rider_relationship: String? = null,
+    val save_proxy_rider: Boolean? = null,
     val return_pickup_at: String? = null,
     val return_pickup_area_id: Long? = null,
     val return_pickup_address: String? = null,
@@ -202,6 +211,9 @@ data class CancelReq(val reason: String? = null)
 
 @Serializable
 data class EventCreator(val id: Long, val name: String)
+
+@Serializable
+data class EventRideRef(val id: Long, val status: String)
 
 @Serializable
 data class MySignup(
@@ -230,6 +242,7 @@ data class EventItem(
     val waitlist: Long = 0,
     @SerialName("spots_left") val spotsLeft: Long? = null,
     @SerialName("my_signup") val mySignup: MySignup? = null,
+    @SerialName("my_ride") val myRide: EventRideRef? = null,
     /** Display names of the target groups (a string in event_json, not an array). */
     val groups: String = "",
     @SerialName("photo_file_id") val photoFileId: Long? = null,
@@ -302,6 +315,39 @@ data class ProfileUpdateReq(
     val phone: String? = null,
     val lang: String? = null,
     val auto_lock_mins: Int? = null,
+    val telegram_chat_id: String? = null,
+    val whatsapp_opt_in: Boolean? = null,
+    val push_opt_in: Boolean? = null,
+    val badges_opt_out: Boolean? = null,
+    val readiness_prompt_mins: Int? = null,
+    val photo_file_id: Long? = null,
+    val clear_photo: Boolean? = null,
+    val avatar_color: String? = null,
+    val avatar_icon: String? = null,
+)
+
+@Serializable
+data class ProxyRider(
+    val id: Long,
+    val name: String,
+    val phone: String = "",
+    val relationship: String = "",
+    val notes: String = "",
+    @SerialName("area_id") val areaId: Long? = null,
+    @SerialName("pickup_address") val pickupAddress: String = "",
+    @SerialName("gate_notes") val gateNotes: String = "",
+)
+
+@Serializable
+data class Badge(
+    val key: String,
+    val char: String,
+    val icon: String? = null,
+    val name: String = "",
+    val rule: String = "",
+    @SerialName("char_zh") val charZh: String? = null,
+    @SerialName("name_zh") val nameZh: String? = null,
+    @SerialName("rule_zh") val ruleZh: String? = null,
 )
 
 @Serializable

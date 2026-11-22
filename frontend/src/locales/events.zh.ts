@@ -1,6 +1,6 @@
 export default {
-  title: '运动与团契活动',
-  desc: '只显示发给您所属群体的活动。',
+  title: '活动',
+  desc: '显示与您所属群体相关的聚会与活动。',
   create: '发起活动',
   upcoming: '即将举行',
   past: '过往活动',
@@ -16,6 +16,8 @@ export default {
   signedUp: '已报名',
   ridesNeeded: '需 {count} 位司机',
   ridesNeeded_one: '需 {count} 位司机',
+  needRideCount: '{count} 人需要接送',
+  needRideCount_one: '1 人需要接送',
   spotsLeft: '余 {n} 名额',
   full: '已满额',
   postEventReimbTitle: '活动散场与司机车贴登记',

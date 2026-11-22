@@ -71,6 +71,7 @@ export default {
   decreaseSeats: '减少座位',
   increaseSeats: '增加座位',
   moreActions: '更多操作',
+  moreTripOptions: '通知延误或取消接单',
   withdrawDriver: '无法出车？退出接送',
   withdrawTitle: '无法出车',
   withdrawLabel: '原因（将通知乘客与交通组）',

@@ -44,6 +44,7 @@ interface ApiService {
     @GET("api/areas") suspend fun areas(): List<Area>
     @GET("api/places") suspend fun places(@Query("q") q: String): List<Place>
     @GET("api/saved-places") suspend fun savedPlaces(): List<SavedPlace>
+    @GET("api/proxy-riders") suspend fun proxyRiders(): List<ProxyRider>
     @GET("api/rides") suspend fun myRides(@Query("scope") scope: String? = null): List<Ride>
     @GET("api/rides/{id}") suspend fun ride(@Path("id") id: Long): Ride
     @POST("api/rides") suspend fun createRide(@Body body: CreateRideReq): CreateRideRes
@@ -51,6 +52,7 @@ interface ApiService {
     @POST("api/rides/{id}/respond") suspend fun respondRide(@Path("id") id: Long, @Body body: RespondReq): OkResponse
     @POST("api/rides/{id}/readiness") suspend fun readiness(@Path("id") id: Long, @Body body: ReadinessReq): OkResponse
     @GET("api/driver/schedule") suspend fun driverSchedule(@Query("from") from: String, @Query("to") to: String): List<Ride>
+    @GET("api/driver/requests") suspend fun driverRequests(@Query("mine_areas") mineAreas: Boolean? = null): List<Ride>
 
     // ---- events ----
     @GET("api/events") suspend fun events(@Query("scope") scope: String? = null): List<EventItem>

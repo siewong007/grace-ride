@@ -168,7 +168,7 @@ export default function Rides() {
           ]}
         />
 
-        <ErrorBox error={error} />
+        <ErrorBox error={error} onRetry={() => (scope === 'past' ? loadPast(null) : upcoming.reload())} />
 
         {loading ? (
           <ListSkeleton count={4} />

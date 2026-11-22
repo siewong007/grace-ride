@@ -3,6 +3,7 @@ package org.pjstatecm.graceride
 import android.app.Application
 import coil.Coil
 import coil.ImageLoader
+import coil.decode.ImageDecoderDecoder
 import org.pjstatecm.graceride.di.AppContainer
 
 class GraceRideApp : Application() {
@@ -17,6 +18,7 @@ class GraceRideApp : Application() {
         Coil.setImageLoader(
             ImageLoader.Builder(this)
                 .okHttpClient(container.okHttp)
+                .components { add(ImageDecoderDecoder.Factory()) }
                 .crossfade(true)
                 .build()
         )

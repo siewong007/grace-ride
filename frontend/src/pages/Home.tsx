@@ -1,5 +1,5 @@
 import { Link } from 'react-router-dom';
-import { CalendarPlus, ChevronRight, Phone, Pin } from 'lucide-react';
+import { Accessibility, ChevronRight, Phone, Pin } from 'lucide-react';
 import { useEffect, useState } from 'react';
 import type { ReactNode } from 'react';
 import { useTranslation } from 'react-i18next';
@@ -7,10 +7,9 @@ import { post, useApi } from '../api';
 import { useAuth } from '../auth';
 import CantMakeItModal from '../components/CantMakeIt';
 import type { Ride } from '../components/RideCard';
-import { Button, CardSkeleton, ErrorBox, ListSkeleton, Notice, Page, StatusPill, useAction } from '../components/ui';
-import { fmtAgo, fmtDay, fmtTime, greeting, localDate, RIDE_STATUS, RIDE_STATUS_PASSENGER, rm, todayStr, useFormatT } from '../format';
+import { Button, CardSkeleton, EmptyState, ErrorBox, ListSkeleton, Notice, Page, Pill, StatusPill, useAction } from '../components/ui';
+import { fmtAgo, fmtDateTime, fmtDay, fmtTime, greeting, localDate, RIDE_STATUS, RIDE_STATUS_PASSENGER, rm, todayStr, useFormatT } from '../format';
 import { loadTodayRidesSnapshot, saveTodayRidesSnapshot } from '../offlineSnapshot';
-import { loadPrefs, savePrefs, TextSize } from '../prefs';
 import type { EventItem } from './Events';
 import { GettingStarted } from '../components/Onboarding';
 
@@ -83,25 +82,6 @@ export default function Home() {
   const nextWeekStr = localDate(nextWeek);
   const driving = useApi<Ride[]>(can('drive') ? `/driver/schedule?from=${today}&to=${nextWeekStr}` : null);
 
-  const [showComfort, setShowComfort] = useState(() => {
-    try {
-      return !localStorage.getItem('gr-prefs') && !localStorage.getItem('gr-comfort-dismissed');
-    } catch {
-      return false;
-    }
-  });
-
-  const chooseComfort = (size: TextSize) => {
-    const p = loadPrefs();
-    savePrefs({ ...p, textSize: size });
-    try {
-      localStorage.setItem('gr-comfort-dismissed', '1');
-    } catch {
-      // ignore
-    }
-    setShowComfort(false);
-  };
-
   useEffect(() => {
     if (!me?.id) return;
     const combined = [...(rides.data ?? []), ...(driving.data ?? [])];
@@ -115,28 +95,61 @@ export default function Home() {
   const allDriving = driving.data ?? (offlineSnap ? offlineSnap.rides.filter((r) => r.viewer?.is_driver) : []);
   const todaysDriving = allDriving.filter((r) => r.pickup_at.slice(0, 10) === today);
   const upcomingDriving = allDriving.filter((r) => r.pickup_at.slice(0, 10) > today);
-  const next = myRides[0];
-  // Rides where a driver has offered and only the member's answer is missing.
+  const nextRide = myRides[0] ?? null;
+  const nextDrive = todaysDriving[0] ?? upcomingDriving[0] ?? null;
+
+  const allEvents = events.data ?? [];
+  const goingEvents = allEvents.filter((e) => e.my_signup?.status === 'going');
+  const openEvents = allEvents.filter((e) => e.status === 'published' && e.my_signup?.status !== 'going');
+
+  // Needs you: driver offers awaiting reply, assignments awaiting driver confirm, and unpaid shares.
   const awaitingReply = myRides.filter((r) => r.status === 'pending_passenger' && r.viewer?.is_passenger && r.driver);
+  const awaitingDriveConfirm = allDriving.filter((r) => r.status === 'pending_driver_confirm');
   const toPay = (shares.data ?? []).filter((s) => TO_PAY.includes(s.status));
 
-  // Coming up: the member's other rides, upcoming driving, and the events they are going to, in date order.
+  // Single event-first hero commitment.
+  const heroKind: 'ride' | 'drive' | 'goingEvent' | 'openEvent' | 'empty' =
+    nextRide && (!nextDrive || nextRide.pickup_at <= nextDrive.pickup_at)
+      ? 'ride'
+      : nextDrive
+        ? 'drive'
+        : goingEvents.length > 0
+          ? 'goingEvent'
+          : openEvents.length > 0
+            ? 'openEvent'
+            : 'empty';
+
+  const heroRideId = heroKind === 'ride' && nextRide ? nextRide.id : null;
+  const heroRideEventId = heroKind === 'ride' && nextRide?.event?.id ? nextRide.event.id : null;
+  const heroDriveId = heroKind === 'drive' && nextDrive ? nextDrive.id : null;
+  const heroGoingEventId = heroKind === 'goingEvent' && goingEvents[0] ? goingEvents[0].id : null;
+
+  const extraDrivingToday = todaysDriving.filter((r) => r.id !== heroRideId && r.id !== heroDriveId);
+  const extraDrivingLater = upcomingDriving.filter((r) => r.id !== heroRideId && r.id !== heroDriveId);
+  const showSecondaryDriveSection =
+    heroKind === 'ride' && can('drive') && (extraDrivingToday.length > 0 || extraDrivingLater.length > 0);
+
+  // Coming up: remaining commitments not already shown in the hero or secondary driving block.
   const comingUp = [
-    // Rides already listed under "Needs you" are not repeated here.
     ...myRides
-      .slice(1)
-      .filter((r) => !awaitingReply.includes(r))
+      .filter((r) => r.id !== heroRideId && !awaitingReply.some((a) => a.id === r.id))
       .map((r) => ({ kind: 'ride' as const, at: r.pickup_at, ride: r })),
-    ...upcomingDriving.map((r) => ({ kind: 'drive' as const, at: r.pickup_at, ride: r })),
-    ...(events.data ?? [])
-      .filter((e) => e.my_signup?.status === 'going')
+    ...(heroKind === 'drive' ? [...extraDrivingToday, ...extraDrivingLater] : [])
+      .filter((r) => !awaitingDriveConfirm.some((a) => a.id === r.id))
+      .map((r) => ({ kind: 'drive' as const, at: r.pickup_at, ride: r })),
+    ...goingEvents
+      .filter((e) => e.id !== heroGoingEventId && e.id !== heroRideEventId)
       .map((e) => ({ kind: 'event' as const, at: e.starts_at, event: e })),
   ]
     .sort((a, b) => a.at.localeCompare(b.at))
-    .slice(0, 3);
+    .slice(0, 4);
 
-  const isDriverToday = can('drive') && (driving.loading || todaysDriving.length > 0);
   const canRequest = can('rides', 'create');
+  const heroLoading = (can('rides') && rides.loading) || (can('events') && events.loading && !nextRide && !nextDrive);
+  const heroError =
+    !offlineSnap && !nextRide && !nextDrive && !allEvents.length
+      ? rides.error ?? events.error ?? driving.error
+      : null;
   // The whole date ("Friday 20 November"), not just "Today".
   const formattedToday = new Date().toLocaleDateString(i18n.language === 'zh' ? 'zh-CN' : 'en-GB', {
     weekday: 'long',
@@ -154,11 +167,6 @@ export default function Home() {
             <h1>{greeting(ft)}{me?.name ? `, ${me.name}` : ''}</h1>
             <p className="muted">{formattedToday}</p>
           </div>
-          {can('admin_dashboard') && (
-            <div className="btn-row page-head-actions hide-mobile">
-              <Link className="btn" to="/admin">{t('dashboard')}</Link>
-            </div>
-          )}
         </div>
 
         {offlineSnap && (
@@ -167,8 +175,17 @@ export default function Home() {
           </Notice>
         )}
 
+        <ErrorBox
+          error={heroError}
+          onRetry={() => {
+            rides.reload();
+            events.reload();
+            driving.reload();
+          }}
+        />
+
         {/* 1. Needs you — only when something is waiting on the member. */}
-        {(awaitingReply.length > 0 || toPay.length > 0) && (
+        {(awaitingReply.length > 0 || awaitingDriveConfirm.length > 0 || toPay.length > 0) && (
           <Section title={t('needsYou')}>
             <div className="list">
               {awaitingReply.map((r) => (
@@ -176,8 +193,17 @@ export default function Home() {
                   key={`r${r.id}`}
                   to={`/rides/${r.id}`}
                   title={t('replyNeeded', { name: r.driver!.name })}
-                  sub={`${fmtDay(r.pickup_at, ft)} · ${fmtTime(r.pickup_at, ft)} · ${r.destination}`}
+                  sub={`${fmtDay(r.pickup_at, ft)} · ${fmtTime(r.pickup_at, ft)} · ${r.event?.title ?? r.destination}`}
                   cta={t('replyCta')}
+                />
+              ))}
+              {awaitingDriveConfirm.map((r) => (
+                <NeedRow
+                  key={`dc${r.id}`}
+                  to={`/rides/${r.id}`}
+                  title={t('confirmDriveNeeded', { place: r.event?.title ?? r.destination })}
+                  sub={`${fmtDay(r.pickup_at, ft)} · ${fmtTime(r.pickup_at, ft)} · ${r.passenger.name}`}
+                  cta={t('confirmAssignment')}
                 />
               ))}
               {/* My costs is where a share is paid (bank details, receipt upload). */}
@@ -198,62 +224,48 @@ export default function Home() {
         {!rides.loading && !events.loading && (
           <GettingStarted
             hasRide={myRides.length > 0}
-            hasEvent={(events.data ?? []).some((e) => !!e.my_signup)}
+            hasEvent={allEvents.some((e) => !!e.my_signup)}
           />
         )}
 
-        {/* 2. Next ride — or, with nothing booked, the one blue button. */}
-        {rides.loading ? (
+        {/* 2. Primary Focus Surface — adapts to what matters next. */}
+        {heroLoading ? (
           <CardSkeleton count={1} />
-        ) : next ? (
-          <NextRide ride={next} onChange={rides.reload} />
-        ) : !can('rides') || isDriverToday ? null : (
-          <section className="card home-empty">
-            <h2>{t('noRide')}</h2>
-            {canRequest && (
-              <>
-                <p className="muted">{t('noRideHint')}</p>
-                <Button variant="primary" block to="/events" icon={<CalendarPlus size={20} />}>
-                  {t('signupRide')}
-                </Button>
-              </>
-            )}
-          </section>
+        ) : heroKind === 'ride' && nextRide ? (
+          <NextRide ride={nextRide} onChange={rides.reload} />
+        ) : heroKind === 'drive' && nextDrive ? (
+          <NextDriveFocus
+            ride={nextDrive}
+            todaysCount={todaysDriving.length}
+            isToday={nextDrive.pickup_at.slice(0, 10) === today}
+          />
+        ) : heroKind === 'goingEvent' && goingEvents[0] ? (
+          <NextGoingEventFocus
+            event={goingEvents[0]}
+            canRequest={canRequest}
+            canDrive={can('drive', 'create')}
+          />
+        ) : heroKind === 'openEvent' && openEvents[0] ? (
+          <NextOpenEventFocus event={openEvents[0]} />
+        ) : (
+          <EmptyState
+            title={t('noEventsYet')}
+            description={t('noEventsHint')}
+            action={can('events') ? <Button variant="primary" to="/events">{t('browseEvents')}</Button> : undefined}
+          />
         )}
 
-        {!rides.loading && !next && !isDriverToday && showComfort && (
-          <section className="card stack-sm home-comfort" aria-label={t('comfortTitle')}>
-            <div>
-              <div className="bold">{t('comfortTitle')}</div>
-              <p className="muted small">{t('comfortBody')}</p>
-            </div>
-            <div className="btn-row">
-              <Button variant="secondary" size="sm" onClick={() => chooseComfort('large')}>
-                {t('comfortLarge')}
-              </Button>
-              <Button variant="secondary" size="sm" onClick={() => chooseComfort('xlarge')}>
-                {t('comfortXlarge')}
-              </Button>
-              <Button variant="ghost" size="sm" onClick={() => chooseComfort('normal')}>
-                {t('comfortKeep')}
-              </Button>
-            </div>
-          </section>
-        )}
-
-        {/* Today's driving (drivers only). Always shown for drivers so the driving
-            pages stay one tap from Home even with nothing scheduled today — the
-            bottom tab bar no longer has a Drive tab. */}
-        {can('drive') && (
+        {/* Secondary driving commitments when the hero is already a passenger ride. */}
+        {showSecondaryDriveSection && (
           <Section title={t('driveSchedule')} more={{ to: '/drive', label: t('seeAll') }}>
             {driving.loading ? (
               <ListSkeleton count={2} />
-            ) : todaysDriving.length ? (
+            ) : extraDrivingToday.length > 0 ? (
               <div className="list">
-                {todaysDriving.map((r) => (
+                {extraDrivingToday.map((r) => (
                   <Link key={r.id} to={`/rides/${r.id}`} className="item">
                     <span className="timeline-time">{fmtTime(r.pickup_at, ft).replace(/^.. /, '')}</span>
-                    <div className="grow">
+                    <div className="grow min-w-0">
                       <div className="bold">{r.passenger.name}</div>
                       <div className="muted small">{r.area.name} → {r.destination}</div>
                     </div>
@@ -261,27 +273,22 @@ export default function Home() {
                   </Link>
                 ))}
               </div>
-            ) : upcomingDriving.length ? (
-              <div className="stack-sm">
-                <p className="muted small">{t('noDriveToday')}</p>
-                <Link to={`/rides/${upcomingDriving[0].id}`} className="item">
-                  <div className="grow">
-                    <div className="bold">{t('nextDriveUpcoming', { when: fmtDay(upcomingDriving[0].pickup_at, ft) })}</div>
-                    <div className="muted small">
-                      {fmtTime(upcomingDriving[0].pickup_at, ft)} · {upcomingDriving[0].passenger.name} · {upcomingDriving[0].area.name} → {upcomingDriving[0].destination}
-                    </div>
-                  </div>
-                  <ChevronRight size={16} className="muted" aria-hidden="true" />
-                </Link>
-              </div>
             ) : (
-              <p className="muted">{t('noDriveToday')}</p>
+              <Link to={`/rides/${extraDrivingLater[0].id}`} className="item">
+                <div className="grow min-w-0">
+                  <div className="bold">{t('nextDriveUpcoming', { when: fmtDay(extraDrivingLater[0].pickup_at, ft) })}</div>
+                  <div className="muted small">
+                    {fmtTime(extraDrivingLater[0].pickup_at, ft)} · {extraDrivingLater[0].passenger.name} · {extraDrivingLater[0].area.name} → {extraDrivingLater[0].destination}
+                  </div>
+                </div>
+                <ChevronRight size={16} className="muted" aria-hidden="true" />
+              </Link>
             )}
           </Section>
         )}
 
-        {/* 3. Coming up — the member's own plans only; other events stay on the Events tab. */}
-        {(can('rides') || can('events')) && !rides.loading && (
+        {/* 3. Coming up — remaining commitments, or quiet open events when user has none. */}
+        {!heroLoading && comingUp.length > 0 && (
           <Section
             title={t('comingUp')}
             more={
@@ -292,56 +299,59 @@ export default function Home() {
                   : undefined
             }
           >
-            {events.loading ? (
-              <ListSkeleton count={2} />
-            ) : comingUp.length ? (
-              <div className="list">
-                {comingUp.map((c) =>
-                  c.kind === 'ride' ? (
-                    <Link key={`r${c.ride.id}`} to={`/rides/${c.ride.id}`} className="item">
-                      <div className="grow">
-                        <div className="bold">{t('rideTo', { place: c.ride.destination })}</div>
-                        <div className="muted small">
-                          {fmtDay(c.at, ft)} · {fmtTime(c.at, ft)} ·{' '}
-                          {ft(RIDE_STATUS_PASSENGER[c.ride.status]?.label ?? RIDE_STATUS[c.ride.status]?.label ?? c.ride.status)}
-                        </div>
+            <div className="list">
+              {comingUp.map((c) =>
+                c.kind === 'ride' ? (
+                  <Link key={`r${c.ride.id}`} to={`/rides/${c.ride.id}`} className="item">
+                    <div className="grow min-w-0">
+                      <div className="bold">{c.ride.event?.title ?? t('rideTo', { place: c.ride.destination })}</div>
+                      <div className="muted small">
+                        {fmtDay(c.at, ft)} · {fmtTime(c.at, ft)} ·{' '}
+                        {ft(RIDE_STATUS_PASSENGER[c.ride.status]?.label ?? RIDE_STATUS[c.ride.status]?.label ?? c.ride.status)}
                       </div>
-                      <ChevronRight size={16} className="muted" aria-hidden="true" />
-                    </Link>
-                  ) : c.kind === 'drive' ? (
-                    <Link key={`d${c.ride.id}`} to={`/rides/${c.ride.id}`} className="item">
-                      <div className="grow">
-                        <div className="bold">{t('driveFor', { name: c.ride.passenger.name })}</div>
-                        <div className="muted small">
-                          {fmtDay(c.at, ft)} · {fmtTime(c.at, ft)} · {c.ride.destination}
-                        </div>
+                    </div>
+                    <ChevronRight size={16} className="muted" aria-hidden="true" />
+                  </Link>
+                ) : c.kind === 'drive' ? (
+                  <Link key={`d${c.ride.id}`} to={`/rides/${c.ride.id}`} className="item">
+                    <div className="grow min-w-0">
+                      <div className="bold">{t('driveFor', { name: c.ride.passenger.name })}</div>
+                      <div className="muted small">
+                        {fmtDay(c.at, ft)} · {fmtTime(c.at, ft)} · {c.ride.event?.title ?? c.ride.destination}
                       </div>
-                      <ChevronRight size={16} className="muted" aria-hidden="true" />
-                    </Link>
-                  ) : (
-                    <Link key={`e${c.event.id}`} to={`/events/${c.event.id}`} className="item">
-                      <div className="grow">
-                        <div className="bold">{c.event.title}</div>
-                        <div className="muted small">
-                          {fmtDay(c.at, ft)} · {fmtTime(c.at, ft)} · {t('going')}
-                        </div>
+                    </div>
+                    <ChevronRight size={16} className="muted" aria-hidden="true" />
+                  </Link>
+                ) : (
+                  <Link key={`e${c.event.id}`} to={`/events/${c.event.id}`} className="item">
+                    <div className="grow min-w-0">
+                      <div className="bold">{c.event.title}</div>
+                      <div className="muted small">
+                        {fmtDay(c.at, ft)} · {fmtTime(c.at, ft)} · {t('going')}
                       </div>
-                      <ChevronRight size={16} className="muted" aria-hidden="true" />
-                    </Link>
-                  ),
-                )}
-              </div>
-            ) : (
-              <p className="muted">{t('nothingComingUp')}</p>
-            )}
+                    </div>
+                    <ChevronRight size={16} className="muted" aria-hidden="true" />
+                  </Link>
+                ),
+              )}
+            </div>
           </Section>
         )}
 
-        {/* With a ride already booked, requesting another is a quiet secondary action. */}
-        {next && canRequest && (
-          <Button variant="secondary" block to="/events" icon={<CalendarPlus size={20} />}>
-            {t('signupRide')}
-          </Button>
+        {!heroLoading && comingUp.length === 0 && heroKind === 'openEvent' && openEvents.length > 1 && can('events') && (
+          <Section title={t('otherEvents')} more={{ to: '/events', label: t('seeAll') }}>
+            <div className="list">
+              {openEvents.slice(1, 4).map((ev) => (
+                <Link key={ev.id} to={`/events/${ev.id}`} className="item">
+                  <div className="grow min-w-0">
+                    <div className="bold">{ev.title}</div>
+                    <div className="muted small">{fmtDateTime(ev.starts_at, ft)} · {ev.location}</div>
+                  </div>
+                  <ChevronRight size={16} className="muted" aria-hidden="true" />
+                </Link>
+              ))}
+            </div>
+          </Section>
         )}
 
         {/* Announcements: one line, the rest folded away. */}
@@ -390,17 +400,23 @@ function NextRide({ ride, onChange }: { ride: Ride; onChange: () => void }) {
   const say = (status: 'ready' | 'delayed_5m', done: string) =>
     run(() => post(`/rides/${ride.id}/readiness`, { status }).then(onChange), done);
 
+  const eventTitle = ride.event?.title;
+  const whenText = isToday ? fmtTime(ride.pickup_at, ft) : `${fmtDay(ride.pickup_at, ft)} · ${fmtTime(ride.pickup_at, ft)}`;
+
   return (
-    <section className={`card home-next${askReadiness ? ' home-next--today' : ''}`} aria-labelledby="home-next-label home-next-title">
+    <section className={`focus-surface home-next${askReadiness ? ' focus-surface--today home-next--today' : ''}`} aria-labelledby="home-next-label home-next-title">
       <div className="row between nowrap">
-        <span id="home-next-label" className="muted small">{isToday ? t('today') : t('nextRide')}</span>
+        <span id="home-next-label" className="home-focus-eyebrow">
+          {isToday ? t('today') : t('nextRide')}
+          {eventTitle ? ` · ${whenText}` : ''}
+        </span>
         <StatusPill map={ride.viewer?.is_passenger ? RIDE_STATUS_PASSENGER : RIDE_STATUS} status={ride.status} />
       </div>
 
       <h2 id="home-next-title" className="home-next-time">
-        {/* Stretched over the card, so the whole card opens the ride. */}
+        {/* Stretched over the focus surface, so tapping anywhere opens the ride. */}
         <Link to={`/rides/${ride.id}`} className="home-next-link">
-          {isToday ? fmtTime(ride.pickup_at, ft) : `${fmtDay(ride.pickup_at, ft)} · ${fmtTime(ride.pickup_at, ft)}`}
+          {eventTitle ?? whenText}
         </Link>
       </h2>
       <p className="home-next-route">
@@ -449,7 +465,7 @@ function NextRide({ ride, onChange }: { ride: Ride; onChange: () => void }) {
               {proxyName ? t('rideDetail:delayed5mBtnProxy', { name: proxyName }) : t('runningLate')}
             </Button>
           </div>
-          <Button variant="ghost" size="sm" className="text-danger home-cant" disabled={busy} onClick={() => setUnable(true)}>
+          <Button variant="ghost" size="sm" className="quiet-danger home-cant" disabled={busy} onClick={() => setUnable(true)}>
             {proxyName ? t('rideDetail:unableToJoinBtnProxy', { name: proxyName }) : t('cantMakeIt')}
           </Button>
           <ErrorBox error={error} />
@@ -457,6 +473,139 @@ function NextRide({ ride, onChange }: { ride: Ride; onChange: () => void }) {
       )}
 
       {unable && <CantMakeItModal rideId={ride.id} riderName={proxyName} onClose={() => setUnable(false)} onDone={onChange} />}
+    </section>
+  );
+}
+
+/** Volunteer driver focus surface when driving is their next commitment. */
+function NextDriveFocus({ ride, todaysCount, isToday }: { ride: Ride; todaysCount: number; isToday: boolean }) {
+  const { t } = useTranslation('home');
+  const ft = useFormatT();
+  const riderName = ride.is_proxy && ride.proxy ? ride.proxy.rider_name : ride.passenger.name;
+  const multipleToday = isToday && todaysCount > 1;
+
+  return (
+    <section
+      className={`focus-surface${isToday ? ' focus-surface--today' : ''}`}
+      aria-labelledby="home-drive-label home-drive-title"
+    >
+      <div className="row between nowrap">
+        <span id="home-drive-label" className="home-focus-eyebrow">
+          {isToday ? t('today') : fmtDay(ride.pickup_at, ft)} · {t('drivingEyebrow')}
+          {multipleToday ? ` · ${t('pickupsToday', { count: todaysCount })}` : ''}
+        </span>
+        <StatusPill map={RIDE_STATUS} status={ride.status} />
+      </div>
+
+      <h2 id="home-drive-title" className="home-next-time">
+        <Link to={`/rides/${ride.id}`} className="home-next-link">
+          {ride.event?.title ?? ride.destination}
+        </Link>
+      </h2>
+
+      <p className="home-focus-meta">
+        {t('pickupSummary', {
+          time: fmtTime(ride.pickup_at, ft),
+          name: riderName,
+          area: ride.area.name,
+        })}
+      </p>
+
+      {ride.assistance && (
+        <div className="small muted row nowrap gap-xs">
+          <Accessibility size={14} aria-hidden="true" />
+          <span>{ride.assistance}</span>
+        </div>
+      )}
+
+      <div className="home-next-above">
+        <Button variant="primary" block to={multipleToday ? '/drive' : `/rides/${ride.id}`}>
+          {multipleToday ? t('openItinerary') : t('openPickupDetails')}
+        </Button>
+      </div>
+    </section>
+  );
+}
+
+/** Signed-up event focus surface when transportation is not arranged yet. */
+function NextGoingEventFocus({
+  event,
+  canRequest,
+  canDrive,
+}: {
+  event: EventItem;
+  canRequest: boolean;
+  canDrive: boolean;
+}) {
+  const { t } = useTranslation('home');
+  const ft = useFormatT();
+
+  return (
+    <section className="focus-surface" aria-labelledby="home-event-label home-event-title">
+      <div className="row between nowrap">
+        <span id="home-event-label" className="home-focus-eyebrow">{t('upcomingEvent')}</span>
+        <Pill tone="success">{t('going')}</Pill>
+      </div>
+
+      <h2 id="home-event-title" className="home-next-time">
+        <Link to={`/events/${event.id}`} className="home-next-link">
+          {event.title}
+        </Link>
+      </h2>
+
+      <p className="home-focus-meta">
+        {fmtDateTime(event.starts_at, ft)} · {event.location}
+      </p>
+
+      <p className="home-focus-status">{t('transportNotArranged')}</p>
+
+      <div className="btn-row home-next-above">
+        {canRequest ? (
+          <Button variant="primary" to={`/rides/new?event=${event.id}`}>
+            {t('needRideBtn')}
+          </Button>
+        ) : (
+          <Button variant="primary" to={`/events/${event.id}`}>
+            {t('viewEvent')}
+          </Button>
+        )}
+        {canDrive && (
+          <Button variant="secondary" to={`/events/${event.id}`}>
+            {t('offerDriveBtn')}
+          </Button>
+        )}
+      </div>
+    </section>
+  );
+}
+
+/** Quiet invitation to the next open event when the member has no commitments yet. */
+function NextOpenEventFocus({ event }: { event: EventItem }) {
+  const { t } = useTranslation('home');
+  const ft = useFormatT();
+
+  return (
+    <section className="focus-surface" aria-labelledby="home-open-event-label home-open-event-title">
+      <span id="home-open-event-label" className="home-focus-eyebrow">{t('nextEvent')}</span>
+
+      <h2 id="home-open-event-title" className="home-next-time">
+        <Link to={`/events/${event.id}`} className="home-next-link">
+          {event.title}
+        </Link>
+      </h2>
+
+      <p className="home-focus-meta">
+        {fmtDateTime(event.starts_at, ft)} · {event.location}
+      </p>
+
+      <div className="btn-row home-next-above">
+        <Button variant="primary" to={`/events/${event.id}`}>
+          {t('viewEvent')}
+        </Button>
+        <Button variant="ghost" to="/events">
+          {t('browseEvents')}
+        </Button>
+      </div>
     </section>
   );
 }

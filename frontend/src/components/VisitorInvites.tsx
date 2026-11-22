@@ -5,7 +5,7 @@ import { Link } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
 import { Copy, Share2, UserPlus } from 'lucide-react';
 import { post, useApi } from '../api';
-import { Button, Card, ErrorBox, Field, Modal, Pill, useAction, useConfirm, useToast } from './ui';
+import { Button, ErrorBox, Field, Modal, Pill, useAction, useConfirm, useToast } from './ui';
 import { fmtDateTime, parseLocal, useFormatT } from '../format';
 
 interface VisitorPass {
@@ -68,11 +68,11 @@ export default function VisitorInvites({ event }: { event: { id: number; title: 
   };
 
   return (
-    <Card className="stack">
+    <section className="detail-section stack">
       <div>
         <h3>{t('bringTitle')}</h3>
         <p className="muted small">{t('bringDesc')}</p>
-        <p className="muted small">{t('bringConsent')}</p>
+        {!!data?.length && <p className="muted small">{t('bringConsent')}</p>}
       </div>
       {!!data?.length && (
         <div className="list">
@@ -88,7 +88,7 @@ export default function VisitorInvites({ event }: { event: { id: number; title: 
               {p.state !== 'closed' && (
                 <div className="btn-row">
                   <Button variant="ghost" size="sm" disabled={busy} onClick={() => reissue(p)}>{t('newLink')}</Button>
-                  <Button variant="ghost" size="sm" className="text-danger" disabled={busy} onClick={() => turnOff(p)}>{t('turnOff')}</Button>
+                  <Button variant="ghost" size="sm" className="quiet-danger" disabled={busy} onClick={() => turnOff(p)}>{t('turnOff')}</Button>
                 </div>
               )}
             </div>
@@ -96,9 +96,11 @@ export default function VisitorInvites({ event }: { event: { id: number; title: 
         </div>
       )}
       <ErrorBox error={error} />
-      <Button variant="secondary" icon={<UserPlus size={18} />} onClick={() => setForm(true)}>
-        {t('inviteButton')}
-      </Button>
+      <div>
+        <Button variant="secondary" size="sm" icon={<UserPlus size={16} />} onClick={() => setForm(true)}>
+          {t('inviteButton')}
+        </Button>
+      </div>
       {form && (
         <InviteForm
           event={event}
@@ -111,7 +113,7 @@ export default function VisitorInvites({ event }: { event: { id: number; title: 
         />
       )}
       {sent && <SendLink event={event.title} {...sent} onClose={() => setSent(null)} />}
-    </Card>
+    </section>
   );
 }
 

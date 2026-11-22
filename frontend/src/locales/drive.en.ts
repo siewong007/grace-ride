@@ -71,6 +71,7 @@ export default {
   decreaseSeats: 'Decrease seats',
   increaseSeats: 'Increase seats',
   moreActions: 'More actions',
+  moreTripOptions: 'Notify delay or withdraw',
   withdrawDriver: 'Can’t drive? Withdraw',
   withdrawTitle: 'Can’t drive',
   withdrawLabel: 'Reason (passenger and transport team will be notified)',

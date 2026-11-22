@@ -11,6 +11,8 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.outlined.DirectionsCar
+import androidx.compose.material.icons.outlined.People
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.Checkbox
@@ -49,6 +51,7 @@ import org.pjstatecm.graceride.domain.KlTime
 import org.pjstatecm.graceride.ui.Routes
 import org.pjstatecm.graceride.ui.components.ErrorView
 import org.pjstatecm.graceride.ui.components.LoadingView
+import org.pjstatecm.graceride.ui.components.RideStatusPill
 import org.pjstatecm.graceride.ui.theme.Spacing
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -124,20 +127,57 @@ fun EventDetailScreen(container: AppContainer, nav: NavHostController, id: Long)
                         Text(event.description, style = MaterialTheme.typography.bodyLarge, color = MaterialTheme.colorScheme.onSurface)
                     }
 
+                    val myRide = event.myRide
+                    val isGoing = signup?.status == "going"
+                    val canCreateRide = container.auth.me?.can("rides", "create") == true
+
                     if (signup == null && event.status == "published") {
                         Button(onClick = { showSignup = true }, enabled = !state.busy, modifier = Modifier.fillMaxWidth()) {
                             Text(stringResource(R.string.event_signup))
                         }
                     } else if (signup != null) {
-                        if (signup.status == "going" && event.status == "published") {
+                        OutlinedButton(onClick = { confirmWithdraw = true }, enabled = !state.busy, modifier = Modifier.fillMaxWidth()) {
+                            Text(stringResource(R.string.event_withdraw), color = MaterialTheme.colorScheme.error)
+                        }
+                    }
+
+                    if (event.status == "published") {
+                        if (myRide != null) {
+                            OutlinedCard(
+                                onClick = { nav.navigate(Routes.rideDetail(myRide.id)) },
+                                modifier = Modifier.fillMaxWidth(),
+                            ) {
+                                Row(
+                                    Modifier.fillMaxWidth().padding(Spacing.sm),
+                                    horizontalArrangement = Arrangement.SpaceBetween,
+                                    verticalAlignment = Alignment.CenterVertically,
+                                ) {
+                                    Row(
+                                        horizontalArrangement = Arrangement.spacedBy(Spacing.xs),
+                                        verticalAlignment = Alignment.CenterVertically,
+                                    ) {
+                                        Icon(Icons.Outlined.DirectionsCar, contentDescription = null)
+                                        Text(stringResource(R.string.event_my_ride), style = MaterialTheme.typography.titleSmall)
+                                    }
+                                    RideStatusPill(myRide.status)
+                                }
+                            }
+                            if (isGoing && canCreateRide) {
+                                OutlinedButton(
+                                    onClick = { nav.navigate(Routes.rideNew(event.id, proxy = true)) },
+                                    enabled = !state.busy,
+                                    modifier = Modifier.fillMaxWidth(),
+                                ) {
+                                    Icon(Icons.Outlined.People, contentDescription = null, modifier = Modifier.padding(end = Spacing.xs))
+                                    Text(stringResource(R.string.event_book_for_family))
+                                }
+                            }
+                        } else if (isGoing && canCreateRide) {
                             Button(
                                 onClick = { nav.navigate(Routes.rideNew(event.id)) },
                                 enabled = !state.busy,
                                 modifier = Modifier.fillMaxWidth(),
                             ) { Text(stringResource(R.string.ride_request)) }
-                        }
-                        OutlinedButton(onClick = { confirmWithdraw = true }, enabled = !state.busy, modifier = Modifier.fillMaxWidth()) {
-                            Text(stringResource(R.string.event_withdraw), color = MaterialTheme.colorScheme.error)
                         }
                     }
                 }

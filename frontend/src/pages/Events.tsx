@@ -139,7 +139,7 @@ export default function Events() {
           actions={
             <div className="page-head-action-pair">
               <Button
-                variant="secondary"
+                variant="ghost"
                 size="sm"
                 icon={<QrCode size={16} />}
                 onClick={() => setShowScanModal(true)}
@@ -165,7 +165,10 @@ export default function Events() {
           ]}
         />
 
-        <ErrorBox error={error} />
+        <ErrorBox
+          error={error}
+          onRetry={() => (scope === 'past' ? loadPast(null) : upcomingOrManaging.reload())}
+        />
 
         {loading ? (
           <CardSkeleton count={3} />
@@ -214,17 +217,17 @@ export default function Events() {
                     ) : e.my_signup?.status === 'waitlist' ? (
                       <Pill tone="warning">{t('waitlist')}</Pill>
                     ) : null}
-                    {scope === 'upcoming' && can('drive') && openRequestsCountByEvent[e.id] ? (
-                      <Pill tone="blue">{t('ridesNeeded', { count: openRequestsCountByEvent[e.id] })}</Pill>
-                    ) : null}
-                    {e.my_signup?.need_ride && <span className="muted small">{t('needRide')}</span>}
-                    {e.status === 'published' && !e.my_signup && (
+                    {e.my_signup?.need_ride ? (
+                      <span className="muted small">{t('needRide')}</span>
+                    ) : scope === 'upcoming' && can('drive') && openRequestsCountByEvent[e.id] ? (
+                      <span className="small text-primary bold">{t('needRideCount', { count: openRequestsCountByEvent[e.id] })}</span>
+                    ) : e.status === 'published' && !e.my_signup ? (
                       e.capacity > 0 && e.spots_left != null ? (
                         <span className="muted small nowrap">{e.spots_left > 0 ? t('spotsLeft', { n: e.spots_left }) : t('full')}</span>
                       ) : (
                         <span className="muted small nowrap">{e.going} {t('peopleAttend')}</span>
                       )
-                    )}
+                    ) : null}
                   </div>
                 </Link>
               );

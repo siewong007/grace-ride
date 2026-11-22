@@ -16,6 +16,7 @@ import org.pjstatecm.graceride.data.api.EventItem
 import org.pjstatecm.graceride.data.api.Me
 import org.pjstatecm.graceride.data.api.Ride
 import org.pjstatecm.graceride.data.api.Share
+import org.pjstatecm.graceride.data.session.OfflineSnapshotStore
 import org.pjstatecm.graceride.di.AppContainer
 import org.pjstatecm.graceride.domain.KlTime
 import org.pjstatecm.graceride.domain.RideStatus
@@ -24,10 +25,13 @@ data class HomeUiState(
     val loading: Boolean = true,
     val refreshing: Boolean = false,
     val offline: Boolean = false,
+    val offlineSnapshotAt: Long? = null,
     val error: String? = null,
     val me: Me? = null,
     val nextRide: Ride? = null,
     val drivingToday: List<Ride> = emptyList(),
+    val nextUpcomingDrive: Ride? = null,
+    val upcomingDrives: List<Ride> = emptyList(),
     val events: List<EventItem> = emptyList(),
     val unpaidShares: List<Share> = emptyList(),
     val announcements: List<Announcement> = emptyList(),
@@ -62,14 +66,37 @@ class HomeViewModel(private val container: AppContainer) : ViewModel() {
                 }
             }
 
-            val rides = section(me?.can("rides") == true, { container.rides.upcoming() }, emptyList<Ride>())
+            var ridesOk = false
+            var drivingOk = false
+            val rides = section(me?.can("rides") == true, { container.rides.upcoming().also { ridesOk = true } }, emptyList<Ride>())
             val events = section(me?.can("events") == true, { container.events.upcoming() }, emptyList<EventItem>())
             val shares = section(me?.can("costs") == true, { container.shares.mine() }, emptyList<Share>())
             val ann = section(true, { container.community.announcements() }, emptyList<Announcement>())
             val today = KlTime.today()
-            val driving = section(me?.can("drive") == true, { container.rides.drivingToday(today, today) }, emptyList<Ride>())
+            val nextWeek = KlTime.todayPlusDays(7)
+            val drivingAll = section(me?.can("drive") == true, { container.rides.drivingToday(today, nextWeek).also { drivingOk = true } }, emptyList<Ride>())
 
-            val next = rides
+            var effectiveRides = rides
+            var effectiveDrivingAll = drivingAll
+            var offlineSnapshotAt: Long? = null
+            if (me != null) {
+                if (ridesOk || drivingOk) {
+                    OfflineSnapshotStore.save(container.secureStore, me.id, (rides + drivingAll).distinctBy { it.id })
+                } else if (offline && rides.isEmpty() && drivingAll.isEmpty()) {
+                    val snap = OfflineSnapshotStore.load(container.secureStore, me.id)
+                    if (snap != null) {
+                        effectiveRides = snap.rides.filter { it.viewer.isPassenger }
+                        effectiveDrivingAll = snap.rides.filter { it.viewer.isDriver }
+                        offlineSnapshotAt = snap.savedAtMillis
+                    }
+                }
+            }
+
+            val drivingToday = effectiveDrivingAll.filter { it.pickupAt.take(10) == today }
+            val upcomingDrives = effectiveDrivingAll.filter { it.pickupAt.take(10) > today }.sortedBy { it.pickupAt }
+            val nextUpcomingDrive = upcomingDrives.firstOrNull()
+
+            val next = effectiveRides
                 .filter { it.status in RideStatus.active && it.viewer.isPassenger }
                 .minByOrNull { it.pickupAt }
 
@@ -77,10 +104,13 @@ class HomeViewModel(private val container: AppContainer) : ViewModel() {
                 loading = false,
                 refreshing = false,
                 offline = offline,
-                error = if (rides.isEmpty() && events.isEmpty() && ann.isEmpty()) error else null,
+                offlineSnapshotAt = offlineSnapshotAt,
+                error = if (effectiveRides.isEmpty() && events.isEmpty() && ann.isEmpty() && effectiveDrivingAll.isEmpty()) error else null,
                 me = me,
                 nextRide = next,
-                drivingToday = driving,
+                drivingToday = drivingToday,
+                nextUpcomingDrive = nextUpcomingDrive,
+                upcomingDrives = upcomingDrives,
                 events = events.take(3),
                 unpaidShares = shares.filter { it.status == "unpaid" }.take(3),
                 announcements = ann.sortedByDescending { it.pinned }.take(3),

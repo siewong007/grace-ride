@@ -17,7 +17,7 @@ import { fmtAgo, fmtDateTime, RIDE_STATUS, useFormatT } from '../../format';
 import type { Ride } from '../RideCard';
 import { NavButtonGroup } from '../TripActions';
 import { AreaPhotoStrip } from '../AreaPhotos';
-import { Avatar, Button, Card, KeyValue, KeyValueItem, Notice, Pill } from '../ui';
+import { Avatar, Button, KeyValue, KeyValueItem, Notice, Pill } from '../ui';
 
 export function DriverCard({
   ride: r,
@@ -31,16 +31,14 @@ export function DriverCard({
 
   if (!d) {
     return (
-      <Card className="stack-sm">
-        <Notice tone="info" icon={<Clock size={18} />}>
-          {t('noDriverYet')}
-        </Notice>
-      </Card>
+      <Notice tone="info" icon={<Clock size={18} />}>
+        {t('noDriverYet')}
+      </Notice>
     );
   }
 
   return (
-    <Card className="ride-driver">
+    <section className="detail-section ride-driver">
       <div className="row nowrap gap-md min-w-0">
         <Avatar name={d.name} fileId={d.photo_file_id} color={d.avatar_color} icon={d.avatar_icon} size="lg" />
         <div className="min-w-0">
@@ -58,7 +56,7 @@ export function DriverCard({
 
       <div className="btn-row ride-driver-actions">
         {d.phone && !r.viewer.is_driver && (
-          <a className="btn sm primary" href={`tel:${d.phone}`}>
+          <a className="btn sm secondary" href={`tel:${d.phone}`}>
             <Phone size={16} aria-hidden="true" />
             <span>{t('call')}</span>
           </a>
@@ -70,7 +68,7 @@ export function DriverCard({
           </Button>
         )}
       </div>
-    </Card>
+    </section>
   );
 }
 
@@ -82,7 +80,7 @@ export function StatusTimeline({ ride }: { ride: Ride }) {
 
   if (isTerminal) {
     return (
-      <Card className="stack-sm">
+      <section className="detail-section stack-sm">
         <h2>{t('statusTimeline')}</h2>
         <div className="status-timeline">
           <div className="timeline-step done">
@@ -111,7 +109,7 @@ export function StatusTimeline({ ride }: { ride: Ride }) {
             </div>
           </div>
         </div>
-      </Card>
+      </section>
     );
   }
 
@@ -160,7 +158,7 @@ export function StatusTimeline({ ride }: { ride: Ride }) {
   ];
 
   return (
-    <Card className="stack-sm">
+    <section className="detail-section stack-sm">
       <h2>{t('statusTimeline')}</h2>
       <div className="status-timeline">
         {steps.map((st, i) => (
@@ -185,7 +183,7 @@ export function StatusTimeline({ ride }: { ride: Ride }) {
           </div>
         ))}
       </div>
-    </Card>
+    </section>
   );
 }
 
@@ -304,7 +302,7 @@ export function Details({ ride: r }: { ride: Ride }) {
   }
 
   return (
-    <Card className="stack">
+    <section className="detail-section stack">
       <KeyValue items={kvItems} />
 
       <AreaPhotoStrip areaId={r.area.id} areaName={r.area.name} />
@@ -356,6 +354,6 @@ export function Details({ ride: r }: { ride: Ride }) {
           </Button>
         </div>
       )}
-    </Card>
+    </section>
   );
 }

@@ -1,6 +1,6 @@
 export default {
-  title: 'Sports & fellowship events',
-  desc: 'Shows only events sent to your groups.',
+  title: 'Events',
+  desc: 'Upcoming gatherings and fellowships for your groups.',
   create: 'Create an event',
   upcoming: 'Upcoming',
   past: 'Past events',
@@ -16,6 +16,8 @@ export default {
   signedUp: 'Signed up',
   ridesNeeded: '{count} rides needed',
   ridesNeeded_one: '{count} ride needed',
+  needRideCount: '{count} need a ride',
+  needRideCount_one: '1 needs a ride',
   spotsLeft: '{n} spots left',
   full: 'Full',
   postEventReimbTitle: 'Post-Event Driver Reimbursements',

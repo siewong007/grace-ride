@@ -7,7 +7,7 @@ import LiveMap, { MapPoint } from '../LiveMap';
 import type { Ride } from '../RideCard';
 import { ShareLocation } from '../TripActions';
 import type { RideEta } from '../TripRoute';
-import { Button, Card, IconButton, Notice, Pill, useAction } from '../ui';
+import { Button, Card, Notice, Pill, useAction } from '../ui';
 
 interface RideLocation {
   sharing: boolean;
@@ -128,12 +128,9 @@ export function CollapsibleTrackCard({ ride }: { ride: Ride }) {
               {t('lastUpdated')} {fmtAgo(data.updated_at, ft)}
             </span>
           )}
-          <IconButton
-            size="sm"
-            variant="ghost"
-            label={collapsed ? t('tripMapExpand') : t('tripMapCollapse')}
-            icon={collapsed ? <ChevronDown size={18} /> : <ChevronUp size={18} />}
-          />
+          <span className="muted" aria-hidden="true">
+            {collapsed ? <ChevronDown size={18} /> : <ChevronUp size={18} />}
+          </span>
         </div>
       </button>
 

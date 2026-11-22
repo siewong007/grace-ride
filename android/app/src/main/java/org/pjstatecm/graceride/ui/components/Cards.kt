@@ -94,8 +94,12 @@ fun RideCard(ride: Ride, onClick: () -> Unit, modifier: Modifier = Modifier) {
                 overflow = TextOverflow.Ellipsis,
                 modifier = Modifier.padding(top = Spacing.xxs),
             )
+            val proxyLabel = if (ride.isProxy && !ride.proxy?.riderName.isNullOrBlank()) {
+                stringResource(R.string.ride_proxy_label, ride.proxy!!.riderName)
+            } else null
             val subtitle = buildString {
-                ride.driver?.name?.let { append(it) }
+                proxyLabel?.let { append(it) }
+                ride.driver?.name?.let { if (isNotEmpty()) append(" · "); append(it) }
                 ride.event?.title?.let { if (isNotEmpty()) append(" · "); append(it) }
                 if (ride.leg == "return") { if (isNotEmpty()) append(" · "); append(stringResource(R.string.ride_leg_return)) }
             }
@@ -122,7 +126,12 @@ fun RideCard(ride: Ride, onClick: () -> Unit, modifier: Modifier = Modifier) {
 }
 
 @Composable
-fun EventCard(event: EventItem, onClick: () -> Unit, modifier: Modifier = Modifier) {
+fun EventCard(
+    event: EventItem,
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier,
+    ridesNeeded: Int = 0,
+) {
     OutlinedCard(onClick = onClick, modifier = modifier.fillMaxWidth()) {
         Column(Modifier.padding(Spacing.sm)) {
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
@@ -134,15 +143,30 @@ fun EventCard(event: EventItem, onClick: () -> Unit, modifier: Modifier = Modifi
                     overflow = TextOverflow.Ellipsis,
                     modifier = Modifier.weight(1f, fill = false),
                 )
-                event.mySignup?.takeIf { it.status == "going" || it.status == "waitlist" }?.let {
-                    val c = LocalStatusColors.current
-                    val (fg, bg) = if (it.status == "going") c.success to c.successSoft else c.warning to c.warningSoft
-                    Surface(color = bg, contentColor = fg, shape = CircleShape) {
-                        Text(
-                            stringResource(if (it.status == "going") R.string.event_going else R.string.event_waitlist),
-                            style = MaterialTheme.typography.labelMedium,
-                            modifier = Modifier.padding(horizontal = Spacing.xs, vertical = Spacing.xxs),
-                        )
+                Row(horizontalArrangement = Arrangement.spacedBy(Spacing.xxs), verticalAlignment = Alignment.CenterVertically) {
+                    if (ridesNeeded > 0) {
+                        Surface(
+                            color = MaterialTheme.colorScheme.primaryContainer,
+                            contentColor = MaterialTheme.colorScheme.onPrimaryContainer,
+                            shape = CircleShape,
+                        ) {
+                            Text(
+                                stringResource(R.string.event_rides_needed, ridesNeeded),
+                                style = MaterialTheme.typography.labelMedium,
+                                modifier = Modifier.padding(horizontal = Spacing.xs, vertical = Spacing.xxs),
+                            )
+                        }
+                    }
+                    event.mySignup?.takeIf { it.status == "going" || it.status == "waitlist" }?.let {
+                        val c = LocalStatusColors.current
+                        val (fg, bg) = if (it.status == "going") c.success to c.successSoft else c.warning to c.warningSoft
+                        Surface(color = bg, contentColor = fg, shape = CircleShape) {
+                            Text(
+                                stringResource(if (it.status == "going") R.string.event_going else R.string.event_waitlist),
+                                style = MaterialTheme.typography.labelMedium,
+                                modifier = Modifier.padding(horizontal = Spacing.xs, vertical = Spacing.xxs),
+                            )
+                        }
                     }
                 }
             }

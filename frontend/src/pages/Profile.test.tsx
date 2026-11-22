@@ -416,12 +416,12 @@ describe('Profile compact layout', () => {
     expect(screen.getByText('JBSWY3DPEHPK3PXP')).toBeInTheDocument();
   });
 
-  it('renders PWA install banner and row when not yet installed, and opens setup guide modal', () => {
+  it('renders a single clean PWA install row when not yet installed, and opens setup guide modal', () => {
     _setInstalledForTesting(false);
     _setDeferredPromptForTesting(null);
     renderProfile(baseMe);
 
-    expect(screen.getByText('Add Grace Ride to Home Screen')).toBeInTheDocument();
+    expect(screen.queryByText('Add Grace Ride to Home Screen')).not.toBeInTheDocument();
     const installRow = screen.getByRole('button', { name: /Add App to Home Screen/i });
     expect(installRow).toBeInTheDocument();
 
@@ -450,7 +450,7 @@ describe('Profile compact layout', () => {
     await waitFor(() => expect(promptMock).toHaveBeenCalled());
   });
 
-  it('shows installed status badge and hides banner when already installed', () => {
+  it('shows installed status badge when already installed', () => {
     _setInstalledForTesting(true);
     _setDeferredPromptForTesting(null);
     renderProfile(baseMe);

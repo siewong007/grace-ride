@@ -73,4 +73,6 @@ export default {
   returnTime: '返程接送时间',
   returnHint: '将从目的地接回您的上车地址',
   savedPlaceApplied: '已填入常用地点：{label}',
+  autoPrefilledPlace: '已自动填入常用地点：{label}',
+  autoPrefilledLast: '已自动填入上次上车资料',
 };

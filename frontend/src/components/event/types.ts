@@ -5,6 +5,7 @@ export interface EventFull extends EventItem {
   /** Groups this member may join as (best match first). */
   join_as?: { id: number; name: string }[];
   my_ride: { id: number; status: string } | null;
+  my_return_ride?: { id: number; status: string } | null;
   settlement: { id: number; status: string } | null;
 }
 

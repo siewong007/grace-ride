@@ -73,4 +73,6 @@ export default {
   returnTime: 'Return pickup time',
   returnHint: 'Picks up from destination back to pickup address',
   savedPlaceApplied: 'Applied saved place: {label}',
+  autoPrefilledPlace: 'Prefilled from saved place: {label}',
+  autoPrefilledLast: 'Prefilled from your last pickup',
 };

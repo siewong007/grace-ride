@@ -131,7 +131,7 @@ describe('RideCard', () => {
 });
 
 describe('Home page', () => {
-  it('renders greeting, one main action, and the next ride', () => {
+  it('renders greeting, event-first focus ride, and omits empty dashboard widgets', () => {
     render(
       <MemoryRouter>
         <Home />
@@ -139,13 +139,41 @@ describe('Home page', () => {
     );
 
     expect(screen.getByRole('heading', { level: 1 })).toBeInTheDocument();
-    // One ride action, and it leads to events: a ride is asked for from an event page.
-    const rideLinks = screen.getAllByRole('link', { name: /find an event to ride to/i });
-    expect(rideLinks).toHaveLength(1);
-    expect(rideLinks[0]).toHaveAttribute('href', '/events');
     expect(screen.getByRole('region', { name: /upcoming ride/i })).toBeInTheDocument();
+    expect(screen.getAllByText(/Sunday Service/i).length).toBeGreaterThan(0);
     expect(screen.getAllByText(/David Driver/i).length).toBeGreaterThan(0);
     expect(screen.getAllByText(/Grace Community Church/i).length).toBeGreaterThan(0);
+    expect(screen.queryByText(/no driving tasks today/i)).not.toBeInTheDocument();
+    expect(screen.queryByRole('link', { name: /find an event to ride to/i })).not.toBeInTheDocument();
+  });
+
+  it('shows an RSVP event focus with contextual ride CTA when no ride is booked yet', () => {
+    const savedRides = mockApiData['/rides'];
+    const savedEvents = mockApiData['/events'];
+    mockApiData['/rides'] = [];
+    mockApiData['/events'] = [
+      {
+        id: 101,
+        title: 'Sunday Service',
+        kind: 'service',
+        location: 'Grace Hall',
+        starts_at: '2099-11-15T09:00:00',
+        my_signup: { status: 'going' },
+      },
+    ];
+    try {
+      render(
+        <MemoryRouter>
+          <Home />
+        </MemoryRouter>
+      );
+
+      expect(screen.getByText(/transportation not arranged yet/i)).toBeInTheDocument();
+      expect(screen.getByRole('link', { name: /i need a ride/i })).toHaveAttribute('href', '/rides/new?event=101');
+    } finally {
+      mockApiData['/rides'] = savedRides;
+      mockApiData['/events'] = savedEvents;
+    }
   });
 });
 
@@ -266,6 +294,32 @@ describe('RideNew page', () => {
 
     const alerts = screen.getAllByRole('alert');
     expect(alerts.length).toBeGreaterThan(0);
+  });
+
+  it('auto-prefills area and pickup address from default saved place', () => {
+    mockApiData['/saved-places'] = [
+      {
+        id: 5,
+        label: 'Home',
+        area_id: 1,
+        area_name: 'Petaling Jaya',
+        address: '88 Jalan Bahagia, PJ',
+        gate_notes: 'Ring bell',
+        is_default: 1,
+      },
+    ];
+    try {
+      render(
+        <MemoryRouter initialEntries={['/rides/new?event=1']}>
+          <RideNew />
+        </MemoryRouter>
+      );
+
+      expect(screen.getByDisplayValue('88 Jalan Bahagia, PJ')).toBeInTheDocument();
+      expect(screen.getByText(/prefilled from saved place: home/i)).toBeInTheDocument();
+    } finally {
+      delete mockApiData['/saved-places'];
+    }
   });
 });
 

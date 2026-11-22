@@ -52,7 +52,8 @@ fun EventsScreen(container: AppContainer, nav: NavHostController) {
                     if (state.offline) item { OfflineBanner() }
                     if (state.events.isEmpty()) item { EmptyView(stringResource(R.string.events_empty)) }
                     items(state.events, key = { it.id }) { event ->
-                        EventCard(event, onClick = { nav.navigate(Routes.eventDetail(event.id)) })
+                        val needed = if (state.tab == 0) state.requestsByEvent[event.id] ?: 0 else 0
+                        EventCard(event, onClick = { nav.navigate(Routes.eventDetail(event.id)) }, ridesNeeded = needed)
                     }
                 }
             }

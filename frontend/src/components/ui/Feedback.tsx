@@ -125,8 +125,9 @@ export function ListSkeleton({ count = 3 }: { count?: number }) {
  * Card skeleton placeholder rendering container cards with shimmering lines.
  */
 export function CardSkeleton({ count = 1 }: { count?: number }) {
+  const wrapperClass = count === 1 ? 'stack' : 'grid cols-2';
   return (
-    <div className="grid cols-2" aria-hidden="true">
+    <div className={wrapperClass} aria-hidden="true">
       {Array.from({ length: count }).map((_, i) => (
         <div key={i} className="card stack">
           <Skeleton width="40%" height="1.2rem" />
@@ -205,8 +206,20 @@ export const Spinner = () => {
   );
 };
 
-export const ErrorBox = ({ error }: { error?: string | null }) =>
-  error ? <div className="error" role="alert">{error}</div> : null;
+export function ErrorBox({ error, onRetry }: { error?: string | null; onRetry?: () => void }) {
+  const { t } = useTranslation();
+  if (!error) return null;
+  return (
+    <div className="error error-box-row" role="alert">
+      <span className="grow min-w-0">{error}</span>
+      {onRetry && (
+        <button type="button" className="btn sm secondary error-retry" onClick={onRetry}>
+          {t('tryAgain')}
+        </button>
+      )}
+    </div>
+  );
+}
 
 export interface AvatarProps {
   name: string;

@@ -129,6 +129,10 @@ describe('Drive page - Schedule tab', () => {
     expect(screen.getByRole('button', { name: /start trip/i })).toBeInTheDocument();
     expect(screen.getByRole('button', { name: /picked up/i })).toBeInTheDocument();
     expect(screen.getByRole('button', { name: /no-show/i })).toBeInTheDocument();
+    const disclosures = screen.getAllByText(/notify delay or withdraw/i);
+    expect(disclosures.length).toBeGreaterThan(0);
+    fireEvent.click(disclosures[0]);
+    expect(screen.getAllByRole('button', { name: /notify 5 min late/i }).length).toBeGreaterThan(0);
   });
 
   it('renders browse events CTA when schedule has no rides', () => {

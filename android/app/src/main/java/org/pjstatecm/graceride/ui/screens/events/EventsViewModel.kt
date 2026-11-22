@@ -19,6 +19,7 @@ data class EventsUiState(
     val offline: Boolean = false,
     val error: String? = null,
     val events: List<EventItem> = emptyList(),
+    val requestsByEvent: Map<Long, Int> = emptyMap(),
 )
 
 class EventsViewModel(private val container: AppContainer) : ViewModel() {
@@ -39,8 +40,28 @@ class EventsViewModel(private val container: AppContainer) : ViewModel() {
         viewModelScope.launch {
             _state.value = _state.value.copy(loading = first, refreshing = !first)
             try {
-                val events = if (_state.value.tab == 0) container.events.upcoming() else container.events.past()
-                _state.value = _state.value.copy(loading = false, refreshing = false, events = events, error = null, offline = false)
+                val tab = _state.value.tab
+                val events = if (tab == 0) container.events.upcoming() else container.events.past()
+                val requestsByEvent = if (tab == 0 && container.auth.me?.can("drive") == true) {
+                    try {
+                        container.rides.driverRequests(mineAreas = true)
+                            .mapNotNull { it.event?.id }
+                            .groupingBy { it }
+                            .eachCount()
+                    } catch (_: ApiException) {
+                        emptyMap()
+                    }
+                } else {
+                    emptyMap()
+                }
+                _state.value = _state.value.copy(
+                    loading = false,
+                    refreshing = false,
+                    events = events,
+                    requestsByEvent = requestsByEvent,
+                    error = null,
+                    offline = false,
+                )
             } catch (e: ApiException) {
                 _state.value = _state.value.copy(
                     loading = false, refreshing = false,

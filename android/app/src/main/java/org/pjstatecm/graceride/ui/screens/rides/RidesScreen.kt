@@ -44,7 +44,7 @@ fun RidesScreen(container: AppContainer, nav: NavHostController) {
         floatingActionButton = {
             if (state.tab == 0) {
                 ExtendedFloatingActionButton(
-                    onClick = { nav.navigate(Routes.RIDE_NEW) },
+                    onClick = { nav.navigate(Routes.rideNew()) },
                     icon = { Icon(Icons.Filled.Add, contentDescription = null) },
                     text = { Text(stringResource(R.string.rides_book)) },
                 )

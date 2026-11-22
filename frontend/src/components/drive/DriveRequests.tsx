@@ -83,19 +83,19 @@ export function DriveRequests({ eventId }: { eventId?: number } = {}) {
         )}
       </div>
 
-      <ErrorBox error={error ?? actErr} />
+      <ErrorBox error={error ?? actErr} onRetry={reload} />
 
       {loading ? (
         <CardSkeleton count={3} />
       ) : !data?.length ? (
         <EmptyState title={t('noRequests')} />
       ) : (
-        <div className="driver-requests-grid">
+        <div className={eventId ? 'stack' : 'driver-requests-grid'}>
           {data.map((r) => (
-            <div key={r.id} className="driver-request-card">
+            <div key={r.id} className={eventId ? 'detail-section' : 'driver-request-card'}>
               <div className="driver-request-card-head">
                 <span className="driver-request-area">{r.area.name}</span>
-                {r.event && <Pill tone="blue">{r.event.title ?? t('churchEvent', { ns: 'rideCard' })}</Pill>}
+                {r.event && <span className="muted small">{r.event.title ?? t('churchEvent', { ns: 'rideCard' })}</span>}
               </div>
 
               <div className="driver-request-meta">
@@ -135,14 +135,17 @@ export function DriveRequests({ eventId }: { eventId?: number } = {}) {
               </div>
 
               {can('drive', 'create') && (
-                <Button
-                  variant="primary"
-                  block
-                  disabled={busy}
-                  onClick={() => claim(r.id)}
-                >
-                  {t('offerToDrive')}
-                </Button>
+                <div className={eventId ? 'btn-row' : undefined}>
+                  <Button
+                    variant="primary"
+                    size={eventId ? 'sm' : 'md'}
+                    block={!eventId}
+                    disabled={busy}
+                    onClick={() => claim(r.id)}
+                  >
+                    {t('offerToDrive')}
+                  </Button>
+                </div>
               )}
             </div>
           ))}

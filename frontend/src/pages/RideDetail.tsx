@@ -74,12 +74,22 @@ export default function RideDetail() {
     !liveRide && error && auth?.me?.id && id ? loadTodayRideById(auth.me.id, Number(id)) : null;
   const r = liveRide ?? offlineFallback?.ride ?? null;
 
-  if (error && !offlineFallback) return <ErrorBox error={error} />;
+  if (error && !offlineFallback) {
+    return (
+      <Page width="wide">
+        <ErrorBox error={error} onRetry={reload} />
+      </Page>
+    );
+  }
   // Never act on a ride other than the one in the URL, even for a moment.
   if (!r || String(r.id) !== id) return <Spinner />;
 
   const chatVisible = r.trip_id != null && (r.viewer.is_passenger || r.viewer.is_driver || r.viewer.is_staff);
   const live = r.status === 'in_progress';
+  const showHelpLink = r.viewer.is_passenger || r.viewer.is_driver;
+  const showCareLink =
+    (r.viewer.is_passenger || (r.viewer.is_staff && canAct('admin_rides', 'update'))) &&
+    !['completed', 'cancelled', 'no_show', 'alt_transport'].includes(r.status);
   // The passenger has something to do now (answer a driver, say they are ready or late):
   // show those controls beside the driver card on every screen, not at the bottom or
   // behind "More actions".
@@ -98,6 +108,15 @@ export default function RideDetail() {
   return (
     <Page width="wide">
       <div className="stack">
+        {r.event && (
+          <div className="muted small">
+            {r.event.id != null ? (
+              <Link to={`/events/${r.event.id}`}>{r.event.title ?? t('churchEvent', { ns: 'rideCard' })}</Link>
+            ) : (
+              <span>{t('churchEvent', { ns: 'rideCard' })}</span>
+            )}
+          </div>
+        )}
         {/* Status Header */}
         <PageHeader
           title={fmtDateTime(r.pickup_at, ft)}
@@ -180,17 +199,22 @@ export default function RideDetail() {
                 />
               </div>
             )}
-            {(r.viewer.is_passenger || r.viewer.is_driver) && (
-              <Button variant="ghost" to={`/help?ride=${r.id}`} icon={<LifeBuoy size={18} />}>
-                {t('needHelp')}
-              </Button>
+            {(showHelpLink || showCareLink) && (
+              <div className="detail-section">
+                <div className="btn-row">
+                  {showHelpLink && (
+                    <Button variant="ghost" size="sm" to={`/help?ride=${r.id}`} icon={<LifeBuoy size={16} />}>
+                      {t('needHelp')}
+                    </Button>
+                  )}
+                  {showCareLink && (
+                    <Button variant="ghost" size="sm" onClick={() => setCareModal(true)} icon={<ShieldCheck size={16} />}>
+                      {t('careLinkBtn')}
+                    </Button>
+                  )}
+                </div>
+              </div>
             )}
-            {(r.viewer.is_passenger || (r.viewer.is_staff && canAct('admin_rides', 'update'))) &&
-              !['completed', 'cancelled', 'no_show', 'alt_transport'].includes(r.status) && (
-                <Button variant="ghost" size="sm" onClick={() => setCareModal(true)} icon={<ShieldCheck size={16} />}>
-                  {t('careLinkBtn')}
-                </Button>
-              )}
             {careModal && <CareLinkModal ride={r} onClose={() => setCareModal(false)} />}
           </div>
         </div>
