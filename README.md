@@ -6,7 +6,8 @@
   **Privacy-first volunteer carpooling, fellowship events, and activity cost-sharing for PJ State CMC.**
 
   [![Rust](https://img.shields.io/badge/Rust-Axum-000000?style=flat-square&logo=rust)](backend/)
-  [![Frontend](https://img.shields.io/badge/React_18-TypeScript-1F5DB4?style=flat-square&logo=react)](frontend/)
+  [![Frontend](https://img.shields.io/badge/React_19-TypeScript-1F5DB4?style=flat-square&logo=react)](frontend/)
+  [![Android](https://img.shields.io/badge/Android-Compose-3DDC84?style=flat-square&logo=android)](android/)
   [![Database](https://img.shields.io/badge/PostgreSQL-18-336791?style=flat-square&logo=postgresql)](backend/migrations/)
   [![Auth](https://img.shields.io/badge/Auth-Passkeys_%26_2FA-2B7549?style=flat-square)](docs/TECHNICAL.md#7-security-model)
   [![License](https://img.shields.io/badge/License-Proprietary-474A4F?style=flat-square)](LICENSE)
@@ -63,19 +64,27 @@ Password for all demo accounts: `GraceRide2026!` · Simulated TOTP secret: `MFRG
 |---|---|---|
 | **API & Jobs** | Rust, Axum, SQLx, WebAuthn, Tokio, SSE | [`backend/`](backend/) |
 | **Web App** | React 19, TypeScript, Vite, Leaflet, i18next | [`frontend/`](frontend/) |
+| **Android App** | Kotlin 2.2, Jetpack Compose, Material 3, MVVM | [`android/`](android/) |
 | **Database** | PostgreSQL 18 (numbered SQLx migrations) | [`backend/migrations/`](backend/migrations/) |
 | **Ops & Deploy** | Docker, Caddy, OSRM, GitHub Actions, encrypted backup/restore scripts | [`deploy/`](deploy/), [`scripts/`](scripts/) |
 
 ## Documentation
 
-All detailed engineering, operational, security, and legal documentation lives in **[`docs/TECHNICAL.md`](docs/TECHNICAL.md)** (paired with **[`SECURITY.md`](SECURITY.md)** for private vulnerability reporting):
+- **[`docs/TECHNICAL.md`](docs/TECHNICAL.md)** — Authoritative engineering, architecture, configuration & compliance reference
+- **[`docs/USER_MANUAL.md`](docs/USER_MANUAL.md)** — Church member & elder user guide (bilingual context, elder-friendly)
+- **[`docs/ADMIN_MANUAL.md`](docs/ADMIN_MANUAL.md)** — Administration, transport planning, and finance operations manual
+- **[`docs/BETA_TESTING_PLAN.md`](docs/BETA_TESTING_PLAN.md)** — Closed beta testing rollout & verification plan
+- **[`docs/android/README.md`](docs/android/README.md)** — Native Android app architecture, setup & test guide
+- **[`SECURITY.md`](SECURITY.md)** — Vulnerability reporting policy and responsible disclosure runbook
+
+Detailed sections in **[`docs/TECHNICAL.md`](docs/TECHNICAL.md)**:
 
 - [Local Development & Tooling](docs/TECHNICAL.md#1-local-development--tooling) — setup, `docker-compose.dev.yml`, demo fixtures, and `Makefile` shortcuts
 - [Features & Module Inventory](docs/TECHNICAL.md#2-features--module-inventory) — all 16 modules, routes, and explicit boundaries
 - [User & Operational Workflows](docs/TECHNICAL.md#3-user--operational-workflows) — ride state machine, concurrency locks, and maintenance rules
 - [System Architecture & Database](docs/TECHNICAL.md#4-system-architecture--database) — topology, 27-page / 67-permission catalog, and the consolidated `0001` migration baseline
 - [Configuration & Deployment](docs/TECHNICAL.md#5-configuration--deployment-runbook) — environment variables, Docker Compose, self-hosted OSRM, AIC VPS CI/CD, and encrypted backups
-- [Testing & Verification](docs/TECHNICAL.md#6-testing--verification) — Cargo, Vitest, and Playwright suites
+- [Testing & Verification](docs/TECHNICAL.md#6-testing--verification) — Cargo, Vitest, Android, and Playwright suites
 - [Security Model](docs/TECHNICAL.md#7-security-model) — auth, RBAC invariants, pass isolation, privacy projections, and accepted risks
 - [Compliance, PDPA & Malaysian Law](docs/TECHNICAL.md#8-compliance-pdpa--malaysian-law) — PDPA review, breach runbook, OSM/OSRM policies, and transport law
 - [Copyright, Third-Party Notices & Brand Kit](docs/TECHNICAL.md#9-copyright-third-party-notices--brand-kit) — OSS licences and [`docs/brand/`](docs/brand/grace-ride-logo-kit/) guidelines

@@ -31,62 +31,57 @@ interface Announcement {
   created_at: string;
 }
 
-/** Shares the member still has to pay. */
+/** Shares the member still has to pay. `pending` (receipt sent) and `confirmed` need nothing from them. */
 const TO_PAY = ['unpaid', 'needs_info'];
 
-/**
- * A titled section on Home — heading + optional "see all" link, then content.
- * Uses uppercase label style (not a heavy card container).
- */
-function Section({
-  title,
-  more,
-  children,
-}: {
-  title: ReactNode;
-  more?: { to: string; label: string };
-  children: ReactNode;
-}) {
+/** A titled list on Home: heading, optional link on the right, then rows. No frame around it. */
+function Section({ title, more, children }: { title: ReactNode; more?: { to: string; label: string }; children: ReactNode }) {
   return (
-    <section>
-      <div className="home-section-head">
+    <section className="home-section">
+      <div className="section-head">
         <h2>{title}</h2>
-        {more && (
-          <Link to={more.to} className="small muted">
-            {more.label}
-          </Link>
-        )}
+        {more && <Link to={more.to} className="small">{more.label}</Link>}
       </div>
       {children}
     </section>
   );
 }
 
+/** One "Needs you" row: what is waiting, when, and a single verb. The whole row is the link. */
+function NeedRow({ to, title, sub, cta }: { to: string; title: ReactNode; sub: ReactNode; cta: string }) {
+  return (
+    <Link to={to} className="item home-need">
+      <span className="grow">
+        <span className="bold">{title}</span>
+        <span className="small muted">{sub}</span>
+      </span>
+      <span className="home-need-cta nowrap">
+        {cta}
+        <ChevronRight size={16} aria-hidden="true" />
+      </span>
+    </Link>
+  );
+}
+
 /**
- * Home answers three questions in order:
- *   1. What needs me right now?
- *   2. What is my next ride?
- *   3. What else is coming up?
- *
- * Sections with nothing in them are omitted. Only one primary action is shown at a time.
+ * Home answers three questions, in order: what needs me, when is my next ride, what is
+ * coming up. Sections with nothing in them are left out, and there is at most one blue
+ * button on the screen.
  */
 export default function Home() {
   const { t, i18n } = useTranslation('home');
   const ft = useFormatT();
   const { me, can } = useAuth();
-
+  // Each block loads only when the member may open the page it belongs to.
   const rides = useApi<Ride[]>(can('rides') ? '/rides' : null, 30000);
   const events = useApi<EventItem[]>(can('events') ? '/events' : null);
   const shares = useApi<Share[]>(can('costs') ? '/me/shares' : null);
   const ann = useApi<Announcement[]>('/announcements');
-
   const today = todayStr();
   const nextWeek = new Date();
   nextWeek.setDate(nextWeek.getDate() + 7);
   const nextWeekStr = localDate(nextWeek);
-  const driving = useApi<Ride[]>(
-    can('drive') ? `/driver/schedule?from=${today}&to=${nextWeekStr}` : null,
-  );
+  const driving = useApi<Ride[]>(can('drive') ? `/driver/schedule?from=${today}&to=${nextWeekStr}` : null);
 
   const [showComfort, setShowComfort] = useState(() => {
     try {
@@ -102,7 +97,7 @@ export default function Home() {
     try {
       localStorage.setItem('gr-comfort-dismissed', '1');
     } catch {
-      /* ignore */
+      // ignore
     }
     setShowComfort(false);
   };
@@ -115,23 +110,19 @@ export default function Home() {
     }
   }, [me?.id, rides.data, driving.data]);
 
-  const offlineSnap =
-    !rides.data && rides.error && me?.id ? loadTodayRidesSnapshot(me.id) : null;
-
+  const offlineSnap = !rides.data && rides.error && me?.id ? loadTodayRidesSnapshot(me.id) : null;
   const myRides = rides.data ?? (offlineSnap ? offlineSnap.rides.filter((r) => r.viewer?.is_passenger) : []);
-  const allDriving =
-    driving.data ?? (offlineSnap ? offlineSnap.rides.filter((r) => r.viewer?.is_driver) : []);
+  const allDriving = driving.data ?? (offlineSnap ? offlineSnap.rides.filter((r) => r.viewer?.is_driver) : []);
   const todaysDriving = allDriving.filter((r) => r.pickup_at.slice(0, 10) === today);
   const upcomingDriving = allDriving.filter((r) => r.pickup_at.slice(0, 10) > today);
   const next = myRides[0];
-
-  const awaitingReply = myRides.filter(
-    (r) => r.status === 'pending_passenger' && r.viewer?.is_passenger && r.driver,
-  );
+  // Rides where a driver has offered and only the member's answer is missing.
+  const awaitingReply = myRides.filter((r) => r.status === 'pending_passenger' && r.viewer?.is_passenger && r.driver);
   const toPay = (shares.data ?? []).filter((s) => TO_PAY.includes(s.status));
 
-  // Coming up: member's other rides, upcoming driving, events they are going to.
+  // Coming up: the member's other rides, upcoming driving, and the events they are going to, in date order.
   const comingUp = [
+    // Rides already listed under "Needs you" are not repeated here.
     ...myRides
       .slice(1)
       .filter((r) => !awaitingReply.includes(r))
@@ -142,41 +133,32 @@ export default function Home() {
       .map((e) => ({ kind: 'event' as const, at: e.starts_at, event: e })),
   ]
     .sort((a, b) => a.at.localeCompare(b.at))
-    .slice(0, 4);
+    .slice(0, 3);
 
   const isDriverToday = can('drive') && (driving.loading || todaysDriving.length > 0);
   const canRequest = can('rides', 'create');
-
-  const formattedToday = new Date().toLocaleDateString(
-    i18n.language === 'zh' ? 'zh-CN' : 'en-GB',
-    { weekday: 'long', day: 'numeric', month: 'long' },
-  );
-
-  const announcements = [...(ann.data ?? [])]
-    .sort((a, b) => Number(b.pinned) - Number(a.pinned))
-    .slice(0, 3);
-
-  const hasNeeds = awaitingReply.length > 0 || toPay.length > 0;
+  // The whole date ("Friday 20 November"), not just "Today".
+  const formattedToday = new Date().toLocaleDateString(i18n.language === 'zh' ? 'zh-CN' : 'en-GB', {
+    weekday: 'long',
+    day: 'numeric',
+    month: 'long',
+  });
+  // Pinned first, then newest; Home shows one line and folds the rest away.
+  const announcements = [...(ann.data ?? [])].sort((a, b) => Number(b.pinned) - Number(a.pinned)).slice(0, 3);
 
   return (
     <Page width="medium">
       <div className="home">
-        {/* Greeting */}
-        <div className="home-greeting">
-          <div className="row between nowrap">
-            <div>
-              <h1>
-                {greeting(ft)}
-                {me?.name ? `, ${me.name}` : ''}
-              </h1>
-              <p className="home-date muted">{formattedToday}</p>
-            </div>
-            {can('admin_dashboard') && (
-              <Link className="btn sm hide-mobile" to="/admin">
-                {t('dashboard')}
-              </Link>
-            )}
+        <div className="page-head home-head">
+          <div>
+            <h1>{greeting(ft)}{me?.name ? `, ${me.name}` : ''}</h1>
+            <p className="muted">{formattedToday}</p>
           </div>
+          {can('admin_dashboard') && (
+            <div className="btn-row page-head-actions hide-mobile">
+              <Link className="btn" to="/admin">{t('dashboard')}</Link>
+            </div>
+          )}
         </div>
 
         {offlineSnap && (
@@ -185,51 +167,34 @@ export default function Home() {
           </Notice>
         )}
 
-        {/* 1. Needs you — only when something awaits the member */}
-        {hasNeeds && (
+        {/* 1. Needs you — only when something is waiting on the member. */}
+        {(awaitingReply.length > 0 || toPay.length > 0) && (
           <Section title={t('needsYou')}>
-            <div>
+            <div className="list">
               {awaitingReply.map((r) => (
-                <Link
+                <NeedRow
                   key={`r${r.id}`}
                   to={`/rides/${r.id}`}
-                  className="home-need-row"
-                >
-                  <div className="home-need-row-body">
-                    <span className="home-need-row-title">
-                      {t('replyNeeded', { name: r.driver!.name })}
-                    </span>
-                    <span className="home-need-row-sub">
-                      {fmtDay(r.pickup_at, ft)} · {fmtTime(r.pickup_at, ft)} · {r.destination}
-                    </span>
-                  </div>
-                  <span className="home-need-row-cta">
-                    {t('replyCta')}
-                    <ChevronRight size={14} aria-hidden="true" />
-                  </span>
-                </Link>
+                  title={t('replyNeeded', { name: r.driver!.name })}
+                  sub={`${fmtDay(r.pickup_at, ft)} · ${fmtTime(r.pickup_at, ft)} · ${r.destination}`}
+                  cta={t('replyCta')}
+                />
               ))}
+              {/* My costs is where a share is paid (bank details, receipt upload). */}
               {toPay.map((s) => (
-                <Link key={`s${s.id}`} to="/costs" className="home-need-row">
-                  <div className="home-need-row-body">
-                    <span className="home-need-row-title">
-                      {s.title} · {rm(s.amount_cents)}
-                    </span>
-                    <span className="home-need-row-sub">
-                      {s.due_date ? t('dueBy', { date: fmtDay(s.due_date, ft) }) : t('toPay')}
-                    </span>
-                  </div>
-                  <span className="home-need-row-cta">
-                    {t('payCta')}
-                    <ChevronRight size={14} aria-hidden="true" />
-                  </span>
-                </Link>
+                <NeedRow
+                  key={`s${s.id}`}
+                  to="/costs"
+                  title={`${s.title} · ${rm(s.amount_cents)}`}
+                  sub={s.due_date ? t('dueBy', { date: fmtDay(s.due_date, ft) }) : t('toPay')}
+                  cta={t('payCta')}
+                />
               ))}
             </div>
           </Section>
         )}
 
-        {/* Onboarding steps for new members */}
+        {/* New members: first steps, until done or hidden. */}
         {!rides.loading && !events.loading && (
           <GettingStarted
             hasRide={myRides.length > 0}
@@ -237,32 +202,27 @@ export default function Home() {
           />
         )}
 
-        {/* 2. Next ride — or the single primary action when nothing is booked */}
+        {/* 2. Next ride — or, with nothing booked, the one blue button. */}
         {rides.loading ? (
           <CardSkeleton count={1} />
         ) : next ? (
           <NextRide ride={next} onChange={rides.reload} />
         ) : !can('rides') || isDriverToday ? null : (
-          <div className="home-empty-state">
+          <section className="card home-empty">
             <h2>{t('noRide')}</h2>
             {canRequest && (
               <>
                 <p className="muted">{t('noRideHint')}</p>
-                <Button
-                  variant="primary"
-                  to="/events"
-                  icon={<CalendarPlus size={18} />}
-                >
+                <Button variant="primary" block to="/events" icon={<CalendarPlus size={20} />}>
                   {t('signupRide')}
                 </Button>
               </>
             )}
-          </div>
+          </section>
         )}
 
-        {/* Text-size comfort chooser (new members only, once) */}
         {!rides.loading && !next && !isDriverToday && showComfort && (
-          <div className="home-comfort-card">
+          <section className="card stack-sm home-comfort" aria-label={t('comfortTitle')}>
             <div>
               <div className="bold">{t('comfortTitle')}</div>
               <p className="muted small">{t('comfortBody')}</p>
@@ -278,54 +238,49 @@ export default function Home() {
                 {t('comfortKeep')}
               </Button>
             </div>
-          </div>
+          </section>
         )}
 
-        {/* 3. Driving today (volunteer drivers) */}
+        {/* Today's driving (drivers only). Always shown for drivers so the driving
+            pages stay one tap from Home even with nothing scheduled today — the
+            bottom tab bar no longer has a Drive tab. */}
         {can('drive') && (
-          <Section
-            title={t('driveSchedule')}
-            more={{ to: '/drive', label: t('seeAll') }}
-          >
+          <Section title={t('driveSchedule')} more={{ to: '/drive', label: t('seeAll') }}>
             {driving.loading ? (
               <ListSkeleton count={2} />
             ) : todaysDriving.length ? (
-              <div className="home-coming-list">
+              <div className="list">
                 {todaysDriving.map((r) => (
-                  <Link key={r.id} to={`/rides/${r.id}`} className="home-coming-row">
-                    <div className="home-coming-row-body">
-                      <span className="home-coming-row-title">{r.passenger.name}</span>
-                      <span className="home-coming-row-meta">
-                        {fmtTime(r.pickup_at, ft)} · {r.area.name} → {r.destination}
-                      </span>
+                  <Link key={r.id} to={`/rides/${r.id}`} className="item">
+                    <span className="timeline-time">{fmtTime(r.pickup_at, ft).replace(/^.. /, '')}</span>
+                    <div className="grow">
+                      <div className="bold">{r.passenger.name}</div>
+                      <div className="muted small">{r.area.name} → {r.destination}</div>
                     </div>
                     <StatusPill map={RIDE_STATUS} status={r.status} />
                   </Link>
                 ))}
               </div>
             ) : upcomingDriving.length ? (
-              <div className="home-coming-list">
-                <p className="home-drive-empty">{t('noDriveToday')}</p>
-                <Link to={`/rides/${upcomingDriving[0].id}`} className="home-coming-row">
-                  <div className="home-coming-row-body">
-                    <span className="home-coming-row-title">
-                      {t('nextDriveUpcoming', { when: fmtDay(upcomingDriving[0].pickup_at, ft) })}
-                    </span>
-                    <span className="home-coming-row-meta">
-                      {fmtTime(upcomingDriving[0].pickup_at, ft)} · {upcomingDriving[0].passenger.name} ·{' '}
-                      {upcomingDriving[0].destination}
-                    </span>
+              <div className="stack-sm">
+                <p className="muted small">{t('noDriveToday')}</p>
+                <Link to={`/rides/${upcomingDriving[0].id}`} className="item">
+                  <div className="grow">
+                    <div className="bold">{t('nextDriveUpcoming', { when: fmtDay(upcomingDriving[0].pickup_at, ft) })}</div>
+                    <div className="muted small">
+                      {fmtTime(upcomingDriving[0].pickup_at, ft)} · {upcomingDriving[0].passenger.name} · {upcomingDriving[0].area.name} → {upcomingDriving[0].destination}
+                    </div>
                   </div>
-                  <ChevronRight size={16} className="home-coming-row-side" aria-hidden="true" />
+                  <ChevronRight size={16} className="muted" aria-hidden="true" />
                 </Link>
               </div>
             ) : (
-              <p className="home-drive-empty">{t('noDriveToday')}</p>
+              <p className="muted">{t('noDriveToday')}</p>
             )}
           </Section>
         )}
 
-        {/* 4. Coming up */}
+        {/* 3. Coming up — the member's own plans only; other events stay on the Events tab. */}
         {(can('rides') || can('events')) && !rides.loading && (
           <Section
             title={t('comingUp')}
@@ -333,94 +288,78 @@ export default function Home() {
               myRides.length > 1
                 ? { to: '/rides', label: t('seeAll') }
                 : can('events')
-                ? { to: '/events', label: t('browseEvents') }
-                : undefined
+                  ? { to: '/events', label: t('browseEvents') }
+                  : undefined
             }
           >
             {events.loading ? (
               <ListSkeleton count={2} />
             ) : comingUp.length ? (
-              <div className="home-coming-list">
+              <div className="list">
                 {comingUp.map((c) =>
                   c.kind === 'ride' ? (
-                    <Link key={`r${c.ride.id}`} to={`/rides/${c.ride.id}`} className="home-coming-row">
-                      <div className="home-coming-row-body">
-                        <span className="home-coming-row-title">
-                          {t('rideTo', { place: c.ride.destination })}
-                        </span>
-                        <span className="home-coming-row-meta">
+                    <Link key={`r${c.ride.id}`} to={`/rides/${c.ride.id}`} className="item">
+                      <div className="grow">
+                        <div className="bold">{t('rideTo', { place: c.ride.destination })}</div>
+                        <div className="muted small">
                           {fmtDay(c.at, ft)} · {fmtTime(c.at, ft)} ·{' '}
-                          {ft(
-                            RIDE_STATUS_PASSENGER[c.ride.status]?.label ??
-                              RIDE_STATUS[c.ride.status]?.label ??
-                              c.ride.status,
-                          )}
-                        </span>
+                          {ft(RIDE_STATUS_PASSENGER[c.ride.status]?.label ?? RIDE_STATUS[c.ride.status]?.label ?? c.ride.status)}
+                        </div>
                       </div>
-                      <ChevronRight size={16} className="home-coming-row-side" aria-hidden="true" />
+                      <ChevronRight size={16} className="muted" aria-hidden="true" />
                     </Link>
                   ) : c.kind === 'drive' ? (
-                    <Link key={`d${c.ride.id}`} to={`/rides/${c.ride.id}`} className="home-coming-row">
-                      <div className="home-coming-row-body">
-                        <span className="home-coming-row-title">
-                          {t('driveFor', { name: c.ride.passenger.name })}
-                        </span>
-                        <span className="home-coming-row-meta">
+                    <Link key={`d${c.ride.id}`} to={`/rides/${c.ride.id}`} className="item">
+                      <div className="grow">
+                        <div className="bold">{t('driveFor', { name: c.ride.passenger.name })}</div>
+                        <div className="muted small">
                           {fmtDay(c.at, ft)} · {fmtTime(c.at, ft)} · {c.ride.destination}
-                        </span>
+                        </div>
                       </div>
-                      <ChevronRight size={16} className="home-coming-row-side" aria-hidden="true" />
+                      <ChevronRight size={16} className="muted" aria-hidden="true" />
                     </Link>
                   ) : (
-                    <Link key={`e${c.event.id}`} to={`/events/${c.event.id}`} className="home-coming-row">
-                      <div className="home-coming-row-body">
-                        <span className="home-coming-row-title">{c.event.title}</span>
-                        <span className="home-coming-row-meta">
+                    <Link key={`e${c.event.id}`} to={`/events/${c.event.id}`} className="item">
+                      <div className="grow">
+                        <div className="bold">{c.event.title}</div>
+                        <div className="muted small">
                           {fmtDay(c.at, ft)} · {fmtTime(c.at, ft)} · {t('going')}
-                        </span>
+                        </div>
                       </div>
-                      <ChevronRight size={16} className="home-coming-row-side" aria-hidden="true" />
+                      <ChevronRight size={16} className="muted" aria-hidden="true" />
                     </Link>
                   ),
                 )}
               </div>
             ) : (
-              <p className="home-drive-empty">{t('nothingComingUp')}</p>
+              <p className="muted">{t('nothingComingUp')}</p>
             )}
           </Section>
         )}
 
-        {/* Quiet secondary action once a ride is booked */}
+        {/* With a ride already booked, requesting another is a quiet secondary action. */}
         {next && canRequest && (
-          <div className="home-secondary-action">
-            <Button variant="ghost" size="sm" to="/events" icon={<CalendarPlus size={16} />}>
-              {t('signupRide')}
-            </Button>
-          </div>
+          <Button variant="secondary" block to="/events" icon={<CalendarPlus size={20} />}>
+            {t('signupRide')}
+          </Button>
         )}
 
-        {/* Announcements: one folded line */}
+        {/* Announcements: one line, the rest folded away. */}
         {announcements.length > 0 && (
-          <details className="home-ann">
+          <details className="home-announce">
             <summary>
-              {announcements[0].pinned && (
-                <Pin size={12} aria-hidden="true" className="muted" />
-              )}
-              <span className="home-ann-title">{announcements[0].title}</span>
-              {announcements.length > 1 && (
-                <span className="small muted">
-                  {t('moreAnnouncements', { n: announcements.length - 1 })}
-                </span>
-              )}
+              {announcements[0].pinned && <Pin size={14} aria-hidden="true" />}
+              <span className="grow home-announce-title">{announcements[0].title}</span>
+              {announcements.length > 1 && <span className="small muted nowrap">{t('moreAnnouncements', { n: announcements.length - 1 })}</span>}
             </summary>
-            <div className="home-ann-body">
+            <div className="stack">
               {announcements.map((a) => (
-                <article key={a.id} className="home-ann-article">
-                  <div className="home-ann-article-head">
+                <article key={a.id} className="stack-sm">
+                  <div className="row between nowrap">
                     <strong>{a.title}</strong>
                     <span className="muted small nowrap">{fmtDay(a.created_at, ft)}</span>
                   </div>
-                  <p className="muted small">{a.body}</p>
+                  <p className="muted">{a.body}</p>
                 </article>
               ))}
             </div>
@@ -431,10 +370,7 @@ export default function Home() {
   );
 }
 
-/**
- * The member's next ride. The card is the primary focus of Home on ride day.
- * On pickup day it also shows readiness controls.
- */
+/** The member's next ride. Tap anywhere on it to open the ride; on pickup day it also asks for readiness. */
 function NextRide({ ride, onChange }: { ride: Ride; onChange: () => void }) {
   const { t } = useTranslation(['home', 'rideDetail']);
   const ft = useFormatT();
@@ -444,134 +380,83 @@ function NextRide({ ride, onChange }: { ride: Ride; onChange: () => void }) {
   const d = ride.driver;
   const proxyName = ride.is_proxy && ride.proxy ? ride.proxy.rider_name : undefined;
   const isToday = ride.pickup_at.slice(0, 10) === todayStr();
-
+  // Same rule as the ride page: on the day, before pickup, for the passenger.
   const askReadiness =
     !!ride.viewer?.is_passenger &&
     can('rides', 'update') &&
     ride.pickup_at.slice(0, 10) <= todayStr() &&
-    (ride.status === 'confirmed' ||
-      (ride.status === 'in_progress' && !ride.picked_up_at));
+    (ride.status === 'confirmed' || (ride.status === 'in_progress' && !ride.picked_up_at));
 
   const say = (status: 'ready' | 'delayed_5m', done: string) =>
     run(() => post(`/rides/${ride.id}/readiness`, { status }).then(onChange), done);
 
   return (
-    <section
-      className={`home-next-hero${isToday ? ' is-today' : ''}`}
-      aria-labelledby="home-next-label home-next-time"
-    >
+    <section className={`card home-next${askReadiness ? ' home-next--today' : ''}`} aria-labelledby="home-next-label home-next-title">
       <div className="row between nowrap">
-        <span
-          id="home-next-label"
-          className="home-next-hero-label"
-        >
-          {isToday ? t('today') : t('nextRide')}
-        </span>
-        <StatusPill
-          map={ride.viewer?.is_passenger ? RIDE_STATUS_PASSENGER : RIDE_STATUS}
-          status={ride.status}
-        />
+        <span id="home-next-label" className="muted small">{isToday ? t('today') : t('nextRide')}</span>
+        <StatusPill map={ride.viewer?.is_passenger ? RIDE_STATUS_PASSENGER : RIDE_STATUS} status={ride.status} />
       </div>
 
-      <h2 id="home-next-time" className="home-next-hero-time">
-        <Link to={`/rides/${ride.id}`} className="home-next-hero-time-link" aria-label={t('nextRide')}>
-          {isToday
-            ? fmtTime(ride.pickup_at, ft)
-            : `${fmtDay(ride.pickup_at, ft)} · ${fmtTime(ride.pickup_at, ft)}`}
+      <h2 id="home-next-title" className="home-next-time">
+        {/* Stretched over the card, so the whole card opens the ride. */}
+        <Link to={`/rides/${ride.id}`} className="home-next-link">
+          {isToday ? fmtTime(ride.pickup_at, ft) : `${fmtDay(ride.pickup_at, ft)} · ${fmtTime(ride.pickup_at, ft)}`}
         </Link>
       </h2>
-
-      <p className="home-next-hero-route">
-        <span className="sr-only">{t('pickupArea')}: </span>
-        {ride.area.name}
-        <span className="home-next-hero-route-sep" aria-hidden="true"> → </span>
-        <span className="sr-only">, {t('destination')}: </span>
-        {ride.destination}
+      <p className="home-next-route">
+        <span className="sr-only">{t('pickupArea')}: </span>{ride.area.name}
+        <span aria-hidden="true"> → </span>
+        <span className="sr-only">, {t('destination')}: </span>{ride.destination}
       </p>
 
       {d && (
-        <div className="home-next-hero-driver">
-          <div className="home-next-hero-driver-info">
-            <div className="home-next-hero-driver-name">
-              {d.name}
-              <span className="muted"> · {t('yourDriver')}</span>
-            </div>
+        <div className="home-next-driver row nowrap">
+          <div className="grow">
+            <div className="bold">{d.name} <span className="muted">· {t('yourDriver')}</span></div>
             {d.vehicle && (
-              <div className="home-next-hero-driver-vehicle">
-                <span>
-                  {d.vehicle.color} {d.vehicle.model}
-                </span>
+              <div className="small muted row nowrap">
+                <span>{d.vehicle.color} {d.vehicle.model}</span>
                 <span className="plate">{d.vehicle.plate}</span>
               </div>
             )}
           </div>
           {d.phone && (
-            <a
-              className="icon-btn home-next-hero-above"
-              href={`tel:${d.phone}`}
-              aria-label={t('callDriver')}
-              style={{ position: 'relative', zIndex: 1 }}
-            >
-              <Phone size={18} />
+            <a className="icon-btn home-next-above" href={`tel:${d.phone}`} aria-label={t('callDriver')}>
+              <Phone size={20} />
             </a>
           )}
         </div>
       )}
 
       {askReadiness && (
-        <div className="home-next-hero-actions home-next-hero-above">
+        <div className="stack-sm home-next-above">
           {ride.readiness_status === 'ready' ? (
             <Notice tone="success">{t('rideDetail:readyConfirmed')}</Notice>
-          ) : ride.readiness_status === 'delayed_5m' ||
-            ride.readiness_status === 'delayed_10m' ? (
+          ) : ride.readiness_status === 'delayed_5m' || ride.readiness_status === 'delayed_10m' ? (
             <Notice tone="warning">{t('rideDetail:delayedConfirmed')}</Notice>
           ) : (
             <p className="small muted">{t('letDriverKnow')}</p>
           )}
-          <div className="home-ready-actions">
+          <div className="home-ready-row">
             <Button
               variant={ride.readiness_status === 'ready' ? 'secondary' : 'primary'}
               disabled={busy}
               onClick={() => say('ready', t('rideDetail:readyConfirmed'))}
             >
-              {proxyName
-                ? t('rideDetail:readyBtnProxy', { name: proxyName })
-                : t('imReady')}
+              {proxyName ? t('rideDetail:readyBtnProxy', { name: proxyName }) : t('imReady')}
             </Button>
-            <Button
-              variant="secondary"
-              disabled={busy}
-              onClick={() => say('delayed_5m', t('rideDetail:delayedConfirmed'))}
-            >
-              {proxyName
-                ? t('rideDetail:delayed5mBtnProxy', { name: proxyName })
-                : t('runningLate')}
+            <Button variant="secondary" disabled={busy} onClick={() => say('delayed_5m', t('rideDetail:delayedConfirmed'))}>
+              {proxyName ? t('rideDetail:delayed5mBtnProxy', { name: proxyName }) : t('runningLate')}
             </Button>
           </div>
-          <Button
-            variant="ghost"
-            size="sm"
-            className="text-danger home-cant"
-            disabled={busy}
-            onClick={() => setUnable(true)}
-            style={{ alignSelf: 'flex-start' }}
-          >
-            {proxyName
-              ? t('rideDetail:unableToJoinBtnProxy', { name: proxyName })
-              : t('cantMakeIt')}
+          <Button variant="ghost" size="sm" className="text-danger home-cant" disabled={busy} onClick={() => setUnable(true)}>
+            {proxyName ? t('rideDetail:unableToJoinBtnProxy', { name: proxyName }) : t('cantMakeIt')}
           </Button>
           <ErrorBox error={error} />
         </div>
       )}
 
-      {unable && (
-        <CantMakeItModal
-          rideId={ride.id}
-          riderName={proxyName}
-          onClose={() => setUnable(false)}
-          onDone={onChange}
-        />
-      )}
+      {unable && <CantMakeItModal rideId={ride.id} riderName={proxyName} onClose={() => setUnable(false)} onDone={onChange} />}
     </section>
   );
 }

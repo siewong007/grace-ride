@@ -67,8 +67,8 @@ NOT yet tested / outstanding:
   Interim: in-app inbox + SSE-ready architecture (SSE client not yet wired).
 - Driver workspace, admin tools, help desk, reimbursements, monthly report,
   family/proxy riders, live maps (osmdroid), QR check-in scanner (CameraX/ML Kit)
-  — later increments; the audit maps them all.
+  — planned future increments.
 - Tablet/rail adaptive layouts; dark mode verified by token design only.
 - Play Store listing/upload (needs the owner's Play account).
 
-See `docs/android/AUDIT.md` (Phase 1) and `docs/android/DESIGN.md` (Phase 2).
+See `docs/android/DESIGN.md` for design system token mappings and UI guidelines.

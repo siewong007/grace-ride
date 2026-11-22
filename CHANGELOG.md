@@ -22,6 +22,11 @@
 - Profile page refresh: a larger avatar card at the top, and each section row shows a one-line summary (phone, push and reminder settings, passkeys and 2FA). Tap the avatar to change it: upload or take a photo and crop it to a circle (it's resized in the browser, which also drops its location data), or show your initial or an icon on a colour you choose. Photos can now be removed. The chosen avatar also appears in the top bar, on the lock screen, on the ride driver card, and in the admin member list.
 - Trip chat: members can react to a message with an emoji (👍 ❤️ 😂 😮 😢 🙏; one per person, tap again to remove), and their own messages show WhatsApp-style ticks: one tick sent, two ticks delivered to every other trip member's app, two coloured ticks once everyone has read it. Staff viewing a chat don't count towards delivered or read.
 - Announcements can be sent to chosen member groups (and their sub-groups). Only those members see them on Home and get the notification; leaving every group unticked still reaches everyone. Admins can change an announcement's groups when editing it.
+- Animated profile pictures & achievement badges: avatars now support animated GIF and WebP formats, with browser-side compression and metadata stripping. Administrators can assign custom achievement icons and badges to members.
+- Event-driven ride and driving flows: integrated QuickJump navigation component across event details and ride pages for instant one-tap transitions.
+- Native Android app: modern Kotlin, Jetpack Compose, Material 3, and MVVM client (`android/`, package `org.pjstatecm.graceride`), featuring EncryptedSharedPreferences session management, biometric passkey hooks via Credential Manager, and complete member flow parity with the web application.
+- Family groups: approved members can create a family list under Profile (`/me/family`), invite relatives by phone or 3-day link (up to 8 people), with pending accounts strictly sandboxed to `/me/family` until administrative approval.
+- Documentation suite update & cleanup: refreshed living documentation suite (`docs/TECHNICAL.md`, `docs/USER_MANUAL.md`, `docs/ADMIN_MANUAL.md`, `docs/BETA_TESTING_PLAN.md`, `docs/android/`), removing stale task-level audit logs and phase plans per the project's single-manual policy.
 
 ## [0.1.0] - 2026-11-18
 - Initial release.

@@ -108,5 +108,4 @@ export default {
   cannotScanPrompt: 'Cannot scan? Enter check-in code directly below',
   cannotScanPassPrompt: 'Cannot scan? Enter member pass code directly below',
   enterCodeOrUrlPlaceholder: 'Enter check-in code (e.g. TESTCODE12) or link',
-  transport: 'Transport',
 };

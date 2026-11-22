@@ -23,6 +23,7 @@ import {
   ErrorBox,
   KeyValue,
   KeyValueItem,
+  Notice,
   Page,
   PageHeader,
   Pill,
@@ -316,66 +317,72 @@ export default function EventDetail() {
               )}
 
               {open && showTransportPrompt && going && !e.my_ride && (
-                <div className="event-signup-transport">
-                  <span className="event-signup-transport-label">{t('transportPromptTitle')}</span>
-                  <p className="muted small">{t('transportPromptBody')}</p>
+                <Notice tone="info" className="stack-sm">
+                  <div>
+                    <strong>{t('transportPromptTitle')}</strong>
+                    <div className="small muted">{t('transportPromptBody')}</div>
+                  </div>
                   <div className="btn-row">
                     {can('rides', 'create') && (
-                      <Button variant="primary" to={`/rides/new?event=${e.id}`} icon={<CarFront size={16} />}>
+                      <Button variant="primary" size="sm" to={`/rides/new?event=${e.id}`} icon={<CarFront size={16} />}>
                         {t('needRide')}
                       </Button>
                     )}
                     {can('drive', 'create') && (
-                      <Button variant="secondary" onClick={() => { setShowDriveRequests(true); setShowTransportPrompt(false); }}>
+                      <Button variant="secondary" size="sm" onClick={() => { setShowDriveRequests(true); setShowTransportPrompt(false); }}>
                         {t('offerDrive')}
                       </Button>
                     )}
+                    <Button variant="ghost" size="sm" onClick={() => setShowTransportPrompt(false)}>
+                      {t('goingOwnWay')}
+                    </Button>
                   </div>
-                  <Button variant="ghost" size="sm" onClick={() => setShowTransportPrompt(false)}>
-                    {t('goingOwnWay')}
-                  </Button>
-                </div>
+                </Notice>
               )}
 
-              {/* Transport status once going */}
-              {open && going && !showTransportPrompt && (
-                <div className="event-signup-transport">
-                  <span className="event-signup-transport-label">{t('transport')}</span>
-                  {e.my_ride ? (
+              {open && signed && (
+                <Button
+                  variant="danger"
+                  block
+                  disabled={busy}
+                  onClick={handleWithdraw}
+                >
+                  {t('withdraw')}
+                </Button>
+              )}
+
+              {/* Need a ride & Offer to drive triggers */}
+              {open && (
+                <div className="stack-sm">
+                  {!e.my_ride && !going ? (
+                    <p className="muted small">{t('signUpForRide')}</p>
+                  ) : e.my_ride ? (
                     <>
-                      <Link to={`/rides/${e.my_ride.id}`} className="transport-status-row">
-                        <div className="transport-status-info">
-                          <div className="transport-status-title">{t('myRide')}</div>
-                        </div>
+                      <Link to={`/rides/${e.my_ride.id}`} className="row between card flat tight link">
+                        <span className="row nowrap gap-sm">
+                          <CarFront size={16} aria-hidden="true" />
+                          <span>{t('myRide')}</span>
+                        </span>
                         <StatusPill map={RIDE_STATUS} status={e.my_ride.status} />
                       </Link>
-                      {can('rides', 'create') && (
-                        <Button variant="ghost" size="sm" to={`/rides/new?event=${e.id}&proxy=1`} icon={<Users size={16} />}>
+                      {going && can('rides', 'create') && (
+                        <Button variant="ghost" size="sm" block to={`/rides/new?event=${e.id}&proxy=1`} icon={<Users size={16} />}>
                           {t('bookForFamily')}
                         </Button>
                       )}
                     </>
                   ) : (
-                    <div className="btn-row">
-                      {can('rides', 'create') && (
-                        <Button variant="secondary" to={`/rides/new?event=${e.id}`} icon={<CarFront size={16} />}>
-                          {t('needRide')}
-                        </Button>
-                      )}
-                      {can('drive', 'create') && (
-                        <Button variant="ghost" onClick={() => setShowDriveRequests((v) => !v)}>
-                          {showDriveRequests ? t('hideDriveRequests') : t('offerDrive')}
-                        </Button>
-                      )}
-                    </div>
+                    <Button variant="secondary" block to={`/rides/new?event=${e.id}`} icon={<CarFront size={18} />}>
+                      {t('needRide')}
+                    </Button>
+                  )}
+
+                  {going && can('drive', 'create') && (
+                    <Button variant="ghost" block onClick={() => setShowDriveRequests((v) => !v)}>
+                      {showDriveRequests ? t('hideDriveRequests') : t('offerDrive')}
+                    </Button>
                   )}
                 </div>
-              )}
-
-              {open && signed && (
-                <Button variant="danger" block disabled={busy} onClick={handleWithdraw}>
-                  {t('withdraw')}
-                </Button>
               )}
 
               <ErrorBox error={actErr} />

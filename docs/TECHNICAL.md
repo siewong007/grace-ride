@@ -83,6 +83,7 @@ Versions below are the ones the lockfiles resolve to. Bump them in `backend/Carg
 | Leaflet / `react-leaflet` | 1.9 / 5.0 |
 | `lucide-react` | 1.75 |
 | `@playwright/test` | 1.65.0 exactly (CI asserts it matches the `mcr.microsoft.com/playwright:v1.65.0-noble` image; bumping needs fresh Linux screenshot baselines) |
+| Android (Native) | Kotlin 2.2.20 · AGP 8.13.0 · Gradle 8.13 · Jetpack Compose BOM 2025.10.00 · Material 3 (minSdk 28, target/compileSdk 36) |
 
 > [!IMPORTANT]
 > **Dynamic SQL (SQLx 0.9):** `sqlx::query*` accepts only `&'static str`. SQL assembled from fixed fragments (column lists, placeholders, visibility clauses) must be wrapped in `crate::dyn_sql!(...)`; user values always travel through `.bind()`. `sqlx::AssertSqlSafe(...)` is the escape hatch for an already-built `String`. See `backend/src/util.rs`.
@@ -145,7 +146,7 @@ Paths below are repository-relative. "Implemented" means present in source code;
 | **Community, Help & Guides**<br>`/`, `/help`, `/help/guides/*`, `/notifications`, `/admin/announcements` | Announcements (for every member, or for chosen groups and their sub-groups via `announcement_groups`, using the same audience rule as events in `audience.rs`: only those members see them on Home and are notified; the admin page lists all with `?manage=true`), answer-first member Help centre (prioritizing today's active ride and awaiting replies before ticket creation), support threads with claim/reply/close, SSE live updates (`/api/stream`) with polling fallback, encrypted native Web Push delivery (RFC 8291 `aes128gcm` + RFC 8292 `ES256` VAPID with self-test `/api/push/test` and automatic `404`/`410` stale-endpoint pruning), per-passenger `readiness_prompt_mins` pickup reminders (30/45/60 min or passenger-muted, auto-rearmed when `driver_id` changes) & escalation jobs, volunteer badges with opt-out, and bilingual step-by-step guides (member & staff audiences, formatted step text, optional step screenshots, stable step IDs, and persistent floating walkthrough card) | `backend/src/routes/community.rs`, `backend/src/web_push.rs`, `backend/src/jobs.rs`, `backend/src/stream.rs`, `frontend/src/pages/Help.tsx`, `HelpGuides.tsx`, `HelpGuideDetail.tsx`, `HelpGuideEditor.tsx`, `components/GuideRunner.tsx`, `components/GuideSteps.tsx`, `guideProgress.ts` |
 | **Reports & Exports**<br>`/report`, `/admin/reports` | Monthly member activity/driving/ride summaries, staff attendance/ride/cost reports, unmet-demand & driver shortage analytics (`GET /admin/reports/demand`, Demand & Shortages tab), CSV exports, and client-side CJK-capable PDF generation (`pdfWriter.ts`) for Chinese and English reports and audit trails | `backend/src/routes/community.rs`, `backend/src/routes/admin.rs`, `frontend/src/pages/Report.tsx`, `admin/Reports.tsx`, `pdfWriter.ts` |
 | **Administration & Settings**<br>`/admin`, `/admin/menu`, `/admin/audit`, `/admin/settings` | Operational dashboard & tab counts, filterable/exportable audit log, hierarchical groups & service areas, vehicle reimbursement rates, external alert channel settings (`GET/PUT /admin/settings/alerts` storing auto-generated/rotatable P-256 VAPID keys, Telegram bot, and WhatsApp webhook secrets in `app_secrets` for async `util::dispatch_external_alerts`), data-retention settings, and organization auto-lock timeout defaults (`admin_settings` restricted to `superadmin`) | `backend/src/routes/admin.rs`, `backend/src/web_push.rs`, `backend/src/jobs.rs`, `frontend/src/pages/admin/Dashboard.tsx`, `Audit.tsx`, `Settings.tsx`, `Menu.tsx` |
-| **Shared UI, PWA Shell & Large Lists**<br>App-wide | Minimalist white/neutral surfaces with logo-blue (`#1F5DB4`) primary actions, dark mode, adjustable text size, responsive mobile bottom-nav / tablet icon-rail / desktop sidebar, route-level lazy code splitting with animated boot splash handoff, numbered & keyset pagination, `@tanstack/react-virtual` list primitive, PWA manifest/icons, and privacy-safe Service Worker (`frontend/public/sw.js` — caches static app shell & handles push/notification clicks while never caching `/api/*` in `CacheStorage`) | `frontend/src/App.tsx`, `styles.css`, `components/Layout.tsx`, `components/ui/` (`components/ui.tsx`), `public/sw.js`, `locales/` |
+| **Shared UI, PWA Shell & Native Android App**<br>App-wide & `android/` | Minimalist white/neutral surfaces with logo-blue (`#1F5DB4`) primary actions, dark mode, adjustable text size, responsive mobile bottom-nav / tablet icon-rail / desktop sidebar, route-level lazy code splitting with animated boot splash handoff, numbered & keyset pagination, `@tanstack/react-virtual` list primitive, PWA manifest/icons, and privacy-safe Service Worker (`frontend/public/sw.js` — caches static app shell & handles push/notification clicks while never caching `/api/*` in `CacheStorage`). Companion native Android app (`android/`, Kotlin, Jetpack Compose, Material 3, MVVM) mirrors the web API and session model via Retrofit and EncryptedSharedPreferences | `frontend/src/App.tsx`, `styles.css`, `components/Layout.tsx`, `components/ui/` (`components/ui.tsx`), `public/sw.js`, `locales/`, `android/` (`docs/android/README.md`) |
 | **Capacity & Operations**<br>Backend & `scripts/` | PostgreSQL connection pool with timezone & statement timeouts, 60 s reminder/escalation/schedule loop, periodic housekeeping job, `/api/health` + binary `healthcheck` subcommand, `age`/`gpg`-capable backup/restore/drill scripts, self-hosted OSRM setup script, synthetic 1,000-member capacity test harness | `backend/src/lib.rs`, `jobs.rs`, `backend/tests/capacity.rs`, `scripts/backup.sh`, `scripts/restore.sh`, `scripts/restore_drill.sh`, `scripts/setup_osrm_malaysia.sh`, `scripts/capacity_baseline.sh` |
 
 ### Boundaries & Outstanding Work
@@ -210,7 +211,9 @@ terminal alternatives: cancelled, no_show, alt_transport
 ### Runtime Topology
 
 ```text
-Browser: React 19 + TypeScript + Vite SPA, Leaflet, Service Worker (sw.js), i18next (zh/en terms)
+Clients:
+  ├── Web Browser: React 19 + TypeScript + Vite SPA, Leaflet, Service Worker (sw.js), i18next (zh/en terms)
+  └── Native Android App: Kotlin + Jetpack Compose + Material 3, EncryptedSharedPreferences CookieJar, Retrofit
   -> HTTPS / Caddy (or Cloudflare -> Host Caddy -> loopback on AIC VPS)
      -> Single Axum Rust binary (/app/grace-ride)
         ├── /api/*            JSON REST routes + cookie auth + session_lock_guard + CSRF/rate limits
@@ -421,6 +424,14 @@ npm run test:e2e                         # Playwright suites against vite previe
 npm audit --omit=dev --audit-level=high
 ```
 
+**Native Android Tests:**
+
+```bash
+cd android
+./gradlew :app:testDebugUnitTest        # 44 JVM unit tests via MockWebServer
+./gradlew :app:connectedDebugAndroidTest # 6 Compose UI tests (emulator/device)
+```
+
 > [!WARNING]
 > **Visual Baselines:** Playwright screenshot baselines (`frontend/e2e/visual.spec.ts-snapshots/*-linux.png`) are rendered inside `mcr.microsoft.com/playwright:v1.65.0-noble`. Keep the container tag in `.github/workflows/ci.yml` synced with `@playwright/test` in `frontend/package-lock.json`, and regenerate visual snapshots in that Linux container rather than macOS.
 
@@ -435,6 +446,7 @@ npm audit --omit=dev --audit-level=high
 | **Admin, Help & Sorting** | `backend/tests/admin_ux.rs`, `help_desk.rs`, `guides.rs`, `rides_sort.rs`, `users_sort.rs`, `reimbursements_sort.rs` | Admin UX endpoints, support ticket claiming/closing races, step-by-step guide CRUD & step validation, allowlisted sort columns |
 | **Schema & Capacity** | `backend/tests/schema_baseline.rs`, `db_audit_fixes.rs`, `capacity.rs`, `scripts/capacity_baseline.sh` | Frozen `0001_init.sql` checksum, pre-squash upgrade replay without row loss, `0002`–`0009` migrations, constraint/index integrity, synthetic 1,000-member / 10-driver fixture & reminder timing |
 | **Frontend Unit (Vitest)** | `frontend/src/**/*.test.{ts,tsx}` (including `ux-enhancements.test.tsx`, `extended-features.test.tsx`, `bugfixes.test.tsx`, `scenario-matrix.test.tsx`) | Auth/public gates, permissions, member/driver/rider/visit/care/attendance/report flows, admin pages/consistency/tab-counts, modal focus retention, Service Worker privacy/redirect guards, transport plan logic, help guides & `guideProgress` step-ID persistence, i18n key parity (`en`/`zh`), date formatting, calendar links, CSS tokens, WebAuthn helpers, CJK `pdfWriter` |
+| **Android Unit & Compose UI** | `android/app/src/test/` (44 JVM unit tests via MockWebServer), `android/app/src/androidTest/` (6 Compose UI tests) | Retrofit API/DTO serialization, error mapping, EncryptedSharedPreferences session persistence, auto-lock & unlock flow, ride mutations, cost share proof upload, pull-to-refresh, Compose M3 screens & ViewModels |
 | **Browser E2E (Playwright)** | `frontend/e2e/smoke.spec.ts`, `visual.spec.ts`, `admin-a11y.spec.ts`, `help-guides.spec.ts`, `full-scenarios.spec.ts` | Mocked-API routing/login smoke tests, public `/care/:token` & `/visit/:token` & `/invite/:token` journeys, Terms v2 & AutoLock unlock flows, mobile & desktop light/dark visual regression snapshots, axe accessibility scans across member and admin screens, and step-by-step guide / walkthrough navigation |
 
 ### Verification Limits (Pre-Launch Evidence Still Required)

@@ -12,9 +12,10 @@
 | Backend | Rust stable · Axum 0.8 · SQLx 0.9 · Tokio |
 | Database | PostgreSQL 18 · integer cents · KL local-time text timestamps |
 | Frontend | React 19 · TypeScript 6 · Vite 8 · i18next · Leaflet |
+| Android | Kotlin 2.2 · Jetpack Compose · Material 3 · MVVM |
 | Auth | WebAuthn passkeys · TOTP · backup codes · Argon2 password hash |
 | Infra | Docker (multi-stage) · Caddy · GitHub Actions CI/CD |
-| Package managers | cargo (backend) · npm (frontend) |
+| Package managers | cargo (backend) · npm (frontend) · gradle (android) |
 
 ---
 
@@ -76,6 +77,7 @@
 │   │   │   │   ├── mod.rs           # router & LIKE escaping helper (120 lines)
 │   │   │   │   ├── announcements.rs # announcements CRUD
 │   │   │   │   ├── calendar.rs      # live .ics calendar feed
+│   │   │   │   ├── family.rs        # member family lists CRUD & invite links
 │   │   │   │   ├── guides.rs        # workflow guides CRUD, feedback & ordering
 │   │   │   │   ├── help.rs          # help center tickets, replies & claiming
 │   │   │   │   ├── notifications.rs # in-app notifications inbox
@@ -84,6 +86,7 @@
 │   │   │   │   ├── push.rs          # VAPID config & web-push subscriptions
 │   │   │   │   ├── reimbursements.rs # Grab reimbursement claims, review & single payout
 │   │   │   │   └── reports.rs       # monthly activity reports & badges
+│   │   │   ├── area_photos.rs       # pickup area photo management & EXIF stripping
 │   │   │   ├── events/              # directory module for events routes
 │   │   │   │   ├── mod.rs           # event listing, detail, visibility, router
 │   │   │   │   ├── manage.rs        # event CRUD, duplication, cancel, export
@@ -133,12 +136,19 @@
 │   │   ├── perms.ts         # permission helpers (mirrors backend perms.rs)
 │   │   └── styles.css       # design tokens (colour, spacing, typography)
 │   └── .nvmrc               # pins Node 22
+├── android/
+│   ├── app/                 # Kotlin Android app (package org.pjstatecm.graceride)
+│   │   ├── src/main/java/   # Jetpack Compose UI, MVVM, API client, CookieJar session
+│   │   └── src/test/        # MockWebServer unit tests
+│   ├── build.gradle.kts     # Gradle root configuration
+│   └── gradle/              # Gradle wrapper
 ├── docs/
 │   ├── TECHNICAL.md         # authoritative technical reference (single-manual policy)
-│   ├── refactor/
-│   │   ├── AUDIT.md         # problem audit + Phase 5 checklist
-│   │   └── PROGRESS.md      # phase log, decisions, open questions
-│   └── brand/               # logo kit, assets
+│   ├── USER_MANUAL.md       # end-user guide (bilingual context, elder-friendly)
+│   ├── ADMIN_MANUAL.md      # administration & transport operations manual
+│   ├── BETA_TESTING_PLAN.md # closed beta implementation plan & verification schedule
+│   ├── android/             # native Android app documentation (README.md, DESIGN.md)
+│   └── brand/               # logo kit, brand guidelines, SVG/PNG assets
 ├── .github/workflows/
 │   ├── ci.yml               # lint + typecheck + test + build on push/PR
 │   └── deploy.yml           # auto-deploy to VPS on passing CI on master
@@ -157,12 +167,14 @@
 |---|---|
 | Start API (dev) | `make dev-api` |
 | Start frontend (dev) | `make dev-web` |
+| Start Android debug | `cd android && ./gradlew :app:assembleDebug` |
 | Lint everything | `make lint` |
 | Format everything | `make fmt` |
 | Type-check | `cd frontend && npm run typecheck` |
 | Run all tests | `make test` |
 | Run backend tests only | `cd backend && DEV_MODE=true cargo test --locked` |
 | Run frontend tests only | `cd frontend && npm test` |
+| Run Android unit tests | `cd android && ./gradlew :app:testDebugUnitTest` |
 | Production build | `make build` |
 | Dependency audit | `make audit` |
 | DB migrate (dev) | `make migrate` |
@@ -186,9 +198,9 @@
 
 ---
 
-## Open Items (as of 2026-11-18)
+## Active Status & Boundaries
 
-1. **LICENSE** ✅ — private proprietary, church-only use (PJ State CMC). Already in repo.
-2. **Sentry** ✅ — `sentry` crate (backend) + `@sentry/react` (frontend) integrated. Activate by setting `SENTRY_DSN` / `VITE_SENTRY_DSN` env vars.
-3. **Mega-module splits** ✅ — `rides/` (`mod.rs` 405 lines + 10 sub-modules), `community/` (`mod.rs` 120 lines + 10 sub-modules), `admin/` (`mod.rs` 165 lines + 6 sub-modules), and `RideDetail.tsx` (205 lines + 4 components under `components/ride/`) are all split.
-4. **Driver/rider verification** — documented approach only; no automated ID check implemented yet.
+1. **Production Readiness:** Backend modularization complete across all domains; frontend modularized; all 67 permissions and 27 pages tested.
+2. **Multi-Client Support:** React 19 PWA web app + Kotlin Jetpack Compose native Android client.
+3. **Single-Manual Policy:** All engineering and operational reference lives in `docs/TECHNICAL.md`; user operations in `docs/USER_MANUAL.md` and `docs/ADMIN_MANUAL.md`; testing verification in `docs/BETA_TESTING_PLAN.md`.
+4. **Governance & Pre-Launch:** Legal review of PDPA notices, written church licensing confirmation, and Play Store account enrollment before public rollout.
