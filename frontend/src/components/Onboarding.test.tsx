@@ -66,7 +66,7 @@ describe('GettingStarted', () => {
   it('adds the car step for drivers', () => {
     granted = [...granted, 'drive'];
     inRouter(<GettingStarted hasRide={false} hasEvent={false} />);
-    expect(screen.getByRole('link', { name: /add your car/i })).toHaveAttribute('href', '/drive');
+    expect(screen.getByRole('link', { name: /add your car/i })).toHaveAttribute('href', '/drive?tab=settings');
   });
 
   it('goes away once every step is done', () => {

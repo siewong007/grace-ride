@@ -30,6 +30,10 @@ pub fn router() -> Router<AppState> {
         .route("/admin/users", get(members::list_users))
         .route("/admin/users/{id}", put(members::update_user))
         .route(
+            "/admin/users/{id}/badges/{badge_key}/icon",
+            put(reports::update_user_badge_icon),
+        )
+        .route(
             "/admin/invites",
             get(invites_recovery::list_invites).post(invites_recovery::create_invite),
         )

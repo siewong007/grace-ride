@@ -104,7 +104,8 @@ describe('AvatarEditor', () => {
     const img = Object.assign(document.createElement('img'), {});
     Object.defineProperty(img, 'naturalWidth', { value: 800 });
     Object.defineProperty(img, 'naturalHeight', { value: 600 });
-    vi.mocked(loadImage).mockResolvedValue({ img, url: 'blob:preview' });
+    const file = new File(['raw'], 'me.png', { type: 'image/png' });
+    vi.mocked(loadImage).mockResolvedValue({ img, url: 'blob:preview', file });
     const cropped = new File(['x'], 'avatar.jpg', { type: 'image/jpeg' });
     vi.mocked(cropToFile).mockResolvedValue(cropped);
     const { onClose } = setup();
@@ -128,5 +129,42 @@ describe('AvatarEditor', () => {
       target: { files: [new File(['raw'], 'me.heic', { type: 'image/heic' })] },
     });
     expect(await screen.findByText('avatarUnreadable')).toBeInTheDocument();
+  });
+
+  it('selects animated avatar tab and saves Grok and Muse animated bots', async () => {
+    const { onSaved, onClose } = setup();
+    fireEvent.click(screen.getByRole('tab', { name: 'avatarAnimated' }));
+    // Defaults to grok on first click
+    expect(screen.getByRole('radio', { name: 'avatarIcon_grok' })).toBeInTheDocument();
+    expect(screen.getByRole('radio', { name: 'avatarIcon_muse' })).toBeInTheDocument();
+
+    // Select Muse Bot
+    fireEvent.click(screen.getByRole('radio', { name: 'avatarIcon_muse' }));
+    fireEvent.click(screen.getByRole('radio', { name: 'avatarColor_purple' }));
+    fireEvent.click(screen.getByRole('button', { name: 'avatarSave' }));
+    await waitFor(() => expect(onClose).toHaveBeenCalled());
+    expect(put).toHaveBeenCalledWith('/me', { clear_photo: true, avatar_icon: 'muse', avatar_color: 'purple' });
+    expect(onSaved).toHaveBeenCalled();
+  });
+
+  it('uploads an animated GIF directly without lossy canvas cropping', async () => {
+    const img = Object.assign(document.createElement('img'), {});
+    Object.defineProperty(img, 'naturalWidth', { value: 400 });
+    Object.defineProperty(img, 'naturalHeight', { value: 400 });
+    const gifFile = new File(['gifdata'], 'anim.gif', { type: 'image/gif' });
+    vi.mocked(loadImage).mockResolvedValue({ img, url: 'blob:gif', file: gifFile });
+    const { onClose } = setup();
+
+    fireEvent.click(screen.getByRole('tab', { name: 'avatarPhoto' }));
+    fireEvent.change(screen.getByLabelText('avatarChoosePhoto'), {
+      target: { files: [gifFile] },
+    });
+    expect(await screen.findByText('avatarGifHint')).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole('button', { name: 'avatarSave' }));
+    await waitFor(() => expect(onClose).toHaveBeenCalled());
+    // Directly uploads the original GIF file!
+    expect(uploadFile).toHaveBeenCalledWith(gifFile);
+    expect(put).toHaveBeenCalledWith('/me', { photo_file_id: 77, avatar_color: '' });
   });
 });

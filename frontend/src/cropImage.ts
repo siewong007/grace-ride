@@ -5,11 +5,11 @@
 export const AVATAR_OUT = 512;
 
 /** Decode a picked file. Rejects when the browser cannot read it (e.g. HEIC outside Safari). */
-export function loadImage(file: File): Promise<{ img: HTMLImageElement; url: string }> {
+export function loadImage(file: File): Promise<{ img: HTMLImageElement; url: string; file: File }> {
   return new Promise((resolve, reject) => {
     const url = URL.createObjectURL(file);
     const img = new Image();
-    img.onload = () => resolve({ img, url });
+    img.onload = () => resolve({ img, url, file });
     img.onerror = () => {
       URL.revokeObjectURL(url);
       reject(new Error('unreadable'));

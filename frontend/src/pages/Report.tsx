@@ -15,11 +15,13 @@ import {
 import { EVENT_KIND, fmtDateTime, parseLocal, rm, useFormatT } from '../format';
 import { useTranslation } from 'react-i18next';
 import { useAuth } from '../auth';
+import { BadgeIcon } from '../badgeIcon';
 import { createPdfWriter } from '../pdfWriter';
 
 interface Badge {
   key: string;
   char: string;
+  icon?: string;
   name: string;
   rule: string;
   char_zh?: string;
@@ -375,7 +377,7 @@ export default function Report() {
                             className={`badge-char ${b.earned ? 'earned' : ''}`}
                             aria-hidden="true"
                           >
-                            {badgeChar(b)}
+                            <BadgeIcon badge={b} fallbackChar={badgeChar(b)} />
                           </div>
                           <div className="grow min-w-0 stack-xs">
                             <div className="row between nowrap">

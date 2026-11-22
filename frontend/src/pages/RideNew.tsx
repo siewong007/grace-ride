@@ -59,6 +59,14 @@ interface SavedPlace {
   is_default: number;
 }
 
+interface EventData {
+  id: number;
+  title: string;
+  starts_at: string;
+  location: string;
+  my_signup?: { status: string } | null;
+}
+
 /** A ride is asked for from an event page. Opened without `?event=` (an old link or
  *  bookmark) there is nothing to attach it to, so point the member at the events list. */
 export default function RideNew() {
@@ -91,7 +99,7 @@ function RideNewForm() {
   const [params] = useSearchParams();
   const eventId = params.get('event');
   const { data: areas } = useApi<Area[]>('/areas');
-  const { data: event } = useApi<{ id: number; title: string; starts_at: string; location: string }>(
+  const { data: event } = useApi<EventData>(
     eventId ? `/events/${eventId}` : null,
   );
   const { data: frequentRiders } = useApi<ProxyRider[]>('/proxy-riders');
@@ -362,13 +370,36 @@ function RideNewForm() {
     }, t('submitted'));
   };
 
+  if (event && event.my_signup?.status !== 'going') {
+    return (
+      <Page width="narrow">
+        <div className="stack">
+          <PageHeader
+            title={t('title')}
+            subtitle={t('eventLabel', { title: event.title })}
+            back={eventId ? `/events/${eventId}` : '/events'}
+          />
+          <EmptyState
+            title={t('signupRequiredTitle')}
+            description={t('signupRequiredDesc', { title: event.title })}
+            action={
+              <Button variant="primary" to={`/events/${eventId}`}>
+                {t('goToEvent')}
+              </Button>
+            }
+          />
+        </div>
+      </Page>
+    );
+  }
+
   return (
     <Page width="narrow">
       <div className="stack">
         <PageHeader
           title={t('title')}
           subtitle={event ? t('eventLabel', { title: event.title }) : t('desc')}
-          back="/rides"
+          back={eventId ? `/events/${eventId}` : '/events'}
         />
 
         {showEventNotice && event && (

@@ -40,6 +40,7 @@ export interface SavedPlace {
 export interface Badge {
   key: string;
   char: string;
+  icon?: string;
   name: string;
   rule: string;
   char_zh?: string;

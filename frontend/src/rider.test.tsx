@@ -45,6 +45,8 @@ const mockApiData: Record<string, unknown> = {
   '/rides?scope=upcoming': [mockRide],
   '/rides?scope=past': [],
   '/events': [{ id: 101, title: 'Sunday Service', kind: 'service', location: 'Grace Hall', starts_at: '2026-11-15T09:00:00' }],
+  '/events/1': { id: 1, title: 'Sunday Service', kind: 'service', location: 'Grace Hall', starts_at: '2026-11-15T09:00:00', my_signup: { status: 'going' } },
+  '/events/2': { id: 2, title: 'Prayer Meeting', kind: 'prayer', location: 'Prayer Room', starts_at: '2026-11-16T19:00:00', my_signup: null },
   '/me/shares': [{ id: 1, title: 'Lunch share', amount_cents: 1500, status: 'pending', due_date: null }],
   '/announcements': [
     {
@@ -170,6 +172,16 @@ describe('RideNew page', () => {
     );
     expect(screen.queryByRole('button', { name: /submit ride request/i })).not.toBeInTheDocument();
     expect(screen.getByRole('link', { name: /browse events/i })).toHaveAttribute('href', '/events');
+  });
+
+  it('requires event signup and prompts to sign up when not going', () => {
+    render(
+      <MemoryRouter initialEntries={['/rides/new?event=2']}>
+        <RideNew />
+      </MemoryRouter>
+    );
+    expect(screen.queryByRole('button', { name: /submit ride request/i })).not.toBeInTheDocument();
+    expect(screen.getByRole('link', { name: /go to event/i })).toHaveAttribute('href', '/events/2');
   });
 
   it('renders sections When, Where, Who, Needs and passenger stepper', () => {

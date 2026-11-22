@@ -3,7 +3,7 @@
 use std::collections::{BTreeMap, HashMap, HashSet};
 
 use axum::{
-    extract::{Query, State},
+    extract::{Path, Query, State},
     Json,
 };
 use chrono::{Datelike, NaiveDate};
@@ -304,4 +304,51 @@ pub(super) async fn demand_report(
         "by_area": area_list,
         "by_slot": slot_list,
     })))
+}
+
+#[derive(Deserialize)]
+pub(super) struct UpdateBadgeIconIn {
+    pub icon: String,
+}
+
+pub(super) async fn update_user_badge_icon(
+    State(st): State<AppState>,
+    u: CurrentUser,
+    Path((user_id, badge_key)): Path<(i64, String)>,
+    Json(req): Json<UpdateBadgeIconIn>,
+) -> AppResult<Json<Value>> {
+    require(&u, Page::AdminMembers, Act::Update)?;
+    let icon = req.icon.trim().to_string();
+    if icon.is_empty() {
+        sqlx::query("DELETE FROM user_badge_icons WHERE user_id = $1 AND badge_key = $2")
+            .bind(user_id)
+            .bind(&badge_key)
+            .execute(&st.db)
+            .await?;
+    } else {
+        sqlx::query(
+            "INSERT INTO user_badge_icons (user_id, badge_key, icon, updated_at, updated_by)
+             VALUES ($1, $2, $3, app_now(), $4)
+             ON CONFLICT (user_id, badge_key)
+             DO UPDATE SET icon = EXCLUDED.icon, updated_at = EXCLUDED.updated_at, updated_by = EXCLUDED.updated_by",
+        )
+        .bind(user_id)
+        .bind(&badge_key)
+        .bind(&icon)
+        .bind(u.id)
+        .execute(&st.db)
+        .await?;
+    }
+    crate::util::audit(
+        &st.db,
+        Some(u.id),
+        "admin.user_badge_icon",
+        "user",
+        Some(user_id),
+        &format!("badge {badge_key} icon set to {icon}"),
+    )
+    .await;
+    Ok(Json(
+        json!({ "ok": true, "user_id": user_id, "badge_key": badge_key, "icon": icon }),
+    ))
 }

@@ -364,7 +364,14 @@ export function DriveSchedule() {
       {loading ? (
         <CardSkeleton count={2} />
       ) : !data?.length ? (
-        <EmptyState title={t('noTasks')} />
+        <EmptyState
+          title={t('noTasks')}
+          action={
+            <Button variant="primary" to="/events">
+              {t('browseEvents')}
+            </Button>
+          }
+        />
       ) : (
         <>
           {focusRide && renderTripCard(focusRide, true)}

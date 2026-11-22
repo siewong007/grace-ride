@@ -1,8 +1,9 @@
 import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
-import { Download, AlertTriangle } from 'lucide-react';
-import { useApi } from '../../api';
+import { Download, AlertTriangle, CheckCircle2, X } from 'lucide-react';
+import { post, useApi } from '../../api';
+import { useAuth } from '../../auth';
 import { Ride } from '../../components/RideCard';
 import {
   Button,
@@ -13,14 +14,16 @@ import {
   Page,
   PageHeader,
   Pagination,
+  Pill,
   UniversalTable,
   TableColumn,
   TableFilter,
   StatusPill,
+  useToast,
 } from '../../components/ui';
 import { useTableParams } from '../../components/tableState';
 import { useExportAll } from '../../components/useExportAll';
-import { fmtDay, todayStr, RIDE_STATUS, useFormatT } from '../../format';
+import { exportToCsv, fmtDay, todayStr, upcomingSundayStr, RIDE_STATUS, useFormatT } from '../../format';
 import { ADMIN_HOME } from '../../staffNav';
 import { rideCompactRow } from './rideRows';
 
@@ -40,6 +43,13 @@ export default function AdminRides() {
   const { t } = useTranslation('admin');
   const ft = useFormatT();
   const nav = useNavigate();
+  const auth = useAuth();
+  const can = auth?.can ?? (() => true);
+  const toast = useToast();
+  const canUpdate = can('admin_rides', 'update');
+
+  const [selectedIds, setSelectedIds] = useState<Set<number>>(new Set());
+  const [batchApproving, setBatchApproving] = useState(false);
 
   const {
     page,
@@ -66,7 +76,7 @@ export default function AdminRides() {
   const attention = filters.attention === 'true' ? 'true' : '';
   if (!attention) apiQuery.delete('attention');
 
-  const { data, error, loading } = useApi<AdminRidesData | Ride[]>(
+  const { data, error, loading, reload } = useApi<AdminRidesData | Ride[]>(
     `/admin/rides?${apiQuery}`,
     20000,
   );
@@ -77,6 +87,59 @@ export default function AdminRides() {
   const rides = Array.isArray(data) ? data : data?.items ?? [];
   const total = Array.isArray(data) ? data.length : data?.total ?? 0;
   const totalPages = Array.isArray(data) ? 1 : data?.total_pages ?? 1;
+
+  const pendingSelected = rides.filter(
+    (r) => selectedIds.has(r.id) && r.status === 'pending_approval',
+  );
+
+  const handleBatchApprove = async () => {
+    if (pendingSelected.length === 0 || batchApproving) return;
+    setBatchApproving(true);
+    let success = 0;
+    try {
+      for (const ride of pendingSelected) {
+        await post(`/rides/${ride.id}/approve`);
+        success++;
+      }
+      toast.success(t('rides.approvedBatch', { count: success }));
+      setSelectedIds(new Set());
+      reload();
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : String(e));
+      if (success > 0) reload();
+    } finally {
+      setBatchApproving(false);
+    }
+  };
+
+  const handleExportSelected = () => {
+    const selectedRows = rides.filter((r) => selectedIds.has(r.id));
+    if (selectedRows.length === 0) return;
+    exportToCsv(
+      `grace-ride-admin-rides-selected-${todayStr()}`,
+      ['ID', 'Date/Time', 'Area', 'Destination', 'Passenger', 'Driver', 'Seats', 'Status'],
+      selectedRows.map((r) => [
+        r.id,
+        r.pickup_at,
+        r.area.name,
+        r.destination,
+        r.passenger.name,
+        r.driver?.name ?? '',
+        r.seats,
+        r.status,
+      ]),
+    );
+  };
+
+  const thisSunday = upcomingSundayStr();
+  const today = todayStr();
+  const currentDate = filters.date ?? '';
+
+  const quickDates = [
+    { key: 'all', label: t('rides.dateAll'), date: '' },
+    { key: 'today', label: t('rides.dateToday'), date: today },
+    { key: 'sunday', label: t('rides.dateThisSunday'), date: thisSunday },
+  ];
 
   const filterDefs: TableFilter[] = [
     { type: 'text', key: 'q', label: t('rides.search'), placeholder: t('rides.search') },
@@ -104,7 +167,48 @@ export default function AdminRides() {
       row: (r) => [r.id, r.pickup_at, r.area.name, r.destination, r.passenger.name, r.driver?.name ?? '', r.seats, r.status],
     });
 
+  const allOnPageSelected = rides.length > 0 && rides.every((r) => selectedIds.has(r.id));
+  const someOnPageSelected = rides.some((r) => selectedIds.has(r.id));
+
   const columns: TableColumn<Ride>[] = [
+    {
+      key: 'select',
+      header: (
+        <input
+          type="checkbox"
+          aria-label={t('rides.selectAll')}
+          checked={allOnPageSelected}
+          ref={(input) => {
+            if (input) {
+              input.indeterminate = someOnPageSelected && !allOnPageSelected;
+            }
+          }}
+          onChange={(e) => {
+            if (e.target.checked) {
+              setSelectedIds(new Set([...selectedIds, ...rides.map((r) => r.id)]));
+            } else {
+              const next = new Set(selectedIds);
+              for (const r of rides) next.delete(r.id);
+              setSelectedIds(next);
+            }
+          }}
+        />
+      ),
+      render: (r) => (
+        <input
+          type="checkbox"
+          aria-label={t('rides.selectRide', { id: r.id })}
+          checked={selectedIds.has(r.id)}
+          onClick={(e) => e.stopPropagation()}
+          onChange={(e) => {
+            const next = new Set(selectedIds);
+            if (e.target.checked) next.add(r.id);
+            else next.delete(r.id);
+            setSelectedIds(next);
+          }}
+        />
+      ),
+    },
     {
       key: 'pickup_at',
       header: t('dashboard.pickupTime'),
@@ -169,6 +273,62 @@ export default function AdminRides() {
       />
 
       <ErrorBox error={error} />
+
+      {/* Quick Date Presets */}
+      <div className="quick-date-chips" role="group" aria-label={t('rides.quickDateLabel')}>
+        <span className="quick-date-label">{t('rides.quickDateLabel')}:</span>
+        {quickDates.map((d) => (
+          <button
+            key={d.key}
+            type="button"
+            className={`chip ${currentDate === d.date ? 'on' : ''}`}
+            aria-pressed={currentDate === d.date}
+            onClick={() => setFilter('date', d.date)}
+          >
+            {d.label}
+            {d.date && <span className="muted tiny"> · {d.date}</span>}
+          </button>
+        ))}
+      </div>
+
+      {/* Batch Selection Action Bar */}
+      {selectedIds.size > 0 && (
+        <div className="table-batch-bar" role="region" aria-label="Batch actions">
+          <div className="table-batch-info">
+            <Pill tone="info">{t('rides.selectedCount', { count: selectedIds.size })}</Pill>
+          </div>
+          <div className="table-batch-actions">
+            {canUpdate && pendingSelected.length > 0 && (
+              <Button
+                variant="primary"
+                size="sm"
+                icon={<CheckCircle2 size={16} />}
+                disabled={batchApproving}
+                loading={batchApproving}
+                onClick={handleBatchApprove}
+              >
+                {t('rides.approveSelected', { count: pendingSelected.length })}
+              </Button>
+            )}
+            <Button
+              variant="secondary"
+              size="sm"
+              icon={<Download size={16} />}
+              onClick={handleExportSelected}
+            >
+              {t('rides.exportSelected', { count: selectedIds.size })}
+            </Button>
+            <Button
+              variant="ghost"
+              size="sm"
+              icon={<X size={16} />}
+              onClick={() => setSelectedIds(new Set())}
+            >
+              {t('rides.clearSelection')}
+            </Button>
+          </div>
+        </div>
+      )}
 
       <Card>
         {loading && !initialLoadComplete ? (

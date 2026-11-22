@@ -193,6 +193,15 @@ export function toCents(v: string): number {
 }
 
 export const todayStr = () => localDate(new Date());
+
+/** Returns YYYY-MM-DD for the upcoming Sunday (or today if today is Sunday). */
+export function upcomingSundayStr(baseDate = new Date()): string {
+  const d = new Date(baseDate);
+  const day = d.getDay();
+  const diff = day === 0 ? 0 : 7 - day;
+  d.setDate(d.getDate() + diff);
+  return localDate(d);
+}
 export function localDate(d: Date) {
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
 }

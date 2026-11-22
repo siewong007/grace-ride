@@ -4,7 +4,7 @@ import { Lock } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import { Tone } from '../../format';
 import { LoadingMark } from '../Brand';
-import { AVATAR_ICONS, isAvatarColor } from '../../avatarStyle';
+import { AVATAR_ICONS, isAnimatedAvatar, isAvatarColor } from '../../avatarStyle';
 
 export interface EmptyStateProps {
   icon?: ReactNode;
@@ -224,7 +224,8 @@ export interface AvatarProps {
 export function Avatar({ name, fileId, color, icon, size, src }: AvatarProps) {
   const Icon = icon ? AVATAR_ICONS[icon] : undefined;
   const img = src ?? (fileId ? `/api/files/${fileId}` : null);
-  const cls = ['avatar', size ?? '', isAvatarColor(color) ? `av-${color}` : ''].filter(Boolean).join(' ');
+  const isAnim = isAnimatedAvatar(icon);
+  const cls = ['avatar', size ?? '', isAvatarColor(color) ? `av-${color}` : '', isAnim ? 'avatar-animated' : ''].filter(Boolean).join(' ');
   return (
     <div className={cls} aria-hidden>
       {img ? <img src={img} alt="" /> : Icon ? <Icon className="avatar-icon" /> : Array.from(name.trim())[0] ?? '?'}

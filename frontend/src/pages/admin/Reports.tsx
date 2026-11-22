@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { Link } from 'react-router-dom';
-import { Award, Calendar, CarFront, CheckCircle2, DollarSign, Download, FileText, Map } from 'lucide-react';
-import { useApi } from '../../api';
+import { Award, Calendar, CarFront, CheckCircle2, DollarSign, Download, FileText, Map, Pencil } from 'lucide-react';
+import { put, useApi } from '../../api';
 import { useAuth } from '../../auth';
 import {
   Button,
@@ -9,16 +9,19 @@ import {
   EmptyState,
   ErrorBox,
   Field,
+  Modal,
   Page,
   PageHeader,
   CardSkeleton,
   Stat,
   Tabs,
+  useAction,
 } from '../../components/ui';
 import { EVENT_KIND, fmtDateTime, rm, useFormatT } from '../../format';
 import { useTranslation } from 'react-i18next';
 import { createPdfWriter } from '../../pdfWriter';
 import { ADMIN_HOME } from '../../staffNav';
+import { ACHIEVEMENT_ICONS, BadgeIcon } from '../../badgeIcon';
 
 interface Member {
   id: number;
@@ -30,6 +33,7 @@ interface Member {
 interface Badge {
   key: string;
   char: string;
+  icon?: string;
   name: string;
   rule: string;
   char_zh?: string;
@@ -81,7 +85,7 @@ export default function AdminReports() {
   const badgeName = (b: Badge) => (isZh ? b.name_zh ?? b.name : b.name_en ?? b.name);
   const badgeRule = (b: Badge) => (isZh ? b.rule_zh ?? b.rule : b.rule_en ?? b.rule);
   // The route only renders this page for members who may view member reports.
-  const { me } = useAuth();
+  const { me, can } = useAuth();
   const [selectedId, setSelectedId] = useState<number | null>(me?.id ?? null);
   const [month, setMonth] = useState(
     `${new Date().getFullYear()}-${String(new Date().getMonth() + 1).padStart(2, '0')}`,
@@ -90,6 +94,11 @@ export default function AdminReports() {
   const [type, setType] = useState<'all' | 'driver' | 'passenger'>('all');
   const [reportTab, setReportTab] = useState<'member' | 'demand'>('member');
   const [y, m] = month.split('-').map(Number);
+
+  const [editingBadge, setEditingBadge] = useState<{ badge: Badge; userId: number; userName: string } | null>(null);
+  const [selectedIcon, setSelectedIcon] = useState('');
+  const [customIcon, setCustomIcon] = useState('');
+  const { busy: savingIcon, error: iconErr, run: runIconAction } = useAction();
 
   const { data: membersData } = useApi<Member[] | { items: Member[] }>('/admin/users?q=');
   const members = Array.isArray(membersData) ? membersData : membersData?.items ?? [];
@@ -111,9 +120,29 @@ export default function AdminReports() {
     type,
     ...(selectedId ? { user_id: String(selectedId) } : {}),
   });
-  const { data: r, error, loading } = useApi<MonthReport>(
+  const { data: r, error, loading, reload: reloadReport } = useApi<MonthReport>(
     `/reports/monthly?${params.toString()}`,
   );
+
+  const saveBadgeIcon = () =>
+    runIconAction(async () => {
+      if (!editingBadge) return;
+      await put(`/admin/users/${editingBadge.userId}/badges/${editingBadge.badge.key}/icon`, {
+        icon: selectedIcon,
+      });
+      await reloadReport();
+      setEditingBadge(null);
+    }, t('reports.badgeIconUpdated'));
+
+  const resetBadgeIcon = () =>
+    runIconAction(async () => {
+      if (!editingBadge) return;
+      await put(`/admin/users/${editingBadge.userId}/badges/${editingBadge.badge.key}/icon`, {
+        icon: '',
+      });
+      await reloadReport();
+      setEditingBadge(null);
+    }, t('reports.badgeIconUpdated'));
 
   const fileBase = `grace-ride-admin-report-${range}-${month}-${selectedId ?? 'self'}`;
 
@@ -422,11 +451,29 @@ export default function AdminReports() {
                             className={`badge-char ${b.earned ? 'earned' : ''}`}
                             aria-hidden="true"
                           >
-                            {badgeChar(b)}
+                            <BadgeIcon badge={b} fallbackChar={badgeChar(b)} />
                           </div>
                           <div className="grow min-w-0 stack-xs">
                             <div className="row between nowrap">
-                              <strong className="ellipsis">{badgeName(b)}</strong>
+                              <div className="row nowrap gap-xs items-center min-w-0">
+                                <strong className="ellipsis">{badgeName(b)}</strong>
+                                {can('admin_members') && (
+                                  <Button
+                                    variant="ghost"
+                                    size="sm"
+                                    className="btn-icon-tight"
+                                    onClick={() => {
+                                      setEditingBadge({ badge: b, userId: r.user.id, userName: r.user.name });
+                                      setSelectedIcon(b.icon ?? '');
+                                      setCustomIcon(ACHIEVEMENT_ICONS[b.icon ?? ''] ? '' : (b.icon ?? ''));
+                                    }}
+                                    title={t('reports.changeBadgeIcon')}
+                                    aria-label={`${t('reports.changeBadgeIcon')} - ${badgeName(b)}`}
+                                  >
+                                    <Pencil size={13} aria-hidden="true" />
+                                  </Button>
+                                )}
+                              </div>
                               <span className="small muted">
                                 {b.earned ? (
                                   <span className="row nowrap gap-xs text-primary bold">
@@ -455,6 +502,90 @@ export default function AdminReports() {
           </>
         )}
       </div>
+
+      {editingBadge && (
+        <Modal
+          title={t('reports.changeBadgeIconTitle', { user: editingBadge.userName })}
+          onClose={() => setEditingBadge(null)}
+          footer={
+            <div className="btn-row between">
+              <Button
+                variant="ghost"
+                onClick={resetBadgeIcon}
+                disabled={savingIcon}
+              >
+                {t('reports.badgeIconReset')}
+              </Button>
+              <div className="btn-row">
+                <Button variant="ghost" onClick={() => setEditingBadge(null)} disabled={savingIcon}>
+                  {t('common.cancel', { defaultValue: 'Cancel' })}
+                </Button>
+                <Button variant="primary" onClick={saveBadgeIcon} loading={savingIcon}>
+                  {t('common.save', { defaultValue: 'Save' })}
+                </Button>
+              </div>
+            </div>
+          }
+        >
+          <div className="stack">
+            <div className="row gap-md items-center">
+              <div className="badge-char earned" aria-hidden="true">
+                <BadgeIcon
+                  icon={selectedIcon}
+                  fallbackChar={badgeChar(editingBadge.badge)}
+                />
+              </div>
+              <div>
+                <div className="bold">{badgeName(editingBadge.badge)}</div>
+                <div className="muted small">{badgeRule(editingBadge.badge)}</div>
+              </div>
+            </div>
+
+            <div className="stack-xs">
+              <label className="bold small">{t('reports.badgeIconLabel')}</label>
+              <div className="badge-icon-grid" role="radiogroup" aria-label={t('reports.badgeIconLabel')}>
+                {Object.entries(ACHIEVEMENT_ICONS).map(([key, item]) => {
+                  const IconComp = item.icon;
+                  const isSelected = selectedIcon === key;
+                  return (
+                    <button
+                      key={key}
+                      type="button"
+                      role="radio"
+                      aria-checked={isSelected}
+                      aria-label={item.label}
+                      title={item.label}
+                      className={`badge-icon-btn${isSelected ? ' on' : ''}`}
+                      onClick={() => {
+                        setSelectedIcon(key);
+                        setCustomIcon('');
+                      }}
+                    >
+                      <IconComp size={22} aria-hidden="true" />
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+
+            <Field label={t('reports.customIconPlaceholder')}>
+              <input
+                className="input"
+                type="text"
+                value={customIcon}
+                placeholder={t('reports.customIconPlaceholder')}
+                onChange={(e) => {
+                  const val = e.target.value;
+                  setCustomIcon(val);
+                  setSelectedIcon(val);
+                }}
+              />
+            </Field>
+
+            <ErrorBox error={iconErr} />
+          </div>
+        </Modal>
+      )}
     </Page>
   );
 }

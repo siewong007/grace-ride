@@ -44,6 +44,8 @@ pub fn sniff(b: &[u8]) -> Option<(&'static str, &'static str)> {
         Some(("image/png", "png"))
     } else if b.len() >= 12 && &b[0..4] == b"RIFF" && &b[8..12] == b"WEBP" {
         Some(("image/webp", "webp"))
+    } else if b.starts_with(b"GIF87a") || b.starts_with(b"GIF89a") {
+        Some(("image/gif", "gif"))
     } else if b.len() >= 12
         && &b[4..8] == b"ftyp"
         && matches!(&b[8..12], b"heic" | b"heix" | b"mif1" | b"msf1" | b"hevc")

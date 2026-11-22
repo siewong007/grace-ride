@@ -2,11 +2,11 @@ import { KeyboardEvent as ReactKeyboardEvent, PointerEvent as ReactPointerEvent,
 import { useTranslation } from 'react-i18next';
 import { Check, ImagePlus, Trash2, ZoomIn, ZoomOut } from 'lucide-react';
 import { put, uploadFile } from '../api';
-import { AVATAR_COLORS, AVATAR_ICONS, type AvatarFields } from '../avatarStyle';
+import { ANIMATED_AVATARS, AVATAR_COLORS, AVATAR_ICONS, type AvatarFields, isAnimatedAvatar } from '../avatarStyle';
 import { clampOffset, coverSize, cropToFile, loadImage } from '../cropImage';
 import { Avatar, Button, ErrorBox, Modal, Tabs, useAction } from './ui';
 
-type Mode = 'photo' | 'initials' | 'icon';
+type Mode = 'photo' | 'animated' | 'initials' | 'icon';
 
 /** Side of the crop circle, in CSS pixels. */
 const VIEW = 240;
@@ -25,10 +25,18 @@ export default function AvatarEditor({
 }) {
   const { t } = useTranslation('profile');
   const { busy, error, run } = useAction();
-  const [mode, setMode] = useState<Mode>(current.photo_file_id ? 'photo' : current.avatar_icon ? 'icon' : 'initials');
+  const [mode, setMode] = useState<Mode>(
+    current.photo_file_id
+      ? 'photo'
+      : isAnimatedAvatar(current.avatar_icon)
+      ? 'animated'
+      : current.avatar_icon
+      ? 'icon'
+      : 'initials',
+  );
   const [color, setColor] = useState<string | null>(current.avatar_color ?? null);
   const [icon, setIcon] = useState<string | null>(current.avatar_icon ?? null);
-  const [picked, setPicked] = useState<{ img: HTMLImageElement; url: string } | null>(null);
+  const [picked, setPicked] = useState<{ img: HTMLImageElement; url: string; file: File } | null>(null);
   const [crop, setCrop] = useState({ zoom: 1, x: 0, y: 0 });
   const [localErr, setLocalErr] = useState<string | null>(null);
   const drag = useRef<{ px: number; py: number; x: number; y: number } | null>(null);
@@ -88,7 +96,9 @@ export default function AvatarEditor({
       setLocalErr(null);
       if (mode === 'photo') {
         if (picked) {
-          const file = await cropToFile(picked.img, { view: VIEW, ...crop });
+          const file = picked.file?.type === 'image/gif'
+            ? picked.file
+            : await cropToFile(picked.img, { view: VIEW, ...crop });
           const up = await uploadFile(file);
           await put('/me', { photo_file_id: up.id, avatar_color: colorField });
         } else if (current.photo_file_id) {
@@ -96,7 +106,7 @@ export default function AvatarEditor({
         } else {
           throw new Error(t('avatarPickPhoto'));
         }
-      } else if (mode === 'icon') {
+      } else if (mode === 'icon' || mode === 'animated') {
         if (!icon) throw new Error(t('avatarPickIcon'));
         await put('/me', { clear_photo: true, avatar_icon: icon, avatar_color: colorField });
       } else {
@@ -166,7 +176,7 @@ export default function AvatarEditor({
               size="xl"
               color={color}
               fileId={mode === 'photo' ? current.photo_file_id : null}
-              icon={mode === 'icon' ? icon : null}
+              icon={mode === 'icon' || mode === 'animated' ? icon : null}
             />
           )}
         </div>
@@ -177,10 +187,15 @@ export default function AvatarEditor({
           value={mode}
           onChange={(v) => {
             setLocalErr(null);
-            setMode(v as Mode);
+            const nextMode = v as Mode;
+            setMode(nextMode);
+            if (nextMode === 'animated' && !isAnimatedAvatar(icon)) {
+              setIcon('grok');
+            }
           }}
           items={[
             { value: 'photo', label: t('avatarPhoto') },
+            { value: 'animated', label: t('avatarAnimated') },
             { value: 'initials', label: t('avatarInitials') },
             { value: 'icon', label: t('avatarIcon') },
           ]}
@@ -202,9 +217,11 @@ export default function AvatarEditor({
             <button type="button" className="avatar-drop" onClick={() => fileRef.current?.click()}>
               <ImagePlus size={22} aria-hidden="true" />
               <span className="bold">{picked || current.photo_file_id ? t('avatarChangePhoto') : t('avatarChoosePhoto')}</span>
-              <span className="muted tiny">{t('avatarPhotoHint')}</span>
+              <span className="muted tiny">
+                {picked?.file?.type === 'image/gif' ? t('avatarGifHint') : t('avatarPhotoHint')}
+              </span>
             </button>
-            {picked && (
+            {picked && picked.file?.type !== 'image/gif' && (
               <label className="avatar-zoom">
                 <ZoomOut size={18} aria-hidden="true" />
                 <input
@@ -222,23 +239,53 @@ export default function AvatarEditor({
           </div>
         )}
 
+        {mode === 'animated' && (
+          <div className="stack-xs">
+            <div className="bold small">{t('avatarAnimatedDesc')}</div>
+            <div className="avatar-animated-grid" role="radiogroup" aria-label={t('avatarAnimated')}>
+              {ANIMATED_AVATARS.map((anim) => {
+                const IconComp = AVATAR_ICONS[anim.key];
+                const isSelected = icon === anim.key;
+                return (
+                  <button
+                    key={anim.key}
+                    type="button"
+                    role="radio"
+                    aria-checked={isSelected}
+                    aria-label={t(`avatarIcon_${anim.key}`)}
+                    className={`avatar-animated-card${isSelected ? ' on' : ''}`}
+                    onClick={() => setIcon(anim.key)}
+                  >
+                    <div style={{ width: 44, height: 44 }}>
+                      {IconComp && <IconComp size={44} className="avatar-icon" />}
+                    </div>
+                    <span className="bold small">{t(`avatarIcon_${anim.key}`)}</span>
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+        )}
+
         {mode === 'icon' && (
           <div className="stack-xs">
             <div className="bold small">{t('avatarPickIconLabel')}</div>
             <div className="avatar-icon-grid" role="radiogroup" aria-label={t('avatarPickIconLabel')}>
-              {Object.entries(AVATAR_ICONS).map(([key, Icon]) => (
-                <button
-                  key={key}
-                  type="button"
-                  role="radio"
-                  aria-checked={icon === key}
-                  aria-label={t(`avatarIcon_${key}`)}
-                  className={`avatar-icon-opt${icon === key ? ' on' : ''}`}
-                  onClick={() => setIcon(key)}
-                >
-                  <Icon size={20} aria-hidden="true" />
-                </button>
-              ))}
+              {Object.entries(AVATAR_ICONS)
+                .filter(([key]) => !isAnimatedAvatar(key))
+                .map(([key, Icon]) => (
+                  <button
+                    key={key}
+                    type="button"
+                    role="radio"
+                    aria-checked={icon === key}
+                    aria-label={t(`avatarIcon_${key}`)}
+                    className={`avatar-icon-opt${icon === key ? ' on' : ''}`}
+                    onClick={() => setIcon(key)}
+                  >
+                    <Icon size={20} aria-hidden="true" />
+                  </button>
+                ))}
             </div>
           </div>
         )}

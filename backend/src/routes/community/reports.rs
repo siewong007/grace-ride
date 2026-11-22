@@ -90,6 +90,15 @@ pub async fn compute_badges(st: &AppState, user_id: i64, lang: Lang) -> AppResul
     .bind(user_id)
     .fetch_one(&st.db)
     .await?;
+
+    let custom_icons: Vec<(String, String)> =
+        sqlx::query_as("SELECT badge_key, icon FROM user_badge_icons WHERE user_id = $1")
+            .bind(user_id)
+            .fetch_all(&st.db)
+            .await
+            .unwrap_or_default();
+    let icon_map: std::collections::HashMap<String, String> = custom_icons.into_iter().collect();
+
     // Criteria are public (徽章获得条件应公开透明).
     let defs = [
         (
@@ -102,6 +111,7 @@ pub async fn compute_badges(st: &AppState, user_id: i64, lang: Lang) -> AppResul
             "Complete 3 or more rides after 9 pm",
             night,
             3,
+            "moon",
         ),
         (
             "regular",
@@ -113,6 +123,7 @@ pub async fn compute_badges(st: &AppState, user_id: i64, lang: Lang) -> AppResul
             "Completed rides in at least 3 of the past 6 months",
             months,
             3,
+            "award",
         ),
         (
             "carpool",
@@ -124,19 +135,25 @@ pub async fn compute_badges(st: &AppState, user_id: i64, lang: Lang) -> AppResul
             "Enable carpool and complete 2 or more rides with multiple passengers",
             if carpool == 1 { shared } else { 0 },
             2,
+            "heart",
         ),
     ];
     let _ = total;
     Ok(defs
         .iter()
         .map(
-            |(key, ch_zh, ch_en, name_zh, name_en, rule_zh, rule_en, have, need)| {
+            |(key, ch_zh, ch_en, name_zh, name_en, rule_zh, rule_en, have, need, default_icon)| {
                 let ch = t(lang, ch_zh, ch_en);
                 let name = t(lang, name_zh, name_en);
                 let rule = t(lang, rule_zh, rule_en);
+                let icon = icon_map
+                    .get(*key)
+                    .map(|s| s.as_str())
+                    .unwrap_or(*default_icon);
                 json!({
                     "key": key,
                     "char": ch,
+                    "icon": icon,
                     "name": name,
                     "rule": rule,
                     "char_zh": ch_zh,

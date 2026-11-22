@@ -731,6 +731,148 @@ textarea.input { min-height: 96px; resize: vertical; }
 .avatar-icon-opt.on { border-color: var(--primary); color: var(--primary); }
 .avatar-editor-actions { justify-content: flex-end; }
 
+/* Animated avatars: Grok Bot & Muse Bot */
+.avatar-animated-icon {
+  width: 100%;
+  height: 100%;
+  display: block;
+}
+
+@keyframes grokPulse {
+  0%, 100% { transform: scale(1); opacity: 0.95; }
+  50% { transform: scale(1.05); opacity: 1; filter: drop-shadow(0 0 3px currentColor); }
+}
+
+@keyframes grokEyeGlow {
+  0%, 100% { transform: scaleY(1); opacity: 0.85; }
+  45% { transform: scaleY(1); opacity: 1; }
+  50% { transform: scaleY(0.12); opacity: 0.25; }
+  55% { transform: scaleY(1); opacity: 1; }
+}
+
+@keyframes grokAntennaPulse {
+  0%, 100% { opacity: 0.4; }
+  50% { opacity: 1; filter: drop-shadow(0 0 3px currentColor); }
+}
+
+.avatar-grok-bot .grok-antenna-pulse {
+  animation: grokAntennaPulse 2s ease-in-out infinite;
+}
+
+.avatar-grok-bot .grok-eye {
+  transform-origin: 24px 22px;
+  animation: grokEyeGlow 3.5s ease-in-out infinite;
+}
+
+.avatar-grok-bot {
+  animation: grokPulse 3s ease-in-out infinite;
+}
+
+@keyframes museBreathe {
+  0%, 100% { transform: translateY(0) scale(1); }
+  50% { transform: translateY(-1.5px) scale(1.04); }
+}
+
+@keyframes museBlink {
+  0%, 88%, 100% { transform: scaleY(1); }
+  92% { transform: scaleY(0.1); }
+  96% { transform: scaleY(1); }
+}
+
+@keyframes museWave {
+  0%, 100% { opacity: 0.35; transform: scale(0.96); }
+  50% { opacity: 1; transform: scale(1.04); }
+}
+
+.avatar-muse-bot {
+  animation: museBreathe 2.8s ease-in-out infinite;
+  transform-origin: center center;
+}
+
+.avatar-muse-bot .muse-eye {
+  transform-origin: 24px 22px;
+  animation: museBlink 4.2s ease-in-out infinite;
+}
+
+.avatar-muse-bot .muse-wave-1 {
+  animation: museWave 2s ease-in-out infinite;
+}
+
+.avatar-muse-bot .muse-wave-2 {
+  animation: museWave 2s ease-in-out infinite 0.4s;
+}
+
+.avatar-muse-bot .muse-sparkle {
+  animation: grokAntennaPulse 1.8s ease-in-out infinite;
+}
+
+.avatar-animated-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: var(--space-3);
+}
+
+.avatar-animated-card {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--space-2);
+  padding: var(--space-3);
+  border-radius: var(--radius);
+  border: 2px solid var(--border);
+  background: var(--surface);
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+.avatar-animated-card:hover {
+  border-color: var(--primary);
+  background: var(--surface-2);
+}
+
+.avatar-animated-card.on {
+  border-color: var(--primary);
+  background: color-mix(in srgb, var(--primary) 10%, var(--surface));
+  box-shadow: 0 0 0 1px var(--primary);
+}
+
+.badge-char svg {
+  width: 26px;
+  height: 26px;
+}
+
+.badge-icon-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(52px, 1fr));
+  gap: var(--space-2);
+  max-height: 240px;
+  overflow-y: auto;
+  padding: 2px;
+}
+
+.badge-icon-btn {
+  height: 48px;
+  display: grid;
+  place-items: center;
+  border-radius: var(--radius);
+  border: 1px solid var(--border);
+  background: var(--surface);
+  color: var(--text);
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+.badge-icon-btn:hover {
+  border-color: var(--primary);
+  background: var(--surface-2);
+}
+
+.badge-icon-btn.on {
+  border-color: var(--primary);
+  background: var(--primary);
+  color: var(--primary-ink, #ffffff);
+}
+
 .passkey-list { width: 100%; }
 .passkey-row {
   padding: var(--space-3) 0;
@@ -3329,3 +3471,196 @@ main a[href^="tel:"]:not(.btn) { text-decoration: underline; }
 }
 /* Never widen the form or card it sits in: the strip scrolls instead. */
 .area-photos { width: 0; min-width: 100%; }
+
+/* ---------- Admin UX Enhancements (Batch Actions, WhatsApp, Reimb Split, Plan Floating Dock) ---------- */
+
+/* WhatsApp Button */
+.btn-whatsapp {
+  background-color: #25d366 !important;
+  color: #ffffff !important;
+  border-color: #25d366 !important;
+  font-weight: 600;
+}
+.btn-whatsapp:hover {
+  background-color: #20bd5a !important;
+  border-color: #20bd5a !important;
+  color: #ffffff !important;
+}
+
+/* Table Multi-Select & Batch Actions Bar */
+.table-batch-bar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-2);
+  padding: var(--space-2) var(--space-3);
+  background: var(--surface-2);
+  border: 1px solid var(--accent);
+  border-radius: var(--radius);
+  margin-bottom: var(--space-3);
+  animation: fadeIn 0.15s ease-in-out;
+}
+.table-batch-info {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  font-size: var(--fs-sm);
+}
+.table-batch-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+/* Quick Date Presets Chips */
+.quick-date-chips {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2);
+  margin-bottom: var(--space-3);
+}
+.quick-date-label {
+  font-size: var(--fs-xs, 12px);
+  font-weight: 600;
+  color: var(--muted);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  margin-right: var(--space-1);
+}
+
+/* Reimbursement Dual-Pane Review Modal */
+.reimb-review-split {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: var(--space-4);
+  align-items: start;
+}
+@media (min-width: 768px) {
+  .reimb-review-split {
+    grid-template-columns: 1.1fr 1fr;
+    max-height: calc(85vh - 120px);
+  }
+}
+.reimb-receipt-pane {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: var(--space-3);
+  overflow: hidden;
+}
+.reimb-receipt-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-1);
+}
+.receipt-zoom-container {
+  width: 100%;
+  height: 380px;
+  max-height: 50vh;
+  overflow: auto;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(0, 0, 0, 0.04);
+  border-radius: var(--radius-sm, 6px);
+  border: 1px dashed var(--border);
+}
+.receipt-zoom-img {
+  max-width: 100%;
+  max-height: 100%;
+  object-fit: contain;
+  transition: transform 0.15s ease-out;
+  transform-origin: center center;
+}
+.reimb-details-pane {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  overflow-y: auto;
+  max-height: calc(85vh - 140px);
+  padding-right: var(--space-1);
+}
+
+/* Plan Transport Floating Dock */
+.plan-floating-dock {
+  position: fixed;
+  bottom: calc(var(--space-4) + env(safe-area-inset-bottom, 0px));
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 30;
+  max-width: 92vw;
+  width: auto;
+  animation: dockSlideUp 0.2s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+@keyframes dockSlideUp {
+  from {
+    opacity: 0;
+    transform: translate(-50%, 16px);
+  }
+  to {
+    opacity: 1;
+    transform: translate(-50%, 0);
+  }
+}
+
+.plan-floating-dock-content {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  padding: var(--space-2) var(--space-4);
+  background: var(--surface);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+  border: 1.5px solid var(--accent);
+  border-radius: 9999px;
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.22);
+}
+
+.plan-floating-dock-status {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  white-space: nowrap;
+  font-size: var(--fs-sm);
+}
+
+.plan-dock-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--warning, #f59e0b);
+  box-shadow: 0 0 0 2px rgba(245, 158, 11, 0.25);
+  animation: pulseDot 2s infinite;
+}
+
+@keyframes pulseDot {
+  0%, 100% { opacity: 1; transform: scale(1); }
+  50% { opacity: 0.6; transform: scale(0.85); }
+}
+
+@media (max-width: 767px) {
+  .plan-floating-dock {
+    bottom: calc(var(--nav-h) + env(safe-area-inset-bottom, 0px) + var(--space-2));
+    width: calc(100% - var(--space-4));
+  }
+  .plan-floating-dock-content {
+    border-radius: var(--radius);
+    flex-direction: column;
+    align-items: stretch;
+    gap: var(--space-2);
+    padding: var(--space-2) var(--space-3);
+  }
+  .plan-floating-dock-content .btn-row {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+

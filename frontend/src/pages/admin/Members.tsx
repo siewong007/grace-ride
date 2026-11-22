@@ -1,7 +1,7 @@
 import { FormEvent, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
-import { Download } from 'lucide-react';
+import { Download, Share2 } from 'lucide-react';
 import { del, post, put, useApi } from '../../api';
 import { useAuth } from '../../auth';
 import { useTableParams } from '../../components/tableState';
@@ -600,14 +600,34 @@ function Invites() {
           <div className="notice ok stack-sm">
             <span>{t('members.inviteLink')}</span>
             <code className="text-break">{link}</code>
-            <Button
-              variant="secondary"
-              size="sm"
-              type="button"
-              onClick={() => copy(link)}
-            >
-              {t('members.copy')}
-            </Button>
+            <div className="btn-row">
+              <Button
+                variant="secondary"
+                size="sm"
+                type="button"
+                onClick={() => copy(link)}
+              >
+                {t('members.copy')}
+              </Button>
+              <Button
+                variant="secondary"
+                size="sm"
+                type="button"
+                className="btn-whatsapp"
+                icon={<Share2 size={16} />}
+                onClick={() =>
+                  window.open(
+                    `https://wa.me/?text=${encodeURIComponent(
+                      `${t('members.inviteShareText')}\n\n${link}`
+                    )}`,
+                    '_blank',
+                    'noopener,noreferrer'
+                  )
+                }
+              >
+                {t('members.shareWhatsapp')}
+              </Button>
+            </div>
           </div>
         )}
       </form>
@@ -640,9 +660,28 @@ function Invites() {
                   <div className="btn-row">
                     {/* Recovery links are shown once, on approval, and never listed. */}
                     {i.url && (
-                      <Button variant="secondary" size="sm" onClick={() => copy(i.url!)}>
-                        {t('members.copy')}
-                      </Button>
+                      <>
+                        <Button variant="secondary" size="sm" onClick={() => copy(i.url!)}>
+                          {t('members.copy')}
+                        </Button>
+                        <Button
+                          variant="secondary"
+                          size="sm"
+                          className="btn-whatsapp"
+                          icon={<Share2 size={16} />}
+                          onClick={() =>
+                            window.open(
+                              `https://wa.me/?text=${encodeURIComponent(
+                                `${t('members.inviteShareText')}\n\n${i.url}`
+                              )}`,
+                              '_blank',
+                              'noopener,noreferrer'
+                            )
+                          }
+                        >
+                          {t('members.shareWhatsapp')}
+                        </Button>
+                      </>
                     )}
                     {can('admin_invites', 'delete') && (
                       <Button variant="danger" size="sm" onClick={() => revoke(i)}>

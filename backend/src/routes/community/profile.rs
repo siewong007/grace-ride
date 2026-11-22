@@ -20,7 +20,7 @@ pub const AVATAR_COLORS: &[&str] = &[
 /// Avatar icons, drawn by the client from its own icon set.
 pub const AVATAR_ICONS: &[&str] = &[
     "car", "heart", "star", "music", "sun", "leaf", "coffee", "book", "church", "bike", "smile",
-    "flower",
+    "flower", "grok", "muse",
 ];
 
 /// Accepts "" (reset) or a key from `allowed`.

@@ -743,6 +743,76 @@ export default function PlanTransport() {
           </div>
         </Modal>
       )}
+
+      {dirty && canUpdate && (
+        <aside className="plan-floating-dock" aria-label={t('floatingDockLabel')}>
+          <div className="plan-floating-dock-content">
+            <div className="plan-floating-dock-status">
+              <span className="plan-dock-dot" aria-hidden="true" />
+              <span className="bold">{t('floatingChanges', { count: changes.length })}</span>
+            </div>
+            <div className="btn-row nowrap">
+              <Button
+                variant="ghost"
+                size="sm"
+                icon={<Undo2 size={16} />}
+                onClick={undoStep}
+                disabled={undoStack.length === 0}
+                title="Ctrl+Z"
+                aria-label={t('dockUndo')}
+              >
+                {t('dockUndo')}
+              </Button>
+              <Button
+                variant="ghost"
+                size="sm"
+                icon={<RotateCcw size={16} />}
+                onClick={resetAll}
+                disabled={!dirty}
+                aria-label={t('dockReset')}
+              >
+                {t('dockReset')}
+              </Button>
+              <Button
+                variant="secondary"
+                size="sm"
+                icon={<Save size={16} />}
+                onClick={saveDraft}
+                disabled={busy}
+                loading={busy}
+                aria-label={t('dockSave')}
+              >
+                {t('dockSave')}
+              </Button>
+              {!canApprove ? (
+                <Button
+                  variant="primary"
+                  size="sm"
+                  icon={<Send size={16} />}
+                  onClick={askLeadApproval}
+                  disabled={busy}
+                  loading={busy}
+                  aria-label={t('dockAskApproval')}
+                >
+                  {t('dockAskApproval')}
+                </Button>
+              ) : (
+                <Button
+                  variant="primary"
+                  size="sm"
+                  icon={<CheckCircle2 size={16} />}
+                  onClick={send}
+                  disabled={!dirty || busy}
+                  loading={busy}
+                  aria-label={t('dockApprove', { count: changes.length })}
+                >
+                  {t('dockApprove', { count: changes.length })}
+                </Button>
+              )}
+            </div>
+          </div>
+        </aside>
+      )}
     </Page>
   );
 }

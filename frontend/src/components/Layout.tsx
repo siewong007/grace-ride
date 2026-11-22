@@ -1,7 +1,7 @@
 import { ReactNode, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Link, NavLink, Navigate, Outlet, useLocation, useNavigate } from 'react-router-dom';
 import {
-  ArrowLeft, Bell, Calendar, Clock, Fingerprint, HandCoins, Home,
+  ArrowLeft, Bell, Calendar, Car, CarFront, Clock, Fingerprint, HandCoins, Home,
   LayoutGrid, LifeBuoy, PanelLeftClose, PanelLeftOpen, Search, Receipt, ShieldAlert, User, Wallet, BarChart3, WifiOff,
 } from 'lucide-react';
 import { useAuth } from '../auth';
@@ -392,7 +392,14 @@ function LayoutInner() {
 
       {jumpOpen && !pending && (
         <QuickJump
-          pages={[...member, ...service, ...staff, profileTab].filter(
+          pages={[
+            ...member,
+            ...service,
+            ...staff,
+            ...(can('rides') ? [{ to: '/rides', label: t('myRides'), icon: <Car size={sz} /> }] : []),
+            ...(can('drive') ? [{ to: '/drive', label: t('drive'), icon: <CarFront size={sz} /> }] : []),
+            profileTab,
+          ].filter(
             (p, i, all) => all.findIndex((x) => x.to === p.to) === i,
           )}
           onClose={() => setJumpOpen(false)}

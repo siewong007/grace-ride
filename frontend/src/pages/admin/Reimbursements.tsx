@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
-import { Download } from 'lucide-react';
+import { Download, ZoomIn, ZoomOut, RotateCw, RotateCcw } from 'lucide-react';
 import { del, post, useApi } from '../../api';
 import { useAuth } from '../../auth';
 import {
@@ -340,6 +340,21 @@ function List({ scope }: { scope: 'review' | 'payout' }) {
   );
 }
 
+function getDuitNowBadge(phone: string | null | undefined, t: (k: string) => string) {
+  if (!phone) return null;
+  const cleaned = phone.replace(/[\s-]/g, '');
+  if (/^(\+?601|01)\d{7,9}$/.test(cleaned)) {
+    return <Pill tone="teal">{t('reimb.duitnowTypePhone')}</Pill>;
+  }
+  if (/^\d{12}$/.test(cleaned)) {
+    return <Pill tone="blue">{t('reimb.duitnowTypeNric')}</Pill>;
+  }
+  if (/^\d{8,16}$/.test(cleaned)) {
+    return <Pill tone="gray">{t('reimb.duitnowTypeAccount')}</Pill>;
+  }
+  return null;
+}
+
 function ReviewModal({
   r,
   onClose,
@@ -352,8 +367,18 @@ function ReviewModal({
   const { t } = useTranslation('admin');
   const ft = useFormatT();
   const [note, setNote] = useState('');
+  const [zoom, setZoom] = useState(1);
+  const [rotation, setRotation] = useState(0);
   const needsNote = !note.trim();
   const { busy, error, run } = useAction();
+
+  const handleZoomIn = () => setZoom((z) => Math.min(z + 0.3, 3));
+  const handleZoomOut = () => setZoom((z) => Math.max(z - 0.3, 0.7));
+  const handleRotate = () => setRotation((rot) => (rot + 90) % 360);
+  const handleResetZoom = () => {
+    setZoom(1);
+    setRotation(0);
+  };
 
   const act = (action: string, msg: string) =>
     run(
@@ -361,87 +386,148 @@ function ReviewModal({
       msg,
     );
 
+  const hasReceipt = Boolean(r.receipt_file_id);
+
   return (
     <Modal
+      size={hasReceipt ? 'lg' : 'md'}
       title={t('reimb.reviewTitle', {
         name: r.user.name,
         amount: rm(r.amount_cents),
       })}
       onClose={onClose}
     >
-      <div className="stack-sm">
-        {r.receipt_file_id ? (
-          <>
-            <img
-              className="receipt-thumb"
-              src={`/api/files/${r.receipt_file_id}`}
-              alt={t('reimb.receiptAlt')}
-              onError={(e) => {
-                e.currentTarget.style.display = 'none';
-              }}
-            />
+      <div className={hasReceipt ? 'reimb-review-split' : 'stack-sm'}>
+        {hasReceipt && (
+          <div className="reimb-receipt-pane">
+            <div className="reimb-receipt-toolbar">
+              <span className="small bold">{t('reimb.receiptViewer')}</span>
+              <div className="btn-row nowrap">
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  icon={<ZoomIn size={15} />}
+                  onClick={handleZoomIn}
+                  aria-label={t('reimb.zoomIn')}
+                  title={t('reimb.zoomIn')}
+                />
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  icon={<ZoomOut size={15} />}
+                  onClick={handleZoomOut}
+                  aria-label={t('reimb.zoomOut')}
+                  title={t('reimb.zoomOut')}
+                />
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  icon={<RotateCw size={15} />}
+                  onClick={handleRotate}
+                  aria-label={t('reimb.rotate')}
+                  title={t('reimb.rotate')}
+                />
+                {(zoom !== 1 || rotation !== 0) && (
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    icon={<RotateCcw size={15} />}
+                    onClick={handleResetZoom}
+                    aria-label={t('reimb.resetZoom')}
+                    title={t('reimb.resetZoom')}
+                  />
+                )}
+              </div>
+            </div>
+            <div className="receipt-zoom-container">
+              <img
+                className="receipt-zoom-img"
+                style={{
+                  transform: `scale(${zoom}) rotate(${rotation}deg)`,
+                }}
+                src={`/api/files/${r.receipt_file_id}`}
+                alt={t('reimb.receiptAlt')}
+              />
+            </div>
             <ReceiptLink id={r.receipt_file_id} label={t('reimb.openReceipt')} />
-          </>
-        ) : r.kind === 'visitor_special' ? (
-          <p className="small muted">{t('reimb.noReceiptNeeded')}</p>
-        ) : null}
-        {r.kind === 'visitor_special' ? (
-          <div className="small"><SpecialSummary r={r} /></div>
-        ) : (
-          <p className="small">{r.description}</p>
+          </div>
         )}
-        {r.high_amount && (
-          <div className="notice warning small" role="status">{t('reimb.highAmountNote')}</div>
-        )}
-        {r.event_title && (
-          <p className="small">
-            <strong>{t('reimb.event')}:</strong> {r.event_title}
-            {r.event_starts_at && <span className="muted"> ({fmtDateTime(r.event_starts_at, ft)})</span>}
-          </p>
-        )}
-        {r.kind === 'mileage' && (
-          <p className="small">
-            <strong>{t('reimb.mileageKind')}</strong>
-            {r.ride_route ? ` · ${r.ride_route}` : ''}
-          </p>
-        )}
-        {r.ride_at && (
-          <p className="small muted">
-            {t('reimb.ride', { time: fmtDateTime(r.ride_at, ft) })}
-          </p>
-        )}
-        <Field label={t('reimb.noteLabel')} hint={needsNote ? t('reimb.noteNeeded') : undefined}>
-          <input
-            className="input"
-            value={note}
-            onChange={(e) => setNote(e.target.value)}
-          />
-        </Field>
-        <ErrorBox error={error} />
-        <Button
-          variant="primary"
-          block
-          disabled={busy}
-          onClick={() => act('approve', t('reimb.approved'))}
-        >
-          {t('reimb.approve')}
-        </Button>
-        {/* Sending it back or turning it down needs a reason the member can read. */}
-        <div className="btn-row">
+
+        <div className={hasReceipt ? 'reimb-details-pane' : 'stack-sm'}>
+          {r.kind === 'visitor_special' ? (
+            <>
+              <p className="small muted">{t('reimb.noReceiptNeeded')}</p>
+              <div className="small">
+                <SpecialSummary r={r} />
+              </div>
+            </>
+          ) : (
+            <p className="small">{r.description}</p>
+          )}
+          {r.high_amount && (
+            <div className="notice warning small" role="status">
+              {t('reimb.highAmountNote')}
+            </div>
+          )}
+          {r.event_title && (
+            <p className="small">
+              <strong>{t('reimb.event')}:</strong> {r.event_title}
+              {r.event_starts_at && (
+                <span className="muted"> ({fmtDateTime(r.event_starts_at, ft)})</span>
+              )}
+            </p>
+          )}
+          {r.kind === 'mileage' && (
+            <p className="small">
+              <strong>{t('reimb.mileageKind')}</strong>
+              {r.ride_route ? ` · ${r.ride_route}` : ''}
+            </p>
+          )}
+          {r.ride_at && (
+            <p className="small muted">
+              {t('reimb.ride', { time: fmtDateTime(r.ride_at, ft) })}
+            </p>
+          )}
+          {r.payee_phone && (
+            <div className="row wrap gap-xs small">
+              <span className="muted">{t('reimb.phone')}:</span>
+              <span className="mono">{r.payee_phone}</span>
+              {getDuitNowBadge(r.payee_phone, t)}
+            </div>
+          )}
+          <Field label={t('reimb.noteLabel')} hint={needsNote ? t('reimb.noteNeeded') : undefined}>
+            <input
+              className="input"
+              value={note}
+              onChange={(e) => setNote(e.target.value)}
+            />
+          </Field>
+          <ErrorBox error={error} />
           <Button
-            variant="secondary"
-            disabled={busy || !note.trim()}
-            onClick={() => act('return', t('reimb.returned'))}
+            variant="primary"
+            block
+            disabled={busy}
+            onClick={() => act('approve', t('reimb.approved'))}
           >
-            {t('reimb.return')}
+            {t('reimb.approve')}
           </Button>
-          <Button
-            variant="danger"
-            disabled={busy || !note.trim()}
-            onClick={() => act('reject', t('reimb.rejected'))}
-          >
-            {t('reimb.reject')}
-          </Button>
+          {/* Sending it back or turning it down needs a reason the member can read. */}
+          <div className="btn-row">
+            <Button
+              variant="secondary"
+              disabled={busy || !note.trim()}
+              onClick={() => act('return', t('reimb.returned'))}
+            >
+              {t('reimb.return')}
+            </Button>
+            <Button
+              variant="danger"
+              disabled={busy || !note.trim()}
+              onClick={() => act('reject', t('reimb.rejected'))}
+            >
+              {t('reimb.reject')}
+            </Button>
+          </div>
         </div>
       </div>
     </Modal>
@@ -472,7 +558,9 @@ function PayModal({
           <dt>{t('reimb.payee')}</dt>
           <dd>{r.payee_name}</dd>
           <dt>{t('reimb.phone')}</dt>
-          <dd className="mono">{r.payee_phone}</dd>
+          <dd className="mono">
+            {r.payee_phone} {getDuitNowBadge(r.payee_phone, t)}
+          </dd>
           <dt>{t('reimb.applicant2')}</dt>
           <dd>{r.user.name}</dd>
         </dl>

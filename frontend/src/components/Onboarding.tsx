@@ -141,7 +141,7 @@ export function GettingStarted({ hasRide, hasEvent }: HomeData) {
       key: 'car',
       title: t('car'),
       hint: t('carHint'),
-      to: '/drive',
+      to: '/drive?tab=settings',
       state: driver.data?.vehicle?.plate ? 'done' : 'todo',
     });
   }
