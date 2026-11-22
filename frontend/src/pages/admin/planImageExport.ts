@@ -5,51 +5,40 @@ import { fmtDateTime, fmtTime } from '../../format';
 import { Draft, Plan, PlanDriver, PlanRide } from './planLogic';
 
 const CANVAS_WIDTH = 1200;
-const PAD = 48;
-const GAP = 16;
-const CENTER_GUTTER = 80;
+const PAD = 56;
+const GAP = 22;
+const CENTER_GUTTER = 84;
 const SIDE_GUTTER = 32;
-const TOP_GUTTER = 70;
-const AREA_GAP = 16;
-const SLIM_BAR_H = 52;
-const TABLE_HEADER_H = 36;
-const TABLE_SUB_H = 26;
-const COL_HEAD_H = 22;
-const RADIUS_TABLE = 8;
-const RADIUS_PILL = 6;
+const TOP_GUTTER = 76;
+const AREA_GAP = 24;
+const SLIM_BAR_H = 36;
+const TABLE_HEADER_H = 34;
+const TABLE_SUB_H = 22;
+const ACCENT_H = 3;
+const RADIUS_TABLE = 5;
 
 const FONT_FAMILY =
   'system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "PingFang SC", "Noto Sans CJK SC", "Microsoft YaHei", sans-serif';
 
 const COLOR = {
-  canvas: '#f1f5f9',
-  slimBar: '#0f172a',
-  brand: '#38bdf8',
+  canvas: '#f7f7f5',
+  brand: '#57534e',
   white: '#ffffff',
-  ink: '#0f172a',
-  body: '#334155',
-  muted: '#64748b',
-  line: '#94a3b8',
-  lineStrong: '#475569',
-  driveLine: '#0369a1',
-  areaLine: '#15803d',
-  divider: '#e2e8f0',
-  rowAlt: '#f8fafc',
-  note: '#b45309',
-  eventHeader: '#1e3a5f',
-  carHeader: '#0c4a6e',
-  unassignedHeader: '#92400e',
-  areaHeader: '#14532d',
-  standbyHeader: '#334155',
-  seatsOkBg: '#ecfdf5',
-  seatsOkFg: '#065f46',
-  seatsOkBorder: '#a7f3d0',
-  seatsFullBg: '#fef3c7',
+  ink: '#292524',
+  body: '#44403c',
+  muted: '#78716c',
+  line: '#a8a29e',
+  lineStrong: '#78716c',
+  driveLine: '#4a6fa5',
+  areaLine: '#5a8a6a',
+  divider: '#e8e6e3',
+  note: '#a16207',
+  eventAccent: '#4a6fa5',
+  carAccent: '#4a6fa5',
+  unassignedAccent: '#b45309',
+  areaAccent: '#5a8a6a',
+  standbyAccent: '#a8a29e',
   seatsFullFg: '#92400e',
-  seatsFullBorder: '#fcd34d',
-  labelBg: '#ffffff',
-  labelFg: '#334155',
-  labelBorder: '#cbd5e1',
 };
 
 export type TranslationFn = (key: string, opts?: Record<string, unknown>) => string;
@@ -229,46 +218,6 @@ export function drawRoundedRect(
   }
 }
 
-function drawBadge(
-  ctx: CanvasRenderingContext2D,
-  text: string,
-  x: number,
-  y: number,
-  opts: {
-    bg: string;
-    color: string;
-    border?: string;
-    fontSize?: number;
-    padX?: number;
-    padY?: number;
-    radius?: number;
-  },
-): number {
-  const { bg, color, border, fontSize = 11, padX = 8, padY = 4, radius = 6 } = opts;
-  ctx.font = `600 ${fontSize}px ${FONT_FAMILY}`;
-  const textWidth = ctx.measureText(text).width;
-  const badgeWidth = textWidth + padX * 2;
-  const badgeHeight = fontSize + padY * 2 + 2;
-
-  ctx.fillStyle = bg;
-  drawRoundedRect(ctx, x, y, badgeWidth, badgeHeight, radius);
-  ctx.fill();
-
-  if (border) {
-    ctx.strokeStyle = border;
-    ctx.lineWidth = 1;
-    drawRoundedRect(ctx, x, y, badgeWidth, badgeHeight, radius);
-    ctx.stroke();
-  }
-
-  ctx.fillStyle = color;
-  ctx.textBaseline = 'middle';
-  ctx.textAlign = 'left';
-  ctx.fillText(text, x + padX, y + badgeHeight / 2);
-
-  return badgeWidth;
-}
-
 /**
  * Visitors (record only, no ride) join the sheet as passenger rows with negative ids, in
  * the car they were recorded in, or under "no driver yet". They are tagged as visitors
@@ -301,7 +250,7 @@ const isVisitorRow = (r: PlanRide) => r.id < 0;
 
 function rowHeader(r: PlanRide, t: TranslationFn, formatT: TranslationFn): string {
   const legLabel = r.leg === 'return' ? ` [${t('returnTag')}]` : '';
-  const seatsLabel = ` (${t('passengerSeats', { count: r.seats })})`;
+  const seatsLabel = r.seats > 1 ? ` (${t('passengerSeats', { count: r.seats })})` : '';
   if (isVisitorRow(r)) return `${r.passenger.name} [${t('visitorTag')}]${seatsLabel}${legLabel}`;
   return `${r.passenger.name}${seatsLabel}${legLabel} \u00b7 ${fmtTime(r.pickup_at, formatT)}`;
 }
@@ -334,12 +283,12 @@ function measurePassengerBlock(
     .join(' \u00b7 ');
   const noteLines = noteRaw ? wrapText(ctx, noteRaw, innerWidth) : [];
   const itemHeight =
-    8 +
-    16 +
-    3 +
-    Math.max(1, addrLines.length) * 16 +
-    (noteLines.length > 0 ? 3 + noteLines.length * 15 : 0) +
-    8;
+    6 +
+    15 +
+    2 +
+    Math.max(1, addrLines.length) * 15 +
+    (noteLines.length > 0 ? 2 + noteLines.length * 14 : 0) +
+    6;
   return {
     ride: r,
     headerText,
@@ -350,16 +299,15 @@ function measurePassengerBlock(
 }
 
 function tableBodyHeight(passengers: MeasuredPassengerItem[], empty: boolean): number {
-  if (empty) return COL_HEAD_H + 36;
-  const items = passengers.reduce((acc, p) => acc + p.height, 0);
-  return COL_HEAD_H + items;
+  if (empty) return 32;
+  return passengers.reduce((acc, p) => acc + p.height, 0);
 }
 
 function vehicleLine(d: PlanDriver, t: TranslationFn): string {
   return [
     d.vehicle.model,
     d.vehicle.plate,
-    d.carpool ? t('carpool') : t('oneBooking'),
+    d.carpool ? null : t('oneBooking'),
     d.vehicle.wheelchair_ok ? t('wheelchairTag') : null,
     d.vehicle.child_seat ? t('childSeatTag') : null,
     d.vehicle.low_step ? t('lowStepTag') : null,
@@ -516,29 +464,26 @@ export function measurePlanLayout(
   const headerHeight = SLIM_BAR_H;
 
   // --- Event entity ---
-  const eventWidth = Math.min(560, contentWidth);
-  const eventInner = eventWidth - 28;
-  ctx.font = `700 20px ${FONT_FAMILY}`;
+  const eventWidth = Math.min(520, contentWidth);
+  const eventInner = eventWidth - 32;
+  ctx.font = `600 20px ${FONT_FAMILY}`;
   const titleLines = wrapText(ctx, eventTitle, eventInner);
+  const whenWhere = [fmtDateTime(plan.event.starts_at, formatT), plan.event.location || '']
+    .filter((x) => x && String(x).trim())
+    .join(' \u00b7 ');
+  const seatsLine = `${t('totalPassengers', { count: totalRiders })} \u00b7 ${t('seatsCount', { used: totalAssignedSeats, cap: totalCap })}`;
   const eventAttrs: Array<{ key: string; value: string }> = [
-    { key: t('colStartsAt'), value: fmtDateTime(plan.event.starts_at, formatT) },
-    { key: t('colLocation'), value: plan.event.location || '\u2014' },
-    { key: t('colStatus'), value: statusBadge.text },
-    {
-      key: t('colSeats'),
-      value: `${t('totalPassengers', { count: totalRiders })} \u00b7 ${t('seatsCount', { used: totalAssignedSeats, cap: totalCap })}`,
-    },
+    { key: 'when', value: whenWhere },
+    { key: 'seats', value: seatsLine },
   ];
-  if (unassignedRides.length === 0 && plan.rides.length > 0) {
-    eventAttrs.push({ key: t('colAssignment'), value: t('allAssigned') });
-  }
   const eventHeight =
     TABLE_HEADER_H +
-    10 +
-    Math.max(1, titleLines.length) * 24 +
     8 +
-    eventAttrs.length * 20 +
-    12;
+    Math.max(1, titleLines.length) * 24 +
+    6 +
+    18 +
+    16 +
+    14;
   const eventEntity: MeasuredEventEntity = {
     x: (CANVAS_WIDTH - eventWidth) / 2,
     y: headerY + headerHeight + GAP,
@@ -616,25 +561,16 @@ export function measurePlanLayout(
   const areaCount = Math.max(1, areas.length);
   const areaAvail = contentWidth;
   const areaWidth = Math.max(
-    160,
-    Math.min(260, (areaAvail - AREA_GAP * (Math.min(areaCount, 5) - 1)) / Math.min(areaCount, 5)),
+    140,
+    Math.min(200, (areaAvail - AREA_GAP * (Math.min(areaCount, 5) - 1)) / Math.min(areaCount, 5)),
   );
   const areasPerRow = Math.max(1, Math.floor((areaAvail + AREA_GAP) / (areaWidth + AREA_GAP)));
 
-  ctx.font = `12px ${FONT_FAMILY}`;
+  ctx.font = `600 13px ${FONT_FAMILY}`;
   const measuredAreasUnplaced = areas.map((a) => {
-    const nameLines = wrapText(ctx, a.name, areaWidth - 24);
-    const shown = a.names.slice(0, 3);
-    const extra = a.names.length - shown.length;
-    const listRaw = extra > 0 ? `${shown.join(', ')} +${extra}` : shown.join(', ');
-    const listLines = listRaw ? wrapText(ctx, listRaw, areaWidth - 24) : [];
-    const height =
-      TABLE_HEADER_H +
-      8 +
-      16 +
-      (listLines.length > 0 ? 4 + listLines.length * 15 : 0) +
-      10;
-    return { ...a, nameLines, listLines, height };
+    const nameLines = wrapText(ctx, a.name, areaWidth - 40);
+    const height = Math.max(44, 12 + Math.max(1, nameLines.length) * 18 + 12);
+    return { ...a, nameLines, listLines: [] as string[], height };
   });
 
   const areaRowCount = Math.max(1, Math.ceil(Math.max(areas.length, 1) / areasPerRow));
@@ -704,20 +640,20 @@ export function measurePlanLayout(
   let standbyY = 0;
   let standbyHeight = 0;
   const standbyNames = standbyDrivers
-    .map((d) => `${d.name} (${t('seatsCount', { used: 0, cap: d.cap })})`)
+    .map((d) => `${d.name} (${d.cap})`)
     .join(' \u00b7 ');
   if (standbyDrivers.length > 0) {
     standbyY = areasBottom + GAP;
     ctx.font = `13px ${FONT_FAMILY}`;
-    const nameLines = wrapText(ctx, standbyNames, contentWidth - 28);
-    standbyHeight = TABLE_HEADER_H + 12 + Math.max(1, nameLines.length) * 18 + 12;
+    const nameLines = wrapText(ctx, `${t('standbyDrivers')}  ·  ${standbyNames}`, contentWidth);
+    standbyHeight = Math.max(24, nameLines.length * 18);
   }
 
   // --- Footer ---
   ctx.font = `12px ${FONT_FAMILY}`;
   const reminderRaw = t('reminderNote');
   const reminderText = wrapText(ctx, reminderRaw, contentWidth - 260);
-  const footerHeight = Math.max(56, reminderText.length * 18 + 24);
+  const footerHeight = Math.max(32, reminderText.length * 18 + 8);
   const hasLegend = activeDrivers.length > 0 || unassignedRides.length > 0;
   const legendHeight = hasLegend ? 28 : 0;
   const legendY = (standbyHeight > 0 ? standbyY + standbyHeight : areasBottom) + GAP;
@@ -892,18 +828,18 @@ function entityKindLabel(kind: 'event' | 'car' | 'area' | 'unassigned' | 'standb
   }
 }
 
-function headerFill(kind: 'event' | 'car' | 'area' | 'unassigned' | 'standby'): string {
+function accentColor(kind: 'event' | 'car' | 'area' | 'unassigned' | 'standby'): string {
   switch (kind) {
     case 'event':
-      return COLOR.eventHeader;
+      return COLOR.eventAccent;
     case 'car':
-      return COLOR.carHeader;
+      return COLOR.carAccent;
     case 'area':
-      return COLOR.areaHeader;
+      return COLOR.areaAccent;
     case 'unassigned':
-      return COLOR.unassignedHeader;
+      return COLOR.unassignedAccent;
     case 'standby':
-      return COLOR.standbyHeader;
+      return COLOR.standbyAccent;
   }
 }
 
@@ -916,70 +852,58 @@ function drawTableShell(
   kind: 'event' | 'car' | 'area' | 'unassigned' | 'standby',
   t: TranslationFn,
   title: string,
-  opts?: { badge?: string; badgeTone?: 'success' | 'amber' | 'ok' | 'full' },
+  opts?: { badge?: string; badgeTone?: 'success' | 'amber' | 'ok' | 'full'; hideKind?: boolean },
 ) {
   ctx.save();
   drawRoundedRect(ctx, x, y, w, h, RADIUS_TABLE);
   ctx.fillStyle = COLOR.white;
   ctx.fill();
   ctx.strokeStyle = COLOR.divider;
-  ctx.lineWidth = 1.25;
+  ctx.lineWidth = 1;
   ctx.stroke();
 
-  // Header bar (square off the bottom corners by painting over them after a rounded clip).
-  ctx.beginPath();
-  const r = RADIUS_TABLE;
-  ctx.moveTo(x, y + TABLE_HEADER_H);
-  ctx.lineTo(x, y + r);
-  ctx.arcTo(x, y, x + r, y, r);
-  ctx.lineTo(x + w - r, y);
-  ctx.arcTo(x + w, y, x + w, y + r, r);
-  ctx.lineTo(x + w, y + TABLE_HEADER_H);
-  ctx.closePath();
-  ctx.fillStyle = headerFill(kind);
-  ctx.fill();
+  // Thin colored top accent, clipped to the rounded corners.
+  ctx.save();
+  drawRoundedRect(ctx, x, y, w, h, RADIUS_TABLE);
+  if (typeof ctx.clip === 'function') ctx.clip();
+  ctx.fillStyle = accentColor(kind);
+  ctx.fillRect(x, y, w, ACCENT_H);
+  ctx.restore();
 
-  const kindText = entityKindLabel(kind, t).toUpperCase();
-  ctx.font = `700 10px ${FONT_FAMILY}`;
-  ctx.fillStyle = 'rgba(255,255,255,0.7)';
-  ctx.textAlign = 'left';
-  ctx.textBaseline = 'middle';
-  ctx.fillText(kindText, x + 12, y + TABLE_HEADER_H / 2);
+  const midY = y + ACCENT_H + (TABLE_HEADER_H - ACCENT_H) / 2;
+  let titleX = x + 12;
+  let titleMax = w - 24;
+  if (!opts?.hideKind) {
+    const kindText = entityKindLabel(kind, t).toUpperCase();
+    ctx.font = `600 9px ${FONT_FAMILY}`;
+    ctx.fillStyle = accentColor(kind);
+    ctx.textAlign = 'left';
+    ctx.textBaseline = 'middle';
+    ctx.fillText(kindText, x + 12, midY);
+    titleX = x + 12 + ctx.measureText(kindText).width + (title ? 8 : 0);
+    titleMax = w - 24 - (titleX - x - 12);
+  }
 
-  const kindWidth = ctx.measureText(kindText).width;
-  const titleX = x + 12 + kindWidth + (title ? 10 : 0);
-  let titleMax = w - 24 - kindWidth - (title ? 10 : 0);
   if (opts?.badge) {
-    ctx.font = `600 11px ${FONT_FAMILY}`;
-    const badgeW = ctx.measureText(opts.badge).width + 16;
-    const badgeX = x + w - 10 - badgeW;
-    const tone = opts.badgeTone ?? 'ok';
-    const bg =
-      tone === 'amber' || tone === 'full' ? COLOR.seatsFullBg : tone === 'success' || tone === 'ok' ? COLOR.seatsOkBg : COLOR.white;
-    const fg =
-      tone === 'amber' || tone === 'full' ? COLOR.seatsFullFg : tone === 'success' || tone === 'ok' ? COLOR.seatsOkFg : COLOR.ink;
-    const border =
-      tone === 'amber' || tone === 'full' ? COLOR.seatsFullBorder : COLOR.seatsOkBorder;
-    drawBadge(ctx, opts.badge, badgeX, y + (TABLE_HEADER_H - 20) / 2, {
-      bg,
-      color: fg,
-      border,
-      fontSize: 11,
-      padX: 8,
-      padY: 3,
-      radius: RADIUS_PILL,
-    });
+    ctx.font = `500 12px ${FONT_FAMILY}`;
+    const badgeW = ctx.measureText(opts.badge).width;
+    const badgeX = x + w - 12 - badgeW;
+    const fg = opts.badgeTone === 'amber' || opts.badgeTone === 'full' ? COLOR.seatsFullFg : COLOR.muted;
+    ctx.fillStyle = fg;
+    ctx.textAlign = 'left';
+    ctx.textBaseline = 'middle';
+    ctx.fillText(opts.badge, badgeX, midY);
     titleMax = badgeX - titleX - 8;
   }
 
-  ctx.font = `700 14px ${FONT_FAMILY}`;
-  ctx.fillStyle = COLOR.white;
-  ctx.textAlign = 'left';
-  ctx.textBaseline = 'middle';
   if (!title) {
     ctx.restore();
     return;
   }
+  ctx.font = `600 14px ${FONT_FAMILY}`;
+  ctx.fillStyle = COLOR.ink;
+  ctx.textAlign = 'left';
+  ctx.textBaseline = 'middle';
   let drawnTitle = title;
   if (ctx.measureText(drawnTitle).width > titleMax) {
     while (drawnTitle.length > 1 && ctx.measureText(`${drawnTitle}\u2026`).width > titleMax) {
@@ -987,7 +911,7 @@ function drawTableShell(
     }
     drawnTitle = `${drawnTitle}\u2026`;
   }
-  ctx.fillText(drawnTitle, titleX, y + TABLE_HEADER_H / 2);
+  ctx.fillText(drawnTitle, titleX, midY);
   ctx.restore();
 }
 
@@ -997,60 +921,40 @@ function drawPassengerRows(
   startY: number,
   w: number,
   items: MeasuredPassengerItem[],
-  colLabel: string,
   unassigned: boolean,
 ) {
-  const innerX = x + 1;
-  const innerW = w - 2;
-  // Column header, like an attribute name in a table.
-  ctx.fillStyle = COLOR.rowAlt;
-  ctx.fillRect(innerX, startY, innerW, COL_HEAD_H);
-  ctx.fillStyle = COLOR.muted;
-  ctx.font = `700 10px ${FONT_FAMILY}`;
-  ctx.textAlign = 'left';
-  ctx.textBaseline = 'middle';
-  ctx.fillText(colLabel, x + 12, startY + COL_HEAD_H / 2);
-  ctx.beginPath();
-  ctx.moveTo(x, startY + COL_HEAD_H);
-  ctx.lineTo(x + w, startY + COL_HEAD_H);
-  ctx.strokeStyle = COLOR.divider;
-  ctx.lineWidth = 1;
-  ctx.stroke();
-
-  let y = startY + COL_HEAD_H;
+  let y = startY;
   items.forEach((p, i) => {
-    if (i % 2 === 1) {
-      ctx.fillStyle = COLOR.rowAlt;
-      ctx.fillRect(innerX, y, innerW, p.height);
+    if (i > 0) {
+      ctx.beginPath();
+      ctx.moveTo(x + 12, y);
+      ctx.lineTo(x + w - 12, y);
+      ctx.strokeStyle = COLOR.divider;
+      ctx.lineWidth = 1;
+      ctx.stroke();
     }
     ctx.fillStyle = unassigned ? COLOR.seatsFullFg : COLOR.ink;
-    ctx.font = `700 13px ${FONT_FAMILY}`;
+    ctx.font = `600 13px ${FONT_FAMILY}`;
     ctx.textAlign = 'left';
     ctx.textBaseline = 'top';
-    ctx.fillText(p.headerText, x + 12, y + 8);
+    ctx.fillText(p.headerText, x + 12, y + 6);
 
-    ctx.fillStyle = COLOR.body;
+    ctx.fillStyle = COLOR.muted;
     ctx.font = `12px ${FONT_FAMILY}`;
-    let ty = y + 8 + 16 + 3;
+    let ty = y + 6 + 15 + 2;
     for (const line of p.addrLines) {
       ctx.fillText(line, x + 12, ty);
-      ty += 16;
+      ty += 15;
     }
     if (p.noteLines.length > 0) {
       ctx.fillStyle = COLOR.note;
-      ctx.font = `600 11px ${FONT_FAMILY}`;
+      ctx.font = `500 11px ${FONT_FAMILY}`;
       for (const line of p.noteLines) {
-        ctx.fillText(`\u26a0 ${line}`, x + 12, ty);
-        ty += 15;
+        ctx.fillText(line, x + 12, ty);
+        ty += 14;
       }
     }
     y += p.height;
-    ctx.beginPath();
-    ctx.moveTo(x + 8, y);
-    ctx.lineTo(x + w - 8, y);
-    ctx.strokeStyle = COLOR.divider;
-    ctx.lineWidth = 1;
-    ctx.stroke();
   });
 }
 
@@ -1062,10 +966,10 @@ function drawCrowFoot(
   kind: 'one' | 'many',
   color: string,
 ) {
-  const arm = 9;
+  const arm = 7;
   ctx.save();
   ctx.strokeStyle = color;
-  ctx.lineWidth = 1.5;
+  ctx.lineWidth = 1.2;
   ctx.lineCap = 'round';
   ctx.lineJoin = 'round';
   ctx.beginPath();
@@ -1120,11 +1024,11 @@ function drawConnector(ctx: CanvasRenderingContext2D, c: Connector) {
   const color = connectorColor(c);
   ctx.save();
   ctx.strokeStyle = color;
-  ctx.lineWidth = 1.75;
+  ctx.lineWidth = 1.25;
   ctx.lineCap = 'round';
   ctx.lineJoin = 'round';
   if (c.dashed && typeof ctx.setLineDash === 'function') {
-    ctx.setLineDash([6, 4]);
+    ctx.setLineDash([5, 4]);
   }
   ctx.beginPath();
   ctx.moveTo(c.points[0].x, c.points[0].y);
@@ -1144,23 +1048,6 @@ function drawConnector(ctx: CanvasRenderingContext2D, c: Connector) {
   // "Toward" is the direction the path is travelling as it arrives at the entity.
   drawCrowFoot(ctx, a0.x, a0.y, endDirection(a1, a0), c.fromCard, color);
   drawCrowFoot(ctx, b1.x, b1.y, endDirection(b0, b1), c.toCard, color);
-}
-
-function drawLabelPill(ctx: CanvasRenderingContext2D, text: string, x: number, y: number, color = COLOR.labelFg) {
-  ctx.font = `600 11px ${FONT_FAMILY}`;
-  const w = ctx.measureText(text).width + 14;
-  const h = 18;
-  drawRoundedRect(ctx, x - w / 2, y - h / 2, w, h, 4);
-  ctx.fillStyle = COLOR.labelBg;
-  ctx.fill();
-  ctx.strokeStyle = color;
-  ctx.lineWidth = 1;
-  drawRoundedRect(ctx, x - w / 2, y - h / 2, w, h, 4);
-  ctx.stroke();
-  ctx.fillStyle = color;
-  ctx.textAlign = 'center';
-  ctx.textBaseline = 'middle';
-  ctx.fillText(text, x, y);
 }
 
 function drawLegend(
@@ -1191,7 +1078,7 @@ function drawLegend(
     const it = items[i];
     ctx.save();
     ctx.strokeStyle = it.color;
-    ctx.lineWidth = 1.75;
+    ctx.lineWidth = 1.25;
     ctx.lineCap = 'round';
     if (it.dashed && typeof ctx.setLineDash === 'function') ctx.setLineDash([5, 3]);
     ctx.beginPath();
@@ -1218,106 +1105,47 @@ export function drawPlanLayout(
   ctx.fillStyle = COLOR.canvas;
   ctx.fillRect(0, 0, layout.width, layout.height);
 
-  // --- Slim brand bar ---
+  // --- Brand line (no filled bar, no status badge — status sits once on the event card) ---
   const hx = PAD;
   const hy = layout.headerY;
-  const hw = contentWidth;
   const hh = layout.headerHeight;
-  drawRoundedRect(ctx, hx, hy, hw, hh, 10);
-  ctx.fillStyle = COLOR.slimBar;
-  ctx.fill();
-
   ctx.fillStyle = COLOR.brand;
-  ctx.font = `700 13px ${FONT_FAMILY}`;
+  ctx.font = `500 12px ${FONT_FAMILY}`;
   ctx.textAlign = 'left';
   ctx.textBaseline = 'middle';
-  ctx.fillText(`${t('brandTitle')} \u00b7 ${t('brandSubtitle')}`, hx + 18, hy + hh / 2);
-
-  const badgeColor = layout.statusBadge.tone === 'success' ? '#10b981' : '#f59e0b';
-  const badgeBg = layout.statusBadge.tone === 'success' ? 'rgba(16, 185, 129, 0.2)' : 'rgba(245, 158, 11, 0.2)';
-  const badgeBorder = layout.statusBadge.tone === 'success' ? '#059669' : '#d97706';
-  ctx.font = `600 12px ${FONT_FAMILY}`;
-  const badgeW = ctx.measureText(layout.statusBadge.text).width + 24;
-  drawBadge(ctx, layout.statusBadge.text, hx + hw - 12 - badgeW, hy + (hh - 24) / 2, {
-    bg: badgeBg,
-    color: badgeColor,
-    border: badgeBorder,
-    fontSize: 12,
-    padX: 12,
-    padY: 5,
-    radius: 12,
-  });
+  ctx.fillText(`${t('brandTitle')} \u00b7 ${t('brandSubtitle')}`, hx, hy + hh / 2);
 
   // --- Connectors behind the tables so crow's feet sit on the edges once redrawn after ---
   for (const c of layout.connectors) {
     drawConnector(ctx, c);
   }
 
-  // Relationship labels (once per kind), with a pill so lines never hide the text.
-  const drives = layout.connectors.find((c) => c.kind === 'drivesTo');
-  if (drives) {
-    const ev = layout.eventEntity;
-    drawLabelPill(ctx, drives.label, ev.x + ev.width / 2, ev.y + ev.height + 28, COLOR.driveLine);
-  }
-  const picks = layout.connectors.find((c) => c.kind === 'picksUpIn');
-  if (picks && layout.areaEntities.length > 0 && layout.driverCards.length + (layout.unassignedBox ? 1 : 0) > 0) {
-    const minAreaY = Math.min(...layout.areaEntities.map((a) => a.y));
-    const maxTableY = Math.max(
-      ...layout.driverCards.map((c) => c.y + c.height),
-      layout.unassignedBox ? layout.unassignedBox.y + layout.unassignedBox.height : 0,
-    );
-    drawLabelPill(ctx, picks.label, CANVAS_WIDTH / 2, (maxTableY + minAreaY) / 2, COLOR.areaLine);
-  }
-
   // --- Event entity ---
   const ev = layout.eventEntity;
   drawTableShell(ctx, ev.x, ev.y, ev.width, ev.height, 'event', t, '', {
     badge: layout.statusBadge.tone === 'success' ? t('statusApproved') : t('statusDraft'),
-    badgeTone: layout.statusBadge.tone === 'success' ? 'success' : 'amber',
   });
-  // If the title wrapped, print the remaining lines in the body as the entity name.
-  let bodyY = ev.y + TABLE_HEADER_H + 10;
+  let bodyY = ev.y + TABLE_HEADER_H + 8;
   ctx.textAlign = 'left';
   ctx.textBaseline = 'top';
-  const titleLines = ev.titleLines;
-  ctx.font = `700 18px ${FONT_FAMILY}`;
+  ctx.font = `600 18px ${FONT_FAMILY}`;
   ctx.fillStyle = COLOR.ink;
-  for (const line of titleLines) {
-    ctx.fillText(line, ev.x + 14, bodyY);
+  for (const line of ev.titleLines) {
+    ctx.fillText(line, ev.x + 16, bodyY);
     bodyY += 24;
   }
-  bodyY += 4;
-  ctx.beginPath();
-  ctx.moveTo(ev.x + 10, bodyY);
-  ctx.lineTo(ev.x + ev.width - 10, bodyY);
-  ctx.strokeStyle = COLOR.divider;
-  ctx.lineWidth = 1;
-  ctx.stroke();
-  bodyY += 8;
-  const keyW = 110;
+  bodyY += 6;
+  ctx.font = `400 13px ${FONT_FAMILY}`;
+  ctx.fillStyle = COLOR.muted;
   for (const attr of ev.attrs) {
-    ctx.font = `600 11px ${FONT_FAMILY}`;
-    ctx.fillStyle = COLOR.muted;
-    ctx.fillText(attr.key, ev.x + 14, bodyY);
-    ctx.font = `500 13px ${FONT_FAMILY}`;
-    ctx.fillStyle = COLOR.ink;
-    const valX = ev.x + 14 + keyW;
-    const valMax = ev.width - 28 - keyW;
-    let value = attr.value;
-    if (ctx.measureText(value).width > valMax) {
-      while (value.length > 1 && ctx.measureText(`${value}\u2026`).width > valMax) {
-        value = value.slice(0, -1);
-      }
-      value = `${value}\u2026`;
-    }
-    ctx.fillText(value, valX, bodyY);
-    bodyY += 20;
+    ctx.fillText(attr.value, ev.x + 16, bodyY);
+    bodyY += 18;
   }
 
   // --- Car tables ---
   for (const card of layout.driverCards) {
     const { x, y, width: cw, height: ch, driver: d, passengers, assignedSeats } = card;
-    const seatsLabel = t('seatsCount', { used: assignedSeats, cap: d.cap });
+    const seatsLabel = `${assignedSeats}/${d.cap}`;
     drawTableShell(ctx, x, y, cw, ch, 'car', t, d.name, {
       badge: seatsLabel,
       badgeTone: assignedSeats >= d.cap ? 'full' : 'ok',
@@ -1342,15 +1170,7 @@ export function drawPlanLayout(
     ctx.strokeStyle = COLOR.divider;
     ctx.lineWidth = 1;
     ctx.stroke();
-    drawPassengerRows(
-      ctx,
-      x,
-      y + TABLE_HEADER_H + TABLE_SUB_H,
-      cw,
-      passengers,
-      t('colPassenger'),
-      false,
-    );
+    drawPassengerRows(ctx, x, y + TABLE_HEADER_H + TABLE_SUB_H, cw, passengers, false);
   }
 
   // --- Unassigned table ---
@@ -1359,61 +1179,29 @@ export function drawPlanLayout(
     drawTableShell(ctx, box.x, box.y, box.width, box.height, 'unassigned', t, t('unassignedTitle'), {
       badge: String(layout.unassignedItems.length),
       badgeTone: 'amber',
+      hideKind: true,
     });
-    drawPassengerRows(
-      ctx,
-      box.x,
-      box.y + TABLE_HEADER_H,
-      box.width,
-      layout.unassignedItems,
-      t('colPassenger'),
-      true,
-    );
+    drawPassengerRows(ctx, box.x, box.y + TABLE_HEADER_H, box.width, layout.unassignedItems, true);
   }
 
-  // --- Area entities ---
+  // --- Area chips ---
   for (const area of layout.areaEntities) {
     drawTableShell(ctx, area.x, area.y, area.width, area.height, 'area', t, area.name, {
-      badge: t('paxTag', { count: area.count }),
-      badgeTone: 'ok',
+      badge: String(area.count),
+      hideKind: true,
     });
-    let ay = area.y + TABLE_HEADER_H + 8;
-    ctx.textAlign = 'left';
-    ctx.textBaseline = 'top';
-    ctx.font = `700 14px ${FONT_FAMILY}`;
-    ctx.fillStyle = COLOR.ink;
-    ctx.font = `600 11px ${FONT_FAMILY}`;
-    ctx.fillStyle = COLOR.muted;
-    ctx.fillText(t('colPassengers'), area.x + 12, ay);
-    ay += 16;
-    ctx.font = `12px ${FONT_FAMILY}`;
-    ctx.fillStyle = COLOR.body;
-    const shown = area.passengerNames.slice(0, 3);
-    const extra = area.passengerNames.length - shown.length;
-    const list = extra > 0 ? `${shown.join(', ')} +${extra}` : shown.join(', ') || '\u2014';
-    ctx.font = `12px ${FONT_FAMILY}`;
-    const lines = wrapText(ctx, list, area.width - 24);
-    for (const line of lines) {
-      ctx.fillText(line, area.x + 12, ay);
-      ay += 15;
-    }
   }
 
-  // --- Standby ---
+  // --- Standby (quiet line, no card) ---
   if (layout.standbyHeight > 0) {
-    const sx = PAD;
-    const sy = layout.standbyY;
-    const sw = contentWidth;
-    const sh = layout.standbyHeight;
-    drawTableShell(ctx, sx, sy, sw, sh, 'standby', t, '');
-    ctx.font = `13px ${FONT_FAMILY}`;
-    ctx.fillStyle = COLOR.body;
+    ctx.font = `400 13px ${FONT_FAMILY}`;
+    ctx.fillStyle = COLOR.muted;
     ctx.textAlign = 'left';
     ctx.textBaseline = 'top';
-    const lines = wrapText(ctx, layout.standbyNames, sw - 28);
-    let ly = sy + TABLE_HEADER_H + 12;
+    const lines = wrapText(ctx, `${t('standbyDrivers')}  \u00b7  ${layout.standbyNames}`, contentWidth);
+    let ly = layout.standbyY;
     for (const line of lines) {
-      ctx.fillText(line, sx + 14, ly);
+      ctx.fillText(line, PAD, ly);
       ly += 18;
     }
   }
@@ -1437,27 +1225,18 @@ export function drawPlanLayout(
   const fx = PAD;
   const fy = layout.footerY;
   const fw = contentWidth;
-  const fh = layout.footerHeight;
-  drawRoundedRect(ctx, fx, fy, fw, fh, 10);
-  ctx.fillStyle = COLOR.white;
-  ctx.fill();
-  ctx.strokeStyle = COLOR.divider;
-  ctx.lineWidth = 1;
-  ctx.stroke();
-
   ctx.fillStyle = COLOR.muted;
-  ctx.font = `500 12px ${FONT_FAMILY}`;
+  ctx.font = `400 12px ${FONT_FAMILY}`;
   ctx.textAlign = 'left';
   ctx.textBaseline = 'top';
-  let lineY = fy + 14;
+  let lineY = fy;
   for (const line of layout.reminderText) {
-    ctx.fillText(line, fx + 16, lineY);
+    ctx.fillText(line, fx, lineY);
     lineY += 18;
   }
   ctx.fillStyle = COLOR.line;
-  ctx.font = `12px ${FONT_FAMILY}`;
   ctx.textAlign = 'right';
-  ctx.fillText(t('generatedAt', { time: layout.timestamp }), fx + fw - 16, fy + 14);
+  ctx.fillText(t('generatedAt', { time: layout.timestamp }), fx + fw, fy);
 }
 
 export function renderPlanToCanvas(options: PlanImageExportOptions): HTMLCanvasElement {

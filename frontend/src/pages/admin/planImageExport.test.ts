@@ -231,7 +231,6 @@ describe('planImageExport', () => {
       expect(layout.unassignedHeight).toBe(0);
       expect(layout.unassignedBox).toBeNull();
       expect(layout.allAssigned).toBe(true);
-      expect(layout.eventEntity.attrs.some((a) => a.value === 'allAssigned')).toBe(true);
       expect(layout.statusBadge.tone).toBe('success');
     });
   });
@@ -321,6 +320,7 @@ describe('planImageExport', () => {
       save: vi.fn(),
       restore: vi.fn(),
       setLineDash: vi.fn(),
+      clip: vi.fn(),
       measureText: vi.fn((str: string) => ({ width: str.length * 8 })),
     };
 
@@ -412,9 +412,6 @@ describe('planImageExport', () => {
           width: layout.unassignedBox.width,
           height: layout.unassignedBox.height,
         });
-      }
-      if (layout.standbyHeight > 0) {
-        boxes.push({ x: 48, y: layout.standbyY, width: 1104, height: layout.standbyHeight });
       }
       return boxes;
     };
