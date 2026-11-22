@@ -14,6 +14,8 @@ export default {
   finished: 'Ended',
   peopleAttend: 'attending',
   signedUp: 'Signed up',
+  ridesNeeded: '{count} rides needed',
+  ridesNeeded_one: '{count} ride needed',
   spotsLeft: '{n} spots left',
   full: 'Full',
   postEventReimbTitle: 'Post-Event Driver Reimbursements',

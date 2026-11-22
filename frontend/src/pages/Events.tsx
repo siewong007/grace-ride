@@ -1,8 +1,9 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { Plus, QrCode } from 'lucide-react';
 import { api, useApi } from '../api';
 import { useAuth } from '../auth';
+import type { Ride } from '../components/RideCard';
 import {
   BackToTop,
   Button,
@@ -62,6 +63,17 @@ export default function Events() {
   const [scope, setScope] = useState<'upcoming' | 'past' | 'managing'>('upcoming');
   const [showScanModal, setShowScanModal] = useState(false);
   const upcomingOrManaging = useApi<EventItem[]>(scope !== 'past' ? `/events?scope=${scope}` : null);
+  const openRequests = useApi<Ride[]>(can('drive') && scope === 'upcoming' ? '/driver/requests?mine_areas=true' : null);
+
+  const openRequestsCountByEvent = useMemo(() => {
+    const counts: Record<number, number> = {};
+    for (const r of openRequests.data ?? []) {
+      if (r.event?.id) {
+        counts[r.event.id] = (counts[r.event.id] || 0) + 1;
+      }
+    }
+    return counts;
+  }, [openRequests.data]);
 
   const [pastEvents, setPastEvents] = useState<EventItem[]>([]);
   const [nextPast, setNextPast] = useState<string | null>(null);
@@ -201,6 +213,9 @@ export default function Events() {
                       <Pill tone="success">{t('signedUp')}</Pill>
                     ) : e.my_signup?.status === 'waitlist' ? (
                       <Pill tone="warning">{t('waitlist')}</Pill>
+                    ) : null}
+                    {scope === 'upcoming' && can('drive') && openRequestsCountByEvent[e.id] ? (
+                      <Pill tone="blue">{t('ridesNeeded', { count: openRequestsCountByEvent[e.id] })}</Pill>
                     ) : null}
                     {e.my_signup?.need_ride && <span className="muted small">{t('needRide')}</span>}
                     {e.status === 'published' && !e.my_signup && (

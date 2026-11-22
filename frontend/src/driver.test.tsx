@@ -130,6 +130,18 @@ describe('Drive page - Schedule tab', () => {
     expect(screen.getByRole('button', { name: /picked up/i })).toBeInTheDocument();
     expect(screen.getByRole('button', { name: /no-show/i })).toBeInTheDocument();
   });
+
+  it('renders browse events CTA when schedule has no rides', () => {
+    mockApiMap['/driver/schedule?from=2026-11-12&to=2026-11-12'] = [];
+    render(
+      <MemoryRouter>
+        <Drive />
+      </MemoryRouter>
+    );
+
+    expect(screen.getByRole('link', { name: /browse events/i })).toHaveAttribute('href', '/events');
+    mockApiMap['/driver/schedule?from=2026-11-12&to=2026-11-12'] = mockScheduleRides;
+  });
 });
 
 describe('Drive page - no generic requests tab', () => {

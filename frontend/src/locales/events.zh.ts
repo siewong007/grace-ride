@@ -14,6 +14,8 @@ export default {
   finished: '已结束',
   peopleAttend: '人参加',
   signedUp: '已报名',
+  ridesNeeded: '需 {count} 位司机',
+  ridesNeeded_one: '需 {count} 位司机',
   spotsLeft: '余 {n} 名额',
   full: '已满额',
   postEventReimbTitle: '活动散场与司机车贴登记',

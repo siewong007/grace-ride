@@ -710,50 +710,58 @@ function MonthlyPayoutBatches({ onChanged }: { onChanged: () => void }) {
       {batches.length > 0 && (
         <div className="stack-sm">
           {batches.map((b) => (
-            <div key={b.id} className="card flat tight row between wrap gap-sm">
-              <div className="min-w-0">
-                <div className="bold small">
-                  {b.title} · <span className="mono">{rm(b.total_cents)}</span> ({t('reimb.batchCount', { count: b.claim_count })})
+            <div key={b.id} className="card flat tight stack-xs">
+              <div className="row between wrap gap-sm">
+                <div className="min-w-0">
+                  <div className="row nowrap gap-xs align-center">
+                    <span className="bold small">{b.title}</span>
+                    <span className="mono bold">{rm(b.total_cents)}</span>
+                    <Pill tone={b.status === 'paid' ? 'success' : 'warning'}>
+                      {b.status === 'paid' ? t('reimb.batchStatusPaid') : t('reimb.batchStatusOpen')}
+                    </Pill>
+                  </div>
+                  <div className="muted tiny">
+                    {b.month} · {b.created_by} ({t('reimb.batchCount', { count: b.claim_count })})
+                    {b.status === 'paid' && b.paid_ref ? ` · ${b.paid_ref}` : ''}
+                    {b.paid_by ? ` · ${b.paid_by}` : ''}
+                  </div>
                 </div>
-                <div className="muted tiny">
-                  {b.month} · {b.created_by}
-                  {b.status === 'paid' && b.paid_ref ? ` · ${b.paid_ref}` : ''}
+                <div className="row nowrap gap-xs">
+                  <Button
+                    variant="secondary"
+                    size="sm"
+                    disabled={busy}
+                    onClick={() => downloadCsv(b)}
+                    icon={<Download size={14} />}
+                  >
+                    {t('reimb.batchCsv')}
+                  </Button>
+                  {b.status === 'open' && canPay && (
+                    <>
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        disabled={busy}
+                        onClick={() => cancelBatch(b.id)}
+                      >
+                        {t('reimb.batchCancel')}
+                      </Button>
+                      <Button
+                        variant="primary"
+                        size="sm"
+                        onClick={() => {
+                          setPayBatch(b);
+                          setVerified(false);
+                          setPaidRef('');
+                        }}
+                      >
+                        {t('reimb.batchPayBtn')}
+                      </Button>
+                    </>
+                  )}
                 </div>
               </div>
-              <div className="row nowrap gap-xs">
-                <Button
-                  variant="secondary"
-                  size="sm"
-                  disabled={busy}
-                  onClick={() => downloadCsv(b)}
-                  icon={<Download size={14} />}
-                >
-                  {t('reimb.batchCsv')}
-                </Button>
-                {b.status === 'open' && canPay && (
-                  <>
-                    <Button
-                      variant="ghost"
-                      size="sm"
-                      disabled={busy}
-                      onClick={() => cancelBatch(b.id)}
-                    >
-                      {t('reimb.batchCancel')}
-                    </Button>
-                    <Button
-                      variant="primary"
-                      size="sm"
-                      onClick={() => {
-                        setPayBatch(b);
-                        setVerified(false);
-                        setPaidRef('');
-                      }}
-                    >
-                      {t('reimb.batchPayBtn')}
-                    </Button>
-                  </>
-                )}
-              </div>
+              <BatchFlowStepper batch={b} />
             </div>
           ))}
         </div>
@@ -793,6 +801,32 @@ function MonthlyPayoutBatches({ onChanged }: { onChanged: () => void }) {
         </Modal>
       )}
     </Card>
+  );
+}
+
+/** Visual 4-step stepper illustrating the Maker-Checker payout lifecycle */
+function BatchFlowStepper({ batch }: { batch: PayoutBatch }) {
+  const { t } = useTranslation('admin');
+  const isPaid = batch.status === 'paid';
+  const steps = [
+    { key: 'created', label: t('reimb.stepCreated'), done: true, sub: batch.created_by },
+    { key: 'csv', label: t('reimb.stepCsv'), done: true, sub: 'DuitNow CSV' },
+    { key: 'disburse', label: t('reimb.stepDisburse'), done: isPaid, sub: isPaid ? 'Done' : t('reimb.batchStatusOpen') },
+    { key: 'finalized', label: t('reimb.stepFinalized'), done: isPaid, sub: isPaid ? (batch.paid_ref || 'Verified') : 'Pending' },
+  ];
+  return (
+    <div className="payout-stepper" role="region" aria-label="Batch progress">
+      {steps.map((s, idx) => (
+        <div key={s.key} className={`payout-step-item ${s.done ? 'step-done' : 'step-pending'}`}>
+          <div className="step-circle">{s.done ? '✓' : idx + 1}</div>
+          <div className="step-content">
+            <span className="step-label">{s.label}</span>
+            <span className="step-sub muted tiny">{s.sub}</span>
+          </div>
+          {idx < steps.length - 1 && <div className={`step-connector ${isPaid || idx === 0 ? 'connector-done' : ''}`} />}
+        </div>
+      ))}
+    </div>
   );
 }
 

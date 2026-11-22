@@ -8,7 +8,7 @@ import { useAuth } from '../auth';
 import CantMakeItModal from '../components/CantMakeIt';
 import type { Ride } from '../components/RideCard';
 import { Button, CardSkeleton, ErrorBox, ListSkeleton, Notice, Page, StatusPill, useAction } from '../components/ui';
-import { fmtAgo, fmtDay, fmtTime, greeting, RIDE_STATUS, RIDE_STATUS_PASSENGER, rm, todayStr, useFormatT } from '../format';
+import { fmtAgo, fmtDay, fmtTime, greeting, localDate, RIDE_STATUS, RIDE_STATUS_PASSENGER, rm, todayStr, useFormatT } from '../format';
 import { loadTodayRidesSnapshot, saveTodayRidesSnapshot } from '../offlineSnapshot';
 import { loadPrefs, savePrefs, TextSize } from '../prefs';
 import type { EventItem } from './Events';
@@ -78,7 +78,10 @@ export default function Home() {
   const shares = useApi<Share[]>(can('costs') ? '/me/shares' : null);
   const ann = useApi<Announcement[]>('/announcements');
   const today = todayStr();
-  const driving = useApi<Ride[]>(can('drive') ? `/driver/schedule?from=${today}&to=${today}` : null);
+  const nextWeek = new Date();
+  nextWeek.setDate(nextWeek.getDate() + 7);
+  const nextWeekStr = localDate(nextWeek);
+  const driving = useApi<Ride[]>(can('drive') ? `/driver/schedule?from=${today}&to=${nextWeekStr}` : null);
 
   const [showComfort, setShowComfort] = useState(() => {
     try {
@@ -109,18 +112,22 @@ export default function Home() {
 
   const offlineSnap = !rides.data && rides.error && me?.id ? loadTodayRidesSnapshot(me.id) : null;
   const myRides = rides.data ?? (offlineSnap ? offlineSnap.rides.filter((r) => r.viewer?.is_passenger) : []);
+  const allDriving = driving.data ?? (offlineSnap ? offlineSnap.rides.filter((r) => r.viewer?.is_driver) : []);
+  const todaysDriving = allDriving.filter((r) => r.pickup_at.slice(0, 10) === today);
+  const upcomingDriving = allDriving.filter((r) => r.pickup_at.slice(0, 10) > today);
   const next = myRides[0];
   // Rides where a driver has offered and only the member's answer is missing.
   const awaitingReply = myRides.filter((r) => r.status === 'pending_passenger' && r.viewer?.is_passenger && r.driver);
   const toPay = (shares.data ?? []).filter((s) => TO_PAY.includes(s.status));
 
-  // Coming up: the member's other rides and the events they are going to, in date order.
+  // Coming up: the member's other rides, upcoming driving, and the events they are going to, in date order.
   const comingUp = [
     // Rides already listed under "Needs you" are not repeated here.
     ...myRides
       .slice(1)
       .filter((r) => !awaitingReply.includes(r))
       .map((r) => ({ kind: 'ride' as const, at: r.pickup_at, ride: r })),
+    ...upcomingDriving.map((r) => ({ kind: 'drive' as const, at: r.pickup_at, ride: r })),
     ...(events.data ?? [])
       .filter((e) => e.my_signup?.status === 'going')
       .map((e) => ({ kind: 'event' as const, at: e.starts_at, event: e })),
@@ -128,7 +135,7 @@ export default function Home() {
     .sort((a, b) => a.at.localeCompare(b.at))
     .slice(0, 3);
 
-  const isDriverToday = can('drive') && (driving.loading || (driving.data?.length ?? 0) > 0);
+  const isDriverToday = can('drive') && (driving.loading || todaysDriving.length > 0);
   const canRequest = can('rides', 'create');
   // The whole date ("Friday 20 November"), not just "Today".
   const formattedToday = new Date().toLocaleDateString(i18n.language === 'zh' ? 'zh-CN' : 'en-GB', {
@@ -241,9 +248,9 @@ export default function Home() {
           <Section title={t('driveSchedule')} more={{ to: '/drive', label: t('seeAll') }}>
             {driving.loading ? (
               <ListSkeleton count={2} />
-            ) : driving.data?.length ? (
+            ) : todaysDriving.length ? (
               <div className="list">
-                {driving.data.map((r) => (
+                {todaysDriving.map((r) => (
                   <Link key={r.id} to={`/rides/${r.id}`} className="item">
                     <span className="timeline-time">{fmtTime(r.pickup_at, ft).replace(/^.. /, '')}</span>
                     <div className="grow">
@@ -253,6 +260,19 @@ export default function Home() {
                     <StatusPill map={RIDE_STATUS} status={r.status} />
                   </Link>
                 ))}
+              </div>
+            ) : upcomingDriving.length ? (
+              <div className="stack-sm">
+                <p className="muted small">{t('noDriveToday')}</p>
+                <Link to={`/rides/${upcomingDriving[0].id}`} className="item">
+                  <div className="grow">
+                    <div className="bold">{t('nextDriveUpcoming', { when: fmtDay(upcomingDriving[0].pickup_at, ft) })}</div>
+                    <div className="muted small">
+                      {fmtTime(upcomingDriving[0].pickup_at, ft)} · {upcomingDriving[0].passenger.name} · {upcomingDriving[0].area.name} → {upcomingDriving[0].destination}
+                    </div>
+                  </div>
+                  <ChevronRight size={16} className="muted" aria-hidden="true" />
+                </Link>
               </div>
             ) : (
               <p className="muted">{t('noDriveToday')}</p>
@@ -284,6 +304,16 @@ export default function Home() {
                         <div className="muted small">
                           {fmtDay(c.at, ft)} · {fmtTime(c.at, ft)} ·{' '}
                           {ft(RIDE_STATUS_PASSENGER[c.ride.status]?.label ?? RIDE_STATUS[c.ride.status]?.label ?? c.ride.status)}
+                        </div>
+                      </div>
+                      <ChevronRight size={16} className="muted" aria-hidden="true" />
+                    </Link>
+                  ) : c.kind === 'drive' ? (
+                    <Link key={`d${c.ride.id}`} to={`/rides/${c.ride.id}`} className="item">
+                      <div className="grow">
+                        <div className="bold">{t('driveFor', { name: c.ride.passenger.name })}</div>
+                        <div className="muted small">
+                          {fmtDay(c.at, ft)} · {fmtTime(c.at, ft)} · {c.ride.destination}
                         </div>
                       </div>
                       <ChevronRight size={16} className="muted" aria-hidden="true" />

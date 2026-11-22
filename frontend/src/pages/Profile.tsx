@@ -73,6 +73,20 @@ export default function Profile() {
   const [telegramChatId, setTelegramChatId] = useState(me?.telegram_chat_id ?? '');
   const [whatsappOptIn, setWhatsappOptIn] = useState(Boolean(me?.whatsapp_opt_in));
   const [pushOptIn, setPushOptIn] = useState(me?.push_opt_in ?? true);
+
+  useEffect(() => {
+    if (me) {
+      setF({
+        name: me.name,
+        phone: me.phone ?? '',
+        optOut: me.badges_opt_out ?? false,
+      });
+      setReadinessPrompt(me.readiness_prompt_mins ?? 45);
+      setTelegramChatId(me.telegram_chat_id ?? '');
+      setWhatsappOptIn(Boolean(me.whatsapp_opt_in));
+      setPushOptIn(me.push_opt_in ?? true);
+    }
+  }, [me]);
   const [pushStatus, setPushStatus] = useState('');
   const [pushBusy, setPushBusy] = useState(false);
   const [totp, setTotp] = useState<{ secret: string; url: string } | null>(null);
@@ -130,7 +144,7 @@ export default function Profile() {
     put('/me', {
       badges_opt_out: f.optOut,
       readiness_prompt_mins: readinessPrompt,
-      telegram_chat_id: telegramChatId.trim(),
+      telegram_chat_id: telegramChatId.trim().replace(/^@/, ''),
       whatsapp_opt_in: whatsappOptIn,
       push_opt_in: pushOptIn,
     }).then(refresh);
@@ -426,10 +440,23 @@ export default function Profile() {
                 run(savePersonal, t('saved'));
               }}>
                 <Field label={t('name')}>
-                  <input className="input" required value={f.name} onChange={(e) => setF({ ...f, name: e.target.value })} />
+                  <input
+                    className="input"
+                    required
+                    autoComplete="name"
+                    value={f.name}
+                    onChange={(e) => setF({ ...f, name: e.target.value })}
+                  />
                 </Field>
                 <Field label={t('phone')} hint={t('phoneHint')}>
-                  <input className="input" type="tel" value={f.phone} onChange={(e) => setF({ ...f, phone: e.target.value })} />
+                  <input
+                    className="input"
+                    type="tel"
+                    autoComplete="tel"
+                    placeholder={t('phonePlaceholder')}
+                    value={f.phone}
+                    onChange={(e) => setF({ ...f, phone: e.target.value })}
+                  />
                 </Field>
                 <div className="btn-row">
                   <Button variant="primary" type="submit" loading={busy}>
@@ -781,6 +808,7 @@ function TotpModal({
   const [backupCodes, setBackupCodes] = useState<string[] | null>(null);
   const { busy, error, run } = useAction();
   const [copied, setCopied] = useState(false);
+  const [secretCopied, setSecretCopied] = useState(false);
   const [qr, setQr] = useState<string | null>(null);
 
   // The QR is drawn in the browser from the otpauth link, so the secret never goes to a third party.
@@ -835,7 +863,22 @@ function TotpModal({
         </div>
       )}
       <p className="muted small">{t('totpStep2')}</p>
-      <code className="card flat tight mono break-all">{secret}</code>
+      <div className="row align-center gap-xs">
+        <code className="card flat tight mono break-all flex-1">{secret}</code>
+        <Button
+          variant="secondary"
+          size="sm"
+          type="button"
+          onClick={() => {
+            navigator.clipboard?.writeText(secret);
+            setSecretCopied(true);
+            setTimeout(() => setSecretCopied(false), 2000);
+          }}
+        >
+          {secretCopied ? <Check size={14} /> : <Copy size={14} />}
+          {secretCopied ? t('secretCopied') : t('copySecret')}
+        </Button>
+      </div>
       <a className="small" href={url}>
         {t('totpJoin')}
       </a>
@@ -918,6 +961,7 @@ interface AreaOpt {
 
 function PlacesAndCalendarSection() {
   const { t } = useTranslation('profile');
+  const confirm = useConfirm();
   const { data: placesRaw, reload: reloadPlaces } = useApi<SavedPlaceItem[]>('/saved-places');
   const { data: areasRaw } = useApi<AreaOpt[]>('/areas');
   const { data: calRaw, reload: reloadCal } = useApi<{ enabled?: boolean }>('/me/calendar-feed');
@@ -980,7 +1024,15 @@ function PlacesAndCalendarSection() {
                   variant="danger"
                   size="sm"
                   disabled={busy}
-                  onClick={() => run(() => del(`/saved-places/${sp.id}`).then(reloadPlaces))}
+                  onClick={async () => {
+                    const ok = await confirm({
+                      title: t('remove'),
+                      body: t('removePlaceConfirm'),
+                      confirmLabel: t('remove'),
+                      tone: 'danger',
+                    });
+                    if (ok) run(() => del(`/saved-places/${sp.id}`).then(reloadPlaces), t('removed'));
+                  }}
                 >
                   <Trash2 size={14} />
                   {t('remove')}

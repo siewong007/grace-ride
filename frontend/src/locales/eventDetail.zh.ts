@@ -17,6 +17,7 @@ export default {
   joinAsRequired: '请选择您以哪个群体参加',
   joiningAsName: '以{name}参加',
   signUpForRide: '先报名，再申请接送或自愿接送。',
+  bookForFamily: '为家人/亲友代约接送',
   hideDriveRequests: '收起接送申请',
   driveRequestsTitle: '此活动的接送申请',
   driveRequestsHint: '为报名参加的会友提供接送。如尚未设置，请先填写车辆与路线。',

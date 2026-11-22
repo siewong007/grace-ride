@@ -17,6 +17,7 @@ export default {
   joinAsRequired: 'Choose which group you’re joining as',
   joiningAsName: 'Joining as {name}',
   signUpForRide: 'Sign up first, then you can ask for a ride or offer to drive.',
+  bookForFamily: 'Book a ride for family / dependent',
   hideDriveRequests: 'Hide ride requests',
   driveRequestsTitle: 'Ride requests for this event',
   driveRequestsHint: 'Offer to drive a member who is going. Set your vehicle and areas first if you haven’t.',

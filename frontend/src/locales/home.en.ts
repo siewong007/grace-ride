@@ -8,6 +8,8 @@ export default {
   noRide: 'No rides booked',
   driveSchedule: 'Today’s driving schedule',
   noDriveToday: 'No driving tasks today.',
+  nextDriveUpcoming: 'Next drive: {when}',
+  driveFor: 'Drive: {name}',
   yourDriver: 'Your driver',
   callDriver: 'Call driver',
   going: 'Going',

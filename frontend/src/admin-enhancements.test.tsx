@@ -1,3 +1,4 @@
+/* eslint-disable @typescript-eslint/no-explicit-any */
 import { beforeAll, describe, expect, it, vi } from 'vitest';
 import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { MemoryRouter, Route, Routes } from 'react-router-dom';
@@ -6,6 +7,7 @@ import AdminRides from './pages/admin/Rides';
 import Members from './pages/admin/Members';
 import AdminReimbursements from './pages/admin/Reimbursements';
 import PlanTransport from './pages/admin/PlanTransport';
+import AreaFares from './pages/admin/AreaFares';
 import * as apiMod from './api';
 import * as authMod from './auth';
 
@@ -46,7 +48,7 @@ describe('Admin UX Enhancements', () => {
       can: () => true,
       me: { id: 1, name: 'Admin Paul', roles: ['admin'] },
       refresh: vi.fn(),
-    });
+    } as any);
 
     vi.spyOn(apiMod, 'useApi').mockReturnValue({
       data: {
@@ -59,7 +61,7 @@ describe('Admin UX Enhancements', () => {
       error: null,
       loading: false,
       reload: vi.fn(),
-    });
+    } as any);
 
     const postSpy = vi.spyOn(apiMod, 'post').mockResolvedValue({ ok: true });
 
@@ -110,7 +112,7 @@ describe('Admin UX Enhancements', () => {
       can: () => true,
       me: { id: 1, name: 'Admin Paul', roles: ['admin'] },
       refresh: vi.fn(),
-    });
+    } as any);
 
     vi.spyOn(apiMod, 'useApi').mockReturnValue({
       data: [
@@ -126,7 +128,7 @@ describe('Admin UX Enhancements', () => {
       ],
       loading: false,
       reload: vi.fn(),
-    });
+    } as any);
 
     const openSpy = vi.spyOn(window, 'open').mockImplementation(() => null);
 
@@ -153,7 +155,7 @@ describe('Admin UX Enhancements', () => {
       can: () => true,
       me: { id: 1, name: 'Finance Grace', roles: ['finance'] },
       refresh: vi.fn(),
-    });
+    } as any);
 
     const mockReimb = {
       id: 77,
@@ -179,7 +181,7 @@ describe('Admin UX Enhancements', () => {
       error: null,
       loading: false,
       reload: vi.fn(),
-    });
+    } as any);
 
     render(
       <MemoryRouter initialEntries={['/admin/reimbursements?tab=review']}>
@@ -206,7 +208,7 @@ describe('Admin UX Enhancements', () => {
       can: () => true,
       me: { id: 1, name: 'Lead Zhang', roles: ['traffic_head'] },
       refresh: vi.fn(),
-    });
+    } as any);
 
     const planPayload = {
       event: { id: 5, title: 'Sunday Worship', starts_at: '2026-11-22T09:00:00', location: 'Grace Hall', group_ids: [1] },
@@ -244,7 +246,7 @@ describe('Admin UX Enhancements', () => {
       error: null,
       loading: false,
       reload: vi.fn(),
-    });
+    } as any);
 
     render(
       <MemoryRouter initialEntries={['/admin/events/5/plan']}>
@@ -266,5 +268,181 @@ describe('Admin UX Enhancements', () => {
     expect(dock).toBeInTheDocument();
     expect(within(dock).getByText(/1 unsaved change/i)).toBeInTheDocument();
     expect(within(dock).getByRole('button', { name: /quick approve/i })).toBeInTheDocument();
+  });
+
+  it('AreaFares provides 2D Matrix grid view and inline cell editing', async () => {
+    vi.spyOn(authMod, 'useAuth').mockReturnValue({
+      can: () => true,
+      me: { id: 1, name: 'Admin', roles: ['admin'] },
+      refresh: vi.fn(),
+    } as any);
+
+    const mockAreas = [
+      { id: 1, name: 'Cheras', active: true },
+      { id: 2, name: 'PJ', active: true },
+    ];
+    const mockFares = [
+      { id: 10, area_a: { id: 1, name: 'Cheras' }, area_b: { id: 2, name: 'PJ' }, amount_cents: 1500, updated_at: '' },
+    ];
+
+    vi.spyOn(apiMod, 'useApi').mockImplementation((path: string | null) => {
+      if (path === '/areas') return { data: mockAreas, loading: false, error: null, reload: vi.fn() } as any;
+      if (path === '/admin/settings/fares') return { data: { fares: mockFares }, loading: false, error: null, reload: vi.fn() } as any;
+      return { data: null, loading: false, error: null, reload: vi.fn() } as any;
+    });
+
+    const putSpy = vi.spyOn(apiMod, 'put').mockResolvedValue({ ok: true });
+
+    render(
+      <MemoryRouter>
+        <AreaFares />
+      </MemoryRouter>,
+    );
+
+    // Initial list view
+    expect(screen.getByText('1 of 3 routes priced')).toBeInTheDocument();
+    const matrixBtn = screen.getByRole('tab', { name: '2D Matrix grid' });
+    expect(matrixBtn).toBeInTheDocument();
+
+    // Switch to 2D Matrix Grid view
+    fireEvent.click(matrixBtn);
+    expect(screen.getByRole('region', { name: '2D Matrix grid' })).toBeInTheDocument();
+
+    // Verify matrix headers and cells
+    expect(screen.getByText('From \\ To')).toBeInTheDocument();
+    expect(screen.getAllByText('RM 15.00').length).toBeGreaterThan(0);
+
+    // Click on cell to edit
+    const cell = screen.getAllByRole('button', { name: 'RM 15.00' })[0];
+    fireEvent.click(cell);
+
+    // Fare editor form is active
+    const input = screen.getByLabelText('Fare for Cheras ↔ PJ');
+    expect(input).toHaveValue(15);
+    fireEvent.change(input, { target: { value: '22.00' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Save' }));
+
+    await waitFor(() => {
+      expect(putSpy).toHaveBeenCalledWith('/admin/settings/fares', {
+        area_a_id: 1,
+        area_b_id: 2,
+        amount_cents: 2200,
+      });
+    });
+  });
+
+  it('Members provides fast-triage batch approval for pending members', async () => {
+    vi.spyOn(authMod, 'useAuth').mockReturnValue({
+      can: () => true,
+      me: { id: 1, name: 'Admin', roles: ['superadmin'] },
+      refresh: vi.fn(),
+    } as any);
+
+    const pendingUsers = [
+      { id: 101, name: 'New Friend A', email: 'a@church.org', phone: '0123456789', roles: [], status: 'pending', created_at: '2026-11-20', passkeys: 0, groups: '' },
+      { id: 102, name: 'New Friend B', email: 'b@church.org', phone: '0123456788', roles: [], status: 'pending', created_at: '2026-11-20', passkeys: 0, groups: '' },
+    ];
+
+    vi.spyOn(apiMod, 'useApi').mockImplementation((path: string | null) => {
+      if (path?.startsWith('/admin/users')) {
+        return { data: { items: pendingUsers, total: 2, page: 1, page_size: 50, total_pages: 1 }, loading: false, error: null, reload: vi.fn() } as any;
+      }
+      if (path === '/groups') {
+        return { data: [{ id: 5, name: 'Youth Fellowship', is_all: false }], loading: false, error: null, reload: vi.fn() } as any;
+      }
+      if (path?.startsWith('/admin/roles')) {
+        return { data: { roles: [] }, loading: false, error: null, reload: vi.fn() } as any;
+      }
+      return { data: [], loading: false, error: null, reload: vi.fn() } as any;
+    });
+
+    const putSpy = vi.spyOn(apiMod, 'put').mockResolvedValue({ ok: true });
+
+    render(
+      <MemoryRouter initialEntries={['/admin/members']}>
+        <Members />
+      </MemoryRouter>,
+    );
+
+    // Select all members via table header checkbox
+    const selectAllCheckbox = screen.getByRole('checkbox', { name: /select all/i });
+    fireEvent.click(selectAllCheckbox);
+
+    // Floating batch bar appears
+    expect(screen.getByText('2 members selected')).toBeInTheDocument();
+    const batchBtn = screen.getByRole('button', { name: /batch approve \(2\)/i });
+    fireEvent.click(batchBtn);
+
+    // Modal dialog opens
+    const dialog = screen.getByRole('dialog');
+    expect(dialog).toBeInTheDocument();
+    expect(within(dialog).getByText('Batch Approve Members')).toBeInTheDocument();
+    expect(within(dialog).getByText('New Friend A')).toBeInTheDocument();
+    expect(within(dialog).getByText('New Friend B')).toBeInTheDocument();
+
+    // Select Youth Fellowship group
+    const groupChip = within(dialog).getByRole('button', { name: 'Youth Fellowship' });
+    fireEvent.click(groupChip);
+
+    // Submit batch approval
+    const confirmBtn = within(dialog).getByRole('button', { name: /approve all selected \(2\)/i });
+    fireEvent.click(confirmBtn);
+
+    await waitFor(() => {
+      expect(putSpy).toHaveBeenCalledTimes(2);
+      expect(putSpy).toHaveBeenCalledWith('/admin/users/101', expect.objectContaining({
+        status: 'active',
+        group_ids: [5],
+      }));
+      expect(putSpy).toHaveBeenCalledWith('/admin/users/102', expect.objectContaining({
+        status: 'active',
+        group_ids: [5],
+      }));
+    });
+  });
+
+  it('Reimbursements renders the 4-stage Maker-Checker payout stepper', async () => {
+    vi.spyOn(authMod, 'useAuth').mockReturnValue({
+      can: (perm: string) => perm === 'admin_reimb_pay',
+      me: { id: 1, name: 'Treasurer Sarah', roles: ['admin'] },
+      refresh: vi.fn(),
+    } as any);
+
+    const mockBatches = [
+      {
+        id: 77,
+        month: '2026-11',
+        title: 'Nov 2026 Batch #1',
+        total_cents: 8500,
+        claim_count: 3,
+        status: 'open',
+        paid_ref: '',
+        created_by: 'Deacon Philip',
+        paid_by: null,
+        paid_at: null,
+      },
+    ];
+
+    vi.spyOn(apiMod, 'useApi').mockImplementation((path: string | null) => {
+      if (path === '/reimbursements/batches') {
+        return { data: mockBatches, loading: false, error: null, reload: vi.fn() } as any;
+      }
+      return { data: [], loading: false, error: null, reload: vi.fn() } as any;
+    });
+
+    render(
+      <MemoryRouter initialEntries={['/admin/reimbursements?tab=payout']}>
+        <AdminReimbursements />
+      </MemoryRouter>,
+    );
+
+    // Verify stepper elements
+    expect(screen.getByText('Nov 2026 Batch #1')).toBeInTheDocument();
+    const stepper = screen.getByRole('region', { name: 'Batch progress' });
+    expect(stepper).toBeInTheDocument();
+    expect(within(stepper).getByText('Batch created')).toBeInTheDocument();
+    expect(within(stepper).getByText('Bank CSV')).toBeInTheDocument();
+    expect(within(stepper).getByText('Bank transfer')).toBeInTheDocument();
+    expect(within(stepper).getByText('Checker signed')).toBeInTheDocument();
   });
 });

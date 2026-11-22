@@ -8,6 +8,8 @@ export default {
   noRide: '暂无接送预约',
   driveSchedule: '今日接送安排（司机）',
   noDriveToday: '今天没有接送任务。',
+  nextDriveUpcoming: '下次接送任务：{when}',
+  driveFor: '接送：{name}',
   yourDriver: '您的司机',
   callDriver: '致电司机',
   going: '已报名',

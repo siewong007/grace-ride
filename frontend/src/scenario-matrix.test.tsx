@@ -283,7 +283,13 @@ describe('Scenario Matrix — Frontend Components & Service Worker', () => {
       expect(within(placesDlg).getByText(/Home · Petaling Jaya/)).toBeInTheDocument();
 
       await user.click(within(placesDlg).getByRole('button', { name: /remove/i }));
-      expect(mocks.del).toHaveBeenCalledWith('/saved-places/1');
+      const confirmRemoveBtns = screen.getAllByRole('button', { name: /remove/i });
+      if (confirmRemoveBtns.length > 1) {
+        await user.click(confirmRemoveBtns[confirmRemoveBtns.length - 1]);
+      }
+      await waitFor(() => {
+        expect(mocks.del).toHaveBeenCalledWith('/saved-places/1');
+      });
 
       await user.type(within(placesDlg).getByLabelText(/^label$/i), 'Office');
       await user.selectOptions(within(placesDlg).getByLabelText(/^area$/i), '2');

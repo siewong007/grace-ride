@@ -190,10 +190,13 @@ function MemberList() {
     user: User;
     mode: 'edit' | 'approve';
   } | null>(null);
+  const [selectedIds, setSelectedIds] = useState<number[]>([]);
+  const [batchModalOpen, setBatchModalOpen] = useState(false);
 
   const users = Array.isArray(data) ? data : data?.items ?? [];
   const total = Array.isArray(data) ? data.length : data?.total ?? 0;
   const totalPages = Array.isArray(data) ? 1 : data?.total_pages ?? 1;
+  const selectedUsers = users.filter((u) => selectedIds.includes(u.id));
 
   const filterDefs: TableFilter[] = [
     { type: 'text', key: 'q', label: t('members.search') },
@@ -227,7 +230,50 @@ function MemberList() {
       row: (u) => [u.id, u.name, u.email, u.phone, u.roles.join('; '), u.status, u.passkeys, u.groups, u.created_at],
     });
 
-  const columns: TableColumn<User>[] = [
+  const columns: TableColumn<User>[] = [];
+  if (canEdit) {
+    columns.push({
+      key: 'select',
+      header: (
+        <input
+          type="checkbox"
+          aria-label={t('members.selectAll')}
+          checked={users.length > 0 && users.every((u) => selectedIds.includes(u.id))}
+          ref={(el) => {
+            if (el) {
+              const count = users.filter((u) => selectedIds.includes(u.id)).length;
+              el.indeterminate = count > 0 && count < users.length;
+            }
+          }}
+          onChange={(e) => {
+            if (e.target.checked) {
+              setSelectedIds(Array.from(new Set([...selectedIds, ...users.map((u) => u.id)])));
+            } else {
+              const pageIds = new Set(users.map((u) => u.id));
+              setSelectedIds(selectedIds.filter((id) => !pageIds.has(id)));
+            }
+          }}
+        />
+      ),
+      headerClassName: 'col-select',
+      cellClassName: 'col-select',
+      render: (u) => (
+        <input
+          type="checkbox"
+          aria-label={`Select ${u.name}`}
+          checked={selectedIds.includes(u.id)}
+          onChange={(e) => {
+            if (e.target.checked) {
+              setSelectedIds((prev) => [...prev, u.id]);
+            } else {
+              setSelectedIds((prev) => prev.filter((id) => id !== u.id));
+            }
+          }}
+        />
+      ),
+    });
+  }
+  columns.push(
     {
       key: 'name',
       header: t('members.name'),
@@ -274,7 +320,7 @@ function MemberList() {
       render: (u) => u.passkeys,
       cellClassName: 'mono',
     },
-  ];
+  );
   if (canEdit) {
     columns.push({
       key: 'actions',
@@ -308,6 +354,30 @@ function MemberList() {
 
   return (
     <div className="stack">
+      <div className="quick-date-chips row wrap gap-xs" role="group" aria-label={t('members.status')}>
+        <button
+          type="button"
+          className={`chip ${!filters.status ? 'on' : ''}`}
+          onClick={() => setFilter('status', '')}
+        >
+          {t('members.allStatus')}
+        </button>
+        <button
+          type="button"
+          className={`chip ${filters.status === 'pending' ? 'on' : ''}`}
+          onClick={() => setFilter('status', 'pending')}
+        >
+          {t('members.pending')}
+        </button>
+        <button
+          type="button"
+          className={`chip ${filters.status === 'active' ? 'on' : ''}`}
+          onClick={() => setFilter('status', 'active')}
+        >
+          {t('members.active')}
+        </button>
+      </div>
+
       <Card>
         {loading && !initialLoadComplete ? (
           <CardSkeleton count={4} />
@@ -318,6 +388,17 @@ function MemberList() {
             itemKey={(u) => u.id}
             compactRow={(u) => (
               <>
+                {canEdit && (
+                  <input
+                    type="checkbox"
+                    aria-label={`Select ${u.name}`}
+                    checked={selectedIds.includes(u.id)}
+                    onChange={(e) => {
+                      if (e.target.checked) setSelectedIds((prev) => [...prev, u.id]);
+                      else setSelectedIds((prev) => prev.filter((id) => id !== u.id));
+                    }}
+                  />
+                )}
                 <Avatar name={u.name} fileId={u.photo_file_id} color={u.avatar_color} icon={u.avatar_icon} size="sm" />
                 <div className="grow min-w-0">
                   <div className="bold ellipsis">{u.name}</div>
@@ -381,6 +462,26 @@ function MemberList() {
         )}
       </Card>
 
+      {selectedIds.length > 0 && (
+        <div className="table-batch-bar" role="region" aria-label="Batch actions">
+          <span className="batch-count bold">{t('members.selectedCount', { count: selectedIds.length })}</span>
+          <div className="row gap-xs">
+            {canEdit && (
+              <Button
+                variant="primary"
+                size="sm"
+                onClick={() => setBatchModalOpen(true)}
+              >
+                {t('members.batchApprove', { count: selectedIds.length })}
+              </Button>
+            )}
+            <Button variant="ghost" size="sm" onClick={() => setSelectedIds([])}>
+              {t('members.batchClear')}
+            </Button>
+          </div>
+        </div>
+      )}
+
       {modalUser && (
         <MemberFormModal
           user={modalUser.user}
@@ -392,7 +493,142 @@ function MemberList() {
           }}
         />
       )}
+
+      {batchModalOpen && selectedUsers.length > 0 && (
+        <BatchApproveModal
+          selectedUsers={selectedUsers}
+          onClose={() => setBatchModalOpen(false)}
+          onSuccess={() => {
+            setBatchModalOpen(false);
+            setSelectedIds([]);
+            reload();
+          }}
+        />
+      )}
     </div>
+  );
+}
+
+/** Batch approve modal for rapidly triaging multiple new members */
+function BatchApproveModal({
+  selectedUsers,
+  onClose,
+  onSuccess,
+}: {
+  selectedUsers: User[];
+  onClose: () => void;
+  onSuccess: () => void;
+}) {
+  const { t } = useTranslation('admin');
+  const ft = useFormatT();
+  const { can } = useAuth();
+  const canAssign = can('admin_roles', 'update');
+  const { assignable, names } = useRoleOptions();
+  const { data: groups } = useApi<Group[]>('/groups');
+  const [selectedGroups, setSelectedGroups] = useState<number[]>([]);
+  const [role, setRole] = useState<string>('member');
+  const { busy, error, run } = useAction();
+
+  const toggleGroup = (id: number) => {
+    setSelectedGroups((curr) =>
+      curr.includes(id) ? curr.filter((g) => g !== id) : [...curr, id],
+    );
+  };
+
+  const handleBatchSubmit = () => {
+    run(async () => {
+      const payloadRoles = role === 'member' ? [] : [role];
+      await Promise.all(
+        selectedUsers.map((u) =>
+          put(`/admin/users/${u.id}`, {
+            roles: payloadRoles,
+            status: 'active',
+            ...(groups ? { group_ids: selectedGroups } : {}),
+          }),
+        ),
+      );
+      onSuccess();
+    }, t('members.batchApproveSuccess', { count: selectedUsers.length }));
+  };
+
+  return (
+    <Modal title={t('members.batchApproveTitle')} onClose={onClose}>
+      <div className="stack gap-md">
+        <p className="muted small">
+          {t('members.batchApproveDesc', { count: selectedUsers.length })}
+        </p>
+
+        <div className="card flat tight stack-xs">
+          <div className="label small bold">{t('members.selectedCount', { count: selectedUsers.length })}:</div>
+          <div className="chips">
+            {selectedUsers.map((u) => (
+              <Pill key={u.id} tone="gray">
+                {u.name}
+              </Pill>
+            ))}
+          </div>
+        </div>
+
+        {canAssign && (
+          <div className="stack-xs">
+            <label className="label small bold">{t('members.batchAssignRole')}</label>
+            <div className="chips">
+              <button
+                type="button"
+                className={`chip ${role === 'member' ? 'on' : ''}`}
+                onClick={() => setRole('member')}
+              >
+                {t('members.member')}
+              </button>
+              {assignable.map((r) => (
+                <button
+                  key={r}
+                  type="button"
+                  className={`chip ${role === r ? 'on' : ''}`}
+                  onClick={() => setRole(r)}
+                >
+                  {roleLabel(r, ft, names)}
+                </button>
+              ))}
+            </div>
+          </div>
+        )}
+
+        <div className="stack-xs">
+          <label className="label small bold">{t('members.batchAssignGroups')}</label>
+          <div className="chips">
+            {(groups ?? []).map((g) => {
+              const active = selectedGroups.includes(g.id);
+              return (
+                <button
+                  key={g.id}
+                  type="button"
+                  className={`chip ${active ? 'on' : ''}`}
+                  onClick={() => toggleGroup(g.id)}
+                >
+                  {g.name}
+                </button>
+              );
+            })}
+          </div>
+        </div>
+
+        <ErrorBox error={error} />
+
+        <div className="row end gap-xs">
+          <Button variant="ghost" onClick={onClose} disabled={busy}>
+            {t('common:cancel')}
+          </Button>
+          <Button
+            variant="primary"
+            onClick={handleBatchSubmit}
+            loading={busy}
+          >
+            {t('members.batchConfirm', { count: selectedUsers.length })}
+          </Button>
+        </div>
+      </div>
+    </Modal>
   );
 }
 

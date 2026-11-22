@@ -17,6 +17,7 @@ import {
   CardSkeleton,
   EmptyState,
   ErrorBox,
+  Notice,
   Pill,
   StatusPill,
   useAction,
@@ -24,6 +25,7 @@ import {
   useToast,
 } from '../ui';
 import {
+  fmtAgo,
   fmtDay,
   fmtTime,
   localDate,
@@ -32,7 +34,7 @@ import {
   todayStr,
   useFormatT,
 } from '../../format';
-import { saveTodayRidesSnapshot } from '../../offlineSnapshot';
+import { loadTodayRidesSnapshot, saveTodayRidesSnapshot } from '../../offlineSnapshot';
 
 export function DriveSchedule() {
   const { t } = useTranslation('drive');
@@ -53,7 +55,9 @@ export function DriveSchedule() {
     20000,
   );
   const { busy, error: actErr, run } = useAction();
-  const active = data?.some((r) => r.status === 'in_progress');
+  const offlineSnap = !data && error && me?.id ? loadTodayRidesSnapshot(me.id) : null;
+  const scheduleRides = data ?? (offlineSnap ? offlineSnap.rides : null);
+  const active = scheduleRides?.some((r) => r.status === 'in_progress');
 
   useEffect(() => {
     if (me?.id && data) {
@@ -352,18 +356,23 @@ export function DriveSchedule() {
       </div>
 
       {active && <ShareLocation />}
+      {offlineSnap && (
+        <Notice tone="warning">
+          <span>{t('offlineSnapshot', { when: fmtAgo(offlineSnap.savedAt, ft) })}</span>
+        </Notice>
+      )}
       <div className="drive-schedule-body stack">
       <div className="drive-route-slot">
       <DriverRouteCard
-        refreshKey={data?.map((r) => `${r.id}:${r.status}:${r.picked_up_at ?? ''}`).join(',')}
+        refreshKey={scheduleRides?.map((r) => `${r.id}:${r.status}:${r.picked_up_at ?? ''}`).join(',')}
       />
       </div>
-      <ErrorBox error={error ?? actErr} />
+      <ErrorBox error={offlineSnap ? null : (error ?? actErr)} />
 
       <div className="drive-trips-slot stack">
       {loading ? (
         <CardSkeleton count={2} />
-      ) : !data?.length ? (
+      ) : !scheduleRides?.length ? (
         <EmptyState
           title={t('noTasks')}
           action={

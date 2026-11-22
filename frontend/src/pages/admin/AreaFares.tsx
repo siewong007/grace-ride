@@ -63,16 +63,48 @@ export default function AreaFares() {
     return m;
   }, [fares.data]);
   const [picked, setPicked] = useState<number | null>(null);
+  const [viewMode, setViewMode] = useState<'list' | 'matrix'>('list');
+  const [matrixPair, setMatrixPair] = useState<{ from: FareArea; to: FareArea } | null>(null);
   const from = open.find((a) => a.id === picked) ?? open[0];
 
   const unsetFor = (a: FareArea) => open.filter((b) => !byPair.has(pairKey(a.id, b.id))).length;
   const { set, total } = fareCoverage(open, fares.data?.fares ?? []);
+  const coveragePercent = total > 0 ? Math.round((set / total) * 100) : 0;
 
   return (
     <Card className="stack">
-      <div>
-        <h3>{t('fares.title')}</h3>
-        <p className="muted small">{t('fares.desc')}</p>
+      <div className="row between wrap gap-sm">
+        <div>
+          <h3>{t('fares.title')}</h3>
+          <p className="muted small">{t('fares.desc')}</p>
+        </div>
+        {open.length > 0 && (
+          <div className="chips" role="tablist" aria-label="View mode">
+            <button
+              type="button"
+              role="tab"
+              aria-selected={viewMode === 'list'}
+              className={`chip ${viewMode === 'list' ? 'on' : ''}`}
+              onClick={() => setViewMode('list')}
+            >
+              {t('fares.viewList')}
+            </button>
+            <button
+              type="button"
+              role="tab"
+              aria-selected={viewMode === 'matrix'}
+              className={`chip ${viewMode === 'matrix' ? 'on' : ''}`}
+              onClick={() => {
+                setViewMode('matrix');
+                if (!matrixPair && open.length > 0) {
+                  setMatrixPair({ from: open[0], to: open[0] });
+                }
+              }}
+            >
+              {t('fares.viewMatrix')}
+            </button>
+          </div>
+        )}
       </div>
 
       {fares.loading || areasApi.loading ? (
@@ -83,6 +115,7 @@ export default function AreaFares() {
         <>
           <div className="row wrap gap-sm" aria-live="polite">
             <strong>{t('fares.coverage', { set, total })}</strong>
+            <span className="muted small">({coveragePercent}%)</span>
             {total - set > 0 ? (
               <Pill tone="warning">{t('fares.unsetCount', { count: total - set })}</Pill>
             ) : (
@@ -90,44 +123,112 @@ export default function AreaFares() {
             )}
           </div>
 
-          <div className="stack-sm">
-            <div className="label small muted">{t('fares.pickArea')}</div>
-            <div className="chips fare-area-chips" role="group" aria-label={t('fares.pickArea')}>
-              {open.map((a) => {
-                const unset = unsetFor(a);
-                return (
-                  <button
-                    key={a.id}
-                    type="button"
-                    className={`chip${from?.id === a.id ? ' on' : ''}`}
-                    aria-pressed={from?.id === a.id}
-                    onClick={() => setPicked(a.id)}
-                  >
-                    {a.name}
-                    {unset > 0 && (
-                      <span className="fare-chip-count" aria-label={t('fares.unsetCount', { count: unset })}>
-                        {unset}
-                      </span>
-                    )}
-                  </button>
-                );
-              })}
-            </div>
-          </div>
+          {viewMode === 'list' ? (
+            <>
+              <div className="stack-sm">
+                <div className="label small muted">{t('fares.pickArea')}</div>
+                <div className="chips fare-area-chips" role="group" aria-label={t('fares.pickArea')}>
+                  {open.map((a) => {
+                    const unset = unsetFor(a);
+                    return (
+                      <button
+                        key={a.id}
+                        type="button"
+                        className={`chip${from?.id === a.id ? ' on' : ''}`}
+                        aria-pressed={from?.id === a.id}
+                        onClick={() => setPicked(a.id)}
+                      >
+                        {a.name}
+                        {unset > 0 && (
+                          <span className="fare-chip-count" aria-label={t('fares.unsetCount', { count: unset })}>
+                            {unset}
+                          </span>
+                        )}
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
 
-          {from && (
-            <ul className="fare-list" aria-label={t('fares.routesFrom', { area: from.name })}>
-              {[from, ...open.filter((b) => b.id !== from.id)].map((b) => (
-                <FareRow
-                  key={`${from.id}-${b.id}`}
-                  from={from}
-                  to={b}
-                  fare={byPair.get(pairKey(from.id, b.id))}
-                  canUpdate={canUpdate}
-                  onChanged={fares.reload}
-                />
-              ))}
-            </ul>
+              {from && (
+                <ul className="fare-list" aria-label={t('fares.routesFrom', { area: from.name })}>
+                  {[from, ...open.filter((b) => b.id !== from.id)].map((b) => (
+                    <FareRow
+                      key={`${from.id}-${b.id}`}
+                      from={from}
+                      to={b}
+                      fare={byPair.get(pairKey(from.id, b.id))}
+                      canUpdate={canUpdate}
+                      onChanged={fares.reload}
+                    />
+                  ))}
+                </ul>
+              )}
+            </>
+          ) : (
+            <div className="stack-sm">
+              <p className="muted small">{t('fares.matrixSelectHint')}</p>
+              <div className="fare-matrix-wrap" role="region" aria-label={t('fares.viewMatrix')}>
+                <table className="fare-matrix-table">
+                  <thead>
+                    <tr>
+                      <th className="origin-header">{t('fares.matrixOrigin')}</th>
+                      {open.map((toArea) => (
+                        <th key={toArea.id}>{toArea.name}</th>
+                      ))}
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {open.map((fromArea) => (
+                      <tr key={fromArea.id}>
+                        <th className="origin-header">{fromArea.name}</th>
+                        {open.map((toArea) => {
+                          const key = pairKey(fromArea.id, toArea.id);
+                          const fare = byPair.get(key);
+                          const isSelected =
+                            matrixPair && pairKey(matrixPair.from.id, matrixPair.to.id) === key;
+                          const isDiagonal = fromArea.id === toArea.id;
+                          return (
+                            <td
+                              key={toArea.id}
+                              className={`fare-matrix-cell ${isSelected ? 'active-cell' : ''} ${isDiagonal ? 'diagonal' : ''}`}
+                              onClick={() => setMatrixPair({ from: fromArea, to: toArea })}
+                              title={`${fromArea.name} ↔ ${toArea.name}`}
+                              role="button"
+                              tabIndex={0}
+                              onKeyDown={(e) => {
+                                if (e.key === 'Enter' || e.key === ' ') {
+                                  e.preventDefault();
+                                  setMatrixPair({ from: fromArea, to: toArea });
+                                }
+                              }}
+                            >
+                              {fare ? (
+                                <span className="fare-matrix-val">RM {toRm(fare.amount_cents)}</span>
+                              ) : (
+                                <span className="fare-matrix-unset">{t('fares.notSet')}</span>
+                              )}
+                            </td>
+                          );
+                        })}
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+
+              {matrixPair && (
+                <div className="fare-matrix-editor">
+                  <FareRow
+                    from={matrixPair.from}
+                    to={matrixPair.to}
+                    fare={byPair.get(pairKey(matrixPair.from.id, matrixPair.to.id))}
+                    canUpdate={canUpdate}
+                    onChanged={fares.reload}
+                  />
+                </div>
+              )}
+            </div>
           )}
         </>
       )}

@@ -135,6 +135,8 @@ const profileStrings: Record<string, string> = {
   leaveFamily: 'Leave family',
   waitingApproval: 'Waiting for approval',
   copyLink: 'Copy link',
+  copySecret: 'Copy setup key',
+  secretCopied: 'Setup key copied',
 };
 
 vi.mock('react-i18next', () => ({
@@ -490,5 +492,30 @@ describe('Profile compact layout', () => {
     currentMe = { ...baseMe, status: 'pending' };
     renderProfile({ ...baseMe, status: 'pending' }, '/me/family');
     expect(screen.queryByRole('button', { name: 'Create family' })).not.toBeInTheDocument();
+  });
+
+  it('allows copying the 2FA secret setup key with visual feedback', async () => {
+    const writeMock = vi.fn().mockResolvedValue(undefined);
+    Object.assign(navigator, { clipboard: { writeText: writeMock } });
+    vi.mocked(post).mockResolvedValueOnce({ secret: 'JBSWY3DPEHPK3PXP', url: 'otpauth://totp/Grace%20Ride:a@b.c?secret=JBSWY3DPEHPK3PXP' });
+    renderProfile(baseMe);
+    fireEvent.click(screen.getByRole('button', { name: /Account security/i }));
+    fireEvent.click(screen.getByRole('button', { name: 'setupTotp' }));
+    await screen.findByAltText('totpQrAlt');
+
+    const copyBtn = screen.getByRole('button', { name: /Copy setup key/i });
+    expect(copyBtn).toBeInTheDocument();
+    fireEvent.click(copyBtn);
+    expect(writeMock).toHaveBeenCalledWith('JBSWY3DPEHPK3PXP');
+    expect(screen.getByText('Setup key copied')).toBeInTheDocument();
+  });
+
+  it('provides accessible autocomplete attributes for name and phone in personal details', () => {
+    renderProfile(baseMe);
+    fireEvent.click(screen.getByRole('button', { name: /Personal details/i }));
+    const nameInput = screen.getByDisplayValue(baseMe.name);
+    const phoneInput = screen.getByDisplayValue(baseMe.phone);
+    expect(nameInput).toHaveAttribute('autoComplete', 'name');
+    expect(phoneInput).toHaveAttribute('autoComplete', 'tel');
   });
 });

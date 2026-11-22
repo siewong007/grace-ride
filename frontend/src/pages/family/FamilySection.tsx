@@ -98,7 +98,15 @@ export default function FamilySection() {
                   variant="secondary"
                   size="sm"
                   disabled={busy}
-                  onClick={() => run(() => del(`/me/family/members/${m.user_id}`).then(done))}
+                  onClick={async () => {
+                    const ok = await confirm({
+                      title: t('removeMember'),
+                      body: t('removeMemberConfirm'),
+                      confirmLabel: t('removeMember'),
+                      tone: 'danger',
+                    });
+                    if (ok) run(() => del(`/me/family/members/${m.user_id}`).then(done));
+                  }}
                 >
                   {t('removeMember')}
                 </Button>
@@ -207,7 +215,19 @@ export default function FamilySection() {
       )}
 
       {!owner && (
-        <Button variant="secondary" disabled={busy} onClick={() => run(() => post('/me/family/leave').then(done))}>
+        <Button
+          variant="secondary"
+          disabled={busy}
+          onClick={async () => {
+            const ok = await confirm({
+              title: t('leaveFamily'),
+              body: t('leaveFamilyConfirm'),
+              confirmLabel: t('leaveFamily'),
+              tone: 'danger',
+            });
+            if (ok) run(() => post('/me/family/leave').then(done));
+          }}
+        >
           {t('leaveFamily')}
         </Button>
       )}

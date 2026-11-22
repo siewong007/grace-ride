@@ -227,6 +227,33 @@ describe('RideNew page', () => {
     expect(screen.getByPlaceholderText(/Sister Chen/i)).toBeInTheDocument();
   });
 
+  it('preselects proxy booking mode when ?proxy=1 query param is set', () => {
+    render(
+      <MemoryRouter initialEntries={['/rides/new?event=1&proxy=1']}>
+        <RideNew />
+      </MemoryRouter>
+    );
+
+    expect(screen.getByPlaceholderText(/Sister Chen/i)).toBeInTheDocument();
+  });
+
+  it('allows selecting trip direction (to event, round trip, return only)', () => {
+    render(
+      <MemoryRouter initialEntries={['/rides/new?event=1']}>
+        <RideNew />
+      </MemoryRouter>
+    );
+
+    const roundBtn = screen.getByRole('button', { name: /round trip/i });
+    const returnBtn = screen.getByRole('button', { name: /return only/i });
+    expect(roundBtn).toBeInTheDocument();
+    expect(returnBtn).toBeInTheDocument();
+
+    fireEvent.click(returnBtn);
+    expect(returnBtn).toHaveAttribute('aria-pressed', 'true');
+    expect(roundBtn).toHaveAttribute('aria-pressed', 'false');
+  });
+
   it('validates fields and shows error on empty submission', () => {
     render(
       <MemoryRouter initialEntries={['/rides/new?event=1']}>

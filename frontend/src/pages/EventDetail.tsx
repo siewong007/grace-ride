@@ -11,6 +11,7 @@ import {
   Route,
   ScanLine,
   Share2,
+  Users,
 } from 'lucide-react';
 import { downloadIcs } from '../calendar';
 import { post, useApi } from '../api';
@@ -356,13 +357,20 @@ export default function EventDetail() {
                   {!e.my_ride && !going ? (
                     <p className="muted small">{t('signUpForRide')}</p>
                   ) : e.my_ride ? (
-                    <Link to={`/rides/${e.my_ride.id}`} className="row between card flat tight link">
-                      <span className="row nowrap gap-sm">
-                        <CarFront size={16} aria-hidden="true" />
-                        <span>{t('myRide')}</span>
-                      </span>
-                      <StatusPill map={RIDE_STATUS} status={e.my_ride.status} />
-                    </Link>
+                    <>
+                      <Link to={`/rides/${e.my_ride.id}`} className="row between card flat tight link">
+                        <span className="row nowrap gap-sm">
+                          <CarFront size={16} aria-hidden="true" />
+                          <span>{t('myRide')}</span>
+                        </span>
+                        <StatusPill map={RIDE_STATUS} status={e.my_ride.status} />
+                      </Link>
+                      {going && can('rides', 'create') && (
+                        <Button variant="ghost" size="sm" block to={`/rides/new?event=${e.id}&proxy=1`} icon={<Users size={16} />}>
+                          {t('bookForFamily')}
+                        </Button>
+                      )}
+                    </>
                   ) : (
                     <Button variant="secondary" block to={`/rides/new?event=${e.id}`} icon={<CarFront size={18} />}>
                       {t('needRide')}

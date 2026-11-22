@@ -108,7 +108,7 @@ function RideNewForm() {
   const { data: recentRides } = useApi<Ride[]>('/rides');
   const toast = useToast();
 
-  const [isProxy, setIsProxy] = useState(false);
+  const [isProxy, setIsProxy] = useState(() => params.get('proxy') === '1');
   const [riderName, setRiderName] = useState('');
   const [riderPhone, setRiderPhone] = useState('');
   const [riderRelationship, setRiderRelationship] = useState('parent');
@@ -116,6 +116,7 @@ function RideNewForm() {
 
   const [date, setDate] = useState('');
   const [time, setTime] = useState('');
+  const [tripType, setTripType] = useState<'outbound' | 'round' | 'return'>('outbound');
   const [includeReturn, setIncludeReturn] = useState(false);
   const [returnTime, setReturnTime] = useState('12:30');
   const [area, setArea] = useState('');
@@ -142,6 +143,38 @@ function RideNewForm() {
     if (mins < 12 * 60 && returnTime > hhmm) return returnTime;
     const retMins = Math.min(23 * 60 + 59, mins + 120);
     return `${String(Math.floor(retMins / 60)).padStart(2, '0')}:${String(retMins % 60).padStart(2, '0')}`;
+  };
+
+  const handleTripTypeChange = (newType: 'outbound' | 'round' | 'return') => {
+    setTripType(newType);
+    setIncludeReturn(newType === 'round');
+    if (!event) {
+      if (newType === 'round' && time) {
+        setReturnTime((cur) => (cur && cur > time ? cur : defaultReturnFor(time)));
+      }
+      return;
+    }
+    const [, t2 = '09:00'] = event.starts_at.split(/[T ]/);
+    const [h = 9, m = 0] = t2.split(':').map(Number);
+    if (newType === 'return') {
+      const retMins = Math.min(23 * 60 + 59, h * 60 + m + 120);
+      const retHhmm = `${String(Math.floor(retMins / 60)).padStart(2, '0')}:${String(retMins % 60).padStart(2, '0')}`;
+      setTime(retHhmm);
+      setAddress(event.location);
+      setDestination(lastOwnRide?.pickup_address || '');
+    } else {
+      const mins = Math.max(0, h * 60 + m - 40);
+      const hhmm = `${String(Math.floor(mins / 60)).padStart(2, '0')}:${String(mins % 60).padStart(2, '0')}`;
+      setTime(hhmm);
+      setDestination(event.location);
+      if (address === event.location) {
+        setAddress(lastOwnRide?.pickup_address || '');
+      }
+      if (newType === 'round') {
+        const retMins = Math.min(23 * 60 + 59, h * 60 + m + 120);
+        setReturnTime(`${String(Math.floor(retMins / 60)).padStart(2, '0')}:${String(retMins % 60).padStart(2, '0')}`);
+      }
+    }
   };
 
   const [prefilled, setPrefilled] = useState(false);
@@ -356,6 +389,7 @@ function RideNewForm() {
         assistance: canonicalAssistance,
         notes: finalNotes,
         event_id: eventId ? Number(eventId) : undefined,
+        leg: tripType === 'return' ? 'return' : 'outbound',
         is_proxy: isProxy,
         rider_name: isProxy ? riderName.trim() : undefined,
         rider_phone: isProxy ? riderPhone.trim() : undefined,
@@ -549,6 +583,32 @@ function RideNewForm() {
           {/* Section 1: When */}
           <section className="form-section stack">
             <h3>{t('whenSection')}</h3>
+            <div className="segmented-control wrap-phone" role="group" aria-label={t('tripTypeLabel')}>
+              <button
+                type="button"
+                className={`segmented-item ${tripType === 'outbound' ? 'active' : ''}`}
+                aria-pressed={tripType === 'outbound'}
+                onClick={() => handleTripTypeChange('outbound')}
+              >
+                <span>{t('tripTypeOutbound')}</span>
+              </button>
+              <button
+                type="button"
+                className={`segmented-item ${tripType === 'round' ? 'active' : ''}`}
+                aria-pressed={tripType === 'round'}
+                onClick={() => handleTripTypeChange('round')}
+              >
+                <span>{t('tripTypeRound')}</span>
+              </button>
+              <button
+                type="button"
+                className={`segmented-item ${tripType === 'return' ? 'active' : ''}`}
+                aria-pressed={tripType === 'return'}
+                onClick={() => handleTripTypeChange('return')}
+              >
+                <span>{t('tripTypeReturn')}</span>
+              </button>
+            </div>
             <div className="form-grid two">
               <div>
                 <Field label={t('date')}>
@@ -573,7 +633,7 @@ function RideNewForm() {
               </div>
 
               <div>
-                <Field label={t('time')} hint={event ? t('timeHintEvent') : undefined}>
+                <Field label={t('time')} hint={tripType === 'return' ? t('timeHintReturn') : event ? t('timeHintEvent') : undefined}>
                   <input
                     id="field-time"
                     className="input"
@@ -593,21 +653,7 @@ function RideNewForm() {
                 )}
               </div>
             </div>
-            <label className="row gap-xs items-center small">
-              <input
-                type="checkbox"
-                checked={includeReturn}
-                onChange={(e) => {
-                  const checked = e.target.checked;
-                  setIncludeReturn(checked);
-                  if (checked && time) {
-                    setReturnTime((cur) => (cur && cur > time ? cur : defaultReturnFor(time)));
-                  }
-                }}
-              />
-              <span>{t('includeReturn')}</span>
-            </label>
-            {includeReturn && (
+            {tripType === 'round' && (
               <div className="form-grid two">
                 <div>
                   <Field label={t('returnTime')} hint={t('returnHint')}>
