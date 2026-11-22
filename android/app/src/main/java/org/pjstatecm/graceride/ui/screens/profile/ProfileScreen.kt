@@ -27,6 +27,7 @@ import androidx.compose.material.icons.outlined.ChevronRight
 import androidx.compose.material.icons.outlined.Delete
 import androidx.compose.material.icons.outlined.History
 import androidx.compose.material.icons.outlined.Key
+import androidx.compose.material.icons.outlined.LocationOn
 import androidx.compose.material.icons.outlined.Notifications
 import androidx.compose.material.icons.outlined.Payments
 import androidx.compose.material3.AlertDialog
@@ -190,6 +191,8 @@ fun ProfileScreen(container: AppContainer, nav: NavHostController) {
             item {
                 OutlinedCard(Modifier.fillMaxWidth()) {
                     Column {
+                        ProfileRow(stringResource(R.string.saved_addresses_title), Icons.Outlined.LocationOn) { nav.navigate(Routes.SAVED_ADDRESSES) }
+                        HorizontalDivider()
                         ProfileRow(stringResource(R.string.rides_title), Icons.Outlined.ChevronRight) { nav.navigate(Routes.RIDES) }
                         HorizontalDivider()
                         ProfileRow(stringResource(R.string.history_title), Icons.Outlined.History) { nav.navigate(Routes.HISTORY) }

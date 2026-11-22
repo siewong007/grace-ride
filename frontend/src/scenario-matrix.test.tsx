@@ -277,13 +277,15 @@ describe('Scenario Matrix — Frontend Components & Service Worker', () => {
         </TestWrap>,
       );
 
-      // Saved places + Calendar ICS sheet
-      await user.click(screen.getByRole('button', { name: /saved places & calendar feed/i }));
+      // Saved addresses sheet
+      await user.click(screen.getByRole('button', { name: /saved addresses/i }));
       const placesDlg = document.body;
-      expect(within(placesDlg).getByText(/Home · Petaling Jaya/)).toBeInTheDocument();
+      expect(within(placesDlg).getByText('Home')).toBeInTheDocument();
+      expect(within(placesDlg).getByText(/Petaling Jaya/)).toBeInTheDocument();
 
-      await user.click(within(placesDlg).getByRole('button', { name: /remove/i }));
-      const confirmRemoveBtns = screen.getAllByRole('button', { name: /remove/i });
+      await user.click(within(placesDlg).getByRole('button', { name: /edit home/i }));
+      await user.click(within(placesDlg).getByRole('button', { name: /^remove$/i }));
+      const confirmRemoveBtns = screen.getAllByRole('button', { name: /^remove$/i });
       if (confirmRemoveBtns.length > 1) {
         await user.click(confirmRemoveBtns[confirmRemoveBtns.length - 1]);
       }
@@ -291,26 +293,32 @@ describe('Scenario Matrix — Frontend Components & Service Worker', () => {
         expect(mocks.del).toHaveBeenCalledWith('/saved-places/1');
       });
 
+      await user.click(within(placesDlg).getByRole('button', { name: /add address/i }));
       await user.type(within(placesDlg).getByLabelText(/^label$/i), 'Office');
       await user.selectOptions(within(placesDlg).getByLabelText(/^area$/i), '2');
-      await user.type(within(placesDlg).getByLabelText(/street address/i), '88 Tower B');
+      await user.type(within(placesDlg).getByRole('combobox', { name: /street address/i }), '88 Tower B');
       await user.type(within(placesDlg).getByLabelText(/gate \/ pickup notes/i), 'Lobby');
-      await user.click(within(placesDlg).getByRole('button', { name: /add saved place/i }));
+      await user.click(within(placesDlg).getByRole('button', { name: /^save$/i }));
       expect(mocks.post).toHaveBeenCalledWith('/saved-places', {
         label: 'Office',
         area_id: 2,
         address: '88 Tower B',
         gate_notes: 'Lobby',
+        is_default: false,
       });
+      await user.click(screen.getByRole('link', { name: /back/i }));
 
-      await user.click(within(placesDlg).getByRole('button', { name: /reset calendar link/i }));
+      // Calendar feed sheet
+      await user.click(screen.getByRole('button', { name: /calendar feed/i }));
+      const calDlg = document.body;
+      await user.click(within(calDlg).getByRole('button', { name: /reset calendar link/i }));
       await waitFor(() => {
         expect(mocks.post).toHaveBeenCalledWith('/me/calendar-feed/rotate');
       });
-      const calLink = within(placesDlg).getByRole('link', { name: /open in calendar app/i });
+      const calLink = within(calDlg).getByRole('link', { name: /open in calendar app/i });
       expect(calLink).toHaveAttribute('href', expect.stringMatching(/^webcal:\/\/.*\/api\/calendar\/caltok999\.ics$/));
 
-      await user.click(within(placesDlg).getByRole('button', { name: /turn off feed/i }));
+      await user.click(within(calDlg).getByRole('button', { name: /turn off feed/i }));
       expect(mocks.del).toHaveBeenCalledWith('/me/calendar-feed');
       await user.click(screen.getByRole('link', { name: /back/i }));
 
@@ -344,7 +352,8 @@ describe('Scenario Matrix — Frontend Components & Service Worker', () => {
       expect(screen.getByRole('button', { name: /personal details/i })).toBeInTheDocument();
       expect(screen.getByRole('button', { name: /preferences/i })).toBeInTheDocument();
       expect(screen.getByRole('button', { name: /account security/i })).toBeInTheDocument();
-      expect(screen.queryByRole('button', { name: /saved places & calendar feed/i })).toBeNull();
+      expect(screen.queryByRole('button', { name: /saved addresses/i })).toBeNull();
+      expect(screen.queryByRole('button', { name: /calendar feed/i })).toBeNull();
       expect(screen.queryByRole('link', { name: /my report/i })).toBeNull();
     });
   });

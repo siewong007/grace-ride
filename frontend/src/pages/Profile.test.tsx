@@ -1,7 +1,7 @@
 import { describe, expect, it, vi, beforeEach } from 'vitest';
 import { render, screen, fireEvent, waitFor } from '@testing-library/react';
 import { Link, MemoryRouter } from 'react-router-dom';
-import { put, post } from '../api';
+import { del, put, post } from '../api';
 import { _setInstalledForTesting, _setDeferredPromptForTesting, BeforeInstallPromptEvent } from '../pwaInstall';
 import Profile from './Profile';
 
@@ -39,6 +39,19 @@ const emptyFamily = {
   incoming: null as { id: number; family_name: string; owner_name: string } | null,
 };
 let familyData = { ...emptyFamily };
+let savedPlacesData: {
+  id: number;
+  label: string;
+  area_id: number | null;
+  area_name: string | null;
+  address: string;
+  gate_notes: string;
+  is_default: number;
+}[] = [];
+const areasData = [
+  { id: 1, name: 'Petaling Jaya', active: true },
+  { id: 2, name: 'Subang Jaya', active: true },
+];
 const confirmMock = vi.fn().mockResolvedValue(false);
 
 vi.mock('../auth', () => ({
@@ -51,11 +64,19 @@ vi.mock('../auth', () => ({
 }));
 
 vi.mock('../api', () => ({
-  del: vi.fn(),
+  api: vi.fn().mockResolvedValue([]),
+  del: vi.fn().mockResolvedValue({ ok: true }),
   post: vi.fn().mockResolvedValue(undefined),
   put: vi.fn().mockResolvedValue(undefined),
   useApi: (path: string | null) => ({
-    data: path === '/me/family' ? familyData : [],
+    data:
+      path === '/me/family'
+        ? familyData
+        : path === '/saved-places'
+          ? savedPlacesData
+          : path === '/areas'
+            ? areasData
+            : [],
     loading: false,
     error: null,
     reload: vi.fn(),
@@ -137,12 +158,45 @@ const profileStrings: Record<string, string> = {
   copyLink: 'Copy link',
   copySecret: 'Copy setup key',
   secretCopied: 'Setup key copied',
+  savedAddresses: 'Saved addresses',
+  savedAddressesHint: 'Home, office, or family',
+  savedAddressesCountHint: '{label} · {count} saved',
+  savedAddressesEmptyTitle: 'No saved addresses yet',
+  savedAddressesEmptyDesc: 'Save Home, Work, or family addresses for 1-tap booking.',
+  addAddress: 'Add address',
+  editAddress: 'Edit address',
+  editAddressAria: 'Edit {label}',
+  defaultAddress: 'Default',
+  setDefaultAddress: 'Set {label} as default',
+  setAsDefault: 'Use as default address',
+  placePresetHome: 'Home',
+  placePresetWork: 'Work',
+  placePresetParents: 'Parents',
+  placeLabel: 'Label',
+  placeLabelPlaceholder: 'E.g. Home / Mom’s house',
+  placeAddress: 'Street address',
+  placeAddressPlaceholder: 'E.g. 12 Jalan SS2/10, Petaling Jaya',
+  placeArea: 'Area',
+  placeGateNotes: 'Gate / pickup notes (optional)',
+  placeGatePlaceholder: 'E.g. Ring guardhouse bell #4',
+  remove: 'Remove',
+  cancel: 'Cancel',
+  calendarFeed: 'Calendar feed',
+  calendarFeedShort: 'Sync rides & events (.ics)',
 };
 
 vi.mock('react-i18next', () => ({
   initReactI18next: { type: '3rdParty', init: vi.fn() },
   useTranslation: () => ({
-    t: (k: string) => profileStrings[k] ?? k,
+    t: (k: string, vars?: Record<string, unknown>) => {
+      const base = profileStrings[k];
+      if (!base) return k;
+      if (!vars) return base;
+      return Object.entries(vars).reduce(
+        (acc, [vk, vv]) => acc.replaceAll(`{${vk}}`, String(vv)),
+        base,
+      );
+    },
     i18n: { language: 'en' },
   }),
 }));
@@ -184,10 +238,12 @@ vi.mock('../components/ui', () => ({
   Modal: ({
     children,
     title,
+    footer,
     onClose,
   }: {
     children?: React.ReactNode;
     title?: string;
+    footer?: React.ReactNode;
     onClose?: () => void;
     size?: string;
     initialFocusRef?: React.RefObject<HTMLElement | null>;
@@ -198,13 +254,71 @@ vi.mock('../components/ui', () => ({
         Close
       </button>
       {children}
+      {footer && <div data-testid="modal-footer">{footer}</div>}
     </div>
   ),
-  PageHeader: ({ title, back }: { title?: React.ReactNode; back?: string }) => (
+  PageHeader: ({
+    title,
+    subtitle,
+    back,
+    actions,
+  }: {
+    title?: React.ReactNode;
+    subtitle?: React.ReactNode;
+    back?: string;
+    actions?: React.ReactNode;
+  }) => (
     <div data-testid="page-header" data-back={back}>
       <h1>{title}</h1>
+      {subtitle && <span>{subtitle}</span>}
+      {actions}
     </div>
   ),
+  EmptyState: ({
+    title,
+    description,
+    action,
+  }: {
+    icon?: React.ReactNode;
+    title: React.ReactNode;
+    description?: React.ReactNode;
+    action?: React.ReactNode;
+  }) => (
+    <div data-testid="empty-state">
+      <div>{title}</div>
+      {description && <div>{description}</div>}
+      {action}
+    </div>
+  ),
+  IconButton: ({
+    label,
+    icon,
+    onClick,
+    disabled,
+    className,
+    ...rest
+  }: {
+    label: string;
+    icon: React.ReactNode;
+    onClick?: () => void;
+    disabled?: boolean;
+    className?: string;
+    variant?: string;
+    size?: string;
+    [k: string]: unknown;
+  }) => (
+    <button
+      type="button"
+      aria-label={label}
+      disabled={disabled}
+      className={className}
+      onClick={onClick}
+      {...rest}
+    >
+      {icon}
+    </button>
+  ),
+  ListSkeleton: () => <div data-testid="list-skeleton" />,
   Notice: ({ children }: { children?: React.ReactNode }) => (
     <div data-testid="notice">{children}</div>
   ),
@@ -256,6 +370,7 @@ vi.mock('../components/ui', () => ({
 beforeEach(() => {
   vi.clearAllMocks();
   currentMe = baseMe;
+  savedPlacesData = [];
   familyData = {
     family: null,
     members: [],
@@ -517,5 +632,82 @@ describe('Profile compact layout', () => {
     const phoneInput = screen.getByDisplayValue(baseMe.phone);
     expect(nameInput).toHaveAttribute('autoComplete', 'name');
     expect(phoneInput).toHaveAttribute('autoComplete', 'tel');
+  });
+
+  it('shows empty state when user has no saved addresses and adds first address as default', async () => {
+    const postMock = vi.mocked(post);
+    renderProfile(baseMe, '/me?section=places');
+
+    expect(screen.getByText('No saved addresses yet')).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: /Add address/i }));
+
+    const dlg = screen.getByRole('dialog', { name: 'Add address' });
+    expect(dlg).toBeInTheDocument();
+    const defaultCheckbox = screen.getByLabelText('Use as default address') as HTMLInputElement;
+    expect(defaultCheckbox.checked).toBe(true);
+
+    fireEvent.click(screen.getByRole('button', { name: 'Home' }));
+    fireEvent.change(screen.getByRole('combobox', { name: 'Street address' }), { target: { value: '12 Jalan SS2' } });
+    fireEvent.change(screen.getByLabelText('Area'), { target: { value: '1' } });
+    fireEvent.change(screen.getByLabelText('Gate / pickup notes (optional)'), { target: { value: 'Gate B' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Save' }));
+
+    await waitFor(() =>
+      expect(postMock).toHaveBeenCalledWith('/saved-places', {
+        label: 'Home',
+        area_id: 1,
+        address: '12 Jalan SS2',
+        gate_notes: 'Gate B',
+        is_default: true,
+      }),
+    );
+  });
+
+  it('lists multiple saved addresses, promotes default via star button, edits and deletes via modal', async () => {
+    const putMock = vi.mocked(put);
+    const delMock = vi.mocked(del);
+    savedPlacesData = [
+      { id: 1, label: 'Home', area_id: 1, area_name: 'Petaling Jaya', address: '10 Jalan SS2', gate_notes: 'Gate 2', is_default: 1 },
+      { id: 2, label: 'Work', area_id: 2, area_name: 'Subang Jaya', address: '88 Tower B', gate_notes: '', is_default: 0 },
+    ];
+    renderProfile(baseMe, '/me?section=places');
+
+    expect(screen.getByText('Home')).toBeInTheDocument();
+    expect(screen.getByText('Default')).toBeInTheDocument();
+    expect(screen.getByText('Work')).toBeInTheDocument();
+
+    // 1-tap default promotion
+    fireEvent.click(screen.getByRole('button', { name: 'Set Work as default' }));
+    await waitFor(() =>
+      expect(putMock).toHaveBeenCalledWith('/saved-places/2', {
+        label: 'Work',
+        area_id: 2,
+        address: '88 Tower B',
+        gate_notes: '',
+        is_default: true,
+      }),
+    );
+
+    // Edit and save
+    fireEvent.click(screen.getByRole('button', { name: 'Edit Work' }));
+    expect(screen.getByRole('dialog', { name: 'Edit address' })).toBeInTheDocument();
+    fireEvent.change(screen.getByRole('combobox', { name: 'Street address' }), { target: { value: '99 Tower C' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Save' }));
+
+    await waitFor(() =>
+      expect(putMock).toHaveBeenCalledWith('/saved-places/2', {
+        label: 'Work',
+        area_id: 2,
+        address: '99 Tower C',
+        gate_notes: '',
+        is_default: false,
+      }),
+    );
+
+    // Edit and remove with confirmation
+    vi.mocked(confirmMock).mockResolvedValueOnce(true);
+    fireEvent.click(screen.getByRole('button', { name: 'Edit Home' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Remove' }));
+    await waitFor(() => expect(delMock).toHaveBeenCalledWith('/saved-places/1'));
   });
 });

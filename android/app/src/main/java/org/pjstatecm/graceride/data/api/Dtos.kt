@@ -84,6 +84,18 @@ data class SavedPlace(
 )
 
 @Serializable
+data class SavedPlaceReq(
+    val label: String,
+    val area_id: Long? = null,
+    val address: String,
+    val gate_notes: String? = null,
+    val is_default: Boolean? = null,
+)
+
+@Serializable
+data class CreateSavedPlaceRes(val id: Long, val ok: Boolean = true)
+
+@Serializable
 data class RideArea(val id: Long, val name: String)
 
 @Serializable

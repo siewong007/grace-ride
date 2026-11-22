@@ -622,7 +622,7 @@ function GroupMembers({
   );
 }
 
-function Areas() {
+export function Areas() {
   const { t } = useTranslation('admin');
   const { can } = useAuth();
   const { data, loading, reload } = useApi<Area[]>('/areas');

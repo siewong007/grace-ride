@@ -18,6 +18,7 @@ use crate::state::AppState;
 use crate::util::{now, ErrorKey, Lang};
 
 mod chat;
+mod drafts;
 mod driver;
 mod driver_profile;
 mod location;
@@ -103,6 +104,35 @@ pub fn router() -> Router<AppState> {
             post(staff::staff_alt_transport),
         )
         .route(
+            "/rides/{id}/reimbursement-excluded",
+            axum::routing::put(staff::staff_set_reimbursement_excluded),
+        )
+        .route("/admin/ride-drafts", get(drafts::list_all_ride_drafts))
+        .route(
+            "/rides/{id}/drafts",
+            get(drafts::list_ride_drafts).post(drafts::create_ride_draft),
+        )
+        .route(
+            "/rides/{id}/drafts/{did}",
+            put(drafts::update_ride_draft).delete(drafts::delete_ride_draft),
+        )
+        .route(
+            "/rides/{id}/drafts/{did}/lock",
+            post(drafts::acquire_ride_draft_lock).delete(drafts::release_ride_draft_lock),
+        )
+        .route(
+            "/rides/{id}/drafts/{did}/request-approval",
+            post(drafts::request_ride_draft_approval),
+        )
+        .route(
+            "/rides/{id}/drafts/{did}/approve",
+            post(drafts::approve_ride_draft),
+        )
+        .route(
+            "/rides/{id}/drafts/{did}/return",
+            post(drafts::return_ride_draft),
+        )
+        .route(
             "/rides/{id}/messages",
             get(chat::list_messages).post(chat::post_message),
         )
@@ -181,6 +211,7 @@ pub struct RideRow {
     pub v_child_seat: Option<i64>,
     pub distance_km: Option<i64>,
     pub reimbursement_amount_cents: Option<i64>,
+    pub reimbursement_excluded: i64,
     pub mileage_receipt_needed: i64,
     pub event_title: Option<String>,
     pub readiness_status: Option<String>,
@@ -211,7 +242,7 @@ pub struct RideRow {
 
 pub(super) const RIDE_SELECT: &str = "SELECT r.id, r.passenger_id, r.driver_id, r.event_id, r.trip_id, r.pickup_at, r.pickup_area_id,
     r.pickup_address, r.destination, r.seats, r.assistance, r.notes, r.status, r.needs_attention, r.attention_reason,
-    r.started_at, r.picked_up_at, r.completed_at, r.distance_km, r.reimbursement_amount_cents, r.mileage_receipt_needed, r.created_at, r.updated_at,
+    r.started_at, r.picked_up_at, r.completed_at, r.distance_km, r.reimbursement_amount_cents, r.reimbursement_excluded, r.mileage_receipt_needed, r.created_at, r.updated_at,
     a.name AS area_name, p.name AS p_name, p.phone AS p_phone, d.name AS d_name, d.phone AS d_phone,
     d.photo_file_id AS d_photo_file_id, d.avatar_color AS d_avatar_color, d.avatar_icon AS d_avatar_icon,
     v.model AS v_model, v.color AS v_color, v.plate AS v_plate, v.vehicle_type AS v_type,
@@ -257,6 +288,9 @@ fn route_fare(
     staff: bool,
     u: &CurrentUser,
 ) -> Value {
+    if r.reimbursement_excluded == 1 {
+        return Value::Null;
+    }
     let sees_event = staff
         || crate::audience::sees_event(
             u,
@@ -354,6 +388,7 @@ pub fn ride_json(r: &RideRow, u: &CurrentUser) -> Value {
         "route_fare": route_fare(r, is_passenger, is_driver, staff, u),
         "distance_km": r.distance_km,
         "reimbursement_amount_cents": r.reimbursement_amount_cents,
+        "reimbursement_excluded": r.reimbursement_excluded == 1,
         "mileage_receipt_needed": r.mileage_receipt_needed == 1,
         "readiness_status": r.readiness_status.as_deref().unwrap_or("unconfirmed"),
         "readiness_updated_at": r.readiness_updated_at,

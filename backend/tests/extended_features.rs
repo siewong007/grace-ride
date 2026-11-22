@@ -1693,3 +1693,176 @@ async fn driver_can_configure_multiple_vehicles_and_choose_active() {
         .iter()
         .any(|v| v["id"] == new_vehicle_id));
 }
+
+#[tokio::test]
+async fn multiple_saved_places_defaults_isolation_and_preserve() {
+    let (app, st) = setup().await;
+    let member = login(&st, "member@example.org").await;
+    let sophie = login(&st, "sophie@example.org").await;
+    let area = first_area_id(&st).await;
+
+    let home = call(
+        &app,
+        Method::POST,
+        "/api/saved-places",
+        Some(&member),
+        Some(json!({
+            "label": "Home",
+            "area_id": area,
+            "address": "10 Jalan SS2",
+            "gate_notes": "Gate 2",
+            "is_default": true
+        })),
+    )
+    .await;
+    assert_eq!(home.status, StatusCode::OK, "{}", home.json);
+    let home_id = home.json["id"].as_i64().unwrap();
+
+    let office = call(
+        &app,
+        Method::POST,
+        "/api/saved-places",
+        Some(&member),
+        Some(json!({
+            "label": "Office",
+            "area_id": area,
+            "address": "88 Tower B",
+            "gate_notes": "Lobby",
+            "is_default": false
+        })),
+    )
+    .await;
+    assert_eq!(office.status, StatusCode::OK, "{}", office.json);
+    let office_id = office.json["id"].as_i64().unwrap();
+
+    let parents = call(
+        &app,
+        Method::POST,
+        "/api/saved-places",
+        Some(&member),
+        Some(json!({
+            "label": "Parents",
+            "area_id": area,
+            "address": "22 Jalan Aman"
+        })),
+    )
+    .await;
+    assert_eq!(parents.status, StatusCode::OK, "{}", parents.json);
+    let parents_id = parents.json["id"].as_i64().unwrap();
+
+    // Ordered by default DESC, then label ASC
+    let list1 = call(&app, Method::GET, "/api/saved-places", Some(&member), None).await;
+    assert_eq!(list1.status, StatusCode::OK);
+    let arr1 = list1.json.as_array().unwrap();
+    assert_eq!(arr1.len(), 3);
+    assert_eq!(arr1[0]["label"], "Home");
+    assert_eq!(arr1[0]["is_default"], 1);
+    assert_eq!(arr1[1]["label"], "Office");
+    assert_eq!(arr1[1]["is_default"], 0);
+    assert_eq!(arr1[2]["label"], "Parents");
+    assert_eq!(arr1[2]["is_default"], 0);
+
+    // Promote Office to default
+    let promote = call(
+        &app,
+        Method::PUT,
+        &format!("/api/saved-places/{office_id}"),
+        Some(&member),
+        Some(json!({
+            "label": "Office",
+            "area_id": area,
+            "address": "88 Tower B",
+            "gate_notes": "Lobby",
+            "is_default": true
+        })),
+    )
+    .await;
+    assert_eq!(promote.status, StatusCode::OK, "{}", promote.json);
+
+    let list2 = call(&app, Method::GET, "/api/saved-places", Some(&member), None).await;
+    let arr2 = list2.json.as_array().unwrap();
+    assert_eq!(arr2[0]["id"], office_id);
+    assert_eq!(arr2[0]["is_default"], 1);
+    let home_row = arr2.iter().find(|r| r["id"] == home_id).unwrap();
+    assert_eq!(home_row["is_default"], 0);
+
+    // Omitting is_default preserves existing default flag (stays 1)
+    let upd_omit = call(
+        &app,
+        Method::PUT,
+        &format!("/api/saved-places/{office_id}"),
+        Some(&member),
+        Some(json!({
+            "label": "Office",
+            "area_id": area,
+            "address": "88 Tower B",
+            "gate_notes": "Side entrance"
+        })),
+    )
+    .await;
+    assert_eq!(upd_omit.status, StatusCode::OK, "{}", upd_omit.json);
+
+    let list3 = call(&app, Method::GET, "/api/saved-places", Some(&member), None).await;
+    let arr3 = list3.json.as_array().unwrap();
+    assert_eq!(arr3[0]["id"], office_id);
+    assert_eq!(arr3[0]["is_default"], 1);
+    assert_eq!(arr3[0]["gate_notes"], "Side entrance");
+
+    // Per-user isolation: another member cannot view, edit, or delete member's places
+    let sophie_list = call(&app, Method::GET, "/api/saved-places", Some(&sophie), None).await;
+    assert_eq!(sophie_list.status, StatusCode::OK);
+    assert_eq!(sophie_list.json.as_array().unwrap().len(), 0);
+
+    let sophie_put = call(
+        &app,
+        Method::PUT,
+        &format!("/api/saved-places/{office_id}"),
+        Some(&sophie),
+        Some(json!({
+            "label": "Hijack",
+            "area_id": area,
+            "address": "1 Bad St"
+        })),
+    )
+    .await;
+    assert_eq!(sophie_put.status, StatusCode::NOT_FOUND);
+
+    let sophie_del = call(
+        &app,
+        Method::DELETE,
+        &format!("/api/saved-places/{home_id}"),
+        Some(&sophie),
+        None,
+    )
+    .await;
+    assert_eq!(sophie_del.status, StatusCode::NOT_FOUND);
+
+    let sophie_create = call(
+        &app,
+        Method::POST,
+        "/api/saved-places",
+        Some(&sophie),
+        Some(json!({
+            "label": "Home",
+            "area_id": area,
+            "address": "5 Jalan Damansara",
+            "is_default": true
+        })),
+    )
+    .await;
+    assert_eq!(sophie_create.status, StatusCode::OK);
+
+    // Member deletes Parents, leaving 2 places
+    let del_parents = call(
+        &app,
+        Method::DELETE,
+        &format!("/api/saved-places/{parents_id}"),
+        Some(&member),
+        None,
+    )
+    .await;
+    assert_eq!(del_parents.status, StatusCode::OK);
+
+    let list4 = call(&app, Method::GET, "/api/saved-places", Some(&member), None).await;
+    assert_eq!(list4.json.as_array().unwrap().len(), 2);
+}

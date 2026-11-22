@@ -4,6 +4,8 @@ export default {
   sectionMember: '会员',
   sectionService: '服事',
   sectionAdmin: '管理',
+  trafficTab: '交通组',
+  trafficHub: '交通组工作台',
   home: '首页',
   myRides: '我的接送',
   events: '活动',

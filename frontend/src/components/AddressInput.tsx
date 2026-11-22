@@ -24,10 +24,22 @@ interface Props {
   placeholder?: string;
   required?: boolean;
   invalid?: boolean;
+  maxLength?: number;
 }
 
 /** Combobox (WAI-ARIA list autocomplete): arrows move, Enter picks, Escape closes. */
-export function AddressInput({ id, label, value, onChange, onBlur, hint, placeholder, required, invalid }: Props) {
+export function AddressInput({
+  id,
+  label,
+  value,
+  onChange,
+  onBlur,
+  hint,
+  placeholder,
+  required,
+  invalid,
+  maxLength,
+}: Props) {
   const { t } = useTranslation('rideNew');
   const listId = useId();
   const [options, setOptions] = useState<Place[]>([]);
@@ -130,6 +142,7 @@ export function AddressInput({ id, label, value, onChange, onBlur, hint, placeho
           aria-invalid={invalid || undefined}
           autoComplete="off"
           required={required}
+          maxLength={maxLength}
           value={value}
           placeholder={placeholder}
           onChange={(e) => {

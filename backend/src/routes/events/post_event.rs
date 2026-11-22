@@ -47,6 +47,9 @@ pub struct PostEventDriverItem {
     pub already_claimed: bool,
     pub claimed_amount_cents: Option<i64>,
     pub claimed_status: Option<String>,
+    pub reimbursement_excluded: bool,
+    pub excluded_ride_count: i64,
+    pub total_ride_count: i64,
 }
 
 #[derive(Serialize)]
@@ -271,6 +274,19 @@ pub(super) async fn get_post_event_drivers(
             None => (false, None, None),
         };
 
+        let (total_ride_count, excluded_ride_count): (i64, i64) = sqlx::query_as(
+            "SELECT COUNT(*)::BIGINT,
+                    COUNT(*) FILTER (WHERE reimbursement_excluded = 1)::BIGINT
+             FROM rides
+             WHERE event_id = $1 AND driver_id = $2 AND status <> 'cancelled'",
+        )
+        .bind(event_id)
+        .bind(did)
+        .fetch_one(&st.db)
+        .await?;
+        let reimbursement_excluded =
+            total_ride_count > 0 && excluded_ride_count == total_ride_count;
+
         driver_items.push(PostEventDriverItem {
             id: did,
             name,
@@ -282,6 +298,9 @@ pub(super) async fn get_post_event_drivers(
             already_claimed,
             claimed_amount_cents,
             claimed_status,
+            reimbursement_excluded,
+            excluded_ride_count,
+            total_ride_count,
         });
     }
 
@@ -334,8 +353,12 @@ pub(super) async fn create_post_event_reimbursements(
     .await?;
 
     let timestamp = now();
-    let mut created_ids = Vec::new();
+    let mut created_ids: Vec<(i64, i64, i64, bool)> = Vec::new();
     let mut total_cents: i64 = 0;
+    let mut approved_count: usize = 0;
+    let mut approved_cents: i64 = 0;
+    let mut pending_count: usize = 0;
+    let mut pending_cents: i64 = 0;
 
     for claim in &req.claims {
         if claim.amount_cents < 0 || claim.amount_cents > 50_000 {
@@ -369,6 +392,18 @@ pub(super) async fn create_post_event_reimbursements(
             return Err(conflict(u.lang, ErrorKey::ReimbursementAlreadyClaimed));
         }
 
+        let (total_rides, excluded_rides): (i64, i64) = sqlx::query_as(
+            "SELECT COUNT(*)::BIGINT,
+                    COUNT(*) FILTER (WHERE reimbursement_excluded = 1)::BIGINT
+             FROM rides
+             WHERE event_id = $1 AND driver_id = $2 AND status <> 'cancelled'",
+        )
+        .bind(event_id)
+        .bind(claim.driver_id)
+        .fetch_one(&mut *tx)
+        .await?;
+        let is_excluded = total_rides > 0 && excluded_rides == total_rides;
+
         let trip_label = if claim.trip_type == "supper" {
             "宵夜"
         } else {
@@ -387,6 +422,12 @@ pub(super) async fn create_post_event_reimbursements(
             trip_label, event_title, dest_area_name, note_suffix
         );
 
+        let (claim_status, claim_reviewer): (&str, Option<i64>) = if is_excluded {
+            ("pending", None)
+        } else {
+            ("approved", Some(u.id))
+        };
+
         let (reimb_id,): (i64,) = sqlx::query_as(
             "INSERT INTO reimbursements (
                 user_id, event_id, destination_area_id, trip_type, amount_cents, description,
@@ -394,8 +435,8 @@ pub(super) async fn create_post_event_reimbursements(
                 created_at, updated_at
             ) VALUES (
                 $1, $2, $3, $4, $5, $6,
-                NULL, $7, $8, 'approved', 'mileage', $9,
-                $10, $10
+                NULL, $7, $8, $9, 'mileage', $10,
+                $11, $11
             ) RETURNING id",
         )
         .bind(claim.driver_id)
@@ -406,38 +447,68 @@ pub(super) async fn create_post_event_reimbursements(
         .bind(&desc)
         .bind(&driver_name)
         .bind(&driver_phone)
-        .bind(u.id)
+        .bind(claim_status)
+        .bind(claim_reviewer)
         .bind(&timestamp)
         .fetch_one(&mut *tx)
         .await?;
 
-        created_ids.push((reimb_id, claim.driver_id, claim.amount_cents));
+        created_ids.push((reimb_id, claim.driver_id, claim.amount_cents, is_excluded));
         total_cents += claim.amount_cents;
+        if is_excluded {
+            pending_count += 1;
+            pending_cents += claim.amount_cents;
+        } else {
+            approved_count += 1;
+            approved_cents += claim.amount_cents;
+        }
     }
 
     tx.commit().await?;
 
     // Disperse notifications
-    for (rid, did, amt) in &created_ids {
-        notify(
-            &st.db,
-            *did,
-            ("活动车贴已登记", "Post-event mileage recorded"),
-            (
-                &format!("交通组已为您登记活动车贴 {}，财务将安排打款。", fmt_rm(*amt)),
-                &format!(
-                    "Post-event mileage reimbursement of {} was recorded; finance will arrange payout.",
-                    fmt_rm(*amt)
+    for (rid, did, amt, is_excluded) in &created_ids {
+        if *is_excluded {
+            notify(
+                &st.db,
+                *did,
+                ("活动车贴已提交审核", "Post-event mileage submitted for review"),
+                (
+                    &format!(
+                        "交通组已为您提交活动车贴 {}（因行程标记为不包报销，需等待审核）。",
+                        fmt_rm(*amt)
+                    ),
+                    &format!(
+                        "Post-event mileage claim of {} was submitted for review (ride marked no reimbursement).",
+                        fmt_rm(*amt)
+                    ),
                 ),
-            ),
-            &format!("/reimbursements/{rid}"),
-        )
-        .await;
+                &format!("/reimbursements/{rid}"),
+            )
+            .await;
+        } else {
+            notify(
+                &st.db,
+                *did,
+                ("活动车贴已登记", "Post-event mileage recorded"),
+                (
+                    &format!("交通组已为您登记活动车贴 {}，财务将安排打款。", fmt_rm(*amt)),
+                    &format!(
+                        "Post-event mileage reimbursement of {} was recorded; finance will arrange payout.",
+                        fmt_rm(*amt)
+                    ),
+                ),
+                &format!("/reimbursements/{rid}"),
+            )
+            .await;
+        }
     }
 
     let audit_detail = format!(
-        "{} claims, total {}{}",
+        "{} claims ({} auto-approved, {} pending review), total {}{}",
         created_ids.len(),
+        approved_count,
+        pending_count,
         fmt_rm(total_cents),
         req.supper_note
             .as_deref()
@@ -455,32 +526,64 @@ pub(super) async fn create_post_event_reimbursements(
     )
     .await;
 
-    notify_perm(
-        &st.db,
-        Page::AdminReimbPay,
-        Act::Update,
-        ("新的活动车贴待打款", "New event mileage awaiting payout"),
-        (
-            &format!(
-                "{} · {} 笔车贴已批准待付（共 {}）",
-                event_title,
-                created_ids.len(),
-                fmt_rm(total_cents)
+    if approved_count > 0 {
+        notify_perm(
+            &st.db,
+            Page::AdminReimbPay,
+            Act::Update,
+            ("新的活动车贴待打款", "New event mileage awaiting payout"),
+            (
+                &format!(
+                    "{} · {} 笔车贴已批准待付（共 {}）",
+                    event_title,
+                    approved_count,
+                    fmt_rm(approved_cents)
+                ),
+                &format!(
+                    "{} · {} claims approved awaiting payout (total {})",
+                    event_title,
+                    approved_count,
+                    fmt_rm(approved_cents)
+                ),
             ),
-            &format!(
-                "{} · {} claims approved awaiting payout (total {})",
-                event_title,
-                created_ids.len(),
-                fmt_rm(total_cents)
+            "/admin/reimbursements?tab=payout",
+        )
+        .await;
+    }
+
+    if pending_count > 0 {
+        notify_perm(
+            &st.db,
+            Page::AdminReimbReview,
+            Act::Update,
+            (
+                "新的例外车贴待审核",
+                "New exception mileage awaiting review",
             ),
-        ),
-        "/admin/reimbursements?tab=payout",
-    )
-    .await;
+            (
+                &format!(
+                    "{} · {} 笔不包报销行程的例外车贴待审核（共 {}）",
+                    event_title,
+                    pending_count,
+                    fmt_rm(pending_cents)
+                ),
+                &format!(
+                    "{} · {} exception claims for excluded rides awaiting review (total {})",
+                    event_title,
+                    pending_count,
+                    fmt_rm(pending_cents)
+                ),
+            ),
+            "/admin/reimbursements",
+        )
+        .await;
+    }
 
     Ok(Json(json!({
         "ok": true,
         "created_count": created_ids.len(),
+        "auto_approved_count": approved_count,
+        "pending_review_count": pending_count,
         "total_cents": total_cents,
     })))
 }

@@ -39,7 +39,7 @@ interface AdminRidesData {
   total_pages: number;
 }
 
-export default function AdminRides() {
+export function AdminRidesContent({ showExportTop = true }: { showExportTop?: boolean }) {
   const { t } = useTranslation('admin');
   const ft = useFormatT();
   const nav = useNavigate();
@@ -258,37 +258,31 @@ export default function AdminRides() {
   ];
 
   return (
-    <Page>
-      <PageHeader
-        title={t('rides.title')}
-        subtitle={t('rides.desc')}
-        back={ADMIN_HOME}
-        actions={
-          total > 0 ? (
-            <Button variant="secondary" size="sm" onClick={handleExport} loading={exporter.busy} icon={<Download size={16} />}>
-              {t('common:exportAll', { count: total })}
-            </Button>
-          ) : undefined
-        }
-      />
-
+    <div className="stack">
       <ErrorBox error={error} />
 
       {/* Quick Date Presets */}
-      <div className="quick-date-chips" role="group" aria-label={t('rides.quickDateLabel')}>
-        <span className="quick-date-label">{t('rides.quickDateLabel')}:</span>
-        {quickDates.map((d) => (
-          <button
-            key={d.key}
-            type="button"
-            className={`chip ${currentDate === d.date ? 'on' : ''}`}
-            aria-pressed={currentDate === d.date}
-            onClick={() => setFilter('date', d.date)}
-          >
-            {d.label}
-            {d.date && <span className="muted tiny"> · {d.date}</span>}
-          </button>
-        ))}
+      <div className="row between wrap gap-sm">
+        <div className="quick-date-chips" role="group" aria-label={t('rides.quickDateLabel')}>
+          <span className="quick-date-label">{t('rides.quickDateLabel')}:</span>
+          {quickDates.map((d) => (
+            <button
+              key={d.key}
+              type="button"
+              className={`chip ${currentDate === d.date ? 'on' : ''}`}
+              aria-pressed={currentDate === d.date}
+              onClick={() => setFilter('date', d.date)}
+            >
+              {d.label}
+              {d.date && <span className="muted tiny"> · {d.date}</span>}
+            </button>
+          ))}
+        </div>
+        {showExportTop && total > 0 && (
+          <Button variant="secondary" size="sm" onClick={handleExport} loading={exporter.busy} icon={<Download size={16} />}>
+            {t('common:exportAll', { count: total })}
+          </Button>
+        )}
       </div>
 
       {/* Batch Selection Action Bar */}
@@ -367,6 +361,20 @@ export default function AdminRides() {
           </>
         )}
       </Card>
+    </div>
+  );
+}
+
+export default function AdminRides() {
+  const { t } = useTranslation('admin');
+  return (
+    <Page>
+      <PageHeader
+        title={t('rides.title')}
+        subtitle={t('rides.desc')}
+        back={ADMIN_HOME}
+      />
+      <AdminRidesContent />
     </Page>
   );
 }

@@ -44,6 +44,9 @@ interface ApiService {
     @GET("api/areas") suspend fun areas(): List<Area>
     @GET("api/places") suspend fun places(@Query("q") q: String): List<Place>
     @GET("api/saved-places") suspend fun savedPlaces(): List<SavedPlace>
+    @POST("api/saved-places") suspend fun createSavedPlace(@Body body: SavedPlaceReq): CreateSavedPlaceRes
+    @PUT("api/saved-places/{id}") suspend fun updateSavedPlace(@Path("id") id: Long, @Body body: SavedPlaceReq): OkResponse
+    @DELETE("api/saved-places/{id}") suspend fun deleteSavedPlace(@Path("id") id: Long): OkResponse
     @GET("api/proxy-riders") suspend fun proxyRiders(): List<ProxyRider>
     @GET("api/rides") suspend fun myRides(@Query("scope") scope: String? = null): List<Ride>
     @GET("api/rides/{id}") suspend fun ride(@Path("id") id: Long): Ride

@@ -9,6 +9,7 @@ import kotlinx.coroutines.test.resetMain
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.test.setMain
 import kotlinx.serialization.json.boolean
+import kotlinx.serialization.json.int
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
 import okhttp3.mockwebserver.MockResponse
@@ -21,6 +22,7 @@ import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Test
+import org.pjstatecm.graceride.data.api.SavedPlace
 import org.pjstatecm.graceride.data.api.apiJson
 import org.pjstatecm.graceride.di.AppContainer
 import org.pjstatecm.graceride.data.session.InMemoryStore
@@ -29,6 +31,7 @@ import org.pjstatecm.graceride.ui.screens.events.EventsViewModel
 import org.pjstatecm.graceride.ui.screens.home.HomeViewModel
 import org.pjstatecm.graceride.ui.screens.login.LoginViewModel
 import org.pjstatecm.graceride.ui.screens.profile.ProfileViewModel
+import org.pjstatecm.graceride.ui.screens.profile.SavedAddressesViewModel
 import org.pjstatecm.graceride.ui.screens.rides.RideNewViewModel
 import org.pjstatecm.graceride.ui.screens.rides.RidesViewModel
 import org.pjstatecm.graceride.ui.screens.rides.TripType
@@ -438,5 +441,142 @@ class ViewModelTest {
         assertEquals("grok", avatarPut["avatar_icon"]?.jsonPrimitive?.content)
         assertEquals("purple", avatarPut["avatar_color"]?.jsonPrimitive?.content)
         assertFalse(avatarPut.containsKey("photo_file_id"))
+    }
+
+    @Test fun savedAddressesCrudAndDefaultPromotion() = runBlocking {
+        val initialPlaces = """[{"id":1,"label":"Home","area_id":2,"area_name":"PJ","address":"10 Jalan SS2","gate_notes":"Gate 2","is_default":1}]"""
+        val twoPlaces = """[
+            {"id":1,"label":"Home","area_id":2,"area_name":"PJ","address":"10 Jalan SS2","gate_notes":"Gate 2","is_default":1},
+            {"id":2,"label":"Work","area_id":3,"area_name":"Subang","address":"88 Tower B","gate_notes":"Lobby","is_default":0}
+        ]"""
+        val promotedPlaces = """[
+            {"id":2,"label":"Work","area_id":3,"area_name":"Subang","address":"88 Tower B","gate_notes":"Lobby","is_default":1},
+            {"id":1,"label":"Home","area_id":2,"area_name":"PJ","address":"10 Jalan SS2","gate_notes":"Gate 2","is_default":0}
+        ]"""
+        val editedPlaces = """[
+            {"id":2,"label":"Work HQ","area_id":3,"area_name":"Subang","address":"88 Tower B","gate_notes":"Gate 3","is_default":1},
+            {"id":1,"label":"Home","area_id":2,"area_name":"PJ","address":"10 Jalan SS2","gate_notes":"Gate 2","is_default":0}
+        ]"""
+        val afterDelete = """[{"id":2,"label":"Work HQ","area_id":3,"area_name":"Subang","address":"88 Tower B","gate_notes":"Gate 3","is_default":1}]"""
+
+        server.enqueue(json(initialPlaces))
+        server.enqueue(json("""[{"id":2,"name":"PJ","active":true},{"id":3,"name":"Subang","active":true}]"""))
+        val vm = SavedAddressesViewModel(container)
+        val loaded = vm.state.awaitUntil { !it.loading }
+        assertEquals(1, loaded.places.size)
+        repeat(2) { server.takeRequest() }
+
+        // Create second saved address
+        server.enqueue(json("""{"id":2,"ok":true}"""))
+        server.enqueue(json(twoPlaces))
+        var doneCount = 0
+        vm.save(null, "Work", 3L, "88 Tower B", "Lobby", false) { doneCount++ }
+        vm.state.awaitUntil { it.message == "saved" }
+        assertEquals(1, doneCount)
+        assertEquals(2, vm.state.value.places.size)
+        val postReq = server.takeRequest()
+        assertEquals("POST", postReq.method)
+        assertEquals("/api/saved-places", postReq.path)
+        val postBody = apiJson.parseToJsonElement(postReq.body.readUtf8()).jsonObject
+        assertEquals("Work", postBody["label"]?.jsonPrimitive?.content)
+        assertEquals(false, postBody["is_default"]?.jsonPrimitive?.boolean)
+        server.takeRequest() // GET /api/saved-places
+
+        // 1-tap default promotion
+        vm.clearMessage()
+        server.enqueue(json("""{"ok":true}"""))
+        server.enqueue(json(promotedPlaces))
+        val work = vm.state.value.places.first { it.id == 2L }
+        vm.setDefault(work)
+        vm.state.awaitUntil { it.message == "default_updated" }
+        assertEquals(2L, vm.state.value.places.first().id)
+        val starReq = server.takeRequest()
+        assertEquals("PUT", starReq.method)
+        assertEquals("/api/saved-places/2", starReq.path)
+        assertEquals(true, apiJson.parseToJsonElement(starReq.body.readUtf8()).jsonObject["is_default"]?.jsonPrimitive?.boolean)
+        server.takeRequest() // GET /api/saved-places
+
+        // Edit saved address
+        vm.clearMessage()
+        server.enqueue(json("""{"ok":true}"""))
+        server.enqueue(json(editedPlaces))
+        vm.save(2L, "Work HQ", 3L, "88 Tower B", "Gate 3", true) { doneCount++ }
+        vm.state.awaitUntil { it.message == "saved" }
+        assertEquals(2, doneCount)
+        assertEquals("Work HQ", vm.state.value.places.first().label)
+        repeat(2) { server.takeRequest() }
+
+        // Delete saved address
+        vm.clearMessage()
+        server.enqueue(json("""{"ok":true}"""))
+        server.enqueue(json(afterDelete))
+        vm.delete(1L) { doneCount++ }
+        vm.state.awaitUntil { it.message == "removed" }
+        assertEquals(3, doneCount)
+        assertEquals(1, vm.state.value.places.size)
+        val delReq = server.takeRequest()
+        assertEquals("DELETE", delReq.method)
+        assertEquals("/api/saved-places/1", delReq.path)
+    }
+
+    @Test fun rideNewAppliesMultipleSavedPlacesAndSavesNewAddress() = runBlocking {
+        val areasJson = """[{"id":2,"name":"PJ","active":true},{"id":3,"name":"Subang","active":true}]"""
+        val savedJson = """[
+            {"id":1,"label":"Home","area_id":2,"area_name":"PJ","address":"12 Jalan Home","gate_notes":"Ring bell 1","is_default":1},
+            {"id":2,"label":"Office","area_id":3,"area_name":"Subang","address":"88 Tower B","gate_notes":"Guardhouse","is_default":0}
+        ]"""
+        val eventJson = """{"id":20,"title":"Sunday Service","starts_at":"2026-11-29 10:00:00","location":"Church Hall","my_signup":{"status":"going"}}"""
+
+        server.enqueue(json(areasJson))
+        server.enqueue(json(savedJson))
+        server.enqueue(json("[]"))
+        server.enqueue(json(eventJson))
+
+        val vm = RideNewViewModel(container, 20L, initialProxy = false)
+        val init = vm.state.awaitUntil { !it.loading && it.event != null }
+        assertEquals("12 Jalan Home", init.address)
+        assertEquals("Ring bell 1", init.notes)
+        repeat(4) { server.takeRequest() }
+
+        val home = SavedPlace(1L, "Home", 2L, "PJ", "12 Jalan Home", "Ring bell 1", 1)
+        val office = SavedPlace(2L, "Office", 3L, "Subang", "88 Tower B", "Guardhouse", 0)
+
+        // Switching to Office swaps area, address, and gate notes cleanly
+        vm.applySavedPlace(office)
+        assertEquals(3L, vm.state.value.areaId)
+        assertEquals("88 Tower B", vm.state.value.address)
+        assertEquals("Guardhouse", vm.state.value.notes)
+
+        // Switching to return trip & picking Home populates destination (not pickup)
+        vm.setTripType(TripType.RETURN)
+        vm.applySavedPlace(home)
+        assertEquals("Church Hall", vm.state.value.address)
+        assertEquals("12 Jalan Home", vm.state.value.destination)
+        assertEquals("Ring bell 1", vm.state.value.notes)
+
+        // Switching back to outbound, typing a new address and opting to save it on submit
+        vm.setTripType(TripType.OUTBOUND)
+        vm.update {
+            it.copy(
+                areaId = 2L,
+                address = "77 Jalan Baru",
+                saveAddress = true,
+                saveAddressLabel = "Parents",
+            )
+        }
+        server.enqueue(json("""{"id":105}"""))
+        server.enqueue(json("""{"id":9,"ok":true}"""))
+        vm.submit()
+        vm.state.awaitUntil { it.createdId == 105L }
+
+        val rideReq = server.takeRequest()
+        assertEquals("/api/rides", rideReq.path)
+        val saveReq = server.takeRequest()
+        assertEquals("/api/saved-places", saveReq.path)
+        val saveBody = apiJson.parseToJsonElement(saveReq.body.readUtf8()).jsonObject
+        assertEquals("Parents", saveBody["label"]?.jsonPrimitive?.content)
+        assertEquals(2, saveBody["area_id"]?.jsonPrimitive?.int)
+        assertEquals("77 Jalan Baru", saveBody["address"]?.jsonPrimitive?.content)
+        assertEquals(false, saveBody["is_default"]?.jsonPrimitive?.boolean)
     }
 }

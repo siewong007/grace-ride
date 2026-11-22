@@ -3,7 +3,7 @@
  * The tab bar and the mobile swipe gesture both use this so they cannot drift apart.
  */
 
-export type BottomTabId = 'home' | 'events' | 'admin' | 'profile';
+export type BottomTabId = 'home' | 'events' | 'traffic' | 'admin' | 'profile';
 
 export interface BottomTab {
   id: BottomTabId;
@@ -14,11 +14,14 @@ export function getBottomNavTabs(opts: {
   pending: boolean;
   canEvents: boolean;
   hasStaffNav: boolean;
+  trafficOnly?: boolean;
 }): BottomTab[] {
   if (opts.pending) return [{ id: 'profile', to: '/me' }];
   const tabs: BottomTab[] = [{ id: 'home', to: '/' }];
   if (opts.canEvents) tabs.push({ id: 'events', to: '/events' });
-  if (opts.hasStaffNav) tabs.push({ id: 'admin', to: '/admin/menu' });
+  if (opts.hasStaffNav) {
+    tabs.push(opts.trafficOnly ? { id: 'traffic', to: '/admin/traffic' } : { id: 'admin', to: '/admin/menu' });
+  }
   tabs.push({ id: 'profile', to: '/me' });
   return tabs;
 }
@@ -47,7 +50,7 @@ function isProfileSection(path: string): boolean {
 
 /**
  * Which bottom tab the current page belongs to, if any.
- * The Admin tab is current on any /admin/* page, and on /help for help-desk staff.
+ * The Traffic / Admin tab is current on any /admin/* page, and on /help for help-desk staff.
  */
 export function matchBottomTab(
   pathname: string,
@@ -56,13 +59,14 @@ export function matchBottomTab(
 ): BottomTab | undefined {
   const path = normalizePath(pathname);
   const has = (id: BottomTabId) => tabs.find((t) => t.id === id);
+  const staffTab = has('traffic') ?? has('admin');
   if (
-    has('admin') &&
+    staffTab &&
     (path === '/admin' ||
       path.startsWith('/admin/') ||
       (helpDesk && (path === '/help' || path.startsWith('/help/'))))
   ) {
-    return has('admin');
+    return staffTab;
   }
   if (has('events') && (path === '/events' || path.startsWith('/events/'))) {
     return has('events');
@@ -73,9 +77,14 @@ export function matchBottomTab(
 }
 
 /** True on the tab's own root page (not an event detail, admin sub-page, or profile section). */
-export function isBottomTabRoot(pathname: string, search = ''): boolean {
+export function isBottomTabRoot(
+  pathname: string,
+  search = '',
+  tabs?: readonly BottomTab[],
+): boolean {
   const path = normalizePath(pathname);
   if (path === '/' || path === '/events' || path === '/admin/menu') return true;
+  if (path === '/admin/traffic' && tabs?.some((t) => t.id === 'traffic')) return true;
   if (path === '/me' && !new URLSearchParams(search).get('section')) return true;
   return false;
 }
@@ -107,7 +116,7 @@ export function decideSwipeAction(opts: {
   canGoForward: boolean;
 }): SwipeNavAction {
   const search = opts.search ?? '';
-  const onRoot = isBottomTabRoot(opts.pathname, search);
+  const onRoot = isBottomTabRoot(opts.pathname, search, opts.tabs);
   const goingBack = opts.direction === 'right';
 
   if (!onRoot) {

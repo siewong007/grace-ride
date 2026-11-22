@@ -586,6 +586,26 @@ pub fn sql_holds(alias: &str, perm: Perm) -> String {
     )
 }
 
+/// SQL condition: the `users` row aliased `alias` is active and holds `role` as an exact
+/// comma-separated token in `roles`. `role` is a built-in role constant, never from input.
+pub fn sql_has_role(alias: &str, role: &str) -> String {
+    format!(
+        "({alias}.status = 'active' AND string_to_array(replace({alias}.roles, ' ', ''), ',') && ARRAY['{role}'])"
+    )
+}
+
+/// SQL condition: the `users` row aliased `alias` is active and holds any of `roles`.
+pub fn sql_has_any_role(alias: &str, roles: &[&str]) -> String {
+    let arr = roles
+        .iter()
+        .map(|r| format!("'{r}'"))
+        .collect::<Vec<_>>()
+        .join(", ");
+    format!(
+        "({alias}.status = 'active' AND string_to_array(replace({alias}.roles, ' ', ''), ',') && ARRAY[{arr}])"
+    )
+}
+
 /// Permissions granted by the given roles, plus the `member` role.
 pub async fn for_roles(db: &PgPool, roles: &[String]) -> sqlx::Result<PermSet> {
     let rows: Vec<(String,)> = sqlx::query_as(

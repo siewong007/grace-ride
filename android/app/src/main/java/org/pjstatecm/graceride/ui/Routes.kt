@@ -14,6 +14,7 @@ object Routes {
     const val COSTS = "costs"
     const val HISTORY = "history"
     const val PROFILE = "profile"
+    const val SAVED_ADDRESSES = "saved-addresses"
     const val NOTIFICATIONS = "notifications"
 
     fun rideDetail(id: Long, justBooked: Boolean = false) =

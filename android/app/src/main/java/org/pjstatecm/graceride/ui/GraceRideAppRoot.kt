@@ -42,6 +42,7 @@ import org.pjstatecm.graceride.ui.screens.login.TermsScreen
 import org.pjstatecm.graceride.ui.screens.login.UnlockScreen
 import org.pjstatecm.graceride.ui.screens.notifications.NotificationsScreen
 import org.pjstatecm.graceride.ui.screens.profile.ProfileScreen
+import org.pjstatecm.graceride.ui.screens.profile.SavedAddressesScreen
 import org.pjstatecm.graceride.ui.screens.rides.RideDetailScreen
 import org.pjstatecm.graceride.ui.screens.rides.RideNewScreen
 import org.pjstatecm.graceride.ui.screens.rides.RidesScreen
@@ -172,6 +173,7 @@ fun GraceRideAppRoot(container: AppContainer) {
             composable(Routes.COSTS) { CostsScreen(container, navController) }
             composable(Routes.HISTORY) { HistoryScreen(container, navController) }
             composable(Routes.PROFILE) { ProfileScreen(container, navController) }
+            composable(Routes.SAVED_ADDRESSES) { SavedAddressesScreen(container, navController) }
             composable(Routes.NOTIFICATIONS) { NotificationsScreen(container, navController) }
         }
     }

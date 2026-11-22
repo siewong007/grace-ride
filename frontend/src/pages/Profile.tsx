@@ -2,6 +2,7 @@ import { ReactNode, useEffect, useState } from 'react';
 import { useLocation, useNavigate, useSearchParams } from 'react-router-dom';
 import {
   BarChart3,
+  Calendar,
   Camera,
   Check,
   Copy,
@@ -17,7 +18,6 @@ import {
   Shield,
   Sliders,
   Smartphone,
-  Trash2,
   User,
   Users,
   Wallet,
@@ -36,10 +36,12 @@ import AvatarEditor from '../components/AvatarEditor';
 import { PwaInstallModal } from '../components/PwaInstallModal';
 import { usePwaInstall } from '../pwaInstall';
 import FamilySection from './family/FamilySection';
+import SavedAddressesSection from './SavedAddressesSection';
+import type { SavedPlace } from '../types/domain';
 import QRCode from 'qrcode';
 import { useTranslation } from 'react-i18next';
 
-type SectionKey = 'personal' | 'preferences' | 'places' | 'security';
+type SectionKey = 'personal' | 'preferences' | 'places' | 'calendar' | 'security';
 
 export default function Profile() {
   const { t } = useTranslation('profile');
@@ -56,7 +58,9 @@ export default function Profile() {
   // The open section lives in the URL so the header back button and swipe-back both return to the list.
   const [searchParams] = useSearchParams();
   const sectionParam = searchParams.get('section');
-  const open: SectionKey | null = (['personal', 'preferences', 'places', 'security'] as const).find((k) => k === sectionParam) ?? null;
+  const open: SectionKey | null =
+    (['personal', 'preferences', 'places', 'calendar', 'security'] as const).find((k) => k === sectionParam) ?? null;
+  const savedPlacesApi = useApi<SavedPlace[]>(me && me.status !== 'pending' ? '/saved-places' : null);
   const pushCfg = useApi<{
     enabled?: boolean;
     configured?: boolean;
@@ -138,6 +142,13 @@ export default function Profile() {
     t('passkeyCount', { count: me.passkey_count }),
     me.totp_enabled ? t('twoFaOnShort') : t('twoFaOffShort'),
   ].join(' · ');
+  const savedPlaces = Array.isArray(savedPlacesApi.data) ? savedPlacesApi.data : [];
+  const placesHint =
+    savedPlaces.length === 0
+      ? t('savedAddressesHint')
+      : savedPlaces.length === 1
+        ? savedPlaces[0].label
+        : t('savedAddressesCountHint', { label: savedPlaces[0].label, count: savedPlaces.length });
 
   const savePersonal = () => put('/me', { name: f.name, phone: f.phone }).then(refresh);
   const savePreferences = () =>
@@ -278,7 +289,8 @@ export default function Profile() {
   const sheetTitle: Record<SectionKey, string> = {
     personal: t('personalInfo'),
     preferences: t('preferences'),
-    places: t('placesAndCalendar'),
+    places: t('savedAddresses'),
+    calendar: t('calendarFeed'),
     security: t('security'),
   };
 
@@ -335,12 +347,22 @@ export default function Profile() {
               onClick={() => openSection('preferences')}
             />
             {!isPending && (
-              <SheetLink
-                icon={<MapPin size={iconSz} />}
-                label={t('placesAndCalendar')}
-                aria-haspopup="dialog"
-                onClick={() => openSection('places')}
-              />
+              <>
+                <SheetLink
+                  icon={<MapPin size={iconSz} />}
+                  label={t('savedAddresses')}
+                  hint={placesHint}
+                  aria-haspopup="dialog"
+                  onClick={() => openSection('places')}
+                />
+                <SheetLink
+                  icon={<Calendar size={iconSz} />}
+                  label={t('calendarFeed')}
+                  hint={t('calendarFeedShort')}
+                  aria-haspopup="dialog"
+                  onClick={() => openSection('calendar')}
+                />
+              </>
             )}
             <SheetLink
               icon={<Shield size={iconSz} />}
@@ -394,7 +416,15 @@ export default function Profile() {
         </>
       )}
 
-      {open && (
+      {open === 'places' && (
+        <SavedAddressesSection
+          places={savedPlaces}
+          loading={savedPlacesApi.loading}
+          reloadPlaces={savedPlacesApi.reload}
+        />
+      )}
+
+      {open && open !== 'places' && (
         <>
           <PageHeader title={sheetTitle[open]} back="/me" />
           {open === 'personal' && (
@@ -532,7 +562,7 @@ export default function Profile() {
             </div>
           )}
 
-          {open === 'places' && <PlacesAndCalendarSection />}
+          {open === 'calendar' && <CalendarFeedSection />}
 
           {open === 'security' && (
             <div className="stack">
@@ -917,49 +947,14 @@ function Verify2faModal({ onClose, onDone }: { onClose: () => void; onDone: () =
   );
 }
 
-interface SavedPlaceItem {
-  id: number;
-  label: string;
-  area_id: number | null;
-  area_name: string | null;
-  address: string;
-  gate_notes: string;
-  is_default: number;
-}
-
-interface AreaOpt {
-  id: number;
-  name: string;
-  active: boolean;
-}
-
-function PlacesAndCalendarSection() {
+function CalendarFeedSection() {
   const { t } = useTranslation('profile');
-  const confirm = useConfirm();
-  const { data: placesRaw, reload: reloadPlaces } = useApi<SavedPlaceItem[]>('/saved-places');
-  const { data: areasRaw } = useApi<AreaOpt[]>('/areas');
   const { data: calRaw, reload: reloadCal } = useApi<{ enabled?: boolean }>('/me/calendar-feed');
-  const places = Array.isArray(placesRaw) ? placesRaw : [];
-  const areas = (Array.isArray(areasRaw) ? areasRaw : []).filter((a) => a.active);
   const calEnabled = Boolean(calRaw && !Array.isArray(calRaw) && calRaw.enabled);
 
-  const [newPlace, setNewPlace] = useState({ label: '', area_id: '', address: '', gate_notes: '' });
   const [feedUrl, setFeedUrl] = useState<string | null>(null);
   const [copiedFeed, setCopiedFeed] = useState(false);
   const { busy, error, run } = useAction();
-
-  const addPlace = () => {
-    run(async () => {
-      await post('/saved-places', {
-        label: newPlace.label.trim(),
-        area_id: newPlace.area_id ? Number(newPlace.area_id) : null,
-        address: newPlace.address.trim(),
-        gate_notes: newPlace.gate_notes.trim(),
-      });
-      setNewPlace({ label: '', area_id: '', address: '', gate_notes: '' });
-      await reloadPlaces();
-    }, t('saved'));
-  };
 
   const rotateFeed = () => {
     run(async () => {
@@ -982,87 +977,6 @@ function PlacesAndCalendarSection() {
 
   return (
     <div className="stack">
-      <div className="stack-sm">
-        <div className="bold">{t('savedPlacesTitle')}</div>
-        <p className="muted small">{t('savedPlacesHint')}</p>
-        {places.length > 0 && (
-          <div className="stack-sm">
-            {places.map((sp) => (
-              <div key={sp.id} className="card flat tight row between nowrap gap-sm">
-                <div className="min-w-0">
-                  <div className="bold small">{sp.label}{sp.area_name ? ` · ${sp.area_name}` : ''}</div>
-                  <div className="muted tiny ellipsis">{sp.address}</div>
-                  {sp.gate_notes && <div className="tiny muted">{sp.gate_notes}</div>}
-                </div>
-                <Button
-                  variant="danger"
-                  size="sm"
-                  disabled={busy}
-                  onClick={async () => {
-                    const ok = await confirm({
-                      title: t('remove'),
-                      body: t('removePlaceConfirm'),
-                      confirmLabel: t('remove'),
-                      tone: 'danger',
-                    });
-                    if (ok) run(() => del(`/saved-places/${sp.id}`).then(reloadPlaces), t('removed'));
-                  }}
-                >
-                  <Trash2 size={14} />
-                  {t('remove')}
-                </Button>
-              </div>
-            ))}
-          </div>
-        )}
-        <div className="form-grid two">
-          <Field label={t('placeLabel')}>
-            <input
-              className="input"
-              value={newPlace.label}
-              onChange={(e) => setNewPlace({ ...newPlace, label: e.target.value })}
-              placeholder={t('placeLabelPlaceholder')}
-            />
-          </Field>
-          <Field label={t('placeArea')}>
-            <select
-              className="input"
-              value={newPlace.area_id}
-              onChange={(e) => setNewPlace({ ...newPlace, area_id: e.target.value })}
-            >
-              <option value="">—</option>
-              {areas.map((a) => (
-                <option key={a.id} value={a.id}>{a.name}</option>
-              ))}
-            </select>
-          </Field>
-        </div>
-        <Field label={t('placeAddress')}>
-          <input
-            className="input"
-            value={newPlace.address}
-            onChange={(e) => setNewPlace({ ...newPlace, address: e.target.value })}
-          />
-        </Field>
-        <Field label={t('placeGateNotes')}>
-          <input
-            className="input"
-            value={newPlace.gate_notes}
-            onChange={(e) => setNewPlace({ ...newPlace, gate_notes: e.target.value })}
-            placeholder={t('placeGatePlaceholder')}
-          />
-        </Field>
-        <Button
-          variant="secondary"
-          disabled={busy || !newPlace.label.trim() || !newPlace.address.trim()}
-          onClick={addPlace}
-        >
-          {t('addSavedPlace')}
-        </Button>
-      </div>
-
-      <div className="divider" />
-
       <div className="stack-sm">
         <div className="row between">
           <span className="bold">{t('calendarFeedTitle')}</span>

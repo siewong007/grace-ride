@@ -1,6 +1,7 @@
 import { beforeAll, describe, expect, it, vi } from 'vitest';
-import { fireEvent, render, screen } from '@testing-library/react';
+import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { MemoryRouter, Route, Routes } from 'react-router-dom';
+import { post } from './api';
 import i18n from './i18n';
 import RideCard, { Ride } from './components/RideCard';
 import Home from './pages/Home';
@@ -85,6 +86,7 @@ vi.mock('./auth', () => ({
 }));
 
 vi.mock('./api', () => ({
+  api: vi.fn().mockResolvedValue([]),
   useApi: (path: string | null) => ({
     data: path ? mockApiData[path] ?? null : null,
     loading: false,
@@ -317,6 +319,87 @@ describe('RideNew page', () => {
 
       expect(screen.getByDisplayValue('88 Jalan Bahagia, PJ')).toBeInTheDocument();
       expect(screen.getByText(/prefilled from saved place: home/i)).toBeInTheDocument();
+    } finally {
+      delete mockApiData['/saved-places'];
+    }
+  });
+
+  it('switches multiple saved addresses without duplicating gate notes and applies to return destination', () => {
+    const savedAreas = mockApiData['/areas'];
+    mockApiData['/areas'] = [
+      { id: 1, name: 'Petaling Jaya', active: true },
+      { id: 2, name: 'Subang Jaya', active: true },
+    ];
+    mockApiData['/saved-places'] = [
+      { id: 1, label: 'Home', area_id: 1, area_name: 'Petaling Jaya', address: '10 Jalan SS2', gate_notes: 'Ring bell 1', is_default: 1 },
+      { id: 2, label: 'Office', area_id: 2, area_name: 'Subang Jaya', address: '88 Tower B', gate_notes: 'Guardhouse pass', is_default: 0 },
+    ];
+    try {
+      render(
+        <MemoryRouter initialEntries={['/rides/new?event=1']}>
+          <RideNew />
+        </MemoryRouter>
+      );
+
+      const notesBox = screen.getByLabelText(/notes/i) as HTMLTextAreaElement;
+      expect(notesBox.value).toBe('Ring bell 1');
+
+      fireEvent.click(screen.getByRole('button', { name: 'Office' }));
+      expect(screen.getByDisplayValue('88 Tower B')).toBeInTheDocument();
+      expect((screen.getByLabelText(/pickup area/i) as HTMLSelectElement).value).toBe('2');
+      expect(notesBox.value).toBe('Guardhouse pass');
+      expect(notesBox.value).not.toContain('Ring bell 1');
+
+      // Return trip: tapping Home populates destination while keeping event location as pickup
+      fireEvent.click(screen.getByRole('button', { name: /return only/i }));
+      fireEvent.click(screen.getByRole('button', { name: 'Home' }));
+      expect(screen.getByRole('combobox', { name: /detailed pickup address/i })).toHaveValue('Grace Hall');
+      expect(screen.getByRole('combobox', { name: /destination/i })).toHaveValue('10 Jalan SS2');
+      expect(notesBox.value).toBe('Ring bell 1');
+    } finally {
+      mockApiData['/areas'] = savedAreas;
+      delete mockApiData['/saved-places'];
+    }
+  });
+
+  it('offers progressive save-address option for a newly typed address and saves on submit', async () => {
+    const postMock = vi.mocked(post);
+    postMock.mockClear();
+    mockApiData['/saved-places'] = [];
+    try {
+      render(
+        <MemoryRouter initialEntries={['/rides/new?event=1']}>
+          <RideNew />
+        </MemoryRouter>
+      );
+
+      fireEvent.change(screen.getByLabelText(/pickup area/i), { target: { value: '1' } });
+      fireEvent.change(screen.getByRole('combobox', { name: /detailed pickup address/i }), {
+        target: { value: '77 Jalan Sejahtera' },
+      });
+
+      const saveCheck = screen.getByLabelText(/save this address for next time/i);
+      fireEvent.click(saveCheck);
+      fireEvent.click(screen.getByRole('button', { name: 'Parents' }));
+
+      fireEvent.click(screen.getByRole('button', { name: /submit ride request/i }));
+
+      await waitFor(() => {
+        expect(postMock).toHaveBeenCalledWith(
+          '/rides',
+          expect.objectContaining({
+            pickup_area_id: 1,
+            pickup_address: '77 Jalan Sejahtera',
+          }),
+        );
+        expect(postMock).toHaveBeenCalledWith('/saved-places', {
+          label: 'Parents',
+          area_id: 1,
+          address: '77 Jalan Sejahtera',
+          gate_notes: '',
+          is_default: true,
+        });
+      });
     } finally {
       delete mockApiData['/saved-places'];
     }

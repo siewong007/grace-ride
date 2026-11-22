@@ -2,7 +2,7 @@ import { ReactNode, useCallback, useEffect, useMemo, useRef, useState } from 're
 import { Link, NavLink, Navigate, Outlet, useLocation, useNavigate } from 'react-router-dom';
 import {
   ArrowLeft, Bell, Calendar, Car, CarFront, Clock, Fingerprint, HandCoins, Home,
-  LayoutGrid, LifeBuoy, PanelLeftClose, PanelLeftOpen, Search, Receipt, ShieldAlert, User, Wallet, BarChart3, WifiOff,
+  LayoutGrid, LifeBuoy, PanelLeftClose, PanelLeftOpen, Route, Search, Receipt, ShieldAlert, User, Wallet, BarChart3, WifiOff,
 } from 'lucide-react';
 import { useAuth } from '../auth';
 import { BackNavigationProvider, getDefaultBack, SwipeBackGesture, useOptionalBackNavigation, useSmartBack } from './BackNavigation';
@@ -49,6 +49,7 @@ function getPageTitle(pathname: string, t: (key: string) => string): string {
   if (pathname === '/notifications') return t('notifications');
   if (pathname === '/me') return t('profile');
   if (pathname === '/admin/menu') return t('adminSheetTitle');
+  if (pathname === '/admin/traffic') return t('trafficHub');
   if (pathname === '/admin/rides') return t('adminRides');
   if (pathname.startsWith('/admin/rides/')) return t('rideDetail');
   if (/^\/admin\/events\/[^/]+\/plan$/.test(pathname)) return t('planTransport');
@@ -97,7 +98,7 @@ function LayoutInner() {
     setJumpOpen(true);
   }, []);
   useQuickJumpShortcut(openJump);
-  const { staffGroups, staff, staffWaiting, helpDesk } = useStaffNav();
+  const { staffGroups, staff, staffWaiting, helpDesk, isTrafficOnlyStaff, trafficBadge } = useStaffNav();
   const isHome = loc.pathname === '/';
   const pending = me?.status === 'pending';
   // The profile page itself, where a pending member's waiting-room checklist says what the banners would.
@@ -178,7 +179,9 @@ function LayoutInner() {
     pending,
     canEvents: can('events'),
     hasStaffNav: !pending && staff.length > 0,
+    trafficOnly: isTrafficOnlyStaff,
   });
+  const showTrafficTab = bottomTabs.some((tab) => tab.id === 'traffic');
   const showAdminTab = bottomTabs.some((tab) => tab.id === 'admin');
   const bottom: NavItem[] = bottomTabs
     .filter((tab) => tab.id === 'home' || tab.id === 'events')
@@ -358,6 +361,18 @@ function LayoutInner() {
             <span className="bottom-tab-label">{n.label}</span>
           </NavLink>
         ))}
+        {showTrafficTab && (
+          <NavLink
+            to="/admin/traffic"
+            className={`bottom-tab ${onAdminPage ? 'active' : ''}`}
+          >
+            <span className="bottom-tab-icon">
+              <Route size={sz} />
+              {badge(trafficBadge)}
+            </span>
+            <span className="bottom-tab-label">{t('trafficTab')}</span>
+          </NavLink>
+        )}
         {showAdminTab && (
           <NavLink
             to="/admin/menu"

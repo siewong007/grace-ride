@@ -164,6 +164,26 @@ async fn dashboard(State(st): State<AppState>, u: CurrentUser) -> AppResult<Json
     .flatten()
     .and_then(|s| s.parse::<i64>().ok())
     .unwrap_or(st.cfg.max_live_drivers);
+    let (pending_plan_drafts,): (i64,) =
+        sqlx::query_as("SELECT COUNT(*) FROM event_plan_drafts WHERE status='pending_approval'")
+            .fetch_one(&st.db)
+            .await?;
+    let (pending_ride_drafts,): (i64,) =
+        sqlx::query_as("SELECT COUNT(*) FROM ride_change_drafts WHERE status='pending_approval'")
+            .fetch_one(&st.db)
+            .await?;
+    let (my_returned_plan_drafts,): (i64,) = sqlx::query_as(
+        "SELECT COUNT(*) FROM event_plan_drafts WHERE status='returned' AND (submitted_by=$1 OR created_by=$1)",
+    )
+    .bind(u.id)
+    .fetch_one(&st.db)
+    .await?;
+    let (my_returned_ride_drafts,): (i64,) = sqlx::query_as(
+        "SELECT COUNT(*) FROM ride_change_drafts WHERE status='returned' AND (submitted_by=$1 OR created_by=$1)",
+    )
+    .bind(u.id)
+    .fetch_one(&st.db)
+    .await?;
     Ok(Json(json!({
         "today": today, "today_total": today_total, "today_confirmed": today_confirmed, "today_changes": today_changes,
         "pending_approval": pending_approval, "no_driver": no_driver, "needs_attention": attention,
@@ -172,5 +192,9 @@ async fn dashboard(State(st): State<AppState>, u: CurrentUser) -> AppResult<Json
         "open_invites": open_invites, "awaiting_payment": awaiting_payment,
         "oldest_approval_at": oldest_approval_at, "next_no_driver_at": next_no_driver_at,
         "oldest_help_at": oldest_help_at, "help_claimed_by_me": help_claimed_by_me,
+        "pending_plan_drafts": pending_plan_drafts,
+        "pending_ride_drafts": pending_ride_drafts,
+        "my_returned_plan_drafts": my_returned_plan_drafts,
+        "my_returned_ride_drafts": my_returned_ride_drafts,
     })))
 }

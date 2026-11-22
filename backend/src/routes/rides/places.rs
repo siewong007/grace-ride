@@ -49,7 +49,7 @@ pub(super) async fn list_saved_places(
     let rows: Vec<SavedPlaceRow> = sqlx::query_as(
         "SELECT sp.id, sp.user_id, sp.label, sp.area_id, a.name AS area_name, sp.address, sp.gate_notes, sp.lat, sp.lng, sp.is_default, sp.created_at, sp.updated_at
          FROM saved_places sp LEFT JOIN areas a ON a.id = sp.area_id
-         WHERE sp.user_id=$1 ORDER BY sp.is_default DESC, sp.label ASC",
+         WHERE sp.user_id=$1 ORDER BY sp.is_default DESC, sp.label ASC, sp.id ASC",
     )
     .bind(u.id)
     .fetch_all(&st.db)
@@ -161,20 +161,17 @@ pub(super) async fn update_saved_place(
             .fetch_optional(&st.db)
             .await?;
     let (lat, lng) = cached.unwrap_or((None, None));
-    let is_def = if req.is_default.unwrap_or(false) {
-        1i64
-    } else {
-        0i64
-    };
+    let is_def: Option<i64> = req.is_default.map(|b| if b { 1 } else { 0 });
     let mut tx = st.db.begin().await?;
-    if is_def == 1 {
-        sqlx::query("UPDATE saved_places SET is_default=0 WHERE user_id=$1")
+    if is_def == Some(1) {
+        sqlx::query("UPDATE saved_places SET is_default=0 WHERE user_id=$1 AND id<>$2")
             .bind(u.id)
+            .bind(id)
             .execute(&mut *tx)
             .await?;
     }
     let res = sqlx::query(
-        "UPDATE saved_places SET label=$1, area_id=$2, address=$3, gate_notes=$4, lat=$5, lng=$6, is_default=$7, updated_at=$8
+        "UPDATE saved_places SET label=$1, area_id=$2, address=$3, gate_notes=$4, lat=$5, lng=$6, is_default=COALESCE($7, is_default), updated_at=$8
          WHERE id=$9 AND user_id=$10",
     )
     .bind(label)

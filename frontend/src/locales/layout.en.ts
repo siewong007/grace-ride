@@ -4,6 +4,8 @@ export default {
   sectionMember: 'Members',
   sectionService: 'Service',
   sectionAdmin: 'Admin',
+  trafficTab: 'Traffic',
+  trafficHub: 'Traffic workspace',
   home: 'Home',
   myRides: 'My rides',
   events: 'Events',

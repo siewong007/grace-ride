@@ -267,6 +267,11 @@ pub fn render(lang: Lang, key: &ErrorKey) -> String {
             rides::render(lang, RidesError::OnlyTrafficLeadCanApprove)
         }
         ErrorKey::PlanDraftNotFound => rides::render(lang, RidesError::PlanDraftNotFound),
+        ErrorKey::DraftLockedByOther { name } => {
+            rides::render(lang, RidesError::DraftLockedByOther { name: name.clone() })
+        }
+        ErrorKey::DraftNotEditable => rides::render(lang, RidesError::DraftNotEditable),
+        ErrorKey::RideDraftNotFound => rides::render(lang, RidesError::RideDraftNotFound),
 
         ErrorKey::SettlementNameRequired => {
             settlements::render(lang, SettlementsError::SettlementNameRequired)
@@ -634,6 +639,11 @@ mod tests {
             ErrorKey::OnlyVolunteerDriversCanChoose => ErrorKey::OnlyVolunteerDriversCanChoose,
             ErrorKey::OnlyTrafficLeadCanApprove => ErrorKey::OnlyTrafficLeadCanApprove,
             ErrorKey::PlanDraftNotFound => ErrorKey::PlanDraftNotFound,
+            ErrorKey::DraftLockedByOther { .. } => {
+                ErrorKey::DraftLockedByOther { name: "x".into() }
+            }
+            ErrorKey::DraftNotEditable => ErrorKey::DraftNotEditable,
+            ErrorKey::RideDraftNotFound => ErrorKey::RideDraftNotFound,
 
             ErrorKey::SettlementNameRequired => ErrorKey::SettlementNameRequired,
             ErrorKey::AtLeastOneExpenseItem => ErrorKey::AtLeastOneExpenseItem,

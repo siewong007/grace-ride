@@ -13,7 +13,7 @@ import {
 import { fmtAgo, fmtTime, parseLocal, useFormatT } from '../../format';
 import { ADMIN_HOME } from '../../staffNav';
 
-interface Live {
+export interface Live {
   max: number;
   drivers: {
     driver_id: number;
@@ -26,7 +26,7 @@ interface Live {
   }[];
 }
 
-export default function AdminLive() {
+export function AdminLiveContent({ showCountPill = false }: { showCountPill?: boolean }) {
   const { t } = useTranslation('admin');
   const ft = useFormatT();
   const [focusPoint, setFocusPoint] = useState<{ lat: number; lng: number } | null>(null);
@@ -57,18 +57,15 @@ export default function AdminLive() {
   };
 
   return (
-    <Page>
-      <PageHeader
-        title={t('live.title')}
-        subtitle={t('live.desc')}
-        back={ADMIN_HOME}
-        actions={
+    <div className="stack">
+      <ErrorBox error={error} />
+      {showCountPill && (
+        <div className="row end">
           <Pill tone="teal">
             {data?.drivers.length ?? 0} / {data?.max ?? 10} {t('live.drivers')}
           </Pill>
-        }
-      />
-      <ErrorBox error={error} />
+        </div>
+      )}
 
       <div className="split">
         <div className="stack">
@@ -135,6 +132,27 @@ export default function AdminLive() {
           )}
         </section>
       </div>
+    </div>
+  );
+}
+
+export default function AdminLive() {
+  const { t } = useTranslation('admin');
+  const { data } = useApi<Live>('/admin/live', 15000);
+
+  return (
+    <Page>
+      <PageHeader
+        title={t('live.title')}
+        subtitle={t('live.desc')}
+        back={ADMIN_HOME}
+        actions={
+          <Pill tone="teal">
+            {data?.drivers.length ?? 0} / {data?.max ?? 10} {t('live.drivers')}
+          </Pill>
+        }
+      />
+      <AdminLiveContent />
     </Page>
   );
 }

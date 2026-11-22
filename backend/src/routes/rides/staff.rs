@@ -22,16 +22,12 @@ use super::{
 
 // ---------------- 交通组 (staff) ----------------
 
-pub(super) async fn staff_approve(
-    State(st): State<AppState>,
-    u: CurrentUser,
-    Path(id): Path<i64>,
-) -> AppResult<Json<Value>> {
-    require(&u, Page::AdminRides, Act::Update)?;
-    let r = load_ride(&st, u.lang, id).await?;
-    if !traffic_scope_ok(&u, r.event_created_by) {
-        return Err(forbidden(u.lang, ErrorKey::CannotViewRide));
-    }
+pub(super) async fn exec_staff_approve(
+    st: &AppState,
+    u: &CurrentUser,
+    r: &RideRow,
+) -> AppResult<()> {
+    let id = r.id;
     let d = r
         .driver_id
         .ok_or_else(|| bad(u.lang, ErrorKey::NoDriverYet))?;
@@ -59,28 +55,36 @@ pub(super) async fn staff_approve(
     if approved.rows_affected() == 0 {
         return Err(conflict(u.lang, ErrorKey::RideStatusChanged));
     }
-    assign_trip(&mut tx, &r).await?;
+    assign_trip(&mut tx, r).await?;
     tx.commit().await?;
-    let r = load_ride(&st, u.lang, id).await?;
+    let r = load_ride(st, u.lang, id).await?;
     let trip = r.trip_id.unwrap_or(id);
-    announce_confirmed(&st, &r, trip, false).await;
+    announce_confirmed(st, &r, trip, false).await;
     audit(&st.db, Some(u.id), "ride.approve", "ride", Some(id), "").await;
-    Ok(Json(json!({"ok": true})))
+    Ok(())
 }
 
-/// 退回: send back to the pool (e.g. conflict or unsuitable match).
-pub(super) async fn staff_return(
+pub(super) async fn staff_approve(
     State(st): State<AppState>,
     u: CurrentUser,
     Path(id): Path<i64>,
-    Json(req): Json<ReasonReq>,
 ) -> AppResult<Json<Value>> {
     require(&u, Page::AdminRides, Act::Update)?;
     let r = load_ride(&st, u.lang, id).await?;
     if !traffic_scope_ok(&u, r.event_created_by) {
         return Err(forbidden(u.lang, ErrorKey::CannotViewRide));
     }
-    let reason = req.reason.unwrap_or_default();
+    exec_staff_approve(&st, &u, &r).await?;
+    Ok(Json(json!({"ok": true})))
+}
+
+pub(super) async fn exec_staff_return(
+    st: &AppState,
+    u: &CurrentUser,
+    r: &RideRow,
+    reason: &str,
+) -> AppResult<()> {
+    let id = r.id;
     // One statement, and only while the ride still has the driver loaded above: as two
     // steps a driver could claim the reopened ride in between, and clearing the driver
     // afterwards left it waiting on a passenger reply with nobody driving.
@@ -103,7 +107,7 @@ pub(super) async fn staff_return(
         &st.db,
         r.passenger_id,
         ("接送安排需重新配对", "Your ride needs to be re-matched"),
-        (&reason, &reason),
+        (reason, reason),
         &format!("/rides/{id}"),
     )
     .await;
@@ -122,6 +126,23 @@ pub(super) async fn staff_return(
         .await;
     }
     audit(&st.db, Some(u.id), "ride.return", "ride", Some(id), reason).await;
+    Ok(())
+}
+
+/// 退回: send back to the pool (e.g. conflict or unsuitable match).
+pub(super) async fn staff_return(
+    State(st): State<AppState>,
+    u: CurrentUser,
+    Path(id): Path<i64>,
+    Json(req): Json<ReasonReq>,
+) -> AppResult<Json<Value>> {
+    require(&u, Page::AdminRides, Act::Update)?;
+    let r = load_ride(&st, u.lang, id).await?;
+    if !traffic_scope_ok(&u, r.event_created_by) {
+        return Err(forbidden(u.lang, ErrorKey::CannotViewRide));
+    }
+    let reason = req.reason.unwrap_or_default();
+    exec_staff_return(&st, &u, &r, &reason).await?;
     Ok(Json(json!({"ok": true})))
 }
 
@@ -130,34 +151,30 @@ pub(super) struct ReassignReq {
     driver_id: i64,
 }
 
-pub(super) async fn staff_reassign(
-    State(st): State<AppState>,
-    u: CurrentUser,
-    Path(id): Path<i64>,
-    Json(req): Json<ReassignReq>,
-) -> AppResult<Json<Value>> {
-    require(&u, Page::AdminRides, Act::Update)?;
-    let r = load_ride(&st, u.lang, id).await?;
-    if !traffic_scope_ok(&u, r.event_created_by) {
-        return Err(forbidden(u.lang, ErrorKey::CannotViewRide));
-    }
+pub(super) async fn exec_staff_reassign(
+    st: &AppState,
+    u: &CurrentUser,
+    r: &RideRow,
+    driver_id: i64,
+) -> AppResult<()> {
+    let id = r.id;
     let (can_drive,): (bool,) = sqlx::query_as(crate::dyn_sql!(
         "SELECT {} FROM users u WHERE u.id=$1 AND u.status='active'",
         perms::sql_holds("u", Perm(Page::Drive, Act::Create))
     ))
-    .bind(req.driver_id)
+    .bind(driver_id)
     .fetch_optional(&st.db)
     .await?
     .ok_or_else(|| bad(u.lang, ErrorKey::DriverNotFound))?;
     if !can_drive {
         return Err(bad(u.lang, ErrorKey::MemberNotVolunteerDriver));
     }
-    if req.driver_id == r.passenger_id {
+    if driver_id == r.passenger_id {
         return Err(bad(u.lang, ErrorKey::DriverCannotBePassenger));
     }
     // Transport staff may go outside the rider's group; that is recorded.
     if let Some(g) = r.match_group_id {
-        let (_, scope) = crate::audience::group_scopes(&st.db, req.driver_id).await?;
+        let (_, scope) = crate::audience::group_scopes(&st.db, driver_id).await?;
         if !scope.contains(&g) {
             audit(
                 &st.db,
@@ -165,7 +182,7 @@ pub(super) async fn staff_reassign(
                 "ride.assign_outside_group",
                 "ride",
                 Some(id),
-                format!("driver {} is outside group {g}", req.driver_id),
+                format!("driver {} is outside group {g}", driver_id),
             )
             .await;
         }
@@ -175,10 +192,10 @@ pub(super) async fn staff_reassign(
     // second sees the first booking in `load` instead of overbooking the car.
     let mut tx = st.db.begin().await?;
     sqlx::query("SELECT id FROM users WHERE id=$1 FOR UPDATE")
-        .bind(req.driver_id)
+        .bind(driver_id)
         .fetch_optional(&mut *tx)
         .await?;
-    let (load, cap) = driver_load_on(&mut tx, req.driver_id, &r.pickup_at, Some(id)).await?;
+    let (load, cap) = driver_load_on(&mut tx, driver_id, &r.pickup_at, Some(id)).await?;
     if load + r.seats > cap {
         return Err(bad(
             u.lang,
@@ -193,7 +210,7 @@ pub(super) async fn staff_reassign(
          WHERE id=$4 AND driver_id IS NOT DISTINCT FROM $5
            AND status IN ('pending_driver','pending_passenger','pending_approval','pending_driver_confirm','confirmed')",
     )
-    .bind(req.driver_id)
+    .bind(driver_id)
     .bind(u.id)
     .bind(now())
     .bind(id)
@@ -204,7 +221,7 @@ pub(super) async fn staff_reassign(
         return Err(conflict(u.lang, ErrorKey::RideStatusChanged));
     }
     tx.commit().await?;
-    if let Some(old) = r.driver_id.filter(|o| *o != req.driver_id) {
+    if let Some(old) = r.driver_id.filter(|o| *o != driver_id) {
         let line = format!("{} · {}", r.p_name, r.pickup_at.replace('T', " "));
         notify(
             &st.db,
@@ -230,7 +247,7 @@ pub(super) async fn staff_reassign(
     }
     notify(
         &st.db,
-        req.driver_id,
+        driver_id,
         (
             "交通组为您安排了接送",
             "Transport staff arranged a ride for you",
@@ -256,27 +273,39 @@ pub(super) async fn staff_reassign(
         "ride.reassign",
         "ride",
         Some(id),
-        format!("driver {:?} → {}", r.driver_id, req.driver_id),
+        format!("driver {:?} → {}", r.driver_id, driver_id),
     )
     .await;
-    Ok(Json(json!({"ok": true})))
+    Ok(())
 }
 
-/// 没人接单 → 按政策批准 Grab 替代交通 (passenger may then claim reimbursement).
-pub(super) async fn staff_alt_transport(
+pub(super) async fn staff_reassign(
     State(st): State<AppState>,
     u: CurrentUser,
     Path(id): Path<i64>,
-    Json(req): Json<ReasonReq>,
+    Json(req): Json<ReassignReq>,
 ) -> AppResult<Json<Value>> {
     require(&u, Page::AdminRides, Act::Update)?;
     let r = load_ride(&st, u.lang, id).await?;
     if !traffic_scope_ok(&u, r.event_created_by) {
         return Err(forbidden(u.lang, ErrorKey::CannotViewRide));
     }
-    let note = req
-        .reason
-        .unwrap_or_else(|| "已批准使用 Grab 替代交通".into());
+    exec_staff_reassign(&st, &u, &r, req.driver_id).await?;
+    Ok(Json(json!({"ok": true})))
+}
+
+pub(super) async fn exec_staff_alt_transport(
+    st: &AppState,
+    u: &CurrentUser,
+    r: &RideRow,
+    reason: Option<&str>,
+) -> AppResult<()> {
+    let id = r.id;
+    let note = reason
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .unwrap_or("已批准使用 Grab 替代交通")
+        .to_string();
     // One statement, and only while the ride still has the driver loaded above, so the
     // driver who is told the ride was taken off them is the one it was taken from.
     let switched = sqlx::query(
@@ -336,7 +365,77 @@ pub(super) async fn staff_alt_transport(
         note,
     )
     .await;
+    Ok(())
+}
+
+/// 没人接单 → 按政策批准 Grab 替代交通 (passenger may then claim reimbursement).
+pub(super) async fn staff_alt_transport(
+    State(st): State<AppState>,
+    u: CurrentUser,
+    Path(id): Path<i64>,
+    Json(req): Json<ReasonReq>,
+) -> AppResult<Json<Value>> {
+    require(&u, Page::AdminRides, Act::Update)?;
+    let r = load_ride(&st, u.lang, id).await?;
+    if !traffic_scope_ok(&u, r.event_created_by) {
+        return Err(forbidden(u.lang, ErrorKey::CannotViewRide));
+    }
+    exec_staff_alt_transport(&st, &u, &r, req.reason.as_deref()).await?;
     Ok(Json(json!({"ok": true})))
+}
+
+#[derive(Deserialize)]
+pub(super) struct ReimbExcludedReq {
+    excluded: bool,
+}
+
+pub(super) async fn exec_set_reimbursement_excluded(
+    st: &AppState,
+    u: &CurrentUser,
+    r: &RideRow,
+    excluded: bool,
+) -> AppResult<()> {
+    let val: i64 = if excluded { 1 } else { 0 };
+    sqlx::query("UPDATE rides SET reimbursement_excluded = $1, updated_at = $2 WHERE id = $3")
+        .bind(val)
+        .bind(now())
+        .bind(r.id)
+        .execute(&st.db)
+        .await?;
+    audit(
+        &st.db,
+        Some(u.id),
+        "ride.reimbursement_excluded",
+        "ride",
+        Some(r.id),
+        if excluded {
+            "excluded from reimbursement"
+        } else {
+            "included for reimbursement"
+        },
+    )
+    .await;
+    Ok(())
+}
+
+pub(super) async fn staff_set_reimbursement_excluded(
+    State(st): State<AppState>,
+    u: CurrentUser,
+    Path(id): Path<i64>,
+    Json(req): Json<ReimbExcludedReq>,
+) -> AppResult<Json<Value>> {
+    if !u.can(Page::AdminRides, Act::Update) && !u.is_traffic_lead() {
+        return Err(forbidden(u.lang, ErrorKey::NoPermission));
+    }
+    let r = load_ride(&st, u.lang, id).await?;
+    if !traffic_scope_ok(&u, r.event_created_by) {
+        return Err(forbidden(u.lang, ErrorKey::CannotViewRide));
+    }
+    exec_set_reimbursement_excluded(&st, &u, &r, req.excluded).await?;
+    Ok(Json(json!({
+        "ok": true,
+        "reimbursement_excluded": req.excluded,
+    })))
 }
 
 #[derive(Deserialize)]

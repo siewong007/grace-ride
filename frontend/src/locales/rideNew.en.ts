@@ -75,4 +75,11 @@ export default {
   savedPlaceApplied: 'Applied saved place: {label}',
   autoPrefilledPlace: 'Prefilled from saved place: {label}',
   autoPrefilledLast: 'Prefilled from your last pickup',
+  manageSavedPlaces: 'Manage',
+  saveAddressForNextTime: 'Save this address for next time',
+  saveAddressLabel: 'Address label',
+  saveAddressLabelPlaceholder: 'E.g. Home, Work, Mom’s house',
+  placePresetHome: 'Home',
+  placePresetWork: 'Work',
+  placePresetParents: 'Parents',
 };

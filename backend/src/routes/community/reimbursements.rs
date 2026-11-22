@@ -264,17 +264,18 @@ async fn validate_reimb(st: &AppState, u: &CurrentUser, req: &ReimbIn) -> AppRes
         let rid = req
             .ride_id
             .ok_or_else(|| bad(u.lang, ErrorKey::InvalidAction))?;
-        let (driver, needed, ride_event_id): (Option<i64>, i64, Option<i64>) = sqlx::query_as(
-            "SELECT driver_id, mileage_receipt_needed, event_id FROM rides WHERE id=$1",
-        )
-        .bind(rid)
-        .fetch_optional(&st.db)
-        .await?
-        .ok_or(not_found(u.lang))?;
+        let (driver, needed, ride_event_id, excluded): (Option<i64>, i64, Option<i64>, i64) =
+            sqlx::query_as(
+                "SELECT driver_id, mileage_receipt_needed, event_id, reimbursement_excluded FROM rides WHERE id=$1",
+            )
+            .bind(rid)
+            .fetch_optional(&st.db)
+            .await?
+            .ok_or(not_found(u.lang))?;
         if driver != Some(u.id) {
             return Err(forbidden(u.lang, ErrorKey::OnlyLinkOwnRides));
         }
-        if needed != 1 {
+        if needed != 1 || excluded == 1 {
             return Err(bad(u.lang, ErrorKey::InvalidAction));
         }
         Ok(ride_event_id)

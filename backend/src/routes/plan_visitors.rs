@@ -156,33 +156,33 @@ async fn list_visitors(
 }
 
 #[derive(Deserialize)]
-struct VisitorIn {
-    name: String,
+pub(crate) struct VisitorIn {
+    pub(crate) name: String,
     #[serde(default)]
-    phone: String,
+    pub(crate) phone: String,
     #[serde(default)]
-    notes: String,
-    area_id: Option<i64>,
+    pub(crate) notes: String,
+    pub(crate) area_id: Option<i64>,
     #[serde(default)]
-    pickup_address: String,
-    seats: Option<i64>,
-    leg: Option<String>,
-    driver_id: Option<i64>,
+    pub(crate) pickup_address: String,
+    pub(crate) seats: Option<i64>,
+    pub(crate) leg: Option<String>,
+    pub(crate) driver_id: Option<i64>,
 }
 
 /// A checked visitor, ready to store.
-struct Clean {
-    name: String,
-    phone: String,
-    notes: String,
-    area_id: Option<i64>,
-    pickup_address: String,
-    seats: i64,
-    leg: String,
-    driver_id: Option<i64>,
+pub(crate) struct Clean {
+    pub(crate) name: String,
+    pub(crate) phone: String,
+    pub(crate) notes: String,
+    pub(crate) area_id: Option<i64>,
+    pub(crate) pickup_address: String,
+    pub(crate) seats: i64,
+    pub(crate) leg: String,
+    pub(crate) driver_id: Option<i64>,
 }
 
-async fn clean(st: &AppState, u: &CurrentUser, req: VisitorIn) -> AppResult<Clean> {
+pub(crate) async fn clean(st: &AppState, u: &CurrentUser, req: VisitorIn) -> AppResult<Clean> {
     let name = req.name.trim().to_string();
     if name.is_empty() {
         return Err(bad(u.lang, ErrorKey::VisitorNameRequired));

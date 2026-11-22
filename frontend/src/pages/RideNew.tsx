@@ -1,5 +1,5 @@
 import { FormEvent, useEffect, useMemo, useRef, useState } from 'react';
-import { useNavigate, useSearchParams } from 'react-router-dom';
+import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 import {
   Accessibility,
   Eye,
@@ -24,6 +24,7 @@ import {
   useToast,
 } from '../components/ui';
 import type { Ride } from '../components/RideCard';
+import type { SavedPlace } from '../types/domain';
 import { fmtDateTime, todayStr, useFormatT } from '../format';
 import { useTranslation } from 'react-i18next';
 import { AddressInput } from '../components/AddressInput';
@@ -45,16 +46,6 @@ interface ProxyRider {
   area_id?: number | null;
   pickup_address?: string;
   gate_notes?: string;
-}
-
-interface SavedPlace {
-  id: number;
-  label: string;
-  area_id: number | null;
-  area_name: string | null;
-  address: string;
-  gate_notes: string;
-  is_default: number;
 }
 
 interface EventData {
@@ -107,6 +98,12 @@ function RideNewForm() {
     () => (Array.isArray(savedPlacesRaw) ? savedPlacesRaw : []),
     [savedPlacesRaw],
   );
+  const preferredPlace = useMemo(
+    () =>
+      savedPlaces.find((sp) => sp.is_default === 1) ??
+      (savedPlaces.length === 1 ? savedPlaces[0] : null),
+    [savedPlaces],
+  );
   const { data: recentRides } = useApi<Ride[]>('/rides');
   const toast = useToast();
 
@@ -128,12 +125,15 @@ function RideNewForm() {
   const [selectedChips, setSelectedChips] = useState<string[]>([]);
   const [customAssistance, setCustomAssistance] = useState('');
   const [notes, setNotes] = useState('');
+  const [saveAddress, setSaveAddress] = useState(false);
+  const [saveAddressLabel, setSaveAddressLabel] = useState('');
 
   const [autoFilledHint, setAutoFilledHint] = useState<string | null>(null);
   const [touched, setTouched] = useState<Record<string, boolean>>({});
   const [errors, setErrors] = useState<Record<string, string>>({});
   const { busy, error, run } = useAction();
   const proxyAppliedRef = useRef<{ area?: string; address?: string; notes?: string }>({});
+  const savedPlaceAppliedRef = useRef<{ notes?: string }>({});
   const prefilledPlaceRef = useRef(false);
 
   const defaultReturnFor = (hhmm: string): string => {
@@ -164,14 +164,15 @@ function RideNewForm() {
       const retHhmm = `${String(Math.floor(retMins / 60)).padStart(2, '0')}:${String(retMins % 60).padStart(2, '0')}`;
       setTime(retHhmm);
       setAddress(event.location);
-      setDestination(lastOwnRide?.pickup_address || '');
+      setDestination(preferredPlace?.address || lastOwnRide?.pickup_address || '');
+      if (!area && preferredPlace?.area_id) setArea(String(preferredPlace.area_id));
     } else {
       const mins = Math.max(0, h * 60 + m - 40);
       const hhmm = `${String(Math.floor(mins / 60)).padStart(2, '0')}:${String(mins % 60).padStart(2, '0')}`;
       setTime(hhmm);
       setDestination(event.location);
       if (address === event.location) {
-        setAddress(lastOwnRide?.pickup_address || '');
+        setAddress(preferredPlace?.address || lastOwnRide?.pickup_address || '');
       }
       if (newType === 'round') {
         const retMins = Math.min(23 * 60 + 59, h * 60 + m + 120);
@@ -199,9 +200,6 @@ function RideNewForm() {
 
   useEffect(() => {
     if (prefilledPlaceRef.current || isProxy || area || address || tripType === 'return') return;
-    const preferredPlace =
-      savedPlaces.find((sp) => sp.is_default === 1) ??
-      (savedPlaces.length === 1 ? savedPlaces[0] : null);
     if (preferredPlace && (preferredPlace.area_id || preferredPlace.address)) {
       prefilledPlaceRef.current = true;
       if (preferredPlace.area_id) setArea(String(preferredPlace.area_id));
@@ -209,6 +207,7 @@ function RideNewForm() {
       if (preferredPlace.gate_notes && !notes.includes(preferredPlace.gate_notes)) {
         setNotes((cur) => (cur ? `${cur}\n${preferredPlace.gate_notes}` : preferredPlace.gate_notes));
       }
+      savedPlaceAppliedRef.current = { notes: preferredPlace.gate_notes || undefined };
       setAutoFilledHint(t('autoPrefilledPlace', { label: preferredPlace.label }));
       return;
     }
@@ -219,7 +218,7 @@ function RideNewForm() {
       setAddress(ownRide.pickup_address ?? '');
       setAutoFilledHint(t('autoPrefilledLast'));
     }
-  }, [isProxy, area, address, tripType, savedPlaces, recentRides, notes, t]);
+  }, [isProxy, area, address, tripType, preferredPlace, recentRides, notes, t]);
 
   const validateField = (_name: string, val: string): string => {
     if (!val || !val.trim()) {
@@ -295,17 +294,42 @@ function RideNewForm() {
   };
 
   const applySavedPlace = (sp: SavedPlace) => {
+    const prevNotes = savedPlaceAppliedRef.current.notes ?? '';
     if (sp.area_id) {
       setArea(String(sp.area_id));
       setErrors((cur) => ({ ...cur, area: '' }));
     }
-    setAddress(sp.address);
-    setErrors((cur) => ({ ...cur, address: '' }));
-    if (sp.gate_notes && !notes.includes(sp.gate_notes)) {
-      setNotes((cur) => (cur ? `${cur}\n${sp.gate_notes}` : sp.gate_notes));
+    if (tripType === 'return') {
+      setDestination(sp.address);
+      setErrors((cur) => ({ ...cur, destination: '' }));
+    } else {
+      setAddress(sp.address);
+      setErrors((cur) => ({ ...cur, address: '' }));
     }
+    setNotes((cur) => {
+      const stripped = stripAppliedNotes(cur, prevNotes);
+      if (!sp.gate_notes) return stripped;
+      if (stripped.includes(sp.gate_notes)) return stripped;
+      return stripped ? `${stripped}\n${sp.gate_notes}` : sp.gate_notes;
+    });
+    savedPlaceAppliedRef.current = { notes: sp.gate_notes || undefined };
+    setSaveAddress(false);
+    setSaveAddressLabel('');
     toast(t('savedPlaceApplied', { label: sp.label }));
   };
+
+  const memberAddr = tripType === 'return' ? destination : address;
+  const trimmedMemberAddr = memberAddr.trim();
+  const matchesExistingSavedPlace = savedPlaces.some(
+    (sp) => sp.address.trim().toLowerCase() === trimmedMemberAddr.toLowerCase(),
+  );
+  const canOfferSaveAddress =
+    !isProxy &&
+    trimmedMemberAddr.length > 0 &&
+    !matchesExistingSavedPlace &&
+    savedPlaces.length < 50 &&
+    (!event || trimmedMemberAddr.toLowerCase() !== event.location.trim().toLowerCase());
+  const addressLabelPresets = [t('placePresetHome'), t('placePresetWork'), t('placePresetParents')];
 
   const lastOwnRide = (recentRides ?? []).find((r) => !r.is_proxy && r.area?.id);
   const quickDestList = Array.from(
@@ -427,6 +451,15 @@ function RideNewForm() {
         return_pickup_address: includeReturn ? destination.trim() : undefined,
         return_destination: includeReturn ? address.trim() : undefined,
       });
+      if (canOfferSaveAddress && saveAddress && saveAddressLabel.trim()) {
+        await post('/saved-places', {
+          label: saveAddressLabel.trim(),
+          area_id: area ? Number(area) : null,
+          address: trimmedMemberAddr,
+          gate_notes: '',
+          is_default: savedPlaces.length === 0,
+        }).catch(() => {});
+      }
       nav(`/rides/${r.id}`, { replace: true });
     }, t('submitted'));
   };
@@ -698,17 +731,18 @@ function RideNewForm() {
                 <h3>{t('whereSection')}</h3>
                 {autoFilledHint && !isProxy && <p className="muted tiny">{autoFilledHint}</p>}
               </div>
-              <div className="row wrap gap-xs">
-                {savedPlaces.map((sp) => (
-                  <button
-                    key={sp.id}
-                    type="button"
-                    className={`chip ${address === sp.address ? 'active' : ''}`}
-                    onClick={() => applySavedPlace(sp)}
-                  >
-                    {sp.label}
-                  </button>
-                ))}
+              <div className="row wrap gap-xs items-center">
+                {!isProxy &&
+                  savedPlaces.map((sp) => (
+                    <button
+                      key={sp.id}
+                      type="button"
+                      className={`chip ${(tripType === 'return' ? destination : address) === sp.address ? 'on' : ''}`}
+                      onClick={() => applySavedPlace(sp)}
+                    >
+                      {sp.label}
+                    </button>
+                  ))}
                 {!isProxy && lastOwnRide && (
                   <button
                     type="button"
@@ -717,6 +751,11 @@ function RideNewForm() {
                   >
                     {t('useLastPickup', { area: lastOwnRide.area.name })}
                   </button>
+                )}
+                {!isProxy && (
+                  <Link to="/me?section=places" className="saved-addr-manage-link">
+                    {t('manageSavedPlaces')}
+                  </Link>
                 )}
               </div>
             </div>
@@ -812,6 +851,44 @@ function RideNewForm() {
                   <div className="field-error-msg" role="alert">{errors.destination}</div>
                 )}
               </div>
+
+              {canOfferSaveAddress && (
+                <div className="full stack-sm">
+                  <label className={`check ${saveAddress ? 'on' : ''}`}>
+                    <input
+                      type="checkbox"
+                      checked={saveAddress}
+                      onChange={(e) => setSaveAddress(e.target.checked)}
+                    />
+                    <span>{t('saveAddressForNextTime')}</span>
+                  </label>
+                  {saveAddress && (
+                    <div className="stack-sm">
+                      <div className="chips">
+                        {addressLabelPresets.map((preset) => (
+                          <button
+                            key={preset}
+                            type="button"
+                            className={`chip ${saveAddressLabel.trim() === preset ? 'on' : ''}`}
+                            onClick={() => setSaveAddressLabel(preset)}
+                          >
+                            {preset}
+                          </button>
+                        ))}
+                      </div>
+                      <Field label={t('saveAddressLabel')}>
+                        <input
+                          className="input"
+                          maxLength={40}
+                          value={saveAddressLabel}
+                          onChange={(e) => setSaveAddressLabel(e.target.value)}
+                          placeholder={t('saveAddressLabelPlaceholder')}
+                        />
+                      </Field>
+                    </div>
+                  )}
+                </div>
+              )}
             </div>
           </section>
 

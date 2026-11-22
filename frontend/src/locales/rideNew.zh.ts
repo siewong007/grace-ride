@@ -75,4 +75,11 @@ export default {
   savedPlaceApplied: '已填入常用地点：{label}',
   autoPrefilledPlace: '已自动填入常用地点：{label}',
   autoPrefilledLast: '已自动填入上次上车资料',
+  manageSavedPlaces: '管理地址',
+  saveAddressForNextTime: '保存此地址，下次一键选择',
+  saveAddressLabel: '地址标签',
+  saveAddressLabelPlaceholder: '例如：家里、公司、妈妈家',
+  placePresetHome: '家里',
+  placePresetWork: '公司',
+  placePresetParents: '父母家',
 };

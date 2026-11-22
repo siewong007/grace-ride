@@ -17,6 +17,7 @@ import org.pjstatecm.graceride.data.api.EventItem
 import org.pjstatecm.graceride.data.api.Place
 import org.pjstatecm.graceride.data.api.ProxyRider
 import org.pjstatecm.graceride.data.api.SavedPlace
+import org.pjstatecm.graceride.data.api.SavedPlaceReq
 import org.pjstatecm.graceride.di.AppContainer
 import org.pjstatecm.graceride.domain.KlTime
 import java.time.LocalDate
@@ -44,6 +45,8 @@ data class RideNewUiState(
     val seats: Int = 1,
     val assistance: String = "",
     val notes: String = "",
+    val saveAddress: Boolean = false,
+    val saveAddressLabel: String = "",
     val returnDate: LocalDate = LocalDate.now().plusDays(1),
     val returnHour: Int = 12,
     val returnMinute: Int = 0,
@@ -68,6 +71,7 @@ class RideNewViewModel(
     )
     val state: StateFlow<RideNewUiState> = _state.asStateFlow()
     private var searchJob: Job? = null
+    private var lastAppliedPlaceNotes: String? = null
 
     init {
         viewModelScope.launch {
@@ -76,6 +80,10 @@ class RideNewViewModel(
                 val saved = try { container.rides.savedPlaces() } catch (_: ApiException) { emptyList() }
                 val proxyRiders = try { container.rides.proxyRiders() } catch (_: ApiException) { emptyList() }
                 val defaultPlace = saved.firstOrNull { it.isDefault == 1 } ?: saved.firstOrNull()
+                val defaultNotes = defaultPlace?.gateNotes?.trim().orEmpty()
+                if (defaultNotes.isNotBlank()) {
+                    lastAppliedPlaceNotes = defaultNotes
+                }
                 var event: EventItem? = null
                 var date = _state.value.date
                 var hour = _state.value.hour
@@ -116,6 +124,7 @@ class RideNewViewModel(
                     destination = destination,
                     areaId = defaultPlace?.areaId ?: _state.value.areaId,
                     address = defaultPlace?.address ?: "",
+                    notes = if (_state.value.notes.isBlank() && defaultNotes.isNotBlank()) defaultNotes else _state.value.notes,
                 )
             } catch (e: ApiException) {
                 _state.value = _state.value.copy(loading = false, error = e.message)
@@ -245,6 +254,41 @@ class RideNewViewModel(
         _state.value = _state.value.copy(address = label, suggestions = emptyList())
     }
 
+    private fun stripAppliedNotes(curNotes: String, applied: String?): String {
+        val clean = applied?.trim().orEmpty()
+        if (clean.isEmpty()) return curNotes
+        if (curNotes.trim() == clean) return ""
+        return curNotes
+            .split("\n")
+            .filter { it.trim() != clean }
+            .joinToString("\n")
+            .trim()
+    }
+
+    fun applySavedPlace(place: SavedPlace) {
+        val s = _state.value
+        val prevNotes = lastAppliedPlaceNotes
+        val nextNotes = stripAppliedNotes(s.notes, prevNotes)
+        val gate = place.gateNotes.trim()
+        val mergedNotes = when {
+            gate.isEmpty() -> nextNotes
+            nextNotes.contains(gate) -> nextNotes
+            nextNotes.isEmpty() -> gate
+            else -> "$nextNotes\n$gate"
+        }
+        lastAppliedPlaceNotes = gate.ifEmpty { null }
+        val isReturn = s.tripType == TripType.RETURN
+        _state.value = s.copy(
+            areaId = place.areaId ?: s.areaId,
+            address = if (isReturn) s.address else place.address,
+            destination = if (isReturn) place.address else s.destination,
+            notes = mergedNotes,
+            suggestions = emptyList(),
+            saveAddress = false,
+            saveAddressLabel = "",
+        )
+    }
+
     fun submit() {
         val s = _state.value
         if (s.submitting) return
@@ -299,6 +343,23 @@ class RideNewViewModel(
                         return_destination = if (isRound) s.address.trim() else null,
                     )
                 )
+                val memberAddr = (if (isReturn) s.destination else s.address).trim()
+                val label = s.saveAddressLabel.trim()
+                val alreadySaved = s.savedPlaces.any { it.address.trim().equals(memberAddr, ignoreCase = true) }
+                val isEventLocation = memberAddr.equals(event.location.trim(), ignoreCase = true)
+                if (!s.isProxy && s.saveAddress && label.isNotEmpty() && memberAddr.isNotEmpty() && !alreadySaved && !isEventLocation && s.savedPlaces.size < 50) {
+                    try {
+                        container.rides.createSavedPlace(
+                            SavedPlaceReq(
+                                label = label,
+                                area_id = areaId,
+                                address = memberAddr,
+                                gate_notes = "",
+                                is_default = s.savedPlaces.isEmpty(),
+                            )
+                        )
+                    } catch (_: ApiException) { }
+                }
                 _state.value = _state.value.copy(submitting = false, createdId = res.id)
             } catch (e: ApiException) {
                 _state.value = _state.value.copy(submitting = false, error = e.message)

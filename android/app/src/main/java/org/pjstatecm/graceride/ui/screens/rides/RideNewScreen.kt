@@ -309,6 +309,23 @@ fun RideNewScreen(
                     }
                 }
 
+                if (!s.isProxy && s.savedPlaces.isNotEmpty()) {
+                    Text(
+                        stringResource(R.string.ride_new_saved_addresses),
+                        style = MaterialTheme.typography.titleSmall,
+                    )
+                    val activeAddr = if (s.tripType == TripType.RETURN) s.destination else s.address
+                    FlowRow(horizontalArrangement = Arrangement.spacedBy(Spacing.xs)) {
+                        s.savedPlaces.forEach { sp ->
+                            FilterChip(
+                                selected = activeAddr == sp.address,
+                                onClick = { vm.applySavedPlace(sp) },
+                                label = { Text(sp.label) },
+                            )
+                        }
+                    }
+                }
+
                 // Pickup area
                 ExposedDropdownMenuBox(expanded = areaExpanded, onExpandedChange = { areaExpanded = it }) {
                     OutlinedTextField(
@@ -329,17 +346,18 @@ fun RideNewScreen(
                     }
                 }
 
-                // Pickup address with saved places + geocoder suggestions
+                // Pickup address with geocoder suggestions
                 OutlinedTextField(
                     value = s.address,
                     onValueChange = vm::onAddressChange,
                     label = { Text(stringResource(R.string.ride_new_address)) },
                     modifier = Modifier.fillMaxWidth(),
                 )
-                if (s.suggestions.isNotEmpty() || s.savedPlaces.isNotEmpty()) {
+                if (s.suggestions.isNotEmpty()) {
                     OutlinedCard(Modifier.fillMaxWidth()) {
                         Column(Modifier.padding(Spacing.xs)) {
-                            (s.suggestions.map { it.label } + s.savedPlaces.map { it.address })
+                            s.suggestions
+                                .map { it.label }
                                 .distinct()
                                 .take(5)
                                 .forEach { label ->
@@ -357,6 +375,52 @@ fun RideNewScreen(
                     label = { Text(stringResource(R.string.ride_new_destination)) },
                     modifier = Modifier.fillMaxWidth(),
                 )
+
+                val memberAddr = (if (s.tripType == TripType.RETURN) s.destination else s.address).trim()
+                val alreadySaved = s.savedPlaces.any { it.address.trim().equals(memberAddr, ignoreCase = true) }
+                val matchesEvent = s.event?.location?.trim()?.equals(memberAddr, ignoreCase = true) == true
+                if (!s.isProxy && memberAddr.isNotEmpty() && !alreadySaved && !matchesEvent && s.savedPlaces.size < 50) {
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .toggleable(
+                                value = s.saveAddress,
+                                onValueChange = { checked -> vm.update { it.copy(saveAddress = checked) } },
+                            ),
+                    ) {
+                        Checkbox(checked = s.saveAddress, onCheckedChange = null)
+                        Text(
+                            stringResource(R.string.ride_new_save_address),
+                            style = MaterialTheme.typography.bodyMedium,
+                            modifier = Modifier.padding(start = Spacing.xs),
+                        )
+                    }
+                    if (s.saveAddress) {
+                        val presets = listOf(
+                            stringResource(R.string.saved_addresses_preset_home),
+                            stringResource(R.string.saved_addresses_preset_work),
+                            stringResource(R.string.saved_addresses_preset_parents),
+                        )
+                        FlowRow(horizontalArrangement = Arrangement.spacedBy(Spacing.xs)) {
+                            presets.forEach { preset ->
+                                FilterChip(
+                                    selected = s.saveAddressLabel.trim() == preset,
+                                    onClick = { vm.update { it.copy(saveAddressLabel = preset) } },
+                                    label = { Text(preset) },
+                                )
+                            }
+                        }
+                        OutlinedTextField(
+                            value = s.saveAddressLabel,
+                            onValueChange = { v -> if (v.length <= 40) vm.update { it.copy(saveAddressLabel = v) } },
+                            label = { Text(stringResource(R.string.ride_new_save_address_label)) },
+                            placeholder = { Text(stringResource(R.string.saved_addresses_label_hint)) },
+                            singleLine = true,
+                            modifier = Modifier.fillMaxWidth(),
+                        )
+                    }
+                }
 
                 // Seats stepper
                 Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(Spacing.sm)) {

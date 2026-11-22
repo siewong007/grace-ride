@@ -158,6 +158,9 @@ pub enum ErrorKey {
     OnlyVolunteerDriversCanChoose,
     OnlyTrafficLeadCanApprove,
     PlanDraftNotFound,
+    DraftLockedByOther { name: String },
+    DraftNotEditable,
+    RideDraftNotFound,
 
     // === Settlements ===
     SettlementNameRequired,
@@ -403,6 +406,9 @@ impl ErrorKey {
             Self::OnlyVolunteerDriversCanChoose => "ONLY_VOLUNTEER_DRIVERS_CAN_CHOOSE",
             Self::OnlyTrafficLeadCanApprove => "ONLY_TRAFFIC_LEAD_CAN_APPROVE",
             Self::PlanDraftNotFound => "PLAN_DRAFT_NOT_FOUND",
+            Self::DraftLockedByOther { .. } => "DRAFT_LOCKED_BY_OTHER",
+            Self::DraftNotEditable => "DRAFT_NOT_EDITABLE",
+            Self::RideDraftNotFound => "RIDE_DRAFT_NOT_FOUND",
 
             Self::SettlementNameRequired => "SETTLEMENT_NAME_REQUIRED",
             Self::AtLeastOneExpenseItem => "AT_LEAST_ONE_EXPENSE_ITEM",
@@ -511,6 +517,7 @@ impl ErrorKey {
             Self::MaxLiveDriversReached { live, limit } => {
                 Some(json!({ "live": live, "limit": limit }))
             }
+            Self::DraftLockedByOther { name } => Some(json!({ "name": name })),
             Self::CustomSplitMismatch { sum, total } => Some(json!({ "sum": sum, "total": total })),
             Self::UnattendedMembers(count)
             | Self::OpenPaymentsRemain(count)

@@ -47,6 +47,9 @@ pub enum RidesError {
     OnlyVolunteerDriversCanChoose,
     OnlyTrafficLeadCanApprove,
     PlanDraftNotFound,
+    DraftLockedByOther { name: String },
+    DraftNotEditable,
+    RideDraftNotFound,
 }
 
 pub fn render(lang: Lang, key: RidesError) -> String {
@@ -213,6 +216,22 @@ pub fn render(lang: Lang, key: RidesError) -> String {
             lang,
             "未找到接送安排草稿",
             "Transport arrangement draft not found",
+        ),
+        RidesError::DraftLockedByOther { name } => match lang {
+            Lang::Zh => format!("{name} 正在编辑此草稿版本，请稍后再试或新建草稿版本"),
+            Lang::En => format!(
+                "{name} is currently editing this draft version. Wait or create a new draft version."
+            ),
+        },
+        RidesError::DraftNotEditable => pair(
+            lang,
+            "此草稿版本已审批或已归档，请新建草稿版本",
+            "This draft version is already approved or archived. Create a new draft version.",
+        ),
+        RidesError::RideDraftNotFound => pair(
+            lang,
+            "找不到该接送修改草稿",
+            "Ride change draft not found.",
         ),
     }
 }

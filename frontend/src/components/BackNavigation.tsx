@@ -159,9 +159,19 @@ export function getDefaultBack(pathname: string, can?: Can): string {
   if (path === '/notifications') return '/';
   if (path === '/me') return '/';
   if (path === '/admin/menu') return '/';
-  if (path.startsWith('/admin/rides/')) return '/admin/rides';
+  if (path === '/admin/traffic') {
+    const hasNonTraffic = (
+      [
+        'admin_members', 'admin_invites', 'admin_recovery', 'admin_roles',
+        'admin_reimb_review', 'admin_reimb_pay', 'admin_reports',
+        'admin_announcements', 'admin_help', 'admin_groups', 'admin_settings', 'admin_audit',
+      ] as const
+    ).some((p) => Boolean(can?.(p)));
+    return hasNonTraffic ? ADMIN_HOME : '/';
+  }
+  if (path.startsWith('/admin/rides/')) return can?.('admin_plan') || can?.('admin_rides') ? '/admin/traffic?tab=rides' : '/admin/rides';
   const planMatch = path.match(/^\/admin\/events\/([^/]+)\/plan$/);
-  if (planMatch) return `/events/${planMatch[1]}`;
+  if (planMatch) return can?.('admin_plan') && can?.('admin_dashboard') ? '/admin/traffic' : `/events/${planMatch[1]}`;
   if (path === '/admin' || path.startsWith('/admin/')) return ADMIN_HOME;
   return '/';
 }

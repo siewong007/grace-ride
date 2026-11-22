@@ -833,6 +833,7 @@ pub(super) async fn complete(
     }
     let (reimbursement_cents, receipt_needed): (i64, i64) = if r.event_id.is_some()
         && r.event_mileage_claimable == 1
+        && r.reimbursement_excluded == 0
     {
         // Rides still travelling in this trip count too, so the fare is the same
         // whichever rider is dropped off first.
@@ -841,9 +842,10 @@ pub(super) async fn complete(
                           WHERE f.area_a_id = LEAST(x.pickup_area_id, e.area_id)
                             AND f.area_b_id = GREATEST(x.pickup_area_id, e.area_id))
                  FROM rides x JOIN events e ON e.id = x.event_id
-                 WHERE x.id = $1
+                 WHERE x.reimbursement_excluded = 0
+                    AND (x.id = $1
                     OR ($2::BIGINT IS NOT NULL AND x.trip_id = $2 AND x.driver_id = $3
-                        AND x.status IN ('confirmed','in_progress','completed'))",
+                        AND x.status IN ('confirmed','in_progress','completed')))",
         )
         .bind(id)
         .bind(r.trip_id)
