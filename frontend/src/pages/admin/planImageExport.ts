@@ -1,14 +1,45 @@
 // High-resolution canvas rendering for exporting transport assignments as an image.
+// Drawn as an ER / database diagram so drivers can see cars, areas and the event at a glance.
 // Designed for crystal-clear readability (Retina 2x/3x scale) when shared on mobile chats.
 import { fmtDateTime, fmtTime } from '../../format';
 import { Draft, Plan, PlanDriver, PlanRide } from './planLogic';
 
 const CANVAS_WIDTH = 1200;
-const PAD = 36;
-const GAP = 20;
+const PAD = 56;
+const GAP = 22;
+const CENTER_GUTTER = 84;
+const SIDE_GUTTER = 32;
+const TOP_GUTTER = 76;
+const AREA_GAP = 24;
+const SLIM_BAR_H = 36;
+const TABLE_HEADER_H = 34;
+const TABLE_SUB_H = 22;
+const ACCENT_H = 3;
+const RADIUS_TABLE = 5;
 
 const FONT_FAMILY =
   'system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "PingFang SC", "Noto Sans CJK SC", "Microsoft YaHei", sans-serif';
+
+const COLOR = {
+  canvas: '#f7f7f5',
+  brand: '#57534e',
+  white: '#ffffff',
+  ink: '#292524',
+  body: '#44403c',
+  muted: '#78716c',
+  line: '#a8a29e',
+  lineStrong: '#78716c',
+  driveLine: '#4a6fa5',
+  areaLine: '#5a8a6a',
+  divider: '#e8e6e3',
+  note: '#a16207',
+  eventAccent: '#4a6fa5',
+  carAccent: '#4a6fa5',
+  unassignedAccent: '#b45309',
+  areaAccent: '#5a8a6a',
+  standbyAccent: '#a8a29e',
+  seatsFullFg: '#92400e',
+};
 
 export type TranslationFn = (key: string, opts?: Record<string, unknown>) => string;
 
@@ -19,6 +50,29 @@ export interface PlanImageExportOptions {
   formatT: TranslationFn;
   scale?: number;
   isApproved?: boolean;
+}
+
+export interface Point {
+  x: number;
+  y: number;
+}
+
+export interface Rect {
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+}
+
+export type ConnectorKind = 'drivesTo' | 'picksUpIn';
+
+export interface Connector {
+  kind: ConnectorKind;
+  label: string;
+  points: Point[];
+  fromCard: 'one' | 'many';
+  toCard: 'one' | 'many';
+  dashed?: boolean;
 }
 
 interface MeasuredPassengerItem {
@@ -48,6 +102,34 @@ interface MeasuredUnassignedItem {
   height: number;
 }
 
+export interface MeasuredAreaEntity {
+  id: number;
+  name: string;
+  passengerNames: string[];
+  count: number;
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+}
+
+export interface MeasuredEventEntity {
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+  titleLines: string[];
+  attrs: Array<{ key: string; value: string }>;
+}
+
+interface MeasuredUnassignedBox {
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+  vehicleText?: string;
+}
+
 interface MeasuredLayout {
   width: number;
   height: number;
@@ -60,17 +142,24 @@ interface MeasuredLayout {
   unassignedItems: MeasuredUnassignedItem[];
   unassignedY: number;
   unassignedHeight: number;
+  unassignedBox: MeasuredUnassignedBox | null;
   allAssignedY: number;
   allAssignedHeight: number;
+  allAssigned: boolean;
   footerY: number;
   footerHeight: number;
-  // Metadata for rendering
+  legendY: number;
+  legendHeight: number;
   eventTitle: string;
   eventSubtitle: string;
   statusBadge: { text: string; tone: 'success' | 'amber' };
   stats: Array<{ label: string; value: string }>;
   timestamp: string;
   reminderText: string[];
+  eventEntity: MeasuredEventEntity;
+  areaEntities: MeasuredAreaEntity[];
+  connectors: Connector[];
+  standbyNames: string;
 }
 
 export function wrapText(
@@ -88,8 +177,14 @@ export function wrapText(
     for (const char of trimmed) {
       const testLine = currentLine + char;
       if (currentLine && ctx.measureText(testLine).width > maxWidth) {
-        lines.push(currentLine);
-        currentLine = char === ' ' ? '' : char;
+        const sp = currentLine.lastIndexOf(' ');
+        if (sp > 0) {
+          lines.push(currentLine.slice(0, sp));
+          currentLine = currentLine.slice(sp + 1) + (char === ' ' ? '' : char);
+        } else {
+          lines.push(currentLine);
+          currentLine = char === ' ' ? '' : char;
+        }
       } else {
         currentLine = testLine;
       }
@@ -121,46 +216,6 @@ export function drawRoundedRect(
     ctx.arcTo(x, y, x + w, y, radius);
     ctx.closePath();
   }
-}
-
-function drawBadge(
-  ctx: CanvasRenderingContext2D,
-  text: string,
-  x: number,
-  y: number,
-  opts: {
-    bg: string;
-    color: string;
-    border?: string;
-    fontSize?: number;
-    padX?: number;
-    padY?: number;
-    radius?: number;
-  },
-): number {
-  const { bg, color, border, fontSize = 11, padX = 8, padY = 4, radius = 6 } = opts;
-  ctx.font = `600 ${fontSize}px ${FONT_FAMILY}`;
-  const textWidth = ctx.measureText(text).width;
-  const badgeWidth = textWidth + padX * 2;
-  const badgeHeight = fontSize + padY * 2 + 2;
-
-  ctx.fillStyle = bg;
-  drawRoundedRect(ctx, x, y, badgeWidth, badgeHeight, radius);
-  ctx.fill();
-
-  if (border) {
-    ctx.strokeStyle = border;
-    ctx.lineWidth = 1;
-    drawRoundedRect(ctx, x, y, badgeWidth, badgeHeight, radius);
-    ctx.stroke();
-  }
-
-  ctx.fillStyle = color;
-  ctx.textBaseline = 'middle';
-  ctx.textAlign = 'left';
-  ctx.fillText(text, x + padX, y + badgeHeight / 2);
-
-  return badgeWidth;
 }
 
 /**
@@ -195,13 +250,166 @@ const isVisitorRow = (r: PlanRide) => r.id < 0;
 
 function rowHeader(r: PlanRide, t: TranslationFn, formatT: TranslationFn): string {
   const legLabel = r.leg === 'return' ? ` [${t('returnTag')}]` : '';
-  const seatsLabel = ` (${t('passengerSeats', { count: r.seats })})`;
+  const seatsLabel = r.seats > 1 ? ` (${t('passengerSeats', { count: r.seats })})` : '';
   if (isVisitorRow(r)) return `${r.passenger.name} [${t('visitorTag')}]${seatsLabel}${legLabel}`;
   return `${r.passenger.name}${seatsLabel}${legLabel} \u00b7 ${fmtTime(r.pickup_at, formatT)}`;
 }
 
 const rowAddress = (r: PlanRide) =>
   [r.area.name, r.pickup_address].filter((x) => x && x.trim()).join(' \u00b7 ') || '\u2014';
+
+function areaKey(r: PlanRide): { id: number; name: string } | null {
+  const name = (r.area?.name || '').trim();
+  if (!name) return null;
+  return { id: r.area?.id ?? 0, name };
+}
+
+function measurePassengerBlock(
+  ctx: CanvasRenderingContext2D,
+  r: PlanRide,
+  innerWidth: number,
+  t: TranslationFn,
+  formatT: TranslationFn,
+): MeasuredPassengerItem {
+  const headerText = rowHeader(r, t, formatT);
+  ctx.font = `13px ${FONT_FAMILY}`;
+  const addrRaw = rowAddress(r);
+  const addrLines = wrapText(ctx, addrRaw, innerWidth);
+  const noteRaw = [
+    r.assistance ? `${t('assistance', { what: r.assistance })}` : null,
+    r.notes ? r.notes : null,
+  ]
+    .filter(Boolean)
+    .join(' \u00b7 ');
+  const noteLines = noteRaw ? wrapText(ctx, noteRaw, innerWidth) : [];
+  const itemHeight =
+    6 +
+    15 +
+    2 +
+    Math.max(1, addrLines.length) * 15 +
+    (noteLines.length > 0 ? 2 + noteLines.length * 14 : 0) +
+    6;
+  return {
+    ride: r,
+    headerText,
+    addrLines: addrLines.length > 0 ? addrLines : [addrRaw],
+    noteLines,
+    height: itemHeight,
+  };
+}
+
+function tableBodyHeight(passengers: MeasuredPassengerItem[], empty: boolean): number {
+  if (empty) return 32;
+  return passengers.reduce((acc, p) => acc + p.height, 0);
+}
+
+function vehicleLine(d: PlanDriver, t: TranslationFn): string {
+  return [
+    d.vehicle.model,
+    d.vehicle.plate,
+    d.carpool ? null : t('oneBooking'),
+    d.vehicle.wheelchair_ok ? t('wheelchairTag') : null,
+    d.vehicle.child_seat ? t('childSeatTag') : null,
+    d.vehicle.low_step ? t('lowStepTag') : null,
+  ]
+    .filter(Boolean)
+    .join(' \u00b7 ');
+}
+
+function collapseColinear(points: Point[]): Point[] {
+  if (points.length <= 2) return points.slice();
+  const out: Point[] = [points[0]];
+  for (let i = 1; i < points.length - 1; i++) {
+    const a = out[out.length - 1];
+    const b = points[i];
+    const c = points[i + 1];
+    const colinear =
+      (a.x === b.x && b.x === c.x) || (a.y === b.y && b.y === c.y);
+    if (!colinear) out.push(b);
+  }
+  out.push(points[points.length - 1]);
+  return out;
+}
+
+/** True when an orthogonal path crosses the interior of a box (edge ports are allowed). */
+export function pathHitsRectInterior(points: Point[], rect: Rect, inset = 2): boolean {
+  if (points.length < 2) return false;
+  const x1 = rect.x + inset;
+  const y1 = rect.y + inset;
+  const x2 = rect.x + rect.width - inset;
+  const y2 = rect.y + rect.height - inset;
+  if (x2 <= x1 || y2 <= y1) return false;
+  for (let i = 0; i < points.length - 1; i++) {
+    const a = points[i];
+    const b = points[i + 1];
+    if (segmentHitsAabb(a.x, a.y, b.x, b.y, x1, y1, x2, y2)) return true;
+  }
+  return false;
+}
+
+function segmentHitsAabb(
+  ax: number,
+  ay: number,
+  bx: number,
+  by: number,
+  x1: number,
+  y1: number,
+  x2: number,
+  y2: number,
+): boolean {
+  const minX = Math.min(ax, bx);
+  const maxX = Math.max(ax, bx);
+  const minY = Math.min(ay, by);
+  const maxY = Math.max(ay, by);
+  const ix = Math.max(minX, x1);
+  const iy = Math.max(minY, y1);
+  const jx = Math.min(maxX, x2);
+  const jy = Math.min(maxY, y2);
+  // A touching point on the edge of the inset box is ignored; a positive overlap is a hit.
+  return jx - ix > 0.5 && jy - iy > 0.5;
+}
+
+
+/** Colinear overlap of two orthogonal polylines, ignoring a mere touching of endpoints. */
+export function pathsShareASegment(a: Point[], b: Point[], minOverlap = 2): boolean {
+  const segs = (pts: Point[]) => {
+    const out: Array<[Point, Point]> = [];
+    for (let i = 0; i < pts.length - 1; i++) {
+      const p = pts[i];
+      const q = pts[i + 1];
+      if (p.x === q.x && p.y === q.y) continue;
+      out.push([p, q]);
+    }
+    return out;
+  };
+  const overlap1d = (a1: number, a2: number, b1: number, b2: number) => {
+    const lo = Math.max(Math.min(a1, a2), Math.min(b1, b2));
+    const hi = Math.min(Math.max(a1, a2), Math.max(b1, b2));
+    return hi - lo;
+  };
+  for (const [p, q] of segs(a)) {
+    for (const [r, t] of segs(b)) {
+      const aH = p.y === q.y;
+      const bH = r.y === t.y;
+      if (aH && bH && Math.abs(p.y - r.y) < 0.5) {
+        if (overlap1d(p.x, q.x, r.x, t.x) >= minOverlap) return true;
+      } else if (!aH && !bH && Math.abs(p.x - r.x) < 0.5 && p.x === q.x && r.x === t.x) {
+        if (overlap1d(p.y, q.y, r.y, t.y) >= minOverlap) return true;
+      }
+    }
+  }
+  return false;
+}
+
+export function boxesOverlap(a: Rect, b: Rect, gap = 0): boolean {
+  return (
+    a.x < b.x + b.width + gap &&
+    a.x + a.width + gap > b.x &&
+    a.y < b.y + b.height + gap &&
+    a.y + a.height + gap > b.y
+  );
+}
+
 
 export function measurePlanLayout(
   ctx: CanvasRenderingContext2D,
@@ -216,7 +424,6 @@ export function measurePlanLayout(
   const isApproved =
     isApprovedOverride ?? (plan.draft?.status === 'approved' || plan.event.status === 'confirmed');
 
-  // 1. Header measurement
   const eventTitle = plan.event.title || t('title');
   const eventSubtitle = `${fmtDateTime(plan.event.starts_at, formatT)} \u00b7 ${plan.event.location || ''}`;
   const statusBadge = {
@@ -229,7 +436,6 @@ export function measurePlanLayout(
   const assignedRides = plan.rides.filter((r) => draft[r.id] != null);
   const totalAssignedSeats = assignedRides.reduce((acc, r) => acc + (r.seats || 1), 0);
 
-  // Group rides by driver
   const driverRidesMap = new Map<number, PlanRide[]>();
   for (const d of plan.drivers) {
     driverRidesMap.set(d.id, []);
@@ -241,12 +447,8 @@ export function measurePlanLayout(
     }
   }
 
-  const activeDrivers = plan.drivers.filter(
-    (d) => (driverRidesMap.get(d.id)?.length ?? 0) > 0,
-  );
-  const standbyDrivers = plan.drivers.filter(
-    (d) => (driverRidesMap.get(d.id)?.length ?? 0) === 0,
-  );
+  const activeDrivers = plan.drivers.filter((d) => (driverRidesMap.get(d.id)?.length ?? 0) > 0);
+  const standbyDrivers = plan.drivers.filter((d) => (driverRidesMap.get(d.id)?.length ?? 0) === 0);
   const totalCap = plan.drivers.reduce((acc, d) => acc + d.cap, 0);
 
   const stats = [
@@ -259,153 +461,328 @@ export function measurePlanLayout(
   const timestamp = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')} ${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}`;
 
   const headerY = PAD;
-  const headerHeight = 170;
+  const headerHeight = SLIM_BAR_H;
 
-  let currentY = headerY + headerHeight + GAP;
+  // --- Event entity ---
+  const eventWidth = Math.min(520, contentWidth);
+  const eventInner = eventWidth - 32;
+  ctx.font = `600 20px ${FONT_FAMILY}`;
+  const titleLines = wrapText(ctx, eventTitle, eventInner);
+  const whenWhere = [fmtDateTime(plan.event.starts_at, formatT), plan.event.location || '']
+    .filter((x) => x && String(x).trim())
+    .join(' \u00b7 ');
+  const seatsLine = `${t('totalPassengers', { count: totalRiders })} \u00b7 ${t('seatsCount', { used: totalAssignedSeats, cap: totalCap })}`;
+  const eventAttrs: Array<{ key: string; value: string }> = [
+    { key: 'when', value: whenWhere },
+    { key: 'seats', value: seatsLine },
+  ];
+  const eventHeight =
+    TABLE_HEADER_H +
+    8 +
+    Math.max(1, titleLines.length) * 24 +
+    6 +
+    18 +
+    16 +
+    14;
+  const eventEntity: MeasuredEventEntity = {
+    x: (CANVAS_WIDTH - eventWidth) / 2,
+    y: headerY + headerHeight + GAP,
+    width: eventWidth,
+    height: eventHeight,
+    titleLines: titleLines.length > 0 ? titleLines : [eventTitle],
+    attrs: eventAttrs,
+  };
 
-  // 2. Driver cards measurement
-  const colCount = activeDrivers.length <= 1 ? 1 : 2;
-  const colWidth = colCount === 1 ? contentWidth : (contentWidth - GAP) / 2;
-  const colXs = colCount === 1 ? [PAD] : [PAD, PAD + colWidth + GAP];
-  const colHeights = colCount === 1 ? [currentY] : [currentY, currentY];
-
-  const cardInnerWidth = colWidth - 32;
-  const passengerInnerWidth = cardInnerWidth - 24;
+  // --- Car / unassigned tables ---
+  const tableCount = activeDrivers.length + (unassignedRides.length > 0 ? 1 : 0);
+  const colCount = tableCount <= 1 ? 1 : 2;
+  const sideGutter = colCount === 1 ? 0 : SIDE_GUTTER;
+  const gridWidth =
+    colCount === 1 ? Math.min(640, contentWidth) : contentWidth - sideGutter * 2;
+  const colWidth = colCount === 1 ? gridWidth : (gridWidth - CENTER_GUTTER) / 2;
+  const gridX = (CANVAS_WIDTH - gridWidth) / 2;
+  const colXs = colCount === 1 ? [gridX] : [gridX, gridX + colWidth + CENTER_GUTTER];
+  const gridTop = eventEntity.y + eventEntity.height + TOP_GUTTER;
+  const colHeights = colCount === 1 ? [gridTop] : [gridTop, gridTop];
+  const passengerInnerWidth = colWidth - 28;
 
   const measuredCards: MeasuredDriverCard[] = [];
-
   for (const d of activeDrivers) {
     const rides = driverRidesMap.get(d.id) ?? [];
     const assignedSeats = rides.reduce((acc, r) => acc + (r.seats || 1), 0);
-
-    const passengerItems: MeasuredPassengerItem[] = [];
-    let itemsTotalHeight = 0;
-
-    for (const r of rides) {
-      const headerText = rowHeader(r, t, formatT);
-
-      ctx.font = `13px ${FONT_FAMILY}`;
-      const addrRaw = rowAddress(r);
-      const addrLines = wrapText(ctx, addrRaw, passengerInnerWidth);
-
-      const noteRaw = [
-        r.assistance ? `${t('assistance', { what: r.assistance })}` : null,
-        r.notes ? r.notes : null,
-      ]
-        .filter(Boolean)
-        .join(' \u00b7 ');
-      const noteLines = noteRaw ? wrapText(ctx, noteRaw, passengerInnerWidth) : [];
-
-      const itemHeight =
-        10 + // top pad
-        18 + // header text
-        4 + // gap
-        Math.max(1, addrLines.length) * 17 + // address lines
-        (noteLines.length > 0 ? 4 + noteLines.length * 16 : 0) + // notes
-        10; // bottom pad
-
-      passengerItems.push({
-        ride: r,
-        headerText,
-        addrLines: addrLines.length > 0 ? addrLines : [addrRaw],
-        noteLines,
-        height: itemHeight,
-      });
-
-      itemsTotalHeight += itemHeight + 8;
-    }
-
-    const cardHeaderHeight = 56;
-    const cardPadding = 32;
-    const cardHeight = cardHeaderHeight + itemsTotalHeight + cardPadding;
-
-    // One column: always column 0 (there is no column 1 to compare against).
+    const passengers = rides.map((r) => measurePassengerBlock(ctx, r, passengerInnerWidth, t, formatT));
+    const height = TABLE_HEADER_H + TABLE_SUB_H + tableBodyHeight(passengers, passengers.length === 0);
     const chosenCol = colCount === 1 || colHeights[0] <= colHeights[1] ? 0 : 1;
     const x = colXs[chosenCol];
     const y = colHeights[chosenCol];
-
     measuredCards.push({
       driver: d,
       rides,
       assignedSeats,
-      passengers: passengerItems,
+      passengers,
       x,
       y,
       width: colWidth,
-      height: cardHeight,
+      height,
     });
-
-    colHeights[chosenCol] += cardHeight + GAP;
+    colHeights[chosenCol] += height + GAP;
   }
 
-  currentY = Math.max(colHeights[0], colHeights[colCount - 1]);
-
-  // 3. Unassigned passengers section
-  let unassignedY = 0;
-  let unassignedHeight = 0;
   const measuredUnassigned: MeasuredUnassignedItem[] = [];
-
-  let allAssignedY = 0;
-  let allAssignedHeight = 0;
-
+  let unassignedBox: MeasuredUnassignedBox | null = null;
   if (unassignedRides.length > 0) {
-    unassignedY = currentY;
-    let itemsH = 0;
-    const itemW = contentWidth - 32 - 24;
-
     for (const r of unassignedRides) {
-      const headerText = rowHeader(r, t, formatT);
-
-      ctx.font = `13px ${FONT_FAMILY}`;
-      const addrRaw = rowAddress(r);
-      const addrLines = wrapText(ctx, addrRaw, itemW);
-
-      const noteRaw = r.assistance ? `${t('assistance', { what: r.assistance })}` : '';
-      const noteLines = noteRaw ? wrapText(ctx, noteRaw, itemW) : [];
-
-      const itemHeight =
-        10 + 18 + 4 + Math.max(1, addrLines.length) * 17 + (noteLines.length > 0 ? 4 + noteLines.length * 16 : 0) + 10;
-
-      measuredUnassigned.push({
-        ride: r,
-        headerText,
-        addrLines: addrLines.length > 0 ? addrLines : [addrRaw],
-        noteLines,
-        height: itemHeight,
-      });
-
-      itemsH += itemHeight + 8;
+      measuredUnassigned.push(measurePassengerBlock(ctx, r, passengerInnerWidth, t, formatT));
     }
-
-    unassignedHeight = 48 + itemsH + 16;
-    currentY += unassignedHeight + GAP;
-  } else {
-    allAssignedY = currentY;
-    allAssignedHeight = 56;
-    currentY += allAssignedHeight + GAP;
+    const height = TABLE_HEADER_H + tableBodyHeight(measuredUnassigned, false);
+    const chosenCol = colCount === 1 || colHeights[0] <= colHeights[1] ? 0 : 1;
+    unassignedBox = {
+      x: colXs[chosenCol],
+      y: colHeights[chosenCol],
+      width: colWidth,
+      height,
+    };
+    colHeights[chosenCol] += height + GAP;
   }
 
-  // 4. Standby drivers section
+  const gridBottom = Math.max(colHeights[0], colHeights[colCount - 1]) - GAP;
+
+  // --- Area entities ---
+  const areaMap = new Map<string, { id: number; name: string; names: string[] }>();
+  for (const r of plan.rides) {
+    const a = areaKey(r);
+    if (!a) continue;
+    const key = `${a.id}::${a.name}`;
+    const rec = areaMap.get(key) ?? { id: a.id, name: a.name, names: [] };
+    rec.names.push(r.passenger.name);
+    areaMap.set(key, rec);
+  }
+  const areas = [...areaMap.values()];
+  const areaCount = Math.max(1, areas.length);
+  const areaAvail = contentWidth;
+  const areaWidth = Math.max(
+    140,
+    Math.min(200, (areaAvail - AREA_GAP * (Math.min(areaCount, 5) - 1)) / Math.min(areaCount, 5)),
+  );
+  const areasPerRow = Math.max(1, Math.floor((areaAvail + AREA_GAP) / (areaWidth + AREA_GAP)));
+
+  ctx.font = `600 13px ${FONT_FAMILY}`;
+  const measuredAreasUnplaced = areas.map((a) => {
+    const nameLines = wrapText(ctx, a.name, areaWidth - 40);
+    const height = Math.max(44, 12 + Math.max(1, nameLines.length) * 18 + 12);
+    return { ...a, nameLines, listLines: [] as string[], height };
+  });
+
+  const areaRowCount = Math.max(1, Math.ceil(Math.max(areas.length, 1) / areasPerRow));
+  const areaRowHeights: number[] = Array.from({ length: areaRowCount }, () => 0);
+  measuredAreasUnplaced.forEach((a, i) => {
+    const row = Math.floor(i / areasPerRow);
+    areaRowHeights[row] = Math.max(areaRowHeights[row], a.height);
+  });
+
+  const areaSources = [
+    ...measuredCards.map((c) => ({
+      x: c.x,
+      y: c.y,
+      width: c.width,
+      height: c.height,
+      rides: c.rides,
+      col: c.x === colXs[0] ? 0 : 1,
+    })),
+    ...(unassignedBox
+      ? [
+          {
+            x: unassignedBox.x,
+            y: unassignedBox.y,
+            width: unassignedBox.width,
+            height: unassignedBox.height,
+            rides: unassignedRides,
+            col: unassignedBox.x === colXs[0] ? 0 : 1,
+          },
+        ]
+      : []),
+  ];
+
+  const areaLaneCount = Math.max(1, areaSources.filter((s) => s.rides.length > 0).length);
+  const bottomGutter = areas.length === 0 ? GAP : Math.max(64, 36 + areaLaneCount * 14);
+  const areasTop = gridBottom + bottomGutter;
+
+  const areaEntities: MeasuredAreaEntity[] = [];
+  if (areas.length > 0) {
+    let rowY = areasTop;
+    for (let row = 0; row < areaRowCount; row++) {
+      const rowItems = measuredAreasUnplaced.slice(row * areasPerRow, (row + 1) * areasPerRow);
+      const rowWidth = rowItems.length * areaWidth + (rowItems.length - 1) * AREA_GAP;
+      let x = (CANVAS_WIDTH - rowWidth) / 2;
+      const rowH = areaRowHeights[row];
+      for (const a of rowItems) {
+        areaEntities.push({
+          id: a.id,
+          name: a.name,
+          passengerNames: a.names,
+          count: a.names.length,
+          x,
+          y: rowY,
+          width: areaWidth,
+          height: rowH,
+        });
+        x += areaWidth + AREA_GAP;
+      }
+      rowY += rowH + GAP;
+    }
+  }
+
+  const areasBottom = areaEntities.length
+    ? areaEntities.reduce((m, a) => Math.max(m, a.y + a.height), areasTop)
+    : gridBottom;
+
+  // --- Standby ---
   let standbyY = 0;
   let standbyHeight = 0;
+  const standbyNames = standbyDrivers
+    .map((d) => `${d.name} (${d.cap})`)
+    .join(' \u00b7 ');
   if (standbyDrivers.length > 0) {
-    standbyY = currentY;
-    standbyHeight = 64;
-    currentY += standbyHeight + GAP;
+    standbyY = areasBottom + GAP;
+    ctx.font = `13px ${FONT_FAMILY}`;
+    const nameLines = wrapText(ctx, `${t('standbyDrivers')}  ·  ${standbyNames}`, contentWidth);
+    standbyHeight = Math.max(24, nameLines.length * 18);
   }
 
-  // 5. Footer measurement
+  // --- Footer ---
   ctx.font = `12px ${FONT_FAMILY}`;
   const reminderRaw = t('reminderNote');
   const reminderText = wrapText(ctx, reminderRaw, contentWidth - 260);
-  const footerHeight = Math.max(64, reminderText.length * 18 + 24);
-  const footerY = currentY;
+  const footerHeight = Math.max(32, reminderText.length * 18 + 8);
+  const hasLegend = activeDrivers.length > 0 || unassignedRides.length > 0;
+  const legendHeight = hasLegend ? 28 : 0;
+  const legendY = (standbyHeight > 0 ? standbyY + standbyHeight : areasBottom) + GAP;
+  const footerY = legendY + (legendHeight > 0 ? legendHeight + 8 : 0);
 
-  const totalHeight = footerY + footerHeight + PAD;
+  // --- Connectors ---
+  const connectors: Connector[] = [];
+  const drivesLabel = t('relDrivesTo');
+  const picksLabel = t('relPicksUpIn');
+  // Drives-to uses the top gutter and outer side rails only.
+  // Picks-up-in uses the bottom gutter and the center gutter only.
+  // The two relationship types never travel along the same segment.
+  const centerRailX = CANVAS_WIDTH / 2;
+  const leftDriveRailX = gridX - 16;
+  const rightDriveRailX = gridX + gridWidth + 16;
+  const eventBusY = eventEntity.y + eventEntity.height + 28;
+  const eventBottom: Point = {
+    x: eventEntity.x + eventEntity.width / 2,
+    y: eventEntity.y + eventEntity.height,
+  };
+
+  const lastYByCol: number[] = [];
+  for (let c = 0; c < colCount; c++) {
+    const inCol = [
+      ...measuredCards.filter((card) => card.x === colXs[c]),
+      ...(unassignedBox && unassignedBox.x === colXs[c] ? [unassignedBox] : []),
+    ];
+    lastYByCol[c] = inCol.reduce((m, b) => Math.max(m, b.y), 0);
+  }
+
+  const firstRowY = measuredCards.length ? Math.min(...measuredCards.map((c) => c.y)) : 0;
+  for (const card of measuredCards) {
+    const col = card.x === colXs[0] ? 0 : 1;
+    const carMidX = card.x + card.width / 2;
+    const straight =
+      colCount === 1 &&
+      measuredCards.length === 1 &&
+      Math.abs(carMidX - eventBottom.x) < 4;
+    const isFirstRow = Math.abs(card.y - firstRowY) < 1;
+    let path: Point[];
+    if (straight) {
+      path = [eventBottom, { x: eventBottom.x, y: card.y }];
+    } else if (isFirstRow) {
+      // Fan out through the top gutter, down onto the car's top edge.
+      path = collapseColinear([
+        eventBottom,
+        { x: eventBottom.x, y: eventBusY },
+        { x: carMidX, y: eventBusY },
+        { x: carMidX, y: card.y },
+      ]);
+    } else {
+      // Lower cars climb an outer side rail so they never share the center trunk.
+      const railX = colCount === 1 || col === 0 ? leftDriveRailX : rightDriveRailX;
+      const outerX = colCount === 1 || col === 0 ? card.x : card.x + card.width;
+      const portY = card.y + TABLE_HEADER_H / 2;
+      path = collapseColinear([
+        eventBottom,
+        { x: eventBottom.x, y: eventBusY },
+        { x: railX, y: eventBusY },
+        { x: railX, y: portY },
+        { x: outerX, y: portY },
+      ]);
+    }
+    connectors.push({
+      kind: 'drivesTo',
+      label: drivesLabel,
+      points: path,
+      fromCard: 'one',
+      toCard: 'many',
+    });
+  }
+
+  const areaByKey = new Map<string, MeasuredAreaEntity>();
+  for (const a of areaEntities) {
+    areaByKey.set(`${a.id}::${a.name}`, a);
+  }
+
+  const areaBusTop = gridBottom + 20;
+  let laneIndex = 0;
+  for (const src of areaSources) {
+    const targets = new Map<string, MeasuredAreaEntity>();
+    for (const r of src.rides) {
+      const a = areaKey(r);
+      if (!a) continue;
+      const key = `${a.id}::${a.name}`;
+      const ent = areaByKey.get(key);
+      if (ent) targets.set(key, ent);
+    }
+    if (targets.size === 0) continue;
+    const laneY = areaBusTop + 10 + laneIndex * 14;
+    laneIndex += 1;
+    const isBottom = Math.abs(src.y - lastYByCol[src.col]) < 1;
+    // 1-col: pick rail sits to the right of the stack (drives-to uses the left).
+    // 2-col: pick rail is the center gutter, never the outer drive rails.
+    const pickRailX = colCount === 1 ? gridX + gridWidth + 16 : centerRailX;
+    const areaPortY = src.y + src.height - 16 + (colCount === 1 ? 0 : src.col === 0 ? -6 : 6);
+    const innerX = colCount === 1 || src.col === 0 ? src.x + src.width : src.x;
+    const start: Point = isBottom
+      ? { x: src.x + src.width / 2, y: src.y + src.height }
+      : { x: innerX, y: areaPortY };
+    const viaRail: Point[] = isBottom
+      ? [start, { x: start.x, y: laneY }]
+      : [start, { x: pickRailX, y: areaPortY }, { x: pickRailX, y: laneY }];
+
+    const dashed = unassignedBox != null && src.x === unassignedBox.x && src.y === unassignedBox.y;
+    for (const ent of targets.values()) {
+      const dest: Point = { x: ent.x + ent.width / 2, y: ent.y };
+      const points = collapseColinear([
+        ...viaRail,
+        { x: dest.x, y: laneY },
+        dest,
+      ]);
+      connectors.push({
+        kind: 'picksUpIn',
+        label: picksLabel,
+        points,
+        fromCard: 'many',
+        toCard: 'many',
+        dashed,
+      });
+    }
+  }
+
+  const unassignedY = unassignedBox?.y ?? 0;
+  const unassignedHeight = unassignedBox?.height ?? 0;
 
   return {
     width: CANVAS_WIDTH,
-    height: totalHeight,
+    height: footerY + footerHeight + PAD,
     headerY,
     headerHeight,
     driverCards: measuredCards,
@@ -415,17 +792,307 @@ export function measurePlanLayout(
     unassignedItems: measuredUnassigned,
     unassignedY,
     unassignedHeight,
-    allAssignedY,
-    allAssignedHeight,
+    unassignedBox,
+    allAssignedY: 0,
+    allAssignedHeight: 0,
+    allAssigned: unassignedRides.length === 0,
     footerY,
     footerHeight,
+    legendY,
+    legendHeight,
     eventTitle,
     eventSubtitle,
     statusBadge,
     stats,
     timestamp,
     reminderText,
+    eventEntity,
+    areaEntities,
+    connectors,
+    standbyNames,
   };
+}
+
+function entityKindLabel(kind: 'event' | 'car' | 'area' | 'unassigned' | 'standby', t: TranslationFn): string {
+  switch (kind) {
+    case 'event':
+      return t('entityEvent');
+    case 'car':
+      return t('entityCar');
+    case 'area':
+      return t('entityArea');
+    case 'unassigned':
+      return t('entityUnassigned');
+    case 'standby':
+      return t('standbyDrivers');
+  }
+}
+
+function accentColor(kind: 'event' | 'car' | 'area' | 'unassigned' | 'standby'): string {
+  switch (kind) {
+    case 'event':
+      return COLOR.eventAccent;
+    case 'car':
+      return COLOR.carAccent;
+    case 'area':
+      return COLOR.areaAccent;
+    case 'unassigned':
+      return COLOR.unassignedAccent;
+    case 'standby':
+      return COLOR.standbyAccent;
+  }
+}
+
+function drawTableShell(
+  ctx: CanvasRenderingContext2D,
+  x: number,
+  y: number,
+  w: number,
+  h: number,
+  kind: 'event' | 'car' | 'area' | 'unassigned' | 'standby',
+  t: TranslationFn,
+  title: string,
+  opts?: { badge?: string; badgeTone?: 'success' | 'amber' | 'ok' | 'full'; hideKind?: boolean },
+) {
+  ctx.save();
+  drawRoundedRect(ctx, x, y, w, h, RADIUS_TABLE);
+  ctx.fillStyle = COLOR.white;
+  ctx.fill();
+  ctx.strokeStyle = COLOR.divider;
+  ctx.lineWidth = 1;
+  ctx.stroke();
+
+  // Thin colored top accent, clipped to the rounded corners.
+  ctx.save();
+  drawRoundedRect(ctx, x, y, w, h, RADIUS_TABLE);
+  if (typeof ctx.clip === 'function') ctx.clip();
+  ctx.fillStyle = accentColor(kind);
+  ctx.fillRect(x, y, w, ACCENT_H);
+  ctx.restore();
+
+  const midY = y + ACCENT_H + (TABLE_HEADER_H - ACCENT_H) / 2;
+  let titleX = x + 12;
+  let titleMax = w - 24;
+  if (!opts?.hideKind) {
+    const kindText = entityKindLabel(kind, t).toUpperCase();
+    ctx.font = `600 9px ${FONT_FAMILY}`;
+    ctx.fillStyle = accentColor(kind);
+    ctx.textAlign = 'left';
+    ctx.textBaseline = 'middle';
+    ctx.fillText(kindText, x + 12, midY);
+    titleX = x + 12 + ctx.measureText(kindText).width + (title ? 8 : 0);
+    titleMax = w - 24 - (titleX - x - 12);
+  }
+
+  if (opts?.badge) {
+    ctx.font = `500 12px ${FONT_FAMILY}`;
+    const badgeW = ctx.measureText(opts.badge).width;
+    const badgeX = x + w - 12 - badgeW;
+    const fg = opts.badgeTone === 'amber' || opts.badgeTone === 'full' ? COLOR.seatsFullFg : COLOR.muted;
+    ctx.fillStyle = fg;
+    ctx.textAlign = 'left';
+    ctx.textBaseline = 'middle';
+    ctx.fillText(opts.badge, badgeX, midY);
+    titleMax = badgeX - titleX - 8;
+  }
+
+  if (!title) {
+    ctx.restore();
+    return;
+  }
+  ctx.font = `600 14px ${FONT_FAMILY}`;
+  ctx.fillStyle = COLOR.ink;
+  ctx.textAlign = 'left';
+  ctx.textBaseline = 'middle';
+  let drawnTitle = title;
+  if (ctx.measureText(drawnTitle).width > titleMax) {
+    while (drawnTitle.length > 1 && ctx.measureText(`${drawnTitle}\u2026`).width > titleMax) {
+      drawnTitle = drawnTitle.slice(0, -1);
+    }
+    drawnTitle = `${drawnTitle}\u2026`;
+  }
+  ctx.fillText(drawnTitle, titleX, midY);
+  ctx.restore();
+}
+
+function drawPassengerRows(
+  ctx: CanvasRenderingContext2D,
+  x: number,
+  startY: number,
+  w: number,
+  items: MeasuredPassengerItem[],
+  unassigned: boolean,
+) {
+  let y = startY;
+  items.forEach((p, i) => {
+    if (i > 0) {
+      ctx.beginPath();
+      ctx.moveTo(x + 12, y);
+      ctx.lineTo(x + w - 12, y);
+      ctx.strokeStyle = COLOR.divider;
+      ctx.lineWidth = 1;
+      ctx.stroke();
+    }
+    ctx.fillStyle = unassigned ? COLOR.seatsFullFg : COLOR.ink;
+    ctx.font = `600 13px ${FONT_FAMILY}`;
+    ctx.textAlign = 'left';
+    ctx.textBaseline = 'top';
+    ctx.fillText(p.headerText, x + 12, y + 6);
+
+    ctx.fillStyle = COLOR.muted;
+    ctx.font = `12px ${FONT_FAMILY}`;
+    let ty = y + 6 + 15 + 2;
+    for (const line of p.addrLines) {
+      ctx.fillText(line, x + 12, ty);
+      ty += 15;
+    }
+    if (p.noteLines.length > 0) {
+      ctx.fillStyle = COLOR.note;
+      ctx.font = `500 11px ${FONT_FAMILY}`;
+      for (const line of p.noteLines) {
+        ctx.fillText(line, x + 12, ty);
+        ty += 14;
+      }
+    }
+    y += p.height;
+  });
+}
+
+function drawCrowFoot(
+  ctx: CanvasRenderingContext2D,
+  x: number,
+  y: number,
+  toward: 'up' | 'down' | 'left' | 'right',
+  kind: 'one' | 'many',
+  color: string,
+) {
+  const arm = 7;
+  ctx.save();
+  ctx.strokeStyle = color;
+  ctx.lineWidth = 1.2;
+  ctx.lineCap = 'round';
+  ctx.lineJoin = 'round';
+  ctx.beginPath();
+  if (kind === 'one') {
+    if (toward === 'up' || toward === 'down') {
+      ctx.moveTo(x - 6, y);
+      ctx.lineTo(x + 6, y);
+    } else {
+      ctx.moveTo(x, y - 6);
+      ctx.lineTo(x, y + 6);
+    }
+  } else if (toward === 'down') {
+    ctx.moveTo(x - arm, y);
+    ctx.lineTo(x, y + arm);
+    ctx.lineTo(x + arm, y);
+    ctx.moveTo(x, y);
+    ctx.lineTo(x, y + arm);
+  } else if (toward === 'up') {
+    ctx.moveTo(x - arm, y);
+    ctx.lineTo(x, y - arm);
+    ctx.lineTo(x + arm, y);
+    ctx.moveTo(x, y);
+    ctx.lineTo(x, y - arm);
+  } else if (toward === 'right') {
+    ctx.moveTo(x, y - arm);
+    ctx.lineTo(x + arm, y);
+    ctx.lineTo(x, y + arm);
+    ctx.moveTo(x, y);
+    ctx.lineTo(x + arm, y);
+  } else {
+    ctx.moveTo(x, y - arm);
+    ctx.lineTo(x - arm, y);
+    ctx.lineTo(x, y + arm);
+    ctx.moveTo(x, y);
+    ctx.lineTo(x - arm, y);
+  }
+  ctx.stroke();
+  ctx.restore();
+}
+
+function endDirection(a: Point, b: Point): 'up' | 'down' | 'left' | 'right' {
+  if (a.x === b.x) return b.y > a.y ? 'down' : 'up';
+  return b.x > a.x ? 'right' : 'left';
+}
+
+function connectorColor(c: Connector): string {
+  return c.kind === 'drivesTo' ? COLOR.driveLine : COLOR.areaLine;
+}
+
+function drawConnector(ctx: CanvasRenderingContext2D, c: Connector) {
+  if (c.points.length < 2) return;
+  const color = connectorColor(c);
+  ctx.save();
+  ctx.strokeStyle = color;
+  ctx.lineWidth = 1.25;
+  ctx.lineCap = 'round';
+  ctx.lineJoin = 'round';
+  if (c.dashed && typeof ctx.setLineDash === 'function') {
+    ctx.setLineDash([5, 4]);
+  }
+  ctx.beginPath();
+  ctx.moveTo(c.points[0].x, c.points[0].y);
+  for (let i = 1; i < c.points.length; i++) {
+    ctx.lineTo(c.points[i].x, c.points[i].y);
+  }
+  ctx.stroke();
+  if (c.dashed && typeof ctx.setLineDash === 'function') {
+    ctx.setLineDash([]);
+  }
+  ctx.restore();
+
+  const a0 = c.points[0];
+  const a1 = c.points[1];
+  const b0 = c.points[c.points.length - 2];
+  const b1 = c.points[c.points.length - 1];
+  // "Toward" is the direction the path is travelling as it arrives at the entity.
+  drawCrowFoot(ctx, a0.x, a0.y, endDirection(a1, a0), c.fromCard, color);
+  drawCrowFoot(ctx, b1.x, b1.y, endDirection(b0, b1), c.toCard, color);
+}
+
+function drawLegend(
+  ctx: CanvasRenderingContext2D,
+  x: number,
+  y: number,
+  w: number,
+  h: number,
+  t: TranslationFn,
+  showDrives: boolean,
+  showPicks: boolean,
+  showDashed: boolean,
+) {
+  const items: Array<{ label: string; color: string; dashed: boolean }> = [];
+  if (showDrives) items.push({ label: t('relDrivesTo'), color: COLOR.driveLine, dashed: false });
+  if (showPicks) items.push({ label: t('relPicksUpIn'), color: COLOR.areaLine, dashed: false });
+  if (showDashed) items.push({ label: t('legendUnassigned'), color: COLOR.areaLine, dashed: true });
+  if (items.length === 0) return;
+
+  ctx.font = `600 11px ${FONT_FAMILY}`;
+  const swatch = 22;
+  const gap = 22;
+  const parts = items.map((it) => swatch + 6 + ctx.measureText(it.label).width);
+  const total = parts.reduce((a, b) => a + b, 0) + gap * (items.length - 1);
+  let cx = x + (w - total) / 2;
+  const mid = y + h / 2;
+  for (let i = 0; i < items.length; i++) {
+    const it = items[i];
+    ctx.save();
+    ctx.strokeStyle = it.color;
+    ctx.lineWidth = 1.25;
+    ctx.lineCap = 'round';
+    if (it.dashed && typeof ctx.setLineDash === 'function') ctx.setLineDash([5, 3]);
+    ctx.beginPath();
+    ctx.moveTo(cx, mid);
+    ctx.lineTo(cx + swatch, mid);
+    ctx.stroke();
+    ctx.restore();
+    ctx.fillStyle = it.color;
+    ctx.textAlign = 'left';
+    ctx.textBaseline = 'middle';
+    ctx.font = `600 11px ${FONT_FAMILY}`;
+    ctx.fillText(it.label, cx + swatch + 6, mid);
+    cx += parts[i] + gap;
+  }
 }
 
 export function drawPlanLayout(
@@ -435,307 +1102,141 @@ export function drawPlanLayout(
 ) {
   const contentWidth = CANVAS_WIDTH - PAD * 2;
 
-  // Background
-  ctx.fillStyle = '#f8fafc';
+  ctx.fillStyle = COLOR.canvas;
   ctx.fillRect(0, 0, layout.width, layout.height);
 
-  // --- 1. HEADER BANNER ---
+  // --- Brand line (no filled bar, no status badge — status sits once on the event card) ---
   const hx = PAD;
   const hy = layout.headerY;
-  const hw = contentWidth;
   const hh = layout.headerHeight;
+  ctx.fillStyle = COLOR.brand;
+  ctx.font = `500 12px ${FONT_FAMILY}`;
+  ctx.textAlign = 'left';
+  ctx.textBaseline = 'middle';
+  ctx.fillText(`${t('brandTitle')} \u00b7 ${t('brandSubtitle')}`, hx, hy + hh / 2);
 
-  drawRoundedRect(ctx, hx, hy, hw, hh, 16);
-  ctx.fillStyle = '#0f172a';
-  ctx.fill();
+  // --- Connectors behind the tables so crow's feet sit on the edges once redrawn after ---
+  for (const c of layout.connectors) {
+    drawConnector(ctx, c);
+  }
 
-  // Header Brand Line
-  ctx.fillStyle = '#38bdf8';
-  ctx.font = `700 13px ${FONT_FAMILY}`;
+  // --- Event entity ---
+  const ev = layout.eventEntity;
+  drawTableShell(ctx, ev.x, ev.y, ev.width, ev.height, 'event', t, '', {
+    badge: layout.statusBadge.tone === 'success' ? t('statusApproved') : t('statusDraft'),
+  });
+  let bodyY = ev.y + TABLE_HEADER_H + 8;
   ctx.textAlign = 'left';
   ctx.textBaseline = 'top';
-  ctx.fillText(`${t('brandTitle')} \u00b7 ${t('brandSubtitle')}`, hx + 24, hy + 20);
-
-  // Status Badge in Header
-  const badgeColor = layout.statusBadge.tone === 'success' ? '#10b981' : '#f59e0b';
-  const badgeBg = layout.statusBadge.tone === 'success' ? 'rgba(16, 185, 129, 0.2)' : 'rgba(245, 158, 11, 0.2)';
-  const badgeBorder = layout.statusBadge.tone === 'success' ? '#059669' : '#d97706';
-  drawBadge(ctx, layout.statusBadge.text, hx + hw - 180, hy + 20, {
-    bg: badgeBg,
-    color: badgeColor,
-    border: badgeBorder,
-    fontSize: 12,
-    padX: 12,
-    padY: 5,
-    radius: 12,
-  });
-
-  // Event Title
-  ctx.fillStyle = '#ffffff';
-  ctx.font = `700 24px ${FONT_FAMILY}`;
-  ctx.fillText(layout.eventTitle, hx + 24, hy + 46);
-
-  // Event Subtitle
-  ctx.fillStyle = '#94a3b8';
-  ctx.font = `500 14px ${FONT_FAMILY}`;
-  ctx.fillText(layout.eventSubtitle, hx + 24, hy + 82);
-
-  // Stats bar inside Header
-  const statBoxY = hy + 112;
-  const statBoxH = 38;
-  drawRoundedRect(ctx, hx + 24, statBoxY, hw - 48, statBoxH, 8);
-  ctx.fillStyle = 'rgba(255, 255, 255, 0.08)';
-  ctx.fill();
-
-  ctx.font = `600 13px ${FONT_FAMILY}`;
-  ctx.fillStyle = '#e2e8f0';
-  ctx.textBaseline = 'middle';
-  let curStatX = hx + 40;
-  for (let i = 0; i < layout.stats.length; i++) {
-    const st = layout.stats[i];
-    ctx.fillText(`${st.label}`, curStatX, statBoxY + statBoxH / 2);
-    curStatX += ctx.measureText(`${st.label}`).width + 24;
-    if (i < layout.stats.length - 1) {
-      ctx.fillStyle = '#64748b';
-      ctx.fillText('\u00b7', curStatX - 12, statBoxY + statBoxH / 2);
-      ctx.fillStyle = '#e2e8f0';
-    }
+  ctx.font = `600 18px ${FONT_FAMILY}`;
+  ctx.fillStyle = COLOR.ink;
+  for (const line of ev.titleLines) {
+    ctx.fillText(line, ev.x + 16, bodyY);
+    bodyY += 24;
+  }
+  bodyY += 6;
+  ctx.font = `400 13px ${FONT_FAMILY}`;
+  ctx.fillStyle = COLOR.muted;
+  for (const attr of ev.attrs) {
+    ctx.fillText(attr.value, ev.x + 16, bodyY);
+    bodyY += 18;
   }
 
-  // --- 2. DRIVER CARDS ---
+  // --- Car tables ---
   for (const card of layout.driverCards) {
     const { x, y, width: cw, height: ch, driver: d, passengers, assignedSeats } = card;
-
-    // Card background & border
-    drawRoundedRect(ctx, x, y, cw, ch, 12);
-    ctx.fillStyle = '#ffffff';
-    ctx.fill();
-    ctx.strokeStyle = '#e2e8f0';
-    ctx.lineWidth = 1;
-    ctx.stroke();
-
-    // Driver Card Header
-    const dHeaderH = 50;
-    drawRoundedRect(ctx, x, y, cw, dHeaderH, 12);
-    ctx.fillStyle = '#f8fafc';
-    ctx.fill();
-
-    // Bottom border for header
-    ctx.beginPath();
-    ctx.moveTo(x, y + dHeaderH);
-    ctx.lineTo(x + cw, y + dHeaderH);
-    ctx.strokeStyle = '#e2e8f0';
-    ctx.stroke();
-
-    // Driver Name
-    ctx.fillStyle = '#0f172a';
-    ctx.font = `700 16px ${FONT_FAMILY}`;
-    ctx.textAlign = 'left';
-    ctx.textBaseline = 'middle';
-    ctx.fillText(`\ud83d\ude97 ${d.name}`, x + 16, y + dHeaderH / 2);
-
-    // Seats badge on right
-    const seatsLabel = `${assignedSeats}/${d.cap} ${t('seatsUsed', { count: assignedSeats })}`;
-    const isFull = assignedSeats >= d.cap;
-    drawBadge(ctx, seatsLabel, x + cw - 120, y + 14, {
-      bg: isFull ? '#fef3c7' : '#ecfdf5',
-      color: isFull ? '#92400e' : '#065f46',
-      border: isFull ? '#fcd34d' : '#a7f3d0',
-      fontSize: 11,
-      padX: 8,
-      padY: 3,
-      radius: 6,
+    const seatsLabel = `${assignedSeats}/${d.cap}`;
+    drawTableShell(ctx, x, y, cw, ch, 'car', t, d.name, {
+      badge: seatsLabel,
+      badgeTone: assignedSeats >= d.cap ? 'full' : 'ok',
     });
-
-    // Sub-header: Vehicle Info & Tags
     ctx.font = `12px ${FONT_FAMILY}`;
-    ctx.fillStyle = '#64748b';
-    ctx.textBaseline = 'top';
-    const vehicleParts = [
-      d.vehicle.model,
-      d.vehicle.plate,
-      d.carpool ? t('carpool') : t('oneBooking'),
-      d.vehicle.wheelchair_ok ? t('wheelchairTag') : null,
-      d.vehicle.child_seat ? t('childSeatTag') : null,
-      d.vehicle.low_step ? t('lowStepTag') : null,
-    ].filter(Boolean);
-    const vehicleText = vehicleParts.join(' \u00b7 ');
-    ctx.fillText(vehicleText, x + 16, y + dHeaderH + 10);
-
-    // Passenger items
-    let curItemY = y + dHeaderH + 32;
-    const itemW = cw - 32;
-
-    for (const p of passengers) {
-      drawRoundedRect(ctx, x + 16, curItemY, itemW, p.height, 8);
-      ctx.fillStyle = '#f8fafc';
-      ctx.fill();
-      ctx.strokeStyle = '#e2e8f0';
-      ctx.lineWidth = 1;
-      ctx.stroke();
-
-      // Left blue accent indicator
-      drawRoundedRect(ctx, x + 16, curItemY, 4, p.height, 2);
-      ctx.fillStyle = '#0284c7';
-      ctx.fill();
-
-      // Passenger header line
-      ctx.fillStyle = '#0f172a';
-      ctx.font = `700 14px ${FONT_FAMILY}`;
-      ctx.textAlign = 'left';
-      ctx.textBaseline = 'top';
-      ctx.fillText(p.headerText, x + 28, curItemY + 10);
-
-      // Address lines
-      ctx.fillStyle = '#475569';
-      ctx.font = `13px ${FONT_FAMILY}`;
-      let textLineY = curItemY + 32;
-      for (const line of p.addrLines) {
-        ctx.fillText(line, x + 28, textLineY);
-        textLineY += 17;
-      }
-
-      // Notes lines (if any)
-      if (p.noteLines.length > 0) {
-        ctx.fillStyle = '#b45309';
-        ctx.font = `600 12px ${FONT_FAMILY}`;
-        for (const line of p.noteLines) {
-          ctx.fillText(`\u26a0\ufe0f ${line}`, x + 28, textLineY);
-          textLineY += 16;
-        }
-      }
-
-      curItemY += p.height + 8;
-    }
-  }
-
-  // --- 3. ALL ASSIGNED BANNER ---
-  if (layout.allAssignedHeight > 0) {
-    const ax = PAD;
-    const ay = layout.allAssignedY;
-    const aw = contentWidth;
-    const ah = layout.allAssignedHeight;
-
-    drawRoundedRect(ctx, ax, ay, aw, ah, 10);
-    ctx.fillStyle = '#ecfdf5';
-    ctx.fill();
-    ctx.strokeStyle = '#a7f3d0';
-    ctx.lineWidth = 1;
-    ctx.stroke();
-
-    ctx.fillStyle = '#065f46';
-    ctx.font = `700 15px ${FONT_FAMILY}`;
-    ctx.textAlign = 'center';
+    ctx.fillStyle = COLOR.muted;
+    ctx.textAlign = 'left';
     ctx.textBaseline = 'middle';
-    ctx.fillText(`\u2705 ${t('allAssigned')}`, ax + aw / 2, ay + ah / 2);
-  }
-
-  // --- 4. UNASSIGNED PASSENGERS SECTION ---
-  if (layout.unassignedHeight > 0) {
-    const ux = PAD;
-    const uy = layout.unassignedY;
-    const uw = contentWidth;
-    const uh = layout.unassignedHeight;
-
-    drawRoundedRect(ctx, ux, uy, uw, uh, 12);
-    ctx.fillStyle = '#fffbeb';
-    ctx.fill();
-    ctx.strokeStyle = '#fcd34d';
+    const sub = vehicleLine(d, t);
+    const subMax = cw - 24;
+    let subText = sub;
+    if (ctx.measureText(subText).width > subMax) {
+      while (subText.length > 1 && ctx.measureText(`${subText}\u2026`).width > subMax) {
+        subText = subText.slice(0, -1);
+      }
+      subText = `${subText}\u2026`;
+    }
+    ctx.fillText(subText, x + 12, y + TABLE_HEADER_H + TABLE_SUB_H / 2);
+    ctx.beginPath();
+    ctx.moveTo(x, y + TABLE_HEADER_H + TABLE_SUB_H);
+    ctx.lineTo(x + cw, y + TABLE_HEADER_H + TABLE_SUB_H);
+    ctx.strokeStyle = COLOR.divider;
     ctx.lineWidth = 1;
     ctx.stroke();
+    drawPassengerRows(ctx, x, y + TABLE_HEADER_H + TABLE_SUB_H, cw, passengers, false);
+  }
 
-    // Section title
-    ctx.fillStyle = '#92400e';
-    ctx.font = `700 16px ${FONT_FAMILY}`;
+  // --- Unassigned table ---
+  if (layout.unassignedBox && layout.unassignedItems.length > 0) {
+    const box = layout.unassignedBox;
+    drawTableShell(ctx, box.x, box.y, box.width, box.height, 'unassigned', t, t('unassignedTitle'), {
+      badge: String(layout.unassignedItems.length),
+      badgeTone: 'amber',
+      hideKind: true,
+    });
+    drawPassengerRows(ctx, box.x, box.y + TABLE_HEADER_H, box.width, layout.unassignedItems, true);
+  }
+
+  // --- Area chips ---
+  for (const area of layout.areaEntities) {
+    drawTableShell(ctx, area.x, area.y, area.width, area.height, 'area', t, area.name, {
+      badge: String(area.count),
+      hideKind: true,
+    });
+  }
+
+  // --- Standby (quiet line, no card) ---
+  if (layout.standbyHeight > 0) {
+    ctx.font = `400 13px ${FONT_FAMILY}`;
+    ctx.fillStyle = COLOR.muted;
     ctx.textAlign = 'left';
     ctx.textBaseline = 'top';
-    ctx.fillText(`\u26a0\ufe0f ${t('unassignedTitle')} (${layout.unassignedItems.length})`, ux + 16, uy + 14);
-
-    let curUY = uy + 44;
-    const itemW = uw - 32;
-
-    for (const p of layout.unassignedItems) {
-      drawRoundedRect(ctx, ux + 16, curUY, itemW, p.height, 8);
-      ctx.fillStyle = '#ffffff';
-      ctx.fill();
-      ctx.strokeStyle = '#fde68a';
-      ctx.lineWidth = 1;
-      ctx.stroke();
-
-      ctx.fillStyle = '#92400e';
-      ctx.font = `700 14px ${FONT_FAMILY}`;
-      ctx.textAlign = 'left';
-      ctx.textBaseline = 'top';
-      ctx.fillText(p.headerText, ux + 28, curUY + 10);
-
-      ctx.fillStyle = '#475569';
-      ctx.font = `13px ${FONT_FAMILY}`;
-      let textLineY = curUY + 32;
-      for (const line of p.addrLines) {
-        ctx.fillText(line, ux + 28, textLineY);
-        textLineY += 17;
-      }
-
-      curUY += p.height + 8;
+    const lines = wrapText(ctx, `${t('standbyDrivers')}  \u00b7  ${layout.standbyNames}`, contentWidth);
+    let ly = layout.standbyY;
+    for (const line of lines) {
+      ctx.fillText(line, PAD, ly);
+      ly += 18;
     }
   }
 
-  // --- 5. STANDBY DRIVERS ---
-  if (layout.standbyHeight > 0) {
-    const sx = PAD;
-    const sy = layout.standbyY;
-    const sw = contentWidth;
-    const sh = layout.standbyHeight;
-
-    drawRoundedRect(ctx, sx, sy, sw, sh, 10);
-    ctx.fillStyle = '#f1f5f9';
-    ctx.fill();
-    ctx.strokeStyle = '#cbd5e1';
-    ctx.lineWidth = 1;
-    ctx.stroke();
-
-    ctx.fillStyle = '#334155';
-    ctx.font = `700 14px ${FONT_FAMILY}`;
-    ctx.textAlign = 'left';
-    ctx.textBaseline = 'top';
-    ctx.fillText(`\ud83d\ude97 ${t('standbyDrivers')}:`, sx + 16, sy + 14);
-
-    ctx.font = `500 13px ${FONT_FAMILY}`;
-    ctx.fillStyle = '#64748b';
-    const names = layout.standbyDrivers
-      .map((d) => `${d.name} (${d.cap} ${t('seatsUsed', { count: d.cap })})`)
-      .join(' \u00b7 ');
-    ctx.fillText(names, sx + 16, sy + 36);
+  // --- Legend ---
+  if (layout.legendHeight > 0) {
+    drawLegend(
+      ctx,
+      PAD,
+      layout.legendY,
+      contentWidth,
+      layout.legendHeight,
+      t,
+      layout.connectors.some((c) => c.kind === 'drivesTo'),
+      layout.connectors.some((c) => c.kind === 'picksUpIn'),
+      layout.connectors.some((c) => c.dashed),
+    );
   }
 
-  // --- 6. FOOTER ---
+  // --- Footer ---
   const fx = PAD;
   const fy = layout.footerY;
   const fw = contentWidth;
-  const fh = layout.footerHeight;
-
-  drawRoundedRect(ctx, fx, fy, fw, fh, 12);
-  ctx.fillStyle = '#ffffff';
-  ctx.fill();
-  ctx.strokeStyle = '#e2e8f0';
-  ctx.lineWidth = 1;
-  ctx.stroke();
-
-  ctx.fillStyle = '#64748b';
-  ctx.font = `500 12px ${FONT_FAMILY}`;
+  ctx.fillStyle = COLOR.muted;
+  ctx.font = `400 12px ${FONT_FAMILY}`;
   ctx.textAlign = 'left';
   ctx.textBaseline = 'top';
-  let lineY = fy + 14;
+  let lineY = fy;
   for (const line of layout.reminderText) {
-    ctx.fillText(line, fx + 16, lineY);
+    ctx.fillText(line, fx, lineY);
     lineY += 18;
   }
-
-  // Timestamp on the right
-  ctx.fillStyle = '#94a3b8';
-  ctx.font = `12px ${FONT_FAMILY}`;
+  ctx.fillStyle = COLOR.line;
   ctx.textAlign = 'right';
-  ctx.fillText(t('generatedAt', { time: layout.timestamp }), fx + fw - 16, fy + 14);
+  ctx.fillText(t('generatedAt', { time: layout.timestamp }), fx + fw, fy);
 }
 
 export function renderPlanToCanvas(options: PlanImageExportOptions): HTMLCanvasElement {
