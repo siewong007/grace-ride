@@ -11,6 +11,7 @@ export default {
   count: '{count} rides',
   noTasks: 'No driving tasks in this period. Open an event you’ve signed up for to see who needs a ride.',
   browseEvents: 'Browse events',
+  offlineSnapshot: 'Offline — showing your saved schedule from {when}.',
   areas: 'Areas I’m willing to drive',
   areasHint: 'Tick areas you often pass through; you’ll be notified of new requests.',
   carpool: 'Grace Ride carpool mode',

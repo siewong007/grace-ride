@@ -11,6 +11,7 @@ export default {
   count: '{count} 项接送',
   noTasks: '这段时间没有接送任务。打开您已报名的活动，看看有没有需要接送的会员吧！',
   browseEvents: '浏览活动',
+  offlineSnapshot: '离线模式 — 显示 {when} 保存的接送安排。',
   areas: '我愿意接送的地区',
   areasHint: '勾选平时方便经过的地区，有新报名时会通知您。',
   carpool: '恩典同行共乘模式',
