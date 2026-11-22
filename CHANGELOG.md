@@ -1,6 +1,7 @@
 # Changelog
 
 ## [Unreleased]
+- The shared transport assignment image is now drawn as a database / ER diagram: each car is a table of passengers, with entity boxes for pickup areas and the event, and connector lines between them. Unassigned riders sit in their own table. Download and copy behaviour is unchanged.
 - Fixed: booking a ride for someone else (代订) could book two cars for the same rider on a double tap or a second tab — the one-ride-per-leg guard only covered the member's own ride. It now covers each proxy rider too, and the booking lock no longer truncates 64-bit ids.
 - Fixed: a driver could record a passenger as a no-show before the pickup time had even passed (even before starting the trip). A driver may now record a no-show only once the trip is running and the pickup time has passed; staff keep the pre-emptive override. The no-show button on the ride page and driving schedule appears only when it can be used.
 - Fixed: completing a ride without recording pickup stamped a made-up pickup time (and told the passenger they had been picked up). The pickup time now stays empty unless pickup was actually recorded.

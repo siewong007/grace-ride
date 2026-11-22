@@ -173,6 +173,9 @@ describe('PlanTransport draft & traffic lead approval', () => {
       stroke: vi.fn(),
       roundRect: vi.fn(),
       scale: vi.fn(),
+      save: vi.fn(),
+      restore: vi.fn(),
+      setLineDash: vi.fn(),
       measureText: vi.fn((str: string) => ({ width: str.length * 8 })),
     } as unknown as CanvasRenderingContext2D);
     vi.spyOn(HTMLCanvasElement.prototype, 'toDataURL').mockReturnValue('data:image/png;base64,mockImageDataUrl');
@@ -242,6 +245,9 @@ describe('PlanTransport draft & traffic lead approval', () => {
       stroke: vi.fn(),
       roundRect: vi.fn(),
       scale: vi.fn(),
+      save: vi.fn(),
+      restore: vi.fn(),
+      setLineDash: vi.fn(),
       measureText: vi.fn((str: string) => ({ width: str.length * 8 })),
     } as unknown as CanvasRenderingContext2D);
     vi.spyOn(HTMLCanvasElement.prototype, 'toDataURL').mockReturnValue('data:image/png;base64,mockApprovedDataUrl');

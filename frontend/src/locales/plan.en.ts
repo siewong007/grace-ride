@@ -188,4 +188,18 @@ export default {
   visitorReimbHigh: 'High amount (over RM 100)',
   visitorReimbHighWarn: 'High amount: {amount} is over RM 100. You can still send it; reviewers will see it flagged, so make the reason clear.',
   optional: 'Optional',
+  entityEvent: 'Event',
+  entityCar: 'Car',
+  entityArea: 'Area',
+  entityUnassigned: 'Unassigned',
+  relDrivesTo: 'drives to',
+  relPicksUpIn: 'picks up in',
+  colPassenger: 'passenger',
+  colStartsAt: 'starts_at',
+  colLocation: 'location',
+  colStatus: 'status',
+  colSeats: 'seats',
+  colAssignment: 'assignment',
+  colPassengers: 'passengers',
 };
+
