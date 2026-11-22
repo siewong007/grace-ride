@@ -194,6 +194,7 @@ export default {
   entityUnassigned: '待安排',
   relDrivesTo: '前往',
   relPicksUpIn: '接载于',
+  legendUnassigned: '待安排（虚线）',
   colPassenger: '乘客',
   colStartsAt: '开始时间',
   colLocation: '地点',

@@ -6,6 +6,7 @@ import {
   exportPlanAsPng,
   measurePlanLayout,
   pathHitsRectInterior,
+  pathsShareASegment,
   renderPlanToCanvas,
   sanitizeFilename,
   wrapText,
@@ -502,6 +503,34 @@ describe('planImageExport', () => {
           expect(pathHitsRectInterior(c.points, box)).toBe(false);
         }
       }
+    });
+
+    it('keeps drives-to and picks-up-in on fully separate paths', () => {
+      const layout = measurePlanLayout(ctx, mockPlan, draft, mockT, mockFormatT, false);
+      const drives = layout.connectors.filter((c) => c.kind === 'drivesTo');
+      const picks = layout.connectors.filter((c) => c.kind === 'picksUpIn');
+      expect(drives.length).toBeGreaterThan(0);
+      expect(picks.length).toBeGreaterThan(0);
+      for (const d of drives) {
+        for (const p of picks) {
+          expect(pathsShareASegment(d.points, p.points)).toBe(false);
+        }
+      }
+    });
+
+    it('detects a shared colinear segment but not a mere endpoint touch', () => {
+      expect(
+        pathsShareASegment(
+          [{ x: 0, y: 0 }, { x: 0, y: 50 }],
+          [{ x: 0, y: 20 }, { x: 0, y: 80 }],
+        ),
+      ).toBe(true);
+      expect(
+        pathsShareASegment(
+          [{ x: 0, y: 0 }, { x: 0, y: 20 }],
+          [{ x: 0, y: 20 }, { x: 40, y: 20 }],
+        ),
+      ).toBe(false);
     });
   });
 });

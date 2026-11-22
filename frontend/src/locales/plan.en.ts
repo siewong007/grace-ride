@@ -194,6 +194,7 @@ export default {
   entityUnassigned: 'Unassigned',
   relDrivesTo: 'drives to',
   relPicksUpIn: 'picks up in',
+  legendUnassigned: 'unassigned (dashed)',
   colPassenger: 'passenger',
   colStartsAt: 'starts_at',
   colLocation: 'location',

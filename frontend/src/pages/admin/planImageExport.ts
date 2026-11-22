@@ -8,6 +8,7 @@ const CANVAS_WIDTH = 1200;
 const PAD = 48;
 const GAP = 16;
 const CENTER_GUTTER = 80;
+const SIDE_GUTTER = 32;
 const TOP_GUTTER = 70;
 const AREA_GAP = 16;
 const SLIM_BAR_H = 52;
@@ -30,6 +31,8 @@ const COLOR = {
   muted: '#64748b',
   line: '#94a3b8',
   lineStrong: '#475569',
+  driveLine: '#0369a1',
+  areaLine: '#15803d',
   divider: '#e2e8f0',
   rowAlt: '#f8fafc',
   note: '#b45309',
@@ -156,6 +159,8 @@ interface MeasuredLayout {
   allAssigned: boolean;
   footerY: number;
   footerHeight: number;
+  legendY: number;
+  legendHeight: number;
   eventTitle: string;
   eventSubtitle: string;
   statusBadge: { text: string; tone: 'success' | 'amber' };
@@ -416,6 +421,38 @@ function segmentHitsAabb(
   return jx - ix > 0.5 && jy - iy > 0.5;
 }
 
+
+/** Colinear overlap of two orthogonal polylines, ignoring a mere touching of endpoints. */
+export function pathsShareASegment(a: Point[], b: Point[], minOverlap = 2): boolean {
+  const segs = (pts: Point[]) => {
+    const out: Array<[Point, Point]> = [];
+    for (let i = 0; i < pts.length - 1; i++) {
+      const p = pts[i];
+      const q = pts[i + 1];
+      if (p.x === q.x && p.y === q.y) continue;
+      out.push([p, q]);
+    }
+    return out;
+  };
+  const overlap1d = (a1: number, a2: number, b1: number, b2: number) => {
+    const lo = Math.max(Math.min(a1, a2), Math.min(b1, b2));
+    const hi = Math.min(Math.max(a1, a2), Math.max(b1, b2));
+    return hi - lo;
+  };
+  for (const [p, q] of segs(a)) {
+    for (const [r, t] of segs(b)) {
+      const aH = p.y === q.y;
+      const bH = r.y === t.y;
+      if (aH && bH && Math.abs(p.y - r.y) < 0.5) {
+        if (overlap1d(p.x, q.x, r.x, t.x) >= minOverlap) return true;
+      } else if (!aH && !bH && Math.abs(p.x - r.x) < 0.5 && p.x === q.x && r.x === t.x) {
+        if (overlap1d(p.y, q.y, r.y, t.y) >= minOverlap) return true;
+      }
+    }
+  }
+  return false;
+}
+
 export function boxesOverlap(a: Rect, b: Rect, gap = 0): boolean {
   return (
     a.x < b.x + b.width + gap &&
@@ -514,8 +551,9 @@ export function measurePlanLayout(
   // --- Car / unassigned tables ---
   const tableCount = activeDrivers.length + (unassignedRides.length > 0 ? 1 : 0);
   const colCount = tableCount <= 1 ? 1 : 2;
+  const sideGutter = colCount === 1 ? 0 : SIDE_GUTTER;
   const gridWidth =
-    colCount === 1 ? Math.min(640, contentWidth) : contentWidth;
+    colCount === 1 ? Math.min(640, contentWidth) : contentWidth - sideGutter * 2;
   const colWidth = colCount === 1 ? gridWidth : (gridWidth - CENTER_GUTTER) / 2;
   const gridX = (CANVAS_WIDTH - gridWidth) / 2;
   const colXs = colCount === 1 ? [gridX] : [gridX, gridX + colWidth + CENTER_GUTTER];
@@ -680,14 +718,21 @@ export function measurePlanLayout(
   const reminderRaw = t('reminderNote');
   const reminderText = wrapText(ctx, reminderRaw, contentWidth - 260);
   const footerHeight = Math.max(56, reminderText.length * 18 + 24);
-  const footerY = (standbyHeight > 0 ? standbyY + standbyHeight : areasBottom) + GAP;
+  const hasLegend = activeDrivers.length > 0 || unassignedRides.length > 0;
+  const legendHeight = hasLegend ? 28 : 0;
+  const legendY = (standbyHeight > 0 ? standbyY + standbyHeight : areasBottom) + GAP;
+  const footerY = legendY + (legendHeight > 0 ? legendHeight + 8 : 0);
 
   // --- Connectors ---
   const connectors: Connector[] = [];
   const drivesLabel = t('relDrivesTo');
   const picksLabel = t('relPicksUpIn');
+  // Drives-to uses the top gutter and outer side rails only.
+  // Picks-up-in uses the bottom gutter and the center gutter only.
+  // The two relationship types never travel along the same segment.
   const centerRailX = CANVAS_WIDTH / 2;
-  const leftRailX = gridX - 22;
+  const leftDriveRailX = gridX - 16;
+  const rightDriveRailX = gridX + gridWidth + 16;
   const eventBusY = eventEntity.y + eventEntity.height + 28;
   const eventBottom: Point = {
     x: eventEntity.x + eventEntity.width / 2,
@@ -703,30 +748,39 @@ export function measurePlanLayout(
     lastYByCol[c] = inCol.reduce((m, b) => Math.max(m, b.y), 0);
   }
 
+  const firstRowY = measuredCards.length ? Math.min(...measuredCards.map((c) => c.y)) : 0;
   for (const card of measuredCards) {
     const col = card.x === colXs[0] ? 0 : 1;
-    const innerX = colCount === 1 ? card.x : col === 0 ? card.x + card.width : card.x;
-    const railX = colCount === 1 ? leftRailX : centerRailX;
-    // Offset left/right ports so two cars in the same row do not form one through-line.
-    const portY = card.y + TABLE_HEADER_H / 2 + (colCount === 1 ? 0 : col === 0 ? -6 : 6);
-    const points: Point[] = collapseColinear([
-      eventBottom,
-      { x: eventBottom.x, y: eventBusY },
-      { x: railX, y: eventBusY },
-      { x: railX, y: portY },
-      { x: innerX, y: portY },
-    ]);
-    // Single car, single column: a straight drop looks cleaner when the car sits under the event.
+    const carMidX = card.x + card.width / 2;
     const straight =
       colCount === 1 &&
       measuredCards.length === 1 &&
-      Math.abs(card.x + card.width / 2 - eventBottom.x) < 4;
-    const path = straight
-      ? [
-          eventBottom,
-          { x: eventBottom.x, y: card.y },
-        ]
-      : points;
+      Math.abs(carMidX - eventBottom.x) < 4;
+    const isFirstRow = Math.abs(card.y - firstRowY) < 1;
+    let path: Point[];
+    if (straight) {
+      path = [eventBottom, { x: eventBottom.x, y: card.y }];
+    } else if (isFirstRow) {
+      // Fan out through the top gutter, down onto the car's top edge.
+      path = collapseColinear([
+        eventBottom,
+        { x: eventBottom.x, y: eventBusY },
+        { x: carMidX, y: eventBusY },
+        { x: carMidX, y: card.y },
+      ]);
+    } else {
+      // Lower cars climb an outer side rail so they never share the center trunk.
+      const railX = colCount === 1 || col === 0 ? leftDriveRailX : rightDriveRailX;
+      const outerX = colCount === 1 || col === 0 ? card.x : card.x + card.width;
+      const portY = card.y + TABLE_HEADER_H / 2;
+      path = collapseColinear([
+        eventBottom,
+        { x: eventBottom.x, y: eventBusY },
+        { x: railX, y: eventBusY },
+        { x: railX, y: portY },
+        { x: outerX, y: portY },
+      ]);
+    }
     connectors.push({
       kind: 'drivesTo',
       label: drivesLabel,
@@ -756,7 +810,9 @@ export function measurePlanLayout(
     const laneY = areaBusTop + 10 + laneIndex * 14;
     laneIndex += 1;
     const isBottom = Math.abs(src.y - lastYByCol[src.col]) < 1;
-    const areaRailX = colCount === 1 ? leftRailX : centerRailX;
+    // 1-col: pick rail sits to the right of the stack (drives-to uses the left).
+    // 2-col: pick rail is the center gutter, never the outer drive rails.
+    const pickRailX = colCount === 1 ? gridX + gridWidth + 16 : centerRailX;
     const areaPortY = src.y + src.height - 16 + (colCount === 1 ? 0 : src.col === 0 ? -6 : 6);
     const innerX = colCount === 1 || src.col === 0 ? src.x + src.width : src.x;
     const start: Point = isBottom
@@ -764,7 +820,7 @@ export function measurePlanLayout(
       : { x: innerX, y: areaPortY };
     const viaRail: Point[] = isBottom
       ? [start, { x: start.x, y: laneY }]
-      : [start, { x: areaRailX, y: areaPortY }, { x: areaRailX, y: laneY }];
+      : [start, { x: pickRailX, y: areaPortY }, { x: pickRailX, y: laneY }];
 
     const dashed = unassignedBox != null && src.x === unassignedBox.x && src.y === unassignedBox.y;
     for (const ent of targets.values()) {
@@ -806,6 +862,8 @@ export function measurePlanLayout(
     allAssigned: unassignedRides.length === 0,
     footerY,
     footerHeight,
+    legendY,
+    legendHeight,
     eventTitle,
     eventSubtitle,
     statusBadge,
@@ -1002,10 +1060,11 @@ function drawCrowFoot(
   y: number,
   toward: 'up' | 'down' | 'left' | 'right',
   kind: 'one' | 'many',
+  color: string,
 ) {
   const arm = 9;
   ctx.save();
-  ctx.strokeStyle = COLOR.lineStrong;
+  ctx.strokeStyle = color;
   ctx.lineWidth = 1.5;
   ctx.lineCap = 'round';
   ctx.lineJoin = 'round';
@@ -1052,11 +1111,16 @@ function endDirection(a: Point, b: Point): 'up' | 'down' | 'left' | 'right' {
   return b.x > a.x ? 'right' : 'left';
 }
 
+function connectorColor(c: Connector): string {
+  return c.kind === 'drivesTo' ? COLOR.driveLine : COLOR.areaLine;
+}
+
 function drawConnector(ctx: CanvasRenderingContext2D, c: Connector) {
   if (c.points.length < 2) return;
+  const color = connectorColor(c);
   ctx.save();
-  ctx.strokeStyle = COLOR.lineStrong;
-  ctx.lineWidth = 1.5;
+  ctx.strokeStyle = color;
+  ctx.lineWidth = 1.75;
   ctx.lineCap = 'round';
   ctx.lineJoin = 'round';
   if (c.dashed && typeof ctx.setLineDash === 'function') {
@@ -1078,25 +1142,70 @@ function drawConnector(ctx: CanvasRenderingContext2D, c: Connector) {
   const b0 = c.points[c.points.length - 2];
   const b1 = c.points[c.points.length - 1];
   // "Toward" is the direction the path is travelling as it arrives at the entity.
-  drawCrowFoot(ctx, a0.x, a0.y, endDirection(a1, a0), c.fromCard);
-  drawCrowFoot(ctx, b1.x, b1.y, endDirection(b0, b1), c.toCard);
+  drawCrowFoot(ctx, a0.x, a0.y, endDirection(a1, a0), c.fromCard, color);
+  drawCrowFoot(ctx, b1.x, b1.y, endDirection(b0, b1), c.toCard, color);
 }
 
-function drawLabelPill(ctx: CanvasRenderingContext2D, text: string, x: number, y: number) {
+function drawLabelPill(ctx: CanvasRenderingContext2D, text: string, x: number, y: number, color = COLOR.labelFg) {
   ctx.font = `600 11px ${FONT_FAMILY}`;
   const w = ctx.measureText(text).width + 14;
   const h = 18;
   drawRoundedRect(ctx, x - w / 2, y - h / 2, w, h, 4);
   ctx.fillStyle = COLOR.labelBg;
   ctx.fill();
-  ctx.strokeStyle = COLOR.labelBorder;
+  ctx.strokeStyle = color;
   ctx.lineWidth = 1;
   drawRoundedRect(ctx, x - w / 2, y - h / 2, w, h, 4);
   ctx.stroke();
-  ctx.fillStyle = COLOR.labelFg;
+  ctx.fillStyle = color;
   ctx.textAlign = 'center';
   ctx.textBaseline = 'middle';
   ctx.fillText(text, x, y);
+}
+
+function drawLegend(
+  ctx: CanvasRenderingContext2D,
+  x: number,
+  y: number,
+  w: number,
+  h: number,
+  t: TranslationFn,
+  showDrives: boolean,
+  showPicks: boolean,
+  showDashed: boolean,
+) {
+  const items: Array<{ label: string; color: string; dashed: boolean }> = [];
+  if (showDrives) items.push({ label: t('relDrivesTo'), color: COLOR.driveLine, dashed: false });
+  if (showPicks) items.push({ label: t('relPicksUpIn'), color: COLOR.areaLine, dashed: false });
+  if (showDashed) items.push({ label: t('legendUnassigned'), color: COLOR.areaLine, dashed: true });
+  if (items.length === 0) return;
+
+  ctx.font = `600 11px ${FONT_FAMILY}`;
+  const swatch = 22;
+  const gap = 22;
+  const parts = items.map((it) => swatch + 6 + ctx.measureText(it.label).width);
+  const total = parts.reduce((a, b) => a + b, 0) + gap * (items.length - 1);
+  let cx = x + (w - total) / 2;
+  const mid = y + h / 2;
+  for (let i = 0; i < items.length; i++) {
+    const it = items[i];
+    ctx.save();
+    ctx.strokeStyle = it.color;
+    ctx.lineWidth = 1.75;
+    ctx.lineCap = 'round';
+    if (it.dashed && typeof ctx.setLineDash === 'function') ctx.setLineDash([5, 3]);
+    ctx.beginPath();
+    ctx.moveTo(cx, mid);
+    ctx.lineTo(cx + swatch, mid);
+    ctx.stroke();
+    ctx.restore();
+    ctx.fillStyle = it.color;
+    ctx.textAlign = 'left';
+    ctx.textBaseline = 'middle';
+    ctx.font = `600 11px ${FONT_FAMILY}`;
+    ctx.fillText(it.label, cx + swatch + 6, mid);
+    cx += parts[i] + gap;
+  }
 }
 
 export function drawPlanLayout(
@@ -1148,7 +1257,7 @@ export function drawPlanLayout(
   const drives = layout.connectors.find((c) => c.kind === 'drivesTo');
   if (drives) {
     const ev = layout.eventEntity;
-    drawLabelPill(ctx, drives.label, ev.x + ev.width / 2, ev.y + ev.height + 28);
+    drawLabelPill(ctx, drives.label, ev.x + ev.width / 2, ev.y + ev.height + 28, COLOR.driveLine);
   }
   const picks = layout.connectors.find((c) => c.kind === 'picksUpIn');
   if (picks && layout.areaEntities.length > 0 && layout.driverCards.length + (layout.unassignedBox ? 1 : 0) > 0) {
@@ -1157,7 +1266,7 @@ export function drawPlanLayout(
       ...layout.driverCards.map((c) => c.y + c.height),
       layout.unassignedBox ? layout.unassignedBox.y + layout.unassignedBox.height : 0,
     );
-    drawLabelPill(ctx, picks.label, CANVAS_WIDTH / 2, (maxTableY + minAreaY) / 2);
+    drawLabelPill(ctx, picks.label, CANVAS_WIDTH / 2, (maxTableY + minAreaY) / 2, COLOR.areaLine);
   }
 
   // --- Event entity ---
@@ -1307,6 +1416,21 @@ export function drawPlanLayout(
       ctx.fillText(line, sx + 14, ly);
       ly += 18;
     }
+  }
+
+  // --- Legend ---
+  if (layout.legendHeight > 0) {
+    drawLegend(
+      ctx,
+      PAD,
+      layout.legendY,
+      contentWidth,
+      layout.legendHeight,
+      t,
+      layout.connectors.some((c) => c.kind === 'drivesTo'),
+      layout.connectors.some((c) => c.kind === 'picksUpIn'),
+      layout.connectors.some((c) => c.dashed),
+    );
   }
 
   // --- Footer ---
