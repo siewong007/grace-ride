@@ -23,6 +23,7 @@ use crate::util::{
 pub(super) struct EventIn {
     title: String,
     kind: String,
+    icon: Option<String>,
     description: Option<String>,
     starts_at: String,
     location: String,
@@ -128,6 +129,16 @@ async fn save_event_groups(
     Ok(())
 }
 
+fn normalize_icon(raw: Option<&str>, lang: Lang) -> AppResult<Option<String>> {
+    let Some(s) = raw.map(str::trim).filter(|s| !s.is_empty()) else {
+        return Ok(None);
+    };
+    if s.chars().count() > 32 || s.chars().any(char::is_control) {
+        return Err(bad(lang, ErrorKey::InvalidAction));
+    }
+    Ok(Some(s.to_string()))
+}
+
 fn validate(req: &EventIn, lang: Lang) -> AppResult<(String, Option<String>)> {
     if req.title.trim().is_empty() {
         return Err(bad(lang, ErrorKey::EventNameRequired));
@@ -183,6 +194,7 @@ pub(super) async fn create_event(
         return Err(forbidden(u.lang, ErrorKey::OnlyOrganiserCanCreate));
     }
     let (at, dl) = validate(&req, u.lang)?;
+    let icon = normalize_icon(req.icon.as_deref(), u.lang)?;
     check_photo(&st, &u, req.photo_file_id, None).await?;
     check_area(&st, &u, req.area_id).await?;
     let freq = req.repeat_frequency.as_deref().unwrap_or("none");
@@ -228,8 +240,8 @@ pub(super) async fn create_event(
             None
         };
         let (id,): (i64,) = sqlx::query_as(
-            "INSERT INTO events (title, kind, description, starts_at, location, capacity, cost_note, signup_deadline, created_by, created_at, photo_file_id, attendance_enabled, checkin_code, series_id, mileage_claimable, area_id)
-             VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16) RETURNING id",
+            "INSERT INTO events (title, kind, description, starts_at, location, capacity, cost_note, signup_deadline, created_by, created_at, photo_file_id, attendance_enabled, checkin_code, series_id, mileage_claimable, area_id, icon)
+             VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17) RETURNING id",
         )
         .bind(req.title.trim())
         .bind(&req.kind)
@@ -247,6 +259,7 @@ pub(super) async fn create_event(
         .bind(&series_id)
         .bind(mileage_claimable as i64)
         .bind(req.area_id)
+        .bind(&icon)
         .fetch_one(&mut *tx)
         .await?;
         save_event_groups(&mut tx, id, &req, u.lang).await?;
@@ -370,8 +383,8 @@ pub(super) async fn duplicate_event(
 
     let mut tx = st.db.begin().await?;
     let (new_id,): (i64,) = sqlx::query_as(
-        "INSERT INTO events (title, kind, description, starts_at, location, capacity, cost_note, signup_deadline, created_by, created_at, photo_file_id, attendance_enabled, checkin_code, mileage_claimable, area_id)
-         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15) RETURNING id",
+        "INSERT INTO events (title, kind, description, starts_at, location, capacity, cost_note, signup_deadline, created_by, created_at, photo_file_id, attendance_enabled, checkin_code, mileage_claimable, area_id, icon)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16) RETURNING id",
     )
     .bind(&title)
     .bind(&src.kind)
@@ -388,6 +401,7 @@ pub(super) async fn duplicate_event(
     .bind(checkin_code)
     .bind(mileage_claimable as i64)
     .bind(src.area_id)
+    .bind(&src.icon)
     .fetch_one(&mut *tx)
     .await?;
     let groups_copied = sqlx::query(
@@ -457,6 +471,7 @@ pub(super) async fn update_event(
         return Err(forbidden(u.lang, ErrorKey::OnlyOrganiserCanEdit));
     }
     let (at, dl) = validate(&req, u.lang)?;
+    let icon = normalize_icon(req.icon.as_deref(), u.lang)?;
     check_photo(&st, &u, req.photo_file_id, e.photo_file_id).await?;
     check_area(&st, &u, req.area_id).await?;
     // Same event lock as `signup` / `withdraw`: places a raised capacity opens go to the
@@ -484,7 +499,7 @@ pub(super) async fn update_event(
     } else {
         e.checkin_code.clone()
     };
-    sqlx::query("UPDATE events SET title=$1, kind=$2, description=$3, starts_at=$4, location=$5, capacity=$6, cost_note=$7, signup_deadline=$8, photo_file_id=$9, attendance_enabled=$10, checkin_code=$11, mileage_claimable=$12, area_id=$13 WHERE id=$14")
+    sqlx::query("UPDATE events SET title=$1, kind=$2, description=$3, starts_at=$4, location=$5, capacity=$6, cost_note=$7, signup_deadline=$8, photo_file_id=$9, attendance_enabled=$10, checkin_code=$11, mileage_claimable=$12, area_id=$13, icon=$14 WHERE id=$15")
         .bind(req.title.trim())
         .bind(&req.kind)
         .bind(req.description.clone().unwrap_or_default())
@@ -498,6 +513,7 @@ pub(super) async fn update_event(
         .bind(checkin_code)
         .bind(target_mileage as i64)
         .bind(req.area_id)
+        .bind(&icon)
         .bind(id)
         .execute(&mut *tx)
         .await?;

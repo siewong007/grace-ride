@@ -239,11 +239,66 @@ class ViewModelTest {
         assertEquals("/api/driver/requests?mine_areas=true", server.takeRequest().path)
         assertEquals(mapOf(20L to 2, 21L to 1), state.requestsByEvent)
 
-        server.enqueue(json("[]"))
+        // My schedule: upcoming events + my rides + my driving schedule
+        server.enqueue(json("[$ev1,$ev2]"))
+        server.enqueue(json("[$r1]"))
+        server.enqueue(json("[$r3]"))
         vm.setTab(1)
-        val pastState = vm.state.awaitUntil { !it.loading && it.tab == 1 }
+        val scheduleState = vm.state.awaitUntil { !it.loading && it.tab == 1 }
+        assertEquals("/api/events?scope=upcoming", server.takeRequest().path)
+        assertTrue(server.takeRequest().path!!.startsWith("/api/rides"))
+        assertTrue(server.takeRequest().path!!.startsWith("/api/driver/schedule"))
+        assertEquals(2, scheduleState.events.size)
+        assertEquals(1, scheduleState.myRides.size)
+        assertEquals(1, scheduleState.myDrives.size)
+        assertTrue(scheduleState.requestsByEvent.isEmpty())
+        vm.selectDay("2026-11-29")
+        assertEquals("2026-11-29", vm.state.value.selectedDay)
+
+        server.enqueue(json("[]"))
+        vm.setTab(2)
+        val pastState = vm.state.awaitUntil { !it.loading && it.tab == 2 }
         assertEquals("/api/events?scope=past", server.takeRequest().path)
         assertTrue(pastState.requestsByEvent.isEmpty())
+        assertTrue(pastState.myRides.isEmpty())
+        assertEquals("all", pastState.selectedDay)
+    }
+
+    @Test fun eventDetailLoadsScheduleRidesAndDriving() = runBlocking {
+        signIn()
+        server.takeRequest() // /api/auth/me
+        val goingEvent = """{"id":20,"title":"Sunday Service","starts_at":"2026-11-29 09:00:00",
+            "my_signup":{"status":"going"},"my_ride":{"id":44,"status":"confirmed"},"my_return_ride":{"id":45,"status":"pending_driver"}}"""
+        val out = """{"id":44,"status":"confirmed","pickup_at":"2026-11-29 08:20:00","area":{"id":2,"name":"PJ"},
+            "destination":"Church","event":{"id":20},"passenger":{"id":1,"name":"Test Member"}}"""
+        val ret = """{"id":45,"status":"pending_driver","pickup_at":"2026-11-29 12:00:00","leg":"return","area":{"id":2,"name":"PJ"},
+            "destination":"Home","event":{"id":20},"passenger":{"id":1,"name":"Test Member"}}"""
+        val drive = """{"id":50,"status":"confirmed","pickup_at":"2026-11-29 08:10:00","area":{"id":2,"name":"PJ"},
+            "destination":"Church","event":{"id":20},"passenger":{"id":7,"name":"Auntie"}}"""
+        val otherDrive = """{"id":51,"status":"confirmed","pickup_at":"2026-11-29 18:10:00","area":{"id":2,"name":"PJ"},
+            "destination":"Hall","event":{"id":99},"passenger":{"id":8,"name":"Uncle"}}"""
+        server.enqueue(json(goingEvent))
+        server.enqueue(json("[$out,$ret]"))
+        server.enqueue(json("[$drive,$otherDrive]"))
+
+        val vm = org.pjstatecm.graceride.ui.screens.events.EventDetailViewModel(container, 20L)
+        val state = vm.state.awaitUntil { !it.loading && it.event != null }
+        assertEquals("/api/events/20", server.takeRequest().path)
+        assertTrue(server.takeRequest().path!!.startsWith("/api/rides"))
+        assertEquals("/api/driver/schedule?from=2026-11-29&to=2026-11-29", server.takeRequest().path)
+        assertEquals(44L, state.outboundRide?.id)
+        assertEquals(45L, state.returnRide?.id)
+        assertEquals(listOf(50L), state.drivingForEvent.map { it.id })
+
+        // Not signed up: no ride or driving calls
+        val notSigned = """{"id":21,"title":"Prayer","starts_at":"2026-12-02 20:00:00"}"""
+        server.enqueue(json(notSigned))
+        val vm2 = org.pjstatecm.graceride.ui.screens.events.EventDetailViewModel(container, 21L)
+        val s2 = vm2.state.awaitUntil { !it.loading && it.event != null }
+        assertEquals("/api/events/21", server.takeRequest().path)
+        assertNull(s2.outboundRide)
+        assertTrue(s2.drivingForEvent.isEmpty())
+        assertEquals(0, server.requestCount - 5)
     }
 
     @Test fun rideNewTripTypesAndReturnAddressSwap() = runBlocking {

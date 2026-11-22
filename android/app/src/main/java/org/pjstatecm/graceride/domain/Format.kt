@@ -54,6 +54,16 @@ object KlTime {
         return dt.format(DateTimeFormatter.ofPattern("HH:mm", Locale.getDefault()))
     }
 
+    fun weekdayShort(text: String): String {
+        val dt = parse(text) ?: return text
+        return dt.format(DateTimeFormatter.ofPattern("EEE", Locale.getDefault()))
+    }
+
+    fun dayMonthShort(text: String): String {
+        val dt = parse(text) ?: return text
+        return dt.format(DateTimeFormatter.ofPattern("d MMM", Locale.getDefault()))
+    }
+
     fun displayZh(text: String): String {
         val dt = parse(text) ?: return text
         return dt.format(DateTimeFormatter.ofPattern("M月d日 EEE HH:mm", Locale.CHINESE))

@@ -129,6 +129,8 @@ pub(super) struct EventRow {
     pub(super) creator_name: String,
     pub(super) going: i64,
     pub(super) waitlist: i64,
+    pub(super) attended_count: i64,
+    pub(super) unassigned_rides: i64,
     pub(super) my_status: Option<String>,
     pub(super) my_need_ride: Option<i64>,
     pub(super) my_offer_drive: Option<i64>,
@@ -144,14 +146,17 @@ pub(super) struct EventRow {
     pub(super) area_id: Option<i64>,
     pub(super) area_name: Option<String>,
     pub(super) checkin_code: Option<String>,
+    pub(super) icon: Option<String>,
 }
 
 const EVENT_SELECT: &str = "SELECT e.id, e.title, e.kind, e.description, e.starts_at, e.location, e.capacity, e.cost_note,
     e.signup_deadline, e.status, e.created_by, c.name AS creator_name, e.photo_file_id,
-    e.attendance_enabled, e.checkin_code, e.series_id, e.mileage_claimable, e.area_id,
+    e.attendance_enabled, e.checkin_code, e.series_id, e.mileage_claimable, e.area_id, e.icon,
     (SELECT name FROM areas WHERE id = e.area_id) AS area_name,
     (SELECT COUNT(*) FROM event_signups s WHERE s.event_id=e.id AND s.status='going') AS going,
     (SELECT COUNT(*) FROM event_signups s WHERE s.event_id=e.id AND s.status='waitlist') AS waitlist,
+    (SELECT COUNT(*) FROM event_signups s WHERE s.event_id=e.id AND s.status!='cancelled' AND s.attended=1) AS attended_count,
+    (SELECT COUNT(*) FROM rides r WHERE r.event_id=e.id AND r.status='pending_driver') AS unassigned_rides,
     ms.status AS my_status, ms.need_ride AS my_need_ride, ms.offer_drive AS my_offer_drive, ms.attended AS my_attended,
     ms.as_group_id AS my_as_group_id, (SELECT name FROM groups WHERE id = ms.as_group_id) AS my_as_group, ms.pass_code AS my_pass_code,
     (SELECT string_agg(g.name, '、') FROM event_groups eg JOIN groups g ON g.id=eg.group_id WHERE eg.event_id=e.id) AS groups
@@ -161,11 +166,13 @@ const EVENT_SELECT: &str = "SELECT e.id, e.title, e.kind, e.description, e.start
 fn event_json(e: &EventRow, u: &CurrentUser) -> Value {
     let can_edit = can_manage(u, e.created_by, Act::Update);
     json!({
-        "id": e.id, "title": e.title, "kind": e.kind, "description": e.description, "starts_at": e.starts_at,
+        "id": e.id, "title": e.title, "kind": e.kind, "icon": e.icon, "description": e.description, "starts_at": e.starts_at,
         "location": e.location, "capacity": e.capacity, "cost_note": e.cost_note, "signup_deadline": e.signup_deadline,
         "status": e.status, "created_by": {"id": e.created_by, "name": e.creator_name},
         "series_id": e.series_id,
         "going": e.going, "waitlist": e.waitlist,
+        "attended_count": if can_see_signups(u, e.created_by) { Some(e.attended_count) } else { None },
+        "unassigned_rides": if can_edit || u.can(Page::AdminPlan, Act::View) { Some(e.unassigned_rides) } else { None },
         "spots_left": if e.capacity > 0 { Some((e.capacity - e.going).max(0)) } else { None },
         "my_signup": e.my_status.as_ref().map(|s| json!({
             "status": s,

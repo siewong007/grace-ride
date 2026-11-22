@@ -1,6 +1,6 @@
 import type { ReactNode } from 'react';
 import { Link } from 'react-router-dom';
-import { Calendar, CarFront, Repeat } from 'lucide-react';
+import { Calendar, CarFront, QrCode, Repeat, UserCheck } from 'lucide-react';
 
 export interface TimelineNode {
   id: string;
@@ -8,10 +8,11 @@ export interface TimelineNode {
   title: string;
   subtitle?: string;
   to?: string;
-  kind: 'ride' | 'return' | 'drive' | 'event';
+  kind: 'signup' | 'ride' | 'return' | 'drive' | 'event' | 'checkin';
   state: 'active' | 'upcoming' | 'done';
   badge?: ReactNode;
   action?: ReactNode;
+  icon?: ReactNode;
 }
 
 export interface DayOption {
@@ -22,6 +23,8 @@ export interface DayOption {
 }
 
 function nodeIcon(kind: TimelineNode['kind']) {
+  if (kind === 'signup') return <UserCheck size={15} aria-hidden="true" />;
+  if (kind === 'checkin') return <QrCode size={15} aria-hidden="true" />;
   if (kind === 'return') return <Repeat size={15} aria-hidden="true" />;
   if (kind === 'event') return <Calendar size={15} aria-hidden="true" />;
   return <CarFront size={15} aria-hidden="true" />;
@@ -69,7 +72,7 @@ export function ScheduleTimeline({
               {item.action && <div className="schedule-node-action">{item.action}</div>}
             </div>
             <div className="schedule-node-icon" aria-hidden="true">
-              {nodeIcon(item.kind)}
+              {item.icon ?? nodeIcon(item.kind)}
             </div>
           </li>
         );
@@ -118,7 +121,10 @@ export function DayStrip({
             aria-pressed={active}
             onClick={() => onSelect(d.key)}
           >
-            <span className="day-strip-weekday">{d.weekday}</span>
+            <span className="day-strip-weekday">
+              <span>{d.weekday}</span>
+              {d.count > 0 && <span className="day-strip-count">{d.count}</span>}
+            </span>
             <span className="day-strip-date">{d.dateLabel}</span>
           </button>
         );

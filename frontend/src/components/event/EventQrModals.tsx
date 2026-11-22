@@ -11,14 +11,14 @@ import {
   useConfirm,
 } from '../ui';
 import { fmtDateTime, useFormatT } from '../../format';
-import type { EventFull } from './types';
+import type { EventItem } from '../../pages/Events';
 
 export function AttendanceQrModal({
   event,
   onClose,
   onResetCode,
 }: {
-  event: EventFull;
+  event: EventItem;
   onClose: () => void;
   onResetCode: (newCode: string) => void;
 }) {
@@ -186,7 +186,7 @@ export function MemberPassQrModal({
   passCode,
   onClose,
 }: {
-  event: EventFull;
+  event: Pick<EventItem, 'id'>;
   passCode: string;
   onClose: () => void;
 }) {

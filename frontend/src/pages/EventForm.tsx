@@ -4,6 +4,7 @@ import { post, put, useApi } from '../api';
 import { useAuth } from '../auth';
 import { Button, ErrorBox, Field, Page, PageHeader, useAction } from '../components/ui';
 import { EVENT_KIND, useFormatT } from '../format';
+import { EVENT_ICONS, EventIcon } from '../eventIcon';
 import { useTranslation } from 'react-i18next';
 import { AddressInput } from '../components/AddressInput';
 import PhotoAttach from '../components/PhotoAttach';
@@ -24,6 +25,7 @@ interface ExistingEvent {
   id: number;
   title: string;
   kind: string;
+  icon?: string | null;
   description: string;
   starts_at: string;
   location: string;
@@ -56,6 +58,7 @@ export default function EventForm() {
   const [f, setF] = useState({
     title: '',
     kind: 'badminton',
+    icon: '',
     description: '',
     date: '',
     time: '',
@@ -82,6 +85,7 @@ export default function EventForm() {
     setF({
       title: existing.title,
       kind: existing.kind,
+      icon: existing.icon ?? '',
       description: existing.description,
       date: duplicateId ? '' : d,
       time: t2,
@@ -129,6 +133,7 @@ export default function EventForm() {
     const body = {
       title: f.title,
       kind: f.kind,
+      icon: f.icon.trim() || null,
       description: f.description,
       starts_at: `${f.date}T${f.time}`,
       location: f.location,
@@ -195,6 +200,71 @@ export default function EventForm() {
                 onChange={set('capacity')}
               />
             </Field>
+            <div className="full">
+              <Field as="div" label={t('icon')} hint={t('iconHint')}>
+                <div className="stack-sm">
+                  <div className="event-icon-preview">
+                    <div className="row nowrap gap-sm">
+                      <span className="event-icon-badge" aria-hidden="true">
+                        <EventIcon icon={f.icon || null} kind={f.kind} size={20} />
+                      </span>
+                      <span className="small muted">
+                        {f.icon.trim()
+                          ? Object.prototype.hasOwnProperty.call(EVENT_ICONS, f.icon.trim())
+                            ? t(`iconNames.${f.icon.trim()}`)
+                            : f.icon.trim()
+                          : t('iconDefault')}
+                      </span>
+                    </div>
+                    {f.icon.trim() && (
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        onClick={() => setF((cur) => ({ ...cur, icon: '' }))}
+                      >
+                        {t('iconReset')}
+                      </Button>
+                    )}
+                  </div>
+                  <div className="badge-icon-grid" role="radiogroup" aria-label={t('icon')}>
+                    {Object.entries(EVENT_ICONS).map(([key, item]) => {
+                      const IconComp = item.icon;
+                      const isSelected = f.icon.trim() === key;
+                      const label = t(`iconNames.${key}`);
+                      return (
+                        <button
+                          key={key}
+                          type="button"
+                          role="radio"
+                          aria-checked={isSelected}
+                          aria-label={label}
+                          title={label}
+                          className={`badge-icon-btn${isSelected ? ' on' : ''}`}
+                          onClick={() =>
+                            setF((cur) => ({ ...cur, icon: cur.icon.trim() === key ? '' : key }))
+                          }
+                        >
+                          <IconComp size={20} aria-hidden="true" />
+                        </button>
+                      );
+                    })}
+                  </div>
+                  <input
+                    className="input"
+                    type="text"
+                    maxLength={32}
+                    value={
+                      f.icon && !Object.prototype.hasOwnProperty.call(EVENT_ICONS, f.icon.trim())
+                        ? f.icon
+                        : ''
+                    }
+                    placeholder={t('iconCustomPlaceholder')}
+                    aria-label={t('iconCustomPlaceholder')}
+                    onChange={(ev) => setF((cur) => ({ ...cur, icon: ev.target.value }))}
+                  />
+                </div>
+              </Field>
+            </div>
             <Field label={t('date')}>
               <input
                 className="input"

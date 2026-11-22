@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { Link, useParams } from 'react-router-dom';
+import { Link, useParams, useSearchParams } from 'react-router-dom';
 import {
   Calendar,
   Car,
@@ -35,6 +35,7 @@ import {
   useConfirm,
 } from '../components/ui';
 import { EVENT_KIND, fmtDateTime, fmtTime, RIDE_STATUS, RIDE_STATUS_PASSENGER, useFormatT } from '../format';
+import { EventIcon } from '../eventIcon';
 import { useTranslation } from 'react-i18next';
 import VisitorInvites from '../components/VisitorInvites';
 import { DriveRequests } from '../components/drive/DriveRequests';
@@ -58,6 +59,7 @@ export default function EventDetail() {
   const { t } = useTranslation('eventDetail');
   const ft = useFormatT();
   const { id } = useParams();
+  const [searchParams] = useSearchParams();
   const { can, me } = useAuth();
   // Planning the whole event's transport needs its own permission (the server checks too).
   const isStaff = can('admin_plan');
@@ -73,7 +75,7 @@ export default function EventDetail() {
   const [joinAs, setJoinAs] = useState<number | null>(null);
   const [joinAsMissing, setJoinAsMissing] = useState(false);
   const [showTransportPrompt, setShowTransportPrompt] = useState(false);
-  const [showDriveRequests, setShowDriveRequests] = useState(false);
+  const [showDriveRequests, setShowDriveRequests] = useState(() => searchParams.get('drive') === '1');
   const { data: signups, reload: reloadS } = useApi<Signup[]>(id ? `/events/${id}/signups` : null);
   const eventDay = e?.starts_at ? e.starts_at.slice(0, 10) : '';
   const shouldLoadDriverDay = Boolean(
@@ -100,15 +102,16 @@ export default function EventDetail() {
   const fullOutbound = e.my_ride ? upcomingRidesList.find((r) => r.id === e.my_ride!.id) : undefined;
   const fullReturn = e.my_return_ride ? upcomingRidesList.find((r) => r.id === e.my_return_ride!.id) : undefined;
 
-  const eventTimelineNodes: TimelineNode[] = [];
-  if (going && (e.my_ride || myDrivingForEvent.length > 0)) {
-    const preDrives = myDrivingForEvent
-      .filter((r) => r.leg !== 'return' && r.pickup_at <= e.starts_at)
-      .sort((a, b) => a.pickup_at.localeCompare(b.pickup_at));
-    const postDrives = myDrivingForEvent
-      .filter((r) => r.leg === 'return' || r.pickup_at > e.starts_at)
-      .sort((a, b) => a.pickup_at.localeCompare(b.pickup_at));
+  const hasTransport = Boolean(e.my_ride || myDrivingForEvent.length > 0);
+  const preDrives = myDrivingForEvent
+    .filter((r) => r.leg !== 'return' && r.pickup_at <= e.starts_at)
+    .sort((a, b) => a.pickup_at.localeCompare(b.pickup_at));
+  const postDrives = myDrivingForEvent
+    .filter((r) => r.leg === 'return' || r.pickup_at > e.starts_at)
+    .sort((a, b) => a.pickup_at.localeCompare(b.pickup_at));
 
+  const eventTimelineNodes: TimelineNode[] = [];
+  const appendTransportTimeline = (doneAll: boolean) => {
     if (e.my_ride) {
       eventTimelineNodes.push({
         id: `out-${e.my_ride.id}`,
@@ -117,11 +120,10 @@ export default function EventDetail() {
         subtitle: fullOutbound?.driver?.name,
         to: `/rides/${e.my_ride.id}`,
         kind: 'ride',
-        state: e.my_ride.status === 'completed' ? 'done' : 'active',
+        state: doneAll || e.my_ride.status === 'completed' ? 'done' : 'active',
         badge: <StatusPill map={RIDE_STATUS_PASSENGER} status={e.my_ride.status} />,
       });
     }
-
     for (const r of preDrives) {
       const riderName = r.is_proxy && r.proxy ? r.proxy.rider_name : r.passenger.name;
       eventTimelineNodes.push({
@@ -131,20 +133,24 @@ export default function EventDetail() {
         subtitle: `${r.area.name} → ${r.destination}`,
         to: `/rides/${r.id}`,
         kind: 'drive',
-        state: r.status === 'completed' ? 'done' : 'active',
+        state: doneAll || r.status === 'completed' ? 'done' : 'active',
         badge: <StatusPill map={RIDE_STATUS} status={r.status} />,
       });
     }
-
     eventTimelineNodes.push({
       id: `evt-${e.id}`,
       timeLabel: fmtTime(e.starts_at, ft),
-      title: e.title,
+      title: t('workflowEventStart'),
       subtitle: e.location,
       kind: 'event',
-      state: 'active',
+      icon: <EventIcon icon={e.icon} kind={e.kind} size={15} />,
+      state: doneAll ? 'done' : 'active',
+      badge: doneAll ? (
+        <Pill tone="neutral">{e.status === 'cancelled' ? t('statusCancelled') : t('statusFinished')}</Pill>
+      ) : attendanceEnabled && e.my_signup?.attended === 1 ? (
+        <Pill tone="success">{t('statusAttended')}</Pill>
+      ) : undefined,
     });
-
     for (const r of postDrives) {
       const riderName = r.is_proxy && r.proxy ? r.proxy.rider_name : r.passenger.name;
       eventTimelineNodes.push({
@@ -154,11 +160,10 @@ export default function EventDetail() {
         subtitle: `${r.area.name} → ${r.destination}`,
         to: `/rides/${r.id}`,
         kind: 'return',
-        state: r.status === 'completed' ? 'done' : 'upcoming',
+        state: doneAll || r.status === 'completed' ? 'done' : 'upcoming',
         badge: <StatusPill map={RIDE_STATUS} status={r.status} />,
       });
     }
-
     if (e.my_return_ride && e.my_return_ride.id !== e.my_ride?.id) {
       eventTimelineNodes.push({
         id: `ret-${e.my_return_ride.id}`,
@@ -167,10 +172,109 @@ export default function EventDetail() {
         subtitle: fullReturn?.driver?.name,
         to: `/rides/${e.my_return_ride.id}`,
         kind: 'return',
-        state: e.my_return_ride.status === 'completed' ? 'done' : 'upcoming',
+        state: doneAll || e.my_return_ride.status === 'completed' ? 'done' : 'upcoming',
         badge: <StatusPill map={RIDE_STATUS_PASSENGER} status={e.my_return_ride.status} />,
       });
     }
+  };
+
+  if (!open) {
+    appendTransportTimeline(true);
+  } else if (!signed) {
+    eventTimelineNodes.push(
+      {
+        id: 'wf-signup',
+        timeLabel: t('workflowRsvpStep'),
+        title: isFull ? t('joinWaitlist') : t('workflowSignupTitle'),
+        subtitle: e.signup_deadline
+          ? t('workflowSignupDeadline', { time: fmtDateTime(e.signup_deadline, ft) })
+          : t('signUpForRide'),
+        kind: 'signup',
+        state: 'active',
+      },
+      {
+        id: 'wf-transport',
+        timeLabel: t('workflowBeforeStep'),
+        title: t('transportation'),
+        subtitle: t('workflowTransportUnlocks'),
+        kind: 'ride',
+        state: 'upcoming',
+      },
+      {
+        id: `evt-${e.id}`,
+        timeLabel: fmtTime(e.starts_at, ft),
+        title: t('workflowEventStart'),
+        subtitle: e.location,
+        kind: 'event',
+        icon: <EventIcon icon={e.icon} kind={e.kind} size={15} />,
+        state: 'upcoming',
+      },
+    );
+    if (attendanceEnabled) {
+      eventTimelineNodes.push({
+        id: 'wf-checkin',
+        timeLabel: t('workflowAtVenueStep'),
+        title: t('workflowCheckinTitle'),
+        subtitle: t('workflowCheckinHint'),
+        kind: 'checkin',
+        state: 'upcoming',
+      });
+    }
+  } else if (!going) {
+    eventTimelineNodes.push(
+      {
+        id: 'wf-waitlist',
+        timeLabel: t('workflowRsvpStep'),
+        title: t('waitlist'),
+        subtitle: t('workflowWaitlistNote'),
+        kind: 'signup',
+        state: 'active',
+        badge: <Pill tone="warning">{t('waitlist')}</Pill>,
+      },
+      {
+        id: `evt-${e.id}`,
+        timeLabel: fmtTime(e.starts_at, ft),
+        title: t('workflowEventStart'),
+        subtitle: e.location,
+        kind: 'event',
+        icon: <EventIcon icon={e.icon} kind={e.kind} size={15} />,
+        state: 'upcoming',
+      },
+    );
+  } else if (!hasTransport) {
+    eventTimelineNodes.push(
+      {
+        id: 'wf-transport',
+        timeLabel: t('workflowBeforeStep'),
+        title: t('transportation'),
+        subtitle: t('workflowTransportPending'),
+        kind: 'ride',
+        state: 'active',
+      },
+      {
+        id: `evt-${e.id}`,
+        timeLabel: fmtTime(e.starts_at, ft),
+        title: t('workflowEventStart'),
+        subtitle: e.location,
+        kind: 'event',
+        icon: <EventIcon icon={e.icon} kind={e.kind} size={15} />,
+        state: 'active',
+        badge: <Pill tone="success">{t('going')}</Pill>,
+      },
+    );
+    if (attendanceEnabled) {
+      eventTimelineNodes.push({
+        id: 'wf-checkin',
+        timeLabel: t('workflowAtVenueStep'),
+        title: t('workflowCheckinTitle'),
+        subtitle: e.my_signup?.attended === 1 ? t('alreadyAttendedNote') : t('workflowCheckinHint'),
+        kind: 'checkin',
+        state: e.my_signup?.attended === 1 ? 'done' : 'upcoming',
+        badge: e.my_signup?.attended === 1 ? <Pill tone="success">{t('statusAttended')}</Pill> : undefined,
+      });
+    }
+  } else {
+    appendTransportTimeline(false);
   }
 
   const active = Array.isArray(signups) ? signups.filter((s) => s.status !== 'cancelled') : [];
@@ -286,6 +390,13 @@ export default function EventDetail() {
 
         {signed && myGroup && <p className="small muted">{t('joiningAsName', { name: myGroup })}</p>}
 
+        <div className="stack-xs">
+          <span className="small muted">
+            {going && myDrivingForEvent.length > 0 && !e.my_ride ? t('youAreDriving') : t('eventSchedule')}
+          </span>
+          <ScheduleTimeline compact items={eventTimelineNodes} />
+        </div>
+
         {open && !signed && (
           <>
             {mustChoose && (
@@ -331,7 +442,7 @@ export default function EventDetail() {
               <span className="small bold">{t('transportation')}</span>
             </div>
 
-            {showTransportPrompt && !e.my_ride && myDrivingForEvent.length === 0 && (
+            {showTransportPrompt && !hasTransport && (
               <Notice tone="info" className="stack-sm">
                 <div>
                   <strong>{t('transportPromptTitle')}</strong>
@@ -340,24 +451,18 @@ export default function EventDetail() {
               </Notice>
             )}
 
-            {eventTimelineNodes.length > 0 ? (
-              <div className="stack-xs">
-                <span className="small muted">
-                  {myDrivingForEvent.length > 0 && !e.my_ride ? t('youAreDriving') : t('eventSchedule')}
-                </span>
-                <ScheduleTimeline compact items={eventTimelineNodes} />
-                <div className="btn-row">
-                  {can('rides', 'create') && (
-                    <Button variant="ghost" size="sm" to={`/rides/new?event=${e.id}&proxy=1`} icon={<Users size={16} />}>
-                      {t('bookForFamily')}
-                    </Button>
-                  )}
-                  {myDrivingForEvent.length > 0 && (
-                    <Button variant="secondary" size="sm" to="/drive">
-                      {t('openItinerary')}
-                    </Button>
-                  )}
-                </div>
+            {hasTransport ? (
+              <div className="btn-row">
+                {can('rides', 'create') && (
+                  <Button variant="ghost" size="sm" to={`/rides/new?event=${e.id}&proxy=1`} icon={<Users size={16} />}>
+                    {t('bookForFamily')}
+                  </Button>
+                )}
+                {myDrivingForEvent.length > 0 && (
+                  <Button variant="secondary" size="sm" to="/drive">
+                    {t('openItinerary')}
+                  </Button>
+                )}
               </div>
             ) : (
               <div className="btn-row">
@@ -385,7 +490,7 @@ export default function EventDetail() {
               </div>
             )}
 
-            {(e.my_ride || myDrivingForEvent.length > 0) && can('drive', 'create') && (
+            {hasTransport && can('drive', 'create') && (
               <div>
                 <Button variant="ghost" size="sm" onClick={() => setShowDriveRequests((v) => !v)}>
                   {showDriveRequests ? t('hideDriveRequests') : t('offerDrive')}
@@ -393,7 +498,7 @@ export default function EventDetail() {
               </div>
             )}
 
-            {!e.my_ride && myDrivingForEvent.length === 0 && (
+            {!hasTransport && (
               <p className="muted small">{t('signupNote')}</p>
             )}
           </div>
@@ -456,7 +561,10 @@ export default function EventDetail() {
       <section className="detail-section stack">
         <div className="row between nowrap">
           <h3>{t('aboutEvent')}</h3>
-          <span className="muted small">{ft(EVENT_KIND[e.kind]?.label ?? e.kind)}</span>
+          <span className="muted small event-kind-inline">
+            <EventIcon icon={e.icon} kind={e.kind} size={15} />
+            <span>{ft(EVENT_KIND[e.kind]?.label ?? e.kind)}</span>
+          </span>
         </div>
 
         {e.description && (

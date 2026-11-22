@@ -264,7 +264,7 @@ describe('Events page', () => {
     expect(screen.getByText(/signed up/i)).toBeInTheDocument();
   });
 
-  it('expands an event row inline to show contextual transport or 1-tap sign up', async () => {
+  it('shows inline transport alert and 1-tap sign up directly on event rows', async () => {
     const user = userEvent.setup();
     const savedUpcoming = mockApiMap['/events?scope=upcoming'];
     mockApiMap['/events?scope=upcoming'] = [
@@ -285,18 +285,14 @@ describe('Events page', () => {
         </MemoryRouter>
       );
 
-      const expandBtns = screen.getAllByRole('button', { name: /show event actions/i });
-      expect(expandBtns).toHaveLength(2);
-
-      // First row is signed up without transport -> offers I need a ride + I can drive
-      await user.click(expandBtns[0]);
+      // First row is signed up without transport -> offers I need a ride + I can drive inline
       expect(screen.getByText(/transportation not arranged yet/i)).toBeInTheDocument();
       expect(screen.getByRole('link', { name: /i need a ride/i })).toHaveAttribute('href', '/rides/new?event=10');
 
-      // Second row is open -> offers 1-tap Sign up
-      await user.click(expandBtns[1]);
+      // Second row is open -> offers 1-tap Sign up inline and transitions to transport follow-up modal
       await user.click(screen.getByRole('button', { name: /^sign up$/i }));
       expect(post).toHaveBeenCalledWith('/events/12/signup', {});
+      expect(await screen.findByText(/how are you getting there\?/i)).toBeInTheDocument();
     } finally {
       mockApiMap['/events?scope=upcoming'] = savedUpcoming;
     }
@@ -398,8 +394,12 @@ describe('EventDetail page', () => {
     );
 
     expect(screen.getByText('Badminton Night')).toBeInTheDocument();
+    expect(screen.getByText(/your event schedule/i)).toBeInTheDocument();
+    expect(screen.getByText(/not arranged yet/i)).toBeInTheDocument();
+    expect(screen.getByText(/event starts/i)).toBeInTheDocument();
     expect(screen.getByRole('button', { name: /withdraw/i })).toBeInTheDocument();
     expect(screen.getByRole('link', { name: /need a ride/i })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /^i can drive$/i })).toBeInTheDocument();
     expect(screen.getByText(/manage event/i)).toBeInTheDocument();
   });
 
@@ -417,7 +417,7 @@ describe('EventDetail page', () => {
     expect(screen.getByText(/ride requests for this event/i)).toBeInTheDocument();
   });
 
-  it('offers no driving before the member has signed up', () => {
+  it('shows the event workflow timeline before signup while hiding ride and drive actions', () => {
     render(
       <MemoryRouter initialEntries={['/events/11']}>
         <Routes>
@@ -425,6 +425,10 @@ describe('EventDetail page', () => {
         </Routes>
       </MemoryRouter>
     );
+    expect(screen.getByText(/your event schedule/i)).toBeInTheDocument();
+    expect(screen.getByText(/sign up to attend/i)).toBeInTheDocument();
+    expect(screen.getByText(/event starts/i)).toBeInTheDocument();
+    expect(screen.queryByRole('link', { name: /need a ride/i })).not.toBeInTheDocument();
     expect(screen.queryByRole('button', { name: /^i can drive$/i })).not.toBeInTheDocument();
     expect(screen.queryByRole('link', { name: /drive/i })).not.toBeInTheDocument();
   });

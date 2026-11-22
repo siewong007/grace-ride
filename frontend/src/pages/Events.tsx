@@ -1,15 +1,23 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { Link, useNavigate } from 'react-router-dom';
-import { ChevronDown, Plus, QrCode } from 'lucide-react';
+import { Link, useSearchParams } from 'react-router-dom';
+import { Calendar, Plus, QrCode } from 'lucide-react';
 import { api, post, useApi } from '../api';
 import { useAuth } from '../auth';
+import { downloadIcs } from '../calendar';
 import type { Ride } from '../components/RideCard';
+import { EventManageCard } from '../components/event/EventManageCard';
+import { AttendanceQrModal, MemberPassQrModal } from '../components/event/EventQrModals';
 import {
   DayStrip,
   ScheduleTimeline,
   type DayOption,
   type TimelineNode,
 } from '../components/event/EventScheduleTimeline';
+import { EventScannerModal, UniversalCheckinScannerModal } from '../components/event/EventScannerModals';
+import { EventTodayBanner } from '../components/event/EventTodayBanner';
+import { QuickRsvpModal } from '../components/event/QuickRsvpModal';
+import type { EventFull } from '../components/event/types';
+import PostEventReimbursementModal from '../components/events/PostEventReimbursementModal';
 import {
   BackToTop,
   Button,
@@ -21,8 +29,8 @@ import {
   PageHeader,
   Pill,
   Tabs,
-  useAction,
   useInfiniteScroll,
+  useToast,
 } from '../components/ui';
 import {
   EVENT_KIND,
@@ -36,13 +44,14 @@ import {
   todayStr,
   useFormatT,
 } from '../format';
+import { EventIcon } from '../eventIcon';
 import { useTranslation } from 'react-i18next';
-import { UniversalCheckinScannerModal } from '../components/event/EventScannerModals';
 
 export interface EventItem {
   id: number;
   title: string;
   kind: string;
+  icon?: string | null;
   description: string;
   starts_at: string;
   location: string;
@@ -54,7 +63,13 @@ export interface EventItem {
   going: number;
   waitlist: number;
   spots_left: number | null;
-  my_signup: { status: string; need_ride: boolean; offer_drive: boolean; attended: number | null; pass_code?: string | null } | null;
+  my_signup: {
+    status: string;
+    need_ride: boolean;
+    offer_drive: boolean;
+    attended: number | null;
+    pass_code?: string | null;
+  } | null;
   groups: string;
   can_manage: boolean;
   /** May cancel it (the events page's delete permission). */
@@ -67,6 +82,10 @@ export interface EventItem {
   mileage_claimable?: boolean;
   /** Check-in code for QR attendance (returned only to organiser). */
   checkin_code?: string | null;
+  /** Number of attended signups (returned only to authorised event organisers/staff). */
+  attended_count?: number | null;
+  /** Number of pending_driver rides (returned only to authorised event organisers/staff). */
+  unassigned_rides?: number | null;
 }
 
 interface EventsPage {
@@ -74,10 +93,26 @@ interface EventsPage {
   next_before: string | null;
 }
 
+type ScopeTab = 'upcoming' | 'my' | 'past' | 'managing';
+type UpcomingFilter = 'all' | 'open' | 'going' | 'needs_transport' | 'rides_needed';
+
 interface DatedTimelineNode {
   sortAt: string;
-  dayKey: string;
   node: TimelineNode;
+}
+
+interface OutingBlock {
+  id: string;
+  sortAt: string;
+  event?: EventItem;
+  items: TimelineNode[];
+}
+
+interface QuickRsvpState {
+  event: EventItem;
+  step: 'group' | 'transport';
+  loadingChoices: boolean;
+  joinChoices?: { id: number; name: string }[];
 }
 
 function monthParts(ym: string, locale: string) {
@@ -108,34 +143,84 @@ function dayChipParts(dayKey: string, locale: string, ft: (k: string) => string)
 export default function Events() {
   const { t, i18n } = useTranslation('events');
   const ft = useFormatT();
-  const nav = useNavigate();
-  const { can } = useAuth();
-  const { busy: actionBusy, run } = useAction();
+  const { can, me } = useAuth();
+  const toast = useToast();
+  const [searchParams, setSearchParams] = useSearchParams();
 
-  const [scope, setScope] = useState<'upcoming' | 'my' | 'past' | 'managing'>('upcoming');
-  const [selectedMonth, setSelectedMonth] = useState<string>('all');
-  const [selectedDay, setSelectedDay] = useState<string>('all');
-  const [expandedId, setExpandedId] = useState<number | null>(null);
-  const [showScanModal, setShowScanModal] = useState(false);
+  const canCreateEvent = can('events', 'create');
+  const canDrive = can('drive');
+  const canRides = can('rides');
 
-  const listScope = scope === 'my' ? 'upcoming' : scope;
-  const upcomingOrManaging = useApi<EventItem[]>(listScope !== 'past' ? `/events?scope=${listScope}` : null);
+  const rawTab = searchParams.get('tab');
+  const scope: ScopeTab =
+    rawTab === 'my' || rawTab === 'past' || (rawTab === 'managing' && canCreateEvent)
+      ? rawTab
+      : 'upcoming';
+
+  const rawFilter = searchParams.get('filter');
+  const statusFilter: UpcomingFilter =
+    rawFilter === 'open' ||
+    rawFilter === 'going' ||
+    rawFilter === 'needs_transport' ||
+    (rawFilter === 'rides_needed' && canDrive)
+      ? rawFilter
+      : 'all';
+
+  const selectedMonth = searchParams.get('month') || 'all';
+  const selectedDay = searchParams.get('day') || 'all';
+  const pastQuery = searchParams.get('q') ?? '';
+  const pastAttendedOnly = searchParams.get('attended') === '1';
+
+  const updateParams = useCallback(
+    (patch: Record<string, string | null>) => {
+      setSearchParams(
+        (prev) => {
+          const next = new URLSearchParams(prev);
+          for (const [k, v] of Object.entries(patch)) {
+            if (v == null || v === '') next.delete(k);
+            else next.set(k, v);
+          }
+          return next;
+        },
+        { replace: true },
+      );
+    },
+    [setSearchParams],
+  );
+
+  const setScope = (next: ScopeTab) => updateParams({ tab: next === 'upcoming' ? null : next });
+
+  const [actionBusy, setActionBusy] = useState(false);
+  const [showUniversalScan, setShowUniversalScan] = useState(false);
+  const [scanEvent, setScanEvent] = useState<EventFull | null>(null);
+  const [passModalEvent, setPassModalEvent] = useState<EventItem | null>(null);
+  const [qrManageEvent, setQrManageEvent] = useState<EventItem | null>(null);
+  const [reimbEventId, setReimbEventId] = useState<number | null>(null);
+  const [quickRsvp, setQuickRsvp] = useState<QuickRsvpState | null>(null);
+
+  const upcomingRes = useApi<EventItem[]>('/events?scope=upcoming');
+  const managingRes = useApi<EventItem[]>(canCreateEvent ? '/events?scope=managing' : null);
+
   const loadTransport = scope === 'upcoming' || scope === 'my';
-  const myRidesRes = useApi<Ride[]>(can('rides') && loadTransport ? '/rides?scope=upcoming' : null);
+  const myRidesRes = useApi<Ride[]>(canRides && loadTransport ? '/rides?scope=upcoming' : null);
 
   const today = todayStr();
   const horizonDate = new Date();
   horizonDate.setDate(horizonDate.getDate() + 60);
   const horizon = localDate(horizonDate);
   const myDrivingRes = useApi<Ride[]>(
-    can('drive') && loadTransport ? `/driver/schedule?from=${today}&to=${horizon}` : null,
+    canDrive && loadTransport ? `/driver/schedule?from=${today}&to=${horizon}` : null,
   );
-  const openRequests = useApi<Ride[]>(can('drive') && scope === 'upcoming' ? '/driver/requests?mine_areas=true' : null);
+  const openRequests = useApi<Ride[]>(
+    canDrive && scope === 'upcoming' ? '/driver/requests?mine_areas=true' : null,
+  );
 
   const myRides = useMemo(
     () =>
       (Array.isArray(myRidesRes.data) ? myRidesRes.data : []).filter(
-        (r) => r.viewer?.is_passenger !== false && !['cancelled', 'no_show', 'alt_transport'].includes(r.status),
+        (r) =>
+          r.viewer?.is_passenger !== false &&
+          !['cancelled', 'no_show', 'alt_transport'].includes(r.status),
       ),
     [myRidesRes.data],
   );
@@ -184,6 +269,7 @@ export default function Events() {
   }, [openRequests.data]);
 
   const [pastEvents, setPastEvents] = useState<EventItem[]>([]);
+  const [pastLoaded, setPastLoaded] = useState(false);
   const [nextPast, setNextPast] = useState<string | null>(null);
   const [loadingPast, setLoadingPast] = useState(false);
   const [loadingMore, setLoadingMore] = useState(false);
@@ -207,6 +293,7 @@ export default function Events() {
       });
       setNextPast(nb);
       setPastError(null);
+      setPastLoaded(true);
     } catch (e) {
       if (mine === latestPast.current) setPastError((e as Error).message);
     } finally {
@@ -234,19 +321,88 @@ export default function Events() {
     disabled: scope !== 'past',
   });
 
-  const activeEvents = useMemo(
-    () => (scope === 'past' ? pastEvents : Array.isArray(upcomingOrManaging.data) ? upcomingOrManaging.data : []),
-    [scope, pastEvents, upcomingOrManaging.data],
+  const upcomingLoaded = Array.isArray(upcomingRes.data);
+  const upcomingEvents = useMemo(
+    () => (Array.isArray(upcomingRes.data) ? upcomingRes.data : []),
+    [upcomingRes.data],
   );
-  const loading = scope === 'past' ? loadingPast : upcomingOrManaging.loading;
-  const error = scope === 'past' ? pastError : upcomingOrManaging.error;
+  const managingEvents = useMemo(
+    () => (Array.isArray(managingRes.data) ? managingRes.data : []),
+    [managingRes.data],
+  );
+
+  const myUpcomingEvents = useMemo(
+    () => upcomingEvents.filter((e) => e.my_signup && e.my_signup.status !== 'cancelled'),
+    [upcomingEvents],
+  );
+
+  const loading =
+    scope === 'past'
+      ? loadingPast && !pastLoaded
+      : scope === 'managing'
+        ? managingRes.loading && !Array.isArray(managingRes.data)
+        : upcomingRes.loading && !upcomingLoaded;
+
+  const error =
+    scope === 'past' ? pastError : scope === 'managing' ? managingRes.error : upcomingRes.error;
+
   const dateLocale = i18n.language?.startsWith('zh') ? 'zh-CN' : 'en-GB';
+
+  const getTransportSummary = useCallback(
+    (e: EventItem): string | null => {
+      if (e.my_signup?.status !== 'going') return null;
+      const ridePair = ridesByEvent.get(e.id);
+      const drives = drivesByEvent.get(e.id) ?? [];
+      if (ridePair?.outbound) {
+        const statusText = ft(
+          RIDE_STATUS_PASSENGER[ridePair.outbound.status]?.label ?? ridePair.outbound.status,
+        );
+        return ridePair.outbound.driver?.name
+          ? t('transportRideWithDriver', { driver: ridePair.outbound.driver.name, status: statusText })
+          : t('transportRideSummary', { status: statusText });
+      }
+      if (drives.length > 0) {
+        return t('transportDrivingCount', { count: drives.length });
+      }
+      return t('transportNotArranged');
+    },
+    [ridesByEvent, drivesByEvent, ft, t],
+  );
+
+  const todayEvent = useMemo(
+    () =>
+      upcomingEvents.find(
+        (e) =>
+          e.status === 'published' &&
+          e.my_signup?.status === 'going' &&
+          e.starts_at.slice(0, 10) === today,
+      ) ?? null,
+    [upcomingEvents, today],
+  );
+
+  const todayBannerVisible = Boolean(todayEvent) && (scope === 'upcoming' || scope === 'my');
+  const todayBannerHasScan = Boolean(
+    todayBannerVisible &&
+      todayEvent &&
+      todayEvent.attendance_enabled !== false &&
+      todayEvent.my_signup?.attended !== 1,
+  );
+  const hasAnyAttendanceEvent =
+    !upcomingLoaded ||
+    upcomingEvents.length === 0 ||
+    upcomingEvents.some((e) => e.attendance_enabled !== false);
+  const showHeaderScan = hasAnyAttendanceEvent && !todayBannerHasScan;
+
+  const ridesNeededEventCount = useMemo(() => {
+    if (!canDrive) return 0;
+    return upcomingEvents.filter((e) => (openRequestsCountByEvent[e.id] ?? 0) > 0).length;
+  }, [canDrive, upcomingEvents, openRequestsCountByEvent]);
 
   const months = useMemo(() => {
     if (scope !== 'upcoming') return [];
     const seen = new Set<string>();
     const list: string[] = [];
-    for (const e of activeEvents) {
+    for (const e of upcomingEvents) {
       const ym = e.starts_at.slice(0, 7);
       if (ym && !seen.has(ym)) {
         seen.add(ym);
@@ -254,20 +410,58 @@ export default function Events() {
       }
     }
     return list;
-  }, [scope, activeEvents]);
+  }, [scope, upcomingEvents]);
 
-  const effectiveMonth = selectedMonth !== 'all' && months.includes(selectedMonth) ? selectedMonth : 'all';
+  const effectiveMonth =
+    selectedMonth !== 'all' && months.includes(selectedMonth) ? selectedMonth : 'all';
+
+  const hasTransportForEvent = useCallback(
+    (e: EventItem) => {
+      const pair = ridesByEvent.get(e.id);
+      const drives = drivesByEvent.get(e.id) ?? [];
+      return Boolean(pair?.outbound || pair?.returnRide || drives.length > 0);
+    },
+    [ridesByEvent, drivesByEvent],
+  );
+
+  const filteredUpcoming = useMemo(() => {
+    return upcomingEvents.filter((e) => {
+      if (effectiveMonth !== 'all' && !e.starts_at.startsWith(effectiveMonth)) return false;
+      if (statusFilter === 'open') {
+        const signed = Boolean(e.my_signup && e.my_signup.status !== 'cancelled');
+        const deadlinePassed = e.signup_deadline
+          ? parseLocal(e.signup_deadline).getTime() < Date.now()
+          : false;
+        const isFull = e.capacity > 0 && e.going >= e.capacity;
+        return e.status === 'published' && !signed && !deadlinePassed && !isFull;
+      }
+      if (statusFilter === 'going') {
+        return e.my_signup?.status === 'going';
+      }
+      if (statusFilter === 'needs_transport') {
+        return (
+          e.status === 'published' &&
+          e.my_signup?.status === 'going' &&
+          !hasTransportForEvent(e)
+        );
+      }
+      if (statusFilter === 'rides_needed') {
+        return (openRequestsCountByEvent[e.id] ?? 0) > 0;
+      }
+      return true;
+    });
+  }, [
+    upcomingEvents,
+    effectiveMonth,
+    statusFilter,
+    hasTransportForEvent,
+    openRequestsCountByEvent,
+  ]);
 
   const monthGroups = useMemo(() => {
-    const filtered =
-      scope === 'upcoming' && effectiveMonth !== 'all'
-        ? activeEvents.filter((e) => e.starts_at.startsWith(effectiveMonth))
-        : activeEvents;
-    if (scope !== 'upcoming') {
-      return [{ monthKey: 'all', items: filtered }];
-    }
+    if (scope !== 'upcoming') return [];
     const groups: { monthKey: string; items: EventItem[] }[] = [];
-    for (const e of filtered) {
+    for (const e of filteredUpcoming) {
       const ym = e.starts_at.slice(0, 7) || 'other';
       const last = groups[groups.length - 1];
       if (!last || last.monthKey !== ym) {
@@ -277,67 +471,21 @@ export default function Events() {
       }
     }
     return groups;
-  }, [scope, effectiveMonth, activeEvents]);
+  }, [scope, filteredUpcoming]);
 
-  const myScheduleGroups = useMemo(() => {
+  const myScheduleDays = useMemo(() => {
     if (scope !== 'my') return [];
-    const nodes: DatedTimelineNode[] = [];
-    const seenRideIds = new Set<number>();
 
-    const myUpcomingEvents = activeEvents.filter(
-      (e) => e.my_signup && e.my_signup.status !== 'cancelled',
-    );
-    for (const e of myUpcomingEvents) {
-      const ridePair = ridesByEvent.get(e.id);
-      const drives = drivesByEvent.get(e.id) ?? [];
-      const hasTransport = Boolean(ridePair?.outbound || ridePair?.returnRide || drives.length > 0);
-      const going = e.my_signup?.status === 'going';
-      const action =
-        e.status === 'published' && going && !hasTransport && (can('rides', 'create') || can('drive', 'create')) ? (
-          <div className="btn-row">
-            {can('rides', 'create') && (
-              <Button variant="secondary" size="sm" to={`/rides/new?event=${e.id}`}>
-                {t('needRideBtn')}
-              </Button>
-            )}
-            {can('drive', 'create') && (
-              <Button variant="ghost" size="sm" to={`/events/${e.id}`}>
-                {t('offerDriveBtn')}
-              </Button>
-            )}
-          </div>
-        ) : undefined;
+    const consumedRideIds = new Set<number>();
+    const consumedDriveIds = new Set<number>();
+    const blocksByDay = new Map<string, OutingBlock[]>();
 
-      nodes.push({
-        sortAt: e.starts_at,
-        dayKey: e.starts_at.slice(0, 10),
-        node: {
-          id: `event-${e.id}`,
-          timeLabel: fmtTime(e.starts_at, ft),
-          title: e.title,
-          subtitle: `${e.location}${going && !hasTransport ? ` · ${t('transportNotArranged')}` : ''}`,
-          to: `/events/${e.id}`,
-          kind: 'event',
-          state: going ? 'active' : 'upcoming',
-          badge: going ? (
-            <Pill tone="success">{t('signedUp')}</Pill>
-          ) : (
-            <Pill tone="warning">{t('waitlist')}</Pill>
-          ),
-          action,
-        },
-      });
-    }
-
-    for (const r of myRides) {
-      if (seenRideIds.has(r.id)) continue;
-      seenRideIds.add(r.id);
+    const toRideNode = (r: Ride): DatedTimelineNode => {
       const isReturn = r.leg === 'return';
       const statusText = ft(RIDE_STATUS_PASSENGER[r.status]?.label ?? r.status);
       const subtitle = r.driver?.name ? `${r.driver.name} · ${r.area.name}` : r.area.name;
-      nodes.push({
+      return {
         sortAt: r.pickup_at,
-        dayKey: r.pickup_at.slice(0, 10),
         node: {
           id: `ride-${r.id}`,
           timeLabel: fmtTime(r.pickup_at, ft),
@@ -345,18 +493,22 @@ export default function Events() {
           subtitle,
           to: `/rides/${r.id}`,
           kind: isReturn ? 'return' : 'ride',
-          state: r.status === 'completed' ? 'done' : r.status === 'confirmed' || r.status === 'in_progress' ? 'active' : 'upcoming',
+          state:
+            r.status === 'completed'
+              ? 'done'
+              : r.status === 'confirmed' || r.status === 'in_progress'
+                ? 'active'
+                : 'upcoming',
           badge: <Pill tone={RIDE_STATUS_PASSENGER[r.status]?.tone ?? 'neutral'}>{statusText}</Pill>,
         },
-      });
-    }
+      };
+    };
 
-    for (const r of myDrives) {
+    const toDriveNode = (r: Ride): DatedTimelineNode => {
       const riderName = r.is_proxy && r.proxy ? r.proxy.rider_name : r.passenger.name;
       const statusText = ft(RIDE_STATUS[r.status]?.label ?? r.status);
-      nodes.push({
+      return {
         sortAt: r.pickup_at,
-        dayKey: r.pickup_at.slice(0, 10),
         node: {
           id: `drive-${r.id}`,
           timeLabel: fmtTime(r.pickup_at, ft),
@@ -364,44 +516,198 @@ export default function Events() {
           subtitle: `${r.area.name} → ${r.destination}`,
           to: `/rides/${r.id}`,
           kind: 'drive',
-          state: r.status === 'completed' ? 'done' : r.status === 'confirmed' || r.status === 'in_progress' ? 'active' : 'upcoming',
+          state:
+            r.status === 'completed'
+              ? 'done'
+              : r.status === 'confirmed' || r.status === 'in_progress'
+                ? 'active'
+                : 'upcoming',
           badge: <Pill tone={RIDE_STATUS[r.status]?.tone ?? 'neutral'}>{statusText}</Pill>,
         },
+      };
+    };
+
+    for (const e of myUpcomingEvents) {
+      const dayKey = e.starts_at.slice(0, 10);
+      if (!dayKey) continue;
+
+      const linkedRides = myRides.filter((r) => r.event?.id === e.id);
+      const linkedDrives = myDrives.filter((r) => r.event?.id === e.id);
+      for (const r of linkedRides) consumedRideIds.add(r.id);
+      for (const r of linkedDrives) consumedDriveIds.add(r.id);
+
+      const hasTransport = linkedRides.length > 0 || linkedDrives.length > 0;
+      const going = e.my_signup?.status === 'going';
+      const attendanceEnabled = e.attendance_enabled !== false;
+      const attended = attendanceEnabled && e.my_signup?.attended === 1;
+      const canShowPass = attendanceEnabled && going && !attended && Boolean(e.my_signup?.pass_code);
+
+      const action =
+        canShowPass ||
+        (e.status === 'published' && going && !hasTransport && (can('rides', 'create') || can('drive', 'create'))) ? (
+          <div className="btn-row">
+            {canShowPass && (
+              <Button
+                variant="secondary"
+                size="sm"
+                icon={<QrCode size={14} />}
+                onClick={() => setPassModalEvent(e)}
+              >
+                {t('showMyPass')}
+              </Button>
+            )}
+            {e.status === 'published' && going && !hasTransport && can('rides', 'create') && (
+              <Button variant="primary" size="sm" to={`/rides/new?event=${e.id}`}>
+                {t('needRideBtn')}
+              </Button>
+            )}
+            {e.status === 'published' && going && !hasTransport && can('drive', 'create') && (
+              <Button variant="ghost" size="sm" to={`/events/${e.id}?drive=1`}>
+                {t('offerDriveBtn')}
+              </Button>
+            )}
+          </div>
+        ) : undefined;
+
+      const datedNodes: DatedTimelineNode[] = [
+        ...linkedRides.map(toRideNode),
+        ...linkedDrives.map(toDriveNode),
+        {
+          sortAt: e.starts_at,
+          node: {
+            id: `event-${e.id}`,
+            timeLabel: fmtTime(e.starts_at, ft),
+            title: e.title,
+            subtitle: `${e.location}${going && !hasTransport ? ` · ${t('transportNotArranged')}` : ''}`,
+            to: `/events/${e.id}`,
+            kind: 'event',
+            icon: <EventIcon icon={e.icon} kind={e.kind} size={15} />,
+            state: attended ? 'done' : going ? 'active' : 'upcoming',
+            badge: attended ? (
+              <Pill tone="success">{t('statusAttended', { ns: 'eventDetail' })}</Pill>
+            ) : going ? (
+              <Pill tone="success">{t('signedUp')}</Pill>
+            ) : (
+              <Pill tone="warning">{t('waitlist')}</Pill>
+            ),
+            action,
+          },
+        },
+      ];
+
+      datedNodes.sort((a, b) => a.sortAt.localeCompare(b.sortAt));
+
+      const block: OutingBlock = {
+        id: `outing-${e.id}`,
+        sortAt: datedNodes[0]?.sortAt ?? e.starts_at,
+        event: e,
+        items: datedNodes.map((d) => d.node),
+      };
+      blocksByDay.set(dayKey, [...(blocksByDay.get(dayKey) ?? []), block]);
+    }
+
+    const standaloneByDay = new Map<string, DatedTimelineNode[]>();
+    for (const r of myRides) {
+      if (consumedRideIds.has(r.id)) continue;
+      consumedRideIds.add(r.id);
+      const dk = r.pickup_at.slice(0, 10);
+      if (!dk) continue;
+      standaloneByDay.set(dk, [...(standaloneByDay.get(dk) ?? []), toRideNode(r)]);
+    }
+    for (const r of myDrives) {
+      if (consumedDriveIds.has(r.id)) continue;
+      consumedDriveIds.add(r.id);
+      const dk = r.pickup_at.slice(0, 10);
+      if (!dk) continue;
+      standaloneByDay.set(dk, [...(standaloneByDay.get(dk) ?? []), toDriveNode(r)]);
+    }
+    for (const [dk, nodes] of standaloneByDay.entries()) {
+      nodes.sort((a, b) => a.sortAt.localeCompare(b.sortAt));
+      const block: OutingBlock = {
+        id: `standalone-${dk}`,
+        sortAt: nodes[0]?.sortAt ?? dk,
+        items: nodes.map((n) => n.node),
+      };
+      blocksByDay.set(dk, [...(blocksByDay.get(dk) ?? []), block]);
+    }
+
+    return [...blocksByDay.entries()]
+      .sort(([a], [b]) => a.localeCompare(b))
+      .map(([dayKey, blocks]) => {
+        const sortedBlocks = [...blocks].sort((a, b) => a.sortAt.localeCompare(b.sortAt));
+        const count = sortedBlocks.reduce((sum, blk) => sum + blk.items.length, 0);
+        return { dayKey, blocks: sortedBlocks, count };
       });
-    }
-
-    nodes.sort((a, b) => a.sortAt.localeCompare(b.sortAt));
-
-    const byDay = new Map<string, TimelineNode[]>();
-    for (const item of nodes) {
-      if (!item.dayKey) continue;
-      byDay.set(item.dayKey, [...(byDay.get(item.dayKey) ?? []), item.node]);
-    }
-    return [...byDay.entries()].map(([dayKey, items]) => ({ dayKey, items }));
-  }, [scope, activeEvents, myRides, myDrives, ridesByEvent, drivesByEvent, can, t, ft]);
+  }, [scope, myUpcomingEvents, myRides, myDrives, can, t, ft]);
 
   const scheduleDays: DayOption[] = useMemo(
     () =>
-      myScheduleGroups.map((g) => {
+      myScheduleDays.map((g) => {
         const parts = dayChipParts(g.dayKey, dateLocale, ft);
-        return { key: g.dayKey, weekday: parts.weekday, dateLabel: parts.dateLabel, count: g.items.length };
+        return { key: g.dayKey, weekday: parts.weekday, dateLabel: parts.dateLabel, count: g.count };
       }),
-    [myScheduleGroups, dateLocale, ft],
+    [myScheduleDays, dateLocale, ft],
   );
 
   const effectiveDay =
-    selectedDay !== 'all' && myScheduleGroups.some((g) => g.dayKey === selectedDay) ? selectedDay : 'all';
+    selectedDay !== 'all' && myScheduleDays.some((g) => g.dayKey === selectedDay)
+      ? selectedDay
+      : 'all';
 
-  const visibleScheduleGroups =
-    effectiveDay === 'all' ? myScheduleGroups : myScheduleGroups.filter((g) => g.dayKey === effectiveDay);
+  const visibleScheduleDays =
+    effectiveDay === 'all'
+      ? myScheduleDays
+      : myScheduleDays.filter((g) => g.dayKey === effectiveDay);
 
-  const handleQuickSignUp = async (eventId: number) => {
-    const ok = await run(
-      () => post(`/events/${eventId}/signup`, {}).then(() => upcomingOrManaging.reload()),
-      t('signedUpSuccess'),
-    );
-    if (!ok) {
-      nav(`/events/${eventId}`);
+  const filteredPast = useMemo(() => {
+    const q = pastQuery.trim().toLowerCase();
+    return pastEvents.filter((e) => {
+      if (pastAttendedOnly && e.my_signup?.attended !== 1) return false;
+      if (q) {
+        const hay = `${e.title} ${e.location} ${e.groups}`.toLowerCase();
+        if (!hay.includes(q)) return false;
+      }
+      return true;
+    });
+  }, [pastEvents, pastQuery, pastAttendedOnly]);
+
+  const handleQuickSignUp = async (e: EventItem) => {
+    setActionBusy(true);
+    try {
+      const res = await post<{ ok?: boolean; status?: string }>(`/events/${e.id}/signup`, {});
+      upcomingRes.reload();
+      if (res?.status === 'waitlist') {
+        toast.success(t('joinedWaitlistSuccess'));
+      } else {
+        toast.success(t('signedUpSuccess'));
+        if (can('rides', 'create') || can('drive', 'create')) {
+          setQuickRsvp({ event: e, step: 'transport', loadingChoices: false });
+        }
+      }
+    } catch (err: unknown) {
+      const code =
+        typeof err === 'object' && err !== null && 'code' in err
+          ? (err as { code?: string }).code
+          : undefined;
+      if (code === 'JOIN_AS_REQUIRED') {
+        setQuickRsvp({ event: e, step: 'group', loadingChoices: true });
+        try {
+          const detail = await api<EventFull>(`/events/${e.id}`);
+          setQuickRsvp({
+            event: e,
+            step: 'group',
+            loadingChoices: false,
+            joinChoices: detail.join_as ?? [],
+          });
+        } catch (fetchErr) {
+          setQuickRsvp(null);
+          toast.error((fetchErr as Error).message);
+        }
+      } else {
+        toast.error((err as Error).message);
+      }
+    } finally {
+      setActionBusy(false);
     }
   };
 
@@ -409,55 +715,66 @@ export default function Events() {
     const d = parseLocal(e.starts_at);
     const monthName = d.toLocaleDateString(dateLocale, { month: 'short' });
     const dayNum = d.getDate();
-    const isExpanded = expandedId === e.id;
     const going = e.my_signup?.status === 'going';
     const signed = Boolean(e.my_signup && e.my_signup.status !== 'cancelled');
     const ridePair = ridesByEvent.get(e.id);
     const drives = drivesByEvent.get(e.id) ?? [];
-    const deadlinePassed = e.signup_deadline ? parseLocal(e.signup_deadline).getTime() < Date.now() : false;
+    const hasTransport = Boolean(ridePair?.outbound || ridePair?.returnRide || drives.length > 0);
+    const deadlineMs = e.signup_deadline ? parseLocal(e.signup_deadline).getTime() : null;
+    const nowMs = Date.now();
+    const deadlinePassed = deadlineMs != null ? deadlineMs < nowMs : false;
     const isFull = e.capacity > 0 && e.going >= e.capacity;
     const canQuickSignUp =
       scope === 'upcoming' &&
       e.status === 'published' &&
       !signed &&
       !deadlinePassed &&
-      !isFull &&
       can('events', 'view');
 
-    const transportSummary = (() => {
-      if (!going) return null;
-      if (ridePair?.outbound) {
-        const statusText = ft(RIDE_STATUS_PASSENGER[ridePair.outbound.status]?.label ?? ridePair.outbound.status);
-        return ridePair.outbound.driver?.name
-          ? t('transportRideWithDriver', { driver: ridePair.outbound.driver.name, status: statusText })
-          : t('transportRideSummary', { status: statusText });
-      }
-      if (drives.length > 0) {
-        return t('transportDrivingCount', { count: drives.length });
-      }
-      return t('transportNotArranged');
-    })();
+    const isClosingSoon =
+      scope === 'upcoming' &&
+      !signed &&
+      !deadlinePassed &&
+      deadlineMs != null &&
+      deadlineMs - nowMs <= 24 * 60 * 60 * 1000;
+    const urgencyLabel =
+      isClosingSoon && e.signup_deadline
+        ? e.signup_deadline.slice(0, 10) === today
+          ? t('closesToday')
+          : t('closesSoon', { time: fmtTime(e.signup_deadline, ft) })
+        : null;
+
+    const transportSummary = getTransportSummary(e);
+    const openReqCount = scope === 'upcoming' && canDrive ? openRequestsCountByEvent[e.id] ?? 0 : 0;
+
+    const showActionsBlock =
+      scope === 'upcoming' &&
+      (canQuickSignUp ||
+        openReqCount > 0 ||
+        (going && (hasTransport || e.status === 'published')));
 
     return (
       <div key={e.id} className="event-row-wrap">
         <div className="event-row">
           <Link to={`/events/${e.id}`} className="event-card-link">
-            {e.photo_file_id ? (
-              <img src={`/api/files/${e.photo_file_id}`} alt="" className="event-card-photo" loading="lazy" />
-            ) : (
-              <div className="event-date-col" aria-hidden="true">
-                <span className="event-date-day">{dayNum}</span>
-                <span className="event-date-month">{monthName}</span>
-              </div>
-            )}
+            <div className="event-date-col" aria-hidden="true">
+              <span className="event-date-day">{dayNum}</span>
+              <span className="event-date-month">{monthName}</span>
+            </div>
             <div className="grow min-w-0 event-card-main">
               <div className="bold clamp-2">{e.title}</div>
               <div className="muted small clamp-2">
                 {fmtDateTime(e.starts_at, ft)} · {e.location}
               </div>
               <div className="muted small ellipsis">
-                {ft(EVENT_KIND[e.kind]?.label ?? e.kind)}{e.groups ? ` · ${e.groups}` : ''}
+                <span className="event-kind-inline">
+                  <EventIcon icon={e.icon} kind={e.kind} size={14} />
+                  <span>{ft(EVENT_KIND[e.kind]?.label ?? e.kind)}</span>
+                </span>
+                {e.groups ? ` · ${e.groups}` : ''}
+                {e.cost_note ? ` · ${e.cost_note}` : ''}
               </div>
+              {urgencyLabel && <div className="small event-deadline-urgent">{urgencyLabel}</div>}
             </div>
             <div className="event-card-side">
               {e.status !== 'published' ? (
@@ -466,85 +783,134 @@ export default function Events() {
                 <Pill tone="success">{t('signedUp')}</Pill>
               ) : e.my_signup?.status === 'waitlist' ? (
                 <Pill tone="warning">{t('waitlist')}</Pill>
-              ) : null}
-              {e.my_signup?.need_ride && !ridePair?.outbound && drives.length === 0 ? (
-                <span className="muted small">{t('needRide')}</span>
-              ) : scope === 'upcoming' && can('drive') && openRequestsCountByEvent[e.id] ? (
-                <span className="small text-primary bold">{t('needRideCount', { count: openRequestsCountByEvent[e.id] })}</span>
-              ) : e.status === 'published' && !e.my_signup ? (
-                e.capacity > 0 && e.spots_left != null ? (
-                  <span className="muted small nowrap">{e.spots_left > 0 ? t('spotsLeft', { n: e.spots_left }) : t('full')}</span>
-                ) : (
-                  <span className="muted small nowrap">{e.going} {t('peopleAttend')}</span>
-                )
-              ) : null}
+              ) : e.capacity > 0 && e.spots_left != null ? (
+                <span className="muted small nowrap">
+                  {e.spots_left > 0 ? t('spotsLeft', { n: e.spots_left }) : t('full')}
+                </span>
+              ) : (
+                <span className="muted small nowrap">
+                  {e.going} {t('peopleAttend')}
+                </span>
+              )}
+              {e.photo_file_id && (
+                <img
+                  src={`/api/files/${e.photo_file_id}`}
+                  alt=""
+                  className="event-card-photo"
+                  loading="lazy"
+                />
+              )}
             </div>
           </Link>
-
-          {scope === 'upcoming' && (
-            <button
-              type="button"
-              className="icon-btn sm event-expand-btn"
-              aria-expanded={isExpanded}
-              aria-label={isExpanded ? t('collapseDetails') : t('expandDetails')}
-              onClick={() => setExpandedId((cur) => (cur === e.id ? null : e.id))}
-            >
-              <ChevronDown size={18} aria-hidden="true" />
-            </button>
-          )}
         </div>
 
-        {scope === 'upcoming' && isExpanded && (
-          <div className="event-row-drawer">
-            {(e.description || e.cost_note) && (
-              <p className="muted small clamp-2">
-                {[e.description, e.cost_note].filter(Boolean).join(' · ')}
-              </p>
+        {showActionsBlock && (
+          <div className="event-row-actions">
+            {openReqCount > 0 && (
+              <Link to={`/events/${e.id}?drive=1`} className="event-driver-chip">
+                {t('needRideCount', { count: openReqCount })}
+              </Link>
             )}
-            {transportSummary && <p className="small">{transportSummary}</p>}
-            <div className="btn-row">
-              {canQuickSignUp ? (
-                <Button variant="primary" size="sm" disabled={actionBusy} onClick={() => handleQuickSignUp(e.id)}>
-                  {t('quickSignUp')}
+
+            {canQuickSignUp && (
+              <div className="btn-row">
+                <Button
+                  variant={isFull ? 'secondary' : 'primary'}
+                  size="sm"
+                  disabled={actionBusy}
+                  onClick={() => handleQuickSignUp(e)}
+                >
+                  {isFull ? t('joinWaitlist', { ns: 'eventDetail' }) : t('quickSignUp')}
                 </Button>
-              ) : going && ridePair?.outbound ? (
-                <>
-                  <Button variant="primary" size="sm" to={`/rides/${ridePair.outbound.id}`}>
+              </div>
+            )}
+
+            {going && ridePair?.outbound && (
+              <div className="row between wrap gap-sm">
+                {transportSummary && <span className="small muted">{transportSummary}</span>}
+                <div className="btn-row">
+                  <Button variant="secondary" size="sm" to={`/rides/${ridePair.outbound.id}`}>
                     {t('openRide')}
                   </Button>
                   {ridePair.returnRide && ridePair.returnRide.id !== ridePair.outbound.id && (
-                    <Button variant="secondary" size="sm" to={`/rides/${ridePair.returnRide.id}`}>
+                    <Button variant="ghost" size="sm" to={`/rides/${ridePair.returnRide.id}`}>
                       {t('openReturnRide')}
                     </Button>
                   )}
-                </>
-              ) : going && drives.length > 0 ? (
-                <Button variant="primary" size="sm" to="/drive">
+                </div>
+              </div>
+            )}
+
+            {going && !ridePair?.outbound && drives.length > 0 && (
+              <div className="row between wrap gap-sm">
+                {transportSummary && <span className="small muted">{transportSummary}</span>}
+                <Button variant="secondary" size="sm" to="/drive">
                   {t('openItinerary')}
                 </Button>
-              ) : going && e.status === 'published' ? (
-                <>
+              </div>
+            )}
+
+            {going && !hasTransport && e.status === 'published' && (
+              <div className="event-transport-alert">
+                <span className="small bold">{t('transportNotArranged')}</span>
+                <div className="btn-row">
                   {can('rides', 'create') && (
                     <Button variant="primary" size="sm" to={`/rides/new?event=${e.id}`}>
                       {t('needRideBtn')}
                     </Button>
                   )}
                   {can('drive', 'create') && (
-                    <Button variant="secondary" size="sm" to={`/events/${e.id}`}>
+                    <Button variant="secondary" size="sm" to={`/events/${e.id}?drive=1`}>
                       {t('offerDriveBtn')}
                     </Button>
                   )}
-                </>
-              ) : null}
-              <Button variant="ghost" size="sm" to={`/events/${e.id}`}>
-                {t('viewDetails')}
-              </Button>
-            </div>
+                </div>
+              </div>
+            )}
           </div>
         )}
       </div>
     );
   };
+
+  const tabItems = [
+    {
+      value: 'upcoming',
+      label: t('upcoming'),
+      count: upcomingLoaded ? upcomingEvents.length : undefined,
+    },
+    {
+      value: 'my',
+      label: t('mySchedule'),
+      count: upcomingLoaded ? myUpcomingEvents.length : undefined,
+    },
+    {
+      value: 'past',
+      label: t('past'),
+      count: pastLoaded ? pastEvents.length : undefined,
+    },
+    ...(canCreateEvent
+      ? [
+          {
+            value: 'managing',
+            label: t('managing'),
+            count: Array.isArray(managingRes.data) ? managingRes.data.length : undefined,
+          },
+        ]
+      : []),
+  ];
+
+  const todayBannerEl = todayBannerVisible && todayEvent ? (
+    <EventTodayBanner
+      event={todayEvent}
+      transportSummary={getTransportSummary(todayEvent)}
+      outboundRideId={ridesByEvent.get(todayEvent.id)?.outbound?.id}
+      drivingCount={(drivesByEvent.get(todayEvent.id) ?? []).length}
+      canRequestRide={can('rides', 'create')}
+      onShowPass={() => setPassModalEvent(todayEvent)}
+      onScan={() => setScanEvent(todayEvent as EventFull)}
+    />
+  ) : null;
 
   return (
     <Page width="medium">
@@ -553,68 +919,141 @@ export default function Events() {
           title={t('title')}
           subtitle={t('desc')}
           actions={
-            <div className="page-head-action-pair">
-              <Button
-                variant="ghost"
-                size="sm"
-                icon={<QrCode size={16} />}
-                onClick={() => setShowScanModal(true)}
-              >
-                <span className="page-head-action-label">{t('scanToAttend', { ns: 'eventDetail' })}</span>
-              </Button>
-              {can('events', 'create') && (
-                <Button variant="primary" to="/events/new" icon={<Plus size={18} />}>
-                  <span className="page-head-action-label">{t('create')}</span>
-                </Button>
-              )}
-            </div>
+            showHeaderScan || canCreateEvent ? (
+              <div className="page-head-action-pair">
+                {showHeaderScan && (
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    icon={<QrCode size={16} />}
+                    onClick={() => setShowUniversalScan(true)}
+                  >
+                    <span className="page-head-action-label">
+                      {t('scanToAttend', { ns: 'eventDetail' })}
+                    </span>
+                  </Button>
+                )}
+                {canCreateEvent && (
+                  <Button variant="primary" to="/events/new" icon={<Plus size={18} />}>
+                    <span className="page-head-action-label">{t('create')}</span>
+                  </Button>
+                )}
+              </div>
+            ) : undefined
           }
         />
 
         <Tabs
           value={scope}
-          onChange={(v) => setScope(v as 'upcoming' | 'my' | 'past' | 'managing')}
-          items={[
-            { value: 'upcoming', label: t('upcoming') },
-            { value: 'my', label: t('mySchedule') },
-            { value: 'past', label: t('past') },
-            ...(can('events', 'create') ? [{ value: 'managing', label: t('managing') }] : []),
-          ]}
+          onChange={(v) => setScope(v as ScopeTab)}
+          items={tabItems}
         />
 
-        {scope === 'upcoming' && months.length >= 2 && (
+        {todayBannerEl}
+
+        {scope === 'upcoming' && upcomingEvents.length > 0 && (
           <div className="events-month-bar" data-no-swipe-back data-no-swipe-next>
             <button
               type="button"
-              className={`chip ${effectiveMonth === 'all' ? 'on' : ''}`}
-              aria-pressed={effectiveMonth === 'all'}
-              onClick={() => setSelectedMonth('all')}
+              className={`chip ${statusFilter === 'all' && effectiveMonth === 'all' ? 'on' : ''}`}
+              aria-pressed={statusFilter === 'all' && effectiveMonth === 'all'}
+              onClick={() => updateParams({ filter: null, month: null })}
             >
-              {t('allMonths')}
+              {t('filterAll')}
             </button>
-            {months.map((ym) => (
+            <button
+              type="button"
+              className={`chip ${statusFilter === 'open' ? 'on' : ''}`}
+              aria-pressed={statusFilter === 'open'}
+              onClick={() => updateParams({ filter: statusFilter === 'open' ? null : 'open' })}
+            >
+              {t('filterOpen')}
+            </button>
+            <button
+              type="button"
+              className={`chip ${statusFilter === 'going' ? 'on' : ''}`}
+              aria-pressed={statusFilter === 'going'}
+              onClick={() => updateParams({ filter: statusFilter === 'going' ? null : 'going' })}
+            >
+              {t('filterGoing')}
+            </button>
+            <button
+              type="button"
+              className={`chip ${statusFilter === 'needs_transport' ? 'on' : ''}`}
+              aria-pressed={statusFilter === 'needs_transport'}
+              onClick={() =>
+                updateParams({ filter: statusFilter === 'needs_transport' ? null : 'needs_transport' })
+              }
+            >
+              {t('filterNeedsTransport')}
+            </button>
+            {canDrive && ridesNeededEventCount > 0 && (
               <button
-                key={ym}
                 type="button"
-                className={`chip ${effectiveMonth === ym ? 'on' : ''}`}
-                aria-pressed={effectiveMonth === ym}
-                onClick={() => setSelectedMonth(ym)}
+                className={`chip ${statusFilter === 'rides_needed' ? 'on' : ''}`}
+                aria-pressed={statusFilter === 'rides_needed'}
+                onClick={() =>
+                  updateParams({ filter: statusFilter === 'rides_needed' ? null : 'rides_needed' })
+                }
               >
-                {monthParts(ym, dateLocale).short}
+                {t('filterRidesNeeded', { count: ridesNeededEventCount })}
               </button>
-            ))}
+            )}
+            {months.length >= 2 && (
+              <>
+                <span className="events-filter-sep" aria-hidden="true" />
+                {months.map((ym) => (
+                  <button
+                    key={ym}
+                    type="button"
+                    className={`chip ${effectiveMonth === ym ? 'on' : ''}`}
+                    aria-pressed={effectiveMonth === ym}
+                    onClick={() => updateParams({ month: effectiveMonth === ym ? null : ym })}
+                  >
+                    {monthParts(ym, dateLocale).short}
+                  </button>
+                ))}
+              </>
+            )}
+          </div>
+        )}
+
+        {scope === 'past' && (
+          <div className="events-past-tools">
+            <input
+              type="search"
+              className="input events-past-search"
+              placeholder={t('searchPastPlaceholder')}
+              aria-label={t('searchPastPlaceholder')}
+              value={pastQuery}
+              onChange={(ev) => updateParams({ q: ev.target.value || null })}
+            />
+            <button
+              type="button"
+              className={`chip ${pastAttendedOnly ? 'on' : ''}`}
+              aria-pressed={pastAttendedOnly}
+              onClick={() => updateParams({ attended: pastAttendedOnly ? null : '1' })}
+            >
+              {t('attendedOnly')}
+            </button>
           </div>
         )}
 
         <ErrorBox
           error={error}
-          onRetry={() => (scope === 'past' ? loadPast(null) : upcomingOrManaging.reload())}
+          onRetry={() =>
+            scope === 'past'
+              ? loadPast(null)
+              : scope === 'managing'
+                ? managingRes.reload()
+                : upcomingRes.reload()
+          }
         />
 
         {loading ? (
           <CardSkeleton count={3} />
         ) : scope === 'my' ? (
-          myScheduleGroups.length === 0 ? (
+          myScheduleDays.length === 0 ? (
             <EmptyState
               title={t('emptyScheduleTitle')}
               description={t('emptyScheduleDesc')}
@@ -630,55 +1069,192 @@ export default function Events() {
                 <DayStrip
                   days={scheduleDays}
                   selectedDay={effectiveDay}
-                  onSelect={setSelectedDay}
+                  onSelect={(day) => updateParams({ day: day === 'all' ? null : day })}
                   allLabel={t('allDays')}
                   ariaLabel={t('mySchedule')}
                 />
               )}
-              {visibleScheduleGroups.map((g) => (
-                <section key={g.dayKey} className="stack-xs">
+              {visibleScheduleDays.map((day) => (
+                <section key={day.dayKey} className="stack-sm">
                   {effectiveDay === 'all' && (
-                    <div className="events-month-head">{fmtDay(`${g.dayKey}T00:00`, ft)}</div>
+                    <div className="events-month-head">{fmtDay(`${day.dayKey}T00:00`, ft)}</div>
                   )}
-                  <ScheduleTimeline items={g.items} />
+                  {day.blocks.map((block) => (
+                    <div key={block.id} className="outing-block">
+                      {block.event && (
+                        <div className="outing-block-head">
+                          <span className="small muted event-kind-inline">
+                            <EventIcon icon={block.event.icon} kind={block.event.kind} size={14} />
+                            <span>
+                              {ft(EVENT_KIND[block.event.kind]?.label ?? block.event.kind)}
+                              {block.event.groups ? ` · ${block.event.groups}` : ''}
+                            </span>
+                          </span>
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            icon={<Calendar size={14} />}
+                            onClick={() =>
+                              downloadIcs(
+                                {
+                                  title: block.event!.title,
+                                  description: block.event!.description,
+                                  location: block.event!.location,
+                                  startsAt: block.event!.starts_at,
+                                },
+                                `${block.event!.title}.ics`,
+                              )
+                            }
+                          >
+                            {t('addToCalendar', { ns: 'eventDetail' })}
+                          </Button>
+                        </div>
+                      )}
+                      <ScheduleTimeline items={block.items} />
+                    </div>
+                  ))}
                 </section>
               ))}
             </div>
           )
-        ) : !activeEvents.length ? (
-          <EmptyState
-            title={t('none')}
-            action={
-              can('events', 'create') ? (
-                <Button variant="primary" to="/events/new" icon={<Plus size={18} />}>
-                  {t('create')}
+        ) : scope === 'managing' ? (
+          !managingEvents.length ? (
+            <EmptyState
+              title={t('none')}
+              action={
+                canCreateEvent ? (
+                  <Button variant="primary" to="/events/new" icon={<Plus size={18} />}>
+                    {t('create')}
+                  </Button>
+                ) : undefined
+              }
+            />
+          ) : (
+            <div className="stack-sm">
+              {managingEvents.map((e) => {
+                const canPlan = can('admin_plan') && (can('admin_dashboard') || e.can_manage);
+                const canReimb =
+                  (e.created_by?.id === me?.id && can('events', 'update')) ||
+                  can('admin_events') ||
+                  can('admin_plan') ||
+                  can('admin_rides');
+                return (
+                  <EventManageCard
+                    key={e.id}
+                    event={e}
+                    canPlan={canPlan}
+                    canReimb={canReimb}
+                    onOpenQr={setQrManageEvent}
+                    onOpenReimb={(ev) => setReimbEventId(ev.id)}
+                  />
+                );
+              })}
+            </div>
+          )
+        ) : scope === 'past' ? (
+          !pastEvents.length ? (
+            <EmptyState title={t('none')} />
+          ) : !filteredPast.length ? (
+            <EmptyState
+              title={t('pastEmptySearch')}
+              action={
+                <Button
+                  variant="secondary"
+                  onClick={() => updateParams({ q: null, attended: null })}
+                >
+                  {t('showAllEvents')}
                 </Button>
-              ) : undefined
-            }
-          />
-        ) : (
-          <div className="stack">
-            {monthGroups.map((grp) => (
-              <div key={grp.monthKey} className="stack-xs">
-                {scope === 'upcoming' && monthGroups.length >= 2 && grp.monthKey !== 'all' && (
-                  <div className="events-month-head">{monthParts(grp.monthKey, dateLocale).long}</div>
-                )}
-                <div className="list">{grp.items.map(renderEventRow)}</div>
-              </div>
-            ))}
-            {scope === 'past' && (
+              }
+            />
+          ) : (
+            <div className="stack">
+              <div className="list">{filteredPast.map(renderEventRow)}</div>
               <InfiniteSentinel
                 hasMore={nextPast != null}
                 loading={loadingMore}
                 sentinelRef={sentinelRef}
                 empty={!pastEvents.length}
               />
-            )}
+            </div>
+          )
+        ) : !upcomingEvents.length ? (
+          <EmptyState
+            title={t('none')}
+            action={
+              canCreateEvent ? (
+                <Button variant="primary" to="/events/new" icon={<Plus size={18} />}>
+                  {t('create')}
+                </Button>
+              ) : undefined
+            }
+          />
+        ) : !filteredUpcoming.length ? (
+          <EmptyState
+            title={t('filterEmptyTitle')}
+            description={t('filterEmptyDesc')}
+            action={
+              <Button variant="secondary" onClick={() => updateParams({ filter: null, month: null })}>
+                {t('showAllEvents')}
+              </Button>
+            }
+          />
+        ) : (
+          <div className="stack">
+            {monthGroups.map((grp) => (
+              <div key={grp.monthKey} className="stack-xs">
+                {monthGroups.length >= 2 && grp.monthKey !== 'other' && (
+                  <div className="events-month-head">{monthParts(grp.monthKey, dateLocale).long}</div>
+                )}
+                <div className="list">{grp.items.map(renderEventRow)}</div>
+              </div>
+            ))}
           </div>
         )}
       </div>
-      {showScanModal && (
-        <UniversalCheckinScannerModal onClose={() => setShowScanModal(false)} />
+
+      {showUniversalScan && (
+        <UniversalCheckinScannerModal onClose={() => setShowUniversalScan(false)} />
+      )}
+      {scanEvent && (
+        <EventScannerModal
+          event={scanEvent}
+          onClose={() => setScanEvent(null)}
+          onSuccess={() => {
+            setScanEvent(null);
+            upcomingRes.reload();
+          }}
+        />
+      )}
+      {passModalEvent && passModalEvent.my_signup?.pass_code && (
+        <MemberPassQrModal
+          event={passModalEvent}
+          passCode={passModalEvent.my_signup.pass_code}
+          onClose={() => setPassModalEvent(null)}
+        />
+      )}
+      {qrManageEvent && (
+        <AttendanceQrModal
+          event={qrManageEvent}
+          onClose={() => setQrManageEvent(null)}
+          onResetCode={() => managingRes.reload()}
+        />
+      )}
+      {reimbEventId != null && (
+        <PostEventReimbursementModal
+          eventId={reimbEventId}
+          onClose={() => setReimbEventId(null)}
+          onSuccess={() => managingRes.reload()}
+        />
+      )}
+      {quickRsvp && (
+        <QuickRsvpModal
+          event={quickRsvp.event}
+          initialStep={quickRsvp.step}
+          joinChoices={quickRsvp.joinChoices}
+          loadingChoices={quickRsvp.loadingChoices}
+          onCompleteSignup={() => upcomingRes.reload()}
+          onClose={() => setQuickRsvp(null)}
+        />
       )}
       <BackToTop />
     </Page>

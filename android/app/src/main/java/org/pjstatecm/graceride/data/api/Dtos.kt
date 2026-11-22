@@ -243,6 +243,7 @@ data class EventItem(
     @SerialName("spots_left") val spotsLeft: Long? = null,
     @SerialName("my_signup") val mySignup: MySignup? = null,
     @SerialName("my_ride") val myRide: EventRideRef? = null,
+    @SerialName("my_return_ride") val myReturnRide: EventRideRef? = null,
     /** Display names of the target groups (a string in event_json, not an array). */
     val groups: String = "",
     @SerialName("photo_file_id") val photoFileId: Long? = null,
