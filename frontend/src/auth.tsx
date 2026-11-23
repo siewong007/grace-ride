@@ -1,6 +1,7 @@
 import { createContext, ReactNode, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react';
 import { api, subscribe } from './api';
 import { clearOfflineSnapshots } from './offlineSnapshot';
+import { syncAppBadge } from './pushNotifications';
 import type { Act, Can, PageKey } from './perms';
 
 export interface Me {
@@ -73,6 +74,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     refresh();
     const onUnauth = () => {
       prevUnreadRef.current = null;
+      syncAppBadge(0);
       clearOfflineSnapshots();
       try {
         localStorage.removeItem('gr_autolock_mins');
@@ -135,6 +137,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }, [pushOptIn]);
 
   useEffect(() => {
+    syncAppBadge(me?.unread ?? 0);
     const unread = me?.unread;
     if (unread === undefined || me == null) {
       prevUnreadRef.current = null;

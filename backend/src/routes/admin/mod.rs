@@ -2,7 +2,7 @@
 //! Roles themselves are edited in `routes::roles`.
 
 use axum::{
-    extract::State,
+    extract::{DefaultBodyLimit, State},
     routing::{delete, get, post, put},
     Json, Router,
 };
@@ -67,6 +67,11 @@ pub fn router() -> Router<AppState> {
             "/admin/settings/fares",
             get(fares::list_fares).put(fares::put_fare),
         )
+        .route(
+            "/admin/settings/fares/bulk",
+            put(fares::bulk_put_fares).layer(DefaultBodyLimit::max(1024 * 1024)),
+        )
+        .route("/admin/settings/fares/export", get(fares::export_fares_csv))
         .route("/admin/settings/fares/{id}", delete(fares::delete_fare))
         .route(
             "/admin/settings/system",

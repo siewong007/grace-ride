@@ -3,6 +3,7 @@ import { render, screen, fireEvent, waitFor } from '@testing-library/react';
 import { Link, MemoryRouter } from 'react-router-dom';
 import { del, put, post } from '../api';
 import { _setInstalledForTesting, _setDeferredPromptForTesting, BeforeInstallPromptEvent } from '../pwaInstall';
+import { _resetPushStateForTesting } from '../pushNotifications';
 import Profile from './Profile';
 
 const baseMe = {
@@ -175,6 +176,24 @@ const profileStrings: Record<string, string> = {
   installAppGuideTitle: 'Add App to Home Screen (No App Store Needed)',
   installAppInstalled: 'Added to Home Screen',
   installAppInstalledDesc: 'Currently running as a standalone mobile app with full-screen experience.',
+  enableBrowserPush: 'Enable browser notifications',
+  enableNotifications: 'Enable Notifications',
+  pushEnabled: 'Browser push alerts enabled.',
+  pushEnabledLocal: 'Browser notification permission granted.',
+  pushUnsupported: 'Browser notifications are not supported on this device.',
+  pushDisabledDevice: 'Browser push disconnected on this device.',
+  pushNeedsInstallIos: 'On iPhone and iPad, add Grace Ride to your Home Screen first, then open the installed app and tap Enable Notifications.',
+  pushInstallGuideAction: 'How to add to Home Screen',
+  pushDeniedIos: 'You previously chose Don’t Allow. Open iPhone Settings → Notifications → Grace Ride and turn on Allow Notifications.',
+  pushDeniedAndroid: 'Notifications are blocked. Open Settings → Notifications (or Chrome site settings) and allow notifications for Grace Ride.',
+  pushDeniedDesktop: 'Notifications are blocked in your browser. Use the address bar site settings to allow Notifications.',
+  pushDismissed: 'Permission prompt was closed. Tap Enable Notifications and choose Allow to turn on alerts.',
+  installAppStep2NotifTitle: 'Step 2: Allow notifications',
+  installAppStep2NotifDesc: 'Tap Enable Notifications below, then choose Allow when your phone displays the system permission dialog.',
+  installAppStep2NotifDone: 'Notifications are enabled on this device.',
+  installAppIosStep4: 'Open Grace Ride from your Home Screen, tap Enable Notifications, and choose Allow when iOS asks.',
+  installAppAndroidStep4: 'Open Grace Ride from your Home Screen, tap Enable Notifications, and choose Allow when Android asks.',
+  installAppDesktopStep2: 'Open the installed app, click Enable Notifications, and choose Allow when prompted.',
   family: 'Family',
   familyName: 'Family name',
   createFamily: 'Create family',
@@ -429,6 +448,7 @@ vi.mock('../components/ui', () => ({
 
 beforeEach(() => {
   vi.clearAllMocks();
+  _resetPushStateForTesting();
   mockCanLock = false;
   currentMe = baseMe;
   savedPlacesData = [];
@@ -918,5 +938,122 @@ describe('Profile compact layout', () => {
     // Pending accounts do not see ProxyRidersSection
     renderProfile({ ...baseMe, status: 'pending' }, '/me/family');
     expect(screen.getAllByText('Frequent riders')).toHaveLength(1);
+  });
+
+  it('shows Step 2 Allow notifications inside setup modal when installed and requests permission on tap', async () => {
+    const origNotification = globalThis.Notification;
+    const origPushManager = (window as unknown as { PushManager?: unknown }).PushManager;
+    const requestPermission = vi.fn().mockImplementation(async () => {
+      Object.defineProperty(globalThis, 'Notification', {
+        configurable: true,
+        writable: true,
+        value: { permission: 'granted', requestPermission },
+      });
+      return 'granted' as NotificationPermission;
+    });
+
+    Object.defineProperty(globalThis, 'Notification', {
+      configurable: true,
+      writable: true,
+      value: { permission: 'default', requestPermission },
+    });
+    Object.defineProperty(window, 'PushManager', {
+      configurable: true,
+      writable: true,
+      value: function MockPushManager() {},
+    });
+
+    try {
+      _setInstalledForTesting(true);
+      _setDeferredPromptForTesting(null);
+      renderProfile(baseMe, '/me?section=preferences');
+
+      fireEvent.click(screen.getByRole('button', { name: /Add App to Home Screen/i }));
+      expect(screen.getByText('Step 2: Allow notifications')).toBeInTheDocument();
+
+      const enableBtn = screen.getByRole('button', { name: 'Enable Notifications' });
+      fireEvent.click(enableBtn);
+
+      await waitFor(() => expect(requestPermission).toHaveBeenCalledTimes(1));
+      expect(await screen.findByText('Notifications are enabled on this device.')).toBeInTheDocument();
+    } finally {
+      _setInstalledForTesting(null);
+      if (origNotification === undefined) {
+        delete (globalThis as { Notification?: unknown }).Notification;
+      } else {
+        Object.defineProperty(globalThis, 'Notification', {
+          configurable: true,
+          writable: true,
+          value: origNotification,
+        });
+      }
+      if (origPushManager === undefined) {
+        delete (window as unknown as { PushManager?: unknown }).PushManager;
+      } else {
+        Object.defineProperty(window, 'PushManager', {
+          configurable: true,
+          writable: true,
+          value: origPushManager,
+        });
+      }
+    }
+  });
+
+  it('shows iOS install-first push guidance in Preferences and opens setup modal', () => {
+    const origUA = navigator.userAgent;
+    const origNotification = globalThis.Notification;
+    const origPushManager = (window as unknown as { PushManager?: unknown }).PushManager;
+
+    Object.defineProperty(navigator, 'userAgent', {
+      configurable: true,
+      value: 'Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 Safari/604.1',
+    });
+    Object.defineProperty(globalThis, 'Notification', {
+      configurable: true,
+      writable: true,
+      value: undefined,
+    });
+    Object.defineProperty(window, 'PushManager', {
+      configurable: true,
+      writable: true,
+      value: undefined,
+    });
+
+    try {
+      _setInstalledForTesting(false);
+      _setDeferredPromptForTesting(null);
+      renderProfile(baseMe, '/me?section=preferences');
+
+      expect(
+        screen.getByText(
+          'On iPhone and iPad, add Grace Ride to your Home Screen first, then open the installed app and tap Enable Notifications.',
+        ),
+      ).toBeInTheDocument();
+
+      fireEvent.click(screen.getByRole('button', { name: 'How to add to Home Screen' }));
+      expect(screen.getByTestId('modal')).toBeInTheDocument();
+      expect(screen.getByText('Add App to Home Screen (No App Store Needed)')).toBeInTheDocument();
+    } finally {
+      _setInstalledForTesting(null);
+      Object.defineProperty(navigator, 'userAgent', { configurable: true, value: origUA });
+      if (origNotification === undefined) {
+        delete (globalThis as { Notification?: unknown }).Notification;
+      } else {
+        Object.defineProperty(globalThis, 'Notification', {
+          configurable: true,
+          writable: true,
+          value: origNotification,
+        });
+      }
+      if (origPushManager === undefined) {
+        delete (window as unknown as { PushManager?: unknown }).PushManager;
+      } else {
+        Object.defineProperty(window, 'PushManager', {
+          configurable: true,
+          writable: true,
+          value: origPushManager,
+        });
+      }
+    }
   });
 });

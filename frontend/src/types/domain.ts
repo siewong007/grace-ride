@@ -50,8 +50,19 @@ export interface ProxyRider {
   gate_notes?: string;
 }
 
+export type BadgeTier = 'none' | 'bronze' | 'silver' | 'gold' | 'platinum';
+export type EarnedBadgeTier = Exclude<BadgeTier, 'none'>;
+
+export interface BadgeTierStep {
+  tier: EarnedBadgeTier;
+  target: number;
+  reached: boolean;
+}
+
 export interface Badge {
   key: string;
+  category?: 'member' | 'driver' | 'traffic_lead';
+  role_match?: boolean;
   char: string;
   icon?: string;
   name: string;
@@ -65,6 +76,11 @@ export interface Badge {
   progress: number;
   target: number;
   earned: boolean;
+  tier?: BadgeTier;
+  tier_level?: number;
+  next_tier?: EarnedBadgeTier | null;
+  next_target?: number | null;
+  tiers?: BadgeTierStep[];
 }
 
 export interface MonthReport {

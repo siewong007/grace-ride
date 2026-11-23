@@ -41,7 +41,11 @@ export default {
     "CANNOT_GRANT_UNHELD_PERMISSION": "You can’t grant a permission you don’t hold yourself",
     "APPOINT_NEXT_LEVEL_ONLY": "You can only appoint the level directly below your own",
     "PRESIDENT_ACKNOWLEDGEMENT_REQUIRED": "A Vice-President must confirm the President has acknowledged the appointment before making an ordinary member an administrator",
-    "SETTINGS_SUPERADMIN_ONLY": "Only the super admin can grant system settings access"
+    "SETTINGS_SUPERADMIN_ONLY": "Only the super admin can grant system settings access",
+    "FARE_BATCH_EMPTY": "Provide at least one fare entry",
+    "FARE_BATCH_TOO_LARGE": "At most 10,000 fare entries can be imported at once",
+    "FARE_UNKNOWN_AREA": "Some areas in the import do not exist; add them first or allow creating missing areas",
+    "FARE_DUPLICATE_CONFLICT": "The same route appears with conflicting fare amounts"
   },
   "auth": {
     "INVALID_CREDENTIALS": "Incorrect email or password",

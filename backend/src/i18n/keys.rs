@@ -45,6 +45,10 @@ pub enum ErrorKey {
     AppointNextLevelOnly,
     PresidentAcknowledgementRequired,
     SettingsSuperadminOnly,
+    FareBatchEmpty,
+    FareBatchTooLarge,
+    FareUnknownArea,
+    FareDuplicateConflict,
 
     // === Auth ===
     InvalidCredentials,
@@ -296,6 +300,10 @@ impl ErrorKey {
             Self::AppointNextLevelOnly => "APPOINT_NEXT_LEVEL_ONLY",
             Self::PresidentAcknowledgementRequired => "PRESIDENT_ACKNOWLEDGEMENT_REQUIRED",
             Self::SettingsSuperadminOnly => "SETTINGS_SUPERADMIN_ONLY",
+            Self::FareBatchEmpty => "FARE_BATCH_EMPTY",
+            Self::FareBatchTooLarge => "FARE_BATCH_TOO_LARGE",
+            Self::FareUnknownArea => "FARE_UNKNOWN_AREA",
+            Self::FareDuplicateConflict => "FARE_DUPLICATE_CONFLICT",
 
             Self::InvalidCredentials => "INVALID_CREDENTIALS",
             Self::VerificationExpired => "VERIFICATION_EXPIRED",

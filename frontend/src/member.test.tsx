@@ -1,9 +1,10 @@
 import { beforeAll, describe, expect, it, vi } from 'vitest';
-import { render, screen } from '@testing-library/react';
+import { fireEvent, render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { post } from './api';
 import { MemoryRouter, Route, Routes } from 'react-router-dom';
 import i18n from './i18n';
+import type { Badge } from './types/domain';
 import Events from './pages/Events';
 import EventDetail from './pages/EventDetail';
 import Costs from './pages/Costs';
@@ -195,7 +196,7 @@ const mockReport = {
       target: 3,
       earned: true,
     },
-  ],
+  ] as Badge[],
 };
 
 const mockApiMap: Record<string, unknown> = {
@@ -586,6 +587,143 @@ describe('Report page', () => {
 
     expect(screen.getByLabelText(/month/i)).toBeInTheDocument();
     expect(screen.getByText('Active Participant')).toBeInTheDocument();
+  });
+
+  it('renders role-grouped adorable animated badges and supports role filter tabs', () => {
+    const prev = mockReport.badges;
+    mockReport.badges = [
+      {
+        key: 'member_first_journey',
+        category: 'member',
+        role_match: true,
+        char: 'J',
+        icon: 'badge_joy_rider',
+        name: 'Joyful Rider',
+        rule: 'Complete 3 rides',
+        progress: 3,
+        target: 3,
+        earned: true,
+      },
+      {
+        key: 'night',
+        category: 'driver',
+        role_match: false,
+        char: 'N',
+        icon: 'moon',
+        name: 'Night Owl',
+        rule: '3 night rides',
+        progress: 1,
+        target: 3,
+        earned: false,
+      },
+      {
+        key: 'traffic_dispatcher',
+        category: 'traffic_lead',
+        role_match: false,
+        char: 'G',
+        icon: 'badge_traffic_light',
+        name: 'Green-Light Captain',
+        rule: 'Approve 5 matches',
+        progress: 5,
+        target: 5,
+        earned: true,
+      },
+    ];
+
+    try {
+      const { container } = render(
+        <MemoryRouter>
+          <Report />
+        </MemoryRouter>
+      );
+
+      // Default "My roles" filter displays matching member role badges
+      expect(screen.getByText('Joyful Rider')).toBeInTheDocument();
+      expect(screen.queryByText('Night Owl')).not.toBeInTheDocument();
+      expect(container.querySelector('.badge-joy-rider')).toBeInTheDocument();
+
+      // Clicking "All" displays Normal Member, Driver, and Traffic Lead badges
+      fireEvent.click(screen.getByRole('tab', { name: 'All' }));
+      expect(screen.getByText('Night Owl')).toBeInTheDocument();
+      expect(screen.getByText('Green-Light Captain')).toBeInTheDocument();
+      expect(container.querySelector('.badge-night-owl')).toBeInTheDocument();
+      expect(container.querySelector('.badge-traffic-light')).toBeInTheDocument();
+
+      // Clicking "Traffic Lead" narrows to traffic lead badges
+      fireEvent.click(screen.getByRole('tab', { name: 'Traffic Lead' }));
+      expect(screen.getByText('Green-Light Captain')).toBeInTheDocument();
+      expect(screen.queryByText('Joyful Rider')).not.toBeInTheDocument();
+    } finally {
+      mockReport.badges = prev;
+    }
+  });
+
+  it('renders bronze, silver, gold, and platinum tiers with progress steps and crests', () => {
+    const prev = mockReport.badges;
+    mockReport.badges = [
+      {
+        key: 'member_first_journey',
+        category: 'member',
+        role_match: true,
+        char: 'J',
+        icon: 'badge_joy_rider',
+        name: 'Joyful Rider',
+        rule: 'Complete rides (Bronze 3 · Silver 10 · Gold 25 · Platinum 50)',
+        progress: 12,
+        target: 25,
+        earned: true,
+        tier: 'silver',
+        tier_level: 2,
+        next_tier: 'gold',
+        next_target: 25,
+        tiers: [
+          { tier: 'bronze', target: 3, reached: true },
+          { tier: 'silver', target: 10, reached: true },
+          { tier: 'gold', target: 25, reached: false },
+          { tier: 'platinum', target: 50, reached: false },
+        ],
+      },
+      {
+        key: 'member_warm_welcome',
+        category: 'member',
+        role_match: true,
+        char: 'W',
+        icon: 'badge_warm_welcome',
+        name: 'Caring Helper',
+        rule: 'Book proxy rides (Bronze 2 · Silver 5 · Gold 12 · Platinum 25)',
+        progress: 26,
+        target: 25,
+        earned: true,
+        tier: 'platinum',
+        tier_level: 4,
+        next_tier: null,
+        next_target: null,
+        tiers: [
+          { tier: 'bronze', target: 2, reached: true },
+          { tier: 'silver', target: 5, reached: true },
+          { tier: 'gold', target: 12, reached: true },
+          { tier: 'platinum', target: 25, reached: true },
+        ],
+      },
+    ];
+
+    try {
+      const { container } = render(
+        <MemoryRouter>
+          <Report />
+        </MemoryRouter>
+      );
+      expect(container.querySelector('.badge-char.badge-tier-silver')).toBeInTheDocument();
+      expect(container.querySelector('.badge-char.badge-tier-platinum')).toBeInTheDocument();
+      expect(screen.getByText('Silver')).toBeInTheDocument();
+      expect(screen.getByText('Platinum')).toBeInTheDocument();
+      expect(screen.getByText('Next: Gold (12/25)')).toBeInTheDocument();
+      expect(screen.getByText('Max tier')).toBeInTheDocument();
+      expect(screen.getByText('Gold 25')).toBeInTheDocument();
+      expect(screen.getByText('Platinum 50')).toBeInTheDocument();
+    } finally {
+      mockReport.badges = prev;
+    }
   });
 });
 

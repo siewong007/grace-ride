@@ -41,7 +41,11 @@ export default {
     "CANNOT_GRANT_UNHELD_PERMISSION": "不能授予自己不具备的权限",
     "APPOINT_NEXT_LEVEL_ONLY": "只能委任比自己低一级的职务",
     "PRESIDENT_ACKNOWLEDGEMENT_REQUIRED": "副会长将普通会员升为管理员前，必须先取得会长确认并勾选确认",
-    "SETTINGS_SUPERADMIN_ONLY": "只有超级管理员可以授予系统设置权限"
+    "SETTINGS_SUPERADMIN_ONLY": "只有超级管理员可以授予系统设置权限",
+    "FARE_BATCH_EMPTY": "请至少提供一条车费记录",
+    "FARE_BATCH_TOO_LARGE": "单次最多导入 10,000 条车费记录",
+    "FARE_UNKNOWN_AREA": "导入包含未知地区，请先新增地区或勾选自动创建",
+    "FARE_DUPLICATE_CONFLICT": "同一路线在导入文件中存在不同的车费金额"
   },
   "auth": {
     "INVALID_CREDENTIALS": "电邮或密码不正确",

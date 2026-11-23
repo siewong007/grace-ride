@@ -1,5 +1,6 @@
 package org.pjstatecm.graceride
 
+import androidx.compose.ui.graphics.Color
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.test.UnconfinedTestDispatcher
@@ -24,6 +25,7 @@ import org.pjstatecm.graceride.data.session.InMemoryStore
 import org.pjstatecm.graceride.ui.Routes
 import org.pjstatecm.graceride.ui.components.AvatarStyle
 import org.pjstatecm.graceride.ui.components.BadgeIcons
+import org.pjstatecm.graceride.ui.components.BadgeTierStyle
 
 /** Regressions found by live emulator testing against the real dev backend. */
 @OptIn(ExperimentalCoroutinesApi::class)
@@ -89,13 +91,26 @@ class RegressionTest {
     }
 
     @Test fun animatedAvatarsAndBadgeIconsResolve() {
-        assertTrue(AvatarStyle.isAnimatedAvatar("grok"))
-        assertTrue(AvatarStyle.isAnimatedAvatar("muse"))
+        for (anim in listOf(
+            "grace_car", "peace_dove", "sunny_cloud", "happy_bear",
+            "fellowship_cat", "joy_puppy", "star_lantern", "blossom_sprout",
+            "grok", "muse",
+        )) {
+            assertTrue("$anim should be animated", AvatarStyle.isAnimatedAvatar(anim))
+        }
         assertFalse(AvatarStyle.isAnimatedAvatar("car"))
         assertFalse(AvatarStyle.isAnimatedAvatar(null))
 
         val reg = BadgeIcons.resolve(icon = "moon")
         assertTrue(reg is BadgeIcons.ResolvedBadgeIcon.Vector)
+
+        for (animBadge in listOf(
+            "badge_joy_rider", "badge_fellowship_sprout", "badge_punctual_clock", "badge_warm_welcome",
+            "badge_helping_wheels", "badge_traffic_light", "badge_route_compass", "badge_traffic_whistle", "badge_care_shield",
+        )) {
+            val resolved = BadgeIcons.resolve(icon = animBadge)
+            assertTrue("$animBadge should resolve to Animated", resolved is BadgeIcons.ResolvedBadgeIcon.Animated)
+        }
 
         val emoji = BadgeIcons.resolve(icon = "🦉")
         assertEquals(BadgeIcons.ResolvedBadgeIcon.Text("🦉"), emoji)
@@ -103,5 +118,48 @@ class RegressionTest {
         val badge = Badge(key = "k", char = "N", icon = null)
         val fallback = BadgeIcons.resolve(badge = badge, fallbackChar = "R")
         assertEquals(BadgeIcons.ResolvedBadgeIcon.Text("R"), fallback)
+    }
+
+    @Test fun whiteAvatarAndMultiTierBadgesAreSupported() {
+        assertTrue("white" in AvatarStyle.COLORS)
+        assertEquals(Color(0xFFFFFFFF), AvatarStyle.grokSkinColor("white"))
+        assertEquals(Color(0xFF18181B), AvatarStyle.grokEyeColor("white"))
+        assertEquals(Color(0xFFFFFFFF), AvatarStyle.grokEyeColor("gray"))
+        assertEquals(Color(0xFFFFFFFF) to Color(0xFFE2E8F0), AvatarStyle.musePlushColors("white"))
+
+        val tieredJson = """
+            {
+              "key":"member_first_journey",
+              "category":"member",
+              "role_match":true,
+              "char":"J",
+              "icon":"badge_joy_rider",
+              "name":"Joyful Rider",
+              "rule":"Complete rides",
+              "progress":28,
+              "target":50,
+              "earned":true,
+              "tier":"gold",
+              "tier_level":3,
+              "next_tier":"platinum",
+              "next_target":50,
+              "tiers":[
+                {"tier":"bronze","target":3,"reached":true},
+                {"tier":"silver","target":10,"reached":true},
+                {"tier":"gold","target":25,"reached":true},
+                {"tier":"platinum","target":50,"reached":false}
+              ]
+            }
+        """.trimIndent()
+        val parsed = apiJson.decodeFromString(Badge.serializer(), tieredJson)
+        assertEquals("gold", parsed.tier)
+        assertEquals(3, parsed.tierLevel)
+        assertEquals("platinum", parsed.nextTier)
+        assertEquals(50L, parsed.nextTarget)
+        assertEquals(4, parsed.tiers.size)
+        assertEquals("gold", BadgeTierStyle.resolveTier(parsed))
+
+        val distinctBgs = BadgeTierStyle.ALL_TIERS.map { BadgeTierStyle.palette(it).bg }.toSet()
+        assertEquals(4, distinctBgs.size)
     }
 }

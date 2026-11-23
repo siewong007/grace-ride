@@ -239,6 +239,14 @@
     <string name="profile_avatar_choose_photo">选择照片或动效 GIF</string>
     <string name="profile_avatar_color">背景颜色</string>
     <string name="profile_avatar_save">保存头像</string>
+    <string name="profile_avatar_grace_car">恩典小车</string>
+    <string name="profile_avatar_peace_dove">和平白鸽</string>
+    <string name="profile_avatar_sunny_cloud">暖阳云朵</string>
+    <string name="profile_avatar_happy_bear">暖心小熊</string>
+    <string name="profile_avatar_fellowship_cat">团契小猫</string>
+    <string name="profile_avatar_joy_puppy">喜乐小狗</string>
+    <string name="profile_avatar_star_lantern">星光灯笼</string>
+    <string name="profile_avatar_blossom_sprout">恩典花芽</string>
     <string name="profile_avatar_grok">Grok 机器人</string>
     <string name="profile_avatar_muse">Muse 机器人</string>
     <string name="profile_security">安全</string>

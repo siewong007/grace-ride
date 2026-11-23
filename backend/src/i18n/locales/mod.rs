@@ -83,6 +83,10 @@ pub fn render(lang: Lang, key: &ErrorKey) -> String {
             admin::render(lang, AdminError::PresidentAcknowledgementRequired)
         }
         ErrorKey::SettingsSuperadminOnly => admin::render(lang, AdminError::SettingsSuperadminOnly),
+        ErrorKey::FareBatchEmpty => admin::render(lang, AdminError::FareBatchEmpty),
+        ErrorKey::FareBatchTooLarge => admin::render(lang, AdminError::FareBatchTooLarge),
+        ErrorKey::FareUnknownArea => admin::render(lang, AdminError::FareUnknownArea),
+        ErrorKey::FareDuplicateConflict => admin::render(lang, AdminError::FareDuplicateConflict),
 
         ErrorKey::InvalidCredentials => auth::render(lang, AuthError::InvalidCredentials),
         ErrorKey::VerificationExpired => auth::render(lang, AuthError::VerificationExpired),
@@ -529,6 +533,10 @@ mod tests {
             ErrorKey::AppointNextLevelOnly => ErrorKey::AppointNextLevelOnly,
             ErrorKey::PresidentAcknowledgementRequired => ErrorKey::PresidentAcknowledgementRequired,
             ErrorKey::SettingsSuperadminOnly => ErrorKey::SettingsSuperadminOnly,
+            ErrorKey::FareBatchEmpty => ErrorKey::FareBatchEmpty,
+            ErrorKey::FareBatchTooLarge => ErrorKey::FareBatchTooLarge,
+            ErrorKey::FareUnknownArea => ErrorKey::FareUnknownArea,
+            ErrorKey::FareDuplicateConflict => ErrorKey::FareDuplicateConflict,
 
             ErrorKey::InvalidCredentials => ErrorKey::InvalidCredentials,
             ErrorKey::VerificationExpired => ErrorKey::VerificationExpired,

@@ -28,17 +28,18 @@ import {
   Car,
   CarFront,
 } from 'lucide-react';
-import { api, del, post, put, useApi } from '../api';
+import { del, post, put, useApi } from '../api';
 import { useAuth } from '../auth';
 import { useAutoLock } from '../components/AutoLock';
 import { DisplayPreferences } from '../components/AppChrome';
-import { Avatar, Button, ErrorBox, Field, Modal, PageHeader, Pill, SheetLink, useAction, useConfirm } from '../components/ui';
+import { Avatar, Button, ErrorBox, Field, Modal, Notice, PageHeader, Pill, SheetLink, useAction, useConfirm } from '../components/ui';
 import { fmtAgo, roleLabel, useFormatT } from '../format';
 import { clearDevicePasskey, passkeySupported, registerPasskey, withRecentSignIn } from '../webauthn';
 import { WaitingRoom } from '../components/Onboarding';
 import AvatarEditor from '../components/AvatarEditor';
 import { PwaInstallModal } from '../components/PwaInstallModal';
 import { usePwaInstall } from '../pwaInstall';
+import { disableDevicePush, enablePushNotifications, usePushNotifications } from '../pushNotifications';
 import FamilySection from './family/FamilySection';
 import ProxyRidersSection from './family/ProxyRidersSection';
 import SavedAddressesSection from './SavedAddressesSection';
@@ -109,6 +110,7 @@ export default function Profile() {
   const [editAvatar, setEditAvatar] = useState(false);
   const [moreActivityOpen, setMoreActivityOpen] = useState(false);
   const pwa = usePwaInstall();
+  const push = usePushNotifications();
   const [showInstallModal, setShowInstallModal] = useState(false);
   const { busy, error, run } = useAction();
   if (!me) return null;
@@ -177,56 +179,32 @@ export default function Profile() {
       push_opt_in: pushOptIn,
     }).then(refresh);
 
+  const deniedPushCopy =
+    push.platform === 'ios'
+      ? t('pushDeniedIos')
+      : push.platform === 'android'
+        ? t('pushDeniedAndroid')
+        : t('pushDeniedDesktop');
+
   const enableBrowserPush = async () => {
     setPushStatus('');
-    if (typeof Notification === 'undefined') {
-      setPushStatus(t('pushUnsupported'));
-      return;
-    }
-    const perm = await Notification.requestPermission();
-    if (perm !== 'granted') {
-      setPushStatus(t('pushDenied'));
-      return;
-    }
-    setPushOptIn(true);
     setPushBusy(true);
     try {
-      await put('/me', { push_opt_in: true }).catch(() => {});
-      void refresh();
-      const cfg = await api<{ enabled?: boolean; vapid_public_key?: string }>('/push/config');
-      const reg = 'serviceWorker' in navigator ? await navigator.serviceWorker.getRegistration() : undefined;
-      if (cfg?.vapid_public_key && reg?.pushManager) {
-        const pad = '='.repeat((4 - (cfg.vapid_public_key.length % 4)) % 4);
-        const b64 = (cfg.vapid_public_key + pad).replace(/-/g, '+').replace(/_/g, '/');
-        const raw = atob(b64);
-        const keyBytes = Uint8Array.from(raw, (c) => c.charCodeAt(0));
-        let sub: PushSubscription;
-        try {
-          sub = await reg.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: keyBytes });
-        } catch (err) {
-          const existing = await reg.pushManager.getSubscription();
-          if (existing) {
-            await existing.unsubscribe();
-            sub = await reg.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: keyBytes });
-          } else {
-            throw err;
-          }
-        }
-        const json = sub.toJSON();
-        if (json.endpoint) {
-          await post('/push/subscribe', {
-            endpoint: json.endpoint,
-            p256dh: json.keys?.p256dh ?? '',
-            auth: json.keys?.auth ?? '',
-          });
-          pushCfg.reload();
-        }
-        setPushStatus(t('pushEnabled'));
-      } else {
-        setPushStatus(t('pushEnabledLocal'));
+      const res = await enablePushNotifications();
+      if (res.ok) {
+        setPushOptIn(true);
+        void refresh();
+        pushCfg.reload();
+        setPushStatus(t(res.mode === 'push' ? 'pushEnabled' : 'pushEnabledLocal'));
+      } else if (res.reason === 'needs_install_ios') {
+        setPushStatus(t('pushNeedsInstallIos'));
+      } else if (res.reason === 'unsupported') {
+        setPushStatus(t('pushUnsupported'));
+      } else if (res.reason === 'denied') {
+        setPushStatus(deniedPushCopy);
+      } else if (res.reason === 'dismissed') {
+        setPushStatus(t('pushDismissed'));
       }
-    } catch {
-      setPushStatus(t('pushEnabledLocal'));
     } finally {
       setPushBusy(false);
     }
@@ -249,19 +227,8 @@ export default function Profile() {
     setPushStatus('');
     setPushBusy(true);
     try {
-      let endpoint = '';
-      if ('serviceWorker' in navigator) {
-        const reg = await navigator.serviceWorker.ready;
-        const sub = await reg.pushManager?.getSubscription?.();
-        if (sub) {
-          endpoint = sub.endpoint;
-          await sub.unsubscribe();
-        }
-      }
-      if (endpoint) {
-        await api('/push/subscribe', { method: 'DELETE', body: { endpoint } });
-        pushCfg.reload();
-      }
+      await disableDevicePush();
+      pushCfg.reload();
       setPushStatus(t('pushDisabledDevice'));
     } catch {
       setPushStatus(t('pushTestFailed'));
@@ -580,6 +547,18 @@ export default function Profile() {
                 {(channelCfg?.subscription_count ?? 0) > 0 && (
                   <p className="muted tiny">{t('pushConnectedCount', { count: channelCfg?.subscription_count ?? 0 })}</p>
                 )}
+                {push.availability === 'needs_install_ios' && (
+                  <Notice tone="info">
+                    <div className="stack-xs">
+                      <p className="small">{t('pushNeedsInstallIos')}</p>
+                      <div>
+                        <Button variant="secondary" size="sm" onClick={() => setShowInstallModal(true)}>
+                          {t('pushInstallGuideAction')}
+                        </Button>
+                      </div>
+                    </div>
+                  </Notice>
+                )}
                 <div className="row wrap gap-xs">
                   <Button variant="secondary" size="sm" disabled={pushBusy} onClick={enableBrowserPush}>
                     {t('enableBrowserPush')}
@@ -596,6 +575,9 @@ export default function Profile() {
                   )}
                 </div>
                 {pushStatus && <p className="muted tiny">{pushStatus}</p>}
+                {!pushStatus && push.availability === 'denied' && (
+                  <p className="muted tiny">{deniedPushCopy}</p>
+                )}
                 {channelCfg?.whatsapp_configured === false ? (
                   <p className="muted tiny">{t('whatsappNotConfigured')}</p>
                 ) : (
@@ -847,7 +829,14 @@ export default function Profile() {
         />
       )}
       {showInstallModal && (
-        <PwaInstallModal onClose={() => setShowInstallModal(false)} />
+        <PwaInstallModal
+          onClose={() => setShowInstallModal(false)}
+          onNotificationsEnabled={() => {
+            setPushOptIn(true);
+            pushCfg.reload();
+            void refresh();
+          }}
+        />
       )}
     </div>
   );

@@ -1,17 +1,25 @@
 import { KeyboardEvent as ReactKeyboardEvent, PointerEvent as ReactPointerEvent, useEffect, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
-import { Check, ImagePlus, Trash2, ZoomIn, ZoomOut } from 'lucide-react';
+import { Check, ImagePlus, type LucideIcon, Trash2, ZoomIn, ZoomOut } from 'lucide-react';
 import { put, uploadFile } from '../api';
-import { ANIMATED_AVATARS, AVATAR_COLORS, AVATAR_ICONS, type AvatarFields, isAnimatedAvatar } from '../avatarStyle';
+import {
+  ANIMATED_AVATARS,
+  AVATAR_COLORS,
+  AVATAR_ICONS,
+  type AvatarFields,
+  DEFAULT_ANIMATED_AVATAR,
+  getAnimatedAvatarMeta,
+  isAnimatedAvatar,
+} from '../avatarStyle';
 import { clampOffset, coverSize, cropToFile, loadImage } from '../cropImage';
 import { Avatar, Button, ErrorBox, Modal, Tabs, useAction } from './ui';
 
-type Mode = 'photo' | 'animated' | 'initials' | 'icon';
+type Mode = 'animated' | 'photo' | 'initials' | 'icon';
 
 /** Side of the crop circle, in CSS pixels. */
 const VIEW = 240;
 
-/** Pick how your avatar looks: a cropped photo, your initial on a colour, or an icon on a colour. */
+/** Pick how your avatar looks: coloured animated Grace Ride characters, a cropped photo, your initial, or an icon. */
 export default function AvatarEditor({
   name,
   current,
@@ -25,6 +33,7 @@ export default function AvatarEditor({
 }) {
   const { t } = useTranslation('profile');
   const { busy, error, run } = useAction();
+  const hasAnyAvatar = !!(current.photo_file_id || current.avatar_icon || current.avatar_color);
   const [mode, setMode] = useState<Mode>(
     current.photo_file_id
       ? 'photo'
@@ -32,10 +41,15 @@ export default function AvatarEditor({
       ? 'animated'
       : current.avatar_icon
       ? 'icon'
-      : 'initials',
+      : current.avatar_color
+      ? 'initials'
+      : 'animated',
   );
   const [color, setColor] = useState<string | null>(current.avatar_color ?? null);
-  const [icon, setIcon] = useState<string | null>(current.avatar_icon ?? null);
+  const [explicitDefault, setExplicitDefault] = useState(false);
+  const [icon, setIcon] = useState<string | null>(
+    current.avatar_icon ?? (!hasAnyAvatar ? DEFAULT_ANIMATED_AVATAR : null),
+  );
   const [picked, setPicked] = useState<{ img: HTMLImageElement; url: string; file: File } | null>(null);
   const [crop, setCrop] = useState({ zoom: 1, x: 0, y: 0 });
   const [localErr, setLocalErr] = useState<string | null>(null);
@@ -90,7 +104,11 @@ export default function AvatarEditor({
     setOffset(crop.zoom, crop.x + m[0], crop.y + m[1]);
   };
 
-  const colorField = color ?? '';
+  const effectiveColor =
+    mode === 'animated'
+      ? (color ?? (explicitDefault ? null : (getAnimatedAvatarMeta(icon)?.defaultColor ?? null)))
+      : color;
+  const colorField = effectiveColor ?? '';
   const save = () =>
     run(async () => {
       setLocalErr(null);
@@ -174,7 +192,7 @@ export default function AvatarEditor({
             <Avatar
               name={name}
               size="xl"
-              color={color}
+              color={effectiveColor}
               fileId={mode === 'photo' ? current.photo_file_id : null}
               icon={mode === 'icon' || mode === 'animated' ? icon : null}
             />
@@ -190,12 +208,14 @@ export default function AvatarEditor({
             const nextMode = v as Mode;
             setMode(nextMode);
             if (nextMode === 'animated' && !isAnimatedAvatar(icon)) {
-              setIcon('grok');
+              setIcon(DEFAULT_ANIMATED_AVATAR);
+            } else if (nextMode === 'icon' && isAnimatedAvatar(icon)) {
+              setIcon(null);
             }
           }}
           items={[
-            { value: 'photo', label: t('avatarPhoto') },
             { value: 'animated', label: t('avatarAnimated') },
+            { value: 'photo', label: t('avatarPhoto') },
             { value: 'initials', label: t('avatarInitials') },
             { value: 'icon', label: t('avatarIcon') },
           ]}
@@ -246,6 +266,7 @@ export default function AvatarEditor({
               {ANIMATED_AVATARS.map((anim) => {
                 const IconComp = AVATAR_ICONS[anim.key];
                 const isSelected = icon === anim.key;
+                const thumbColor = isSelected && effectiveColor ? effectiveColor : anim.defaultColor;
                 return (
                   <button
                     key={anim.key}
@@ -254,10 +275,15 @@ export default function AvatarEditor({
                     aria-checked={isSelected}
                     aria-label={t(`avatarIcon_${anim.key}`)}
                     className={`avatar-animated-card${isSelected ? ' on' : ''}`}
-                    onClick={() => setIcon(anim.key)}
+                    onClick={() => {
+                      setIcon(anim.key);
+                      if (color === null && !explicitDefault) {
+                        setColor(anim.defaultColor);
+                      }
+                    }}
                   >
-                    <div style={{ width: 44, height: 44 }}>
-                      {IconComp && <IconComp size={44} className="avatar-icon" />}
+                    <div className={`avatar av-${thumbColor} avatar-animated avatar-animated-thumb`} aria-hidden="true">
+                      {IconComp && <IconComp className="avatar-icon" />}
                     </div>
                     <span className="bold small">{t(`avatarIcon_${anim.key}`)}</span>
                   </button>
@@ -273,19 +299,22 @@ export default function AvatarEditor({
             <div className="avatar-icon-grid" role="radiogroup" aria-label={t('avatarPickIconLabel')}>
               {Object.entries(AVATAR_ICONS)
                 .filter(([key]) => !isAnimatedAvatar(key))
-                .map(([key, Icon]) => (
-                  <button
-                    key={key}
-                    type="button"
-                    role="radio"
-                    aria-checked={icon === key}
-                    aria-label={t(`avatarIcon_${key}`)}
-                    className={`avatar-icon-opt${icon === key ? ' on' : ''}`}
-                    onClick={() => setIcon(key)}
-                  >
-                    <Icon size={20} aria-hidden="true" />
-                  </button>
-                ))}
+                .map(([key, Icon]) => {
+                  const StaticIcon = Icon as LucideIcon;
+                  return (
+                    <button
+                      key={key}
+                      type="button"
+                      role="radio"
+                      aria-checked={icon === key}
+                      aria-label={t(`avatarIcon_${key}`)}
+                      className={`avatar-icon-opt${icon === key ? ' on' : ''}`}
+                      onClick={() => setIcon(key)}
+                    >
+                      <StaticIcon size={20} aria-hidden="true" />
+                    </button>
+                  );
+                })}
             </div>
           </div>
         )}
@@ -297,20 +326,26 @@ export default function AvatarEditor({
               <button
                 type="button"
                 role="radio"
-                aria-checked={color === null}
+                aria-checked={effectiveColor === null}
                 aria-label={t('avatarColorDefault')}
-                className={`avatar-swatch av-none${color === null ? ' on' : ''}`}
-                onClick={() => setColor(null)}
+                className={`avatar-swatch av-none${effectiveColor === null ? ' on' : ''}`}
+                onClick={() => {
+                  setColor(null);
+                  setExplicitDefault(true);
+                }}
               />
               {AVATAR_COLORS.map((c) => (
                 <button
                   key={c}
                   type="button"
                   role="radio"
-                  aria-checked={color === c}
+                  aria-checked={effectiveColor === c}
                   aria-label={t(`avatarColor_${c}`)}
-                  className={`avatar-swatch av-${c}${color === c ? ' on' : ''}`}
-                  onClick={() => setColor(c)}
+                  className={`avatar-swatch av-${c}${effectiveColor === c ? ' on' : ''}`}
+                  onClick={() => {
+                    setColor(c);
+                    setExplicitDefault(false);
+                  }}
                 />
               ))}
             </div>

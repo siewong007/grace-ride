@@ -115,14 +115,20 @@ self.addEventListener('push', (event) => {
   } catch {
     if (event.data) payload.body = event.data.text();
   }
-  event.waitUntil(
-    self.registration.showNotification(payload.title || 'Grace Ride', {
-      body: payload.body || '',
-      icon: NOTIFICATION_ICON,
-      badge: NOTIFICATION_ICON,
-      data: { url: payload.url || '/notifications' },
-    }),
-  );
+  const showPromise = self.registration.showNotification(payload.title || 'Grace Ride', {
+    body: payload.body || '',
+    icon: NOTIFICATION_ICON,
+    badge: NOTIFICATION_ICON,
+    data: { url: payload.url || '/notifications' },
+  });
+  const badgePromise =
+    self.navigator && typeof self.navigator.setAppBadge === 'function'
+      ? (typeof payload.badge_count === 'number' && payload.badge_count > 0
+          ? self.navigator.setAppBadge(payload.badge_count)
+          : self.navigator.setAppBadge()
+        ).catch(() => {})
+      : Promise.resolve();
+  event.waitUntil(Promise.all([showPromise, badgePromise]));
 });
 
 self.addEventListener('message', (event) => {

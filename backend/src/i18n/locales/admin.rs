@@ -31,6 +31,10 @@ pub enum AdminError {
     AppointNextLevelOnly,
     PresidentAcknowledgementRequired,
     SettingsSuperadminOnly,
+    FareBatchEmpty,
+    FareBatchTooLarge,
+    FareUnknownArea,
+    FareDuplicateConflict,
 }
 
 pub fn render(lang: Lang, key: AdminError) -> String {
@@ -115,6 +119,26 @@ pub fn render(lang: Lang, key: AdminError) -> String {
             lang,
             "只有超级管理员可以授予系统设置权限",
             "Only the super admin can grant system settings access",
+        ),
+        AdminError::FareBatchEmpty => pair(
+            lang,
+            "请至少提供一条车费记录",
+            "Provide at least one fare entry",
+        ),
+        AdminError::FareBatchTooLarge => pair(
+            lang,
+            "单次最多导入 10,000 条车费记录",
+            "At most 10,000 fare entries can be imported at once",
+        ),
+        AdminError::FareUnknownArea => pair(
+            lang,
+            "导入包含未知地区，请先新增地区或勾选自动创建",
+            "Some areas in the import do not exist; add them first or allow creating missing areas",
+        ),
+        AdminError::FareDuplicateConflict => pair(
+            lang,
+            "同一路线在导入文件中存在不同的车费金额",
+            "The same route appears with conflicting fare amounts",
         ),
         AdminError::SecondAdminRequired => pair(
             lang,

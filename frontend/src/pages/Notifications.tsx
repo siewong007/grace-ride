@@ -2,19 +2,24 @@ import { useCallback, useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import {
   Bell,
+  BellOff,
+  BellRing,
   Calendar,
   CarFront,
   CheckCheck,
   CreditCard,
   MessageSquare,
+  Smartphone,
 } from 'lucide-react';
 import { api, post, useApi } from '../api';
 import { useAuth } from '../auth';
+import { PwaInstallModal } from '../components/PwaInstallModal';
 import {
   BackToTop,
   Button,
   EmptyState,
   InfiniteSentinel,
+  Notice,
   Page,
   PageHeader,
   Spinner,
@@ -22,6 +27,7 @@ import {
   useInfiniteScroll,
 } from '../components/ui';
 import { fmtAgo, todayStr, useFormatT } from '../format';
+import { enablePushNotifications, usePushNotifications } from '../pushNotifications';
 import { useTranslation } from 'react-i18next';
 
 interface Notif {
@@ -54,7 +60,18 @@ export default function Notifications() {
     }
   }, [data, olderItems.length]);
 
-  const { refresh } = useAuth();
+  const { me, refresh } = useAuth();
+  const push = usePushNotifications();
+  const [dismissed, setDismissed] = useState(() => {
+    try {
+      return sessionStorage.getItem('gr_notif_prompt_dismissed') === '1';
+    } catch {
+      return false;
+    }
+  });
+  const [enabling, setEnabling] = useState(false);
+  const [pushFeedback, setPushFeedback] = useState<{ tone: 'success' | 'warning'; text: string } | null>(null);
+  const [showInstallModal, setShowInstallModal] = useState(false);
   const { run } = useAction();
   const nav = useNavigate();
 
@@ -133,6 +150,57 @@ export default function Notifications() {
     return <Bell size={18} />;
   };
 
+  const dismissPrompt = () => {
+    setDismissed(true);
+    try {
+      sessionStorage.setItem('gr_notif_prompt_dismissed', '1');
+    } catch {
+      /* storage blocked */
+    }
+  };
+
+  const deniedCopy =
+    push.platform === 'ios'
+      ? t('pushDeniedIos')
+      : push.platform === 'android'
+        ? t('pushDeniedAndroid')
+        : t('pushDeniedDesktop');
+
+  const handleEnablePush = async () => {
+    setEnabling(true);
+    setPushFeedback(null);
+    try {
+      const res = await enablePushNotifications();
+      if (res.ok) {
+        setPushFeedback({
+          tone: 'success',
+          text: t(res.mode === 'push' ? 'pushEnabled' : 'pushEnabledLocal'),
+        });
+        void refresh();
+      } else if (res.reason === 'needs_install_ios') {
+        setShowInstallModal(true);
+      } else if (res.reason === 'denied') {
+        setPushFeedback({ tone: 'warning', text: deniedCopy });
+      } else if (res.reason === 'dismissed') {
+        setPushFeedback({ tone: 'warning', text: t('pushDismissed') });
+      }
+    } finally {
+      setEnabling(false);
+    }
+  };
+
+  const canShowBanner = Boolean(
+    me && me.status !== 'pending' && me.push_opt_in !== false && !dismissed,
+  );
+  const needsReconnect = push.availability === 'granted' && push.isSubscribed === false;
+  const showPromptCard =
+    canShowBanner &&
+    pushFeedback?.tone !== 'success' &&
+    (push.availability === 'prompt' || needsReconnect);
+  const showInstallCard = canShowBanner && push.availability === 'needs_install_ios';
+  const showDeniedBanner = canShowBanner && push.availability === 'denied';
+  const bannerShown = showPromptCard || showInstallCard || showDeniedBanner;
+
   const today = todayStr();
   const todayNotifs = items.filter((n) => n.created_at.slice(0, 10) === today);
   const earlierNotifs = items.filter((n) => n.created_at.slice(0, 10) !== today);
@@ -155,6 +223,96 @@ export default function Notifications() {
             ) : undefined
           }
         />
+
+        {showPromptCard && (
+          <section
+            className="card notif-push-banner"
+            aria-label={t(needsReconnect ? 'pushReconnectTitle' : 'pushPromptTitle')}
+          >
+            <div className="notif-push-banner-head">
+              <div className="notif-push-banner-icon" aria-hidden="true">
+                <BellRing size={20} />
+              </div>
+              <div className="stack-xs grow min-w-0">
+                <div className="bold">
+                  {t(needsReconnect ? 'pushReconnectTitle' : 'pushPromptTitle')}
+                </div>
+                <p className="muted small">
+                  {t(needsReconnect ? 'pushReconnectDesc' : 'pushPromptDesc')}
+                </p>
+              </div>
+            </div>
+            {pushFeedback && (
+              <p className="muted tiny" role="status">
+                {pushFeedback.text}
+              </p>
+            )}
+            <div className="notif-push-banner-actions">
+              <Button
+                variant="primary"
+                size="sm"
+                loading={enabling}
+                onClick={handleEnablePush}
+              >
+                <BellRing size={15} aria-hidden="true" />
+                {t(enabling ? 'enablingNotifications' : 'enableNotifications')}
+              </Button>
+              <Button variant="ghost" size="sm" onClick={dismissPrompt}>
+                {t('notNow')}
+              </Button>
+            </div>
+          </section>
+        )}
+
+        {showInstallCard && (
+          <section
+            className="card notif-push-banner"
+            aria-label={t('pushInstallIosTitle')}
+          >
+            <div className="notif-push-banner-head">
+              <div className="notif-push-banner-icon" aria-hidden="true">
+                <Smartphone size={20} />
+              </div>
+              <div className="stack-xs grow min-w-0">
+                <div className="bold">{t('pushInstallIosTitle')}</div>
+                <p className="muted small">{t('pushInstallIosDesc')}</p>
+              </div>
+            </div>
+            <div className="notif-push-banner-actions">
+              <Button
+                variant="primary"
+                size="sm"
+                onClick={() => setShowInstallModal(true)}
+              >
+                <Smartphone size={15} aria-hidden="true" />
+                {t('pushInstallIosAction')}
+              </Button>
+              <Button variant="ghost" size="sm" onClick={dismissPrompt}>
+                {t('notNow')}
+              </Button>
+            </div>
+          </section>
+        )}
+
+        {showDeniedBanner && (
+          <Notice tone="warning" icon={<BellOff size={18} aria-hidden="true" />}>
+            <div className="stack-xs">
+              <div className="bold">{t('pushDeniedTitle')}</div>
+              <p className="small">{deniedCopy}</p>
+              <div>
+                <Button variant="ghost" size="sm" onClick={dismissPrompt}>
+                  {t('notNow')}
+                </Button>
+              </div>
+            </div>
+          </Notice>
+        )}
+
+        {!bannerShown && pushFeedback && (
+          <Notice tone={pushFeedback.tone} role="status">
+            {pushFeedback.text}
+          </Notice>
+        )}
 
         {loading ? (
           <Spinner />
@@ -225,6 +383,12 @@ export default function Notifications() {
           </>
         )}
       </div>
+      {showInstallModal && (
+        <PwaInstallModal
+          onClose={() => setShowInstallModal(false)}
+          onNotificationsEnabled={() => void refresh()}
+        />
+      )}
     </Page>
   );
 }

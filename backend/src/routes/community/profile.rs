@@ -15,12 +15,32 @@ use crate::util::{audit, check_name, check_phone, now};
 /// Avatar background colours. The client maps each key to a themed CSS class, so no
 /// member-supplied colour ever reaches a style attribute.
 pub const AVATAR_COLORS: &[&str] = &[
-    "purple", "teal", "coral", "pink", "blue", "green", "amber", "gray",
+    "purple", "teal", "coral", "pink", "blue", "green", "amber", "gray", "white",
 ];
 /// Avatar icons, drawn by the client from its own icon set.
 pub const AVATAR_ICONS: &[&str] = &[
-    "car", "heart", "star", "music", "sun", "leaf", "coffee", "book", "church", "bike", "smile",
-    "flower", "grok", "muse",
+    "car",
+    "heart",
+    "star",
+    "music",
+    "sun",
+    "leaf",
+    "coffee",
+    "book",
+    "church",
+    "bike",
+    "smile",
+    "flower",
+    "grace_car",
+    "peace_dove",
+    "sunny_cloud",
+    "happy_bear",
+    "fellowship_cat",
+    "joy_puppy",
+    "star_lantern",
+    "blossom_sprout",
+    "grok",
+    "muse",
 ];
 
 /// Accepts "" (reset) or a key from `allowed`.

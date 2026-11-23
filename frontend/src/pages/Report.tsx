@@ -15,25 +15,15 @@ import {
 import { EVENT_KIND, fmtDateTime, parseLocal, rm, useFormatT } from '../format';
 import { useTranslation } from 'react-i18next';
 import { useAuth } from '../auth';
-import { BadgeIcon } from '../badgeIcon';
+import {
+  BADGE_TIER_ROMAN,
+  type BadgeCategory,
+  BadgeIcon,
+  isAnimatedBadgeIcon,
+  resolveBadgeTier,
+} from '../badgeIcon';
 import { createPdfWriter } from '../pdfWriter';
-
-interface Badge {
-  key: string;
-  char: string;
-  icon?: string;
-  name: string;
-  rule: string;
-  char_zh?: string;
-  char_en?: string;
-  name_zh?: string;
-  name_en?: string;
-  rule_zh?: string;
-  rule_en?: string;
-  progress: number;
-  target: number;
-  earned: boolean;
-}
+import type { Badge } from '../types/domain';
 
 interface MonthReport {
   user: { id: number; name: string };
@@ -64,6 +54,7 @@ export default function Report() {
   );
   const [range, setRange] = useState<'monthly' | 'quarterly' | 'yearly'>('monthly');
   const [type, setType] = useState<'all' | 'driver' | 'passenger'>('all');
+  const [badgeFilter, setBadgeFilter] = useState<'mine' | 'all' | BadgeCategory>('mine');
   const [y, m] = month.split('-').map(Number);
   const params = new URLSearchParams({ month, range, type });
   const { data: r, error } = useApi<MonthReport>(
@@ -124,11 +115,13 @@ export default function Report() {
     for (const e of r.events)
       lines.push(`${e.id},${escapeCsv(e.title)},${escapeCsv(e.kind)},${e.starts_at}`);
     lines.push('');
-    lines.push('Badge Key,Name,Rule,Progress,Target,Earned');
-    for (const b of r.badges)
+    lines.push('Badge Key,Name,Tier,Rule,Progress,Target,Earned');
+    for (const b of r.badges) {
+      const tier = resolveBadgeTier(b);
       lines.push(
-        `${escapeCsv(b.key)},${escapeCsv(badgeName(b))},${escapeCsv(badgeRule(b))},${b.progress},${b.target},${b.earned}`,
+        `${escapeCsv(b.key)},${escapeCsv(badgeName(b))},${escapeCsv(tier)},${escapeCsv(badgeRule(b))},${b.progress},${b.target},${b.earned}`,
       );
+    }
     const csv = lines.join('\n');
     const blob = new Blob([csv], { type: 'text/csv;charset=utf-8' });
     const url = URL.createObjectURL(blob);
@@ -153,9 +146,11 @@ export default function Report() {
     };
     const kinds = r.by_kind.map((k) => `${ft(EVENT_KIND[k.kind]?.label ?? k.kind)} × ${k.count}`);
     const events = r.events.map((e) => `${e.title} — ${fmtDateTime(e.starts_at, ft)}`);
-    const badges = r.badges.map(
-      (b) => `${badgeName(b)} — ${badgeRule(b)} (${b.progress}/${b.target}) ${b.earned ? t('earned') : ''}`,
-    );
+    const badges = r.badges.map((b) => {
+      const tier = resolveBadgeTier(b);
+      const tierText = tier !== 'none' ? `[${t(`badgeTier_${tier}`)}]` : b.earned ? t('earned') : '';
+      return `${badgeName(b)} ${tierText} — ${badgeRule(b)} (${b.progress}/${b.target})`.trim();
+    });
     const heads = [t('summary'), t('byKind'), t('events'), t('badges')];
     const rows: [string, string][] = [
       [t('events_attended'), String(r.events_attended)],
@@ -367,42 +362,142 @@ export default function Report() {
 
                 {r.badges.length === 0 ? (
                   <p className="muted">{t('noBadges')}</p>
-                ) : (
-                  <div className="stack-sm">
-                    {r.badges.map((b) => {
-                      const percent = Math.min(100, Math.round((b.progress / b.target) * 100));
-                      return (
-                        <div key={b.key} className="card flat tight badge-card">
-                          <div
-                            className={`badge-char ${b.earned ? 'earned' : ''}`}
-                            aria-hidden="true"
-                          >
-                            <BadgeIcon badge={b} fallbackChar={badgeChar(b)} />
-                          </div>
-                          <div className="grow min-w-0 stack-xs">
-                            <div className="row between nowrap">
-                              <strong className="ellipsis">{badgeName(b)}</strong>
-                              <span className="small muted">
-                                {b.earned ? (
-                                  <span className="row nowrap gap-xs text-primary bold">
-                                    <CheckCircle2 size={14} aria-hidden="true" />
-                                    <span>{t('earned')}</span>
-                                  </span>
-                                ) : (
-                                  `${Math.min(b.progress, b.target)}/${b.target}`
-                                )}
-                              </span>
-                            </div>
-                            <div className="bar">
-                              <div style={{ width: `${percent}%` }} />
-                            </div>
-                            <div className="muted tiny">{badgeRule(b)}</div>
-                          </div>
-                        </div>
+                ) : (() => {
+                  const hasCategories = r.badges.some((b) => !!b.category);
+                  const visibleBadges = !hasCategories || badgeFilter === 'all'
+                    ? r.badges
+                    : badgeFilter === 'mine'
+                    ? r.badges.filter((b) => !b.category || b.role_match !== false)
+                    : r.badges.filter((b) => b.category === badgeFilter);
+
+                  const renderBadgeCard = (b: Badge) => {
+                    const percent = b.target > 0 ? Math.min(100, Math.round((b.progress / b.target) * 100)) : 100;
+                    const isAnim = isAnimatedBadgeIcon(b.icon);
+                    const catClass = b.category ? `badge-cat-${b.category}` : '';
+                    const tier = resolveBadgeTier(b);
+                    const hasTiers = Array.isArray(b.tiers) && b.tiers.length > 0;
+                    const progressText =
+                      tier === 'platinum' ? (
+                        <span className="row nowrap gap-xs text-primary bold">
+                          <CheckCircle2 size={14} aria-hidden="true" />
+                          <span>{t('badgeMaxTier')}</span>
+                        </span>
+                      ) : b.next_tier && b.next_target != null ? (
+                        t('badgeNextTier', {
+                          tier: t(`badgeTier_${b.next_tier}`),
+                          progress: b.progress,
+                          target: b.next_target,
+                        })
+                      ) : b.earned ? (
+                        <span className="row nowrap gap-xs text-primary bold">
+                          <CheckCircle2 size={14} aria-hidden="true" />
+                          <span>{t('earned')}</span>
+                        </span>
+                      ) : (
+                        `${Math.min(b.progress, b.target)}/${b.target}`
                       );
-                    })}
-                  </div>
-                )}
+                    return (
+                      <div key={b.key} className="card flat tight badge-card">
+                        <div
+                          className={`badge-char ${b.earned ? 'earned' : ''} ${isAnim ? 'badge-animated' : ''} ${catClass} badge-tier-${tier}`.trim()}
+                          aria-hidden="true"
+                        >
+                          <BadgeIcon badge={b} fallbackChar={badgeChar(b)} />
+                          {tier !== 'none' && (
+                            <span className={`badge-tier-crest badge-tier-${tier}`}>
+                              {BADGE_TIER_ROMAN[tier]}
+                            </span>
+                          )}
+                        </div>
+                        <div className="grow min-w-0 stack-xs">
+                          <div className="row between nowrap gap-xs">
+                            <div className="row nowrap gap-xs items-center min-w-0">
+                              <strong className="ellipsis">{badgeName(b)}</strong>
+                              {tier !== 'none' && (
+                                <span className={`badge-tier-pill badge-tier-${tier}`}>
+                                  {t(`badgeTier_${tier}`)}
+                                </span>
+                              )}
+                            </div>
+                            <span className="small muted nowrap">{progressText}</span>
+                          </div>
+                          <div className={`bar badge-tier-${tier}`}>
+                            <div style={{ width: `${percent}%` }} />
+                          </div>
+                          {hasTiers && (
+                            <div className="badge-tier-steps">
+                              {b.tiers!.map((step) => {
+                                const isNext = !step.reached && b.next_tier === step.tier;
+                                return (
+                                  <span
+                                    key={step.tier}
+                                    className={`badge-tier-step badge-tier-${step.tier}${step.reached ? ' reached' : ''}${isNext ? ' next' : ''}`}
+                                  >
+                                    {t(`badgeTier_${step.tier}`)} {step.target}
+                                  </span>
+                                );
+                              })}
+                            </div>
+                          )}
+                          <div className="muted tiny">{badgeRule(b)}</div>
+                        </div>
+                      </div>
+                    );
+                  };
+
+                  const categories: BadgeCategory[] = ['member', 'driver', 'traffic_lead'];
+                  const filterOptions: { value: 'mine' | 'all' | BadgeCategory; label: string }[] = [
+                    { value: 'mine', label: t('badgeFilterMine') },
+                    { value: 'all', label: t('badgeFilterAll') },
+                    { value: 'member', label: t('badgeRole_member') },
+                    { value: 'driver', label: t('badgeRole_driver') },
+                    { value: 'traffic_lead', label: t('badgeRole_traffic_lead') },
+                  ];
+
+                  return (
+                    <div className="stack-sm">
+                      {hasCategories && (
+                        <div className="badge-filter-row" role="tablist" aria-label={t('badges')}>
+                          {filterOptions.map((opt) => (
+                            <button
+                              key={opt.value}
+                              type="button"
+                              role="tab"
+                              aria-selected={badgeFilter === opt.value}
+                              className={`chip${badgeFilter === opt.value ? ' on' : ''}`}
+                              onClick={() => setBadgeFilter(opt.value)}
+                            >
+                              {opt.label}
+                            </button>
+                          ))}
+                        </div>
+                      )}
+                      {hasCategories ? (
+                        categories.map((cat) => {
+                          const group = visibleBadges.filter((b) => b.category === cat);
+                          if (group.length === 0) return null;
+                          const earnedCount = group.filter((b) => b.earned).length;
+                          return (
+                            <div key={cat} className="stack-xs">
+                              <div className="badge-group-header">
+                                <span className={`badge-role-dot badge-cat-${cat}`} aria-hidden="true" />
+                                <span className="bold small">{t(`badgeRole_${cat}`)}</span>
+                                <span className="muted tiny">{earnedCount}/{group.length}</span>
+                              </div>
+                              <div className="stack-sm">
+                                {group.map(renderBadgeCard)}
+                              </div>
+                            </div>
+                          );
+                        })
+                      ) : (
+                        <div className="stack-sm">
+                          {visibleBadges.map(renderBadgeCard)}
+                        </div>
+                      )}
+                    </div>
+                  );
+                })()}
               </Card>
             </div>
           </>

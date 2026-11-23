@@ -1,8 +1,11 @@
 import { FormEvent, useMemo, useState } from 'react';
+import { Download, FileSpreadsheet, Upload } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import { del, put, useApi } from '../../api';
 import { useAuth } from '../../auth';
 import { Button, Card, CardSkeleton, EmptyState, ErrorBox, Pill, useAction, useConfirm } from '../../components/ui';
+import { buildFaresCsv, buildFaresXlsx, triggerBlobDownload } from '../../fareSheet';
+import FareImportModal from './FareImportModal';
 
 export interface FareArea {
   id: number;
@@ -51,6 +54,7 @@ export default function AreaFares() {
   const { t } = useTranslation('admin');
   const { can } = useAuth();
   const canUpdate = can('admin_fares', 'update');
+  const canCreateAreas = can('admin_areas', 'create');
   const fares = useApi<FaresResponse>('/admin/settings/fares');
   const areasApi = useApi<FareArea[]>('/areas');
   const open = useMemo(
@@ -65,11 +69,42 @@ export default function AreaFares() {
   const [picked, setPicked] = useState<number | null>(null);
   const [viewMode, setViewMode] = useState<'list' | 'matrix'>('list');
   const [matrixPair, setMatrixPair] = useState<{ from: FareArea; to: FareArea } | null>(null);
+  const [importOpen, setImportOpen] = useState(false);
   const from = open.find((a) => a.id === picked) ?? open[0];
 
   const unsetFor = (a: FareArea) => open.filter((b) => !byPair.has(pairKey(a.id, b.id))).length;
   const { set, total } = fareCoverage(open, fares.data?.fares ?? []);
   const coveragePercent = total > 0 ? Math.round((set / total) * 100) : 0;
+
+  const handleExportXlsx = () => {
+    const bytes = buildFaresXlsx(areasApi.data ?? [], fares.data?.fares ?? [], {
+      sheetName: t('fares.sheetNameExport'),
+      originLabel: t('fares.matrixOrigin'),
+    });
+    const copy = new Uint8Array(bytes.byteLength);
+    copy.set(bytes);
+    triggerBlobDownload(
+      new Blob([copy], {
+        type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+      }),
+      'grace-ride-area-fares.xlsx',
+    );
+  };
+
+  const handleExportCsv = () => {
+    const csv = buildFaresCsv(
+      areasApi.data ?? [],
+      fares.data?.fares ?? [],
+      t('fares.matrixOrigin'),
+    );
+    triggerBlobDownload(
+      new Blob([csv], { type: 'text/csv;charset=utf-8;' }),
+      'grace-ride-area-fares.csv',
+    );
+  };
+
+  const showIoBar =
+    !fares.loading && !areasApi.loading && (open.length > 0 || (canUpdate && canCreateAreas));
 
   return (
     <Card className="stack">
@@ -106,6 +141,29 @@ export default function AreaFares() {
           </div>
         )}
       </div>
+
+      {showIoBar && (
+        <div className="fare-io-bar">
+          {open.length > 0 && (
+            <>
+              <Button variant="secondary" size="sm" onClick={handleExportXlsx}>
+                <FileSpreadsheet size={16} aria-hidden="true" />
+                {t('fares.exportXlsx')}
+              </Button>
+              <Button variant="secondary" size="sm" onClick={handleExportCsv}>
+                <Download size={16} aria-hidden="true" />
+                {t('fares.exportCsv')}
+              </Button>
+            </>
+          )}
+          {canUpdate && (open.length > 0 || canCreateAreas) && (
+            <Button variant="primary" size="sm" onClick={() => setImportOpen(true)}>
+              <Upload size={16} aria-hidden="true" />
+              {t('fares.importAction')}
+            </Button>
+          )}
+        </div>
+      )}
 
       {fares.loading || areasApi.loading ? (
         <CardSkeleton count={2} />
@@ -231,6 +289,22 @@ export default function AreaFares() {
             </div>
           )}
         </>
+      )}
+
+      {importOpen && (
+        <FareImportModal
+          allAreas={areasApi.data ?? []}
+          openAreas={open}
+          existingFares={fares.data?.fares ?? []}
+          canCreateAreas={canCreateAreas}
+          onClose={() => setImportOpen(false)}
+          onImported={(createdAreas) => {
+            fares.reload();
+            if (createdAreas) areasApi.reload();
+          }}
+          onDownloadXlsx={handleExportXlsx}
+          onDownloadCsv={handleExportCsv}
+        />
       )}
     </Card>
   );

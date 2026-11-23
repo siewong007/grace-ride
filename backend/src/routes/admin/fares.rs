@@ -1,15 +1,53 @@
 //! Area-to-area mileage fares. One flat price per pair of areas, the same in both directions.
 
-use axum::{extract::State, Json};
+use std::collections::{BTreeMap, HashMap, HashSet};
+
+use axum::{
+    body::Body,
+    extract::State,
+    http::{header, StatusCode},
+    response::Response,
+    Json,
+};
 use serde::Deserialize;
 use serde_json::{json, Value};
 
 use crate::auth::CurrentUser;
-use crate::error::{bad, AppResult};
+use crate::error::{bad, AppError, AppResult};
 use crate::i18n::ErrorKey;
 use crate::perms::{Act, Page};
 use crate::state::AppState;
 use crate::util::{audit, fmt_rm, now, require};
+
+const MAX_BULK_FARES: usize = 10_000;
+const MAX_AREA_NAME_CHARS: usize = 80;
+
+fn normalize_area_name(s: &str) -> String {
+    s.split_whitespace().collect::<Vec<_>>().join(" ")
+}
+
+fn area_lookup_key(s: &str) -> String {
+    normalize_area_name(s).to_lowercase()
+}
+
+fn valid_area_name(s: &str) -> bool {
+    !s.is_empty() && s.chars().count() <= MAX_AREA_NAME_CHARS && !s.chars().any(char::is_control)
+}
+
+fn escape_csv_cell(s: &str) -> String {
+    let trimmed = s.trim_start();
+    let sanitized =
+        if s.starts_with(['\t', '\r']) || trimmed.starts_with(['=', '+', '-', '@', '|', '%']) {
+            format!("'{s}")
+        } else {
+            s.to_string()
+        };
+    if sanitized.contains([',', '"', '\n', '\r']) {
+        format!("\"{}\"", sanitized.replace('"', "\"\""))
+    } else {
+        sanitized
+    }
+}
 
 pub(super) async fn list_fares(
     State(st): State<AppState>,
@@ -112,4 +150,232 @@ pub(super) async fn delete_fare(
     )
     .await;
     Ok(Json(json!({ "ok": true })))
+}
+
+#[derive(Deserialize)]
+pub(super) struct BulkFareItem {
+    area_a: String,
+    area_b: String,
+    amount_cents: i64,
+}
+
+#[derive(Deserialize)]
+pub(super) struct BulkFaresIn {
+    fares: Vec<BulkFareItem>,
+    #[serde(default)]
+    create_missing_areas: bool,
+}
+
+/// Bulk upsert area-to-area fares by area name inside a single transaction.
+pub(super) async fn bulk_put_fares(
+    State(st): State<AppState>,
+    u: CurrentUser,
+    Json(req): Json<BulkFaresIn>,
+) -> AppResult<Json<Value>> {
+    require(&u, Page::AdminFares, Act::Update)?;
+    if req.fares.is_empty() {
+        return Err(bad(u.lang, ErrorKey::FareBatchEmpty));
+    }
+    if req.fares.len() > MAX_BULK_FARES {
+        return Err(bad(u.lang, ErrorKey::FareBatchTooLarge));
+    }
+
+    let mut validated: Vec<(String, String, i64)> = Vec::with_capacity(req.fares.len());
+    for item in &req.fares {
+        let a = normalize_area_name(&item.area_a);
+        let b = normalize_area_name(&item.area_b);
+        if !valid_area_name(&a) || !valid_area_name(&b) {
+            return Err(bad(u.lang, ErrorKey::AreaNameRequired));
+        }
+        if item.amount_cents < 0 || item.amount_cents > 50_000 {
+            return Err(bad(u.lang, ErrorKey::AmountRangeInvalid));
+        }
+        validated.push((a, b, item.amount_cents));
+    }
+
+    let mut tx = st.db.begin().await?;
+    let existing_areas: Vec<(i64, String)> =
+        sqlx::query_as("SELECT id, name FROM areas ORDER BY active DESC, id ASC")
+            .fetch_all(&mut *tx)
+            .await?;
+    let mut area_map: HashMap<String, i64> = HashMap::with_capacity(existing_areas.len());
+    for (id, name) in existing_areas {
+        area_map.entry(area_lookup_key(&name)).or_insert(id);
+    }
+
+    let mut seen_missing: HashSet<String> = HashSet::new();
+    let mut missing_areas: Vec<(String, String)> = Vec::new();
+    for (a, b, _) in &validated {
+        for name in [a, b] {
+            let key = area_lookup_key(name);
+            if !area_map.contains_key(&key) && seen_missing.insert(key.clone()) {
+                missing_areas.push((key, name.clone()));
+            }
+        }
+    }
+
+    let mut created_areas: Vec<(i64, String)> = Vec::new();
+    if !missing_areas.is_empty() {
+        if !req.create_missing_areas {
+            return Err(bad(u.lang, ErrorKey::FareUnknownArea));
+        }
+        require(&u, Page::AdminAreas, Act::Create)?;
+        for (key, name) in missing_areas {
+            let row: Result<(i64,), sqlx::Error> =
+                sqlx::query_as("INSERT INTO areas (name, active) VALUES ($1, 1) RETURNING id")
+                    .bind(&name)
+                    .fetch_one(&mut *tx)
+                    .await;
+            let (id,) = match row {
+                Ok(r) => r,
+                Err(sqlx::Error::Database(e)) if e.is_unique_violation() => {
+                    return Err(bad(u.lang, ErrorKey::AreaExists));
+                }
+                Err(e) => return Err(e.into()),
+            };
+            area_map.insert(key, id);
+            created_areas.push((id, name));
+        }
+    }
+
+    let mut deduped: BTreeMap<(i64, i64), i64> = BTreeMap::new();
+    for (a, b, cents) in &validated {
+        let id_a = area_map[&area_lookup_key(a)];
+        let id_b = area_map[&area_lookup_key(b)];
+        let pair = (id_a.min(id_b), id_a.max(id_b));
+        if let Some(&prev) = deduped.get(&pair) {
+            if prev != *cents {
+                return Err(bad(u.lang, ErrorKey::FareDuplicateConflict));
+            }
+        } else {
+            deduped.insert(pair, *cents);
+        }
+    }
+
+    let existing_fares: Vec<(i64, i64, i64)> =
+        sqlx::query_as("SELECT area_a_id, area_b_id, amount_cents FROM area_fares")
+            .fetch_all(&mut *tx)
+            .await?;
+    let existing_map: HashMap<(i64, i64), i64> = existing_fares
+        .into_iter()
+        .map(|(a, b, c)| ((a, b), c))
+        .collect();
+
+    let ts = now();
+    let mut created: usize = 0;
+    let mut updated: usize = 0;
+    let mut unchanged: usize = 0;
+    for (&(lo, hi), &cents) in &deduped {
+        match existing_map.get(&(lo, hi)) {
+            Some(&prev) if prev == cents => {
+                unchanged += 1;
+            }
+            Some(_) => {
+                updated += 1;
+                sqlx::query(
+                    "INSERT INTO area_fares (area_a_id, area_b_id, amount_cents, updated_at)
+                     VALUES ($1, $2, $3, $4)
+                     ON CONFLICT (area_a_id, area_b_id) DO UPDATE
+                     SET amount_cents = EXCLUDED.amount_cents, updated_at = EXCLUDED.updated_at",
+                )
+                .bind(lo)
+                .bind(hi)
+                .bind(cents)
+                .bind(&ts)
+                .execute(&mut *tx)
+                .await?;
+            }
+            None => {
+                created += 1;
+                sqlx::query(
+                    "INSERT INTO area_fares (area_a_id, area_b_id, amount_cents, updated_at)
+                     VALUES ($1, $2, $3, $4)
+                     ON CONFLICT (area_a_id, area_b_id) DO UPDATE
+                     SET amount_cents = EXCLUDED.amount_cents, updated_at = EXCLUDED.updated_at",
+                )
+                .bind(lo)
+                .bind(hi)
+                .bind(cents)
+                .bind(&ts)
+                .execute(&mut *tx)
+                .await?;
+            }
+        }
+    }
+
+    tx.commit().await?;
+
+    let mut created_names: Vec<String> = Vec::with_capacity(created_areas.len());
+    for (id, name) in created_areas {
+        audit(&st.db, Some(u.id), "area.create", "area", Some(id), &name).await;
+        created_names.push(name);
+    }
+    let total = deduped.len();
+    audit(
+        &st.db,
+        Some(u.id),
+        "settings.fare_bulk",
+        "area_fares",
+        None,
+        format!("{total} routes ({created} added, {updated} updated, {unchanged} unchanged)"),
+    )
+    .await;
+
+    Ok(Json(json!({
+        "created": created,
+        "updated": updated,
+        "unchanged": unchanged,
+        "total": total,
+        "areas_created": created_names,
+    })))
+}
+
+/// Export the active area fare matrix as UTF-8 BOM CSV (upper triangle + diagonal).
+pub(super) async fn export_fares_csv(
+    State(st): State<AppState>,
+    u: CurrentUser,
+) -> AppResult<Response> {
+    require(&u, Page::AdminFares, Act::View)?;
+    let areas: Vec<(i64, String)> =
+        sqlx::query_as("SELECT id, name FROM areas WHERE active = 1 ORDER BY LOWER(name), name")
+            .fetch_all(&st.db)
+            .await?;
+    let fare_rows: Vec<(i64, i64, i64)> =
+        sqlx::query_as("SELECT area_a_id, area_b_id, amount_cents FROM area_fares")
+            .fetch_all(&st.db)
+            .await?;
+    let fare_map: HashMap<(i64, i64), i64> =
+        fare_rows.into_iter().map(|(a, b, c)| ((a, b), c)).collect();
+
+    let mut out = String::from("\u{FEFF}");
+    out.push_str(&escape_csv_cell("From \\ To"));
+    for (_, name) in &areas {
+        out.push(',');
+        out.push_str(&escape_csv_cell(name));
+    }
+    out.push_str("\r\n");
+
+    for (i, (id_a, name_a)) in areas.iter().enumerate() {
+        out.push_str(&escape_csv_cell(name_a));
+        for (j, (id_b, _)) in areas.iter().enumerate() {
+            out.push(',');
+            if j >= i {
+                let pair = ((*id_a).min(*id_b), (*id_a).max(*id_b));
+                if let Some(&cents) = fare_map.get(&pair) {
+                    out.push_str(&format!("{}.{:02}", cents / 100, cents % 100));
+                }
+            }
+        }
+        out.push_str("\r\n");
+    }
+
+    Response::builder()
+        .status(StatusCode::OK)
+        .header(header::CONTENT_TYPE, "text/csv; charset=utf-8")
+        .header(
+            header::CONTENT_DISPOSITION,
+            "attachment; filename=\"grace-ride-area-fares.csv\"",
+        )
+        .body(Body::from(out))
+        .map_err(|e| AppError::Other(anyhow::anyhow!(e)))
 }

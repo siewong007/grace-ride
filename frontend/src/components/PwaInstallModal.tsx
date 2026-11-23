@@ -1,17 +1,22 @@
 import { useState } from 'react';
 import { useTranslation } from 'react-i18next';
-import { CheckCircle2, Download, Monitor, PlusSquare, Share, Smartphone } from 'lucide-react';
+import { BellRing, CheckCircle2, Download, Monitor, PlusSquare, Share, Smartphone } from 'lucide-react';
 import { usePwaInstall } from '../pwaInstall';
+import { enablePushNotifications, usePushNotifications } from '../pushNotifications';
 import { Button, Modal, Notice } from './ui';
 
 export interface PwaInstallModalProps {
   onClose: () => void;
+  onNotificationsEnabled?: () => void;
 }
 
-export function PwaInstallModal({ onClose }: { onClose: () => void }) {
+export function PwaInstallModal({ onClose, onNotificationsEnabled }: PwaInstallModalProps) {
   const { t } = useTranslation('profile');
   const pwa = usePwaInstall();
+  const push = usePushNotifications();
   const [installing, setInstalling] = useState(false);
+  const [enablingPush, setEnablingPush] = useState(false);
+  const [pushFeedback, setPushFeedback] = useState('');
 
   const handleInstallOneClick = async () => {
     setInstalling(true);
@@ -22,6 +27,33 @@ export function PwaInstallModal({ onClose }: { onClose: () => void }) {
       }
     } finally {
       setInstalling(false);
+    }
+  };
+
+  const deniedCopy =
+    push.platform === 'ios'
+      ? t('pushDeniedIos')
+      : push.platform === 'android'
+        ? t('pushDeniedAndroid')
+        : t('pushDeniedDesktop');
+
+  const handleEnablePush = async () => {
+    setEnablingPush(true);
+    setPushFeedback('');
+    try {
+      const res = await enablePushNotifications();
+      if (res.ok) {
+        setPushFeedback(t(res.mode === 'push' ? 'pushEnabled' : 'pushEnabledLocal'));
+        onNotificationsEnabled?.();
+      } else if (res.reason === 'denied') {
+        setPushFeedback(deniedCopy);
+      } else if (res.reason === 'dismissed') {
+        setPushFeedback(t('pushDismissed'));
+      } else if (res.reason === 'unsupported') {
+        setPushFeedback(t('pushUnsupported'));
+      }
+    } finally {
+      setEnablingPush(false);
     }
   };
 
@@ -50,11 +82,52 @@ export function PwaInstallModal({ onClose }: { onClose: () => void }) {
     >
       <div className="stack">
         {pwa.isInstalled ? (
-          <div className="empty stack align-center text-center p-md">
-            <CheckCircle2 size={48} style={{ color: 'var(--success)' }} aria-hidden="true" />
-            <h3 className="bold">{t('installAppInstalled')}</h3>
-            <p className="muted small">{t('installAppInstalledDesc')}</p>
-          </div>
+          <>
+            <div className="empty stack align-center text-center p-md">
+              <CheckCircle2 size={48} style={{ color: 'var(--success)' }} aria-hidden="true" />
+              <h3 className="bold">{t('installAppInstalled')}</h3>
+              <p className="muted small">{t('installAppInstalledDesc')}</p>
+            </div>
+            {(push.availability === 'prompt' ||
+              (push.availability === 'granted' && push.isSubscribed === false)) && (
+              <div className="pwa-step2-card">
+                <div className="bold row align-center gap-xs">
+                  <BellRing size={16} style={{ color: 'var(--primary)' }} aria-hidden="true" />
+                  <span>{t('installAppStep2NotifTitle')}</span>
+                </div>
+                <p className="muted small">{t('installAppStep2NotifDesc')}</p>
+                <div>
+                  <Button
+                    variant="primary"
+                    size="sm"
+                    loading={enablingPush}
+                    onClick={handleEnablePush}
+                  >
+                    <BellRing size={15} aria-hidden="true" />
+                    {t('enableNotifications')}
+                  </Button>
+                </div>
+                {pushFeedback && (
+                  <p className="muted tiny" role="status">
+                    {pushFeedback}
+                  </p>
+                )}
+              </div>
+            )}
+            {push.availability === 'granted' && push.isSubscribed !== false && (
+              <Notice tone="success" icon={<CheckCircle2 size={16} aria-hidden="true" />}>
+                {t('installAppStep2NotifDone')}
+              </Notice>
+            )}
+            {push.availability === 'denied' && (
+              <Notice tone="warning">{deniedCopy}</Notice>
+            )}
+            {push.availability === 'unsupported' && pushFeedback && (
+              <p className="muted tiny" role="status">
+                {pushFeedback}
+              </p>
+            )}
+          </>
         ) : (
           <>
             {pwa.isInApp && (
@@ -116,6 +189,13 @@ export function PwaInstallModal({ onClose }: { onClose: () => void }) {
                       <span>{t('installAppIosStep3')}</span>
                     </div>
                   </div>
+
+                  <div className="pwa-guide-step">
+                    <span className="pwa-guide-step-num">4</span>
+                    <div className="pwa-guide-step-content">
+                      <span>{t('installAppIosStep4')}</span>
+                    </div>
+                  </div>
                 </div>
               </div>
             ) : pwa.platform === 'android' ? (
@@ -146,6 +226,13 @@ export function PwaInstallModal({ onClose }: { onClose: () => void }) {
                       <span>{t('installAppAndroidStep3')}</span>
                     </div>
                   </div>
+
+                  <div className="pwa-guide-step">
+                    <span className="pwa-guide-step-num">4</span>
+                    <div className="pwa-guide-step-content">
+                      <span>{t('installAppAndroidStep4')}</span>
+                    </div>
+                  </div>
                 </div>
               </div>
             ) : (
@@ -159,6 +246,13 @@ export function PwaInstallModal({ onClose }: { onClose: () => void }) {
                     <span className="pwa-guide-step-num">1</span>
                     <div className="pwa-guide-step-content">
                       <span>{t('installAppDesktopStep1')}</span>
+                    </div>
+                  </div>
+
+                  <div className="pwa-guide-step">
+                    <span className="pwa-guide-step-num">2</span>
+                    <div className="pwa-guide-step-content">
+                      <span>{t('installAppDesktopStep2')}</span>
                     </div>
                   </div>
                 </div>

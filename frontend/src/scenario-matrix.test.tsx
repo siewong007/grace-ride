@@ -446,6 +446,9 @@ describe('Scenario Matrix — Frontend Components & Service Worker', () => {
         registration: {
           showNotification: vi.fn().mockResolvedValue(undefined),
         },
+        navigator: {
+          setAppBadge: vi.fn().mockResolvedValue(undefined),
+        },
       };
       const fakeHtmlResponse = {
         ok: true,
@@ -567,6 +570,45 @@ describe('Scenario Matrix — Frontend Components & Service Worker', () => {
         badge: '/icon-192.png?v=2',
         data: { url: '/rides/42?action=readiness' },
       });
+    });
+
+    it('updates app icon badge via setAppBadge when push event arrives', async () => {
+      const { listeners, mockSelf } = loadSwHarness();
+      const onPush = listeners.get('push')!;
+
+      let waitCount: Promise<unknown> | undefined;
+      onPush({
+        data: {
+          json: () => ({
+            title: 'New alert',
+            body: 'Check rides',
+            url: '/notifications',
+            badge_count: 4,
+          }),
+        },
+        waitUntil: (p: Promise<unknown>) => {
+          waitCount = p;
+        },
+      });
+      await waitCount;
+      expect(mockSelf.navigator.setAppBadge).toHaveBeenCalledWith(4);
+
+      mockSelf.navigator.setAppBadge.mockClear();
+      let waitDefault: Promise<unknown> | undefined;
+      onPush({
+        data: {
+          json: () => ({
+            title: 'New alert',
+            body: 'Check rides',
+            url: '/notifications',
+          }),
+        },
+        waitUntil: (p: Promise<unknown>) => {
+          waitDefault = p;
+        },
+      });
+      await waitDefault;
+      expect(mockSelf.navigator.setAppBadge).toHaveBeenCalledWith();
     });
   });
 });

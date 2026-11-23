@@ -362,8 +362,17 @@ data class ProxyRider(
 )
 
 @Serializable
+data class BadgeTierStep(
+    val tier: String,
+    val target: Long,
+    val reached: Boolean = false,
+)
+
+@Serializable
 data class Badge(
     val key: String,
+    val category: String? = null,
+    @SerialName("role_match") val roleMatch: Boolean = true,
     val char: String,
     val icon: String? = null,
     val name: String = "",
@@ -371,6 +380,14 @@ data class Badge(
     @SerialName("char_zh") val charZh: String? = null,
     @SerialName("name_zh") val nameZh: String? = null,
     @SerialName("rule_zh") val ruleZh: String? = null,
+    val progress: Long = 0,
+    val target: Long = 0,
+    val earned: Boolean = false,
+    val tier: String = "none",
+    @SerialName("tier_level") val tierLevel: Int = 0,
+    @SerialName("next_tier") val nextTier: String? = null,
+    @SerialName("next_target") val nextTarget: Long? = null,
+    val tiers: List<BadgeTierStep> = emptyList(),
 )
 
 @Serializable

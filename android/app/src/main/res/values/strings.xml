@@ -239,6 +239,14 @@
     <string name="profile_avatar_choose_photo">Choose photo or animated GIF</string>
     <string name="profile_avatar_color">Background color</string>
     <string name="profile_avatar_save">Save avatar</string>
+    <string name="profile_avatar_grace_car">Grace Cruiser</string>
+    <string name="profile_avatar_peace_dove">Peace Dove</string>
+    <string name="profile_avatar_sunny_cloud">Sunny Smile</string>
+    <string name="profile_avatar_happy_bear">Cuddly Bear</string>
+    <string name="profile_avatar_fellowship_cat">Mochi Cat</string>
+    <string name="profile_avatar_joy_puppy">Joy Puppy</string>
+    <string name="profile_avatar_star_lantern">Starry Guide</string>
+    <string name="profile_avatar_blossom_sprout">Grace Blossom</string>
     <string name="profile_avatar_grok">Grok Bot</string>
     <string name="profile_avatar_muse">Muse Bot</string>
     <string name="profile_security">Security</string>

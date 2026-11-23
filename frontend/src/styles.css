@@ -46,6 +46,70 @@
   --logo-red: var(--brand-red);
   --logo-blue: var(--brand-blue);
 
+  /* Adorable flat illustration palette for animated avatars & achievement badges */
+  --art-blue: #2563EB;
+  --art-sky: #60A5FA;
+  --art-sky-soft: #DBEAFE;
+  --art-red: #E8462F;
+  --art-coral: #FB7185;
+  --art-pink: #F472B6;
+  --art-pink-soft: #FCE7F3;
+  --art-blush: #FDA4AF;
+  --art-amber: #F59E0B;
+  --art-gold: #FBBF24;
+  --art-cream: #FEF3C7;
+  --art-mint: #34D399;
+  --art-green: #22C55E;
+  --art-teal: #14B8A6;
+  --art-lavender: #C4B5FD;
+  --art-purple: #8B5CF6;
+  --art-indigo: #4F46E5;
+  --art-brown: #92400E;
+  --art-caramel: #D97706;
+  --art-ink: #1E293B;
+  --art-white: #FFFFFF;
+  --art-cyan: #22D3EE;
+  --art-slate: #475569;
+
+  /* Achievement role accent tokens */
+  --badge-member: #10B981;
+  --badge-driver: #2563EB;
+  --badge-traffic: #D97706;
+  --badge-accent: var(--primary);
+
+  /* Dynamic avatar skin & plush palette (overridden per .av-<color>) */
+  --av-skin: #18181B;
+  --av-skin-ring: rgb(255 255 255 / 0.18);
+  --av-eye: #FFFFFF;
+  --av-plush: #FEF3C7;
+  --av-plush-shade: #FDE68A;
+
+  /* Achievement tier metallic palettes (Bronze / Silver / Gold / Platinum) */
+  --tier-none: #94A3B8;
+  --tier-none-bg: #F1F5F9;
+  --tier-none-ink: #64748B;
+  --tier-bronze: #B45309;
+  --tier-bronze-bg: #FEF3E6;
+  --tier-bronze-ring: #D97706;
+  --tier-bronze-ink: #92400E;
+  --tier-silver: #64748B;
+  --tier-silver-bg: #F1F5F9;
+  --tier-silver-ring: #94A3B8;
+  --tier-silver-ink: #334155;
+  --tier-gold: #D97706;
+  --tier-gold-bg: #FEF9C3;
+  --tier-gold-ring: #F59E0B;
+  --tier-gold-ink: #854D0E;
+  --tier-platinum: #0284C7;
+  --tier-platinum-bg: #E0F2FE;
+  --tier-platinum-ring: #38BDF8;
+  --tier-platinum-ink: #075985;
+  --tier-platinum-spark: #A855F7;
+  --badge-tier-color: var(--tier-none);
+  --badge-tier-bg: var(--tier-none-bg);
+  --badge-tier-ring: var(--border);
+  --badge-tier-ink: var(--tier-none-ink);
+
   /* Names used by page styles; aliases of the base tokens. */
   --border-soft: var(--border);
   --border-hover: var(--muted);
@@ -135,6 +199,30 @@
     --info-soft: #1A2A44;
     --logo-red: #FFFFFF;
     --logo-blue: #FFFFFF;
+    --badge-member: #34D399;
+    --badge-driver: #60A5FA;
+    --badge-traffic: #FBBF24;
+    --av-skin-ring: rgb(255 255 255 / 0.28);
+    --tier-none: #64748B;
+    --tier-none-bg: #1F2124;
+    --tier-none-ink: #94A3B8;
+    --tier-bronze: #F59E0B;
+    --tier-bronze-bg: #2A1D12;
+    --tier-bronze-ring: #D97706;
+    --tier-bronze-ink: #FCD34D;
+    --tier-silver: #CBD5E1;
+    --tier-silver-bg: #242933;
+    --tier-silver-ring: #94A3B8;
+    --tier-silver-ink: #E2E8F0;
+    --tier-gold: #FBBF24;
+    --tier-gold-bg: #2C230D;
+    --tier-gold-ring: #F59E0B;
+    --tier-gold-ink: #FDE68A;
+    --tier-platinum: #38BDF8;
+    --tier-platinum-bg: #132536;
+    --tier-platinum-ring: #7DD3FC;
+    --tier-platinum-ink: #BAE6FD;
+    --tier-platinum-spark: #C084FC;
     --shadow-lg: 0 4px 16px rgb(0 0 0 / .4);
     color-scheme: dark;
   }
@@ -166,6 +254,30 @@
   --info-soft: #1A2A44;
   --logo-red: #FFFFFF;
   --logo-blue: #FFFFFF;
+  --badge-member: #34D399;
+  --badge-driver: #60A5FA;
+  --badge-traffic: #FBBF24;
+  --av-skin-ring: rgb(255 255 255 / 0.28);
+  --tier-none: #64748B;
+  --tier-none-bg: #1F2124;
+  --tier-none-ink: #94A3B8;
+  --tier-bronze: #F59E0B;
+  --tier-bronze-bg: #2A1D12;
+  --tier-bronze-ring: #D97706;
+  --tier-bronze-ink: #FCD34D;
+  --tier-silver: #CBD5E1;
+  --tier-silver-bg: #242933;
+  --tier-silver-ring: #94A3B8;
+  --tier-silver-ink: #E2E8F0;
+  --tier-gold: #FBBF24;
+  --tier-gold-bg: #2C230D;
+  --tier-gold-ring: #F59E0B;
+  --tier-gold-ink: #FDE68A;
+  --tier-platinum: #38BDF8;
+  --tier-platinum-bg: #132536;
+  --tier-platinum-ring: #7DD3FC;
+  --tier-platinum-ink: #BAE6FD;
+  --tier-platinum-spark: #C084FC;
   --shadow-lg: 0 4px 16px rgb(0 0 0 / .4);
   color-scheme: dark;
 }
@@ -536,13 +648,26 @@ button, input, select, textarea { font: inherit; color: inherit; }
 .avatar.lg { width: 64px; height: 64px; font-size: var(--fs-2xl); }
 .avatar.xl { width: 120px; height: 120px; font-size: 48px; }
 .avatar .avatar-icon { width: 55%; height: 55%; }
+.avatar.avatar-animated .avatar-icon { width: 84%; height: 84%; }
 /* Chosen avatar colours: a tint of --av over the surface, with ink mixed toward the text
-   colour, so each one follows light and dark themes without per-theme overrides. */
-.av-purple { --av: #7F77DD; } .av-teal { --av: #1D9E75; } .av-coral { --av: #D85A30; } .av-pink { --av: #D4537E; }
-.av-blue { --av: #378ADD; } .av-green { --av: #639922; } .av-amber { --av: #BA7517; } .av-gray { --av: #888780; }
+   colour, and skin/plush hues for Grok Bot & Muse (Jolly), so each follows light/dark themes. */
+.av-purple { --av: #7F77DD; --av-skin: #7C3AED; --av-plush: #DDD6FE; --av-plush-shade: #C4B5FD; }
+.av-teal { --av: #1D9E75; --av-skin: #0D9488; --av-plush: #CCFBF1; --av-plush-shade: #99F6E4; }
+.av-coral { --av: #D85A30; --av-skin: #EA580C; --av-plush: #FED7AA; --av-plush-shade: #FDBA74; }
+.av-pink { --av: #D4537E; --av-skin: #DB2777; --av-plush: #FCE7F3; --av-plush-shade: #FBCFE8; }
+.av-blue { --av: #378ADD; --av-skin: #2563EB; --av-plush: #DBEAFE; --av-plush-shade: #BFDBFE; }
+.av-green { --av: #639922; --av-skin: #16A34A; --av-plush: #DCFCE7; --av-plush-shade: #BBF7D0; }
+.av-amber { --av: #BA7517; --av-skin: #D97706; --av-plush: #FEF3C7; --av-plush-shade: #FDE68A; }
+.av-gray { --av: #888780; --av-skin: #18181B; --av-plush: #E4E4E7; --av-plush-shade: #D4D4D8; }
+.av-white { --av: #FFFFFF; --av-skin: #FFFFFF; --av-skin-ring: #CBD5E1; --av-eye: #18181B; --av-plush: #FFFFFF; --av-plush-shade: #E2E8F0; }
 .avatar[class*='av-'] {
   background: color-mix(in srgb, var(--av) 24%, var(--surface));
   color: color-mix(in srgb, var(--av) 70%, var(--text));
+}
+.avatar.av-white {
+  background: #FFFFFF;
+  color: #1E293B;
+  box-shadow: inset 0 0 0 1.5px var(--border);
 }
 .plate { display: inline-block; padding: 1px var(--space-2); border: 1px solid currentColor; border-radius: 4px; font-weight: 700; letter-spacing: 0.06em; font-family: var(--font-mono); font-variant-numeric: tabular-nums; }
 
@@ -839,6 +964,7 @@ textarea.input { min-height: 96px; resize: vertical; }
   box-shadow: inset 0 0 0 1px var(--border);
 }
 .avatar-swatch.av-none { background: var(--surface-2); }
+.avatar-swatch.av-white { background: #FFFFFF; box-shadow: inset 0 0 0 1px #CBD5E1; }
 .avatar-swatch.on { border-color: var(--text); box-shadow: inset 0 0 0 2px var(--surface); }
 .avatar-icon-opt {
   width: 44px; height: 44px; border-radius: 50%; display: grid; place-items: center; cursor: pointer;
@@ -847,85 +973,234 @@ textarea.input { min-height: 96px; resize: vertical; }
 .avatar-icon-opt.on { border-color: var(--primary); color: var(--primary); }
 .avatar-editor-actions { justify-content: flex-end; }
 
-/* Animated avatars: Grok Bot & Muse Bot */
+/* Animated avatars: Grace Ride coloured characters, Grok Bot & Muse (Jolly) */
 .avatar-animated-icon {
   width: 100%;
   height: 100%;
   display: block;
 }
 
-@keyframes grokPulse {
-  0%, 100% { transform: scale(1); opacity: 0.95; }
-  50% { transform: scale(1.05); opacity: 1; filter: drop-shadow(0 0 3px currentColor); }
+.avatar-animated-icon *,
+.badge-animated-svg * {
+  transform-box: fill-box;
+  transform-origin: center;
 }
 
-@keyframes grokEyeGlow {
-  0%, 100% { transform: scaleY(1); opacity: 0.85; }
-  45% { transform: scaleY(1); opacity: 1; }
-  50% { transform: scaleY(0.12); opacity: 0.25; }
-  55% { transform: scaleY(1); opacity: 1; }
+@keyframes avSquashHop {
+  0%, 100% { transform: translateY(0) scale(1.03, 0.96); }
+  22% { transform: translateY(-2.5px) scale(0.97, 1.04); }
+  50% { transform: translateY(-0.5px) scale(1, 1); }
+  74% { transform: translateY(0.4px) scale(1.03, 0.97); }
 }
 
-@keyframes grokAntennaPulse {
-  0%, 100% { opacity: 0.4; }
-  50% { opacity: 1; filter: drop-shadow(0 0 3px currentColor); }
+@keyframes avShadowSync {
+  0%, 100% { transform: scaleX(1.06); opacity: 0.16; }
+  22% { transform: scaleX(0.82); opacity: 0.08; }
+  50% { transform: scaleX(0.96); opacity: 0.13; }
+  74% { transform: scaleX(1.05); opacity: 0.17; }
 }
 
-.avatar-grok-bot .grok-antenna-pulse {
-  animation: grokAntennaPulse 2s ease-in-out infinite;
+@keyframes avCarRide {
+  0%, 100% { transform: translateY(0) scale(1.02, 0.98); }
+  25% { transform: translateY(-1.8px) scale(0.99, 1.02) rotate(-1deg); }
+  55% { transform: translateY(0.4px) scale(1.02, 0.98) rotate(0.6deg); }
+  80% { transform: translateY(-1.1px) scale(0.99, 1.01) rotate(-0.5deg); }
 }
 
-.avatar-grok-bot .grok-eye {
-  transform-origin: 24px 22px;
-  animation: grokEyeGlow 3.5s ease-in-out infinite;
+@keyframes avWiggle {
+  0%, 100% { transform: rotate(0deg); }
+  25% { transform: rotate(-4.5deg) translateY(-0.5px); }
+  75% { transform: rotate(4.5deg) translateY(-0.5px); }
 }
 
-.avatar-grok-bot {
-  animation: grokPulse 3s ease-in-out infinite;
+@keyframes avDoubleBlink {
+  0%, 72%, 80%, 88%, 100% { transform: scaleY(1); }
+  75%, 84% { transform: scaleY(0.12); }
 }
 
-@keyframes museBreathe {
-  0%, 100% { transform: translateY(0) scale(1); }
-  50% { transform: translateY(-1.5px) scale(1.04); }
+@keyframes avHeartRise {
+  0% { transform: translateY(2px) scale(0.7); opacity: 0; }
+  30% { transform: translateY(-0.8px) scale(1.08); opacity: 1; }
+  75% { transform: translateY(-3.4px) scale(1); opacity: 0.9; }
+  100% { transform: translateY(-4.8px) scale(0.82); opacity: 0; }
 }
 
-@keyframes museBlink {
-  0%, 88%, 100% { transform: scaleY(1); }
-  92% { transform: scaleY(0.1); }
-  96% { transform: scaleY(1); }
+@keyframes avTwinkle {
+  0%, 100% { transform: scale(0.72) rotate(0deg); opacity: 0.45; }
+  45% { transform: scale(1.22) rotate(20deg); opacity: 1; }
+  75% { transform: scale(0.9) rotate(8deg); opacity: 0.75; }
 }
 
-@keyframes museWave {
-  0%, 100% { opacity: 0.35; transform: scale(0.96); }
-  50% { opacity: 1; transform: scale(1.04); }
+@keyframes avSpinSlow {
+  from { transform: rotate(0deg); }
+  to { transform: rotate(360deg); }
 }
 
-.avatar-muse-bot {
-  animation: museBreathe 2.8s ease-in-out infinite;
-  transform-origin: center center;
+@keyframes avFlapL {
+  0%, 100% { transform: rotate(4deg); }
+  50% { transform: rotate(-20deg); }
 }
 
-.avatar-muse-bot .muse-eye {
-  transform-origin: 24px 22px;
-  animation: museBlink 4.2s ease-in-out infinite;
+@keyframes avFlapR {
+  0%, 100% { transform: rotate(-4deg); }
+  50% { transform: rotate(20deg); }
 }
 
-.avatar-muse-bot .muse-wave-1 {
-  animation: museWave 2s ease-in-out infinite;
+@keyframes avSoftPulse {
+  0%, 100% { opacity: 0.65; transform: scale(0.95); }
+  50% { opacity: 1; transform: scale(1.08); }
 }
 
-.avatar-muse-bot .muse-wave-2 {
-  animation: museWave 2s ease-in-out infinite 0.4s;
+@keyframes starFloat {
+  0%, 100% { transform: translateY(0) rotate(-3deg) scale(1); }
+  50% { transform: translateY(-2.4px) rotate(3deg) scale(1.04); }
 }
 
-.avatar-muse-bot .muse-sparkle {
-  animation: grokAntennaPulse 1.8s ease-in-out infinite;
+@keyframes blossomSway {
+  0%, 100% { transform: rotate(-4deg); }
+  50% { transform: rotate(4deg); }
 }
+
+@keyframes puppyWag {
+  0%, 100% { transform: rotate(-12deg); }
+  50% { transform: rotate(16deg); }
+}
+
+/* Grok Bot: minimalist geometric squircle with expressive white pill eyes */
+@keyframes grokFloat {
+  0%, 100% { transform: translateY(0.4px) scale(1.03, 0.97) rotate(0deg); }
+  30% { transform: translateY(-2.4px) scale(0.98, 1.03) rotate(-2deg); }
+  65% { transform: translateY(-1.2px) scale(1, 1.01) rotate(2deg); }
+}
+
+@keyframes grokLook {
+  0%, 18%, 100% { transform: translate(0, 0); }
+  26%, 44% { transform: translate(2.3px, -0.7px); }
+  54%, 72% { transform: translate(-2.3px, 0.5px); }
+  82% { transform: translate(0, -0.4px); }
+}
+
+@keyframes grokEyeBlink {
+  0%, 66%, 72%, 78%, 84%, 100% { transform: scaleY(1); }
+  69%, 81% { transform: scaleY(0.1); }
+}
+
+@keyframes grokEyeWink {
+  0%, 34%, 44%, 66%, 72%, 78%, 84%, 100% { transform: scaleY(1); }
+  38%, 41% { transform: scaleY(0.16); }
+  69%, 81% { transform: scaleY(0.1); }
+}
+
+/* Muse (Jolly): plump plush toy cuddle-hop, waving stubby arms, happy waddle */
+@keyframes museHop {
+  0%, 100% { transform: translateY(0.5px) scale(1.04, 0.95) rotate(0deg); }
+  25% { transform: translateY(-2.5px) scale(0.97, 1.04) rotate(-2.5deg); }
+  55% { transform: translateY(0.2px) scale(1.02, 0.98) rotate(1.5deg); }
+  80% { transform: translateY(-1.6px) scale(0.98, 1.02) rotate(2deg); }
+}
+
+@keyframes museArmL {
+  0%, 100% { transform: rotate(8deg); }
+  30% { transform: rotate(-22deg) translateY(-0.5px); }
+  75% { transform: rotate(4deg); }
+}
+
+@keyframes museArmR {
+  0%, 100% { transform: rotate(-8deg); }
+  30% { transform: rotate(22deg) translateY(-0.5px); }
+  75% { transform: rotate(-4deg); }
+}
+
+@keyframes museFootStep {
+  0%, 100% { transform: translateY(0) rotate(0deg); }
+  35% { transform: translateY(-1.2px) rotate(-6deg); }
+  70% { transform: translateY(0) rotate(4deg); }
+}
+
+@keyframes museCheekGlow {
+  0%, 100% { transform: scale(1); opacity: 0.82; }
+  50% { transform: scale(1.14); opacity: 1; }
+}
+
+/* Grace Cruiser */
+.avatar-grace-car .grace-car-body { animation: avCarRide 2.2s cubic-bezier(0.37, 0, 0.63, 1) infinite; }
+.avatar-grace-car .grace-car-wheel { animation: avSpinSlow 2s linear infinite; }
+.avatar-grace-car .grace-car-eye { animation: avDoubleBlink 4.6s ease-in-out infinite; }
+.avatar-grace-car .grace-car-heart { animation: avHeartRise 2.4s ease-out infinite; }
+.avatar-grace-car .grace-car-light { animation: avSoftPulse 1.5s ease-in-out infinite; }
+.avatar-grace-car .av-shadow { animation: avShadowSync 2.2s ease-in-out infinite; }
+
+/* Peace Dove */
+.avatar-peace-dove .dove-body { animation: avSquashHop 2.8s cubic-bezier(0.37, 0, 0.63, 1) infinite; }
+.avatar-peace-dove .dove-wing-front { transform-origin: 20% 45%; animation: avFlapL 1.6s ease-in-out infinite; }
+.avatar-peace-dove .dove-wing-back { transform-origin: 85% 55%; animation: avFlapR 1.6s ease-in-out infinite 0.16s; }
+.avatar-peace-dove .dove-eye { animation: avDoubleBlink 4.8s ease-in-out infinite; }
+.avatar-peace-dove .dove-star { animation: avTwinkle 2.1s ease-in-out infinite; }
+
+/* Sunny Smile */
+.avatar-sunny-cloud .sun-rays { animation: avSpinSlow 16s linear infinite; }
+.avatar-sunny-cloud .sun-orb { animation: avSoftPulse 3s ease-in-out infinite; }
+.avatar-sunny-cloud .cloud-puff { animation: avSquashHop 3s cubic-bezier(0.37, 0, 0.63, 1) infinite; }
+.avatar-sunny-cloud .cloud-eye { animation: avDoubleBlink 4.2s ease-in-out infinite; }
+
+/* Cuddly Bear */
+.avatar-happy-bear .bear-head-group { animation: avWiggle 3.2s cubic-bezier(0.45, 0, 0.55, 1) infinite; }
+.avatar-happy-bear .bear-ear-l { animation: avFlapL 2.2s ease-in-out infinite; }
+.avatar-happy-bear .bear-ear-r { animation: avFlapR 2.2s ease-in-out infinite 0.2s; }
+.avatar-happy-bear .bear-eye { animation: avDoubleBlink 4.4s ease-in-out infinite; }
+.avatar-happy-bear .bear-heart { animation: avHeartRise 2.5s ease-out infinite; }
+.avatar-happy-bear .av-shadow { animation: avShadowSync 3.2s ease-in-out infinite; }
+
+/* Mochi Cat */
+.avatar-fellowship-cat .cat-head-group { animation: avWiggle 3.5s cubic-bezier(0.45, 0, 0.55, 1) infinite; }
+.avatar-fellowship-cat .cat-eye { animation: avDoubleBlink 3.9s ease-in-out infinite; }
+.avatar-fellowship-cat .cat-whiskers { animation: avSquashHop 2.4s ease-in-out infinite; }
+.avatar-fellowship-cat .cat-sparkle { animation: avTwinkle 2s ease-in-out infinite; }
+
+/* Joy Puppy */
+.avatar-joy-puppy .puppy-head-group { animation: avSquashHop 2.2s cubic-bezier(0.37, 0, 0.63, 1) infinite; }
+.avatar-joy-puppy .puppy-ear-l { transform-origin: 70% 15%; animation: avFlapL 1.3s ease-in-out infinite; }
+.avatar-joy-puppy .puppy-ear-r { transform-origin: 30% 15%; animation: avFlapR 1.3s ease-in-out infinite; }
+.avatar-joy-puppy .puppy-tail { transform-origin: 10% 90%; animation: puppyWag 0.58s ease-in-out infinite; }
+.avatar-joy-puppy .puppy-eye { animation: avDoubleBlink 4.5s ease-in-out infinite; }
+.avatar-joy-puppy .av-shadow { animation: avShadowSync 2.2s ease-in-out infinite; }
+
+/* Starry Guide */
+.avatar-star-lantern .lantern-star { animation: starFloat 2.8s ease-in-out infinite; }
+.avatar-star-lantern .lantern-eye { animation: avDoubleBlink 4.1s ease-in-out infinite; }
+.avatar-star-lantern .lantern-sparkle-1 { animation: avTwinkle 1.8s ease-in-out infinite; }
+.avatar-star-lantern .lantern-sparkle-2 { animation: avTwinkle 1.8s ease-in-out infinite 0.7s; }
+
+/* Grace Blossom */
+.avatar-blossom-sprout .blossom-flower { transform-origin: 50% 95%; animation: blossomSway 3s cubic-bezier(0.45, 0, 0.55, 1) infinite; }
+.avatar-blossom-sprout .blossom-leaf-l { transform-origin: 95% 90%; animation: avFlapL 2.6s ease-in-out infinite; }
+.avatar-blossom-sprout .blossom-leaf-r { transform-origin: 5% 90%; animation: avFlapR 2.6s ease-in-out infinite; }
+.avatar-blossom-sprout .blossom-eye { animation: avDoubleBlink 4.3s ease-in-out infinite; }
+.avatar-blossom-sprout .blossom-dew { animation: avHeartRise 2.6s ease-out infinite; }
+
+/* Grok Bot & Muse (Jolly) */
+.avatar-grok-bot .grok-body { animation: grokFloat 3.4s cubic-bezier(0.37, 0, 0.63, 1) infinite; }
+.avatar-grok-bot .grok-shadow { animation: avShadowSync 3.4s ease-in-out infinite; }
+.avatar-grok-bot .grok-eyes { animation: grokLook 5.6s cubic-bezier(0.45, 0, 0.55, 1) infinite; }
+.avatar-grok-bot .grok-eye-l { animation: grokEyeBlink 4.8s ease-in-out infinite; }
+.avatar-grok-bot .grok-eye-r { animation: grokEyeWink 4.8s ease-in-out infinite; }
+
+.avatar-muse-bot .muse-body-group { animation: museHop 2.9s cubic-bezier(0.37, 0, 0.63, 1) infinite; }
+.avatar-muse-bot .muse-shadow { animation: avShadowSync 2.9s ease-in-out infinite; }
+.avatar-muse-bot .muse-arm-l { transform-origin: 90% 35%; animation: museArmL 2.9s ease-in-out infinite; }
+.avatar-muse-bot .muse-arm-r { transform-origin: 10% 35%; animation: museArmR 2.9s ease-in-out infinite; }
+.avatar-muse-bot .muse-foot-l { animation: museFootStep 2.9s ease-in-out infinite; }
+.avatar-muse-bot .muse-foot-r { animation: museFootStep 2.9s ease-in-out infinite 1.45s; }
+.avatar-muse-bot .muse-eye { animation: avDoubleBlink 4.2s ease-in-out infinite; }
+.avatar-muse-bot .muse-cheek { animation: museCheekGlow 2.9s ease-in-out infinite; }
 
 .avatar-animated-grid {
   display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: var(--space-3);
+  grid-template-columns: repeat(auto-fill, minmax(104px, 1fr));
+  gap: var(--space-2);
+  max-height: 296px;
+  overflow-y: auto;
+  padding: 2px;
 }
 
 .avatar-animated-card {
@@ -933,12 +1208,13 @@ textarea.input { min-height: 96px; resize: vertical; }
   flex-direction: column;
   align-items: center;
   gap: var(--space-2);
-  padding: var(--space-3);
+  padding: var(--space-2) var(--space-2);
   border-radius: var(--radius);
   border: 2px solid var(--border);
   background: var(--surface);
   cursor: pointer;
   transition: all 0.15s ease;
+  text-align: center;
 }
 
 .avatar-animated-card:hover {
@@ -952,22 +1228,180 @@ textarea.input { min-height: 96px; resize: vertical; }
   box-shadow: 0 0 0 1px var(--primary);
 }
 
+.avatar-animated-thumb {
+  width: 52px;
+  height: 52px;
+}
+
 .badge-char svg {
   width: 26px;
   height: 26px;
 }
 
-.badge-icon-grid {
-  display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(52px, 1fr));
+/* Adorable role-categorized animated achievement badges */
+.badge-cat-member { --badge-accent: var(--badge-member); }
+.badge-cat-driver { --badge-accent: var(--badge-driver); }
+.badge-cat-traffic_lead { --badge-accent: var(--badge-traffic); }
+
+.badge-char.badge-animated {
+  width: 58px;
+  height: 58px;
+  border-radius: var(--radius);
+  background: color-mix(in srgb, var(--badge-accent) 12%, var(--surface));
+  border: 1.5px solid color-mix(in srgb, var(--badge-accent) 28%, var(--border));
+  transition: transform var(--dur-fast) var(--ease), border-color var(--dur-fast) var(--ease);
+}
+
+.badge-char.badge-animated svg {
+  width: 48px;
+  height: 48px;
+}
+
+.badge-char.badge-animated:not(.earned) {
+  opacity: 0.72;
+  filter: saturate(0.7);
+}
+
+.badge-char.badge-animated.earned {
+  background: color-mix(in srgb, var(--badge-accent) 18%, var(--surface));
+  border-color: color-mix(in srgb, var(--badge-accent) 55%, var(--border));
+  opacity: 1;
+  filter: none;
+}
+
+.badge-animated-svg {
+  display: block;
+}
+
+@keyframes tlLightRed {
+  0%, 28% { opacity: 1; transform: scale(1.14); }
+  34%, 100% { opacity: 0.3; transform: scale(0.94); }
+}
+
+@keyframes tlLightAmber {
+  0%, 30% { opacity: 0.3; transform: scale(0.94); }
+  34%, 62% { opacity: 1; transform: scale(1.14); }
+  68%, 100% { opacity: 0.3; transform: scale(0.94); }
+}
+
+@keyframes tlLightGreen {
+  0%, 64% { opacity: 0.3; transform: scale(0.94); }
+  68%, 96% { opacity: 1; transform: scale(1.16); }
+  100% { opacity: 0.3; transform: scale(0.94); }
+}
+
+@keyframes badgeCompassDamp {
+  0%, 100% { transform: rotate(-18deg); }
+  25% { transform: rotate(22deg); }
+  50% { transform: rotate(-12deg); }
+  75% { transform: rotate(14deg); }
+}
+
+@keyframes badgePendulum {
+  0%, 100% { transform: rotate(-9deg); }
+  50% { transform: rotate(9deg); }
+}
+
+@keyframes badgeAlarmBurst {
+  0%, 68%, 100% { transform: rotate(0deg) translateY(0); }
+  72%, 82% { transform: rotate(-7deg) translateY(-1px); }
+  77%, 87% { transform: rotate(7deg) translateY(-1px); }
+  92% { transform: rotate(-3deg); }
+}
+
+@keyframes badgeHeartbeat {
+  0%, 40%, 100% { transform: scale(1); }
+  12% { transform: scale(1.12); }
+  20% { transform: scale(0.98); }
+  28% { transform: scale(1.08); }
+}
+
+@keyframes badgeWhistleBurst {
+  0% { transform: translate(0, 0) scale(0.75); opacity: 0; }
+  35% { transform: translate(1.8px, -1.6px) scale(1.1); opacity: 1; }
+  85%, 100% { transform: translate(3.8px, -3px) scale(1.22); opacity: 0; }
+}
+
+@keyframes badgePop {
+  0%, 100% { transform: scale(1); }
+  50% { transform: scale(1.14); }
+}
+
+.badge-animated-svg .badge-blink { animation: avDoubleBlink 4.2s ease-in-out infinite; }
+.badge-animated-svg .badge-twinkle-1 { animation: avTwinkle 2s ease-in-out infinite; }
+.badge-animated-svg .badge-twinkle-2 { animation: avTwinkle 2s ease-in-out infinite 0.8s; }
+.badge-animated-svg .badge-heart-float { animation: avHeartRise 2.3s ease-out infinite; }
+.badge-animated-svg .badge-heart-float-delay { animation: avHeartRise 2.3s ease-out infinite 0.75s; }
+.badge-animated-svg .badge-car-bob { animation: avCarRide 2.1s cubic-bezier(0.37, 0, 0.63, 1) infinite; }
+.badge-animated-svg .badge-bell-swing { transform-origin: 50% 6%; animation: badgePendulum 2.4s cubic-bezier(0.45, 0, 0.55, 1) infinite; }
+.badge-animated-svg .badge-flower-sway { animation: blossomSway 2.9s ease-in-out infinite; }
+.badge-animated-svg .badge-note-1 { animation: avHeartRise 2.5s ease-out infinite; }
+.badge-animated-svg .badge-clock-jiggle { animation: badgeAlarmBurst 3.2s ease-in-out infinite; }
+.badge-animated-svg .badge-tick-pop { animation: badgePop 2.4s cubic-bezier(0.34, 1.56, 0.64, 1) infinite; }
+.badge-animated-svg .badge-heart-pulse { animation: badgeHeartbeat 2.4s ease-in-out infinite; }
+.badge-animated-svg .badge-heart-tilt { animation: avWiggle 2.9s ease-in-out infinite; }
+.badge-animated-svg .badge-moon-rock { animation: avWiggle 3.5s cubic-bezier(0.45, 0, 0.55, 1) infinite; }
+.badge-animated-svg .badge-ribbon-flutter { transform-origin: 50% 10%; animation: avWiggle 2.4s ease-in-out infinite; }
+.badge-animated-svg .badge-medal-bob { animation: avSquashHop 2.6s cubic-bezier(0.37, 0, 0.63, 1) infinite; }
+.badge-animated-svg .badge-halo-pulse { animation: avSoftPulse 2s ease-in-out infinite; }
+.badge-animated-svg .badge-wing-l { transform-origin: 90% 55%; animation: avFlapL 1.6s ease-in-out infinite; }
+.badge-animated-svg .badge-wing-r { transform-origin: 10% 55%; animation: avFlapR 1.6s ease-in-out infinite; }
+.badge-animated-svg .badge-wheel-bob { animation: avSquashHop 2.4s cubic-bezier(0.37, 0, 0.63, 1) infinite; }
+.badge-animated-svg .badge-tl-bob { animation: avSquashHop 2.8s cubic-bezier(0.37, 0, 0.63, 1) infinite; }
+.badge-animated-svg .tl-red { animation: tlLightRed 3.6s ease-in-out infinite; }
+.badge-animated-svg .tl-amber { animation: tlLightAmber 3.6s ease-in-out infinite; }
+.badge-animated-svg .tl-green { animation: tlLightGreen 3.6s ease-in-out infinite; }
+.badge-animated-svg .badge-compass-needle { animation: badgeCompassDamp 3.4s cubic-bezier(0.45, 0, 0.55, 1) infinite; }
+.badge-animated-svg .badge-whistle-tilt { animation: avWiggle 2.2s ease-in-out infinite; }
+.badge-animated-svg .badge-whistle-puff-1 { animation: badgeWhistleBurst 1.8s ease-out infinite; }
+.badge-animated-svg .badge-whistle-puff-2 { animation: badgeWhistleBurst 1.8s ease-out infinite 0.55s; }
+.badge-animated-svg .badge-crown-bob { animation: avSquashHop 2.2s cubic-bezier(0.34, 1.56, 0.64, 1) infinite; }
+.badge-animated-svg .badge-shield-pulse { animation: avSoftPulse 2.8s ease-in-out infinite; }
+
+.badge-filter-row {
+  display: flex;
+  flex-wrap: wrap;
   gap: var(--space-2);
-  max-height: 240px;
+}
+
+.badge-group-header {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  margin-top: var(--space-1);
+}
+
+.badge-role-dot {
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  background: var(--badge-accent);
+  flex: none;
+}
+
+.badge-icon-picker-sections {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  max-height: 300px;
   overflow-y: auto;
   padding: 2px;
 }
 
+.badge-picker-section-title {
+  font-size: var(--fs-sm);
+  font-weight: 700;
+  color: var(--muted);
+}
+
+.badge-icon-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(54px, 1fr));
+  gap: var(--space-2);
+}
+
 .badge-icon-btn {
-  height: 48px;
+  height: 52px;
   display: grid;
   place-items: center;
   border-radius: var(--radius);
@@ -976,6 +1410,16 @@ textarea.input { min-height: 96px; resize: vertical; }
   color: var(--text);
   cursor: pointer;
   transition: all 0.15s ease;
+}
+
+.badge-icon-btn.animated {
+  background: color-mix(in srgb, var(--badge-accent) 10%, var(--surface));
+  border-color: color-mix(in srgb, var(--badge-accent) 26%, var(--border));
+}
+
+.badge-icon-btn.animated svg {
+  width: 38px;
+  height: 38px;
 }
 
 .badge-icon-btn:hover {
@@ -987,6 +1431,24 @@ textarea.input { min-height: 96px; resize: vertical; }
   border-color: var(--primary);
   background: var(--primary);
   color: var(--primary-ink, #ffffff);
+}
+
+.badge-icon-btn.animated.on {
+  border-color: var(--badge-accent);
+  background: color-mix(in srgb, var(--badge-accent) 24%, var(--surface));
+  box-shadow: 0 0 0 1px var(--badge-accent);
+  color: var(--text);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .avatar-animated-icon,
+  .avatar-animated-icon *,
+  .badge-animated-svg,
+  .badge-animated-svg *,
+  .badge-char.badge-tier-gold,
+  .badge-char.badge-tier-platinum {
+    animation: none !important;
+  }
 }
 
 .passkey-list { width: 100%; }
@@ -1155,10 +1617,184 @@ p.empty-title { font-weight: 400; color: var(--muted); }
 .empty-desc { margin-top: var(--space-1); }
 .empty-action { margin-top: var(--space-3); display: flex; justify-content: center; }
 .badge-tile { display: flex; gap: var(--space-3); align-items: center; }
-.badge-char { width: 52px; height: 52px; border-radius: var(--radius); display: grid; place-items: center; font-size: 1.5rem; font-weight: 700; background: var(--surface-2); color: var(--muted); flex: none; }
+.badge-char { position: relative; width: 52px; height: 52px; border-radius: var(--radius); display: grid; place-items: center; font-size: 1.5rem; font-weight: 700; background: var(--surface-2); color: var(--muted); flex: none; }
 .badge-char.earned { background: var(--primary); color: var(--primary-ink); }
-.bar { height: 4px; background: var(--border); border-radius: 2px; overflow: hidden; }
-.bar > div { height: 100%; background: var(--primary); }
+.bar { height: 5px; background: var(--border); border-radius: 3px; overflow: hidden; }
+.bar > div { height: 100%; background: var(--primary); border-radius: 3px; transition: width 0.35s ease; }
+
+/* Progressive achievement tiers: Bronze / Silver / Gold / Platinum */
+.badge-tier-none {
+  --badge-tier-color: var(--tier-none);
+  --badge-tier-bg: var(--tier-none-bg);
+  --badge-tier-ring: var(--border);
+  --badge-tier-ink: var(--tier-none-ink);
+}
+.badge-tier-bronze {
+  --badge-tier-color: var(--tier-bronze);
+  --badge-tier-bg: var(--tier-bronze-bg);
+  --badge-tier-ring: var(--tier-bronze-ring);
+  --badge-tier-ink: var(--tier-bronze-ink);
+}
+.badge-tier-silver {
+  --badge-tier-color: var(--tier-silver);
+  --badge-tier-bg: var(--tier-silver-bg);
+  --badge-tier-ring: var(--tier-silver-ring);
+  --badge-tier-ink: var(--tier-silver-ink);
+}
+.badge-tier-gold {
+  --badge-tier-color: var(--tier-gold);
+  --badge-tier-bg: var(--tier-gold-bg);
+  --badge-tier-ring: var(--tier-gold-ring);
+  --badge-tier-ink: var(--tier-gold-ink);
+}
+.badge-tier-platinum {
+  --badge-tier-color: var(--tier-platinum);
+  --badge-tier-bg: var(--tier-platinum-bg);
+  --badge-tier-ring: var(--tier-platinum-ring);
+  --badge-tier-ink: var(--tier-platinum-ink);
+}
+
+@keyframes tierGoldGlow {
+  0%, 100% {
+    box-shadow: inset 0 0 0 2px color-mix(in srgb, var(--tier-gold-ring) 38%, transparent), 0 0 0 2px color-mix(in srgb, var(--tier-gold) 22%, transparent);
+  }
+  50% {
+    box-shadow: inset 0 0 0 2px color-mix(in srgb, var(--tier-gold-ring) 55%, transparent), 0 0 10px 2px color-mix(in srgb, var(--tier-gold-ring) 34%, transparent);
+  }
+}
+
+@keyframes tierPlatAura {
+  0%, 100% {
+    box-shadow: inset 0 0 0 2px color-mix(in srgb, var(--tier-platinum-ring) 44%, transparent), 0 0 0 2px color-mix(in srgb, var(--tier-platinum) 26%, transparent);
+  }
+  50% {
+    box-shadow: inset 0 0 0 2px color-mix(in srgb, var(--tier-platinum-spark) 44%, transparent), 0 0 12px 2px color-mix(in srgb, var(--tier-platinum-spark) 34%, transparent);
+  }
+}
+
+.badge-char.badge-tier-none,
+.badge-char.badge-animated.badge-tier-none {
+  background: var(--badge-tier-bg);
+  border: 1.5px dashed var(--badge-tier-ring);
+  color: var(--badge-tier-ink);
+  opacity: 0.72;
+  filter: saturate(0.65);
+}
+
+.badge-char.earned.badge-tier-bronze,
+.badge-char.badge-animated.earned.badge-tier-bronze {
+  background: var(--badge-tier-bg);
+  color: var(--badge-tier-ink);
+  border: 2px solid var(--badge-tier-ring);
+  box-shadow: inset 0 0 0 2px color-mix(in srgb, var(--tier-bronze) 22%, transparent);
+  opacity: 1;
+  filter: none;
+}
+
+.badge-char.earned.badge-tier-silver,
+.badge-char.badge-animated.earned.badge-tier-silver {
+  background: var(--badge-tier-bg);
+  color: var(--badge-tier-ink);
+  border: 2px solid var(--badge-tier-ring);
+  box-shadow: inset 0 0 0 2px color-mix(in srgb, var(--tier-silver-ring) 34%, transparent), 0 0 0 2px color-mix(in srgb, var(--tier-silver) 18%, transparent);
+  opacity: 1;
+  filter: none;
+}
+
+.badge-char.earned.badge-tier-gold,
+.badge-char.badge-animated.earned.badge-tier-gold {
+  background: var(--badge-tier-bg);
+  color: var(--badge-tier-ink);
+  border: 2px solid var(--badge-tier-ring);
+  animation: tierGoldGlow 3s ease-in-out infinite;
+  opacity: 1;
+  filter: none;
+}
+
+.badge-char.earned.badge-tier-platinum,
+.badge-char.badge-animated.earned.badge-tier-platinum {
+  background: var(--badge-tier-bg);
+  color: var(--badge-tier-ink);
+  border: 2px solid var(--badge-tier-ring);
+  animation: tierPlatAura 2.8s ease-in-out infinite;
+  opacity: 1;
+  filter: none;
+}
+
+.badge-tier-crest {
+  position: absolute;
+  right: -5px;
+  bottom: -5px;
+  min-width: 19px;
+  height: 19px;
+  padding: 0 4px;
+  border-radius: var(--radius-pill);
+  background: var(--badge-tier-color);
+  color: var(--art-white);
+  border: 1.5px solid var(--surface);
+  font-size: 0.68rem;
+  font-weight: 800;
+  letter-spacing: 0.02em;
+  display: inline-grid;
+  place-items: center;
+  line-height: 1;
+}
+
+.badge-tier-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  padding: 1px 7px;
+  border-radius: var(--radius-pill);
+  background: var(--badge-tier-bg);
+  color: var(--badge-tier-ink);
+  border: 1px solid var(--badge-tier-ring);
+  font-size: 0.72rem;
+  font-weight: 700;
+  line-height: 1.35;
+  flex: none;
+}
+
+.bar.badge-tier-bronze > div,
+.bar.badge-tier-silver > div,
+.bar.badge-tier-gold > div,
+.bar.badge-tier-platinum > div {
+  background: var(--badge-tier-color);
+}
+
+.badge-tier-steps {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  margin-top: 2px;
+}
+
+.badge-tier-step {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  padding: 1px 6px;
+  border-radius: var(--radius-pill);
+  font-size: 0.72rem;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  border: 1px solid var(--border);
+  color: var(--muted);
+  background: var(--surface);
+}
+
+.badge-tier-step.reached {
+  background: var(--badge-tier-bg);
+  border-color: var(--badge-tier-ring);
+  color: var(--badge-tier-ink);
+  font-weight: 700;
+}
+
+.badge-tier-step.next:not(.reached) {
+  border-style: dashed;
+  border-color: var(--badge-tier-ring);
+  color: var(--badge-tier-ink);
+}
 .auth-page {
   min-height: 100vh;
   display: grid;
@@ -3928,6 +4564,48 @@ main a[href^="tel:"]:not(.btn) { text-decoration: underline; }
   line-height: 1.5;
 }
 
+.pwa-step2-card {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  padding: var(--space-3);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md, 10px);
+  background: var(--surface-2);
+  text-align: left;
+}
+
+.notif-push-banner {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  min-width: 0;
+}
+
+.notif-push-banner-head {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-3);
+}
+
+.notif-push-banner-icon {
+  display: grid;
+  place-items: center;
+  width: 38px;
+  height: 38px;
+  border-radius: var(--radius-md, 10px);
+  background: var(--primary-soft);
+  color: var(--primary);
+  flex-shrink: 0;
+}
+
+.notif-push-banner-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2);
+}
+
 
 /* ---- Visitors on the transport plan (record only) ---- */
 .plan-visitors { margin-bottom: var(--space-4); }
@@ -4038,6 +4716,81 @@ main a[href^="tel:"]:not(.btn) { text-decoration: underline; }
   border-radius: var(--radius);
   background: var(--surface-2, var(--surface));
   border: 1px solid var(--border);
+}
+.fare-io-bar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2);
+}
+.fare-dropzone {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-1);
+  padding: var(--space-5) var(--space-4);
+  border: 2px dashed var(--border);
+  border-radius: var(--radius);
+  background: var(--surface-2, var(--surface));
+  text-align: center;
+  cursor: pointer;
+  transition: border-color 0.15s ease, background-color 0.15s ease;
+}
+.fare-dropzone:hover,
+.fare-dropzone.dragging,
+.fare-dropzone:focus-within {
+  border-color: var(--primary);
+  background: var(--primary-soft);
+}
+.fare-dropzone:focus-within {
+  outline: 3px solid var(--primary);
+  outline-offset: 2px;
+}
+.fare-import-meta {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-2);
+  padding: var(--space-2) var(--space-3);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--surface-2, var(--surface));
+}
+.fare-import-table-wrap {
+  max-height: 280px;
+  overflow: auto;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--surface);
+}
+.fare-import-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: var(--fs-sm);
+}
+.fare-import-table th,
+.fare-import-table td {
+  padding: var(--space-2) var(--space-3);
+  border-bottom: 1px solid var(--border);
+  text-align: left;
+}
+.fare-import-table thead th {
+  position: sticky;
+  top: 0;
+  background: var(--surface-2, var(--surface));
+  font-weight: 600;
+  z-index: 1;
+}
+.fare-import-table .num {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+.fare-import-issues {
+  margin: var(--space-1) 0 0;
+  padding-left: 1.2rem;
 }
 
 /* ---- Payout Batch Flow Stepper ---- */

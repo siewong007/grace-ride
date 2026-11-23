@@ -131,19 +131,56 @@ describe('AvatarEditor', () => {
     expect(await screen.findByText('avatarUnreadable')).toBeInTheDocument();
   });
 
-  it('selects animated avatar tab and saves Grok and Muse animated bots', async () => {
+  it('defaults to animated avatars with all 10 coloured choices when user has no custom avatar', async () => {
+    const { onSaved, onClose } = setup();
+    expect(screen.getByRole('tab', { name: 'avatarAnimated' })).toHaveAttribute('aria-selected', 'true');
+    for (const key of [
+      'grace_car',
+      'peace_dove',
+      'sunny_cloud',
+      'happy_bear',
+      'fellowship_cat',
+      'joy_puppy',
+      'star_lantern',
+      'blossom_sprout',
+      'grok',
+      'muse',
+    ]) {
+      expect(screen.getByRole('radio', { name: `avatarIcon_${key}` })).toBeInTheDocument();
+    }
+    expect(screen.getByRole('radio', { name: 'avatarIcon_grace_car' })).toHaveAttribute('aria-checked', 'true');
+    expect(document.querySelector('.avatar-animated-icon.avatar-grace-car.avatar-icon')).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole('button', { name: 'avatarSave' }));
+    await waitFor(() => expect(onClose).toHaveBeenCalled());
+    expect(put).toHaveBeenCalledWith('/me', { clear_photo: true, avatar_icon: 'grace_car', avatar_color: 'blue' });
+    expect(onSaved).toHaveBeenCalled();
+  });
+
+  it('selects animated avatar tab and saves Grok and Muse animated bots with dynamic skin colours', async () => {
     const { onSaved, onClose } = setup();
     fireEvent.click(screen.getByRole('tab', { name: 'avatarAnimated' }));
-    // Defaults to grok on first click
     expect(screen.getByRole('radio', { name: 'avatarIcon_grok' })).toBeInTheDocument();
     expect(screen.getByRole('radio', { name: 'avatarIcon_muse' })).toBeInTheDocument();
 
-    // Select Muse Bot
+    // Select Grok Bot with coral skin colour
+    fireEvent.click(screen.getByRole('radio', { name: 'avatarIcon_grok' }));
+    fireEvent.click(screen.getByRole('radio', { name: 'avatarColor_coral' }));
+    expect(document.querySelector('.avatar.av-coral.avatar-animated .avatar-grok-bot')).toBeInTheDocument();
+
+    // Switch to Muse Bot with pink plush skin colour
     fireEvent.click(screen.getByRole('radio', { name: 'avatarIcon_muse' }));
-    fireEvent.click(screen.getByRole('radio', { name: 'avatarColor_purple' }));
+    fireEvent.click(screen.getByRole('radio', { name: 'avatarColor_pink' }));
+    expect(document.querySelector('.avatar.av-pink.avatar-animated .avatar-muse-bot')).toBeInTheDocument();
+
+    // Switch back to Grok Bot and select White skin colour (dark pill eyes via CSS var(--av-eye))
+    fireEvent.click(screen.getByRole('radio', { name: 'avatarIcon_grok' }));
+    fireEvent.click(screen.getByRole('radio', { name: 'avatarColor_white' }));
+    expect(document.querySelector('.avatar.av-white.avatar-animated .avatar-grok-bot')).toBeInTheDocument();
+
     fireEvent.click(screen.getByRole('button', { name: 'avatarSave' }));
     await waitFor(() => expect(onClose).toHaveBeenCalled());
-    expect(put).toHaveBeenCalledWith('/me', { clear_photo: true, avatar_icon: 'muse', avatar_color: 'purple' });
+    expect(put).toHaveBeenCalledWith('/me', { clear_photo: true, avatar_icon: 'grok', avatar_color: 'white' });
     expect(onSaved).toHaveBeenCalled();
   });
 

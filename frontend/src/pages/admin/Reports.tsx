@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { Link } from 'react-router-dom';
-import { Award, Calendar, CarFront, CheckCircle2, DollarSign, Download, FileText, Map, Pencil } from 'lucide-react';
+import { Award, Calendar, CarFront, CheckCircle2, DollarSign, Download, FileText, type LucideIcon, Map, Pencil } from 'lucide-react';
 import { put, useApi } from '../../api';
 import { useAuth } from '../../auth';
 import {
@@ -21,30 +21,22 @@ import { EVENT_KIND, fmtDateTime, rm, useFormatT } from '../../format';
 import { useTranslation } from 'react-i18next';
 import { createPdfWriter } from '../../pdfWriter';
 import { ADMIN_HOME } from '../../staffNav';
-import { ACHIEVEMENT_ICONS, BadgeIcon } from '../../badgeIcon';
+import {
+  ACHIEVEMENT_ICONS,
+  ANIMATED_BADGE_ICONS,
+  BADGE_TIER_ROMAN,
+  type BadgeCategory,
+  BadgeIcon,
+  isAnimatedBadgeIcon,
+  resolveBadgeTier,
+} from '../../badgeIcon';
+import type { Badge } from '../../types/domain';
 
 interface Member {
   id: number;
   name: string;
   email?: string;
   roles?: string[];
-}
-
-interface Badge {
-  key: string;
-  char: string;
-  icon?: string;
-  name: string;
-  rule: string;
-  char_zh?: string;
-  char_en?: string;
-  name_zh?: string;
-  name_en?: string;
-  rule_zh?: string;
-  rule_en?: string;
-  progress: number;
-  target: number;
-  earned: boolean;
 }
 
 interface MonthReport {
@@ -93,6 +85,7 @@ export default function AdminReports() {
   const [range, setRange] = useState<'monthly' | 'quarterly' | 'yearly'>('monthly');
   const [type, setType] = useState<'all' | 'driver' | 'passenger'>('all');
   const [reportTab, setReportTab] = useState<'member' | 'demand'>('member');
+  const [badgeFilter, setBadgeFilter] = useState<'all' | BadgeCategory>('all');
   const [y, m] = month.split('-').map(Number);
 
   const [editingBadge, setEditingBadge] = useState<{ badge: Badge; userId: number; userName: string } | null>(null);
@@ -179,11 +172,13 @@ export default function AdminReports() {
     for (const e of r.events)
       lines.push(`${e.id},${escapeCsv(e.title)},${escapeCsv(e.kind)},${e.starts_at}`);
     lines.push('');
-    lines.push('Badge Key,Name,Rule,Progress,Target,Earned');
-    for (const b of r.badges)
+    lines.push('Badge Key,Name,Tier,Rule,Progress,Target,Earned');
+    for (const b of r.badges) {
+      const tier = resolveBadgeTier(b);
       lines.push(
-        `${escapeCsv(b.key)},${escapeCsv(badgeName(b))},${escapeCsv(badgeRule(b))},${b.progress},${b.target},${b.earned}`,
+        `${escapeCsv(b.key)},${escapeCsv(badgeName(b))},${escapeCsv(tier)},${escapeCsv(badgeRule(b))},${b.progress},${b.target},${b.earned}`,
       );
+    }
     const csv = lines.join('\n');
     const blob = new Blob([csv], { type: 'text/csv;charset=utf-8' });
     const url = URL.createObjectURL(blob);
@@ -198,9 +193,11 @@ export default function AdminReports() {
     if (!r) return;
     const kinds = r.by_kind.map((k) => `${ft(EVENT_KIND[k.kind]?.label ?? k.kind)} × ${k.count}`);
     const events = r.events.map((e) => `${e.title} — ${fmtDateTime(e.starts_at, ft)}`);
-    const badges = r.badges.map(
-      (b) => `${badgeName(b)} — ${badgeRule(b)} (${b.progress}/${b.target}) ${b.earned ? t('reports.earned') : ''}`,
-    );
+    const badges = r.badges.map((b) => {
+      const tier = resolveBadgeTier(b);
+      const tierText = tier !== 'none' ? `[${t(`reports.badgeTier_${tier}`)}]` : b.earned ? t('reports.earned') : '';
+      return `${badgeName(b)} ${tierText} — ${badgeRule(b)} (${b.progress}/${b.target})`.trim();
+    });
     const heads = [t('reports.summary'), t('reports.byKind'), t('reports.events'), t('reports.badges')];
     const rows: [string, string][] = [
       [t('reports.events_attended'), String(r.events_attended)],
@@ -441,60 +438,155 @@ export default function AdminReports() {
 
                 {r.badges.length === 0 ? (
                   <p className="muted">{t('reports.noBadges')}</p>
-                ) : (
-                  <div className="stack-sm">
-                    {r.badges.map((b) => {
-                      const percent = Math.min(100, Math.round((b.progress / b.target) * 100));
-                      return (
-                        <div key={b.key} className="card flat tight badge-card">
-                          <div
-                            className={`badge-char ${b.earned ? 'earned' : ''}`}
-                            aria-hidden="true"
-                          >
-                            <BadgeIcon badge={b} fallbackChar={badgeChar(b)} />
-                          </div>
-                          <div className="grow min-w-0 stack-xs">
-                            <div className="row between nowrap">
-                              <div className="row nowrap gap-xs items-center min-w-0">
-                                <strong className="ellipsis">{badgeName(b)}</strong>
-                                {can('admin_members') && (
-                                  <Button
-                                    variant="ghost"
-                                    size="sm"
-                                    className="btn-icon-tight"
-                                    onClick={() => {
-                                      setEditingBadge({ badge: b, userId: r.user.id, userName: r.user.name });
-                                      setSelectedIcon(b.icon ?? '');
-                                      setCustomIcon(ACHIEVEMENT_ICONS[b.icon ?? ''] ? '' : (b.icon ?? ''));
-                                    }}
-                                    title={t('reports.changeBadgeIcon')}
-                                    aria-label={`${t('reports.changeBadgeIcon')} - ${badgeName(b)}`}
-                                  >
-                                    <Pencil size={13} aria-hidden="true" />
-                                  </Button>
-                                )}
-                              </div>
-                              <span className="small muted">
-                                {b.earned ? (
-                                  <span className="row nowrap gap-xs text-primary bold">
-                                    <CheckCircle2 size={14} aria-hidden="true" />
-                                    <span>{t('reports.earned')}</span>
-                                  </span>
-                                ) : (
-                                  `${Math.min(b.progress, b.target)}/${b.target}`
-                                )}
-                              </span>
-                            </div>
-                            <div className="bar">
-                              <div style={{ width: `${percent}%` }} />
-                            </div>
-                            <div className="muted tiny">{badgeRule(b)}</div>
-                          </div>
-                        </div>
+                ) : (() => {
+                  const hasCategories = r.badges.some((b) => !!b.category);
+                  const visibleBadges = !hasCategories || badgeFilter === 'all'
+                    ? r.badges
+                    : r.badges.filter((b) => b.category === badgeFilter);
+
+                  const renderBadgeCard = (b: Badge) => {
+                    const percent = b.target > 0 ? Math.min(100, Math.round((b.progress / b.target) * 100)) : 100;
+                    const isAnim = isAnimatedBadgeIcon(b.icon);
+                    const catClass = b.category ? `badge-cat-${b.category}` : '';
+                    const tier = resolveBadgeTier(b);
+                    const hasTiers = Array.isArray(b.tiers) && b.tiers.length > 0;
+                    const progressText =
+                      tier === 'platinum' ? (
+                        <span className="row nowrap gap-xs text-primary bold">
+                          <CheckCircle2 size={14} aria-hidden="true" />
+                          <span>{t('reports.badgeMaxTier')}</span>
+                        </span>
+                      ) : b.next_tier && b.next_target != null ? (
+                        t('reports.badgeNextTier', {
+                          tier: t(`reports.badgeTier_${b.next_tier}`),
+                          progress: b.progress,
+                          target: b.next_target,
+                        })
+                      ) : b.earned ? (
+                        <span className="row nowrap gap-xs text-primary bold">
+                          <CheckCircle2 size={14} aria-hidden="true" />
+                          <span>{t('reports.earned')}</span>
+                        </span>
+                      ) : (
+                        `${Math.min(b.progress, b.target)}/${b.target}`
                       );
-                    })}
-                  </div>
-                )}
+                    return (
+                      <div key={b.key} className="card flat tight badge-card">
+                        <div
+                          className={`badge-char ${b.earned ? 'earned' : ''} ${isAnim ? 'badge-animated' : ''} ${catClass} badge-tier-${tier}`.trim()}
+                          aria-hidden="true"
+                        >
+                          <BadgeIcon badge={b} fallbackChar={badgeChar(b)} />
+                          {tier !== 'none' && (
+                            <span className={`badge-tier-crest badge-tier-${tier}`}>
+                              {BADGE_TIER_ROMAN[tier]}
+                            </span>
+                          )}
+                        </div>
+                        <div className="grow min-w-0 stack-xs">
+                          <div className="row between nowrap gap-xs">
+                            <div className="row nowrap gap-xs items-center min-w-0">
+                              <strong className="ellipsis">{badgeName(b)}</strong>
+                              {tier !== 'none' && (
+                                <span className={`badge-tier-pill badge-tier-${tier}`}>
+                                  {t(`reports.badgeTier_${tier}`)}
+                                </span>
+                              )}
+                              {can('admin_members') && (
+                                <Button
+                                  variant="ghost"
+                                  size="sm"
+                                  className="btn-icon-tight"
+                                  onClick={() => {
+                                    setEditingBadge({ badge: b, userId: r.user.id, userName: r.user.name });
+                                    setSelectedIcon(b.icon ?? '');
+                                    setCustomIcon(ACHIEVEMENT_ICONS[b.icon ?? ''] ? '' : (b.icon ?? ''));
+                                  }}
+                                  title={t('reports.changeBadgeIcon')}
+                                  aria-label={`${t('reports.changeBadgeIcon')} - ${badgeName(b)}`}
+                                >
+                                  <Pencil size={13} aria-hidden="true" />
+                                </Button>
+                              )}
+                            </div>
+                            <span className="small muted nowrap">{progressText}</span>
+                          </div>
+                          <div className={`bar badge-tier-${tier}`}>
+                            <div style={{ width: `${percent}%` }} />
+                          </div>
+                          {hasTiers && (
+                            <div className="badge-tier-steps">
+                              {b.tiers!.map((step) => {
+                                const isNext = !step.reached && b.next_tier === step.tier;
+                                return (
+                                  <span
+                                    key={step.tier}
+                                    className={`badge-tier-step badge-tier-${step.tier}${step.reached ? ' reached' : ''}${isNext ? ' next' : ''}`}
+                                  >
+                                    {t(`reports.badgeTier_${step.tier}`)} {step.target}
+                                  </span>
+                                );
+                              })}
+                            </div>
+                          )}
+                          <div className="muted tiny">{badgeRule(b)}</div>
+                        </div>
+                      </div>
+                    );
+                  };
+
+                  const categories: BadgeCategory[] = ['member', 'driver', 'traffic_lead'];
+                  const filterOptions: { value: 'all' | BadgeCategory; label: string }[] = [
+                    { value: 'all', label: t('reports.badgeFilterAll') },
+                    { value: 'member', label: t('reports.badgeRole_member') },
+                    { value: 'driver', label: t('reports.badgeRole_driver') },
+                    { value: 'traffic_lead', label: t('reports.badgeRole_traffic_lead') },
+                  ];
+
+                  return (
+                    <div className="stack-sm">
+                      {hasCategories && (
+                        <div className="badge-filter-row" role="tablist" aria-label={t('reports.badges')}>
+                          {filterOptions.map((opt) => (
+                            <button
+                              key={opt.value}
+                              type="button"
+                              role="tab"
+                              aria-selected={badgeFilter === opt.value}
+                              className={`chip${badgeFilter === opt.value ? ' on' : ''}`}
+                              onClick={() => setBadgeFilter(opt.value)}
+                            >
+                              {opt.label}
+                            </button>
+                          ))}
+                        </div>
+                      )}
+                      {hasCategories ? (
+                        categories.map((cat) => {
+                          const group = visibleBadges.filter((b) => b.category === cat);
+                          if (group.length === 0) return null;
+                          const earnedCount = group.filter((b) => b.earned).length;
+                          return (
+                            <div key={cat} className="stack-xs">
+                              <div className="badge-group-header">
+                                <span className={`badge-role-dot badge-cat-${cat}`} aria-hidden="true" />
+                                <span className="bold small">{t(`reports.badgeRole_${cat}`)}</span>
+                                <span className="muted tiny">{earnedCount}/{group.length}</span>
+                              </div>
+                              <div className="stack-sm">
+                                {group.map(renderBadgeCard)}
+                              </div>
+                            </div>
+                          );
+                        })
+                      ) : (
+                        <div className="stack-sm">
+                          {visibleBadges.map(renderBadgeCard)}
+                        </div>
+                      )}
+                    </div>
+                  );
+                })()}
               </Card>
             </div>
           </>
@@ -529,42 +621,96 @@ export default function AdminReports() {
         >
           <div className="stack">
             <div className="row gap-md items-center">
-              <div className="badge-char earned" aria-hidden="true">
-                <BadgeIcon
-                  icon={selectedIcon}
-                  fallbackChar={badgeChar(editingBadge.badge)}
-                />
-              </div>
+              {(() => {
+                const modalTier = resolveBadgeTier(editingBadge.badge);
+                return (
+                  <div
+                    className={`badge-char ${editingBadge.badge.earned ? 'earned' : ''} ${isAnimatedBadgeIcon(selectedIcon) ? `badge-animated badge-cat-${editingBadge.badge.category ?? 'driver'}` : ''} badge-tier-${modalTier}`.trim()}
+                    aria-hidden="true"
+                  >
+                    <BadgeIcon
+                      icon={selectedIcon}
+                      fallbackChar={badgeChar(editingBadge.badge)}
+                    />
+                    {modalTier !== 'none' && (
+                      <span className={`badge-tier-crest badge-tier-${modalTier}`}>
+                        {BADGE_TIER_ROMAN[modalTier]}
+                      </span>
+                    )}
+                  </div>
+                );
+              })()}
               <div>
                 <div className="bold">{badgeName(editingBadge.badge)}</div>
                 <div className="muted small">{badgeRule(editingBadge.badge)}</div>
               </div>
             </div>
 
-            <div className="stack-xs">
+            <div className="stack-sm">
               <label className="bold small">{t('reports.badgeIconLabel')}</label>
-              <div className="badge-icon-grid" role="radiogroup" aria-label={t('reports.badgeIconLabel')}>
-                {Object.entries(ACHIEVEMENT_ICONS).map(([key, item]) => {
-                  const IconComp = item.icon;
-                  const isSelected = selectedIcon === key;
-                  return (
-                    <button
-                      key={key}
-                      type="button"
-                      role="radio"
-                      aria-checked={isSelected}
-                      aria-label={item.label}
-                      title={item.label}
-                      className={`badge-icon-btn${isSelected ? ' on' : ''}`}
-                      onClick={() => {
-                        setSelectedIcon(key);
-                        setCustomIcon('');
-                      }}
-                    >
-                      <IconComp size={22} aria-hidden="true" />
-                    </button>
-                  );
-                })}
+              <div className="badge-icon-picker-sections">
+                <div className="stack-xs">
+                  <div className="badge-picker-section-title">{t('reports.animatedBadgesLabel')}</div>
+                  {(['member', 'driver', 'traffic_lead'] as const).map((cat) => (
+                    <div key={cat} className="stack-xs">
+                      <div className="badge-group-header">
+                        <span className={`badge-role-dot badge-cat-${cat}`} aria-hidden="true" />
+                        <span className="muted tiny bold">{t(`reports.badgeRole_${cat}`)}</span>
+                      </div>
+                      <div className="badge-icon-grid" role="radiogroup" aria-label={t(`reports.badgeRole_${cat}`)}>
+                        {ANIMATED_BADGE_ICONS.filter((item) => item.category === cat).map((item) => {
+                          const isSelected = selectedIcon === item.key;
+                          return (
+                            <button
+                              key={item.key}
+                              type="button"
+                              role="radio"
+                              aria-checked={isSelected}
+                              aria-label={item.label}
+                              title={item.label}
+                              className={`badge-icon-btn animated badge-cat-${cat}${isSelected ? ' on' : ''}`}
+                              onClick={() => {
+                                setSelectedIcon(item.key);
+                                setCustomIcon('');
+                              }}
+                            >
+                              <BadgeIcon icon={item.key} />
+                            </button>
+                          );
+                        })}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+
+                <div className="stack-xs">
+                  <div className="badge-picker-section-title">{t('reports.classicIconsLabel')}</div>
+                  <div className="badge-icon-grid" role="radiogroup" aria-label={t('reports.classicIconsLabel')}>
+                    {Object.entries(ACHIEVEMENT_ICONS)
+                      .filter(([key, item]) => !item.animated && !isAnimatedBadgeIcon(key))
+                      .map(([key, item]) => {
+                        const IconComp = item.icon as LucideIcon;
+                        const isSelected = selectedIcon === key;
+                        return (
+                          <button
+                            key={key}
+                            type="button"
+                            role="radio"
+                            aria-checked={isSelected}
+                            aria-label={item.label}
+                            title={item.label}
+                            className={`badge-icon-btn${isSelected ? ' on' : ''}`}
+                            onClick={() => {
+                              setSelectedIcon(key);
+                              setCustomIcon('');
+                            }}
+                          >
+                            <IconComp size={22} aria-hidden="true" />
+                          </button>
+                        );
+                      })}
+                  </div>
+                </div>
               </div>
             </div>
 
