@@ -1704,16 +1704,17 @@ function PassengerCard({
       }}
     >
       <div className="plan-passenger-head">
-        <strong className="plan-passenger-name ellipsis">
-          <UserRound size={15} aria-hidden="true" /> {r.passenger.name}
+        <strong className="plan-passenger-name">
+          <UserRound size={15} aria-hidden="true" />
+          <span className="ellipsis">{r.passenger.name}</span>
         </strong>
-        <div className="row nowrap gap-xs">
-          {r.seats > 1 && <Pill tone="neutral">{t('passengers', { count: r.seats })}</Pill>}
+        <div className="plan-passenger-head-end">
           {changed ? <Pill tone="info">{t('changed')}</Pill> : <StatusPill map={RIDE_STATUS} status={r.status} />}
           {canUpdate && (
             <IconButton
               size="sm"
               variant="secondary"
+              className="plan-picker-icon-btn"
               label={t('chooseDriverSheet', { name: r.passenger.name })}
               icon={<Car size={16} />}
               onClick={onOpenPicker}
@@ -1725,6 +1726,7 @@ function PassengerCard({
         {metaLine}
       </div>
       <div className="plan-tags">
+        {r.seats > 1 && <Pill tone="neutral">{t('paxTag', { count: r.seats })}</Pill>}
         {r.leg === 'return' && <Pill tone="info">{t('returnTag')}</Pill>}
         {r.reimbursement_excluded && <Pill tone="warning">{t('noReimbTag')}</Pill>}
         {r.assistance && (
@@ -1753,6 +1755,16 @@ function PassengerCard({
               .join(' · ')}
           </span>
         </p>
+      )}
+      {canUpdate && (
+        <button
+          type="button"
+          className="plan-mobile-assign-btn"
+          onClick={onOpenPicker}
+        >
+          <span className="ellipsis">{driver ? driver.name : t('noDriver')}</span>
+          <span className="plan-mobile-assign-cta" aria-hidden="true">›</span>
+        </button>
       )}
       <label className="sr-only" htmlFor={selectId}>
         {t('assignTo', { name: r.passenger.name })}

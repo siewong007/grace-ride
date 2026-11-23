@@ -777,7 +777,7 @@ textarea.input { min-height: 96px; resize: vertical; }
 .profile-identity-meta { color: var(--muted); font-size: var(--fs-sm); }
 .profile-hub .list { background: transparent; border: none; border-top: 1px solid var(--divider); border-radius: 0; padding: 0; }
 .profile-hub .list > .item.admin-sheet-link { padding-block: var(--space-3); padding-inline: 0; }
-.profile-more-toggle { color: var(--primary); font-weight: 500; }
+.profile-hub .list > button.item.profile-more-toggle { width: auto; color: var(--primary); font-weight: 500; }
 .sheet-link-text { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
 .sheet-link-hint { color: var(--muted); font-size: var(--fs-sm); font-weight: 400; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .sheet-tile { width: 28px; height: 28px; border-radius: 0; display: grid; place-items: center; color: var(--muted); flex-shrink: 0; }
@@ -4359,6 +4359,8 @@ main a[href^="tel:"]:not(.btn) { text-decoration: underline; }
   .density-ops .chip { min-height: 32px; padding: 0 10px; font-size: var(--fs-sm); }
   .density-ops .card { padding: 14px; }
   .density-ops .input, .density-ops select.input { min-height: 36px; }
+  .density-ops .plan-draft-bar { padding: 6px 10px; }
+  .density-ops .plan-toolbar-secondary .btn { min-height: 30px; padding: 0 8px; font-size: var(--fs-xs); gap: 4px; }
 }
 
 /* ---- Decluttered PlanTransport toolbar & slim PassengerCard ---- */
@@ -4366,23 +4368,34 @@ main a[href^="tel:"]:not(.btn) { text-decoration: underline; }
 .plan-toolbar-primary { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: var(--space-2); }
 .plan-toolbar-secondary { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-2); }
 .plan-more-tools-btn { display: none; }
-.plan-passenger { gap: 4px; padding: var(--space-2) var(--space-3); }
+.plan-column { min-width: 0; }
+.plan-passenger { min-width: 0; gap: 4px; padding: var(--space-2) var(--space-3); }
 .plan-passenger-head { gap: var(--space-1); }
-.plan-passenger-head .icon-btn { flex: none; }
+.plan-passenger-name { flex: 1 1 auto; min-width: 0; display: flex; align-items: center; gap: var(--space-1); }
+.plan-passenger-name svg { flex: none; }
+.plan-passenger-head-end { display: inline-flex; align-items: center; gap: var(--space-1); flex: none; }
 .plan-select { min-height: 36px; padding-block: 4px; }
+.plan-mobile-assign-btn { display: none; }
 @media (max-width: 767px) {
   .plan-more-tools-btn { display: inline-flex; }
   .plan-toolbar-secondary:not(.is-mobile-open) { display: none; }
   .plan-toolbar-secondary.is-mobile-open { padding-top: var(--space-1); }
-  .plan-select { display: none; }
+  .plan-picker-icon-btn, .plan-select { display: none; }
+  .plan-mobile-assign-btn {
+    display: flex; align-items: center; justify-content: space-between; gap: var(--space-2);
+    width: 100%; min-height: 40px; padding: var(--space-1) 0; margin-top: 2px;
+    border: 0; border-top: 1px solid var(--divider); background: transparent;
+    color: var(--primary); font: inherit; font-size: var(--fs-sm); font-weight: 600;
+    cursor: pointer; text-align: left;
+  }
+  .plan-mobile-assign-cta { font-size: var(--fs-md); line-height: 1; flex: none; }
 }
 
 /* ---- Desktop Sidebar Quiet Rhythm & Collapsible Member Tools (1280x800 fit) ---- */
 .sidebar-section-toggle {
   width: 100%; display: flex; align-items: center; justify-content: space-between;
   background: none; border: 0; color: var(--muted); font: inherit; font-size: var(--fs-xs);
-  font-weight: 600; text-transform: uppercase; letter-spacing: 0.04em;
-  cursor: pointer; padding: 10px var(--space-2) 4px; text-align: left;
+  font-weight: 600; cursor: pointer; padding: 10px var(--space-2) 4px; text-align: left;
 }
 .sidebar-section-toggle:hover { color: var(--text); }
 @media (min-width: 768px) and (max-width: 1199px) {
@@ -4393,10 +4406,11 @@ main a[href^="tel:"]:not(.btn) { text-decoration: underline; }
   }
 }
 @media (min-width: 1200px) and (pointer: fine) {
-  .sidebar { padding: var(--space-3); }
-  .sidebar-brand { padding: 0 var(--space-2) var(--space-2); }
-  .sidebar .section-label, .sidebar-section-toggle { padding: 10px var(--space-2) 4px; }
-  .sidebar-link { min-height: 36px; padding: 6px 10px; font-size: var(--fs-sm); }
+  .sidebar { padding: var(--space-2) var(--space-3); gap: 1px; }
+  .sidebar-brand { padding: 0 var(--space-2) var(--space-1); }
+  .sidebar .section-label, .sidebar-section-toggle { padding: 6px var(--space-2) 2px; }
+  .sidebar-link { min-height: 32px; padding: 4px 10px; font-size: var(--fs-sm); gap: var(--space-2); }
+  .sidebar-label { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 }
 
 /* ---- Minimalist Mobile Admin Dashboard (375px open hairlines + high-signal cues) ---- */
@@ -4441,6 +4455,11 @@ main a[href^="tel:"]:not(.btn) { text-decoration: underline; }
   .dash-page .work-queue-icon.bad { background: var(--danger); }
   .dash-page .work-queue-icon.warn { background: var(--warning); }
   .dash-page .work-queue-count { font-size: 1.125rem; min-width: 1.5ch; }
+  .dash-page .work-queue-row .btn {
+    background: transparent; border: 0; box-shadow: none;
+    padding: 0 var(--space-1); min-height: 44px; color: var(--muted); font-weight: 500;
+  }
+  .dash-page .work-queue-row .btn.primary { color: var(--primary); font-weight: 600; }
 }
 
 /* ---- Focus: strong visible focus ring ---- */
@@ -4546,6 +4565,7 @@ main a[href^="tel:"]:not(.btn) { text-decoration: underline; }
 }
 @media (hover: hover) {
   .profile-hub .list > .item.admin-sheet-link {
+    width: auto;
     margin-inline: calc(-1 * var(--space-2));
     padding-inline: var(--space-2);
     border-radius: var(--radius-sm);

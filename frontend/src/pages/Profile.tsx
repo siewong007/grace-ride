@@ -355,10 +355,10 @@ export default function Profile() {
         <button
           type="button"
           className="profile-identity-btn"
-          aria-label={`${t('personalInfo')} · ${me.name}`}
           aria-haspopup="dialog"
           onClick={() => openSection('personal')}
         >
+          <span className="sr-only">{t('personalInfo')} </span>
           <div className="grow min-w-0">
             <h1 className="ellipsis">{me.name}</h1>
             <div className="profile-identity-meta">

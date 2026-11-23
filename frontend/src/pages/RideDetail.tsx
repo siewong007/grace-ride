@@ -219,10 +219,8 @@ export default function RideDetail() {
           </div>
         </div>
 
-        {/* Sticky Action Bar on Phones */}
-        <div className="hide-tablet-up">
-          <MobileStickyActions ride={r} reload={reload} passengerTurn={passengerTurn} />
-        </div>
+        {/* Sticky Action Bar on Phones & Landscape Phones (<=767px) */}
+        <MobileStickyActions ride={r} reload={reload} passengerTurn={passengerTurn} />
       </div>
     </Page>
   );
