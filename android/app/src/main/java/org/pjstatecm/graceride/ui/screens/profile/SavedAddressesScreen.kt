@@ -60,6 +60,7 @@ import org.pjstatecm.graceride.data.api.Area
 import org.pjstatecm.graceride.data.api.Place
 import org.pjstatecm.graceride.data.api.SavedPlace
 import org.pjstatecm.graceride.di.AppContainer
+import org.pjstatecm.graceride.domain.inferAreaId
 import org.pjstatecm.graceride.ui.components.EmptyView
 import org.pjstatecm.graceride.ui.components.ErrorView
 import org.pjstatecm.graceride.ui.components.LoadingView
@@ -200,7 +201,7 @@ fun SavedAddressesScreen(container: AppContainer, nav: NavHostController) {
                 showDialog = false
                 editing = null
             },
-            onSave = { label, areaId, address, gateNotes, isDefault ->
+            onSave = { label, areaId, address, gateNotes, isDefault, lat, lng ->
                 vm.save(
                     editingId = editing?.id,
                     label = label,
@@ -208,6 +209,8 @@ fun SavedAddressesScreen(container: AppContainer, nav: NavHostController) {
                     address = address,
                     gateNotes = gateNotes,
                     isDefault = isDefault,
+                    lat = lat,
+                    lng = lng,
                 ) {
                     showDialog = false
                     editing = null
@@ -288,6 +291,24 @@ private fun SavedAddressRow(
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
             }
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(Spacing.xs),
+            ) {
+                if (place.areaId == null) {
+                    Text(
+                        stringResource(R.string.saved_addresses_area_missing),
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.error,
+                    )
+                }
+                val hasPin = place.lat != null && place.lng != null
+                Text(
+                    stringResource(if (hasPin) R.string.saved_addresses_pinned else R.string.saved_addresses_no_pin),
+                    style = MaterialTheme.typography.labelSmall,
+                    color = if (hasPin) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
         }
         IconButton(
             onClick = onSetDefault,
@@ -318,7 +339,7 @@ private fun SavedAddressDialog(
     onAddressChange: (String) -> Unit,
     onPickSuggestion: () -> Unit,
     onDismiss: () -> Unit,
-    onSave: (label: String, areaId: Long?, address: String, gateNotes: String, isDefault: Boolean) -> Unit,
+    onSave: (label: String, areaId: Long?, address: String, gateNotes: String, isDefault: Boolean, lat: Double?, lng: Double?) -> Unit,
     onDelete: (Long) -> Unit,
 ) {
     var label by remember(editing) { mutableStateOf(editing?.label ?: "") }
@@ -326,6 +347,8 @@ private fun SavedAddressDialog(
     var address by remember(editing) { mutableStateOf(editing?.address ?: "") }
     var gateNotes by remember(editing) { mutableStateOf(editing?.gateNotes ?: "") }
     var isDefault by remember(editing) { mutableStateOf(defaultInitial) }
+    var lat by remember(editing) { mutableStateOf(editing?.lat) }
+    var lng by remember(editing) { mutableStateOf(editing?.lng) }
     var areaExpanded by remember { mutableStateOf(false) }
     var confirmDelete by remember { mutableStateOf(false) }
 
@@ -371,6 +394,17 @@ private fun SavedAddressDialog(
                     onValueChange = {
                         if (it.length <= 200) {
                             address = it
+                            val unchanged = editing != null && it.trim() == editing.address.trim()
+                            if (unchanged) {
+                                lat = editing?.lat
+                                lng = editing?.lng
+                            } else {
+                                lat = null
+                                lng = null
+                            }
+                            if (areaId == null && it.trim().length >= 3) {
+                                areaId = inferAreaId(it, areas)
+                            }
                             onAddressChange(it)
                         }
                     },
@@ -384,6 +418,11 @@ private fun SavedAddressDialog(
                                 TextButton(
                                     onClick = {
                                         address = s.label.take(200)
+                                        lat = s.lat
+                                        lng = s.lng
+                                        if (areaId == null) {
+                                            areaId = inferAreaId(s.label, areas)
+                                        }
                                         onPickSuggestion()
                                     },
                                     modifier = Modifier.fillMaxWidth(),
@@ -400,6 +439,7 @@ private fun SavedAddressDialog(
                         onValueChange = {},
                         readOnly = true,
                         label = { Text(stringResource(R.string.saved_addresses_area)) },
+                        supportingText = { Text(stringResource(R.string.saved_addresses_area_hint)) },
                         trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded = areaExpanded) },
                         modifier = Modifier.menuAnchor(MenuAnchorType.PrimaryNotEditable).fillMaxWidth(),
                     )
@@ -454,7 +494,7 @@ private fun SavedAddressDialog(
         confirmButton = {
             Button(
                 enabled = !busy && label.isNotBlank() && address.isNotBlank(),
-                onClick = { onSave(label, areaId, address, gateNotes, isDefault) },
+                onClick = { onSave(label, areaId, address, gateNotes, isDefault, lat, lng) },
             ) {
                 Text(stringResource(R.string.common_save))
             }

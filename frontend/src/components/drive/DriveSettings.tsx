@@ -39,13 +39,19 @@ function VehicleModal({ vehicle, onClose, onSave }: VehicleModalProps) {
     is_active: vehicle?.is_active ?? true,
   });
   const { busy, error, run } = useAction();
+  const [fieldError, setFieldError] = useState<string | null>(null);
 
-  const setF = (k: keyof Vehicle, val: string | number | boolean) =>
+  const setF = (k: keyof Vehicle, val: string | number | boolean) => {
+    setFieldError(null);
     setForm((prev) => ({ ...prev, [k]: val }));
+  };
 
   const handleSubmit = async (e: FormEvent) => {
     e.preventDefault();
-    if (!form.model.trim() || !form.plate.trim()) return;
+    if (!form.model.trim() || !form.color.trim() || !form.plate.trim()) {
+      setFieldError(t('vehicleFieldsRequired'));
+      return;
+    }
     await run(async () => {
       await onSave({
         ...form,
@@ -60,10 +66,10 @@ function VehicleModal({ vehicle, onClose, onSave }: VehicleModalProps) {
 
   return (
     <Modal
-      title={vehicle?.id ? t('editVehicle') : t('addVehicle')}
+      title={vehicle?.id || vehicle?.plate ? t('editVehicle') : t('addVehicle')}
       onClose={onClose}
     >
-      <form onSubmit={handleSubmit} className="stack">
+      <form onSubmit={handleSubmit} noValidate className="stack">
         <div className="plate-preview-box">
           <div className="plate">{form.plate.trim() || 'VXX 1234'}</div>
           <div className="plate-preview-desc">
@@ -168,19 +174,40 @@ function VehicleModal({ vehicle, onClose, onSave }: VehicleModalProps) {
           {t('setAsActive')}
         </label>
 
-        <ErrorBox error={error} />
+        <ErrorBox error={fieldError || error} />
 
         <div className="form-actions right">
           <Button type="button" variant="secondary" onClick={onClose}>
             {t('cancel', { defaultValue: 'Cancel' })}
           </Button>
           <Button type="submit" variant="primary" disabled={busy}>
-            {vehicle?.id ? t('saveSettings') : t('addVehicle')}
+            {vehicle?.id || vehicle?.plate ? t('saveSettings') : t('addVehicle')}
           </Button>
         </div>
       </form>
     </Modal>
   );
+}
+
+interface PrefsSnapshot {
+  carpool_enabled: boolean;
+  spare_seats: number;
+  gate_wait_mins: number;
+  area_ids: number[];
+}
+
+function normalizePrefs(src: Pick<Profile, 'carpool_enabled' | 'spare_seats' | 'gate_wait_mins' | 'area_ids'>): PrefsSnapshot {
+  return {
+    carpool_enabled: !!src.carpool_enabled,
+    spare_seats: Number(src.spare_seats) || 1,
+    gate_wait_mins: Number(src.gate_wait_mins) || 5,
+    area_ids: [...src.area_ids].sort((a, b) => a - b),
+  };
+}
+
+function clampForVehicle(spare: number, active: Vehicle | null): number {
+  const max = active ? Math.min(7, Math.max(1, Number(active.seats) - 1)) : 6;
+  return Math.max(1, Math.min(spare, max));
 }
 
 export function DriveSettings() {
@@ -208,22 +235,7 @@ export function DriveSettings() {
         vList.find((v) => (profile.active_vehicle_id != null ? v.id === profile.active_vehicle_id : v.is_active)) ||
         vList.find((v) => v.is_active) ||
         vList[0] ||
-        (profile.vehicle
-          ? {
-              model: profile.vehicle.model ?? '',
-              color: profile.vehicle.color ?? '',
-              plate: profile.vehicle.plate ?? '',
-              seats: Number(profile.vehicle.seats) || 5,
-              vehicle_type:
-                profile.vehicle.vehicle_type ??
-                (profile.vehicle as { type?: string } | null)?.type ??
-                'standard',
-              wheelchair_ok: !!profile.vehicle.wheelchair_ok,
-              low_step: !!profile.vehicle.low_step,
-              child_seat: !!profile.vehicle.child_seat,
-              is_active: true,
-            }
-          : null);
+        null;
 
       const initial: Profile = {
         carpool_enabled: !!profile.carpool_enabled,
@@ -251,46 +263,16 @@ export function DriveSettings() {
       };
       setP(initial);
       setVehicles(vList);
-      initialRef.current = JSON.stringify({
-        ...initial,
-        vehicle: initial.vehicle
-          ? {
-              model: initial.vehicle.model ?? '',
-              color: initial.vehicle.color ?? '',
-              plate: initial.vehicle.plate ?? '',
-              seats: Number(initial.vehicle.seats) || 5,
-              vehicle_type: initial.vehicle.vehicle_type ?? 'standard',
-              wheelchair_ok: !!initial.vehicle.wheelchair_ok,
-              low_step: !!initial.vehicle.low_step,
-              child_seat: !!initial.vehicle.child_seat,
-            }
-          : null,
-      });
+      initialRef.current = JSON.stringify(normalizePrefs(initial));
     }
   }, [profile]);
 
   const isDirty = useMemo(() => {
     if (!p || !initialRef.current) return false;
-    const currentNormalized = {
-      ...p,
-      area_ids: [...p.area_ids].sort((a, b) => a - b),
-      vehicle: p.vehicle
-        ? {
-            model: p.vehicle.model ?? '',
-            color: p.vehicle.color ?? '',
-            plate: p.vehicle.plate ?? '',
-            seats: Number(p.vehicle.seats) || 5,
-            vehicle_type: p.vehicle.vehicle_type ?? 'standard',
-            wheelchair_ok: !!p.vehicle.wheelchair_ok,
-            low_step: !!p.vehicle.low_step,
-            child_seat: !!p.vehicle.child_seat,
-          }
-        : null,
-    };
-    return JSON.stringify(currentNormalized) !== initialRef.current;
+    return JSON.stringify(normalizePrefs(p)) !== initialRef.current;
   }, [p]);
 
-  if (loading || !p || !p.vehicle) return <Spinner />;
+  if (loading || !p) return <Spinner />;
 
   const toggleArea = (id: number) => {
     setP({
@@ -302,19 +284,18 @@ export function DriveSettings() {
   };
 
   const v = p.vehicle;
-  const setV = (k: keyof Vehicle, val: string | number | boolean) => {
-    const updatedV = { ...v, [k]: val };
-    const updatedVehicles = vehicles.map((vh) =>
-      vh.id != null && v.id != null
-        ? vh.id === v.id
-          ? updatedV
-          : vh
-        : vh.plate === v.plate
-          ? updatedV
-          : vh,
-    );
-    setP({ ...p, vehicle: updatedV, vehicles: updatedVehicles });
-    setVehicles(updatedVehicles);
+  const maxSpareSeats = v ? Math.min(7, Math.max(1, Number(v.seats) - 1)) : 6;
+
+  const syncClampedInitial = (nextSpare: number) => {
+    if (!initialRef.current) return;
+    try {
+      const prev = JSON.parse(initialRef.current) as PrefsSnapshot;
+      if (prev.spare_seats > nextSpare) {
+        initialRef.current = JSON.stringify({ ...prev, spare_seats: nextSpare });
+      }
+    } catch {
+      /* ignore */
+    }
   };
 
   const selectVehicle = async (item: Vehicle) => {
@@ -328,10 +309,12 @@ export function DriveSettings() {
       ...vh,
       is_active: vh.id != null && item.id != null ? vh.id === item.id : vh.plate === item.plate,
     }));
+    const chosen = updated.find((vh) => vh.is_active) || updated[0] || null;
+    const nextSpare = clampForVehicle(p.spare_seats, chosen);
+    syncClampedInitial(nextSpare);
     setVehicles(updated);
-    const chosen = updated.find((vh) => vh.is_active) || updated[0];
     if (chosen) {
-      setP({ ...p, vehicle: chosen, active_vehicle_id: chosen.id });
+      setP({ ...p, vehicle: chosen, vehicles: updated, active_vehicle_id: chosen.id, spare_seats: nextSpare });
     }
   };
 
@@ -350,15 +333,23 @@ export function DriveSettings() {
         t('vehicleDeleted'),
       );
     }
-    const remaining = vehicles.filter((vh) =>
-      vh.id != null && item.id != null ? vh.id !== item.id : vh.plate !== item.plate,
-    );
+    const remaining = vehicles
+      .filter((vh) => (vh.id != null && item.id != null ? vh.id !== item.id : vh.plate !== item.plate))
+      .map((vh) => ({ ...vh }));
     if (item.is_active && remaining.length > 0) {
       remaining[0].is_active = true;
     }
-    setVehicles(remaining);
     const chosen = remaining.find((vh) => vh.is_active) || remaining[0] || null;
-    setP({ ...p, vehicle: chosen, active_vehicle_id: chosen?.id });
+    const nextSpare = clampForVehicle(p.spare_seats, chosen);
+    syncClampedInitial(nextSpare);
+    setVehicles(remaining);
+    setP({
+      ...p,
+      vehicle: chosen,
+      vehicles: remaining,
+      active_vehicle_id: chosen?.id ?? null,
+      spare_seats: nextSpare,
+    });
   };
 
   const handleSaveModalVehicle = async (vData: Vehicle) => {
@@ -371,47 +362,60 @@ export function DriveSettings() {
             ? { ...vh, is_active: false }
             : vh,
       );
+      const activeV = updated.find((vh) => vh.is_active) || updated[0] || null;
+      const nextSpare = clampForVehicle(p.spare_seats, activeV);
+      syncClampedInitial(nextSpare);
       setVehicles(updated);
-      const activeV = updated.find((vh) => vh.is_active) || updated[0];
-      if (activeV) {
-        setP({ ...p, vehicle: activeV, active_vehicle_id: activeV.id });
-      }
+      setP({ ...p, vehicle: activeV, vehicles: updated, active_vehicle_id: activeV?.id ?? null, spare_seats: nextSpare });
+      toast(t('vehicleSaved'));
+    } else if (modalVehicle != null) {
+      const prefs = normalizePrefs(p);
+      await put('/driver/profile', {
+        ...prefs,
+        active_vehicle_id: p.active_vehicle_id ?? undefined,
+        vehicle: { ...vData, seats: Number(vData.seats) },
+      });
+      const updated = vehicles.map((vh) =>
+        vh.plate === modalVehicle.plate ? { ...vh, ...vData, is_active: true } : vh,
+      );
+      const activeV = updated.find((vh) => vh.is_active) || updated[0] || null;
+      const nextSpare = clampForVehicle(p.spare_seats, activeV);
+      syncClampedInitial(nextSpare);
+      setVehicles(updated);
+      setP({ ...p, vehicle: activeV, vehicles: updated, spare_seats: nextSpare });
       toast(t('vehicleSaved'));
     } else {
       const res = await post<Vehicle>('/driver/vehicles', vData);
-      const updated: Vehicle[] = vData.is_active
+      const updated: Vehicle[] = res.is_active
         ? [...vehicles.map((vh) => ({ ...vh, is_active: false })), res]
         : [...vehicles, res];
+      const activeV = updated.find((vh) => vh.is_active) || updated[0] || null;
+      const nextSpare = clampForVehicle(p.spare_seats, activeV);
+      syncClampedInitial(nextSpare);
       setVehicles(updated);
-      const activeV = updated.find((vh) => vh.is_active) || updated[0];
-      if (activeV) {
-        setP({ ...p, vehicle: activeV, active_vehicle_id: activeV.id });
-      }
+      setP({ ...p, vehicle: activeV, vehicles: updated, active_vehicle_id: activeV?.id ?? null, spare_seats: nextSpare });
       toast(t('vehicleSaved'));
     }
   };
 
   const save = async (e: FormEvent) => {
     e.preventDefault();
-    if (!p || !p.vehicle) return;
+    if (!p) return;
+    const prefsPayload = normalizePrefs({
+      ...p,
+      spare_seats: clampForVehicle(Number(p.spare_seats) || 1, v),
+    });
     const ok = await run(
       () =>
         put('/driver/profile', {
-          ...p,
-          spare_seats: Number(p.spare_seats),
-          gate_wait_mins: Number(p.gate_wait_mins || 5),
-          active_vehicle_id: v.id,
-          vehicle: { ...v, seats: Number(v.seats) },
+          ...prefsPayload,
+          active_vehicle_id: v?.id ?? undefined,
         }),
       t('settingsSaved'),
     );
     if (ok) {
-      const savedNormalized = {
-        ...p,
-        area_ids: [...p.area_ids].sort((a, b) => a - b),
-        vehicle: { ...v, seats: Number(v.seats) },
-      };
-      initialRef.current = JSON.stringify(savedNormalized);
+      setP((cur) => (cur ? { ...cur, spare_seats: prefsPayload.spare_seats } : cur));
+      initialRef.current = JSON.stringify(prefsPayload);
     }
   };
 
@@ -458,7 +462,18 @@ export function DriveSettings() {
                 />
                 {t('carpoolLabel')}
               </label>
-              <Field label={t('spare')} hint={t('spareHint')}>
+              <Field
+                label={t('spare')}
+                hint={
+                  v ? (
+                    <>
+                      {t('spareMaxHint', { max: maxSpareSeats, seats: v.seats })} {t('spareHint')}
+                    </>
+                  ) : (
+                    t('spareHint')
+                  )
+                }
+              >
                 <div className="stepper" role="group" aria-label={t('spare')}>
                   <IconButton
                     label={t('decreaseSeats')}
@@ -474,9 +489,9 @@ export function DriveSettings() {
                   <IconButton
                     label={t('increaseSeats')}
                     icon={<Plus size={18} />}
-                    disabled={p.spare_seats >= 6}
+                    disabled={p.spare_seats >= maxSpareSeats}
                     onClick={() =>
-                      setP({ ...p, spare_seats: Math.min(6, p.spare_seats + 1) })
+                      setP({ ...p, spare_seats: Math.min(maxSpareSeats, p.spare_seats + 1) })
                     }
                   />
                 </div>
@@ -504,7 +519,7 @@ export function DriveSettings() {
                   <h3>{t('vehicles')}</h3>
                   <p className="muted small">{t('vehiclesHint')}</p>
                 </div>
-                {can('drive', 'update') && (
+                {can('drive', 'update') && vehicles.length > 0 && (
                   <Button
                     type="button"
                     variant="secondary"
@@ -516,27 +531,40 @@ export function DriveSettings() {
                 )}
               </div>
 
-              {/* Active vehicle live plate-badge preview */}
-              <div className="plate-preview-box">
-                <div className="vehicle-active-tag">
-                  <Check size={14} /> {t('selectedForDriving')}
+              {vehicles.length === 0 || !v ? (
+                <div className="plate-preview-box">
+                  <p className="muted small">{t('noVehicles')}</p>
+                  {can('drive', 'update') && (
+                    <Button
+                      type="button"
+                      variant="primary"
+                      size="sm"
+                      onClick={() => setModalVehicle(null)}
+                    >
+                      <Plus size={16} /> {t('addVehicle')}
+                    </Button>
+                  )}
                 </div>
-                <div className="plate">{v.plate.trim() || 'VXX 1234'}</div>
-                <div className="plate-preview-desc">
-                  {v.color.trim() || t('colorPlaceholder')} ·{' '}
-                  {v.model.trim() || t('model')} ({v.seats} {t('seats')})
-                </div>
-                <div className="vehicle-badges-row">
-                  {v.wheelchair_ok ? <span className="chip on small">{t('wheelchairOk')}</span> : null}
-                  {v.low_step ? <span className="chip on small">{t('lowStep')}</span> : null}
-                  {v.child_seat ? <span className="chip on small">{t('childSeat')}</span> : null}
-                </div>
-              </div>
+              ) : (
+                <>
+                  {/* Active vehicle live plate-badge preview */}
+                  <div className="plate-preview-box">
+                    <div className="vehicle-active-tag">
+                      <Check size={14} /> {t('selectedForDriving')}
+                    </div>
+                    <div className="plate">{v.plate.trim() || 'VXX 1234'}</div>
+                    <div className="plate-preview-desc">
+                      {v.color.trim() || t('colorPlaceholder')} ·{' '}
+                      {v.model.trim() || t('model')} ({v.seats} {t('seats')})
+                    </div>
+                    <div className="vehicle-badges-row">
+                      {v.wheelchair_ok ? <span className="chip on small">{t('wheelchairOk')}</span> : null}
+                      {v.low_step ? <span className="chip on small">{t('lowStep')}</span> : null}
+                      {v.child_seat ? <span className="chip on small">{t('childSeat')}</span> : null}
+                    </div>
+                  </div>
 
-              {/* List of configured vehicles when multiple vehicles exist */}
-              {vehicles.length > 1 && (
-                <div className="stack-xs">
-                  <div className="bold small">{t('vehicles')}</div>
+                  {/* Unified vehicle list (shown for 1 or more vehicles) */}
                   <div className="vehicle-list">
                     {vehicles.map((item) => {
                       const isActive =
@@ -559,124 +587,37 @@ export function DriveSettings() {
                               </span>
                             )}
                           </div>
-                          <div className="vehicle-item-actions">
-                            {!isActive && (
-                              <Button
-                                type="button"
-                                variant="secondary"
-                                className="small"
-                                onClick={() => selectVehicle(item)}
-                              >
-                                {t('selectForDriving')}
-                              </Button>
-                            )}
-                            <IconButton
-                              label={t('editVehicle')}
-                              icon={<Edit2 size={15} />}
-                              onClick={() => setModalVehicle(item)}
-                            />
-                            {vehicles.length > 1 && (
+                          {can('drive', 'update') && (
+                            <div className="vehicle-item-actions">
+                              {!isActive && (
+                                <Button
+                                  type="button"
+                                  variant="secondary"
+                                  className="small"
+                                  onClick={() => selectVehicle(item)}
+                                >
+                                  {t('selectForDriving')}
+                                </Button>
+                              )}
+                              <IconButton
+                                label={t('editVehicle')}
+                                icon={<Edit2 size={15} />}
+                                onClick={() => setModalVehicle(item)}
+                              />
                               <IconButton
                                 label={t('deleteVehicle')}
                                 icon={<Trash2 size={15} />}
                                 onClick={() => deleteVehicle(item)}
                               />
-                            )}
-                          </div>
+                            </div>
+                          )}
                         </div>
                       );
                     })}
                   </div>
-                </div>
+                  <p className="muted tiny">{t('vehiclesSaveInstant')}</p>
+                </>
               )}
-
-              {/* Form fields for active vehicle */}
-              <div className="form-grid two">
-                <Field label={t('model')}>
-                  <input
-                    className="input"
-                    required
-                    value={v.model}
-                    onChange={(e) => setV('model', e.target.value)}
-                    placeholder="Perodua Myvi"
-                  />
-                </Field>
-                <Field label={t('color')}>
-                  <input
-                    className="input"
-                    required
-                    value={v.color}
-                    onChange={(e) => setV('color', e.target.value)}
-                    placeholder={t('colorPlaceholder')}
-                  />
-                </Field>
-                <Field label={t('plate')}>
-                  <input
-                    className="input"
-                    required
-                    value={v.plate}
-                    onChange={(e) => setV('plate', e.target.value)}
-                    placeholder="VXX 1234"
-                  />
-                </Field>
-                <Field label={t('seats')}>
-                  <div className="stepper" role="group" aria-label={t('seats')}>
-                    <IconButton
-                      label={t('decreaseSeats')}
-                      icon={<Minus size={18} />}
-                      disabled={v.seats <= 2}
-                      onClick={() => setV('seats', Math.max(2, v.seats - 1))}
-                    />
-                    <span className="stepper-value bold">
-                      {t('seatCount', { count: v.seats })}
-                    </span>
-                    <IconButton
-                      label={t('increaseSeats')}
-                      icon={<Plus size={18} />}
-                      disabled={v.seats >= 9}
-                      onClick={() => setV('seats', Math.min(9, v.seats + 1))}
-                    />
-                  </div>
-                </Field>
-                <Field label={t('vehicleType')}>
-                  <select
-                    className="input"
-                    value={v.vehicle_type}
-                    onChange={(e) => setV('vehicle_type', e.target.value)}
-                  >
-                    <option value="standard">{t('vehicleTypeStandard')}</option>
-                    <option value="other">{t('vehicleTypeOther')}</option>
-                  </select>
-                </Field>
-              </div>
-
-              <div className="stack-xs">
-                <div className="bold small">{t('accessibilityTitle')}</div>
-                <label className={`check ${v.wheelchair_ok ? 'on' : ''}`}>
-                  <input
-                    type="checkbox"
-                    checked={!!v.wheelchair_ok}
-                    onChange={(e) => setV('wheelchair_ok', e.target.checked)}
-                  />
-                  {t('wheelchairOk')}
-                </label>
-                <label className={`check ${v.low_step ? 'on' : ''}`}>
-                  <input
-                    type="checkbox"
-                    checked={!!v.low_step}
-                    onChange={(e) => setV('low_step', e.target.checked)}
-                  />
-                  {t('lowStep')}
-                </label>
-                <label className={`check ${v.child_seat ? 'on' : ''}`}>
-                  <input
-                    type="checkbox"
-                    checked={!!v.child_seat}
-                    onChange={(e) => setV('child_seat', e.target.checked)}
-                  />
-                  {t('childSeat')}
-                </label>
-              </div>
             </Card>
           </div>
         </div>

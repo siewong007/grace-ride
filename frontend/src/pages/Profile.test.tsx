@@ -46,6 +46,8 @@ let savedPlacesData: {
   area_name: string | null;
   address: string;
   gate_notes: string;
+  lat?: number | null;
+  lng?: number | null;
   is_default: number;
 }[] = [];
 const areasData = [
@@ -127,7 +129,9 @@ const profileStrings: Record<string, string> = {
   relatedPages: 'Related pages',
   myCosts: 'My costs',
   myRideHistory: 'My ride history',
-  myDrivingHistory: 'My driving history',
+  myDrivingHistory: 'Driving & schedule',
+  driverSettings: 'Vehicle & driving settings',
+  driverSettingsHint: 'Car details, service areas & carpool',
   myReimb: 'My reimbursements',
   myReport: 'My report',
   myHelp: 'Help centre',
@@ -180,6 +184,14 @@ const profileStrings: Record<string, string> = {
   placeAddress: 'Street address',
   placeAddressPlaceholder: 'E.g. 12 Jalan SS2/10, Petaling Jaya',
   placeArea: 'Area',
+  placeAreaHint: 'Needed when booking a ride so volunteer drivers in your area see your request.',
+  placeAreaMissing: 'Area not set',
+  placePinned: 'Map pin saved',
+  placeNoPin: 'No map pin yet',
+  useCurrentLocation: 'Use my current location',
+  locatingGps: 'Getting location…',
+  placeGpsCaptured: 'GPS coordinates captured for driver routing.',
+  placeGpsDenied: 'Location access was declined. You can pick a suggestion from the address box instead.',
   placeGateNotes: 'Gate / pickup notes (optional)',
   placeGatePlaceholder: 'E.g. Ring guardhouse bell #4',
   remove: 'Remove',
@@ -236,8 +248,8 @@ vi.mock('../components/ui', () => ({
   Card: ({ children }: { children?: React.ReactNode }) => <div data-testid="card">{children}</div>,
   ErrorBox: ({ error }: { error?: string | null }) =>
     error ? <div data-testid="error-box">{error}</div> : null,
-  Field: ({ label, children }: { label: string; children: React.ReactNode }) => (
-    <label data-testid="field">{label}{children}</label>
+  Field: ({ label, hint, children }: { label: string; hint?: React.ReactNode; children: React.ReactNode }) => (
+    <label data-testid="field">{label}{children}{hint && <small>{hint}</small>}</label>
   ),
   FileInput: ({ label }: { label: string }) => (
     <label data-testid="fileinput">{label}</label>
@@ -446,10 +458,11 @@ describe('Profile compact layout', () => {
     }
   });
 
-  it('keeps ride and driving history reachable from the profile', () => {
+  it('keeps ride, driving schedule, and driver settings reachable from the profile', () => {
     renderProfile(baseMe);
     expect(screen.getByText('My ride history').closest('a')).toHaveAttribute('href', '/rides');
-    expect(screen.getByText('My driving history').closest('a')).toHaveAttribute('href', '/drive');
+    expect(screen.getByText('Driving & schedule').closest('a')).toHaveAttribute('href', '/drive');
+    expect(screen.getByText('Vehicle & driving settings').closest('a')).toHaveAttribute('href', '/drive?tab=settings');
   });
 
   it('hides related pages shortcuts for pending accounts', () => {
@@ -735,5 +748,55 @@ describe('Profile compact layout', () => {
     const botLink = screen.getByRole('link', { name: 'Open @GraceRideBot in Telegram' });
     expect(botLink).toHaveAttribute('href', 'https://t.me/GraceRideBot');
     expect(screen.getByPlaceholderText('123456789')).toBeInTheDocument();
+  });
+
+  it('infers pickup area, shows missing-area/pin status, and captures GPS coords on saved address', async () => {
+    const postMock = vi.mocked(post);
+    postMock.mockClear();
+    savedPlacesData = [
+      { id: 10, label: 'Pinned', area_id: null, area_name: null, address: '5 Jalan Barat', gate_notes: '', lat: 3.11, lng: 101.64, is_default: 0 },
+    ];
+    const origGeo = navigator.geolocation;
+    Object.defineProperty(navigator, 'geolocation', {
+      configurable: true,
+      value: {
+        getCurrentPosition: (cb: (pos: { coords: { latitude: number; longitude: number } }) => void) =>
+          cb({ coords: { latitude: 3.123456, longitude: 101.654321 } }),
+      },
+    });
+
+    try {
+      renderProfile(baseMe, '/me?section=places');
+      expect(screen.getByText('Area not set')).toBeInTheDocument();
+      expect(screen.getByText('Map pin saved')).toBeInTheDocument();
+
+      fireEvent.click(screen.getByRole('button', { name: /Add address/i }));
+      expect(screen.getByText(/Needed when booking a ride so volunteer drivers/i)).toBeInTheDocument();
+
+      fireEvent.click(screen.getByRole('button', { name: 'Home' }));
+      fireEvent.change(screen.getByRole('combobox', { name: 'Street address' }), {
+        target: { value: '18 Jalan Utara, Subang Jaya' },
+      });
+      // Area "Subang Jaya" (id 2) is inferred automatically
+      expect((screen.getByLabelText(/Area/i) as HTMLSelectElement).value).toBe('2');
+
+      fireEvent.click(screen.getByRole('button', { name: /Use my current location/i }));
+      expect(screen.getByText('GPS coordinates captured for driver routing.')).toBeInTheDocument();
+
+      fireEvent.click(screen.getByRole('button', { name: 'Save' }));
+      await waitFor(() =>
+        expect(postMock).toHaveBeenCalledWith('/saved-places', {
+          label: 'Home',
+          area_id: 2,
+          address: '18 Jalan Utara, Subang Jaya',
+          gate_notes: '',
+          is_default: false,
+          lat: 3.123456,
+          lng: 101.654321,
+        }),
+      );
+    } finally {
+      Object.defineProperty(navigator, 'geolocation', { configurable: true, value: origGeo });
+    }
   });
 });

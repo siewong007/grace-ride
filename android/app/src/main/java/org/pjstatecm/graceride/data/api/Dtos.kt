@@ -81,6 +81,8 @@ data class SavedPlace(
     val address: String = "",
     @SerialName("gate_notes") val gateNotes: String = "",
     @SerialName("is_default") val isDefault: Int = 0,
+    val lat: Double? = null,
+    val lng: Double? = null,
 )
 
 @Serializable
@@ -90,6 +92,8 @@ data class SavedPlaceReq(
     val address: String,
     val gate_notes: String? = null,
     val is_default: Boolean? = null,
+    val lat: Double? = null,
+    val lng: Double? = null,
 )
 
 @Serializable
@@ -374,3 +378,56 @@ data class CreateRideRes(val id: Long, val return_ride_id: Long? = null)
 
 @Serializable
 data class TermsReq(val accepted: Boolean)
+
+@Serializable
+data class DriverVehicle(
+    val id: Long? = null,
+    val model: String = "",
+    val color: String = "",
+    val plate: String = "",
+    val seats: Int = 5,
+    @SerialName("vehicle_type") val vehicleType: String = "standard",
+    @SerialName("wheelchair_ok") val wheelchairOk: Boolean = false,
+    @SerialName("low_step") val lowStep: Boolean = false,
+    @SerialName("child_seat") val childSeat: Boolean = false,
+    @SerialName("is_active") val isActive: Boolean = false,
+)
+
+@Serializable
+data class DriverProfile(
+    @SerialName("carpool_enabled") val carpoolEnabled: Boolean = false,
+    @SerialName("spare_seats") val spareSeats: Int = 1,
+    @SerialName("gate_wait_mins") val gateWaitMins: Int = 5,
+    @SerialName("area_ids") val areaIds: List<Long> = emptyList(),
+    val vehicle: DriverVehicle? = null,
+    val vehicles: List<DriverVehicle> = emptyList(),
+    @SerialName("active_vehicle_id") val activeVehicleId: Long? = null,
+)
+
+@Serializable
+data class DriverProfileReq(
+    val carpool_enabled: Boolean,
+    val spare_seats: Int,
+    val gate_wait_mins: Int,
+    val area_ids: List<Long>,
+    val active_vehicle_id: Long? = null,
+)
+
+@Serializable
+data class DriverVehicleReq(
+    val model: String,
+    val color: String,
+    val plate: String,
+    val seats: Int,
+    val vehicle_type: String = "standard",
+    val wheelchair_ok: Boolean = false,
+    val low_step: Boolean = false,
+    val child_seat: Boolean = false,
+    val is_active: Boolean = false,
+)
+
+@Serializable
+data class SelectVehicleRes(
+    val ok: Boolean = true,
+    @SerialName("active_vehicle_id") val activeVehicleId: Long? = null,
+)

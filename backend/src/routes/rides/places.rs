@@ -9,6 +9,7 @@ use serde_json::{json, Value};
 
 use crate::auth::CurrentUser;
 use crate::error::{bad, not_found, AppResult};
+use crate::i18n::Lang;
 use crate::perms::{Act, Page};
 use crate::state::AppState;
 use crate::util::{now, require, ErrorKey};
@@ -40,6 +41,29 @@ pub(super) struct SavedPlaceIn {
     gate_notes: Option<String>,
     #[serde(default)]
     is_default: Option<bool>,
+    #[serde(default)]
+    lat: Option<f64>,
+    #[serde(default)]
+    lng: Option<f64>,
+}
+
+fn validate_coords(
+    lat: Option<f64>,
+    lng: Option<f64>,
+    lang: Lang,
+) -> AppResult<Option<(f64, f64)>> {
+    match (lat, lng) {
+        (None, None) => Ok(None),
+        (Some(la), Some(ln))
+            if la.is_finite()
+                && ln.is_finite()
+                && (-90.0..=90.0).contains(&la)
+                && (-180.0..=180.0).contains(&ln) =>
+        {
+            Ok(Some((la, ln)))
+        }
+        _ => Err(bad(lang, ErrorKey::InvalidAction)),
+    }
 }
 
 pub(super) async fn list_saved_places(
@@ -90,12 +114,17 @@ pub(super) async fn create_saved_place(
             return Err(bad(u.lang, ErrorKey::PickupAreaRequired));
         }
     }
-    let cached: Option<(Option<f64>, Option<f64>)> =
-        sqlx::query_as("SELECT lat, lng FROM geocode_cache WHERE query=$1")
-            .bind(crate::routing::cache_key(address))
-            .fetch_optional(&st.db)
-            .await?;
-    let (lat, lng) = cached.unwrap_or((None, None));
+    let explicit_coords = validate_coords(req.lat, req.lng, u.lang)?;
+    let (lat, lng) = if let Some((la, ln)) = explicit_coords {
+        (Some(la), Some(ln))
+    } else {
+        let cached: Option<(Option<f64>, Option<f64>)> =
+            sqlx::query_as("SELECT lat, lng FROM geocode_cache WHERE query=$1")
+                .bind(crate::routing::cache_key(address))
+                .fetch_optional(&st.db)
+                .await?;
+        cached.unwrap_or((None, None))
+    };
     let is_def = if req.is_default.unwrap_or(false) {
         1i64
     } else {
@@ -125,7 +154,9 @@ pub(super) async fn create_saved_place(
     .fetch_one(&mut *tx)
     .await?;
     tx.commit().await?;
-    Ok(Json(json!({ "id": id, "ok": true })))
+    Ok(Json(
+        json!({ "id": id, "ok": true, "lat": lat, "lng": lng }),
+    ))
 }
 
 pub(super) async fn update_saved_place(
@@ -155,12 +186,35 @@ pub(super) async fn update_saved_place(
             return Err(bad(u.lang, ErrorKey::PickupAreaRequired));
         }
     }
-    let cached: Option<(Option<f64>, Option<f64>)> =
-        sqlx::query_as("SELECT lat, lng FROM geocode_cache WHERE query=$1")
-            .bind(crate::routing::cache_key(address))
+    let explicit_coords = validate_coords(req.lat, req.lng, u.lang)?;
+    let existing: Option<(String, Option<f64>, Option<f64>)> =
+        sqlx::query_as("SELECT address, lat, lng FROM saved_places WHERE id=$1 AND user_id=$2")
+            .bind(id)
+            .bind(u.id)
             .fetch_optional(&st.db)
             .await?;
-    let (lat, lng) = cached.unwrap_or((None, None));
+    let Some((existing_addr, existing_lat, existing_lng)) = existing else {
+        return Err(not_found(u.lang));
+    };
+
+    let (lat, lng) = if let Some((la, ln)) = explicit_coords {
+        (Some(la), Some(ln))
+    } else {
+        let cached: Option<(Option<f64>, Option<f64>)> =
+            sqlx::query_as("SELECT lat, lng FROM geocode_cache WHERE query=$1")
+                .bind(crate::routing::cache_key(address))
+                .fetch_optional(&st.db)
+                .await?;
+        match cached {
+            Some((Some(la), Some(ln))) => (Some(la), Some(ln)),
+            _ if crate::routing::cache_key(&existing_addr)
+                == crate::routing::cache_key(address) =>
+            {
+                (existing_lat, existing_lng)
+            }
+            _ => (None, None),
+        }
+    };
     let is_def: Option<i64> = req.is_default.map(|b| if b { 1 } else { 0 });
     let mut tx = st.db.begin().await?;
     if is_def == Some(1) {

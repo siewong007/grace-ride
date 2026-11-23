@@ -19,6 +19,7 @@ interface Props {
   label: string;
   value: string;
   onChange: (value: string) => void;
+  onSelectPlace?: (place: Place) => void;
   onBlur?: (value: string) => void;
   hint?: ReactNode;
   placeholder?: string;
@@ -33,6 +34,7 @@ export function AddressInput({
   label,
   value,
   onChange,
+  onSelectPlace,
   onBlur,
   hint,
   placeholder,
@@ -103,6 +105,7 @@ export function AddressInput({
     setOpen(false);
     setActive(-1);
     onChange(p.label);
+    onSelectPlace?.(p);
   };
 
   const onKeyDown = (e: KeyboardEvent<HTMLInputElement>) => {

@@ -220,6 +220,26 @@ fn default_vehicle_type() -> String {
     "standard".to_string()
 }
 
+/// Keeps `users.spare_seats` within `[1, max(1, seats - 1)]` after switching or editing
+/// the active vehicle so carpool assignment capacity never exceeds physical seats.
+async fn clamp_spare_seats(
+    tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+    user_id: i64,
+    vehicle_seats: i64,
+) -> AppResult<()> {
+    if vehicle_seats < 2 {
+        return Ok(());
+    }
+    sqlx::query(
+        "UPDATE users SET spare_seats = GREATEST(1, LEAST(spare_seats, $1 - 1)) WHERE id=$2",
+    )
+    .bind(vehicle_seats)
+    .bind(user_id)
+    .execute(&mut **tx)
+    .await?;
+    Ok(())
+}
+
 #[derive(Deserialize)]
 pub(super) struct DriverProfileIn {
     carpool_enabled: bool,
@@ -243,10 +263,39 @@ pub(super) async fn put_driver_profile(
     if !(1..=7).contains(&req.spare_seats) {
         return Err(bad(u.lang, ErrorKey::SpareSeatsRange));
     }
+    if let Some(ref v) = req.vehicle {
+        if v.model.trim().is_empty() || v.plate.trim().is_empty() {
+            return Err(bad(u.lang, ErrorKey::VehicleModelAndPlateRequired));
+        }
+        if !(2..=9).contains(&v.seats) {
+            return Err(bad(u.lang, ErrorKey::VehicleSeatsRange));
+        }
+    }
     let mut tx = st.db.begin().await?;
+    let mut active_seats: Option<i64> = req.vehicle.as_ref().map(|v| v.seats);
+    if active_seats.is_none() {
+        active_seats = if let Some(target_id) = req.active_vehicle_id {
+            sqlx::query_scalar("SELECT seats FROM vehicles WHERE id=$1 AND user_id=$2")
+                .bind(target_id)
+                .bind(u.id)
+                .fetch_optional(&mut *tx)
+                .await?
+        } else {
+            sqlx::query_scalar(
+                "SELECT seats FROM vehicles WHERE user_id=$1 AND is_active=1 LIMIT 1",
+            )
+            .bind(u.id)
+            .fetch_optional(&mut *tx)
+            .await?
+        };
+    }
+    let effective_spare = match active_seats {
+        Some(seats) if seats >= 2 => req.spare_seats.min((seats - 1).max(1)),
+        _ => req.spare_seats,
+    };
     sqlx::query("UPDATE users SET carpool_enabled=$1, spare_seats=$2 WHERE id=$3")
         .bind(req.carpool_enabled as i64)
-        .bind(req.spare_seats)
+        .bind(effective_spare)
         .bind(u.id)
         .execute(&mut *tx)
         .await?;
@@ -274,7 +323,7 @@ pub(super) async fn put_driver_profile(
     let mut detail = format!(
         "carpool {}; spare seats {}; areas {:?}",
         if req.carpool_enabled { "on" } else { "off" },
-        req.spare_seats,
+        effective_spare,
         req.area_ids
     );
 
@@ -471,6 +520,9 @@ pub(super) async fn create_driver_vehicle(
     .bind(is_act_val)
     .fetch_one(&mut *tx)
     .await?;
+    if should_activate {
+        clamp_spare_seats(&mut tx, u.id, req.seats).await?;
+    }
 
     tx.commit().await?;
 
@@ -564,6 +616,9 @@ pub(super) async fn update_driver_vehicle(
     .bind(u.id)
     .execute(&mut *tx)
     .await?;
+    if should_activate {
+        clamp_spare_seats(&mut tx, u.id, req.seats).await?;
+    }
 
     tx.commit().await?;
 
@@ -621,16 +676,18 @@ pub(super) async fn delete_driver_vehicle(
         .await?;
 
     if is_active == 1 {
-        let next_v: Option<(i64,)> =
-            sqlx::query_as("SELECT id FROM vehicles WHERE user_id=$1 ORDER BY id ASC LIMIT 1")
-                .bind(u.id)
-                .fetch_optional(&mut *tx)
-                .await?;
-        if let Some((next_id,)) = next_v {
+        let next_v: Option<(i64, i64)> = sqlx::query_as(
+            "SELECT id, seats FROM vehicles WHERE user_id=$1 ORDER BY id ASC LIMIT 1",
+        )
+        .bind(u.id)
+        .fetch_optional(&mut *tx)
+        .await?;
+        if let Some((next_id, next_seats)) = next_v {
             sqlx::query("UPDATE vehicles SET is_active=1 WHERE id=$1")
                 .bind(next_id)
                 .execute(&mut *tx)
                 .await?;
+            clamp_spare_seats(&mut tx, u.id, next_seats).await?;
         }
     }
     tx.commit().await?;
@@ -656,13 +713,13 @@ pub(super) async fn select_driver_vehicle(
     if !u.can(Page::Drive, Act::Update) {
         return Err(forbidden(u.lang, ErrorKey::OnlyVolunteerDriversCanSet));
     }
-    let existing: Option<(i64, String, String)> =
-        sqlx::query_as("SELECT id, model, plate FROM vehicles WHERE id=$1 AND user_id=$2")
+    let existing: Option<(i64, String, String, i64)> =
+        sqlx::query_as("SELECT id, model, plate, seats FROM vehicles WHERE id=$1 AND user_id=$2")
             .bind(id)
             .bind(u.id)
             .fetch_optional(&st.db)
             .await?;
-    let Some((_, model, plate)) = existing else {
+    let Some((_, model, plate, seats)) = existing else {
         return Err(not_found(u.lang));
     };
 
@@ -676,6 +733,7 @@ pub(super) async fn select_driver_vehicle(
         .bind(u.id)
         .execute(&mut *tx)
         .await?;
+    clamp_spare_seats(&mut tx, u.id, seats).await?;
     tx.commit().await?;
 
     audit(

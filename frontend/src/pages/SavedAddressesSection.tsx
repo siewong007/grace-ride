@@ -1,8 +1,9 @@
 import { FormEvent, useRef, useState } from 'react';
-import { MapPin, Pencil, Plus, Star, Trash2 } from 'lucide-react';
+import { LocateFixed, MapPin, Pencil, Plus, Star, Trash2 } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import { del, post, put, useApi } from '../api';
-import { AddressInput } from '../components/AddressInput';
+import { inferAreaId } from '../areaMatch';
+import { AddressInput, type Place } from '../components/AddressInput';
 import {
   Button,
   EmptyState,
@@ -30,6 +31,8 @@ interface PlaceFormState {
   address: string;
   gate_notes: string;
   is_default: boolean;
+  lat: number | null;
+  lng: number | null;
 }
 
 const MAX_SAVED_PLACES = 50;
@@ -38,10 +41,12 @@ export default function SavedAddressesSection({
   places,
   loading,
   reloadPlaces,
+  embedded = false,
 }: {
   places: SavedPlace[];
   loading: boolean;
   reloadPlaces: () => void | Promise<unknown>;
+  embedded?: boolean;
 }) {
   const { t } = useTranslation('profile');
   const { data: areasRaw } = useApi<AreaOpt[]>('/areas');
@@ -84,18 +89,31 @@ export default function SavedAddressesSection({
 
   return (
     <div className="stack">
-      <PageHeader
-        title={t('savedAddresses')}
-        subtitle={places.length > 0 ? t('savedAddressCount', { count: places.length }) : undefined}
-        back="/me"
-        actions={
-          places.length > 0 && canAdd ? (
-            <Button variant="primary" size="sm" icon={<Plus size={16} aria-hidden="true" />} onClick={openCreate}>
-              {t('addAddress')}
-            </Button>
-          ) : undefined
-        }
-      />
+      {!embedded ? (
+        <PageHeader
+          title={t('savedAddresses')}
+          subtitle={places.length > 0 ? t('savedAddressCount', { count: places.length }) : undefined}
+          back="/me"
+          actions={
+            places.length > 0 && canAdd ? (
+              <Button variant="primary" size="sm" icon={<Plus size={16} aria-hidden="true" />} onClick={openCreate}>
+                {t('addAddress')}
+              </Button>
+            ) : undefined
+          }
+        />
+      ) : (
+        places.length > 0 && (
+          <div className="row between items-center">
+            <span className="muted small">{t('savedAddressCount', { count: places.length })}</span>
+            {canAdd && (
+              <Button variant="primary" size="sm" icon={<Plus size={16} aria-hidden="true" />} onClick={openCreate}>
+                {t('addAddress')}
+              </Button>
+            )}
+          </div>
+        )
+      )}
 
       {loading && places.length === 0 ? (
         <ListSkeleton count={2} />
@@ -129,6 +147,12 @@ export default function SavedAddressesSection({
                   </div>
                   <span className="saved-addr-street">{sp.address}</span>
                   {sp.gate_notes && <span className="saved-addr-notes">{sp.gate_notes}</span>}
+                  <div className="saved-addr-meta">
+                    {!sp.area_id && <Pill tone="warning">{t('placeAreaMissing')}</Pill>}
+                    <span className={sp.lat != null && sp.lng != null ? 'place-pin-status is-pinned' : 'place-pin-status'}>
+                      {sp.lat != null && sp.lng != null ? t('placePinned') : t('placeNoPin')}
+                    </span>
+                  </div>
                 </div>
                 <div className="saved-addr-actions">
                   <IconButton
@@ -200,10 +224,34 @@ function SavedAddressModal({
     address: editing?.address ?? '',
     gate_notes: editing?.gate_notes ?? '',
     is_default: defaultCheckedInitial,
+    lat: editing?.lat ?? null,
+    lng: editing?.lng ?? null,
   }));
+  const [gpsStatus, setGpsStatus] = useState<'idle' | 'locating' | 'captured' | 'denied'>('idle');
+  const hasGeolocation =
+    typeof navigator !== 'undefined' &&
+    'geolocation' in navigator &&
+    typeof navigator.geolocation?.getCurrentPosition === 'function';
 
   const presets = [t('placePresetHome'), t('placePresetWork'), t('placePresetParents')];
   const canSave = !busy && form.label.trim().length > 0 && form.address.trim().length > 0;
+
+  const captureGps = () => {
+    if (!hasGeolocation) return;
+    setGpsStatus('locating');
+    navigator.geolocation.getCurrentPosition(
+      (pos) => {
+        setForm((cur) => ({
+          ...cur,
+          lat: Number(pos.coords.latitude.toFixed(6)),
+          lng: Number(pos.coords.longitude.toFixed(6)),
+        }));
+        setGpsStatus('captured');
+      },
+      () => setGpsStatus('denied'),
+      { enableHighAccuracy: true, timeout: 10000 },
+    );
+  };
 
   const savePlace = () => {
     if (!canSave) return;
@@ -214,6 +262,7 @@ function SavedAddressModal({
         address: form.address.trim(),
         gate_notes: form.gate_notes.trim(),
         is_default: form.is_default,
+        ...(form.lat != null && form.lng != null ? { lat: form.lat, lng: form.lng } : {}),
       };
       if (editing) {
         await put(`/saved-places/${editing.id}`, payload);
@@ -303,12 +352,63 @@ function SavedAddressModal({
           required
           maxLength={200}
           value={form.address}
-          onChange={(v) => setForm((cur) => ({ ...cur, address: v }))}
+          onChange={(v) => {
+            setGpsStatus('idle');
+            setForm((cur) => {
+              const addrUnchanged = editing != null && v.trim() === editing.address.trim();
+              const inferred = !cur.area_id && v.trim().length >= 3 ? inferAreaId(v, areas) : null;
+              return {
+                ...cur,
+                address: v,
+                lat: addrUnchanged ? (editing.lat ?? null) : null,
+                lng: addrUnchanged ? (editing.lng ?? null) : null,
+                area_id: cur.area_id || (inferred ? String(inferred) : ''),
+              };
+            });
+          }}
+          onSelectPlace={(place: Place) => {
+            setGpsStatus('idle');
+            setForm((cur) => ({
+              ...cur,
+              address: place.label,
+              lat: place.lat,
+              lng: place.lng,
+              area_id: cur.area_id || String(inferAreaId(place.label, areas) ?? ''),
+            }));
+          }}
           placeholder={t('placeAddressPlaceholder')}
         />
 
-        <Field label={t('placeArea')}>
+        {(hasGeolocation || (form.lat != null && form.lng != null)) && (
+          <div className="row wrap items-center gap-xs">
+            {hasGeolocation && (
+              <Button
+                type="button"
+                variant="secondary"
+                size="sm"
+                loading={gpsStatus === 'locating'}
+                onClick={captureGps}
+              >
+                <LocateFixed size={14} aria-hidden="true" />
+                {gpsStatus === 'locating' ? t('locatingGps') : t('useCurrentLocation')}
+              </Button>
+            )}
+            {gpsStatus === 'captured' && (
+              <span className="place-pin-status is-pinned">{t('placeGpsCaptured')}</span>
+            )}
+            {gpsStatus === 'denied' && (
+              <span className="muted tiny">{t('placeGpsDenied')}</span>
+            )}
+            {gpsStatus === 'idle' && form.lat != null && form.lng != null && (
+              <span className="place-pin-status is-pinned">{t('placePinned')}</span>
+            )}
+          </div>
+        )}
+
+        <div className="field">
+          <label htmlFor="saved-place-area" className="field-label">{t('placeArea')}</label>
           <select
+            id="saved-place-area"
             className="input"
             value={form.area_id}
             onChange={(e) => setForm((cur) => ({ ...cur, area_id: e.target.value }))}
@@ -320,7 +420,8 @@ function SavedAddressModal({
               </option>
             ))}
           </select>
-        </Field>
+          <small className="hint">{t('placeAreaHint')}</small>
+        </div>
 
         <Field label={t('placeGateNotes')}>
           <input

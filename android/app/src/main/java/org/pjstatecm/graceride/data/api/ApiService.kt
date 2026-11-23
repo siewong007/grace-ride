@@ -63,6 +63,12 @@ interface ApiService {
     @POST("api/rides/{id}/withdraw") suspend fun withdrawRide(@Path("id") id: Long, @Body body: WithdrawReq): OkResponse
     @GET("api/driver/schedule") suspend fun driverSchedule(@Query("from") from: String, @Query("to") to: String): List<Ride>
     @GET("api/driver/requests") suspend fun driverRequests(@Query("mine_areas") mineAreas: Boolean? = null): List<Ride>
+    @GET("api/driver/profile") suspend fun driverProfile(): DriverProfile
+    @PUT("api/driver/profile") suspend fun updateDriverProfile(@Body body: DriverProfileReq): OkResponse
+    @POST("api/driver/vehicles") suspend fun createDriverVehicle(@Body body: DriverVehicleReq): DriverVehicle
+    @PUT("api/driver/vehicles/{id}") suspend fun updateDriverVehicle(@Path("id") id: Long, @Body body: DriverVehicleReq): DriverVehicle
+    @DELETE("api/driver/vehicles/{id}") suspend fun deleteDriverVehicle(@Path("id") id: Long): OkResponse
+    @POST("api/driver/vehicles/{id}/select") suspend fun selectDriverVehicle(@Path("id") id: Long): SelectVehicleRes
 
     // ---- events ----
     @GET("api/events") suspend fun events(@Query("scope") scope: String? = null): List<EventItem>

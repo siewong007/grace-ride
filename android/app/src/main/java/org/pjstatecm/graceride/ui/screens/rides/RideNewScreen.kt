@@ -357,12 +357,11 @@ fun RideNewScreen(
                     OutlinedCard(Modifier.fillMaxWidth()) {
                         Column(Modifier.padding(Spacing.xs)) {
                             s.suggestions
-                                .map { it.label }
-                                .distinct()
+                                .distinctBy { it.label }
                                 .take(5)
-                                .forEach { label ->
-                                    TextButton(onClick = { vm.pickSuggestion(label) }, modifier = Modifier.fillMaxWidth()) {
-                                        Text(label, style = MaterialTheme.typography.bodyMedium, maxLines = 2)
+                                .forEach { place ->
+                                    TextButton(onClick = { vm.pickSuggestion(place) }, modifier = Modifier.fillMaxWidth()) {
+                                        Text(place.label, style = MaterialTheme.typography.bodyMedium, maxLines = 2)
                                     }
                                 }
                         }
@@ -380,13 +379,28 @@ fun RideNewScreen(
                 val alreadySaved = s.savedPlaces.any { it.address.trim().equals(memberAddr, ignoreCase = true) }
                 val matchesEvent = s.event?.location?.trim()?.equals(memberAddr, ignoreCase = true) == true
                 if (!s.isProxy && memberAddr.isNotEmpty() && !alreadySaved && !matchesEvent && s.savedPlaces.size < 50) {
+                    val presets = listOf(
+                        stringResource(R.string.saved_addresses_preset_home),
+                        stringResource(R.string.saved_addresses_preset_work),
+                        stringResource(R.string.saved_addresses_preset_parents),
+                    )
                     Row(
                         verticalAlignment = Alignment.CenterVertically,
                         modifier = Modifier
                             .fillMaxWidth()
                             .toggleable(
                                 value = s.saveAddress,
-                                onValueChange = { checked -> vm.update { it.copy(saveAddress = checked) } },
+                                onValueChange = { checked ->
+                                    vm.update { cur ->
+                                        val nextLabel = if (checked && cur.saveAddressLabel.isBlank()) {
+                                            val used = cur.savedPlaces.map { it.label.trim().lowercase() }.toSet()
+                                            presets.firstOrNull { it.lowercase() !in used } ?: ""
+                                        } else {
+                                            cur.saveAddressLabel
+                                        }
+                                        cur.copy(saveAddress = checked, saveAddressLabel = nextLabel)
+                                    }
+                                },
                             ),
                     ) {
                         Checkbox(checked = s.saveAddress, onCheckedChange = null)
@@ -397,11 +411,6 @@ fun RideNewScreen(
                         )
                     }
                     if (s.saveAddress) {
-                        val presets = listOf(
-                            stringResource(R.string.saved_addresses_preset_home),
-                            stringResource(R.string.saved_addresses_preset_work),
-                            stringResource(R.string.saved_addresses_preset_parents),
-                        )
                         FlowRow(horizontalArrangement = Arrangement.spacedBy(Spacing.xs)) {
                             presets.forEach { preset ->
                                 FilterChip(

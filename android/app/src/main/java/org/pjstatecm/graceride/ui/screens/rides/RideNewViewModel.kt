@@ -20,6 +20,7 @@ import org.pjstatecm.graceride.data.api.SavedPlace
 import org.pjstatecm.graceride.data.api.SavedPlaceReq
 import org.pjstatecm.graceride.di.AppContainer
 import org.pjstatecm.graceride.domain.KlTime
+import org.pjstatecm.graceride.domain.inferAreaId
 import java.time.LocalDate
 
 enum class TripType { OUTBOUND, ROUND, RETURN }
@@ -51,6 +52,7 @@ data class RideNewUiState(
     val returnHour: Int = 12,
     val returnMinute: Int = 0,
     val suggestions: List<Place> = emptyList(),
+    val pickedPlace: Place? = null,
     val submitting: Boolean = false,
     val error: String? = null,
     val createdId: Long? = null,
@@ -251,7 +253,20 @@ class RideNewViewModel(
     }
 
     fun pickSuggestion(label: String) {
-        _state.value = _state.value.copy(address = label, suggestions = emptyList())
+        val cur = _state.value
+        val inferred = cur.areaId ?: inferAreaId(label, cur.areas)
+        _state.value = cur.copy(address = label, areaId = inferred, suggestions = emptyList())
+    }
+
+    fun pickSuggestion(place: Place) {
+        val cur = _state.value
+        val inferred = cur.areaId ?: inferAreaId(place.label, cur.areas)
+        _state.value = cur.copy(
+            address = place.label,
+            pickedPlace = place,
+            areaId = inferred,
+            suggestions = emptyList(),
+        )
     }
 
     private fun stripAppliedNotes(curNotes: String, applied: String?): String {
@@ -313,6 +328,15 @@ class RideNewViewModel(
         val pickupAt = KlTime.apiStamp(s.date, s.hour, s.minute)
         val isReturn = s.tripType == TripType.RETURN
         val isRound = s.tripType == TripType.ROUND
+        val memberAddr = (if (isReturn) s.destination else s.address).trim()
+        val label = s.saveAddressLabel.trim()
+        val alreadySaved = s.savedPlaces.any { it.address.trim().equals(memberAddr, ignoreCase = true) }
+        val isEventLocation = memberAddr.equals(event.location.trim(), ignoreCase = true)
+        val shouldSaveAddress = !s.isProxy && s.saveAddress && memberAddr.isNotEmpty() && !alreadySaved && !isEventLocation && s.savedPlaces.size < 50
+        if (shouldSaveAddress && label.isEmpty()) {
+            _state.value = s.copy(error = "Please enter a label for the saved address (e.g. Home) or untick Save address.")
+            return
+        }
         val returnPickupAt = if (isRound) KlTime.apiStamp(s.returnDate, s.returnHour, s.returnMinute) else null
         if (isRound && returnPickupAt != null && returnPickupAt <= pickupAt) {
             _state.value = s.copy(error = "Return pickup time must be after outbound pickup time.")
@@ -343,19 +367,20 @@ class RideNewViewModel(
                         return_destination = if (isRound) s.address.trim() else null,
                     )
                 )
-                val memberAddr = (if (isReturn) s.destination else s.address).trim()
-                val label = s.saveAddressLabel.trim()
-                val alreadySaved = s.savedPlaces.any { it.address.trim().equals(memberAddr, ignoreCase = true) }
-                val isEventLocation = memberAddr.equals(event.location.trim(), ignoreCase = true)
-                if (!s.isProxy && s.saveAddress && label.isNotEmpty() && memberAddr.isNotEmpty() && !alreadySaved && !isEventLocation && s.savedPlaces.size < 50) {
+                if (shouldSaveAddress) {
+                    val matchingCoords = s.pickedPlace?.takeIf {
+                        it.label.trim().equals(memberAddr, ignoreCase = true)
+                    }
                     try {
                         container.rides.createSavedPlace(
                             SavedPlaceReq(
                                 label = label,
                                 area_id = areaId,
                                 address = memberAddr,
-                                gate_notes = "",
+                                gate_notes = s.notes.trim().take(300),
                                 is_default = s.savedPlaces.isEmpty(),
+                                lat = matchingCoords?.lat,
+                                lng = matchingCoords?.lng,
                             )
                         )
                     } catch (_: ApiException) { }

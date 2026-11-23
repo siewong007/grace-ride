@@ -192,7 +192,7 @@ describe('Drive page - Settings tab', () => {
     fireEvent.click(settingsTab);
 
     await waitFor(() => {
-      expect(screen.getByText('WXX 8888')).toBeInTheDocument();
+      expect(screen.getAllByText('WXX 8888').length).toBeGreaterThanOrEqual(1);
     });
 
     // Plate badge preview
@@ -214,10 +214,11 @@ describe('Drive page - Settings tab', () => {
     expect(saveBtn).not.toBeDisabled();
   });
 
-  it('allows volunteer driver to view multiple vehicles and choose active vehicle', async () => {
+  it('allows volunteer driver to view multiple vehicles, choose active vehicle cleanly, and clamp spare seats', async () => {
+    const prevProfile = mockApiMap['/driver/profile'];
     mockApiMap['/driver/profile'] = {
       carpool_enabled: true,
-      spare_seats: 2,
+      spare_seats: 3,
       area_ids: [1, 2],
       active_vehicle_id: 1,
       vehicle: {
@@ -239,46 +240,82 @@ describe('Drive page - Settings tab', () => {
         },
         {
           id: 2,
-          model: 'Nissan Serena',
-          color: 'Black',
+          model: 'Smart Fortwo',
+          color: 'Yellow',
           plate: 'VYY 9999',
-          seats: 7,
+          seats: 2,
           is_active: false,
         },
       ],
     };
 
-    render(
-      <MemoryRouter>
-        <Drive />
-      </MemoryRouter>
-    );
+    try {
+      render(
+        <MemoryRouter>
+          <Drive />
+        </MemoryRouter>
+      );
 
-    const settingsTab = screen.getByRole('tab', { name: /^settings$/i });
-    fireEvent.click(settingsTab);
+      const settingsTab = screen.getByRole('tab', { name: /^settings$/i });
+      fireEvent.click(settingsTab);
 
-    await waitFor(() => {
-      expect(screen.getAllByText('WXX 8888').length).toBeGreaterThanOrEqual(1);
-      expect(screen.getByText('VYY 9999')).toBeInTheDocument();
-    });
+      await waitFor(() => {
+        expect(screen.getAllByText('WXX 8888').length).toBeGreaterThanOrEqual(1);
+        expect(screen.getByText('VYY 9999')).toBeInTheDocument();
+      });
 
-    // Both vehicles rendered in the list
-    expect(screen.getByText(/black nissan serena/i)).toBeInTheDocument();
+      // Both vehicles rendered in the list
+      expect(screen.getByText(/yellow smart fortwo/i)).toBeInTheDocument();
 
-    // Vehicle 2 has "Select for driving" button
-    const selectBtn = screen.getByRole('button', { name: /select for driving/i });
-    expect(selectBtn).toBeInTheDocument();
+      // Vehicle 2 has "Select for driving" button
+      const selectBtn = screen.getByRole('button', { name: /select for driving/i });
+      expect(selectBtn).toBeInTheDocument();
 
-    // Click select for vehicle 2
-    fireEvent.click(selectBtn);
+      // Click select for 2-seat vehicle 2
+      fireEvent.click(selectBtn);
 
-    // Active vehicle plate preview should switch to VYY 9999
-    await waitFor(() => {
-      expect(screen.getByText(/black · nissan serena/i)).toBeInTheDocument();
-    });
+      // Active vehicle switches cleanly without false unsaved state, and spare seats clamp from 3 -> 1
+      await waitFor(() => {
+        expect(screen.getByText(/yellow · smart fortwo/i)).toBeInTheDocument();
+        expect(screen.getByText(/all settings saved/i)).toBeInTheDocument();
+        expect(screen.getByText(/1 seat$/i)).toBeInTheDocument();
+      });
+    } finally {
+      mockApiMap['/driver/profile'] = prevProfile;
+    }
   });
 
-  it('allows volunteer driver to open add vehicle modal', async () => {
+  it('renders service areas and empty vehicle state instead of spinning when driver has no vehicles', async () => {
+    const prevProfile = mockApiMap['/driver/profile'];
+    mockApiMap['/driver/profile'] = {
+      carpool_enabled: false,
+      spare_seats: 1,
+      area_ids: [1],
+      vehicle: null,
+      vehicles: [],
+      active_vehicle_id: null,
+    };
+
+    try {
+      render(
+        <MemoryRouter>
+          <Drive />
+        </MemoryRouter>
+      );
+
+      fireEvent.click(screen.getByRole('tab', { name: /^settings$/i }));
+
+      await waitFor(() => {
+        expect(screen.getByText(/no vehicles configured yet/i)).toBeInTheDocument();
+      });
+      expect(screen.getByRole('checkbox', { name: 'Petaling Jaya' })).toBeInTheDocument();
+      expect(screen.getByRole('button', { name: /add vehicle/i })).toBeInTheDocument();
+    } finally {
+      mockApiMap['/driver/profile'] = prevProfile;
+    }
+  });
+
+  it('allows volunteer driver to open add vehicle modal and validates required colour/model/plate', async () => {
     render(
       <MemoryRouter>
         <Drive />
@@ -296,8 +333,14 @@ describe('Drive page - Settings tab', () => {
     fireEvent.click(addBtn);
 
     // Modal opens with dialog
+    const dlg = await screen.findByRole('dialog', { name: /add vehicle/i });
+    expect(dlg).toBeInTheDocument();
+
+    // Submit empty form shows validation error instead of silently ignoring
+    const submitBtns = screen.getAllByRole('button', { name: /add vehicle/i });
+    fireEvent.click(submitBtns[submitBtns.length - 1]);
     await waitFor(() => {
-      expect(screen.getByRole('dialog', { name: /add vehicle/i })).toBeInTheDocument();
+      expect(screen.getByText(/please enter the model, colour and plate number/i)).toBeInTheDocument();
     });
   });
 });

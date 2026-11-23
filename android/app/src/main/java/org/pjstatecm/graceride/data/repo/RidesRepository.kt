@@ -8,6 +8,10 @@ import org.pjstatecm.graceride.data.api.CreateRideReq
 import org.pjstatecm.graceride.data.api.CreateRideRes
 import org.pjstatecm.graceride.data.api.CreateSavedPlaceRes
 import org.pjstatecm.graceride.data.api.DriverDelayReq
+import org.pjstatecm.graceride.data.api.DriverProfile
+import org.pjstatecm.graceride.data.api.DriverProfileReq
+import org.pjstatecm.graceride.data.api.DriverVehicle
+import org.pjstatecm.graceride.data.api.DriverVehicleReq
 import org.pjstatecm.graceride.data.api.Place
 import org.pjstatecm.graceride.data.api.ProxyRider
 import org.pjstatecm.graceride.data.api.ReadinessReq
@@ -15,6 +19,7 @@ import org.pjstatecm.graceride.data.api.RespondReq
 import org.pjstatecm.graceride.data.api.Ride
 import org.pjstatecm.graceride.data.api.SavedPlace
 import org.pjstatecm.graceride.data.api.SavedPlaceReq
+import org.pjstatecm.graceride.data.api.SelectVehicleRes
 import org.pjstatecm.graceride.data.api.WithdrawReq
 import org.pjstatecm.graceride.data.api.apiCall
 
@@ -45,4 +50,12 @@ class RidesRepository(private val api: ApiService, private val bus: AuthEventBus
         apiCall(bus) { api.driverSchedule(from, to) }
     suspend fun driverRequests(mineAreas: Boolean? = null): List<Ride> =
         apiCall(bus) { api.driverRequests(mineAreas) }
+    suspend fun driverProfile(): DriverProfile = apiCall(bus) { api.driverProfile() }
+    suspend fun updateDriverProfile(req: DriverProfileReq) = apiCall(bus) { api.updateDriverProfile(req) }
+    suspend fun createDriverVehicle(req: DriverVehicleReq): DriverVehicle =
+        apiCall(bus) { api.createDriverVehicle(req) }
+    suspend fun updateDriverVehicle(id: Long, req: DriverVehicleReq): DriverVehicle =
+        apiCall(bus) { api.updateDriverVehicle(id, req) }
+    suspend fun deleteDriverVehicle(id: Long) = apiCall(bus) { api.deleteDriverVehicle(id) }
+    suspend fun selectDriverVehicle(id: Long): SelectVehicleRes = apiCall(bus) { api.selectDriverVehicle(id) }
 }

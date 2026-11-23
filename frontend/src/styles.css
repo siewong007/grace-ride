@@ -782,10 +782,16 @@ textarea.input { min-height: 96px; resize: vertical; }
 .saved-addr-area { font-size: var(--fs-sm); color: var(--muted); }
 .saved-addr-street { font-size: var(--fs-sm); color: var(--muted); overflow-wrap: anywhere; }
 .saved-addr-notes { font-size: var(--fs-sm); color: var(--muted); }
+.saved-addr-meta { display: flex; align-items: center; flex-wrap: wrap; gap: var(--space-2); margin-top: 2px; }
+.place-pin-status { font-size: var(--fs-xs); color: var(--muted); }
+.place-pin-status.is-pinned { color: var(--success); font-weight: 600; }
 .saved-addr-actions { display: flex; align-items: center; flex: none; gap: var(--space-1); }
 .saved-addr-star { color: var(--muted); }
 .saved-addr-star.is-default { color: var(--primary); opacity: 1; }
-.saved-addr-manage-link { font-size: var(--fs-sm); color: var(--muted); text-decoration: none; white-space: nowrap; }
+.saved-addr-manage-link {
+  font-size: var(--fs-sm); color: var(--muted); text-decoration: none; white-space: nowrap;
+  background: none; border: 0; padding: 0; font-family: inherit; cursor: pointer;
+}
 .saved-addr-manage-link:hover { color: var(--primary); text-decoration: underline; }
 .saved-addr-modal-footer {
   display: flex; align-items: center; justify-content: space-between;

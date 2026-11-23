@@ -9,7 +9,9 @@ import kotlinx.coroutines.test.resetMain
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.test.setMain
 import kotlinx.serialization.json.boolean
+import kotlinx.serialization.json.double
 import kotlinx.serialization.json.int
+import kotlinx.serialization.json.jsonArray
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
 import okhttp3.mockwebserver.MockResponse
@@ -22,14 +24,18 @@ import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Test
+import org.pjstatecm.graceride.data.api.Area
+import org.pjstatecm.graceride.data.api.DriverVehicleReq
 import org.pjstatecm.graceride.data.api.SavedPlace
 import org.pjstatecm.graceride.data.api.apiJson
 import org.pjstatecm.graceride.di.AppContainer
 import org.pjstatecm.graceride.data.session.InMemoryStore
 import org.pjstatecm.graceride.domain.KlTime
+import org.pjstatecm.graceride.domain.inferAreaId
 import org.pjstatecm.graceride.ui.screens.events.EventsViewModel
 import org.pjstatecm.graceride.ui.screens.home.HomeViewModel
 import org.pjstatecm.graceride.ui.screens.login.LoginViewModel
+import org.pjstatecm.graceride.ui.screens.profile.DriverSettingsViewModel
 import org.pjstatecm.graceride.ui.screens.profile.ProfileViewModel
 import org.pjstatecm.graceride.ui.screens.profile.SavedAddressesViewModel
 import org.pjstatecm.graceride.ui.screens.rides.RideDetailViewModel
@@ -644,5 +650,86 @@ class ViewModelTest {
         val web = container.webUrl("/rides/77")
         assertTrue(web.endsWith("/rides/77"))
         assertFalse(web.contains("//rides"))
+    }
+
+    @Test fun driverSettingsHandlesZeroVehiclesAndVehicleCrud() = runBlocking {
+        val areasJson = """[{"id":1,"name":"Petaling Jaya","active":true},{"id":2,"name":"Subang Jaya","active":true}]"""
+        val emptyProfile = """{"carpool_enabled":false,"spare_seats":1,"gate_wait_mins":5,"area_ids":[],"vehicle":null,"vehicles":[],"active_vehicle_id":null}"""
+        val oneVehicleProfile = """{"carpool_enabled":false,"spare_seats":1,"gate_wait_mins":5,"area_ids":[],"vehicle":{"id":10,"model":"Toyota Vios","color":"Silver","plate":"WXX 8888","seats":5,"is_active":true},"vehicles":[{"id":10,"model":"Toyota Vios","color":"Silver","plate":"WXX 8888","seats":5,"is_active":true}],"active_vehicle_id":10}"""
+        val twoVehicleClampedProfile = """{"carpool_enabled":true,"spare_seats":1,"gate_wait_mins":5,"area_ids":[1],"vehicle":{"id":11,"model":"Smart Fortwo","color":"Yellow","plate":"SMT 202","seats":2,"is_active":true},"vehicles":[{"id":10,"model":"Toyota Vios","color":"Silver","plate":"WXX 8888","seats":5,"is_active":false},{"id":11,"model":"Smart Fortwo","color":"Yellow","plate":"SMT 202","seats":2,"is_active":true}],"active_vehicle_id":11}"""
+
+        server.enqueue(json(emptyProfile))
+        server.enqueue(json(areasJson))
+
+        val vm = DriverSettingsViewModel(container)
+        val init = vm.state.awaitUntil { !it.loading }
+        assertTrue(init.vehicles.isEmpty())
+        assertFalse(init.dirty)
+        assertNull(init.error)
+        repeat(2) { server.takeRequest() }
+
+        // Add first vehicle -> dirty stays false
+        server.enqueue(json("""{"id":10,"model":"Toyota Vios","color":"Silver","plate":"WXX 8888","seats":5,"is_active":true}"""))
+        server.enqueue(json(oneVehicleProfile))
+        var done = 0
+        vm.saveVehicle(null, DriverVehicleReq("Toyota Vios", "Silver", "WXX 8888", 5, is_active = true)) { done++ }
+        vm.state.awaitUntil { it.message == "vehicle_saved" }
+        assertEquals(1, done)
+        assertEquals(1, vm.state.value.vehicles.size)
+        assertEquals(4, vm.state.value.maxSpareSeats)
+        assertFalse(vm.state.value.dirty)
+        repeat(2) { server.takeRequest() }
+
+        // Toggle area + carpool + raise spare seats to 3 -> dirty becomes true, save via PUT /api/driver/profile
+        vm.toggleArea(1L)
+        vm.setCarpool(true)
+        vm.stepSpareSeats(2)
+        assertTrue(vm.state.value.dirty)
+        assertEquals(3, vm.state.value.spareSeats)
+
+        server.enqueue(json("""{"ok":true}"""))
+        vm.saveProfile()
+        vm.state.awaitUntil { it.message == "saved" }
+        assertFalse(vm.state.value.dirty)
+        val putReq = server.takeRequest()
+        assertEquals("PUT", putReq.method)
+        assertEquals("/api/driver/profile", putReq.path)
+        val putBody = apiJson.parseToJsonElement(putReq.body.readUtf8()).jsonObject
+        assertEquals(3, putBody["spare_seats"]?.jsonPrimitive?.int)
+        assertEquals(1, putBody["area_ids"]?.jsonArray?.size)
+
+        // Switching active vehicle to 2-seat car clamps spareSeats to 1 and keeps dirty false
+        server.enqueue(json("""{"ok":true,"active_vehicle_id":11}"""))
+        server.enqueue(json(twoVehicleClampedProfile))
+        vm.selectVehicle(11L)
+        vm.state.awaitUntil { it.message == "vehicle_selected" }
+        assertEquals(1, vm.state.value.spareSeats)
+        assertEquals(1, vm.state.value.maxSpareSeats)
+        assertFalse(vm.state.value.dirty)
+    }
+
+    @Test fun savedAddressesCapturesCoordsAndInfersArea() = runBlocking {
+        val areas = listOf(
+            Area(1L, "PJ", true),
+            Area(2L, "Subang Jaya", true),
+        )
+        assertEquals(2L, inferAreaId("12 Jalan SS15, Subang Jaya, Selangor", areas))
+        assertEquals(1L, inferAreaId("88 Jalan Barat, PJ", areas))
+        assertNull(inferAreaId("Unknown Street", areas))
+
+        server.enqueue(json("[]"))
+        server.enqueue(json("""[{"id":1,"name":"PJ","active":true},{"id":2,"name":"Subang Jaya","active":true}]"""))
+        val vm = SavedAddressesViewModel(container)
+        vm.state.awaitUntil { !it.loading }
+        repeat(2) { server.takeRequest() }
+
+        server.enqueue(json("""{"id":5,"ok":true,"lat":3.073,"lng":101.588}"""))
+        server.enqueue(json("""[{"id":5,"label":"Work","area_id":2,"area_name":"Subang Jaya","address":"Jalan SS15, Subang Jaya","gate_notes":"","is_default":1,"lat":3.073,"lng":101.588}]"""))
+        vm.save(null, "Work", 2L, "Jalan SS15, Subang Jaya", "", true, lat = 3.073, lng = 101.588)
+        vm.state.awaitUntil { it.message == "saved" }
+        val postReq = server.takeRequest()
+        val postBody = apiJson.parseToJsonElement(postReq.body.readUtf8()).jsonObject
+        assertEquals(3.073, postBody["lat"]?.jsonPrimitive?.double ?: 0.0, 0.0001)
+        assertEquals(101.588, postBody["lng"]?.jsonPrimitive?.double ?: 0.0, 0.0001)
     }
 }

@@ -94,6 +94,7 @@ vi.mock('./api', () => ({
     reload: vi.fn(),
   }),
   post: vi.fn().mockResolvedValue({ id: 99 }),
+  put: vi.fn().mockResolvedValue({ ok: true }),
   del: vi.fn().mockResolvedValue({}),
 }));
 
@@ -411,6 +412,43 @@ describe('RideNew page', () => {
           is_default: true,
         });
       });
+    } finally {
+      delete mockApiData['/saved-places'];
+    }
+  });
+
+  it('auto-fills Home label when save-address checked, validates cleared label, and opens inline Manage modal without losing form state', async () => {
+    const postMock = vi.mocked(post);
+    postMock.mockClear();
+    mockApiData['/saved-places'] = [];
+    try {
+      render(
+        <MemoryRouter initialEntries={['/rides/new?event=1']}>
+          <RideNew />
+        </MemoryRouter>
+      );
+
+      fireEvent.change(screen.getByLabelText(/pickup area/i), { target: { value: '1' } });
+      fireEvent.change(screen.getByRole('combobox', { name: /detailed pickup address/i }), {
+        target: { value: '77 Jalan Sejahtera' },
+      });
+
+      // Open Manage modal in-place and confirm form input stays intact when closed
+      fireEvent.click(screen.getByRole('button', { name: /manage/i }));
+      expect(await screen.findByRole('dialog', { name: /saved addresses/i })).toBeInTheDocument();
+      fireEvent.click(screen.getByRole('button', { name: /close/i }));
+      expect(screen.getByDisplayValue('77 Jalan Sejahtera')).toBeInTheDocument();
+
+      // Checking save-address auto-fills "Home"; clearing it triggers validation alert instead of silent skip
+      const saveCheck = screen.getByLabelText(/save this address for next time/i);
+      fireEvent.click(saveCheck);
+      const labelInput = screen.getByLabelText(/address label/i) as HTMLInputElement;
+      expect(labelInput.value).toBe('Home');
+
+      fireEvent.change(labelInput, { target: { value: '' } });
+      fireEvent.click(screen.getByRole('button', { name: /submit ride request/i }));
+      expect(await screen.findByText(/please enter a label/i)).toBeInTheDocument();
+      expect(postMock).not.toHaveBeenCalled();
     } finally {
       delete mockApiData['/saved-places'];
     }

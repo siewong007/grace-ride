@@ -95,6 +95,8 @@ class SavedAddressesViewModel(private val container: AppContainer) : ViewModel()
         address: String,
         gateNotes: String,
         isDefault: Boolean,
+        lat: Double? = null,
+        lng: Double? = null,
         onDone: () -> Unit = {},
     ) {
         if (_state.value.busy) return
@@ -110,6 +112,8 @@ class SavedAddressesViewModel(private val container: AppContainer) : ViewModel()
                     address = cleanAddress,
                     gate_notes = gateNotes.trim(),
                     is_default = isDefault,
+                    lat = lat,
+                    lng = lng,
                 )
                 if (editingId == null) {
                     container.rides.createSavedPlace(req)

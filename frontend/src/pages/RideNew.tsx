@@ -1,5 +1,5 @@
 import { FormEvent, useEffect, useMemo, useRef, useState } from 'react';
-import { Link, useNavigate, useSearchParams } from 'react-router-dom';
+import { useNavigate, useSearchParams } from 'react-router-dom';
 import {
   Accessibility,
   ChevronDown,
@@ -14,12 +14,14 @@ import {
   Users,
 } from 'lucide-react';
 import { post, useApi } from '../api';
+import { inferAreaId } from '../areaMatch';
 import {
   Button,
   EmptyState,
   ErrorBox,
   Field,
   IconButton,
+  Modal,
   Page,
   PageHeader,
   useAction,
@@ -31,6 +33,7 @@ import { fmtDateTime, todayStr, useFormatT } from '../format';
 import { useTranslation } from 'react-i18next';
 import { AddressInput } from '../components/AddressInput';
 import { AreaPhotoStrip } from '../components/AreaPhotos';
+import SavedAddressesSection from './SavedAddressesSection';
 
 interface Area {
   id: number;
@@ -95,7 +98,11 @@ function RideNewForm() {
     eventId ? `/events/${eventId}` : null,
   );
   const { data: frequentRiders } = useApi<ProxyRider[]>('/proxy-riders');
-  const { data: savedPlacesRaw } = useApi<SavedPlace[]>('/saved-places');
+  const {
+    data: savedPlacesRaw,
+    loading: savedPlacesLoading,
+    reload: reloadSavedPlaces,
+  } = useApi<SavedPlace[]>('/saved-places');
   const savedPlaces = useMemo(
     () => (Array.isArray(savedPlacesRaw) ? savedPlacesRaw : []),
     [savedPlacesRaw],
@@ -128,6 +135,8 @@ function RideNewForm() {
   const [customAssistance, setCustomAssistance] = useState('');
   const [notes, setNotes] = useState('');
   const [needsOpen, setNeedsOpen] = useState(false);
+  const [managePlacesOpen, setManagePlacesOpen] = useState(false);
+  const [pickedCoords, setPickedCoords] = useState<{ address: string; lat: number; lng: number } | null>(null);
   const [saveAddress, setSaveAddress] = useState(false);
   const [saveAddressLabel, setSaveAddressLabel] = useState('');
 
@@ -365,6 +374,7 @@ function RideNewForm() {
     e.preventDefault();
 
     const returnInvalid = includeReturn && (!returnTime.trim() || (Boolean(time) && returnTime <= time));
+    const saveAddrLabelMissing = canOfferSaveAddress && saveAddress && !saveAddressLabel.trim();
     const newErrors: Record<string, string> = {
       date: validateField('date', date),
       time: validateField('time', time),
@@ -377,6 +387,7 @@ function RideNewForm() {
       address: validateField('address', address),
       destination: validateField('destination', destination),
       riderName: isProxy && !riderName.trim() ? t('fieldRequired') : '',
+      saveAddressLabel: saveAddrLabelMissing ? t('saveAddressLabelRequired') : '',
     };
 
     setTouched({
@@ -387,6 +398,7 @@ function RideNewForm() {
       address: true,
       destination: true,
       riderName: isProxy,
+      saveAddressLabel: canOfferSaveAddress && saveAddress,
     });
     setErrors(newErrors);
 
@@ -398,6 +410,7 @@ function RideNewForm() {
       'area',
       'address',
       'destination',
+      'saveAddressLabel',
     ].find((k) => k && newErrors[k]);
 
     if (firstErrKey) {
@@ -461,12 +474,17 @@ function RideNewForm() {
         return_destination: includeReturn ? address.trim() : undefined,
       });
       if (canOfferSaveAddress && saveAddress && saveAddressLabel.trim()) {
+        const matchingCoords =
+          pickedCoords && pickedCoords.address.trim().toLowerCase() === trimmedMemberAddr.toLowerCase()
+            ? { lat: pickedCoords.lat, lng: pickedCoords.lng }
+            : {};
         await post('/saved-places', {
           label: saveAddressLabel.trim(),
           area_id: area ? Number(area) : null,
           address: trimmedMemberAddr,
-          gate_notes: '',
+          gate_notes: cleanNotes.slice(0, 300),
           is_default: savedPlaces.length === 0,
+          ...matchingCoords,
         }).catch(() => {});
       }
       nav(`/rides/${r.id}`, { replace: true });
@@ -762,9 +780,13 @@ function RideNewForm() {
                   </button>
                 )}
                 {!isProxy && (
-                  <Link to="/me?section=places" className="saved-addr-manage-link">
+                  <button
+                    type="button"
+                    className="saved-addr-manage-link"
+                    onClick={() => setManagePlacesOpen(true)}
+                  >
                     {t('manageSavedPlaces')}
-                  </Link>
+                  </button>
                 )}
               </div>
             </div>
@@ -783,7 +805,7 @@ function RideNewForm() {
                     onBlur={(e) => handleBlur('area', e.target.value)}
                     aria-invalid={touched.area && !!errors.area}
                   >
-                    <option value="">{t('chooseDriver')}</option>
+                    <option value="">{t('chooseArea')}</option>
                     {areas?.filter((a) => a.active).map((a) => (
                       <option key={a.id} value={a.id}>{a.name}</option>
                     ))}
@@ -816,6 +838,19 @@ function RideNewForm() {
                     setAddress(v);
                     if (touched.address) setErrors((c) => ({ ...c, address: validateField('address', v) }));
                   }}
+                  onSelectPlace={(place) => {
+                    setPickedCoords({ address: place.label, lat: place.lat, lng: place.lng });
+                    if (!area && areas) {
+                      const matched = inferAreaId(
+                        place.label,
+                        areas.filter((a) => a.active),
+                      );
+                      if (matched) {
+                        setArea(String(matched));
+                        setErrors((c) => ({ ...c, area: '' }));
+                      }
+                    }
+                  }}
                   onBlur={(v) => handleBlur('address', v)}
                   placeholder={t('addressPlaceholder')}
                   invalid={touched.address && !!errors.address}
@@ -834,6 +869,9 @@ function RideNewForm() {
                   onChange={(v) => {
                     setDestination(v);
                     if (touched.destination) setErrors((c) => ({ ...c, destination: validateField('destination', v) }));
+                  }}
+                  onSelectPlace={(place) => {
+                    setPickedCoords({ address: place.label, lat: place.lat, lng: place.lng });
                   }}
                   onBlur={(v) => handleBlur('destination', v)}
                   placeholder={t('destinationPlaceholder')}
@@ -867,7 +905,18 @@ function RideNewForm() {
                     <input
                       type="checkbox"
                       checked={saveAddress}
-                      onChange={(e) => setSaveAddress(e.target.checked)}
+                      onChange={(e) => {
+                        const checked = e.target.checked;
+                        setSaveAddress(checked);
+                        if (checked && !saveAddressLabel.trim()) {
+                          const used = new Set(savedPlaces.map((sp) => sp.label.trim().toLowerCase()));
+                          const nextPreset = addressLabelPresets.find((p) => !used.has(p.toLowerCase())) ?? '';
+                          setSaveAddressLabel(nextPreset);
+                        }
+                        if (!checked) {
+                          setErrors((cur) => ({ ...cur, saveAddressLabel: '' }));
+                        }
+                      }}
                     />
                     <span>{t('saveAddressForNextTime')}</span>
                   </label>
@@ -879,7 +928,10 @@ function RideNewForm() {
                             key={preset}
                             type="button"
                             className={`chip ${saveAddressLabel.trim() === preset ? 'on' : ''}`}
-                            onClick={() => setSaveAddressLabel(preset)}
+                            onClick={() => {
+                              setSaveAddressLabel(preset);
+                              setErrors((cur) => ({ ...cur, saveAddressLabel: '' }));
+                            }}
                           >
                             {preset}
                           </button>
@@ -887,13 +939,26 @@ function RideNewForm() {
                       </div>
                       <Field label={t('saveAddressLabel')}>
                         <input
+                          id="field-saveAddressLabel"
                           className="input"
                           maxLength={40}
                           value={saveAddressLabel}
-                          onChange={(e) => setSaveAddressLabel(e.target.value)}
+                          onChange={(e) => {
+                            setSaveAddressLabel(e.target.value);
+                            if (touched.saveAddressLabel) {
+                              setErrors((cur) => ({
+                                ...cur,
+                                saveAddressLabel: e.target.value.trim() ? '' : t('saveAddressLabelRequired'),
+                              }));
+                            }
+                          }}
+                          aria-invalid={touched.saveAddressLabel && !!errors.saveAddressLabel}
                           placeholder={t('saveAddressLabelPlaceholder')}
                         />
                       </Field>
+                      {touched.saveAddressLabel && errors.saveAddressLabel && (
+                        <div className="field-error-msg" role="alert">{errors.saveAddressLabel}</div>
+                      )}
                     </div>
                   )}
                 </div>
@@ -1025,6 +1090,20 @@ function RideNewForm() {
           <p className="muted small center">{t('note')}</p>
         </form>
       </div>
+
+      {managePlacesOpen && (
+        <Modal
+          title={t('manageSavedPlacesTitle')}
+          onClose={() => setManagePlacesOpen(false)}
+        >
+          <SavedAddressesSection
+            embedded
+            places={savedPlaces}
+            loading={savedPlacesLoading}
+            reloadPlaces={reloadSavedPlaces}
+          />
+        </Modal>
+      )}
     </Page>
   );
 }

@@ -1701,6 +1701,85 @@ async fn driver_can_configure_multiple_vehicles_and_choose_active() {
         .unwrap()
         .iter()
         .any(|v| v["id"] == new_vehicle_id));
+
+    // Auto-clamp spare_seats to active vehicle capacity (seats - 1) on PUT /api/driver/profile
+    let compact = call(
+        &app,
+        Method::POST,
+        "/api/driver/vehicles",
+        Some(&driver),
+        Some(json!({
+            "model": "Smart Fortwo",
+            "color": "Yellow",
+            "plate": "SMT 2002",
+            "seats": 2,
+            "is_active": false
+        })),
+    )
+    .await;
+    assert_eq!(compact.status, StatusCode::OK, "{}", compact.json);
+    let compact_id = compact.json["id"].as_i64().unwrap();
+
+    // Active original vehicle has 5 seats; spare_seats=5 clamps to 4
+    let clamp_prof = call(
+        &app,
+        Method::PUT,
+        "/api/driver/profile",
+        Some(&driver),
+        Some(json!({
+            "carpool_enabled": true,
+            "spare_seats": 5,
+            "area_ids": [1]
+        })),
+    )
+    .await;
+    assert_eq!(clamp_prof.status, StatusCode::OK, "{}", clamp_prof.json);
+
+    let prof_clamped_orig = call(
+        &app,
+        Method::GET,
+        "/api/driver/profile",
+        Some(&driver),
+        None,
+    )
+    .await;
+    assert_eq!(prof_clamped_orig.json["spare_seats"], 4);
+
+    // Raise spare_seats to 3 on the 5-seat vehicle, then switch to 2-seat compact vehicle -> clamps spare_seats to 1
+    let set3 = call(
+        &app,
+        Method::PUT,
+        "/api/driver/profile",
+        Some(&driver),
+        Some(json!({
+            "carpool_enabled": true,
+            "spare_seats": 3,
+            "area_ids": [1]
+        })),
+    )
+    .await;
+    assert_eq!(set3.status, StatusCode::OK, "{}", set3.json);
+
+    let sel_compact = call(
+        &app,
+        Method::POST,
+        &format!("/api/driver/vehicles/{compact_id}/select"),
+        Some(&driver),
+        None,
+    )
+    .await;
+    assert_eq!(sel_compact.status, StatusCode::OK, "{}", sel_compact.json);
+
+    let prof_clamped = call(
+        &app,
+        Method::GET,
+        "/api/driver/profile",
+        Some(&driver),
+        None,
+    )
+    .await;
+    assert_eq!(prof_clamped.json["active_vehicle_id"], compact_id);
+    assert_eq!(prof_clamped.json["spare_seats"], 1);
 }
 
 #[tokio::test]
@@ -1874,4 +1953,69 @@ async fn multiple_saved_places_defaults_isolation_and_preserve() {
 
     let list4 = call(&app, Method::GET, "/api/saved-places", Some(&member), None).await;
     assert_eq!(list4.json.as_array().unwrap().len(), 2);
+
+    // Explicit coordinates are stored on POST, preserved when unchanged address is PUT without coords,
+    // and out-of-range coordinates are rejected.
+    let bad_coord = call(
+        &app,
+        Method::POST,
+        "/api/saved-places",
+        Some(&member),
+        Some(json!({
+            "label": "Invalid",
+            "area_id": area,
+            "address": "99 Nowheresville",
+            "lat": 120.0,
+            "lng": 101.6
+        })),
+    )
+    .await;
+    assert_eq!(bad_coord.status, StatusCode::BAD_REQUEST);
+
+    let pinned = call(
+        &app,
+        Method::POST,
+        "/api/saved-places",
+        Some(&member),
+        Some(json!({
+            "label": "Clinic",
+            "area_id": area,
+            "address": "15 Jalan Gasing",
+            "lat": 3.1025,
+            "lng": 101.6481
+        })),
+    )
+    .await;
+    assert_eq!(pinned.status, StatusCode::OK, "{}", pinned.json);
+    let pinned_id = pinned.json["id"].as_i64().unwrap();
+    assert_eq!(pinned.json["lat"], 3.1025);
+    assert_eq!(pinned.json["lng"], 101.6481);
+
+    // Update label without resending coords while keeping address unchanged -> coords preserved
+    let upd_pin = call(
+        &app,
+        Method::PUT,
+        &format!("/api/saved-places/{pinned_id}"),
+        Some(&member),
+        Some(json!({
+            "label": "GP Clinic",
+            "area_id": area,
+            "address": "15 Jalan Gasing",
+            "is_default": true
+        })),
+    )
+    .await;
+    assert_eq!(upd_pin.status, StatusCode::OK, "{}", upd_pin.json);
+
+    let list5 = call(&app, Method::GET, "/api/saved-places", Some(&member), None).await;
+    let pinned_row = list5
+        .json
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|r| r["id"] == pinned_id)
+        .unwrap();
+    assert_eq!(pinned_row["label"], "GP Clinic");
+    assert_eq!(pinned_row["lat"], 3.1025);
+    assert_eq!(pinned_row["lng"], 101.6481);
 }

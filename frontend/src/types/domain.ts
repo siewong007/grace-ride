@@ -34,6 +34,8 @@ export interface SavedPlace {
   area_name: string | null;
   address: string;
   gate_notes: string;
+  lat?: number | null;
+  lng?: number | null;
   is_default: number;
 }
 

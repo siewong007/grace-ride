@@ -361,6 +361,14 @@ export default function Profile() {
                   aria-haspopup="dialog"
                   onClick={() => openSection('places')}
                 />
+                {can('drive') && (
+                  <SheetLink
+                    icon={<CarFront size={iconSz} />}
+                    label={t('driverSettings')}
+                    hint={t('driverSettingsHint')}
+                    to="/drive?tab=settings"
+                  />
+                )}
                 <SheetLink
                   icon={<Calendar size={iconSz} />}
                   label={t('calendarFeed')}
