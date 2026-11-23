@@ -17,6 +17,7 @@ export interface Signup {
   need_ride: boolean;
   offer_drive: boolean;
   offer_seats: number;
+  self_transport?: boolean;
   attended: number | null;
   ride_status: string | null;
   as_group?: string | null;

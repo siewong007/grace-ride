@@ -314,6 +314,15 @@ pub(super) async fn create_ride(
             .await?;
         return_ride_id = Some(rid);
     }
+    if !is_proxy {
+        sqlx::query(
+            "UPDATE event_signups SET self_transport = 0 WHERE event_id = $1 AND user_id = $2",
+        )
+        .bind(eid)
+        .bind(u.id)
+        .execute(&mut *tx)
+        .await?;
+    }
     tx.commit().await?;
 
     if is_proxy && req.save_proxy_rider.unwrap_or(false) && !rider_name.is_empty() {

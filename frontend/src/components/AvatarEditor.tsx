@@ -1,15 +1,31 @@
 import { KeyboardEvent as ReactKeyboardEvent, PointerEvent as ReactPointerEvent, useEffect, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
-import { Check, ImagePlus, type LucideIcon, Trash2, ZoomIn, ZoomOut } from 'lucide-react';
+import { Check, ImagePlus, Trash2, ZoomIn, ZoomOut } from 'lucide-react';
 import { put, uploadFile } from '../api';
 import {
   ANIMATED_AVATARS,
+  AVATAR_BG_SHAPES,
+  AVATAR_BG_SHAPE_PATHS,
   AVATAR_COLORS,
-  AVATAR_ICONS,
+  AVATAR_SHAPES,
+  AVATAR_SHAPE_PATHS,
+  type AvatarBgShape,
+  type AvatarColor,
+  avatarGifUrl,
+  avatarIconClass,
   type AvatarFields,
+  type AvatarShape,
   DEFAULT_ANIMATED_AVATAR,
+  encodeAvatarColor,
+  encodeAvatarIcon,
   getAnimatedAvatarMeta,
+  GrokBotSvg,
   isAnimatedAvatar,
+  isShapeableAvatar,
+  MuseBotSvg,
+  parseAvatarColor,
+  parseAvatarIcon,
+  STATIC_AVATAR_ICON_KEYS,
 } from '../avatarStyle';
 import { clampOffset, coverSize, cropToFile, loadImage } from '../cropImage';
 import { Avatar, Button, ErrorBox, Modal, Tabs, useAction } from './ui';
@@ -33,23 +49,32 @@ export default function AvatarEditor({
 }) {
   const { t } = useTranslation('profile');
   const { busy, error, run } = useAction();
+  const initialBg = parseAvatarColor(current.avatar_color);
+  const initialIcon = parseAvatarIcon(current.avatar_icon);
   const hasAnyAvatar = !!(current.photo_file_id || current.avatar_icon || current.avatar_color);
   const [mode, setMode] = useState<Mode>(
     current.photo_file_id
       ? 'photo'
-      : isAnimatedAvatar(current.avatar_icon)
+      : initialIcon.icon === 'initials'
+      ? 'initials'
+      : isAnimatedAvatar(initialIcon.icon)
       ? 'animated'
-      : current.avatar_icon
+      : initialIcon.icon
       ? 'icon'
-      : current.avatar_color
+      : initialBg.bgColor || initialBg.bgShape !== 'circle'
       ? 'initials'
       : 'animated',
   );
-  const [color, setColor] = useState<string | null>(current.avatar_color ?? null);
+  const [color, setColor] = useState<AvatarColor | null>(initialBg.bgColor);
+  const [bgShape, setBgShape] = useState<AvatarBgShape>(initialBg.bgShape);
   const [explicitDefault, setExplicitDefault] = useState(false);
   const [icon, setIcon] = useState<string | null>(
-    current.avatar_icon ?? (!hasAnyAvatar ? DEFAULT_ANIMATED_AVATAR : null),
+    initialIcon.icon === 'initials'
+      ? null
+      : (initialIcon.icon ?? (!hasAnyAvatar ? DEFAULT_ANIMATED_AVATAR : null)),
   );
+  const [avatarShape, setAvatarShape] = useState<AvatarShape | null>(initialIcon.avatarShape);
+  const [fgColor, setFgColor] = useState<AvatarColor | null>(initialIcon.fgColor);
   const [picked, setPicked] = useState<{ img: HTMLImageElement; url: string; file: File } | null>(null);
   const [crop, setCrop] = useState({ zoom: 1, x: 0, y: 0 });
   const [localErr, setLocalErr] = useState<string | null>(null);
@@ -104,11 +129,15 @@ export default function AvatarEditor({
     setOffset(crop.zoom, crop.x + m[0], crop.y + m[1]);
   };
 
-  const effectiveColor =
+  const effectiveColor: AvatarColor | null =
     mode === 'animated'
       ? (color ?? (explicitDefault ? null : (getAnimatedAvatarMeta(icon)?.defaultColor ?? null)))
       : color;
-  const colorField = effectiveColor ?? '';
+  const colorField = encodeAvatarColor(effectiveColor, bgShape);
+  const encodedIcon =
+    mode === 'initials'
+      ? encodeAvatarIcon(null, null, fgColor)
+      : encodeAvatarIcon(icon, avatarShape, fgColor);
   const save = () =>
     run(async () => {
       setLocalErr(null);
@@ -126,9 +155,9 @@ export default function AvatarEditor({
         }
       } else if (mode === 'icon' || mode === 'animated') {
         if (!icon) throw new Error(t('avatarPickIcon'));
-        await put('/me', { clear_photo: true, avatar_icon: icon, avatar_color: colorField });
+        await put('/me', { clear_photo: true, avatar_icon: encodedIcon, avatar_color: colorField });
       } else {
-        await put('/me', { clear_photo: true, avatar_icon: '', avatar_color: colorField });
+        await put('/me', { clear_photo: true, avatar_icon: encodedIcon, avatar_color: colorField });
       }
       await onSaved();
       onClose();
@@ -192,9 +221,9 @@ export default function AvatarEditor({
             <Avatar
               name={name}
               size="xl"
-              color={effectiveColor}
+              color={colorField}
               fileId={mode === 'photo' ? current.photo_file_id : null}
-              icon={mode === 'icon' || mode === 'animated' ? icon : null}
+              icon={mode === 'photo' ? null : encodedIcon}
             />
           )}
         </div>
@@ -209,8 +238,12 @@ export default function AvatarEditor({
             setMode(nextMode);
             if (nextMode === 'animated' && !isAnimatedAvatar(icon)) {
               setIcon(DEFAULT_ANIMATED_AVATAR);
+              setAvatarShape(null);
             } else if (nextMode === 'icon' && isAnimatedAvatar(icon)) {
               setIcon(null);
+              setAvatarShape(null);
+            } else if (nextMode === 'initials') {
+              setAvatarShape(null);
             }
           }}
           items={[
@@ -264,9 +297,9 @@ export default function AvatarEditor({
             <div className="bold small">{t('avatarAnimatedDesc')}</div>
             <div className="avatar-animated-grid" role="radiogroup" aria-label={t('avatarAnimated')}>
               {ANIMATED_AVATARS.map((anim) => {
-                const IconComp = AVATAR_ICONS[anim.key];
                 const isSelected = icon === anim.key;
                 const thumbColor = isSelected && effectiveColor ? effectiveColor : anim.defaultColor;
+                const thumbFg = isSelected && fgColor ? fgColor : null;
                 return (
                   <button
                     key={anim.key}
@@ -277,13 +310,34 @@ export default function AvatarEditor({
                     className={`avatar-animated-card${isSelected ? ' on' : ''}`}
                     onClick={() => {
                       setIcon(anim.key);
+                      setAvatarShape(null);
                       if (color === null && !explicitDefault) {
                         setColor(anim.defaultColor);
                       }
                     }}
                   >
-                    <div className={`avatar av-${thumbColor} avatar-animated avatar-animated-thumb`} aria-hidden="true">
-                      {IconComp && <IconComp className="avatar-icon" />}
+                    <div
+                      className={`avatar av-${thumbColor}${thumbFg ? ` av-fg-${thumbFg}` : ''} avatar-animated avatar-animated-thumb`}
+                      aria-hidden="true"
+                    >
+                      {anim.key === 'grok' && isSelected && avatarShape && avatarShape !== 'hexagon' ? (
+                        <GrokBotSvg
+                          shape={avatarShape}
+                          className="avatar-icon"
+                        />
+                      ) : anim.key === 'muse' && isSelected && avatarShape && avatarShape !== 'cloud' ? (
+                        <MuseBotSvg
+                          shape={avatarShape}
+                          className="avatar-icon"
+                        />
+                      ) : (
+                        <img
+                          src={avatarGifUrl(anim.key, thumbFg ?? thumbColor)}
+                          alt=""
+                          className={`avatar-animated-icon ${anim.className} avatar-icon avatar-gif`}
+                          decoding="async"
+                        />
+                      )}
                     </div>
                     <span className="bold small">{t(`avatarIcon_${anim.key}`)}</span>
                   </button>
@@ -297,27 +351,116 @@ export default function AvatarEditor({
           <div className="stack-xs">
             <div className="bold small">{t('avatarPickIconLabel')}</div>
             <div className="avatar-icon-grid" role="radiogroup" aria-label={t('avatarPickIconLabel')}>
-              {Object.entries(AVATAR_ICONS)
-                .filter(([key]) => !isAnimatedAvatar(key))
-                .map(([key, Icon]) => {
-                  const StaticIcon = Icon as LucideIcon;
-                  return (
-                    <button
-                      key={key}
-                      type="button"
-                      role="radio"
-                      aria-checked={icon === key}
-                      aria-label={t(`avatarIcon_${key}`)}
-                      className={`avatar-icon-opt${icon === key ? ' on' : ''}`}
-                      onClick={() => setIcon(key)}
-                    >
-                      <StaticIcon size={20} aria-hidden="true" />
-                    </button>
-                  );
-                })}
+              {STATIC_AVATAR_ICON_KEYS.map((key) => (
+                <button
+                  key={key}
+                  type="button"
+                  role="radio"
+                  aria-checked={icon === key}
+                  aria-label={t(`avatarIcon_${key}`)}
+                  className={`avatar-icon-opt${icon === key ? ' on' : ''}`}
+                  onClick={() => setIcon(key)}
+                >
+                  <img
+                    src={avatarGifUrl(key, effectiveColor)}
+                    alt=""
+                    width={28}
+                    height={28}
+                    className={`avatar-animated-icon ${avatarIconClass(key)} avatar-icon-gif`}
+                    aria-hidden="true"
+                    decoding="async"
+                  />
+                </button>
+              ))}
             </div>
           </div>
         )}
+
+        {mode === 'animated' && isShapeableAvatar(icon) && (
+          <div className="stack-xs">
+            <div className="bold small">{t('avatarShape')}</div>
+            <div className="avatar-shape-grid" role="radiogroup" aria-label={t('avatarShape')}>
+              {AVATAR_SHAPES.map((s) => {
+                const currentShape = avatarShape ?? (icon === 'muse' ? 'cloud' : 'hexagon');
+                const isSel = currentShape === s;
+                return (
+                  <button
+                    key={s}
+                    type="button"
+                    role="radio"
+                    aria-checked={isSel}
+                    aria-label={t(`avatarShape_${s}`)}
+                    title={t(`avatarShape_${s}`)}
+                    className={`avatar-shape-opt${isSel ? ' on' : ''}`}
+                    onClick={() => setAvatarShape(s)}
+                  >
+                    <svg viewBox="0 0 48 48" width="22" height="22" fill="currentColor" aria-hidden="true">
+                      <path d={AVATAR_SHAPE_PATHS[s]} />
+                    </svg>
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+        )}
+
+        {(mode === 'initials' || (mode === 'animated' && isShapeableAvatar(icon))) && (
+          <div className="stack-xs">
+            <div className="bold small">{t('avatarFgColor')}</div>
+            <div className="avatar-swatches" role="radiogroup" aria-label={t('avatarFgColor')}>
+              <button
+                type="button"
+                role="radio"
+                aria-checked={fgColor === null}
+                aria-label={`${t('avatarFgColor')}: ${t('avatarColorAuto')}`}
+                title={t('avatarColorAuto')}
+                className={`avatar-swatch av-none${fgColor === null ? ' on' : ''}`}
+                onClick={() => setFgColor(null)}
+              />
+              {AVATAR_COLORS.map((c) => (
+                <button
+                  key={c}
+                  type="button"
+                  role="radio"
+                  aria-checked={fgColor === c}
+                  aria-label={`${t('avatarFgColor')}: ${t(`avatarColor_${c}`)}`}
+                  title={t(`avatarColor_${c}`)}
+                  className={`avatar-swatch av-fg-swatch av-fg-${c}${fgColor === c ? ' on' : ''}`}
+                  onClick={() => setFgColor(c)}
+                />
+              ))}
+            </div>
+          </div>
+        )}
+
+        <div className="stack-xs">
+          <div className="bold small">{t('avatarBgShape')}</div>
+          <div className="avatar-shape-grid" role="radiogroup" aria-label={t('avatarBgShape')}>
+            {AVATAR_BG_SHAPES.map((s) => {
+              const isSel = bgShape === s;
+              return (
+                <button
+                  key={s}
+                  type="button"
+                  role="radio"
+                  aria-checked={isSel}
+                  aria-label={t(`avatarBgShape_${s}`)}
+                  title={t(`avatarBgShape_${s}`)}
+                  className={`avatar-shape-opt${isSel ? ' on' : ''}`}
+                  onClick={() => setBgShape(s)}
+                >
+                  {s === 'hexagon' || s === 'cloud' ? (
+                    <svg viewBox="0 0 48 48" width="20" height="20" fill="none" stroke="currentColor" strokeWidth="3.4" aria-hidden="true">
+                      <path d={AVATAR_BG_SHAPE_PATHS[s]} />
+                    </svg>
+                  ) : (
+                    <span className={`avatar-bg-mini av-bg-${s}`} aria-hidden="true" />
+                  )}
+                </button>
+              );
+            })}
+          </div>
+        </div>
 
         {mode !== 'photo' && (
           <div className="stack-xs">

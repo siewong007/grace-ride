@@ -204,4 +204,44 @@ describe('AvatarEditor', () => {
     expect(uploadFile).toHaveBeenCalledWith(gifFile);
     expect(put).toHaveBeenCalledWith('/me', { photo_file_id: 77, avatar_color: '' });
   });
+
+  it('allows independent shape and colour customization for both avatar and background', async () => {
+    const { onSaved, onClose } = setup();
+    fireEvent.click(screen.getByRole('radio', { name: 'avatarIcon_grok' }));
+    fireEvent.click(screen.getByRole('radio', { name: 'avatarShape_circle' }));
+    fireEvent.click(screen.getByRole('radio', { name: 'avatarFgColor: avatarColor_coral' }));
+    fireEvent.click(screen.getByRole('radio', { name: 'avatarBgShape_hexagon' }));
+    fireEvent.click(screen.getByRole('radio', { name: 'avatarColor_white' }));
+
+    const preview = document.querySelector('.avatar.av-white.av-bg-hexagon.av-fg-coral');
+    expect(preview).toBeInTheDocument();
+    expect(preview?.querySelector('.avatar-bg-svg')).toBeInTheDocument();
+    expect(preview?.querySelector('.avatar-grok-bot')).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole('button', { name: 'avatarSave' }));
+    await waitFor(() => expect(onClose).toHaveBeenCalled());
+    expect(put).toHaveBeenCalledWith('/me', {
+      clear_photo: true,
+      avatar_icon: 'grok:circle:coral',
+      avatar_color: 'white:hexagon',
+    });
+    expect(onSaved).toHaveBeenCalled();
+  });
+
+  it('reopens customized avatar styles and supports independent initials colour', async () => {
+    setup({ avatar_icon: 'initials::teal', avatar_color: 'white:rounded' });
+    expect(screen.getByRole('tab', { name: 'avatarInitials' })).toHaveAttribute('aria-selected', 'true');
+    expect(screen.getByRole('radio', { name: 'avatarBgShape_rounded' })).toHaveAttribute('aria-checked', 'true');
+    expect(screen.getByRole('radio', { name: 'avatarFgColor: avatarColor_teal' })).toHaveAttribute('aria-checked', 'true');
+    expect(document.querySelector('.avatar.av-white.av-bg-rounded.av-fg-teal')).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole('button', { name: 'avatarSave' }));
+    await waitFor(() =>
+      expect(put).toHaveBeenCalledWith('/me', {
+        clear_photo: true,
+        avatar_icon: 'initials::teal',
+        avatar_color: 'white:rounded',
+      }),
+    );
+  });
 });

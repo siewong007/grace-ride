@@ -7,10 +7,12 @@ import {
   Check,
   Copy,
   Edit2,
+  EyeOff,
   Plus,
   QrCode,
   Route,
   ScanLine,
+  Send,
   Share2,
   Users,
 } from 'lucide-react';
@@ -63,7 +65,7 @@ export default function EventDetail() {
   const { can, me } = useAuth();
   // Planning the whole event's transport needs its own permission (the server checks too).
   const isStaff = can('admin_plan');
-  const { data: e, error, reload } = useApi<EventFull>(id ? `/events/${id}` : null);
+  const { data: e, error, reload, setData } = useApi<EventFull>(id ? `/events/${id}` : null);
   const { busy, error: actErr, run } = useAction();
   const confirm = useConfirm();
   const [showPostEventReimb, setShowPostEventReimb] = useState(false);
@@ -95,6 +97,7 @@ export default function EventDetail() {
   const signed = !!e.my_signup && e.my_signup.status !== 'cancelled';
   const going = signed && e.my_signup!.status === 'going';
   const open = e.status === 'published';
+  const isDraft = e.status === 'draft';
   const isFull = e.capacity > 0 && e.going >= e.capacity;
   const attendanceEnabled = e.attendance_enabled !== false;
   const myDrivingForEvent = (Array.isArray(myDrivingDay.data) ? myDrivingDay.data : []).filter((r) => r.event?.id === e.id);
@@ -103,6 +106,7 @@ export default function EventDetail() {
   const fullReturn = e.my_return_ride ? upcomingRidesList.find((r) => r.id === e.my_return_ride!.id) : undefined;
 
   const hasTransport = Boolean(e.my_ride || myDrivingForEvent.length > 0);
+  const selfTransport = !hasTransport && Boolean(e.my_signup?.self_transport);
   const preDrives = myDrivingForEvent
     .filter((r) => r.leg !== 'return' && r.pickup_at <= e.starts_at)
     .sort((a, b) => a.pickup_at.localeCompare(b.pickup_at));
@@ -143,10 +147,12 @@ export default function EventDetail() {
       title: t('workflowEventStart'),
       subtitle: e.location,
       kind: 'event',
-      icon: <EventIcon icon={e.icon} kind={e.kind} size={15} />,
+      icon: <EventIcon icon={e.icon} kind={e.kind} size={20} />,
       state: doneAll ? 'done' : 'active',
       badge: doneAll ? (
-        <Pill tone="neutral">{e.status === 'cancelled' ? t('statusCancelled') : t('statusFinished')}</Pill>
+        <Pill tone={isDraft ? 'warning' : 'neutral'}>
+          {isDraft ? t('statusDraft') : e.status === 'cancelled' ? t('statusCancelled') : t('statusFinished')}
+        </Pill>
       ) : attendanceEnabled && e.my_signup?.attended === 1 ? (
         <Pill tone="success">{t('statusAttended')}</Pill>
       ) : undefined,
@@ -206,7 +212,7 @@ export default function EventDetail() {
         title: t('workflowEventStart'),
         subtitle: e.location,
         kind: 'event',
-        icon: <EventIcon icon={e.icon} kind={e.kind} size={15} />,
+        icon: <EventIcon icon={e.icon} kind={e.kind} size={20} />,
         state: 'upcoming',
       },
     );
@@ -237,7 +243,7 @@ export default function EventDetail() {
         title: t('workflowEventStart'),
         subtitle: e.location,
         kind: 'event',
-        icon: <EventIcon icon={e.icon} kind={e.kind} size={15} />,
+        icon: <EventIcon icon={e.icon} kind={e.kind} size={20} />,
         state: 'upcoming',
       },
     );
@@ -247,9 +253,9 @@ export default function EventDetail() {
         id: 'wf-transport',
         timeLabel: t('workflowBeforeStep'),
         title: t('transportation'),
-        subtitle: t('workflowTransportPending'),
+        subtitle: selfTransport ? t('workflowTransportSelf') : t('workflowTransportPending'),
         kind: 'ride',
-        state: 'active',
+        state: selfTransport ? 'done' : 'active',
       },
       {
         id: `evt-${e.id}`,
@@ -257,7 +263,7 @@ export default function EventDetail() {
         title: t('workflowEventStart'),
         subtitle: e.location,
         kind: 'event',
-        icon: <EventIcon icon={e.icon} kind={e.kind} size={15} />,
+        icon: <EventIcon icon={e.icon} kind={e.kind} size={20} />,
         state: 'active',
         badge: <Pill tone="success">{t('going')}</Pill>,
       },
@@ -299,6 +305,19 @@ export default function EventDetail() {
     }, t('signedUpSuccess'));
   };
 
+  const handleSetSelfTransport = (value: boolean) =>
+    run(async () => {
+      await post(`/events/${e.id}/transport`, { self_transport: value });
+      setShowTransportPrompt(false);
+      if (value) setShowDriveRequests(false);
+      setData?.((prev) =>
+        prev?.my_signup
+          ? { ...prev, my_signup: { ...prev.my_signup, self_transport: value } }
+          : prev,
+      );
+      reload();
+    }, value ? t('goingOwnWaySaved') : undefined);
+
   const handleWithdraw = async () => {
     const ok = await confirm({
       title: t('withdraw'),
@@ -338,14 +357,14 @@ export default function EventDetail() {
   const canPlan = isStaff && (can('admin_dashboard') || e.can_manage);
 
   const primaryAndEditActions =
-    (e.can_manage && open) || (canPlan && open) ? (
+    (e.can_manage && (open || isDraft)) || (canPlan && open) ? (
       <div className="btn-row">
         {canPlan && open && (
           <Button variant="primary" to={`/admin/events/${e.id}/plan`} icon={<Route size={16} />}>
             {t('open', { ns: 'plan' })}
           </Button>
         )}
-        {e.can_manage && open && (
+        {e.can_manage && (open || isDraft) && (
           <Button variant="secondary" to={`/events/${e.id}/edit`} icon={<Edit2 size={16} />}>
             {t('edit')}
           </Button>
@@ -362,6 +381,7 @@ export default function EventDetail() {
       )}
 
       {/* 1. Primary Participation & Transportation Focus Surface */}
+      {!isDraft && (
       <section className="focus-surface" aria-label={t('mySignup')}>
         <div className="row between nowrap">
           <div className="row wrap gap-xs items-center">
@@ -442,7 +462,7 @@ export default function EventDetail() {
               <span className="small bold">{t('transportation')}</span>
             </div>
 
-            {showTransportPrompt && !hasTransport && (
+            {showTransportPrompt && !hasTransport && !selfTransport && (
               <Notice tone="info" className="stack-sm">
                 <div>
                   <strong>{t('transportPromptTitle')}</strong>
@@ -464,6 +484,16 @@ export default function EventDetail() {
                   </Button>
                 )}
               </div>
+            ) : selfTransport ? (
+              <div className="row between wrap gap-xs">
+                <span className="small muted row nowrap gap-xs">
+                  <Check size={14} aria-hidden="true" />
+                  <span>{t('goingOwnWay')}</span>
+                </span>
+                <Button variant="ghost" size="sm" disabled={busy} onClick={() => handleSetSelfTransport(false)}>
+                  {t('changeTransport')}
+                </Button>
+              </div>
             ) : (
               <div className="btn-row">
                 {can('rides', 'create') && (
@@ -482,11 +512,9 @@ export default function EventDetail() {
                     {showDriveRequests ? t('hideDriveRequests') : t('offerDrive')}
                   </Button>
                 )}
-                {showTransportPrompt && (
-                  <Button variant="ghost" size="sm" onClick={() => setShowTransportPrompt(false)}>
-                    {t('goingOwnWay')}
-                  </Button>
-                )}
+                <Button variant="ghost" size="sm" disabled={busy} onClick={() => handleSetSelfTransport(true)}>
+                  {t('goingOwnWay')}
+                </Button>
               </div>
             )}
 
@@ -498,7 +526,7 @@ export default function EventDetail() {
               </div>
             )}
 
-            {!hasTransport && (
+            {!hasTransport && !selfTransport && (
               <p className="muted small">{t('signupNote')}</p>
             )}
           </div>
@@ -544,6 +572,7 @@ export default function EventDetail() {
 
         <ErrorBox error={actErr} />
       </section>
+      )}
 
       {/* Inline Ride Requests for Volunteer Drivers */}
       {open && going && can('drive', 'create') && showDriveRequests && (
@@ -562,7 +591,7 @@ export default function EventDetail() {
         <div className="row between nowrap">
           <h3>{t('aboutEvent')}</h3>
           <span className="muted small event-kind-inline">
-            <EventIcon icon={e.icon} kind={e.kind} size={15} />
+            <EventIcon icon={e.icon} kind={e.kind} size={20} />
             <span>{ft(EVENT_KIND[e.kind]?.label ?? e.kind)}</span>
           </span>
         </div>
@@ -615,6 +644,17 @@ export default function EventDetail() {
     </div>
   );
 
+  const handleUnpublish = async () => {
+    const ok = await confirm({
+      title: t('hideToDraft'),
+      body: t('hideToDraftConfirm'),
+      confirmLabel: t('hideToDraft'),
+    });
+    if (ok) {
+      run(() => post(`/events/${e.id}/unpublish`).then(reload), t('unpublishedDone'));
+    }
+  };
+
   const managePanel = e.can_manage ? (
     <Card className="stack">
       <div className="row between nowrap">
@@ -622,143 +662,204 @@ export default function EventDetail() {
           <h3>{t('manageTitle')}</h3>
           <p className="muted tiny">{t('manageDesc')}</p>
         </div>
-        {attendanceEnabled && (
+        {!isDraft && attendanceEnabled && (
           <span className="muted small">
             {t('attendance', { attended: signupsAttended, total: active.length })}
           </span>
         )}
       </div>
 
-      {attendanceEnabled && (
-        <div className="btn-row">
+      {isDraft ? (
+        <div className="stack-sm">
           <Button
-            variant="secondary"
-            size="sm"
-            icon={<QrCode size={16} />}
-            onClick={() => setShowQrModal(true)}
+            variant="primary"
+            block
+            icon={<Send size={16} />}
+            disabled={busy}
+            onClick={() => run(() => post(`/events/${e.id}/publish`).then(reload), t('publishedDone'))}
           >
-            {t('attendanceQr')}
+            {t('publishEvent')}
           </Button>
+          <Button variant="secondary" block to={`/events/${e.id}/edit`} icon={<Edit2 size={16} />}>
+            {t('edit')}
+          </Button>
+          {can('events', 'create') && (
+            <Button variant="ghost" block to={`/events/new?duplicate=${e.id}`} icon={<Copy size={16} />}>
+              {t('duplicate')}
+            </Button>
+          )}
+          {(e.can_cancel ?? true) && (
+            <Button
+              variant="danger"
+              block
+              disabled={busy}
+              onClick={async () => {
+                const ok = await confirm({
+                  title: t('cancelDraft'),
+                  body: t('cancelConfirm'),
+                  confirmLabel: t('cancelDraft'),
+                  tone: 'danger',
+                });
+                if (ok) run(() => post(`/events/${e.id}/cancel`).then(reload), t('cancelledDone'));
+              }}
+            >
+              {t('cancelDraft')}
+            </Button>
+          )}
         </div>
-      )}
-
-      {!active.length ? (
-        <EmptyState title={t('noSignups')} />
       ) : (
-        <div className="list">
-          {active.map((s) => (
-            <div key={s.id} className="item">
-              <div className="grow min-w-0">
-                <div className="bold">
-                  {s.name}{' '}
-                  {s.status === 'waitlist' && <Pill tone="warning">{t('waitlist')}</Pill>}
-                </div>
-                <div className="muted tiny">
-                  {s.need_ride && (
-                    s.ride_status
-                      ? t('needsRideWithStatus', { status: ft(`format:rideStatus.${s.ride_status}`) })
-                      : t('needsRide')
+        <>
+          {attendanceEnabled && (
+            <div className="btn-row">
+              <Button
+                variant="secondary"
+                size="sm"
+                icon={<QrCode size={16} />}
+                onClick={() => setShowQrModal(true)}
+              >
+                {t('attendanceQr')}
+              </Button>
+            </div>
+          )}
+
+          {!active.length ? (
+            <EmptyState title={t('noSignups')} />
+          ) : (
+            <div className="list">
+              {active.map((s) => (
+                <div key={s.id} className="item">
+                  <div className="grow min-w-0">
+                    <div className="bold">
+                      {s.name}{' '}
+                      {s.status === 'waitlist' && <Pill tone="warning">{t('waitlist')}</Pill>}
+                    </div>
+                    <div className="muted tiny">
+                      {s.need_ride && (
+                        s.ride_status
+                          ? t('needsRideWithStatus', { status: ft(`format:rideStatus.${s.ride_status}`) })
+                          : t('needsRide')
+                      )}
+                      {s.need_ride && s.offer_drive ? ' ' : ''}
+                      {s.offer_drive && t('offersSeats', { n: s.offer_seats })}
+                      {!s.need_ride && !s.offer_drive && s.self_transport && t('goingOwnWay')}
+                      {s.as_group && (
+                        <>
+                          {(s.need_ride || s.offer_drive || s.self_transport) ? ' · ' : ''}
+                          {t('joiningAsName', { name: s.as_group })}
+                        </>
+                      )}
+                    </div>
+                  </div>
+                  {attendanceEnabled && (
+                    <div className="chips">
+                      <button
+                        type="button"
+                        className={`chip ${s.attended === 1 ? 'on' : ''}`}
+                        disabled={busy}
+                        onClick={() => mark(s.user_id, s.attended === 1 ? null : true)}
+                      >
+                        {t('attending')}
+                      </button>
+                      <button
+                        type="button"
+                        className={`chip ${s.attended === 0 ? 'on' : ''}`}
+                        disabled={busy}
+                        onClick={() => mark(s.user_id, s.attended === 0 ? null : false)}
+                      >
+                        {t('absent')}
+                      </button>
+                    </div>
                   )}
-                  {s.need_ride && s.offer_drive ? ' ' : ''}
-                  {s.offer_drive && t('offersSeats', { n: s.offer_seats })}
-                  {s.as_group && <>{(s.need_ride || s.offer_drive) ? ' · ' : ''}{t('joiningAsName', { name: s.as_group })}</>}
                 </div>
+              ))}
+            </div>
+          )}
+
+          {attendanceEnabled && (
+            <>
+              <div className="btn-row">
+                <Button variant="ghost" size="sm" onClick={() => setWalkIn(true)} icon={<Plus size={16} />}>
+                  {t('walkIn')}
+                </Button>
+                <Button variant="secondary" size="sm" onClick={() => setShowScanMember(true)} icon={<ScanLine size={16} />}>
+                  {t('scanMemberPass')}
+                </Button>
               </div>
-              {attendanceEnabled && (
-                <div className="chips">
-                  <button
-                    type="button"
-                    className={`chip ${s.attended === 1 ? 'on' : ''}`}
-                    disabled={busy}
-                    onClick={() => mark(s.user_id, s.attended === 1 ? null : true)}
-                  >
-                    {t('attending')}
-                  </button>
-                  <button
-                    type="button"
-                    className={`chip ${s.attended === 0 ? 'on' : ''}`}
-                    disabled={busy}
-                    onClick={() => mark(s.user_id, s.attended === 0 ? null : false)}
-                  >
-                    {t('absent')}
-                  </button>
-                </div>
+              <p className="muted tiny">{t('walkInNote')}</p>
+            </>
+          )}
+
+          {/* Event Actions & Settlements */}
+          <div className="divider" />
+          <h4>{t('afterEvent')}</h4>
+          {((e.created_by?.id === me?.id && can('events', 'update')) || can('admin_events') || can('admin_plan') || can('admin_rides')) && (
+            <Button
+              variant="secondary"
+              block
+              icon={<Car size={16} />}
+              onClick={() => setShowPostEventReimb(true)}
+            >
+              {t('postEventReimbBtn')}
+            </Button>
+          )}
+          {e.settlement ? (
+            <Button variant="secondary" block to={`/settlements/${e.settlement.id}`}>
+              {t('viewSettlement')}
+            </Button>
+          ) : (
+            can('settlements', 'create') && (
+              <Button variant="primary" block to={`/events/${e.id}/settle`}>
+                {t('createSettlement')}
+              </Button>
+            )
+          )}
+
+          {can('events', 'create') && (
+            <Button variant="ghost" block to={`/events/new?duplicate=${e.id}`} icon={<Copy size={16} />}>
+              {t('duplicate')}
+            </Button>
+          )}
+
+          {open && (
+            <div className="stack-xs">
+              <div className="btn-row">
+                <Button
+                  variant="secondary"
+                  disabled={busy || !e.can_unpublish}
+                  icon={<EyeOff size={16} />}
+                  onClick={handleUnpublish}
+                >
+                  {t('hideToDraft')}
+                </Button>
+                <Button
+                  variant="secondary"
+                  disabled={busy}
+                  onClick={() => run(() => post(`/events/${e.id}/finish`).then(reload), t('finishedDone'))}
+                >
+                  {t('finish')}
+                </Button>
+                {(e.can_cancel ?? true) && <Button
+                  variant="danger"
+                  disabled={busy}
+                  onClick={async () => {
+                    const ok = await confirm({
+                      title: t('cancelEvent'),
+                      body: t('cancelConfirm'),
+                      confirmLabel: t('cancelEvent'),
+                      tone: 'danger',
+                    });
+                    if (ok) run(() => post(`/events/${e.id}/cancel`).then(reload), t('cancelledDone'));
+                  }}
+                >
+                  {t('cancelEvent')}
+                </Button>}
+              </div>
+              {!e.can_unpublish && (
+                <p className="muted tiny">{t('hideToDraftBlockedHint')}</p>
               )}
             </div>
-          ))}
-        </div>
-      )}
-
-      {attendanceEnabled && (
-        <>
-          <div className="btn-row">
-            <Button variant="ghost" size="sm" onClick={() => setWalkIn(true)} icon={<Plus size={16} />}>
-              {t('walkIn')}
-            </Button>
-            <Button variant="secondary" size="sm" onClick={() => setShowScanMember(true)} icon={<ScanLine size={16} />}>
-              {t('scanMemberPass')}
-            </Button>
-          </div>
-          <p className="muted tiny">{t('walkInNote')}</p>
+          )}
         </>
-      )}
-
-      {/* Event Actions & Settlements */}
-      <div className="divider" />
-      <h4>{t('afterEvent')}</h4>
-      {((e.created_by?.id === me?.id && can('events', 'update')) || can('admin_events') || can('admin_plan') || can('admin_rides')) && (
-        <Button
-          variant="secondary"
-          block
-          icon={<Car size={16} />}
-          onClick={() => setShowPostEventReimb(true)}
-        >
-          {t('postEventReimbBtn')}
-        </Button>
-      )}
-      {e.settlement ? (
-        <Button variant="secondary" block to={`/settlements/${e.settlement.id}`}>
-          {t('viewSettlement')}
-        </Button>
-      ) : (
-        can('settlements', 'create') && (
-          <Button variant="primary" block to={`/events/${e.id}/settle`}>
-            {t('createSettlement')}
-          </Button>
-        )
-      )}
-
-      {can('events', 'create') && (
-        <Button variant="ghost" block to={`/events/new?duplicate=${e.id}`} icon={<Copy size={16} />}>
-          {t('duplicate')}
-        </Button>
-      )}
-
-      {open && (
-        <div className="btn-row">
-          <Button
-            variant="secondary"
-            disabled={busy}
-            onClick={() => run(() => post(`/events/${e.id}/finish`).then(reload), t('finishedDone'))}
-          >
-            {t('finish')}
-          </Button>
-          {(e.can_cancel ?? true) && <Button
-            variant="danger"
-            disabled={busy}
-            onClick={async () => {
-              const ok = await confirm({
-                title: t('cancelEvent'),
-                body: t('cancelConfirm'),
-                confirmLabel: t('cancelEvent'),
-                tone: 'danger',
-              });
-              if (ok) run(() => post(`/events/${e.id}/cancel`).then(reload), t('cancelledDone'));
-            }}
-          >
-            {t('cancelEvent')}
-          </Button>}
-        </div>
       )}
     </Card>
   ) : null;
@@ -773,6 +874,7 @@ export default function EventDetail() {
           actions={primaryAndEditActions}
         />
 
+        {isDraft && <Notice tone="warning">{t('draftBanner')}</Notice>}
         {e.status === 'cancelled' && (
           <div className="notice danger">{t('cancelled')}</div>
         )}

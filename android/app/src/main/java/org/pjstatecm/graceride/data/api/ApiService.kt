@@ -74,10 +74,15 @@ interface ApiService {
     @POST("api/driver/vehicles/{id}/select") suspend fun selectDriverVehicle(@Path("id") id: Long): SelectVehicleRes
 
     // ---- events ----
-    @GET("api/events") suspend fun events(@Query("scope") scope: String? = null): List<EventItem>
+    @GET("api/events") suspend fun events(
+        @Query("scope") scope: String? = null,
+        @Query("hide_drafts") hideDrafts: Boolean? = null,
+    ): List<EventItem>
     @GET("api/events/{id}") suspend fun event(@Path("id") id: Long): EventItem
     @POST("api/events/{id}/signup") suspend fun signup(@Path("id") id: Long, @Body body: SignupReq): OkResponse
     @POST("api/events/{id}/withdraw") suspend fun withdraw(@Path("id") id: Long): OkResponse
+    @POST("api/events/{id}/publish") suspend fun publishEvent(@Path("id") id: Long): OkResponse
+    @POST("api/events/{id}/unpublish") suspend fun unpublishEvent(@Path("id") id: Long): OkResponse
 
     // ---- costs / settlements ----
     @GET("api/me/shares") suspend fun myShares(): List<Share>

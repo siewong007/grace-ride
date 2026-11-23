@@ -36,6 +36,9 @@ pub(super) async fn mark_attendance(
             ErrorKey::OnlyOrganiserCanRecordAttendance,
         ));
     }
+    if e.status == "draft" {
+        return Err(bad(u.lang, ErrorKey::EventNotOpen));
+    }
     if e.attendance_enabled != 1 {
         return Err(bad(u.lang, ErrorKey::AttendanceModuleDisabled));
     }

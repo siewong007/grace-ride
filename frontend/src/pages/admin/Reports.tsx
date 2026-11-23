@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { Link } from 'react-router-dom';
-import { Award, Calendar, CarFront, CheckCircle2, DollarSign, Download, FileText, type LucideIcon, Map, Pencil } from 'lucide-react';
+import { Award, Calendar, CarFront, CheckCircle2, DollarSign, Download, FileText, Map, Pencil } from 'lucide-react';
 import { put, useApi } from '../../api';
 import { useAuth } from '../../auth';
 import {
@@ -689,7 +689,6 @@ export default function AdminReports() {
                     {Object.entries(ACHIEVEMENT_ICONS)
                       .filter(([key, item]) => !item.animated && !isAnimatedBadgeIcon(key))
                       .map(([key, item]) => {
-                        const IconComp = item.icon as LucideIcon;
                         const isSelected = selectedIcon === key;
                         return (
                           <button
@@ -705,7 +704,7 @@ export default function AdminReports() {
                               setCustomIcon('');
                             }}
                           >
-                            <IconComp size={22} aria-hidden="true" />
+                            <BadgeIcon icon={key} size={34} />
                           </button>
                         );
                       })}

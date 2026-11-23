@@ -31,6 +31,13 @@ pub(super) async fn create(
             ErrorKey::OnlyOrganiserCanInitiateCostSplit,
         ));
     }
+    let event_status: String = sqlx::query_scalar("SELECT status FROM events WHERE id=$1")
+        .bind(event_id)
+        .fetch_one(&st.db)
+        .await?;
+    if event_status == "draft" {
+        return Err(bad(u.lang, ErrorKey::EventNotOpen));
+    }
     let shares = compute_shares(u.lang, &req)?;
     check_receipts(&st, &u, &req).await?;
     let mut tx = st.db.begin().await?;

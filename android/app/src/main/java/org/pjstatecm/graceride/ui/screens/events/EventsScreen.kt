@@ -1,31 +1,49 @@
 package org.pjstatecm.graceride.ui.screens.events
 
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
+import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.FilterChip
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedCard
+import androidx.compose.material3.PrimaryScrollableTabRow
 import androidx.compose.material3.PrimaryTabRow
+import androidx.compose.material3.SnackbarHost
+import androidx.compose.material3.SnackbarHostState
+import androidx.compose.material3.Surface
 import androidx.compose.material3.Tab
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.material3.pulltorefresh.PullToRefreshBox
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.navigation.NavHostController
 import org.pjstatecm.graceride.R
+import org.pjstatecm.graceride.data.api.EventItem
 import org.pjstatecm.graceride.di.AppContainer
 import org.pjstatecm.graceride.domain.KlTime
 import org.pjstatecm.graceride.domain.RideStatus
@@ -36,6 +54,7 @@ import org.pjstatecm.graceride.ui.components.DayStrip
 import org.pjstatecm.graceride.ui.components.EmptyView
 import org.pjstatecm.graceride.ui.components.ErrorView
 import org.pjstatecm.graceride.ui.components.EventCard
+import org.pjstatecm.graceride.ui.components.EventIcon
 import org.pjstatecm.graceride.ui.components.LoadingView
 import org.pjstatecm.graceride.ui.components.OfflineBanner
 import org.pjstatecm.graceride.ui.components.ScheduleTimeline
@@ -43,6 +62,8 @@ import org.pjstatecm.graceride.ui.components.TimelineBadge
 import org.pjstatecm.graceride.ui.components.TimelineKind
 import org.pjstatecm.graceride.ui.components.TimelineNode
 import org.pjstatecm.graceride.ui.components.TimelineState
+import org.pjstatecm.graceride.ui.components.friendlyTime
+import org.pjstatecm.graceride.ui.theme.LocalStatusColors
 import org.pjstatecm.graceride.ui.theme.Spacing
 
 private data class DatedNode(
@@ -56,28 +77,261 @@ private data class DatedNode(
 fun EventsScreen(container: AppContainer, nav: NavHostController) {
     val vm: EventsViewModel = viewModel(factory = EventsViewModel.factory(container))
     val state by vm.state.collectAsStateWithLifecycle()
+    val snackbar = remember { SnackbarHostState() }
+    val canCreateEvent = container.auth.me?.can("events", "create") == true
+    val publishedNotice = stringResource(R.string.event_published_notice)
+    val unpublishedNotice = stringResource(R.string.event_unpublished_notice)
+    var pendingPublish by remember { mutableStateOf<EventItem?>(null) }
+    var pendingUnpublish by remember { mutableStateOf<EventItem?>(null) }
 
-    Column(Modifier.fillMaxSize()) {
-        PrimaryTabRow(selectedTabIndex = state.tab) {
-            Tab(selected = state.tab == 0, onClick = { vm.setTab(0) }, text = { Text(stringResource(R.string.events_tab_upcoming)) })
-            Tab(selected = state.tab == 1, onClick = { vm.setTab(1) }, text = { Text(stringResource(R.string.events_tab_my_schedule)) })
-            Tab(selected = state.tab == 2, onClick = { vm.setTab(2) }, text = { Text(stringResource(R.string.events_tab_past)) })
+    LaunchedEffect(state.message) {
+        state.message?.let {
+            snackbar.showSnackbar(it)
+            vm.clearMessage()
         }
-        when {
-            state.loading -> LoadingView()
-            state.error != null && state.events.isEmpty() -> ErrorView(state.error!!, vm::refresh)
-            state.tab == 1 -> MyScheduleContent(state, vm::refresh, vm::selectDay, { vm.setTab(0) }, nav)
-            else -> PullToRefreshBox(isRefreshing = state.refreshing, onRefresh = vm::refresh) {
-                LazyColumn(
-                    Modifier.fillMaxSize().padding(horizontal = Spacing.sm),
-                    verticalArrangement = Arrangement.spacedBy(Spacing.xs),
-                    contentPadding = PaddingValues(vertical = Spacing.xs),
+    }
+    LaunchedEffect(state.actionNotice) {
+        when (state.actionNotice) {
+            EventActionNotice.PUBLISHED -> snackbar.showSnackbar(publishedNotice)
+            EventActionNotice.UNPUBLISHED -> snackbar.showSnackbar(unpublishedNotice)
+            null -> Unit
+        }
+        if (state.actionNotice != null) vm.clearNotice()
+    }
+
+    Box(Modifier.fillMaxSize()) {
+        Column(Modifier.fillMaxSize()) {
+            val tabItems: @Composable () -> Unit = {
+                Tab(
+                    selected = state.tab == 0,
+                    onClick = { vm.setTab(0) },
+                    text = { Text(stringResource(R.string.events_tab_upcoming), maxLines = 1, overflow = TextOverflow.Ellipsis) },
+                )
+                Tab(
+                    selected = state.tab == 1,
+                    onClick = { vm.setTab(1) },
+                    text = { Text(stringResource(R.string.events_tab_my_schedule), maxLines = 1, overflow = TextOverflow.Ellipsis) },
+                )
+                Tab(
+                    selected = state.tab == 2,
+                    onClick = { vm.setTab(2) },
+                    text = { Text(stringResource(R.string.events_tab_past), maxLines = 1, overflow = TextOverflow.Ellipsis) },
+                )
+                if (canCreateEvent) {
+                    Tab(
+                        selected = state.tab == 3,
+                        onClick = { vm.setTab(3) },
+                        text = { Text(stringResource(R.string.events_tab_managing), maxLines = 1, overflow = TextOverflow.Ellipsis) },
+                    )
+                }
+            }
+            if (canCreateEvent) {
+                PrimaryScrollableTabRow(selectedTabIndex = state.tab, edgePadding = Spacing.xs) {
+                    tabItems()
+                }
+            } else {
+                PrimaryTabRow(selectedTabIndex = state.tab.coerceIn(0, 2)) {
+                    tabItems()
+                }
+            }
+
+            when {
+                state.loading -> LoadingView()
+                state.error != null && state.events.isEmpty() -> ErrorView(state.error!!, vm::refresh)
+                state.tab == 1 -> MyScheduleContent(state, vm::refresh, vm::selectDay, { vm.setTab(0) }, nav)
+                state.tab == 3 -> ManagingContent(
+                    state = state,
+                    onRefresh = vm::refresh,
+                    onToggleHideDrafts = vm::toggleHideDrafts,
+                    onOpenEvent = { nav.navigate(Routes.eventDetail(it)) },
+                    onPublishClick = { pendingPublish = it },
+                    onUnpublishClick = { pendingUnpublish = it },
+                )
+                else -> PullToRefreshBox(isRefreshing = state.refreshing, onRefresh = vm::refresh) {
+                    LazyColumn(
+                        Modifier.fillMaxSize().padding(horizontal = Spacing.sm),
+                        verticalArrangement = Arrangement.spacedBy(Spacing.xs),
+                        contentPadding = PaddingValues(vertical = Spacing.xs),
+                    ) {
+                        if (state.offline) item { OfflineBanner() }
+                        if (state.events.isEmpty()) item { EmptyView(stringResource(R.string.events_empty)) }
+                        items(state.events, key = { it.id }) { event ->
+                            val needed = if (state.tab == 0) state.requestsByEvent[event.id] ?: 0 else 0
+                            EventCard(event, onClick = { nav.navigate(Routes.eventDetail(event.id)) }, ridesNeeded = needed)
+                        }
+                    }
+                }
+            }
+        }
+        SnackbarHost(
+            hostState = snackbar,
+            modifier = Modifier.align(Alignment.BottomCenter),
+        )
+    }
+
+    pendingPublish?.let { target ->
+        AlertDialog(
+            onDismissRequest = { pendingPublish = null },
+            title = { Text(stringResource(R.string.event_publish)) },
+            text = { Text(stringResource(R.string.event_publish_confirm)) },
+            confirmButton = {
+                TextButton(onClick = {
+                    vm.publishEvent(target.id)
+                    pendingPublish = null
+                }) { Text(stringResource(R.string.common_confirm)) }
+            },
+            dismissButton = {
+                TextButton(onClick = { pendingPublish = null }) { Text(stringResource(R.string.common_cancel)) }
+            },
+        )
+    }
+
+    pendingUnpublish?.let { target ->
+        AlertDialog(
+            onDismissRequest = { pendingUnpublish = null },
+            title = { Text(stringResource(R.string.event_unpublish)) },
+            text = { Text(stringResource(R.string.event_unpublish_confirm)) },
+            confirmButton = {
+                TextButton(onClick = {
+                    vm.unpublishEvent(target.id)
+                    pendingUnpublish = null
+                }) { Text(stringResource(R.string.common_confirm)) }
+            },
+            dismissButton = {
+                TextButton(onClick = { pendingUnpublish = null }) { Text(stringResource(R.string.common_cancel)) }
+            },
+        )
+    }
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun ManagingContent(
+    state: EventsUiState,
+    onRefresh: () -> Unit,
+    onToggleHideDrafts: () -> Unit,
+    onOpenEvent: (Long) -> Unit,
+    onPublishClick: (EventItem) -> Unit,
+    onUnpublishClick: (EventItem) -> Unit,
+) {
+    PullToRefreshBox(isRefreshing = state.refreshing, onRefresh = onRefresh) {
+        LazyColumn(
+            Modifier.fillMaxSize().padding(horizontal = Spacing.sm),
+            verticalArrangement = Arrangement.spacedBy(Spacing.xs),
+            contentPadding = PaddingValues(vertical = Spacing.xs),
+        ) {
+            if (state.offline) item { OfflineBanner() }
+            item {
+                val filterLabel = if (!state.hideDrafts && state.draftCount > 0) {
+                    stringResource(R.string.events_hide_drafts_count, state.draftCount)
+                } else {
+                    stringResource(R.string.events_hide_drafts)
+                }
+                FilterChip(
+                    selected = state.hideDrafts,
+                    onClick = onToggleHideDrafts,
+                    label = { Text(filterLabel) },
+                )
+            }
+            if (state.events.isEmpty()) {
+                item {
+                    if (state.hideDrafts) {
+                        Column(
+                            horizontalAlignment = Alignment.CenterHorizontally,
+                            verticalArrangement = Arrangement.spacedBy(Spacing.xs),
+                            modifier = Modifier.fillMaxWidth().padding(vertical = Spacing.lg),
+                        ) {
+                            EmptyView(stringResource(R.string.events_drafts_hidden_empty))
+                            OutlinedButton(onClick = onToggleHideDrafts) {
+                                Text(stringResource(R.string.events_show_drafts))
+                            }
+                        }
+                    } else {
+                        EmptyView(stringResource(R.string.events_empty))
+                    }
+                }
+            }
+            items(state.events, key = { it.id }) { event ->
+                val busy = state.busyEventId == event.id
+                ManagingEventCard(
+                    event = event,
+                    busy = busy,
+                    onClick = { onOpenEvent(event.id) },
+                    onPublishClick = { onPublishClick(event) },
+                    onUnpublishClick = { onUnpublishClick(event) },
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun ManagingEventCard(
+    event: EventItem,
+    busy: Boolean,
+    onClick: () -> Unit,
+    onPublishClick: () -> Unit,
+    onUnpublishClick: () -> Unit,
+) {
+    val c = LocalStatusColors.current
+    OutlinedCard(onClick = onClick, modifier = Modifier.fillMaxWidth()) {
+        Column(Modifier.padding(Spacing.sm), verticalArrangement = Arrangement.spacedBy(Spacing.xs)) {
+            Row(
+                Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Row(
+                    horizontalArrangement = Arrangement.spacedBy(Spacing.xs),
+                    verticalAlignment = Alignment.CenterVertically,
+                    modifier = Modifier.weight(1f),
                 ) {
-                    if (state.offline) item { OfflineBanner() }
-                    if (state.events.isEmpty()) item { EmptyView(stringResource(R.string.events_empty)) }
-                    items(state.events, key = { it.id }) { event ->
-                        val needed = if (state.tab == 0) state.requestsByEvent[event.id] ?: 0 else 0
-                        EventCard(event, onClick = { nav.navigate(Routes.eventDetail(event.id)) }, ridesNeeded = needed)
+                    EventIcon(icon = event.icon, kind = event.kind, size = 22.dp)
+                    Text(
+                        event.title,
+                        style = MaterialTheme.typography.titleSmall,
+                        color = MaterialTheme.colorScheme.onSurface,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                        modifier = Modifier.weight(1f, fill = false),
+                    )
+                }
+                if (event.status == "draft") {
+                    Surface(color = c.warningSoft, contentColor = c.warning, shape = CircleShape) {
+                        Text(
+                            stringResource(R.string.event_status_draft),
+                            style = MaterialTheme.typography.labelMedium,
+                            modifier = Modifier.padding(horizontal = Spacing.xs, vertical = Spacing.xxs),
+                        )
+                    }
+                } else if (event.status == "cancelled") {
+                    Surface(color = c.dangerSoft, contentColor = c.danger, shape = CircleShape) {
+                        Text(
+                            stringResource(R.string.event_status_cancelled),
+                            style = MaterialTheme.typography.labelMedium,
+                            modifier = Modifier.padding(horizontal = Spacing.xs, vertical = Spacing.xxs),
+                        )
+                    }
+                }
+            }
+            Text(
+                friendlyTime(event.startsAt) + (if (event.location.isNotBlank()) " · " + event.location else ""),
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
+            if (event.canPublish || event.canUnpublish) {
+                Row(horizontalArrangement = Arrangement.spacedBy(Spacing.xs)) {
+                    if (event.canPublish) {
+                        Button(onClick = onPublishClick, enabled = !busy) {
+                            Text(stringResource(R.string.event_publish))
+                        }
+                    }
+                    if (event.canUnpublish) {
+                        OutlinedButton(onClick = onUnpublishClick, enabled = !busy) {
+                            Text(stringResource(R.string.event_unpublish))
+                        }
                     }
                 }
             }
@@ -213,6 +467,8 @@ private fun buildScheduleGroups(
                             stringResource(if (going) R.string.event_going else R.string.event_waitlist),
                             if (going) RideStatusKind.ACTIVE else RideStatusKind.PENDING,
                         ),
+                        eventIcon = event.icon,
+                        eventKind = event.kind,
                         onClick = { nav.navigate(Routes.eventDetail(event.id)) },
                     ),
                 )

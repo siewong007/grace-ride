@@ -117,6 +117,8 @@ pub enum ErrorKey {
     CarePassClosed,
     CarePassNotOpenYet,
     MileageAuthorisationRestricted,
+    EventNotDraft,
+    EventCannotHideWithSignups,
 
     // === Rides ===
     InvalidPickupTime,
@@ -370,6 +372,8 @@ impl ErrorKey {
             Self::CarePassClosed => "CARE_PASS_CLOSED",
             Self::CarePassNotOpenYet => "CARE_PASS_NOT_OPEN_YET",
             Self::MileageAuthorisationRestricted => "MILEAGE_AUTHORISATION_RESTRICTED",
+            Self::EventNotDraft => "EVENT_NOT_DRAFT",
+            Self::EventCannotHideWithSignups => "EVENT_CANNOT_HIDE_WITH_SIGNUPS",
 
             Self::InvalidPickupTime => "INVALID_PICKUP_TIME",
             Self::PickupTimeInPast => "PICKUP_TIME_IN_PAST",

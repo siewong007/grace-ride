@@ -143,6 +143,11 @@ pub(super) async fn driver_claim(
     if res.rows_affected() == 0 {
         return Err(conflict(u.lang, ErrorKey::RidePickedByAnotherDriver));
     }
+    sqlx::query("UPDATE event_signups SET self_transport = 0 WHERE event_id = $1 AND user_id = $2")
+        .bind(event_id)
+        .bind(u.id)
+        .execute(&mut *tx)
+        .await?;
     tx.commit().await?;
     let target_zh = if r.is_proxy == 1 && !r.rider_name.is_empty() {
         format!("长辈/组员 {}", r.rider_name)

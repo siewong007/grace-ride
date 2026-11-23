@@ -50,6 +50,7 @@ export default {
   upcomingEvent: '即将参加的活动',
   nextEvent: '下一场活动',
   transportNotArranged: '尚未安排交通',
+  transportSelf: '自行前往',
   needRideBtn: '我需要接送',
   offerDriveBtn: '我可以接送',
   viewEvent: '查看活动',

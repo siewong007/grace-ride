@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
-import { AlertCircle, Calendar, CarFront, Check, Plus, QrCode, Search } from 'lucide-react';
+import { AlertCircle, Calendar, CarFront, Check, Eye, EyeOff, Plus, QrCode, Search } from 'lucide-react';
 import { api, post, useApi } from '../api';
 import { useAuth } from '../auth';
 import { downloadIcs } from '../calendar';
@@ -29,6 +29,7 @@ import {
   PageHeader,
   Pill,
   Tabs,
+  useConfirm,
   useInfiniteScroll,
   useToast,
 } from '../components/ui';
@@ -67,11 +68,16 @@ export interface EventItem {
     status: string;
     need_ride: boolean;
     offer_drive: boolean;
+    self_transport?: boolean;
     attended: number | null;
     pass_code?: string | null;
   } | null;
   groups: string;
   can_manage: boolean;
+  /** Organiser may publish this draft event. */
+  can_publish?: boolean;
+  /** Organiser may hide this published event back to draft (no signups/rides). */
+  can_unpublish?: boolean;
   /** May cancel it (the events page's delete permission). */
   can_cancel?: boolean;
   /** Optional cover photo. */
@@ -145,6 +151,7 @@ export default function Events() {
   const ft = useFormatT();
   const { can, me } = useAuth();
   const toast = useToast();
+  const confirm = useConfirm();
   const [searchParams, setSearchParams] = useSearchParams();
 
   const canCreateEvent = can('events', 'create');
@@ -170,6 +177,7 @@ export default function Events() {
   const selectedDay = searchParams.get('day') || 'all';
   const pastQuery = searchParams.get('q') ?? '';
   const pastAttendedOnly = searchParams.get('attended') === '1';
+  const hideDrafts = searchParams.get('hideDrafts') === '1';
 
   const updateParams = useCallback(
     (patch: Record<string, string | null>) => {
@@ -330,6 +338,14 @@ export default function Events() {
     () => (Array.isArray(managingRes.data) ? managingRes.data : []),
     [managingRes.data],
   );
+  const draftManagingCount = useMemo(
+    () => managingEvents.filter((e) => e.status === 'draft').length,
+    [managingEvents],
+  );
+  const visibleManagingEvents = useMemo(
+    () => (hideDrafts ? managingEvents.filter((e) => e.status !== 'draft') : managingEvents),
+    [managingEvents, hideDrafts],
+  );
 
   const myUpcomingEvents = useMemo(
     () => upcomingEvents.filter((e) => e.my_signup && e.my_signup.status !== 'cancelled'),
@@ -364,7 +380,7 @@ export default function Events() {
       if (drives.length > 0) {
         return t('transportDrivingCount', { count: drives.length });
       }
-      return t('transportNotArranged');
+      return e.my_signup?.self_transport ? t('transportSelf') : t('transportNotArranged');
     },
     [ridesByEvent, drivesByEvent, ft, t],
   );
@@ -440,7 +456,8 @@ export default function Events() {
         return (
           e.status === 'published' &&
           e.my_signup?.status === 'going' &&
-          !hasTransportForEvent(e)
+          !hasTransportForEvent(e) &&
+          !e.my_signup?.self_transport
         );
       }
       if (statusFilter === 'rides_needed') {
@@ -535,6 +552,7 @@ export default function Events() {
       for (const r of linkedDrives) consumedDriveIds.add(r.id);
 
       const hasTransport = linkedRides.length > 0 || linkedDrives.length > 0;
+      const selfTransport = !hasTransport && Boolean(e.my_signup?.self_transport);
       const going = e.my_signup?.status === 'going';
       const attendanceEnabled = e.attendance_enabled !== false;
       const attended = attendanceEnabled && e.my_signup?.attended === 1;
@@ -542,7 +560,7 @@ export default function Events() {
 
       const action =
         canShowPass ||
-        (e.status === 'published' && going && !hasTransport && (can('rides', 'create') || can('drive', 'create'))) ? (
+        (e.status === 'published' && going && !hasTransport && !selfTransport && (can('rides', 'create') || can('drive', 'create'))) ? (
           <div className="btn-row">
             {canShowPass && (
               <Button
@@ -554,12 +572,12 @@ export default function Events() {
                 {t('showMyPass')}
               </Button>
             )}
-            {e.status === 'published' && going && !hasTransport && can('rides', 'create') && (
+            {e.status === 'published' && going && !hasTransport && !selfTransport && can('rides', 'create') && (
               <Button variant="primary" size="sm" to={`/rides/new?event=${e.id}`}>
                 {t('needRideBtn')}
               </Button>
             )}
-            {e.status === 'published' && going && !hasTransport && can('drive', 'create') && (
+            {e.status === 'published' && going && !hasTransport && !selfTransport && can('drive', 'create') && (
               <Button variant="ghost" size="sm" to={`/events/${e.id}?drive=1`}>
                 {t('offerDriveBtn')}
               </Button>
@@ -576,10 +594,10 @@ export default function Events() {
             id: `event-${e.id}`,
             timeLabel: fmtTime(e.starts_at, ft),
             title: e.title,
-            subtitle: `${e.location}${going && !hasTransport ? ` · ${t('transportNotArranged')}` : ''}`,
+            subtitle: `${e.location}${going && !hasTransport ? ` · ${selfTransport ? t('transportSelf') : t('transportNotArranged')}` : ''}`,
             to: `/events/${e.id}`,
             kind: 'event',
-            icon: <EventIcon icon={e.icon} kind={e.kind} size={15} />,
+            icon: <EventIcon icon={e.icon} kind={e.kind} size={20} />,
             state: attended ? 'done' : going ? 'active' : 'upcoming',
             badge: attended ? (
               <Pill tone="success">{t('statusAttended', { ns: 'eventDetail' })}</Pill>
@@ -709,6 +727,53 @@ export default function Events() {
     }
   };
 
+  const handleSetSelfTransport = async (e: EventItem) => {
+    setActionBusy(true);
+    try {
+      await post(`/events/${e.id}/transport`, { self_transport: true });
+      upcomingRes.reload();
+      toast.success(t('goingOwnWaySaved', { ns: 'eventDetail' }));
+    } catch (err) {
+      toast.error((err as Error).message);
+    } finally {
+      setActionBusy(false);
+    }
+  };
+
+  const handlePublishEvent = async (ev: EventItem) => {
+    setActionBusy(true);
+    try {
+      await post(`/events/${ev.id}/publish`, {});
+      managingRes.reload();
+      upcomingRes.reload();
+      toast.success(t('publishSuccess'));
+    } catch (err) {
+      toast.error((err as Error).message);
+    } finally {
+      setActionBusy(false);
+    }
+  };
+
+  const handleUnpublishEvent = async (ev: EventItem) => {
+    const ok = await confirm({
+      title: t('unpublishConfirmTitle'),
+      body: t('unpublishConfirmBody'),
+      confirmLabel: t('hideToDraftBtn'),
+    });
+    if (!ok) return;
+    setActionBusy(true);
+    try {
+      await post(`/events/${ev.id}/unpublish`, {});
+      managingRes.reload();
+      upcomingRes.reload();
+      toast.success(t('unpublishSuccess'));
+    } catch (err) {
+      toast.error((err as Error).message);
+    } finally {
+      setActionBusy(false);
+    }
+  };
+
   const renderEventRow = (e: EventItem) => {
     const d = parseLocal(e.starts_at);
     const monthName = d.toLocaleDateString(dateLocale, { month: 'short' });
@@ -718,6 +783,7 @@ export default function Events() {
     const ridePair = ridesByEvent.get(e.id);
     const drives = drivesByEvent.get(e.id) ?? [];
     const hasTransport = Boolean(ridePair?.outbound || ridePair?.returnRide || drives.length > 0);
+    const selfTransport = !hasTransport && Boolean(e.my_signup?.self_transport);
     const deadlineMs = e.signup_deadline ? parseLocal(e.signup_deadline).getTime() : null;
     const nowMs = Date.now();
     const deadlinePassed = deadlineMs != null ? deadlineMs < nowMs : false;
@@ -792,7 +858,7 @@ export default function Events() {
                 </div>
                 <div className="muted small ellipsis">
                   <span className="event-kind-inline">
-                    <EventIcon icon={e.icon} kind={e.kind} size={14} />
+                    <EventIcon icon={e.icon} kind={e.kind} size={20} />
                     <span>{ft(EVENT_KIND[e.kind]?.label ?? e.kind)}</span>
                   </span>
                   {e.groups ? ` · ${e.groups}` : ''}
@@ -893,7 +959,7 @@ export default function Events() {
               </div>
             )}
 
-            {scope === 'upcoming' && going && !hasTransport && e.status === 'published' && (
+            {scope === 'upcoming' && going && !hasTransport && !selfTransport && e.status === 'published' && (
               <div className="event-transport-alert">
                 <span className="small bold event-transport-alert-label">
                   <AlertCircle size={15} aria-hidden="true" />
@@ -910,7 +976,24 @@ export default function Events() {
                       {t('offerDriveBtn')}
                     </Button>
                   )}
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    disabled={actionBusy}
+                    onClick={() => handleSetSelfTransport(e)}
+                  >
+                    {t('goingOwnWay', { ns: 'eventDetail' })}
+                  </Button>
                 </div>
+              </div>
+            )}
+
+            {scope === 'upcoming' && going && !hasTransport && selfTransport && e.status === 'published' && (
+              <div className="event-transport-strip">
+                <span className="small event-transport-text">
+                  <Check size={14} aria-hidden="true" />
+                  <span>{t('transportSelf')}</span>
+                </span>
               </div>
             )}
           </div>
@@ -1149,7 +1232,7 @@ export default function Events() {
                       {block.event && (
                         <div className="outing-block-head">
                           <span className="small muted event-kind-inline">
-                            <EventIcon icon={block.event.icon} kind={block.event.kind} size={14} />
+                            <EventIcon icon={block.event.icon} kind={block.event.kind} size={20} />
                             <span>
                               {ft(EVENT_KIND[block.event.kind]?.label ?? block.event.kind)}
                               {block.event.groups ? ` · ${block.event.groups}` : ''}
@@ -1192,24 +1275,62 @@ export default function Events() {
             />
           ) : (
             <div className="stack-sm">
-              {managingEvents.map((e) => {
-                const canPlan = can('admin_plan') && (can('admin_dashboard') || e.can_manage);
-                const canReimb =
-                  (e.created_by?.id === me?.id && can('events', 'update')) ||
-                  can('admin_events') ||
-                  can('admin_plan') ||
-                  can('admin_rides');
-                return (
-                  <EventManageCard
-                    key={e.id}
-                    event={e}
-                    canPlan={canPlan}
-                    canReimb={canReimb}
-                    onOpenQr={setQrManageEvent}
-                    onOpenReimb={(ev) => setReimbEventId(ev.id)}
-                  />
-                );
-              })}
+              {(draftManagingCount > 0 || hideDrafts) && (
+                <div className="events-month-bar" data-no-swipe-back data-no-swipe-next>
+                  <button
+                    type="button"
+                    className={`chip ${hideDrafts ? 'on' : ''}`}
+                    aria-pressed={hideDrafts}
+                    onClick={() => updateParams({ hideDrafts: hideDrafts ? null : '1' })}
+                  >
+                    {hideDrafts ? <Eye size={14} aria-hidden="true" /> : <EyeOff size={14} aria-hidden="true" />}
+                    <span>
+                      {hideDrafts
+                        ? draftManagingCount > 0
+                          ? t('draftsHiddenCount', { count: draftManagingCount })
+                          : t('showDrafts')
+                        : draftManagingCount > 0
+                          ? t('hideDraftsCount', { count: draftManagingCount })
+                          : t('hideDrafts')}
+                    </span>
+                  </button>
+                </div>
+              )}
+              {!visibleManagingEvents.length ? (
+                <EmptyState
+                  className="events-empty-card"
+                  icon={emptyCalendarIcon}
+                  title={t('draftsHiddenEmptyTitle')}
+                  description={t('draftsHiddenEmptyDesc')}
+                  action={
+                    <Button variant="secondary" size="sm" onClick={() => updateParams({ hideDrafts: null })}>
+                      {t('showDrafts')}
+                    </Button>
+                  }
+                />
+              ) : (
+                visibleManagingEvents.map((e) => {
+                  const canPlan = can('admin_plan') && (can('admin_dashboard') || e.can_manage);
+                  const canReimb =
+                    (e.created_by?.id === me?.id && can('events', 'update')) ||
+                    can('admin_events') ||
+                    can('admin_plan') ||
+                    can('admin_rides');
+                  return (
+                    <EventManageCard
+                      key={e.id}
+                      event={e}
+                      canPlan={canPlan}
+                      canReimb={canReimb}
+                      busy={actionBusy}
+                      onOpenQr={setQrManageEvent}
+                      onOpenReimb={(ev) => setReimbEventId(ev.id)}
+                      onPublish={handlePublishEvent}
+                      onUnpublish={handleUnpublishEvent}
+                    />
+                  );
+                })
+              )}
             </div>
           )
         ) : scope === 'past' ? (

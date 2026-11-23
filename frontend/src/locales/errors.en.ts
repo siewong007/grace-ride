@@ -112,7 +112,9 @@ export default {
     "ONLY_GOING_CAN_INVITE_VISITOR": "Only members going to the event, or its organiser, can invite a visitor",
     "INVALID_PASS_CODE": "No matching member pass code found for this event",
     "CARE_PASS_CLOSED": "This safe-arrival status link is closed or expired",
-    "MILEAGE_AUTHORISATION_RESTRICTED": "Only the super admin, President or Vice-President can allow an event to be claimable for mileage"
+    "MILEAGE_AUTHORISATION_RESTRICTED": "Only the super admin, President or Vice-President can allow an event to be claimable for mileage",
+    "EVENT_NOT_DRAFT": "This event is not a draft",
+    "EVENT_CANNOT_HIDE_WITH_SIGNUPS": "Cannot hide to draft while active signups or rides exist"
   },
   "rides": {
     "PICKUP_TIME_REQUIRED": "Please enter a pickup time",

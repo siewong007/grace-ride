@@ -57,12 +57,13 @@ pub async fn group_scopes(db: &PgPool, user_id: i64) -> Result<(Vec<i64>, Vec<i6
 }
 
 /// SQL condition: event `e` is visible to the member whose id is bound at `me` and whose
-/// `group_scope` is bound at `scope` (a `BIGINT[]`). Organiser, `is_all`, or a targeted
-/// group in scope. Event admins are let through in Rust, not here.
+/// `group_scope` is bound at `scope` (a `BIGINT[]`). Organiser always sees their own
+/// events (including drafts); other members only see non-draft events for `is_all` or a
+/// targeted group in scope. Event admins are let through in Rust, not here.
 pub fn visible_events_sql(me: &str, scope: &str) -> String {
     format!(
-        "(e.created_by = {me} OR EXISTS (SELECT 1 FROM event_groups eg JOIN groups g ON g.id = eg.group_id
-            WHERE eg.event_id = e.id AND (g.is_all = 1 OR eg.group_id = ANY({scope}))))"
+        "(e.created_by = {me} OR (e.status != 'draft' AND EXISTS (SELECT 1 FROM event_groups eg JOIN groups g ON g.id = eg.group_id
+            WHERE eg.event_id = e.id AND (g.is_all = 1 OR eg.group_id = ANY({scope})))))"
     )
 }
 

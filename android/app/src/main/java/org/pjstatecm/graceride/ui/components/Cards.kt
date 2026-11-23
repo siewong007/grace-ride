@@ -16,6 +16,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.dp
 import org.pjstatecm.graceride.R
 import org.pjstatecm.graceride.data.api.EventItem
 import org.pjstatecm.graceride.data.api.Ride
@@ -134,16 +135,37 @@ fun EventCard(
 ) {
     OutlinedCard(onClick = onClick, modifier = modifier.fillMaxWidth()) {
         Column(Modifier.padding(Spacing.sm)) {
-            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
-                Text(
-                    event.title,
-                    style = MaterialTheme.typography.titleSmall,
-                    color = MaterialTheme.colorScheme.onSurface,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
-                    modifier = Modifier.weight(1f, fill = false),
-                )
+            Row(
+                Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Row(
+                    horizontalArrangement = Arrangement.spacedBy(Spacing.xs),
+                    verticalAlignment = Alignment.CenterVertically,
+                    modifier = Modifier.weight(1f),
+                ) {
+                    EventIcon(icon = event.icon, kind = event.kind, size = 22.dp)
+                    Text(
+                        event.title,
+                        style = MaterialTheme.typography.titleSmall,
+                        color = MaterialTheme.colorScheme.onSurface,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                        modifier = Modifier.weight(1f, fill = false),
+                    )
+                }
                 Row(horizontalArrangement = Arrangement.spacedBy(Spacing.xxs), verticalAlignment = Alignment.CenterVertically) {
+                    if (event.status == "draft") {
+                        val c = LocalStatusColors.current
+                        Surface(color = c.warningSoft, contentColor = c.warning, shape = CircleShape) {
+                            Text(
+                                stringResource(R.string.event_status_draft),
+                                style = MaterialTheme.typography.labelMedium,
+                                modifier = Modifier.padding(horizontal = Spacing.xs, vertical = Spacing.xxs),
+                            )
+                        }
+                    }
                     if (ridesNeeded > 0) {
                         Surface(
                             color = MaterialTheme.colorScheme.primaryContainer,

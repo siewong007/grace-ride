@@ -162,4 +162,41 @@ class RegressionTest {
         val distinctBgs = BadgeTierStyle.ALL_TIERS.map { BadgeTierStyle.palette(it).bg }.toSet()
         assertEquals(4, distinctBgs.size)
     }
+
+    @Test
+    fun avatarStyleCodecSupportsShapesAndForegroundColors() {
+        assertEquals(8, AvatarStyle.AVATAR_SHAPES.size)
+        assertEquals(6, AvatarStyle.AVATAR_BG_SHAPES.size)
+        assertEquals(9, AvatarStyle.COLORS.size)
+
+        assertEquals("white:hexagon", AvatarStyle.encodeAvatarColor("white", "hexagon"))
+        assertEquals("amber", AvatarStyle.encodeAvatarColor("amber", "circle"))
+        assertEquals(":squircle", AvatarStyle.encodeAvatarColor("", "squircle"))
+
+        val parsedColor = AvatarStyle.parseAvatarColor("white:hexagon")
+        assertEquals("white", parsedColor.bgColor)
+        assertEquals("hexagon", parsedColor.bgShape)
+
+        val defaultColor = AvatarStyle.parseAvatarColor("blue")
+        assertEquals("blue", defaultColor.bgColor)
+        assertEquals("circle", defaultColor.bgShape)
+
+        assertEquals("grok:circle:coral", AvatarStyle.encodeAvatarIcon("grok", "circle", "coral"))
+        assertEquals("grok::coral", AvatarStyle.encodeAvatarIcon("grok", "hexagon", "coral"))
+        assertEquals("grok", AvatarStyle.encodeAvatarIcon("grok", "hexagon", null))
+        assertEquals("muse:droplet:pink", AvatarStyle.encodeAvatarIcon("muse", "droplet", "pink"))
+        assertEquals("muse", AvatarStyle.encodeAvatarIcon("muse", "cloud", null))
+        assertEquals("car::purple", AvatarStyle.encodeAvatarIcon("car", "droplet", "purple"))
+        assertEquals("initials::teal", AvatarStyle.encodeAvatarIcon("initials", null, "teal"))
+        assertEquals("", AvatarStyle.encodeAvatarIcon("initials", null, null))
+
+        val parsedIcon = AvatarStyle.parseAvatarIcon("grok:circle:coral")
+        assertEquals("grok", parsedIcon.icon)
+        assertEquals("circle", parsedIcon.shape)
+        assertEquals("coral", parsedIcon.fgColor)
+        assertTrue(AvatarStyle.isAnimatedAvatar("grok:circle:coral"))
+        assertTrue(AvatarStyle.isShapeableAvatar("muse:droplet:pink"))
+        assertFalse(AvatarStyle.isShapeableAvatar("car::purple"))
+        assertEquals("blue", AvatarStyle.defaultColorFor("grace_car"))
+    }
 }

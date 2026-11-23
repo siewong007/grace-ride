@@ -82,6 +82,34 @@ async fn avatar_style_and_photo_removal() {
     let m = me().await;
     assert!(m.json["avatar_icon"].is_null());
     assert_eq!(m.json["avatar_color"], "white");
+
+    // Independent avatar + background shape and colour combinations validate and persist.
+    for (anim, bg) in [
+        ("grok:circle:coral", "white:hexagon"),
+        ("muse:droplet:pink", "blue:cloud"),
+        ("grok::blue", ":squircle"),
+        ("car::purple", "amber:pebble"),
+        ("initials::teal", "white:rounded"),
+    ] {
+        let r = put(json!({"avatar_icon": anim, "avatar_color": bg})).await;
+        assert_eq!(r.status, StatusCode::OK, "{anim} on {bg}: {}", r.json);
+        let m = me().await;
+        assert_eq!(m.json["avatar_icon"], anim);
+        assert_eq!(m.json["avatar_color"], bg);
+    }
+
+    // Invalid shape / foreground / injected compound values are rejected.
+    for bad_body in [
+        json!({"avatar_icon": "grok:star"}),
+        json!({"avatar_icon": "grok:circle:#ff0000"}),
+        json!({"avatar_icon": "grok:circle:blue:extra"}),
+        json!({"avatar_color": "blue:diamond"}),
+        json!({"avatar_color": ":badshape"}),
+        json!({"avatar_color": ":"}),
+    ] {
+        let r = put(bad_body.clone()).await;
+        assert_eq!(r.status, StatusCode::BAD_REQUEST, "{bad_body}: {}", r.json);
+    }
 }
 
 #[tokio::test]

@@ -175,6 +175,10 @@ pub fn render(lang: Lang, key: &ErrorKey) -> String {
         ErrorKey::MileageAuthorisationRestricted => {
             events::render(lang, EventsError::MileageAuthorisationRestricted)
         }
+        ErrorKey::EventNotDraft => events::render(lang, EventsError::EventNotDraft),
+        ErrorKey::EventCannotHideWithSignups => {
+            events::render(lang, EventsError::EventCannotHideWithSignups)
+        }
 
         ErrorKey::InvalidPickupTime => rides::render(lang, RidesError::InvalidPickupTime),
         ErrorKey::PickupTimeInPast => rides::render(lang, RidesError::PickupTimeInPast),
@@ -603,6 +607,8 @@ mod tests {
             ErrorKey::CarePassClosed => ErrorKey::CarePassClosed,
             ErrorKey::CarePassNotOpenYet => ErrorKey::CarePassNotOpenYet,
             ErrorKey::MileageAuthorisationRestricted => ErrorKey::MileageAuthorisationRestricted,
+            ErrorKey::EventNotDraft => ErrorKey::EventNotDraft,
+            ErrorKey::EventCannotHideWithSignups => ErrorKey::EventCannotHideWithSignups,
 
             ErrorKey::InvalidPickupTime => ErrorKey::InvalidPickupTime,
             ErrorKey::PickupTimeInPast => ErrorKey::PickupTimeInPast,

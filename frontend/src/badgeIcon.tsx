@@ -1,41 +1,4 @@
-import type { ComponentType, ReactNode, SVGProps } from 'react';
-import {
-  Award,
-  Car,
-  Clock,
-  Coffee,
-  Compass,
-  Crown,
-  Flame,
-  Gift,
-  Heart,
-  Medal,
-  Moon,
-  Shield,
-  Smile,
-  Sparkles,
-  Star,
-  Sun,
-  Target,
-  ThumbsUp,
-  Trophy,
-  Zap,
-  type LucideIcon,
-} from 'lucide-react';
-import {
-  BadgeCareShield,
-  BadgeCarpoolLove,
-  BadgeFellowshipSprout,
-  BadgeHelpingWheels,
-  BadgeJoyRider,
-  BadgeNightOwl,
-  BadgePunctualClock,
-  BadgeResidentDriver,
-  BadgeRouteCompass,
-  BadgeTrafficLight,
-  BadgeTrafficWhistle,
-  BadgeWarmWelcome,
-} from './animatedBadges';
+import type { ReactNode } from 'react';
 import type { Badge, BadgeTier, BadgeTierStep, EarnedBadgeTier } from './types/domain';
 
 export type { BadgeTier, BadgeTierStep, EarnedBadgeTier };
@@ -59,29 +22,32 @@ export const BADGE_TIER_ROMAN: Record<EarnedBadgeTier, string> = {
   platinum: 'IV',
 };
 
+export const badgeGifUrl = (key: string): string => `/icons/badges/${key}.gif`;
+
 export interface AnimatedBadgeMeta {
   key: string;
   label: string;
   category: BadgeCategory;
-  component: ComponentType<SVGProps<SVGSVGElement>>;
+  className: string;
+  gif: string;
 }
 
 export const ANIMATED_BADGE_ICONS: readonly AnimatedBadgeMeta[] = [
   // Normal Member
-  { key: 'badge_joy_rider', label: 'Joyful Rider', category: 'member', component: BadgeJoyRider },
-  { key: 'badge_fellowship_sprout', label: 'Faithful Attendee', category: 'member', component: BadgeFellowshipSprout },
-  { key: 'badge_punctual_clock', label: 'Ready & Punctual', category: 'member', component: BadgePunctualClock },
-  { key: 'badge_warm_welcome', label: 'Caring Helper', category: 'member', component: BadgeWarmWelcome },
+  { key: 'badge_joy_rider', label: 'Joyful Rider', category: 'member', className: 'badge-joy-rider', gif: badgeGifUrl('badge_joy_rider') },
+  { key: 'badge_fellowship_sprout', label: 'Faithful Attendee', category: 'member', className: 'badge-fellowship-sprout', gif: badgeGifUrl('badge_fellowship_sprout') },
+  { key: 'badge_punctual_clock', label: 'Ready & Punctual', category: 'member', className: 'badge-punctual-clock', gif: badgeGifUrl('badge_punctual_clock') },
+  { key: 'badge_warm_welcome', label: 'Caring Helper', category: 'member', className: 'badge-warm-welcome', gif: badgeGifUrl('badge_warm_welcome') },
   // Driver
-  { key: 'moon', label: 'Night Owl', category: 'driver', component: BadgeNightOwl },
-  { key: 'award', label: 'Resident Driver', category: 'driver', component: BadgeResidentDriver },
-  { key: 'heart', label: 'Caring Companion', category: 'driver', component: BadgeCarpoolLove },
-  { key: 'badge_helping_wheels', label: 'Helping Wheels', category: 'driver', component: BadgeHelpingWheels },
+  { key: 'moon', label: 'Night Owl', category: 'driver', className: 'badge-night-owl', gif: badgeGifUrl('moon') },
+  { key: 'award', label: 'Resident Driver', category: 'driver', className: 'badge-resident-driver', gif: badgeGifUrl('award') },
+  { key: 'heart', label: 'Caring Companion', category: 'driver', className: 'badge-carpool-love', gif: badgeGifUrl('heart') },
+  { key: 'badge_helping_wheels', label: 'Helping Wheels', category: 'driver', className: 'badge-helping-wheels', gif: badgeGifUrl('badge_helping_wheels') },
   // Traffic Lead
-  { key: 'badge_traffic_light', label: 'Green-Light Captain', category: 'traffic_lead', component: BadgeTrafficLight },
-  { key: 'badge_route_compass', label: 'Master Route Planner', category: 'traffic_lead', component: BadgeRouteCompass },
-  { key: 'badge_traffic_whistle', label: 'Smooth Coordinator', category: 'traffic_lead', component: BadgeTrafficWhistle },
-  { key: 'badge_care_shield', label: 'Care Steward', category: 'traffic_lead', component: BadgeCareShield },
+  { key: 'badge_traffic_light', label: 'Green-Light Captain', category: 'traffic_lead', className: 'badge-traffic-light', gif: badgeGifUrl('badge_traffic_light') },
+  { key: 'badge_route_compass', label: 'Master Route Planner', category: 'traffic_lead', className: 'badge-route-compass', gif: badgeGifUrl('badge_route_compass') },
+  { key: 'badge_traffic_whistle', label: 'Smooth Coordinator', category: 'traffic_lead', className: 'badge-traffic-whistle', gif: badgeGifUrl('badge_traffic_whistle') },
+  { key: 'badge_care_shield', label: 'Care Steward', category: 'traffic_lead', className: 'badge-care-shield', gif: badgeGifUrl('badge_care_shield') },
 ] as const;
 
 const ANIMATED_BADGE_MAP: Record<string, AnimatedBadgeMeta> = Object.fromEntries(
@@ -93,37 +59,37 @@ export const isAnimatedBadgeIcon = (key?: string | null): boolean =>
 
 export const ACHIEVEMENT_ICONS: Record<
   string,
-  { label: string; icon: LucideIcon | ComponentType<SVGProps<SVGSVGElement>>; animated?: boolean }
+  { label: string; gif: string; animated?: boolean }
 > = {
-  award: { label: 'Award', icon: Award },
-  trophy: { label: 'Trophy', icon: Trophy },
-  medal: { label: 'Medal', icon: Medal },
-  moon: { label: 'Moon', icon: Moon },
-  star: { label: 'Star', icon: Star },
-  heart: { label: 'Heart', icon: Heart },
-  shield: { label: 'Shield', icon: Shield },
-  crown: { label: 'Crown', icon: Crown },
-  sparkles: { label: 'Sparkles', icon: Sparkles },
-  flame: { label: 'Flame', icon: Flame },
-  zap: { label: 'Lightning', icon: Zap },
-  car: { label: 'Car', icon: Car },
-  clock: { label: 'Clock', icon: Clock },
-  target: { label: 'Target', icon: Target },
-  sun: { label: 'Sun', icon: Sun },
-  coffee: { label: 'Coffee', icon: Coffee },
-  gift: { label: 'Gift', icon: Gift },
-  smile: { label: 'Smile', icon: Smile },
-  thumbsUp: { label: 'Thumbs Up', icon: ThumbsUp },
-  compass: { label: 'Compass', icon: Compass },
-  badge_joy_rider: { label: 'Joyful Rider', icon: BadgeJoyRider, animated: true },
-  badge_fellowship_sprout: { label: 'Faithful Attendee', icon: BadgeFellowshipSprout, animated: true },
-  badge_punctual_clock: { label: 'Ready & Punctual', icon: BadgePunctualClock, animated: true },
-  badge_warm_welcome: { label: 'Caring Helper', icon: BadgeWarmWelcome, animated: true },
-  badge_helping_wheels: { label: 'Helping Wheels', icon: BadgeHelpingWheels, animated: true },
-  badge_traffic_light: { label: 'Green-Light Captain', icon: BadgeTrafficLight, animated: true },
-  badge_route_compass: { label: 'Master Route Planner', icon: BadgeRouteCompass, animated: true },
-  badge_traffic_whistle: { label: 'Smooth Coordinator', icon: BadgeTrafficWhistle, animated: true },
-  badge_care_shield: { label: 'Care Steward', icon: BadgeCareShield, animated: true },
+  award: { label: 'Award', gif: badgeGifUrl('award'), animated: true },
+  trophy: { label: 'Trophy', gif: badgeGifUrl('trophy') },
+  medal: { label: 'Medal', gif: badgeGifUrl('medal') },
+  moon: { label: 'Moon', gif: badgeGifUrl('moon'), animated: true },
+  star: { label: 'Star', gif: badgeGifUrl('star') },
+  heart: { label: 'Heart', gif: badgeGifUrl('heart'), animated: true },
+  shield: { label: 'Shield', gif: badgeGifUrl('shield') },
+  crown: { label: 'Crown', gif: badgeGifUrl('crown') },
+  sparkles: { label: 'Sparkles', gif: badgeGifUrl('sparkles') },
+  flame: { label: 'Flame', gif: badgeGifUrl('flame') },
+  zap: { label: 'Lightning', gif: badgeGifUrl('zap') },
+  car: { label: 'Car', gif: badgeGifUrl('car') },
+  clock: { label: 'Clock', gif: badgeGifUrl('clock') },
+  target: { label: 'Target', gif: badgeGifUrl('target') },
+  sun: { label: 'Sun', gif: badgeGifUrl('sun') },
+  coffee: { label: 'Coffee', gif: badgeGifUrl('coffee') },
+  gift: { label: 'Gift', gif: badgeGifUrl('gift') },
+  smile: { label: 'Smile', gif: badgeGifUrl('smile') },
+  thumbsUp: { label: 'Thumbs Up', gif: badgeGifUrl('thumbsUp') },
+  compass: { label: 'Compass', gif: badgeGifUrl('compass') },
+  badge_joy_rider: { label: 'Joyful Rider', gif: badgeGifUrl('badge_joy_rider'), animated: true },
+  badge_fellowship_sprout: { label: 'Faithful Attendee', gif: badgeGifUrl('badge_fellowship_sprout'), animated: true },
+  badge_punctual_clock: { label: 'Ready & Punctual', gif: badgeGifUrl('badge_punctual_clock'), animated: true },
+  badge_warm_welcome: { label: 'Caring Helper', gif: badgeGifUrl('badge_warm_welcome'), animated: true },
+  badge_helping_wheels: { label: 'Helping Wheels', gif: badgeGifUrl('badge_helping_wheels'), animated: true },
+  badge_traffic_light: { label: 'Green-Light Captain', gif: badgeGifUrl('badge_traffic_light'), animated: true },
+  badge_route_compass: { label: 'Master Route Planner', gif: badgeGifUrl('badge_route_compass'), animated: true },
+  badge_traffic_whistle: { label: 'Smooth Coordinator', gif: badgeGifUrl('badge_traffic_whistle'), animated: true },
+  badge_care_shield: { label: 'Care Steward', gif: badgeGifUrl('badge_care_shield'), animated: true },
 };
 
 export interface BadgeIconProps {
@@ -135,31 +101,38 @@ export interface BadgeIconProps {
 }
 
 /**
- * Renders an achievement icon:
- * - If an adorable animated badge key is specified (e.g. "moon", "badge_joy_rider", "badge_traffic_light"),
- *   renders the multi-coloured animated SVG badge.
- * - If a registered Lucide icon key is specified (e.g. "trophy", "star"), renders the Lucide icon.
- * - If a custom short string/emoji is given, renders it as text.
+ * Renders an achievement icon as a high-quality Bloub-style animated GIF:
+ * - Registered role badges & classic achievement icon keys render their animated GIF.
+ * - Custom short string/emoji renders as text.
  * - Otherwise falls back to the badge character.
  */
 export function BadgeIcon({
   badge,
   icon,
   fallbackChar,
-  size = 24,
+  size = 40,
   className = '',
 }: BadgeIconProps): ReactNode {
-  const chosenKey = icon ?? badge?.icon;
-  if (chosenKey && ANIMATED_BADGE_MAP[chosenKey]) {
-    const AnimatedComponent = ANIMATED_BADGE_MAP[chosenKey].component;
-    return <AnimatedComponent className={className} aria-hidden="true" />;
+  const chosenKey = (icon ?? badge?.icon)?.trim();
+  if (chosenKey && (ANIMATED_BADGE_MAP[chosenKey] || Object.prototype.hasOwnProperty.call(ACHIEVEMENT_ICONS, chosenKey))) {
+    const animMeta = ANIMATED_BADGE_MAP[chosenKey];
+    const cls = ['badge-gif', animMeta ? 'badge-animated-svg' : '', animMeta?.className ?? '', className]
+      .filter(Boolean)
+      .join(' ');
+    return (
+      <img
+        src={badgeGifUrl(chosenKey)}
+        alt=""
+        width={size}
+        height={size}
+        className={cls}
+        aria-hidden="true"
+        decoding="async"
+      />
+    );
   }
-  if (chosenKey && ACHIEVEMENT_ICONS[chosenKey]) {
-    const IconComponent = ACHIEVEMENT_ICONS[chosenKey].icon as LucideIcon;
-    return <IconComponent size={size} className={className} aria-hidden="true" />;
-  }
-  if (chosenKey && chosenKey.trim()) {
-    return <span className={className}>{chosenKey.trim()}</span>;
+  if (chosenKey) {
+    return <span className={className}>{chosenKey}</span>;
   }
   return <span className={className}>{fallbackChar ?? badge?.char ?? '★'}</span>;
 }

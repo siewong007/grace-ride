@@ -112,7 +112,9 @@ export default {
     "ONLY_GOING_CAN_INVITE_VISITOR": "只有已报名参加的会员或活动负责人可以邀请访客",
     "INVALID_PASS_CODE": "找不到对应的活动通行码",
     "CARE_PASS_CLOSED": "此平安接送追踪链接已关闭或过期",
-    "MILEAGE_AUTHORISATION_RESTRICTED": "只有超级管理员、会长或副会长可以允许活动报销里程车费"
+    "MILEAGE_AUTHORISATION_RESTRICTED": "只有超级管理员、会长或副会长可以允许活动报销里程车费",
+    "EVENT_NOT_DRAFT": "此活动不是草稿状态",
+    "EVENT_CANNOT_HIDE_WITH_SIGNUPS": "已有会员报名或预约接送，无法退回草稿"
   },
   "rides": {
     "PICKUP_TIME_REQUIRED": "请填写接送时间",

@@ -42,6 +42,8 @@ pub enum EventsError {
     CarePassClosed,
     CarePassNotOpenYet,
     MileageAuthorisationRestricted,
+    EventNotDraft,
+    EventCannotHideWithSignups,
 }
 
 pub fn render(lang: Lang, key: EventsError) -> String {
@@ -215,6 +217,12 @@ pub fn render(lang: Lang, key: EventsError) -> String {
             lang,
             "只有超级管理员、会长或副会长可以允许活动报销里程车费",
             "Only the super admin, President or Vice-President can allow an event to be claimable for mileage",
+        ),
+        EventsError::EventNotDraft => pair(lang, "此活动不是草稿状态", "This event is not a draft"),
+        EventsError::EventCannotHideWithSignups => pair(
+            lang,
+            "已有会员报名或预约接送，无法退回草稿",
+            "Cannot hide to draft while active signups or rides exist",
         ),
     }
 }

@@ -14,6 +14,8 @@ import org.pjstatecm.graceride.data.api.Ride
 import org.pjstatecm.graceride.di.AppContainer
 import org.pjstatecm.graceride.domain.KlTime
 
+enum class EventActionNotice { PUBLISHED, UNPUBLISHED }
+
 data class EventsUiState(
     val tab: Int = 0,
     val loading: Boolean = true,
@@ -25,6 +27,11 @@ data class EventsUiState(
     val myDrives: List<Ride> = emptyList(),
     val selectedDay: String = "all",
     val requestsByEvent: Map<Long, Int> = emptyMap(),
+    val hideDrafts: Boolean = false,
+    val draftCount: Int = 0,
+    val busyEventId: Long? = null,
+    val message: String? = null,
+    val actionNotice: EventActionNotice? = null,
 )
 
 class EventsViewModel(private val container: AppContainer) : ViewModel() {
@@ -43,6 +50,55 @@ class EventsViewModel(private val container: AppContainer) : ViewModel() {
         _state.value = _state.value.copy(selectedDay = dayKey)
     }
 
+    fun toggleHideDrafts() {
+        _state.value = _state.value.copy(hideDrafts = !_state.value.hideDrafts)
+        load(first = false)
+    }
+
+    fun publishEvent(id: Long) {
+        if (_state.value.busyEventId != null) return
+        _state.value = _state.value.copy(busyEventId = id, message = null, actionNotice = null)
+        viewModelScope.launch {
+            try {
+                container.events.publish(id)
+                _state.value = _state.value.copy(actionNotice = EventActionNotice.PUBLISHED)
+                load(first = false)
+            } catch (e: ApiException) {
+                _state.value = _state.value.copy(message = e.message)
+            } finally {
+                _state.value = _state.value.copy(busyEventId = null)
+            }
+        }
+    }
+
+    fun unpublishEvent(id: Long) {
+        if (_state.value.busyEventId != null) return
+        _state.value = _state.value.copy(busyEventId = id, message = null, actionNotice = null)
+        viewModelScope.launch {
+            try {
+                container.events.unpublish(id)
+                val nextDrafts = if (_state.value.hideDrafts) _state.value.draftCount + 1 else _state.value.draftCount
+                _state.value = _state.value.copy(
+                    actionNotice = EventActionNotice.UNPUBLISHED,
+                    draftCount = nextDrafts,
+                )
+                load(first = false)
+            } catch (e: ApiException) {
+                _state.value = _state.value.copy(message = e.message)
+            } finally {
+                _state.value = _state.value.copy(busyEventId = null)
+            }
+        }
+    }
+
+    fun clearMessage() {
+        _state.value = _state.value.copy(message = null)
+    }
+
+    fun clearNotice() {
+        _state.value = _state.value.copy(actionNotice = null)
+    }
+
     fun refresh() = load(first = false)
 
     private fun load(first: Boolean) {
@@ -50,7 +106,17 @@ class EventsViewModel(private val container: AppContainer) : ViewModel() {
             _state.value = _state.value.copy(loading = first, refreshing = !first)
             try {
                 val tab = _state.value.tab
-                val events = if (tab == 2) container.events.past() else container.events.upcoming()
+                val hideDrafts = _state.value.hideDrafts
+                val events = when (tab) {
+                    2 -> container.events.past()
+                    3 -> container.events.managing(hideDrafts = hideDrafts)
+                    else -> container.events.upcoming()
+                }
+                val draftCount = if (tab == 3 && !hideDrafts) {
+                    events.count { it.status == "draft" }
+                } else {
+                    _state.value.draftCount
+                }
                 val requestsByEvent = if (tab == 0 && container.auth.me?.can("drive") == true) {
                     try {
                         container.rides.driverRequests(mineAreas = true)
@@ -88,6 +154,7 @@ class EventsViewModel(private val container: AppContainer) : ViewModel() {
                     myRides = myRides,
                     myDrives = myDrives,
                     requestsByEvent = requestsByEvent,
+                    draftCount = draftCount,
                     error = null,
                     offline = false,
                 )

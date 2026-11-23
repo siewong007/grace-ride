@@ -582,6 +582,7 @@ function NextGoingEventFocus({
 }) {
   const { t } = useTranslation('home');
   const ft = useFormatT();
+  const selfTransport = Boolean(event.my_signup?.self_transport);
 
   return (
     <section className="focus-surface" aria-labelledby="home-event-label home-event-title">
@@ -600,22 +601,30 @@ function NextGoingEventFocus({
         {fmtDateTime(event.starts_at, ft)} · {event.location}
       </p>
 
-      <p className="home-focus-status">{t('transportNotArranged')}</p>
+      <p className="home-focus-status">{selfTransport ? t('transportSelf') : t('transportNotArranged')}</p>
 
       <div className="btn-row home-next-above">
-        {canRequest ? (
-          <Button variant="primary" to={`/rides/new?event=${event.id}`}>
-            {t('needRideBtn')}
-          </Button>
-        ) : (
+        {selfTransport ? (
           <Button variant="primary" to={`/events/${event.id}`}>
             {t('viewEvent')}
           </Button>
-        )}
-        {canDrive && (
-          <Button variant="secondary" to={`/events/${event.id}`}>
-            {t('offerDriveBtn')}
-          </Button>
+        ) : (
+          <>
+            {canRequest ? (
+              <Button variant="primary" to={`/rides/new?event=${event.id}`}>
+                {t('needRideBtn')}
+              </Button>
+            ) : (
+              <Button variant="primary" to={`/events/${event.id}`}>
+                {t('viewEvent')}
+              </Button>
+            )}
+            {canDrive && (
+              <Button variant="secondary" to={`/events/${event.id}`}>
+                {t('offerDriveBtn')}
+              </Button>
+            )}
+          </>
         )}
       </div>
     </section>

@@ -66,12 +66,12 @@ async fn check_post_event_auth(
     u: &CurrentUser,
     event_id: i64,
 ) -> AppResult<(i64, String, Option<i64>)> {
-    let row: Option<(i64, String, Option<i64>)> =
-        sqlx::query_as("SELECT created_by, title, area_id FROM events WHERE id = $1")
+    let row: Option<(i64, String, Option<i64>, String)> =
+        sqlx::query_as("SELECT created_by, title, area_id, status FROM events WHERE id = $1")
             .bind(event_id)
             .fetch_optional(&st.db)
             .await?;
-    let (created_by, title, area_id) = row.ok_or_else(|| not_found(u.lang))?;
+    let (created_by, title, area_id, status) = row.ok_or_else(|| not_found(u.lang))?;
 
     let allowed = can_manage(u, created_by, Act::Update)
         || u.can(Page::AdminPlan, Act::Update)
@@ -80,6 +80,9 @@ async fn check_post_event_auth(
 
     if !allowed {
         return Err(forbidden(u.lang, ErrorKey::NoPermission));
+    }
+    if status == "draft" {
+        return Err(bad(u.lang, ErrorKey::EventNotOpen));
     }
 
     Ok((created_by, title, area_id))

@@ -4,7 +4,17 @@ import { Lock } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import { Tone } from '../../format';
 import { LoadingMark } from '../Brand';
-import { AVATAR_ICONS, isAnimatedAvatar, isAvatarColor } from '../../avatarStyle';
+import {
+  AVATAR_BG_SHAPE_PATHS,
+  AVATAR_ICONS,
+  avatarGifUrl,
+  avatarIconClass,
+  GrokBotSvg,
+  isAnimatedAvatar,
+  MuseBotSvg,
+  parseAvatarColor,
+  parseAvatarIcon,
+} from '../../avatarStyle';
 
 export interface EmptyStateProps {
   icon?: ReactNode;
@@ -233,15 +243,50 @@ export interface AvatarProps {
   src?: string | null;
 }
 
-/** A member's picture: their photo, else their chosen icon, else their first initial, on their chosen colour. */
+/** A member's picture: their photo, else their chosen icon/mascot, else their first initial, on their chosen colour and shape. */
 export function Avatar({ name, fileId, color, icon, size, src }: AvatarProps) {
-  const Icon = icon ? AVATAR_ICONS[icon] : undefined;
+  const { bgColor, bgShape } = parseAvatarColor(color);
+  const { icon: baseIcon, avatarShape, fgColor } = parseAvatarIcon(icon);
+  const hasPresetIcon = !!(
+    baseIcon &&
+    baseIcon !== 'initials' &&
+    Object.prototype.hasOwnProperty.call(AVATAR_ICONS, baseIcon)
+  );
   const img = src ?? (fileId ? `/api/files/${fileId}` : null);
-  const isAnim = isAnimatedAvatar(icon);
-  const cls = ['avatar', size ?? '', isAvatarColor(color) ? `av-${color}` : '', isAnim ? 'avatar-animated' : ''].filter(Boolean).join(' ');
+  const isAnim = isAnimatedAvatar(baseIcon) || hasPresetIcon;
+  const hasSvgBg = !img && (bgShape === 'hexagon' || bgShape === 'cloud');
+  const cls = [
+    'avatar',
+    size ?? '',
+    bgColor ? `av-${bgColor}` : '',
+    bgShape !== 'circle' ? `av-bg-${bgShape}` : '',
+    fgColor ? `av-fg-${fgColor}` : '',
+    isAnim ? 'avatar-animated' : '',
+    hasSvgBg ? 'avatar-svg-bg' : '',
+  ]
+    .filter(Boolean)
+    .join(' ');
+  const iconCls = ['avatar-animated-icon', avatarIconClass(baseIcon), 'avatar-icon', 'avatar-gif']
+    .filter(Boolean)
+    .join(' ');
   return (
     <div className={cls} aria-hidden>
-      {img ? <img src={img} alt="" /> : Icon ? <Icon className="avatar-icon" /> : Array.from(name.trim())[0] ?? '?'}
+      {hasSvgBg && (
+        <svg viewBox="0 0 48 48" fill="none" className="avatar-bg-svg" aria-hidden="true">
+          <path d={AVATAR_BG_SHAPE_PATHS[bgShape]} />
+        </svg>
+      )}
+      {img ? (
+        <img src={img} alt="" />
+      ) : baseIcon === 'grok' && avatarShape && avatarShape !== 'hexagon' ? (
+        <GrokBotSvg shape={avatarShape} className="avatar-icon" />
+      ) : baseIcon === 'muse' && avatarShape && avatarShape !== 'cloud' ? (
+        <MuseBotSvg shape={avatarShape} className="avatar-icon" />
+      ) : hasPresetIcon && baseIcon ? (
+        <img src={avatarGifUrl(baseIcon, fgColor ?? bgColor)} alt="" className={iconCls} decoding="async" />
+      ) : (
+        <span className="avatar-initial">{Array.from(name.trim())[0] ?? '?'}</span>
+      )}
     </div>
   );
 }

@@ -403,27 +403,44 @@ private fun AvatarEditorDialog(
     onSavePhoto: (Uri?, String) -> Unit,
     onSaveStyle: (String, String) -> Unit,
 ) {
+    val initParsedColor = AvatarStyle.parseAvatarColor(me.avatarColor)
+    val initParsedIcon = AvatarStyle.parseAvatarIcon(me.avatarIcon)
     val hasCustom = me.photoFileId != null || !me.avatarIcon.isNullOrBlank() || !me.avatarColor.isNullOrBlank()
+    val initialIconBase = when {
+        initParsedIcon.icon == "initials" || initParsedIcon.icon.isEmpty() ->
+            if (!hasCustom) AvatarStyle.DEFAULT_ANIMATED_ICON else "car"
+        else -> initParsedIcon.icon
+    }
     val initialMode = when {
         me.photoFileId != null -> AvatarMode.PHOTO
-        AvatarStyle.isAnimatedAvatar(me.avatarIcon) -> AvatarMode.ANIMATED
-        !me.avatarIcon.isNullOrBlank() -> AvatarMode.ICON
-        !me.avatarColor.isNullOrBlank() -> AvatarMode.INITIALS
+        AvatarStyle.isAnimatedAvatar(initParsedIcon.icon) -> AvatarMode.ANIMATED
+        AvatarStyle.staticIconVector(initParsedIcon.icon) != null -> AvatarMode.ICON
+        !me.avatarColor.isNullOrBlank() || initParsedIcon.fgColor != null -> AvatarMode.INITIALS
         else -> AvatarMode.ANIMATED
     }
     var mode by remember { mutableStateOf(initialMode) }
-    var icon by remember {
+    var icon by remember { mutableStateOf(initialIconBase) }
+    var avatarShape by remember {
+        mutableStateOf(initParsedIcon.shape ?: AvatarStyle.defaultAvatarShape(initialIconBase))
+    }
+    var fgColor by remember { mutableStateOf(initParsedIcon.fgColor) }
+    var bgColor by remember {
         mutableStateOf(
-            me.avatarIcon ?: if (!hasCustom) AvatarStyle.DEFAULT_ANIMATED_ICON else "car",
+            initParsedColor.bgColor.ifBlank {
+                if (!hasCustom) AvatarStyle.defaultColorFor(AvatarStyle.DEFAULT_ANIMATED_ICON) else "purple"
+            },
         )
     }
-    var color by remember {
-        mutableStateOf(
-            me.avatarColor ?: if (!hasCustom) AvatarStyle.defaultColorFor(AvatarStyle.DEFAULT_ANIMATED_ICON) else "purple",
-        )
-    }
-    var customColorPicked by remember { mutableStateOf(!me.avatarColor.isNullOrBlank()) }
+    var bgShape by remember { mutableStateOf(initParsedColor.bgShape) }
+    var customColorPicked by remember { mutableStateOf(initParsedColor.bgColor.isNotEmpty()) }
     var pickedUri by remember { mutableStateOf<Uri?>(null) }
+
+    val encodedColor = AvatarStyle.encodeAvatarColor(bgColor, bgShape)
+    val encodedIcon = when (mode) {
+        AvatarMode.ANIMATED, AvatarMode.ICON -> AvatarStyle.encodeAvatarIcon(icon, avatarShape, fgColor)
+        AvatarMode.INITIALS -> AvatarStyle.encodeAvatarIcon("initials", null, fgColor)
+        AvatarMode.PHOTO -> ""
+    }
 
     val pickImage = rememberLauncherForActivityResult(ActivityResultContracts.GetContent()) { uri ->
         if (uri != null) {
@@ -461,13 +478,13 @@ private fun AvatarEditorDialog(
                         else -> null
                     }
                     val previewIcon = when (mode) {
-                        AvatarMode.ANIMATED, AvatarMode.ICON -> icon
-                        else -> null
+                        AvatarMode.ANIMATED, AvatarMode.ICON, AvatarMode.INITIALS -> encodedIcon
+                        AvatarMode.PHOTO -> null
                     }
                     MemberAvatar(
                         name = me.name,
                         photoUrl = previewUrl,
-                        avatarColor = color,
+                        avatarColor = encodedColor,
                         avatarIcon = previewIcon,
                         size = 76.dp,
                     )
@@ -481,8 +498,9 @@ private fun AvatarEditorDialog(
                                 mode = m
                                 if (m == AvatarMode.ANIMATED && !AvatarStyle.isAnimatedAvatar(icon)) {
                                     icon = AvatarStyle.DEFAULT_ANIMATED_ICON
-                                    if (me.avatarColor.isNullOrBlank()) {
-                                        color = AvatarStyle.defaultColorFor(AvatarStyle.DEFAULT_ANIMATED_ICON)
+                                    avatarShape = AvatarStyle.defaultAvatarShape(icon)
+                                    if (!customColorPicked) {
+                                        bgColor = AvatarStyle.defaultColorFor(AvatarStyle.DEFAULT_ANIMATED_ICON)
                                     }
                                 } else if (m == AvatarMode.ICON && AvatarStyle.staticIconVector(icon) == null) {
                                     icon = "car"
@@ -526,13 +544,20 @@ private fun AvatarEditorDialog(
                                 ) {
                                     pair.forEach { (key, labelRes) ->
                                         val selected = icon == key
-                                        val activeCol = if (selected) color else AvatarStyle.defaultColorFor(key)
-                                        val (cardBg, cardFg) = AvatarStyle.colorPair(activeCol)
+                                        val activeBg = if (selected) bgColor else AvatarStyle.defaultColorFor(key)
+                                        val activeFg = if (selected) fgColor else null
+                                        val cardShape = if (selected && AvatarStyle.isShapeableAvatar(key)) {
+                                            avatarShape
+                                        } else {
+                                            AvatarStyle.defaultAvatarShape(key)
+                                        }
+                                        val (cardBg, cardFg) = AvatarStyle.colorPair(activeBg)
                                         OutlinedCard(
                                             onClick = {
                                                 icon = key
+                                                avatarShape = AvatarStyle.defaultAvatarShape(key)
                                                 if (!customColorPicked) {
-                                                    color = AvatarStyle.defaultColorFor(key)
+                                                    bgColor = AvatarStyle.defaultColorFor(key)
                                                 }
                                             },
                                             border = if (selected) {
@@ -550,6 +575,11 @@ private fun AvatarEditorDialog(
                                                 Surface(
                                                     color = cardBg,
                                                     shape = CircleShape,
+                                                    border = if (activeBg == "white") {
+                                                        BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant)
+                                                    } else {
+                                                        null
+                                                    },
                                                     modifier = Modifier.size(48.dp),
                                                 ) {
                                                     Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
@@ -557,7 +587,8 @@ private fun AvatarEditorDialog(
                                                             icon = key,
                                                             tint = cardFg,
                                                             modifier = Modifier.size(40.dp),
-                                                            avatarColor = activeCol,
+                                                            avatarColor = activeFg ?: activeBg,
+                                                            avatarShape = cardShape,
                                                         )
                                                     }
                                                 }
@@ -580,16 +611,98 @@ private fun AvatarEditorDialog(
                             verticalArrangement = Arrangement.spacedBy(Spacing.xs),
                         ) {
                             AvatarStyle.STATIC_ICONS.forEach { key ->
-                                val vec = AvatarStyle.staticIconVector(key) ?: return@forEach
                                 FilterChip(
                                     selected = icon == key,
                                     onClick = { icon = key },
-                                    label = { Icon(vec, contentDescription = key, modifier = Modifier.size(20.dp)) },
+                                    label = {
+                                        AnimatedMemberAvatar(
+                                            icon = key,
+                                            tint = MaterialTheme.colorScheme.onSurface,
+                                            modifier = Modifier.size(26.dp),
+                                            avatarColor = fgColor ?: bgColor,
+                                        )
+                                    },
                                 )
                             }
                         }
                     }
                     AvatarMode.INITIALS -> Unit
+                }
+
+                if (mode == AvatarMode.ANIMATED && AvatarStyle.isShapeableAvatar(icon)) {
+                    Text(stringResource(R.string.profile_avatar_shape), style = MaterialTheme.typography.labelMedium)
+                    FlowRow(
+                        horizontalArrangement = Arrangement.spacedBy(Spacing.xs),
+                        verticalArrangement = Arrangement.spacedBy(Spacing.xs),
+                    ) {
+                        AvatarStyle.AVATAR_SHAPES.forEach { sKey ->
+                            FilterChip(
+                                selected = avatarShape == sKey,
+                                onClick = { avatarShape = sKey },
+                                label = { Text(stringResource(avatarShapeLabelRes(sKey)), maxLines = 1) },
+                            )
+                        }
+                    }
+                }
+
+                if (mode != AvatarMode.PHOTO) {
+                    Text(stringResource(R.string.profile_avatar_fg_color), style = MaterialTheme.typography.labelMedium)
+                    FlowRow(
+                        horizontalArrangement = Arrangement.spacedBy(Spacing.xs),
+                        verticalArrangement = Arrangement.spacedBy(Spacing.xs),
+                    ) {
+                        FilterChip(
+                            selected = fgColor == null,
+                            onClick = { fgColor = null },
+                            label = { Text(stringResource(R.string.profile_avatar_color_auto), maxLines = 1) },
+                        )
+                        AvatarStyle.COLORS.forEach { cKey ->
+                            val swatchBg = AvatarStyle.grokSkinColor(cKey)
+                            val swatchFg = AvatarStyle.grokEyeColor(cKey)
+                            Surface(
+                                color = swatchBg,
+                                shape = CircleShape,
+                                border = when {
+                                    fgColor == cKey -> BorderStroke(2.dp, MaterialTheme.colorScheme.primary)
+                                    cKey == "white" -> BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant)
+                                    else -> null
+                                },
+                                modifier = Modifier.size(32.dp).clickable { fgColor = cKey },
+                            ) {
+                                if (fgColor == cKey) {
+                                    Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                                        Icon(Icons.Outlined.Check, contentDescription = cKey, tint = swatchFg, modifier = Modifier.size(16.dp))
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+
+                Text(stringResource(R.string.profile_avatar_bg_shape), style = MaterialTheme.typography.labelMedium)
+                FlowRow(
+                    horizontalArrangement = Arrangement.spacedBy(Spacing.xs),
+                    verticalArrangement = Arrangement.spacedBy(Spacing.xs),
+                ) {
+                    AvatarStyle.AVATAR_BG_SHAPES.forEach { bsKey ->
+                        val selected = bgShape == bsKey
+                        FilterChip(
+                            selected = selected,
+                            onClick = { bgShape = bsKey },
+                            leadingIcon = {
+                                Surface(
+                                    color = androidx.compose.ui.graphics.Color.Transparent,
+                                    shape = AvatarStyle.bgComposeShape(bsKey),
+                                    border = BorderStroke(
+                                        1.5.dp,
+                                        if (selected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
+                                    ),
+                                    modifier = Modifier.size(14.dp),
+                                ) {}
+                            },
+                            label = { Text(stringResource(avatarBgShapeLabelRes(bsKey)), maxLines = 1) },
+                        )
+                    }
                 }
 
                 Text(stringResource(R.string.profile_avatar_color), style = MaterialTheme.typography.labelMedium)
@@ -603,16 +716,16 @@ private fun AvatarEditorDialog(
                             color = bg,
                             shape = CircleShape,
                             border = when {
-                                color == cKey -> BorderStroke(2.dp, fg)
+                                bgColor == cKey -> BorderStroke(2.dp, fg)
                                 cKey == "white" -> BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant)
                                 else -> null
                             },
                             modifier = Modifier.size(32.dp).clickable {
-                                color = cKey
+                                bgColor = cKey
                                 customColorPicked = true
                             },
                         ) {
-                            if (color == cKey) {
+                            if (bgColor == cKey) {
                                 Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
                                     Icon(Icons.Outlined.Check, contentDescription = cKey, tint = fg, modifier = Modifier.size(16.dp))
                                 }
@@ -627,9 +740,8 @@ private fun AvatarEditorDialog(
                 enabled = !busy && canSave,
                 onClick = {
                     when (mode) {
-                        AvatarMode.PHOTO -> onSavePhoto(pickedUri, color)
-                        AvatarMode.ANIMATED, AvatarMode.ICON -> onSaveStyle(icon, color)
-                        AvatarMode.INITIALS -> onSaveStyle("", color)
+                        AvatarMode.PHOTO -> onSavePhoto(pickedUri, encodedColor)
+                        AvatarMode.ANIMATED, AvatarMode.ICON, AvatarMode.INITIALS -> onSaveStyle(encodedIcon, encodedColor)
                     }
                 },
             ) {
@@ -642,6 +754,26 @@ private fun AvatarEditorDialog(
             }
         },
     )
+}
+
+private fun avatarShapeLabelRes(key: String): Int = when (key) {
+    "circle" -> R.string.profile_avatar_shape_circle
+    "pebble" -> R.string.profile_avatar_shape_pebble
+    "squircle" -> R.string.profile_avatar_shape_squircle
+    "capsule" -> R.string.profile_avatar_shape_capsule
+    "triangle" -> R.string.profile_avatar_shape_triangle
+    "cloud" -> R.string.profile_avatar_shape_cloud
+    "droplet" -> R.string.profile_avatar_shape_droplet
+    else -> R.string.profile_avatar_shape_hexagon
+}
+
+private fun avatarBgShapeLabelRes(key: String): Int = when (key) {
+    "squircle" -> R.string.profile_avatar_bg_squircle
+    "rounded" -> R.string.profile_avatar_bg_rounded
+    "hexagon" -> R.string.profile_avatar_bg_hexagon
+    "cloud" -> R.string.profile_avatar_bg_cloud
+    "pebble" -> R.string.profile_avatar_bg_pebble
+    else -> R.string.profile_avatar_bg_circle
 }
 
 @Composable

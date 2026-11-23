@@ -315,7 +315,7 @@ async fn validate_reimb(st: &AppState, u: &CurrentUser, req: &ReimbIn) -> AppRes
         let Some((status,)) = event_row else {
             return Err(not_found(u.lang));
         };
-        if status == "cancelled" {
+        if status == "cancelled" || status == "draft" {
             return Err(bad(u.lang, ErrorKey::EventNotOpen));
         }
 

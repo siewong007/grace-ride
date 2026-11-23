@@ -10,7 +10,7 @@ use serde_json::{json, Value};
 use super::{can_see_event, can_see_signups, load_event};
 use crate::audience::join_choices;
 use crate::auth::CurrentUser;
-use crate::error::{bad, forbidden, AppResult};
+use crate::error::{bad, forbidden, not_found, AppResult};
 use crate::i18n::ErrorKey;
 use crate::perms::{Act, Page};
 use crate::state::AppState;
@@ -43,6 +43,7 @@ pub(super) struct SignupIn {
     need_ride: Option<bool>,
     offer_drive: Option<bool>,
     offer_seats: Option<i64>,
+    self_transport: Option<bool>,
     /// The group the member joins as. Required; filled in when only one fits.
     as_group_id: Option<i64>,
 }
@@ -104,10 +105,11 @@ pub(super) async fn signup(
     };
     let pass_code = allocate_pass_code(&mut tx, id).await?;
     sqlx::query(
-        "INSERT INTO event_signups (event_id, user_id, status, need_ride, offer_drive, offer_seats, created_at, as_group_id, pass_code) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)
+        "INSERT INTO event_signups (event_id, user_id, status, need_ride, offer_drive, offer_seats, created_at, as_group_id, pass_code, self_transport) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)
          ON CONFLICT(event_id, user_id) DO UPDATE SET status=excluded.status, need_ride=excluded.need_ride, offer_drive=excluded.offer_drive, offer_seats=excluded.offer_seats, as_group_id=excluded.as_group_id,
          pass_code = COALESCE(event_signups.pass_code, excluded.pass_code),
-         created_at = CASE WHEN event_signups.status = 'cancelled' THEN excluded.created_at ELSE event_signups.created_at END",
+         created_at = CASE WHEN event_signups.status = 'cancelled' THEN excluded.created_at ELSE event_signups.created_at END,
+         self_transport = CASE WHEN event_signups.status = 'cancelled' OR $11 THEN excluded.self_transport ELSE event_signups.self_transport END",
     )
     .bind(id)
     .bind(u.id)
@@ -118,6 +120,8 @@ pub(super) async fn signup(
     .bind(now())
     .bind(as_group)
     .bind(&pass_code)
+    .bind(req.self_transport.unwrap_or(false) as i64)
+    .bind(req.self_transport.is_some())
     .execute(&mut *tx)
     .await?;
     // A ride already booked for this event follows a changed "joining as".
@@ -229,7 +233,7 @@ pub(super) async fn withdraw(
             .fetch_one(&mut *tx)
             .await?;
     let withdrew = sqlx::query(
-        "UPDATE event_signups SET status='cancelled' WHERE event_id=$1 AND user_id=$2 AND status <> 'cancelled'",
+        "UPDATE event_signups SET status='cancelled', self_transport=0 WHERE event_id=$1 AND user_id=$2 AND status <> 'cancelled'",
     )
     .bind(id)
     .bind(u.id)
@@ -337,6 +341,64 @@ pub(super) async fn withdraw(
     Ok(Json(json!({"ok": true})))
 }
 
+#[derive(Deserialize)]
+pub(super) struct TransportIn {
+    self_transport: bool,
+}
+
+/// Update how a signed-up member gets to the event (currently toggling self-transport).
+pub(super) async fn set_transport(
+    State(st): State<AppState>,
+    u: CurrentUser,
+    Path(id): Path<i64>,
+    Json(req): Json<TransportIn>,
+) -> AppResult<Json<Value>> {
+    if !can_see_event(&st, &u, id).await? {
+        return Err(forbidden(u.lang, ErrorKey::EventNotOpenToGroup));
+    }
+    let event_status: Option<(String,)> = sqlx::query_as("SELECT status FROM events WHERE id=$1")
+        .bind(id)
+        .fetch_optional(&st.db)
+        .await?;
+    let Some((status,)) = event_status else {
+        return Err(not_found(u.lang));
+    };
+    if status != "published" {
+        return Err(bad(u.lang, ErrorKey::EventNotOpen));
+    }
+    let res = sqlx::query(
+        "UPDATE event_signups
+         SET self_transport = $1,
+             need_ride = CASE WHEN $1 = 1 THEN 0 ELSE need_ride END,
+             offer_drive = CASE WHEN $1 = 1 THEN 0 ELSE offer_drive END
+         WHERE event_id = $2 AND user_id = $3 AND status = 'going'",
+    )
+    .bind(req.self_transport as i64)
+    .bind(id)
+    .bind(u.id)
+    .execute(&st.db)
+    .await?;
+    if res.rows_affected() == 0 {
+        return Err(bad(u.lang, ErrorKey::EventRideNeedsSignup));
+    }
+    audit(
+        &st.db,
+        Some(u.id),
+        "event.transport",
+        "event",
+        Some(id),
+        if req.self_transport {
+            "self_transport"
+        } else {
+            "unset"
+        },
+    )
+    .await;
+    Ok(Json(
+        json!({ "ok": true, "self_transport": req.self_transport }),
+    ))
+}
+
 /// Signup list is visible only to the organiser (不公开全体报名名单).
 pub(super) async fn list_signups(
     State(st): State<AppState>,
@@ -355,12 +417,13 @@ pub(super) async fn list_signups(
         i64,
         i64,
         i64,
+        i64,
         Option<i64>,
         Option<String>,
         Option<String>,
     );
     let rows: Vec<SignupRow> = sqlx::query_as(
-        "SELECT s.id, s.user_id, u.name, s.status, s.need_ride, s.offer_drive, s.offer_seats, s.attended,
+        "SELECT s.id, s.user_id, u.name, s.status, s.need_ride, s.offer_drive, s.offer_seats, s.self_transport, s.attended,
             (SELECT r.status FROM rides r WHERE r.event_id = s.event_id AND r.passenger_id = s.user_id AND r.is_proxy = 0 AND r.status != 'cancelled'
              ORDER BY CASE WHEN r.leg='outbound' THEN 0 ELSE 1 END, r.id DESC LIMIT 1),
             (SELECT name FROM groups WHERE id = s.as_group_id)
@@ -369,8 +432,8 @@ pub(super) async fn list_signups(
     .bind(id)
     .fetch_all(&st.db)
     .await?;
-    Ok(Json(json!(rows.into_iter().map(|(sid, uid, name, status, nr, od, os, att, ride, as_group)| json!({
+    Ok(Json(json!(rows.into_iter().map(|(sid, uid, name, status, nr, od, os, st_flag, att, ride, as_group)| json!({
         "id": sid, "user_id": uid, "name": name, "status": status, "need_ride": nr == 1, "offer_drive": od == 1,
-        "offer_seats": os, "attended": att, "ride_status": ride, "as_group": as_group,
+        "offer_seats": os, "self_transport": st_flag == 1, "attended": att, "ride_status": ride, "as_group": as_group,
     })).collect::<Vec<_>>())))
 }

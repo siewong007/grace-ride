@@ -50,6 +50,7 @@ export default {
   upcomingEvent: 'Upcoming event',
   nextEvent: 'Next event',
   transportNotArranged: 'Transportation not arranged yet',
+  transportSelf: 'Going on your own',
   needRideBtn: 'I need a ride',
   offerDriveBtn: 'I can drive',
   viewEvent: 'View event',

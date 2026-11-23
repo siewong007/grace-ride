@@ -28,6 +28,7 @@ export function EventTodayBanner({
 
   const attendanceEnabled = event.attendance_enabled !== false;
   const attended = attendanceEnabled && event.my_signup?.attended === 1;
+  const selfTransport = Boolean(event.my_signup?.self_transport);
   const canShowPass = attendanceEnabled && !attended && Boolean(event.my_signup?.pass_code);
   const canScan = attendanceEnabled && !attended;
   const hasAttendanceActions = canShowPass || canScan;
@@ -45,7 +46,7 @@ export function EventTodayBanner({
       <div className="stack-xs">
         <Link to={`/events/${event.id}`} className="bold event-today-title">
           <span className="event-title-with-icon">
-            <EventIcon icon={event.icon} kind={event.kind} size={18} />
+            <EventIcon icon={event.icon} kind={event.kind} size={22} />
             <span>{event.title}</span>
           </span>
         </Link>
@@ -82,7 +83,7 @@ export function EventTodayBanner({
           <Button variant={transportVariant} size="sm" to="/drive">
             {t('openItinerary')}
           </Button>
-        ) : canRequestRide ? (
+        ) : canRequestRide && !selfTransport ? (
           <Button variant={transportVariant} size="sm" to={`/rides/new?event=${event.id}`}>
             {t('needRideBtn')}
           </Button>

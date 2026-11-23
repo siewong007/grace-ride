@@ -27,9 +27,12 @@ pub fn router() -> Router<AppState> {
         .route("/events", get(list_events).post(manage::create_event))
         .route("/events/{id}", get(get_event).put(manage::update_event))
         .route("/events/{id}/duplicate", post(manage::duplicate_event))
+        .route("/events/{id}/publish", post(manage::publish_event))
+        .route("/events/{id}/unpublish", post(manage::unpublish_event))
         .route("/events/{id}/cancel", post(manage::cancel_event))
         .route("/events/{id}/finish", post(manage::finish_event))
         .route("/events/{id}/signup", post(signups::signup))
+        .route("/events/{id}/transport", post(signups::set_transport))
         .route("/events/{id}/withdraw", post(signups::withdraw))
         .route("/events/{id}/signups", get(signups::list_signups))
         .route("/events/{id}/attendance", post(checkin::mark_attendance))
@@ -131,9 +134,12 @@ pub(super) struct EventRow {
     pub(super) waitlist: i64,
     pub(super) attended_count: i64,
     pub(super) unassigned_rides: i64,
+    pub(super) active_rides: i64,
+    pub(super) settlement_count: i64,
     pub(super) my_status: Option<String>,
     pub(super) my_need_ride: Option<i64>,
     pub(super) my_offer_drive: Option<i64>,
+    pub(super) my_self_transport: Option<i64>,
     pub(super) my_attended: Option<i64>,
     pub(super) my_as_group_id: Option<i64>,
     pub(super) my_as_group: Option<String>,
@@ -157,7 +163,9 @@ const EVENT_SELECT: &str = "SELECT e.id, e.title, e.kind, e.description, e.start
     (SELECT COUNT(*) FROM event_signups s WHERE s.event_id=e.id AND s.status='waitlist') AS waitlist,
     (SELECT COUNT(*) FROM event_signups s WHERE s.event_id=e.id AND s.status!='cancelled' AND s.attended=1) AS attended_count,
     (SELECT COUNT(*) FROM rides r WHERE r.event_id=e.id AND r.status='pending_driver') AS unassigned_rides,
-    ms.status AS my_status, ms.need_ride AS my_need_ride, ms.offer_drive AS my_offer_drive, ms.attended AS my_attended,
+    (SELECT COUNT(*) FROM rides r WHERE r.event_id=e.id AND r.status!='cancelled') AS active_rides,
+    (SELECT COUNT(*) FROM settlements st WHERE st.event_id=e.id) AS settlement_count,
+    ms.status AS my_status, ms.need_ride AS my_need_ride, ms.offer_drive AS my_offer_drive, ms.self_transport AS my_self_transport, ms.attended AS my_attended,
     ms.as_group_id AS my_as_group_id, (SELECT name FROM groups WHERE id = ms.as_group_id) AS my_as_group, ms.pass_code AS my_pass_code,
     (SELECT string_agg(g.name, '、') FROM event_groups eg JOIN groups g ON g.id=eg.group_id WHERE eg.event_id=e.id) AS groups
     FROM events e JOIN users c ON c.id = e.created_by
@@ -178,6 +186,7 @@ fn event_json(e: &EventRow, u: &CurrentUser) -> Value {
             "status": s,
             "need_ride": e.my_need_ride == Some(1),
             "offer_drive": e.my_offer_drive == Some(1),
+            "self_transport": e.my_self_transport == Some(1),
             "attended": e.my_attended,
             "pass_code": if s == "going" { e.my_pass_code.clone() } else { None },
             "as_group": e.my_as_group_id.map(|id| json!({"id": id, "name": e.my_as_group})),
@@ -189,6 +198,8 @@ fn event_json(e: &EventRow, u: &CurrentUser) -> Value {
         "area": e.area_id.map(|id| json!({"id": id, "name": e.area_name})),
         "checkin_code": if can_edit { e.checkin_code.clone() } else { None },
         "can_manage": can_edit,
+        "can_publish": can_edit && e.status == "draft",
+        "can_unpublish": can_edit && e.status == "published" && e.going == 0 && e.waitlist == 0 && e.active_rides == 0 && e.settlement_count == 0,
         "can_cancel": can_manage(u, e.created_by, Act::Delete),
         "can_see_signups": can_see_signups(u, e.created_by),
     })
@@ -199,6 +210,7 @@ struct ListQuery {
     scope: Option<String>, // upcoming | past | managing
     before: Option<String>,
     limit: Option<i64>,
+    hide_drafts: Option<bool>,
 }
 
 async fn list_events(
@@ -215,6 +227,7 @@ async fn list_events(
         let mut conds = vec![
             visibility,
             "(e.starts_at < $3 OR e.status='finished')".to_string(),
+            "e.status != 'draft'".to_string(),
         ];
         let cursor = q.before.as_deref().map(crate::util::split_cursor);
         let mut next_param = 4usize;
@@ -256,9 +269,15 @@ async fn list_events(
     }
 
     let sql = match q.scope.as_deref() {
-        Some("past") => format!("{EVENT_SELECT} WHERE {visibility} AND (e.starts_at < $3 OR e.status='finished') ORDER BY e.starts_at DESC LIMIT 50"),
-        Some("managing") => format!("{EVENT_SELECT} WHERE e.created_by = $1 ORDER BY e.starts_at DESC LIMIT 100"),
-        Some("registered") => format!("{EVENT_SELECT} WHERE {visibility} AND ms.status = 'going' AND e.status != 'cancelled' AND ($3 != '' OR TRUE) ORDER BY e.starts_at DESC LIMIT 100"),
+        Some("past") => format!("{EVENT_SELECT} WHERE {visibility} AND (e.starts_at < $3 OR e.status='finished') AND e.status != 'draft' ORDER BY e.starts_at DESC LIMIT 50"),
+        Some("managing") => {
+            if q.hide_drafts == Some(true) {
+                format!("{EVENT_SELECT} WHERE e.created_by = $1 AND e.status != 'draft' ORDER BY e.starts_at DESC LIMIT 100")
+            } else {
+                format!("{EVENT_SELECT} WHERE e.created_by = $1 ORDER BY e.starts_at DESC LIMIT 100")
+            }
+        }
+        Some("registered") => format!("{EVENT_SELECT} WHERE {visibility} AND ms.status = 'going' AND e.status NOT IN ('cancelled','draft') AND ($3 != '' OR TRUE) ORDER BY e.starts_at DESC LIMIT 100"),
         _ => format!("{EVENT_SELECT} WHERE {visibility} AND e.starts_at >= $3 AND e.status = 'published' ORDER BY e.starts_at LIMIT 100"),
     };
     let cutoff = now_str;

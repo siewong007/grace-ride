@@ -61,6 +61,8 @@ data class TimelineNode(
     val kind: TimelineKind,
     val state: TimelineState,
     val badge: TimelineBadge? = null,
+    val eventIcon: String? = null,
+    val eventKind: String = "",
     val onClick: (() -> Unit)? = null,
 )
 
@@ -210,11 +212,15 @@ fun ScheduleTimeline(
                         .size(34.dp),
                 ) {
                     Box(contentAlignment = Alignment.Center) {
-                        Icon(
-                            imageVector = iconFor(node.kind),
-                            contentDescription = null,
-                            modifier = Modifier.size(16.dp),
-                        )
+                        if (node.kind == TimelineKind.EVENT) {
+                            EventIcon(icon = node.eventIcon, kind = node.eventKind, size = 22.dp)
+                        } else {
+                            Icon(
+                                imageVector = iconFor(node.kind),
+                                contentDescription = null,
+                                modifier = Modifier.size(16.dp),
+                            )
+                        }
                     }
                 }
             }

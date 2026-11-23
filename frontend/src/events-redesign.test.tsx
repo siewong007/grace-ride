@@ -7,6 +7,7 @@ import i18n from './i18n';
 import { todayStr } from './format';
 import Events, { type EventItem } from './pages/Events';
 import EventDetail from './pages/EventDetail';
+import Home from './pages/Home';
 import { ToastProvider } from './components/ui';
 
 let mockApiData: Record<string, unknown> = {};
@@ -455,5 +456,175 @@ describe('Events tab redesign', () => {
     );
 
     expect(screen.getByText(/ride requests for this event/i)).toBeInTheDocument();
+  });
+
+  it('persists Going on my own and hides ride/drive buttons on EventDetail', async () => {
+    const user = userEvent.setup();
+    const ev = makeEvent({
+      id: 71,
+      title: 'Fellowship Lunch',
+      my_signup: { status: 'going', need_ride: false, offer_drive: false, self_transport: false, attended: 0 },
+    });
+    mockApiData['/events/71'] = { ...ev, group_ids: [1], my_ride: null, settlement: null };
+    mockApiData['/events/71/signups'] = [];
+
+    const { rerender } = render(
+      <ToastProvider>
+        <MemoryRouter initialEntries={['/events/71']}>
+          <Routes>
+            <Route path="/events/:id" element={<EventDetail />} />
+          </Routes>
+        </MemoryRouter>
+      </ToastProvider>,
+    );
+
+    expect(screen.getByRole('link', { name: /i need a ride/i })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /^i can drive$/i })).toBeInTheDocument();
+    expect(screen.getByText(/not arranged yet/i)).toBeInTheDocument();
+
+    await user.click(screen.getByRole('button', { name: /going on my own/i }));
+    await waitFor(() => {
+      expect(post).toHaveBeenCalledWith('/events/71/transport', { self_transport: true });
+    });
+
+    mockApiData['/events/71'] = {
+      ...ev,
+      my_signup: { status: 'going', need_ride: false, offer_drive: false, self_transport: true, attended: 0 },
+      group_ids: [1],
+      my_ride: null,
+      settlement: null,
+    };
+
+    rerender(
+      <ToastProvider>
+        <MemoryRouter initialEntries={['/events/71']}>
+          <Routes>
+            <Route path="/events/:id" element={<EventDetail />} />
+          </Routes>
+        </MemoryRouter>
+      </ToastProvider>,
+    );
+
+    expect(screen.queryByRole('link', { name: /i need a ride/i })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /^i can drive$/i })).not.toBeInTheDocument();
+    expect(screen.queryByText(/not arranged yet/i)).not.toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /change transport/i })).toBeInTheDocument();
+
+    await user.click(screen.getByRole('button', { name: /change transport/i }));
+    await waitFor(() => {
+      expect(post).toHaveBeenCalledWith('/events/71/transport', { self_transport: false });
+    });
+  });
+
+  it('saves self_transport when clicking Going on my own in QuickRsvpModal', async () => {
+    const user = userEvent.setup();
+    const dinner = makeEvent({
+      id: 22,
+      title: 'Youth Fellowship Dinner',
+      my_signup: null,
+    });
+    mockApiData['/events?scope=upcoming'] = [dinner];
+    vi.mocked(post).mockResolvedValue({ ok: true, status: 'going' });
+
+    render(
+      <ToastProvider>
+        <MemoryRouter initialEntries={['/events']}>
+          <Events />
+        </MemoryRouter>
+      </ToastProvider>,
+    );
+
+    await user.click(screen.getByRole('button', { name: /^sign up$/i }));
+    const dialog = await screen.findByRole('dialog');
+    await user.click(within(dialog).getByRole('button', { name: /going on my own/i }));
+
+    await waitFor(() => {
+      expect(post).toHaveBeenCalledWith('/events/22/transport', { self_transport: true });
+      expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+    });
+  });
+
+  it('hides ride/drive prompts on Upcoming, Today banner, Needs transport filter, and My schedule when self_transport is true', async () => {
+    const user = userEvent.setup();
+    const today = todayStr();
+    mockApiData['/events?scope=upcoming'] = [
+      makeEvent({
+        id: 80,
+        title: 'Self Transport Gathering',
+        starts_at: `${today}T18:00:00`,
+        attendance_enabled: false,
+        my_signup: { status: 'going', need_ride: false, offer_drive: false, self_transport: true, attended: 0 },
+      }),
+      makeEvent({
+        id: 81,
+        title: 'Needs Ride Gathering',
+        starts_at: '2099-11-25T18:00:00',
+        attendance_enabled: false,
+        my_signup: { status: 'going', need_ride: false, offer_drive: false, self_transport: false, attended: 0 },
+      }),
+    ];
+
+    render(
+      <ToastProvider>
+        <MemoryRouter initialEntries={['/events']}>
+          <Events />
+        </MemoryRouter>
+      </ToastProvider>,
+    );
+
+    const banner = screen.getByRole('region', { name: /today/i });
+    expect(within(banner).queryByRole('link', { name: /i need a ride/i })).not.toBeInTheDocument();
+    expect(within(banner).getByRole('link', { name: /view event/i })).toBeInTheDocument();
+
+    const selfCard = screen
+      .getByText('Self Transport Gathering', { selector: '.event-card-title' })
+      .closest('article')!;
+    expect(within(selfCard).queryByRole('link', { name: /i need a ride/i })).not.toBeInTheDocument();
+    expect(within(selfCard).queryByRole('link', { name: /i can drive/i })).not.toBeInTheDocument();
+    expect(within(selfCard).getByText(/going on my own/i)).toBeInTheDocument();
+
+    await user.click(screen.getByRole('button', { name: /needs transport/i }));
+    expect(
+      screen.queryByText('Self Transport Gathering', { selector: '.event-card-title' }),
+    ).not.toBeInTheDocument();
+    expect(screen.getByText('Needs Ride Gathering')).toBeInTheDocument();
+
+    await user.click(screen.getByRole('tab', { name: /my schedule/i }));
+    const selfRow = screen
+      .getByText('Self Transport Gathering', { selector: '.schedule-node-title' })
+      .closest('li')!;
+    expect(selfRow).toBeInTheDocument();
+    expect(within(selfRow).getByText(/going on my own/i)).toBeInTheDocument();
+    expect(within(selfRow).queryByRole('link', { name: /i need a ride/i })).not.toBeInTheDocument();
+    expect(within(selfRow).queryByRole('link', { name: /i can drive/i })).not.toBeInTheDocument();
+    expect(screen.getAllByRole('link', { name: /i need a ride/i })).toHaveLength(1);
+    expect(screen.getAllByRole('link', { name: /i can drive/i })).toHaveLength(1);
+  });
+
+  it('hides ride/drive buttons on Home NextGoingEventFocus when self_transport is true', () => {
+    mockApiData['/rides'] = [];
+    mockApiData['/events'] = [
+      makeEvent({
+        id: 90,
+        title: 'Prayer Meeting',
+        my_signup: { status: 'going', need_ride: false, offer_drive: false, self_transport: true, attended: 0 },
+      }),
+    ];
+    mockApiData['/me/shares'] = [];
+    mockApiData['/announcements'] = [];
+
+    render(
+      <ToastProvider>
+        <MemoryRouter initialEntries={['/']}>
+          <Home />
+        </MemoryRouter>
+      </ToastProvider>,
+    );
+
+    expect(screen.getByText('Prayer Meeting')).toBeInTheDocument();
+    expect(screen.getByText(/going on your own/i)).toBeInTheDocument();
+    expect(screen.queryByRole('link', { name: /i need a ride/i })).not.toBeInTheDocument();
+    expect(screen.queryByRole('link', { name: /i can drive/i })).not.toBeInTheDocument();
+    expect(screen.getByRole('link', { name: /view event/i })).toHaveAttribute('href', '/events/90');
   });
 });

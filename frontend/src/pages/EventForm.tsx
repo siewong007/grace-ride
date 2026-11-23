@@ -1,8 +1,8 @@
-import { FormEvent, useEffect, useState } from 'react';
+import { FormEvent, useEffect, useRef, useState } from 'react';
 import { useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import { post, put, useApi } from '../api';
 import { useAuth } from '../auth';
-import { Button, ErrorBox, Field, Page, PageHeader, useAction } from '../components/ui';
+import { Button, ErrorBox, Field, Notice, Page, PageHeader, useAction } from '../components/ui';
 import { EVENT_KIND, useFormatT } from '../format';
 import { EVENT_ICONS, EventIcon } from '../eventIcon';
 import { useTranslation } from 'react-i18next';
@@ -26,6 +26,7 @@ interface ExistingEvent {
   title: string;
   kind: string;
   icon?: string | null;
+  status?: string;
   description: string;
   starts_at: string;
   location: string;
@@ -76,6 +77,7 @@ export default function EventForm() {
     repeat_count: '4',
   });
   const [narrow, setNarrow] = useState(false);
+  const formRef = useRef<HTMLFormElement>(null);
   const { busy, error, run } = useAction();
 
   useEffect(() => {
@@ -128,28 +130,32 @@ export default function EventForm() {
       as_group_ids: f.as_group_ids.includes(g) ? f.as_group_ids.filter((x) => x !== g) : [...f.as_group_ids, g],
     });
 
-  const submit = (e: FormEvent) => {
-    e.preventDefault();
-    const body = {
-      title: f.title,
-      kind: f.kind,
-      icon: f.icon.trim() || null,
-      description: f.description,
-      starts_at: `${f.date}T${f.time}`,
-      location: f.location,
-      capacity: Number(f.capacity) || 0,
-      cost_note: f.cost_note,
-      signup_deadline: f.deadline || null,
-      group_ids: f.group_ids,
-      photo_file_id: f.photo_file_id,
-      attendance_enabled: f.attendance_enabled,
-      mileage_claimable: f.mileage_claimable,
-      area_id: f.area_id ? Number(f.area_id) : null,
-      // Empty: people choose from the audience groups and their sub-groups.
-      as_group_ids: narrow ? f.as_group_ids.filter((g) => joinable.some((j) => j.id === g)) : [],
-      repeat_frequency: !id && f.repeat_frequency !== 'none' ? f.repeat_frequency : undefined,
-      repeat_count: !id && f.repeat_frequency !== 'none' ? Math.max(2, Math.min(12, Number(f.repeat_count) || 2)) : undefined,
-    };
+  const buildPayload = (statusOverride?: 'draft' | 'published') => ({
+    title: f.title,
+    kind: f.kind,
+    icon: f.icon.trim() || null,
+    description: f.description,
+    starts_at: `${f.date}T${f.time}`,
+    location: f.location,
+    capacity: Number(f.capacity) || 0,
+    cost_note: f.cost_note,
+    signup_deadline: f.deadline || null,
+    group_ids: f.group_ids,
+    photo_file_id: f.photo_file_id,
+    attendance_enabled: f.attendance_enabled,
+    mileage_claimable: f.mileage_claimable,
+    area_id: f.area_id ? Number(f.area_id) : null,
+    // Empty: people choose from the audience groups and their sub-groups.
+    as_group_ids: narrow ? f.as_group_ids.filter((g) => joinable.some((j) => j.id === g)) : [],
+    repeat_frequency: !id && f.repeat_frequency !== 'none' ? f.repeat_frequency : undefined,
+    repeat_count: !id && f.repeat_frequency !== 'none' ? Math.max(2, Math.min(12, Number(f.repeat_count) || 2)) : undefined,
+    status: !id ? statusOverride : undefined,
+  });
+
+  const isEditingDraft = Boolean(id && existing?.status === 'draft');
+
+  const submitCreateOrSave = (targetStatus: 'draft' | 'published') => {
+    const body = buildPayload(targetStatus);
     run(async () => {
       if (id) {
         await put(`/events/${id}`, body);
@@ -158,7 +164,28 @@ export default function EventForm() {
         const r = await post<{ id: number }>('/events', body);
         nav(`/events/${r.id}`);
       }
-    }, id ? t('updated') : t('published'));
+    }, id ? t('updated') : targetStatus === 'draft' ? t('savedDraft') : t('published'));
+  };
+
+  const submit = (e: FormEvent) => {
+    e.preventDefault();
+    submitCreateOrSave(isEditingDraft ? 'draft' : 'published');
+  };
+
+  const saveDraft = () => {
+    if (formRef.current && !formRef.current.reportValidity()) return;
+    submitCreateOrSave('draft');
+  };
+
+  const saveAndPublish = () => {
+    if (!id) return;
+    if (formRef.current && !formRef.current.reportValidity()) return;
+    const body = buildPayload();
+    run(async () => {
+      await put(`/events/${id}`, body);
+      await post(`/events/${id}/publish`, {});
+      nav(`/events/${id}`);
+    }, t('published'));
   };
 
   return (
@@ -169,7 +196,8 @@ export default function EventForm() {
           back={id ? `/events/${id}` : '/events'}
         />
 
-        <form className="card stack" onSubmit={submit}>
+        <form ref={formRef} className="card stack" onSubmit={submit}>
+          {isEditingDraft && <Notice tone="warning">{t('draftBanner')}</Notice>}
           <div className="form-grid two">
             <div className="full">
               <Field label={t('name')}>
@@ -206,7 +234,7 @@ export default function EventForm() {
                   <div className="event-icon-preview">
                     <div className="row nowrap gap-sm">
                       <span className="event-icon-badge" aria-hidden="true">
-                        <EventIcon icon={f.icon || null} kind={f.kind} size={20} />
+                        <EventIcon icon={f.icon || null} kind={f.kind} size={28} />
                       </span>
                       <span className="small muted">
                         {f.icon.trim()
@@ -227,8 +255,7 @@ export default function EventForm() {
                     )}
                   </div>
                   <div className="badge-icon-grid" role="radiogroup" aria-label={t('icon')}>
-                    {Object.entries(EVENT_ICONS).map(([key, item]) => {
-                      const IconComp = item.icon;
+                    {Object.keys(EVENT_ICONS).map((key) => {
                       const isSelected = f.icon.trim() === key;
                       const label = t(`iconNames.${key}`);
                       return (
@@ -244,7 +271,7 @@ export default function EventForm() {
                             setF((cur) => ({ ...cur, icon: cur.icon.trim() === key ? '' : key }))
                           }
                         >
-                          <IconComp size={20} aria-hidden="true" />
+                          <EventIcon icon={key} size={32} />
                         </button>
                       );
                     })}
@@ -437,9 +464,29 @@ export default function EventForm() {
           )}
 
           <ErrorBox error={error} />
-          <Button variant="primary" block type="submit" loading={busy} size="lg">
-            {id ? t('save') : t('publish')}
-          </Button>
+          {!id ? (
+            <div className="btn-row">
+              <Button variant="secondary" type="button" disabled={busy} size="lg" onClick={saveDraft}>
+                {t('saveDraft')}
+              </Button>
+              <Button variant="primary" type="submit" loading={busy} size="lg">
+                {t('publish')}
+              </Button>
+            </div>
+          ) : isEditingDraft ? (
+            <div className="btn-row">
+              <Button variant="secondary" type="submit" disabled={busy} size="lg">
+                {t('saveDraftChanges')}
+              </Button>
+              <Button variant="primary" type="button" loading={busy} size="lg" onClick={saveAndPublish}>
+                {t('saveAndPublish')}
+              </Button>
+            </div>
+          ) : (
+            <Button variant="primary" block type="submit" loading={busy} size="lg">
+              {t('save')}
+            </Button>
+          )}
         </form>
       </div>
     </Page>

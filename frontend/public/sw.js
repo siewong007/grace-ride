@@ -1,4 +1,4 @@
-const SHELL_CACHE = 'grace-ride-shell-v2';
+const SHELL_CACHE = 'grace-ride-shell-v3';
 const STATIC_ASSETS = [
   '/',
   '/index.html',
@@ -8,12 +8,13 @@ const STATIC_ASSETS = [
   '/icon-192.png?v=2',
   '/apple-touch-icon.png?v=2',
 ];
-const MAX_RUNTIME_ASSETS = 80;
+const MAX_RUNTIME_ASSETS = 200;
 const NOTIFICATION_ICON = '/icon-192.png?v=2';
 
 function isCacheableStaticPath(pathname) {
   return (
     pathname.startsWith('/assets/') ||
+    pathname.startsWith('/icons/') ||
     pathname === '/theme-boot.js' ||
     pathname === '/manifest.webmanifest' ||
     pathname.startsWith('/icon') ||

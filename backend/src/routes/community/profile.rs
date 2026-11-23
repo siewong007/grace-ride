@@ -41,14 +41,58 @@ pub const AVATAR_ICONS: &[&str] = &[
     "blossom_sprout",
     "grok",
     "muse",
+    "initials",
+];
+/// Custom avatar foreground silhouettes (Bloub mascot shapes).
+pub const AVATAR_SHAPES: &[&str] = &[
+    "hexagon", "circle", "pebble", "squircle", "capsule", "triangle", "cloud", "droplet",
+];
+/// Custom avatar background container frames.
+pub const AVATAR_BG_SHAPES: &[&str] = &[
+    "circle", "squircle", "rounded", "hexagon", "cloud", "pebble",
 ];
 
-/// Accepts "" (reset) or a key from `allowed`.
-fn check_key(lang: crate::i18n::Lang, v: &Option<String>, allowed: &[&str]) -> AppResult<()> {
-    match v.as_deref() {
-        None | Some("") => Ok(()),
-        Some(k) if allowed.contains(&k) => Ok(()),
-        Some(_) => Err(bad(lang, ErrorKey::InvalidAction)),
+/// Validates `<bg_color>` or `<bg_color>:<bg_shape>` ("" resets to default neutral circle).
+fn check_avatar_color(lang: crate::i18n::Lang, v: &Option<String>) -> AppResult<()> {
+    let Some(raw) = v.as_deref() else {
+        return Ok(());
+    };
+    if raw.is_empty() {
+        return Ok(());
+    }
+    let parts: Vec<&str> = raw.split(':').collect();
+    match parts.as_slice() {
+        [c] if AVATAR_COLORS.contains(c) => Ok(()),
+        [c, sh] if (c.is_empty() || AVATAR_COLORS.contains(c)) && AVATAR_BG_SHAPES.contains(sh) => {
+            Ok(())
+        }
+        _ => Err(bad(lang, ErrorKey::InvalidAction)),
+    }
+}
+
+/// Validates `<icon>`, `<icon>:<shape>`, `<icon>::<fg_color>`, or `<icon>:<shape>:<fg_color>`.
+fn check_avatar_icon(lang: crate::i18n::Lang, v: &Option<String>) -> AppResult<()> {
+    let Some(raw) = v.as_deref() else {
+        return Ok(());
+    };
+    if raw.is_empty() {
+        return Ok(());
+    }
+    let parts: Vec<&str> = raw.split(':').collect();
+    match parts.as_slice() {
+        [ic] if AVATAR_ICONS.contains(ic) => Ok(()),
+        [ic, sh] if AVATAR_ICONS.contains(ic) && !sh.is_empty() && AVATAR_SHAPES.contains(sh) => {
+            Ok(())
+        }
+        [ic, sh, fg]
+            if AVATAR_ICONS.contains(ic)
+                && (sh.is_empty() || AVATAR_SHAPES.contains(sh))
+                && !fg.is_empty()
+                && AVATAR_COLORS.contains(fg) =>
+        {
+            Ok(())
+        }
+        _ => Err(bad(lang, ErrorKey::InvalidAction)),
     }
 }
 
@@ -104,8 +148,8 @@ pub(super) async fn update_profile(
             return Err(bad(u.lang, ErrorKey::InvalidAction));
         }
     }
-    check_key(u.lang, &req.avatar_color, AVATAR_COLORS)?;
-    check_key(u.lang, &req.avatar_icon, AVATAR_ICONS)?;
+    check_avatar_color(u.lang, &req.avatar_color)?;
+    check_avatar_icon(u.lang, &req.avatar_icon)?;
     if let Some(f) = req.photo_file_id {
         let (owner, mime): (i64, String) =
             sqlx::query_as("SELECT owner_id, mime FROM files WHERE id=$1")

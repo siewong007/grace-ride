@@ -72,6 +72,20 @@ export function QuickRsvpModal({
     }
   };
 
+  const handleGoingOwnWay = async () => {
+    setBusy(true);
+    setError(null);
+    try {
+      await post(`/events/${event.id}/transport`, { self_transport: true });
+      onCompleteSignup();
+      onClose();
+    } catch (err) {
+      setError((err as Error).message);
+    } finally {
+      setBusy(false);
+    }
+  };
+
   const title =
     step === 'group'
       ? isFull
@@ -152,10 +166,11 @@ export function QuickRsvpModal({
                 {t('offerDriveBtn')}
               </Button>
             )}
-            <Button variant="ghost" block onClick={onClose}>
+            <Button variant="ghost" block loading={busy} disabled={busy} onClick={handleGoingOwnWay}>
               {t('goingOwnWay', { ns: 'eventDetail' })}
             </Button>
           </div>
+          <ErrorBox error={error} />
         </div>
       )}
     </Modal>

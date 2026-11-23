@@ -11,7 +11,7 @@ use super::signups::{notify_promoted, promote_waitlist};
 use super::{can_manage, load_event, load_visible_event, KINDS};
 use crate::audience::audience_users_sql;
 use crate::auth::CurrentUser;
-use crate::error::{bad, forbidden, AppResult};
+use crate::error::{bad, conflict, forbidden, AppResult};
 use crate::i18n::ErrorKey;
 use crate::perms::{Act, Page};
 use crate::state::AppState;
@@ -45,6 +45,16 @@ pub(super) struct EventIn {
     repeat_frequency: Option<String>,
     /// Number of occurrences to generate (1..=12)
     repeat_count: Option<i64>,
+    /// Optional initial status: "published" (default) or "draft" (hidden from members until published).
+    status: Option<String>,
+}
+
+fn parse_create_status(raw: Option<&str>, lang: Lang) -> AppResult<&'static str> {
+    match raw.map(str::trim).filter(|s| !s.is_empty()) {
+        None | Some("published") => Ok("published"),
+        Some("draft") => Ok("draft"),
+        Some(_) => Err(bad(lang, ErrorKey::InvalidStatus)),
+    }
 }
 
 /// The event's area must be a real area.
@@ -193,6 +203,7 @@ pub(super) async fn create_event(
     if !u.can(Page::Events, Act::Create) {
         return Err(forbidden(u.lang, ErrorKey::OnlyOrganiserCanCreate));
     }
+    let status = parse_create_status(req.status.as_deref(), u.lang)?;
     let (at, dl) = validate(&req, u.lang)?;
     let icon = normalize_icon(req.icon.as_deref(), u.lang)?;
     check_photo(&st, &u, req.photo_file_id, None).await?;
@@ -240,8 +251,8 @@ pub(super) async fn create_event(
             None
         };
         let (id,): (i64,) = sqlx::query_as(
-            "INSERT INTO events (title, kind, description, starts_at, location, capacity, cost_note, signup_deadline, created_by, created_at, photo_file_id, attendance_enabled, checkin_code, series_id, mileage_claimable, area_id, icon)
-             VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17) RETURNING id",
+            "INSERT INTO events (title, kind, description, starts_at, location, capacity, cost_note, signup_deadline, status, created_by, created_at, photo_file_id, attendance_enabled, checkin_code, series_id, mileage_claimable, area_id, icon)
+             VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18) RETURNING id",
         )
         .bind(req.title.trim())
         .bind(&req.kind)
@@ -251,6 +262,7 @@ pub(super) async fn create_event(
         .bind(req.capacity.unwrap_or(0).max(0))
         .bind(req.cost_note.clone().unwrap_or_default())
         .bind(&occ_dl)
+        .bind(status)
         .bind(u.id)
         .bind(now())
         .bind(req.photo_file_id)
@@ -267,43 +279,50 @@ pub(super) async fn create_event(
     }
     tx.commit().await?;
     let first_id = created_ids[0];
-    // Invite members of the target groups and their sub-groups (相关活动邀请).
-    let members: Vec<(i64,)> = sqlx::query_as(sqlx::AssertSqlSafe(audience_users_sql("$1")))
-        .bind(first_id)
-        .fetch_all(&st.db)
-        .await?;
-    let invited: Vec<i64> = members
-        .into_iter()
-        .map(|(m,)| m)
-        .filter(|m| *m != u.id)
-        .collect();
-    let (body_zh, body_en) = if repeat_count > 1 {
-        (
-            format!(
-                "{} · {}（共 {} 场）",
-                req.title.trim(),
-                at.replace('T', " "),
-                repeat_count
-            ),
-            format!(
-                "{} · {} ({} sessions)",
-                req.title.trim(),
-                at.replace('T', " "),
-                repeat_count
-            ),
+    if status == "published" {
+        // Invite members of the target groups and their sub-groups (相关活动邀请).
+        let members: Vec<(i64,)> = sqlx::query_as(sqlx::AssertSqlSafe(audience_users_sql("$1")))
+            .bind(first_id)
+            .fetch_all(&st.db)
+            .await?;
+        let invited: Vec<i64> = members
+            .into_iter()
+            .map(|(m,)| m)
+            .filter(|m| *m != u.id)
+            .collect();
+        let (body_zh, body_en) = if repeat_count > 1 {
+            (
+                format!(
+                    "{} · {}（共 {} 场）",
+                    req.title.trim(),
+                    at.replace('T', " "),
+                    repeat_count
+                ),
+                format!(
+                    "{} · {} ({} sessions)",
+                    req.title.trim(),
+                    at.replace('T', " "),
+                    repeat_count
+                ),
+            )
+        } else {
+            let single = format!("{} · {}", req.title.trim(), at.replace('T', " "));
+            (single.clone(), single)
+        };
+        notify_many(
+            &st.db,
+            &invited,
+            ("新的活动邀请", "New event invitation"),
+            (&body_zh, &body_en),
+            &format!("/events/{first_id}"),
         )
+        .await;
+    }
+    let audit_detail = if status == "draft" {
+        format!("{} (draft)", req.title.trim())
     } else {
-        let single = format!("{} · {}", req.title.trim(), at.replace('T', " "));
-        (single.clone(), single)
+        req.title.trim().to_string()
     };
-    notify_many(
-        &st.db,
-        &invited,
-        ("新的活动邀请", "New event invitation"),
-        (&body_zh, &body_en),
-        &format!("/events/{first_id}"),
-    )
-    .await;
     for &eid in &created_ids {
         audit(
             &st.db,
@@ -311,7 +330,7 @@ pub(super) async fn create_event(
             "event.create",
             "event",
             Some(eid),
-            req.title.trim(),
+            &audit_detail,
         )
         .await;
     }
@@ -319,6 +338,7 @@ pub(super) async fn create_event(
         "id": first_id,
         "created_ids": created_ids,
         "series_id": series_id,
+        "status": status,
     })))
 }
 
@@ -327,6 +347,7 @@ pub(super) struct DuplicateIn {
     starts_at: String,
     signup_deadline: Option<String>,
     title: Option<String>,
+    status: Option<String>,
 }
 
 pub(super) async fn duplicate_event(
@@ -336,6 +357,7 @@ pub(super) async fn duplicate_event(
     Json(req): Json<DuplicateIn>,
 ) -> AppResult<Json<Value>> {
     require(&u, Page::Events, Act::Create)?;
+    let status = parse_create_status(req.status.as_deref(), u.lang)?;
     let src = load_visible_event(&st, &u, id).await?;
     let at = norm_dt(&req.starts_at).ok_or_else(|| bad(u.lang, ErrorKey::InvalidEventTime))?;
     let dl = match req.signup_deadline.as_deref().filter(|s| !s.is_empty()) {
@@ -383,8 +405,8 @@ pub(super) async fn duplicate_event(
 
     let mut tx = st.db.begin().await?;
     let (new_id,): (i64,) = sqlx::query_as(
-        "INSERT INTO events (title, kind, description, starts_at, location, capacity, cost_note, signup_deadline, created_by, created_at, photo_file_id, attendance_enabled, checkin_code, mileage_claimable, area_id, icon)
-         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16) RETURNING id",
+        "INSERT INTO events (title, kind, description, starts_at, location, capacity, cost_note, signup_deadline, status, created_by, created_at, photo_file_id, attendance_enabled, checkin_code, mileage_claimable, area_id, icon)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17) RETURNING id",
     )
     .bind(&title)
     .bind(&src.kind)
@@ -394,6 +416,7 @@ pub(super) async fn duplicate_event(
     .bind(src.capacity)
     .bind(&src.cost_note)
     .bind(&dl)
+    .bind(status)
     .bind(u.id)
     .bind(now())
     .bind(photo_file_id)
@@ -429,24 +452,26 @@ pub(super) async fn duplicate_event(
     .await?;
     tx.commit().await?;
 
-    let members: Vec<(i64,)> = sqlx::query_as(sqlx::AssertSqlSafe(audience_users_sql("$1")))
-        .bind(new_id)
-        .fetch_all(&st.db)
-        .await?;
-    let invited: Vec<i64> = members
-        .into_iter()
-        .map(|(m,)| m)
-        .filter(|m| *m != u.id)
-        .collect();
-    let body = format!("{title} · {}", at.replace('T', " "));
-    notify_many(
-        &st.db,
-        &invited,
-        ("新的活动邀请", "New event invitation"),
-        (&body, &body),
-        &format!("/events/{new_id}"),
-    )
-    .await;
+    if status == "published" {
+        let members: Vec<(i64,)> = sqlx::query_as(sqlx::AssertSqlSafe(audience_users_sql("$1")))
+            .bind(new_id)
+            .fetch_all(&st.db)
+            .await?;
+        let invited: Vec<i64> = members
+            .into_iter()
+            .map(|(m,)| m)
+            .filter(|m| *m != u.id)
+            .collect();
+        let body = format!("{title} · {}", at.replace('T', " "));
+        notify_many(
+            &st.db,
+            &invited,
+            ("新的活动邀请", "New event invitation"),
+            (&body, &body),
+            &format!("/events/{new_id}"),
+        )
+        .await;
+    }
 
     audit(
         &st.db,
@@ -454,10 +479,13 @@ pub(super) async fn duplicate_event(
         "event.create",
         "event",
         Some(new_id),
-        format!("{title} (from #{id})"),
+        format!(
+            "{title} (from #{id}{})",
+            if status == "draft" { ", draft" } else { "" }
+        ),
     )
     .await;
-    Ok(Json(json!({ "id": new_id })))
+    Ok(Json(json!({ "id": new_id, "status": status })))
 }
 
 pub(super) async fn update_event(
@@ -523,7 +551,7 @@ pub(super) async fn update_event(
     let promoted = promote_waitlist(&mut tx, id, capacity, &event_status).await?;
     tx.commit().await?;
     notify_promoted(&st, id, req.title.trim(), &promoted).await;
-    if at != e.starts_at || req.location.trim() != e.location {
+    if event_status == "published" && (at != e.starts_at || req.location.trim() != e.location) {
         let body = format!(
             "{} · {} · {}",
             req.title.trim(),
@@ -538,13 +566,15 @@ pub(super) async fn update_event(
         )
         .await?;
     }
-    crate::routes::rides::event_moved(
-        &st,
-        id,
-        (&e.starts_at, &at),
-        (&e.location, req.location.trim()),
-    )
-    .await?;
+    if event_status == "published" {
+        crate::routes::rides::event_moved(
+            &st,
+            id,
+            (&e.starts_at, &at),
+            (&e.location, req.location.trim()),
+        )
+        .await?;
+    }
     let mut detail = req.title.trim().to_string();
     if at != e.starts_at {
         detail.push_str(&format!("; time {} → {at}", e.starts_at));
@@ -591,6 +621,116 @@ async fn notify_signups(
     Ok(())
 }
 
+pub(super) async fn publish_event(
+    State(st): State<AppState>,
+    u: CurrentUser,
+    Path(id): Path<i64>,
+) -> AppResult<Json<Value>> {
+    let e = load_event(&st, &u, id).await?;
+    if !can_manage(&u, e.created_by, Act::Update) {
+        return Err(forbidden(u.lang, ErrorKey::OnlyOrganiserCanPerformAction));
+    }
+    let mut tx = st.db.begin().await?;
+    let (status, title, starts_at): (String, String, String) =
+        sqlx::query_as("SELECT status, title, starts_at FROM events WHERE id=$1 FOR UPDATE")
+            .bind(id)
+            .fetch_one(&mut *tx)
+            .await?;
+    if status != "draft" {
+        return Err(bad(u.lang, ErrorKey::EventNotDraft));
+    }
+    sqlx::query("UPDATE events SET status='published' WHERE id=$1")
+        .bind(id)
+        .execute(&mut *tx)
+        .await?;
+    tx.commit().await?;
+
+    let members: Vec<(i64,)> = sqlx::query_as(sqlx::AssertSqlSafe(audience_users_sql("$1")))
+        .bind(id)
+        .fetch_all(&st.db)
+        .await?;
+    let invited: Vec<i64> = members
+        .into_iter()
+        .map(|(m,)| m)
+        .filter(|m| *m != u.id)
+        .collect();
+    let body = format!("{title} · {}", starts_at.replace('T', " "));
+    notify_many(
+        &st.db,
+        &invited,
+        ("新的活动邀请", "New event invitation"),
+        (&body, &body),
+        &format!("/events/{id}"),
+    )
+    .await;
+
+    audit(
+        &st.db,
+        Some(u.id),
+        "event.publish",
+        "event",
+        Some(id),
+        &title,
+    )
+    .await;
+    Ok(Json(json!({"ok": true, "status": "published"})))
+}
+
+pub(super) async fn unpublish_event(
+    State(st): State<AppState>,
+    u: CurrentUser,
+    Path(id): Path<i64>,
+) -> AppResult<Json<Value>> {
+    let e = load_event(&st, &u, id).await?;
+    if !can_manage(&u, e.created_by, Act::Update) {
+        return Err(forbidden(u.lang, ErrorKey::OnlyOrganiserCanPerformAction));
+    }
+    let mut tx = st.db.begin().await?;
+    let (status, title): (String, String) =
+        sqlx::query_as("SELECT status, title FROM events WHERE id=$1 FOR UPDATE")
+            .bind(id)
+            .fetch_one(&mut *tx)
+            .await?;
+    if status != "published" {
+        return Err(bad(u.lang, ErrorKey::EventNotOpen));
+    }
+    let (active_signups,): (i64,) = sqlx::query_as(
+        "SELECT COUNT(*) FROM event_signups WHERE event_id=$1 AND status IN ('going','waitlist')",
+    )
+    .bind(id)
+    .fetch_one(&mut *tx)
+    .await?;
+    let (active_rides,): (i64,) =
+        sqlx::query_as("SELECT COUNT(*) FROM rides WHERE event_id=$1 AND status != 'cancelled'")
+            .bind(id)
+            .fetch_one(&mut *tx)
+            .await?;
+    let (settlements,): (i64,) =
+        sqlx::query_as("SELECT COUNT(*) FROM settlements WHERE event_id=$1")
+            .bind(id)
+            .fetch_one(&mut *tx)
+            .await?;
+    if active_signups > 0 || active_rides > 0 || settlements > 0 {
+        return Err(conflict(u.lang, ErrorKey::EventCannotHideWithSignups));
+    }
+    sqlx::query("UPDATE events SET status='draft' WHERE id=$1")
+        .bind(id)
+        .execute(&mut *tx)
+        .await?;
+    tx.commit().await?;
+
+    audit(
+        &st.db,
+        Some(u.id),
+        "event.unpublish",
+        "event",
+        Some(id),
+        &title,
+    )
+    .await;
+    Ok(Json(json!({"ok": true, "status": "draft"})))
+}
+
 pub(super) async fn cancel_event(
     State(st): State<AppState>,
     u: CurrentUser,
@@ -602,14 +742,18 @@ pub(super) async fn cancel_event(
     }
     // The event and the ride requests not yet underway are cancelled together, or not at all.
     let mut tx = st.db.begin().await?;
-    let cancelled =
-        sqlx::query("UPDATE events SET status='cancelled' WHERE id=$1 AND status='published'")
+    let prev_status: Option<String> =
+        sqlx::query_scalar("SELECT status FROM events WHERE id=$1 FOR UPDATE")
             .bind(id)
-            .execute(&mut *tx)
+            .fetch_optional(&mut *tx)
             .await?;
-    if cancelled.rows_affected() == 0 {
+    if !matches!(prev_status.as_deref(), Some("published" | "draft")) {
         return Err(bad(u.lang, ErrorKey::EventNotOpen));
     }
+    sqlx::query("UPDATE events SET status='cancelled' WHERE id=$1")
+        .bind(id)
+        .execute(&mut *tx)
+        .await?;
     let rides: Vec<(i64, Option<i64>, Option<i64>)> = sqlx::query_as(
         "UPDATE rides SET status='cancelled', needs_attention=0, attention_reason='活动已取消', updated_at=$2
          WHERE event_id=$1 AND status IN ('pending_driver','pending_passenger','pending_approval','pending_driver_confirm','confirmed')
@@ -631,13 +775,15 @@ pub(super) async fn cancel_event(
     .await?;
     tx.commit().await?;
 
-    notify_signups(
-        &st,
-        id,
-        ("活动已取消", "Event cancelled"),
-        (e.title.as_str(), e.title.as_str()),
-    )
-    .await?;
+    if prev_status.as_deref() == Some("published") {
+        notify_signups(
+            &st,
+            id,
+            ("活动已取消", "Event cancelled"),
+            (e.title.as_str(), e.title.as_str()),
+        )
+        .await?;
+    }
     for (rid, d, t) in rides {
         if let Some(d) = d {
             st.routing.invalidate(d, t.unwrap_or(rid)).await;

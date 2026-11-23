@@ -23,6 +23,7 @@ data class EventDetailUiState(
     val error: String? = null,
     val busy: Boolean = false,
     val message: String? = null,
+    val actionNotice: EventActionNotice? = null,
 )
 
 class EventDetailViewModel(private val container: AppContainer, private val id: Long) : ViewModel() {
@@ -107,7 +108,41 @@ class EventDetailViewModel(private val container: AppContainer, private val id: 
         }
     }
 
+    fun publish() {
+        if (_state.value.busy) return
+        _state.value = _state.value.copy(busy = true, message = null, actionNotice = null)
+        viewModelScope.launch {
+            try {
+                container.events.publish(id)
+                _state.value = _state.value.copy(actionNotice = EventActionNotice.PUBLISHED)
+                load()
+            } catch (e: ApiException) {
+                _state.value = _state.value.copy(message = e.message)
+            } finally {
+                _state.value = _state.value.copy(busy = false)
+            }
+        }
+    }
+
+    fun unpublish() {
+        if (_state.value.busy) return
+        _state.value = _state.value.copy(busy = true, message = null, actionNotice = null)
+        viewModelScope.launch {
+            try {
+                container.events.unpublish(id)
+                _state.value = _state.value.copy(actionNotice = EventActionNotice.UNPUBLISHED)
+                load()
+            } catch (e: ApiException) {
+                _state.value = _state.value.copy(message = e.message)
+            } finally {
+                _state.value = _state.value.copy(busy = false)
+            }
+        }
+    }
+
     fun clearMessage() { _state.value = _state.value.copy(message = null) }
+
+    fun clearNotice() { _state.value = _state.value.copy(actionNotice = null) }
 
     companion object {
         fun factory(container: AppContainer, id: Long) = viewModelFactory {

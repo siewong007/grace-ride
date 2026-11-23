@@ -1,65 +1,36 @@
 import type { ReactNode } from 'react';
-import {
-  Baby,
-  Bike,
-  BookOpen,
-  Bus,
-  Cake,
-  Calendar,
-  Camera,
-  Church,
-  Coffee,
-  Dumbbell,
-  Film,
-  Flame,
-  Footprints,
-  Gamepad2,
-  Gift,
-  HeartHandshake,
-  Home,
-  Moon,
-  Mountain,
-  Music,
-  Sparkles,
-  Sun,
-  Target,
-  Tent,
-  Trophy,
-  Users,
-  Utensils,
-  Waves,
-  type LucideIcon,
-} from 'lucide-react';
 
-export const EVENT_ICONS: Record<string, { icon: LucideIcon }> = {
-  church: { icon: Church },
-  bookOpen: { icon: BookOpen },
-  music: { icon: Music },
-  flame: { icon: Flame },
-  heartHandshake: { icon: HeartHandshake },
-  sparkles: { icon: Sparkles },
-  utensils: { icon: Utensils },
-  coffee: { icon: Coffee },
-  cake: { icon: Cake },
-  users: { icon: Users },
-  gift: { icon: Gift },
-  home: { icon: Home },
-  trophy: { icon: Trophy },
-  footprints: { icon: Footprints },
-  waves: { icon: Waves },
-  bike: { icon: Bike },
-  tent: { icon: Tent },
-  mountain: { icon: Mountain },
-  dumbbell: { icon: Dumbbell },
-  target: { icon: Target },
-  gamepad: { icon: Gamepad2 },
-  film: { icon: Film },
-  camera: { icon: Camera },
-  bus: { icon: Bus },
-  baby: { icon: Baby },
-  calendar: { icon: Calendar },
-  sun: { icon: Sun },
-  moon: { icon: Moon },
+export const eventIconGifUrl = (key: string): string => `/icons/events/${key}.gif`;
+
+export const EVENT_ICONS: Record<string, { gif: string }> = {
+  church: { gif: eventIconGifUrl('church') },
+  bookOpen: { gif: eventIconGifUrl('bookOpen') },
+  music: { gif: eventIconGifUrl('music') },
+  flame: { gif: eventIconGifUrl('flame') },
+  heartHandshake: { gif: eventIconGifUrl('heartHandshake') },
+  sparkles: { gif: eventIconGifUrl('sparkles') },
+  utensils: { gif: eventIconGifUrl('utensils') },
+  coffee: { gif: eventIconGifUrl('coffee') },
+  cake: { gif: eventIconGifUrl('cake') },
+  users: { gif: eventIconGifUrl('users') },
+  gift: { gif: eventIconGifUrl('gift') },
+  home: { gif: eventIconGifUrl('home') },
+  trophy: { gif: eventIconGifUrl('trophy') },
+  footprints: { gif: eventIconGifUrl('footprints') },
+  waves: { gif: eventIconGifUrl('waves') },
+  bike: { gif: eventIconGifUrl('bike') },
+  tent: { gif: eventIconGifUrl('tent') },
+  mountain: { gif: eventIconGifUrl('mountain') },
+  dumbbell: { gif: eventIconGifUrl('dumbbell') },
+  target: { gif: eventIconGifUrl('target') },
+  gamepad: { gif: eventIconGifUrl('gamepad') },
+  film: { gif: eventIconGifUrl('film') },
+  camera: { gif: eventIconGifUrl('camera') },
+  bus: { gif: eventIconGifUrl('bus') },
+  baby: { gif: eventIconGifUrl('baby') },
+  calendar: { gif: eventIconGifUrl('calendar') },
+  sun: { gif: eventIconGifUrl('sun') },
+  moon: { gif: eventIconGifUrl('moon') },
 };
 
 export const DEFAULT_KIND_ICON: Record<string, string> = {
@@ -78,16 +49,25 @@ export interface EventIconProps {
 }
 
 /**
- * Renders an activity's configured icon:
- * - Preset Lucide icon key (e.g. "church", "utensils")
+ * Renders an activity's configured icon as an animated GIF:
+ * - Preset icon key (e.g. "church", "utensils")
  * - Custom emoji or short symbol (e.g. "🍲")
- * - Default icon derived from the event kind
+ * - Default animated icon derived from the event kind
  */
-export function EventIcon({ icon, kind, size = 16, className = '' }: EventIconProps): ReactNode {
+export function EventIcon({ icon, kind, size = 20, className = '' }: EventIconProps): ReactNode {
   const trimmed = icon?.trim() ?? '';
   if (trimmed && Object.prototype.hasOwnProperty.call(EVENT_ICONS, trimmed)) {
-    const IconComp = EVENT_ICONS[trimmed].icon;
-    return <IconComp size={size} className={className} aria-hidden="true" />;
+    return (
+      <img
+        src={EVENT_ICONS[trimmed].gif}
+        alt=""
+        width={size}
+        height={size}
+        className={`event-icon-gif ${className}`.trim()}
+        aria-hidden="true"
+        decoding="async"
+      />
+    );
   }
   if (trimmed) {
     return (
@@ -100,7 +80,17 @@ export function EventIcon({ icon, kind, size = 16, className = '' }: EventIconPr
       </span>
     );
   }
-  const fallbackKey = DEFAULT_KIND_ICON[kind ?? ''] ?? '';
-  const FallbackComp = EVENT_ICONS[fallbackKey]?.icon ?? Calendar;
-  return <FallbackComp size={size} className={className} aria-hidden="true" />;
+  const fallbackKey = DEFAULT_KIND_ICON[kind ?? ''] ?? 'calendar';
+  const gifUrl = EVENT_ICONS[fallbackKey]?.gif ?? eventIconGifUrl('calendar');
+  return (
+    <img
+      src={gifUrl}
+      alt=""
+      width={size}
+      height={size}
+      className={`event-icon-gif ${className}`.trim()}
+      aria-hidden="true"
+      decoding="async"
+    />
+  );
 }

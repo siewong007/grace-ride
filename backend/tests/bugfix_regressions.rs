@@ -415,3 +415,247 @@ async fn claimant_can_view_receipt_uploaded_by_staff() {
     .await;
     assert_eq!(theirs.status, StatusCode::FORBIDDEN);
 }
+
+#[tokio::test]
+async fn event_self_transport_persists_and_clears_on_ride_or_withdraw() {
+    let (app, st) = setup().await;
+    let admin = login(&st, "admin@example.org").await;
+    let member = login(&st, "member@example.org").await;
+    let mid = uid(&st, "member@example.org").await;
+    let eid = event_for(&st, mid, &in_hours(48), "SELFTR01").await;
+    let eid2 = event_for(&st, mid, &in_hours(72), "SELFTR02").await;
+    let area_id: i64 =
+        sqlx::query_scalar("SELECT id FROM areas WHERE active=1 ORDER BY id LIMIT 1")
+            .fetch_one(&st.db)
+            .await
+            .unwrap();
+
+    // Non-signed-up member cannot mark self-transport.
+    let before_signup = call(
+        &app,
+        Method::POST,
+        &format!("/api/events/{eid}/transport"),
+        Some(&member),
+        Some(json!({"self_transport": true})),
+    )
+    .await;
+    assert_eq!(
+        before_signup.status,
+        StatusCode::BAD_REQUEST,
+        "{}",
+        before_signup.json
+    );
+    assert_eq!(before_signup.json["code"], "EVENT_RIDE_NEEDS_SIGNUP");
+
+    // Sign up for the event -> self_transport defaults to false.
+    let su = call(
+        &app,
+        Method::POST,
+        &format!("/api/events/{eid}/signup"),
+        Some(&member),
+        Some(json!({})),
+    )
+    .await;
+    assert_eq!(su.status, StatusCode::OK, "{}", su.json);
+
+    let detail = call(
+        &app,
+        Method::GET,
+        &format!("/api/events/{eid}"),
+        Some(&member),
+        None,
+    )
+    .await;
+    assert_eq!(detail.status, StatusCode::OK, "{}", detail.json);
+    assert_eq!(detail.json["my_signup"]["self_transport"], false);
+
+    let upcoming = call(
+        &app,
+        Method::GET,
+        "/api/events?scope=upcoming",
+        Some(&member),
+        None,
+    )
+    .await;
+    assert_eq!(upcoming.status, StatusCode::OK, "{}", upcoming.json);
+    let ev_row = upcoming
+        .json
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|e| e["id"] == eid)
+        .unwrap();
+    assert_eq!(ev_row["my_signup"]["self_transport"], false);
+
+    // Mark self_transport = true -> persisted in detail, upcoming list, and organiser signups.
+    let mark_on = call(
+        &app,
+        Method::POST,
+        &format!("/api/events/{eid}/transport"),
+        Some(&member),
+        Some(json!({"self_transport": true})),
+    )
+    .await;
+    assert_eq!(mark_on.status, StatusCode::OK, "{}", mark_on.json);
+    assert_eq!(mark_on.json["self_transport"], true);
+
+    let detail_on = call(
+        &app,
+        Method::GET,
+        &format!("/api/events/{eid}"),
+        Some(&member),
+        None,
+    )
+    .await;
+    assert_eq!(detail_on.json["my_signup"]["self_transport"], true);
+
+    let upcoming_on = call(
+        &app,
+        Method::GET,
+        "/api/events?scope=upcoming",
+        Some(&member),
+        None,
+    )
+    .await;
+    let ev_on = upcoming_on
+        .json
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|e| e["id"] == eid)
+        .unwrap();
+    assert_eq!(ev_on["my_signup"]["self_transport"], true);
+
+    let signups = call(
+        &app,
+        Method::GET,
+        &format!("/api/events/{eid}/signups"),
+        Some(&admin),
+        None,
+    )
+    .await;
+    assert_eq!(signups.status, StatusCode::OK, "{}", signups.json);
+    let member_signup = signups
+        .json
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|s| s["user_id"] == mid)
+        .unwrap();
+    assert_eq!(member_signup["self_transport"], true);
+
+    // Toggling self_transport back to false clears it.
+    let mark_off = call(
+        &app,
+        Method::POST,
+        &format!("/api/events/{eid}/transport"),
+        Some(&member),
+        Some(json!({"self_transport": false})),
+    )
+    .await;
+    assert_eq!(mark_off.status, StatusCode::OK, "{}", mark_off.json);
+    assert_eq!(mark_off.json["self_transport"], false);
+    let detail_off = call(
+        &app,
+        Method::GET,
+        &format!("/api/events/{eid}"),
+        Some(&member),
+        None,
+    )
+    .await;
+    assert_eq!(detail_off.json["my_signup"]["self_transport"], false);
+
+    // Re-enable self_transport, then book own ride -> self_transport clears automatically.
+    let mark_on_again = call(
+        &app,
+        Method::POST,
+        &format!("/api/events/{eid}/transport"),
+        Some(&member),
+        Some(json!({"self_transport": true})),
+    )
+    .await;
+    assert_eq!(
+        mark_on_again.status,
+        StatusCode::OK,
+        "{}",
+        mark_on_again.json
+    );
+
+    let ride = call(
+        &app,
+        Method::POST,
+        "/api/rides",
+        Some(&member),
+        Some(json!({
+            "pickup_at": in_hours(24),
+            "pickup_area_id": area_id,
+            "pickup_address": "12 Test Street",
+            "destination": "PJ State CMC",
+            "seats": 1,
+            "event_id": eid,
+            "is_proxy": false,
+        })),
+    )
+    .await;
+    assert_eq!(ride.status, StatusCode::OK, "{}", ride.json);
+
+    let detail_after_ride = call(
+        &app,
+        Method::GET,
+        &format!("/api/events/{eid}"),
+        Some(&member),
+        None,
+    )
+    .await;
+    assert_eq!(detail_after_ride.json["my_signup"]["self_transport"], false);
+
+    // On another event, withdrawing and re-signing up resets self_transport to false.
+    let su2 = call(
+        &app,
+        Method::POST,
+        &format!("/api/events/{eid2}/signup"),
+        Some(&member),
+        Some(json!({})),
+    )
+    .await;
+    assert_eq!(su2.status, StatusCode::OK, "{}", su2.json);
+    let mark2 = call(
+        &app,
+        Method::POST,
+        &format!("/api/events/{eid2}/transport"),
+        Some(&member),
+        Some(json!({"self_transport": true})),
+    )
+    .await;
+    assert_eq!(mark2.status, StatusCode::OK, "{}", mark2.json);
+
+    let withdraw2 = call(
+        &app,
+        Method::POST,
+        &format!("/api/events/{eid2}/withdraw"),
+        Some(&member),
+        Some(json!({})),
+    )
+    .await;
+    assert_eq!(withdraw2.status, StatusCode::OK, "{}", withdraw2.json);
+
+    let resu2 = call(
+        &app,
+        Method::POST,
+        &format!("/api/events/{eid2}/signup"),
+        Some(&member),
+        Some(json!({})),
+    )
+    .await;
+    assert_eq!(resu2.status, StatusCode::OK, "{}", resu2.json);
+
+    let detail2 = call(
+        &app,
+        Method::GET,
+        &format!("/api/events/{eid2}"),
+        Some(&member),
+        None,
+    )
+    .await;
+    assert_eq!(detail2.json["my_signup"]["self_transport"], false);
+}

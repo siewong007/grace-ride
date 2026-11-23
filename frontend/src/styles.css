@@ -78,11 +78,15 @@
   --badge-accent: var(--primary);
 
   /* Dynamic avatar skin & plush palette (overridden per .av-<color>) */
-  --av-skin: #18181B;
-  --av-skin-ring: rgb(255 255 255 / 0.18);
+  --av-skin: #111113;
+  --av-skin-ring: transparent;
   --av-eye: #FFFFFF;
+  --av-spark: var(--av-skin);
   --av-plush: #FEF3C7;
   --av-plush-shade: #FDE68A;
+  --av-ink: var(--text);
+  --av-bg-fill: var(--surface-2);
+  --av-bg-stroke: transparent;
 
   /* Achievement tier metallic palettes (Bronze / Silver / Gold / Platinum) */
   --tier-none: #94A3B8;
@@ -202,7 +206,7 @@
     --badge-member: #34D399;
     --badge-driver: #60A5FA;
     --badge-traffic: #FBBF24;
-    --av-skin-ring: rgb(255 255 255 / 0.28);
+    --av-skin-ring: transparent;
     --tier-none: #64748B;
     --tier-none-bg: #1F2124;
     --tier-none-ink: #94A3B8;
@@ -257,7 +261,7 @@
   --badge-member: #34D399;
   --badge-driver: #60A5FA;
   --badge-traffic: #FBBF24;
-  --av-skin-ring: rgb(255 255 255 / 0.28);
+  --av-skin-ring: transparent;
   --tier-none: #64748B;
   --tier-none-bg: #1F2124;
   --tier-none-ink: #94A3B8;
@@ -640,35 +644,65 @@ button, input, select, textarea { font: inherit; color: inherit; }
 .pill.red, .pill.danger { color: var(--danger); border-color: color-mix(in srgb, var(--danger) 40%, transparent); }
 .pill-icon { display: inline-flex; align-items: center; }
 .avatar {
+  position: relative;
   width: 48px; height: 48px; border-radius: 50%; flex: none; display: grid; place-items: center;
   background: var(--surface-2); color: var(--text); font-weight: 600; font-size: var(--fs-lg); overflow: hidden;
 }
 .avatar img { width: 100%; height: 100%; object-fit: cover; }
+.avatar img.avatar-icon { width: 80%; height: 80%; object-fit: contain; }
 .avatar.sm { width: 36px; height: 36px; font-size: var(--fs-sm); }
 .avatar.lg { width: 64px; height: 64px; font-size: var(--fs-2xl); }
 .avatar.xl { width: 120px; height: 120px; font-size: 48px; }
+.avatar .avatar-icon,
+.avatar .avatar-initial { position: relative; z-index: 1; }
 .avatar .avatar-icon { width: 55%; height: 55%; }
-.avatar.avatar-animated .avatar-icon { width: 84%; height: 84%; }
+.avatar.avatar-animated .avatar-icon,
+.avatar.avatar-animated img.avatar-icon { width: 86%; height: 86%; object-fit: contain; }
 /* Chosen avatar colours: a tint of --av over the surface, with ink mixed toward the text
-   colour, and skin/plush hues for Grok Bot & Muse (Jolly), so each follows light/dark themes. */
+   colour, and skin/plush hues for Grok Bot & Muse, so each follows light/dark themes. */
 .av-purple { --av: #7F77DD; --av-skin: #7C3AED; --av-plush: #DDD6FE; --av-plush-shade: #C4B5FD; }
 .av-teal { --av: #1D9E75; --av-skin: #0D9488; --av-plush: #CCFBF1; --av-plush-shade: #99F6E4; }
 .av-coral { --av: #D85A30; --av-skin: #EA580C; --av-plush: #FED7AA; --av-plush-shade: #FDBA74; }
 .av-pink { --av: #D4537E; --av-skin: #DB2777; --av-plush: #FCE7F3; --av-plush-shade: #FBCFE8; }
-.av-blue { --av: #378ADD; --av-skin: #2563EB; --av-plush: #DBEAFE; --av-plush-shade: #BFDBFE; }
+.av-blue { --av: #378ADD; --av-skin: #5A96EB; --av-plush: #DBEAFE; --av-plush-shade: #BFDBFE; }
 .av-green { --av: #639922; --av-skin: #16A34A; --av-plush: #DCFCE7; --av-plush-shade: #BBF7D0; }
 .av-amber { --av: #BA7517; --av-skin: #D97706; --av-plush: #FEF3C7; --av-plush-shade: #FDE68A; }
-.av-gray { --av: #888780; --av-skin: #18181B; --av-plush: #E4E4E7; --av-plush-shade: #D4D4D8; }
-.av-white { --av: #FFFFFF; --av-skin: #FFFFFF; --av-skin-ring: #CBD5E1; --av-eye: #18181B; --av-plush: #FFFFFF; --av-plush-shade: #E2E8F0; }
+.av-gray { --av: #888780; --av-skin: #111113; --av-plush: #E4E4E7; --av-plush-shade: #D4D4D8; }
+.av-white { --av: #FFFFFF; --av-skin: #FFFFFF; --av-skin-ring: #CBD5E1; --av-eye: #18181B; --av-spark: var(--art-gold); --av-plush: #FFFFFF; --av-plush-shade: #CBD5E1; }
 .avatar[class*='av-'] {
-  background: color-mix(in srgb, var(--av) 24%, var(--surface));
+  --av-bg-fill: color-mix(in srgb, var(--av) 24%, var(--surface));
+  background: var(--av-bg-fill);
   color: color-mix(in srgb, var(--av) 70%, var(--text));
 }
 .avatar.av-white {
+  --av-bg-fill: #FFFFFF;
+  --av-bg-stroke: var(--border);
   background: #FFFFFF;
   color: #1E293B;
   box-shadow: inset 0 0 0 1.5px var(--border);
 }
+
+/* Independent foreground colours (.av-fg-*) override background-inherited avatar tokens */
+.av-fg-purple { --av-skin: #7C3AED; --av-skin-ring: transparent; --av-eye: #FFFFFF; --av-spark: var(--av-skin); --av-plush: #DDD6FE; --av-plush-shade: #C4B5FD; --av-ink: #6D28D9; }
+.av-fg-teal { --av-skin: #0D9488; --av-skin-ring: transparent; --av-eye: #FFFFFF; --av-spark: var(--av-skin); --av-plush: #CCFBF1; --av-plush-shade: #99F6E4; --av-ink: #0F766E; }
+.av-fg-coral { --av-skin: #EA580C; --av-skin-ring: transparent; --av-eye: #FFFFFF; --av-spark: var(--av-skin); --av-plush: #FED7AA; --av-plush-shade: #FDBA74; --av-ink: #C2410C; }
+.av-fg-pink { --av-skin: #DB2777; --av-skin-ring: transparent; --av-eye: #FFFFFF; --av-spark: var(--av-skin); --av-plush: #FCE7F3; --av-plush-shade: #FBCFE8; --av-ink: #BE185D; }
+.av-fg-blue { --av-skin: #5A96EB; --av-skin-ring: transparent; --av-eye: #FFFFFF; --av-spark: var(--av-skin); --av-plush: #DBEAFE; --av-plush-shade: #BFDBFE; --av-ink: #1D4ED8; }
+.av-fg-green { --av-skin: #16A34A; --av-skin-ring: transparent; --av-eye: #FFFFFF; --av-spark: var(--av-skin); --av-plush: #DCFCE7; --av-plush-shade: #BBF7D0; --av-ink: #15803D; }
+.av-fg-amber { --av-skin: #D97706; --av-skin-ring: transparent; --av-eye: #FFFFFF; --av-spark: var(--av-skin); --av-plush: #FEF3C7; --av-plush-shade: #FDE68A; --av-ink: #B45309; }
+.av-fg-gray { --av-skin: #111113; --av-skin-ring: transparent; --av-eye: #FFFFFF; --av-spark: var(--av-skin); --av-plush: #E4E4E7; --av-plush-shade: #D4D4D8; --av-ink: color-mix(in srgb, var(--muted) 40%, var(--text)); }
+.av-fg-white { --av-skin: #FFFFFF; --av-skin-ring: #CBD5E1; --av-eye: #18181B; --av-spark: var(--art-gold); --av-plush: #FFFFFF; --av-plush-shade: #CBD5E1; --av-ink: #475569; }
+.avatar[class*='av-fg-'] { color: var(--av-ink); }
+
+/* Custom background container frame shapes */
+.avatar.av-bg-squircle { border-radius: 30%; }
+.avatar.av-bg-rounded { border-radius: 16%; }
+.avatar.av-bg-pebble { border-radius: 44% 56% 52% 48% / 48% 44% 56% 52%; }
+.avatar.av-bg-hexagon img { clip-path: polygon(25% 5%, 75% 5%, 98% 50%, 75% 95%, 25% 95%, 2% 50%); }
+.avatar.av-bg-cloud img { border-radius: 38% 38% 42% 42% / 36% 36% 44% 44%; }
+.avatar.avatar-svg-bg { background: transparent; box-shadow: none; border-radius: 0; overflow: visible; }
+.avatar-bg-svg { position: absolute; inset: 0; width: 100%; height: 100%; z-index: 0; pointer-events: none; }
+.avatar-bg-svg path { fill: var(--av-bg-fill); stroke: var(--av-bg-stroke); stroke-width: 1.5; stroke-linejoin: round; }
 .plate { display: inline-block; padding: 1px var(--space-2); border: 1px solid currentColor; border-radius: 4px; font-weight: 700; letter-spacing: 0.06em; font-family: var(--font-mono); font-variant-numeric: tabular-nums; }
 
 /* ---------- Stats ---------- */
@@ -965,7 +999,28 @@ textarea.input { min-height: 96px; resize: vertical; }
 }
 .avatar-swatch.av-none { background: var(--surface-2); }
 .avatar-swatch.av-white { background: #FFFFFF; box-shadow: inset 0 0 0 1px #CBD5E1; }
+.avatar-swatch.av-fg-swatch { background: var(--av-skin, var(--surface-2)); }
+.avatar-swatch.av-fg-swatch.av-fg-white { background: #FFFFFF; box-shadow: inset 0 0 0 1px #CBD5E1; }
 .avatar-swatch.on { border-color: var(--text); box-shadow: inset 0 0 0 2px var(--surface); }
+.avatar-shape-grid { display: flex; flex-wrap: wrap; gap: var(--space-2); }
+.avatar-shape-opt {
+  width: 38px; height: 38px; border-radius: var(--radius); display: grid; place-items: center; cursor: pointer;
+  border: 1.5px solid var(--border); background: var(--surface-2); color: var(--text); padding: 0;
+  transition: all var(--dur-fast) var(--ease);
+}
+.avatar-shape-opt:hover { border-color: var(--primary); }
+.avatar-shape-opt.on {
+  border-color: var(--primary); color: var(--primary);
+  background: color-mix(in srgb, var(--primary) 10%, var(--surface));
+  box-shadow: 0 0 0 1px var(--primary);
+}
+.avatar-bg-mini {
+  width: 20px; height: 20px; border: 2px solid currentColor; display: block;
+}
+.avatar-bg-mini.av-bg-circle { border-radius: 50%; }
+.avatar-bg-mini.av-bg-squircle { border-radius: 30%; }
+.avatar-bg-mini.av-bg-rounded { border-radius: 16%; }
+.avatar-bg-mini.av-bg-pebble { border-radius: 44% 56% 52% 48% / 48% 44% 56% 52%; }
 .avatar-icon-opt {
   width: 44px; height: 44px; border-radius: 50%; display: grid; place-items: center; cursor: pointer;
   border: 2px solid transparent; background: var(--surface-2); color: var(--text);
@@ -973,226 +1028,101 @@ textarea.input { min-height: 96px; resize: vertical; }
 .avatar-icon-opt.on { border-color: var(--primary); color: var(--primary); }
 .avatar-editor-actions { justify-content: flex-end; }
 
-/* Animated avatars: Grace Ride coloured characters, Grok Bot & Muse (Jolly) */
+/* Animated avatars & icon GIFs */
 .avatar-animated-icon {
   width: 100%;
   height: 100%;
   display: block;
 }
 
-.avatar-animated-icon *,
-.badge-animated-svg * {
+.avatar-animated-icon * {
   transform-box: fill-box;
   transform-origin: center;
 }
 
-@keyframes avSquashHop {
-  0%, 100% { transform: translateY(0) scale(1.03, 0.96); }
-  22% { transform: translateY(-2.5px) scale(0.97, 1.04); }
-  50% { transform: translateY(-0.5px) scale(1, 1); }
-  74% { transform: translateY(0.4px) scale(1.03, 0.97); }
+@keyframes grokBodyCycle {
+  0%, 15%, 92%, 100% { transform: translate(0, 0) rotate(0deg) scale(1, 1); }
+  22%, 36% { transform: translate(0.6px, -1.2px) rotate(6.5deg) scale(0.99, 1.02); }
+  44% { transform: translate(-0.8px, -0.6px) rotate(-9.5deg) scale(1.03, 0.97); }
+  50%, 62% { transform: translate(-0.4px, 0) rotate(-7.5deg) scale(1.01, 0.99); }
+  70%, 84% { transform: translate(-0.6px, 0.8px) rotate(-3deg) scale(1.01, 0.99); }
 }
 
-@keyframes avShadowSync {
-  0%, 100% { transform: scaleX(1.06); opacity: 0.16; }
-  22% { transform: scaleX(0.82); opacity: 0.08; }
-  50% { transform: scaleX(0.96); opacity: 0.13; }
-  74% { transform: scaleX(1.05); opacity: 0.17; }
+@keyframes grokGazeCycle {
+  0%, 15%, 92%, 100% { transform: translate(0, 0); }
+  21%, 37% { transform: translate(4.2px, -3.2px); }
+  44%, 62% { transform: translate(-2.2px, 1px); }
+  70%, 84% { transform: translate(-3.8px, 3.2px); }
 }
 
-@keyframes avCarRide {
-  0%, 100% { transform: translateY(0) scale(1.02, 0.98); }
-  25% { transform: translateY(-1.8px) scale(0.99, 1.02) rotate(-1deg); }
-  55% { transform: translateY(0.4px) scale(1.02, 0.98) rotate(0.6deg); }
-  80% { transform: translateY(-1.1px) scale(0.99, 1.01) rotate(-0.5deg); }
+@keyframes grokEyeLeftCycle {
+  0%, 3%, 9%, 14%, 40%, 92%, 98%, 100% { transform: scaleY(1); }
+  6%, 11%, 95% { transform: scaleY(0.1); }
+  44%, 62% { transform: scale(1, 1.05); }
 }
 
-@keyframes avWiggle {
-  0%, 100% { transform: rotate(0deg); }
-  25% { transform: rotate(-4.5deg) translateY(-0.5px); }
-  75% { transform: rotate(4.5deg) translateY(-0.5px); }
+@keyframes grokEyeRightWinkCycle {
+  0%, 3%, 9%, 14%, 40%, 67%, 92%, 98%, 100% { transform: scaleY(1) rotate(0deg); }
+  6%, 11%, 95% { transform: scaleY(0.1) rotate(0deg); }
+  44%, 62% { transform: scale(1.06, 0.4) rotate(-28deg); }
 }
 
-@keyframes avDoubleBlink {
-  0%, 72%, 80%, 88%, 100% { transform: scaleY(1); }
-  75%, 84% { transform: scaleY(0.12); }
+@keyframes museBodyCycle {
+  0%, 16%, 92%, 100% { transform: translate(0, 0) rotate(0deg) scale(1, 1); }
+  22%, 37% { transform: translate(-0.6px, -1.4px) rotate(-6deg) scale(0.98, 1.03); }
+  46% { transform: translate(0.6px, -2.2px) rotate(7.5deg) scale(0.96, 1.05); }
+  52%, 64% { transform: translate(0.4px, 0.2px) rotate(5.5deg) scale(1.04, 0.96); }
+  72%, 85% { transform: translate(0.6px, 0.6px) rotate(3deg) scale(1.01, 0.99); }
 }
 
-@keyframes avHeartRise {
-  0% { transform: translateY(2px) scale(0.7); opacity: 0; }
-  30% { transform: translateY(-0.8px) scale(1.08); opacity: 1; }
-  75% { transform: translateY(-3.4px) scale(1); opacity: 0.9; }
-  100% { transform: translateY(-4.8px) scale(0.82); opacity: 0; }
+@keyframes museFaceCycle {
+  0%, 16%, 92%, 100% { transform: translate(0, 0); }
+  22%, 37% { transform: translate(-3.4px, -2.4px); }
+  46%, 64% { transform: translate(2.4px, -1.6px); }
+  72%, 85% { transform: translate(3.4px, 2.2px); }
 }
 
-@keyframes avTwinkle {
-  0%, 100% { transform: scale(0.72) rotate(0deg); opacity: 0.45; }
-  45% { transform: scale(1.22) rotate(20deg); opacity: 1; }
-  75% { transform: scale(0.9) rotate(8deg); opacity: 0.75; }
+@keyframes museEyeHappyL {
+  0%, 5%, 10%, 16%, 41%, 69%, 100% { transform: scaleY(1) rotate(0deg); }
+  8%, 13% { transform: scaleY(0.12) rotate(0deg); }
+  46%, 64% { transform: scale(1.08, 0.52) rotate(14deg); }
 }
 
-@keyframes avSpinSlow {
-  from { transform: rotate(0deg); }
-  to { transform: rotate(360deg); }
-}
-
-@keyframes avFlapL {
-  0%, 100% { transform: rotate(4deg); }
-  50% { transform: rotate(-20deg); }
-}
-
-@keyframes avFlapR {
-  0%, 100% { transform: rotate(-4deg); }
-  50% { transform: rotate(20deg); }
-}
-
-@keyframes avSoftPulse {
-  0%, 100% { opacity: 0.65; transform: scale(0.95); }
-  50% { opacity: 1; transform: scale(1.08); }
-}
-
-@keyframes starFloat {
-  0%, 100% { transform: translateY(0) rotate(-3deg) scale(1); }
-  50% { transform: translateY(-2.4px) rotate(3deg) scale(1.04); }
-}
-
-@keyframes blossomSway {
-  0%, 100% { transform: rotate(-4deg); }
-  50% { transform: rotate(4deg); }
-}
-
-@keyframes puppyWag {
-  0%, 100% { transform: rotate(-12deg); }
-  50% { transform: rotate(16deg); }
-}
-
-/* Grok Bot: minimalist geometric squircle with expressive white pill eyes */
-@keyframes grokFloat {
-  0%, 100% { transform: translateY(0.4px) scale(1.03, 0.97) rotate(0deg); }
-  30% { transform: translateY(-2.4px) scale(0.98, 1.03) rotate(-2deg); }
-  65% { transform: translateY(-1.2px) scale(1, 1.01) rotate(2deg); }
-}
-
-@keyframes grokLook {
-  0%, 18%, 100% { transform: translate(0, 0); }
-  26%, 44% { transform: translate(2.3px, -0.7px); }
-  54%, 72% { transform: translate(-2.3px, 0.5px); }
-  82% { transform: translate(0, -0.4px); }
-}
-
-@keyframes grokEyeBlink {
-  0%, 66%, 72%, 78%, 84%, 100% { transform: scaleY(1); }
-  69%, 81% { transform: scaleY(0.1); }
-}
-
-@keyframes grokEyeWink {
-  0%, 34%, 44%, 66%, 72%, 78%, 84%, 100% { transform: scaleY(1); }
-  38%, 41% { transform: scaleY(0.16); }
-  69%, 81% { transform: scaleY(0.1); }
-}
-
-/* Muse (Jolly): plump plush toy cuddle-hop, waving stubby arms, happy waddle */
-@keyframes museHop {
-  0%, 100% { transform: translateY(0.5px) scale(1.04, 0.95) rotate(0deg); }
-  25% { transform: translateY(-2.5px) scale(0.97, 1.04) rotate(-2.5deg); }
-  55% { transform: translateY(0.2px) scale(1.02, 0.98) rotate(1.5deg); }
-  80% { transform: translateY(-1.6px) scale(0.98, 1.02) rotate(2deg); }
-}
-
-@keyframes museArmL {
-  0%, 100% { transform: rotate(8deg); }
-  30% { transform: rotate(-22deg) translateY(-0.5px); }
-  75% { transform: rotate(4deg); }
-}
-
-@keyframes museArmR {
-  0%, 100% { transform: rotate(-8deg); }
-  30% { transform: rotate(22deg) translateY(-0.5px); }
-  75% { transform: rotate(-4deg); }
-}
-
-@keyframes museFootStep {
-  0%, 100% { transform: translateY(0) rotate(0deg); }
-  35% { transform: translateY(-1.2px) rotate(-6deg); }
-  70% { transform: translateY(0) rotate(4deg); }
+@keyframes museEyeHappyR {
+  0%, 5%, 10%, 16%, 41%, 69%, 100% { transform: scaleY(1) rotate(0deg); }
+  8%, 13% { transform: scaleY(0.12) rotate(0deg); }
+  46%, 64% { transform: scale(1.08, 0.52) rotate(-14deg); }
 }
 
 @keyframes museCheekGlow {
-  0%, 100% { transform: scale(1); opacity: 0.82; }
-  50% { transform: scale(1.14); opacity: 1; }
+  0%, 40%, 70%, 100% { transform: scale(1); opacity: 0.84; }
+  46%, 64% { transform: scale(1.16); opacity: 1; }
 }
 
-/* Grace Cruiser */
-.avatar-grace-car .grace-car-body { animation: avCarRide 2.2s cubic-bezier(0.37, 0, 0.63, 1) infinite; }
-.avatar-grace-car .grace-car-wheel { animation: avSpinSlow 2s linear infinite; }
-.avatar-grace-car .grace-car-eye { animation: avDoubleBlink 4.6s ease-in-out infinite; }
-.avatar-grace-car .grace-car-heart { animation: avHeartRise 2.4s ease-out infinite; }
-.avatar-grace-car .grace-car-light { animation: avSoftPulse 1.5s ease-in-out infinite; }
-.avatar-grace-car .av-shadow { animation: avShadowSync 2.2s ease-in-out infinite; }
+@keyframes museSparkOrbit {
+  0%, 38%, 72%, 100% { transform: scale(0.75) rotate(0deg); opacity: 0.35; }
+  46%, 64% { transform: scale(1.25) rotate(24deg); opacity: 1; }
+}
 
-/* Peace Dove */
-.avatar-peace-dove .dove-body { animation: avSquashHop 2.8s cubic-bezier(0.37, 0, 0.63, 1) infinite; }
-.avatar-peace-dove .dove-wing-front { transform-origin: 20% 45%; animation: avFlapL 1.6s ease-in-out infinite; }
-.avatar-peace-dove .dove-wing-back { transform-origin: 85% 55%; animation: avFlapR 1.6s ease-in-out infinite 0.16s; }
-.avatar-peace-dove .dove-eye { animation: avDoubleBlink 4.8s ease-in-out infinite; }
-.avatar-peace-dove .dove-star { animation: avTwinkle 2.1s ease-in-out infinite; }
+.avatar-grok-bot .grok-body { animation: grokBodyCycle 6.4s cubic-bezier(0.22, 1, 0.36, 1) infinite; }
+.avatar-grok-bot .grok-eyes { animation: grokGazeCycle 6.4s cubic-bezier(0.22, 1, 0.36, 1) infinite; }
+.avatar-grok-bot .grok-eye-l { animation: grokEyeLeftCycle 6.4s ease-in-out infinite; }
+.avatar-grok-bot .grok-eye-r { animation: grokEyeRightWinkCycle 6.4s cubic-bezier(0.22, 1, 0.36, 1) infinite; }
 
-/* Sunny Smile */
-.avatar-sunny-cloud .sun-rays { animation: avSpinSlow 16s linear infinite; }
-.avatar-sunny-cloud .sun-orb { animation: avSoftPulse 3s ease-in-out infinite; }
-.avatar-sunny-cloud .cloud-puff { animation: avSquashHop 3s cubic-bezier(0.37, 0, 0.63, 1) infinite; }
-.avatar-sunny-cloud .cloud-eye { animation: avDoubleBlink 4.2s ease-in-out infinite; }
+.avatar-muse-bot .muse-body-group { animation: museBodyCycle 5.8s cubic-bezier(0.22, 1, 0.36, 1) infinite; }
+.avatar-muse-bot .muse-face { animation: museFaceCycle 5.8s cubic-bezier(0.22, 1, 0.36, 1) infinite; }
+.avatar-muse-bot .muse-eye-l { animation: museEyeHappyL 5.8s cubic-bezier(0.22, 1, 0.36, 1) infinite; }
+.avatar-muse-bot .muse-eye-r { animation: museEyeHappyR 5.8s cubic-bezier(0.22, 1, 0.36, 1) infinite; }
+.avatar-muse-bot .muse-cheek { animation: museCheekGlow 5.8s ease-in-out infinite; }
+.avatar-muse-bot .muse-spark { animation: museSparkOrbit 5.8s ease-in-out infinite; }
 
-/* Cuddly Bear */
-.avatar-happy-bear .bear-head-group { animation: avWiggle 3.2s cubic-bezier(0.45, 0, 0.55, 1) infinite; }
-.avatar-happy-bear .bear-ear-l { animation: avFlapL 2.2s ease-in-out infinite; }
-.avatar-happy-bear .bear-ear-r { animation: avFlapR 2.2s ease-in-out infinite 0.2s; }
-.avatar-happy-bear .bear-eye { animation: avDoubleBlink 4.4s ease-in-out infinite; }
-.avatar-happy-bear .bear-heart { animation: avHeartRise 2.5s ease-out infinite; }
-.avatar-happy-bear .av-shadow { animation: avShadowSync 3.2s ease-in-out infinite; }
-
-/* Mochi Cat */
-.avatar-fellowship-cat .cat-head-group { animation: avWiggle 3.5s cubic-bezier(0.45, 0, 0.55, 1) infinite; }
-.avatar-fellowship-cat .cat-eye { animation: avDoubleBlink 3.9s ease-in-out infinite; }
-.avatar-fellowship-cat .cat-whiskers { animation: avSquashHop 2.4s ease-in-out infinite; }
-.avatar-fellowship-cat .cat-sparkle { animation: avTwinkle 2s ease-in-out infinite; }
-
-/* Joy Puppy */
-.avatar-joy-puppy .puppy-head-group { animation: avSquashHop 2.2s cubic-bezier(0.37, 0, 0.63, 1) infinite; }
-.avatar-joy-puppy .puppy-ear-l { transform-origin: 70% 15%; animation: avFlapL 1.3s ease-in-out infinite; }
-.avatar-joy-puppy .puppy-ear-r { transform-origin: 30% 15%; animation: avFlapR 1.3s ease-in-out infinite; }
-.avatar-joy-puppy .puppy-tail { transform-origin: 10% 90%; animation: puppyWag 0.58s ease-in-out infinite; }
-.avatar-joy-puppy .puppy-eye { animation: avDoubleBlink 4.5s ease-in-out infinite; }
-.avatar-joy-puppy .av-shadow { animation: avShadowSync 2.2s ease-in-out infinite; }
-
-/* Starry Guide */
-.avatar-star-lantern .lantern-star { animation: starFloat 2.8s ease-in-out infinite; }
-.avatar-star-lantern .lantern-eye { animation: avDoubleBlink 4.1s ease-in-out infinite; }
-.avatar-star-lantern .lantern-sparkle-1 { animation: avTwinkle 1.8s ease-in-out infinite; }
-.avatar-star-lantern .lantern-sparkle-2 { animation: avTwinkle 1.8s ease-in-out infinite 0.7s; }
-
-/* Grace Blossom */
-.avatar-blossom-sprout .blossom-flower { transform-origin: 50% 95%; animation: blossomSway 3s cubic-bezier(0.45, 0, 0.55, 1) infinite; }
-.avatar-blossom-sprout .blossom-leaf-l { transform-origin: 95% 90%; animation: avFlapL 2.6s ease-in-out infinite; }
-.avatar-blossom-sprout .blossom-leaf-r { transform-origin: 5% 90%; animation: avFlapR 2.6s ease-in-out infinite; }
-.avatar-blossom-sprout .blossom-eye { animation: avDoubleBlink 4.3s ease-in-out infinite; }
-.avatar-blossom-sprout .blossom-dew { animation: avHeartRise 2.6s ease-out infinite; }
-
-/* Grok Bot & Muse (Jolly) */
-.avatar-grok-bot .grok-body { animation: grokFloat 3.4s cubic-bezier(0.37, 0, 0.63, 1) infinite; }
-.avatar-grok-bot .grok-shadow { animation: avShadowSync 3.4s ease-in-out infinite; }
-.avatar-grok-bot .grok-eyes { animation: grokLook 5.6s cubic-bezier(0.45, 0, 0.55, 1) infinite; }
-.avatar-grok-bot .grok-eye-l { animation: grokEyeBlink 4.8s ease-in-out infinite; }
-.avatar-grok-bot .grok-eye-r { animation: grokEyeWink 4.8s ease-in-out infinite; }
-
-.avatar-muse-bot .muse-body-group { animation: museHop 2.9s cubic-bezier(0.37, 0, 0.63, 1) infinite; }
-.avatar-muse-bot .muse-shadow { animation: avShadowSync 2.9s ease-in-out infinite; }
-.avatar-muse-bot .muse-arm-l { transform-origin: 90% 35%; animation: museArmL 2.9s ease-in-out infinite; }
-.avatar-muse-bot .muse-arm-r { transform-origin: 10% 35%; animation: museArmR 2.9s ease-in-out infinite; }
-.avatar-muse-bot .muse-foot-l { animation: museFootStep 2.9s ease-in-out infinite; }
-.avatar-muse-bot .muse-foot-r { animation: museFootStep 2.9s ease-in-out infinite 1.45s; }
-.avatar-muse-bot .muse-eye { animation: avDoubleBlink 4.2s ease-in-out infinite; }
-.avatar-muse-bot .muse-cheek { animation: museCheekGlow 2.9s ease-in-out infinite; }
+.avatar-icon-gif,
+.badge-gif,
+.event-icon-gif {
+  display: block;
+  object-fit: contain;
+  flex-shrink: 0;
+}
 
 .avatar-animated-grid {
   display: grid;
@@ -1238,7 +1168,13 @@ textarea.input { min-height: 96px; resize: vertical; }
   height: 26px;
 }
 
-/* Adorable role-categorized animated achievement badges */
+.badge-char img {
+  width: 42px;
+  height: 42px;
+  object-fit: contain;
+}
+
+/* Role-categorized animated achievement badges */
 .badge-cat-member { --badge-accent: var(--badge-member); }
 .badge-cat-driver { --badge-accent: var(--badge-driver); }
 .badge-cat-traffic_lead { --badge-accent: var(--badge-traffic); }
@@ -1252,9 +1188,11 @@ textarea.input { min-height: 96px; resize: vertical; }
   transition: transform var(--dur-fast) var(--ease), border-color var(--dur-fast) var(--ease);
 }
 
-.badge-char.badge-animated svg {
+.badge-char.badge-animated svg,
+.badge-char.badge-animated img {
   width: 48px;
   height: 48px;
+  object-fit: contain;
 }
 
 .badge-char.badge-animated:not(.earned) {
@@ -1272,91 +1210,6 @@ textarea.input { min-height: 96px; resize: vertical; }
 .badge-animated-svg {
   display: block;
 }
-
-@keyframes tlLightRed {
-  0%, 28% { opacity: 1; transform: scale(1.14); }
-  34%, 100% { opacity: 0.3; transform: scale(0.94); }
-}
-
-@keyframes tlLightAmber {
-  0%, 30% { opacity: 0.3; transform: scale(0.94); }
-  34%, 62% { opacity: 1; transform: scale(1.14); }
-  68%, 100% { opacity: 0.3; transform: scale(0.94); }
-}
-
-@keyframes tlLightGreen {
-  0%, 64% { opacity: 0.3; transform: scale(0.94); }
-  68%, 96% { opacity: 1; transform: scale(1.16); }
-  100% { opacity: 0.3; transform: scale(0.94); }
-}
-
-@keyframes badgeCompassDamp {
-  0%, 100% { transform: rotate(-18deg); }
-  25% { transform: rotate(22deg); }
-  50% { transform: rotate(-12deg); }
-  75% { transform: rotate(14deg); }
-}
-
-@keyframes badgePendulum {
-  0%, 100% { transform: rotate(-9deg); }
-  50% { transform: rotate(9deg); }
-}
-
-@keyframes badgeAlarmBurst {
-  0%, 68%, 100% { transform: rotate(0deg) translateY(0); }
-  72%, 82% { transform: rotate(-7deg) translateY(-1px); }
-  77%, 87% { transform: rotate(7deg) translateY(-1px); }
-  92% { transform: rotate(-3deg); }
-}
-
-@keyframes badgeHeartbeat {
-  0%, 40%, 100% { transform: scale(1); }
-  12% { transform: scale(1.12); }
-  20% { transform: scale(0.98); }
-  28% { transform: scale(1.08); }
-}
-
-@keyframes badgeWhistleBurst {
-  0% { transform: translate(0, 0) scale(0.75); opacity: 0; }
-  35% { transform: translate(1.8px, -1.6px) scale(1.1); opacity: 1; }
-  85%, 100% { transform: translate(3.8px, -3px) scale(1.22); opacity: 0; }
-}
-
-@keyframes badgePop {
-  0%, 100% { transform: scale(1); }
-  50% { transform: scale(1.14); }
-}
-
-.badge-animated-svg .badge-blink { animation: avDoubleBlink 4.2s ease-in-out infinite; }
-.badge-animated-svg .badge-twinkle-1 { animation: avTwinkle 2s ease-in-out infinite; }
-.badge-animated-svg .badge-twinkle-2 { animation: avTwinkle 2s ease-in-out infinite 0.8s; }
-.badge-animated-svg .badge-heart-float { animation: avHeartRise 2.3s ease-out infinite; }
-.badge-animated-svg .badge-heart-float-delay { animation: avHeartRise 2.3s ease-out infinite 0.75s; }
-.badge-animated-svg .badge-car-bob { animation: avCarRide 2.1s cubic-bezier(0.37, 0, 0.63, 1) infinite; }
-.badge-animated-svg .badge-bell-swing { transform-origin: 50% 6%; animation: badgePendulum 2.4s cubic-bezier(0.45, 0, 0.55, 1) infinite; }
-.badge-animated-svg .badge-flower-sway { animation: blossomSway 2.9s ease-in-out infinite; }
-.badge-animated-svg .badge-note-1 { animation: avHeartRise 2.5s ease-out infinite; }
-.badge-animated-svg .badge-clock-jiggle { animation: badgeAlarmBurst 3.2s ease-in-out infinite; }
-.badge-animated-svg .badge-tick-pop { animation: badgePop 2.4s cubic-bezier(0.34, 1.56, 0.64, 1) infinite; }
-.badge-animated-svg .badge-heart-pulse { animation: badgeHeartbeat 2.4s ease-in-out infinite; }
-.badge-animated-svg .badge-heart-tilt { animation: avWiggle 2.9s ease-in-out infinite; }
-.badge-animated-svg .badge-moon-rock { animation: avWiggle 3.5s cubic-bezier(0.45, 0, 0.55, 1) infinite; }
-.badge-animated-svg .badge-ribbon-flutter { transform-origin: 50% 10%; animation: avWiggle 2.4s ease-in-out infinite; }
-.badge-animated-svg .badge-medal-bob { animation: avSquashHop 2.6s cubic-bezier(0.37, 0, 0.63, 1) infinite; }
-.badge-animated-svg .badge-halo-pulse { animation: avSoftPulse 2s ease-in-out infinite; }
-.badge-animated-svg .badge-wing-l { transform-origin: 90% 55%; animation: avFlapL 1.6s ease-in-out infinite; }
-.badge-animated-svg .badge-wing-r { transform-origin: 10% 55%; animation: avFlapR 1.6s ease-in-out infinite; }
-.badge-animated-svg .badge-wheel-bob { animation: avSquashHop 2.4s cubic-bezier(0.37, 0, 0.63, 1) infinite; }
-.badge-animated-svg .badge-tl-bob { animation: avSquashHop 2.8s cubic-bezier(0.37, 0, 0.63, 1) infinite; }
-.badge-animated-svg .tl-red { animation: tlLightRed 3.6s ease-in-out infinite; }
-.badge-animated-svg .tl-amber { animation: tlLightAmber 3.6s ease-in-out infinite; }
-.badge-animated-svg .tl-green { animation: tlLightGreen 3.6s ease-in-out infinite; }
-.badge-animated-svg .badge-compass-needle { animation: badgeCompassDamp 3.4s cubic-bezier(0.45, 0, 0.55, 1) infinite; }
-.badge-animated-svg .badge-whistle-tilt { animation: avWiggle 2.2s ease-in-out infinite; }
-.badge-animated-svg .badge-whistle-puff-1 { animation: badgeWhistleBurst 1.8s ease-out infinite; }
-.badge-animated-svg .badge-whistle-puff-2 { animation: badgeWhistleBurst 1.8s ease-out infinite 0.55s; }
-.badge-animated-svg .badge-crown-bob { animation: avSquashHop 2.2s cubic-bezier(0.34, 1.56, 0.64, 1) infinite; }
-.badge-animated-svg .badge-shield-pulse { animation: avSoftPulse 2.8s ease-in-out infinite; }
 
 .badge-filter-row {
   display: flex;
@@ -1417,9 +1270,17 @@ textarea.input { min-height: 96px; resize: vertical; }
   border-color: color-mix(in srgb, var(--badge-accent) 26%, var(--border));
 }
 
-.badge-icon-btn.animated svg {
+.badge-icon-btn.animated svg,
+.badge-icon-btn.animated img {
   width: 38px;
   height: 38px;
+  object-fit: contain;
+}
+
+.badge-icon-btn img {
+  width: 34px;
+  height: 34px;
+  object-fit: contain;
 }
 
 .badge-icon-btn:hover {
@@ -1429,8 +1290,9 @@ textarea.input { min-height: 96px; resize: vertical; }
 
 .badge-icon-btn.on {
   border-color: var(--primary);
-  background: var(--primary);
-  color: var(--primary-ink, #ffffff);
+  background: color-mix(in srgb, var(--primary) 16%, var(--surface));
+  box-shadow: 0 0 0 1px var(--primary);
+  color: var(--text);
 }
 
 .badge-icon-btn.animated.on {
@@ -1443,8 +1305,6 @@ textarea.input { min-height: 96px; resize: vertical; }
 @media (prefers-reduced-motion: reduce) {
   .avatar-animated-icon,
   .avatar-animated-icon *,
-  .badge-animated-svg,
-  .badge-animated-svg *,
   .badge-char.badge-tier-gold,
   .badge-char.badge-tier-platinum {
     animation: none !important;

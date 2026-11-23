@@ -1,5 +1,6 @@
 package org.pjstatecm.graceride.ui.screens.events
 
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -7,6 +8,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.selection.toggleable
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
@@ -30,6 +32,7 @@ import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
+import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
@@ -43,6 +46,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.navigation.NavHostController
@@ -56,6 +60,7 @@ import org.pjstatecm.graceride.domain.RideStatus
 import org.pjstatecm.graceride.domain.RideStatusKind
 import org.pjstatecm.graceride.ui.Routes
 import org.pjstatecm.graceride.ui.components.ErrorView
+import org.pjstatecm.graceride.ui.components.EventIcon
 import org.pjstatecm.graceride.ui.components.LoadingView
 import org.pjstatecm.graceride.ui.components.ScheduleTimeline
 import org.pjstatecm.graceride.ui.components.TimelineBadge
@@ -63,6 +68,7 @@ import org.pjstatecm.graceride.ui.components.TimelineKind
 import org.pjstatecm.graceride.ui.components.TimelineNode
 import org.pjstatecm.graceride.ui.components.TimelineState
 import org.pjstatecm.graceride.ui.openInWebApp
+import org.pjstatecm.graceride.ui.theme.LocalStatusColors
 import org.pjstatecm.graceride.ui.theme.Spacing
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -72,14 +78,26 @@ fun EventDetailScreen(container: AppContainer, nav: NavHostController, id: Long)
     val state by vm.state.collectAsStateWithLifecycle()
     val context = LocalContext.current
     val snackbar = remember { SnackbarHostState() }
+    val publishedNotice = stringResource(R.string.event_published_notice)
+    val unpublishedNotice = stringResource(R.string.event_unpublished_notice)
     var showSignup by remember { mutableStateOf(false) }
     var confirmWithdraw by remember { mutableStateOf(false) }
+    var confirmPublish by remember { mutableStateOf(false) }
+    var confirmUnpublish by remember { mutableStateOf(false) }
 
     LaunchedEffect(state.message) {
         state.message?.let {
             snackbar.showSnackbar(it)
             vm.clearMessage()
         }
+    }
+    LaunchedEffect(state.actionNotice) {
+        when (state.actionNotice) {
+            EventActionNotice.PUBLISHED -> snackbar.showSnackbar(publishedNotice)
+            EventActionNotice.UNPUBLISHED -> snackbar.showSnackbar(unpublishedNotice)
+            null -> Unit
+        }
+        if (state.actionNotice != null) vm.clearNotice()
     }
 
     Scaffold(
@@ -121,8 +139,47 @@ fun EventDetailScreen(container: AppContainer, nav: NavHostController, id: Long)
                     Modifier.fillMaxSize().padding(padding).verticalScroll(rememberScrollState()).padding(Spacing.sm),
                     verticalArrangement = Arrangement.spacedBy(Spacing.sm),
                 ) {
-                    Text(event.title, style = MaterialTheme.typography.headlineSmall, color = MaterialTheme.colorScheme.onSurface)
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(Spacing.xs),
+                        modifier = Modifier.fillMaxWidth(),
+                    ) {
+                        EventIcon(icon = event.icon, kind = event.kind, size = 28.dp)
+                        Text(
+                            event.title,
+                            style = MaterialTheme.typography.headlineSmall,
+                            color = MaterialTheme.colorScheme.onSurface,
+                            modifier = Modifier.weight(1f),
+                        )
+                        if (event.status == "draft") {
+                            val c = LocalStatusColors.current
+                            Surface(color = c.warningSoft, contentColor = c.warning, shape = CircleShape) {
+                                Text(
+                                    stringResource(R.string.event_status_draft),
+                                    style = MaterialTheme.typography.labelMedium,
+                                    modifier = Modifier.padding(horizontal = Spacing.xs, vertical = Spacing.xxs),
+                                )
+                            }
+                        }
+                    }
                     Text(KlTime.display(event.startsAt), style = MaterialTheme.typography.titleMedium, color = MaterialTheme.colorScheme.primary)
+
+                    if (event.status == "draft") {
+                        val c = LocalStatusColors.current
+                        Surface(
+                            color = c.warningSoft,
+                            contentColor = c.warning,
+                            border = BorderStroke(1.dp, c.warning.copy(alpha = 0.4f)),
+                            shape = MaterialTheme.shapes.medium,
+                            modifier = Modifier.fillMaxWidth(),
+                        ) {
+                            Text(
+                                stringResource(R.string.event_draft_banner),
+                                style = MaterialTheme.typography.bodyMedium,
+                                modifier = Modifier.padding(Spacing.sm),
+                            )
+                        }
+                    }
 
                     OutlinedCard(Modifier.fillMaxWidth()) {
                         Column(Modifier.padding(Spacing.sm), verticalArrangement = Arrangement.spacedBy(Spacing.xs)) {
@@ -197,6 +254,31 @@ fun EventDetailScreen(container: AppContainer, nav: NavHostController, id: Long)
 
                     if (event.description.isNotBlank()) {
                         Text(event.description, style = MaterialTheme.typography.bodyLarge, color = MaterialTheme.colorScheme.onSurface)
+                    }
+
+                    if (event.status == "draft" && event.canPublish) {
+                        Button(
+                            onClick = { confirmPublish = true },
+                            enabled = !state.busy,
+                            modifier = Modifier.fillMaxWidth(),
+                        ) {
+                            Text(stringResource(R.string.event_publish))
+                        }
+                    } else if (open && event.canManage) {
+                        OutlinedButton(
+                            onClick = { confirmUnpublish = true },
+                            enabled = event.canUnpublish && !state.busy,
+                            modifier = Modifier.fillMaxWidth(),
+                        ) {
+                            Text(stringResource(R.string.event_unpublish))
+                        }
+                        if (!event.canUnpublish) {
+                            Text(
+                                stringResource(R.string.event_unpublish_blocked),
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                        }
                     }
 
                     OutlinedButton(
@@ -287,6 +369,30 @@ fun EventDetailScreen(container: AppContainer, nav: NavHostController, id: Long)
             dismissButton = { TextButton(onClick = { confirmWithdraw = false }) { Text(stringResource(R.string.common_cancel)) } },
         )
     }
+
+    if (confirmPublish) {
+        AlertDialog(
+            onDismissRequest = { confirmPublish = false },
+            title = { Text(stringResource(R.string.event_publish)) },
+            text = { Text(stringResource(R.string.event_publish_confirm)) },
+            confirmButton = {
+                TextButton(onClick = { vm.publish(); confirmPublish = false }) { Text(stringResource(R.string.common_confirm)) }
+            },
+            dismissButton = { TextButton(onClick = { confirmPublish = false }) { Text(stringResource(R.string.common_cancel)) } },
+        )
+    }
+
+    if (confirmUnpublish) {
+        AlertDialog(
+            onDismissRequest = { confirmUnpublish = false },
+            title = { Text(stringResource(R.string.event_unpublish)) },
+            text = { Text(stringResource(R.string.event_unpublish_confirm)) },
+            confirmButton = {
+                TextButton(onClick = { vm.unpublish(); confirmUnpublish = false }) { Text(stringResource(R.string.common_confirm)) }
+            },
+            dismissButton = { TextButton(onClick = { confirmUnpublish = false }) { Text(stringResource(R.string.common_cancel)) } },
+        )
+    }
 }
 
 @Composable
@@ -352,6 +458,8 @@ private fun buildEventWorkflowNodes(
             subtitle = event.location.ifBlank { null },
             kind = TimelineKind.EVENT,
             state = TimelineState.UPCOMING,
+            eventIcon = event.icon,
+            eventKind = event.kind,
         )
         if (event.attendanceEnabled) {
             nodes += TimelineNode(
@@ -383,6 +491,8 @@ private fun buildEventWorkflowNodes(
             subtitle = event.location.ifBlank { null },
             kind = TimelineKind.EVENT,
             state = TimelineState.UPCOMING,
+            eventIcon = event.icon,
+            eventKind = event.kind,
         )
         return nodes
     }
@@ -405,6 +515,8 @@ private fun buildEventWorkflowNodes(
             kind = TimelineKind.EVENT,
             state = TimelineState.ACTIVE,
             badge = TimelineBadge(stringResource(R.string.event_going), RideStatusKind.ACTIVE),
+            eventIcon = event.icon,
+            eventKind = event.kind,
         )
         if (event.attendanceEnabled) {
             nodes += TimelineNode(
@@ -477,14 +589,20 @@ private fun appendTransportTimelineNodes(
     }
 
     val attended = event.attendanceEnabled && event.mySignup?.attended == true
+    val isDraft = event.status == "draft"
     nodes += TimelineNode(
         id = "evt-${event.id}",
         timeLabel = KlTime.time(event.startsAt),
         title = stringResource(R.string.event_workflow_event_start),
         subtitle = event.location.ifBlank { null },
         kind = TimelineKind.EVENT,
-        state = if (doneAll) TimelineState.DONE else TimelineState.ACTIVE,
+        state = when {
+            isDraft -> TimelineState.UPCOMING
+            doneAll -> TimelineState.DONE
+            else -> TimelineState.ACTIVE
+        },
         badge = when {
+            isDraft -> TimelineBadge(stringResource(R.string.event_status_draft), RideStatusKind.PENDING)
             doneAll -> TimelineBadge(
                 stringResource(if (event.status == "cancelled") R.string.event_status_cancelled else R.string.event_status_finished),
                 RideStatusKind.DONE,
@@ -492,6 +610,8 @@ private fun appendTransportTimelineNodes(
             attended -> TimelineBadge(stringResource(R.string.event_status_attended), RideStatusKind.ACTIVE)
             else -> null
         },
+        eventIcon = event.icon,
+        eventKind = event.kind,
     )
 
     postDrives.forEach { ride ->
