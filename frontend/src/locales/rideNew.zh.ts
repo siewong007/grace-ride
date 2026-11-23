@@ -53,6 +53,8 @@ export default {
   forMyself: '为自己预约',
   forOther: '为长辈/组员代订',
   frequentRiders: '常用乘车人快捷选择',
+  manageProxyRiders: '管理',
+  manageProxyRidersTitle: '常用代订乘车人',
   riderName: '实际乘车人姓名',
   riderNamePlaceholder: '例如：陈妈妈 / 蔡长辈 / 李弟兄',
   relationship: '与您的关系',

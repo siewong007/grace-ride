@@ -199,6 +199,10 @@ fun ProfileScreen(container: AppContainer, nav: NavHostController) {
                 OutlinedCard(Modifier.fillMaxWidth()) {
                     Column {
                         ProfileRow(stringResource(R.string.saved_addresses_title), Icons.Outlined.LocationOn) { nav.navigate(Routes.SAVED_ADDRESSES) }
+                        if (me?.can("rides") == true) {
+                            HorizontalDivider()
+                            ProfileRow(stringResource(R.string.proxy_riders_title), Icons.Outlined.Groups) { nav.navigate(Routes.PROXY_RIDERS) }
+                        }
                         if (me?.can("drive") == true) {
                             HorizontalDivider()
                             ProfileRow(stringResource(R.string.driver_settings_title), Icons.Outlined.DirectionsCar) { nav.navigate(Routes.DRIVER_SETTINGS) }

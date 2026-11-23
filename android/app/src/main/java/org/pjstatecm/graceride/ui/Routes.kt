@@ -15,6 +15,7 @@ object Routes {
     const val HISTORY = "history"
     const val PROFILE = "profile"
     const val DRIVER_SETTINGS = "driver-settings"
+    const val PROXY_RIDERS = "proxy-riders"
     const val SAVED_ADDRESSES = "saved-addresses"
     const val NOTIFICATIONS = "notifications"
 

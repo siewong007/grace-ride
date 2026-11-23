@@ -315,7 +315,7 @@
     <string name="ride_open_web_live">Open live map &amp; chat in Web</string>
     <string name="event_open_web_full">Open check-in &amp; full event in Web</string>
     <string name="profile_section_web">More in Web App</string>
-    <string name="profile_web_drive">Driving schedule &amp; vehicle</string>
+    <string name="profile_web_drive">Driving schedule &amp; routes (Web)</string>
     <string name="profile_web_staff">Staff &amp; traffic workspace</string>
     <string name="driver_settings_title">Vehicle &amp; driving settings</string>
     <string name="driver_vehicles_title">Vehicles</string>
@@ -358,4 +358,19 @@
     <string name="saved_addresses_area_missing">Area not set</string>
     <string name="saved_addresses_pinned">Map pin saved</string>
     <string name="saved_addresses_no_pin">No map pin yet</string>
+    <string name="saved_addresses_use_gps">Use my current location</string>
+    <string name="saved_addresses_locating">Getting location…</string>
+    <string name="saved_addresses_gps_captured">GPS coordinates captured for driver routing.</string>
+    <string name="saved_addresses_gps_denied">Location permission denied or unavailable right now.</string>
+    <string name="common_manage">Manage</string>
+    <string name="proxy_riders_title">Frequent riders</string>
+    <string name="proxy_riders_empty">No frequent riders saved yet.</string>
+    <string name="proxy_riders_add">Add frequent rider</string>
+    <string name="proxy_riders_edit">Edit frequent rider</string>
+    <string name="proxy_riders_saved">Frequent rider saved</string>
+    <string name="proxy_riders_removed">Frequent rider removed</string>
+    <string name="proxy_riders_remove">Remove</string>
+    <string name="proxy_riders_remove_confirm">Remove this frequent rider?</string>
+    <string name="proxy_riders_notes">Mobility or assistance notes (optional)</string>
+    <string name="proxy_rel_cell">Cell group member</string>
 </resources>

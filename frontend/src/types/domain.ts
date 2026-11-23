@@ -39,6 +39,17 @@ export interface SavedPlace {
   is_default: number;
 }
 
+export interface ProxyRider {
+  id: number;
+  name: string;
+  phone: string;
+  relationship: string;
+  notes: string;
+  area_id?: number | null;
+  pickup_address?: string;
+  gate_notes?: string;
+}
+
 export interface Badge {
   key: string;
   char: string;

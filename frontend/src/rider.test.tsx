@@ -453,6 +453,22 @@ describe('RideNew page', () => {
       delete mockApiData['/saved-places'];
     }
   });
+
+  it('opens inline frequent riders manager modal in proxy mode without losing booking state', async () => {
+    render(
+      <MemoryRouter initialEntries={['/rides/new?event=1']}>
+        <RideNew />
+      </MemoryRouter>
+    );
+
+    fireEvent.click(screen.getByRole('button', { name: /book for family/i }));
+    fireEvent.change(screen.getByLabelText(/actual passenger name/i), { target: { value: 'Uncle Tan' } });
+    fireEvent.click(screen.getByRole('button', { name: /manage/i }));
+    expect(await screen.findByRole('dialog', { name: /frequent riders/i })).toBeInTheDocument();
+    expect(screen.getByText('Sister Chen')).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: /close/i }));
+    expect(screen.getByDisplayValue('Uncle Tan')).toBeInTheDocument();
+  });
 });
 
 describe('RideDetail page', () => {

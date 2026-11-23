@@ -26,6 +26,7 @@ import org.junit.Before
 import org.junit.Test
 import org.pjstatecm.graceride.data.api.Area
 import org.pjstatecm.graceride.data.api.DriverVehicleReq
+import org.pjstatecm.graceride.data.api.ProxyRiderReq
 import org.pjstatecm.graceride.data.api.SavedPlace
 import org.pjstatecm.graceride.data.api.apiJson
 import org.pjstatecm.graceride.di.AppContainer
@@ -37,6 +38,7 @@ import org.pjstatecm.graceride.ui.screens.home.HomeViewModel
 import org.pjstatecm.graceride.ui.screens.login.LoginViewModel
 import org.pjstatecm.graceride.ui.screens.profile.DriverSettingsViewModel
 import org.pjstatecm.graceride.ui.screens.profile.ProfileViewModel
+import org.pjstatecm.graceride.ui.screens.profile.ProxyRidersViewModel
 import org.pjstatecm.graceride.ui.screens.profile.SavedAddressesViewModel
 import org.pjstatecm.graceride.ui.screens.rides.RideDetailViewModel
 import org.pjstatecm.graceride.ui.screens.rides.RideNewViewModel
@@ -731,5 +733,49 @@ class ViewModelTest {
         val postBody = apiJson.parseToJsonElement(postReq.body.readUtf8()).jsonObject
         assertEquals(3.073, postBody["lat"]?.jsonPrimitive?.double ?: 0.0, 0.0001)
         assertEquals(101.588, postBody["lng"]?.jsonPrimitive?.double ?: 0.0, 0.0001)
+    }
+
+    @Test fun proxyRidersCrudAndRefresh() = runBlocking {
+        server.enqueue(json("[]"))
+        server.enqueue(json("""[{"id":1,"name":"PJ","active":true}]"""))
+        val vm = ProxyRidersViewModel(container)
+        val init = vm.state.awaitUntil { !it.loading }
+        assertTrue(init.riders.isEmpty())
+        repeat(2) { server.takeRequest() }
+
+        server.enqueue(json("""{"id":9,"ok":true}"""))
+        server.enqueue(json("""[{"id":9,"name":"Sister Chen","phone":"012-3456","relationship":"parent","notes":"Cane","area_id":1,"pickup_address":"10 SS2","gate_notes":"Gate 1"}]"""))
+        var done = 0
+        vm.save(null, ProxyRiderReq("Sister Chen", "012-3456", "parent", "Cane", 1L, "10 SS2", "Gate 1")) { done++ }
+        vm.state.awaitUntil { it.message == "saved" }
+        assertEquals(1, done)
+        assertEquals(1, vm.state.value.riders.size)
+        val createReq = server.takeRequest()
+        assertEquals("POST", createReq.method)
+        assertEquals("/api/proxy-riders", createReq.path)
+        server.takeRequest()
+
+        vm.clearMessage()
+        server.enqueue(json("""{"ok":true}"""))
+        server.enqueue(json("""[{"id":9,"name":"Elder Chen","phone":"012-3456","relationship":"parent","notes":"Walker","area_id":1,"pickup_address":"10 SS2","gate_notes":"Gate 1"}]"""))
+        vm.save(9L, ProxyRiderReq("Elder Chen", "012-3456", "parent", "Walker", 1L, "10 SS2", "Gate 1")) { done++ }
+        vm.state.awaitUntil { it.message == "saved" }
+        assertEquals(2, done)
+        assertEquals("Elder Chen", vm.state.value.riders.first().name)
+        val updReq = server.takeRequest()
+        assertEquals("PUT", updReq.method)
+        assertEquals("/api/proxy-riders/9", updReq.path)
+        server.takeRequest()
+
+        vm.clearMessage()
+        server.enqueue(json("""{"ok":true}"""))
+        server.enqueue(json("[]"))
+        vm.delete(9L) { done++ }
+        vm.state.awaitUntil { it.message == "removed" }
+        assertEquals(3, done)
+        assertTrue(vm.state.value.riders.isEmpty())
+        val delReq = server.takeRequest()
+        assertEquals("DELETE", delReq.method)
+        assertEquals("/api/proxy-riders/9", delReq.path)
     }
 }

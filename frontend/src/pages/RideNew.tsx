@@ -28,11 +28,12 @@ import {
   useToast,
 } from '../components/ui';
 import type { Ride } from '../components/RideCard';
-import type { SavedPlace } from '../types/domain';
+import type { ProxyRider, SavedPlace } from '../types/domain';
 import { fmtDateTime, todayStr, useFormatT } from '../format';
 import { useTranslation } from 'react-i18next';
 import { AddressInput } from '../components/AddressInput';
 import { AreaPhotoStrip } from '../components/AreaPhotos';
+import ProxyRidersSection from './family/ProxyRidersSection';
 import SavedAddressesSection from './SavedAddressesSection';
 
 interface Area {
@@ -40,17 +41,6 @@ interface Area {
   name: string;
   active: boolean;
   photo_count?: number;
-}
-
-interface ProxyRider {
-  id: number;
-  name: string;
-  phone: string;
-  relationship: string;
-  notes: string;
-  area_id?: number | null;
-  pickup_address?: string;
-  gate_notes?: string;
 }
 
 interface EventData {
@@ -97,7 +87,10 @@ function RideNewForm() {
   const { data: event } = useApi<EventData>(
     eventId ? `/events/${eventId}` : null,
   );
-  const { data: frequentRiders } = useApi<ProxyRider[]>('/proxy-riders');
+  const {
+    data: frequentRiders,
+    reload: reloadProxyRiders,
+  } = useApi<ProxyRider[]>('/proxy-riders');
   const {
     data: savedPlacesRaw,
     loading: savedPlacesLoading,
@@ -136,6 +129,7 @@ function RideNewForm() {
   const [notes, setNotes] = useState('');
   const [needsOpen, setNeedsOpen] = useState(false);
   const [managePlacesOpen, setManagePlacesOpen] = useState(false);
+  const [manageProxiesOpen, setManageProxiesOpen] = useState(false);
   const [pickedCoords, setPickedCoords] = useState<{ address: string; lat: number; lng: number } | null>(null);
   const [saveAddress, setSaveAddress] = useState(false);
   const [saveAddressLabel, setSaveAddressLabel] = useState('');
@@ -550,9 +544,18 @@ function RideNewForm() {
 
             {isProxy && (
               <div className="proxy-panel stack">
-                {frequentRiders && frequentRiders.length > 0 && (
-                  <div className="stack gap-xs">
+                <div className="stack gap-xs">
+                  <div className="row between items-center wrap gap-xs">
                     <label className="small muted bold">{t('frequentRiders')}</label>
+                    <button
+                      type="button"
+                      className="saved-addr-manage-link"
+                      onClick={() => setManageProxiesOpen(true)}
+                    >
+                      {t('manageProxyRiders')}
+                    </button>
+                  </div>
+                  {frequentRiders && frequentRiders.length > 0 && (
                     <div className="row wrap gap-xs">
                       {frequentRiders.map((fr) => (
                         <button
@@ -565,8 +568,8 @@ function RideNewForm() {
                         </button>
                       ))}
                     </div>
-                  </div>
-                )}
+                  )}
+                </div>
 
                 <div className="form-grid two">
                   <div>
@@ -1101,6 +1104,18 @@ function RideNewForm() {
             places={savedPlaces}
             loading={savedPlacesLoading}
             reloadPlaces={reloadSavedPlaces}
+          />
+        </Modal>
+      )}
+
+      {manageProxiesOpen && (
+        <Modal
+          title={t('manageProxyRidersTitle')}
+          onClose={() => setManageProxiesOpen(false)}
+        >
+          <ProxyRidersSection
+            embedded
+            onChanged={reloadProxyRiders}
           />
         </Modal>
       )}

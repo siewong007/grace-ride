@@ -50,6 +50,16 @@ let savedPlacesData: {
   lng?: number | null;
   is_default: number;
 }[] = [];
+let proxyRidersData: {
+  id: number;
+  name: string;
+  phone: string;
+  relationship: string;
+  notes: string;
+  area_id?: number | null;
+  pickup_address?: string;
+  gate_notes?: string;
+}[] = [];
 const areasData = [
   { id: 1, name: 'Petaling Jaya', active: true },
   { id: 2, name: 'Subang Jaya', active: true },
@@ -78,7 +88,9 @@ vi.mock('../api', () => ({
         : path === '/saved-places'
           ? savedPlacesData
           : path === '/areas'
-            ? areasData
+          ? areasData
+          : path === '/proxy-riders'
+            ? proxyRidersData
             : path === '/push/config'
               ? pushConfigData
               : [],
@@ -202,6 +214,28 @@ const profileStrings: Record<string, string> = {
   telegramNotConfigured: 'Telegram alerts are not enabled by the church office yet.',
   telegramOpenBot: 'Open @{bot} in Telegram',
   telegramGuidedHint: '1. Tap above and press Start in Telegram. 2. Copy the numeric Chat ID shown and paste it below.',
+  pickOnMap: 'Adjust pin on map',
+  hideMapPicker: 'Hide map',
+  mapPickerHint: 'Tap the map or drag the pin to mark your exact pickup gate.',
+  proxyRidersTitle: 'Frequent riders',
+  proxyRidersDesc: 'People you often book rides for (parents, seniors, cell members).',
+  proxyRidersEmptyTitle: 'No frequent riders saved yet',
+  proxyRidersEmptyDesc: 'Save parents or cell members here for 1-tap booking.',
+  addProxyRider: 'Add frequent rider',
+  editProxyRider: 'Edit frequent rider',
+  proxyRiderSaved: 'Frequent rider saved',
+  removeProxyConfirm: 'Remove this frequent rider?',
+  proxyName: 'Passenger name',
+  proxyNamePlaceholder: 'E.g. Sister Chen / Uncle Lim',
+  proxyRelationship: 'Relationship',
+  relParent: 'Parent / Senior',
+  relCellMember: 'Cell group member',
+  relSpouse: 'Spouse / Child',
+  relFriend: 'Fellow church member',
+  relOther: 'Other',
+  proxyPhone: 'Phone (optional)',
+  proxyNotes: 'Mobility or assistance notes (optional)',
+  proxyNotesPlaceholder: 'E.g. Uses wheelchair or needs front-seat space',
 };
 
 vi.mock('react-i18next', () => ({
@@ -390,6 +424,7 @@ beforeEach(() => {
   vi.clearAllMocks();
   currentMe = baseMe;
   savedPlacesData = [];
+  proxyRidersData = [];
   pushConfigData = undefined;
   familyData = {
     family: null,
@@ -798,5 +833,59 @@ describe('Profile compact layout', () => {
     } finally {
       Object.defineProperty(navigator, 'geolocation', { configurable: true, value: origGeo });
     }
+  });
+
+  it('manages frequent proxy riders (add, edit, remove) under /me/family when active and hides for pending', async () => {
+    const postMock = vi.mocked(post);
+    const putMock = vi.mocked(put);
+    const delMock = vi.mocked(del);
+    postMock.mockClear();
+    putMock.mockClear();
+    delMock.mockClear();
+
+    proxyRidersData = [
+      { id: 7, name: 'Uncle Lim', phone: '012-1112222', relationship: 'parent', notes: 'Cane', area_id: 1, pickup_address: '10 SS2', gate_notes: 'Gate 1' },
+    ];
+    renderProfile(baseMe, '/me/family');
+    expect(screen.getByText('Frequent riders')).toBeInTheDocument();
+    expect(screen.getByText('Uncle Lim')).toBeInTheDocument();
+
+    // Add new frequent rider
+    fireEvent.click(screen.getByRole('button', { name: /Add frequent rider/i }));
+    expect(screen.getByRole('dialog', { name: 'Add frequent rider' })).toBeInTheDocument();
+    fireEvent.change(screen.getByLabelText('Passenger name'), { target: { value: 'Auntie Mary' } });
+    fireEvent.change(screen.getByLabelText('Phone (optional)'), { target: { value: '013-9998888' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Save' }));
+    await waitFor(() =>
+      expect(postMock).toHaveBeenCalledWith('/proxy-riders', {
+        name: 'Auntie Mary',
+        phone: '013-9998888',
+        relationship: 'parent',
+        pickup_address: '',
+        area_id: null,
+        gate_notes: '',
+        notes: '',
+      }),
+    );
+
+    // Edit and remove existing rider
+    vi.mocked(confirmMock).mockResolvedValueOnce(true);
+    fireEvent.click(screen.getByRole('button', { name: 'Edit Uncle Lim' }));
+    fireEvent.change(screen.getByLabelText('Passenger name'), { target: { value: 'Elder Lim' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Save' }));
+    await waitFor(() =>
+      expect(putMock).toHaveBeenCalledWith(
+        '/proxy-riders/7',
+        expect.objectContaining({ name: 'Elder Lim' }),
+      ),
+    );
+
+    fireEvent.click(screen.getByRole('button', { name: 'Edit Uncle Lim' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Remove' }));
+    await waitFor(() => expect(delMock).toHaveBeenCalledWith('/proxy-riders/7'));
+
+    // Pending accounts do not see ProxyRidersSection
+    renderProfile({ ...baseMe, status: 'pending' }, '/me/family');
+    expect(screen.getAllByText('Frequent riders')).toHaveLength(1);
   });
 });

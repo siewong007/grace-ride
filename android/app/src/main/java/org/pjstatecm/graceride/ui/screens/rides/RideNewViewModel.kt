@@ -136,6 +136,14 @@ class RideNewViewModel(
 
     fun update(f: (RideNewUiState) -> RideNewUiState) { _state.value = f(_state.value) }
 
+    fun refreshPlacesAndProxies() {
+        viewModelScope.launch {
+            val saved = try { container.rides.savedPlaces() } catch (_: ApiException) { _state.value.savedPlaces }
+            val proxyRiders = try { container.rides.proxyRiders() } catch (_: ApiException) { _state.value.proxyRiders }
+            _state.value = _state.value.copy(savedPlaces = saved, proxyRiders = proxyRiders)
+        }
+    }
+
     fun setTripType(newType: TripType) {
         val s = _state.value
         val ev = s.event

@@ -42,6 +42,7 @@ import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.rememberDatePickerState
 import androidx.compose.material3.rememberTimePickerState
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -50,6 +51,9 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.res.stringResource
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
+import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.navigation.NavHostController
@@ -72,6 +76,17 @@ fun RideNewScreen(
 ) {
     val vm: RideNewViewModel = viewModel(factory = RideNewViewModel.factory(container, eventId, initialProxy))
     val s by vm.state.collectAsStateWithLifecycle()
+    val lifecycleOwner = LocalLifecycleOwner.current
+
+    DisposableEffect(lifecycleOwner) {
+        val observer = LifecycleEventObserver { _, event ->
+            if (event == Lifecycle.Event.ON_RESUME) {
+                vm.refreshPlacesAndProxies()
+            }
+        }
+        lifecycleOwner.lifecycle.addObserver(observer)
+        onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
+    }
 
     // Rides exist only for events: without one, point the member at the events
     // list, exactly like the web's /rides/new without ?event=.
@@ -224,12 +239,21 @@ fun RideNewScreen(
                             )
                         }
                         if (s.isProxy) {
-                            if (s.proxyRiders.isNotEmpty()) {
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                                modifier = Modifier.fillMaxWidth(),
+                            ) {
                                 Text(
                                     stringResource(R.string.ride_new_frequent_riders),
                                     style = MaterialTheme.typography.labelMedium,
                                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                                 )
+                                TextButton(onClick = { nav.navigate(Routes.PROXY_RIDERS) }) {
+                                    Text(stringResource(R.string.common_manage))
+                                }
+                            }
+                            if (s.proxyRiders.isNotEmpty()) {
                                 FlowRow(horizontalArrangement = Arrangement.spacedBy(Spacing.xs)) {
                                     s.proxyRiders.forEach { fr ->
                                         FilterChip(
@@ -309,19 +333,30 @@ fun RideNewScreen(
                     }
                 }
 
-                if (!s.isProxy && s.savedPlaces.isNotEmpty()) {
-                    Text(
-                        stringResource(R.string.ride_new_saved_addresses),
-                        style = MaterialTheme.typography.titleSmall,
-                    )
-                    val activeAddr = if (s.tripType == TripType.RETURN) s.destination else s.address
-                    FlowRow(horizontalArrangement = Arrangement.spacedBy(Spacing.xs)) {
-                        s.savedPlaces.forEach { sp ->
-                            FilterChip(
-                                selected = activeAddr == sp.address,
-                                onClick = { vm.applySavedPlace(sp) },
-                                label = { Text(sp.label) },
-                            )
+                if (!s.isProxy) {
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        modifier = Modifier.fillMaxWidth(),
+                    ) {
+                        Text(
+                            stringResource(R.string.ride_new_saved_addresses),
+                            style = MaterialTheme.typography.titleSmall,
+                        )
+                        TextButton(onClick = { nav.navigate(Routes.SAVED_ADDRESSES) }) {
+                            Text(stringResource(R.string.common_manage))
+                        }
+                    }
+                    if (s.savedPlaces.isNotEmpty()) {
+                        val activeAddr = if (s.tripType == TripType.RETURN) s.destination else s.address
+                        FlowRow(horizontalArrangement = Arrangement.spacedBy(Spacing.xs)) {
+                            s.savedPlaces.forEach { sp ->
+                                FilterChip(
+                                    selected = activeAddr == sp.address,
+                                    onClick = { vm.applySavedPlace(sp) },
+                                    label = { Text(sp.label) },
+                                )
+                            }
                         }
                     }
                 }

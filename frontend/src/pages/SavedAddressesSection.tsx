@@ -1,9 +1,11 @@
-import { FormEvent, useRef, useState } from 'react';
+import { FormEvent, lazy, Suspense, useRef, useState } from 'react';
 import { LocateFixed, MapPin, Pencil, Plus, Star, Trash2 } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import { del, post, put, useApi } from '../api';
 import { inferAreaId } from '../areaMatch';
 import { AddressInput, type Place } from '../components/AddressInput';
+
+const LocationPinPicker = lazy(() => import('../components/LocationPinPicker'));
 import {
   Button,
   EmptyState,
@@ -228,6 +230,7 @@ function SavedAddressModal({
     lng: editing?.lng ?? null,
   }));
   const [gpsStatus, setGpsStatus] = useState<'idle' | 'locating' | 'captured' | 'denied'>('idle');
+  const [showMap, setShowMap] = useState(false);
   const hasGeolocation =
     typeof navigator !== 'undefined' &&
     'geolocation' in navigator &&
@@ -379,7 +382,7 @@ function SavedAddressModal({
           placeholder={t('placeAddressPlaceholder')}
         />
 
-        {(hasGeolocation || (form.lat != null && form.lng != null)) && (
+        <div className="stack-xs">
           <div className="row wrap items-center gap-xs">
             {hasGeolocation && (
               <Button
@@ -393,6 +396,15 @@ function SavedAddressModal({
                 {gpsStatus === 'locating' ? t('locatingGps') : t('useCurrentLocation')}
               </Button>
             )}
+            <Button
+              type="button"
+              variant="secondary"
+              size="sm"
+              onClick={() => setShowMap((v) => !v)}
+            >
+              <MapPin size={14} aria-hidden="true" />
+              {t(showMap ? 'hideMapPicker' : 'pickOnMap')}
+            </Button>
             {gpsStatus === 'captured' && (
               <span className="place-pin-status is-pinned">{t('placeGpsCaptured')}</span>
             )}
@@ -403,7 +415,22 @@ function SavedAddressModal({
               <span className="place-pin-status is-pinned">{t('placePinned')}</span>
             )}
           </div>
-        )}
+          {showMap && (
+            <div className="stack-xs">
+              <Suspense fallback={<ListSkeleton count={1} />}>
+                <LocationPinPicker
+                  lat={form.lat}
+                  lng={form.lng}
+                  onPick={(lat, lng) => {
+                    setGpsStatus('idle');
+                    setForm((cur) => ({ ...cur, lat, lng }));
+                  }}
+                />
+              </Suspense>
+              <small className="hint">{t('mapPickerHint')}</small>
+            </div>
+          )}
+        </div>
 
         <div className="field">
           <label htmlFor="saved-place-area" className="field-label">{t('placeArea')}</label>

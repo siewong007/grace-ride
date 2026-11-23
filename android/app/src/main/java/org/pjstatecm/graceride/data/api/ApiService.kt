@@ -48,6 +48,9 @@ interface ApiService {
     @PUT("api/saved-places/{id}") suspend fun updateSavedPlace(@Path("id") id: Long, @Body body: SavedPlaceReq): OkResponse
     @DELETE("api/saved-places/{id}") suspend fun deleteSavedPlace(@Path("id") id: Long): OkResponse
     @GET("api/proxy-riders") suspend fun proxyRiders(): List<ProxyRider>
+    @POST("api/proxy-riders") suspend fun createProxyRider(@Body body: ProxyRiderReq): CreateProxyRiderRes
+    @PUT("api/proxy-riders/{id}") suspend fun updateProxyRider(@Path("id") id: Long, @Body body: ProxyRiderReq): OkResponse
+    @DELETE("api/proxy-riders/{id}") suspend fun deleteProxyRider(@Path("id") id: Long): OkResponse
     @GET("api/rides") suspend fun myRides(@Query("scope") scope: String? = null): List<Ride>
     @GET("api/rides/{id}") suspend fun ride(@Path("id") id: Long): Ride
     @POST("api/rides") suspend fun createRide(@Body body: CreateRideReq): CreateRideRes

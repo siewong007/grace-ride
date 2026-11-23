@@ -4,6 +4,7 @@ import org.pjstatecm.graceride.data.api.ApiService
 import org.pjstatecm.graceride.data.api.Area
 import org.pjstatecm.graceride.data.api.AuthEventBus
 import org.pjstatecm.graceride.data.api.CancelReq
+import org.pjstatecm.graceride.data.api.CreateProxyRiderRes
 import org.pjstatecm.graceride.data.api.CreateRideReq
 import org.pjstatecm.graceride.data.api.CreateRideRes
 import org.pjstatecm.graceride.data.api.CreateSavedPlaceRes
@@ -14,6 +15,7 @@ import org.pjstatecm.graceride.data.api.DriverVehicle
 import org.pjstatecm.graceride.data.api.DriverVehicleReq
 import org.pjstatecm.graceride.data.api.Place
 import org.pjstatecm.graceride.data.api.ProxyRider
+import org.pjstatecm.graceride.data.api.ProxyRiderReq
 import org.pjstatecm.graceride.data.api.ReadinessReq
 import org.pjstatecm.graceride.data.api.RespondReq
 import org.pjstatecm.graceride.data.api.Ride
@@ -34,6 +36,9 @@ class RidesRepository(private val api: ApiService, private val bus: AuthEventBus
     suspend fun updateSavedPlace(id: Long, req: SavedPlaceReq) = apiCall(bus) { api.updateSavedPlace(id, req) }
     suspend fun deleteSavedPlace(id: Long) = apiCall(bus) { api.deleteSavedPlace(id) }
     suspend fun proxyRiders(): List<ProxyRider> = apiCall(bus) { api.proxyRiders() }
+    suspend fun createProxyRider(req: ProxyRiderReq): CreateProxyRiderRes = apiCall(bus) { api.createProxyRider(req) }
+    suspend fun updateProxyRider(id: Long, req: ProxyRiderReq) = apiCall(bus) { api.updateProxyRider(id, req) }
+    suspend fun deleteProxyRider(id: Long) = apiCall(bus) { api.deleteProxyRider(id) }
     suspend fun create(req: CreateRideReq): CreateRideRes = apiCall(bus) { api.createRide(req) }
     suspend fun cancel(id: Long, reason: String?) = apiCall(bus) { api.cancelRide(id, CancelReq(reason)) }
     suspend fun respond(id: Long, accept: Boolean) = apiCall(bus) { api.respondRide(id, RespondReq(accept)) }

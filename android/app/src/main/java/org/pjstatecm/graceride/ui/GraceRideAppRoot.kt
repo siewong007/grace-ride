@@ -43,6 +43,7 @@ import org.pjstatecm.graceride.ui.screens.login.UnlockScreen
 import org.pjstatecm.graceride.ui.screens.notifications.NotificationsScreen
 import org.pjstatecm.graceride.ui.screens.profile.DriverSettingsScreen
 import org.pjstatecm.graceride.ui.screens.profile.ProfileScreen
+import org.pjstatecm.graceride.ui.screens.profile.ProxyRidersScreen
 import org.pjstatecm.graceride.ui.screens.profile.SavedAddressesScreen
 import org.pjstatecm.graceride.ui.screens.rides.RideDetailScreen
 import org.pjstatecm.graceride.ui.screens.rides.RideNewScreen
@@ -175,6 +176,7 @@ fun GraceRideAppRoot(container: AppContainer) {
             composable(Routes.HISTORY) { HistoryScreen(container, navController) }
             composable(Routes.PROFILE) { ProfileScreen(container, navController) }
             composable(Routes.DRIVER_SETTINGS) { DriverSettingsScreen(container, navController) }
+            composable(Routes.PROXY_RIDERS) { ProxyRidersScreen(container, navController) }
             composable(Routes.SAVED_ADDRESSES) { SavedAddressesScreen(container, navController) }
             composable(Routes.NOTIFICATIONS) { NotificationsScreen(container, navController) }
         }

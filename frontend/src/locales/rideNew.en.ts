@@ -53,6 +53,8 @@ export default {
   forMyself: 'For myself',
   forOther: 'Book for family / cell member',
   frequentRiders: 'Frequent riders quick select',
+  manageProxyRiders: 'Manage',
+  manageProxyRidersTitle: 'Frequent riders',
   riderName: 'Actual passenger name',
   riderNamePlaceholder: 'E.g. Sister Chen / Uncle Lim / Brother Tan',
   relationship: 'Relationship',

@@ -1,5 +1,13 @@
 package org.pjstatecm.graceride.ui.screens.profile
 
+import android.Manifest
+import android.annotation.SuppressLint
+import android.content.Context
+import android.content.pm.PackageManager
+import android.location.LocationManager
+import android.os.Build
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
@@ -19,6 +27,7 @@ import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Star
 import androidx.compose.material.icons.outlined.Add
 import androidx.compose.material.icons.outlined.LocationOn
+import androidx.compose.material.icons.outlined.MyLocation
 import androidx.compose.material.icons.outlined.StarOutline
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
@@ -34,6 +43,7 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.MenuAnchorType
+import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedCard
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
@@ -50,8 +60,10 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.core.content.ContextCompat
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.navigation.NavHostController
@@ -349,8 +361,75 @@ private fun SavedAddressDialog(
     var isDefault by remember(editing) { mutableStateOf(defaultInitial) }
     var lat by remember(editing) { mutableStateOf(editing?.lat) }
     var lng by remember(editing) { mutableStateOf(editing?.lng) }
+    var gpsStatus by remember { mutableStateOf("idle") }
     var areaExpanded by remember { mutableStateOf(false) }
     var confirmDelete by remember { mutableStateOf(false) }
+    val context = LocalContext.current
+
+    @SuppressLint("MissingPermission")
+    fun captureGpsLocation() {
+        val lm = context.getSystemService(Context.LOCATION_SERVICE) as? LocationManager
+        if (lm == null) {
+            gpsStatus = "denied"
+            return
+        }
+        gpsStatus = "locating"
+        try {
+            val provider = when {
+                lm.isProviderEnabled(LocationManager.GPS_PROVIDER) -> LocationManager.GPS_PROVIDER
+                lm.isProviderEnabled(LocationManager.NETWORK_PROVIDER) -> LocationManager.NETWORK_PROVIDER
+                else -> null
+            }
+            val applyLoc: (android.location.Location?) -> Unit = { loc ->
+                if (loc != null) {
+                    lat = loc.latitude
+                    lng = loc.longitude
+                    gpsStatus = "captured"
+                } else {
+                    gpsStatus = "denied"
+                }
+            }
+            if (provider != null && Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+                lm.getCurrentLocation(provider, null, context.mainExecutor) { loc ->
+                    if (loc != null) {
+                        applyLoc(loc)
+                    } else {
+                        val fallback = lm.getLastKnownLocation(LocationManager.GPS_PROVIDER)
+                            ?: lm.getLastKnownLocation(LocationManager.NETWORK_PROVIDER)
+                        applyLoc(fallback)
+                    }
+                }
+            } else {
+                val fallback = lm.getLastKnownLocation(LocationManager.GPS_PROVIDER)
+                    ?: lm.getLastKnownLocation(LocationManager.NETWORK_PROVIDER)
+                applyLoc(fallback)
+            }
+        } catch (_: SecurityException) {
+            gpsStatus = "denied"
+        }
+    }
+
+    val permLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.RequestMultiplePermissions(),
+    ) { granted ->
+        if (granted[Manifest.permission.ACCESS_FINE_LOCATION] == true ||
+            granted[Manifest.permission.ACCESS_COARSE_LOCATION] == true
+        ) {
+            captureGpsLocation()
+        } else {
+            gpsStatus = "denied"
+        }
+    }
+
+    fun requestOrCaptureGps() {
+        val hasFine = ContextCompat.checkSelfPermission(context, Manifest.permission.ACCESS_FINE_LOCATION) == PackageManager.PERMISSION_GRANTED
+        val hasCoarse = ContextCompat.checkSelfPermission(context, Manifest.permission.ACCESS_COARSE_LOCATION) == PackageManager.PERMISSION_GRANTED
+        if (hasFine || hasCoarse) {
+            captureGpsLocation()
+        } else {
+            permLauncher.launch(arrayOf(Manifest.permission.ACCESS_FINE_LOCATION, Manifest.permission.ACCESS_COARSE_LOCATION))
+        }
+    }
 
     val presets = listOf(
         stringResource(R.string.saved_addresses_preset_home),
@@ -420,6 +499,7 @@ private fun SavedAddressDialog(
                                         address = s.label.take(200)
                                         lat = s.lat
                                         lng = s.lng
+                                        gpsStatus = "idle"
                                         if (areaId == null) {
                                             areaId = inferAreaId(s.label, areas)
                                         }
@@ -432,6 +512,38 @@ private fun SavedAddressDialog(
                             }
                         }
                     }
+                }
+                OutlinedButton(
+                    onClick = { requestOrCaptureGps() },
+                    enabled = !busy && gpsStatus != "locating",
+                    modifier = Modifier.fillMaxWidth(),
+                ) {
+                    Icon(Icons.Outlined.MyLocation, contentDescription = null)
+                    Text(
+                        stringResource(
+                            if (gpsStatus == "locating") R.string.saved_addresses_locating else R.string.saved_addresses_use_gps,
+                        ),
+                        modifier = Modifier.padding(start = Spacing.xs),
+                    )
+                }
+                if (gpsStatus == "captured") {
+                    Text(
+                        stringResource(R.string.saved_addresses_gps_captured),
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.primary,
+                    )
+                } else if (gpsStatus == "denied") {
+                    Text(
+                        stringResource(R.string.saved_addresses_gps_denied),
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                } else if (lat != null && lng != null) {
+                    Text(
+                        stringResource(R.string.saved_addresses_pinned),
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.primary,
+                    )
                 }
                 ExposedDropdownMenuBox(expanded = areaExpanded, onExpandedChange = { areaExpanded = it }) {
                     OutlinedTextField(

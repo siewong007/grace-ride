@@ -37,6 +37,7 @@ import AvatarEditor from '../components/AvatarEditor';
 import { PwaInstallModal } from '../components/PwaInstallModal';
 import { usePwaInstall } from '../pwaInstall';
 import FamilySection from './family/FamilySection';
+import ProxyRidersSection from './family/ProxyRidersSection';
 import SavedAddressesSection from './SavedAddressesSection';
 import type { SavedPlace } from '../types/domain';
 import QRCode from 'qrcode';
@@ -113,6 +114,12 @@ export default function Profile() {
       <div className="stack profile-page">
         <PageHeader title={t('family')} back="/me" />
         <FamilySection />
+        {me.status !== 'pending' && can('rides') && (
+          <>
+            <div className="divider" />
+            <ProxyRidersSection />
+          </>
+        )}
       </div>
     );
   }

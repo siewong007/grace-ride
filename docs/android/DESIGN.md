@@ -50,7 +50,7 @@ All sizes in `sp`: the system font scale is respected (elder-friendly text scali
 
 - `enableEdgeToEdge()` in `MainActivity`; content draws behind system bars.
 - `Scaffold` supplies safe insets; screens apply `contentPadding`/`padding(padding)`.
-- Bottom navigation (phone): **Home · Events · Profile** (3 primary tabs; Rides, Costs, History, Saved Addresses, and Driver Vehicle &amp; Carpool Settings live natively under Profile, while Event Detail and Home link straight to Ride Detail and booking).
+- Bottom navigation (phone): **Home · Events · Profile** (3 primary tabs; Rides, Costs, History, Saved Addresses with GPS capture, Frequent Proxy Riders, and Driver Vehicle &amp; Carpool Settings live natively under Profile, while Event Detail and Home link straight to Ride Detail and booking).
   Volunteer drivers also receive native trip execution controls on Ride Detail (confirm assignment, start trip, delay notice, at-gate arrival, pickup, complete, withdraw); extended workflows (trip chat, live map, QR check-in, reimbursements, family management, and MFA-gated staff tools) hand off directly to the Web App via browser links.
 - Detail screens use `TopAppBar` with a back arrow; tab roots do not.
 - Adaptive behaviour: single-column lists today; `WindowSizeClass` rail/tablet

@@ -785,6 +785,7 @@ textarea.input { min-height: 96px; resize: vertical; }
 .saved-addr-meta { display: flex; align-items: center; flex-wrap: wrap; gap: var(--space-2); margin-top: 2px; }
 .place-pin-status { font-size: var(--fs-xs); color: var(--muted); }
 .place-pin-status.is-pinned { color: var(--success); font-weight: 600; }
+.pin-picker-map { height: 200px; border-radius: var(--radius); overflow: hidden; border: 1px solid var(--border); }
 .saved-addr-actions { display: flex; align-items: center; flex: none; gap: var(--space-1); }
 .saved-addr-star { color: var(--muted); }
 .saved-addr-star.is-default { color: var(--primary); opacity: 1; }

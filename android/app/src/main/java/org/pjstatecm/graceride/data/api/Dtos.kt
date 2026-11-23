@@ -431,3 +431,17 @@ data class SelectVehicleRes(
     val ok: Boolean = true,
     @SerialName("active_vehicle_id") val activeVehicleId: Long? = null,
 )
+
+@Serializable
+data class ProxyRiderReq(
+    val name: String,
+    val phone: String? = null,
+    val relationship: String? = null,
+    val notes: String? = null,
+    val area_id: Long? = null,
+    val pickup_address: String? = null,
+    val gate_notes: String? = null,
+)
+
+@Serializable
+data class CreateProxyRiderRes(val id: Long, val ok: Boolean = true)
