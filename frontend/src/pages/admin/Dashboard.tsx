@@ -319,7 +319,7 @@ export default function Dashboard() {
   ];
 
   return (
-    <Page>
+    <Page className="dash-page">
       <PageHeader
         title={t('dashboard.title')}
         subtitle={`${fmtDay(`${d.today}T00:00`, ft)} · ${t('dashboard.desc')}`}

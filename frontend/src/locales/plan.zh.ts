@@ -252,4 +252,6 @@ export default {
   toggleReimbInclude: '恢复包含报销',
   reimbExcludedSaved: '已将该接送标记为不包报销。',
   reimbIncludedSaved: '已恢复该接送的报销资格。',
+  moreTools: '更多工具',
+  visitorsChip: '访客（{count}）',
 };

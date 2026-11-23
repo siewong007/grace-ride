@@ -196,4 +196,37 @@ describe('TrafficHub workspace', () => {
     await userEvent.click(screen.getByRole('button', { name: /approve & apply/i }));
     expect(postSpy).toHaveBeenCalledWith('/rides/22/drafts/5/approve', {});
   });
+
+  it('splits Areas & Photos tab into segmented sub-views without stacking all modules', async () => {
+    vi.spyOn(apiMod, 'useApi').mockImplementation(((path: string | null) => {
+      if (path === '/areas') {
+        return { data: [{ id: 1, name: 'SS2', active: true }], error: null, loading: false, refreshing: false, reload: vi.fn(), setData: vi.fn() };
+      }
+      if (path === '/admin/settings/fares') {
+        return { data: { fares: [] }, error: null, loading: false, refreshing: false, reload: vi.fn(), setData: vi.fn() };
+      }
+      return { data: null, error: null, loading: false, refreshing: false, reload: vi.fn(), setData: vi.fn() };
+    }) as unknown as typeof apiMod.useApi);
+
+    render(
+      <MemoryRouter initialEntries={['/admin/traffic?tab=areas']}>
+        <Routes>
+          <Route path="/admin/traffic" element={<TrafficHub />} />
+        </Routes>
+      </MemoryRouter>,
+    );
+
+    expect(screen.getByRole('tab', { name: 'Area photos' })).toHaveAttribute('aria-selected', 'true');
+    expect(screen.getByRole('heading', { name: /pickup area photos/i })).toBeInTheDocument();
+    expect(screen.queryByRole('heading', { name: /fixed fares between areas/i })).not.toBeInTheDocument();
+
+    await userEvent.click(screen.getByRole('tab', { name: 'Fare table' }));
+    expect(screen.getByRole('tab', { name: 'Fare table' })).toHaveAttribute('aria-selected', 'true');
+    expect(screen.getByRole('heading', { name: /fixed fares between areas/i })).toBeInTheDocument();
+    expect(screen.queryByRole('heading', { name: /pickup area photos/i })).not.toBeInTheDocument();
+
+    await userEvent.click(screen.getByRole('tab', { name: 'Areas' }));
+    expect(screen.getByRole('tab', { name: 'Areas' })).toHaveAttribute('aria-selected', 'true');
+    expect(screen.getByRole('heading', { name: /ride areas/i })).toBeInTheDocument();
+  });
 });

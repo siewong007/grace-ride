@@ -252,5 +252,7 @@ export default {
   toggleReimbInclude: 'Include reimbursement',
   reimbExcludedSaved: 'Marked ride as no reimbursement.',
   reimbIncludedSaved: 'Reimbursement enabled for this ride.',
+  moreTools: 'More tools',
+  visitorsChip: 'Visitors ({count})',
 };
 

@@ -41,10 +41,14 @@ function isProfileSection(path: string): boolean {
     path.startsWith('/drive/') ||
     path === '/costs' ||
     path.startsWith('/costs/') ||
+    path === '/settlements' ||
+    path.startsWith('/settlements/') ||
     path === '/reimbursements' ||
     path.startsWith('/reimbursements/') ||
     path === '/report' ||
-    path.startsWith('/report/')
+    path.startsWith('/report/') ||
+    path === '/help' ||
+    path.startsWith('/help/')
   );
 }
 

@@ -111,6 +111,8 @@ export default function PlanTransport() {
   const [newDraftBase, setNewDraftBase] = useState<'live' | 'clone'>('live');
   const [returnModalOpen, setReturnModalOpen] = useState(false);
   const [returnNotes, setReturnNotes] = useState('');
+  const [mobileToolsOpen, setMobileToolsOpen] = useState(false);
+  const [visitorsExpanded, setVisitorsExpanded] = useState<boolean | null>(null);
   // Visitors are saved straight away in Live mode, or stored inside draftVisitors in Draft mode.
   const [visitors, setVisitors] = useState<PlanVisitor[] | null>(null);
   const reloadVisitors = useCallback(() => {
@@ -752,16 +754,16 @@ export default function PlanTransport() {
       reason={reasons[r.id]?.driver_id === draft[r.id] ? reasons[r.id] : undefined}
       noRoom={draft[r.id] == null && noRoom.has(r.id)}
       canUpdate={canEditBoard}
-      canToggleReimb={canToggleReimb}
-      onToggleReimb={() => toggleRideReimb(r)}
     />
   );
 
   const pickerRide = pickerRideId != null ? plan.rides.find((r) => r.id === pickerRideId) ?? null : null;
   const displayedDraft = activeDraft ?? (selectedDraftKey === 'live' ? null : data.draft ?? null);
+  const showDock = dirty && canEditBoard;
+  const showVisitors = visitorsExpanded ?? (visitorCount.count > 0 || Boolean(activeDraft && draftVisitors.length > 0));
 
   return (
-    <Page width="wide" className="plan-page">
+    <Page width="wide" className={`plan-page density-ops${showDock ? ' has-dock' : ''}`}>
       <PageHeader
         title={t('title')}
         subtitle={t('subtitle', { event: plan.event.title, when: fmtDateTime(plan.event.starts_at, ft) })}
@@ -918,11 +920,64 @@ export default function PlanTransport() {
       {plan.rides.length > 0 && (
         <>
           <div className="plan-toolbar">
-            <div className="plan-summary" aria-live="polite">
-              {t('summary', { placed, total: plan.rides.length, seats: seatsUsed })}
-              {visitorCount.count > 0 && <> · {t('visitorSummary', visitorCount)}</>}
+            <div className="plan-toolbar-primary">
+              <div className="plan-summary" aria-live="polite">
+                {t('summary', { placed, total: plan.rides.length, seats: seatsUsed })}
+                {visitorCount.count > 0 && <> · {t('visitorSummary', visitorCount)}</>}
+              </div>
+              <div className="btn-row">
+                {canUpdate && (
+                  <>
+                    <Button
+                      variant="secondary"
+                      icon={<Sparkles size={16} />}
+                      onClick={autoArrange}
+                      loading={arranging}
+                      disabled={!canEditBoard || unassigned.length === 0 || arranging}
+                    >
+                      {t('autoArrange')}
+                    </Button>
+                    <Button variant="secondary" icon={<Save size={16} />} onClick={saveDraft} disabled={!canEditBoard || busy} loading={busy}>
+                      {t('saveDraft')}
+                    </Button>
+                    {!canApprove ? (
+                      <Button variant="primary" icon={<Send size={16} />} onClick={askLeadApproval} disabled={!canEditBoard || busy} loading={busy}>
+                        {t('askLeadApproval')}
+                      </Button>
+                    ) : (
+                      <>
+                        {displayedDraft?.status === 'pending_approval' && (
+                          <Button
+                            variant="danger"
+                            icon={<RotateCcw size={16} />}
+                            onClick={() => {
+                              setReturnNotes('');
+                              setReturnModalOpen(true);
+                            }}
+                            disabled={busy}
+                          >
+                            {t('returnDraft')}
+                          </Button>
+                        )}
+                        <Button variant="primary" className="plan-confirm" icon={<CheckCircle2 size={16} />} onClick={send} disabled={!canApproveDraftNow} loading={busy}>
+                          {t('approveAndNotify', { count: changes.length })}
+                        </Button>
+                      </>
+                    )}
+                  </>
+                )}
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  className="plan-more-tools-btn"
+                  aria-expanded={mobileToolsOpen}
+                  onClick={() => setMobileToolsOpen((open) => !open)}
+                >
+                  {t('moreTools')}
+                </Button>
+              </div>
             </div>
-            <div className="btn-row">
+            <div className={`btn-row plan-toolbar-secondary${mobileToolsOpen ? ' is-mobile-open' : ''}`}>
               <Button
                 variant="secondary"
                 icon={<Download size={16} />}
@@ -936,70 +991,34 @@ export default function PlanTransport() {
                   <Button
                     variant="secondary"
                     icon={<Sparkles size={16} />}
-                    onClick={autoArrange}
-                    loading={arranging}
-                    disabled={!canEditBoard || unassigned.length === 0 || arranging}
-                  >
-                    {t('autoArrange')}
-                  </Button>
-                  <Button
-                    variant="secondary"
-                    icon={<Sparkles size={16} />}
                     onClick={() => setDiagnosisOpen(true)}
                   >
                     {t('diagnosisBtn')}
                   </Button>
-                <Button variant="secondary" icon={<History size={16} />} onClick={sameAsLast} disabled={!canEditBoard || unassigned.length === 0}>
-                  {t('sameAsLast')}
-                </Button>
-                {hasReturnRides && (
-                  <Button variant="secondary" icon={<Repeat size={16} />} onClick={matchReturns} disabled={!canEditBoard}>
-                    {t('matchReturns')}
+                  <Button variant="secondary" icon={<History size={16} />} onClick={sameAsLast} disabled={!canEditBoard || unassigned.length === 0}>
+                    {t('sameAsLast')}
                   </Button>
-                )}
-                <Button variant="ghost" icon={<Undo2 size={16} />} onClick={undoStep} disabled={!canEditBoard || undoStack.length === 0}>
-                  {t('undoStep')}
-                </Button>
-                <Button variant="ghost" icon={<RotateCcw size={16} />} onClick={resetAll} disabled={!canEditBoard || !dirty}>
-                  {t('reset')}
-                </Button>
-                <Button variant="secondary" icon={<Save size={16} />} onClick={saveDraft} disabled={!canEditBoard || busy} loading={busy}>
-                  {t('saveDraft')}
-                </Button>
-                <Button
-                  variant="secondary"
-                  icon={<Car size={16} />}
-                  onClick={() => setShowPostEventReimb(true)}
-                >
-                  {t('postEventReimbBtn', { ns: 'events' })}
-                </Button>
-                {!canApprove ? (
-                  <Button variant="primary" icon={<Send size={16} />} onClick={askLeadApproval} disabled={!canEditBoard || busy} loading={busy}>
-                    {t('askLeadApproval')}
-                  </Button>
-                ) : (
-                  <>
-                    {displayedDraft?.status === 'pending_approval' && (
-                      <Button
-                        variant="danger"
-                        icon={<RotateCcw size={16} />}
-                        onClick={() => {
-                          setReturnNotes('');
-                          setReturnModalOpen(true);
-                        }}
-                        disabled={busy}
-                      >
-                        {t('returnDraft')}
-                      </Button>
-                    )}
-                    <Button variant="primary" className="plan-confirm" icon={<CheckCircle2 size={16} />} onClick={send} disabled={!canApproveDraftNow} loading={busy}>
-                      {t('approveAndNotify', { count: changes.length })}
+                  {hasReturnRides && (
+                    <Button variant="secondary" icon={<Repeat size={16} />} onClick={matchReturns} disabled={!canEditBoard}>
+                      {t('matchReturns')}
                     </Button>
-                  </>
-                )}
-              </>
-            )}
-          </div>
+                  )}
+                  <Button variant="ghost" icon={<Undo2 size={16} />} onClick={undoStep} disabled={!canEditBoard || undoStack.length === 0}>
+                    {t('undoStep')}
+                  </Button>
+                  <Button variant="ghost" icon={<RotateCcw size={16} />} onClick={resetAll} disabled={!canEditBoard || !dirty}>
+                    {t('reset')}
+                  </Button>
+                  <Button
+                    variant="secondary"
+                    icon={<Car size={16} />}
+                    onClick={() => setShowPostEventReimb(true)}
+                  >
+                    {t('postEventReimbBtn', { ns: 'events' })}
+                  </Button>
+                </>
+              )}
+            </div>
           </div>
 
           <div className="chips plan-filters" role="group" aria-label={t('title')}>
@@ -1037,27 +1056,37 @@ export default function PlanTransport() {
                   {areaName}
                 </button>
               ))}
+            <button
+              type="button"
+              className={`chip plan-visitors-chip ${showVisitors ? 'on' : ''}`}
+              aria-expanded={showVisitors}
+              onClick={() => setVisitorsExpanded(!showVisitors)}
+            >
+              {t('visitorsChip', { count: visitorCount.count })}
+            </button>
           </div>
         </>
       )}
       {dirty && <p className="plan-unsaved">{t('unsaved')}</p>}
 
-      <PlanVisitors
-        eventId={plan.event.id}
-        visitors={baseVisitors}
-        drivers={plan.drivers}
-        draftMode={Boolean(activeDraft)}
-        draftVisitors={activeDraft ? draftVisitors : undefined}
-        onChangeDraftVisitors={activeDraft ? handleDraftVisitorsChange : undefined}
-        // On Live, only the traffic lead records visitors directly; inside a draft, members propose visitor changes too.
-        canUpdate={
-          activeDraft
-            ? canEditBoard && plan.event.status !== 'cancelled'
-            : canUpdate && canApprove && plan.event.status !== 'cancelled'
-        }
-        canManageReimb={canUpdate && canApprove && plan.event.status !== 'cancelled'}
-        onChanged={reloadVisitors}
-      />
+      {(showVisitors || plan.rides.length === 0) && (
+        <PlanVisitors
+          eventId={plan.event.id}
+          visitors={baseVisitors}
+          drivers={plan.drivers}
+          draftMode={Boolean(activeDraft)}
+          draftVisitors={activeDraft ? draftVisitors : undefined}
+          onChangeDraftVisitors={activeDraft ? handleDraftVisitorsChange : undefined}
+          // On Live, only the traffic lead records visitors directly; inside a draft, members propose visitor changes too.
+          canUpdate={
+            activeDraft
+              ? canEditBoard && plan.event.status !== 'cancelled'
+              : canUpdate && canApprove && plan.event.status !== 'cancelled'
+          }
+          canManageReimb={canUpdate && canApprove && plan.event.status !== 'cancelled'}
+          onChanged={reloadVisitors}
+        />
+      )}
 
       {plan.rides.length === 0 ? (
         <EmptyState title={t('noRides')} />
@@ -1133,6 +1162,11 @@ export default function PlanTransport() {
           onClose={() => setPickerRideId(null)}
         >
           <div className="stack-sm">
+            {pickerRide.pickup_address && (
+              <p className="muted small no-margin">
+                {[pickerRide.area.name, fmtTime(pickerRide.pickup_at, ft), pickerRide.pickup_address].filter(Boolean).join(' · ')}
+              </p>
+            )}
             <button
               type="button"
               className={`item row between ${draft[pickerRide.id] == null ? 'active' : ''}`}
@@ -1178,6 +1212,21 @@ export default function PlanTransport() {
                   </button>
                 );
               })}
+            {canToggleReimb && (
+              <>
+                <div className="divider" />
+                <div className="row end">
+                  <Button
+                    size="sm"
+                    variant="ghost"
+                    disabled={busy}
+                    onClick={() => toggleRideReimb(pickerRide)}
+                  >
+                    {pickerRide.reimbursement_excluded ? t('toggleReimbInclude') : t('toggleReimbExclude')}
+                  </Button>
+                </div>
+              </>
+            )}
           </div>
         </Modal>
       )}
@@ -1480,17 +1529,17 @@ function DiagnosisDrawerModal({
 
         {/* Top metrics summary */}
         <div className="row wrap gap-sm" role="region" aria-label="Summary statistics">
-          <div className="card flat tight flex-1 min-w-[120px]">
+          <div className="card flat tight plan-diag-metric">
             <div className="muted tiny">Placed Rides</div>
-            <div className="bold text-lg">{placedRides.length} / {plan.rides.length}</div>
+            <div className="bold plan-diag-val">{placedRides.length} / {plan.rides.length}</div>
           </div>
-          <div className="card flat tight flex-1 min-w-[120px]">
+          <div className="card flat tight plan-diag-metric">
             <div className="muted tiny">Carpool Clusters</div>
-            <div className="bold text-lg text-success">{clusterCount} rides</div>
+            <div className="bold plan-diag-val text-success">{clusterCount} rides</div>
           </div>
-          <div className="card flat tight flex-1 min-w-[120px]">
+          <div className="card flat tight plan-diag-metric">
             <div className="muted tiny">Unassigned</div>
-            <div className={`bold text-lg ${unassignedRides.length > 0 ? 'text-warning' : 'text-muted'}`}>
+            <div className={`bold plan-diag-val ${unassignedRides.length > 0 ? 'text-warning' : 'text-muted'}`}>
               {unassignedRides.length}
             </div>
           </div>
@@ -1502,7 +1551,7 @@ function DiagnosisDrawerModal({
           {unassignedRides.length === 0 ? (
             <p className="muted small">{t('diagnosisNoUnassigned')}</p>
           ) : (
-            <ul className="stack-xs list-none p-0 m-0">
+            <ul className="stack-xs plan-diag-list">
               {unassignedRides.map((r) => {
                 const areaDrivers = plan.drivers.filter((d) => d.area_ids.includes(r.area.id));
                 const allFull =
@@ -1520,7 +1569,7 @@ function DiagnosisDrawerModal({
                       : t('noRoom');
 
                 return (
-                  <li key={r.id} className="card flat tight stack-xs border-warning">
+                  <li key={r.id} className="card flat tight stack-xs plan-diag-warn">
                     <div className="row between wrap gap-xs">
                       <div className="bold small">
                         <span>{r.passenger.name}</span> · <span className="muted">{r.area.name}</span>
@@ -1531,10 +1580,10 @@ function DiagnosisDrawerModal({
                     </div>
                     <p className="small text-warning no-margin">{diagnosisMsg}</p>
                     {canUpdate && (
-                      <div className="row nowrap gap-xs align-center mt-xs">
+                      <div className="row nowrap gap-xs align-center plan-diag-assign">
                         <span className="muted tiny">{t('diagnosisActionAssign')}</span>
                         <select
-                          className="input input-sm"
+                          className="input plan-diag-select"
                           aria-label={`Driver for ${r.passenger.name}`}
                           value=""
                           onChange={(e) => {
@@ -1627,8 +1676,6 @@ function PassengerCard({
   reason,
   noRoom,
   canUpdate = true,
-  canToggleReimb = false,
-  onToggleReimb,
 }: {
   ride: PlanRide;
   plan: Plan;
@@ -1639,14 +1686,13 @@ function PassengerCard({
   reason?: Reason;
   noRoom?: boolean;
   canUpdate?: boolean;
-  canToggleReimb?: boolean;
-  onToggleReimb?: () => void;
 }) {
   const { t } = useTranslation('plan');
   const ft = useFormatT();
   const current = draft[r.id] ?? null;
   const driver = plan.drivers.find((d) => d.id === current);
   const selectId = `plan-ride-${r.id}`;
+  const metaLine = [r.area.name, fmtTime(r.pickup_at, ft), r.pickup_address].filter(Boolean).join(' · ');
   return (
     <article
       className={`plan-passenger ${changed ? 'is-changed' : ''}`}
@@ -1658,15 +1704,26 @@ function PassengerCard({
       }}
     >
       <div className="plan-passenger-head">
-        <strong className="plan-passenger-name">
-          <UserRound size={16} aria-hidden="true" /> {r.passenger.name}
+        <strong className="plan-passenger-name ellipsis">
+          <UserRound size={15} aria-hidden="true" /> {r.passenger.name}
         </strong>
-        {changed ? <Pill tone="info">{t('changed')}</Pill> : <StatusPill map={RIDE_STATUS} status={r.status} />}
+        <div className="row nowrap gap-xs">
+          {r.seats > 1 && <Pill tone="neutral">{t('passengers', { count: r.seats })}</Pill>}
+          {changed ? <Pill tone="info">{t('changed')}</Pill> : <StatusPill map={RIDE_STATUS} status={r.status} />}
+          {canUpdate && (
+            <IconButton
+              size="sm"
+              variant="secondary"
+              label={t('chooseDriverSheet', { name: r.passenger.name })}
+              icon={<Car size={16} />}
+              onClick={onOpenPicker}
+            />
+          )}
+        </div>
       </div>
-      <div className="plan-passenger-meta">
-        {r.area.name} · {fmtTime(r.pickup_at, ft)} · {t('passengers', { count: r.seats })}
+      <div className="plan-passenger-meta ellipsis" title={r.pickup_address || undefined}>
+        {metaLine}
       </div>
-      {r.pickup_address && <div className="plan-passenger-addr">{r.pickup_address}</div>}
       <div className="plan-tags">
         {r.leg === 'return' && <Pill tone="info">{t('returnTag')}</Pill>}
         {r.reimbursement_excluded && <Pill tone="warning">{t('noReimbTag')}</Pill>}
@@ -1697,54 +1754,36 @@ function PassengerCard({
           </span>
         </p>
       )}
-      <div className="row nowrap gap-xs">
-        <label className="sr-only" htmlFor={selectId}>
-          {t('assignTo', { name: r.passenger.name })}
-        </label>
-        <select
-          id={selectId}
-          className="input plan-select grow"
-          value={current ?? ''}
-          disabled={!canUpdate}
-          onChange={(e) => onAssign(e.target.value ? Number(e.target.value) : null)}
-        >
-          <option value="">{t('noDriver')}</option>
-          {/* Drivers from the rider's group first; anyone else only by an admin's choice (audited). */}
-          {[true, false].map((inside) => {
-            const list = plan.drivers.filter((d) => d.id !== r.passenger.id && inGroup(d, r) === inside);
-            if (!list.length) return null;
-            const options = list.map((d) => {
-              const l = driverLoad(plan, draft, d, r.leg === 'return' ? 'return' : 'outbound');
-              return (
-                <option key={d.id} value={d.id}>
-                  {t('driverOption', { name: d.name, used: l.seats, cap: d.cap })}
-                </option>
-              );
-            });
-            return inside && r.match_group_id == null ? options : (
-              <optgroup key={String(inside)} label={inside ? t('inGroup') : t('outsideGroupAdmin')}>
-                {options}
-              </optgroup>
+      <label className="sr-only" htmlFor={selectId}>
+        {t('assignTo', { name: r.passenger.name })}
+      </label>
+      <select
+        id={selectId}
+        className="input plan-select"
+        value={current ?? ''}
+        disabled={!canUpdate}
+        onChange={(e) => onAssign(e.target.value ? Number(e.target.value) : null)}
+      >
+        <option value="">{t('noDriver')}</option>
+        {/* Drivers from the rider's group first; anyone else only by an admin's choice (audited). */}
+        {[true, false].map((inside) => {
+          const list = plan.drivers.filter((d) => d.id !== r.passenger.id && inGroup(d, r) === inside);
+          if (!list.length) return null;
+          const options = list.map((d) => {
+            const l = driverLoad(plan, draft, d, r.leg === 'return' ? 'return' : 'outbound');
+            return (
+              <option key={d.id} value={d.id}>
+                {t('driverOption', { name: d.name, used: l.seats, cap: d.cap })}
+              </option>
             );
-          })}
-        </select>
-        {canUpdate && (
-          <IconButton
-            size="sm"
-            variant="secondary"
-            label={t('chooseDriverSheet', { name: r.passenger.name })}
-            icon={<Car size={16} />}
-            onClick={onOpenPicker}
-          />
-        )}
-      </div>
-      {canToggleReimb && onToggleReimb && (
-        <div className="row end">
-          <Button size="sm" variant="ghost" onClick={onToggleReimb}>
-            {r.reimbursement_excluded ? t('toggleReimbInclude') : t('toggleReimbExclude')}
-          </Button>
-        </div>
-      )}
+          });
+          return inside && r.match_group_id == null ? options : (
+            <optgroup key={String(inside)} label={inside ? t('inGroup') : t('outsideGroupAdmin')}>
+              {options}
+            </optgroup>
+          );
+        })}
+      </select>
     </article>
   );
 }

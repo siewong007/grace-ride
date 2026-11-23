@@ -71,3 +71,14 @@ test.describe('tablet navigation rail', () => {
     await expect(page.getByRole('button', { name: 'Hide menu names' })).toBeVisible();
   });
 });
+
+test.describe('landscape phone sticky bars (640-767px)', () => {
+  test.use({ viewport: { width: 700, height: 800 } });
+  test.beforeEach(async ({ context }) => mockAdminApi(context));
+
+  test('RideDetail keeps mobile sticky action bar visible without blackout at 700px', async ({ page }) => {
+    await open(page, '/admin/rides/101');
+    const stickyBar = page.locator('.ride-detail-sticky-bar');
+    await expect(stickyBar).toBeVisible();
+  });
+});

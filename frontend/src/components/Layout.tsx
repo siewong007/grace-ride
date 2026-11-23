@@ -1,7 +1,7 @@
 import { ReactNode, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Link, NavLink, Navigate, Outlet, useLocation, useNavigate } from 'react-router-dom';
 import {
-  ArrowLeft, Bell, Calendar, Car, CarFront, ClipboardList, Clock, Fingerprint, HandCoins, Home,
+  ArrowLeft, Bell, Calendar, Car, CarFront, ChevronDown, ChevronRight, ClipboardList, Clock, Fingerprint, HandCoins, Home,
   LayoutGrid, LifeBuoy, MapPinned, PanelLeftClose, PanelLeftOpen, Route, Search, Receipt, ShieldAlert, User, Wallet, BarChart3, WifiOff,
 } from 'lucide-react';
 import { useAuth } from '../auth';
@@ -128,6 +128,24 @@ function LayoutInner() {
         // Not remembered when storage is blocked; the toggle still works.
       }
       return !open;
+    });
+
+  const [toolsOpen, setToolsOpen] = useState(() => {
+    try {
+      return localStorage.getItem('gr.sidebarToolsOpen') === '1';
+    } catch {
+      return false;
+    }
+  });
+  const toggleTools = () =>
+    setToolsOpen((open) => {
+      const next = !open;
+      try {
+        localStorage.setItem('gr.sidebarToolsOpen', next ? '1' : '0');
+      } catch {
+        // Ignore storage restrictions; in-memory toggle still works.
+      }
+      return next;
     });
 
   const meId = me?.id;
@@ -271,12 +289,34 @@ function LayoutInner() {
         </Link>
         {member.length > 0 && staffGroups.length > 0 && <div className="section-label">{t('sectionMember')}</div>}
         {member.map(sidebarLink)}
-        {sidebarMemberTools.length > 0 && (
-          <div className="sidebar-group" role="group" aria-label={t('sectionTools')}>
-            <div className="section-label" aria-hidden="true">{t('sectionTools')}</div>
-            {sidebarMemberTools.map(sidebarLink)}
-          </div>
-        )}
+        {sidebarMemberTools.length > 0 && (() => {
+          const inMemberTools = sidebarMemberTools.some(
+            (item) => loc.pathname === item.to || loc.pathname.startsWith(`${item.to}/`),
+          );
+          const showToolsItems = staffGroups.length === 0 || toolsOpen || inMemberTools;
+          return (
+            <div className="sidebar-group" role="group" aria-label={t('sectionTools')}>
+              {staffGroups.length > 0 ? (
+                <button
+                  type="button"
+                  className="sidebar-section-toggle"
+                  aria-expanded={showToolsItems}
+                  onClick={toggleTools}
+                >
+                  <span>{t('sectionTools')} ({sidebarMemberTools.length})</span>
+                  {showToolsItems ? (
+                    <ChevronDown size={14} aria-hidden="true" />
+                  ) : (
+                    <ChevronRight size={14} aria-hidden="true" />
+                  )}
+                </button>
+              ) : (
+                <div className="section-label" aria-hidden="true">{t('sectionTools')}</div>
+              )}
+              {showToolsItems && sidebarMemberTools.map(sidebarLink)}
+            </div>
+          );
+        })()}
         {staffGroups.map((g) => (
           <div key={g.key} className="sidebar-group" role="group" aria-label={g.label}>
             <div className="section-label" aria-hidden="true">{g.label}</div>

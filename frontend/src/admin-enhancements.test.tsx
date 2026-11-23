@@ -563,4 +563,99 @@ describe('Admin UX Enhancements', () => {
     fireEvent.click(screen.getByText('Monthly payout batches & bank transfers'));
     expect(onClose).toHaveBeenCalled();
   });
+
+  it('AdminRides compact mode exposes per-ride selection checkboxes and batch actions without navigating', () => {
+    const origMatchMedia = window.matchMedia;
+    vi.stubGlobal('matchMedia', (query: string) => ({
+      matches: query === '(max-width: 767px)',
+      media: query,
+      onchange: null,
+      addEventListener: vi.fn(),
+      removeEventListener: vi.fn(),
+      addListener: vi.fn(),
+      removeListener: vi.fn(),
+      dispatchEvent: vi.fn(),
+    }));
+    try {
+      vi.spyOn(authMod, 'useAuth').mockReturnValue({
+        can: () => true,
+        me: { id: 1, name: 'Admin Paul', roles: ['admin'] },
+        refresh: vi.fn(),
+      } as any);
+
+      vi.spyOn(apiMod, 'useApi').mockReturnValue({
+        data: { items: mockRides, total: 2, page: 1, page_size: 50, total_pages: 1 },
+        error: null,
+        loading: false,
+        reload: vi.fn(),
+      } as any);
+
+      const { container } = render(
+        <MemoryRouter initialEntries={['/admin/rides']}>
+          <AdminRides />
+        </MemoryRouter>,
+      );
+
+      expect(container.querySelector('.table-compact')).toBeInTheDocument();
+      const checks = screen.getAllByRole('checkbox', { name: /select ride/i });
+      expect(checks).toHaveLength(2);
+      fireEvent.click(checks[0]);
+
+      const batchBar = screen.getByRole('region', { name: /batch actions/i });
+      expect(within(batchBar).getByText(/1 ride selected/i)).toBeInTheDocument();
+    } finally {
+      vi.stubGlobal('matchMedia', origMatchMedia);
+    }
+  });
+
+  it('PlanTransport collapses empty PlanVisitors behind filter chip until expanded', () => {
+    vi.spyOn(authMod, 'useAuth').mockReturnValue({
+      can: () => true,
+      me: { id: 1, name: 'Lead Zhang', roles: ['traffic_head'] },
+      refresh: vi.fn(),
+    } as any);
+
+    const planPayload = {
+      event: { id: 5, title: 'Sunday Worship', starts_at: '2026-11-22T09:00:00', location: 'Grace Hall', group_ids: [1] },
+      rides: [
+        {
+          id: 11,
+          status: 'pending_driver',
+          pickup_at: '2026-11-22T08:15:00',
+          pickup_address: '10 Jalan SS2',
+          seats: 1,
+          assistance: '',
+          driver_id: null,
+          area: { id: 1, name: 'SS2' },
+          passenger: { id: 20, name: 'Uncle Lim' },
+          match_group_id: 1,
+          last: null,
+        },
+      ],
+      drivers: [],
+      visitors: [],
+    };
+
+    vi.spyOn(apiMod, 'useApi').mockImplementation((path: string | null) =>
+      path === '/areas'
+        ? ({ data: [{ id: 1, name: 'SS2', active: true }], error: null, loading: false, reload: vi.fn() } as any)
+        : ({ data: planPayload, error: null, loading: false, reload: vi.fn() } as any),
+    );
+
+    render(
+      <MemoryRouter initialEntries={['/admin/events/5/plan']}>
+        <Routes>
+          <Route path="/admin/events/:id/plan" element={<PlanTransport />} />
+        </Routes>
+      </MemoryRouter>,
+    );
+
+    const visitorsChip = screen.getByRole('button', { name: /visitors \(0\)/i });
+    expect(visitorsChip).toHaveAttribute('aria-expanded', 'false');
+    expect(screen.queryByRole('heading', { name: /visitors \(for the record\)/i })).not.toBeInTheDocument();
+
+    fireEvent.click(visitorsChip);
+    expect(visitorsChip).toHaveAttribute('aria-expanded', 'true');
+    expect(screen.getByRole('heading', { name: /visitors \(for the record\)/i })).toBeInTheDocument();
+  });
 });

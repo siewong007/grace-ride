@@ -5,6 +5,9 @@ import {
   Calendar,
   Camera,
   Check,
+  ChevronDown,
+  ChevronRight,
+  ChevronUp,
   Copy,
   ExternalLink,
   Fingerprint,
@@ -14,12 +17,12 @@ import {
   Lock,
   LogOut,
   MapPin,
+  Plus,
   Receipt,
   RefreshCw,
   Shield,
   Sliders,
   Smartphone,
-  User,
   Users,
   Wallet,
   Car,
@@ -104,6 +107,7 @@ export default function Profile() {
   const [showVerify2fa, setShowVerify2fa] = useState(false);
   const [showBackupCodes, setShowBackupCodes] = useState<string[] | null>(null);
   const [editAvatar, setEditAvatar] = useState(false);
+  const [moreActivityOpen, setMoreActivityOpen] = useState(false);
   const pwa = usePwaInstall();
   const [showInstallModal, setShowInstallModal] = useState(false);
   const { busy, error, run } = useAction();
@@ -289,15 +293,40 @@ export default function Profile() {
     }
   };
 
-  const related = [
+  const primaryActivity = [
     can('rides') && { to: '/rides', label: t('myRideHistory'), icon: <Car size={iconSz} /> },
-    can('drive') && { to: '/drive', label: t('myDrivingHistory'), icon: <CarFront size={iconSz} /> },
+    can('drive') && {
+      to: '/drive',
+      label: t('myDrivingHistory'),
+      hint: t('driverSettingsHint'),
+      icon: <CarFront size={iconSz} />,
+    },
     can('costs') && { to: '/costs', label: t('myCosts'), icon: <Wallet size={iconSz} /> },
+    can('help') && { to: '/help', label: t('myHelp'), icon: <LifeBuoy size={iconSz} /> },
+  ].filter(Boolean) as { to: string; label: string; hint?: string; icon: ReactNode }[];
+
+  const secondaryActivity = [
     (can('settlements') || can('admin_bills')) && { to: '/settlements', label: t('settlements'), icon: <HandCoins size={iconSz} /> },
     can('reimbursements') && { to: '/reimbursements', label: t('myReimb'), icon: <Receipt size={iconSz} /> },
     can('report') && { to: '/report', label: t('myReport'), icon: <BarChart3 size={iconSz} /> },
-    can('help') && { to: '/help', label: t('myHelp'), icon: <LifeBuoy size={iconSz} /> },
   ].filter(Boolean) as { to: string; label: string; icon: ReactNode }[];
+
+  const installRow = (
+    <SheetLink
+      icon={pwa.isInstalled ? <Check size={iconSz} /> : <Smartphone size={iconSz} />}
+      label={t('installApp')}
+      hint={
+        pwa.isInstalled
+          ? t('installAppInstalledDesc')
+          : pwa.canPrompt
+            ? t('installAppOneClickPrompt')
+            : t('installAppDesc')
+      }
+      badge={pwa.isInstalled ? <Pill tone="success">{t('installAppInstalled')}</Pill> : undefined}
+      aria-haspopup="dialog"
+      onClick={handleInstallClick}
+    />
+  );
 
   const sheetTitle: Record<SectionKey, string> = {
     personal: t('personalInfo'),
@@ -311,7 +340,7 @@ export default function Profile() {
     <div className="stack profile-page profile-hub">
       {!open && (
         <>
-      <section className="profile-hero" aria-label={t('account')}>
+      <section className="profile-identity-header" aria-label={t('account')}>
         <button
           type="button"
           className="profile-avatar-btn"
@@ -320,38 +349,78 @@ export default function Profile() {
         >
           {avatarEl}
           <span className="profile-avatar-badge" aria-hidden="true">
-            <Camera size={16} />
+            <Plus size={14} strokeWidth={2.5} />
           </span>
         </button>
-        <h1>{me.name}</h1>
-        <div className="profile-email">{me.email}</div>
-        {isPending ? (
-          <div className="profile-tags">
-            <Pill tone="warning">{roleText}</Pill>
+        <button
+          type="button"
+          className="profile-identity-btn"
+          aria-label={`${t('personalInfo')} · ${me.name}`}
+          aria-haspopup="dialog"
+          onClick={() => openSection('personal')}
+        >
+          <div className="grow min-w-0">
+            <h1 className="ellipsis">{me.name}</h1>
+            <div className="profile-identity-meta">
+              {isPending ? (
+                <Pill tone="warning">{roleText}</Pill>
+              ) : (
+                <>
+                  <span>{roleText}</span>
+                  {me.groups.slice(0, 3).map((g) => (
+                    <span key={g.id}> · {g.name}</span>
+                  ))}
+                </>
+              )}
+            </div>
+            <div className="sheet-link-hint">{me.phone || t('personalHint')}</div>
           </div>
-        ) : (
-          <div className="profile-meta-line">
-            <span>{roleText}</span>
-            {me.groups.slice(0, 3).map((g) => (
-              <span key={g.id}> · {g.name}</span>
-            ))}
-          </div>
-        )}
+          <ChevronRight size={18} className="muted sheet-link-chevron" aria-hidden="true" />
+        </button>
       </section>
 
       {isPending && <WaitingRoom />}
 
       <div className="stack">
+        {!isPending && (primaryActivity.length > 0 || secondaryActivity.length > 0) && (
+          <section className="stack-xs" aria-label={t('activitySection')}>
+            <div className="section-label">{t('activitySection')}</div>
+            <div className="list">
+              {primaryActivity.map((n) => (
+                <SheetLink key={n.to} to={n.to} icon={n.icon} label={n.label} hint={n.hint} />
+              ))}
+              {secondaryActivity.length > 0 && (
+                <>
+                  <button
+                    type="button"
+                    className="item admin-sheet-link profile-more-toggle"
+                    aria-expanded={moreActivityOpen}
+                    onClick={() => setMoreActivityOpen((v) => !v)}
+                  >
+                    <span className="grow">
+                      {moreActivityOpen
+                        ? t('hideMoreActivity')
+                        : t('moreActivity', { count: secondaryActivity.length })}
+                    </span>
+                    {moreActivityOpen ? (
+                      <ChevronUp size={18} className="sheet-link-chevron" aria-hidden="true" />
+                    ) : (
+                      <ChevronDown size={18} className="sheet-link-chevron" aria-hidden="true" />
+                    )}
+                  </button>
+                  {moreActivityOpen &&
+                    secondaryActivity.map((n) => (
+                      <SheetLink key={n.to} to={n.to} icon={n.icon} label={n.label} />
+                    ))}
+                </>
+              )}
+            </div>
+          </section>
+        )}
+
         <section className="stack-xs" aria-label={t('account')}>
           <div className="section-label">{t('account')}</div>
           <div className="list">
-            <SheetLink
-              icon={<User size={iconSz} />}
-              label={t('personalInfo')}
-              hint={me.phone || t('personalHint')}
-              aria-haspopup="dialog"
-              onClick={() => openSection('personal')}
-            />
             <SheetLink
               icon={<Sliders size={iconSz} />}
               label={t('preferences')}
@@ -360,31 +429,19 @@ export default function Profile() {
               onClick={() => openSection('preferences')}
             />
             {!isPending && (
-              <>
-                <SheetLink
-                  icon={<MapPin size={iconSz} />}
-                  label={t('savedAddresses')}
-                  hint={placesHint}
-                  aria-haspopup="dialog"
-                  onClick={() => openSection('places')}
-                />
-                {can('drive') && (
-                  <SheetLink
-                    icon={<CarFront size={iconSz} />}
-                    label={t('driverSettings')}
-                    hint={t('driverSettingsHint')}
-                    to="/drive?tab=settings"
-                  />
-                )}
-                <SheetLink
-                  icon={<Calendar size={iconSz} />}
-                  label={t('calendarFeed')}
-                  hint={t('calendarFeedShort')}
-                  aria-haspopup="dialog"
-                  onClick={() => openSection('calendar')}
-                />
-              </>
+              <SheetLink
+                icon={<MapPin size={iconSz} />}
+                label={t('savedAddresses')}
+                hint={placesHint}
+                aria-haspopup="dialog"
+                onClick={() => openSection('places')}
+              />
             )}
+            <SheetLink
+              icon={<Users size={iconSz} />}
+              label={t('family')}
+              to="/me/family"
+            />
             <SheetLink
               icon={<Shield size={iconSz} />}
               label={t('security')}
@@ -392,41 +449,20 @@ export default function Profile() {
               aria-haspopup="dialog"
               onClick={() => openSection('security')}
             />
-            <SheetLink
-              icon={<Users size={iconSz} />}
-              label={t('family')}
-              to="/me/family"
-            />
-            <SheetLink
-              icon={pwa.isInstalled ? <Check size={iconSz} /> : <Smartphone size={iconSz} />}
-              label={t('installApp')}
-              hint={
-                pwa.isInstalled
-                  ? t('installAppInstalledDesc')
-                  : pwa.canPrompt
-                    ? t('installAppOneClickPrompt')
-                    : t('installAppDesc')
-              }
-              badge={pwa.isInstalled ? <Pill tone="success">{t('installAppInstalled')}</Pill> : undefined}
-              aria-haspopup="dialog"
-              onClick={handleInstallClick}
-            />
+            {pwa.canPrompt && !pwa.isInstalled && installRow}
           </div>
         </section>
-
-        {!isPending && related.length > 0 && (
-          <section className="stack-xs" aria-label={t('relatedPages')}>
-            <div className="section-label">{t('relatedPages')}</div>
-            <div className="list">
-              {related.map((n) => (
-                <SheetLink key={n.to} to={n.to} icon={n.icon} label={n.label} />
-              ))}
-            </div>
-          </section>
-        )}
       </div>
 
       <div className="list">
+        {canLock && (
+          <SheetLink
+            icon={<Lock size={iconSz} aria-hidden="true" />}
+            label={t('lockNow')}
+            chevron={false}
+            onClick={lock}
+          />
+        )}
         <SheetLink
           icon={<LogOut size={iconSz} aria-hidden="true" />}
           label={t('logout')}
@@ -606,6 +642,19 @@ export default function Profile() {
                 </Button>
               </div>
               <ErrorBox error={error} />
+              <div className="divider" />
+              <div className="list">
+                {!isPending && (
+                  <SheetLink
+                    icon={<Calendar size={iconSz} />}
+                    label={t('calendarFeed')}
+                    hint={t('calendarFeedShort')}
+                    aria-haspopup="dialog"
+                    onClick={() => openSection('calendar')}
+                  />
+                )}
+                {installRow}
+              </div>
             </div>
           )}
 

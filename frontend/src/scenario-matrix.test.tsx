@@ -308,7 +308,8 @@ describe('Scenario Matrix — Frontend Components & Service Worker', () => {
       });
       await user.click(screen.getByRole('link', { name: /back/i }));
 
-      // Calendar feed sheet
+      // Calendar feed sheet (folded inside Preferences)
+      await user.click(screen.getByRole('button', { name: /preferences/i }));
       await user.click(screen.getByRole('button', { name: /calendar feed/i }));
       const calDlg = document.body;
       await user.click(within(calDlg).getByRole('button', { name: /reset calendar link/i }));

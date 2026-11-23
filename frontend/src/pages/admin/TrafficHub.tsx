@@ -1,5 +1,5 @@
 import { FormEvent, useMemo, useState } from 'react';
-import { Link, useSearchParams } from 'react-router-dom';
+import { useSearchParams } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
 import {
   AlertCircle,
@@ -44,6 +44,7 @@ import { Areas } from './Settings';
 type HubTab = 'plans' | 'rides' | 'live' | 'areas';
 type PlanFilter = 'all' | 'pending' | 'needs_plan' | 'returned' | 'has_draft';
 type RidesView = 'all' | 'drafts';
+type AreaSubTab = 'photos' | 'fares' | 'areas';
 
 interface TrafficDashCounts extends AdminCounts {
   live_drivers?: number;
@@ -133,7 +134,10 @@ export default function TrafficHub() {
   const canPlans = can('admin_plan');
   const canRides = can('admin_rides');
   const canLive = can('admin_live');
-  const canAreas = can('admin_area_photos') || can('admin_areas') || can('admin_fares');
+  const canAreaPhotos = can('admin_area_photos');
+  const canFares = can('admin_fares');
+  const canManageAreas = can('admin_areas');
+  const canAreas = canAreaPhotos || canFares || canManageAreas;
 
   const dash = useApi<TrafficDashCounts>(can('admin_dashboard') ? '/admin/dashboard' : null, 30000);
   const plans = useApi<TrafficEventPlan[]>(canPlans ? '/admin/traffic/plans' : null, 30000);
@@ -233,6 +237,7 @@ export default function TrafficHub() {
     const next = new URLSearchParams(searchParams);
     next.set('tab', nextTab);
     if (nextTab !== 'rides') next.delete('view');
+    if (nextTab !== 'areas') next.delete('sub');
     if (extra) {
       for (const [k, v] of Object.entries(extra)) {
         next.set(k, v);
@@ -240,6 +245,18 @@ export default function TrafficHub() {
     }
     setSearchParams(next, { replace: true });
   };
+
+  const areaSubTabs = useMemo(() => {
+    const list: { key: AreaSubTab; label: string }[] = [];
+    if (canAreaPhotos) list.push({ key: 'photos', label: t('trafficHub.areasSubPhotos') });
+    if (canFares) list.push({ key: 'fares', label: t('trafficHub.areasSubFares') });
+    if (canManageAreas) list.push({ key: 'areas', label: t('trafficHub.areasSubAreas') });
+    return list;
+  }, [canAreaPhotos, canFares, canManageAreas, t]);
+  const rawSub = searchParams.get('sub') as AreaSubTab | null;
+  const activeAreaSub: AreaSubTab | undefined =
+    rawSub && areaSubTabs.some((s) => s.key === rawSub) ? rawSub : areaSubTabs[0]?.key;
+  const setAreaSub = (sub: AreaSubTab) => setTab('areas', { sub });
 
   const setRidesView = (view: RidesView) => {
     const next = new URLSearchParams(searchParams);
@@ -413,9 +430,9 @@ export default function TrafficHub() {
                             .join(' · ')}
                         </p>
                       </div>
-                      <Link to={planHrefFor(nextEvent)} className="btn btn-primary">
+                      <Button variant="primary" to={planHrefFor(nextEvent)}>
                         {planCtaLabel(nextEvent)}
-                      </Link>
+                      </Button>
                     </div>
                     <div className="row wrap gap-xs">
                       <Pill tone="neutral">{t('trafficHub.ridesCount', { count: nextEvent.ride_count })}</Pill>
@@ -494,9 +511,9 @@ export default function TrafficHub() {
                                 .join(' · ')}
                             </div>
                           </div>
-                          <Link to={planHrefFor(ev)} className="btn btn-secondary btn-sm">
+                          <Button variant="secondary" size="sm" to={planHrefFor(ev)}>
                             {planCtaLabel(ev)}
-                          </Link>
+                          </Button>
                         </div>
                         <div className="row wrap gap-xs small">
                           <Pill tone="neutral">{t('trafficHub.ridesCount', { count: ev.ride_count })}</Pill>
@@ -583,9 +600,9 @@ export default function TrafficHub() {
                           )}
                         </div>
                         <div className="btn-row">
-                          <Link to={`/admin/rides/${d.ride_id}`} className="btn btn-secondary btn-sm">
+                          <Button variant="secondary" size="sm" to={`/admin/rides/${d.ride_id}`}>
                             {t('trafficHub.openRideDetail')}
-                          </Link>
+                          </Button>
                           {isLead && d.status === 'pending_approval' && (
                             <>
                               <Button
@@ -626,9 +643,25 @@ export default function TrafficHub() {
 
         {activeTab === 'areas' && canAreas && (
           <div className="stack">
-            {can('admin_area_photos') && <AreaPhotos />}
-            {can('admin_fares') && <AreaFares />}
-            {can('admin_areas') && <Areas />}
+            {areaSubTabs.length > 1 && (
+              <div className="chips" role="tablist" aria-label={t('trafficHub.tabAreas')}>
+                {areaSubTabs.map((sub) => (
+                  <button
+                    key={sub.key}
+                    type="button"
+                    role="tab"
+                    aria-selected={activeAreaSub === sub.key}
+                    className={`chip ${activeAreaSub === sub.key ? 'on' : ''}`}
+                    onClick={() => setAreaSub(sub.key)}
+                  >
+                    {sub.label}
+                  </button>
+                ))}
+              </div>
+            )}
+            {activeAreaSub === 'photos' && can('admin_area_photos') && <AreaPhotos />}
+            {activeAreaSub === 'fares' && can('admin_fares') && <AreaFares />}
+            {activeAreaSub === 'areas' && can('admin_areas') && <Areas />}
           </div>
         )}
       </div>

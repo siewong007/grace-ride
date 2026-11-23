@@ -106,8 +106,11 @@ vi.mock('../webauthn', () => ({
   withRecentSignIn: (fn: () => Promise<unknown>) => fn(),
 }));
 
+let mockCanLock = false;
+const lockMock = vi.fn();
+
 vi.mock('../components/AutoLock', () => ({
-  useAutoLock: () => ({ lock: vi.fn() }),
+  useAutoLock: () => ({ lock: lockMock, canLock: mockCanLock }),
 }));
 
 vi.mock('../components/AvatarEditor', () => ({
@@ -139,6 +142,10 @@ const profileStrings: Record<string, string> = {
   security: 'Account security',
   account: 'Account',
   relatedPages: 'Related pages',
+  activitySection: 'Activity',
+  moreActivity: 'More activity ({count})',
+  hideMoreActivity: 'Hide extra activity',
+  lockNow: 'Lock screen now',
   myCosts: 'My costs',
   myRideHistory: 'My ride history',
   myDrivingHistory: 'Driving & schedule',
@@ -422,6 +429,7 @@ vi.mock('../components/ui', () => ({
 
 beforeEach(() => {
   vi.clearAllMocks();
+  mockCanLock = false;
   currentMe = baseMe;
   savedPlacesData = [];
   proxyRidersData = [];
@@ -488,21 +496,32 @@ describe('Profile compact layout', () => {
 
   it('keeps permitted non-admin shortcuts reachable for a member', () => {
     renderProfile(baseMe);
-    for (const label of ['My costs', 'My reimbursements', 'Help centre']) {
+    for (const label of ['My costs', 'Help centre']) {
       expect(screen.getByText(label)).toBeInTheDocument();
     }
+    expect(screen.queryByText('My report')).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: /More activity/i }));
+    expect(screen.getByText('My reimbursements')).toBeInTheDocument();
+    expect(screen.getByText('My report')).toBeInTheDocument();
   });
 
-  it('keeps ride, driving schedule, and driver settings reachable from the profile', () => {
+  it('keeps ride and driving schedule above Account without duplicating Vehicle & driving settings', () => {
     renderProfile(baseMe);
     expect(screen.getByText('My ride history').closest('a')).toHaveAttribute('href', '/rides');
-    expect(screen.getByText('Driving & schedule').closest('a')).toHaveAttribute('href', '/drive');
-    expect(screen.getByText('Vehicle & driving settings').closest('a')).toHaveAttribute('href', '/drive?tab=settings');
+    const driveLink = screen.getByText('Driving & schedule').closest('a');
+    expect(driveLink).toHaveAttribute('href', '/drive');
+    expect(driveLink).toHaveTextContent('Car details, service areas & carpool');
+    expect(screen.queryByText('Vehicle & driving settings')).not.toBeInTheDocument();
+
+    const activityHeading = screen.getByText('Activity');
+    const accountHeading = screen.getByText('Account');
+    expect(activityHeading.compareDocumentPosition(accountHeading) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
   });
 
   it('hides related pages shortcuts for pending accounts', () => {
     renderProfile({ ...baseMe, status: 'pending' });
     expect(screen.queryByText('My costs')).not.toBeInTheDocument();
+    expect(screen.queryByText('Activity')).not.toBeInTheDocument();
     expect(screen.queryByText('Related pages')).not.toBeInTheDocument();
   });
 
@@ -522,10 +541,12 @@ describe('Profile compact layout', () => {
     expect(screen.getByText('passkeyCount · twoFaOnShort')).toBeInTheDocument();
   });
 
-  it('opens the avatar editor from the avatar and from personal details', () => {
+  it('opens the avatar editor from the avatar (+ badge) and from personal details', () => {
     renderProfile(baseMe);
+    const avatarBtn = screen.getByRole('button', { name: 'avatarEdit' });
+    expect(avatarBtn.querySelector('.profile-avatar-badge')).toBeInTheDocument();
     expect(screen.queryByTestId('avatar-editor')).not.toBeInTheDocument();
-    fireEvent.click(screen.getByRole('button', { name: 'avatarEdit' }));
+    fireEvent.click(avatarBtn);
     expect(screen.getByTestId('avatar-editor')).toBeInTheDocument();
     fireEvent.click(screen.getByRole('button', { name: 'close editor' }));
     fireEvent.click(screen.getByRole('button', { name: /Personal details/i }));
@@ -533,8 +554,11 @@ describe('Profile compact layout', () => {
     expect(screen.getByTestId('avatar-editor')).toBeInTheDocument();
   });
 
-  it('renders a Log out action below the sections', () => {
+  it('renders Lock screen when canLock is enabled and Log out below the sections', () => {
+    mockCanLock = true;
     renderProfile(baseMe);
+    fireEvent.click(screen.getByRole('button', { name: /Lock screen now/i }));
+    expect(lockMock).toHaveBeenCalledTimes(1);
     expect(screen.getByRole('button', { name: /^Log out$/ })).toBeInTheDocument();
   });
 
@@ -587,12 +611,17 @@ describe('Profile compact layout', () => {
     expect(screen.getByText('JBSWY3DPEHPK3PXP')).toBeInTheDocument();
   });
 
-  it('renders a single clean PWA install row when not yet installed, and opens setup guide modal', () => {
+  it('folds Calendar feed and PWA setup guide into Preferences instead of cluttering root /me when prompt unavailable', () => {
     _setInstalledForTesting(false);
     _setDeferredPromptForTesting(null);
     renderProfile(baseMe);
 
     expect(screen.queryByText('Add Grace Ride to Home Screen')).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /Add App to Home Screen/i })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /Calendar feed/i })).not.toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole('button', { name: /Preferences/i }));
+    expect(screen.getByRole('button', { name: /Calendar feed/i })).toBeInTheDocument();
     const installRow = screen.getByRole('button', { name: /Add App to Home Screen/i });
     expect(installRow).toBeInTheDocument();
 
@@ -621,12 +650,14 @@ describe('Profile compact layout', () => {
     await waitFor(() => expect(promptMock).toHaveBeenCalled());
   });
 
-  it('shows installed status badge when already installed', () => {
+  it('shows installed status badge inside Preferences when already installed', () => {
     _setInstalledForTesting(true);
     _setDeferredPromptForTesting(null);
     renderProfile(baseMe);
 
     expect(screen.queryByText('Add Grace Ride to Home Screen')).not.toBeInTheDocument();
+    expect(screen.queryByText('Added to Home Screen')).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: /Preferences/i }));
     expect(screen.getByText('Added to Home Screen')).toBeInTheDocument();
   });
 

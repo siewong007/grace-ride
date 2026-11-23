@@ -53,6 +53,7 @@ export interface UniversalTableProps<T> {
   clearFiltersLabel?: string;
   toolbarActions?: ReactNode;
   compactRow?: (item: T, index: number) => ReactNode;
+  compactRowLead?: (item: T, index: number) => ReactNode;
 }
 
 function columnSortKey<T>(col: TableColumn<T>): string {
@@ -102,15 +103,12 @@ function useNarrowScreen(): boolean {
   return narrow;
 }
 
-function isInteractive(target: EventTarget | null): boolean {
-  return (
-    target instanceof Element &&
-    Boolean(
-      target.closest(
-        'a,button,input,select,textarea,[role="button"],[data-row-click-ignore]',
-      ),
-    )
+function isInteractive(target: EventTarget | null, rowEl?: EventTarget | null): boolean {
+  if (!(target instanceof Element)) return false;
+  const match = target.closest(
+    'a,button,input,select,textarea,[role="button"],[data-row-click-ignore]',
   );
+  return Boolean(match && match !== rowEl);
 }
 
 export function UniversalTable<T>({
@@ -131,6 +129,7 @@ export function UniversalTable<T>({
   clearFiltersLabel,
   toolbarActions,
   compactRow,
+  compactRowLead,
 }: UniversalTableProps<T>) {
   const { t } = useTranslation('common');
   const blockRef = useRef<HTMLDivElement>(null);
@@ -246,7 +245,7 @@ export function UniversalTable<T>({
     : 'table responsive sticky-header';
 
   return (
-    <div ref={blockRef} className={`table-block${className ? ` ${className}` : ''}`}>
+    <div ref={blockRef} className={`table-block${showCompact ? ' is-compact' : ''}${className ? ` ${className}` : ''}`}>
       {sortableColumns.length > 0 && (
         <label className="table-mobile-sort">
           <span>{t('table.sortBy')}</span>
@@ -300,7 +299,22 @@ export function UniversalTable<T>({
         <div className="list table-compact">
           {rows.map((item, rowIndex) => {
             const key = itemKey ? itemKey(item, rowIndex) : rowIndex;
+            const lead = compactRowLead?.(item, rowIndex);
             const body = compactRow?.(item, rowIndex);
+            if (onRowClick && lead) {
+              return (
+                <div key={key} className="item-select-row">
+                  {lead}
+                  <button
+                    type="button"
+                    className="item grow"
+                    onClick={() => onRowClick(item, rowIndex)}
+                  >
+                    {body}
+                  </button>
+                </div>
+              );
+            }
             if (onRowClick) {
               return (
                 <button
@@ -315,6 +329,7 @@ export function UniversalTable<T>({
             }
             return (
               <div key={key} className="item">
+                {lead}
                 {body}
               </div>
             );
@@ -377,7 +392,7 @@ export function UniversalTable<T>({
                     className={onRowClick ? 'clickable' : ''}
                     tabIndex={onRowClick ? 0 : undefined}
                     onClick={(e) => {
-                      if (isInteractive(e.target)) return;
+                      if (isInteractive(e.target, e.currentTarget)) return;
                       onRowClick?.(item, rowIndex);
                     }}
                     onKeyDown={(e) => {

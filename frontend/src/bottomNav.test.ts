@@ -49,18 +49,22 @@ describe('matchBottomTab and isBottomTabRoot', () => {
     expect(isBottomTabRoot('/admin/menu')).toBe(true);
   });
 
-  it('treats /help as the Admin tab only for help-desk staff', () => {
+  it('treats /help as the Admin tab only for help-desk staff, and Profile otherwise', () => {
     expect(matchBottomTab('/help', staffTabs, true)?.id).toBe('admin');
     expect(matchBottomTab('/help/4', staffTabs, true)?.id).toBe('admin');
-    expect(matchBottomTab('/help', staffTabs, false)).toBeUndefined();
+    expect(matchBottomTab('/help', staffTabs, false)?.id).toBe('profile');
+    expect(matchBottomTab('/help', memberTabs, false)?.id).toBe('profile');
+    expect(matchBottomTab('/help/4', memberTabs, false)?.id).toBe('profile');
     expect(isBottomTabRoot('/help')).toBe(false);
   });
 
-  it('treats a profile section as a Profile sub-page, not the tab root', () => {
+  it('treats a profile section or settlement page as a Profile sub-page, not the tab root', () => {
     expect(matchBottomTab('/me', memberTabs)?.id).toBe('profile');
     expect(isBottomTabRoot('/me')).toBe(true);
     expect(isBottomTabRoot('/me', '?section=security')).toBe(false);
     expect(matchBottomTab('/rides/101', memberTabs)?.id).toBe('profile');
+    expect(matchBottomTab('/settlements', memberTabs)?.id).toBe('profile');
+    expect(matchBottomTab('/settlements/5', memberTabs)?.id).toBe('profile');
   });
 
   it('does not assign unmatched pages such as notifications to a tab', () => {

@@ -334,6 +334,20 @@ export function AdminRidesContent({ showExportTop = true }: { showExportTop?: bo
               items={loading ? [] : rides}
               onRowClick={(r) => nav(`/admin/rides/${r.id}`)}
               itemKey={(r) => r.id}
+              compactRowLead={(r) => (
+                <input
+                  type="checkbox"
+                  className="ride-row-check"
+                  aria-label={t('rides.selectRide', { id: r.id })}
+                  checked={selectedIds.has(r.id)}
+                  onChange={(e) => {
+                    const next = new Set(selectedIds);
+                    if (e.target.checked) next.add(r.id);
+                    else next.delete(r.id);
+                    setSelectedIds(next);
+                  }}
+                />
+              )}
               compactRow={(r) => rideCompactRow(r, ft, true)}
               sort={sort}
               onSortChange={setSort}

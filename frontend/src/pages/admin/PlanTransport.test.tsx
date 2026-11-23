@@ -446,7 +446,8 @@ describe('PlanTransport draft & traffic lead approval', () => {
 
     expect(screen.getByRole('button', { name: /v1 · Plan A/i })).toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'Live' })).toBeInTheDocument();
-    // Member can add a visitor in draftMode without calling direct /plan/visitors.
+    // Empty visitors starts collapsed behind filter chip; expanding lets member add a visitor in draftMode.
+    await userEvent.click(screen.getByRole('button', { name: /visitors \(0\)/i }));
     await userEvent.click(screen.getByRole('button', { name: 'Add visitor' }));
     const visitorDlg = screen.getByRole('dialog');
     await userEvent.type(within(visitorDlg).getByLabelText('Name'), 'Draft Guest');
