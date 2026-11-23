@@ -35,6 +35,7 @@ import {
   useFormatT,
 } from '../../format';
 import { loadTodayRidesSnapshot, saveTodayRidesSnapshot } from '../../offlineSnapshot';
+import { getQueuedActionsForRide, postOrQueue, useOfflineQueueTick } from '../../offlineQueue';
 
 export function DriveSchedule() {
   const { t } = useTranslation('drive');
@@ -55,6 +56,7 @@ export function DriveSchedule() {
     20000,
   );
   const { busy, error: actErr, run } = useAction();
+  const queueTick = useOfflineQueueTick();
   const offlineSnap = !data && error && me?.id ? loadTodayRidesSnapshot(me.id) : null;
   const scheduleRides = data ?? (offlineSnap ? offlineSnap.rides : null);
   const active = scheduleRides?.some((r) => r.status === 'in_progress');
@@ -67,6 +69,30 @@ export function DriveSchedule() {
 
   const act = (r: Ride, path: string, msg: string) =>
     run(() => post(`/rides/${r.id}/${path}`).then(reload), msg);
+
+  const actQueueable = async (r: Ride, path: string, label: string, successMsg: string, body?: unknown) => {
+    if (!me?.id) {
+      if (await run(() => post(`/rides/${r.id}/${path}`, body).then(reload))) {
+        toast.success(successMsg);
+      }
+      return;
+    }
+    await run(async () => {
+      const res = await postOrQueue({
+        userId: me.id,
+        rideId: r.id,
+        path: `/rides/${r.id}/${path}`,
+        body,
+        label,
+      });
+      if (res.queued) {
+        toast.info(t('common:queuedOffline'));
+      } else {
+        toast.success(successMsg);
+        reload();
+      }
+    });
+  };
 
   const handleNoShow = async (r: Ride) => {
     const ok = await confirm({
@@ -158,6 +184,9 @@ export function DriveSchedule() {
             </Link>
           </div>
           <div className="row nowrap gap-xs">
+            {me?.id && queueTick >= 0 && getQueuedActionsForRide(me.id, r.id).length > 0 && (
+              <Pill tone="info">{t('common:offlineQueuedPill')}</Pill>
+            )}
             {r.readiness_status === 'ready' && (
               <Pill tone="success">{t('passengerReady')}</Pill>
             )}
@@ -220,7 +249,7 @@ export function DriveSchedule() {
               block
               className="driver-trip-primary-btn"
               disabled={busy}
-              onClick={() => act(r, 'pickup', t('respondedPickedUp'))}
+              onClick={() => void actQueueable(r, 'pickup', t('pickedUp'), t('respondedPickedUp'))}
             >
               {t('pickedUp')}
             </Button>
@@ -231,7 +260,7 @@ export function DriveSchedule() {
               block
               className="driver-trip-primary-btn"
               disabled={busy}
-              onClick={() => act(r, 'complete', t('respondedCompleted'))}
+              onClick={() => void actQueueable(r, 'complete', t('completed'), t('respondedCompleted'))}
             >
               {t('completed')}
             </Button>
@@ -279,11 +308,7 @@ export function DriveSchedule() {
                   variant="secondary"
                   size="sm"
                   disabled={busy}
-                  onClick={async () => {
-                    if (await run(() => post(`/rides/${r.id}/arrived-gate`).then(reload))) {
-                      toast.success(t('arrivedGateSent'));
-                    }
-                  }}
+                  onClick={() => void actQueueable(r, 'arrived-gate', t('arrivedGate'), t('arrivedGateSent'))}
                 >
                   {t('arrivedGate')}
                 </Button>
@@ -314,11 +339,15 @@ export function DriveSchedule() {
                       variant="secondary"
                       size="sm"
                       disabled={busy}
-                      onClick={async () => {
-                        if (await run(() => post(`/rides/${r.id}/driver-delay`, { delay_minutes: 5 }).then(reload))) {
-                          toast.success(t('delayToast', { mins: 5 }));
-                        }
-                      }}
+                      onClick={() =>
+                        void actQueueable(
+                          r,
+                          'driver-delay',
+                          t('delayPlus5'),
+                          t('delayToast', { mins: 5 }),
+                          { delay_minutes: 5 },
+                        )
+                      }
                     >
                       {t('delayPlus5')}
                     </Button>
@@ -326,11 +355,15 @@ export function DriveSchedule() {
                       variant="secondary"
                       size="sm"
                       disabled={busy}
-                      onClick={async () => {
-                        if (await run(() => post(`/rides/${r.id}/driver-delay`, { delay_minutes: 10 }).then(reload))) {
-                          toast.success(t('delayToast', { mins: 10 }));
-                        }
-                      }}
+                      onClick={() =>
+                        void actQueueable(
+                          r,
+                          'driver-delay',
+                          t('delayPlus10'),
+                          t('delayToast', { mins: 10 }),
+                          { delay_minutes: 10 },
+                        )
+                      }
                     >
                       {t('delayPlus10')}
                     </Button>

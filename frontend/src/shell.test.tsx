@@ -176,7 +176,7 @@ describe('Layout and Navigation', () => {
     expect(screen.getAllByRole('heading', { level: 1 })).toHaveLength(1);
   });
 
-  it('keeps member navigation minimal with Home, Events, and Profile only', () => {
+  it('keeps bottom navigation minimal while surfacing member tools in desktop sidebar and mobile search', () => {
     render(
       <MemoryRouter initialEntries={['/']}>
         <Routes>
@@ -190,13 +190,17 @@ describe('Layout and Navigation', () => {
     const desktopNav = screen.getByRole('navigation', { name: 'Main navigation' });
     expect(desktopNav).toHaveTextContent('Home');
     expect(desktopNav).toHaveTextContent('Events');
+    expect(desktopNav).toHaveTextContent('My rides');
+    expect(desktopNav).toHaveTextContent('My costs');
+    expect(desktopNav).toHaveTextContent('Help centre');
     expect(desktopNav).toHaveTextContent('Grace Member');
-    expect(desktopNav).not.toHaveTextContent('My costs');
-    expect(desktopNav).not.toHaveTextContent('Help centre');
 
     const bottomNav = screen.getByRole('navigation', { name: 'Bottom navigation' });
     expect(bottomNav).toHaveTextContent('Home');
     expect(bottomNav).toHaveTextContent('Events');
     expect(bottomNav).toHaveTextContent('Profile');
+    expect(bottomNav).not.toHaveTextContent('My costs');
+
+    expect(screen.getAllByRole('button', { name: /Search/i }).length).toBeGreaterThanOrEqual(2);
   });
 });

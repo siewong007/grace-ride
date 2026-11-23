@@ -11,6 +11,7 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.automirrored.outlined.OpenInNew
 import androidx.compose.material.icons.outlined.People
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
@@ -40,6 +41,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
@@ -60,6 +62,7 @@ import org.pjstatecm.graceride.ui.components.TimelineBadge
 import org.pjstatecm.graceride.ui.components.TimelineKind
 import org.pjstatecm.graceride.ui.components.TimelineNode
 import org.pjstatecm.graceride.ui.components.TimelineState
+import org.pjstatecm.graceride.ui.openInWebApp
 import org.pjstatecm.graceride.ui.theme.Spacing
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -67,6 +70,7 @@ import org.pjstatecm.graceride.ui.theme.Spacing
 fun EventDetailScreen(container: AppContainer, nav: NavHostController, id: Long) {
     val vm: EventDetailViewModel = viewModel(factory = EventDetailViewModel.factory(container, id))
     val state by vm.state.collectAsStateWithLifecycle()
+    val context = LocalContext.current
     val snackbar = remember { SnackbarHostState() }
     var showSignup by remember { mutableStateOf(false) }
     var confirmWithdraw by remember { mutableStateOf(false) }
@@ -193,6 +197,14 @@ fun EventDetailScreen(container: AppContainer, nav: NavHostController, id: Long)
 
                     if (event.description.isNotBlank()) {
                         Text(event.description, style = MaterialTheme.typography.bodyLarge, color = MaterialTheme.colorScheme.onSurface)
+                    }
+
+                    OutlinedButton(
+                        onClick = { openInWebApp(context, container.webUrl("events/${event.id}")) },
+                        modifier = Modifier.fillMaxWidth(),
+                    ) {
+                        Icon(Icons.AutoMirrored.Outlined.OpenInNew, contentDescription = null, modifier = Modifier.padding(end = Spacing.xs))
+                        Text(stringResource(R.string.event_open_web_full))
                     }
                 }
             }

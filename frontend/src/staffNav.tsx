@@ -1,12 +1,10 @@
 import { ReactNode } from 'react';
 import {
-  ClipboardList,
   FileBarChart,
   HeartHandshake,
   KeyRound,
   LayoutDashboard,
   LifeBuoy,
-  MapPinned,
   Megaphone,
   Route,
   ScrollText,
@@ -110,6 +108,9 @@ export function useStaffNav() {
       ? (counts.pending_plan_drafts ?? 0) + (counts.pending_ride_drafts ?? 0)
       : (counts.my_returned_plan_drafts ?? 0) + (counts.my_returned_ride_drafts ?? 0)
     : 0;
+  const opsTrafficBadge = isTrafficOnlyStaff
+    ? trafficBadge
+    : trafficBadge + (can('admin_rides') && counts ? counts.pending_approval + counts.no_driver : 0);
 
   const links = (items: (StaffNavItem & { show: boolean })[]): StaffNavItem[] =>
     items.filter((n) => n.show && !pending).map(({ to, label, icon, end, badge }) => ({ to, label, icon, end, badge }));
@@ -132,13 +133,8 @@ export function useStaffNav() {
             key: 'ops',
             label: t('groupOps'),
             items: links([
-              { to: '/admin/traffic', label: t('trafficHub'), icon: <Route size={sz} />, show: canTrafficHub, badge: trafficBadge },
+              { to: '/admin/traffic', label: t('trafficHub'), icon: <Route size={sz} />, show: canTrafficHub, badge: opsTrafficBadge },
               { to: '/admin', label: t('dashboard'), icon: <LayoutDashboard size={sz} />, end: true, show: can('admin_dashboard') },
-              {
-                to: '/admin/rides', label: t('adminRides'), icon: <ClipboardList size={sz} />, show: can('admin_rides'),
-                badge: counts ? counts.pending_approval + counts.no_driver : 0,
-              },
-              { to: '/admin/live', label: t('liveMap'), icon: <MapPinned size={sz} />, show: can('admin_live') },
             ]),
           },
           {

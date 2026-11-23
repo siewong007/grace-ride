@@ -6,6 +6,7 @@ import {
   Camera,
   Check,
   Copy,
+  ExternalLink,
   Fingerprint,
   HandCoins,
   KeyRound,
@@ -66,7 +67,12 @@ export default function Profile() {
     configured?: boolean;
     vapid_public_key?: string;
     subscription_count?: number;
+    whatsapp_configured?: boolean;
+    telegram_configured?: boolean;
+    telegram_bot_username?: string;
   }>(open === 'preferences' && me?.status !== 'pending' ? '/push/config' : null);
+  const channelCfg = pushCfg.data && !Array.isArray(pushCfg.data) ? pushCfg.data : undefined;
+  const telegramBot = (channelCfg?.telegram_bot_username ?? '').replace(/[^a-zA-Z0-9_]/g, '');
   const [f, setF] = useState({
     name: me?.name ?? '',
     phone: me?.phone ?? '',
@@ -520,14 +526,14 @@ export default function Profile() {
                 <label className={`check ${pushOptIn ? 'on' : ''}`}>
                   <input type="checkbox" checked={pushOptIn} onChange={(e) => setPushOptIn(e.target.checked)} /> {t('pushOptIn')}
                 </label>
-                {(pushCfg.data?.subscription_count ?? 0) > 0 && (
-                  <p className="muted tiny">{t('pushConnectedCount', { count: pushCfg.data?.subscription_count ?? 0 })}</p>
+                {(channelCfg?.subscription_count ?? 0) > 0 && (
+                  <p className="muted tiny">{t('pushConnectedCount', { count: channelCfg?.subscription_count ?? 0 })}</p>
                 )}
                 <div className="row wrap gap-xs">
                   <Button variant="secondary" size="sm" disabled={pushBusy} onClick={enableBrowserPush}>
                     {t('enableBrowserPush')}
                   </Button>
-                  {(pushCfg.data?.subscription_count ?? 0) > 0 && (
+                  {(channelCfg?.subscription_count ?? 0) > 0 && (
                     <>
                       <Button variant="secondary" size="sm" disabled={pushBusy} onClick={sendTestPush}>
                         {t('sendTestPush')}
@@ -539,17 +545,43 @@ export default function Profile() {
                   )}
                 </div>
                 {pushStatus && <p className="muted tiny">{pushStatus}</p>}
-                <label className={`check ${whatsappOptIn ? 'on' : ''}`}>
-                  <input type="checkbox" checked={whatsappOptIn} onChange={(e) => setWhatsappOptIn(e.target.checked)} /> {t('whatsappOptIn')}
-                </label>
-                <Field label={t('telegramChatId')} hint={t('telegramChatIdHint')}>
-                  <input
-                    className="input"
-                    value={telegramChatId}
-                    onChange={(e) => setTelegramChatId(e.target.value)}
-                    placeholder="123456789"
-                  />
-                </Field>
+                {channelCfg?.whatsapp_configured === false ? (
+                  <p className="muted tiny">{t('whatsappNotConfigured')}</p>
+                ) : (
+                  <label className={`check ${whatsappOptIn ? 'on' : ''}`}>
+                    <input type="checkbox" checked={whatsappOptIn} onChange={(e) => setWhatsappOptIn(e.target.checked)} /> {t('whatsappOptIn')}
+                  </label>
+                )}
+                {channelCfg?.telegram_configured === false ? (
+                  <p className="muted tiny">{t('telegramNotConfigured')}</p>
+                ) : (
+                  <div className="stack-xs">
+                    {telegramBot && (
+                      <div>
+                        <a
+                          className="btn secondary sm"
+                          href={`https://t.me/${telegramBot}`}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                        >
+                          <ExternalLink size={15} aria-hidden="true" />
+                          {t('telegramOpenBot', { bot: telegramBot })}
+                        </a>
+                      </div>
+                    )}
+                    <Field
+                      label={t('telegramChatId')}
+                      hint={telegramBot ? t('telegramGuidedHint') : t('telegramChatIdHint')}
+                    >
+                      <input
+                        className="input"
+                        value={telegramChatId}
+                        onChange={(e) => setTelegramChatId(e.target.value)}
+                        placeholder="123456789"
+                      />
+                    </Field>
+                  </div>
+                )}
               </div>
               <div className="divider" />
               <DisplayPreferences />

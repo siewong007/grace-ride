@@ -2,6 +2,7 @@ export default {
   brand: '恩典同行',
   brandSub: '恩典同行 · PJ State CMC',
   sectionMember: '会员',
+  sectionTools: '我的常用',
   sectionService: '服事',
   sectionAdmin: '管理',
   trafficTab: '交通组',

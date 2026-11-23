@@ -63,6 +63,13 @@ class RideDetailViewModel(private val container: AppContainer, private val id: L
     fun cancel(reason: String?) = action { container.rides.cancel(id, reason) }
     fun respond(accept: Boolean) = action { container.rides.respond(id, accept) }
     fun readiness(status: String) = action { container.rides.readiness(id, status) }
+    fun confirmAssignment() = action { container.rides.confirmAssignment(id) }
+    fun startRide() = action { container.rides.startRide(id) }
+    fun arrivedGate() = action { container.rides.arrivedGate(id) }
+    fun pickup() = action { container.rides.pickupRide(id) }
+    fun complete() = action { container.rides.completeRide(id) }
+    fun driverDelay(minutes: Int) = action { container.rides.driverDelay(id, minutes) }
+    fun withdraw(reason: String?) = action { container.rides.withdrawRide(id, reason) }
     fun clearMessage() { _state.value = _state.value.copy(message = null, staleReload = false) }
 
     companion object {

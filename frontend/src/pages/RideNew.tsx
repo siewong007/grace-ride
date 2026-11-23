@@ -2,6 +2,8 @@ import { FormEvent, useEffect, useMemo, useRef, useState } from 'react';
 import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 import {
   Accessibility,
+  ChevronDown,
+  ChevronUp,
   Eye,
   Footprints,
   HeartHandshake,
@@ -125,6 +127,7 @@ function RideNewForm() {
   const [selectedChips, setSelectedChips] = useState<string[]>([]);
   const [customAssistance, setCustomAssistance] = useState('');
   const [notes, setNotes] = useState('');
+  const [needsOpen, setNeedsOpen] = useState(false);
   const [saveAddress, setSaveAddress] = useState(false);
   const [saveAddressLabel, setSaveAddressLabel] = useState('');
 
@@ -135,6 +138,12 @@ function RideNewForm() {
   const proxyAppliedRef = useRef<{ area?: string; address?: string; notes?: string }>({});
   const savedPlaceAppliedRef = useRef<{ notes?: string }>({});
   const prefilledPlaceRef = useRef(false);
+
+  const hasNeedsContent =
+    selectedChips.length > 0 || customAssistance.trim().length > 0 || notes.trim().length > 0;
+  useEffect(() => {
+    if (hasNeedsContent) setNeedsOpen(true);
+  }, [hasNeedsContent]);
 
   const defaultReturnFor = (hhmm: string): string => {
     const parts = hhmm.split(':');
@@ -912,67 +921,92 @@ function RideNewForm() {
             </div>
           </section>
 
-          {/* Section 4: Needs & Notes */}
+          {/* Section 4: Needs & Notes (collapsible optional disclosure) */}
           <section className="form-section stack">
-            <h3>{t('needsSection')}</h3>
-            <Field label={t('assistance')} hint={t('assistanceHint')}>
-              <div className="chips-grid">
-                <button
-                  type="button"
-                  className={`chip-toggle ${selectedChips.includes('wheelchair') ? 'active' : ''}`}
-                  onClick={() => toggleChip('wheelchair')}
-                  aria-pressed={selectedChips.includes('wheelchair')}
-                >
-                  <Accessibility size={16} aria-hidden="true" />
-                  <span>{t('needWheelchair')}</span>
-                </button>
-                <button
-                  type="button"
-                  className={`chip-toggle ${selectedChips.includes('walking') ? 'active' : ''}`}
-                  onClick={() => toggleChip('walking')}
-                  aria-pressed={selectedChips.includes('walking')}
-                >
-                  <Footprints size={16} aria-hidden="true" />
-                  <span>{t('needWalkingAid')}</span>
-                </button>
-                <button
-                  type="button"
-                  className={`chip-toggle ${selectedChips.includes('visual') ? 'active' : ''}`}
-                  onClick={() => toggleChip('visual')}
-                  aria-pressed={selectedChips.includes('visual')}
-                >
-                  <Eye size={16} aria-hidden="true" />
-                  <span>{t('needVisualAssistance')}</span>
-                </button>
-                <button
-                  type="button"
-                  className={`chip-toggle ${selectedChips.includes('helpInOut') ? 'active' : ''}`}
-                  onClick={() => toggleChip('helpInOut')}
-                  aria-pressed={selectedChips.includes('helpInOut')}
-                >
-                  <HeartHandshake size={16} aria-hidden="true" />
-                  <span>{t('needHelpInOut')}</span>
-                </button>
+            <button
+              type="button"
+              className="disclosure-toggle row between items-center"
+              aria-expanded={needsOpen}
+              aria-controls="ride-needs-panel"
+              onClick={() => setNeedsOpen((v) => !v)}
+            >
+              <div className="stack-none text-left">
+                <h3>{t('needsSection')}</h3>
+                <span className="muted tiny">
+                  {hasNeedsContent
+                    ? t('needsAddedSummary', {
+                        count:
+                          selectedChips.length +
+                          (customAssistance.trim() ? 1 : 0) +
+                          (notes.trim() ? 1 : 0),
+                      })
+                    : t('needsOptionalHint')}
+                </span>
               </div>
-            </Field>
+              {needsOpen ? <ChevronUp size={20} aria-hidden="true" /> : <ChevronDown size={20} aria-hidden="true" />}
+            </button>
+            {needsOpen && (
+              <div id="ride-needs-panel" className="stack">
+                <Field label={t('assistance')} hint={t('assistanceHint')}>
+                  <div className="chips-grid">
+                    <button
+                      type="button"
+                      className={`chip-toggle ${selectedChips.includes('wheelchair') ? 'active' : ''}`}
+                      onClick={() => toggleChip('wheelchair')}
+                      aria-pressed={selectedChips.includes('wheelchair')}
+                    >
+                      <Accessibility size={16} aria-hidden="true" />
+                      <span>{t('needWheelchair')}</span>
+                    </button>
+                    <button
+                      type="button"
+                      className={`chip-toggle ${selectedChips.includes('walking') ? 'active' : ''}`}
+                      onClick={() => toggleChip('walking')}
+                      aria-pressed={selectedChips.includes('walking')}
+                    >
+                      <Footprints size={16} aria-hidden="true" />
+                      <span>{t('needWalkingAid')}</span>
+                    </button>
+                    <button
+                      type="button"
+                      className={`chip-toggle ${selectedChips.includes('visual') ? 'active' : ''}`}
+                      onClick={() => toggleChip('visual')}
+                      aria-pressed={selectedChips.includes('visual')}
+                    >
+                      <Eye size={16} aria-hidden="true" />
+                      <span>{t('needVisualAssistance')}</span>
+                    </button>
+                    <button
+                      type="button"
+                      className={`chip-toggle ${selectedChips.includes('helpInOut') ? 'active' : ''}`}
+                      onClick={() => toggleChip('helpInOut')}
+                      aria-pressed={selectedChips.includes('helpInOut')}
+                    >
+                      <HeartHandshake size={16} aria-hidden="true" />
+                      <span>{t('needHelpInOut')}</span>
+                    </button>
+                  </div>
+                </Field>
 
-            <Field label={t('otherAssistance')}>
-              <input
-                className="input"
-                value={customAssistance}
-                onChange={(e) => setCustomAssistance(e.target.value)}
-                placeholder={t('otherAssistancePlaceholder')}
-              />
-            </Field>
+                <Field label={t('otherAssistance')}>
+                  <input
+                    className="input"
+                    value={customAssistance}
+                    onChange={(e) => setCustomAssistance(e.target.value)}
+                    placeholder={t('otherAssistancePlaceholder')}
+                  />
+                </Field>
 
-            <Field label={t('notes')}>
-              <textarea
-                className="input"
-                value={notes}
-                onChange={(e) => setNotes(e.target.value)}
-                rows={3}
-              />
-            </Field>
+                <Field label={t('notes')}>
+                  <textarea
+                    className="input"
+                    value={notes}
+                    onChange={(e) => setNotes(e.target.value)}
+                    rows={3}
+                  />
+                </Field>
+              </div>
+            )}
           </section>
 
           {/* Sticky Submit Bar on Phone */}

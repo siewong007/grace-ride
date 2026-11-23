@@ -62,7 +62,7 @@ test.describe('tablet navigation rail', () => {
 
     await toggle.click();
     await expect(page.getByRole('button', { name: 'Hide menu names' })).toHaveAttribute('aria-expanded', 'true');
-    const label = page.locator('.sidebar-link .sidebar-label', { hasText: 'Ride management' });
+    const label = page.locator('.sidebar-link .sidebar-label', { hasText: 'Traffic workspace' });
     await expect(label).toBeVisible();
     expect(await page.evaluate(() => document.documentElement.scrollWidth - window.innerWidth)).toBeLessThanOrEqual(0);
 

@@ -1,8 +1,8 @@
 import { ReactNode, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Link, NavLink, Navigate, Outlet, useLocation, useNavigate } from 'react-router-dom';
 import {
-  ArrowLeft, Bell, Calendar, Car, CarFront, Clock, Fingerprint, HandCoins, Home,
-  LayoutGrid, LifeBuoy, PanelLeftClose, PanelLeftOpen, Route, Search, Receipt, ShieldAlert, User, Wallet, BarChart3, WifiOff,
+  ArrowLeft, Bell, Calendar, Car, CarFront, ClipboardList, Clock, Fingerprint, HandCoins, Home,
+  LayoutGrid, LifeBuoy, MapPinned, PanelLeftClose, PanelLeftOpen, Route, Search, Receipt, ShieldAlert, User, Wallet, BarChart3, WifiOff,
 } from 'lucide-react';
 import { useAuth } from '../auth';
 import { BackNavigationProvider, getDefaultBack, SwipeBackGesture, useOptionalBackNavigation, useSmartBack } from './BackNavigation';
@@ -10,13 +10,14 @@ import { LogoMark, Wordmark } from './Brand';
 import { GuideHeaderActionContext, PageChromeContext } from './PageChrome';
 import { ErrorBoundary } from './AppChrome';
 import { TermsGate } from './Terms';
-import { Avatar, IconButton, Notice } from './ui';
+import { Avatar, Button, IconButton, Notice, useToast } from './ui';
 import { GuideRunnerProvider, PageHeaderGuideButton } from './GuideRunner';
 import { SwipeTabsGesture, useMobileNav } from './SwipeTabs';
 import { getBottomNavTabs } from '../bottomNav';
 import QuickJump, { useQuickJumpShortcut } from './QuickJump';
 import { useTranslation } from 'react-i18next';
 import { useStaffNav, waitingBadge } from '../staffNav';
+import { flushOfflineQueue, getOfflineQueue, useOfflineQueueTick } from '../offlineQueue';
 
 interface NavItem {
   to: string;
@@ -79,6 +80,7 @@ function LayoutInner() {
   const { me, can } = useAuth();
   const loc = useLocation();
   const navigate = useNavigate();
+  const toast = useToast();
   const mobileNav = useMobileNav();
   const inAppHistory = useOptionalBackNavigation();
   const [scrolled, setScrolled] = useState(false);
@@ -87,6 +89,8 @@ function LayoutInner() {
   const [back, setBack] = useState<string | null>(null);
   const [headingVisible, setHeadingVisible] = useState(false);
   const [isOffline, setIsOffline] = useState(typeof navigator !== 'undefined' ? !navigator.onLine : false);
+  const [syncingQueue, setSyncingQueue] = useState(false);
+  useOfflineQueueTick();
   const chrome = useMemo(() => ({ setBack, setHeadingVisible }), []);
   const [jumpOpen, setJumpOpen] = useState(false);
   const openJump = useCallback(() => {
@@ -126,16 +130,41 @@ function LayoutInner() {
       return !open;
     });
 
+  const meId = me?.id;
+  const runQueueSync = useCallback(async () => {
+    if (!meId) return;
+    setSyncingQueue(true);
+    try {
+      const res = await flushOfflineQueue(meId);
+      if (res.conflicts > 0) {
+        toast.info(tc('offlineSyncConflicts', { synced: res.synced, conflicts: res.conflicts }));
+      } else if (res.synced > 0) {
+        toast.success(tc('offlineSynced', { count: res.synced }));
+      }
+      if (res.synced > 0 || res.conflicts > 0) {
+        window.dispatchEvent(new Event('gr:ride-stale'));
+      }
+    } finally {
+      setSyncingQueue(false);
+    }
+  }, [meId, tc, toast]);
+
   useEffect(() => {
-    const onOnline = () => setIsOffline(false);
+    const onOnline = () => {
+      setIsOffline(false);
+      void runQueueSync();
+    };
     const onOffline = () => setIsOffline(true);
     window.addEventListener('online', onOnline);
     window.addEventListener('offline', onOffline);
+    if (!isOffline && meId && getOfflineQueue(meId).length > 0) {
+      void runQueueSync();
+    }
     return () => {
       window.removeEventListener('online', onOnline);
       window.removeEventListener('offline', onOffline);
     };
-  }, []);
+  }, [isOffline, meId, runQueueSync]);
 
   useEffect(() => {
     const el = sentinelRef.current;
@@ -150,6 +179,8 @@ function LayoutInner() {
     return () => obs.disconnect();
   }, []);
 
+  const pendingOfflineCount = me ? getOfflineQueue(me.id).length : 0;
+
   if (!me) return null;
   if (!me.terms_accepted) return <TermsGate />;
   const onMe = loc.pathname === '/me' || loc.pathname === '/me/family';
@@ -163,13 +194,15 @@ function LayoutInner() {
     { to: '/', label: t('home'), icon: <Home size={sz} />, end: true, show: true },
     { to: '/events', label: t('events'), icon: <Calendar size={sz} />, show: can('events') },
   ]);
-  const quickJumpMember = links([
+  const sidebarMemberTools = links([
+    { to: '/drive', label: t('drive'), icon: <CarFront size={sz} />, show: can('drive') },
+    { to: '/rides', label: t('myRides'), icon: <Car size={sz} />, show: can('rides') },
     { to: '/costs', label: t('myCosts'), icon: <Wallet size={sz} />, show: can('costs') },
+    { to: '/settlements', label: t('settlements'), icon: <HandCoins size={sz} />, show: can('settlements') || can('admin_bills') },
     { to: '/reimbursements', label: t('reimbursements'), icon: <Receipt size={sz} />, show: can('reimbursements') },
     { to: '/report', label: t('myReport'), icon: <BarChart3 size={sz} />, show: can('report') },
     // Help-desk staff reach the same page as "Help desk" in their own section.
     { to: '/help', label: t('help'), icon: <LifeBuoy size={sz} />, show: can('help') && !helpDesk },
-    { to: '/settlements', label: t('settlements'), icon: <HandCoins size={sz} />, show: can('settlements') || can('admin_bills') },
   ]);
   const profileTab: NavItem = { to: '/me', label: t('profile'), icon: <User size={sz} /> };
   // Phone tab bar: home, events. Rides and driving are asked for from an event, and their
@@ -238,6 +271,12 @@ function LayoutInner() {
         </Link>
         {member.length > 0 && staffGroups.length > 0 && <div className="section-label">{t('sectionMember')}</div>}
         {member.map(sidebarLink)}
+        {sidebarMemberTools.length > 0 && (
+          <div className="sidebar-group" role="group" aria-label={t('sectionTools')}>
+            <div className="section-label" aria-hidden="true">{t('sectionTools')}</div>
+            {sidebarMemberTools.map(sidebarLink)}
+          </div>
+        )}
         {staffGroups.map((g) => (
           <div key={g.key} className="sidebar-group" role="group" aria-label={g.label}>
             <div className="section-label" aria-hidden="true">{g.label}</div>
@@ -280,11 +319,20 @@ function LayoutInner() {
 
           <div className="topbar-actions row nowrap">
             {!pending && (
-              <button type="button" className="btn sm ghost topbar-jump hide-phone" onClick={openJump}>
-                <Search size={16} aria-hidden="true" />
-                <span>{t('jumpButton')}</span>
-                <kbd aria-hidden="true">{/Mac|iPhone|iPad/.test(navigator.platform) ? '⌘K' : 'Ctrl K'}</kbd>
-              </button>
+              <>
+                <button type="button" className="btn sm ghost topbar-jump hide-phone" onClick={openJump}>
+                  <Search size={16} aria-hidden="true" />
+                  <span>{t('jumpButton')}</span>
+                  <kbd aria-hidden="true">{/Mac|iPhone|iPad/.test(navigator.platform) ? '⌘K' : 'Ctrl K'}</kbd>
+                </button>
+                <IconButton
+                  icon={<Search size={20} />}
+                  label={t('jumpButton')}
+                  variant="ghost"
+                  className="hide-tablet-up"
+                  onClick={openJump}
+                />
+              </>
             )}
             {!pending && (
               <IconButton
@@ -333,6 +381,20 @@ function LayoutInner() {
           <div className="shell-notice-container" role="status" aria-live="polite">
             <Notice tone="warning" icon={<WifiOff size={20} />}>
               {tc('offlineNotice')}
+            </Notice>
+          </div>
+        )}
+        {pendingOfflineCount > 0 && (
+          <div className="shell-notice-container" role="status" aria-live="polite">
+            <Notice tone="info">
+              <div className="row between items-center wrap gap-xs">
+                <span>{tc('offlinePendingBanner', { count: pendingOfflineCount })}</span>
+                {!isOffline && (
+                  <Button variant="secondary" size="sm" loading={syncingQueue} onClick={() => void runQueueSync()}>
+                    {tc('offlineSyncNow')}
+                  </Button>
+                )}
+              </div>
             </Notice>
           </div>
         )}
@@ -398,10 +460,12 @@ function LayoutInner() {
         <QuickJump
           pages={[
             ...member,
-            ...quickJumpMember,
+            ...sidebarMemberTools,
             ...staff,
-            ...(can('rides') ? [{ to: '/rides', label: t('myRides'), icon: <Car size={sz} /> }] : []),
-            ...(can('drive') ? [{ to: '/drive', label: t('drive'), icon: <CarFront size={sz} /> }] : []),
+            ...links([
+              { to: '/admin/rides', label: t('adminRides'), icon: <ClipboardList size={sz} />, show: can('admin_rides') },
+              { to: '/admin/live', label: t('liveMap'), icon: <MapPinned size={sz} />, show: can('admin_live') },
+            ]),
             profileTab,
           ].filter(
             (p, i, all) => all.findIndex((x) => x.to === p.to) === i,

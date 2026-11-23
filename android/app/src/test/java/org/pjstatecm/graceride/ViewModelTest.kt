@@ -32,6 +32,7 @@ import org.pjstatecm.graceride.ui.screens.home.HomeViewModel
 import org.pjstatecm.graceride.ui.screens.login.LoginViewModel
 import org.pjstatecm.graceride.ui.screens.profile.ProfileViewModel
 import org.pjstatecm.graceride.ui.screens.profile.SavedAddressesViewModel
+import org.pjstatecm.graceride.ui.screens.rides.RideDetailViewModel
 import org.pjstatecm.graceride.ui.screens.rides.RideNewViewModel
 import org.pjstatecm.graceride.ui.screens.rides.RidesViewModel
 import org.pjstatecm.graceride.ui.screens.rides.TripType
@@ -578,5 +579,70 @@ class ViewModelTest {
         assertEquals(2, saveBody["area_id"]?.jsonPrimitive?.int)
         assertEquals("77 Jalan Baru", saveBody["address"]?.jsonPrimitive?.content)
         assertEquals(false, saveBody["is_default"]?.jsonPrimitive?.boolean)
+    }
+
+    @Test fun rideDetailDriverActionsAndWebUrl() = runBlocking {
+        val driverRide = """{"id":77,"status":"pending_driver_confirm","pickup_at":"2026-11-29 09:00:00",
+            "area":{"id":2,"name":"PJ"},"destination":"Church","seats":1,
+            "passenger":{"id":5,"name":"Rider"},"viewer":{"is_passenger":false,"is_driver":true,"is_staff":false}}"""
+        server.enqueue(json(driverRide))
+        val vm = RideDetailViewModel(container, 77L)
+        vm.state.awaitUntil { !it.loading && it.ride != null }
+        assertEquals("/api/rides/77", server.takeRequest().path)
+
+        fun enqueueAction() {
+            server.enqueue(json("""{"ok":true}"""))
+            server.enqueue(json(driverRide))
+        }
+
+        enqueueAction()
+        vm.confirmAssignment()
+        vm.state.awaitUntil { !it.busy }
+        assertEquals("/api/rides/77/confirm-assignment", server.takeRequest().path)
+        assertEquals("/api/rides/77", server.takeRequest().path)
+
+        enqueueAction()
+        vm.startRide()
+        vm.state.awaitUntil { !it.busy }
+        assertEquals("/api/rides/77/start", server.takeRequest().path)
+        server.takeRequest()
+
+        enqueueAction()
+        vm.arrivedGate()
+        vm.state.awaitUntil { !it.busy }
+        assertEquals("/api/rides/77/arrived-gate", server.takeRequest().path)
+        server.takeRequest()
+
+        enqueueAction()
+        vm.pickup()
+        vm.state.awaitUntil { !it.busy }
+        assertEquals("/api/rides/77/pickup", server.takeRequest().path)
+        server.takeRequest()
+
+        enqueueAction()
+        vm.complete()
+        vm.state.awaitUntil { !it.busy }
+        assertEquals("/api/rides/77/complete", server.takeRequest().path)
+        server.takeRequest()
+
+        enqueueAction()
+        vm.driverDelay(5)
+        vm.state.awaitUntil { !it.busy }
+        val delayReq = server.takeRequest()
+        assertEquals("/api/rides/77/driver-delay", delayReq.path)
+        assertEquals(5, apiJson.parseToJsonElement(delayReq.body.readUtf8()).jsonObject["delay_minutes"]?.jsonPrimitive?.int)
+        server.takeRequest()
+
+        enqueueAction()
+        vm.withdraw("Car trouble")
+        vm.state.awaitUntil { !it.busy }
+        val withdrawReq = server.takeRequest()
+        assertEquals("/api/rides/77/withdraw", withdrawReq.path)
+        assertEquals("Car trouble", apiJson.parseToJsonElement(withdrawReq.body.readUtf8()).jsonObject["reason"]?.jsonPrimitive?.content)
+        server.takeRequest()
+
+        val web = container.webUrl("/rides/77")
+        assertTrue(web.endsWith("/rides/77"))
+        assertFalse(web.contains("//rides"))
     }
 }

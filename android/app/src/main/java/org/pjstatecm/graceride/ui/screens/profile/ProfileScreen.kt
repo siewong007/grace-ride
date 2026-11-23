@@ -21,15 +21,21 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.outlined.HelpOutline
 import androidx.compose.material.icons.automirrored.outlined.Logout
+import androidx.compose.material.icons.outlined.AdminPanelSettings
+import androidx.compose.material.icons.outlined.BarChart
 import androidx.compose.material.icons.outlined.Check
 import androidx.compose.material.icons.outlined.ChevronRight
 import androidx.compose.material.icons.outlined.Delete
+import androidx.compose.material.icons.outlined.DirectionsCar
+import androidx.compose.material.icons.outlined.Groups
 import androidx.compose.material.icons.outlined.History
 import androidx.compose.material.icons.outlined.Key
 import androidx.compose.material.icons.outlined.LocationOn
 import androidx.compose.material.icons.outlined.Notifications
 import androidx.compose.material.icons.outlined.Payments
+import androidx.compose.material.icons.outlined.ReceiptLong
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.DropdownMenuItem
@@ -76,6 +82,7 @@ import org.pjstatecm.graceride.ui.components.GrokBotAvatar
 import org.pjstatecm.graceride.ui.components.MemberAvatar
 import org.pjstatecm.graceride.ui.components.MuseBotAvatar
 import org.pjstatecm.graceride.ui.components.SectionHeader
+import org.pjstatecm.graceride.ui.openInWebApp
 import org.pjstatecm.graceride.ui.theme.Spacing
 
 private enum class AvatarMode { PHOTO, ANIMATED, INITIALS, ICON }
@@ -287,6 +294,53 @@ fun ProfileScreen(container: AppContainer, nav: NavHostController) {
                 OutlinedCard(Modifier.fillMaxWidth()) {
                     Column {
                         ProfileRow(stringResource(R.string.notif_title), Icons.Outlined.Notifications) { nav.navigate(Routes.NOTIFICATIONS) }
+                    }
+                }
+            }
+
+            if (me != null && me.status != "pending") {
+                item { SectionHeader(stringResource(R.string.profile_section_web)) }
+                item {
+                    OutlinedCard(Modifier.fillMaxWidth()) {
+                        Column {
+                            var hasAbove = false
+                            if (me.can("drive")) {
+                                ProfileRow(stringResource(R.string.profile_web_drive), Icons.Outlined.DirectionsCar) {
+                                    openInWebApp(context, container.webUrl("drive"))
+                                }
+                                hasAbove = true
+                            }
+                            if (me.can("reimbursements")) {
+                                if (hasAbove) HorizontalDivider()
+                                ProfileRow(stringResource(R.string.profile_reimbursements), Icons.Outlined.ReceiptLong) {
+                                    openInWebApp(context, container.webUrl("reimbursements"))
+                                }
+                                hasAbove = true
+                            }
+                            if (hasAbove) HorizontalDivider()
+                            ProfileRow(stringResource(R.string.profile_family), Icons.Outlined.Groups) {
+                                openInWebApp(context, container.webUrl("me/family"))
+                            }
+                            if (me.can("report")) {
+                                HorizontalDivider()
+                                ProfileRow(stringResource(R.string.profile_report), Icons.Outlined.BarChart) {
+                                    openInWebApp(context, container.webUrl("report"))
+                                }
+                            }
+                            if (me.can("help")) {
+                                HorizontalDivider()
+                                ProfileRow(stringResource(R.string.profile_help), Icons.AutoMirrored.Outlined.HelpOutline) {
+                                    openInWebApp(context, container.webUrl("help"))
+                                }
+                            }
+                            if (me.privileged) {
+                                HorizontalDivider()
+                                val staffPath = if (me.can("admin_plan") || me.can("admin_rides")) "admin/traffic" else "admin/menu"
+                                ProfileRow(stringResource(R.string.profile_web_staff), Icons.Outlined.AdminPanelSettings) {
+                                    openInWebApp(context, container.webUrl(staffPath))
+                                }
+                            }
+                        }
                     }
                 }
             }

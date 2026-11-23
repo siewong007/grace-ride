@@ -222,6 +222,12 @@ data class RespondReq(val accept: Boolean)
 data class CancelReq(val reason: String? = null)
 
 @Serializable
+data class DriverDelayReq(val delay_minutes: Int)
+
+@Serializable
+data class WithdrawReq(val reason: String? = null)
+
+@Serializable
 data class EventCreator(val id: Long, val name: String)
 
 @Serializable

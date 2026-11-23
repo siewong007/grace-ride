@@ -29,11 +29,32 @@ pub(super) async fn push_config(
             .bind(u.id)
             .fetch_one(&st.db)
             .await?;
+    let secrets: Vec<(String, String)> = sqlx::query_as(
+        "SELECT name, value FROM app_secrets WHERE name IN ('telegram_bot_token', 'telegram_bot_username', 'alert_webhook_url')",
+    )
+    .fetch_all(&st.db)
+    .await?;
+    let mut telegram_configured = false;
+    let mut telegram_bot_username = String::new();
+    let mut whatsapp_configured = false;
+    for (name, value) in secrets {
+        match name.as_str() {
+            "telegram_bot_token" => telegram_configured = !value.trim().is_empty(),
+            "telegram_bot_username" => {
+                telegram_bot_username = value.trim().trim_start_matches('@').to_string();
+            }
+            "alert_webhook_url" => whatsapp_configured = !value.trim().is_empty(),
+            _ => {}
+        }
+    }
     Ok(Json(json!({
         "enabled": true,
         "configured": configured,
         "vapid_public_key": pub_key,
         "subscription_count": sub_count,
+        "whatsapp_configured": whatsapp_configured,
+        "telegram_configured": telegram_configured,
+        "telegram_bot_username": telegram_bot_username,
     })))
 }
 

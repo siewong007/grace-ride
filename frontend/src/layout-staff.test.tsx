@@ -87,8 +87,8 @@ describe('Staff navigation', () => {
     renderShell();
     const sidebar = screen.getByRole('navigation', { name: 'Main navigation' });
     const ops = within(sidebar).getByRole('group', { name: 'Operations' });
-    expect(within(ops).getByRole('link', { name: /Ride management/ })).toHaveTextContent('3');
-    expect(within(ops).getByRole('link', { name: /Ride management/ })).toHaveAccessibleName(/3 waiting/);
+    expect(within(ops).getByRole('link', { name: /Traffic workspace/ })).toHaveTextContent('3');
+    expect(within(ops).getByRole('link', { name: /Traffic workspace/ })).toHaveAccessibleName(/3 waiting/);
     expect(within(sidebar).getByRole('group', { name: 'Content' })).toHaveTextContent('Help desk');
     expect(within(sidebar).queryByRole('group', { name: 'System' })).toBeNull();
     // The member "Help centre" link gives way to "Help desk" for help-desk staff.
@@ -106,8 +106,8 @@ describe('Staff navigation', () => {
     expect(screen.queryByRole('dialog')).toBeNull();
     const heading = screen.getByRole('heading', { name: 'Admin' });
     const page = heading.closest('.profile-page') as HTMLElement;
-    fireEvent.click(within(page).getByRole('link', { name: /Ride management/ }));
-    expect(screen.getByText('rides page')).toBeInTheDocument();
+    fireEvent.click(within(page).getByRole('link', { name: /Traffic workspace/ }));
+    expect(screen.getByText('traffic hub page')).toBeInTheDocument();
     expect(screen.queryByRole('heading', { name: 'Admin' })).toBeNull();
   });
 
@@ -130,11 +130,12 @@ describe('Staff navigation', () => {
   it('hides admin pages the user is not allowed to open', () => {
     granted = [...transportGranted];
     const { page } = openAdminMenu('/admin/menu');
+    expect(within(page).getByRole('link', { name: /Traffic workspace/ })).toBeInTheDocument();
     expect(within(page).getByRole('link', { name: /Transport dashboard/ })).toBeInTheDocument();
-    expect(within(page).getByRole('link', { name: /Ride management/ })).toBeInTheDocument();
-    expect(within(page).getByRole('link', { name: /Live map/ })).toBeInTheDocument();
     expect(within(page).getByRole('link', { name: /Reimbursement review/ })).toBeInTheDocument();
     expect(within(page).getByRole('link', { name: /Help desk/ })).toBeInTheDocument();
+    expect(within(page).queryByRole('link', { name: /Ride management/ })).toBeNull();
+    expect(within(page).queryByRole('link', { name: /Live map/ })).toBeNull();
     expect(within(page).queryByRole('link', { name: /Members & invites/ })).toBeNull();
     expect(within(page).queryByRole('link', { name: /Roles & permissions/ })).toBeNull();
     expect(within(page).queryByRole('link', { name: /Member reports/ })).toBeNull();
@@ -153,8 +154,6 @@ describe('Staff navigation', () => {
     expect(hrefs).toEqual([
       '/admin/traffic',
       '/admin',
-      '/admin/rides',
-      '/admin/live',
       '/admin/members',
       '/admin/roles',
       '/admin/reimbursements',
@@ -206,7 +205,7 @@ describe('Staff navigation', () => {
     expect(heading).toHaveClass('sr-only');
     expect(page.querySelector('.profile-hero')).toBeNull();
     expect(within(page).queryByText('10 waiting')).not.toBeInTheDocument();
-    expect(within(page).getByRole('link', { name: /Ride management/ })).toHaveAccessibleName(/3 waiting/);
+    expect(within(page).getByRole('link', { name: /Traffic workspace/ })).toHaveAccessibleName(/3 waiting/);
     const bottom = screen.getByRole('navigation', { name: 'Bottom navigation' });
     expect(within(bottom).getByRole('link', { name: /Admin/ })).toHaveAccessibleName(/10 waiting/);
   });

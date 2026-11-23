@@ -301,4 +301,20 @@
     <string name="terms_opt_in">I have read these terms and the privacy notice, and I opt in</string>
     <string name="terms_agree">Agree and continue</string>
     <string name="terms_logout">Log out</string>
+    <string name="driver_actions_title">Driver actions</string>
+    <string name="driver_confirm_assignment">Confirm assignment</string>
+    <string name="driver_start_trip">Start trip</string>
+    <string name="driver_arrived_gate">I\’m at the gate</string>
+    <string name="driver_picked_up">Picked up</string>
+    <string name="driver_complete_trip">Complete trip</string>
+    <string name="driver_delay_5m">5 min late</string>
+    <string name="driver_delay_10m">10 min late</string>
+    <string name="driver_withdraw">Withdraw from ride</string>
+    <string name="driver_withdraw_confirm">Release this ride back to the driver pool?</string>
+    <string name="driver_withdraw_reason">Reason (optional)</string>
+    <string name="ride_open_web_live">Open live map &amp; chat in Web</string>
+    <string name="event_open_web_full">Open check-in &amp; full event in Web</string>
+    <string name="profile_section_web">More in Web App</string>
+    <string name="profile_web_drive">Driving schedule &amp; vehicle</string>
+    <string name="profile_web_staff">Staff &amp; traffic workspace</string>
 </resources>

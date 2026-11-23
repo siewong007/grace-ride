@@ -37,6 +37,8 @@ export default {
   whereSection: 'Where',
   whoSection: 'Who',
   needsSection: 'Special Needs & Notes',
+  needsOptionalHint: 'Optional — wheelchair, walking aid, or gate notes',
+  needsAddedSummary: '{count} selected',
   decreaseSeats: 'Decrease passengers',
   increaseSeats: 'Increase passengers',
   needWheelchair: 'Wheelchair',

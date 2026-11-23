@@ -1,10 +1,11 @@
 export default {
   title: '活动',
-  desc: '显示与您所属群体相关的聚会与活动。',
+  desc: '您所属群体的聚会与接送安排',
   create: '发起活动',
+  createShort: '发起',
   upcoming: '即将举行',
   mySchedule: '我的日程',
-  past: '过往活动',
+  past: '过往',
   managing: '我负责的',
   allMonths: '全部',
   allDays: '全部日期',
@@ -100,4 +101,8 @@ export default {
   postEventReimbExcludedBadge: '不包报销',
   postEventReimbExcludedHint: '该司机接送已标记不包报销；若勾选并提交，将转为待组长审批状态。',
   postEventReimbPendingNote: '其中 {count} 笔标记不包报销的申请已转交交通组长审批。',
+  emptyUpcomingDesc: '您所属群体的聚会与团契活动发布后将显示在此。',
+  browsePast: '查看过往活动',
+  emptyPastDesc: '已结束的教会聚会与出席记录将显示在此。',
+  emptyManagingDesc: '您负责的活动将在此显示报名进度、交通排班与签到二维码。',
 };

@@ -1,10 +1,11 @@
 export default {
   title: 'Events',
-  desc: 'Upcoming gatherings and fellowships for your groups.',
+  desc: 'Gatherings and rides for your groups',
   create: 'Create an event',
+  createShort: 'Create',
   upcoming: 'Upcoming',
   mySchedule: 'My schedule',
-  past: 'Past events',
+  past: 'Past',
   managing: 'I manage',
   allMonths: 'All',
   allDays: 'All days',
@@ -100,4 +101,8 @@ export default {
   postEventReimbExcludedBadge: 'No reimbursement included',
   postEventReimbExcludedHint: 'Marked no reimbursement; selecting this driver submits a pending claim for traffic lead review.',
   postEventReimbPendingNote: '{count} excluded-ride claim(s) submitted for traffic lead review.',
+  emptyUpcomingDesc: 'Gatherings and fellowships for your groups will appear here as soon as they are scheduled.',
+  browsePast: 'Browse past events',
+  emptyPastDesc: 'Completed church gatherings and attendance history will appear here.',
+  emptyManagingDesc: 'Events you organise will show headcount progress, transport plans, and QR check-in here.',
 };

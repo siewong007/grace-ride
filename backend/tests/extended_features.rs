@@ -770,6 +770,12 @@ async fn live_calendar_feed_and_alert_channels() {
         let _ = axum::serve(listener, hook_app).await;
     });
 
+    let push_cfg_before = call(&app, Method::GET, "/api/push/config", Some(&member), None).await;
+    assert_eq!(push_cfg_before.status, StatusCode::OK);
+    assert_eq!(push_cfg_before.json["whatsapp_configured"], false);
+    assert_eq!(push_cfg_before.json["telegram_configured"], false);
+    assert_eq!(push_cfg_before.json["telegram_bot_username"], "");
+
     // Admin updates alert channels
     let put_alerts = call(
         &app,
@@ -791,6 +797,9 @@ async fn live_calendar_feed_and_alert_channels() {
     assert!(push_cfg.json["vapid_public_key"]
         .as_str()
         .is_some_and(|k| !k.is_empty()));
+    assert_eq!(push_cfg.json["whatsapp_configured"], true);
+    assert_eq!(push_cfg.json["telegram_configured"], false);
+    assert_eq!(push_cfg.json["telegram_bot_username"], "GraceTestBot");
 
     assert_eq!(
         call(

@@ -169,6 +169,28 @@ describe('Events tab redesign', () => {
     expect(screen.queryByRole('button', { name: /scan qr to check in/i })).not.toBeInTheDocument();
   });
 
+  it('hides scan button and avoids duplicate Create buttons when upcoming is empty', async () => {
+    const user = userEvent.setup();
+    mockApiData['/events?scope=upcoming'] = [];
+
+    render(
+      <ToastProvider>
+        <MemoryRouter initialEntries={['/events']}>
+          <LocationSpy />
+          <Events />
+        </MemoryRouter>
+      </ToastProvider>,
+    );
+
+    expect(screen.queryByRole('button', { name: /scan qr to check in/i })).not.toBeInTheDocument();
+    const createLinks = screen.getAllByRole('link', { name: /create an event/i });
+    expect(createLinks).toHaveLength(1);
+    expect(createLinks[0]).toHaveAttribute('href', '/events/new');
+
+    await user.click(screen.getByRole('button', { name: /browse past events/i }));
+    expect(screen.getByTestId('loc')).toHaveTextContent('/events?tab=past');
+  });
+
   it('handles JOIN_AS_REQUIRED inline in 2-step QuickRsvpModal without leaving /events', async () => {
     const user = userEvent.setup();
     const dinner = makeEvent({
@@ -366,6 +388,7 @@ describe('Events tab redesign', () => {
           id: 60,
           title: 'Mid-Autumn Lunch',
           status: 'finished',
+          attendance_enabled: true,
           location: 'Fellowship Hall',
           my_signup: { status: 'going', need_ride: false, offer_drive: false, attended: 1 },
         }),
@@ -373,8 +396,17 @@ describe('Events tab redesign', () => {
           id: 61,
           title: 'Morning Prayer Walk',
           status: 'finished',
+          attendance_enabled: true,
           location: 'Taman Jaya Park',
           my_signup: { status: 'going', need_ride: false, offer_drive: false, attended: 0 },
+        }),
+        makeEvent({
+          id: 62,
+          title: 'Casual Badminton',
+          status: 'finished',
+          attendance_enabled: false,
+          location: 'Court 2',
+          my_signup: { status: 'going', need_ride: false, offer_drive: false, attended: 1 },
         }),
       ],
       next_before: null,
@@ -390,10 +422,13 @@ describe('Events tab redesign', () => {
 
     expect(await screen.findByText('Mid-Autumn Lunch')).toBeInTheDocument();
     expect(screen.getByText('Morning Prayer Walk')).toBeInTheDocument();
+    expect(screen.getByText('Casual Badminton')).toBeInTheDocument();
+    expect(screen.getAllByText(/^attended$/i)).toHaveLength(1);
 
     await user.click(screen.getByRole('button', { name: /attended only/i }));
     expect(screen.getByText('Mid-Autumn Lunch')).toBeInTheDocument();
     expect(screen.queryByText('Morning Prayer Walk')).not.toBeInTheDocument();
+    expect(screen.queryByText('Casual Badminton')).not.toBeInTheDocument();
 
     await user.type(screen.getByPlaceholderText(/search past events/i), 'Park');
     expect(screen.getByText(/no past events match your search/i)).toBeInTheDocument();

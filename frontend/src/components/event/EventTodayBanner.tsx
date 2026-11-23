@@ -1,5 +1,5 @@
 import { Link } from 'react-router-dom';
-import { QrCode } from 'lucide-react';
+import { CarFront, QrCode } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import { EventIcon } from '../../eventIcon';
 import { fmtTime, useFormatT } from '../../format';
@@ -50,7 +50,12 @@ export function EventTodayBanner({
           </span>
         </Link>
         <div className="muted small">{event.location}</div>
-        {transportSummary && <div className="small">{transportSummary}</div>}
+        {transportSummary && (
+          <div className="small event-today-transport">
+            <CarFront size={15} className="event-today-transport-icon" aria-hidden="true" />
+            <span>{transportSummary}</span>
+          </div>
+        )}
       </div>
 
       <div className="btn-row">

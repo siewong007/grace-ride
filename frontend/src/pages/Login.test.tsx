@@ -1,6 +1,7 @@
 import { describe, expect, it, vi, beforeEach } from 'vitest';
-import { fireEvent, render, screen } from '@testing-library/react';
+import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { MemoryRouter } from 'react-router-dom';
+import { post } from '../api';
 import Login from './Login';
 
 const mockWebauthn = vi.hoisted(() => ({
@@ -36,15 +37,30 @@ vi.mock('react-i18next', () => ({
 }));
 
 vi.mock('../components/ui', () => ({
-  useAction: () => ({ busy: false, error: null, run: (fn: () => Promise<void>) => fn() }),
+  useAction: () => ({
+    busy: false,
+    error: null,
+    run: async (fn: () => Promise<void>) => {
+      await fn();
+      return true;
+    },
+  }),
   ErrorBox: ({ error }: { error?: string | null }) => (error ? <div>{error}</div> : null),
+  Notice: ({ children }: { children?: React.ReactNode }) => <div role="status">{children}</div>,
+  Modal: ({ title, children, onClose }: { title: string; children: React.ReactNode; onClose: () => void }) => (
+    <div role="dialog" aria-label={title}>
+      <h2>{title}</h2>
+      <button type="button" aria-label="Close" onClick={onClose}>Close</button>
+      {children}
+    </div>
+  ),
   Field: ({ label, children }: { label: string; children: React.ReactNode }) => (
     <label>
       {label}
       {children}
     </label>
   ),
-  Button: ({ children, type = 'button', block: _block, loading: _loading, ...rest }: React.ButtonHTMLAttributes<HTMLButtonElement> & { block?: boolean; loading?: boolean }) => (
+  Button: ({ children, type = 'button', block: _block, loading: _loading, size: _size, ...rest }: React.ButtonHTMLAttributes<HTMLButtonElement> & { block?: boolean; loading?: boolean; size?: string }) => (
     <button type={type} {...rest}>
       {children}
     </button>
@@ -111,5 +127,53 @@ describe('Login', () => {
     fireEvent.click(screen.getByRole('button', { name: /useSavedPasskey/i }));
     expect(screen.queryByRole('textbox')).toBeNull();
     expect(screen.getByText('alice@example.com')).toBeInTheDocument();
+  });
+
+  it('shows embedded-browser guidance when opened inside WeChat or WhatsApp', () => {
+    const origUa = navigator.userAgent;
+    Object.defineProperty(navigator, 'userAgent', { value: 'Mozilla/5.0 MicroMessenger/8.0', configurable: true });
+    try {
+      render(
+        <MemoryRouter>
+          <Login />
+        </MemoryRouter>,
+      );
+      expect(screen.getByText('inAppTitle')).toBeInTheDocument();
+      expect(screen.getByRole('button', { name: /copyLoginLink/i })).toBeInTheDocument();
+    } finally {
+      Object.defineProperty(navigator, 'userAgent', { value: origUa, configurable: true });
+    }
+  });
+
+  it('opens guided recovery modal, blocks empty email, and submits email + chosen reason preset', async () => {
+    vi.mocked(post).mockResolvedValueOnce({ ok: true });
+    render(
+      <MemoryRouter>
+        <Login />
+      </MemoryRouter>,
+    );
+
+    fireEvent.click(screen.getByRole('button', { name: /emailRecovery/i }));
+    const dlg = screen.getByRole('dialog', { name: 'recoveryModalTitle' });
+    expect(dlg).toBeInTheDocument();
+
+    // Empty email is blocked locally without hitting the server
+    fireEvent.click(screen.getByRole('button', { name: /recoverySubmit/i }));
+    expect(screen.getByRole('alert')).toHaveTextContent('recoveryEmailRequired');
+    expect(post).not.toHaveBeenCalled();
+
+    // Fill email + pick reason preset chip and submit
+    const inputs = dlg.querySelectorAll('input[type="email"]');
+    fireEvent.change(inputs[0], { target: { value: 'elder@example.org' } });
+    fireEvent.click(screen.getByRole('button', { name: 'recoveryPresetNewPhone' }));
+    fireEvent.click(screen.getByRole('button', { name: /recoverySubmit/i }));
+
+    await waitFor(() =>
+      expect(post).toHaveBeenCalledWith('/auth/recovery-request', {
+        email: 'elder@example.org',
+        reason: 'recoveryPresetNewPhone',
+      }),
+    );
+    expect(await screen.findByText('recoverySentTitle')).toBeInTheDocument();
   });
 });

@@ -1,5 +1,5 @@
 import { beforeAll, describe, expect, it, vi } from 'vitest';
-import { fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { MemoryRouter, Route, Routes } from 'react-router-dom';
 import { post } from './api';
 import i18n from './i18n';
@@ -236,8 +236,17 @@ describe('RideNew page', () => {
     fireEvent.click(incBtn);
     expect(screen.getByText(/2 seats/i)).toBeInTheDocument();
 
+    // Needs & notes starts collapsed and opens on demand
+    expect(document.getElementById('ride-needs-panel')).toBeNull();
+    const needsToggle = screen.getByRole('button', { name: /special needs & notes/i });
+    expect(needsToggle).toHaveAttribute('aria-expanded', 'false');
+    fireEvent.click(needsToggle);
+    expect(needsToggle).toHaveAttribute('aria-expanded', 'true');
+    const needsPanel = document.getElementById('ride-needs-panel')!;
+    expect(needsPanel).not.toBeNull();
+
     // Assistance chip toggle
-    const wheelchairChip = screen.getByRole('button', { name: /wheelchair/i });
+    const wheelchairChip = within(needsPanel).getByRole('button', { name: /wheelchair/i });
     expect(wheelchairChip).toHaveAttribute('aria-pressed', 'false');
     fireEvent.click(wheelchairChip);
     expect(wheelchairChip).toHaveAttribute('aria-pressed', 'true');
@@ -319,6 +328,8 @@ describe('RideNew page', () => {
 
       expect(screen.getByDisplayValue('88 Jalan Bahagia, PJ')).toBeInTheDocument();
       expect(screen.getByText(/prefilled from saved place: home/i)).toBeInTheDocument();
+      expect(screen.getByRole('button', { name: /special needs & notes/i })).toHaveAttribute('aria-expanded', 'true');
+      expect(screen.getByDisplayValue('Ring bell')).toBeInTheDocument();
     } finally {
       delete mockApiData['/saved-places'];
     }

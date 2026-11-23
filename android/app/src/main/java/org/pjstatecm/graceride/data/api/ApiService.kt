@@ -54,6 +54,13 @@ interface ApiService {
     @POST("api/rides/{id}/cancel") suspend fun cancelRide(@Path("id") id: Long, @Body body: CancelReq): OkResponse
     @POST("api/rides/{id}/respond") suspend fun respondRide(@Path("id") id: Long, @Body body: RespondReq): OkResponse
     @POST("api/rides/{id}/readiness") suspend fun readiness(@Path("id") id: Long, @Body body: ReadinessReq): OkResponse
+    @POST("api/rides/{id}/confirm-assignment") suspend fun confirmAssignment(@Path("id") id: Long): OkResponse
+    @POST("api/rides/{id}/start") suspend fun startRide(@Path("id") id: Long): OkResponse
+    @POST("api/rides/{id}/arrived-gate") suspend fun arrivedGate(@Path("id") id: Long): OkResponse
+    @POST("api/rides/{id}/pickup") suspend fun pickupRide(@Path("id") id: Long): OkResponse
+    @POST("api/rides/{id}/complete") suspend fun completeRide(@Path("id") id: Long): OkResponse
+    @POST("api/rides/{id}/driver-delay") suspend fun driverDelay(@Path("id") id: Long, @Body body: DriverDelayReq): OkResponse
+    @POST("api/rides/{id}/withdraw") suspend fun withdrawRide(@Path("id") id: Long, @Body body: WithdrawReq): OkResponse
     @GET("api/driver/schedule") suspend fun driverSchedule(@Query("from") from: String, @Query("to") to: String): List<Ride>
     @GET("api/driver/requests") suspend fun driverRequests(@Query("mine_areas") mineAreas: Boolean? = null): List<Ride>
 

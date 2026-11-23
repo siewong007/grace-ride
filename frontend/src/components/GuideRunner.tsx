@@ -273,11 +273,12 @@ export function PageHeaderGuideButton() {
     <Button
       variant="ghost"
       size="sm"
+      className="page-header-guide-btn"
       icon={<HelpCircle size={14} />}
       aria-label={t('pageGuideNamed', { title: pick(fullGuide.title_zh, fullGuide.title_en) })}
       onClick={() => startWalkthrough(fullGuide, matchingGuideForPage.stepIndex)}
     >
-      {t('pageGuideBtn', 'Guide')}
+      <span className="page-header-guide-label">{t('pageGuideBtn', 'Guide')}</span>
     </Button>
   );
 }

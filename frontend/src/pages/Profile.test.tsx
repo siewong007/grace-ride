@@ -52,6 +52,7 @@ const areasData = [
   { id: 1, name: 'Petaling Jaya', active: true },
   { id: 2, name: 'Subang Jaya', active: true },
 ];
+let pushConfigData: Record<string, unknown> | undefined = undefined;
 const confirmMock = vi.fn().mockResolvedValue(false);
 
 vi.mock('../auth', () => ({
@@ -76,7 +77,9 @@ vi.mock('../api', () => ({
           ? savedPlacesData
           : path === '/areas'
             ? areasData
-            : [],
+            : path === '/push/config'
+              ? pushConfigData
+              : [],
     loading: false,
     error: null,
     reload: vi.fn(),
@@ -183,6 +186,10 @@ const profileStrings: Record<string, string> = {
   cancel: 'Cancel',
   calendarFeed: 'Calendar feed',
   calendarFeedShort: 'Sync rides & events (.ics)',
+  whatsappNotConfigured: 'WhatsApp alerts are not enabled by the church office yet.',
+  telegramNotConfigured: 'Telegram alerts are not enabled by the church office yet.',
+  telegramOpenBot: 'Open @{bot} in Telegram',
+  telegramGuidedHint: '1. Tap above and press Start in Telegram. 2. Copy the numeric Chat ID shown and paste it below.',
 };
 
 vi.mock('react-i18next', () => ({
@@ -371,6 +378,7 @@ beforeEach(() => {
   vi.clearAllMocks();
   currentMe = baseMe;
   savedPlacesData = [];
+  pushConfigData = undefined;
   familyData = {
     family: null,
     members: [],
@@ -709,5 +717,23 @@ describe('Profile compact layout', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Edit Home' }));
     fireEvent.click(screen.getByRole('button', { name: 'Remove' }));
     await waitFor(() => expect(delMock).toHaveBeenCalledWith('/saved-places/1'));
+  });
+
+  it('hides unconfigured WhatsApp/Telegram controls and shows availability notices', () => {
+    pushConfigData = { whatsapp_configured: false, telegram_configured: false, telegram_bot_username: '' };
+    renderProfile(baseMe, '/me?section=preferences');
+
+    expect(screen.getByText('WhatsApp alerts are not enabled by the church office yet.')).toBeInTheDocument();
+    expect(screen.getByText('Telegram alerts are not enabled by the church office yet.')).toBeInTheDocument();
+    expect(screen.queryByPlaceholderText('123456789')).not.toBeInTheDocument();
+  });
+
+  it('renders guided Telegram bot link when channel and username are configured', () => {
+    pushConfigData = { whatsapp_configured: true, telegram_configured: true, telegram_bot_username: 'GraceRideBot' };
+    renderProfile(baseMe, '/me?section=preferences');
+
+    const botLink = screen.getByRole('link', { name: 'Open @GraceRideBot in Telegram' });
+    expect(botLink).toHaveAttribute('href', 'https://t.me/GraceRideBot');
+    expect(screen.getByPlaceholderText('123456789')).toBeInTheDocument();
   });
 });

@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
-import { Calendar, Plus, QrCode } from 'lucide-react';
+import { AlertCircle, Calendar, CarFront, Check, Plus, QrCode, Search } from 'lucide-react';
 import { api, post, useApi } from '../api';
 import { useAuth } from '../auth';
 import { downloadIcs } from '../calendar';
@@ -388,9 +388,7 @@ export default function Events() {
       todayEvent.my_signup?.attended !== 1,
   );
   const hasAnyAttendanceEvent =
-    !upcomingLoaded ||
-    upcomingEvents.length === 0 ||
-    upcomingEvents.some((e) => e.attendance_enabled !== false);
+    !upcomingLoaded || upcomingEvents.some((e) => e.attendance_enabled !== false);
   const showHeaderScan = hasAnyAttendanceEvent && !todayBannerHasScan;
 
   const ridesNeededEventCount = useMemo(() => {
@@ -662,7 +660,7 @@ export default function Events() {
   const filteredPast = useMemo(() => {
     const q = pastQuery.trim().toLowerCase();
     return pastEvents.filter((e) => {
-      if (pastAttendedOnly && e.my_signup?.attended !== 1) return false;
+      if (pastAttendedOnly && (e.attendance_enabled === false || e.my_signup?.attended !== 1)) return false;
       if (q) {
         const hay = `${e.title} ${e.location} ${e.groups}`.toLowerCase();
         if (!hay.includes(q)) return false;
@@ -747,88 +745,130 @@ export default function Events() {
     const transportSummary = getTransportSummary(e);
     const openReqCount = scope === 'upcoming' && canDrive ? openRequestsCountByEvent[e.id] ?? 0 : 0;
 
-    const showActionsBlock =
-      scope === 'upcoming' &&
-      (canQuickSignUp ||
-        openReqCount > 0 ||
-        (going && (hasTransport || e.status === 'published')));
+    const spotsCue =
+      !signed && e.status === 'published' && e.capacity > 0 && e.spots_left != null
+        ? e.spots_left > 0
+          ? t('spotsLeft', { n: e.spots_left })
+          : t('full')
+        : null;
+    const spotsUrgent =
+      !signed &&
+      e.status === 'published' &&
+      e.capacity > 0 &&
+      e.spots_left != null &&
+      e.spots_left > 0 &&
+      e.spots_left <= 5;
+    const waitlistCue =
+      !signed && e.status === 'published' && isFull && e.waitlist > 0
+        ? t('waitlistCount', { count: e.waitlist })
+        : null;
+    const showCues = Boolean(urgencyLabel || spotsCue || waitlistCue || e.cost_note);
+    const pastAttended =
+      scope === 'past' &&
+      e.status !== 'published' &&
+      e.attendance_enabled !== false &&
+      e.my_signup?.attended === 1;
+    const outboundConfirmed = Boolean(
+      ridePair?.outbound &&
+        ['confirmed', 'in_progress', 'completed'].includes(ridePair.outbound.status),
+    );
 
     return (
-      <div key={e.id} className="event-row-wrap">
+      <article key={e.id} className="event-row-wrap">
         <div className="event-row">
-          <Link to={`/events/${e.id}`} className="event-card-link">
-            <div className="event-date-col" aria-hidden="true">
+          <Link to={`/events/${e.id}`} className="event-date-link" tabIndex={-1} aria-hidden="true">
+            <div className="event-date-col">
               <span className="event-date-day">{dayNum}</span>
               <span className="event-date-month">{monthName}</span>
             </div>
-            <div className="grow min-w-0 event-card-main">
-              <div className="bold clamp-2">{e.title}</div>
-              <div className="muted small clamp-2">
-                {fmtDateTime(e.starts_at, ft)} · {e.location}
-              </div>
-              <div className="muted small ellipsis">
-                <span className="event-kind-inline">
-                  <EventIcon icon={e.icon} kind={e.kind} size={14} />
-                  <span>{ft(EVENT_KIND[e.kind]?.label ?? e.kind)}</span>
-                </span>
-                {e.groups ? ` · ${e.groups}` : ''}
-                {e.cost_note ? ` · ${e.cost_note}` : ''}
-              </div>
-              {urgencyLabel && <div className="small event-deadline-urgent">{urgencyLabel}</div>}
-            </div>
-            <div className="event-card-side">
-              {e.status !== 'published' ? (
-                <Pill tone="neutral">{e.status === 'cancelled' ? t('cancelled') : t('finished')}</Pill>
-              ) : e.my_signup?.status === 'going' ? (
-                <Pill tone="success">{t('signedUp')}</Pill>
-              ) : e.my_signup?.status === 'waitlist' ? (
-                <Pill tone="warning">{t('waitlist')}</Pill>
-              ) : e.capacity > 0 && e.spots_left != null ? (
-                <span className="muted small nowrap">
-                  {e.spots_left > 0 ? t('spotsLeft', { n: e.spots_left }) : t('full')}
-                </span>
-              ) : (
-                <span className="muted small nowrap">
-                  {e.going} {t('peopleAttend')}
-                </span>
-              )}
-              {e.photo_file_id && (
-                <img
-                  src={`/api/files/${e.photo_file_id}`}
-                  alt=""
-                  className="event-card-photo"
-                  loading="lazy"
-                />
-              )}
-            </div>
           </Link>
-        </div>
+          <div className="event-row-body">
+            <div className="event-card-top">
+              <Link to={`/events/${e.id}`} className="event-card-info">
+                <div className="bold clamp-2 event-card-title">{e.title}</div>
+                <div className="muted small clamp-2">
+                  {scope === 'past' ? fmtDateTime(e.starts_at, ft) : fmtTime(e.starts_at, ft)} ·{' '}
+                  {e.location}
+                </div>
+                <div className="muted small ellipsis">
+                  <span className="event-kind-inline">
+                    <EventIcon icon={e.icon} kind={e.kind} size={14} />
+                    <span>{ft(EVENT_KIND[e.kind]?.label ?? e.kind)}</span>
+                  </span>
+                  {e.groups ? ` · ${e.groups}` : ''}
+                </div>
+                {showCues && (
+                  <div className="small muted event-card-cues">
+                    {urgencyLabel && <span className="event-deadline-urgent">{urgencyLabel}</span>}
+                    {spotsCue && (
+                      <span className={spotsUrgent ? 'event-deadline-urgent' : undefined}>
+                        {spotsCue}
+                      </span>
+                    )}
+                    {waitlistCue && <span>{waitlistCue}</span>}
+                    {e.cost_note && <span>{e.cost_note}</span>}
+                  </div>
+                )}
+              </Link>
+              <div className="event-card-side">
+                {e.status !== 'published' ? (
+                  pastAttended ? (
+                    <Pill tone="success">{t('statusAttended', { ns: 'eventDetail' })}</Pill>
+                  ) : (
+                    <Pill tone="neutral">{e.status === 'cancelled' ? t('cancelled') : t('finished')}</Pill>
+                  )
+                ) : e.my_signup?.status === 'going' ? (
+                  <Pill tone="success">{t('signedUp')}</Pill>
+                ) : e.my_signup?.status === 'waitlist' ? (
+                  <Pill tone="warning">{t('waitlist')}</Pill>
+                ) : null}
+                {canQuickSignUp && (
+                  <Button
+                    variant={isFull ? 'secondary' : 'primary'}
+                    size="sm"
+                    className="event-row-rsvp-btn"
+                    disabled={actionBusy}
+                    onClick={() => handleQuickSignUp(e)}
+                  >
+                    {isFull ? t('joinWaitlist', { ns: 'eventDetail' }) : t('quickSignUp')}
+                  </Button>
+                )}
+                {!canQuickSignUp && !signed && e.status === 'published' && e.capacity === 0 && (
+                  <span className="muted small nowrap">
+                    {e.going} {t('peopleAttend')}
+                  </span>
+                )}
+                {e.photo_file_id && (
+                  <Link to={`/events/${e.id}`} tabIndex={-1} aria-hidden="true">
+                    <img
+                      src={`/api/files/${e.photo_file_id}`}
+                      alt=""
+                      className="event-card-photo"
+                      loading="lazy"
+                    />
+                  </Link>
+                )}
+              </div>
+            </div>
 
-        {showActionsBlock && (
-          <div className="event-row-actions">
-            {openReqCount > 0 && (
+            {scope === 'upcoming' && openReqCount > 0 && (
               <Link to={`/events/${e.id}?drive=1`} className="event-driver-chip">
-                {t('needRideCount', { count: openReqCount })}
+                <CarFront size={14} aria-hidden="true" />
+                <span>{t('needRideCount', { count: openReqCount })}</span>
               </Link>
             )}
 
-            {canQuickSignUp && (
-              <div className="btn-row">
-                <Button
-                  variant={isFull ? 'secondary' : 'primary'}
-                  size="sm"
-                  disabled={actionBusy}
-                  onClick={() => handleQuickSignUp(e)}
+            {scope === 'upcoming' && going && ridePair?.outbound && (
+              <div className="event-transport-strip">
+                <span
+                  className={`small event-transport-text ${
+                    outboundConfirmed ? 'is-confirmed' : 'is-pending'
+                  }`}
                 >
-                  {isFull ? t('joinWaitlist', { ns: 'eventDetail' }) : t('quickSignUp')}
-                </Button>
-              </div>
-            )}
-
-            {going && ridePair?.outbound && (
-              <div className="row between wrap gap-sm">
-                {transportSummary && <span className="small muted">{transportSummary}</span>}
-                <div className="btn-row">
+                  {outboundConfirmed && <Check size={14} aria-hidden="true" />}
+                  <span>{transportSummary}</span>
+                </span>
+                <div className="btn-row event-transport-links">
                   <Button variant="secondary" size="sm" to={`/rides/${ridePair.outbound.id}`}>
                     {t('openRide')}
                   </Button>
@@ -841,19 +881,25 @@ export default function Events() {
               </div>
             )}
 
-            {going && !ridePair?.outbound && drives.length > 0 && (
-              <div className="row between wrap gap-sm">
-                {transportSummary && <span className="small muted">{transportSummary}</span>}
+            {scope === 'upcoming' && going && !ridePair?.outbound && drives.length > 0 && (
+              <div className="event-transport-strip">
+                <span className="small event-transport-text is-driving">
+                  <CarFront size={14} aria-hidden="true" />
+                  <span>{transportSummary}</span>
+                </span>
                 <Button variant="secondary" size="sm" to="/drive">
                   {t('openItinerary')}
                 </Button>
               </div>
             )}
 
-            {going && !hasTransport && e.status === 'published' && (
+            {scope === 'upcoming' && going && !hasTransport && e.status === 'published' && (
               <div className="event-transport-alert">
-                <span className="small bold">{t('transportNotArranged')}</span>
-                <div className="btn-row">
+                <span className="small bold event-transport-alert-label">
+                  <AlertCircle size={15} aria-hidden="true" />
+                  <span>{t('transportNotArranged')}</span>
+                </span>
+                <div className="btn-row event-transport-alert-actions">
                   {can('rides', 'create') && (
                     <Button variant="primary" size="sm" to={`/rides/new?event=${e.id}`}>
                       {t('needRideBtn')}
@@ -868,8 +914,8 @@ export default function Events() {
               </div>
             )}
           </div>
-        )}
-      </div>
+        </div>
+      </article>
     );
   };
 
@@ -912,30 +958,43 @@ export default function Events() {
     />
   ) : null;
 
+  const emptyCalendarIcon = (
+    <span className="events-empty-icon">
+      <Calendar size={22} />
+    </span>
+  );
+
   return (
     <Page width="medium">
       <div className="stack">
         <PageHeader
+          className="events-page-head"
           title={t('title')}
           subtitle={t('desc')}
           actions={
             showHeaderScan || canCreateEvent ? (
-              <div className="page-head-action-pair">
+              <div className="events-head-actions">
                 {showHeaderScan && (
                   <Button
-                    variant="ghost"
+                    variant="secondary"
                     size="sm"
-                    icon={<QrCode size={16} />}
+                    className="events-scan-icon-btn"
+                    icon={<QrCode size={17} />}
+                    aria-label={t('scanToAttend', { ns: 'eventDetail' })}
+                    title={t('scanToAttend', { ns: 'eventDetail' })}
                     onClick={() => setShowUniversalScan(true)}
-                  >
-                    <span className="page-head-action-label">
-                      {t('scanToAttend', { ns: 'eventDetail' })}
-                    </span>
-                  </Button>
+                  />
                 )}
                 {canCreateEvent && (
-                  <Button variant="primary" to="/events/new" icon={<Plus size={18} />}>
-                    <span className="page-head-action-label">{t('create')}</span>
+                  <Button
+                    variant="primary"
+                    size="sm"
+                    className="events-create-btn"
+                    to="/events/new"
+                    icon={<Plus size={16} />}
+                    aria-label={t('create')}
+                  >
+                    {t('createShort')}
                   </Button>
                 )}
               </div>
@@ -944,6 +1003,7 @@ export default function Events() {
         />
 
         <Tabs
+          className="events-tabs"
           value={scope}
           onChange={(v) => setScope(v as ScopeTab)}
           items={tabItems}
@@ -1006,7 +1066,7 @@ export default function Events() {
                   <button
                     key={ym}
                     type="button"
-                    className={`chip ${effectiveMonth === ym ? 'on' : ''}`}
+                    className={`chip chip-month ${effectiveMonth === ym ? 'on' : ''}`}
                     aria-pressed={effectiveMonth === ym}
                     onClick={() => updateParams({ month: effectiveMonth === ym ? null : ym })}
                   >
@@ -1020,14 +1080,17 @@ export default function Events() {
 
         {scope === 'past' && (
           <div className="events-past-tools">
-            <input
-              type="search"
-              className="input events-past-search"
-              placeholder={t('searchPastPlaceholder')}
-              aria-label={t('searchPastPlaceholder')}
-              value={pastQuery}
-              onChange={(ev) => updateParams({ q: ev.target.value || null })}
-            />
+            <div className="events-past-search-wrap">
+              <Search size={15} className="events-past-search-icon" aria-hidden="true" />
+              <input
+                type="search"
+                className="input events-past-search"
+                placeholder={t('searchPastPlaceholder')}
+                aria-label={t('searchPastPlaceholder')}
+                value={pastQuery}
+                onChange={(ev) => updateParams({ q: ev.target.value || null })}
+              />
+            </div>
             <button
               type="button"
               className={`chip ${pastAttendedOnly ? 'on' : ''}`}
@@ -1055,10 +1118,12 @@ export default function Events() {
         ) : scope === 'my' ? (
           myScheduleDays.length === 0 ? (
             <EmptyState
+              className="events-empty-card"
+              icon={emptyCalendarIcon}
               title={t('emptyScheduleTitle')}
               description={t('emptyScheduleDesc')}
               action={
-                <Button variant="primary" onClick={() => setScope('upcoming')}>
+                <Button variant="primary" size="sm" onClick={() => setScope('upcoming')}>
                   {t('browseUpcoming')}
                 </Button>
               }
@@ -1120,14 +1185,10 @@ export default function Events() {
         ) : scope === 'managing' ? (
           !managingEvents.length ? (
             <EmptyState
+              className="events-empty-card"
+              icon={emptyCalendarIcon}
               title={t('none')}
-              action={
-                canCreateEvent ? (
-                  <Button variant="primary" to="/events/new" icon={<Plus size={18} />}>
-                    {t('create')}
-                  </Button>
-                ) : undefined
-              }
+              description={t('emptyManagingDesc')}
             />
           ) : (
             <div className="stack-sm">
@@ -1153,13 +1214,20 @@ export default function Events() {
           )
         ) : scope === 'past' ? (
           !pastEvents.length ? (
-            <EmptyState title={t('none')} />
+            <EmptyState
+              className="events-empty-card"
+              icon={emptyCalendarIcon}
+              title={t('none')}
+              description={t('emptyPastDesc')}
+            />
           ) : !filteredPast.length ? (
             <EmptyState
+              className="events-empty-card"
               title={t('pastEmptySearch')}
               action={
                 <Button
                   variant="secondary"
+                  size="sm"
                   onClick={() => updateParams({ q: null, attended: null })}
                 >
                   {t('showAllEvents')}
@@ -1179,21 +1247,27 @@ export default function Events() {
           )
         ) : !upcomingEvents.length ? (
           <EmptyState
+            className="events-empty-card"
+            icon={emptyCalendarIcon}
             title={t('none')}
+            description={t('emptyUpcomingDesc')}
             action={
-              canCreateEvent ? (
-                <Button variant="primary" to="/events/new" icon={<Plus size={18} />}>
-                  {t('create')}
-                </Button>
-              ) : undefined
+              <Button variant="secondary" size="sm" onClick={() => setScope('past')}>
+                {t('browsePast')}
+              </Button>
             }
           />
         ) : !filteredUpcoming.length ? (
           <EmptyState
+            className="events-empty-card"
             title={t('filterEmptyTitle')}
             description={t('filterEmptyDesc')}
             action={
-              <Button variant="secondary" onClick={() => updateParams({ filter: null, month: null })}>
+              <Button
+                variant="primary"
+                size="sm"
+                onClick={() => updateParams({ filter: null, month: null })}
+              >
                 {t('showAllEvents')}
               </Button>
             }

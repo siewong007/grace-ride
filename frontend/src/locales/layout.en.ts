@@ -2,6 +2,7 @@ export default {
   brand: 'Grace Ride',
   brandSub: 'PJ State CMC',
   sectionMember: 'Members',
+  sectionTools: 'My tools',
   sectionService: 'Service',
   sectionAdmin: 'Admin',
   trafficTab: 'Traffic',

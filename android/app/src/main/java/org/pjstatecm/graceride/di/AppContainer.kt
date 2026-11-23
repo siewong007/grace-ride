@@ -101,4 +101,6 @@ class AppContainer(context: Context?, storeOverride: SecureStore? = null) {
     }
 
     fun fileUrl(fileId: Long): String = baseUrl + "api/files/" + fileId
+
+    fun webUrl(path: String): String = baseUrl.trimEnd('/') + "/" + path.trimStart('/')
 }

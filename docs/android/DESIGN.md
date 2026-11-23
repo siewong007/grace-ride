@@ -50,10 +50,8 @@ All sizes in `sp`: the system font scale is respected (elder-friendly text scali
 
 - `enableEdgeToEdge()` in `MainActivity`; content draws behind system bars.
 - `Scaffold` supplies safe insets; screens apply `contentPadding`/`padding(padding)`.
-- Bottom navigation (phone): **Home · Rides · Events · Profile**.
-  The web's phone tabs are Home · Events · Admin · Profile with rides under Profile;
-  the native app promotes Rides to a tab because booking is the primary member job.
-  Admin tools remain a later increment (staff-only, MFA-gated).
+- Bottom navigation (phone): **Home · Events · Profile** (3 primary tabs; Rides, Costs, History, and Saved Addresses live under Profile, while Event Detail and Home link straight to Ride Detail and booking).
+  Volunteer drivers also receive native trip execution controls on Ride Detail (confirm assignment, start trip, delay notice, at-gate arrival, pickup, complete, withdraw); extended workflows (trip chat, live map, QR check-in, reimbursements, family management, and MFA-gated staff tools) hand off directly to the Web App via browser links.
 - Detail screens use `TopAppBar` with a back arrow; tab roots do not.
 - Adaptive behaviour: single-column lists today; `WindowSizeClass` rail/tablet
   layouts are a later increment (the web switches at 768/1200px).

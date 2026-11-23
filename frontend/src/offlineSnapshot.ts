@@ -1,6 +1,8 @@
 import type { Ride } from './components/RideCard';
 
 const SNAPSHOT_KEY = 'gr_today_rides_v1';
+const QUEUE_KEY = 'gr_offline_actions_v1';
+const QUEUE_EVENT = 'gr:offline-queue-changed';
 
 function todayStr(): string {
   const d = new Date();
@@ -34,6 +36,10 @@ function nowLocalIso(): string {
 export function clearOfflineSnapshots(): void {
   try {
     localStorage.removeItem(SNAPSHOT_KEY);
+    localStorage.removeItem(QUEUE_KEY);
+    if (typeof window !== 'undefined') {
+      window.dispatchEvent(new Event(QUEUE_EVENT));
+    }
   } catch {
     // storage unavailable
   }

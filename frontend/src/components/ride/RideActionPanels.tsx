@@ -10,7 +10,8 @@ import CantMakeItModal from '../CantMakeIt';
 import type { Ride } from '../RideCard';
 import { ReasonModal, StartTripButton } from '../TripActions';
 import { parseLocal } from '../../format';
-import { Button, ErrorBox, Field, Modal, Notice, Pill, useAction, useConfirm, type PillTone } from '../ui';
+import { Button, ErrorBox, Field, Modal, Notice, Pill, useAction, useConfirm, useToast, type PillTone } from '../ui';
+import { getQueuedActionsForRide, postOrQueue, useOfflineQueueTick } from '../../offlineQueue';
 
 /** `part` splits the card when the passenger has something to do now: "respond" is the
  *  answer/readiness block shown near the top, "cancel" the quieter cancel control below. */
@@ -25,12 +26,38 @@ export function PassengerActions({
 }) {
   const { t } = useTranslation('rideDetail');
   const auth = useAuth();
+  const meId = auth?.me?.id;
   const can = auth?.can ?? (() => true);
   const confirm = useConfirm();
+  const toast = useToast();
+  const queueTick = useOfflineQueueTick();
   const { busy, error, run } = useAction();
   const nav = useNavigate();
   const [cancel, setCancel] = useState(false);
   const [unable, setUnable] = useState(false);
+
+  const postReadiness = (status: 'ready' | 'delayed_5m', label: string, successMsg: string) =>
+    run(async () => {
+      if (!meId) {
+        await post(`/rides/${r.id}/readiness`, { status });
+        toast.success(successMsg);
+        reload();
+        return;
+      }
+      const res = await postOrQueue({
+        userId: meId,
+        rideId: r.id,
+        path: `/rides/${r.id}/readiness`,
+        body: { status },
+        label,
+      });
+      if (res.queued) {
+        toast.info(t('common:queuedOffline'));
+      } else {
+        toast.success(successMsg);
+        reload();
+      }
+    });
   const cancellable = ['pending_driver', 'pending_passenger', 'pending_approval', 'pending_driver_confirm', 'confirmed'].includes(r.status);
 
   const handleDecline = async () => {
@@ -152,13 +179,26 @@ export function PassengerActions({
             {(r.readiness_status === 'delayed_5m' || r.readiness_status === 'delayed_10m') && (
               <Notice tone="warning">{t('delayedConfirmed')}</Notice>
             )}
+            {meId && queueTick >= 0 && getQueuedActionsForRide(meId, r.id).length > 0 && (
+              <div>
+                <Pill tone="info">{t('common:offlineQueuedPill')}</Pill>
+              </div>
+            )}
 
             <div className="btn-row">
               <Button
                 variant={r.readiness_status === 'ready' ? 'secondary' : 'primary'}
                 size="sm"
                 disabled={busy}
-                onClick={() => run(() => post(`/rides/${r.id}/readiness`, { status: 'ready' }).then(reload), t('readyConfirmed'))}
+                onClick={() =>
+                  void postReadiness(
+                    'ready',
+                    r.is_proxy && r.proxy
+                      ? t('readyBtnProxy', { name: r.proxy.rider_name })
+                      : t('readyBtn'),
+                    t('readyConfirmed'),
+                  )
+                }
               >
                 {r.is_proxy && r.proxy
                   ? t('readyBtnProxy', { name: r.proxy.rider_name })
@@ -168,7 +208,15 @@ export function PassengerActions({
                 variant="secondary"
                 size="sm"
                 disabled={busy}
-                onClick={() => run(() => post(`/rides/${r.id}/readiness`, { status: 'delayed_5m' }).then(reload), t('delayedConfirmed'))}
+                onClick={() =>
+                  void postReadiness(
+                    'delayed_5m',
+                    r.is_proxy && r.proxy
+                      ? t('delayed5mBtnProxy', { name: r.proxy.rider_name })
+                      : t('delayed5mBtn'),
+                    t('delayedConfirmed'),
+                  )
+                }
               >
                 {r.is_proxy && r.proxy
                   ? t('delayed5mBtnProxy', { name: r.proxy.rider_name })
@@ -247,10 +295,40 @@ export function PassengerActions({
 
 export function DriverActions({ ride: r, reload }: { ride: Ride; reload: () => void }) {
   const { t } = useTranslation('rideDetail');
+  const auth = useAuth();
+  const meId = auth?.me?.id;
   const confirm = useConfirm();
+  const toast = useToast();
+  const queueTick = useOfflineQueueTick();
   const { busy, error, run } = useAction();
   const [withdraw, setWithdraw] = useState(false);
   const act = (path: string, msg: string) => run(() => post(`/rides/${r.id}/${path}`).then(reload), msg);
+  const actQueueable = (path: string, label: string, successMsg: string, body?: unknown) =>
+    run(async () => {
+      if (!meId) {
+        if (body !== undefined) {
+          await post(`/rides/${r.id}/${path}`, body);
+        } else {
+          await post(`/rides/${r.id}/${path}`);
+        }
+        toast.success(successMsg);
+        reload();
+        return;
+      }
+      const res = await postOrQueue({
+        userId: meId,
+        rideId: r.id,
+        path: `/rides/${r.id}/${path}`,
+        body,
+        label,
+      });
+      if (res.queued) {
+        toast.info(t('common:queuedOffline'));
+      } else {
+        toast.success(successMsg);
+        reload();
+      }
+    });
 
   const handleNoShow = async () => {
     const ok = await confirm({
@@ -287,7 +365,7 @@ export function DriverActions({ ride: r, reload }: { ride: Ride; reload: () => v
         variant="secondary"
         size="sm"
         disabled={busy}
-        onClick={() => run(() => post(`/rides/${r.id}/driver-delay`, { delay_minutes: 5 }).then(reload), t('driverDelaySent', { mins: 5 }))}
+        onClick={() => void actQueueable('driver-delay', t('driverDelay5m'), t('driverDelaySent', { mins: 5 }), { delay_minutes: 5 })}
       >
         {t('driverDelay5m')}
       </Button>
@@ -295,7 +373,7 @@ export function DriverActions({ ride: r, reload }: { ride: Ride; reload: () => v
         variant="secondary"
         size="sm"
         disabled={busy}
-        onClick={() => run(() => post(`/rides/${r.id}/driver-delay`, { delay_minutes: 10 }).then(reload), t('driverDelaySent', { mins: 10 }))}
+        onClick={() => void actQueueable('driver-delay', t('driverDelay10m'), t('driverDelaySent', { mins: 10 }), { delay_minutes: 10 })}
       >
         {t('driverDelay10m')}
       </Button>
@@ -303,7 +381,7 @@ export function DriverActions({ ride: r, reload }: { ride: Ride; reload: () => v
         variant="secondary"
         size="sm"
         disabled={busy}
-        onClick={() => run(() => post(`/rides/${r.id}/driver-delay`, { delay_minutes: 15 }).then(reload), t('driverDelaySent', { mins: 15 }))}
+        onClick={() => void actQueueable('driver-delay', t('driverDelay15m'), t('driverDelaySent', { mins: 15 }), { delay_minutes: 15 })}
       >
         {t('driverDelay15m')}
       </Button>
@@ -312,7 +390,12 @@ export function DriverActions({ ride: r, reload }: { ride: Ride; reload: () => v
 
   return (
     <section className="focus-surface stack">
-      <h2>{t('driverActions')}</h2>
+      <div className="row between items-center wrap gap-xs">
+        <h2>{t('driverActions')}</h2>
+        {meId && queueTick >= 0 && getQueuedActionsForRide(meId, r.id).length > 0 && (
+          <Pill tone="info">{t('common:offlineQueuedPill')}</Pill>
+        )}
+      </div>
 
       {/* Passenger readiness status notice for driver */}
       {r.leg === 'return' && r.supper_choice === 'supper' && (
@@ -366,13 +449,13 @@ export function DriverActions({ ride: r, reload }: { ride: Ride; reload: () => v
       {r.status === 'in_progress' && !r.picked_up_at && (
         <>
           <div className="btn-row">
-            <Button variant="primary" disabled={busy} onClick={() => act('pickup', t('respondedPickedUp'))}>
+            <Button variant="primary" disabled={busy} onClick={() => void actQueueable('pickup', t('pickedUp'), t('respondedPickedUp'))}>
               {t('pickedUp')}
             </Button>
             <Button
               variant="secondary"
               disabled={busy}
-              onClick={() => run(() => post(`/rides/${r.id}/arrived-gate`).then(reload), t('arrivedGateSent'))}
+              onClick={() => void actQueueable('arrived-gate', t('arrivedGateBtn'), t('arrivedGateSent'))}
             >
               {t('arrivedGateBtn')}
             </Button>
@@ -388,7 +471,7 @@ export function DriverActions({ ride: r, reload }: { ride: Ride; reload: () => v
                     {t('noShowBtn')}
                   </Button>
                 )}
-                <Button variant="ghost" size="sm" disabled={busy} onClick={() => act('complete', t('respondedCompleted'))}>
+                <Button variant="ghost" size="sm" disabled={busy} onClick={() => void actQueueable('complete', t('completedTrip'), t('respondedCompleted'))}>
                   {t('completedTrip')}
                 </Button>
               </div>
@@ -397,7 +480,7 @@ export function DriverActions({ ride: r, reload }: { ride: Ride; reload: () => v
         </>
       )}
       {r.status === 'in_progress' && r.picked_up_at && (
-        <Button variant="primary" disabled={busy} onClick={() => act('complete', t('respondedCompleted'))}>
+        <Button variant="primary" disabled={busy} onClick={() => void actQueueable('complete', t('completedTrip'), t('respondedCompleted'))}>
           {t('completedTrip')}
         </Button>
       )}

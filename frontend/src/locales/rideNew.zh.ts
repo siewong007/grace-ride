@@ -37,6 +37,8 @@ export default {
   whereSection: '地点',
   whoSection: '人数',
   needsSection: '特殊需要与备注',
+  needsOptionalHint: '选填：轮椅、助行器或门禁备注',
+  needsAddedSummary: '已填 {count} 项',
   decreaseSeats: '减少人数',
   increaseSeats: '增加人数',
   needWheelchair: '轮椅',

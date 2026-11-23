@@ -2,6 +2,7 @@ package org.pjstatecm.graceride.ui.screens.rides
 
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -10,6 +11,7 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.automirrored.outlined.OpenInNew
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -18,6 +20,7 @@ import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedCard
+import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
@@ -32,6 +35,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
@@ -45,6 +49,7 @@ import org.pjstatecm.graceride.ui.components.ErrorView
 import org.pjstatecm.graceride.ui.components.LoadingView
 import org.pjstatecm.graceride.ui.components.MemberAvatar
 import org.pjstatecm.graceride.ui.components.RideStatusPill
+import org.pjstatecm.graceride.ui.openInWebApp
 import org.pjstatecm.graceride.ui.theme.LocalStatusColors
 import org.pjstatecm.graceride.ui.theme.Spacing
 
@@ -53,8 +58,11 @@ import org.pjstatecm.graceride.ui.theme.Spacing
 fun RideDetailScreen(container: AppContainer, nav: NavHostController, id: Long) {
     val vm: RideDetailViewModel = viewModel(factory = RideDetailViewModel.factory(container, id))
     val state by vm.state.collectAsStateWithLifecycle()
+    val context = LocalContext.current
     val snackbar = remember { SnackbarHostState() }
     var confirmCancel by remember { mutableStateOf(false) }
+    var confirmWithdraw by remember { mutableStateOf(false) }
+    var withdrawReason by remember { mutableStateOf("") }
     val staleMsg = stringResource(R.string.error_ride_changed)
 
     LaunchedEffect(state.message, state.staleReload) {
@@ -199,6 +207,91 @@ fun RideDetailScreen(container: AppContainer, nav: NavHostController, id: Long) 
                             Text(stringResource(R.string.ride_cancel), color = MaterialTheme.colorScheme.error)
                         }
                     }
+
+                    // Driver execution controls, matching the web's ride lifecycle actions.
+                    if (ride.viewer.isDriver && ride.status in setOf(
+                            "pending_driver_confirm",
+                            "confirmed",
+                            "in_progress",
+                            "pending_passenger",
+                            "pending_approval",
+                        )
+                    ) {
+                        OutlinedCard(Modifier.fillMaxWidth()) {
+                            Column(Modifier.padding(Spacing.sm), verticalArrangement = Arrangement.spacedBy(Spacing.xs)) {
+                                Text(stringResource(R.string.driver_actions_title), style = MaterialTheme.typography.titleSmall)
+                                when (ride.status) {
+                                    "pending_driver_confirm" -> {
+                                        Button(
+                                            onClick = { vm.confirmAssignment() },
+                                            enabled = !state.busy,
+                                            modifier = Modifier.fillMaxWidth(),
+                                        ) { Text(stringResource(R.string.driver_confirm_assignment)) }
+                                    }
+                                    "confirmed" -> {
+                                        Button(
+                                            onClick = { vm.startRide() },
+                                            enabled = !state.busy,
+                                            modifier = Modifier.fillMaxWidth(),
+                                        ) { Text(stringResource(R.string.driver_start_trip)) }
+                                        FlowRow(horizontalArrangement = Arrangement.spacedBy(Spacing.xs)) {
+                                            OutlinedButton(onClick = { vm.driverDelay(5) }, enabled = !state.busy) {
+                                                Text(stringResource(R.string.driver_delay_5m))
+                                            }
+                                            OutlinedButton(onClick = { vm.driverDelay(10) }, enabled = !state.busy) {
+                                                Text(stringResource(R.string.driver_delay_10m))
+                                            }
+                                        }
+                                    }
+                                    "in_progress" -> {
+                                        if (ride.pickedUpAt == null) {
+                                            Button(
+                                                onClick = { vm.pickup() },
+                                                enabled = !state.busy,
+                                                modifier = Modifier.fillMaxWidth(),
+                                            ) { Text(stringResource(R.string.driver_picked_up)) }
+                                            FlowRow(horizontalArrangement = Arrangement.spacedBy(Spacing.xs)) {
+                                                OutlinedButton(onClick = { vm.arrivedGate() }, enabled = !state.busy) {
+                                                    Text(stringResource(R.string.driver_arrived_gate))
+                                                }
+                                                OutlinedButton(onClick = { vm.driverDelay(5) }, enabled = !state.busy) {
+                                                    Text(stringResource(R.string.driver_delay_5m))
+                                                }
+                                                OutlinedButton(onClick = { vm.driverDelay(10) }, enabled = !state.busy) {
+                                                    Text(stringResource(R.string.driver_delay_10m))
+                                                }
+                                            }
+                                        } else {
+                                            Button(
+                                                onClick = { vm.complete() },
+                                                enabled = !state.busy,
+                                                modifier = Modifier.fillMaxWidth(),
+                                            ) { Text(stringResource(R.string.driver_complete_trip)) }
+                                        }
+                                    }
+                                }
+                                if (ride.status in setOf("pending_passenger", "pending_approval", "pending_driver_confirm", "confirmed")) {
+                                    OutlinedButton(
+                                        onClick = { confirmWithdraw = true },
+                                        enabled = !state.busy,
+                                        modifier = Modifier.fillMaxWidth(),
+                                    ) {
+                                        Text(stringResource(R.string.driver_withdraw), color = MaterialTheme.colorScheme.error)
+                                    }
+                                }
+                            }
+                        }
+                    }
+
+                    if (ride.tripId != null || ride.status in setOf("confirmed", "in_progress")) {
+                        OutlinedButton(
+                            onClick = { openInWebApp(context, container.webUrl("rides/${ride.id}")) },
+                            modifier = Modifier.fillMaxWidth(),
+                        ) {
+                            Icon(Icons.AutoMirrored.Outlined.OpenInNew, contentDescription = null, modifier = Modifier.padding(end = Spacing.xs))
+                            Text(stringResource(R.string.ride_open_web_live))
+                        }
+                    }
                 }
             }
         }
@@ -214,6 +307,35 @@ fun RideDetailScreen(container: AppContainer, nav: NavHostController, id: Long) 
             },
             dismissButton = {
                 TextButton(onClick = { confirmCancel = false }) { Text(stringResource(R.string.common_cancel)) }
+            },
+        )
+    }
+
+    if (confirmWithdraw) {
+        AlertDialog(
+            onDismissRequest = { confirmWithdraw = false },
+            title = { Text(stringResource(R.string.driver_withdraw)) },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(Spacing.xs)) {
+                    Text(stringResource(R.string.driver_withdraw_confirm))
+                    OutlinedTextField(
+                        value = withdrawReason,
+                        onValueChange = { withdrawReason = it },
+                        label = { Text(stringResource(R.string.driver_withdraw_reason)) },
+                        singleLine = true,
+                        modifier = Modifier.fillMaxWidth(),
+                    )
+                }
+            },
+            confirmButton = {
+                TextButton(onClick = {
+                    vm.withdraw(withdrawReason.trim().ifBlank { null })
+                    withdrawReason = ""
+                    confirmWithdraw = false
+                }) { Text(stringResource(R.string.common_confirm)) }
+            },
+            dismissButton = {
+                TextButton(onClick = { confirmWithdraw = false }) { Text(stringResource(R.string.common_cancel)) }
             },
         )
     }

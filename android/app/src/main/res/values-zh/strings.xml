@@ -301,4 +301,20 @@
     <string name="terms_opt_in">我已阅读这些条款和隐私声明，并选择加入</string>
     <string name="terms_agree">同意并继续</string>
     <string name="terms_logout">登出</string>
+    <string name="driver_actions_title">司机操作</string>
+    <string name="driver_confirm_assignment">确认接单安排</string>
+    <string name="driver_start_trip">开始接送</string>
+    <string name="driver_arrived_gate">已到门口</string>
+    <string name="driver_picked_up">已接到乘客</string>
+    <string name="driver_complete_trip">完成行程</string>
+    <string name="driver_delay_5m">迟到 5 分钟</string>
+    <string name="driver_delay_10m">迟到 10 分钟</string>
+    <string name="driver_withdraw">退出接送</string>
+    <string name="driver_withdraw_confirm">确认将此接送退回司机接单池吗？</string>
+    <string name="driver_withdraw_reason">原因（选填）</string>
+    <string name="ride_open_web_live">在网页端查看实时地图与聊天</string>
+    <string name="event_open_web_full">在网页端签到或查看完整活动</string>
+    <string name="profile_section_web">前往网页端使用更多功能</string>
+    <string name="profile_web_drive">出车排班与车辆设置</string>
+    <string name="profile_web_staff">交通组与同工工作台</string>
 </resources>
