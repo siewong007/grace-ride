@@ -111,7 +111,8 @@ test.describe('Mobile bottom-tab swipe (iPhone 13)', () => {
   test('member swipes Home → Events → Profile and stops at the ends', async ({ page }) => {
     await mockApi(page, 'member');
     await page.goto('/');
-    await expect(page.getByRole('navigation', { name: 'Bottom navigation' })).toBeVisible();
+    const bottomNav = page.getByRole('navigation', { name: 'Bottom navigation' });
+    await expect(bottomNav).toBeVisible();
     await swipe(page, 'left');
     await expect(page).toHaveURL(/\/events$/);
     await expect(page.getByRole('heading', { level: 1 })).toBeVisible();
@@ -122,8 +123,10 @@ test.describe('Mobile bottom-tab swipe (iPhone 13)', () => {
     await expect(page).toHaveURL(/\/me$/);
     await swipe(page, 'right');
     await expect(page).toHaveURL(/\/events$/);
+    await expect(bottomNav.getByRole('link', { name: /Events/ })).toHaveAttribute('aria-current', 'page');
     await swipe(page, 'right');
     await expect(page).toHaveURL(/\/$/);
+    await expect(bottomNav.getByRole('link', { name: /Home/ })).toHaveAttribute('aria-current', 'page');
     await swipe(page, 'right');
     await expect(page).toHaveURL(/\/$/);
   });
