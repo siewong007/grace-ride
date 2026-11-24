@@ -5842,3 +5842,476 @@ main a[href^="tel:"]:not(.btn) { text-decoration: underline; }
 .disclosure-toggle h3 {
   margin: 0;
 }
+
+/* ============================================================================
+   Grok Bot Studio (/studio & AvatarEditor Studio tab)
+   ============================================================================ */
+:root {
+  --grok-stage-bg: #FAF9F6;
+  --grok-stage-dot: rgba(26, 26, 26, 0.1);
+  --grok-tile-eye: #FFFFFF;
+  --grok-cream-eye: #262522;
+  --grok-ink-eye: #F4F4F6;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme='light']) {
+    --grok-stage-bg: #111215;
+    --grok-stage-dot: rgba(255, 255, 255, 0.09);
+    --grok-tile-eye: #181A1E;
+    --grok-cream-eye: #1C1B18;
+    --grok-ink-eye: #E8E8EC;
+  }
+}
+
+:root[data-theme='dark'] {
+  --grok-stage-bg: #111215;
+  --grok-stage-dot: rgba(255, 255, 255, 0.09);
+  --grok-tile-eye: #181A1E;
+  --grok-cream-eye: #1C1B18;
+  --grok-ink-eye: #E8E8EC;
+}
+
+.avatar.avatar-grokbot .avatar-grokbot-svg {
+  width: 88%;
+  height: 88%;
+  display: block;
+}
+
+.grok-studio-page {
+  max-width: 1120px;
+}
+
+.grok-studio-breadcrumbs {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  font-size: var(--fs-sm);
+  color: var(--muted);
+}
+
+.grok-studio-breadcrumbs a {
+  color: var(--muted);
+  text-decoration: none;
+}
+
+.grok-studio-breadcrumbs a:hover {
+  color: var(--text);
+  text-decoration: underline;
+}
+
+.grok-studio-subtitle {
+  max-width: 66ch;
+  margin: 0;
+}
+
+.grok-studio-layout {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: var(--space-4);
+  align-items: start;
+}
+
+@media (min-width: 900px) {
+  .grok-studio-layout {
+    grid-template-columns: minmax(340px, 440px) minmax(0, 1fr);
+    gap: var(--space-6);
+  }
+  .grok-studio-stage-card {
+    position: sticky;
+    top: calc(var(--topbar-height) + var(--space-4));
+  }
+}
+
+.grok-studio-stage-card,
+.grok-studio-controls-card {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 16px;
+  padding: var(--space-4);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+}
+
+.grok-studio-mini-stage {
+  width: 100%;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  padding: var(--space-3);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+.grok-studio-stage-topbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-2);
+  flex-wrap: wrap;
+}
+
+.grok-studio-status {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  font-size: var(--fs-sm);
+  font-weight: 600;
+  letter-spacing: 0.05em;
+  color: var(--muted);
+}
+
+.grok-studio-surprise-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 12px;
+  border-radius: var(--radius-pill);
+  border: 1px solid var(--border);
+  background: var(--surface-2);
+  color: var(--text);
+  font-size: var(--fs-sm);
+  font-weight: 600;
+  cursor: pointer;
+  transition: border-color var(--dur-fast) var(--ease), background var(--dur-fast) var(--ease);
+}
+
+.grok-studio-surprise-btn:hover {
+  border-color: var(--primary);
+  background: color-mix(in srgb, var(--primary) 8%, var(--surface));
+}
+
+.grok-studio-stage {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  min-height: 320px;
+  border-radius: 14px;
+  background-color: var(--grok-stage-bg);
+  border: 1px solid var(--divider);
+  overflow: hidden;
+  padding: var(--space-4) var(--space-3) var(--space-3);
+}
+
+.grok-studio-stage.compact {
+  min-height: 210px;
+  padding: var(--space-2);
+}
+
+.grok-studio-backdrop-svg {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  pointer-events: none;
+}
+
+.grok-studio-stage-svg {
+  position: relative;
+  z-index: 1;
+  width: 240px;
+  height: 240px;
+  max-width: 78%;
+  filter: drop-shadow(0 16px 28px rgba(0, 0, 0, 0.14));
+}
+
+.grok-studio-stage.compact .grok-studio-stage-svg {
+  width: 156px;
+  height: 156px;
+}
+
+.grok-studio-cursor-hint {
+  position: relative;
+  z-index: 1;
+  margin-top: var(--space-2);
+  font-size: var(--fs-sm);
+  color: var(--muted);
+}
+
+.grok-studio-actions {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+.grok-studio-save-btn {
+  width: 100%;
+  justify-content: center;
+}
+
+.grok-studio-export-row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  flex-wrap: wrap;
+}
+
+.grok-studio-export-row > .btn {
+  flex: 1 1 auto;
+  justify-content: center;
+}
+
+.grok-studio-copy-wrap {
+  position: relative;
+  flex: 1 1 auto;
+  display: flex;
+}
+
+.grok-studio-copy-wrap > .btn {
+  width: 100%;
+  justify-content: center;
+}
+
+.grok-studio-copy-menu {
+  position: absolute;
+  right: 0;
+  bottom: calc(100% + 6px);
+  min-width: 176px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  box-shadow: var(--shadow-lg);
+  padding: 6px;
+  z-index: 30;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.grok-studio-copy-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 8px 10px;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--text);
+  font-size: var(--fs-sm);
+  text-align: left;
+  cursor: pointer;
+}
+
+.grok-studio-copy-item:hover {
+  background: var(--surface-2);
+}
+
+.grok-studio-tabs {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 4px;
+  padding: 4px;
+  background: var(--surface-2);
+  border-radius: 12px;
+  border: 1px solid var(--border);
+}
+
+.grok-studio-tab {
+  border: 0;
+  border-radius: 9px;
+  padding: 8px 12px;
+  background: transparent;
+  color: var(--muted);
+  font-weight: 600;
+  font-size: var(--fs-sm);
+  cursor: pointer;
+  transition: all var(--dur-fast) var(--ease);
+}
+
+.grok-studio-tab.on {
+  background: var(--surface);
+  color: var(--text);
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.08);
+}
+
+.grok-studio-panel {
+  margin-top: var(--space-3);
+}
+
+.grok-studio-group-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-2);
+}
+
+.grok-studio-group-label {
+  font-size: var(--fs-sm);
+  font-weight: 700;
+  color: var(--text);
+}
+
+.grok-studio-group-val {
+  font-size: var(--fs-sm);
+  color: var(--muted);
+}
+
+.grok-studio-tile-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 8px;
+}
+
+@media (max-width: 480px) {
+  .grok-studio-tile-grid.cols-4 {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+}
+
+.grok-studio-tile {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  padding: 10px 6px 8px;
+  border-radius: 12px;
+  border: 1.5px solid var(--border);
+  background: var(--surface-2);
+  color: var(--text);
+  cursor: pointer;
+  transition: border-color var(--dur-fast) var(--ease), background var(--dur-fast) var(--ease);
+}
+
+.grok-studio-controls.compact .grok-studio-tile {
+  padding: 7px 4px 6px;
+}
+
+.grok-studio-tile:hover {
+  border-color: color-mix(in srgb, var(--primary) 60%, var(--border));
+}
+
+.grok-studio-tile.on {
+  border-color: var(--primary);
+  background: color-mix(in srgb, var(--primary) 9%, var(--surface));
+  box-shadow: 0 0 0 1px var(--primary);
+}
+
+.grok-studio-check {
+  position: absolute;
+  top: 5px;
+  right: 5px;
+  width: 17px;
+  height: 17px;
+  border-radius: 50%;
+  background: var(--primary);
+  color: var(--primary-ink);
+  display: grid;
+  place-items: center;
+}
+
+.grok-tile-svg {
+  width: 52px;
+  height: 52px;
+  display: block;
+}
+
+.grok-studio-controls.compact .grok-tile-svg {
+  width: 42px;
+  height: 42px;
+}
+
+.grok-studio-tile-label {
+  font-size: var(--fs-sm);
+  line-height: 1.2;
+  text-align: center;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.grok-studio-color-grid {
+  display: grid;
+  grid-template-columns: repeat(6, minmax(0, 1fr));
+  gap: 10px;
+  justify-items: center;
+}
+
+.grok-studio-swatch {
+  width: 40px;
+  height: 40px;
+  border-radius: 50%;
+  border: 2px solid rgba(0, 0, 0, 0.12);
+  display: grid;
+  place-items: center;
+  color: #FFFFFF;
+  cursor: pointer;
+  padding: 0;
+  transition: transform var(--dur-fast) var(--ease), box-shadow var(--dur-fast) var(--ease);
+}
+
+.grok-studio-swatch.light-ink {
+  color: #1A1A1A;
+}
+
+.grok-studio-swatch:hover {
+  transform: scale(1.06);
+}
+
+.grok-studio-swatch.on {
+  border-color: var(--text);
+  box-shadow: 0 0 0 2px var(--surface), 0 0 0 4px var(--primary);
+}
+
+.grok-studio-mini-footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-2);
+  flex-wrap: wrap;
+  padding-top: var(--space-1);
+}
+
+.grok-studio-open-link {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-size: var(--fs-sm);
+  font-weight: 600;
+  color: var(--primary);
+  text-decoration: none;
+}
+
+.grok-studio-open-link:hover {
+  text-decoration: underline;
+}
+
+.grok-studio-how {
+  margin-top: var(--space-4);
+  padding-top: var(--space-4);
+  border-top: 1px solid var(--divider);
+}
+
+.grok-studio-steps-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(230px, 1fr));
+  gap: var(--space-3);
+}
+
+.grok-studio-step-card {
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  padding: var(--space-4);
+  background: var(--surface);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+}
+
+.grok-studio-step-card h3,
+.grok-studio-step-card p {
+  margin: 0;
+}
+
+.grok-studio-step-num {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  font-size: var(--fs-sm);
+  font-weight: 700;
+  color: var(--primary);
+}
+

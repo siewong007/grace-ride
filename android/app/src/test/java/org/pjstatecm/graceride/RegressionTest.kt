@@ -28,6 +28,9 @@ import org.pjstatecm.graceride.ui.components.AvatarStyle
 import org.pjstatecm.graceride.ui.components.BadgeIcons
 import org.pjstatecm.graceride.ui.components.BadgeTierStyle
 import org.pjstatecm.graceride.ui.components.EventIcons
+import org.pjstatecm.graceride.ui.components.GrokBotGeometry
+import org.pjstatecm.graceride.ui.components.GrokBotSpec
+import org.pjstatecm.graceride.ui.components.buildStandaloneGrokBotSvg
 
 /** Regressions found by live emulator testing against the real dev backend. */
 @OptIn(ExperimentalCoroutinesApi::class)
@@ -265,5 +268,41 @@ class RegressionTest {
             AvatarStyle.gifAssetUri("grok::coral", "white:hexagon"),
         )
         assertEquals(null, AvatarStyle.gifAssetUri("initials::teal", "white:rounded"))
+    }
+
+    @Test fun grokBotStudioSpecParsesEncodesAndGeneratesSvg() {
+        assertEquals(8, GrokBotSpec.SHAPES.size)
+        assertEquals(16, GrokBotSpec.FACES.size)
+        assertEquals(12, GrokBotSpec.COLORS.size)
+        assertEquals(15, GrokBotSpec.MOVES.size)
+
+        for (shape in GrokBotSpec.SHAPES) {
+            val coords = GrokBotGeometry.SHAPE_COORDS[shape]
+            assertTrue("Missing coords for $shape", coords != null && coords.size == 386)
+        }
+
+        assertEquals(GrokBotSpec("circle", "neutral", "blue"), GrokBotSpec.parse("grokbot"))
+        val spec = GrokBotSpec.parse("grokbot:cloud:excited:brown")
+        assertEquals(GrokBotSpec("cloud", "excited", "brown"), spec)
+        assertEquals("grokbot:cloud:excited:brown", spec?.encode())
+        assertEquals("grok-bot-cloud-excited-brown.png", spec?.filename("png"))
+        assertTrue(GrokBotSpec.isGrokBotIcon("grokbot:droplet:sleepy:cream"))
+        assertFalse(GrokBotSpec.isGrokBotIcon("grok:circle:coral"))
+        assertEquals(null, GrokBotSpec.parse("grokbot:octagon:excited:brown"))
+        assertEquals(null, GrokBotSpec.parse("grokbot:cloud:winking:brown"))
+        assertEquals(null, GrokBotSpec.parse("grokbot:cloud:excited:neon"))
+        assertEquals(null, GrokBotSpec.parse("grokbot:cloud:excited:brown:extra"))
+
+        assertEquals("studio", Routes.studio())
+        assertEquals(
+            "studio?shape=cloud&color=brown&face=excited",
+            Routes.studio(shape = "cloud", color = "brown", face = "excited"),
+        )
+
+        val svg = buildStandaloneGrokBotSvg(spec!!, 512)
+        assertTrue(svg.contains("""width="512" height="512""""))
+        assertTrue(svg.contains("""<mask id="grokbot-mask""""))
+        assertTrue(svg.contains("""<radialGradient id="grokbot-fill""""))
+        assertTrue(svg.contains("#8b5e3c"))
     }
 }

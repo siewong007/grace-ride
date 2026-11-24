@@ -18,6 +18,19 @@ object Routes {
     const val PROXY_RIDERS = "proxy-riders"
     const val SAVED_ADDRESSES = "saved-addresses"
     const val NOTIFICATIONS = "notifications"
+    const val STUDIO = "studio?shape={shape}&color={color}&face={face}"
+
+    fun studio(shape: String? = null, color: String? = null, face: String? = null): String = buildString {
+        append("studio")
+        val params = mutableListOf<String>()
+        if (!shape.isNullOrBlank()) params.add("shape=$shape")
+        if (!color.isNullOrBlank()) params.add("color=$color")
+        if (!face.isNullOrBlank()) params.add("face=$face")
+        if (params.isNotEmpty()) {
+            append("?")
+            append(params.joinToString("&"))
+        }
+    }
 
     fun rideDetail(id: Long, justBooked: Boolean = false) =
         if (justBooked) "ride/$id?new=1" else "ride/$id"

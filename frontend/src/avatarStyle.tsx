@@ -9,6 +9,12 @@ import {
   GrokBotSvg,
   MuseBotSvg,
 } from './bloubAvatars';
+import {
+  encodeGrokBotIcon,
+  type GrokBotSpec,
+  isGrokBotIcon,
+  parseGrokBotIcon,
+} from './grokBotStudio';
 
 export {
   AVATAR_BG_SHAPES,
@@ -17,8 +23,12 @@ export {
   AVATAR_SHAPE_PATHS,
   type AvatarBgShape,
   type AvatarShape,
+  encodeGrokBotIcon,
+  type GrokBotSpec,
   GrokBotSvg,
+  isGrokBotIcon,
   MuseBotSvg,
+  parseGrokBotIcon,
 };
 
 /** Avatar background colours. Keys match the API's fixed list; each maps to a `.avatar.av-<key>` class. */

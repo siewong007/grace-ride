@@ -36,6 +36,8 @@ import androidx.compose.material.icons.outlined.LocationOn
 import androidx.compose.material.icons.outlined.Notifications
 import androidx.compose.material.icons.outlined.Payments
 import androidx.compose.material.icons.outlined.ReceiptLong
+import androidx.compose.material.icons.outlined.Shuffle
+import androidx.compose.material.icons.outlined.AutoAwesome
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.DropdownMenuItem
@@ -80,12 +82,15 @@ import org.pjstatecm.graceride.di.AppContainer
 import org.pjstatecm.graceride.ui.Routes
 import org.pjstatecm.graceride.ui.components.AnimatedMemberAvatar
 import org.pjstatecm.graceride.ui.components.AvatarStyle
+import org.pjstatecm.graceride.ui.components.GrokBotCanvas
+import org.pjstatecm.graceride.ui.components.GrokBotControlsPanel
+import org.pjstatecm.graceride.ui.components.GrokBotSpec
 import org.pjstatecm.graceride.ui.components.MemberAvatar
 import org.pjstatecm.graceride.ui.components.SectionHeader
 import org.pjstatecm.graceride.ui.openInWebApp
 import org.pjstatecm.graceride.ui.theme.Spacing
 
-private enum class AvatarMode { PHOTO, ANIMATED, INITIALS, ICON }
+private enum class AvatarMode { PHOTO, ANIMATED, STUDIO, INITIALS, ICON }
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -301,6 +306,11 @@ fun ProfileScreen(container: AppContainer, nav: NavHostController) {
             item {
                 OutlinedCard(Modifier.fillMaxWidth()) {
                     Column {
+                        ProfileRow(stringResource(R.string.profile_open_grok_studio), Icons.Outlined.AutoAwesome) {
+                            val gb = GrokBotSpec.parse(me?.avatarIcon)
+                            nav.navigate(Routes.studio(gb?.shape, gb?.color, gb?.face))
+                        }
+                        HorizontalDivider()
                         ProfileRow(stringResource(R.string.notif_title), Icons.Outlined.Notifications) { nav.navigate(Routes.NOTIFICATIONS) }
                     }
                 }
@@ -377,6 +387,10 @@ fun ProfileScreen(container: AppContainer, nav: NavHostController) {
             photoUrlFor = container::fileUrl,
             busy = state.busy,
             onDismiss = { showAvatarEditor = false },
+            onOpenFullStudio = { spec ->
+                showAvatarEditor = false
+                nav.navigate(Routes.studio(spec.shape, spec.color, spec.face))
+            },
             onSavePhoto = { uri, color ->
                 if (uri != null) {
                     vm.saveAvatarPhoto(context, uri, color)
@@ -400,11 +414,13 @@ private fun AvatarEditorDialog(
     photoUrlFor: (Long) -> String,
     busy: Boolean,
     onDismiss: () -> Unit,
+    onOpenFullStudio: (GrokBotSpec) -> Unit,
     onSavePhoto: (Uri?, String) -> Unit,
     onSaveStyle: (String, String) -> Unit,
 ) {
     val initParsedColor = AvatarStyle.parseAvatarColor(me.avatarColor)
-    val initParsedIcon = AvatarStyle.parseAvatarIcon(me.avatarIcon)
+    val initGrokBot = GrokBotSpec.parse(me.avatarIcon)
+    val initParsedIcon = AvatarStyle.parseAvatarIcon(if (initGrokBot != null) null else me.avatarIcon)
     val hasCustom = me.photoFileId != null || !me.avatarIcon.isNullOrBlank() || !me.avatarColor.isNullOrBlank()
     val initialIconBase = when {
         initParsedIcon.icon == "initials" || initParsedIcon.icon.isEmpty() ->
@@ -413,12 +429,15 @@ private fun AvatarEditorDialog(
     }
     val initialMode = when {
         me.photoFileId != null -> AvatarMode.PHOTO
+        GrokBotSpec.isGrokBotIcon(me.avatarIcon) -> AvatarMode.STUDIO
         AvatarStyle.isAnimatedAvatar(initParsedIcon.icon) -> AvatarMode.ANIMATED
         AvatarStyle.staticIconVector(initParsedIcon.icon) != null -> AvatarMode.ICON
         !me.avatarColor.isNullOrBlank() || initParsedIcon.fgColor != null -> AvatarMode.INITIALS
         else -> AvatarMode.ANIMATED
     }
     var mode by remember { mutableStateOf(initialMode) }
+    var studioSpec by remember { mutableStateOf(initGrokBot ?: GrokBotSpec.DEFAULT) }
+    var studioMove by remember { mutableStateOf("idle") }
     var icon by remember { mutableStateOf(initialIconBase) }
     var avatarShape by remember {
         mutableStateOf(initParsedIcon.shape ?: AvatarStyle.defaultAvatarShape(initialIconBase))
@@ -437,6 +456,7 @@ private fun AvatarEditorDialog(
 
     val encodedColor = AvatarStyle.encodeAvatarColor(bgColor, bgShape)
     val encodedIcon = when (mode) {
+        AvatarMode.STUDIO -> studioSpec.encode()
         AvatarMode.ANIMATED, AvatarMode.ICON -> AvatarStyle.encodeAvatarIcon(icon, avatarShape, fgColor)
         AvatarMode.INITIALS -> AvatarStyle.encodeAvatarIcon("initials", null, fgColor)
         AvatarMode.PHOTO -> ""
@@ -451,6 +471,7 @@ private fun AvatarEditorDialog(
 
     val modes = listOf(
         AvatarMode.ANIMATED to stringResource(R.string.profile_avatar_animated),
+        AvatarMode.STUDIO to stringResource(R.string.profile_avatar_studio),
         AvatarMode.PHOTO to stringResource(R.string.profile_avatar_photo),
         AvatarMode.INITIALS to stringResource(R.string.profile_avatar_initials),
         AvatarMode.ICON to stringResource(R.string.profile_avatar_icon),
@@ -458,6 +479,7 @@ private fun AvatarEditorDialog(
 
     val canSave = when (mode) {
         AvatarMode.PHOTO -> pickedUri != null || me.photoFileId != null
+        AvatarMode.STUDIO -> true
         AvatarMode.ANIMATED -> AvatarStyle.isAnimatedAvatar(icon)
         AvatarMode.ICON -> AvatarStyle.staticIconVector(icon) != null
         AvatarMode.INITIALS -> true
@@ -472,22 +494,43 @@ private fun AvatarEditorDialog(
                 verticalArrangement = Arrangement.spacedBy(Spacing.sm),
             ) {
                 Box(Modifier.fillMaxWidth(), contentAlignment = Alignment.Center) {
-                    val previewUrl = when {
-                        mode == AvatarMode.PHOTO && pickedUri != null -> pickedUri.toString()
-                        mode == AvatarMode.PHOTO -> me.photoFileId?.let(photoUrlFor)
-                        else -> null
+                    if (mode == AvatarMode.STUDIO) {
+                        Column(
+                            horizontalAlignment = Alignment.CenterHorizontally,
+                            verticalArrangement = Arrangement.spacedBy(Spacing.xxs),
+                        ) {
+                            GrokBotCanvas(
+                                spec = studioSpec,
+                                move = studioMove,
+                                variant = "stage",
+                                modifier = Modifier.size(116.dp),
+                            )
+                            TextButton(onClick = { studioSpec = GrokBotSpec.random(studioSpec) }) {
+                                Icon(Icons.Outlined.Shuffle, contentDescription = null, modifier = Modifier.size(15.dp))
+                                Text(
+                                    stringResource(R.string.studio_surprise_me),
+                                    modifier = Modifier.padding(start = 4.dp),
+                                )
+                            }
+                        }
+                    } else {
+                        val previewUrl = when {
+                            mode == AvatarMode.PHOTO && pickedUri != null -> pickedUri.toString()
+                            mode == AvatarMode.PHOTO -> me.photoFileId?.let(photoUrlFor)
+                            else -> null
+                        }
+                        val previewIcon = when (mode) {
+                            AvatarMode.ANIMATED, AvatarMode.ICON, AvatarMode.INITIALS -> encodedIcon
+                            else -> null
+                        }
+                        MemberAvatar(
+                            name = me.name,
+                            photoUrl = previewUrl,
+                            avatarColor = encodedColor,
+                            avatarIcon = previewIcon,
+                            size = 76.dp,
+                        )
                     }
-                    val previewIcon = when (mode) {
-                        AvatarMode.ANIMATED, AvatarMode.ICON, AvatarMode.INITIALS -> encodedIcon
-                        AvatarMode.PHOTO -> null
-                    }
-                    MemberAvatar(
-                        name = me.name,
-                        photoUrl = previewUrl,
-                        avatarColor = encodedColor,
-                        avatarIcon = previewIcon,
-                        size = 76.dp,
-                    )
                 }
 
                 PrimaryScrollableTabRow(selectedTabIndex = modes.indexOfFirst { it.first == mode }.coerceAtLeast(0)) {
@@ -626,6 +669,24 @@ private fun AvatarEditorDialog(
                             }
                         }
                     }
+                    AvatarMode.STUDIO -> {
+                        Column(verticalArrangement = Arrangement.spacedBy(Spacing.xs)) {
+                            GrokBotControlsPanel(
+                                spec = studioSpec,
+                                onSpecChange = { studioSpec = it },
+                                activeMove = studioMove,
+                                onMoveChange = { studioMove = it },
+                                tilePreviewSize = 36.dp,
+                                cols = 4,
+                            )
+                            OutlinedButton(
+                                onClick = { onOpenFullStudio(studioSpec) },
+                                modifier = Modifier.fillMaxWidth(),
+                            ) {
+                                Text(stringResource(R.string.studio_open_full))
+                            }
+                        }
+                    }
                     AvatarMode.INITIALS -> Unit
                 }
 
@@ -645,7 +706,7 @@ private fun AvatarEditorDialog(
                     }
                 }
 
-                if (mode != AvatarMode.PHOTO) {
+                if (mode != AvatarMode.PHOTO && mode != AvatarMode.STUDIO) {
                     Text(stringResource(R.string.profile_avatar_fg_color), style = MaterialTheme.typography.labelMedium)
                     FlowRow(
                         horizontalArrangement = Arrangement.spacedBy(Spacing.xs),
@@ -679,55 +740,57 @@ private fun AvatarEditorDialog(
                     }
                 }
 
-                Text(stringResource(R.string.profile_avatar_bg_shape), style = MaterialTheme.typography.labelMedium)
-                FlowRow(
-                    horizontalArrangement = Arrangement.spacedBy(Spacing.xs),
-                    verticalArrangement = Arrangement.spacedBy(Spacing.xs),
-                ) {
-                    AvatarStyle.AVATAR_BG_SHAPES.forEach { bsKey ->
-                        val selected = bgShape == bsKey
-                        FilterChip(
-                            selected = selected,
-                            onClick = { bgShape = bsKey },
-                            leadingIcon = {
-                                Surface(
-                                    color = androidx.compose.ui.graphics.Color.Transparent,
-                                    shape = AvatarStyle.bgComposeShape(bsKey),
-                                    border = BorderStroke(
-                                        1.5.dp,
-                                        if (selected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
-                                    ),
-                                    modifier = Modifier.size(14.dp),
-                                ) {}
-                            },
-                            label = { Text(stringResource(avatarBgShapeLabelRes(bsKey)), maxLines = 1) },
-                        )
+                if (mode != AvatarMode.STUDIO) {
+                    Text(stringResource(R.string.profile_avatar_bg_shape), style = MaterialTheme.typography.labelMedium)
+                    FlowRow(
+                        horizontalArrangement = Arrangement.spacedBy(Spacing.xs),
+                        verticalArrangement = Arrangement.spacedBy(Spacing.xs),
+                    ) {
+                        AvatarStyle.AVATAR_BG_SHAPES.forEach { bsKey ->
+                            val selected = bgShape == bsKey
+                            FilterChip(
+                                selected = selected,
+                                onClick = { bgShape = bsKey },
+                                leadingIcon = {
+                                    Surface(
+                                        color = androidx.compose.ui.graphics.Color.Transparent,
+                                        shape = AvatarStyle.bgComposeShape(bsKey),
+                                        border = BorderStroke(
+                                            1.5.dp,
+                                            if (selected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
+                                        ),
+                                        modifier = Modifier.size(14.dp),
+                                    ) {}
+                                },
+                                label = { Text(stringResource(avatarBgShapeLabelRes(bsKey)), maxLines = 1) },
+                            )
+                        }
                     }
-                }
 
-                Text(stringResource(R.string.profile_avatar_color), style = MaterialTheme.typography.labelMedium)
-                FlowRow(
-                    horizontalArrangement = Arrangement.spacedBy(Spacing.xs),
-                    verticalArrangement = Arrangement.spacedBy(Spacing.xs),
-                ) {
-                    AvatarStyle.COLORS.forEach { cKey ->
-                        val (bg, fg) = AvatarStyle.colorPair(cKey)
-                        Surface(
-                            color = bg,
-                            shape = CircleShape,
-                            border = when {
-                                bgColor == cKey -> BorderStroke(2.dp, fg)
-                                cKey == "white" -> BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant)
-                                else -> null
-                            },
-                            modifier = Modifier.size(32.dp).clickable {
-                                bgColor = cKey
-                                customColorPicked = true
-                            },
-                        ) {
-                            if (bgColor == cKey) {
-                                Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                                    Icon(Icons.Outlined.Check, contentDescription = cKey, tint = fg, modifier = Modifier.size(16.dp))
+                    Text(stringResource(R.string.profile_avatar_color), style = MaterialTheme.typography.labelMedium)
+                    FlowRow(
+                        horizontalArrangement = Arrangement.spacedBy(Spacing.xs),
+                        verticalArrangement = Arrangement.spacedBy(Spacing.xs),
+                    ) {
+                        AvatarStyle.COLORS.forEach { cKey ->
+                            val (bg, fg) = AvatarStyle.colorPair(cKey)
+                            Surface(
+                                color = bg,
+                                shape = CircleShape,
+                                border = when {
+                                    bgColor == cKey -> BorderStroke(2.dp, fg)
+                                    cKey == "white" -> BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant)
+                                    else -> null
+                                },
+                                modifier = Modifier.size(32.dp).clickable {
+                                    bgColor = cKey
+                                    customColorPicked = true
+                                },
+                            ) {
+                                if (bgColor == cKey) {
+                                    Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                                        Icon(Icons.Outlined.Check, contentDescription = cKey, tint = fg, modifier = Modifier.size(16.dp))
+                                    }
                                 }
                             }
                         }
@@ -741,6 +804,7 @@ private fun AvatarEditorDialog(
                 onClick = {
                     when (mode) {
                         AvatarMode.PHOTO -> onSavePhoto(pickedUri, encodedColor)
+                        AvatarMode.STUDIO -> onSaveStyle(studioSpec.encode(), "")
                         AvatarMode.ANIMATED, AvatarMode.ICON, AvatarMode.INITIALS -> onSaveStyle(encodedIcon, encodedColor)
                     }
                 },

@@ -23,6 +23,7 @@ import {
   Shield,
   Sliders,
   Smartphone,
+  Sparkles,
   Users,
   Wallet,
   Car,
@@ -30,6 +31,7 @@ import {
 } from 'lucide-react';
 import { del, post, put, useApi } from '../api';
 import { useAuth } from '../auth';
+import { parseGrokBotIcon } from '../avatarStyle';
 import { useAutoLock } from '../components/AutoLock';
 import { DisplayPreferences } from '../components/AppChrome';
 import { Avatar, Button, ErrorBox, Field, Modal, Notice, PageHeader, Pill, SheetLink, useAction, useConfirm } from '../components/ui';
@@ -388,6 +390,17 @@ export default function Profile() {
         <section className="stack-xs" aria-label={t('account')}>
           <div className="section-label">{t('account')}</div>
           <div className="list">
+            <SheetLink
+              icon={<Sparkles size={iconSz} />}
+              label={t('openGrokStudio')}
+              hint={t('openGrokStudioHint')}
+              to={(() => {
+                const gb = parseGrokBotIcon(me.avatar_icon);
+                return gb
+                  ? `/studio?shape=${gb.shape}&color=${gb.color}&face=${gb.face}`
+                  : '/studio';
+              })()}
+            />
             <SheetLink
               icon={<Sliders size={iconSz} />}
               label={t('preferences')}

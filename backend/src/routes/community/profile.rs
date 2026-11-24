@@ -51,6 +51,44 @@ pub const AVATAR_SHAPES: &[&str] = &[
 pub const AVATAR_BG_SHAPES: &[&str] = &[
     "circle", "squircle", "rounded", "hexagon", "cloud", "pebble",
 ];
+/// Grok Bot Studio clay silhouettes (`grokbots.ai/studio` 8 shapes).
+pub const GROKBOT_SHAPES: &[&str] = &[
+    "circle", "pebble", "squircle", "capsule", "triangle", "hexagon", "cloud", "droplet",
+];
+/// Grok Bot Studio facial expressions (`grokbots.ai/studio` 16 faces).
+pub const GROKBOT_FACES: &[&str] = &[
+    "neutral",
+    "attentive",
+    "surprised",
+    "excited",
+    "happy",
+    "laughing",
+    "angry",
+    "sad",
+    "scared",
+    "suspicious",
+    "confused",
+    "curious",
+    "proud",
+    "shy",
+    "unimpressed",
+    "sleepy",
+];
+/// Grok Bot Studio clay palette keys (`grokbots.ai/studio` 12 colours).
+pub const GROKBOT_COLORS: &[&str] = &[
+    "ink",
+    "brown",
+    "red",
+    "orange",
+    "amber",
+    "green",
+    "turquoise",
+    "blue",
+    "purple",
+    "pink",
+    "grey",
+    "cream",
+];
 
 /// Validates `<bg_color>` or `<bg_color>:<bg_shape>` ("" resets to default neutral circle).
 fn check_avatar_color(lang: crate::i18n::Lang, v: &Option<String>) -> AppResult<()> {
@@ -70,7 +108,8 @@ fn check_avatar_color(lang: crate::i18n::Lang, v: &Option<String>) -> AppResult<
     }
 }
 
-/// Validates `<icon>`, `<icon>:<shape>`, `<icon>::<fg_color>`, or `<icon>:<shape>:<fg_color>`.
+/// Validates `<icon>`, `<icon>:<shape>`, `<icon>::<fg_color>`, `<icon>:<shape>:<fg_color>`,
+/// or Grok Bot Studio `grokbot` / `grokbot:<shape>:<face>:<color>`.
 fn check_avatar_icon(lang: crate::i18n::Lang, v: &Option<String>) -> AppResult<()> {
     let Some(raw) = v.as_deref() else {
         return Ok(());
@@ -80,6 +119,14 @@ fn check_avatar_icon(lang: crate::i18n::Lang, v: &Option<String>) -> AppResult<(
     }
     let parts: Vec<&str> = raw.split(':').collect();
     match parts.as_slice() {
+        ["grokbot"] => Ok(()),
+        ["grokbot", sh, face, col]
+            if GROKBOT_SHAPES.contains(sh)
+                && GROKBOT_FACES.contains(face)
+                && GROKBOT_COLORS.contains(col) =>
+        {
+            Ok(())
+        }
         [ic] if AVATAR_ICONS.contains(ic) => Ok(()),
         [ic, sh] if AVATAR_ICONS.contains(ic) && !sh.is_empty() && AVATAR_SHAPES.contains(sh) => {
             Ok(())

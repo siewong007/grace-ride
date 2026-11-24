@@ -41,6 +41,7 @@ const HelpGuideEditor = lazy(() => import('./pages/HelpGuideEditor'));
 const Report = lazy(() => import('./pages/Report'));
 const Notifications = lazy(() => import('./pages/Notifications'));
 const Profile = lazy(() => import('./pages/Profile'));
+const GrokBotStudioPage = lazy(() => import('./pages/GrokBotStudioPage'));
 const NotFound = lazy(() => import('./pages/NotFound'));
 const Licenses = lazy(() => import('./pages/Licenses'));
 const AdminDashboard = lazy(() => import('./pages/admin/Dashboard'));
@@ -138,6 +139,7 @@ export default function App() {
           <Route path="help/guides/:slug" element={gated(<HelpGuideDetail />, 'help')} />
           <Route path="report" element={gated(<Report />, 'report')} />
           <Route path="notifications" element={page(<Notifications />)} />
+          <Route path="studio" element={page(<GrokBotStudioPage />)} />
           <Route path="me" element={page(<Profile />)} />
           <Route path="me/family" element={page(<Profile />)} />
           <Route path="admin/menu" element={gated(<AdminMenu />, ...ADMIN_MENU_PERMS)} />

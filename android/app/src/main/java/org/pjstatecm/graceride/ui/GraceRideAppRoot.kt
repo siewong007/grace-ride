@@ -42,6 +42,7 @@ import org.pjstatecm.graceride.ui.screens.login.TermsScreen
 import org.pjstatecm.graceride.ui.screens.login.UnlockScreen
 import org.pjstatecm.graceride.ui.screens.notifications.NotificationsScreen
 import org.pjstatecm.graceride.ui.screens.profile.DriverSettingsScreen
+import org.pjstatecm.graceride.ui.screens.profile.GrokBotStudioScreen
 import org.pjstatecm.graceride.ui.screens.profile.ProfileScreen
 import org.pjstatecm.graceride.ui.screens.profile.ProxyRidersScreen
 import org.pjstatecm.graceride.ui.screens.profile.SavedAddressesScreen
@@ -179,6 +180,22 @@ fun GraceRideAppRoot(container: AppContainer) {
             composable(Routes.PROXY_RIDERS) { ProxyRidersScreen(container, navController) }
             composable(Routes.SAVED_ADDRESSES) { SavedAddressesScreen(container, navController) }
             composable(Routes.NOTIFICATIONS) { NotificationsScreen(container, navController) }
+            composable(
+                route = Routes.STUDIO,
+                arguments = listOf(
+                    androidx.navigation.navArgument("shape") { nullable = true; defaultValue = null },
+                    androidx.navigation.navArgument("color") { nullable = true; defaultValue = null },
+                    androidx.navigation.navArgument("face") { nullable = true; defaultValue = null },
+                ),
+            ) { entry ->
+                GrokBotStudioScreen(
+                    container = container,
+                    nav = navController,
+                    initialShape = entry.arguments?.getString("shape"),
+                    initialColor = entry.arguments?.getString("color"),
+                    initialFace = entry.arguments?.getString("face"),
+                )
+            }
         }
     }
 }

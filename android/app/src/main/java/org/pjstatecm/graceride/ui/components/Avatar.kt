@@ -764,14 +764,15 @@ fun MemberAvatar(
     modifier: Modifier = Modifier,
 ) {
     val parsedColor = AvatarStyle.parseAvatarColor(avatarColor)
-    val parsedIcon = AvatarStyle.parseAvatarIcon(avatarIcon)
-    val bgKey = parsedColor.bgColor.ifBlank { "purple" }
+    val grokBotSpec = GrokBotSpec.parse(avatarIcon)
+    val parsedIcon = AvatarStyle.parseAvatarIcon(if (grokBotSpec != null) null else avatarIcon)
+    val bgKey = parsedColor.bgColor.ifBlank { if (grokBotSpec != null) "gray" else "purple" }
     val (bg, baseFg) = AvatarStyle.colorPair(bgKey)
     val fg = AvatarStyle.resolveFgColor(parsedIcon.fgColor, bgKey, baseFg)
     val containerShape = AvatarStyle.bgComposeShape(parsedColor.bgShape)
-    val gifUri = AvatarStyle.gifAssetUri(avatarIcon, avatarColor)
+    val gifUri = if (grokBotSpec != null) null else AvatarStyle.gifAssetUri(avatarIcon, avatarColor)
     Surface(
-        color = bg,
+        color = if (grokBotSpec != null && parsedColor.bgColor.isBlank()) MaterialTheme.colorScheme.surfaceVariant else bg,
         contentColor = fg,
         shape = containerShape,
         border = if (avatarColor?.substringBefore(':') == "white") {
@@ -788,6 +789,12 @@ fun MemberAvatar(
                     contentDescription = name,
                     contentScale = ContentScale.Crop,
                     modifier = Modifier.fillMaxSize().clip(containerShape),
+                )
+                grokBotSpec != null -> GrokBotCanvas(
+                    spec = grokBotSpec,
+                    move = "idle",
+                    variant = "avatar",
+                    modifier = Modifier.size(size * 0.88f),
                 )
                 gifUri != null -> AnimatedMemberAvatar(
                     icon = avatarIcon!!,

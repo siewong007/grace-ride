@@ -1,6 +1,14 @@
-import { KeyboardEvent as ReactKeyboardEvent, PointerEvent as ReactPointerEvent, useEffect, useRef, useState } from 'react';
+import {
+  CSSProperties,
+  KeyboardEvent as ReactKeyboardEvent,
+  PointerEvent as ReactPointerEvent,
+  useEffect,
+  useRef,
+  useState,
+} from 'react';
+import { Link, useInRouterContext } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
-import { Check, ImagePlus, Trash2, ZoomIn, ZoomOut } from 'lucide-react';
+import { Check, Download, ExternalLink, ImagePlus, Shuffle, Trash2, ZoomIn, ZoomOut } from 'lucide-react';
 import { put, uploadFile } from '../api';
 import {
   ANIMATED_AVATARS,
@@ -18,24 +26,40 @@ import {
   DEFAULT_ANIMATED_AVATAR,
   encodeAvatarColor,
   encodeAvatarIcon,
+  encodeGrokBotIcon,
   getAnimatedAvatarMeta,
+  type GrokBotSpec,
   GrokBotSvg,
   isAnimatedAvatar,
+  isGrokBotIcon,
   isShapeableAvatar,
   MuseBotSvg,
   parseAvatarColor,
   parseAvatarIcon,
+  parseGrokBotIcon,
   STATIC_AVATAR_ICON_KEYS,
 } from '../avatarStyle';
 import { clampOffset, coverSize, cropToFile, loadImage } from '../cropImage';
+import {
+  buildStandaloneGrokBotSvg,
+  DEFAULT_GROKBOT_SPEC,
+  downloadBlob,
+  GROKBOT_COLOR_PALETTES,
+  grokBotFilename,
+  type GrokBotMove,
+  randomGrokBotSpec,
+  renderGrokBotPngBlob,
+} from '../grokBotStudio';
+import GrokBotControls from './GrokBotControls';
+import GrokBotStudioSvg, { GrokBotStageBackdrop } from './GrokBotSvg';
 import { Avatar, Button, ErrorBox, Modal, Tabs, useAction } from './ui';
 
-type Mode = 'animated' | 'photo' | 'initials' | 'icon';
+type Mode = 'animated' | 'studio' | 'photo' | 'initials' | 'icon';
 
 /** Side of the crop circle, in CSS pixels. */
 const VIEW = 240;
 
-/** Pick how your avatar looks: coloured animated Grace Ride characters, a cropped photo, your initial, or an icon. */
+/** Pick how your avatar looks: coloured animated Grace Ride characters, Grok Bot Studio, a cropped photo, your initial, or an icon. */
 export default function AvatarEditor({
   name,
   current,
@@ -48,23 +72,30 @@ export default function AvatarEditor({
   onSaved: () => void | Promise<unknown>;
 }) {
   const { t } = useTranslation('profile');
+  const { t: ts } = useTranslation('studio');
+  const inRouter = useInRouterContext();
   const { busy, error, run } = useAction();
   const initialBg = parseAvatarColor(current.avatar_color);
-  const initialIcon = parseAvatarIcon(current.avatar_icon);
+  const initialGrokBot = parseGrokBotIcon(current.avatar_icon);
+  const initialIcon = parseAvatarIcon(initialGrokBot ? null : current.avatar_icon);
   const hasAnyAvatar = !!(current.photo_file_id || current.avatar_icon || current.avatar_color);
   const [mode, setMode] = useState<Mode>(
     current.photo_file_id
       ? 'photo'
-      : initialIcon.icon === 'initials'
-      ? 'initials'
-      : isAnimatedAvatar(initialIcon.icon)
-      ? 'animated'
-      : initialIcon.icon
-      ? 'icon'
-      : initialBg.bgColor || initialBg.bgShape !== 'circle'
-      ? 'initials'
-      : 'animated',
+      : isGrokBotIcon(current.avatar_icon)
+        ? 'studio'
+        : initialIcon.icon === 'initials'
+          ? 'initials'
+          : isAnimatedAvatar(initialIcon.icon)
+            ? 'animated'
+            : initialIcon.icon
+              ? 'icon'
+              : initialBg.bgColor || initialBg.bgShape !== 'circle'
+                ? 'initials'
+                : 'animated',
   );
+  const [studioSpec, setStudioSpec] = useState<GrokBotSpec>(initialGrokBot ?? DEFAULT_GROKBOT_SPEC);
+  const [studioMove, setStudioMove] = useState<GrokBotMove>('idle');
   const [color, setColor] = useState<AvatarColor | null>(initialBg.bgColor);
   const [bgShape, setBgShape] = useState<AvatarBgShape>(initialBg.bgShape);
   const [explicitDefault, setExplicitDefault] = useState(false);
@@ -135,9 +166,12 @@ export default function AvatarEditor({
       : color;
   const colorField = encodeAvatarColor(effectiveColor, bgShape);
   const encodedIcon =
-    mode === 'initials'
-      ? encodeAvatarIcon(null, null, fgColor)
-      : encodeAvatarIcon(icon, avatarShape, fgColor);
+    mode === 'studio'
+      ? encodeGrokBotIcon(studioSpec)
+      : mode === 'initials'
+        ? encodeAvatarIcon(null, null, fgColor)
+        : encodeAvatarIcon(icon, avatarShape, fgColor);
+
   const save = () =>
     run(async () => {
       setLocalErr(null);
@@ -153,6 +187,8 @@ export default function AvatarEditor({
         } else {
           throw new Error(t('avatarPickPhoto'));
         }
+      } else if (mode === 'studio') {
+        await put('/me', { clear_photo: true, avatar_icon: encodeGrokBotIcon(studioSpec), avatar_color: '' });
       } else if (mode === 'icon' || mode === 'animated') {
         if (!icon) throw new Error(t('avatarPickIcon'));
         await put('/me', { clear_photo: true, avatar_icon: encodedIcon, avatar_color: colorField });
@@ -170,8 +206,28 @@ export default function AvatarEditor({
       onClose();
     }, t('avatarRemoved'));
 
+  const handleDownloadStudioPng = async () => {
+    try {
+      setLocalErr(null);
+      const blob = await renderGrokBotPngBlob(studioSpec, 512);
+      downloadBlob(blob, grokBotFilename(studioSpec, 'png'));
+    } catch {
+      setLocalErr(ts('copyFailed'));
+    }
+  };
+
+  const handleDownloadStudioSvg = () => {
+    const svg = buildStandaloneGrokBotSvg(studioSpec, 512);
+    const blob = new Blob([svg], { type: 'image/svg+xml;charset=utf-8' });
+    downloadBlob(blob, grokBotFilename(studioSpec, 'svg'));
+  };
+
   const hasCustom = !!(current.photo_file_id || current.avatar_icon || current.avatar_color);
   const size = picked ? coverSize(picked.img.naturalWidth, picked.img.naturalHeight, VIEW, crop.zoom) : null;
+  const studioReadout = `${ts(`colors.${studioSpec.color}`)} ${ts(`shapes.${studioSpec.shape}`)} · ${ts(`faces.${studioSpec.face}`)}`.toUpperCase();
+  const studioGlowVars = {
+    '--grok-glow': GROKBOT_COLOR_PALETTES[studioSpec.color].glow,
+  } as CSSProperties;
 
   return (
     <Modal
@@ -217,6 +273,33 @@ export default function AvatarEditor({
                 }}
               />
             </button>
+          ) : mode === 'studio' ? (
+            <div className="grok-studio-mini-stage" style={studioGlowVars}>
+              <div className="grok-studio-stage-topbar">
+                <span className="grok-studio-status">{studioReadout}</span>
+                <button
+                  type="button"
+                  className="grok-studio-surprise-btn"
+                  onClick={() => setStudioSpec(randomGrokBotSpec(studioSpec))}
+                >
+                  <Shuffle size={13} aria-hidden="true" />
+                  <span>{ts('surpriseMe')}</span>
+                </button>
+              </div>
+              <div className="grok-studio-stage compact">
+                <GrokBotStageBackdrop color={studioSpec.color} />
+                <GrokBotStudioSvg
+                  shape={studioSpec.shape}
+                  face={studioSpec.face}
+                  color={studioSpec.color}
+                  move={studioMove}
+                  variant="stage"
+                  trackCursor
+                  className="grok-studio-stage-svg"
+                />
+                <div className="grok-studio-cursor-hint">{ts('cursorHint')}</div>
+              </div>
+            </div>
           ) : (
             <Avatar
               name={name}
@@ -248,11 +331,63 @@ export default function AvatarEditor({
           }}
           items={[
             { value: 'animated', label: t('avatarAnimated') },
+            { value: 'studio', label: t('avatarStudio') },
             { value: 'photo', label: t('avatarPhoto') },
             { value: 'initials', label: t('avatarInitials') },
             { value: 'icon', label: t('avatarIcon') },
           ]}
         />
+
+        {mode === 'studio' && (
+          <div className="stack-sm">
+            <GrokBotControls
+              spec={studioSpec}
+              onSpecChange={setStudioSpec}
+              move={studioMove}
+              onMoveChange={setStudioMove}
+              compact
+            />
+            <div className="grok-studio-mini-footer">
+              <div className="btn-row">
+                <button
+                  type="button"
+                  className="btn secondary sm"
+                  onClick={() => void handleDownloadStudioPng()}
+                >
+                  <Download size={14} aria-hidden="true" />
+                  <span>{ts('downloadPng')}</span>
+                </button>
+                <button
+                  type="button"
+                  className="btn secondary sm"
+                  onClick={handleDownloadStudioSvg}
+                >
+                  <Download size={14} aria-hidden="true" />
+                  <span>{ts('downloadSvg')}</span>
+                </button>
+              </div>
+              {inRouter ? (
+                <Link
+                  to={`/studio?shape=${studioSpec.shape}&color=${studioSpec.color}&face=${studioSpec.face}`}
+                  className="grok-studio-open-link"
+                  onClick={onClose}
+                >
+                  <span>{ts('openFullStudio')}</span>
+                  <ExternalLink size={14} aria-hidden="true" />
+                </Link>
+              ) : (
+                <a
+                  href={`/studio?shape=${studioSpec.shape}&color=${studioSpec.color}&face=${studioSpec.face}`}
+                  className="grok-studio-open-link"
+                  onClick={onClose}
+                >
+                  <span>{ts('openFullStudio')}</span>
+                  <ExternalLink size={14} aria-hidden="true" />
+                </a>
+              )}
+            </div>
+          </div>
+        )}
 
         {mode === 'photo' && (
           <div className="stack-sm">
@@ -433,36 +568,38 @@ export default function AvatarEditor({
           </div>
         )}
 
-        <div className="stack-xs">
-          <div className="bold small">{t('avatarBgShape')}</div>
-          <div className="avatar-shape-grid" role="radiogroup" aria-label={t('avatarBgShape')}>
-            {AVATAR_BG_SHAPES.map((s) => {
-              const isSel = bgShape === s;
-              return (
-                <button
-                  key={s}
-                  type="button"
-                  role="radio"
-                  aria-checked={isSel}
-                  aria-label={t(`avatarBgShape_${s}`)}
-                  title={t(`avatarBgShape_${s}`)}
-                  className={`avatar-shape-opt${isSel ? ' on' : ''}`}
-                  onClick={() => setBgShape(s)}
-                >
-                  {s === 'hexagon' || s === 'cloud' ? (
-                    <svg viewBox="0 0 48 48" width="20" height="20" fill="none" stroke="currentColor" strokeWidth="3.4" aria-hidden="true">
-                      <path d={AVATAR_BG_SHAPE_PATHS[s]} />
-                    </svg>
-                  ) : (
-                    <span className={`avatar-bg-mini av-bg-${s}`} aria-hidden="true" />
-                  )}
-                </button>
-              );
-            })}
+        {mode !== 'studio' && (
+          <div className="stack-xs">
+            <div className="bold small">{t('avatarBgShape')}</div>
+            <div className="avatar-shape-grid" role="radiogroup" aria-label={t('avatarBgShape')}>
+              {AVATAR_BG_SHAPES.map((s) => {
+                const isSel = bgShape === s;
+                return (
+                  <button
+                    key={s}
+                    type="button"
+                    role="radio"
+                    aria-checked={isSel}
+                    aria-label={t(`avatarBgShape_${s}`)}
+                    title={t(`avatarBgShape_${s}`)}
+                    className={`avatar-shape-opt${isSel ? ' on' : ''}`}
+                    onClick={() => setBgShape(s)}
+                  >
+                    {s === 'hexagon' || s === 'cloud' ? (
+                      <svg viewBox="0 0 48 48" width="20" height="20" fill="none" stroke="currentColor" strokeWidth="3.4" aria-hidden="true">
+                        <path d={AVATAR_BG_SHAPE_PATHS[s]} />
+                      </svg>
+                    ) : (
+                      <span className={`avatar-bg-mini av-bg-${s}`} aria-hidden="true" />
+                    )}
+                  </button>
+                );
+              })}
+            </div>
           </div>
-        </div>
+        )}
 
-        {mode !== 'photo' && (
+        {mode !== 'photo' && mode !== 'studio' && (
           <div className="stack-xs">
             <div className="bold small">{t('avatarColor')}</div>
             <div className="avatar-swatches" role="radiogroup" aria-label={t('avatarColor')}>

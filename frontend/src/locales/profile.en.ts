@@ -326,4 +326,7 @@ export default {
   proxyPhone: 'Phone (optional)',
   proxyNotes: 'Mobility or assistance notes (optional)',
   proxyNotesPlaceholder: 'E.g. Uses wheelchair or needs front-seat space',
+  avatarStudio: 'Grok Studio',
+  openGrokStudio: 'Grok Bot Studio',
+  openGrokStudioHint: 'Build a custom 3D Grok bot avatar, preview animations & export PNG/SVG',
 };

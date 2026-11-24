@@ -4,6 +4,7 @@ import { Lock } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import { Tone } from '../../format';
 import { LoadingMark } from '../Brand';
+import GrokBotStudioSvg from '../GrokBotSvg';
 import {
   AVATAR_BG_SHAPE_PATHS,
   AVATAR_ICONS,
@@ -14,6 +15,7 @@ import {
   MuseBotSvg,
   parseAvatarColor,
   parseAvatarIcon,
+  parseGrokBotIcon,
 } from '../../avatarStyle';
 
 export interface EmptyStateProps {
@@ -246,14 +248,15 @@ export interface AvatarProps {
 /** A member's picture: their photo, else their chosen icon/mascot, else their first initial, on their chosen colour and shape. */
 export function Avatar({ name, fileId, color, icon, size, src }: AvatarProps) {
   const { bgColor, bgShape } = parseAvatarColor(color);
-  const { icon: baseIcon, avatarShape, fgColor } = parseAvatarIcon(icon);
+  const img = src ?? (fileId ? `/api/files/${fileId}` : null);
+  const grokBotSpec = !img ? parseGrokBotIcon(icon) : null;
+  const { icon: baseIcon, avatarShape, fgColor } = parseAvatarIcon(grokBotSpec ? null : icon);
   const hasPresetIcon = !!(
     baseIcon &&
     baseIcon !== 'initials' &&
     Object.prototype.hasOwnProperty.call(AVATAR_ICONS, baseIcon)
   );
-  const img = src ?? (fileId ? `/api/files/${fileId}` : null);
-  const isAnim = isAnimatedAvatar(baseIcon) || hasPresetIcon;
+  const isAnim = !!grokBotSpec || isAnimatedAvatar(baseIcon) || hasPresetIcon;
   const hasSvgBg = !img && (bgShape === 'hexagon' || bgShape === 'cloud');
   const cls = [
     'avatar',
@@ -262,6 +265,7 @@ export function Avatar({ name, fileId, color, icon, size, src }: AvatarProps) {
     bgShape !== 'circle' ? `av-bg-${bgShape}` : '',
     fgColor ? `av-fg-${fgColor}` : '',
     isAnim ? 'avatar-animated' : '',
+    grokBotSpec ? 'avatar-grokbot' : '',
     hasSvgBg ? 'avatar-svg-bg' : '',
   ]
     .filter(Boolean)
@@ -278,6 +282,15 @@ export function Avatar({ name, fileId, color, icon, size, src }: AvatarProps) {
       )}
       {img ? (
         <img src={img} alt="" />
+      ) : grokBotSpec ? (
+        <GrokBotStudioSvg
+          shape={grokBotSpec.shape}
+          face={grokBotSpec.face}
+          color={grokBotSpec.color}
+          variant="avatar"
+          trackCursor={size === 'lg' || size === 'xl'}
+          className="avatar-icon avatar-grokbot-svg"
+        />
       ) : baseIcon === 'grok' && avatarShape && avatarShape !== 'hexagon' ? (
         <GrokBotSvg shape={avatarShape} className="avatar-icon" />
       ) : baseIcon === 'muse' && avatarShape && avatarShape !== 'cloud' ? (

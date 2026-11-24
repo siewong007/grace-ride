@@ -326,4 +326,7 @@ export default {
   proxyPhone: '电话（可选）',
   proxyNotes: '行动协助备注（可选）',
   proxyNotesPlaceholder: '例如：需用轮椅或安排前座',
+  avatarStudio: 'Grok 工坊',
+  openGrokStudio: 'Grok 机器人头像工坊',
+  openGrokStudioHint: '自由搭配形状、配色与表情，预览 15 种动画并导出 PNG/SVG',
 };

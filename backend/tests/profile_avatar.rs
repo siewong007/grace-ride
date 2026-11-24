@@ -401,3 +401,50 @@ async fn achievement_badges_advance_through_bronze_silver_gold_and_platinum() {
         .iter()
         .all(|t| t["reached"] == true));
 }
+
+#[tokio::test]
+async fn grokbot_studio_combinations_validate_and_persist() {
+    let (app, st) = setup().await;
+    let member = login(&st, "member@example.org").await;
+    let me = || call(&app, Method::GET, "/api/auth/me", Some(&member), None);
+    let put =
+        |body: serde_json::Value| call(&app, Method::PUT, "/api/me", Some(&member), Some(body));
+
+    // Bare "grokbot" and full "grokbot:<shape>:<face>:<color>" studio specs persist cleanly.
+    for valid_icon in [
+        "grokbot",
+        "grokbot:circle:neutral:blue",
+        "grokbot:cloud:excited:brown",
+        "grokbot:pebble:suspicious:ink",
+        "grokbot:squircle:happy:cream",
+        "grokbot:capsule:laughing:turquoise",
+        "grokbot:triangle:angry:red",
+        "grokbot:hexagon:curious:orange",
+        "grokbot:droplet:sleepy:grey",
+    ] {
+        let r = put(json!({
+            "clear_photo": true,
+            "avatar_icon": valid_icon,
+            "avatar_color": "",
+        }))
+        .await;
+        assert_eq!(r.status, StatusCode::OK, "{valid_icon}: {}", r.json);
+        let m = me().await;
+        assert_eq!(m.json["avatar_icon"], valid_icon, "{}", m.json);
+        assert!(m.json["avatar_color"].is_null(), "{}", m.json);
+    }
+
+    // Invalid shape, face, colour, missing segment, or extra segment is rejected with 400.
+    for bad_icon in [
+        "grokbot:",
+        "grokbot:circle:neutral",
+        "grokbot:octagon:neutral:blue",
+        "grokbot:circle:winking:blue",
+        "grokbot:circle:neutral:neon",
+        "grokbot:circle:neutral:#3b93f0",
+        "grokbot:circle:neutral:blue:extra",
+    ] {
+        let r = put(json!({"avatar_icon": bad_icon})).await;
+        assert_eq!(r.status, StatusCode::BAD_REQUEST, "{bad_icon}: {}", r.json);
+    }
+}
