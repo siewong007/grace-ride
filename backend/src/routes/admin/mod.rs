@@ -77,7 +77,11 @@ pub fn router() -> Router<AppState> {
             "/admin/settings/system",
             get(settings::get_system_settings).put(settings::update_system_settings),
         )
+        .route("/admin/reports/capabilities", get(reports::capabilities))
+        .route("/admin/reports/overview", get(reports::overview_report))
+        .route("/admin/reports/events", get(reports::events_report))
         .route("/admin/reports/demand", get(reports::demand_report))
+        .route("/admin/reports/finance", get(reports::finance_report))
         .route(
             "/admin/settings/alerts",
             get(settings::get_alert_settings).put(settings::update_alert_settings),

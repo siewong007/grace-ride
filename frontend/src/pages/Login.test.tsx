@@ -96,7 +96,6 @@ describe('Login', () => {
     );
 
     expect(screen.getByText('passkeyDetected')).toBeInTheDocument();
-    expect(screen.getByText('thisDevice')).toBeInTheDocument();
     expect(screen.getByText('alice@example.com')).toBeInTheDocument();
     expect(screen.queryByRole('textbox')).toBeNull();
     expect(screen.getByRole('button', { name: /loginWithPasskey/i })).toBeInTheDocument();

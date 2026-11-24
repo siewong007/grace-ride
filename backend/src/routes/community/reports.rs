@@ -34,7 +34,7 @@ pub(super) struct BadgeQuery {
 
 /// Parse `YYYY-MM` without slicing by byte offset: a 7-byte non-ASCII string used
 /// to panic the handler when a slice landed inside a multi-byte character.
-pub(super) fn parse_report_month(raw: &str) -> Option<(i32, u32)> {
+pub(crate) fn parse_report_month(raw: &str) -> Option<(i32, u32)> {
     let b = raw.as_bytes();
     if b.len() != 7
         || b[4] != b'-'
@@ -479,13 +479,15 @@ pub(super) async fn my_badges(
 
 /// 个人月报 — only the member themself or an admin (获授权人员) may view.
 /// Supports driver/passenger filter and monthly/quarterly/yearly ranges.
+/// Sections are strictly filtered and redacted according to the caller's role privileges.
 pub(super) async fn monthly_report(
     State(st): State<AppState>,
     u: CurrentUser,
     Query(q): Query<ReportQuery>,
 ) -> AppResult<Json<Value>> {
     let target = q.user_id.unwrap_or(u.id);
-    if target != u.id {
+    let is_self = target == u.id;
+    if !is_self {
         require(&u, Page::AdminReports, Act::View)?;
         if !crate::routes::admin::has_global_report_scope(&u) {
             return Err(forbidden(u.lang, ErrorKey::NoPermission));
@@ -493,6 +495,44 @@ pub(super) async fn monthly_report(
     } else {
         require(&u, Page::Report, Act::View)?;
     }
+
+    let can_events = if is_self {
+        true
+    } else {
+        u.can(Page::AdminEvents, Act::View) || u.traffic_is_global()
+    };
+    let can_driving = if is_self {
+        true
+    } else {
+        u.can(Page::AdminRides, Act::View)
+            || u.can(Page::AdminPlan, Act::View)
+            || u.can(Page::AdminReimbReview, Act::View)
+            || u.can(Page::AdminReimbPay, Act::View)
+    };
+    let can_passenger_rides = if is_self {
+        true
+    } else {
+        u.can(Page::AdminRides, Act::View)
+            || u.can(Page::AdminPlan, Act::View)
+            || u.can(Page::AdminEvents, Act::View)
+            || u.traffic_is_global()
+    };
+    let can_costs_paid = if is_self {
+        true
+    } else {
+        u.can(Page::AdminBills, Act::View)
+    };
+    let can_reimb_review = !is_self && u.can(Page::AdminReimbReview, Act::View);
+    let can_reimb_pay = !is_self && u.can(Page::AdminReimbPay, Act::View);
+    let can_reimb_summary = if is_self {
+        u.can(Page::Reimbursements, Act::View)
+    } else {
+        can_reimb_review || can_reimb_pay
+    };
+    let can_organised =
+        is_self && (u.can(Page::Events, Act::Create) || u.can(Page::Settlements, Act::View));
+    let can_organised_settlements = is_self && u.can(Page::Settlements, Act::View);
+
     let report_lang = q.lang.as_deref().map(Lang::from_code).unwrap_or(u.lang);
     let rtype = q.r#type.as_deref().unwrap_or("all");
     let range = q.range.as_deref().unwrap_or("monthly");
@@ -535,72 +575,241 @@ pub(super) async fn monthly_report(
 
     // `rides_driven` is the target's own driving, never a ride they merely took as a
     // passenger. The type filter narrows which side of the report is populated.
-    let (driven,): (i64,) = if rtype == "passenger" {
-        (0,)
+    let (driven, dist_total, reimb_total): (Option<i64>, Option<i64>, Option<i64>) = if !can_driving
+    {
+        (None, None, None)
+    } else if rtype == "passenger" {
+        (Some(0), Some(0), Some(0))
     } else {
-        sqlx::query_as(
-            "SELECT COUNT(*) FROM rides r WHERE r.driver_id=$1 AND r.status='completed' AND r.pickup_at >= $2 AND r.pickup_at < $3",
+        let (cnt, dist, reimb): (i64, Option<i64>, i64) = sqlx::query_as(
+            "SELECT COUNT(*), COALESCE(SUM(r.distance_km),0)::BIGINT, COALESCE(SUM(r.reimbursement_amount_cents),0)::BIGINT
+             FROM rides r WHERE r.driver_id=$1 AND r.status='completed' AND r.pickup_at >= $2 AND r.pickup_at < $3",
         )
         .bind(target)
         .bind(&start)
         .bind(&end)
         .fetch_one(&st.db)
-        .await?
+        .await?;
+        (Some(cnt), Some(dist.unwrap_or(0)), Some(reimb))
     };
 
-    let (received,): (i64,) = if rtype == "driver" {
-        (0,)
+    let received: Option<i64> = if !can_passenger_rides {
+        None
+    } else if rtype == "driver" {
+        Some(0)
     } else {
-        sqlx::query_as(
+        let (cnt,): (i64,) = sqlx::query_as(
             "SELECT COUNT(*) FROM rides r WHERE r.passenger_id=$1 AND r.status='completed' AND r.pickup_at >= $2 AND r.pickup_at < $3",
         )
         .bind(target)
         .bind(&start)
         .bind(&end)
         .fetch_one(&st.db)
-        .await?
+        .await?;
+        Some(cnt)
     };
 
-    let (dist_total, reimb_total): (Option<i64>, i64) = sqlx::query_as(
-        "SELECT COALESCE(SUM(r.distance_km),0)::BIGINT, COALESCE(SUM(r.reimbursement_amount_cents),0)::BIGINT FROM rides r WHERE r.driver_id=$1 AND r.status='completed' AND r.pickup_at >= $2 AND r.pickup_at < $3",
-    )
-    .bind(target)
-    .bind(&start)
-    .bind(&end)
-    .fetch_one(&st.db)
-    .await?;
+    let (attended, events, total_attended): (
+        Vec<(String, i64)>,
+        Vec<(i64, String, String, String)>,
+        Option<i64>,
+    ) = if !can_events {
+        (Vec::new(), Vec::new(), None)
+    } else {
+        let attended: Vec<(String, i64)> = sqlx::query_as(
+                "SELECT e.kind, COUNT(*) FROM event_signups s JOIN events e ON e.id=s.event_id
+                 WHERE s.user_id=$1 AND s.attended=1 AND e.starts_at >= $2 AND e.starts_at < $3 GROUP BY e.kind",
+            )
+            .bind(target)
+            .bind(&start)
+            .bind(&end)
+            .fetch_all(&st.db)
+            .await?;
+        let events: Vec<(i64, String, String, String)> = sqlx::query_as(
+                "SELECT e.id, e.title, e.kind, e.starts_at FROM event_signups s JOIN events e ON e.id=s.event_id
+                 WHERE s.user_id=$1 AND s.attended=1 AND e.starts_at >= $2 AND e.starts_at < $3 ORDER BY e.starts_at",
+            )
+            .bind(target)
+            .bind(&start)
+            .bind(&end)
+            .fetch_all(&st.db)
+            .await?;
+        let sum: i64 = attended.iter().map(|a| a.1).sum();
+        (attended, events, Some(sum))
+    };
 
-    let attended: Vec<(String, i64)> = sqlx::query_as(
-        "SELECT e.kind, COUNT(*) FROM event_signups s JOIN events e ON e.id=s.event_id
-         WHERE s.user_id=$1 AND s.attended=1 AND e.starts_at >= $2 AND e.starts_at < $3 GROUP BY e.kind",
-    )
-    .bind(target)
-    .bind(&start)
-    .bind(&end)
-    .fetch_all(&st.db)
-    .await?;
+    let paid: Option<i64> = if !can_costs_paid {
+        None
+    } else {
+        let (p,): (i64,) = sqlx::query_as(
+            "SELECT COALESCE(SUM(sh.amount_cents),0)::BIGINT FROM settlement_shares sh JOIN settlements s ON s.id=sh.settlement_id JOIN events e ON e.id=s.event_id
+             WHERE sh.user_id=$1 AND sh.status='confirmed' AND e.starts_at >= $2 AND e.starts_at < $3",
+        )
+        .bind(target)
+        .bind(&start)
+        .bind(&end)
+        .fetch_one(&st.db)
+        .await?;
+        Some(p)
+    };
 
-    let events: Vec<(i64, String, String, String)> = sqlx::query_as(
-        "SELECT e.id, e.title, e.kind, e.starts_at FROM event_signups s JOIN events e ON e.id=s.event_id
-         WHERE s.user_id=$1 AND s.attended=1 AND e.starts_at >= $2 AND e.starts_at < $3 ORDER BY e.starts_at",
-    )
-    .bind(target)
-    .bind(&start)
-    .bind(&end)
-    .fetch_all(&st.db)
-    .await?;
+    let reimbursements_summary = if can_reimb_summary {
+        let payout_only = !is_self && can_reimb_pay && !can_reimb_review;
+        let rows: Vec<(String, i64, i64)> = if payout_only {
+            sqlx::query_as(
+                "SELECT status, COUNT(*)::BIGINT, COALESCE(SUM(amount_cents),0)::BIGINT
+                 FROM reimbursements
+                 WHERE user_id=$1 AND created_at >= $2 AND created_at < $3 AND status IN ('approved','paid')
+                 GROUP BY status",
+            )
+            .bind(target)
+            .bind(&start)
+            .bind(&end)
+            .fetch_all(&st.db)
+            .await?
+        } else {
+            sqlx::query_as(
+                "SELECT status, COUNT(*)::BIGINT, COALESCE(SUM(amount_cents),0)::BIGINT
+                 FROM reimbursements
+                 WHERE user_id=$1 AND created_at >= $2 AND created_at < $3
+                 GROUP BY status",
+            )
+            .bind(target)
+            .bind(&start)
+            .bind(&end)
+            .fetch_all(&st.db)
+            .await?
+        };
+        let mut pending_count = 0i64;
+        let mut pending_cents = 0i64;
+        let mut approved_count = 0i64;
+        let mut approved_cents = 0i64;
+        let mut paid_count = 0i64;
+        let mut paid_cents = 0i64;
+        let mut returned_count = 0i64;
+        let mut rejected_count = 0i64;
+        for (st_name, cnt, amt) in rows {
+            match st_name.as_str() {
+                "pending" => {
+                    pending_count = cnt;
+                    pending_cents = amt;
+                }
+                "approved" => {
+                    approved_count = cnt;
+                    approved_cents = amt;
+                }
+                "paid" => {
+                    paid_count = cnt;
+                    paid_cents = amt;
+                }
+                "returned" => returned_count = cnt,
+                "rejected" => rejected_count = cnt,
+                _ => {}
+            }
+        }
+        if payout_only {
+            json!({
+                "claim_count": approved_count + paid_count,
+                "pending_count": Value::Null,
+                "pending_cents": Value::Null,
+                "approved_count": approved_count,
+                "approved_cents": approved_cents,
+                "paid_count": paid_count,
+                "paid_cents": paid_cents,
+                "returned_count": Value::Null,
+                "rejected_count": Value::Null,
+            })
+        } else {
+            json!({
+                "claim_count": pending_count + approved_count + paid_count + returned_count + rejected_count,
+                "pending_count": pending_count,
+                "pending_cents": pending_cents,
+                "approved_count": approved_count,
+                "approved_cents": approved_cents,
+                "paid_count": paid_count,
+                "paid_cents": paid_cents,
+                "returned_count": returned_count,
+                "rejected_count": rejected_count,
+            })
+        }
+    } else {
+        Value::Null
+    };
 
-    let (paid,): (i64,) = sqlx::query_as(
-        "SELECT COALESCE(SUM(sh.amount_cents),0)::BIGINT FROM settlement_shares sh JOIN settlements s ON s.id=sh.settlement_id JOIN events e ON e.id=s.event_id
-         WHERE sh.user_id=$1 AND sh.status='confirmed' AND e.starts_at >= $2 AND e.starts_at < $3",
-    )
-    .bind(target)
-    .bind(&start)
-    .bind(&end)
-    .fetch_one(&st.db)
-    .await?;
+    let organised_events = if can_organised {
+        let (events_count, total_going, total_attended): (i64, i64, i64) = sqlx::query_as(
+            "SELECT
+                COUNT(*) FILTER (WHERE e.status <> 'cancelled')::BIGINT,
+                COALESCE((SELECT COUNT(*) FROM event_signups s JOIN events e2 ON e2.id = s.event_id
+                          WHERE e2.created_by = $1 AND e2.status NOT IN ('draft', 'cancelled')
+                            AND e2.starts_at >= $2 AND e2.starts_at < $3 AND s.status = 'going'), 0)::BIGINT,
+                COALESCE((SELECT COUNT(*) FROM event_signups s JOIN events e2 ON e2.id = s.event_id
+                          WHERE e2.created_by = $1 AND e2.status NOT IN ('draft', 'cancelled')
+                            AND e2.starts_at >= $2 AND e2.starts_at < $3 AND s.status <> 'cancelled' AND s.attended = 1), 0)::BIGINT
+             FROM events e
+             WHERE e.created_by = $1 AND e.status <> 'draft' AND e.starts_at >= $2 AND e.starts_at < $3",
+        )
+        .bind(target)
+        .bind(&start)
+        .bind(&end)
+        .fetch_one(&st.db)
+        .await?;
+        let attendance_rate_pct = if total_going > 0 {
+            (total_attended * 100) / total_going
+        } else {
+            0
+        };
+        let settlements = if can_organised_settlements {
+            let (s_count, gross_cents, subsidy_cents, collected_cents, outstanding_cents): (
+                i64,
+                i64,
+                i64,
+                i64,
+                i64,
+            ) = sqlx::query_as(
+                "WITH sc AS (
+                    SELECT s.id,
+                           s.subsidy_cents,
+                           COALESCE((SELECT SUM(si.amount_cents) FROM settlement_items si WHERE si.settlement_id = s.id), 0)::BIGINT AS gross_cents,
+                           COALESCE((SELECT SUM(sh.amount_cents) FROM settlement_shares sh WHERE sh.settlement_id = s.id AND sh.status = 'confirmed'), 0)::BIGINT AS collected_cents
+                    FROM settlements s
+                    JOIN events e ON e.id = s.event_id
+                    WHERE s.created_by = $1 AND s.status <> 'draft'
+                      AND e.starts_at >= $2 AND e.starts_at < $3
+                )
+                SELECT COUNT(*)::BIGINT,
+                       COALESCE(SUM(gross_cents), 0)::BIGINT,
+                       COALESCE(SUM(subsidy_cents), 0)::BIGINT,
+                       COALESCE(SUM(collected_cents), 0)::BIGINT,
+                       COALESCE(SUM(GREATEST(0, (gross_cents - subsidy_cents) - collected_cents)), 0)::BIGINT
+                FROM sc",
+            )
+            .bind(target)
+            .bind(&start)
+            .bind(&end)
+            .fetch_one(&st.db)
+            .await?;
+            json!({
+                "count": s_count,
+                "gross_cents": gross_cents,
+                "subsidy_cents": subsidy_cents,
+                "collected_cents": collected_cents,
+                "outstanding_cents": outstanding_cents,
+            })
+        } else {
+            Value::Null
+        };
+        json!({
+            "events_count": events_count,
+            "total_going": total_going,
+            "total_attended": total_attended,
+            "attendance_rate_pct": attendance_rate_pct,
+            "settlements": settlements,
+        })
+    } else {
+        Value::Null
+    };
 
-    let total_attended: i64 = attended.iter().map(|a| a.1).sum();
     Ok(Json(json!({
         "user": {"id": target, "name": name},
         "month": month,
@@ -610,12 +819,23 @@ pub(super) async fn monthly_report(
         "period_end": end,
         "rides_driven": driven,
         "rides_received": received,
-        "distance_km": dist_total.unwrap_or(0),
+        "distance_km": dist_total,
         "reimbursement_cents": reimb_total,
         "events_attended": total_attended,
         "by_kind": attended.into_iter().map(|(k, n)| json!({"kind": k, "count": n})).collect::<Vec<_>>(),
         "events": events.into_iter().map(|(id, t, k, at)| json!({"id": id, "title": t, "kind": k, "starts_at": at})).collect::<Vec<_>>(),
         "costs_paid_cents": paid,
+        "visible_sections": {
+            "events": can_events,
+            "driving": can_driving,
+            "passenger_rides": can_passenger_rides,
+            "costs_paid": can_costs_paid,
+            "reimbursements": can_reimb_summary,
+            "organised": can_organised,
+            "badges": true,
+        },
+        "reimbursements_summary": reimbursements_summary,
+        "organised_events": organised_events,
         "badges": compute_badges(&st, target, report_lang).await?,
     })))
 }

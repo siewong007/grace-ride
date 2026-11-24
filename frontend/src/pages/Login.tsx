@@ -142,18 +142,12 @@ export default function Login() {
           <div className="auth-header-row row between">
             <div className="row nowrap auth-brand">
               <LogoMark size={36} />
-              <div>
-                <Wordmark />
-                <p className="muted small">{t('brandSub', { ns: 'layout' })}</p>
-              </div>
+              <Wordmark />
             </div>
             <PublicDisplayBar />
           </div>
 
-          <div>
-            <h1 className="auth-title">{t('welcomeBack')}</h1>
-            <p className="muted">{t('welcomeBilingual')}</p>
-          </div>
+          <h1 className="auth-title">{t('welcomeBack')}</h1>
 
           {inApp && (
             <Notice tone="warning" icon={<ExternalLink size={20} />}>
@@ -173,22 +167,10 @@ export default function Login() {
           {/* Passkey primary login form */}
           <form className="stack" onSubmit={onPasskey}>
             {hasRecognizedDevicePasskey && devicePasskey ? (
-              <div className="passkey-device-card stack-sm">
-                <div className="row items-center gap-sm">
-                  <span className="notice-icon text-primary">
-                    <Fingerprint size={24} />
-                  </span>
-                  <div className="stack-none" style={{ minWidth: 0, flex: 1 }}>
-                    <div className="bold small row items-center gap-xs">
-                      <span>{t('passkeyDetected')}</span>
-                      <span className="pill success tiny">{t('thisDevice')}</span>
-                    </div>
-                    <div className="text-ellipsis bold" style={{ fontSize: 'var(--fs-md)' }}>
-                      {devicePasskey.email}
-                    </div>
-                  </div>
-                </div>
-                <p className="muted tiny">{t('passkeyReadyHint')}</p>
+              <div className="passkey-device-line">
+                <Fingerprint size={18} aria-hidden="true" />
+                <span className="passkey-device-email">{devicePasskey.email}</span>
+                <span className="sr-only">{t('passkeyDetected')}</span>
               </div>
             ) : (
               <Field label={t('email')}>
@@ -228,47 +210,49 @@ export default function Login() {
               <div className="notice warning">{t('noPasskey')}</div>
             )}
 
-            {hasRecognizedDevicePasskey ? (
-              <Button
-                variant="ghost"
-                type="button"
-                block
-                disabled={busy}
-                onClick={() => {
-                  setSwitchingAccount(true);
-                  setEmail('');
-                }}
-              >
-                {t('switchAccount')}
-              </Button>
-            ) : devicePasskey && switchingAccount ? (
-              <Button
-                variant="ghost"
-                type="button"
-                block
-                disabled={busy}
-                onClick={() => {
-                  setSwitchingAccount(false);
-                  setEmail(devicePasskey.email);
-                }}
-              >
-                {t('useSavedPasskey', { email: devicePasskey.email })}
-              </Button>
-            ) : null}
+            <div className="auth-alt-actions">
+              {hasRecognizedDevicePasskey ? (
+                <button
+                  type="button"
+                  className="link-btn"
+                  disabled={busy}
+                  onClick={() => {
+                    setSwitchingAccount(true);
+                    setEmail('');
+                  }}
+                >
+                  {t('switchAccount')}
+                </button>
+              ) : devicePasskey && switchingAccount ? (
+                <button
+                  type="button"
+                  className="link-btn"
+                  disabled={busy}
+                  onClick={() => {
+                    setSwitchingAccount(false);
+                    setEmail(devicePasskey.email);
+                  }}
+                >
+                  {t('useSavedPasskey', { email: devicePasskey.email })}
+                </button>
+              ) : null}
+              {passkeySupported() && (
+                <button type="button" className="link-btn" disabled={busy} onClick={openRecoveryModal}>
+                  {t('emailRecovery')}
+                </button>
+              )}
+            </div>
 
-            <Button
-              variant={passkeySupported() ? 'ghost' : 'secondary'}
-              type="button"
-              block
-              disabled={busy}
-              onClick={openRecoveryModal}
-            >
-              {t('emailRecovery')}
-            </Button>
+            {/* Without passkeys, recovery is the only way in, so it gets a full button. */}
+            {!passkeySupported() && (
+              <Button variant="secondary" type="button" block disabled={busy} onClick={openRecoveryModal}>
+                {t('emailRecovery')}
+              </Button>
+            )}
 
-            <p className="muted small">{t('passkeyHelp')}</p>
-            <div>
-              <Link to="/terms">{t('title', { ns: 'terms' })}</Link>
+            <div className="auth-footnote">
+              <p className="muted small no-margin">{t('passkeyHelp')}</p>
+              <Link to="/terms" className="small">{t('title', { ns: 'terms' })}</Link>
             </div>
           </form>
 

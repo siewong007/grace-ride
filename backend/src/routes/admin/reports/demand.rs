@@ -1,92 +1,39 @@
-//! Admin ride-demand breakdown reports by area and time slot.
+//! Admin ride-demand breakdown reports by area, church group, and time slot.
 
 use std::collections::{BTreeMap, HashMap, HashSet};
 
 use axum::{
-    extract::{Path, Query, State},
+    extract::{Query, State},
     Json,
 };
 use chrono::{Datelike, NaiveDate};
-use serde::Deserialize;
 use serde_json::{json, Value};
 
+use super::{parse_period_window, PeriodQuery};
 use crate::auth::CurrentUser;
-use crate::error::{bad, AppResult};
+use crate::error::{forbidden, AppResult};
 use crate::i18n::ErrorKey;
 use crate::perms::{Act, Page};
 use crate::state::AppState;
-use crate::util::{now, require};
+use crate::util::require;
 
-#[derive(Deserialize)]
-pub(super) struct DemandQuery {
-    month: Option<String>,
-    from: Option<String>,
-    to: Option<String>,
-}
-
-fn month_window(month: &str) -> Option<(String, String)> {
-    let b = month.as_bytes();
-    if b.len() != 7
-        || b[4] != b'-'
-        || !b[..4].iter().all(u8::is_ascii_digit)
-        || !b[5..].iter().all(u8::is_ascii_digit)
-    {
-        return None;
-    }
-    let y: i32 = month[..4].parse().ok()?;
-    let m: u32 = month[5..7].parse().ok()?;
-    if !(1900..=9998).contains(&y) || !(1..=12).contains(&m) {
-        return None;
-    }
-    let (ey, em) = if m == 12 { (y + 1, 1) } else { (y, m + 1) };
-    Some((format!("{y:04}-{m:02}-01"), format!("{ey:04}-{em:02}-01")))
-}
-
-pub(crate) fn has_global_report_scope(u: &CurrentUser) -> bool {
-    u.traffic_is_global()
-        || u.can(Page::AdminReimbPay, Act::View)
-        || u.can(Page::AdminBills, Act::View)
-        || u.can(Page::AdminEvents, Act::View)
-}
-
-pub(super) async fn demand_report(
+pub(in crate::routes::admin) async fn demand_report(
     State(st): State<AppState>,
     u: CurrentUser,
-    Query(q): Query<DemandQuery>,
+    Query(q): Query<PeriodQuery>,
 ) -> AppResult<Json<Value>> {
     require(&u, Page::AdminReports, Act::View)?;
+    if !(u.can(Page::AdminRides, Act::View) || u.can(Page::AdminPlan, Act::View)) {
+        return Err(forbidden(u.lang, ErrorKey::NoPermission));
+    }
 
-    let (start, end, display_to, period_label) = match (q.from.as_deref(), q.to.as_deref()) {
-        (Some(f), Some(t)) => {
-            let fd = NaiveDate::parse_from_str(f.trim(), "%Y-%m-%d")
-                .map_err(|_| bad(u.lang, ErrorKey::InvalidAction))?;
-            let td = NaiveDate::parse_from_str(t.trim(), "%Y-%m-%d")
-                .map_err(|_| bad(u.lang, ErrorKey::InvalidAction))?;
-            if td < fd || (td - fd).num_days() > 366 {
-                return Err(bad(u.lang, ErrorKey::InvalidAction));
-            }
-            let end_d = td.succ_opt().unwrap_or(td);
-            (
-                fd.format("%Y-%m-%d").to_string(),
-                end_d.format("%Y-%m-%d").to_string(),
-                td.format("%Y-%m-%d").to_string(),
-                format!("{}..{}", f.trim(), t.trim()),
-            )
-        }
-        _ => {
-            let m = q
-                .month
-                .as_deref()
-                .map(str::trim)
-                .filter(|s| !s.is_empty())
-                .map(str::to_string)
-                .unwrap_or_else(|| now()[..7].to_string());
-            let (s, e) =
-                month_window(&m).ok_or_else(|| bad(u.lang, ErrorKey::MonthFormatInvalid))?;
-            let d_to = e.clone();
-            (s, e, d_to, m)
-        }
-    };
+    let w = parse_period_window(
+        u.lang,
+        q.month.as_deref(),
+        q.range.as_deref(),
+        q.from.as_deref(),
+        q.to.as_deref(),
+    )?;
 
     #[derive(sqlx::FromRow)]
     struct DemandRow {
@@ -100,27 +47,63 @@ pub(super) async fn demand_report(
         seats_needed: i64,
         assistance: String,
         leg: String,
+        is_proxy: i64,
+        as_group_id: Option<i64>,
+        group_name: Option<String>,
     }
 
-    let scope_creator: Option<i64> = if has_global_report_scope(&u) {
-        None
-    } else {
-        Some(u.id)
-    };
+    let global_scope = u.traffic_is_global();
+    let scope_creator: Option<i64> = if global_scope { None } else { Some(u.id) };
 
     let rows: Vec<DemandRow> = sqlx::query_as(
         "SELECT r.pickup_area_id AS area_id, COALESCE(a.name, '') AS area_zh, COALESCE(a.name, '') AS area_en,
                 r.pickup_at, r.status, r.driver_id, r.passenger_id, r.seats AS seats_needed,
-                COALESCE(r.assistance, '') AS assistance, COALESCE(r.leg, 'outbound') AS leg
+                COALESCE(r.assistance, '') AS assistance, COALESCE(r.leg, 'outbound') AS leg,
+                r.is_proxy, r.as_group_id, g.name AS group_name
          FROM rides r
          LEFT JOIN areas a ON a.id = r.pickup_area_id
+         LEFT JOIN groups g ON g.id = r.as_group_id
          WHERE r.pickup_at >= $1 AND r.pickup_at < $2
-           AND ($3::BIGINT IS NULL OR r.event_id IN (SELECT id FROM events WHERE created_by = $3))",
+           AND ($3::BIGINT IS NULL OR r.event_id IN (SELECT id FROM events WHERE created_by = $3))
+           AND ($4::BIGINT IS NULL OR r.as_group_id = $4)",
     )
-    .bind(&start)
-    .bind(&end)
+    .bind(&w.start)
+    .bind(&w.end)
     .bind(scope_creator)
+    .bind(q.group_id)
     .fetch_all(&st.db)
+    .await?;
+
+    let (plan_visitors_count, plan_visitors_seats): (i64, i64) = if q.group_id.is_some() {
+        (0, 0)
+    } else {
+        sqlx::query_as(
+            "SELECT COUNT(*)::BIGINT, COALESCE(SUM(pv.seats), 0)::BIGINT
+             FROM plan_visitors pv
+             JOIN events e ON e.id = pv.event_id
+             WHERE e.starts_at >= $1 AND e.starts_at < $2 AND e.status <> 'draft'
+               AND ($3::BIGINT IS NULL OR e.created_by = $3)",
+        )
+        .bind(&w.start)
+        .bind(&w.end)
+        .bind(scope_creator)
+        .fetch_one(&st.db)
+        .await?
+    };
+
+    let (visitor_passes_count,): (i64,) = sqlx::query_as(
+        "SELECT COUNT(*)::BIGINT
+         FROM visitor_passes vp
+         JOIN events e ON e.id = vp.event_id
+         WHERE e.starts_at >= $1 AND e.starts_at < $2 AND e.status <> 'draft'
+           AND ($3::BIGINT IS NULL OR e.created_by = $3)
+           AND ($4::BIGINT IS NULL OR vp.host_group_id = $4)",
+    )
+    .bind(&w.start)
+    .bind(&w.end)
+    .bind(scope_creator)
+    .bind(q.group_id)
+    .fetch_one(&st.db)
     .await?;
 
     let mut total_requests = 0_i64;
@@ -129,7 +112,10 @@ pub(super) async fn demand_report(
     let mut completed = 0_i64;
     let mut cancelled_unassigned = 0_i64;
     let mut wheelchair_requests = 0_i64;
+    let mut stroller_requests = 0_i64;
+    let mut oxygen_requests = 0_i64;
     let mut return_requests = 0_i64;
+    let mut proxy_rides = 0_i64;
     let mut seats_unfilled = 0_i64;
     let mut drivers_active: HashSet<i64> = HashSet::new();
     let mut passengers_seen: HashSet<i64> = HashSet::new();
@@ -146,8 +132,18 @@ pub(super) async fn demand_report(
         seats_unfilled: i64,
     }
 
+    #[derive(Default)]
+    struct GroupBucket {
+        group_name: Option<String>,
+        total: i64,
+        fulfilled: i64,
+        unfilled: i64,
+        seats_needed: i64,
+    }
+
     let mut by_area: HashMap<i64, Bucket> = HashMap::new();
     let mut by_slot: BTreeMap<(u32, String), Bucket> = BTreeMap::new();
+    let mut by_group: HashMap<Option<i64>, GroupBucket> = HashMap::new();
 
     for r in &rows {
         let is_cancelled = r.status == "cancelled";
@@ -175,13 +171,36 @@ pub(super) async fn demand_report(
                 unfilled += 1;
                 seats_unfilled += r.seats_needed;
             }
-            if r.assistance.to_ascii_lowercase().contains("wheelchair")
-                || r.assistance.contains("轮椅")
-            {
+            let assist_lower = r.assistance.to_ascii_lowercase();
+            if assist_lower.contains("wheelchair") || r.assistance.contains("轮椅") {
                 wheelchair_requests += 1;
+            }
+            if assist_lower.contains("stroller") {
+                stroller_requests += 1;
+            }
+            if assist_lower.contains("oxygen") {
+                oxygen_requests += 1;
             }
             if r.leg == "return" {
                 return_requests += 1;
+            }
+            if r.is_proxy == 1 {
+                proxy_rides += 1;
+            }
+
+            let gb = by_group
+                .entry(r.as_group_id)
+                .or_insert_with(|| GroupBucket {
+                    group_name: r.group_name.clone(),
+                    ..Default::default()
+                });
+            gb.total += 1;
+            gb.seats_needed += r.seats_needed;
+            if is_fulfilled {
+                gb.fulfilled += 1;
+            }
+            if is_unfilled {
+                gb.unfilled += 1;
             }
         }
 
@@ -278,6 +297,27 @@ pub(super) async fn demand_report(
             .then_with(|| b["total"].as_i64().cmp(&a["total"].as_i64()))
     });
 
+    let mut group_list: Vec<Value> = by_group
+        .into_iter()
+        .map(|(group_id, b)| {
+            json!({
+                "group_id": group_id,
+                "group_name": b.group_name,
+                "total": b.total,
+                "fulfilled": b.fulfilled,
+                "unfilled": b.unfilled,
+                "seats_needed": b.seats_needed,
+                "fulfillment_rate_pct": if b.total > 0 { (b.fulfilled * 100) / b.total } else { 100 },
+            })
+        })
+        .collect();
+    group_list.sort_by(|a, b| {
+        b["unfilled"]
+            .as_i64()
+            .cmp(&a["unfilled"].as_i64())
+            .then_with(|| b["total"].as_i64().cmp(&a["total"].as_i64()))
+    });
+
     let fulfillment_rate_pct = if total_requests > 0 {
         (fulfilled * 100) / total_requests
     } else {
@@ -285,9 +325,11 @@ pub(super) async fn demand_report(
     };
 
     Ok(Json(json!({
-        "period": period_label,
-        "from": start,
-        "to": display_to,
+        "scope": if global_scope { "global" } else { "own_events" },
+        "period": w.period_label,
+        "range": w.range,
+        "from": w.start,
+        "to": w.display_to,
         "totals": {
             "total_requests": total_requests,
             "fulfilled": fulfilled,
@@ -295,7 +337,13 @@ pub(super) async fn demand_report(
             "completed": completed,
             "cancelled_unassigned": cancelled_unassigned,
             "wheelchair_requests": wheelchair_requests,
+            "stroller_requests": stroller_requests,
+            "oxygen_requests": oxygen_requests,
             "return_requests": return_requests,
+            "proxy_rides": proxy_rides,
+            "plan_visitors_count": plan_visitors_count,
+            "plan_visitors_seats": plan_visitors_seats,
+            "visitor_passes_count": visitor_passes_count,
             "seats_unfilled": seats_unfilled,
             "active_drivers": drivers_active.len(),
             "unique_passengers": passengers_seen.len(),
@@ -303,52 +351,6 @@ pub(super) async fn demand_report(
         },
         "by_area": area_list,
         "by_slot": slot_list,
+        "by_group": group_list,
     })))
-}
-
-#[derive(Deserialize)]
-pub(super) struct UpdateBadgeIconIn {
-    pub icon: String,
-}
-
-pub(super) async fn update_user_badge_icon(
-    State(st): State<AppState>,
-    u: CurrentUser,
-    Path((user_id, badge_key)): Path<(i64, String)>,
-    Json(req): Json<UpdateBadgeIconIn>,
-) -> AppResult<Json<Value>> {
-    require(&u, Page::AdminMembers, Act::Update)?;
-    let icon = req.icon.trim().to_string();
-    if icon.is_empty() {
-        sqlx::query("DELETE FROM user_badge_icons WHERE user_id = $1 AND badge_key = $2")
-            .bind(user_id)
-            .bind(&badge_key)
-            .execute(&st.db)
-            .await?;
-    } else {
-        sqlx::query(
-            "INSERT INTO user_badge_icons (user_id, badge_key, icon, updated_at, updated_by)
-             VALUES ($1, $2, $3, app_now(), $4)
-             ON CONFLICT (user_id, badge_key)
-             DO UPDATE SET icon = EXCLUDED.icon, updated_at = EXCLUDED.updated_at, updated_by = EXCLUDED.updated_by",
-        )
-        .bind(user_id)
-        .bind(&badge_key)
-        .bind(&icon)
-        .bind(u.id)
-        .execute(&st.db)
-        .await?;
-    }
-    crate::util::audit(
-        &st.db,
-        Some(u.id),
-        "admin.user_badge_icon",
-        "user",
-        Some(user_id),
-        &format!("badge {badge_key} icon set to {icon}"),
-    )
-    .await;
-    Ok(Json(
-        json!({ "ok": true, "user_id": user_id, "badge_key": badge_key, "icon": icon }),
-    ))
 }

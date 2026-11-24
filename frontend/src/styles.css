@@ -1832,12 +1832,19 @@ p.empty-title { font-weight: 400; color: var(--muted); }
 .terms-title { font-size: var(--fs-2xl); }
 
 /* Recognized device passkey banner */
-.passkey-device-card {
-  border: none;
-  border-radius: var(--radius);
-  padding: var(--space-4);
-  background: var(--surface-2);
-}
+.passkey-device-line { display: flex; align-items: center; gap: var(--space-2); color: var(--muted); }
+.passkey-device-line svg { flex: none; color: var(--primary); }
+.passkey-device-email { font-size: var(--fs-md); color: var(--text); overflow-wrap: anywhere; }
+
+/* Secondary sign-in choices: quiet links in one centred row. */
+.auth-alt-actions { display: flex; flex-wrap: wrap; justify-content: center; column-gap: var(--space-5); }
+.auth-alt-actions { margin-top: calc(-1 * var(--space-2)); }
+.auth-alt-actions .link-btn { min-height: var(--tap); font-size: var(--fs-sm); font-weight: 500; }
+.auth-alt-actions .link-btn:disabled { opacity: 0.5; cursor: default; }
+.auth-footnote { display: grid; gap: var(--space-1); margin-top: var(--space-6); text-align: center; font-size: var(--fs-sm); }
+.auth-footnote p { color: var(--muted); }
+/* The size and language buttons sit together, not pushed apart. */
+.public-display-bar .lang-toggle { margin-left: 0; }
 
 /* Dev account picker dashed frame */
 .dev-account-frame {
@@ -4508,6 +4515,17 @@ body[data-walkthrough="min"] .main { padding-bottom: calc(var(--nav-h) + env(saf
 .report-filters { display: grid; gap: var(--space-3); grid-template-columns: minmax(0, 1fr); }
 .report-member { display: grid; gap: var(--space-3); grid-template-columns: minmax(0, 1fr); grid-column: 1 / -1; }
 @media (min-width: 640px) { .report-filters { grid-template-columns: repeat(3, minmax(0, 1fr)); } .report-member { grid-column: 1 / -1; grid-template-columns: minmax(0, 1fr) minmax(0, 2fr); } }
+.report-scope-bar { display: flex; align-items: center; justify-content: space-between; gap: var(--space-2); flex-wrap: wrap; }
+.report-period-controls { display: grid; gap: var(--space-3); grid-template-columns: minmax(0, 1fr); }
+@media (min-width: 640px) { .report-period-controls { grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); } }
+.report-bar-row { display: flex; flex-direction: column; gap: var(--space-1); min-width: 0; }
+.report-chart { display: flex; align-items: flex-end; gap: var(--space-2); height: 150px; padding-top: var(--space-2); overflow-x: auto; }
+.report-chart-col { display: flex; flex-direction: column; align-items: center; gap: 4px; flex: 1 1 0; min-width: 28px; height: 100%; }
+.report-chart-track { flex: 1 1 auto; width: 100%; max-width: 32px; display: flex; align-items: flex-end; background: var(--surface-2); border-radius: var(--radius-sm); overflow: hidden; }
+.report-chart-fill { width: 100%; background: var(--primary); border-radius: var(--radius-sm); transition: height var(--transition-fast); }
+.report-table-scroll { overflow-x: auto; max-width: 100%; }
+.text-right { text-align: right; }
+.flex-wrap { flex-wrap: wrap; }
 
 /* Transport plan on phones: primary buttons wrap cleanly; the floating dock is the single fixed commit bar. */
 .plan-page.has-dock { padding-bottom: 5.5rem; }
@@ -4533,7 +4551,7 @@ main p a:not(.btn), main .small a:not(.btn), main td a:not(.btn):not(.table-filt
 
 /* Printing a page (e.g. a report) leaves out the app frame. */
 @media print {
-  .sidebar, .topbar, .bottom-nav, .page-head-actions, .report-filters, .toast-container, .shell-notice-container, .swipe-back-indicator, .swipe-tab-indicator { display: none !important; }
+  .sidebar, .topbar, .bottom-nav, .page-head-actions, .report-filters, .report-scope-bar, .report-period-controls, .toast-container, .shell-notice-container, .swipe-back-indicator, .swipe-tab-indicator { display: none !important; }
   .shell { display: block; }
   .main { padding: 0; max-width: none; }
   body { background: #fff; color: #000; }
