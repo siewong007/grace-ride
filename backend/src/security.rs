@@ -158,8 +158,15 @@ pub async fn rate_limit(State(st): State<AppState>, req: Request, next: Next) ->
         Some(("upload", 30, 600))
     } else if path.starts_with("/api/files/") && path.ends_with("/extract-ref") {
         Some(("extract_ref", 30, 600))
-    } else if path == "/api/push/test" {
+    } else if path == "/api/push/test" || path == "/api/push/telegram/test" {
         Some(("push_test", 10, 600))
+    } else if path == "/api/push/subscribe"
+        || path == "/api/push/mobile-token"
+        || path == "/api/push/telegram/link-token"
+    {
+        Some(("push_sub", 30, 600))
+    } else if path == "/api/admin/settings/alerts/test-webhook" {
+        Some(("test_webhook", 10, 600))
     } else {
         None
     };
@@ -245,12 +252,14 @@ fn pending_profile_only(path: &str) -> bool {
         || path.starts_with("/visit/")
         || path.starts_with("/care/")
         || path.starts_with("/calendar/")
+        || path.starts_with("/push/telegram/webhook/")
 }
 
 fn lock_bypass_path(path: &str) -> bool {
     let path = path.strip_prefix("/api").unwrap_or(path);
     path == "/health"
         || path == "/auth/me"
+        || path == "/auth/turnstile"
         || path == "/auth/lock"
         || path == "/auth/unlock"
         || path == "/auth/logout"
@@ -265,6 +274,7 @@ fn lock_bypass_path(path: &str) -> bool {
         || path.starts_with("/visit/")
         || path.starts_with("/care/")
         || path.starts_with("/calendar/")
+        || path.starts_with("/push/telegram/webhook/")
 }
 
 #[derive(sqlx::FromRow)]
@@ -442,6 +452,11 @@ const CSP: &str = "default-src 'self'; script-src 'self'; style-src 'self' 'unsa
 img-src 'self' data: blob: https://*.tile.openstreetmap.org; connect-src 'self'; font-src 'self'; \
 object-src 'none'; frame-ancestors 'none'; base-uri 'self'; form-action 'self'; manifest-src 'self'; worker-src 'self'";
 
+const CSP_TURNSTILE: &str = "default-src 'self'; script-src 'self' https://challenges.cloudflare.com; style-src 'self' 'unsafe-inline'; \
+img-src 'self' data: blob: https://*.tile.openstreetmap.org; connect-src 'self' https://challenges.cloudflare.com; font-src 'self'; \
+frame-src 'self' https://challenges.cloudflare.com; \
+object-src 'none'; frame-ancestors 'none'; base-uri 'self'; form-action 'self'; manifest-src 'self'; worker-src 'self'";
+
 pub async fn security_headers(State(st): State<AppState>, req: Request, next: Next) -> Response {
     let path = req.uri().path().to_string();
     let mut res = next.run(req).await;
@@ -460,7 +475,15 @@ pub async fn security_headers(State(st): State<AppState>, req: Request, next: Ne
     );
     set(h, "cross-origin-opener-policy", "same-origin");
     set(h, "cross-origin-resource-policy", "same-origin");
-    set(h, "content-security-policy", CSP);
+    set(
+        h,
+        "content-security-policy",
+        if st.cfg.turnstile.is_enabled() {
+            CSP_TURNSTILE
+        } else {
+            CSP
+        },
+    );
     if st.cfg.secure_cookies() {
         set(
             h,

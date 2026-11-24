@@ -12,8 +12,10 @@
 //!   when `valid_until` passes, or when the host or staff turn it off. It is checked on
 //!   every visitor request and swept by the background job.
 
+use std::net::SocketAddr;
+
 use axum::{
-    extract::{FromRequestParts, Path, State},
+    extract::{ConnectInfo, FromRequestParts, Path, State},
     http::request::Parts,
     routing::{get, post},
     Json, Router,
@@ -321,14 +323,34 @@ async fn preview(
     })))
 }
 
+#[derive(Deserialize, Default)]
+struct ClaimReq {
+    #[serde(default)]
+    turnstile_token: Option<String>,
+}
+
 /// Use the link up: this browser becomes the only one that can follow the ride.
 async fn claim(
     State(st): State<AppState>,
     jar: CookieJar,
     parts: Parts,
     Path(token): Path<String>,
+    req: Option<Json<ClaimReq>>,
 ) -> AppResult<(CookieJar, Json<Value>)> {
     let lang = lang_of(&parts);
+    let peer = parts
+        .extensions
+        .get::<ConnectInfo<SocketAddr>>()
+        .map(|c| c.0);
+    let ip = crate::security::client_ip(&parts.headers, peer, st.cfg.trust_proxy);
+    st.turnstile
+        .verify(
+            req.as_ref().and_then(|j| j.turnstile_token.as_deref()),
+            "visitor_claim",
+            Some(&ip),
+            lang,
+        )
+        .await?;
     let p = pass_by_token(&st, lang, &token).await?;
     let mine = holds(&st, &jar, p.id).await?;
     match state_of(&p, mine) {

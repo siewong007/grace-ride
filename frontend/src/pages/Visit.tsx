@@ -11,7 +11,9 @@ import { PublicDisplayBar } from '../components/AppChrome';
 import { LogoMark, Wordmark } from '../components/Brand';
 import CantMakeItModal from '../components/CantMakeIt';
 import LiveMap from '../components/LiveMap';
+import TurnstileWidget from '../components/TurnstileWidget';
 import { Button, ErrorBox, Notice, Spinner, useAction } from '../components/ui';
+import { useTurnstile } from '../turnstile';
 import { fmtAgo, fmtDateTime, parseLocal, useFormatT } from '../format';
 
 interface EventBrief {
@@ -70,6 +72,7 @@ export default function Visit() {
   const ft = useFormatT();
   const preview = useApi<Preview>(token ? `/visit/${token}` : null);
   const { busy, error, run } = useAction();
+  const visitTurnstile = useTurnstile();
 
   if (preview.loading && !preview.data) return <Shell><Spinner /></Shell>;
   const p = preview.data;
@@ -87,8 +90,33 @@ export default function Visit() {
           <p className="muted">{eventLine}</p>
           <p className="small">{t('openOnePhone')}</p>
           <p className="muted small">{t('privacyNote')}</p>
+          <TurnstileWidget
+            siteKey={visitTurnstile.siteKey}
+            action="visitor_claim"
+            resetKey={visitTurnstile.resetKey}
+            onToken={visitTurnstile.setToken}
+          />
           <ErrorBox error={error} />
-          <Button variant="primary" size="lg" block disabled={busy} onClick={() => run(() => post(`/visit/${token}/claim`).then(preview.reload))}>
+          <Button
+            variant="primary"
+            size="lg"
+            block
+            disabled={busy || (visitTurnstile.enabled && !visitTurnstile.token)}
+            onClick={() => {
+              if (visitTurnstile.enabled && !visitTurnstile.token) return;
+              void run(async () => {
+                try {
+                  await (visitTurnstile.token
+                    ? post(`/visit/${token}/claim`, { turnstile_token: visitTurnstile.token })
+                    : post(`/visit/${token}/claim`));
+                  await preview.reload();
+                } catch (err) {
+                  visitTurnstile.reset();
+                  throw err;
+                }
+              });
+            }}
+          >
             {t('openButton')}
           </Button>
         </>

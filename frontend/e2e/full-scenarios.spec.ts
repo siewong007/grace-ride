@@ -120,6 +120,7 @@ async function installMemberRoutes(
       return route.fulfill({ status: 200, contentType: 'text/event-stream', body: '' });
     }
     if (p === '/health') return ok({ ok: true, db: true });
+    if (p === '/auth/turnstile') return ok({ enabled: false, site_key: null });
 
     if (p === '/auth/me') {
       const base = { ...memberMe, ...opts.meOverride, terms_accepted: termsAccepted };

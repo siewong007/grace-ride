@@ -2239,9 +2239,9 @@ pub async fn seed_edge(db: &PgPool) -> anyhow::Result<()> {
             "INSERT INTO rides (id, passenger_id, driver_id, event_id, pickup_at, pickup_area_id,
              pickup_address, destination, seats, assistance, notes, status, needs_attention,
              attention_reason, approved_by, trip_id, started_at, picked_up_at, completed_at,
-             reminder_sent, demo_batch, created_at, updated_at, distance_km,
+             reminder_sent, driver_reminder_sent, demo_batch, created_at, updated_at, distance_km,
              reimbursement_amount_cents, is_proxy, rider_name, rider_phone, rider_relationship)
-             VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26,$27,$28,$29)
+             VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$20,$21,$22,$23,$24,$25,$26,$27,$28,$29)
              ON CONFLICT (id) DO UPDATE SET passenger_id=excluded.passenger_id,
              driver_id=excluded.driver_id, status=excluded.status, needs_attention=excluded.needs_attention,
              demo_batch=excluded.demo_batch, updated_at=excluded.updated_at",

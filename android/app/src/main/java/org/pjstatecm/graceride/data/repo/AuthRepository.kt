@@ -7,6 +7,7 @@ import org.pjstatecm.graceride.data.api.ApiException
 import org.pjstatecm.graceride.data.api.ApiService
 import org.pjstatecm.graceride.data.api.AuthEventBus
 import org.pjstatecm.graceride.data.api.DevUser
+import org.pjstatecm.graceride.data.api.LogoutReq
 import org.pjstatecm.graceride.data.api.Me
 import org.pjstatecm.graceride.data.api.OkResponse
 import org.pjstatecm.graceride.data.api.PasskeyFinishReq
@@ -73,6 +74,22 @@ class AuthRepository(
         if (m != null) _state.value = AuthState.Pending(m)
     }
 
+    fun updateUnread(count: Int) {
+        val safe = count.coerceAtLeast(0)
+        when (val s = _state.value) {
+            is AuthState.SignedIn -> if (s.me.unread != safe) {
+                _state.value = AuthState.SignedIn(s.me.copy(unread = safe))
+            }
+            is AuthState.Locked -> s.me?.let { m ->
+                if (m.unread != safe) _state.value = AuthState.Locked(m.copy(unread = safe))
+            }
+            is AuthState.Pending -> if (s.me.unread != safe) {
+                _state.value = AuthState.Pending(s.me.copy(unread = safe))
+            }
+            else -> {}
+        }
+    }
+
     suspend fun devUsers(): List<DevUser> = apiCall(bus) { api.devUsers() }
 
     suspend fun devLogin(email: String) {
@@ -116,9 +133,11 @@ class AuthRepository(
         refresh()
     }
 
-    suspend fun logout() {
+    suspend fun logout(mobileToken: String? = null) {
         try {
-            apiCall(bus) { api.logout() }
+            apiCall(bus) {
+                api.logout(LogoutReq(mobile_token = mobileToken?.takeIf { it.isNotBlank() }))
+            }
         } catch (_: ApiException) {
             // Even if the server call fails, drop the local credential.
         }

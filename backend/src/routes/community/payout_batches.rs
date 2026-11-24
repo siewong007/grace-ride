@@ -13,9 +13,10 @@ use serde_json::{json, Value};
 use crate::auth::CurrentUser;
 use crate::error::{bad, conflict, forbidden, not_found, AppError, AppResult};
 use crate::i18n::ErrorKey;
+use crate::notifications::{notify_batch, BatchNotifItem, NotifMeta};
 use crate::perms::{Act, Page};
 use crate::state::AppState;
-use crate::util::{audit, fmt_rm, notify, now, require};
+use crate::util::{audit, fmt_rm, now, require};
 
 use super::reimbursements::PayIn;
 use super::reports::parse_report_month;
@@ -367,19 +368,26 @@ pub(super) async fn pay_payout_batch(
     .await?;
     tx.commit().await?;
 
-    for (cid, uid, _, amt) in claims {
-        notify(
-            &st.db,
-            uid,
-            ("报销款项已转账", "Reimbursement paid"),
-            (
-                &format!("{} · 交易编号 {}", fmt_rm(amt), paid_ref),
-                &format!("{} · Transaction ref {}", fmt_rm(amt), paid_ref),
-            ),
-            &format!("/reimbursements/{cid}"),
-        )
-        .await;
-    }
+    let batch: Vec<BatchNotifItem> = claims
+        .into_iter()
+        .map(|(cid, uid, _, amt)| BatchNotifItem {
+            user_id: uid,
+            title_zh: "报销款项已转账".into(),
+            title_en: "Reimbursement paid".into(),
+            body_zh: format!("{} · 交易编号 {}", fmt_rm(amt), paid_ref),
+            body_en: format!("{} · Transaction ref {}", fmt_rm(amt), paid_ref),
+            link: format!("/reimbursements/{cid}"),
+            meta: NotifMeta {
+                category: "cost",
+                event_type: "reimbursement_paid".into(),
+                priority: "normal",
+                entity_type: "reimbursement",
+                entity_id: Some(cid),
+                tag: format!("reimb-{cid}"),
+            },
+        })
+        .collect();
+    notify_batch(&st.db, batch).await;
     audit(
         &st.db,
         Some(u.id),

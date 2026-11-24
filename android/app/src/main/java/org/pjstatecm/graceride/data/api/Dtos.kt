@@ -330,6 +330,84 @@ data class NotificationItem(
     val link: String? = null,
     val read: Boolean = false,
     @SerialName("created_at") val createdAt: String = "",
+    val category: String = "general",
+    @SerialName("event_type") val eventType: String = "general",
+    val priority: String = "normal",
+    @SerialName("entity_type") val entityType: String = "",
+    @SerialName("entity_id") val entityId: Long? = null,
+)
+
+@Serializable
+data class NotificationPageDto(
+    val items: List<NotificationItem> = emptyList(),
+    @SerialName("next_before") val nextBefore: Long? = null,
+    val unread: Int = 0,
+)
+
+@Serializable
+data class NotificationActionResp(
+    val ok: Boolean = true,
+    val unread: Int = 0,
+)
+
+@Serializable
+data class ReadAllReq(val category: String? = null)
+
+@Serializable
+data class NotificationPrefsDto(
+    @SerialName("push_opt_in") val pushOptIn: Boolean = true,
+    @SerialName("whatsapp_opt_in") val whatsappOptIn: Boolean = false,
+    @SerialName("telegram_chat_id") val telegramChatId: String = "",
+    @SerialName("telegram_blocked") val telegramBlocked: Boolean = false,
+    @SerialName("readiness_prompt_mins") val readinessPromptMins: Int = 45,
+    @SerialName("driver_remind_mins") val driverRemindMins: Int = 60,
+    @SerialName("muted_categories") val mutedCategories: List<String> = emptyList(),
+    @SerialName("quiet_hours_start") val quietHoursStart: String = "",
+    @SerialName("quiet_hours_end") val quietHoursEnd: String = "",
+    @SerialName("hide_lock_details") val hideLockDetails: Boolean = false,
+)
+
+@Serializable
+data class UpdateNotificationPrefsReq(
+    val push_opt_in: Boolean? = null,
+    val whatsapp_opt_in: Boolean? = null,
+    val telegram_chat_id: String? = null,
+    val readiness_prompt_mins: Int? = null,
+    val driver_remind_mins: Int? = null,
+    val muted_categories: List<String>? = null,
+    val quiet_hours_start: String? = null,
+    val quiet_hours_end: String? = null,
+    val hide_lock_details: Boolean? = null,
+)
+
+@Serializable
+data class MobilePushTokenReq(
+    val platform: String = "android",
+    val provider: String = "unifiedpush",
+    val token: String,
+    val device_label: String = "",
+)
+
+@Serializable
+data class MobilePushTokenDel(val token: String)
+
+@Serializable
+data class LogoutReq(
+    val push_endpoint: String? = null,
+    val mobile_token: String? = null,
+)
+
+@Serializable
+data class TelegramLinkTokenResp(
+    val url: String = "",
+    @SerialName("expires_at") val expiresAt: String = "",
+)
+
+@Serializable
+data class TelegramTestResp(
+    val ok: Boolean = false,
+    val delivered: Boolean = false,
+    val error: String? = null,
 )
 
 @Serializable

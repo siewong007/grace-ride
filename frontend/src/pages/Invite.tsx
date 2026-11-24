@@ -9,7 +9,9 @@ import { LogoMark, Wordmark } from '../components/Brand';
 import { SwipeBackGesture } from '../components/BackNavigation';
 import { PublicDisplayBar } from '../components/AppChrome';
 import { TermsOptIn, TermsText } from '../components/Terms';
+import TurnstileWidget from '../components/TurnstileWidget';
 import { Button, ErrorBox, Field, Spinner, useAction, useConfirm } from '../components/ui';
+import { useTurnstile } from '../turnstile';
 import { passkeySupported, registerPasskey } from '../webauthn';
 import { useTranslation } from 'react-i18next';
 
@@ -52,6 +54,7 @@ export default function Invite() {
   const [fieldErrors, setFieldErrors] = useState<{ name?: string; email?: string; phone?: string; terms?: string }>({});
   const [emailTaken, setEmailTaken] = useState(false);
   const { busy, error: actErr, run } = useAction();
+  const inviteTurnstile = useTurnstile();
 
   // An invite made for a named person arrives with their details filled in.
   useEffect(() => {
@@ -111,13 +114,18 @@ export default function Invite() {
       setFieldErrors({ terms: t('termsRequired') });
       return;
     }
+    if (inviteTurnstile.enabled && !inviteTurnstile.token) return;
     run(async () => {
+      const baseBody = recovery
+        ? { terms: true }
+        : { name: name.trim(), email: email.trim(), phone: phone.trim(), terms: true };
+      const body = inviteTurnstile.token
+        ? { ...baseBody, turnstile_token: inviteTurnstile.token }
+        : baseBody;
       try {
-        await post(
-          `/invites/${token}/accept`,
-          recovery ? { terms: true } : { name: name.trim(), email: email.trim(), phone: phone.trim(), terms: true }
-        );
+        await post(`/invites/${token}/accept`, body);
       } catch (e) {
+        inviteTurnstile.reset();
         // A detail the server refused goes back to its field on step 1, not a banner on step 2.
         const field = e instanceof ApiError && e.code ? FIELD_FOR_CODE[e.code] : undefined;
         if (!field || recovery) throw e;
@@ -131,6 +139,11 @@ export default function Invite() {
       await refresh();
       setStep('passkey');
     });
+  };
+
+  const goBackToDetails = () => {
+    inviteTurnstile.reset();
+    setStep('details');
   };
 
   const addPasskey = () =>
@@ -269,14 +282,26 @@ export default function Invite() {
             </div>
             <TermsOptIn checked={terms} onChange={(v) => { setTerms(v); if (v) setFieldErrors({ ...fieldErrors, terms: undefined }); }} />
             {fieldErrors.terms && <span className="field-error" role="alert">{fieldErrors.terms}</span>}
+            <TurnstileWidget
+              siteKey={inviteTurnstile.siteKey}
+              action="invite_accept"
+              resetKey={inviteTurnstile.resetKey}
+              onToken={inviteTurnstile.setToken}
+            />
             <ErrorBox error={actErr} />
             <div className="btn-row">
               {!recovery && (
-                <Button variant="secondary" type="button" onClick={() => setStep('details')}>
+                <Button variant="secondary" type="button" onClick={goBackToDetails}>
                   {t('back')}
                 </Button>
               )}
-              <Button variant="primary" type="submit" loading={busy} disabled={busy || !terms} block={recovery}>
+              <Button
+                variant="primary"
+                type="submit"
+                loading={busy}
+                disabled={busy || !terms || (inviteTurnstile.enabled && !inviteTurnstile.token)}
+                block={recovery}
+              >
                 {t('agreeAndContinue')}
               </Button>
             </div>
@@ -311,7 +336,7 @@ export default function Invite() {
           </div>
         )}
       </div>
-      <SwipeBackGesture enabled={step === 'terms' && !recovery} onBack={() => setStep('details')} />
+      <SwipeBackGesture enabled={step === 'terms' && !recovery} onBack={goBackToDetails} />
     </div>
   );
 }

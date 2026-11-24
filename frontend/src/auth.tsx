@@ -1,7 +1,7 @@
-import { createContext, ReactNode, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react';
+import { createContext, ReactNode, useCallback, useContext, useEffect, useMemo, useState } from 'react';
 import { api, subscribe } from './api';
 import { clearOfflineSnapshots } from './offlineSnapshot';
-import { syncAppBadge } from './pushNotifications';
+import { resetPushState, syncAppBadge } from './pushNotifications';
 import type { Act, Can, PageKey } from './perms';
 
 export interface Me {
@@ -57,8 +57,6 @@ const Ctx = createContext<AuthCtx>(null as unknown as AuthCtx);
 export function AuthProvider({ children }: { children: ReactNode }) {
   const [me, setMe] = useState<Me | null>(null);
   const [loading, setLoading] = useState(true);
-  const prevUnreadRef = useRef<number | null>(null);
-  const lastNotifiedRef = useRef<number>(0);
 
   const refresh = useCallback(async () => {
     try {
@@ -73,8 +71,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   useEffect(() => {
     refresh();
     const onUnauth = () => {
-      prevUnreadRef.current = null;
       syncAppBadge(0);
+      resetPushState();
       clearOfflineSnapshots();
       try {
         localStorage.removeItem('gr_autolock_mins');
@@ -94,68 +92,26 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   // Keep the unread badge fresh. Re-subscribe only when the signed-in user changes.
   const meId = me?.id;
-  const pushOptIn = me?.push_opt_in ?? true;
-  const notifyHiddenTab = useCallback(() => {
-    if (
-      !pushOptIn ||
-      typeof document === 'undefined' ||
-      document.visibilityState !== 'hidden' ||
-      typeof Notification === 'undefined' ||
-      Notification.permission !== 'granted'
-    ) {
-      return;
-    }
-    const now = Date.now();
-    if (now - lastNotifiedRef.current <= 2000) return;
-    lastNotifiedRef.current = now;
-    const msg = {
-      type: 'SHOW_NOTIFICATION',
-      title: 'Grace Ride',
-      body: '',
-      url: '/notifications',
-    };
-    if (navigator.serviceWorker?.controller) {
-      const ctrl = navigator.serviceWorker.controller;
-      const postFallback = () => ctrl.postMessage(msg);
-      if (navigator.serviceWorker.ready) {
-        navigator.serviceWorker.ready
-          .then((reg) => reg.pushManager?.getSubscription?.() ?? null)
-          .then((sub) => {
-            if (!sub) postFallback();
-          })
-          .catch(postFallback);
-      } else {
-        postFallback();
-      }
-    } else {
-      try {
-        new Notification('Grace Ride', { data: { url: '/notifications' } } as NotificationOptions);
-      } catch {
-        // Browser requires ServiceWorkerRegistration.showNotification (Android Chrome)
-      }
-    }
-  }, [pushOptIn]);
 
   useEffect(() => {
     syncAppBadge(me?.unread ?? 0);
-    const unread = me?.unread;
-    if (unread === undefined || me == null) {
-      prevUnreadRef.current = null;
-      return;
-    }
-    if (prevUnreadRef.current !== null && unread > prevUnreadRef.current) {
-      notifyHiddenTab();
-    }
-    prevUnreadRef.current = unread;
-  }, [me, notifyHiddenTab]);
+  }, [me?.unread]);
 
   useEffect(() => {
     if (meId == null) return;
     return subscribe((kind) => {
-      if (kind === 'notify' || kind === 'resume') refresh();
-      if (kind === 'notify') notifyHiddenTab();
+      if (kind.startsWith('unread:')) {
+        const nextUnread = Number.parseInt(kind.slice(7), 10);
+        if (Number.isFinite(nextUnread) && nextUnread >= 0) {
+          setMe((prev) => (prev ? { ...prev, unread: nextUnread } : prev));
+        }
+        return;
+      }
+      if (kind === 'notify' || kind === 'resume' || kind === 'unlocked') {
+        void refresh();
+      }
     });
-  }, [meId, notifyHiddenTab, refresh]);
+  }, [meId, refresh]);
 
   const granted = useMemo(() => new Set(me?.permissions ?? []), [me?.permissions]);
   const can = useCallback((page: PageKey, act: Act = 'view') => granted.has(`${page}.${act}`), [granted]);

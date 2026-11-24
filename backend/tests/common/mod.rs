@@ -54,6 +54,7 @@ pub async fn setup() -> (Router, AppState) {
         },
         housekeeping_interval_mins: 60,
         notification_retention_days: 90,
+        turnstile: Default::default(),
     };
     cfg.validate().unwrap();
     let state = init(cfg).await.unwrap();

@@ -10,7 +10,7 @@ use sqlx::PgPool;
 
 use crate::auth::CurrentUser;
 use crate::error::{bad, forbidden, AppResult};
-use crate::perms::{self, Act, Page, Perm};
+use crate::perms::{Act, Page};
 
 /// Build a dynamically assembled SQL string for `sqlx::query*`.
 ///
@@ -56,6 +56,10 @@ pub fn vapid_subject() -> String {
         }
     }
     "mailto:noreply@example.org".to_string()
+}
+
+pub fn public_url() -> String {
+    PUBLIC_URL.read().map(|g| g.clone()).unwrap_or_default()
 }
 
 /// Set the app's time zone (`APP_TIMEZONE`). Stored times are local text in this
@@ -214,16 +218,6 @@ pub async fn audit_many<'e>(
 
 pub use crate::i18n::{t, ErrorKey, Lang};
 
-async fn user_lang(db: &PgPool, user_id: i64) -> Lang {
-    let row: Option<(String,)> = sqlx::query_as("SELECT lang FROM users WHERE id=$1")
-        .bind(user_id)
-        .fetch_optional(db)
-        .await
-        .ok()
-        .flatten();
-    row.map(|(l,)| Lang::from_code(&l)).unwrap_or(Lang::Zh)
-}
-
 /// Insert one notification. Title and body are (中文, English) pairs and the
 /// recipient's saved language decides which side is rendered.
 pub async fn notify(
@@ -233,28 +227,8 @@ pub async fn notify(
     body: (&str, &str),
     link: &str,
 ) {
-    let lang = user_lang(db, user_id).await;
-    let title_s = t(lang, title.0, title.1).to_string();
-    let body_s = t(lang, body.0, body.1).to_string();
-    let r = sqlx::query(
-        "INSERT INTO notifications (user_id, title, body, link, created_at) VALUES ($1,$2,$3,$4,$5)",
-    )
-    .bind(user_id)
-    .bind(&title_s)
-    .bind(&body_s)
-    .bind(link)
-    .bind(now())
-    .execute(db)
-    .await;
-    if let Err(e) = r {
-        tracing::error!("notify failed: {e}");
-    } else {
-        crate::stream::publish(user_id, "notify");
-        tokio::spawn(dispatch_external_alerts(
-            db.clone(),
-            vec![(user_id, title_s, body_s, link.to_string())],
-        ));
-    }
+    let meta = crate::notifications::infer_meta(link, title.1);
+    crate::notifications::notify_with(db, user_id, title, body, link, meta).await;
 }
 
 /// Wake every member's open tab for this trip (new chat message).
@@ -282,40 +256,8 @@ pub async fn notify_many(
     body: (&str, &str),
     link: &str,
 ) {
-    if user_ids.is_empty() {
-        return;
-    }
-    let r: sqlx::Result<Vec<(i64, String, String)>> = sqlx::query_as(
-        "INSERT INTO notifications (user_id, title, body, link, created_at)
-         SELECT u.id,
-                CASE WHEN u.lang = 'en' THEN $3 ELSE $2 END,
-                CASE WHEN u.lang = 'en' THEN $5 ELSE $4 END,
-                $6, $7
-         FROM users u WHERE u.id = ANY($1) AND u.status = 'active'
-         RETURNING user_id, title, body",
-    )
-    .bind(user_ids)
-    .bind(title.0)
-    .bind(title.1)
-    .bind(body.0)
-    .bind(body.1)
-    .bind(link)
-    .bind(now())
-    .fetch_all(db)
-    .await;
-    match r {
-        Ok(rows) => {
-            let mut alerts = Vec::with_capacity(rows.len());
-            for (id, t_s, b_s) in rows {
-                crate::stream::publish(id, "notify");
-                alerts.push((id, t_s, b_s, link.to_string()));
-            }
-            if !alerts.is_empty() {
-                tokio::spawn(dispatch_external_alerts(db.clone(), alerts));
-            }
-        }
-        Err(e) => tracing::error!("notify_many failed: {e}"),
-    }
+    let meta = crate::notifications::infer_meta(link, title.1);
+    crate::notifications::notify_many_with(db, user_ids, title, body, link, meta).await;
 }
 
 static ALERT_HTTP: OnceLock<reqwest::Client> = OnceLock::new();
@@ -330,143 +272,10 @@ pub fn alert_client() -> &'static reqwest::Client {
     })
 }
 
-fn is_metadata_ip(ip: std::net::IpAddr) -> bool {
-    match ip {
-        std::net::IpAddr::V4(v4) => v4 == std::net::Ipv4Addr::new(169, 254, 169, 254),
-        std::net::IpAddr::V6(v6) => {
-            v6.to_ipv4_mapped() == Some(std::net::Ipv4Addr::new(169, 254, 169, 254))
-        }
-    }
-}
-
-fn is_non_global_v4(v4: std::net::Ipv4Addr) -> bool {
-    let o = v4.octets();
-    let cgnat = o[0] == 100 && (o[1] & 0b1100_0000) == 64;
-    let bench = o[0] == 198 && (o[1] == 18 || o[1] == 19);
-    let this_net = o[0] == 0;
-    this_net
-        || v4.is_private()
-        || v4.is_loopback()
-        || v4.is_link_local()
-        || v4.is_broadcast()
-        || v4.is_documentation()
-        || v4.is_multicast()
-        || v4.is_unspecified()
-        || cgnat
-        || bench
-        || o[0] >= 240
-}
-
-fn is_non_global_ip(ip: std::net::IpAddr) -> bool {
-    match ip {
-        std::net::IpAddr::V4(v4) => is_non_global_v4(v4),
-        std::net::IpAddr::V6(v6) => {
-            if let Some(mapped) = v6.to_ipv4_mapped() {
-                return is_non_global_v4(mapped);
-            }
-            let segs = v6.segments();
-            let is_ipv4_compat =
-                segs[0..6] == [0, 0, 0, 0, 0, 0] && !v6.is_loopback() && !v6.is_unspecified();
-            if is_ipv4_compat {
-                let mapped = std::net::Ipv4Addr::new(
-                    (segs[6] >> 8) as u8,
-                    segs[6] as u8,
-                    (segs[7] >> 8) as u8,
-                    segs[7] as u8,
-                );
-                return is_non_global_v4(mapped);
-            }
-            let unicast_link_local = (segs[0] & 0xffc0) == 0xfe80;
-            let unique_local = (segs[0] & 0xfe00) == 0xfc00;
-            let doc = segs[0] == 0x2001 && segs[1] == 0x0db8;
-            v6.is_loopback()
-                || v6.is_unspecified()
-                || v6.is_multicast()
-                || unicast_link_local
-                || unique_local
-                || doc
-        }
-    }
-}
-
-async fn validate_http_target(raw: &str, max_len: usize, dev_mode: bool) -> bool {
-    let trimmed = raw.trim();
-    if trimmed.is_empty() || trimmed.len() > max_len {
-        return false;
-    }
-    let Ok(parsed) = url::Url::parse(trimmed) else {
-        return false;
-    };
-    if !parsed.username().is_empty() || parsed.password().is_some() {
-        return false;
-    }
-    let scheme = parsed.scheme();
-    if dev_mode {
-        if scheme != "https" && scheme != "http" {
-            return false;
-        }
-    } else if scheme != "https" {
-        return false;
-    }
-    let Some(host) = parsed.host() else {
-        return false;
-    };
-    let host_lower = parsed
-        .host_str()
-        .unwrap_or_default()
-        .trim_end_matches('.')
-        .to_ascii_lowercase();
-    if host_lower.is_empty()
-        || host_lower == "metadata.google.internal"
-        || host_lower == "169.254.169.254"
-    {
-        return false;
-    }
-    match host {
-        url::Host::Ipv4(v4) => {
-            let ip = std::net::IpAddr::V4(v4);
-            if is_metadata_ip(ip) {
-                return false;
-            }
-            dev_mode || !is_non_global_v4(v4)
-        }
-        url::Host::Ipv6(v6) => {
-            let ip = std::net::IpAddr::V6(v6);
-            if is_metadata_ip(ip) {
-                return false;
-            }
-            dev_mode || !is_non_global_ip(ip)
-        }
-        url::Host::Domain(domain) => {
-            let d = domain.trim_end_matches('.').to_ascii_lowercase();
-            if d == "metadata.google.internal" {
-                return false;
-            }
-            if dev_mode {
-                return true;
-            }
-            if d == "localhost"
-                || d.ends_with(".localhost")
-                || d.ends_with(".local")
-                || d.ends_with(".internal")
-                || !d.contains('.')
-            {
-                return false;
-            }
-            let port = parsed.port_or_known_default().unwrap_or(443);
-            let Ok(addrs) = tokio::net::lookup_host((d.as_str(), port)).await else {
-                return false;
-            };
-            let mut saw_any = false;
-            for addr in addrs {
-                saw_any = true;
-                if is_non_global_ip(addr.ip()) {
-                    return false;
-                }
-            }
-            saw_any
-        }
-    }
+pub async fn validate_http_target(raw: &str, max_len: usize, dev_mode: bool) -> bool {
+    crate::notifications::resolve_and_validate_http_target(raw, max_len, dev_mode)
+        .await
+        .is_some()
 }
 
 const DEFAULT_PUSH_HOST_RULES: &[&str] = &[
@@ -531,174 +340,6 @@ pub async fn validate_push_endpoint(raw: &str, dev_mode: bool) -> bool {
     validate_http_target(raw, 1000, dev_mode).await
 }
 
-async fn dispatch_external_alerts(db: PgPool, recipients: Vec<(i64, String, String, String)>) {
-    if recipients.is_empty() {
-        return;
-    }
-    let secrets: Vec<(String, String)> = sqlx::query_as(
-        "SELECT name, value FROM app_secrets WHERE name IN ('telegram_bot_token', 'alert_webhook_url')",
-    )
-    .fetch_all(&db)
-    .await
-    .unwrap_or_default();
-
-    let mut tg_token = String::new();
-    let mut webhook_url = String::new();
-    for (k, v) in secrets {
-        match k.as_str() {
-            "telegram_bot_token" => tg_token = v.trim().to_string(),
-            "alert_webhook_url" => webhook_url = v.trim().to_string(),
-            _ => {}
-        }
-    }
-    let dev_mode = is_dev_mode();
-    let webhook_ok =
-        !webhook_url.is_empty() && validate_webhook_target(&webhook_url, dev_mode).await;
-    if !webhook_url.is_empty() && !webhook_ok {
-        tracing::warn!("blocked alert webhook URL failing SSRF policy");
-    }
-    let vapid_signer = crate::web_push::load_vapid_signer(&db)
-        .await
-        .map(std::sync::Arc::new);
-
-    if tg_token.is_empty() && !webhook_ok && vapid_signer.is_none() {
-        return;
-    }
-
-    let ids: Vec<i64> = recipients.iter().map(|(id, _, _, _)| *id).collect();
-    let prefs: Vec<(i64, String, String, String, i64, i64)> = sqlx::query_as(
-        "SELECT id, name, phone, COALESCE(telegram_chat_id, ''), whatsapp_opt_in, push_opt_in
-         FROM users WHERE id = ANY($1) AND status = 'active'",
-    )
-    .bind(&ids)
-    .fetch_all(&db)
-    .await
-    .unwrap_or_default();
-
-    let pref_map: std::collections::HashMap<i64, (String, String, String, i64, i64)> = prefs
-        .into_iter()
-        .map(|(id, name, phone, tg, wa, push)| (id, (name, phone, tg, wa, push)))
-        .collect();
-
-    let mut push_map: std::collections::HashMap<i64, Vec<(i64, String, String, String)>> =
-        std::collections::HashMap::new();
-    if vapid_signer.is_some() {
-        let push_ids: Vec<i64> = pref_map
-            .iter()
-            .filter_map(|(uid, (_, _, _, _, push_opt_in))| (*push_opt_in == 1).then_some(*uid))
-            .collect();
-        if !push_ids.is_empty() {
-            let subs: Vec<(i64, i64, String, String, String)> = sqlx::query_as(
-                "SELECT id, user_id, endpoint, p256dh, auth
-                 FROM push_subscriptions WHERE user_id = ANY($1)",
-            )
-            .bind(&push_ids)
-            .fetch_all(&db)
-            .await
-            .unwrap_or_default();
-            for (sub_id, uid, endpoint, p256dh, auth) in subs {
-                push_map
-                    .entry(uid)
-                    .or_default()
-                    .push((sub_id, endpoint, p256dh, auth));
-            }
-        }
-    }
-
-    let client = alert_client().clone();
-    let subject = vapid_subject();
-    let sem = std::sync::Arc::new(tokio::sync::Semaphore::new(8));
-    let mut join_set = tokio::task::JoinSet::new();
-    for (uid, title, body, link) in recipients {
-        let Some((name, phone, tg_chat_id, wa_opt_in, push_opt_in)) = pref_map.get(&uid).cloned()
-        else {
-            continue;
-        };
-        let has_tg = !tg_token.is_empty() && !tg_chat_id.trim().is_empty();
-        let hook_opt = if webhook_ok && wa_opt_in == 1 {
-            Some(webhook_url.clone())
-        } else {
-            None
-        };
-        if has_tg || hook_opt.is_some() {
-            let tg_token = tg_token.clone();
-            let client = client.clone();
-            let sem = sem.clone();
-            let title_c = title.clone();
-            let body_c = body.clone();
-            let link_c = link.clone();
-            join_set.spawn(async move {
-                let Ok(_permit) = sem.acquire_owned().await else {
-                    return;
-                };
-                if !tg_token.is_empty() && !tg_chat_id.trim().is_empty() {
-                    let text = format!("{title_c}\n{body_c}\n{link_c}");
-                    let url = format!("https://api.telegram.org/bot{tg_token}/sendMessage");
-                    let _ = client
-                        .post(&url)
-                        .json(&serde_json::json!({
-                            "chat_id": tg_chat_id.trim(),
-                            "text": text,
-                        }))
-                        .send()
-                        .await;
-                }
-                if let Some(hook) = hook_opt {
-                    let _ = client
-                        .post(&hook)
-                        .json(&serde_json::json!({
-                            "channel": "whatsapp",
-                            "user_id": uid,
-                            "name": name,
-                            "phone": phone,
-                            "title": title_c,
-                            "body": body_c,
-                            "link": link_c,
-                        }))
-                        .send()
-                        .await;
-                }
-            });
-        }
-
-        if push_opt_in == 1 {
-            if let (Some(signer), Some(subs)) = (vapid_signer.as_ref(), push_map.get(&uid)) {
-                for (sub_id, endpoint, p256dh, auth) in subs.iter().cloned() {
-                    let signer = signer.clone();
-                    let client = client.clone();
-                    let db = db.clone();
-                    let sem = sem.clone();
-                    let subject = subject.clone();
-                    let title_c = title.clone();
-                    let body_c = body.clone();
-                    let link_c = link.clone();
-                    join_set.spawn(async move {
-                        let Ok(_permit) = sem.acquire_owned().await else {
-                            return;
-                        };
-                        if !validate_push_endpoint(&endpoint, dev_mode).await {
-                            return;
-                        }
-                        if crate::web_push::send_push_message(
-                            &client, &signer, &subject, &endpoint, &p256dh, &auth, &title_c,
-                            &body_c, &link_c,
-                        )
-                        .await
-                            == crate::web_push::PushOutcome::Gone
-                        {
-                            let _ = sqlx::query("DELETE FROM push_subscriptions WHERE id=$1")
-                                .bind(sub_id)
-                                .execute(&db)
-                                .await;
-                        }
-                    });
-                }
-            }
-        }
-    }
-    while join_set.join_next().await.is_some() {}
-}
-
 /// Notify every active member who may do `act` on `page`; each recipient gets the
 /// message in their own language.
 pub async fn notify_perm(
@@ -709,15 +350,7 @@ pub async fn notify_perm(
     body: (&str, &str),
     link: &str,
 ) {
-    let users: Vec<(i64,)> = sqlx::query_as(crate::dyn_sql!(
-        "SELECT u.id FROM users u WHERE {}",
-        perms::sql_holds("u", Perm(page, act))
-    ))
-    .fetch_all(db)
-    .await
-    .unwrap_or_default();
-    let ids: Vec<i64> = users.into_iter().map(|(id,)| id).collect();
-    notify_many(db, &ids, title, body, link).await;
+    crate::notifications::notify_perm_except(db, page, act, None, title, body, link).await;
 }
 
 /// Chat system message: one shared row for the whole trip, so both languages

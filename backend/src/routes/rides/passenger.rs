@@ -13,7 +13,8 @@ use crate::error::{bad, conflict, forbidden, AppResult};
 use crate::perms::{Act, Page};
 use crate::state::AppState;
 use crate::util::{
-    audit, norm_dt, notify, notify_perm, now, require, split_cursor, system_message, ErrorKey,
+    audit, norm_dt, notify, notify_many, notify_perm, now, require, split_cursor, system_message,
+    ErrorKey,
 };
 
 use super::driver::driver_load;
@@ -413,17 +414,19 @@ pub(crate) async fn notify_area_drivers_pool(
     .bind(match_group)
     .fetch_all(db)
     .await?;
-    let when = format!("{} · {} · {} 位", at.replace('T', " "), rider_label, seats);
-    for (d,) in drivers {
-        notify(
-            db,
-            d,
-            ("新的接送报名", "New ride request"),
-            (&when, &when),
-            "/drive",
-        )
-        .await;
-    }
+    let ts_fmt = at.replace('T', " ");
+    let when_zh = format!("{ts_fmt} · {rider_label} · {seats} 位");
+    let seat_word = if seats == 1 { "seat" } else { "seats" };
+    let when_en = format!("{ts_fmt} · {rider_label} · {seats} {seat_word}");
+    let driver_ids: Vec<i64> = drivers.into_iter().map(|(d,)| d).collect();
+    notify_many(
+        db,
+        &driver_ids,
+        ("新的接送报名", "New ride request"),
+        (&when_zh, &when_en),
+        "/drive",
+    )
+    .await;
     Ok(())
 }
 

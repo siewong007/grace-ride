@@ -71,6 +71,9 @@ export async function api<T = unknown>(path: string, opts: { method?: string; bo
   }
   if (path.startsWith('/auth/logout')) {
     clearOfflineSnapshots();
+    if (typeof window !== 'undefined') {
+      window.dispatchEvent(new Event('gr:push-reset'));
+    }
     try {
       localStorage.removeItem('gr_autolock_mins');
       localStorage.removeItem('gr_locked_user');
@@ -151,6 +154,11 @@ function openStream() {
     streamOpen = true;
     listeners.forEach((fn) => fn(e.data));
   };
+  es.addEventListener('unread', (e) => {
+    streamOpen = true;
+    const data = (e as MessageEvent<string>).data;
+    listeners.forEach((fn) => fn(`unread:${data}`));
+  });
   stream = es;
 }
 
@@ -199,7 +207,7 @@ if (typeof window !== 'undefined') {
 /** Fetch JSON for a path; re-fetch on `reload()` and optionally poll every `pollMs`.
  *  Responses for requests superseded by a newer path or reload are always ignored,
  *  so a slow reply for a previous path can never replace the current path's data. */
-export function useApi<T>(path: string | null, pollMs?: number) {
+export function useApi<T>(path: string | null, pollMs?: number, streamKinds?: string[]) {
   const [data, setData] = useState<T | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(Boolean(path));
@@ -208,10 +216,12 @@ export function useApi<T>(path: string | null, pollMs?: number) {
   const prevBaseRef = useRef<string | null>(path ? path.split('?')[0] : null);
   const hasDataRef = useRef(false);
   const errorRef = useRef<string | null>(error);
+  const streamKindsRef = useRef(streamKinds);
   const requestId = useRef(0);
   pathRef.current = path;
   hasDataRef.current = data !== null;
   errorRef.current = error;
+  streamKindsRef.current = streamKinds;
 
   const reload = useCallback(async () => {
     const currentRequest = ++requestId.current;
@@ -278,7 +288,12 @@ export function useApi<T>(path: string | null, pollMs?: number) {
       skipped = 0;
       reload();
     }, pollMs);
-    const unsub = subscribe(reload);
+    const unsub = subscribe((kind) => {
+      if (kind.startsWith('unread:')) return;
+      const filter = streamKindsRef.current;
+      if (filter && !filter.includes(kind)) return;
+      void reload();
+    });
     return () => {
       window.removeEventListener('gr:session-unlocked', onUnlocked);
       clearInterval(t);

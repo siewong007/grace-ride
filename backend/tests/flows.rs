@@ -262,6 +262,7 @@ async fn prod_app() -> Router {
         db: Default::default(),
         housekeeping_interval_mins: 60,
         notification_retention_days: 90,
+        turnstile: Default::default(),
     };
     cfg.validate().unwrap();
     let state = init(cfg).await.unwrap();

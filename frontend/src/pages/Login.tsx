@@ -6,7 +6,9 @@ import { useAuth } from '../auth';
 import { useTranslation } from 'react-i18next';
 import { LogoMark, Wordmark } from '../components/Brand';
 import { PublicDisplayBar } from '../components/AppChrome';
+import TurnstileWidget from '../components/TurnstileWidget';
 import { Button, ErrorBox, Field, Modal, Notice, useAction } from '../components/ui';
+import { useTurnstile } from '../turnstile';
 import { getDevicePasskey, loginWithPasskey, passkeySupported, type DevicePasskeyInfo } from '../webauthn';
 import { clearAutoLock } from '../components/AutoLock';
 import { detectInAppBrowser, inAppBrowserName } from '../inAppBrowser';
@@ -32,6 +34,8 @@ export default function Login() {
   const [recoveryReason, setRecoveryReason] = useState('');
   const [recoverySent, setRecoverySent] = useState(false);
   const recoveryAct = useAction();
+  const passkeyTurnstile = useTurnstile();
+  const recoveryTurnstile = useTurnstile();
 
   useEffect(() => {
     api<DevUser[]>('/auth/dev-users').then(setDevUsers).catch(() => setDevUsers(null));
@@ -50,10 +54,18 @@ export default function Login() {
 
   const onPasskey = (e: FormEvent) => {
     e.preventDefault();
+    if (passkeyTurnstile.enabled && !passkeyTurnstile.token) return;
     const targetEmail = (hasRecognizedDevicePasskey && devicePasskey ? devicePasskey.email : email).trim();
     run(async () => {
-      await loginWithPasskey(targetEmail);
-      await done();
+      try {
+        await (passkeyTurnstile.token
+          ? loginWithPasskey(targetEmail, passkeyTurnstile.token)
+          : loginWithPasskey(targetEmail));
+        await done();
+      } catch (err) {
+        passkeyTurnstile.reset();
+        throw err;
+      }
     });
   };
 
@@ -71,10 +83,12 @@ export default function Login() {
     setRecoveryEmailErr('');
     setRecoveryReason('');
     setRecoverySent(false);
+    recoveryTurnstile.reset();
     setRecoveryOpen(true);
   };
 
   const closeRecoveryModal = () => {
+    recoveryTurnstile.reset();
     setRecoveryOpen(false);
     setRecoverySent(false);
     setRecoveryEmailErr('');
@@ -87,10 +101,21 @@ export default function Login() {
       setRecoveryEmailErr(t('recoveryEmailRequired'));
       return;
     }
+    if (recoveryTurnstile.enabled && !recoveryTurnstile.token) return;
     setRecoveryEmailErr('');
     await recoveryAct.run(async () => {
-      await post('/auth/recovery-request', { email: trimmed, reason: recoveryReason.trim() });
-      setRecoverySent(true);
+      try {
+        await post(
+          '/auth/recovery-request',
+          recoveryTurnstile.token
+            ? { email: trimmed, reason: recoveryReason.trim(), turnstile_token: recoveryTurnstile.token }
+            : { email: trimmed, reason: recoveryReason.trim() },
+        );
+        setRecoverySent(true);
+      } catch (err) {
+        recoveryTurnstile.reset();
+        throw err;
+      }
     });
   };
 
@@ -178,8 +203,24 @@ export default function Login() {
               </Field>
             )}
 
+            {passkeySupported() && (
+              <TurnstileWidget
+                siteKey={passkeyTurnstile.siteKey}
+                action="passkey_login"
+                resetKey={passkeyTurnstile.resetKey}
+                onToken={passkeyTurnstile.setToken}
+              />
+            )}
+
             {passkeySupported() ? (
-              <Button variant="primary" size="lg" type="submit" block loading={busy} disabled={busy}>
+              <Button
+                variant="primary"
+                size="lg"
+                type="submit"
+                block
+                loading={busy}
+                disabled={busy || (passkeyTurnstile.enabled && !passkeyTurnstile.token)}
+              >
                 <Fingerprint size={20} />
                 {busy ? t('loggingIn') : t('loginWithPasskey')}
               </Button>
@@ -324,8 +365,20 @@ export default function Login() {
                 />
               </div>
 
+              <TurnstileWidget
+                siteKey={recoveryTurnstile.siteKey}
+                action="recovery_request"
+                resetKey={recoveryTurnstile.resetKey}
+                onToken={recoveryTurnstile.setToken}
+              />
               <ErrorBox error={recoveryAct.error} />
-              <Button variant="primary" type="submit" block loading={recoveryAct.busy} disabled={recoveryAct.busy}>
+              <Button
+                variant="primary"
+                type="submit"
+                block
+                loading={recoveryAct.busy}
+                disabled={recoveryAct.busy || (recoveryTurnstile.enabled && !recoveryTurnstile.token)}
+              >
                 {t('recoverySubmit')}
               </Button>
             </form>

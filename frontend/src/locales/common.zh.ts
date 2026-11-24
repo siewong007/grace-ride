@@ -94,4 +94,12 @@ export default {
     prev: '上一张',
     next: '下一张',
   },
+  turnstile: {
+    label: '人机验证',
+    loading: '正在加载安全验证…',
+    expired: '验证已过期，请重新验证。',
+    error: '无法加载安全验证，请检查网络后重试。',
+    retry: '重新验证',
+    required: '请先完成安全验证。',
+  },
 };

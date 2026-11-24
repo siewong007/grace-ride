@@ -12,9 +12,10 @@ use serde_json::{json, Value};
 
 use crate::auth::CurrentUser;
 use crate::error::{bad, forbidden, not_found, AppResult};
+use crate::notifications::notify_trip_chat;
 use crate::perms::Act;
 use crate::state::AppState;
-use crate::util::{notify_trip, now, ErrorKey};
+use crate::util::{now, ErrorKey};
 
 use super::{load_ride, traffic_can};
 
@@ -268,7 +269,7 @@ pub(super) async fn post_message(
     if acc.is_member {
         bump_cursor(&st, acc.trip, u.id, mid, true).await?;
     }
-    notify_trip(&st.db, acc.trip).await;
+    notify_trip_chat(&st.db, acc.trip, id, u.id, &u.name, body).await;
     Ok(Json(json!({"ok": true, "id": mid})))
 }
 

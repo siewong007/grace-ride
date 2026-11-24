@@ -30,6 +30,8 @@ pub enum AuthError<'a> {
     TermsRequired,
     SessionLocked,
     UnlockMethodRequired,
+    TurnstileRequired,
+    TurnstileFailed,
 }
 
 pub fn render(lang: Lang, key: AuthError<'_>) -> String {
@@ -126,6 +128,16 @@ pub fn render(lang: Lang, key: AuthError<'_>) -> String {
             lang,
             "请提供通行密钥、双重验证码或备用码来解锁。",
             "Provide a passkey, two-factor code, or backup code to unlock.",
+        ),
+        AuthError::TurnstileRequired => pair(
+            lang,
+            "请先完成人机验证再继续",
+            "Please complete the human verification check before continuing",
+        ),
+        AuthError::TurnstileFailed => pair(
+            lang,
+            "人机验证失败或已过期，请重试",
+            "Human verification failed or expired; please try again",
         ),
     }
 }

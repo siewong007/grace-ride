@@ -77,6 +77,9 @@ vi.mock('../auth', () => ({
   }),
 }));
 
+let notifPrefsData: Record<string, unknown> | null = null;
+let pushSubsData: Record<string, unknown> | null = null;
+
 vi.mock('../api', () => ({
   api: vi.fn().mockResolvedValue([]),
   del: vi.fn().mockResolvedValue({ ok: true }),
@@ -89,12 +92,16 @@ vi.mock('../api', () => ({
         : path === '/saved-places'
           ? savedPlacesData
           : path === '/areas'
-          ? areasData
-          : path === '/proxy-riders'
-            ? proxyRidersData
-            : path === '/push/config'
-              ? pushConfigData
-              : [],
+            ? areasData
+            : path === '/proxy-riders'
+              ? proxyRidersData
+              : path === '/push/config'
+                ? pushConfigData
+                : path === '/notifications/preferences'
+                  ? notifPrefsData
+                  : path === '/push/subscriptions'
+                    ? pushSubsData
+                    : [],
     loading: false,
     error: null,
     reload: vi.fn(),
@@ -454,6 +461,8 @@ beforeEach(() => {
   savedPlacesData = [];
   proxyRidersData = [];
   pushConfigData = undefined;
+  notifPrefsData = null;
+  pushSubsData = null;
   familyData = {
     family: null,
     members: [],
@@ -1055,5 +1064,43 @@ describe('Profile compact layout', () => {
         });
       }
     }
+  });
+
+  it('warns when /push/test delivers to 0 devices, removes connected web device, and blocks non-numeric Telegram Chat ID', async () => {
+    pushConfigData = {
+      enabled: true,
+      configured: true,
+      subscription_count: 1,
+      telegram_configured: true,
+      telegram_bot_username: 'GraceTestBot',
+    };
+    pushSubsData = {
+      web: [
+        {
+          id: 77,
+          device_label: 'Chrome Desktop',
+          endpoint_preview: 'https://fcm.googleapis.com/***',
+          created_at: '2026-11-20 08:00:00',
+          last_delivered_at: null,
+        },
+      ],
+      mobile: [],
+    };
+    vi.mocked(post).mockResolvedValueOnce({ ok: true, delivered: 0, total: 1 });
+
+    renderProfile(baseMe, '/me?section=preferences');
+
+    fireEvent.click(screen.getByRole('button', { name: 'sendTestPush' }));
+    expect(await screen.findByText('pushTestZeroDelivered')).toBeInTheDocument();
+
+    expect(screen.getByText('Chrome Desktop')).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: 'pushRemoveDevice' }));
+    await waitFor(() => expect(del).toHaveBeenCalledWith('/push/subscriptions/77'));
+
+    const tgInput = screen.getByPlaceholderText('123456789');
+    fireEvent.change(tgInput, { target: { value: '@invalid_handle' } });
+    fireEvent.click(screen.getByRole('button', { name: /^Save$/ }));
+    expect(await screen.findByText('telegramInvalidId')).toBeInTheDocument();
+    expect(put).not.toHaveBeenCalled();
   });
 });

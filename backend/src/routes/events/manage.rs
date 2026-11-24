@@ -15,9 +15,7 @@ use crate::error::{bad, conflict, forbidden, AppResult};
 use crate::i18n::ErrorKey;
 use crate::perms::{Act, Page};
 use crate::state::AppState;
-use crate::util::{
-    audit, audit_many, norm_dt, notify, notify_many, now, random_token, require, Lang,
-};
+use crate::util::{audit, audit_many, norm_dt, notify_many, now, random_token, require, Lang};
 
 #[derive(Deserialize)]
 pub(super) struct EventIn {
@@ -784,22 +782,26 @@ pub(super) async fn cancel_event(
         )
         .await?;
     }
+    let mut driver_ids: Vec<i64> = Vec::new();
     for (rid, d, t) in rides {
         if let Some(d) = d {
             st.routing.invalidate(d, t.unwrap_or(rid)).await;
-            notify(
-                &st.db,
-                d,
-                (
-                    "活动已取消，接送随之取消",
-                    "Event cancelled, ride cancelled with it",
-                ),
-                (e.title.as_str(), e.title.as_str()),
-                "/drive",
-            )
-            .await;
+            if !driver_ids.contains(&d) {
+                driver_ids.push(d);
+            }
         }
     }
+    notify_many(
+        &st.db,
+        &driver_ids,
+        (
+            "活动已取消，接送随之取消",
+            "Event cancelled, ride cancelled with it",
+        ),
+        (e.title.as_str(), e.title.as_str()),
+        "/drive",
+    )
+    .await;
     audit(
         &st.db,
         Some(u.id),

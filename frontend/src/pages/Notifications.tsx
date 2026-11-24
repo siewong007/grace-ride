@@ -8,9 +8,16 @@ import {
   CarFront,
   CheckCheck,
   CreditCard,
+  Heart,
+  Mail,
+  MailOpen,
+  Megaphone,
   MessageSquare,
+  ShieldAlert,
   Smartphone,
+  Trash2,
 } from 'lucide-react';
+import { useTranslation } from 'react-i18next';
 import { api, post, useApi } from '../api';
 import { useAuth } from '../auth';
 import { PwaInstallModal } from '../components/PwaInstallModal';
@@ -26,9 +33,8 @@ import {
   useAction,
   useInfiniteScroll,
 } from '../components/ui';
-import { fmtAgo, todayStr, useFormatT } from '../format';
+import { fmtAgo, parseLocal, useFormatT } from '../format';
 import { enablePushNotifications, usePushNotifications } from '../pushNotifications';
-import { useTranslation } from 'react-i18next';
 
 interface Notif {
   id: number;
@@ -37,26 +43,128 @@ interface Notif {
   link: string;
   read: boolean;
   created_at: string;
+  category?: string;
+  event_type?: string;
+  priority?: string;
+  entity_type?: string;
+  entity_id?: number | null;
 }
 
 interface NotifsPage {
   items: Notif[];
   next_before: number | null;
+  unread?: number;
+}
+
+const CATEGORIES = [
+  { key: '', labelKey: 'catAll' },
+  { key: 'ride', labelKey: 'catRide' },
+  { key: 'event', labelKey: 'catEvent' },
+  { key: 'cost', labelKey: 'catCost' },
+  { key: 'help', labelKey: 'catHelp' },
+  { key: 'family', labelKey: 'catFamily' },
+  { key: 'admin', labelKey: 'catAdmin' },
+  { key: 'announcement', labelKey: 'catAnnouncement' },
+] as const;
+
+const klDateFormatter = new Intl.DateTimeFormat('en-CA', {
+  timeZone: 'Asia/Kuala_Lumpur',
+  year: 'numeric',
+  month: '2-digit',
+  day: '2-digit',
+});
+
+function klDateKey(input: string | Date): string {
+  let d: Date;
+  if (typeof input === 'string') {
+    const trimmed = input.trim();
+    if (!trimmed) return '';
+    d = /[zZ]|[+-]\d{2}:?\d{2}$/.test(trimmed) ? new Date(trimmed) : parseLocal(trimmed);
+  } else {
+    d = input;
+  }
+  if (Number.isNaN(d.getTime())) {
+    return typeof input === 'string' ? input.slice(0, 10) : '';
+  }
+  return klDateFormatter.format(d);
+}
+
+function getNotifIcon(n: Notif) {
+  switch (n.category) {
+    case 'ride':
+      return <CarFront size={18} />;
+    case 'event':
+      return <Calendar size={18} />;
+    case 'cost':
+      return <CreditCard size={18} />;
+    case 'help':
+      return <MessageSquare size={18} />;
+    case 'family':
+      return <Heart size={18} />;
+    case 'admin':
+      return <ShieldAlert size={18} />;
+    case 'announcement':
+      return <Megaphone size={18} />;
+    default:
+      break;
+  }
+  const l = (n.link || '').toLowerCase();
+  const title = (n.title || '').toLowerCase();
+  if (l.includes('ride') || title.includes('ride')) return <CarFront size={18} />;
+  if (l.includes('event') || title.includes('event')) return <Calendar size={18} />;
+  if (l.includes('settlement') || l.includes('share') || l.includes('cost')) {
+    return <CreditCard size={18} />;
+  }
+  if (l.includes('help') || l.includes('chat')) return <MessageSquare size={18} />;
+  return <Bell size={18} />;
+}
+
+function buildNotifsPath(unreadOnly: boolean, category: string, before?: number | null): string {
+  if (!unreadOnly && !category && before == null) {
+    return '/notifications';
+  }
+  const params = new URLSearchParams({ limit: '30' });
+  if (before != null) params.set('before', String(before));
+  if (unreadOnly) params.set('unread_only', 'true');
+  if (category) params.set('category', category);
+  return `/notifications?${params.toString()}`;
 }
 
 export default function Notifications() {
   const { t } = useTranslation('notifications');
   const ft = useFormatT();
-  const { data, loading, reload } = useApi<NotifsPage | Notif[]>('/notifications', 20000);
+  const [unreadOnly, setUnreadOnly] = useState(false);
+  const [category, setCategory] = useState('');
+  const listPath = buildNotifsPath(unreadOnly, category);
+  const { data, loading, reload } = useApi<NotifsPage | Notif[]>(
+    listPath,
+    20000,
+    ['notify', 'resume'],
+  );
   const [olderItems, setOlderItems] = useState<Notif[]>([]);
   const [nextBefore, setNextBefore] = useState<number | null>(null);
   const [loadingMore, setLoadingMore] = useState(false);
+  const [loadMoreError, setLoadMoreError] = useState(false);
+  const [readOverrides, setReadOverrides] = useState<Record<number, boolean>>({});
+  const [deletedIds, setDeletedIds] = useState<number[]>([]);
 
   useEffect(() => {
-    if (data && !Array.isArray(data)) {
-      // Only update the cursor from page 1 when older pages have not been appended yet;
-      // otherwise polling page 1 would reset nextBefore and re-fetch duplicate page-2 items.
-      setNextBefore((cur) => (olderItems.length > 0 ? cur : data.next_before));
+    setOlderItems([]);
+    setNextBefore(null);
+    setLoadMoreError(false);
+    setReadOverrides({});
+    setDeletedIds([]);
+  }, [listPath]);
+
+  useEffect(() => {
+    if (data) {
+      setReadOverrides((cur) => (Object.keys(cur).length === 0 ? cur : {}));
+      setDeletedIds((cur) => (cur.length === 0 ? cur : []));
+      if (!Array.isArray(data)) {
+        // Only update the cursor from page 1 when older pages have not been appended yet;
+        // otherwise polling page 1 would reset nextBefore and re-fetch duplicate page-2 items.
+        setNextBefore((cur) => (olderItems.length > 0 ? cur : data.next_before));
+      }
     }
   }, [data, olderItems.length]);
 
@@ -70,26 +178,34 @@ export default function Notifications() {
     }
   });
   const [enabling, setEnabling] = useState(false);
-  const [pushFeedback, setPushFeedback] = useState<{ tone: 'success' | 'warning'; text: string } | null>(null);
+  const [pushFeedback, setPushFeedback] = useState<{
+    tone: 'success' | 'warning';
+    text: string;
+  } | null>(null);
   const [showInstallModal, setShowInstallModal] = useState(false);
   const { run } = useAction();
   const nav = useNavigate();
 
-  const initialItems = Array.isArray(data) ? data : data?.items ?? [];
+  const deletedSet = new Set(deletedIds);
+  const initialItems = Array.isArray(data) ? data : (data?.items ?? []);
   const seenIds = new Set<number>();
   const items: Notif[] = [];
-  for (const n of [...initialItems, ...olderItems]) {
-    if (!seenIds.has(n.id)) {
-      seenIds.add(n.id);
-      items.push(n);
-    }
+  for (const raw of [...initialItems, ...olderItems]) {
+    if (seenIds.has(raw.id) || deletedSet.has(raw.id)) continue;
+    seenIds.add(raw.id);
+    const read = readOverrides[raw.id] !== undefined ? readOverrides[raw.id] : raw.read;
+    if (unreadOnly && read) continue;
+    items.push({ ...raw, read });
   }
 
   const loadMore = useCallback(async () => {
     if (nextBefore == null || loadingMore) return;
     setLoadingMore(true);
+    setLoadMoreError(false);
     try {
-      const res = await api<NotifsPage | Notif[]>(`/notifications?before=${nextBefore}&limit=30`);
+      const res = await api<NotifsPage | Notif[]>(
+        buildNotifsPath(unreadOnly, category, nextBefore),
+      );
       const newItems = Array.isArray(res) ? res : res.items;
       const nb = Array.isArray(res) ? null : res.next_before;
       setOlderItems((prev) => {
@@ -98,22 +214,23 @@ export default function Notifications() {
       });
       setNextBefore(nb);
     } catch {
-      // ignore
+      setLoadMoreError(true);
     } finally {
       setLoadingMore(false);
     }
-  }, [nextBefore, loadingMore]);
+  }, [nextBefore, loadingMore, unreadOnly, category]);
 
   const { sentinelRef } = useInfiniteScroll({
-    hasMore: nextBefore != null,
+    hasMore: nextBefore != null && !loadMoreError,
     loading: loadingMore || loading,
     onLoadMore: loadMore,
   });
 
   const open = async (n: Notif) => {
     if (!n.read) {
-      await run(() => post(`/notifications/${n.id}/read`));
+      setReadOverrides((prev) => ({ ...prev, [n.id]: true }));
       setOlderItems((prev) => prev.map((x) => (x.id === n.id ? { ...x, read: true } : x)));
+      await run(() => post(`/notifications/${n.id}/read`));
     }
     refresh();
     if (
@@ -129,25 +246,41 @@ export default function Notifications() {
     }
   };
 
-  const markAllRead = async () => {
+  const toggleRead = async (n: Notif) => {
+    const nextRead = !n.read;
+    setReadOverrides((prev) => ({ ...prev, [n.id]: nextRead }));
+    setOlderItems((prev) => prev.map((x) => (x.id === n.id ? { ...x, read: nextRead } : x)));
     await run(async () => {
-      await post('/notifications/read-all');
-      setOlderItems((prev) => prev.map((x) => ({ ...x, read: true })));
+      await post(`/notifications/${n.id}/${nextRead ? 'read' : 'unread'}`);
       reload();
       refresh();
     });
   };
 
-  const getNotifIcon = (n: Notif) => {
-    const l = (n.link || '').toLowerCase();
-    const title = (n.title || '').toLowerCase();
-    if (l.includes('ride') || title.includes('ride')) return <CarFront size={18} />;
-    if (l.includes('event') || title.includes('event')) return <Calendar size={18} />;
-    if (l.includes('settlement') || l.includes('share') || l.includes('cost')) {
-      return <CreditCard size={18} />;
+  const removeNotif = async (n: Notif) => {
+    setDeletedIds((prev) => (prev.includes(n.id) ? prev : [...prev, n.id]));
+    setOlderItems((prev) => prev.filter((x) => x.id !== n.id));
+    await run(async () => {
+      await api(`/notifications/${n.id}`, { method: 'DELETE' });
+      reload();
+      refresh();
+    });
+  };
+
+  const markAllRead = async () => {
+    const patch: Record<number, boolean> = {};
+    for (const item of items) {
+      patch[item.id] = true;
     }
-    if (l.includes('help') || l.includes('chat')) return <MessageSquare size={18} />;
-    return <Bell size={18} />;
+    setReadOverrides((prev) => ({ ...prev, ...patch }));
+    setOlderItems((prev) => prev.map((x) => ({ ...x, read: true })));
+    await run(async () => {
+      await (category
+        ? post('/notifications/read-all', { category })
+        : post('/notifications/read-all'));
+      reload();
+      refresh();
+    });
   };
 
   const dismissPrompt = () => {
@@ -183,6 +316,8 @@ export default function Notifications() {
         setPushFeedback({ tone: 'warning', text: deniedCopy });
       } else if (res.reason === 'dismissed') {
         setPushFeedback({ tone: 'warning', text: t('pushDismissed') });
+      } else if (res.reason === 'subscribe_failed') {
+        setPushFeedback({ tone: 'warning', text: t('pushSubscribeFailed') });
       }
     } finally {
       setEnabling(false);
@@ -201,9 +336,76 @@ export default function Notifications() {
   const showDeniedBanner = canShowBanner && push.availability === 'denied';
   const bannerShown = showPromptCard || showInstallCard || showDeniedBanner;
 
-  const today = todayStr();
-  const todayNotifs = items.filter((n) => n.created_at.slice(0, 10) === today);
-  const earlierNotifs = items.filter((n) => n.created_at.slice(0, 10) !== today);
+  const pageUnread = !Array.isArray(data) && typeof data?.unread === 'number' ? data.unread : undefined;
+  const hasUnread =
+    (pageUnread !== undefined ? pageUnread > 0 : (me?.unread ?? 0) > 0) ||
+    items.some((n) => !n.read);
+
+  const nowDate = new Date();
+  const todayKl = klDateKey(nowDate);
+  const yesterdayKl = klDateKey(new Date(nowDate.getTime() - 86_400_000));
+  const todayNotifs: Notif[] = [];
+  const yesterdayNotifs: Notif[] = [];
+  const earlierNotifs: Notif[] = [];
+  for (const n of items) {
+    const dk = klDateKey(n.created_at);
+    if (dk === todayKl) {
+      todayNotifs.push(n);
+    } else if (dk === yesterdayKl) {
+      yesterdayNotifs.push(n);
+    } else {
+      earlierNotifs.push(n);
+    }
+  }
+
+  const renderNotifRow = (n: Notif) => (
+    <div
+      key={n.id}
+      className={`notif-row ${n.priority === 'urgent' ? 'notif-urgent' : ''}`}
+    >
+      <button
+        type="button"
+        className={`notif-item ${n.read ? '' : 'notif-unread'}`}
+        onClick={() => void open(n)}
+      >
+        <div className="notif-icon-wrap" aria-hidden="true">
+          {getNotifIcon(n)}
+        </div>
+        <div className="grow min-w-0">
+          <div className={`ellipsis ${n.read ? '' : 'bold'}`}>{n.title}</div>
+          {n.body && <div className="muted small clamp-2">{n.body}</div>}
+          <div className="muted tiny">{fmtAgo(n.created_at, ft)}</div>
+        </div>
+        <span aria-hidden className={`unread-dot ${n.read ? 'read' : ''}`} />
+      </button>
+      <div className="notif-row-actions">
+        <button
+          type="button"
+          className="notif-action-btn"
+          aria-label={t(n.read ? 'markUnread' : 'markRead')}
+          title={t(n.read ? 'markUnread' : 'markRead')}
+          onClick={() => void toggleRead(n)}
+        >
+          {n.read ? <Mail size={15} /> : <MailOpen size={15} />}
+        </button>
+        <button
+          type="button"
+          className="notif-action-btn"
+          aria-label={t('deleteNotif')}
+          title={t('deleteNotif')}
+          onClick={() => void removeNotif(n)}
+        >
+          <Trash2 size={15} />
+        </button>
+      </div>
+    </div>
+  );
+
+  const sections = [
+    { key: 'today', label: t('today'), rows: todayNotifs },
+    { key: 'yesterday', label: t('yesterday'), rows: yesterdayNotifs },
+    { key: 'earlier', label: t('earlier'), rows: earlierNotifs },
+  ];
 
   return (
     <Page width="narrow">
@@ -211,11 +413,11 @@ export default function Notifications() {
         <PageHeader
           title={t('title')}
           actions={
-            items.some((n) => !n.read) ? (
+            hasUnread ? (
               <Button
-                variant="ghost"
+                variant="secondary"
                 size="sm"
-                onClick={markAllRead}
+                onClick={() => void markAllRead()}
                 icon={<CheckCheck size={16} />}
               >
                 {t('readAll')}
@@ -314,6 +516,40 @@ export default function Notifications() {
           </Notice>
         )}
 
+        <div className="notif-filters">
+          <div className="notif-filter-row" role="group" aria-label={t('title')}>
+            <button
+              type="button"
+              className={`notif-chip ${!unreadOnly ? 'active' : ''}`}
+              aria-pressed={!unreadOnly}
+              onClick={() => setUnreadOnly(false)}
+            >
+              {t('filterAll')}
+            </button>
+            <button
+              type="button"
+              className={`notif-chip ${unreadOnly ? 'active' : ''}`}
+              aria-pressed={unreadOnly}
+              onClick={() => setUnreadOnly(true)}
+            >
+              {t('filterUnread')}
+            </button>
+          </div>
+          <div className="notif-filter-row">
+            {CATEGORIES.map((c) => (
+              <button
+                key={c.key || 'all'}
+                type="button"
+                className={`notif-chip ${category === c.key ? 'active' : ''}`}
+                aria-pressed={category === c.key}
+                onClick={() => setCategory(c.key)}
+              >
+                {t(c.labelKey)}
+              </button>
+            ))}
+          </div>
+        </div>
+
         {loading ? (
           <Spinner />
         ) : !items.length ? (
@@ -321,60 +557,28 @@ export default function Notifications() {
         ) : (
           <>
             <div className="stack">
-              {todayNotifs.length > 0 && (
-                <div>
-                  <div className="notif-date-header">{t('today')}</div>
-                  <div className="list">
-                    {todayNotifs.map((n) => (
-                      <button
-                        key={n.id}
-                        type="button"
-                        className={`notif-item ${n.read ? '' : 'notif-unread'}`}
-                        onClick={() => open(n)}
-                      >
-                        <div className="notif-icon-wrap" aria-hidden="true">
-                          {getNotifIcon(n)}
-                        </div>
-                        <div className="grow min-w-0">
-                          <div className={`ellipsis ${n.read ? '' : 'bold'}`}>{n.title}</div>
-                          {n.body && <div className="muted small clamp-2">{n.body}</div>}
-                          <div className="muted tiny">{fmtAgo(n.created_at, ft)}</div>
-                        </div>
-                        <span aria-hidden className={`unread-dot ${n.read ? 'read' : ''}`} />
-                      </button>
-                    ))}
-                  </div>
-                </div>
-              )}
-
-              {earlierNotifs.length > 0 && (
-                <div>
-                  <div className="notif-date-header">{t('earlier')}</div>
-                  <div className="list">
-                    {earlierNotifs.map((n) => (
-                      <button
-                        key={n.id}
-                        type="button"
-                        className={`notif-item ${n.read ? '' : 'notif-unread'}`}
-                        onClick={() => open(n)}
-                      >
-                        <div className="notif-icon-wrap" aria-hidden="true">
-                          {getNotifIcon(n)}
-                        </div>
-                        <div className="grow min-w-0">
-                          <div className={`ellipsis ${n.read ? '' : 'bold'}`}>{n.title}</div>
-                          {n.body && <div className="muted small clamp-2">{n.body}</div>}
-                          <div className="muted tiny">{fmtAgo(n.created_at, ft)}</div>
-                        </div>
-                        <span aria-hidden className={`unread-dot ${n.read ? 'read' : ''}`} />
-                      </button>
-                    ))}
-                  </div>
-                </div>
+              {sections.map(
+                (sec) =>
+                  sec.rows.length > 0 && (
+                    <div key={sec.key}>
+                      <div className="notif-date-header">{sec.label}</div>
+                      <div className="list">{sec.rows.map(renderNotifRow)}</div>
+                    </div>
+                  ),
               )}
             </div>
+            {loadMoreError && (
+              <Notice tone="warning">
+                <div className="row between wrap gap-sm items-center">
+                  <span className="small">{t('loadMoreError')}</span>
+                  <Button variant="ghost" size="sm" onClick={() => void loadMore()}>
+                    {t('retry')}
+                  </Button>
+                </div>
+              </Notice>
+            )}
             <InfiniteSentinel
-              hasMore={nextBefore != null}
+              hasMore={nextBefore != null && !loadMoreError}
               loading={loadingMore}
               sentinelRef={sentinelRef}
               empty={!items.length}

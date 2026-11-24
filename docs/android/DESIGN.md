@@ -1,4 +1,4 @@
-# Grace Ride Android — Design System (Phase 2)
+# Grace Ride Android — Design System
 
 Native Material 3 translation of the web design tokens (`frontend/src/styles.css`).
 The web app is minimalist: one background, one accent, borders instead of shadows.
@@ -50,11 +50,17 @@ All sizes in `sp`: the system font scale is respected (elder-friendly text scali
 
 - `enableEdgeToEdge()` in `MainActivity`; content draws behind system bars.
 - `Scaffold` supplies safe insets; screens apply `contentPadding`/`padding(padding)`.
-- Bottom navigation (phone): **Home · Events · Profile** (3 primary tabs; Rides, Costs, History, Saved Addresses with GPS capture, Frequent Proxy Riders, and Driver Vehicle &amp; Carpool Settings live natively under Profile, while Event Detail and Home link straight to Ride Detail and booking).
+- Bottom navigation (phone): **Home · Events · Profile** (3 primary tabs; Rides, Costs, History, Saved Addresses with GPS capture, Frequent Proxy Riders, Driver Vehicle & Carpool Settings, and Grok Bot Studio live natively under Profile, while Event Detail—via `EventScheduleTimeline`—and Home link straight to Ride Detail and booking; `TermsScreen` presents the PDPA v2 consent gate when needed).
   Volunteer drivers also receive native trip execution controls on Ride Detail (confirm assignment, start trip, delay notice, at-gate arrival, pickup, complete, withdraw); extended workflows (trip chat, live map, QR check-in, reimbursements, family management, and MFA-gated staff tools) hand off directly to the Web App via browser links.
 - Detail screens use `TopAppBar` with a back arrow; tab roots do not.
 - Adaptive behaviour: single-column lists today; `WindowSizeClass` rail/tablet
   layouts are a later increment (the web switches at 768/1200px).
+
+## Avatars, Iconography & Badges
+
+- **Animated mascots & bundled GIFs (`Avatar.kt`, `EventIcon.kt`):** Native Compose animated mascot shapes pair with bundled Bloub-style transparent GIF assets (`assets/icons/avatars/`, `badges/`, `events/`) rendered via `coil-gif`.
+- **Grok Bot Studio (`GrokBotStudio.kt`):** Interactive clay-style bot renderer (`grokbot:<shape>:<face>:<color>`, 8 silhouettes × 16 faces × 12 colours with animated poses) tuned for both light and dark themes.
+- **4-tier achievement medallions (`BadgeIcon.kt`):** Progressive badge rings and palettes (`none` → `bronze` → `silver` → `gold` → `platinum`, with subtle animated halo emphasis on `gold`/`platinum`) matching the web's status tokens without relying on colour alone.
 
 ## States
 

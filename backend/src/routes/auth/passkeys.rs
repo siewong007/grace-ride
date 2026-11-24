@@ -76,10 +76,13 @@ async fn take_challenge(
 #[derive(Deserialize)]
 pub(super) struct EmailReq {
     email: String,
+    #[serde(default)]
+    turnstile_token: Option<String>,
 }
 
 pub(super) async fn passkey_login_start(
     State(st): State<AppState>,
+    peer: Option<axum::Extension<ConnectInfo<SocketAddr>>>,
     headers: HeaderMap,
     Json(req): Json<EmailReq>,
 ) -> AppResult<Json<Value>> {
@@ -89,7 +92,15 @@ pub(super) async fn passkey_login_start(
             .and_then(|v| v.to_str().ok())
             .unwrap_or(""),
     );
-    let _ = lang;
+    let ip = crate::security::client_ip(&headers, peer.map(|p| p.0 .0), st.cfg.trust_proxy);
+    st.turnstile
+        .verify(
+            req.turnstile_token.as_deref(),
+            "passkey_login",
+            Some(&ip),
+            lang,
+        )
+        .await?;
     // Emails are stored lowercase; "Alice@…" is the same member as "alice@…".
     let email = req.email.trim().to_lowercase();
     let email = email.as_str();

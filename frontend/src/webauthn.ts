@@ -90,9 +90,12 @@ async function assertPasskey(startPath: string, startBody: unknown, finishPath: 
   await post(finishPath, { challenge_id, credential });
 }
 
-export const loginWithPasskey = async (email: string) => {
+export const loginWithPasskey = async (email: string, turnstileToken?: string | null) => {
   const normEmail = email.trim().toLowerCase();
-  await assertPasskey('/auth/passkey/login/start', { email: normEmail }, '/auth/passkey/login/finish');
+  const body = turnstileToken
+    ? { email: normEmail, turnstile_token: turnstileToken }
+    : { email: normEmail };
+  await assertPasskey('/auth/passkey/login/start', body, '/auth/passkey/login/finish');
   saveDevicePasskey(normEmail);
 };
 

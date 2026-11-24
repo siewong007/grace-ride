@@ -94,4 +94,12 @@ export default {
     prev: 'Previous photo',
     next: 'Next photo',
   },
+  turnstile: {
+    label: 'Human verification',
+    loading: 'Loading verification…',
+    expired: 'Verification expired. Please verify again.',
+    error: 'Verification could not load. Please check your connection and try again.',
+    retry: 'Retry verification',
+    required: 'Please complete the verification check first.',
+  },
 };

@@ -208,6 +208,10 @@ pub(super) async fn approve_recovery(
         .bind(uid)
         .execute(&mut *tx)
         .await?;
+    sqlx::query("DELETE FROM mobile_push_tokens WHERE user_id=$1")
+        .bind(uid)
+        .execute(&mut *tx)
+        .await?;
     sqlx::query("DELETE FROM auth_challenges WHERE user_id=$1")
         .bind(uid)
         .execute(&mut *tx)

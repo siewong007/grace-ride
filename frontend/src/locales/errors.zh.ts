@@ -75,7 +75,9 @@ export default {
     "ACCOUNT_PENDING": "账号尚未通过审核，目前只能使用个人资料。",
     "TERMS_REQUIRED": "请先阅读并勾选同意使用条款。",
     "SESSION_LOCKED": "屏幕已锁定，请验证后继续使用。",
-    "UNLOCK_METHOD_REQUIRED": "请提供通行密钥、双重验证码或备用码来解锁。"
+    "UNLOCK_METHOD_REQUIRED": "请提供通行密钥、双重验证码或备用码来解锁。",
+    "TURNSTILE_REQUIRED": "请先完成人机验证再继续",
+    "TURNSTILE_FAILED": "人机验证失败或已过期，请重试"
   },
   "events": {
     "EVENT_NAME_REQUIRED": "请填写活动名称",

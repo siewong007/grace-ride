@@ -1,34 +1,61 @@
 package org.pjstatecm.graceride.ui.screens.notifications
 
+import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
+import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.PaddingValues
+import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.automirrored.outlined.HelpOutline
+import androidx.compose.material.icons.automirrored.outlined.ReceiptLong
+import androidx.compose.material.icons.outlined.AdminPanelSettings
+import androidx.compose.material.icons.outlined.Campaign
+import androidx.compose.material.icons.outlined.Delete
+import androidx.compose.material.icons.outlined.DirectionsCar
+import androidx.compose.material.icons.outlined.Event
+import androidx.compose.material.icons.outlined.FavoriteBorder
+import androidx.compose.material.icons.outlined.MarkEmailRead
+import androidx.compose.material.icons.outlined.MarkEmailUnread
+import androidx.compose.material.icons.outlined.Notifications
 import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.FilterChip
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedCard
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
+import androidx.compose.material3.pulltorefresh.PullToRefreshBox
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.unit.dp
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
-import androidx.lifecycle.viewmodel.initializer
-import androidx.lifecycle.viewmodel.viewModelFactory
 import androidx.lifecycle.viewModelScope
 import androidx.lifecycle.viewmodel.compose.viewModel
+import androidx.lifecycle.viewmodel.initializer
+import androidx.lifecycle.viewmodel.viewModelFactory
 import androidx.navigation.NavHostController
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -39,15 +66,25 @@ import org.pjstatecm.graceride.data.api.ApiException
 import org.pjstatecm.graceride.data.api.NotificationItem
 import org.pjstatecm.graceride.di.AppContainer
 import org.pjstatecm.graceride.domain.KlTime
-import org.pjstatecm.graceride.ui.Routes
+import org.pjstatecm.graceride.ui.NotifDestination
+import org.pjstatecm.graceride.ui.NotifLinkRouter
 import org.pjstatecm.graceride.ui.components.EmptyView
 import org.pjstatecm.graceride.ui.components.ErrorView
 import org.pjstatecm.graceride.ui.components.LoadingView
+import org.pjstatecm.graceride.ui.components.SectionHeader
+import org.pjstatecm.graceride.ui.openInWebApp
 import org.pjstatecm.graceride.ui.theme.Spacing
 
 data class NotifUiState(
     val loading: Boolean = true,
+    val refreshing: Boolean = false,
+    val loadingMore: Boolean = false,
+    val loadMoreError: Boolean = false,
     val items: List<NotificationItem> = emptyList(),
+    val nextBefore: Long? = null,
+    val unreadCount: Int = 0,
+    val unreadOnly: Boolean = false,
+    val category: String? = null,
     val error: String? = null,
 )
 
@@ -55,53 +92,226 @@ class NotificationsViewModel(private val container: AppContainer) : ViewModel() 
     private val _state = MutableStateFlow(NotifUiState())
     val state: StateFlow<NotifUiState> = _state.asStateFlow()
 
-    init { load() }
-
-    fun load() {
+    init {
+        load(reset = true)
         viewModelScope.launch {
-            _state.value = _state.value.copy(loading = true)
+            container.realtimeStream.refreshEvents.collect { kind ->
+                if (kind == "notify" || kind == "resume") {
+                    refresh()
+                }
+            }
+        }
+    }
+
+    fun load(reset: Boolean = true) {
+        viewModelScope.launch {
+            val cur = _state.value
+            _state.value = cur.copy(
+                loading = reset && cur.items.isEmpty(),
+                refreshing = !reset,
+                error = null,
+            )
             try {
-                _state.value = NotifUiState(loading = false, items = container.community.notifications())
+                val page = container.community.notificationsPage(
+                    before = null,
+                    limit = 30,
+                    unreadOnly = cur.unreadOnly,
+                    category = cur.category,
+                )
+                container.auth.updateUnread(page.unread)
+                _state.value = _state.value.copy(
+                    loading = false,
+                    refreshing = false,
+                    loadMoreError = false,
+                    items = page.items,
+                    nextBefore = page.nextBefore,
+                    unreadCount = page.unread,
+                    error = null,
+                )
             } catch (e: ApiException) {
-                _state.value = NotifUiState(loading = false, error = e.message)
+                _state.value = _state.value.copy(
+                    loading = false,
+                    refreshing = false,
+                    error = e.message,
+                )
+            }
+        }
+    }
+
+    fun refresh() = load(reset = false)
+
+    fun loadMore() {
+        val cur = _state.value
+        val before = cur.nextBefore ?: return
+        if (cur.loadingMore) return
+        viewModelScope.launch {
+            _state.value = _state.value.copy(loadingMore = true, loadMoreError = false)
+            try {
+                val page = container.community.notificationsPage(
+                    before = before,
+                    limit = 30,
+                    unreadOnly = cur.unreadOnly,
+                    category = cur.category,
+                )
+                val latest = _state.value
+                val existingIds = latest.items.map { it.id }.toSet()
+                val merged = latest.items + page.items.filter { it.id !in existingIds }
+                _state.value = latest.copy(
+                    loadingMore = false,
+                    items = merged,
+                    nextBefore = page.nextBefore,
+                    unreadCount = page.unread,
+                )
+            } catch (_: ApiException) {
+                _state.value = _state.value.copy(loadingMore = false, loadMoreError = true)
+            }
+        }
+    }
+
+    fun setUnreadOnly(enabled: Boolean) {
+        if (_state.value.unreadOnly == enabled) return
+        _state.value = _state.value.copy(unreadOnly = enabled, nextBefore = null)
+        load(reset = true)
+    }
+
+    fun setCategory(category: String?) {
+        val normalized = category?.takeIf { it.isNotBlank() }
+        if (_state.value.category == normalized) return
+        _state.value = _state.value.copy(category = normalized, nextBefore = null)
+        load(reset = true)
+    }
+
+    fun toggleRead(item: NotificationItem) {
+        val nextRead = !item.read
+        val cur = _state.value
+        val updatedItems = if (cur.unreadOnly && nextRead) {
+            cur.items.filter { it.id != item.id }
+        } else {
+            cur.items.map { if (it.id == item.id) it.copy(read = nextRead) else it }
+        }
+        val delta = if (nextRead) -1 else 1
+        _state.value = cur.copy(
+            items = updatedItems,
+            unreadCount = (cur.unreadCount + delta).coerceAtLeast(0),
+        )
+        viewModelScope.launch {
+            try {
+                val res = if (nextRead) {
+                    container.community.readOne(item.id)
+                } else {
+                    container.community.unreadOne(item.id)
+                }
+                container.auth.updateUnread(res.unread)
+                _state.value = _state.value.copy(unreadCount = res.unread)
+            } catch (_: ApiException) {
+                load(reset = false)
+            }
+        }
+    }
+
+    fun delete(item: NotificationItem) {
+        val cur = _state.value
+        val dec = if (!item.read) 1 else 0
+        _state.value = cur.copy(
+            items = cur.items.filter { it.id != item.id },
+            unreadCount = (cur.unreadCount - dec).coerceAtLeast(0),
+        )
+        viewModelScope.launch {
+            try {
+                val res = container.community.deleteOne(item.id)
+                container.auth.updateUnread(res.unread)
+                _state.value = _state.value.copy(unreadCount = res.unread)
+            } catch (_: ApiException) {
+                load(reset = false)
             }
         }
     }
 
     fun markAllRead() {
+        val cur = _state.value
+        val updated = if (cur.unreadOnly) {
+            emptyList()
+        } else {
+            cur.items.map { it.copy(read = true) }
+        }
+        val clearedCount = cur.items.count { !it.read }
+        _state.value = cur.copy(
+            items = updated,
+            unreadCount = if (cur.category == null) 0 else (cur.unreadCount - clearedCount).coerceAtLeast(0),
+        )
         viewModelScope.launch {
             try {
-                container.community.readAll()
-                load()
-                container.auth.refresh()
-            } catch (_: ApiException) { }
+                val res = container.community.readAll(cur.category)
+                container.auth.updateUnread(res.unread)
+                _state.value = _state.value.copy(unreadCount = res.unread)
+            } catch (_: ApiException) {
+                load(reset = false)
+            }
         }
     }
 
-    fun open(item: NotificationItem, nav: NavHostController) {
-        viewModelScope.launch {
-            try { container.community.readOne(item.id) } catch (_: ApiException) { }
+    fun open(item: NotificationItem): NotifDestination {
+        if (!item.read) {
+            toggleRead(item)
         }
-        val link = item.link ?: return
-        val rideMatch = Regex("^/rides/(\\d+)").find(link)
-        val eventMatch = Regex("^/events/(\\d+)").find(link)
-        when {
-            rideMatch != null -> nav.navigate(Routes.rideDetail(rideMatch.groupValues[1].toLong()))
-            eventMatch != null -> nav.navigate(Routes.eventDetail(eventMatch.groupValues[1].toLong()))
-            link == "/costs" -> nav.navigate(Routes.COSTS)
-        }
+        return NotifLinkRouter.resolve(item.link)
     }
 
     companion object {
-        fun factory(container: AppContainer) = viewModelFactory { initializer { NotificationsViewModel(container) } }
+        fun factory(container: AppContainer) = viewModelFactory {
+            initializer { NotificationsViewModel(container) }
+        }
     }
 }
 
-@OptIn(ExperimentalMaterial3Api::class)
+private val categoryChips = listOf(
+    null to R.string.notif_cat_all,
+    "ride" to R.string.notif_cat_ride,
+    "event" to R.string.notif_cat_event,
+    "cost" to R.string.notif_cat_cost,
+    "help" to R.string.notif_cat_help,
+    "family" to R.string.notif_cat_family,
+    "admin" to R.string.notif_cat_admin,
+    "announcement" to R.string.notif_cat_announcement,
+)
+
+private fun notifIconFor(item: NotificationItem): ImageVector = when (item.category) {
+    "ride" -> Icons.Outlined.DirectionsCar
+    "event" -> Icons.Outlined.Event
+    "cost" -> Icons.AutoMirrored.Outlined.ReceiptLong
+    "help" -> Icons.AutoMirrored.Outlined.HelpOutline
+    "family" -> Icons.Outlined.FavoriteBorder
+    "admin" -> Icons.Outlined.AdminPanelSettings
+    "announcement" -> Icons.Outlined.Campaign
+    else -> when {
+        item.link?.contains("ride") == true -> Icons.Outlined.DirectionsCar
+        item.link?.contains("event") == true -> Icons.Outlined.Event
+        item.link?.contains("cost") == true || item.link?.contains("settlement") == true -> Icons.AutoMirrored.Outlined.ReceiptLong
+        else -> Icons.Outlined.Notifications
+    }
+}
+
+@OptIn(ExperimentalMaterial3Api::class, ExperimentalLayoutApi::class)
 @Composable
 fun NotificationsScreen(container: AppContainer, nav: NavHostController) {
     val vm: NotificationsViewModel = viewModel(factory = NotificationsViewModel.factory(container))
     val state by vm.state.collectAsStateWithLifecycle()
+    val context = LocalContext.current
+    val hasUnread = state.unreadCount > 0 || state.items.any { !it.read }
+
+    val today = KlTime.today()
+    val yesterday = KlTime.todayPlusDays(-1)
+    val todayItems = mutableListOf<NotificationItem>()
+    val yesterdayItems = mutableListOf<NotificationItem>()
+    val earlierItems = mutableListOf<NotificationItem>()
+    state.items.forEach { item ->
+        val day = KlTime.parse(item.createdAt)?.let { KlTime.date(item.createdAt) } ?: item.createdAt.take(10)
+        when (day) {
+            today -> todayItems += item
+            yesterday -> yesterdayItems += item
+            else -> earlierItems += item
+        }
+    }
 
     Scaffold(
         topBar = {
@@ -113,35 +323,178 @@ fun NotificationsScreen(container: AppContainer, nav: NavHostController) {
                     }
                 },
                 actions = {
-                    TextButton(onClick = { vm.markAllRead() }) { Text(stringResource(R.string.notif_mark_all_read)) }
+                    if (hasUnread) {
+                        TextButton(onClick = { vm.markAllRead() }) {
+                            Text(stringResource(R.string.notif_mark_all_read))
+                        }
+                    }
                 },
             )
         },
     ) { padding ->
-        when {
-            state.loading -> LoadingView(Modifier.padding(padding))
-            state.error != null -> ErrorView(state.error!!, vm::load, Modifier.padding(padding))
-            state.items.isEmpty() -> EmptyView(stringResource(R.string.notif_empty), Modifier.padding(padding))
-            else -> LazyColumn(
-                Modifier.fillMaxSize().padding(padding).padding(horizontal = Spacing.sm),
-                verticalArrangement = Arrangement.spacedBy(Spacing.xs),
-                contentPadding = PaddingValues(vertical = Spacing.xs),
-            ) {
-                items(state.items, key = { it.id }) { item ->
-                    OutlinedCard(onClick = { vm.open(item, nav) }, modifier = Modifier.fillMaxWidth()) {
-                        Column(Modifier.padding(Spacing.sm)) {
-                            Text(
-                                item.title,
-                                style = MaterialTheme.typography.titleSmall,
-                                color = if (item.read) MaterialTheme.colorScheme.onSurfaceVariant else MaterialTheme.colorScheme.onSurface,
-                            )
-                            if (item.body.isNotBlank()) {
-                                Text(item.body, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.padding(top = Spacing.xxs))
+        PullToRefreshBox(
+            isRefreshing = state.refreshing,
+            onRefresh = { vm.refresh() },
+            modifier = Modifier.fillMaxSize().padding(padding),
+        ) {
+            Column(Modifier.fillMaxSize()) {
+                FlowRow(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = Spacing.sm, vertical = Spacing.xxs),
+                    horizontalArrangement = Arrangement.spacedBy(Spacing.xs),
+                ) {
+                    FilterChip(
+                        selected = !state.unreadOnly,
+                        onClick = { vm.setUnreadOnly(false) },
+                        label = { Text(stringResource(R.string.notif_filter_all)) },
+                    )
+                    FilterChip(
+                        selected = state.unreadOnly,
+                        onClick = { vm.setUnreadOnly(true) },
+                        label = { Text(stringResource(R.string.notif_filter_unread)) },
+                    )
+                }
+                FlowRow(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = Spacing.sm),
+                    horizontalArrangement = Arrangement.spacedBy(Spacing.xs),
+                ) {
+                    categoryChips.forEach { (key, labelRes) ->
+                        FilterChip(
+                            selected = state.category == key,
+                            onClick = { vm.setCategory(key) },
+                            label = { Text(stringResource(labelRes)) },
+                        )
+                    }
+                }
+
+                when {
+                    state.loading -> LoadingView(Modifier.fillMaxSize())
+                    state.error != null -> ErrorView(state.error!!, { vm.load(reset = true) }, Modifier.fillMaxSize())
+                    state.items.isEmpty() -> EmptyView(stringResource(R.string.notif_empty), Modifier.fillMaxSize())
+                    else -> LazyColumn(
+                        Modifier.fillMaxSize().padding(horizontal = Spacing.sm),
+                        verticalArrangement = Arrangement.spacedBy(Spacing.xs),
+                        contentPadding = PaddingValues(vertical = Spacing.xs),
+                    ) {
+                        val groups = listOf(
+                            R.string.notif_today to todayItems,
+                            R.string.notif_yesterday to yesterdayItems,
+                            R.string.notif_earlier to earlierItems,
+                        )
+                        groups.forEach { (headerRes, rows) ->
+                            if (rows.isNotEmpty()) {
+                                item(key = "header-$headerRes") {
+                                    SectionHeader(stringResource(headerRes))
+                                }
+                                items(rows, key = { it.id }) { item ->
+                                    NotificationRowCard(
+                                        item = item,
+                                        onOpen = {
+                                            when (val dest = vm.open(item)) {
+                                                is NotifDestination.Native -> nav.navigate(dest.route)
+                                                is NotifDestination.Web -> openInWebApp(context, container.webUrl(dest.path))
+                                                NotifDestination.None -> {}
+                                            }
+                                        },
+                                        onToggleRead = { vm.toggleRead(item) },
+                                        onDelete = { vm.delete(item) },
+                                    )
+                                }
                             }
-                            Text(KlTime.display(item.createdAt), style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.padding(top = Spacing.xxs))
+                        }
+
+                        if (state.nextBefore != null) {
+                            item(key = "load-more") {
+                                OutlinedButton(
+                                    onClick = { vm.loadMore() },
+                                    enabled = !state.loadingMore,
+                                    modifier = Modifier.fillMaxWidth().padding(vertical = Spacing.xs),
+                                ) {
+                                    Text(stringResource(R.string.notif_load_more))
+                                }
+                            }
                         }
                     }
                 }
+            }
+        }
+    }
+}
+
+@Composable
+private fun NotificationRowCard(
+    item: NotificationItem,
+    onOpen: () -> Unit,
+    onToggleRead: () -> Unit,
+    onDelete: () -> Unit,
+) {
+    OutlinedCard(onClick = onOpen, modifier = Modifier.fillMaxWidth()) {
+        Row(
+            modifier = Modifier.fillMaxWidth().padding(start = Spacing.sm, top = Spacing.xs, bottom = Spacing.xs, end = Spacing.xxs),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(Spacing.xs),
+        ) {
+            Icon(
+                imageVector = notifIconFor(item),
+                contentDescription = null,
+                tint = if (item.priority == "urgent") {
+                    MaterialTheme.colorScheme.error
+                } else if (!item.read) {
+                    MaterialTheme.colorScheme.primary
+                } else {
+                    MaterialTheme.colorScheme.onSurfaceVariant
+                },
+            )
+            Column(Modifier.weight(1f).padding(vertical = Spacing.xxs)) {
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(Spacing.xs),
+                ) {
+                    if (!item.read) {
+                        Box(
+                            Modifier
+                                .size(8.dp)
+                                .clip(CircleShape)
+                                .background(MaterialTheme.colorScheme.primary),
+                        )
+                    }
+                    Text(
+                        item.title,
+                        style = MaterialTheme.typography.titleSmall,
+                        fontWeight = if (item.read) FontWeight.Normal else FontWeight.Bold,
+                        color = if (item.read) MaterialTheme.colorScheme.onSurfaceVariant else MaterialTheme.colorScheme.onSurface,
+                    )
+                }
+                if (item.body.isNotBlank()) {
+                    Text(
+                        item.body,
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.padding(top = Spacing.xxs),
+                    )
+                }
+                Text(
+                    KlTime.display(item.createdAt),
+                    style = MaterialTheme.typography.labelMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.padding(top = Spacing.xxs),
+                )
+            }
+            IconButton(onClick = onToggleRead) {
+                Icon(
+                    imageVector = if (item.read) Icons.Outlined.MarkEmailUnread else Icons.Outlined.MarkEmailRead,
+                    contentDescription = stringResource(if (item.read) R.string.notif_mark_unread else R.string.notif_mark_read),
+                )
+            }
+            IconButton(onClick = onDelete) {
+                Icon(
+                    imageVector = Icons.Outlined.Delete,
+                    contentDescription = stringResource(R.string.notif_delete),
+                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
             }
         }
     }

@@ -19,12 +19,12 @@
 
 ## Highlights
 
-- **Invite-Only & Passkey-First** — Single-use member invites, WebAuthn passkeys, TOTP + backup codes, server-enforced idle lock, and 67 granular permissions across 27 pages with a 5-tier leadership chain of command.
-- **Elder-Friendly Rides** — Area-masked pickup privacy until staff approval, round-trip & recurring schedules, accessibility matching, active-trip GPS/ETA, and zero-login `/care/:token` Safe Arrival links for families.
-- **Group Events & QR Check-In** — Recursive sub-group audiences, FIFO waitlists, self-service QR attendance without needing a ride, live ICS feeds, and one-time `/visit/:token` guest ride passes.
-- **Transport Planning Board** — Drag-and-drop & mobile event ride planner with undo history, accessibility-aware auto-arrange suggestions, and atomic row-locked saves.
-- **Transparent Ministry Finance** — Integer-cent activity cost splitting with DuitNow QR & revision reconciliation, plus receipt-backed reimbursements and monthly payout batches.
-- **Bilingual & Mobile-Ready** — Chinese and English UI (with Bahasa Malaysia PDPA notice), dark mode, adjustable text scale, CJK PDF exports, and an installable PWA shell.
+- **Invite-Only & Passkey-First** — Single-use member invites, family lists (up to 8 people), WebAuthn passkeys, TOTP + backup codes, server-enforced idle lock, and 73 granular permissions across 29 pages and 14 built-in roles (plus custom roles) with a 5-tier leadership chain of command.
+- **Elder-Friendly Rides** — Event-driven ride booking with area-masked pickup privacy and pickup area photos, outbound/return legs, proxy riders, saved places with GPS & drag-pin picker, active-trip GPS/ETA, offline today-rides snapshot + trip status action queue, and zero-login `/care/:token` Safe Arrival links (opening 24 h before pickup).
+- **Group Events & QR Check-In** — Draft/publish lifecycle, custom event icons, self-transport status, schedule timeline, recursive sub-group audiences, FIFO waitlists, self-service QR attendance (2 h pre-start to 12 h post-start), live ICS feeds, and one-time `/visit/:token` guest ride passes.
+- **Traffic Workspace & Planning** — Unified `/admin/traffic` hub with drag-and-drop & mobile event ride planner, multi-version plan and single-ride change drafts with 10-min single-editor lease locks and lead approval, accessibility-aware auto-arrange with explainability drawer, ER-diagram plan image export, plan visitors, and atomic row-locked saves.
+- **Transparent Ministry Finance** — Flat area-to-area mileage fares (with XLSX/CSV sheet import/export), post-event driver dispersal & visitor special reimbursements, integer-cent activity cost splitting with DuitNow QR & revision reconciliation, receipt-backed claims, and two-person monthly payout batches.
+- **Bilingual & Multi-Client** — Chinese and English UI (with Bahasa Malaysia PDPA notice), dark mode, adjustable text scale, CJK PDF exports, Grok Bot Studio & animated mascot avatars, 4-tier achievement badges, an installable PWA shell, and a native Android app (Kotlin / Jetpack Compose).
 
 ## Quick Start
 
@@ -65,7 +65,7 @@ Password for all demo accounts: `GraceRide2026!` · Simulated TOTP secret: `MFRG
 | **API & Jobs** | Rust, Axum, SQLx, WebAuthn, Tokio, SSE | [`backend/`](backend/) |
 | **Web App** | React 19, TypeScript, Vite, Leaflet, i18next | [`frontend/`](frontend/) |
 | **Android App** | Kotlin 2.2, Jetpack Compose, Material 3, MVVM | [`android/`](android/) |
-| **Database** | PostgreSQL 18 (numbered SQLx migrations) | [`backend/migrations/`](backend/migrations/) |
+| **Database** | PostgreSQL 18 (squashed `0001` baseline + additive migrations `0002`–`0006`) | [`backend/migrations/`](backend/migrations/) |
 | **Ops & Deploy** | Docker, Caddy, OSRM, GitHub Actions, encrypted backup/restore scripts | [`deploy/`](deploy/), [`scripts/`](scripts/) |
 
 ## Documentation
@@ -74,7 +74,7 @@ Password for all demo accounts: `GraceRide2026!` · Simulated TOTP secret: `MFRG
 - **[`docs/USER_MANUAL.md`](docs/USER_MANUAL.md)** — Church member & elder user guide (bilingual context, elder-friendly)
 - **[`docs/ADMIN_MANUAL.md`](docs/ADMIN_MANUAL.md)** — Administration, transport planning, and finance operations manual
 - **[`docs/BETA_TESTING_PLAN.md`](docs/BETA_TESTING_PLAN.md)** — Closed beta testing rollout & verification plan
-- **[`docs/android/README.md`](docs/android/README.md)** — Native Android app architecture, setup & test guide
+- **[`docs/android/README.md`](docs/android/README.md)** & **[`docs/android/DESIGN.md`](docs/android/DESIGN.md)** — Native Android app architecture, setup, design system & test guide
 - **[`SECURITY.md`](SECURITY.md)** — Vulnerability reporting policy and responsible disclosure runbook
 
 Detailed sections in **[`docs/TECHNICAL.md`](docs/TECHNICAL.md)**:
@@ -82,7 +82,7 @@ Detailed sections in **[`docs/TECHNICAL.md`](docs/TECHNICAL.md)**:
 - [Local Development & Tooling](docs/TECHNICAL.md#1-local-development--tooling) — setup, `docker-compose.dev.yml`, demo fixtures, and `Makefile` shortcuts
 - [Features & Module Inventory](docs/TECHNICAL.md#2-features--module-inventory) — all 16 modules, routes, and explicit boundaries
 - [User & Operational Workflows](docs/TECHNICAL.md#3-user--operational-workflows) — ride state machine, concurrency locks, and maintenance rules
-- [System Architecture & Database](docs/TECHNICAL.md#4-system-architecture--database) — topology, 27-page / 67-permission catalog, and the consolidated `0001` migration baseline
+- [System Architecture & Database](docs/TECHNICAL.md#4-system-architecture--database) — topology, 29-page / 73-permission catalog, and the consolidated `0001` baseline + `0002`–`0006` migrations
 - [Configuration & Deployment](docs/TECHNICAL.md#5-configuration--deployment-runbook) — environment variables, Docker Compose, self-hosted OSRM, AIC VPS CI/CD, and encrypted backups
 - [Testing & Verification](docs/TECHNICAL.md#6-testing--verification) — Cargo, Vitest, Android, and Playwright suites
 - [Security Model](docs/TECHNICAL.md#7-security-model) — auth, RBAC invariants, pass isolation, privacy projections, and accepted risks

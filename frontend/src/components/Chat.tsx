@@ -76,7 +76,7 @@ export default function Chat({
 }) {
   const { t } = useTranslation('rideDetail');
   const ft = useFormatT();
-  const { data, error, reload } = useApi<ChatData>(`/rides/${rideId}/messages`, 4000);
+  const { data, error, reload } = useApi<ChatData>(`/rides/${rideId}/messages`, 4000, ['chat', 'resume']);
   const [text, setText] = useState('');
   const [sending, setSending] = useState(false);
   const [pending, setPending] = useState<PendingMsg | null>(null);

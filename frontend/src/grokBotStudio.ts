@@ -321,61 +321,6 @@ export const SHAPE_COORDS: Record<GrokBotShape, Float32Array> = {
   droplet: parseBezier64Coords(GROKBOT_SHAPE_PATHS.droplet),
 };
 
-/** Move-animation target silhouettes in identical 64-segment clockwise topology. */
-export const MOVE_TARGET_COORDS = {
-  egg: buildPolar64Coords((theta) => {
-    const y = Math.sin(theta);
-    const rx = 82 * (1 + 0.14 * y);
-    const ry = 102;
-    return [rx * Math.cos(theta), ry * y + 2];
-  }),
-  play: buildPolar64Coords((theta) => {
-    // Rounded right-pointing play triangle
-    const corners: [number, number][] = [
-      [82, 0],
-      [-56, 78],
-      [-56, -78],
-    ];
-    let rx = 0;
-    let ry = 0;
-    let wSum = 0;
-    const ux = Math.cos(theta);
-    const uy = Math.sin(theta);
-    for (const [cx, cy] of corners) {
-      const len = Math.hypot(cx, cy);
-      const dot = (ux * cx + uy * cy) / len;
-      const w = Math.exp(dot * 3.1);
-      rx += cx * w;
-      ry += cy * w;
-      wSum += w;
-    }
-    return [(rx / wSum) * 1.16 + 6, (ry / wSum) * 1.16];
-  }),
-  exclamationStem: buildPolar64Coords((theta) => {
-    // Upright tapered clay exclamation stem centered above y = 52 dot
-    const c = Math.cos(theta);
-    const s = Math.sin(theta);
-    const halfH = 44;
-    const y = s * halfH - 28;
-    const taper = 0.62 + 0.38 * ((1 - s) * 0.5);
-    const halfW = 16.5 * taper;
-    const x = Math.sign(c) * Math.pow(Math.abs(c), 0.72) * halfW;
-    return [x, y];
-  }),
-  alertStem: buildPolar64Coords((theta) => {
-    const c = Math.cos(theta);
-    const s = Math.sin(theta);
-    const y0 = s * 46 - 26;
-    const taper = 0.58 + 0.42 * ((1 - s) * 0.5);
-    const x0 = Math.sign(c) * Math.pow(Math.abs(c), 0.72) * (17.5 * taper);
-    const ang = (17.7 * Math.PI) / 180;
-    return [x0 * Math.cos(ang) - y0 * Math.sin(ang) + 8, x0 * Math.sin(ang) + y0 * Math.cos(ang)];
-  }),
-  sleepCore: buildPolar64Coords((theta) => [16 * Math.cos(theta), 16 * Math.sin(theta) + 27]),
-  burstCore: buildPolar64Coords((theta) => [16.7 * Math.cos(theta), 16.7 * Math.sin(theta)]),
-  cometHead: buildPolar64Coords((theta) => [12.8 * Math.cos(theta), 12.8 * Math.sin(theta)]),
-};
-
 export interface FaceEyeDef {
   leftPath: string;
   rightPath: string;
@@ -576,7 +521,7 @@ export const GROKBOT_FACE_DEFS: Record<GrokBotFace, FaceEyeDef> = {
 export const MOVE_EYE_PATHS = {
   winkLeft: PILL(11.8, 11.4),
   winkRightBar: HPILL(22.35, 4.45),
-  wideEye: PILL(17.8, 25.95),
+  wideEye: PILL(14.5, 26),
   notificationEye: PILL(24.9, 0.35),
   smallPlayEye: PILL(9, 8),
   eggEye: PILL(8.2, 11.05),
@@ -605,21 +550,61 @@ export function buildEyeMatrix(
   return `matrix(${a.toFixed(3)},${b.toFixed(3)},${c.toFixed(3)},${d.toFixed(3)},${tx.toFixed(2)},${ty.toFixed(2)})`;
 }
 
+/**
+ * Per-shape eye placement, measured from the grokbots.ai live stage: every shape keeps the circle's
+ * eye geometry, scaled about the face centre by `s` and nudged by (`dx`, `dy`). Narrow bodies such
+ * as the droplet pull the eyes closer together.
+ */
+export const GROKBOT_SHAPE_EYE_LAYOUT: Record<GrokBotShape, { dx: number; dy: number; s: number }> = {
+  circle: { dx: 0, dy: 0, s: 1 },
+  pebble: { dx: -1.5, dy: 1.7, s: 1 },
+  squircle: { dx: -0.4, dy: -0.3, s: 0.98 },
+  capsule: { dx: -4.9, dy: 7.4, s: 1.02 },
+  triangle: { dx: -3.7, dy: 0.9, s: 0.88 },
+  hexagon: { dx: -0.4, dy: -0.4, s: 0.98 },
+  cloud: { dx: -4.7, dy: 3.2, s: 0.9 },
+  droplet: { dx: -3.7, dy: 3, s: 0.62 },
+};
+
+/** One eye cutout: its path plus where it sits (centre, tilt in degrees, vertical squash). */
+export interface GrokBotEyePose {
+  d: string;
+  x: number;
+  y: number;
+  deg: number;
+  sy: number;
+}
+
+/** The face's two eyes on `shape`, looking toward (`gazeX`, `gazeY`) in -1..1. */
+export function faceEyePoses(
+  face: GrokBotFace,
+  shape: GrokBotShape = 'circle',
+  gazeX = 0,
+  gazeY = 0,
+): [GrokBotEyePose, GrokBotEyePose] {
+  const def = GROKBOT_FACE_DEFS[face];
+  const lay = GROKBOT_SHAPE_EYE_LAYOUT[shape];
+  const dx = clamp(gazeX + (def.gazeBiasX ?? 0), -1.15, 1.15) * 22;
+  const dy = clamp(gazeY + (def.gazeBiasY ?? 0), -1.15, 1.15) * 14;
+  return [
+    { d: def.leftPath, x: lay.dx + def.lx * lay.s + dx, y: lay.dy + def.ly * lay.s + dy, deg: def.lDeg, sy: def.lSy ?? 1 },
+    { d: def.rightPath, x: lay.dx + def.rx * lay.s + dx, y: lay.dy + def.ry * lay.s + dy, deg: def.rDeg, sy: def.rSy ?? 1 },
+  ];
+}
+
+export function eyePoseMatrix(e: GrokBotEyePose): string {
+  return buildEyeMatrix(e.x, e.y, e.deg, e.sy);
+}
+
 export function computeFaceEyeMatrices(
   face: GrokBotFace,
   gazeX = 0,
   gazeY = 0,
   blinkSy = 1,
-  offsetY = 0,
+  shape: GrokBotShape = 'circle',
 ): [string, string] {
-  const def = GROKBOT_FACE_DEFS[face];
-  const gx = clamp(gazeX + (def.gazeBiasX ?? 0), -1.15, 1.15);
-  const gy = clamp(gazeY + (def.gazeBiasY ?? 0), -1.15, 1.15);
-  const dx = gx * 22;
-  const dy = gy * 14 + offsetY;
-  const lMat = buildEyeMatrix(def.lx + dx, def.ly + dy, def.lDeg, (def.lSy ?? 1) * blinkSy);
-  const rMat = buildEyeMatrix(def.rx + dx, def.ry + dy, def.rDeg, (def.rSy ?? 1) * blinkSy);
-  return [lMat, rMat];
+  const [l, r] = faceEyePoses(face, shape, gazeX, gazeY);
+  return [eyePoseMatrix({ ...l, sy: l.sy * blinkSy }), eyePoseMatrix({ ...r, sy: r.sy * blinkSy })];
 }
 
 export function grokBotFilename(spec: GrokBotSpec, ext: 'png' | 'svg'): string {
@@ -631,7 +616,7 @@ export function buildStandaloneGrokBotSvg(spec: GrokBotSpec, size = 512): string
   const palette = GROKBOT_COLOR_PALETTES[spec.color];
   const bodyPath = GROKBOT_SHAPE_PATHS[spec.shape];
   const faceDef = GROKBOT_FACE_DEFS[spec.face];
-  const [lMat, rMat] = computeFaceEyeMatrices(spec.face, 0, 0, 1);
+  const [lMat, rMat] = computeFaceEyeMatrices(spec.face, 0, 0, 1, spec.shape);
   return [
     `<svg xmlns="http://www.w3.org/2000/svg" viewBox="-125 -125 250 250" width="${size}" height="${size}">`,
     '<defs>',

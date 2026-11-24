@@ -96,6 +96,12 @@ export default function AvatarEditor({
   );
   const [studioSpec, setStudioSpec] = useState<GrokBotSpec>(initialGrokBot ?? DEFAULT_GROKBOT_SPEC);
   const [studioMove, setStudioMove] = useState<GrokBotMove>('idle');
+  // Bumped on every Move click so picking the same move again replays it.
+  const [studioPlayKey, setStudioPlayKey] = useState(0);
+  const playStudioMove = (m: GrokBotMove) => {
+    setStudioMove(m);
+    setStudioPlayKey((k) => k + 1);
+  };
   const [color, setColor] = useState<AvatarColor | null>(initialBg.bgColor);
   const [bgShape, setBgShape] = useState<AvatarBgShape>(initialBg.bgShape);
   const [explicitDefault, setExplicitDefault] = useState(false);
@@ -293,6 +299,7 @@ export default function AvatarEditor({
                   face={studioSpec.face}
                   color={studioSpec.color}
                   move={studioMove}
+                  playKey={studioPlayKey}
                   variant="stage"
                   trackCursor
                   className="grok-studio-stage-svg"
@@ -344,7 +351,7 @@ export default function AvatarEditor({
               spec={studioSpec}
               onSpecChange={setStudioSpec}
               move={studioMove}
-              onMoveChange={setStudioMove}
+              onMoveChange={playStudioMove}
               compact
             />
             <div className="grok-studio-mini-footer">

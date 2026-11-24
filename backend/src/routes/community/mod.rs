@@ -21,6 +21,7 @@ mod reports;
 
 pub(crate) use family::FAMILY_CAP;
 pub(crate) use guides::any_admin_page;
+pub(crate) use push::telegram_webhook_secret;
 pub use reports::compute_badges;
 
 /// Escape LIKE wildcards so a search term is matched literally.
@@ -76,10 +77,37 @@ pub fn router() -> Router<AppState> {
             "/push/subscribe",
             post(push::push_subscribe).delete(push::push_unsubscribe),
         )
+        .route("/push/subscriptions", get(push::list_subscriptions))
+        .route(
+            "/push/subscriptions/{id}",
+            delete(push::delete_subscription),
+        )
+        .route(
+            "/push/mobile-token",
+            post(push::register_mobile_token).delete(push::unregister_mobile_token),
+        )
+        .route(
+            "/push/telegram/link-token",
+            post(push::create_telegram_link_token),
+        )
+        .route(
+            "/push/telegram/webhook/{secret}",
+            post(push::telegram_webhook),
+        )
+        .route("/push/telegram/test", post(push::telegram_test))
         .route("/push/test", post(push::push_test))
         .route("/notifications", get(notifications::list_notifications))
+        .route(
+            "/notifications/preferences",
+            get(notifications::get_preferences).put(notifications::update_preferences),
+        )
         .route("/notifications/read-all", post(notifications::read_all))
         .route("/notifications/{id}/read", post(notifications::read_one))
+        .route(
+            "/notifications/{id}/unread",
+            post(notifications::unread_one),
+        )
+        .route("/notifications/{id}", delete(notifications::delete_one))
         .route(
             "/announcements",
             get(announcements::list_announcements).post(announcements::create_announcement),

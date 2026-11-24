@@ -6,7 +6,8 @@
 #
 # /opt/grace-ride/secrets.env supplies POSTGRES_PASSWORD, ADMIN_EMAIL, IMAGE_TAG,
 # and optional runtime tunables (OSRM_URL, ROUTING_ENABLED, SESSION_TIMEOUT_MINS,
-# PUSH_ALLOWED_HOSTS, DB_MAX_CONNECTIONS, NOTIFICATION_RETENTION_DAYS, etc.).
+# PUSH_ALLOWED_HOSTS, DB_MAX_CONNECTIONS, NOTIFICATION_RETENTION_DAYS,
+# TURNSTILE_SITE_KEY, TURNSTILE_SECRET_KEY, etc.).
 # The image is loaded on the host; this file does not build it.
 
 name: grace-ride

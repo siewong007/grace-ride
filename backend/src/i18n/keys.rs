@@ -77,6 +77,8 @@ pub enum ErrorKey {
     TermsRequired,
     SessionLocked,
     UnlockMethodRequired,
+    TurnstileRequired,
+    TurnstileFailed,
 
     // === Events ===
     EventNameRequired,
@@ -333,6 +335,8 @@ impl ErrorKey {
             Self::TermsRequired => "TERMS_REQUIRED",
             Self::SessionLocked => "SESSION_LOCKED",
             Self::UnlockMethodRequired => "UNLOCK_METHOD_REQUIRED",
+            Self::TurnstileRequired => "TURNSTILE_REQUIRED",
+            Self::TurnstileFailed => "TURNSTILE_FAILED",
 
             Self::EventNameRequired => "EVENT_NAME_REQUIRED",
             Self::InvalidEventType => "INVALID_EVENT_TYPE",

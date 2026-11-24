@@ -14,6 +14,7 @@ use super::{
 use crate::auth::CurrentUser;
 use crate::error::{bad, conflict, forbidden, AppResult};
 use crate::i18n::ErrorKey;
+use crate::notifications::{notify_batch, BatchNotifItem, NotifMeta};
 use crate::perms::{Act, Page};
 use crate::state::AppState;
 use crate::util::{audit, fmt_rm, notify, now, require};
@@ -262,64 +263,77 @@ pub(super) async fn update(
             .into_iter()
             .map(|(uid, amt, _, _)| (uid, amt))
             .collect();
+        let mut batch = Vec::new();
         for (uid, old) in &before {
             match shares.iter().find(|x| x.0 == *uid) {
-                Some((_, new)) if new != old => {
-                    notify(
-                        &st.db,
-                        *uid,
-                        ("费用分摊已更新", "Cost split updated"),
-                        (
-                            &format!(
-                                "{}：{} → {}（{}）",
-                                s.title,
-                                fmt_rm(*old),
-                                fmt_rm(*new),
-                                reason
-                            ),
-                            &format!(
-                                "{}: {} → {} ({})",
-                                s.title,
-                                fmt_rm(*old),
-                                fmt_rm(*new),
-                                reason
-                            ),
-                        ),
-                        "/costs",
-                    )
-                    .await
-                }
-                None => {
-                    notify(
-                        &st.db,
-                        *uid,
-                        ("您已从分摊名单移除", "Removed from the cost split"),
-                        (
-                            &format!("{}（{}）", s.title, reason),
-                            &format!("{} ({})", s.title, reason),
-                        ),
-                        "/costs",
-                    )
-                    .await
-                }
+                Some((_, new)) if new != old => batch.push(BatchNotifItem {
+                    user_id: *uid,
+                    title_zh: "费用分摊已更新".into(),
+                    title_en: "Cost split updated".into(),
+                    body_zh: format!(
+                        "{}：{} → {}（{}）",
+                        s.title,
+                        fmt_rm(*old),
+                        fmt_rm(*new),
+                        reason
+                    ),
+                    body_en: format!(
+                        "{}: {} → {} ({})",
+                        s.title,
+                        fmt_rm(*old),
+                        fmt_rm(*new),
+                        reason
+                    ),
+                    link: "/costs".into(),
+                    meta: NotifMeta {
+                        category: "cost",
+                        event_type: "settlement_updated".into(),
+                        priority: "normal",
+                        entity_type: "settlement",
+                        entity_id: Some(id),
+                        tag: format!("settlement-{id}"),
+                    },
+                }),
+                None => batch.push(BatchNotifItem {
+                    user_id: *uid,
+                    title_zh: "您已从分摊名单移除".into(),
+                    title_en: "Removed from the cost split".into(),
+                    body_zh: format!("{}（{}）", s.title, reason),
+                    body_en: format!("{} ({})", s.title, reason),
+                    link: "/costs".into(),
+                    meta: NotifMeta {
+                        category: "cost",
+                        event_type: "settlement_removed".into(),
+                        priority: "normal",
+                        entity_type: "settlement",
+                        entity_id: Some(id),
+                        tag: format!("settlement-{id}"),
+                    },
+                }),
                 _ => {}
             }
         }
         for (uid, amt) in &shares {
             if !before.iter().any(|b| b.0 == *uid) {
-                notify(
-                    &st.db,
-                    *uid,
-                    ("新的费用分摊", "New cost split"),
-                    (
-                        &format!("{} · 您应付 {}", s.title, fmt_rm(*amt)),
-                        &format!("{} · You owe {}", s.title, fmt_rm(*amt)),
-                    ),
-                    "/costs",
-                )
-                .await;
+                batch.push(BatchNotifItem {
+                    user_id: *uid,
+                    title_zh: "新的费用分摊".into(),
+                    title_en: "New cost split".into(),
+                    body_zh: format!("{} · 您应付 {}", s.title, fmt_rm(*amt)),
+                    body_en: format!("{} · You owe {}", s.title, fmt_rm(*amt)),
+                    link: "/costs".into(),
+                    meta: NotifMeta {
+                        category: "cost",
+                        event_type: "settlement_added".into(),
+                        priority: "normal",
+                        entity_type: "settlement",
+                        entity_id: Some(id),
+                        tag: format!("settlement-{id}"),
+                    },
+                });
             }
         }
+        notify_batch(&st.db, batch).await;
         audit(
             &st.db,
             Some(u.id),

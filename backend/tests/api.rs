@@ -47,6 +47,7 @@ async fn setup() -> (Router, AppState) {
         db: Default::default(),
         housekeeping_interval_mins: 60,
         notification_retention_days: 90,
+        turnstile: Default::default(),
     };
     cfg.validate().unwrap();
     let state = init(cfg).await.unwrap();
@@ -1416,7 +1417,7 @@ async fn reminder_job_notifies_passenger_and_driver() {
     let (_app, st) = setup().await;
     // Silence seeded rides so a run whose wall-clock time happens to sit within 60 minutes
     // of a demo ride does not generate extra reminder notifications.
-    sqlx::query("UPDATE rides SET reminder_sent=1")
+    sqlx::query("UPDATE rides SET reminder_sent=1, driver_reminder_sent=1")
         .execute(&st.db)
         .await
         .unwrap();
@@ -1464,6 +1465,7 @@ fn production_config_rejects_dev_mode_and_plain_http() {
         db: Default::default(),
         housekeeping_interval_mins: 60,
         notification_retention_days: 90,
+        turnstile: Default::default(),
     };
     assert!(
         cfg.validate().is_err(),

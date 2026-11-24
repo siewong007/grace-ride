@@ -51,6 +51,8 @@ export function PwaInstallModal({ onClose, onNotificationsEnabled }: PwaInstallM
         setPushFeedback(t('pushDismissed'));
       } else if (res.reason === 'unsupported') {
         setPushFeedback(t('pushUnsupported'));
+      } else if (res.reason === 'subscribe_failed') {
+        setPushFeedback(t('pushTestFailed'));
       }
     } finally {
       setEnablingPush(false);

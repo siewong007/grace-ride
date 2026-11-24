@@ -149,8 +149,10 @@ describe('Grok Bot Studio', () => {
     expect(orbitBtn).toHaveAttribute('aria-pressed', 'false');
     fireEvent.click(orbitBtn);
     expect(orbitBtn).toHaveAttribute('aria-pressed', 'true');
-    // Clicking again toggles back to Idle
+    // Clicking again replays the move (it stays selected, as on grokbots.ai); Idle is its own tile.
     fireEvent.click(orbitBtn);
+    expect(orbitBtn).toHaveAttribute('aria-pressed', 'true');
+    fireEvent.click(within(animGroup).getByRole('button', { name: /Idle/i }));
     expect(orbitBtn).toHaveAttribute('aria-pressed', 'false');
     expect(within(animGroup).getByRole('button', { name: /Idle/i })).toHaveAttribute('aria-pressed', 'true');
   });

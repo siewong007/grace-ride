@@ -12,9 +12,10 @@ use crate::audience::join_choices;
 use crate::auth::CurrentUser;
 use crate::error::{bad, forbidden, not_found, AppResult};
 use crate::i18n::ErrorKey;
+use crate::notifications::{notify_batch, BatchNotifItem, NotifMeta};
 use crate::perms::{Act, Page};
 use crate::state::AppState;
-use crate::util::{audit, audit_many, notify, notify_perm, now, random_token};
+use crate::util::{audit, audit_many, notify, now, random_token};
 
 pub(super) async fn allocate_pass_code(
     conn: &mut sqlx::PgConnection,
@@ -302,30 +303,57 @@ pub(super) async fn withdraw(
     .bind(now())
     .fetch_all(&st.db)
     .await?;
+    let mut batch = Vec::new();
+    let staff_ids: Vec<i64> = if !released.is_empty() {
+        sqlx::query_scalar(crate::dyn_sql!(
+            "SELECT u.id FROM users u WHERE {}",
+            crate::perms::sql_holds("u", crate::perms::Perm(Page::AdminRides, Act::Update))
+        ))
+        .fetch_all(&st.db)
+        .await
+        .unwrap_or_default()
+    } else {
+        Vec::new()
+    };
     for (rid, passenger, trip) in released {
         st.routing.invalidate(u.id, trip.unwrap_or(rid)).await;
-        notify(
-            &st.db,
-            passenger,
-            ("司机无法出车", "Driver cannot drive"),
-            (
-                "交通组正在为您安排其他司机，请留意通知。",
-                "Transport staff are arranging another driver for you; please watch for notifications.",
-            ),
-            &format!("/rides/{rid}"),
-        )
-        .await;
+        batch.push(BatchNotifItem {
+            user_id: passenger,
+            title_zh: "司机无法出车".into(),
+            title_en: "Driver cannot drive".into(),
+            body_zh: "交通组正在为您安排其他司机，请留意通知。".into(),
+            body_en: "Transport staff are arranging another driver for you; please watch for notifications.".into(),
+            link: format!("/rides/{rid}"),
+            meta: NotifMeta {
+                category: "ride",
+                event_type: "driver_withdrawn".into(),
+                priority: "urgent",
+                entity_type: "ride",
+                entity_id: Some(rid),
+                tag: format!("ride-{rid}"),
+            },
+        });
         let line = format!("{} · {}", u.name, e.title);
-        notify_perm(
-            &st.db,
-            Page::AdminRides,
-            Act::Update,
-            ("需要重新安排司机", "Driver needs reassignment"),
-            (&line, &line),
-            &format!("/admin/rides/{rid}"),
-        )
-        .await;
+        for &sid in &staff_ids {
+            batch.push(BatchNotifItem {
+                user_id: sid,
+                title_zh: "需要重新安排司机".into(),
+                title_en: "Driver needs reassignment".into(),
+                body_zh: line.clone(),
+                body_en: line.clone(),
+                link: format!("/admin/rides/{rid}"),
+                meta: NotifMeta {
+                    category: "ride",
+                    event_type: "driver_reassignment".into(),
+                    priority: "urgent",
+                    entity_type: "ride",
+                    entity_id: Some(rid),
+                    tag: format!("ride-{rid}"),
+                },
+            });
+        }
     }
+    notify_batch(&st.db, batch).await;
     if withdrew && e.created_by != u.id {
         let body = format!("{} · {}", u.name, e.title);
         notify(

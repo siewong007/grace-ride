@@ -118,7 +118,7 @@ async fn reminder_job_respects_passenger_readiness_prompt_mins() {
     let (app, st) = setup().await;
     // Silence seeded rides so a run whose wall-clock time happens to sit within reminder
     // window of a demo ride does not generate extra reminder notifications.
-    sqlx::query("UPDATE rides SET reminder_sent=1")
+    sqlx::query("UPDATE rides SET reminder_sent=1, driver_reminder_sent=1")
         .execute(&st.db)
         .await
         .unwrap();
@@ -187,7 +187,7 @@ async fn reminder_job_respects_passenger_readiness_prompt_mins() {
     assert_eq!(p_notifs, 1);
 
     // 2. Passenger disables readiness prompt (0): driver still gets notified at T-45m, passenger gets 0 new reminders.
-    sqlx::query("UPDATE rides SET reminder_sent=1")
+    sqlx::query("UPDATE rides SET reminder_sent=1, driver_reminder_sent=1")
         .execute(&st.db)
         .await
         .unwrap();

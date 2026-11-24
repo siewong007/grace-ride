@@ -434,13 +434,13 @@ class ViewModelTest {
 
         server.enqueue(json("""{"ok":true}"""))
         server.enqueue(json(Fixtures.ME_MEMBER))
-        vm.saveProfile("Alice", "+60123456789", "  @alice_tg  ")
+        vm.saveProfile("Alice", "+60123456789", "  123456789  ")
         vm.state.awaitUntil { it.message == "saved" }
         val profilePut = apiJson.parseToJsonElement(server.takeRequest().body.readUtf8()).jsonObject
         server.takeRequest() // /api/auth/me refresh
         assertEquals("Alice", profilePut["name"]?.jsonPrimitive?.content)
         assertEquals("+60123456789", profilePut["phone"]?.jsonPrimitive?.content)
-        assertEquals("alice_tg", profilePut["telegram_chat_id"]?.jsonPrimitive?.content)
+        assertEquals("123456789", profilePut["telegram_chat_id"]?.jsonPrimitive?.content)
 
         vm.clearMessage()
         server.enqueue(json("""{"ok":true}"""))

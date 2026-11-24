@@ -11,13 +11,15 @@
 //! Each reminder and escalation claims its rows with `UPDATE … RETURNING` before
 //! notifying, so a row is handled once even if two ticks (or two instances) overlap.
 
+use std::collections::BTreeMap;
 use std::time::{Duration, Instant};
 
 use sqlx::PgPool;
 
+use crate::notifications::{notify_batch, BatchNotifItem, NotifMeta};
 use crate::perms::{Act, Page};
 use crate::state::Config;
-use crate::util::{audit_many, notify, notify_many, notify_perm, now};
+use crate::util::{audit_many, notify_many, now};
 
 pub fn spawn(db: PgPool, cfg: Config) {
     let (_tx, rx) = tokio::sync::watch::channel(false);
@@ -29,6 +31,35 @@ pub fn spawn_with_shutdown(
     cfg: Config,
     mut shutdown: tokio::sync::watch::Receiver<bool>,
 ) {
+    let delivery_db = db.clone();
+    let mut delivery_shutdown = shutdown.clone();
+    tokio::spawn(async move {
+        let mut delivery_tick = tokio::time::interval(Duration::from_secs(15));
+        delivery_tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+        loop {
+            tokio::select! {
+                biased;
+                res = delivery_shutdown.changed() => {
+                    if res.is_err() || *delivery_shutdown.borrow() {
+                        let _ = tokio::time::timeout(
+                            Duration::from_secs(5),
+                            crate::notifications::process_due_deliveries(&delivery_db, 50),
+                        ).await;
+                        break;
+                    }
+                    continue;
+                }
+                _ = delivery_tick.tick() => {}
+            }
+            if *delivery_shutdown.borrow() {
+                break;
+            }
+            if let Err(e) = crate::notifications::process_due_deliveries(&delivery_db, 50).await {
+                tracing::warn!("notification outbox retry tick failed: {e:?}");
+            }
+        }
+    });
+
     tokio::spawn(async move {
         let mut tick = tokio::time::interval(Duration::from_secs(60));
         tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
@@ -87,24 +118,37 @@ fn ts_in(minutes: i64) -> String {
 }
 
 #[derive(sqlx::FromRow)]
-struct ReminderCandidate {
+struct PassengerReminderCandidate {
     id: i64,
     passenger_id: i64,
-    driver_id: Option<i64>,
     pickup_at: String,
     area_name: String,
-    passenger_name: String,
     driver_name: String,
     readiness_prompt_mins: Option<i64>,
     is_proxy: i64,
     rider_name: String,
 }
 
+#[derive(sqlx::FromRow)]
+struct DriverReminderCandidate {
+    id: i64,
+    driver_id: i64,
+    trip_id: Option<i64>,
+    pickup_at: String,
+    area_name: String,
+    passenger_name: String,
+    is_proxy: i64,
+    rider_name: String,
+    driver_remind_mins: Option<i64>,
+}
+
 async fn ride_reminders(db: &PgPool) -> anyhow::Result<()> {
-    let candidates: Vec<ReminderCandidate> = sqlx::query_as(
-        "SELECT r.id, r.passenger_id, r.driver_id, r.pickup_at,
-                a.name AS area_name, p.name AS passenger_name,
-                COALESCE(d.name, '') AS driver_name, p.readiness_prompt_mins,
+    // Pass 1: Passenger readiness prompt (governed solely by the passenger's preference).
+    let passenger_candidates: Vec<PassengerReminderCandidate> = sqlx::query_as(
+        "SELECT r.id, r.passenger_id, r.pickup_at,
+                a.name AS area_name,
+                COALESCE(d.name, '') AS driver_name,
+                p.readiness_prompt_mins,
                 r.is_proxy, r.rider_name
          FROM rides r
          JOIN areas a ON a.id=r.pickup_area_id
@@ -116,7 +160,9 @@ async fn ride_reminders(db: &PgPool) -> anyhow::Result<()> {
     .bind(ts_in(-10))
     .fetch_all(db)
     .await?;
-    for c in candidates {
+
+    let mut batch = Vec::new();
+    for c in passenger_candidates {
         let prompt = c.readiness_prompt_mins.unwrap_or(45);
         let lead = if prompt <= 0 {
             60
@@ -133,68 +179,153 @@ async fn ride_reminders(db: &PgPool) -> anyhow::Result<()> {
         .execute(db)
         .await?
         .rows_affected();
-        if claimed == 0 {
+        if claimed == 0 || prompt <= 0 {
             continue;
         }
         let time = c.pickup_at.get(11..16).unwrap_or(&c.pickup_at);
-        if prompt > 0 {
-            let rider_disp = if c.is_proxy == 1 && !c.rider_name.is_empty() {
-                c.rider_name.clone()
-            } else {
-                "您".to_string()
-            };
-            let rider_disp_en = if c.is_proxy == 1 && !c.rider_name.is_empty() {
-                c.rider_name.clone()
-            } else {
-                "you".to_string()
-            };
-            notify(
-                db,
-                c.passenger_id,
-                ("接送提醒", "Ride reminder"),
-                (
-                    &format!(
-                        "司机 {} 将于 {time} 到 {} 接 {rider_disp}。请确认长辈/乘车人是否准备就绪或告知需稍候/无法出行。",
-                        c.driver_name, c.area_name
-                    ),
-                    &format!(
-                        "Driver {} will pick up {rider_disp_en} at {} at {time}. Please tap to confirm readiness, delay, or inability to join.",
-                        c.driver_name, c.area_name
-                    ),
-                ),
-                &format!("/rides/{}?action=readiness", c.id),
-            )
-            .await;
-        }
-        if let Some(d) = c.driver_id {
-            let (driver_target_zh, driver_target_en) =
-                if c.is_proxy == 1 && !c.rider_name.is_empty() {
-                    (
-                        format!("{} (由 {} 代订)", c.rider_name, c.passenger_name),
-                        format!("{} (booked by {})", c.rider_name, c.passenger_name),
-                    )
-                } else {
-                    (c.passenger_name.clone(), c.passenger_name.clone())
-                };
-            notify(
-                db,
-                d,
-                ("接送提醒", "Ride reminder"),
-                (
-                    &format!(
-                        "{time} 接载 {driver_target_zh}（{}）。出发时请按「开始行程」。",
-                        c.area_name
-                    ),
-                    &format!(
-                        "{time} pick up {driver_target_en} ({}). Tap \"Start trip\" when departing.",
-                        c.area_name
-                    ),
-                ),
-                &format!("/rides/{}", c.id),
-            )
-            .await;
-        }
+        let rider_disp = if c.is_proxy == 1 && !c.rider_name.is_empty() {
+            c.rider_name.clone()
+        } else {
+            "您".to_string()
+        };
+        let rider_disp_en = if c.is_proxy == 1 && !c.rider_name.is_empty() {
+            c.rider_name.clone()
+        } else {
+            "you".to_string()
+        };
+        batch.push(BatchNotifItem {
+            user_id: c.passenger_id,
+            title_zh: "接送提醒".into(),
+            title_en: "Ride reminder".into(),
+            body_zh: format!(
+                "司机 {} 将于 {time} 到 {} 接 {rider_disp}。请确认长辈/乘车人是否准备就绪或告知需稍候/无法出行。",
+                c.driver_name, c.area_name
+            ),
+            body_en: format!(
+                "Driver {} will pick up {rider_disp_en} at {} at {time}. Please tap to confirm readiness, delay, or inability to join.",
+                c.driver_name, c.area_name
+            ),
+            link: format!("/rides/{}?action=readiness", c.id),
+            meta: NotifMeta {
+                category: "ride",
+                event_type: "ride_reminder".into(),
+                priority: "urgent",
+                entity_type: "ride",
+                entity_id: Some(c.id),
+                tag: format!("ride-{}", c.id),
+            },
+        });
     }
+
+    // Pass 2: Driver pre-trip reminder (governed by driver's own lead-time preference and grouped by trip_id).
+    let driver_candidates: Vec<DriverReminderCandidate> = sqlx::query_as(
+        "SELECT r.id, r.driver_id, r.trip_id, r.pickup_at,
+                a.name AS area_name, p.name AS passenger_name,
+                r.is_proxy, r.rider_name, up.driver_remind_mins
+         FROM rides r
+         JOIN areas a ON a.id=r.pickup_area_id
+         JOIN users p ON p.id=r.passenger_id
+         LEFT JOIN user_notification_prefs up ON up.user_id=r.driver_id
+         WHERE r.status='confirmed' AND r.driver_id IS NOT NULL
+           AND r.driver_reminder_sent=0 AND r.pickup_at <= $1 AND r.pickup_at >= $2
+         ORDER BY r.pickup_at ASC, r.id ASC",
+    )
+    .bind(ts_in(180))
+    .bind(ts_in(-10))
+    .fetch_all(db)
+    .await?;
+
+    let mut grouped: BTreeMap<(i64, i64), Vec<DriverReminderCandidate>> = BTreeMap::new();
+    for c in driver_candidates {
+        let lead = c.driver_remind_mins.unwrap_or(60).clamp(15, 180);
+        if c.pickup_at > ts_in(lead) {
+            continue;
+        }
+        let trip_key = c.trip_id.unwrap_or(-c.id);
+        grouped.entry((c.driver_id, trip_key)).or_default().push(c);
+    }
+
+    for ((driver_id, _trip_key), group_rides) in grouped {
+        let candidate_ids: Vec<i64> = group_rides.iter().map(|r| r.id).collect();
+        let claimed_ids: Vec<i64> = sqlx::query_scalar(
+            "UPDATE rides SET driver_reminder_sent=1
+             WHERE id = ANY($1) AND status='confirmed' AND driver_reminder_sent=0
+             RETURNING id",
+        )
+        .bind(&candidate_ids)
+        .fetch_all(db)
+        .await?;
+        if claimed_ids.is_empty() {
+            continue;
+        }
+        let claimed: Vec<&DriverReminderCandidate> = group_rides
+            .iter()
+            .filter(|r| claimed_ids.contains(&r.id))
+            .collect();
+        let first = claimed[0];
+        let time = first.pickup_at.get(11..16).unwrap_or(&first.pickup_at);
+        let (body_zh, body_en) = if claimed.len() == 1 {
+            let (target_zh, target_en) = if first.is_proxy == 1 && !first.rider_name.is_empty() {
+                (
+                    format!("{} (由 {} 代订)", first.rider_name, first.passenger_name),
+                    format!("{} (booked by {})", first.rider_name, first.passenger_name),
+                )
+            } else {
+                (first.passenger_name.clone(), first.passenger_name.clone())
+            };
+            (
+                format!(
+                    "{time} 接载 {target_zh}（{}）。出发时请按「开始行程」。",
+                    first.area_name
+                ),
+                format!(
+                    "{time} pick up {target_en} ({}). Tap \"Start trip\" when departing.",
+                    first.area_name
+                ),
+            )
+        } else {
+            let names: Vec<String> = claimed
+                .iter()
+                .map(|r| {
+                    if r.is_proxy == 1 && !r.rider_name.is_empty() {
+                        r.rider_name.clone()
+                    } else {
+                        r.passenger_name.clone()
+                    }
+                })
+                .collect();
+            (
+                format!(
+                    "{time} 拼车行程需接载 {} 位乘客（{}）。出发时请按「开始行程」。",
+                    claimed.len(),
+                    names.join("、")
+                ),
+                format!(
+                    "{time} carpool trip for {} passengers ({}). Tap \"Start trip\" when departing.",
+                    claimed.len(),
+                    names.join(", ")
+                ),
+            )
+        };
+        batch.push(BatchNotifItem {
+            user_id: driver_id,
+            title_zh: "接送提醒".into(),
+            title_en: "Ride reminder".into(),
+            body_zh,
+            body_en,
+            link: format!("/rides/{}", first.id),
+            meta: NotifMeta {
+                category: "ride",
+                event_type: "ride_reminder".into(),
+                priority: "urgent",
+                entity_type: "ride",
+                entity_id: Some(first.id),
+                tag: format!("ride-{}", first.id),
+            },
+        });
+    }
+
+    notify_batch(db, batch).await;
     Ok(())
 }
 
@@ -255,19 +386,40 @@ async fn escalate_unmatched(db: &PgPool) -> anyhow::Result<()> {
         "no driver 12h before pickup",
     )
     .await?;
-    for (id, name, at) in rows {
-        notify_perm(
-            db,
-            Page::AdminRides,
-            Act::Update,
-            ("没人接单", "No driver"),
-            (
-                &format!("{name} · {}", at.replace('T', " ")),
-                &format!("{name} · {}", at.replace('T', " ")),
-            ),
-            &format!("/admin/rides/{id}"),
-        )
-        .await;
+    if !rows.is_empty() {
+        let staff_ids: Vec<i64> = sqlx::query_scalar(crate::dyn_sql!(
+            "SELECT u.id FROM users u WHERE {}",
+            crate::perms::sql_holds("u", crate::perms::Perm(Page::AdminRides, Act::Update))
+        ))
+        .fetch_all(db)
+        .await
+        .unwrap_or_default();
+        if !staff_ids.is_empty() {
+            let mut batch = Vec::with_capacity(rows.len() * staff_ids.len());
+            for (id, name, at) in rows {
+                let body = format!("{name} · {}", at.replace('T', " "));
+                let link = format!("/admin/rides/{id}");
+                for &sid in &staff_ids {
+                    batch.push(BatchNotifItem {
+                        user_id: sid,
+                        title_zh: "没人接单".into(),
+                        title_en: "No driver".into(),
+                        body_zh: body.clone(),
+                        body_en: body.clone(),
+                        link: link.clone(),
+                        meta: NotifMeta {
+                            category: "ride",
+                            event_type: "escalate_unmatched".into(),
+                            priority: "urgent",
+                            entity_type: "ride",
+                            entity_id: Some(id),
+                            tag: format!("ride-{id}"),
+                        },
+                    });
+                }
+            }
+            notify_batch(db, batch).await;
+        }
     }
     Ok(())
 }
@@ -372,17 +524,25 @@ async fn housekeeping(db: &PgPool, cfg: &Config) -> anyhow::Result<()> {
     .bind(t(-24 * 60))
     .execute(db)
     .await?;
-    // Read notifications go after NOTIFICATION_RETENTION_DAYS; unread ones after a year
-    // (or that long, if it is longer), so the table cannot grow without end.
+    // Read notifications go after NOTIFICATION_RETENTION_DAYS from when they were read;
+    // unread ones after a year (or that long, if it is longer), so the table cannot grow without end.
     let read_days = cfg.notification_retention_days;
     let unread_days = read_days.max(365);
     sqlx::query(
         "DELETE FROM notifications
-         WHERE (read_at IS NOT NULL AND created_at < $1) OR created_at < $2",
+         WHERE (read_at IS NOT NULL AND read_at < $1) OR created_at < $2",
     )
     .bind(ts_in(-read_days * 24 * 60))
     .bind(ts_in(-unread_days * 24 * 60))
     .execute(db)
     .await?;
+    sqlx::query("DELETE FROM notification_deliveries WHERE created_at < $1")
+        .bind(ts_in(-30 * 24 * 60))
+        .execute(db)
+        .await?;
+    sqlx::query("DELETE FROM telegram_link_tokens WHERE expires_at < $1")
+        .bind(now())
+        .execute(db)
+        .await?;
     Ok(())
 }

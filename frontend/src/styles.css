@@ -2860,6 +2860,54 @@ main:focus { outline: none; }
 }
 .notif-item.notif-unread .notif-icon-wrap { color: var(--primary); }
 .notif-date-header { padding: var(--space-2) 0 var(--space-1); font-size: var(--fs-sm); font-weight: 700; color: var(--muted); }
+.notif-filters { display: flex; flex-direction: column; gap: var(--space-2); }
+.notif-filter-row { display: flex; align-items: center; gap: var(--space-2); flex-wrap: wrap; }
+.notif-chip {
+  border: 1px solid var(--border);
+  background: var(--surface);
+  color: var(--text);
+  border-radius: 999px;
+  padding: 6px 12px;
+  font-size: var(--fs-xs);
+  font-weight: 600;
+  cursor: pointer;
+  transition: background var(--dur-fast) var(--ease), border-color var(--dur-fast) var(--ease), color var(--dur-fast) var(--ease);
+}
+.notif-chip:hover { background: var(--surface-2); }
+.notif-chip.active {
+  background: var(--primary);
+  border-color: var(--primary);
+  color: #fff;
+}
+.notif-row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-1);
+  border-bottom: 1px solid var(--divider);
+}
+.list > .notif-row:last-child { border-bottom: none; }
+.notif-row > .notif-item { flex: 1; min-width: 0; border-bottom: none; }
+.notif-row.notif-urgent .notif-icon-wrap { color: var(--warning, #d97706); }
+.notif-row-actions {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  flex-shrink: 0;
+}
+.notif-action-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  border: none;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--muted);
+  cursor: pointer;
+  transition: background var(--dur-fast) var(--ease), color var(--dur-fast) var(--ease);
+}
+.notif-action-btn:hover { background: var(--surface-2); color: var(--text); }
 
 /* Reimbursements */
 .receipt-drop-preview {
@@ -5717,6 +5765,8 @@ main a[href^="tel:"]:not(.btn) { text-decoration: underline; }
   gap: 8px;
   padding-top: 8px;
   border-top: 1px solid var(--divider);
+  min-width: 0;
+  max-width: 100%;
 }
 .event-transport-text {
   display: inline-flex;
@@ -5724,6 +5774,11 @@ main a[href^="tel:"]:not(.btn) { text-decoration: underline; }
   gap: 6px;
   font-weight: 600;
   color: var(--muted);
+  min-width: 0;
+  max-width: 100%;
+}
+.event-transport-text svg {
+  flex-shrink: 0;
 }
 .event-transport-text.is-confirmed {
   color: var(--success);
@@ -5739,29 +5794,48 @@ main a[href^="tel:"]:not(.btn) { text-decoration: underline; }
   align-items: center;
   gap: 6px;
   flex-wrap: wrap;
+  flex: 0 1 auto;
+  min-width: 0;
+  max-width: 100%;
 }
 .event-transport-links .btn.sm,
 .event-transport-strip > .btn.sm {
+  flex: 0 1 auto;
   min-height: 36px;
-  padding: 0 10px;
+  padding: 6px 10px;
+  max-width: 100%;
+  white-space: normal;
+  text-align: center;
 }
 .event-transport-alert {
   border-radius: 10px;
   padding: 8px 10px;
   gap: 8px;
+  min-width: 0;
+  max-width: 100%;
 }
 .event-transport-alert-label {
   display: inline-flex;
   align-items: center;
   gap: 6px;
+  min-width: 0;
+  max-width: 100%;
+}
+.event-transport-alert-label svg {
+  flex-shrink: 0;
 }
 .event-transport-alert-actions {
-  flex: 0 0 auto;
+  flex: 0 1 auto;
+  min-width: 0;
+  max-width: 100%;
 }
 .event-transport-alert-actions .btn.sm {
-  flex: 0 0 auto;
+  flex: 0 1 auto;
   min-height: 36px;
-  padding: 0 10px;
+  padding: 6px 10px;
+  max-width: 100%;
+  white-space: normal;
+  text-align: center;
 }
 .event-row-body .event-driver-chip {
   min-height: 32px;
@@ -6313,5 +6387,17 @@ main a[href^="tel:"]:not(.btn) { text-decoration: underline; }
   font-size: var(--fs-sm);
   font-weight: 700;
   color: var(--primary);
+}
+
+/* Cloudflare Turnstile human verification widget */
+.turnstile-wrap {
+  width: 100%;
+  min-width: 0;
+}
+
+.turnstile-slot {
+  width: 100%;
+  min-width: 0;
+  overflow: hidden;
 }
 

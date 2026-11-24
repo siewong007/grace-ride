@@ -43,7 +43,7 @@ pub(super) async fn exec_staff_approve(
         return Err(bad(u.lang, ErrorKey::NotEnoughDriverSeats { load, cap }));
     }
     let approved = sqlx::query(
-        "UPDATE rides SET status='confirmed', approved_by=$1, needs_attention=0, reminder_sent=0, updated_at=$2
+        "UPDATE rides SET status='confirmed', approved_by=$1, needs_attention=0, reminder_sent=0, driver_reminder_sent=0, updated_at=$2
          WHERE id=$3 AND driver_id=$4 AND status='pending_approval'",
     )
     .bind(u.id)

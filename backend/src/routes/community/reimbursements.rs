@@ -10,9 +10,10 @@ use serde_json::{json, Value};
 use crate::auth::CurrentUser;
 use crate::error::{bad, conflict, forbidden, not_found, AppResult};
 use crate::i18n::ErrorKey;
+use crate::notifications::notify_perm_except;
 use crate::perms::{Act, Page};
 use crate::state::AppState;
-use crate::util::{audit, fmt_rm, notify, notify_perm, now, require, require_one, Lang};
+use crate::util::{audit, fmt_rm, notify, now, require, require_one, Lang};
 
 use super::like_pattern;
 
@@ -390,10 +391,11 @@ pub(super) async fn create_reimbursement(
     .fetch_one(&mut *tx)
     .await?;
     tx.commit().await?;
-    notify_perm(
+    notify_perm_except(
         &st.db,
         Page::AdminReimbReview,
         Act::Update,
+        Some(u.id),
         if is_mileage(&req) {
             ("新的里程报销收据", "New mileage receipt to confirm")
         } else {
@@ -453,10 +455,11 @@ pub(super) async fn resubmit_reimbursement(
         return Err(bad(u.lang, ErrorKey::OnlyReturnedReimbCanBeResubmitted));
     }
     tx.commit().await?;
-    notify_perm(
+    notify_perm_except(
         &st.db,
         Page::AdminReimbReview,
         Act::Update,
+        Some(u.id),
         ("报销申请已补资料", "Reimbursement updated and resubmitted"),
         (
             &format!("{} · {}", u.name, fmt_rm(req.amount_cents)),
@@ -552,10 +555,11 @@ pub(super) async fn review_reimbursement(
     )
     .await;
     if status == "approved" {
-        notify_perm(
+        notify_perm_except(
             &st.db,
             Page::AdminReimbPay,
             Act::Update,
+            Some(u.id),
             ("有报销待付款", "Reimbursement awaiting payment"),
             (
                 &format!("{} · {}", r.user_name, fmt_rm(r.amount_cents)),

@@ -8,6 +8,7 @@ use serde_json::{json, Value};
 
 use crate::auth::CurrentUser;
 use crate::error::{bad, conflict, forbidden, AppResult};
+use crate::notifications::{notify_batch, BatchNotifItem, NotifMeta};
 use crate::perms::{Act, Page};
 use crate::state::AppState;
 use crate::util::{audit, fmt_rm, notify, notify_perm, now, require, system_message, ErrorKey};
@@ -431,7 +432,7 @@ pub(super) async fn driver_confirm_assignment(
         return Err(bad(u.lang, ErrorKey::NotEnoughSeatsSlot { load, cap }));
     }
     let confirmed = sqlx::query(
-        "UPDATE rides SET status='confirmed', needs_attention=0, reminder_sent=0, updated_at=$1
+        "UPDATE rides SET status='confirmed', needs_attention=0, reminder_sent=0, driver_reminder_sent=0, updated_at=$1
          WHERE id=$2 AND driver_id=$3 AND status='pending_driver_confirm'",
     )
     .bind(now())
@@ -532,26 +533,33 @@ pub(super) async fn start_ride(
     for (other,) in &others {
         started.push(load_ride(&st, u.lang, *other).await?);
     }
+    let mut start_notifs = Vec::with_capacity(started.len());
     for ride in &started {
-        notify(
-            &st.db,
-            ride.passenger_id,
-            ("司机已出发", "Driver departed"),
-            (
-                &format!(
-                    "{} 正在前往 {}，可在应用内查看位置。",
-                    u.name, ride.area_name
-                ),
-                &format!(
-                    "{} is en route to {}; you can follow the location in the app.",
-                    u.name, ride.area_name
-                ),
+        start_notifs.push(BatchNotifItem {
+            user_id: ride.passenger_id,
+            title_zh: "司机已出发".into(),
+            title_en: "Driver departed".into(),
+            body_zh: format!(
+                "{} 正在前往 {}，可在应用内查看位置。",
+                u.name, ride.area_name
             ),
-            &format!("/rides/{}", ride.id),
-        )
-        .await;
+            body_en: format!(
+                "{} is en route to {}; you can follow the location in the app.",
+                u.name, ride.area_name
+            ),
+            link: format!("/rides/{}", ride.id),
+            meta: NotifMeta {
+                category: "ride",
+                event_type: "driver_departed".into(),
+                priority: "urgent",
+                entity_type: "ride",
+                entity_id: Some(ride.id),
+                tag: format!("ride-{}", ride.id),
+            },
+        });
         audit(&st.db, Some(u.id), "ride.start", "ride", Some(ride.id), "").await;
     }
+    notify_batch(&st.db, start_notifs).await;
     if let Some(t) = r.trip_id {
         let names: Vec<&str> = started.iter().map(|x| x.p_name.as_str()).collect();
         system_message(

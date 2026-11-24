@@ -39,6 +39,7 @@ import androidx.compose.material.icons.outlined.ReceiptLong
 import androidx.compose.material.icons.outlined.Shuffle
 import androidx.compose.material.icons.outlined.AutoAwesome
 import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.Badge
 import androidx.compose.material3.Button
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -58,6 +59,7 @@ import androidx.compose.material3.Scaffold
 import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Surface
+import androidx.compose.material3.Switch
 import androidx.compose.material3.Tab
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -78,6 +80,8 @@ import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.navigation.NavHostController
 import org.pjstatecm.graceride.R
 import org.pjstatecm.graceride.data.api.Me
+import org.pjstatecm.graceride.data.api.UpdateNotificationPrefsReq
+import org.pjstatecm.graceride.data.repo.AuthState
 import org.pjstatecm.graceride.di.AppContainer
 import org.pjstatecm.graceride.ui.Routes
 import org.pjstatecm.graceride.ui.components.AnimatedMemberAvatar
@@ -92,34 +96,72 @@ import org.pjstatecm.graceride.ui.theme.Spacing
 
 private enum class AvatarMode { PHOTO, ANIMATED, STUDIO, INITIALS, ICON }
 
-@OptIn(ExperimentalMaterial3Api::class)
+@OptIn(ExperimentalMaterial3Api::class, ExperimentalLayoutApi::class)
 @Composable
 fun ProfileScreen(container: AppContainer, nav: NavHostController) {
     val vm: ProfileViewModel = viewModel(factory = ProfileViewModel.factory(container))
     val state by vm.state.collectAsStateWithLifecycle()
+    val authState by container.auth.state.collectAsStateWithLifecycle()
     val context = LocalContext.current
     val activity = context as? android.app.Activity
     val me = state.me
+    val unreadCount = (authState as? AuthState.SignedIn)?.me?.unread ?: me?.unread ?: 0
     val snackbar = remember { SnackbarHostState() }
     val savedMsg = stringResource(R.string.profile_saved)
+    val prefsSavedMsg = stringResource(R.string.notif_pref_saved)
     var showAvatarEditor by remember { mutableStateOf(false) }
 
     var name by remember { mutableStateOf(me?.name ?: "") }
     var phone by remember { mutableStateOf(me?.phone ?: "") }
     var telegramChatId by remember { mutableStateOf(me?.telegramChatId ?: "") }
+    var pushOptIn by remember { mutableStateOf(me?.pushOptIn ?: true) }
+    var whatsappOptIn by remember { mutableStateOf(me?.whatsappOptIn ?: false) }
+    var driverRemindMins by remember { mutableStateOf(60) }
+    var quietStart by remember { mutableStateOf("") }
+    var quietEnd by remember { mutableStateOf("") }
+    var hideLockDetails by remember { mutableStateOf(false) }
+    var mutedCats by remember { mutableStateOf<List<String>>(emptyList()) }
+
+    LaunchedEffect(me?.status) {
+        if (me != null && me.status != "pending") {
+            vm.loadNotificationPrefs()
+        }
+    }
 
     LaunchedEffect(me) {
         if (me != null) {
             name = me.name
             phone = me.phone
             telegramChatId = me.telegramChatId ?: ""
+            pushOptIn = me.pushOptIn
+            whatsappOptIn = me.whatsappOptIn
+        }
+    }
+
+    LaunchedEffect(state.notifPrefs) {
+        state.notifPrefs?.let { p ->
+            pushOptIn = p.pushOptIn
+            whatsappOptIn = p.whatsappOptIn
+            driverRemindMins = p.driverRemindMins
+            quietStart = p.quietHoursStart
+            quietEnd = p.quietHoursEnd
+            hideLockDetails = p.hideLockDetails
+            mutedCats = p.mutedCategories
+            if (p.telegramChatId.isNotBlank()) telegramChatId = p.telegramChatId
         }
     }
 
     LaunchedEffect(state.message) {
-        if (state.message != null) {
-            snackbar.showSnackbar(savedMsg)
-            vm.clearMessage()
+        when (state.message) {
+            "prefs_saved" -> {
+                snackbar.showSnackbar(prefsSavedMsg)
+                vm.clearMessage()
+            }
+            null -> {}
+            else -> {
+                snackbar.showSnackbar(savedMsg)
+                vm.clearMessage()
+            }
         }
     }
 
@@ -185,9 +227,40 @@ fun ProfileScreen(container: AppContainer, nav: NavHostController) {
                             value = telegramChatId,
                             onValueChange = { telegramChatId = it },
                             label = { Text(stringResource(R.string.profile_telegram_id)) },
+                            placeholder = { Text("123456789") },
                             singleLine = true,
                             modifier = Modifier.fillMaxWidth(),
                         )
+                        if (state.notifPrefs?.telegramBlocked == true) {
+                            Text(
+                                stringResource(R.string.notif_tg_blocked),
+                                color = MaterialTheme.colorScheme.error,
+                                style = MaterialTheme.typography.bodySmall,
+                            )
+                        }
+                        if (me != null && me.status != "pending") {
+                            FlowRow(horizontalArrangement = Arrangement.spacedBy(Spacing.xs)) {
+                                OutlinedButton(onClick = { vm.connectTelegram { url -> openInWebApp(context, url) } }) {
+                                    Text(stringResource(R.string.notif_tg_connect_1tap))
+                                }
+                                if (telegramChatId.isNotBlank()) {
+                                    OutlinedButton(onClick = { vm.testTelegram() }) {
+                                        Text(stringResource(R.string.notif_tg_test))
+                                    }
+                                }
+                            }
+                            state.telegramStatus?.let { st ->
+                                Text(
+                                    text = when (st) {
+                                        "ok" -> stringResource(R.string.notif_tg_test_ok)
+                                        "failed" -> stringResource(R.string.notif_tg_test_fail)
+                                        else -> st
+                                    },
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = if (st == "ok") MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.error,
+                                )
+                            }
+                        }
                         Button(
                             onClick = { vm.saveProfile(name, phone, telegramChatId) },
                             enabled = !state.busy && name.isNotBlank(),
@@ -311,7 +384,124 @@ fun ProfileScreen(container: AppContainer, nav: NavHostController) {
                             nav.navigate(Routes.studio(gb?.shape, gb?.color, gb?.face))
                         }
                         HorizontalDivider()
-                        ProfileRow(stringResource(R.string.notif_title), Icons.Outlined.Notifications) { nav.navigate(Routes.NOTIFICATIONS) }
+                        ProfileRow(
+                            label = stringResource(R.string.notif_title),
+                            icon = Icons.Outlined.Notifications,
+                            badgeCount = unreadCount,
+                        ) { nav.navigate(Routes.NOTIFICATIONS) }
+                    }
+                }
+            }
+
+            if (me != null && me.status != "pending") {
+                item { SectionHeader(stringResource(R.string.notif_prefs_title)) }
+                item {
+                    OutlinedCard(Modifier.fillMaxWidth()) {
+                        Column(Modifier.padding(Spacing.sm), verticalArrangement = Arrangement.spacedBy(Spacing.xs)) {
+                            Row(
+                                Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                                verticalAlignment = Alignment.CenterVertically,
+                            ) {
+                                Text(stringResource(R.string.notif_pref_push), Modifier.weight(1f))
+                                Switch(checked = pushOptIn, onCheckedChange = { pushOptIn = it })
+                            }
+                            Row(
+                                Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                                verticalAlignment = Alignment.CenterVertically,
+                            ) {
+                                Text(stringResource(R.string.notif_pref_whatsapp), Modifier.weight(1f))
+                                Switch(checked = whatsappOptIn, onCheckedChange = { whatsappOptIn = it })
+                            }
+                            Row(
+                                Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                                verticalAlignment = Alignment.CenterVertically,
+                            ) {
+                                Text(stringResource(R.string.notif_pref_hide_lock), Modifier.weight(1f))
+                                Switch(checked = hideLockDetails, onCheckedChange = { hideLockDetails = it })
+                            }
+                            Text(
+                                stringResource(R.string.notif_pref_driver_remind),
+                                style = MaterialTheme.typography.titleSmall,
+                                modifier = Modifier.padding(top = Spacing.xxs),
+                            )
+                            FlowRow(horizontalArrangement = Arrangement.spacedBy(Spacing.xs)) {
+                                listOf(30, 60, 90, 120).forEach { mins ->
+                                    FilterChip(
+                                        selected = driverRemindMins == mins,
+                                        onClick = { driverRemindMins = mins },
+                                        label = { Text(stringResource(R.string.notif_pref_driver_mins, mins)) },
+                                    )
+                                }
+                            }
+                            Text(
+                                stringResource(R.string.notif_pref_quiet_hours),
+                                style = MaterialTheme.typography.titleSmall,
+                                modifier = Modifier.padding(top = Spacing.xxs),
+                            )
+                            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(Spacing.xs)) {
+                                OutlinedTextField(
+                                    value = quietStart,
+                                    onValueChange = { quietStart = it },
+                                    label = { Text(stringResource(R.string.notif_pref_quiet_start)) },
+                                    singleLine = true,
+                                    modifier = Modifier.weight(1f),
+                                )
+                                OutlinedTextField(
+                                    value = quietEnd,
+                                    onValueChange = { quietEnd = it },
+                                    label = { Text(stringResource(R.string.notif_pref_quiet_end)) },
+                                    singleLine = true,
+                                    modifier = Modifier.weight(1f),
+                                )
+                            }
+                            Text(
+                                stringResource(R.string.notif_pref_muted_cats),
+                                style = MaterialTheme.typography.titleSmall,
+                                modifier = Modifier.padding(top = Spacing.xxs),
+                            )
+                            FlowRow(horizontalArrangement = Arrangement.spacedBy(Spacing.xs)) {
+                                listOf(
+                                    "ride" to R.string.notif_cat_ride,
+                                    "event" to R.string.notif_cat_event,
+                                    "cost" to R.string.notif_cat_cost,
+                                    "help" to R.string.notif_cat_help,
+                                    "family" to R.string.notif_cat_family,
+                                    "admin" to R.string.notif_cat_admin,
+                                    "announcement" to R.string.notif_cat_announcement,
+                                ).forEach { (cat, labelRes) ->
+                                    val muted = cat in mutedCats
+                                    FilterChip(
+                                        selected = muted,
+                                        onClick = {
+                                            mutedCats = if (muted) mutedCats - cat else mutedCats + cat
+                                        },
+                                        label = { Text(stringResource(labelRes)) },
+                                    )
+                                }
+                            }
+                            Button(
+                                onClick = {
+                                    vm.saveNotificationPrefs(
+                                        UpdateNotificationPrefsReq(
+                                            push_opt_in = pushOptIn,
+                                            whatsapp_opt_in = whatsappOptIn,
+                                            driver_remind_mins = driverRemindMins,
+                                            muted_categories = mutedCats,
+                                            quiet_hours_start = quietStart.trim(),
+                                            quiet_hours_end = quietEnd.trim(),
+                                            hide_lock_details = hideLockDetails,
+                                        )
+                                    )
+                                },
+                                enabled = !state.busy,
+                                modifier = Modifier.padding(top = Spacing.xxs),
+                            ) {
+                                Text(stringResource(R.string.notif_pref_save))
+                            }
+                        }
                     }
                 }
             }
@@ -364,7 +554,12 @@ fun ProfileScreen(container: AppContainer, nav: NavHostController) {
             }
 
             state.error?.let { err ->
-                item { Text(err, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodyMedium) }
+                item {
+                    val displayErr = if (err == "invalid_telegram_chat_id") {
+                        stringResource(R.string.notif_tg_invalid_id)
+                    } else err
+                    Text(displayErr, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodyMedium)
+                }
             }
 
             item {
@@ -841,7 +1036,12 @@ private fun avatarBgShapeLabelRes(key: String): Int = when (key) {
 }
 
 @Composable
-private fun ProfileRow(label: String, icon: androidx.compose.ui.graphics.vector.ImageVector, onClick: () -> Unit) {
+private fun ProfileRow(
+    label: String,
+    icon: androidx.compose.ui.graphics.vector.ImageVector,
+    badgeCount: Int = 0,
+    onClick: () -> Unit,
+) {
     Surface(onClick = onClick, color = androidx.compose.ui.graphics.Color.Transparent) {
         Row(
             Modifier.fillMaxWidth().padding(horizontal = Spacing.sm, vertical = Spacing.sm),
@@ -849,7 +1049,17 @@ private fun ProfileRow(label: String, icon: androidx.compose.ui.graphics.vector.
             verticalAlignment = Alignment.CenterVertically,
         ) {
             Text(label, style = MaterialTheme.typography.bodyLarge, color = MaterialTheme.colorScheme.onSurface)
-            Icon(icon, contentDescription = null, tint = MaterialTheme.colorScheme.onSurfaceVariant)
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(Spacing.xs),
+            ) {
+                if (badgeCount > 0) {
+                    Badge {
+                        Text(if (badgeCount > 99) "99+" else badgeCount.toString())
+                    }
+                }
+                Icon(icon, contentDescription = null, tint = MaterialTheme.colorScheme.onSurfaceVariant)
+            }
         }
     }
 }

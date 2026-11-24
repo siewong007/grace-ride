@@ -118,6 +118,8 @@ pub fn render(lang: Lang, key: &ErrorKey) -> String {
         ErrorKey::TermsRequired => auth::render(lang, AuthError::TermsRequired),
         ErrorKey::SessionLocked => auth::render(lang, AuthError::SessionLocked),
         ErrorKey::UnlockMethodRequired => auth::render(lang, AuthError::UnlockMethodRequired),
+        ErrorKey::TurnstileRequired => auth::render(lang, AuthError::TurnstileRequired),
+        ErrorKey::TurnstileFailed => auth::render(lang, AuthError::TurnstileFailed),
 
         ErrorKey::EventNameRequired => events::render(lang, EventsError::EventNameRequired),
         ErrorKey::InvalidEventType => events::render(lang, EventsError::InvalidEventType),
@@ -568,6 +570,8 @@ mod tests {
             ErrorKey::TermsRequired => ErrorKey::TermsRequired,
             ErrorKey::SessionLocked => ErrorKey::SessionLocked,
             ErrorKey::UnlockMethodRequired => ErrorKey::UnlockMethodRequired,
+            ErrorKey::TurnstileRequired => ErrorKey::TurnstileRequired,
+            ErrorKey::TurnstileFailed => ErrorKey::TurnstileFailed,
 
             ErrorKey::EventNameRequired => ErrorKey::EventNameRequired,
             ErrorKey::InvalidEventType => ErrorKey::InvalidEventType,

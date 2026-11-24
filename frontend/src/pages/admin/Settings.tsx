@@ -2,11 +2,13 @@ import { FormEvent, useEffect, useRef, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
 import {
+  Activity,
   Bell,
   Check,
   Copy,
   ExternalLink,
   Send,
+  Smartphone,
 } from 'lucide-react';
 import { del, post, put, useApi } from '../../api';
 import { useAuth } from '../../auth';
@@ -20,6 +22,7 @@ import {
   Field,
   Modal,
   NoAccess,
+  Notice,
   Page,
   PageHeader,
   Pill,
@@ -65,11 +68,20 @@ interface SystemSettingsResponse {
 interface AlertSettingsData {
   telegram_bot_configured?: boolean;
   telegram_bot_username?: string;
+  telegram_webhook_path?: string;
   alert_webhook_url?: string;
   alert_webhook_configured?: boolean;
+  alert_webhook_secret_configured?: boolean;
+  mobile_push_webhook_configured?: boolean;
+  mobile_push_webhook_url?: string;
+  mobile_push_subscriptions_count?: number;
   vapid_public_key?: string;
   vapid_private_configured?: boolean;
   push_subscriptions_count?: number;
+  delivery_stats_24h?: Record<
+    string,
+    { delivered?: number; pending?: number; retry?: number; failed?: number; gone?: number }
+  >;
 }
 
 type TabKey = 'fares' | 'photos' | 'rates' | 'org' | 'alerts';
@@ -243,7 +255,8 @@ function SettingsSummaryStrip({
   const channelsCount = cfg
     ? (cfg.vapid_private_configured ? 1 : 0) +
       (cfg.telegram_bot_configured ? 1 : 0) +
-      (cfg.alert_webhook_configured || Boolean(cfg.alert_webhook_url) ? 1 : 0)
+      (cfg.alert_webhook_configured || Boolean(cfg.alert_webhook_url) ? 1 : 0) +
+      (cfg.mobile_push_webhook_configured ? 1 : 0)
     : 0;
 
   return (
@@ -1048,21 +1061,34 @@ function AlertChannelSettings() {
   const [clearToken, setClearToken] = useState(false);
   const [webhookUrl, setWebhookUrl] = useState('');
   const [clearWebhook, setClearWebhook] = useState(false);
+  const [webhookSecret, setWebhookSecret] = useState('');
+  const [clearWebhookSecret, setClearWebhookSecret] = useState(false);
+  const [mobileWebhookUrl, setMobileWebhookUrl] = useState('');
+  const [clearMobileWebhook, setClearMobileWebhook] = useState(false);
   const [vapidKey, setVapidKey] = useState('');
   const [vapidPrivateKey, setVapidPrivateKey] = useState('');
+  const [testingWebhook, setTestingWebhook] = useState(false);
+  const [testWebhookMsg, setTestWebhookMsg] = useState<{
+    tone: 'success' | 'warning';
+    text: string;
+  } | null>(null);
   const [initialized, setInitialized] = useState(false);
-  const initialRef = useRef({ tgUser: '', webhookUrl: '', vapidKey: '' });
+  const initialRef = useRef({
+    tgUser: '',
+    vapidKey: '',
+  });
   const { busy, error, run } = useAction();
 
   useEffect(() => {
     if (cfg && !initialized) {
       const u = cfg.telegram_bot_username ?? '';
       const v = cfg.vapid_public_key ?? '';
-      const w = cfg.alert_webhook_url ?? '';
       setTgUser(u);
       setVapidKey(v);
-      setWebhookUrl(w);
-      initialRef.current = { tgUser: u, webhookUrl: w, vapidKey: v };
+      // Never hydrate masked URLs ('https://host/***') back into editable state.
+      setWebhookUrl('');
+      setMobileWebhookUrl('');
+      initialRef.current = { tgUser: u, vapidKey: v };
       setInitialized(true);
     }
   }, [cfg, initialized]);
@@ -1072,8 +1098,12 @@ function AlertChannelSettings() {
     (tgUser !== initialRef.current.tgUser ||
       tgToken.trim() !== '' ||
       clearToken ||
-      webhookUrl !== initialRef.current.webhookUrl ||
+      webhookUrl.trim() !== '' ||
       clearWebhook ||
+      webhookSecret.trim() !== '' ||
+      clearWebhookSecret ||
+      mobileWebhookUrl.trim() !== '' ||
+      clearMobileWebhook ||
       vapidKey !== initialRef.current.vapidKey ||
       vapidPrivateKey.trim() !== '');
 
@@ -1086,6 +1116,10 @@ function AlertChannelSettings() {
         clear_telegram_bot_token: clearToken,
         alert_webhook_url: webhookUrl.trim() || undefined,
         clear_alert_webhook_url: clearWebhook,
+        alert_webhook_secret: webhookSecret.trim() || undefined,
+        clear_alert_webhook_secret: clearWebhookSecret,
+        mobile_push_webhook_url: mobileWebhookUrl.trim() || undefined,
+        clear_mobile_push_webhook_url: clearMobileWebhook,
         vapid_public_key: vapidKey.trim(),
         vapid_private_key: vapidPrivateKey.trim() || undefined,
       });
@@ -1094,9 +1128,55 @@ function AlertChannelSettings() {
       setClearToken(false);
       setWebhookUrl('');
       setClearWebhook(false);
+      setWebhookSecret('');
+      setClearWebhookSecret(false);
+      setMobileWebhookUrl('');
+      setClearMobileWebhook(false);
       setInitialized(false);
       await reload();
     }, t('settings.alertsSaved'));
+  };
+
+  const sendTestWebhook = async () => {
+    setTestingWebhook(true);
+    setTestWebhookMsg(null);
+    try {
+      const res = await post<{
+        ok?: boolean;
+        status_code?: number;
+        latency_ms?: number;
+        error?: string;
+      }>('/admin/settings/alerts/test-webhook');
+      if (res?.ok) {
+        setTestWebhookMsg({
+          tone: 'success',
+          text: t('settings.testWebhookOk', {
+            status: res.status_code ?? 200,
+            ms: res.latency_ms ?? 0,
+          }),
+        });
+      } else {
+        setTestWebhookMsg({
+          tone: 'warning',
+          text: t('settings.testWebhookFail', {
+            status: res?.status_code ?? 0,
+            ms: res?.latency_ms ?? 0,
+            err: res?.error ? `: ${res.error}` : '',
+          }),
+        });
+      }
+    } catch (err) {
+      setTestWebhookMsg({
+        tone: 'warning',
+        text: t('settings.testWebhookFail', {
+          status: 0,
+          ms: 0,
+          err: err instanceof Error && err.message ? `: ${err.message}` : '',
+        }),
+      });
+    } finally {
+      setTestingWebhook(false);
+    }
   };
 
   const copyVapid = async () => {
@@ -1263,6 +1343,20 @@ function AlertChannelSettings() {
                 <span>{t('settings.tgClearToken')}</span>
               </label>
             )}
+
+            {cfg?.telegram_bot_configured && cfg?.telegram_webhook_path && (
+              <Field
+                label={t('settings.tgWebhookPath')}
+                hint={t('settings.tgWebhookPathHint', { path: cfg.telegram_webhook_path })}
+              >
+                <input
+                  readOnly
+                  aria-label={t('settings.tgWebhookPath')}
+                  className="input mono"
+                  value={cfg.telegram_webhook_path}
+                />
+              </Field>
+            )}
           </div>
 
           {/* Service 3: WhatsApp / Alert Webhook */}
@@ -1288,26 +1382,141 @@ function AlertChannelSettings() {
               </Pill>
             </div>
 
-            <Field label={t('settings.webhookUrl')} hint={t('settings.webhookUrlHint')}>
+            <div className="form-grid two">
+              <Field label={t('settings.webhookUrl')} hint={t('settings.webhookUrlHint')}>
+                <input
+                  aria-label={t('settings.webhookUrl')}
+                  className="input"
+                  disabled={!canUpdate || busy || clearWebhook}
+                  value={webhookUrl}
+                  onChange={(e) => setWebhookUrl(e.target.value)}
+                  placeholder={cfg?.alert_webhook_url || 'https://example.org/hooks/grace-ride'}
+                />
+              </Field>
+
+              <Field label={t('settings.webhookSecret')} hint={t('settings.webhookSecretHint')}>
+                <input
+                  aria-label={t('settings.webhookSecret')}
+                  className="input"
+                  type="password"
+                  autoComplete="off"
+                  disabled={!canUpdate || busy || clearWebhookSecret}
+                  value={webhookSecret}
+                  onChange={(e) => setWebhookSecret(e.target.value)}
+                  placeholder={cfg?.alert_webhook_secret_configured ? '••••••••' : ''}
+                />
+              </Field>
+            </div>
+
+            <div className="row wrap between items-center gap-sm">
+              <div className="stack-xs">
+                {canUpdate && (cfg?.alert_webhook_configured || Boolean(cfg?.alert_webhook_url)) && (
+                  <label className="row gap-xs items-center small">
+                    <input
+                      type="checkbox"
+                      checked={clearWebhook}
+                      onChange={(e) => setClearWebhook(e.target.checked)}
+                    />
+                    <span>{t('settings.webhookClear')}</span>
+                  </label>
+                )}
+                {canUpdate && cfg?.alert_webhook_secret_configured && (
+                  <label className="row gap-xs items-center small">
+                    <input
+                      type="checkbox"
+                      checked={clearWebhookSecret}
+                      onChange={(e) => setClearWebhookSecret(e.target.checked)}
+                    />
+                    <span>{t('settings.webhookClearSecret')}</span>
+                  </label>
+                )}
+              </div>
+              {canUpdate && (cfg?.alert_webhook_configured || Boolean(cfg?.alert_webhook_url)) && (
+                <Button
+                  type="button"
+                  variant="secondary"
+                  size="sm"
+                  loading={testingWebhook}
+                  disabled={busy}
+                  onClick={() => void sendTestWebhook()}
+                >
+                  {t('settings.testWebhook')}
+                </Button>
+              )}
+            </div>
+
+            {testWebhookMsg && (
+              <Notice tone={testWebhookMsg.tone} role="status">
+                {testWebhookMsg.text}
+              </Notice>
+            )}
+          </div>
+
+          {/* Service 4: Mobile Push Gateway Webhook */}
+          <div className="integration-card">
+            <div className="integration-header">
+              <div className="integration-title">
+                <Smartphone size={20} className="text-[var(--primary)]" aria-hidden="true" />
+                <div>
+                  <div className="bold">{t('settings.mobileWebhookUrl')}</div>
+                  <div className="muted small">{t('settings.mobileWebhookUrlHint')}</div>
+                </div>
+              </div>
+              <Pill tone={cfg?.mobile_push_webhook_configured ? 'success' : 'neutral'}>
+                {cfg?.mobile_push_webhook_configured
+                  ? t('settings.pushConfiguredCount', {
+                      count: cfg.mobile_push_subscriptions_count ?? 0,
+                    })
+                  : t('settings.tgNotConfigured')}
+              </Pill>
+            </div>
+
+            <Field label={t('settings.mobileWebhookUrl')}>
               <input
-                aria-label={t('settings.webhookUrl')}
+                aria-label={t('settings.mobileWebhookUrl')}
                 className="input"
-                disabled={!canUpdate || busy || clearWebhook}
-                value={webhookUrl}
-                onChange={(e) => setWebhookUrl(e.target.value)}
-                placeholder={cfg?.alert_webhook_url || 'https://example.org/hooks/grace-ride'}
+                disabled={!canUpdate || busy || clearMobileWebhook}
+                value={mobileWebhookUrl}
+                onChange={(e) => setMobileWebhookUrl(e.target.value)}
+                placeholder={cfg?.mobile_push_webhook_url || 'https://example.org/hooks/mobile-push'}
               />
             </Field>
 
-            {canUpdate && (cfg?.alert_webhook_configured || Boolean(cfg?.alert_webhook_url)) && (
-              <label className="row gap-xs items-center small">
-                <input
-                  type="checkbox"
-                  checked={clearWebhook}
-                  onChange={(e) => setClearWebhook(e.target.checked)}
-                />
-                <span>{t('settings.webhookClear')}</span>
-              </label>
+            {canUpdate &&
+              (cfg?.mobile_push_webhook_configured || Boolean(cfg?.mobile_push_webhook_url)) && (
+                <label className="row gap-xs items-center small">
+                  <input
+                    type="checkbox"
+                    checked={clearMobileWebhook}
+                    onChange={(e) => setClearMobileWebhook(e.target.checked)}
+                  />
+                  <span>{t('settings.mobileWebhookClear')}</span>
+                </label>
+              )}
+          </div>
+
+          {/* 24-hour Delivery Health */}
+          <div className="integration-card">
+            <div className="integration-title">
+              <Activity size={20} className="text-[var(--primary)]" aria-hidden="true" />
+              <div className="bold">{t('settings.deliveryHealthTitle')}</div>
+            </div>
+            {cfg?.delivery_stats_24h && Object.keys(cfg.delivery_stats_24h).length > 0 ? (
+              <div className="stack-xs">
+                {Object.entries(cfg.delivery_stats_24h).map(([ch, stats]) => (
+                  <div key={ch} className="muted small mono">
+                    {t('settings.deliveryHealthStats', {
+                      channel: ch,
+                      delivered: stats.delivered ?? 0,
+                      retry: stats.retry ?? 0,
+                      failed: stats.failed ?? 0,
+                      gone: stats.gone ?? 0,
+                    })}
+                  </div>
+                ))}
+              </div>
+            ) : (
+              <p className="muted small">{t('settings.deliveryHealthEmpty')}</p>
             )}
           </div>
 
@@ -1339,8 +1548,12 @@ function AlertChannelSettings() {
                       setTgUser(initialRef.current.tgUser);
                       setTgToken('');
                       setClearToken(false);
-                      setWebhookUrl(initialRef.current.webhookUrl);
+                      setWebhookUrl('');
                       setClearWebhook(false);
+                      setWebhookSecret('');
+                      setClearWebhookSecret(false);
+                      setMobileWebhookUrl('');
+                      setClearMobileWebhook(false);
                       setVapidKey(initialRef.current.vapidKey);
                       setVapidPrivateKey('');
                     }}

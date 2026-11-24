@@ -2351,40 +2351,49 @@ async fn apply_plan_impl(
             ("教会活动".to_string(), "Church event".to_string())
         }
     };
+    let mut plan_notifs = Vec::with_capacity(gained.len() + lost.len());
     for (d, n) in &gained {
         let (zh, en) = title_for(crate::audience::member_sees_event(&st.db, *d, id).await?);
-        notify(
-            &st.db,
-            *d,
-            (
-                &format!("交通组为您安排了 {n} 位乘客"),
-                &format!(
-                    "Transport staff arranged {n} passenger{} for you",
-                    if *n == 1 { "" } else { "s" }
-                ),
+        plan_notifs.push(crate::notifications::BatchNotifItem {
+            user_id: *d,
+            title_zh: format!("交通组为您安排了 {n} 位乘客"),
+            title_en: format!(
+                "Transport staff arranged {n} passenger{} for you",
+                if *n == 1 { "" } else { "s" }
             ),
-            (
-                &format!("{} · {} · 请在「开车」确认", zh, when),
-                &format!("{} · {} · please confirm in Driving", en, when),
-            ),
-            "/drive",
-        )
-        .await;
+            body_zh: format!("{zh} · {when} · 请在「开车」确认"),
+            body_en: format!("{en} · {when} · please confirm in Driving"),
+            link: "/drive".into(),
+            meta: crate::notifications::NotifMeta {
+                category: "ride",
+                event_type: "plan_assigned".into(),
+                priority: "normal",
+                entity_type: "event",
+                entity_id: Some(id),
+                tag: format!("event-{id}-drive"),
+            },
+        });
     }
     for (d, names) in &lost {
         let (zh, en) = title_for(crate::audience::member_sees_event(&st.db, *d, id).await?);
-        notify(
-            &st.db,
-            *d,
-            ("接送已改派", "Ride reassigned"),
-            (
-                &format!("{} · {}", zh, names.join(", ")),
-                &format!("{} · {}", en, names.join(", ")),
-            ),
-            "/drive",
-        )
-        .await;
+        plan_notifs.push(crate::notifications::BatchNotifItem {
+            user_id: *d,
+            title_zh: "接送已改派".into(),
+            title_en: "Ride reassigned".into(),
+            body_zh: format!("{zh} · {}", names.join(", ")),
+            body_en: format!("{en} · {}", names.join(", ")),
+            link: "/drive".into(),
+            meta: crate::notifications::NotifMeta {
+                category: "ride",
+                event_type: "plan_reassigned".into(),
+                priority: "urgent",
+                entity_type: "event",
+                entity_id: Some(id),
+                tag: format!("event-{id}-drive"),
+            },
+        });
     }
+    crate::notifications::notify_batch(&st.db, plan_notifs).await;
 
     if let Some((did, submitted_by, created_by)) = approved_draft_info {
         audit(

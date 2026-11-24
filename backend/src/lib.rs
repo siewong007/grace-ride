@@ -10,6 +10,7 @@ pub mod auth;
 pub mod error;
 pub mod i18n;
 pub mod jobs;
+pub mod notifications;
 pub mod perms;
 pub mod routes;
 pub mod routing;
@@ -17,6 +18,7 @@ pub mod security;
 pub mod seed;
 pub mod state;
 pub mod stream;
+pub mod turnstile;
 pub mod util;
 pub mod web_push;
 
@@ -249,6 +251,10 @@ pub async fn init(cfg: Config) -> anyhow::Result<AppState> {
         .await;
     }
     let webauthn = Arc::new(build_webauthn(&cfg.public_url)?);
+    let turnstile = Arc::new(turnstile::TurnstileVerifier::new(
+        cfg.turnstile.clone(),
+        &cfg.public_url,
+    ));
     let (shutdown, _) = tokio::sync::watch::channel(false);
     Ok(AppState {
         db,
@@ -256,6 +262,7 @@ pub async fn init(cfg: Config) -> anyhow::Result<AppState> {
         cfg: Arc::new(cfg),
         limiter: Arc::new(RateLimiter::default()),
         routing: Arc::new(routing::RoutingState::default()),
+        turnstile,
         events: stream::channel(),
         shutdown,
     })

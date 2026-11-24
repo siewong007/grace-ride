@@ -1,7 +1,9 @@
 //! Account recovery requests, invites preview/acceptance, and terms consent.
 
+use std::net::SocketAddr;
+
 use axum::{
-    extract::{Path, State},
+    extract::{ConnectInfo, Path, State},
     http::HeaderMap,
     Json,
 };
@@ -23,12 +25,26 @@ use crate::util::{audit, check_name, check_phone, minutes_ago, notify_perm, now}
 pub(super) struct RecoveryReq {
     email: String,
     reason: String,
+    #[serde(default)]
+    turnstile_token: Option<String>,
 }
 
 pub(super) async fn recovery_request(
     State(st): State<AppState>,
+    peer: Option<axum::Extension<ConnectInfo<SocketAddr>>>,
+    headers: HeaderMap,
     Json(req): Json<RecoveryReq>,
 ) -> AppResult<Json<Value>> {
+    let lang = visitor_lang(&headers);
+    let ip = crate::security::client_ip(&headers, peer.map(|p| p.0 .0), st.cfg.trust_proxy);
+    st.turnstile
+        .verify(
+            req.turnstile_token.as_deref(),
+            "recovery_request",
+            Some(&ip),
+            lang,
+        )
+        .await?;
     // Always answer the same way so the endpoint can't be used to probe member emails.
     let email = req.email.trim().to_lowercase();
     if email.is_empty() || email.len() > 254 {
@@ -159,16 +175,28 @@ pub(super) struct AcceptReq {
     email: Option<String>,
     phone: Option<String>,
     terms: Option<bool>,
+    #[serde(default)]
+    turnstile_token: Option<String>,
 }
 
 pub(super) async fn invite_accept(
     State(st): State<AppState>,
+    peer: Option<axum::Extension<ConnectInfo<SocketAddr>>>,
     jar: CookieJar,
     headers: HeaderMap,
     Path(token): Path<String>,
     Json(req): Json<AcceptReq>,
 ) -> AppResult<(CookieJar, Json<Value>)> {
     let lang = visitor_lang(&headers);
+    let ip = crate::security::client_ip(&headers, peer.map(|p| p.0 .0), st.cfg.trust_proxy);
+    st.turnstile
+        .verify(
+            req.turnstile_token.as_deref(),
+            "invite_accept",
+            Some(&ip),
+            lang,
+        )
+        .await?;
     let row: Option<(
         i64,
         String,

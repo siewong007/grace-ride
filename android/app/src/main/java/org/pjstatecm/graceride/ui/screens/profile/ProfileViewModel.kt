@@ -17,14 +17,18 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import org.pjstatecm.graceride.data.api.ApiException
 import org.pjstatecm.graceride.data.api.Me
+import org.pjstatecm.graceride.data.api.NotificationPrefsDto
 import org.pjstatecm.graceride.data.api.PasskeyInfo
 import org.pjstatecm.graceride.data.api.ProfileUpdateReq
+import org.pjstatecm.graceride.data.api.UpdateNotificationPrefsReq
 import org.pjstatecm.graceride.di.AppContainer
 import java.io.File
 
 data class ProfileUiState(
     val me: Me? = null,
     val passkeys: List<PasskeyInfo> = emptyList(),
+    val notifPrefs: NotificationPrefsDto? = null,
+    val telegramStatus: String? = null,
     val busy: Boolean = false,
     val message: String? = null,
     val error: String? = null,
@@ -53,13 +57,30 @@ class ProfileViewModel(private val container: AppContainer) : ViewModel() {
         }
     }
 
+    fun loadNotificationPrefs() {
+        viewModelScope.launch {
+            try {
+                val prefs = container.community.notificationPrefs()
+                _state.value = _state.value.copy(notifPrefs = prefs)
+            } catch (_: ApiException) { }
+        }
+    }
+
     fun clearMessage() {
         _state.value = _state.value.copy(message = null)
     }
 
+    fun clearTelegramStatus() {
+        _state.value = _state.value.copy(telegramStatus = null)
+    }
+
     fun saveProfile(name: String, phone: String, telegramChatId: String) {
         if (_state.value.busy) return
-        val normalizedTg = telegramChatId.trim().removePrefix("@")
+        val normalizedTg = telegramChatId.trim()
+        if (normalizedTg.isNotEmpty() && !Regex("^-?\\d{5,20}$").matches(normalizedTg)) {
+            _state.value = _state.value.copy(error = "invalid_telegram_chat_id")
+            return
+        }
         _state.value = _state.value.copy(busy = true, error = null, message = null)
         viewModelScope.launch {
             try {
@@ -78,6 +99,54 @@ class ProfileViewModel(private val container: AppContainer) : ViewModel() {
                 )
             } catch (e: ApiException) {
                 _state.value = _state.value.copy(busy = false, error = e.message)
+            }
+        }
+    }
+
+    fun saveNotificationPrefs(req: UpdateNotificationPrefsReq) {
+        if (_state.value.busy) return
+        _state.value = _state.value.copy(busy = true, error = null, message = null)
+        viewModelScope.launch {
+            try {
+                container.community.updateNotificationPrefs(req)
+                val prefs = container.community.notificationPrefs()
+                container.auth.refresh()
+                _state.value = _state.value.copy(
+                    busy = false,
+                    me = container.auth.me,
+                    notifPrefs = prefs,
+                    message = "prefs_saved",
+                )
+            } catch (e: ApiException) {
+                _state.value = _state.value.copy(busy = false, error = e.message)
+            }
+        }
+    }
+
+    fun connectTelegram(onUrl: (String) -> Unit) {
+        viewModelScope.launch {
+            try {
+                val res = container.community.createTelegramLinkToken()
+                if (res.url.isNotBlank()) onUrl(res.url)
+            } catch (e: ApiException) {
+                _state.value = _state.value.copy(error = e.message)
+            }
+        }
+    }
+
+    fun testTelegram() {
+        viewModelScope.launch {
+            try {
+                val res = container.community.testTelegram()
+                val curPrefs = _state.value.notifPrefs
+                _state.value = _state.value.copy(
+                    telegramStatus = if (res.delivered) "ok" else (res.error ?: "failed"),
+                    notifPrefs = if (res.delivered && curPrefs != null) {
+                        curPrefs.copy(telegramBlocked = false)
+                    } else curPrefs,
+                )
+            } catch (e: ApiException) {
+                _state.value = _state.value.copy(telegramStatus = e.message)
             }
         }
     }

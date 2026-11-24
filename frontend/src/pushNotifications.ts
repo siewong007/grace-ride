@@ -15,7 +15,7 @@ export type PushAvailability =
 
 export type EnablePushResult =
   | { ok: true; mode: 'push' | 'local' }
-  | { ok: false; reason: 'needs_install_ios' | 'unsupported' | 'denied' | 'dismissed' };
+  | { ok: false; reason: 'needs_install_ios' | 'unsupported' | 'denied' | 'dismissed' | 'subscribe_failed' };
 
 export interface PushNotificationState {
   availability: PushAvailability;
@@ -131,6 +131,22 @@ export async function getCurrentPushSubscription(): Promise<PushSubscription | n
   }
 }
 
+export async function getCurrentPushEndpoint(): Promise<string> {
+  const sub = await getCurrentPushSubscription();
+  return sub?.endpoint ?? '';
+}
+
+export function resetPushState(): void {
+  knownSubscribed = null;
+  notifyPushListeners();
+}
+
+if (typeof window !== 'undefined') {
+  window.addEventListener('gr:push-reset', () => {
+    resetPushState();
+  });
+}
+
 export async function enablePushNotifications(): Promise<EnablePushResult> {
   const avail = getPushAvailability();
   if (avail === 'needs_install_ios') {
@@ -153,6 +169,12 @@ export async function enablePushNotifications(): Promise<EnablePushResult> {
   }
 
   await put('/me', { push_opt_in: true }).catch(() => {});
+
+  const pushSupported = hasPushManagerSupport();
+  if (!pushSupported) {
+    notifyPushListeners();
+    return { ok: true, mode: 'local' };
+  }
 
   try {
     const cfg = await api<{ enabled?: boolean; vapid_public_key?: string }>('/push/config');
@@ -190,11 +212,11 @@ export async function enablePushNotifications(): Promise<EnablePushResult> {
       }
     }
   } catch {
-    // Fall back to local notification permission mode below.
+    // Fall through to subscribe_failed below.
   }
 
   notifyPushListeners();
-  return { ok: true, mode: 'local' };
+  return { ok: false, reason: 'subscribe_failed' };
 }
 
 export async function disableDevicePush(): Promise<boolean> {

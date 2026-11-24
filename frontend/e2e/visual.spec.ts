@@ -117,6 +117,9 @@ test.beforeEach(async ({ page }) => {
     if (url.includes('/api/auth/me')) {
       return route.fulfill({ status: 200, json: mockMe });
     }
+    if (url.includes('/api/auth/turnstile')) {
+      return route.fulfill({ status: 200, json: { enabled: false, site_key: null } });
+    }
     if (url.includes('/api/auth/dev-users')) {
       return route.fulfill({
         status: 200,

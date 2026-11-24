@@ -1183,6 +1183,7 @@ fn verify_vapid_and_decrypt(
     sub_priv: ring::agreement::EphemeralPrivateKey,
     sub_pub: &[u8],
     sub_auth: &[u8],
+    expected_ttl: &str,
 ) -> Value {
     use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine as _};
     use ring::{
@@ -1199,7 +1200,7 @@ fn verify_vapid_and_decrypt(
             .map(|(_, v)| v.as_str())
     };
     assert_eq!(hdr("content-encoding"), Some("aes128gcm"));
-    assert_eq!(hdr("ttl"), Some("86400"));
+    assert_eq!(hdr("ttl"), Some(expected_ttl));
 
     let authz = hdr("authorization").expect("vapid Authorization header");
     let rest = authz.strip_prefix("vapid ").expect("vapid prefix");
@@ -1439,6 +1440,7 @@ async fn web_push_end_to_end_encryption_test_endpoint_and_410_pruning() {
         sub1_priv,
         sub1_pub.as_ref(),
         &sub1_auth,
+        "1800",
     );
     assert_eq!(
         payload1["title"],
@@ -1498,6 +1500,7 @@ async fn web_push_end_to_end_encryption_test_endpoint_and_410_pruning() {
         sub2_priv,
         sub2_pub.as_ref(),
         &sub2_auth,
+        "86400",
     );
     assert_eq!(payload2["url"], "/me");
     assert!(!payload2["title"].as_str().unwrap_or("").is_empty());

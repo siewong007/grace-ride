@@ -7,12 +7,14 @@ import Settings from './Settings';
 
 const mocks = vi.hoisted(() => ({
   put: vi.fn(),
+  post: vi.fn(),
   can: (() => true) as (page: string, act?: string) => boolean,
+  alertsData: null as Record<string, unknown> | null,
 }));
 
 vi.mock('../../api', () => ({
   put: mocks.put,
-  post: vi.fn(),
+  post: mocks.post,
   del: vi.fn(),
   useApi: (path: string | null) => ({
     data:
@@ -20,14 +22,16 @@ vi.mock('../../api', () => ({
         ? { fares: [{ id: 7, area_a: { id: 1, name: 'Cheras' }, area_b: { id: 2, name: 'PJ' }, amount_cents: 1500, updated_at: '' }] }
         : path === '/admin/settings/system'
           ? { audit_retention_days: 730, chat_retention_days: 180, max_live_drivers: 10, session_timeout_mins: 15 }
-          : path === '/areas'
-            ? [
-                { id: 1, name: 'Cheras', active: true },
-                { id: 2, name: 'PJ', active: true },
-                { id: 3, name: 'KK', active: true },
-                { id: 4, name: 'Old Town', active: false },
-              ]
-            : [],
+          : path === '/admin/settings/alerts'
+            ? mocks.alertsData
+            : path === '/areas'
+              ? [
+                  { id: 1, name: 'Cheras', active: true },
+                  { id: 2, name: 'PJ', active: true },
+                  { id: 3, name: 'KK', active: true },
+                  { id: 4, name: 'Old Town', active: false },
+                ]
+              : [],
     loading: false,
     error: null,
     reload: vi.fn(),
@@ -40,7 +44,9 @@ beforeAll(async () => {
 });
 beforeEach(() => {
   mocks.put.mockReset().mockResolvedValue({});
+  mocks.post.mockReset().mockResolvedValue({ ok: true, status_code: 200, latency_ms: 42 });
   mocks.can = () => true;
+  mocks.alertsData = null;
 });
 
 const show = (url = '/admin/settings') =>
@@ -114,5 +120,47 @@ describe('Settings forms', () => {
         session_timeout_mins: 15,
       }),
     );
+  });
+
+  it('never re-submits masked alert_webhook_url when editing Telegram username, and tests webhook + shows 24h health', async () => {
+    mocks.alertsData = {
+      telegram_bot_configured: true,
+      telegram_bot_username: 'OldBot',
+      telegram_webhook_path: '/api/push/telegram/webhook/abc',
+      alert_webhook_configured: true,
+      alert_webhook_url: 'https://hooks.example.org/***',
+      alert_webhook_secret_configured: true,
+      mobile_push_webhook_configured: false,
+      mobile_push_subscriptions_count: 2,
+      vapid_public_key: 'VAPID_PUB',
+      vapid_private_configured: true,
+      push_subscriptions_count: 3,
+      delivery_stats_24h: {
+        web_push: { delivered: 12, retry: 1, failed: 0, gone: 1 },
+      },
+    };
+    show('/admin/settings?tab=alerts');
+
+    expect(screen.getByText(/web_push: 12 delivered/i)).toBeInTheDocument();
+    const webhookInput = screen.getByLabelText('WhatsApp / Alert webhook URL') as HTMLInputElement;
+    expect(webhookInput.value).toBe('');
+
+    fireEvent.change(screen.getByLabelText('Telegram bot username'), {
+      target: { value: 'NewBot' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: 'Save alert channels' }));
+    await waitFor(() =>
+      expect(mocks.put).toHaveBeenCalledWith(
+        '/admin/settings/alerts',
+        expect.objectContaining({
+          telegram_bot_username: 'NewBot',
+          alert_webhook_url: undefined,
+        }),
+      ),
+    );
+
+    fireEvent.click(screen.getByRole('button', { name: 'Send test webhook' }));
+    await waitFor(() => expect(mocks.post).toHaveBeenCalledWith('/admin/settings/alerts/test-webhook'));
+    expect(await screen.findByText(/HTTP 200 in 42 ms/i)).toBeInTheDocument();
   });
 });

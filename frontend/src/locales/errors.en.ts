@@ -75,7 +75,9 @@ export default {
     "ACCOUNT_PENDING": "This account is waiting for approval. Only the profile is available.",
     "TERMS_REQUIRED": "Please read the terms and opt in before continuing.",
     "SESSION_LOCKED": "Screen is locked. Verify your identity to continue.",
-    "UNLOCK_METHOD_REQUIRED": "Provide a passkey, two-factor code, or backup code to unlock."
+    "UNLOCK_METHOD_REQUIRED": "Provide a passkey, two-factor code, or backup code to unlock.",
+    "TURNSTILE_REQUIRED": "Please complete the human verification check before continuing",
+    "TURNSTILE_FAILED": "Human verification failed or expired; please try again"
   },
   "events": {
     "EVENT_NAME_REQUIRED": "Please enter an event name",

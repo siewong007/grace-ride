@@ -351,4 +351,45 @@ describe('pushNotifications', () => {
     syncAppBadge(0);
     expect(setAppBadge).toHaveBeenLastCalledWith(0);
   });
+
+  it('reads current subscription endpoint and returns subscribe_failed when PushManager throws', async () => {
+    setUA('Mozilla/5.0 (Linux; Android 14) Chrome/120.0');
+    _setInstalledForTesting(true);
+    setPushManagerMock(true);
+
+    const requestPermission = vi.fn().mockResolvedValue('granted');
+    Object.defineProperty(globalThis, 'Notification', {
+      configurable: true,
+      writable: true,
+      value: { permission: 'granted', requestPermission },
+    });
+
+    const subscribe = vi.fn().mockRejectedValue(new Error('GCM error'));
+    const regMock = {
+      active: { state: 'activated' },
+      pushManager: {
+        getSubscription: vi.fn().mockResolvedValue({ endpoint: 'https://fcm.googleapis.com/fcm/send/dev-1' }),
+        subscribe,
+      },
+    };
+    Object.defineProperty(navigator, 'serviceWorker', {
+      configurable: true,
+      value: {
+        getRegistration: vi.fn().mockResolvedValue(regMock),
+        ready: Promise.resolve(regMock),
+      },
+    });
+    vi.mocked(api).mockResolvedValue({
+      enabled: true,
+      configured: true,
+      vapid_public_key: 'BEl62iUYgUivxIkv69yViEuiBIa-Ib9-SkvMeAtA3LFgDzkrxZJjSgSnfckjBJuBkr3qBUYIHBQFLXYp5Nksh8',
+    });
+
+    const { getCurrentPushEndpoint } = await import('./pushNotifications');
+    await expect(getCurrentPushEndpoint()).resolves.toBe('https://fcm.googleapis.com/fcm/send/dev-1');
+
+    // No active sub + failing subscribe() => structured subscribe_failed
+    regMock.pushManager.getSubscription.mockResolvedValue(null);
+    await expect(enablePushNotifications()).resolves.toEqual({ ok: false, reason: 'subscribe_failed' });
+  });
 });

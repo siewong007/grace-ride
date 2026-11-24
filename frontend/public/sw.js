@@ -1,4 +1,4 @@
-const SHELL_CACHE = 'grace-ride-shell-v3';
+const SHELL_CACHE = 'grace-ride-shell-v4';
 const STATIC_ASSETS = [
   '/',
   '/index.html',
@@ -7,9 +7,11 @@ const STATIC_ASSETS = [
   '/icon.svg?v=2',
   '/icon-192.png?v=2',
   '/apple-touch-icon.png?v=2',
+  '/badge-monochrome.png',
 ];
 const MAX_RUNTIME_ASSETS = 200;
 const NOTIFICATION_ICON = '/icon-192.png?v=2';
+const NOTIFICATION_BADGE = '/badge-monochrome.png';
 
 function isCacheableStaticPath(pathname) {
   return (
@@ -18,7 +20,8 @@ function isCacheableStaticPath(pathname) {
     pathname === '/theme-boot.js' ||
     pathname === '/manifest.webmanifest' ||
     pathname.startsWith('/icon') ||
-    pathname === '/apple-touch-icon.png'
+    pathname === '/apple-touch-icon.png' ||
+    pathname === '/badge-monochrome.png'
   );
 }
 
@@ -34,6 +37,17 @@ function trimRuntimeCache(cache) {
       cache.delete(runtime[i]);
     }
   });
+}
+
+function urlBase64ToUint8Array(base64String) {
+  const pad = '='.repeat((4 - (base64String.length % 4)) % 4);
+  const b64 = (base64String + pad).replace(/-/g, '+').replace(/_/g, '/');
+  const raw = atob(b64);
+  const bytes = new Uint8Array(raw.length);
+  for (let i = 0; i < raw.length; i++) {
+    bytes[i] = raw.charCodeAt(i);
+  }
+  return bytes;
 }
 
 self.addEventListener('install', (event) => {
@@ -116,20 +130,58 @@ self.addEventListener('push', (event) => {
   } catch {
     if (event.data) payload.body = event.data.text();
   }
-  const showPromise = self.registration.showNotification(payload.title || 'Grace Ride', {
+  const options = {
     body: payload.body || '',
     icon: NOTIFICATION_ICON,
-    badge: NOTIFICATION_ICON,
+    badge: NOTIFICATION_BADGE,
     data: { url: payload.url || '/notifications' },
-  });
+  };
+  if (typeof payload.tag === 'string' && payload.tag) {
+    options.tag = payload.tag;
+    options.renotify = payload.priority === 'urgent';
+  }
+  if (Array.isArray(payload.actions) && payload.actions.length > 0) {
+    options.actions = payload.actions;
+  }
+  const showPromise = self.registration.showNotification(payload.title || 'Grace Ride', options);
   const badgePromise =
     self.navigator && typeof self.navigator.setAppBadge === 'function'
       ? (typeof payload.badge_count === 'number' && payload.badge_count > 0
           ? self.navigator.setAppBadge(payload.badge_count)
-          : self.navigator.setAppBadge()
+          : typeof payload.badge_count === 'number' && payload.badge_count === 0 && typeof self.navigator.clearAppBadge === 'function'
+            ? self.navigator.clearAppBadge()
+            : self.navigator.setAppBadge()
         ).catch(() => {})
       : Promise.resolve();
   event.waitUntil(Promise.all([showPromise, badgePromise]));
+});
+
+self.addEventListener('pushsubscriptionchange', (event) => {
+  event.waitUntil(
+    fetch('/api/push/config', { credentials: 'same-origin' })
+      .then((res) => (res.ok ? res.json() : null))
+      .then(async (cfg) => {
+        if (!cfg || !cfg.vapid_public_key) return;
+        const appKey = urlBase64ToUint8Array(cfg.vapid_public_key);
+        const sub = await self.registration.pushManager.subscribe({
+          userVisibleOnly: true,
+          applicationServerKey: appKey,
+        });
+        const json = sub.toJSON();
+        if (!json.endpoint) return;
+        await fetch('/api/push/subscribe', {
+          method: 'POST',
+          credentials: 'same-origin',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({
+            endpoint: json.endpoint,
+            p256dh: (json.keys && json.keys.p256dh) || '',
+            auth: (json.keys && json.keys.auth) || '',
+          }),
+        });
+      })
+      .catch(() => {}),
+  );
 });
 
 self.addEventListener('message', (event) => {
@@ -139,32 +191,39 @@ self.addEventListener('message', (event) => {
       self.registration.showNotification(msg.title || 'Grace Ride', {
         body: msg.body || '',
         icon: NOTIFICATION_ICON,
-        badge: NOTIFICATION_ICON,
+        badge: NOTIFICATION_BADGE,
         data: { url: msg.url || '/notifications' },
       }),
     );
   }
 });
 
-function safeTargetUrl(raw) {
+function safeTargetUrl(raw, action) {
+  let resolved;
   try {
-    const resolved = new URL(typeof raw === 'string' && raw ? raw : '/notifications', self.location.origin);
+    resolved = new URL(typeof raw === 'string' && raw ? raw : '/notifications', self.location.origin);
     if (
-      resolved.origin === self.location.origin &&
-      !resolved.pathname.startsWith('//') &&
-      !resolved.pathname.startsWith('/api/')
+      resolved.origin !== self.location.origin ||
+      resolved.pathname.startsWith('//') ||
+      resolved.pathname.startsWith('/api/')
     ) {
-      return resolved.href;
+      resolved = new URL('/notifications', self.location.origin);
     }
   } catch {
-    // Fall back to /notifications below.
+    resolved = new URL('/notifications', self.location.origin);
   }
-  return `${self.location.origin}/notifications`;
+  if (action === 'ready' || action === 'delayed_5m') {
+    resolved.searchParams.set('quick', action);
+  }
+  return resolved.href;
 }
 
 self.addEventListener('notificationclick', (event) => {
   event.notification.close();
-  const targetUrl = safeTargetUrl(event.notification.data && event.notification.data.url);
+  const targetUrl = safeTargetUrl(
+    event.notification.data && event.notification.data.url,
+    event.action,
+  );
   event.waitUntil(
     self.clients.matchAll({ type: 'window', includeUncontrolled: true }).then((clients) => {
       for (const client of clients) {

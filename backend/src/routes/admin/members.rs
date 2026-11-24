@@ -467,6 +467,10 @@ pub(super) async fn update_user(
             .bind(id)
             .execute(&mut *tx)
             .await?;
+        sqlx::query("DELETE FROM mobile_push_tokens WHERE user_id=$1")
+            .bind(id)
+            .execute(&mut *tx)
+            .await?;
         // A disabled driver can no longer drive: rides not yet started go back to the
         // pool, flagged for transport staff, instead of waiting on someone who can't act.
         released = sqlx::query_scalar(
@@ -529,19 +533,17 @@ pub(super) async fn update_user(
         )
         .await;
     }
-    for passenger in released {
-        crate::util::notify(
-            &st.db,
-            passenger,
-            ("司机无法出车", "Driver cannot drive"),
-            (
-                "交通组正在为您安排其他司机，请留意通知。",
-                "Transport staff are arranging another driver for you; please watch for notifications.",
-            ),
-            "/rides",
-        )
-        .await;
-    }
+    crate::util::notify_many(
+        &st.db,
+        &released,
+        ("司机无法出车", "Driver cannot drive"),
+        (
+            "交通组正在为您安排其他司机，请留意通知。",
+            "Transport staff are arranging another driver for you; please watch for notifications.",
+        ),
+        "/rides",
+    )
+    .await;
     audit(
         &st.db,
         Some(u.id),

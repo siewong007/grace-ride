@@ -232,10 +232,15 @@ pub(super) async fn update_profile(
             return Err(bad(u.lang, ErrorKey::InvalidAction));
         }
     }
+    if let Some(ref tg) = req.telegram_chat_id {
+        if !crate::notifications::validate_telegram_chat_id(tg) {
+            return Err(bad(u.lang, ErrorKey::InvalidAction));
+        }
+    }
     let tg = req
         .telegram_chat_id
         .as_deref()
-        .map(|s| s.trim().chars().take(64).collect::<String>());
+        .map(|s| s.trim().to_string());
     sqlx::query(
         "UPDATE users SET
             name=COALESCE($1, name),
@@ -274,6 +279,15 @@ pub(super) async fn update_profile(
     .bind(req.avatar_icon.as_deref())
     .execute(&st.db)
     .await?;
+    if tg.is_some() {
+        let _ = sqlx::query(
+            "UPDATE user_notification_prefs SET telegram_blocked=0, updated_at=$2 WHERE user_id=$1 AND telegram_blocked=1",
+        )
+        .bind(u.id)
+        .bind(now())
+        .execute(&st.db)
+        .await;
+    }
     // Which fields were sent, not their values: the log is read by staff.
     let changed: Vec<&str> = [
         ("name", req.name.is_some()),

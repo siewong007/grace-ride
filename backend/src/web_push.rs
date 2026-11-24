@@ -1,6 +1,11 @@
 //! Native Web Push delivery: VAPID JWT signing (RFC 8292) and `aes128gcm`
 //! payload encryption (RFC 8291 + RFC 8188) built directly on `ring`.
 
+use std::{
+    collections::HashMap,
+    sync::{Arc, OnceLock, RwLock},
+};
+
 use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine as _};
 use ring::{
     aead::{self, LessSafeKey, UnboundKey},
@@ -10,6 +15,7 @@ use ring::{
     signature::{EcdsaKeyPair, KeyPair, ECDSA_P256_SHA256_FIXED_SIGNING},
 };
 use serde_json::json;
+use sha2::{Digest, Sha256};
 use sqlx::PgPool;
 use url::Url;
 
@@ -27,12 +33,28 @@ impl KeyType for HkdfLen {
 }
 
 /// Outcome of delivering a single Web Push message to one subscription endpoint.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum PushOutcome {
     Delivered,
     Gone,
+    RateLimited(Option<u64>),
+    Retryable(String),
     Skipped,
-    Failed,
+    Failed(String),
+}
+
+/// Rich Web Push payload and protocol headers.
+pub struct PushMessage<'a> {
+    pub title: &'a str,
+    pub body: &'a str,
+    pub url_path: &'a str,
+    pub badge_count: Option<i64>,
+    pub tag: Option<&'a str>,
+    pub category: &'a str,
+    pub priority: &'a str,
+    pub urgency: &'a str,
+    pub ttl_secs: u32,
+    pub actions: Option<&'a [(&'a str, &'a str)]>,
 }
 
 /// Decode URL-safe or standard base64 (with or without `=` padding).
@@ -144,6 +166,44 @@ impl VapidSigner {
     }
 }
 
+static SIGNER_CACHE: OnceLock<RwLock<HashMap<[u8; 32], Arc<VapidSigner>>>> = OnceLock::new();
+
+pub fn cached_vapid_signer(pub_k: &str, priv_k: &str) -> Option<Arc<VapidSigner>> {
+    let pub_t = pub_k.trim();
+    let priv_t = priv_k.trim();
+    if pub_t.is_empty() || priv_t.is_empty() {
+        return None;
+    }
+    let mut hasher = Sha256::new();
+    hasher.update(pub_t.as_bytes());
+    hasher.update(b"|");
+    hasher.update(priv_t.as_bytes());
+    let key: [u8; 32] = hasher.finalize().into();
+
+    let cache = SIGNER_CACHE.get_or_init(|| RwLock::new(HashMap::new()));
+    if let Ok(guard) = cache.read() {
+        if let Some(hit) = guard.get(&key) {
+            return Some(hit.clone());
+        }
+    }
+    match VapidSigner::from_stored(pub_t, priv_t) {
+        Ok(signer) => {
+            let arc = Arc::new(signer);
+            if let Ok(mut guard) = cache.write() {
+                if guard.len() >= 16 {
+                    guard.clear();
+                }
+                guard.insert(key, arc.clone());
+            }
+            Some(arc)
+        }
+        Err(e) => {
+            tracing::warn!("invalid VAPID keypair in app_secrets: {e}");
+            None
+        }
+    }
+}
+
 /// Ensure a VAPID public key exists in `app_secrets`, auto-generating a pair only when
 /// `vapid_public_key` is missing or empty (preserving any administrator-supplied key).
 pub async fn ensure_vapid_keys(db: &PgPool) -> anyhow::Result<String> {
@@ -183,7 +243,7 @@ pub async fn ensure_vapid_keys(db: &PgPool) -> anyhow::Result<String> {
 }
 
 /// Load the active VAPID signer from `app_secrets` if both public and private keys are present and valid.
-pub async fn load_vapid_signer(db: &PgPool) -> Option<VapidSigner> {
+pub async fn load_vapid_signer(db: &PgPool) -> Option<Arc<VapidSigner>> {
     let rows: Vec<(String, String)> = sqlx::query_as(
         "SELECT name, value FROM app_secrets WHERE name IN ('vapid_public_key', 'vapid_private_key')",
     )
@@ -199,16 +259,7 @@ pub async fn load_vapid_signer(db: &PgPool) -> Option<VapidSigner> {
             _ => {}
         }
     }
-    if pub_k.trim().is_empty() || priv_k.trim().is_empty() {
-        return None;
-    }
-    match VapidSigner::from_stored(&pub_k, &priv_k) {
-        Ok(signer) => Some(signer),
-        Err(e) => {
-            tracing::warn!("invalid VAPID keypair in app_secrets: {e}");
-            None
-        }
-    }
+    cached_vapid_signer(&pub_k, &priv_k)
 }
 
 /// Check that subscription `p256dh` (65-byte uncompressed P-256 point) and `auth` (16-byte secret)
@@ -307,26 +358,54 @@ pub fn encrypt_payload(
     Ok(out)
 }
 
-/// Encrypt and send one Web Push notification to a single subscription endpoint.
+fn sanitize_topic(tag: &str) -> String {
+    tag.chars()
+        .filter(|c| c.is_ascii_alphanumeric() || *c == '-' || *c == '_')
+        .take(32)
+        .collect()
+}
+
+fn parse_retry_after_secs(res: &reqwest::Response) -> Option<u64> {
+    res.headers()
+        .get(reqwest::header::RETRY_AFTER)
+        .and_then(|v| v.to_str().ok())
+        .and_then(|s| s.trim().parse::<u64>().ok())
+        .map(|s| s.clamp(5, 3600))
+}
+
+/// Encrypt and send one rich Web Push notification to a single subscription endpoint.
 #[allow(clippy::too_many_arguments)]
-pub async fn send_push_message(
+pub async fn send_push_message_rich(
     client: &reqwest::Client,
     signer: &VapidSigner,
     subject: &str,
     endpoint: &str,
     p256dh: &str,
     auth: &str,
-    title: &str,
-    body: &str,
-    url_path: &str,
+    msg: &PushMessage<'_>,
 ) -> PushOutcome {
-    let title_s: String = title.chars().take(120).collect();
-    let body_s: String = body.chars().take(500).collect();
-    let Ok(payload) = serde_json::to_vec(&json!({
-        "title": title_s,
-        "body": body_s,
-        "url": url_path,
-    })) else {
+    let title_s: String = msg.title.chars().take(120).collect();
+    let body_s: String = msg.body.chars().take(500).collect();
+    let mut payload_obj = serde_json::Map::new();
+    payload_obj.insert("title".into(), json!(title_s));
+    payload_obj.insert("body".into(), json!(body_s));
+    payload_obj.insert("url".into(), json!(msg.url_path));
+    payload_obj.insert("category".into(), json!(msg.category));
+    payload_obj.insert("priority".into(), json!(msg.priority));
+    if let Some(count) = msg.badge_count {
+        payload_obj.insert("badge_count".into(), json!(count.max(0)));
+    }
+    if let Some(tag) = msg.tag.filter(|s| !s.is_empty()) {
+        payload_obj.insert("tag".into(), json!(tag));
+    }
+    if let Some(actions) = msg.actions.filter(|a| !a.is_empty()) {
+        let arr: Vec<serde_json::Value> = actions
+            .iter()
+            .map(|(act, label)| json!({ "action": act, "title": label }))
+            .collect();
+        payload_obj.insert("actions".into(), json!(arr));
+    }
+    let Ok(payload) = serde_json::to_vec(&serde_json::Value::Object(payload_obj)) else {
         return PushOutcome::Skipped;
     };
     let Ok(ciphertext) = encrypt_payload(p256dh, auth, &payload) else {
@@ -341,33 +420,85 @@ pub async fn send_push_message(
         .and_then(|u| u.host_str().map(str::to_string))
         .unwrap_or_else(|| "unknown".to_string());
 
-    match client
+    let urgency = match msg.urgency {
+        "very-low" | "low" | "normal" | "high" => msg.urgency,
+        _ => "normal",
+    };
+
+    let mut req = client
         .post(endpoint)
         .header("Authorization", auth_header)
         .header("Content-Type", "application/octet-stream")
         .header("Content-Encoding", "aes128gcm")
-        .header("TTL", "86400")
-        .header("Urgency", "normal")
-        .body(ciphertext)
-        .send()
-        .await
-    {
+        .header("TTL", msg.ttl_secs.to_string())
+        .header("Urgency", urgency);
+    if let Some(tag) = msg.tag.filter(|s| !s.is_empty()) {
+        let topic = sanitize_topic(tag);
+        if !topic.is_empty() {
+            req = req.header("Topic", topic);
+        }
+    }
+
+    match req.body(ciphertext).send().await {
         Ok(res) => {
             let status = res.status().as_u16();
             if (200..=299).contains(&status) {
                 PushOutcome::Delivered
             } else if status == 404 || status == 410 {
                 PushOutcome::Gone
+            } else if status == 429 {
+                let ra = parse_retry_after_secs(&res);
+                tracing::warn!(host, status, retry_after = ?ra, "web push rate limited");
+                PushOutcome::RateLimited(ra)
+            } else if status >= 500 || status == 408 {
+                tracing::warn!(host, status, "web push transient rejection");
+                PushOutcome::Retryable(format!("HTTP {status}"))
             } else {
                 tracing::warn!(host, status, "web push delivery rejected");
-                PushOutcome::Failed
+                PushOutcome::Failed(format!("HTTP {status}"))
             }
         }
         Err(e) => {
             tracing::warn!(host, error = %e, "web push request failed");
-            PushOutcome::Failed
+            PushOutcome::Retryable(e.to_string())
         }
     }
+}
+
+/// Encrypt and send one Web Push notification to a single subscription endpoint.
+#[allow(clippy::too_many_arguments)]
+pub async fn send_push_message(
+    client: &reqwest::Client,
+    signer: &VapidSigner,
+    subject: &str,
+    endpoint: &str,
+    p256dh: &str,
+    auth: &str,
+    title: &str,
+    body: &str,
+    url_path: &str,
+) -> PushOutcome {
+    send_push_message_rich(
+        client,
+        signer,
+        subject,
+        endpoint,
+        p256dh,
+        auth,
+        &PushMessage {
+            title,
+            body,
+            url_path,
+            badge_count: None,
+            tag: None,
+            category: "general",
+            priority: "normal",
+            urgency: "normal",
+            ttl_secs: 86400,
+            actions: None,
+        },
+    )
+    .await
 }
 
 #[cfg(test)]

@@ -260,7 +260,7 @@ export default function GrokBotControls({
                     type="button"
                     aria-pressed={active}
                     className={`grok-studio-tile${active ? ' on' : ''}`}
-                    onClick={() => onMoveChange(active && m !== 'idle' ? 'idle' : m)}
+                    onClick={() => onMoveChange(m)}
                   >
                     {active && (
                       <span className="grok-studio-check" aria-hidden="true">

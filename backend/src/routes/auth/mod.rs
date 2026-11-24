@@ -47,6 +47,7 @@ const MAX_FAILURES: i64 = 0; // disable password lockout since password login is
 pub fn router() -> Router<AppState> {
     Router::new()
         .route("/auth/me", get(me))
+        .route("/auth/turnstile", get(turnstile_config))
         .route("/auth/login", post(login_password))
         .route("/auth/dev-users", get(dev_users))
         .route("/auth/dev-login", post(dev_login))
@@ -329,6 +330,15 @@ async fn me(State(st): State<AppState>, u: CurrentUser) -> AppResult<Json<Value>
     })))
 }
 
+/// Public Turnstile configuration for the SPA (never exposes secret_key or verify_url).
+async fn turnstile_config(State(st): State<AppState>) -> Json<Value> {
+    let enabled = st.cfg.turnstile.is_enabled();
+    Json(json!({
+        "enabled": enabled,
+        "site_key": if enabled { st.cfg.turnstile.site_key.as_deref() } else { None },
+    }))
+}
+
 #[derive(Deserialize)]
 #[allow(dead_code)]
 struct LoginReq {
@@ -423,11 +433,47 @@ pub(super) fn visitor_lang(headers: &HeaderMap) -> Lang {
     )
 }
 
+#[derive(Deserialize)]
+struct LogoutIn {
+    push_endpoint: Option<String>,
+    mobile_token: Option<String>,
+}
+
 async fn logout(
     State(st): State<AppState>,
     jar: CookieJar,
     u: CurrentUser,
+    body: axum::body::Bytes,
 ) -> AppResult<(CookieJar, Json<Value>)> {
+    if !body.is_empty() {
+        if let Ok(req) = serde_json::from_slice::<LogoutIn>(&body) {
+            if let Some(ep) = req
+                .push_endpoint
+                .as_deref()
+                .map(str::trim)
+                .filter(|s| !s.is_empty())
+            {
+                let _ =
+                    sqlx::query("DELETE FROM push_subscriptions WHERE user_id=$1 AND endpoint=$2")
+                        .bind(u.id)
+                        .bind(ep)
+                        .execute(&st.db)
+                        .await;
+            }
+            if let Some(tok) = req
+                .mobile_token
+                .as_deref()
+                .map(str::trim)
+                .filter(|s| !s.is_empty())
+            {
+                let _ = sqlx::query("DELETE FROM mobile_push_tokens WHERE user_id=$1 AND token=$2")
+                    .bind(u.id)
+                    .bind(tok)
+                    .execute(&st.db)
+                    .await;
+            }
+        }
+    }
     sqlx::query("DELETE FROM sessions WHERE token=$1")
         .bind(&u.session_id)
         .execute(&st.db)
@@ -446,6 +492,10 @@ async fn logout_all(
         .execute(&st.db)
         .await?;
     sqlx::query("DELETE FROM push_subscriptions WHERE user_id=$1")
+        .bind(u.id)
+        .execute(&st.db)
+        .await?;
+    sqlx::query("DELETE FROM mobile_push_tokens WHERE user_id=$1")
         .bind(u.id)
         .execute(&st.db)
         .await?;

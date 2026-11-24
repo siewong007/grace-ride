@@ -148,6 +148,11 @@ fn validate_telegram_bot_token(tok: &str) -> bool {
             .all(|b| b.is_ascii_alphanumeric() || b == b'_' || b == b'-')
 }
 
+fn is_masked_url(raw: &str) -> bool {
+    let t = raw.trim();
+    t == "***" || t.ends_with("/***")
+}
+
 pub(super) async fn get_alert_settings(
     State(st): State<AppState>,
     u: CurrentUser,
@@ -155,41 +160,87 @@ pub(super) async fn get_alert_settings(
     require(&u, Page::AdminSettings, Act::View)?;
     let _ = crate::web_push::ensure_vapid_keys(&st.db).await;
     let rows: Vec<(String, String)> = sqlx::query_as(
-        "SELECT name, value FROM app_secrets WHERE name IN ('telegram_bot_token', 'telegram_bot_username', 'alert_webhook_url', 'vapid_public_key', 'vapid_private_key')",
+        "SELECT name, value FROM app_secrets
+         WHERE name IN (
+             'telegram_bot_token', 'telegram_bot_username',
+             'alert_webhook_url', 'alert_webhook_secret', 'mobile_push_webhook_url',
+             'vapid_public_key', 'vapid_private_key'
+         )",
     )
     .fetch_all(&st.db)
     .await?;
 
-    let mut tg_configured = false;
+    let mut tg_token = String::new();
     let mut tg_username = String::new();
     let mut webhook_url = String::new();
+    let mut webhook_secret_configured = false;
+    let mut mobile_webhook_url = String::new();
     let mut vapid_public_key = String::new();
     let mut vapid_private_key = String::new();
     for (k, v) in rows {
         match k.as_str() {
-            "telegram_bot_token" => tg_configured = !v.trim().is_empty(),
+            "telegram_bot_token" => tg_token = v,
             "telegram_bot_username" => tg_username = v,
             "alert_webhook_url" => webhook_url = v,
+            "alert_webhook_secret" => webhook_secret_configured = !v.trim().is_empty(),
+            "mobile_push_webhook_url" => mobile_webhook_url = v,
             "vapid_public_key" => vapid_public_key = v,
             "vapid_private_key" => vapid_private_key = v,
             _ => {}
         }
     }
+    let tg_configured = !tg_token.trim().is_empty();
+    let telegram_webhook_path = if tg_configured {
+        format!(
+            "/api/push/telegram/webhook/{}",
+            crate::routes::community::telegram_webhook_secret(&tg_token)
+        )
+    } else {
+        String::new()
+    };
     let vapid_private_configured =
         crate::web_push::VapidSigner::from_stored(&vapid_public_key, &vapid_private_key).is_ok();
     let push_subscriptions_count: i64 =
         sqlx::query_scalar("SELECT COUNT(*) FROM push_subscriptions")
             .fetch_one(&st.db)
             .await?;
+    let mobile_push_subscriptions_count: i64 =
+        sqlx::query_scalar("SELECT COUNT(*) FROM mobile_push_tokens")
+            .fetch_one(&st.db)
+            .await?;
+
+    let stat_rows: Vec<(String, String, i64)> = sqlx::query_as(
+        "SELECT channel, status, COUNT(*) FROM notification_deliveries
+         WHERE created_at >= $1
+         GROUP BY channel, status",
+    )
+    .bind(crate::util::in_hours(-24))
+    .fetch_all(&st.db)
+    .await?;
+    let mut stats_map: serde_json::Map<String, Value> = serde_json::Map::new();
+    for (ch, st_name, cnt) in stat_rows {
+        let entry = stats_map.entry(ch).or_insert_with(
+            || json!({ "delivered": 0, "pending": 0, "retry": 0, "failed": 0, "gone": 0 }),
+        );
+        if let Some(obj) = entry.as_object_mut() {
+            obj.insert(st_name, json!(cnt));
+        }
+    }
 
     Ok(Json(json!({
         "telegram_bot_configured": tg_configured,
         "telegram_bot_username": tg_username,
+        "telegram_webhook_path": telegram_webhook_path,
         "alert_webhook_configured": !webhook_url.trim().is_empty(),
         "alert_webhook_url": mask_webhook_url(&webhook_url),
+        "alert_webhook_secret_configured": webhook_secret_configured,
+        "mobile_push_webhook_configured": !mobile_webhook_url.trim().is_empty(),
+        "mobile_push_webhook_url": mask_webhook_url(&mobile_webhook_url),
+        "mobile_push_subscriptions_count": mobile_push_subscriptions_count,
         "vapid_public_key": vapid_public_key,
         "vapid_private_configured": vapid_private_configured,
         "push_subscriptions_count": push_subscriptions_count,
+        "delivery_stats_24h": Value::Object(stats_map),
     })))
 }
 
@@ -200,6 +251,10 @@ pub(super) struct UpdateAlertSettingsIn {
     telegram_bot_username: Option<String>,
     alert_webhook_url: Option<String>,
     clear_alert_webhook_url: Option<bool>,
+    alert_webhook_secret: Option<String>,
+    clear_alert_webhook_secret: Option<bool>,
+    mobile_push_webhook_url: Option<String>,
+    clear_mobile_push_webhook_url: Option<bool>,
     vapid_public_key: Option<String>,
     vapid_private_key: Option<String>,
     rotate_vapid_keys: Option<bool>,
@@ -227,7 +282,21 @@ pub(super) async fn update_alert_settings(
     let new_webhook = req.alert_webhook_url.as_deref().map(str::trim);
     if !clear_webhook {
         if let Some(cleaned) = new_webhook.filter(|s| !s.is_empty()) {
-            if !crate::util::validate_webhook_target(cleaned, st.cfg.dev_mode).await {
+            if is_masked_url(cleaned)
+                || !crate::util::validate_webhook_target(cleaned, st.cfg.dev_mode).await
+            {
+                return Err(bad(u.lang, ErrorKey::InvalidAction));
+            }
+        }
+    }
+
+    let clear_mobile_hook = req.clear_mobile_push_webhook_url.unwrap_or(false);
+    let new_mobile_hook = req.mobile_push_webhook_url.as_deref().map(str::trim);
+    if !clear_mobile_hook {
+        if let Some(cleaned) = new_mobile_hook.filter(|s| !s.is_empty()) {
+            if is_masked_url(cleaned)
+                || !crate::util::validate_webhook_target(cleaned, st.cfg.dev_mode).await
+            {
                 return Err(bad(u.lang, ErrorKey::InvalidAction));
             }
         }
@@ -291,6 +360,39 @@ pub(super) async fn update_alert_settings(
     } else if let Some(cleaned) = new_webhook.filter(|s| !s.is_empty()) {
         sqlx::query(
             "INSERT INTO app_secrets (name, value) VALUES ('alert_webhook_url', $1)
+             ON CONFLICT (name) DO UPDATE SET value = EXCLUDED.value",
+        )
+        .bind(cleaned)
+        .execute(&mut *tx)
+        .await?;
+    }
+
+    if req.clear_alert_webhook_secret.unwrap_or(false) {
+        sqlx::query("DELETE FROM app_secrets WHERE name='alert_webhook_secret'")
+            .execute(&mut *tx)
+            .await?;
+    } else if let Some(sec) = req
+        .alert_webhook_secret
+        .as_deref()
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+    {
+        sqlx::query(
+            "INSERT INTO app_secrets (name, value) VALUES ('alert_webhook_secret', $1)
+             ON CONFLICT (name) DO UPDATE SET value = EXCLUDED.value",
+        )
+        .bind(sec)
+        .execute(&mut *tx)
+        .await?;
+    }
+
+    if clear_mobile_hook || new_mobile_hook == Some("") {
+        sqlx::query("DELETE FROM app_secrets WHERE name='mobile_push_webhook_url'")
+            .execute(&mut *tx)
+            .await?;
+    } else if let Some(cleaned) = new_mobile_hook.filter(|s| !s.is_empty()) {
+        sqlx::query(
+            "INSERT INTO app_secrets (name, value) VALUES ('mobile_push_webhook_url', $1)
              ON CONFLICT (name) DO UPDATE SET value = EXCLUDED.value",
         )
         .bind(cleaned)
@@ -382,4 +484,71 @@ pub(super) async fn update_alert_settings(
     )
     .await;
     Ok(Json(json!({ "ok": true })))
+}
+
+pub(super) async fn test_alert_webhook(
+    State(st): State<AppState>,
+    u: CurrentUser,
+) -> AppResult<Json<Value>> {
+    require(&u, Page::AdminSettings, Act::Update)?;
+    let rows: Vec<(String, String)> = sqlx::query_as(
+        "SELECT name, value FROM app_secrets WHERE name IN ('alert_webhook_url', 'alert_webhook_secret')",
+    )
+    .fetch_all(&st.db)
+    .await?;
+    let mut url = String::new();
+    let mut secret = String::new();
+    for (k, v) in rows {
+        match k.as_str() {
+            "alert_webhook_url" => url = v.trim().to_string(),
+            "alert_webhook_secret" => secret = v.trim().to_string(),
+            _ => {}
+        }
+    }
+    if url.is_empty() {
+        return Err(bad(u.lang, ErrorKey::InvalidAction));
+    }
+    let Some(client) = crate::notifications::build_pinned_client(&url, st.cfg.dev_mode).await
+    else {
+        return Err(bad(u.lang, ErrorKey::InvalidAction));
+    };
+
+    let delivery_id = format!("test-{}", uuid::Uuid::new_v4());
+    let payload_bytes = serde_json::to_vec(&json!({
+        "delivery_id": delivery_id,
+        "channel": "test",
+        "event": "webhook.test",
+        "message": "Grace Ride test alert",
+        "tested_by": u.id,
+    }))
+    .unwrap_or_default();
+    let (ts, sig) = crate::notifications::sign_webhook_headers(&secret, &payload_bytes);
+    let started = std::time::Instant::now();
+    let mut req = client
+        .post(&url)
+        .header("Content-Type", "application/json")
+        .header("X-GraceRide-Timestamp", ts)
+        .header("X-GraceRide-Delivery-Id", &delivery_id);
+    if let Some(s) = sig {
+        req = req.header("X-GraceRide-Signature", s);
+    }
+
+    let result = req.body(payload_bytes).send().await;
+    let latency_ms = started.elapsed().as_millis() as i64;
+    match result {
+        Ok(res) => {
+            let status_code = res.status().as_u16();
+            Ok(Json(json!({
+                "ok": (200..=299).contains(&status_code),
+                "status_code": status_code,
+                "latency_ms": latency_ms,
+            })))
+        }
+        Err(e) => Ok(Json(json!({
+            "ok": false,
+            "status_code": 0,
+            "latency_ms": latency_ms,
+            "error": e.to_string(),
+        }))),
+    }
 }

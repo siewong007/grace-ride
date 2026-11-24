@@ -82,6 +82,10 @@ pub fn router() -> Router<AppState> {
             "/admin/settings/alerts",
             get(settings::get_alert_settings).put(settings::update_alert_settings),
         )
+        .route(
+            "/admin/settings/alerts/test-webhook",
+            post(settings::test_alert_webhook),
+        )
 }
 
 async fn dashboard(State(st): State<AppState>, u: CurrentUser) -> AppResult<Json<Value>> {

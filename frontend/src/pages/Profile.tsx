@@ -41,7 +41,7 @@ import { WaitingRoom } from '../components/Onboarding';
 import AvatarEditor from '../components/AvatarEditor';
 import { PwaInstallModal } from '../components/PwaInstallModal';
 import { usePwaInstall } from '../pwaInstall';
-import { disableDevicePush, enablePushNotifications, usePushNotifications } from '../pushNotifications';
+import { disableDevicePush, enablePushNotifications, getCurrentPushEndpoint, usePushNotifications } from '../pushNotifications';
 import FamilySection from './family/FamilySection';
 import ProxyRidersSection from './family/ProxyRidersSection';
 import SavedAddressesSection from './SavedAddressesSection';
@@ -79,6 +79,38 @@ export default function Profile() {
     telegram_bot_username?: string;
   }>(open === 'preferences' && me?.status !== 'pending' ? '/push/config' : null);
   const channelCfg = pushCfg.data && !Array.isArray(pushCfg.data) ? pushCfg.data : undefined;
+  const notifPrefsApi = useApi<{
+    push_opt_in?: boolean;
+    whatsapp_opt_in?: boolean;
+    telegram_chat_id?: string;
+    telegram_blocked?: boolean;
+    readiness_prompt_mins?: number;
+    driver_remind_mins?: number;
+    muted_categories?: string[];
+    quiet_hours_start?: string;
+    quiet_hours_end?: string;
+    hide_lock_details?: boolean;
+  }>(open === 'preferences' && me?.status !== 'pending' ? '/notifications/preferences' : null);
+  const subsApi = useApi<{
+    web?: {
+      id: number;
+      device_label: string;
+      endpoint_preview: string;
+      created_at: string;
+      last_delivered_at?: string | null;
+    }[];
+    mobile?: {
+      id: number;
+      platform: string;
+      provider: string;
+      device_label: string;
+      created_at: string;
+      last_delivered_at?: string | null;
+    }[];
+  }>(open === 'preferences' && me?.status !== 'pending' ? '/push/subscriptions' : null);
+  const notifPrefs =
+    notifPrefsApi.data && !Array.isArray(notifPrefsApi.data) ? notifPrefsApi.data : undefined;
+  const subsData = subsApi.data && !Array.isArray(subsApi.data) ? subsApi.data : undefined;
   const telegramBot = (channelCfg?.telegram_bot_username ?? '').replace(/[^a-zA-Z0-9_]/g, '');
   const [f, setF] = useState({
     name: me?.name ?? '',
@@ -90,6 +122,15 @@ export default function Profile() {
   const [telegramChatId, setTelegramChatId] = useState(me?.telegram_chat_id ?? '');
   const [whatsappOptIn, setWhatsappOptIn] = useState(Boolean(me?.whatsapp_opt_in));
   const [pushOptIn, setPushOptIn] = useState(me?.push_opt_in ?? true);
+  const [driverRemindMins, setDriverRemindMins] = useState(60);
+  const [mutedCategories, setMutedCategories] = useState<string[]>([]);
+  const [quietHoursStart, setQuietHoursStart] = useState('');
+  const [quietHoursEnd, setQuietHoursEnd] = useState('');
+  const [hideLockDetails, setHideLockDetails] = useState(false);
+  const [telegramBlocked, setTelegramBlocked] = useState(false);
+  const [tgFeedback, setTgFeedback] = useState('');
+  const [tgBusy, setTgBusy] = useState(false);
+  const [prefsError, setPrefsError] = useState('');
 
   useEffect(() => {
     if (me) {
@@ -104,6 +145,20 @@ export default function Profile() {
       setPushOptIn(me.push_opt_in ?? true);
     }
   }, [me]);
+
+  useEffect(() => {
+    if (notifPrefs) {
+      setDriverRemindMins(notifPrefs.driver_remind_mins ?? 60);
+      setMutedCategories(Array.isArray(notifPrefs.muted_categories) ? notifPrefs.muted_categories : []);
+      setQuietHoursStart(notifPrefs.quiet_hours_start ?? '');
+      setQuietHoursEnd(notifPrefs.quiet_hours_end ?? '');
+      setHideLockDetails(Boolean(notifPrefs.hide_lock_details));
+      setTelegramBlocked(Boolean(notifPrefs.telegram_blocked));
+      if (notifPrefs.telegram_chat_id !== undefined) {
+        setTelegramChatId(notifPrefs.telegram_chat_id);
+      }
+    }
+  }, [notifPrefs]);
   const [pushStatus, setPushStatus] = useState('');
   const [pushBusy, setPushBusy] = useState(false);
   const [totp, setTotp] = useState<{ secret: string; url: string } | null>(null);
@@ -172,14 +227,36 @@ export default function Profile() {
         : t('savedAddressesCountHint', { label: savedPlaces[0].label, count: savedPlaces.length });
 
   const savePersonal = () => put('/me', { name: f.name, phone: f.phone }).then(refresh);
-  const savePreferences = () =>
-    put('/me', {
+  const savePreferences = async () => {
+    setPrefsError('');
+    const cleanedTg = telegramChatId.trim();
+    if (cleanedTg && !/^-?\d{5,20}$/.test(cleanedTg)) {
+      setPrefsError(t('telegramInvalidId'));
+      return;
+    }
+    await put('/me', {
       badges_opt_out: f.optOut,
       readiness_prompt_mins: readinessPrompt,
-      telegram_chat_id: telegramChatId.trim().replace(/^@/, ''),
+      telegram_chat_id: cleanedTg,
       whatsapp_opt_in: whatsappOptIn,
       push_opt_in: pushOptIn,
-    }).then(refresh);
+    });
+    if (!isPending) {
+      await put('/notifications/preferences', {
+        push_opt_in: pushOptIn,
+        whatsapp_opt_in: whatsappOptIn,
+        telegram_chat_id: cleanedTg,
+        readiness_prompt_mins: readinessPrompt,
+        driver_remind_mins: driverRemindMins,
+        muted_categories: mutedCategories,
+        quiet_hours_start: quietHoursStart.trim(),
+        quiet_hours_end: quietHoursEnd.trim(),
+        hide_lock_details: hideLockDetails,
+      });
+    }
+    await refresh();
+    notifPrefsApi.reload();
+  };
 
   const deniedPushCopy =
     push.platform === 'ios'
@@ -197,6 +274,7 @@ export default function Profile() {
         setPushOptIn(true);
         void refresh();
         pushCfg.reload();
+        subsApi.reload();
         setPushStatus(t(res.mode === 'push' ? 'pushEnabled' : 'pushEnabledLocal'));
       } else if (res.reason === 'needs_install_ios') {
         setPushStatus(t('pushNeedsInstallIos'));
@@ -206,6 +284,8 @@ export default function Profile() {
         setPushStatus(deniedPushCopy);
       } else if (res.reason === 'dismissed') {
         setPushStatus(t('pushDismissed'));
+      } else if (res.reason === 'subscribe_failed') {
+        setPushStatus(t('pushSubscribeFailed'));
       }
     } finally {
       setPushBusy(false);
@@ -216,8 +296,13 @@ export default function Profile() {
     setPushStatus('');
     setPushBusy(true);
     try {
-      await post('/push/test');
-      setPushStatus(t('pushTestSent'));
+      const res = await post<{ ok?: boolean; delivered?: number; total?: number }>('/push/test');
+      if (typeof res?.delivered === 'number' && res.delivered === 0) {
+        setPushStatus(t('pushTestZeroDelivered'));
+      } else {
+        setPushStatus(t('pushTestSent'));
+      }
+      subsApi.reload();
     } catch {
       setPushStatus(t('pushTestFailed'));
     } finally {
@@ -231,6 +316,7 @@ export default function Profile() {
     try {
       await disableDevicePush();
       pushCfg.reload();
+      subsApi.reload();
       setPushStatus(t('pushDisabledDevice'));
     } catch {
       setPushStatus(t('pushTestFailed'));
@@ -239,9 +325,70 @@ export default function Profile() {
     }
   };
 
+  const removePushSub = async (subId: number) => {
+    setPushStatus('');
+    setPushBusy(true);
+    try {
+      await del(`/push/subscriptions/${subId}`);
+      pushCfg.reload();
+      subsApi.reload();
+    } catch {
+      setPushStatus(t('pushRemoveDeviceFailed'));
+    } finally {
+      setPushBusy(false);
+    }
+  };
+
+  const handleTelegramConnect = async () => {
+    setTgFeedback('');
+    setTgBusy(true);
+    try {
+      const res = await post<{ url?: string }>('/push/telegram/link-token');
+      if (res?.url) {
+        window.open(res.url, '_blank', 'noopener,noreferrer');
+      }
+    } catch {
+      setTgFeedback(t('telegramTestFailed'));
+    } finally {
+      setTgBusy(false);
+    }
+  };
+
+  const handleTelegramTest = async () => {
+    setTgFeedback('');
+    setTgBusy(true);
+    try {
+      const res = await post<{ delivered?: boolean; error?: string }>('/push/telegram/test');
+      if (res?.delivered) {
+        setTelegramBlocked(false);
+        setTgFeedback(t('telegramTestSent'));
+      } else {
+        setTgFeedback(res?.error || t('telegramTestFailed'));
+      }
+    } catch {
+      setTgFeedback(t('telegramTestFailed'));
+    } finally {
+      setTgBusy(false);
+    }
+  };
+
+  const toggleMutedCategory = (cat: string) => {
+    setMutedCategories((prev) =>
+      prev.includes(cat) ? prev.filter((c) => c !== cat) : [...prev, cat],
+    );
+  };
+
   const handleLogout = () =>
     run(async () => {
-      await post('/auth/logout');
+      if (push.isSubscribed) {
+        const endpoint = await getCurrentPushEndpoint().catch(() => '');
+        await disableDevicePush().catch(() => {});
+        await (endpoint
+          ? post('/auth/logout', { push_endpoint: endpoint })
+          : post('/auth/logout'));
+      } else {
+        await post('/auth/logout');
+      }
       await refresh();
       nav('/login');
     }, t('loggedOut'));
@@ -527,7 +674,7 @@ export default function Profile() {
                   ))}
                 </div>
               </div>
-              <ErrorBox error={error} />
+              <ErrorBox error={prefsError || error} />
             </div>
           )}
 
@@ -581,9 +728,11 @@ export default function Profile() {
                       <Button variant="secondary" size="sm" disabled={pushBusy} onClick={sendTestPush}>
                         {t('sendTestPush')}
                       </Button>
-                      <Button variant="ghost" size="sm" disabled={pushBusy} onClick={disableBrowserPush}>
-                        {t('disableBrowserPush')}
-                      </Button>
+                      {push.isSubscribed === true && (
+                        <Button variant="ghost" size="sm" disabled={pushBusy} onClick={disableBrowserPush}>
+                          {t('disableBrowserPush')}
+                        </Button>
+                      )}
                     </>
                   )}
                 </div>
@@ -591,6 +740,49 @@ export default function Profile() {
                 {!pushStatus && push.availability === 'denied' && (
                   <p className="muted tiny">{deniedPushCopy}</p>
                 )}
+                {!isPending &&
+                  subsData &&
+                  ((subsData.web?.length ?? 0) > 0 || (subsData.mobile?.length ?? 0) > 0) && (
+                    <div className="stack-xs">
+                      <div className="small bold">{t('pushConnectedDevices')}</div>
+                      {(subsData.web ?? []).map((sub) => (
+                        <div key={`web-${sub.id}`} className="row between items-center gap-xs small">
+                          <div className="min-w-0">
+                            <span className="bold">{sub.device_label}</span>
+                            <span className="muted tiny">
+                              {' '}
+                              · {t('pushDeviceWeb')} · {sub.endpoint_preview}
+                              {sub.last_delivered_at
+                                ? ` · ${t('pushLastDelivered', { when: fmtAgo(sub.last_delivered_at, ft) })}`
+                                : ''}
+                            </span>
+                          </div>
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            disabled={pushBusy}
+                            onClick={() => void removePushSub(sub.id)}
+                          >
+                            {t('pushRemoveDevice')}
+                          </Button>
+                        </div>
+                      ))}
+                      {(subsData.mobile ?? []).map((sub) => (
+                        <div key={`mob-${sub.id}`} className="row between items-center gap-xs small">
+                          <div className="min-w-0">
+                            <span className="bold">{sub.device_label}</span>
+                            <span className="muted tiny">
+                              {' '}
+                              · {t('pushDeviceMobile')} ({sub.platform})
+                              {sub.last_delivered_at
+                                ? ` · ${t('pushLastDelivered', { when: fmtAgo(sub.last_delivered_at, ft) })}`
+                                : ''}
+                            </span>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  )}
                 {channelCfg?.whatsapp_configured === false ? (
                   <p className="muted tiny">{t('whatsappNotConfigured')}</p>
                 ) : (
@@ -602,8 +794,21 @@ export default function Profile() {
                   <p className="muted tiny">{t('telegramNotConfigured')}</p>
                 ) : (
                   <div className="stack-xs">
-                    {telegramBot && (
-                      <div>
+                    {telegramBlocked && (
+                      <Notice tone="warning">{t('telegramBlockedBadge')}</Notice>
+                    )}
+                    <div className="row wrap gap-xs">
+                      {!isPending && (
+                        <Button
+                          variant="secondary"
+                          size="sm"
+                          disabled={tgBusy}
+                          onClick={() => void handleTelegramConnect()}
+                        >
+                          {t('telegramConnectOneTap')}
+                        </Button>
+                      )}
+                      {telegramBot && (
                         <a
                           className="btn secondary sm"
                           href={`https://t.me/${telegramBot}`}
@@ -613,8 +818,19 @@ export default function Profile() {
                           <ExternalLink size={15} aria-hidden="true" />
                           {t('telegramOpenBot', { bot: telegramBot })}
                         </a>
-                      </div>
-                    )}
+                      )}
+                      {!isPending && telegramChatId.trim() && (
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          disabled={tgBusy}
+                          onClick={() => void handleTelegramTest()}
+                        >
+                          {t('telegramTest')}
+                        </Button>
+                      )}
+                    </div>
+                    {tgFeedback && <p className="muted tiny" role="status">{tgFeedback}</p>}
                     <Field
                       label={t('telegramChatId')}
                       hint={telegramBot ? t('telegramGuidedHint') : t('telegramChatIdHint')}
@@ -629,6 +845,89 @@ export default function Profile() {
                   </div>
                 )}
               </div>
+              {!isPending && (
+                <>
+                  <div className="divider" />
+                  <div className="stack-sm">
+                    <div className="bold">{t('driverRemindLabel')}</div>
+                    <p className="muted small">{t('driverRemindHint')}</p>
+                    <div className="notif-filter-row">
+                      {([
+                        { mins: 30, key: 'mins30' },
+                        { mins: 60, key: 'mins60' },
+                        { mins: 90, key: 'mins90' },
+                        { mins: 120, key: 'mins120' },
+                      ] as const).map((opt) => (
+                        <button
+                          key={opt.mins}
+                          type="button"
+                          className={`notif-chip ${driverRemindMins === opt.mins ? 'active' : ''}`}
+                          onClick={() => setDriverRemindMins(opt.mins)}
+                        >
+                          {t(opt.key)}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                  <div className="stack-sm">
+                    <div className="bold">{t('quietHoursTitle')}</div>
+                    <p className="muted small">{t('quietHoursHint')}</p>
+                    <div className="form-grid two">
+                      <Field label={t('quietHoursStart')}>
+                        <input
+                          type="time"
+                          className="input"
+                          value={quietHoursStart}
+                          onChange={(e) => setQuietHoursStart(e.target.value)}
+                        />
+                      </Field>
+                      <Field label={t('quietHoursEnd')}>
+                        <input
+                          type="time"
+                          className="input"
+                          value={quietHoursEnd}
+                          onChange={(e) => setQuietHoursEnd(e.target.value)}
+                        />
+                      </Field>
+                    </div>
+                  </div>
+                  <label className={`check ${hideLockDetails ? 'on' : ''}`}>
+                    <input
+                      type="checkbox"
+                      checked={hideLockDetails}
+                      onChange={(e) => setHideLockDetails(e.target.checked)}
+                    />{' '}
+                    {t('hideLockDetails')}
+                  </label>
+                  <div className="stack-sm">
+                    <div className="bold">{t('mutedCategoriesTitle')}</div>
+                    <p className="muted small">{t('mutedCategoriesHint')}</p>
+                    <div className="row wrap gap-xs">
+                      {([
+                        { key: 'ride', labelKey: 'catRide' },
+                        { key: 'event', labelKey: 'catEvent' },
+                        { key: 'cost', labelKey: 'catCost' },
+                        { key: 'help', labelKey: 'catHelp' },
+                        { key: 'family', labelKey: 'catFamily' },
+                        { key: 'admin', labelKey: 'catAdmin' },
+                        { key: 'announcement', labelKey: 'catAnnouncement' },
+                      ] as const).map((c) => {
+                        const checked = mutedCategories.includes(c.key);
+                        return (
+                          <label key={c.key} className={`check ${checked ? 'on' : ''}`}>
+                            <input
+                              type="checkbox"
+                              checked={checked}
+                              onChange={() => toggleMutedCategory(c.key)}
+                            />{' '}
+                            {t(c.labelKey)}
+                          </label>
+                        );
+                      })}
+                    </div>
+                  </div>
+                </>
+              )}
               <div className="divider" />
               <DisplayPreferences />
               <div className="btn-row">
@@ -636,7 +935,7 @@ export default function Profile() {
                   {t('save')}
                 </Button>
               </div>
-              <ErrorBox error={error} />
+              <ErrorBox error={prefsError || error} />
               <div className="divider" />
               <div className="list">
                 {!isPending && (
@@ -801,7 +1100,7 @@ export default function Profile() {
                 </>
               )}
 
-              <ErrorBox error={error} />
+              <ErrorBox error={prefsError || error} />
             </div>
           )}
         </>

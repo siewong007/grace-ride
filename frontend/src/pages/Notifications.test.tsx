@@ -7,16 +7,37 @@ import { _setDeferredPromptForTesting, _setInstalledForTesting } from '../pwaIns
 import { _resetPushStateForTesting } from '../pushNotifications';
 import Notifications from './Notifications';
 
+const useApiPaths: string[] = [];
+let mockUseApiData: unknown = {
+  items: [
+    {
+      id: 101,
+      title: 'Ride confirmed',
+      body: 'Driver on the way',
+      link: '/rides/10',
+      read: false,
+      category: 'ride',
+      priority: 'urgent',
+      created_at: new Date().toISOString().slice(0, 19),
+    },
+  ],
+  next_before: null,
+  unread: 1,
+};
+
 vi.mock('../api', () => ({
   api: vi.fn(),
   post: vi.fn(),
   put: vi.fn(),
-  useApi: () => ({
-    data: { items: [], next_before: null },
-    loading: false,
-    error: null,
-    reload: vi.fn(),
-  }),
+  useApi: (path: string | null) => {
+    if (path) useApiPaths.push(path);
+    return {
+      data: mockUseApiData,
+      loading: false,
+      error: null,
+      reload: vi.fn(),
+    };
+  },
   subscribe: () => () => {},
 }));
 
@@ -81,6 +102,8 @@ describe('Notifications page PWA push prompt', () => {
   beforeEach(async () => {
     await i18n.changeLanguage('en');
     vi.clearAllMocks();
+    useApiPaths.length = 0;
+    mockUseApiData = { items: [], next_before: null };
     sessionStorage.clear();
     _resetPushStateForTesting();
     _setInstalledForTesting(null);
@@ -235,5 +258,122 @@ describe('Notifications page PWA push prompt', () => {
     expect(sessionStorage.getItem('gr_notif_prompt_dismissed')).toBe('1');
     expect(screen.queryByRole('button', { name: 'Enable Notifications' })).not.toBeInTheDocument();
     third.unmount();
+  });
+});
+
+describe('Notifications filters, actions and subscribe_failed', () => {
+  beforeEach(async () => {
+    await i18n.changeLanguage('en');
+    vi.clearAllMocks();
+    useApiPaths.length = 0;
+    sessionStorage.clear();
+    _resetPushStateForTesting();
+    _setInstalledForTesting(true);
+    _setDeferredPromptForTesting(null);
+    mockMe = { id: 1, name: 'Grace Member', status: 'active', push_opt_in: true };
+    mockUseApiData = {
+      items: [
+        {
+          id: 101,
+          title: 'Ride confirmed',
+          body: 'Driver on the way',
+          link: '/rides/10',
+          read: false,
+          category: 'ride',
+          priority: 'urgent',
+          created_at: new Date().toISOString().slice(0, 19),
+        },
+        {
+          id: 102,
+          title: 'Event published',
+          body: 'Sunday worship',
+          link: '/events/4',
+          read: true,
+          category: 'event',
+          priority: 'normal',
+          created_at: '2026-01-01 08:00:00',
+        },
+      ],
+      next_before: null,
+      unread: 1,
+    };
+    vi.mocked(post).mockResolvedValue({ ok: true, unread: 0 });
+    vi.mocked(api).mockResolvedValue({ ok: true, unread: 0 });
+  });
+
+  afterEach(() => {
+    Object.defineProperty(navigator, 'userAgent', { value: origUA, configurable: true });
+    if (origNotification === undefined) {
+      delete (globalThis as { Notification?: unknown }).Notification;
+    } else {
+      Object.defineProperty(globalThis, 'Notification', {
+        configurable: true,
+        writable: true,
+        value: origNotification,
+      });
+    }
+    if (origPushManager === undefined) {
+      delete (window as unknown as { PushManager?: unknown }).PushManager;
+    } else {
+      Object.defineProperty(window, 'PushManager', {
+        configurable: true,
+        writable: true,
+        value: origPushManager,
+      });
+    }
+    if (origSW) Object.defineProperty(navigator, 'serviceWorker', origSW);
+  });
+
+  it('requests filtered endpoints when toggling Unread and category chips, and triggers toggleRead / delete', async () => {
+    renderNotifications();
+
+    expect(useApiPaths[0]).toBe('/notifications');
+    fireEvent.click(screen.getByRole('button', { name: 'Unread' }));
+    expect(useApiPaths).toContain('/notifications?limit=30&unread_only=true');
+
+    fireEvent.click(screen.getByRole('button', { name: 'Rides' }));
+    expect(useApiPaths).toContain('/notifications?limit=30&unread_only=true&category=ride');
+
+    fireEvent.click(screen.getByRole('button', { name: 'Mark as read' }));
+    await waitFor(() => expect(post).toHaveBeenCalledWith('/notifications/101/read'));
+
+    fireEvent.click(screen.getByRole('button', { name: 'Mark as unread' }));
+    await waitFor(() => expect(post).toHaveBeenCalledWith('/notifications/102/unread'));
+
+    const removeButtons = screen.getAllByRole('button', { name: 'Remove notification' });
+    fireEvent.click(removeButtons[0]);
+    await waitFor(() =>
+      expect(api).toHaveBeenCalledWith('/notifications/101', { method: 'DELETE' }),
+    );
+  });
+
+  it('surfaces subscribe_failed message when PushManager subscription fails', async () => {
+    setUA('Mozilla/5.0 (Linux; Android 14) Chrome/120.0');
+    setPushManager(true);
+    setNotification('default', vi.fn().mockResolvedValue('granted'));
+    const regMock = {
+      active: { state: 'activated' },
+      pushManager: {
+        getSubscription: vi.fn().mockResolvedValue(null),
+        subscribe: vi.fn().mockRejectedValue(new Error('GCM error')),
+      },
+    };
+    Object.defineProperty(navigator, 'serviceWorker', {
+      configurable: true,
+      value: {
+        getRegistration: vi.fn().mockResolvedValue(regMock),
+        ready: Promise.resolve(regMock),
+      },
+    });
+    vi.mocked(api).mockResolvedValue({
+      enabled: true,
+      vapid_public_key: 'BEl62iUYgUivxIkv69yViEuiBIa-Ib9-SkvMeAtA3LFgDzkrxZJjSgSnfckjBJuBkr3qBUYIHBQFLXYp5Nksh8',
+    });
+
+    renderNotifications();
+    fireEvent.click(screen.getByRole('button', { name: 'Enable Notifications' }));
+    expect(
+      await screen.findByText(/Could not complete push subscription on this browser/i),
+    ).toBeInTheDocument();
   });
 });

@@ -1,5 +1,9 @@
 package org.pjstatecm.graceride.ui
 
+import android.Manifest
+import android.os.Build
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
@@ -18,6 +22,7 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.navigation.NavGraph.Companion.findStartDestination
@@ -25,8 +30,10 @@ import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
 import androidx.navigation.compose.currentBackStackEntryAsState
 import androidx.navigation.compose.rememberNavController
+import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.filterNotNull
 import kotlinx.coroutines.flow.first
+import org.pjstatecm.graceride.notifications.NotificationHelper
 import org.pjstatecm.graceride.R
 import org.pjstatecm.graceride.data.api.AuthEvent
 import org.pjstatecm.graceride.data.repo.AuthState
@@ -51,8 +58,15 @@ import org.pjstatecm.graceride.ui.screens.rides.RideNewScreen
 import org.pjstatecm.graceride.ui.screens.rides.RidesScreen
 
 @Composable
-fun GraceRideAppRoot(container: AppContainer) {
+fun GraceRideAppRoot(
+    container: AppContainer,
+    pendingDeepLink: MutableStateFlow<String?>? = null,
+) {
     val authState by container.auth.state.collectAsStateWithLifecycle()
+    val context = LocalContext.current
+    val notifPermLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.RequestPermission(),
+    ) { /* Permission result handled gracefully by NotificationHelper. */ }
 
     LaunchedEffect(Unit) {
         container.authEvents.events.collect { event ->
@@ -65,6 +79,18 @@ fun GraceRideAppRoot(container: AppContainer) {
     }
     LaunchedEffect(Unit) { container.auth.refresh() }
 
+    LaunchedEffect(authState) {
+        val signedIn = authState as? AuthState.SignedIn ?: return@LaunchedEffect
+        if (!signedIn.me.termsAccepted) return@LaunchedEffect
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU &&
+            !NotificationHelper.hasPostPermission(context) &&
+            container.secureStore.getString("notif_perm_asked") != "1"
+        ) {
+            container.secureStore.putString("notif_perm_asked", "1")
+            notifPermLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
+        }
+    }
+
     if (authState is AuthState.Loading) {
         Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
             CircularProgressIndicator()
@@ -75,6 +101,25 @@ fun GraceRideAppRoot(container: AppContainer) {
     val navController = rememberNavController()
     val backStack by navController.currentBackStackEntryAsState()
     val currentRoute = backStack?.destination?.route
+    val deepLink by (
+        pendingDeepLink?.collectAsStateWithLifecycle()
+            ?: androidx.compose.runtime.remember { androidx.compose.runtime.mutableStateOf<String?>(null) }
+        )
+
+    LaunchedEffect(authState, deepLink, currentRoute) {
+        val signedIn = authState as? AuthState.SignedIn ?: return@LaunchedEffect
+        if (!signedIn.me.termsAccepted) return@LaunchedEffect
+        val rawLink = deepLink ?: return@LaunchedEffect
+        if (currentRoute == null) return@LaunchedEffect
+        when (val dest = NotifLinkRouter.resolve(rawLink)) {
+            is NotifDestination.Native -> navController.navigate(dest.route) {
+                launchSingleTop = true
+            }
+            is NotifDestination.Web -> openInWebApp(context, container.webUrl(dest.path))
+            NotifDestination.None -> {}
+        }
+        pendingDeepLink?.value = null
+    }
 
     // Session state drives the global navigation, mirroring RequireAuth on the web.
     LaunchedEffect(authState) {

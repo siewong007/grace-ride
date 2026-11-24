@@ -52,6 +52,9 @@ class HomeViewModel(private val container: AppContainer) : ViewModel() {
                 loading = first && _state.value.me == null,
                 refreshing = !first,
             )
+            if (!first) {
+                container.auth.refresh()
+            }
             val me = container.auth.me
             var offline = false
             var error: String? = null

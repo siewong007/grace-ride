@@ -45,6 +45,12 @@ export default function GrokBotStudioPage() {
   const savedSpec = parseGrokBotIcon(me?.avatar_icon) ?? DEFAULT_GROKBOT_SPEC;
   const spec = resolveSpecFromParams(searchParams, savedSpec);
   const [activeMove, setActiveMove] = useState<GrokBotMove>('idle');
+  // Bumped on every Move click so picking the same move again replays it.
+  const [playKey, setPlayKey] = useState(0);
+  const playMove = (m: GrokBotMove) => {
+    setActiveMove(m);
+    setPlayKey((k) => k + 1);
+  };
   const [exportBusy, setExportBusy] = useState(false);
   const [copyOpen, setCopyOpen] = useState(false);
   const copyWrapRef = useRef<HTMLDivElement>(null);
@@ -203,6 +209,7 @@ export default function GrokBotStudioPage() {
               face={spec.face}
               color={spec.color}
               move={activeMove}
+              playKey={playKey}
               variant="stage"
               trackCursor
               className="grok-studio-stage-svg"
@@ -298,7 +305,7 @@ export default function GrokBotStudioPage() {
             spec={spec}
             onSpecChange={updateSpec}
             move={activeMove}
-            onMoveChange={setActiveMove}
+            onMoveChange={playMove}
           />
         </div>
       </div>

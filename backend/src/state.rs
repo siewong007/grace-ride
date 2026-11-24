@@ -2,14 +2,15 @@ use std::{path::PathBuf, sync::Arc};
 
 use chrono_tz::Tz;
 use sqlx::PgPool;
-use tokio::sync::{broadcast, watch};
+use tokio::sync::watch;
 use url::Url;
 use webauthn_rs::prelude::*;
 
 use crate::{
     routing::{RoutingConfig, RoutingState},
     security::RateLimiter,
-    stream::Push,
+    stream::EventHub,
+    turnstile::{TurnstileConfig, TurnstileVerifier},
 };
 
 #[derive(Clone, Debug)]
@@ -44,6 +45,8 @@ pub struct Config {
     /// Days to keep notifications once read. Unread ones are kept for a year, or this
     /// long if it is longer.
     pub notification_retention_days: i64,
+    /// Optional Cloudflare Turnstile verification on public web auth/onboarding/visitor flows.
+    pub turnstile: TurnstileConfig,
 }
 
 /// How the app talks to Postgres.
@@ -154,6 +157,7 @@ impl Config {
             db: DbConfig::from_env()?,
             housekeeping_interval_mins: num("HOUSEKEEPING_INTERVAL_MINS", 60)?,
             notification_retention_days: num("NOTIFICATION_RETENTION_DAYS", 90)?,
+            turnstile: TurnstileConfig::from_env(),
         };
         cfg.validate()?;
         Ok(cfg)
@@ -202,6 +206,7 @@ impl Config {
                 Url::parse(v).map_err(|_| anyhow::anyhow!("{k} is not a valid URL"))?;
             }
         }
+        self.turnstile.validate(local)?;
         Ok(())
     }
 
@@ -225,8 +230,10 @@ pub struct AppState {
     pub limiter: Arc<RateLimiter>,
     /// Route and geocoder caches for pickup routing.
     pub routing: Arc<RoutingState>,
+    /// Cloudflare Turnstile verifier for public web forms.
+    pub turnstile: Arc<TurnstileVerifier>,
     /// Live updates for open tabs (`/api/stream`).
-    pub events: broadcast::Sender<Push>,
+    pub events: EventHub,
     /// Signals open SSE streams and background tasks to drain on `SIGTERM`/`SIGINT`.
     pub shutdown: watch::Sender<bool>,
 }

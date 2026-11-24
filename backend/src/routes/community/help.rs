@@ -10,9 +10,10 @@ use serde_json::{json, Value};
 use crate::auth::CurrentUser;
 use crate::error::{bad, forbidden, not_found, AppResult};
 use crate::i18n::ErrorKey;
+use crate::notifications::notify_perm_except;
 use crate::perms::{Act, Page};
 use crate::state::AppState;
-use crate::util::{audit, notify, notify_perm, now, require};
+use crate::util::{audit, notify, now, require};
 
 use super::like_pattern;
 
@@ -244,10 +245,11 @@ pub(super) async fn create_ticket(
         )
         .await;
     } else {
-        notify_perm(
+        notify_perm_except(
             &st.db,
             Page::AdminHelp,
             Act::Update,
+            Some(u.id),
             ("帮助中心：新的求助", "Help center: new request"),
             (
                 &format!("{} · {}", u.name, req.subject.trim()),
@@ -389,10 +391,11 @@ pub(super) async fn reply_ticket(
         .await?;
     tx.commit().await?;
     if u.id == owner {
-        notify_perm(
+        notify_perm_except(
             &st.db,
             Page::AdminHelp,
             Act::Update,
+            Some(u.id),
             ("帮助中心：会员回复", "Help center: member reply"),
             (&subject, &subject),
             &format!("/help/{id}"),
@@ -473,10 +476,11 @@ pub(super) async fn reopen_ticket(
         .execute(&st.db)
         .await?;
     if u.id == owner {
-        notify_perm(
+        notify_perm_except(
             &st.db,
             Page::AdminHelp,
             Act::Update,
+            Some(u.id),
             ("帮助中心：请求已重新打开", "Help center: request reopened"),
             (&subject, &subject),
             &format!("/help/{id}"),

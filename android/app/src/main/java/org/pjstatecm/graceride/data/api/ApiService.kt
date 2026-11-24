@@ -21,7 +21,7 @@ interface ApiService {
     @GET("api/auth/me") suspend fun me(): Me
     @GET("api/auth/dev-users") suspend fun devUsers(): List<DevUser>
     @POST("api/auth/dev-login") suspend fun devLogin(@Body body: Map<String, String>): OkResponse
-    @POST("api/auth/logout") suspend fun logout(): OkResponse
+    @POST("api/auth/logout") suspend fun logout(@Body body: LogoutReq = LogoutReq()): OkResponse
     @POST("api/auth/logout-all") suspend fun logoutAll(): OkResponse
     @POST("api/auth/lock") suspend fun lock(): OkResponse
     @POST("api/auth/unlock") suspend fun unlock(@Body body: UnlockReq): OkResponse
@@ -36,9 +36,23 @@ interface ApiService {
     // ---- profile & community ----
     @PUT("api/me") suspend fun updateProfile(@Body body: ProfileUpdateReq): OkResponse
     @GET("api/announcements") suspend fun announcements(): List<Announcement>
-    @GET("api/notifications") suspend fun notifications(): List<NotificationItem>
-    @POST("api/notifications/read-all") suspend fun readAllNotifications(): OkResponse
-    @POST("api/notifications/{id}/read") suspend fun readNotification(@Path("id") id: Long): OkResponse
+    @GET("api/notifications") suspend fun notificationsPage(
+        @Query("before") before: Long? = null,
+        @Query("limit") limit: Int = 30,
+        @Query("unread_only") unreadOnly: Boolean? = null,
+        @Query("category") category: String? = null,
+    ): NotificationPageDto
+    @POST("api/notifications/read-all") suspend fun readAllNotifications(@Body body: ReadAllReq = ReadAllReq()): NotificationActionResp
+    @POST("api/notifications/{id}/read") suspend fun readNotification(@Path("id") id: Long): NotificationActionResp
+    @POST("api/notifications/{id}/unread") suspend fun unreadNotification(@Path("id") id: Long): NotificationActionResp
+    @DELETE("api/notifications/{id}") suspend fun deleteNotification(@Path("id") id: Long): NotificationActionResp
+    @GET("api/notifications/preferences") suspend fun notificationPrefs(): NotificationPrefsDto
+    @PUT("api/notifications/preferences") suspend fun updateNotificationPrefs(@Body body: UpdateNotificationPrefsReq): OkResponse
+    @POST("api/push/mobile-token") suspend fun registerMobileToken(@Body body: MobilePushTokenReq): OkResponse
+    @retrofit2.http.HTTP(method = "DELETE", path = "api/push/mobile-token", hasBody = true)
+    suspend fun unregisterMobileToken(@Body body: MobilePushTokenDel): OkResponse
+    @POST("api/push/telegram/link-token") suspend fun createTelegramLinkToken(): TelegramLinkTokenResp
+    @POST("api/push/telegram/test") suspend fun testTelegram(): TelegramTestResp
 
     // ---- rides ----
     @GET("api/areas") suspend fun areas(): List<Area>
