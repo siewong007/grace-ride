@@ -1,7 +1,8 @@
 // App-wide UX safety nets: error boundary, offline banner, skip link, display preferences.
 import { Component, ErrorInfo, ReactNode, useEffect, useState } from 'react';
-import { Globe, Laptop, Moon, Radio, Sun } from 'lucide-react';
+import { Globe, Laptop, Moon, Radio, RefreshCw, Sun } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
+import { applyUpdate, useUpdateAvailable } from '../appUpdate';
 import i18n, { setLanguage, SupportedLanguage } from '../i18n';
 import { loadPrefs, Prefs, savePrefs, TextSize, Theme } from '../prefs';
 import { hideSplash } from '../splash';
@@ -52,6 +53,26 @@ export function OfflineBanner() {
     <div className="offline-banner row nowrap" role="status">
       <Radio size={16} aria-hidden="true" />
       <span>{t('offline')}</span>
+    </div>
+  );
+}
+
+/** A newer build is live: offer a one-tap reload instead of swapping code under the user. */
+export function UpdateBanner() {
+  const { t } = useTranslation('chrome');
+  const available = useUpdateAvailable();
+  const [dismissed, setDismissed] = useState(false);
+  if (!available || dismissed) return null;
+  return (
+    <div className="update-banner row nowrap" role="status">
+      <RefreshCw size={16} aria-hidden="true" />
+      <span className="grow">{t('updateAvailable')}</span>
+      <button type="button" className="btn primary sm" onClick={applyUpdate}>
+        {t('updateNow')}
+      </button>
+      <button type="button" className="btn ghost sm" onClick={() => setDismissed(true)}>
+        {t('updateLater')}
+      </button>
     </div>
   );
 }

@@ -8,7 +8,7 @@ use axum::{
 };
 use serde_json::{json, Value};
 
-use super::{parse_period_window, PeriodQuery};
+use super::{parse_period_window, prev_period_window, PeriodQuery};
 use crate::auth::CurrentUser;
 use crate::error::{bad, forbidden, AppResult};
 use crate::i18n::ErrorKey;
@@ -51,6 +51,7 @@ pub(in crate::routes::admin) async fn events_report(
         kind: String,
         starts_at: String,
         status: String,
+        created_by: i64,
         creator_name: String,
         attendance_enabled: i64,
         going: i64,
@@ -64,26 +65,55 @@ pub(in crate::routes::admin) async fn events_report(
     }
 
     let ev_rows: Vec<EvRow> = sqlx::query_as(
-        "SELECT e.id, e.title, e.kind, e.starts_at, e.status, u.name AS creator_name,
-                e.attendance_enabled,
-                COALESCE((SELECT COUNT(*) FROM event_signups s WHERE s.event_id = e.id AND s.status = 'going'), 0)::BIGINT AS going,
-                COALESCE((SELECT COUNT(*) FROM event_signups s WHERE s.event_id = e.id AND s.status = 'waitlist'), 0)::BIGINT AS waitlist,
-                COALESCE((SELECT COUNT(*) FROM event_signups s WHERE s.event_id = e.id AND s.status <> 'cancelled' AND s.attended = 1), 0)::BIGINT AS attended,
-                COALESCE((SELECT COUNT(*) FROM event_signups s WHERE s.event_id = e.id AND s.status = 'going' AND s.need_ride = 1), 0)::BIGINT AS need_ride,
-                COALESCE((SELECT COUNT(*) FROM event_signups s WHERE s.event_id = e.id AND s.status = 'going' AND s.offer_drive = 1), 0)::BIGINT AS offer_drive,
-                COALESCE((SELECT COUNT(*) FROM event_signups s WHERE s.event_id = e.id AND s.status = 'going' AND s.self_transport = 1), 0)::BIGINT AS self_transport,
-                COALESCE((SELECT COUNT(*) FROM rides r WHERE r.event_id = e.id AND r.status IN ('confirmed', 'in_progress', 'completed')), 0)::BIGINT AS rides_matched,
-                COALESCE((SELECT COUNT(*) FROM rides r WHERE r.event_id = e.id AND r.status NOT IN ('cancelled', 'no_show', 'alt_transport') AND r.driver_id IS NULL), 0)::BIGINT AS rides_unfilled
-         FROM events e
-         JOIN users u ON u.id = e.created_by
-         WHERE e.status <> 'draft'
-           AND e.starts_at >= $1 AND e.starts_at < $2
-           AND ($3::BIGINT IS NULL OR e.created_by = $3)
-           AND ($4::TEXT IS NULL OR e.kind = $4)
-           AND ($5::BIGINT IS NULL
-                OR EXISTS (SELECT 1 FROM event_groups eg WHERE eg.event_id = e.id AND eg.group_id = $5)
-                OR EXISTS (SELECT 1 FROM event_signups es WHERE es.event_id = e.id AND es.as_group_id = $5))
-         ORDER BY e.starts_at DESC, e.id DESC",
+        "WITH filtered_events AS (
+            SELECT e.id, e.title, e.kind, e.starts_at, e.status, e.created_by, u.name AS creator_name,
+                   e.attendance_enabled
+            FROM events e
+            JOIN users u ON u.id = e.created_by
+            WHERE e.status <> 'draft'
+              AND e.starts_at >= $1 AND e.starts_at < $2
+              AND ($3::BIGINT IS NULL OR e.created_by = $3)
+              AND ($4::TEXT IS NULL OR e.kind = $4)
+              AND ($5::BIGINT IS NULL
+                   OR EXISTS (SELECT 1 FROM event_groups eg WHERE eg.event_id = e.id AND eg.group_id = $5)
+                   OR EXISTS (SELECT 1 FROM event_signups es WHERE es.event_id = e.id AND es.as_group_id = $5))
+         ),
+         signup_agg AS (
+            SELECT s.event_id,
+                   COUNT(*) FILTER (WHERE s.status = 'going')::BIGINT AS going,
+                   COUNT(*) FILTER (WHERE s.status = 'waitlist')::BIGINT AS waitlist,
+                   COUNT(*) FILTER (WHERE s.status <> 'cancelled' AND s.attended = 1)::BIGINT AS attended,
+                   COUNT(*) FILTER (WHERE s.status = 'going' AND s.need_ride = 1)::BIGINT AS need_ride,
+                   COUNT(*) FILTER (WHERE s.status = 'going' AND s.offer_drive = 1)::BIGINT AS offer_drive,
+                   COUNT(*) FILTER (WHERE s.status = 'going' AND s.self_transport = 1)::BIGINT AS self_transport
+            FROM event_signups s
+            JOIN filtered_events fe ON fe.id = s.event_id
+            WHERE ($5::BIGINT IS NULL OR s.as_group_id = $5)
+            GROUP BY s.event_id
+         ),
+         ride_agg AS (
+            SELECT r.event_id,
+                   COUNT(*) FILTER (WHERE r.status IN ('confirmed', 'in_progress', 'completed'))::BIGINT AS rides_matched,
+                   COUNT(*) FILTER (WHERE r.status NOT IN ('cancelled', 'no_show', 'alt_transport') AND r.driver_id IS NULL)::BIGINT AS rides_unfilled
+            FROM rides r
+            JOIN filtered_events fe ON fe.id = r.event_id
+            WHERE ($5::BIGINT IS NULL OR r.as_group_id = $5)
+            GROUP BY r.event_id
+         )
+         SELECT fe.id, fe.title, fe.kind, fe.starts_at, fe.status, fe.created_by, fe.creator_name,
+                fe.attendance_enabled,
+                COALESCE(sa.going, 0)::BIGINT AS going,
+                COALESCE(sa.waitlist, 0)::BIGINT AS waitlist,
+                COALESCE(sa.attended, 0)::BIGINT AS attended,
+                COALESCE(sa.need_ride, 0)::BIGINT AS need_ride,
+                COALESCE(sa.offer_drive, 0)::BIGINT AS offer_drive,
+                COALESCE(sa.self_transport, 0)::BIGINT AS self_transport,
+                COALESCE(ra.rides_matched, 0)::BIGINT AS rides_matched,
+                COALESCE(ra.rides_unfilled, 0)::BIGINT AS rides_unfilled
+         FROM filtered_events fe
+         LEFT JOIN signup_agg sa ON sa.event_id = fe.id
+         LEFT JOIN ride_agg ra ON ra.event_id = fe.id
+         ORDER BY fe.starts_at DESC, fe.id DESC",
     )
     .bind(&w.start)
     .bind(&w.end)
@@ -99,6 +129,8 @@ pub(in crate::routes::admin) async fn events_report(
         group_name: Option<String>,
         going: i64,
         attended: i64,
+        tracked_going: i64,
+        tracked_attended: i64,
         need_ride: i64,
         self_transport: i64,
         offer_drive: i64,
@@ -108,6 +140,8 @@ pub(in crate::routes::admin) async fn events_report(
         "SELECT s.as_group_id AS group_id, g.name AS group_name,
                 COUNT(*) FILTER (WHERE s.status = 'going')::BIGINT AS going,
                 COUNT(*) FILTER (WHERE s.status <> 'cancelled' AND s.attended = 1)::BIGINT AS attended,
+                COUNT(*) FILTER (WHERE e.attendance_enabled = 1 AND s.status = 'going')::BIGINT AS tracked_going,
+                COUNT(*) FILTER (WHERE e.attendance_enabled = 1 AND s.status <> 'cancelled' AND s.attended = 1)::BIGINT AS tracked_attended,
                 COUNT(*) FILTER (WHERE s.status = 'going' AND s.need_ride = 1)::BIGINT AS need_ride,
                 COUNT(*) FILTER (WHERE s.status = 'going' AND s.self_transport = 1)::BIGINT AS self_transport,
                 COUNT(*) FILTER (WHERE s.status = 'going' AND s.offer_drive = 1)::BIGINT AS offer_drive
@@ -148,7 +182,9 @@ pub(in crate::routes::admin) async fn events_report(
     .fetch_one(&st.db)
     .await?;
 
+    let rides_global = u.traffic_is_global();
     let plan_visitors_count: Option<i64> = if can_rides && q.group_id.is_none() {
+        let pv_scope: Option<i64> = if rides_global { None } else { Some(u.id) };
         let (cnt,): (i64,) = sqlx::query_as(
             "SELECT COUNT(*)::BIGINT
              FROM plan_visitors pv
@@ -160,22 +196,23 @@ pub(in crate::routes::admin) async fn events_report(
         )
         .bind(&w.start)
         .bind(&w.end)
-        .bind(scope_creator)
+        .bind(pv_scope)
         .bind(kind)
         .fetch_one(&st.db)
         .await?;
         Some(cnt)
-    } else if can_rides {
-        Some(0)
     } else {
         None
     };
 
     let mut events_count = 0_i64;
+    let mut tracked_events_count = 0_i64;
     let mut cancelled_events = 0_i64;
     let mut total_going = 0_i64;
+    let mut tracked_going = 0_i64;
     let mut total_waitlist = 0_i64;
     let mut total_attended = 0_i64;
+    let mut tracked_attended = 0_i64;
     let mut need_ride_count = 0_i64;
     let mut offer_drive_count = 0_i64;
     let mut self_transport_count = 0_i64;
@@ -185,6 +222,8 @@ pub(in crate::routes::admin) async fn events_report(
         events_count: i64,
         going: i64,
         attended: i64,
+        tracked_going: i64,
+        tracked_attended: i64,
     }
     let mut by_kind: HashMap<String, KindBucket> = HashMap::new();
 
@@ -205,10 +244,17 @@ pub(in crate::routes::admin) async fn events_report(
         kb.events_count += 1;
         kb.going += ev.going;
         kb.attended += ev.attended;
+        if ev.attendance_enabled == 1 {
+            tracked_events_count += 1;
+            tracked_going += ev.going;
+            tracked_attended += ev.attended;
+            kb.tracked_going += ev.going;
+            kb.tracked_attended += ev.attended;
+        }
     }
 
-    let attendance_rate_pct = if total_going > 0 {
-        (total_attended * 100) / total_going
+    let attendance_rate_pct = if tracked_going > 0 {
+        (tracked_attended * 100) / tracked_going
     } else {
         0
     };
@@ -221,7 +267,7 @@ pub(in crate::routes::admin) async fn events_report(
                 "events_count": b.events_count,
                 "going": b.going,
                 "attended": b.attended,
-                "attendance_rate_pct": if b.going > 0 { (b.attended * 100) / b.going } else { 0 },
+                "attendance_rate_pct": if b.tracked_going > 0 { (b.tracked_attended * 100) / b.tracked_going } else { 0 },
             })
         })
         .collect();
@@ -230,8 +276,8 @@ pub(in crate::routes::admin) async fn events_report(
     let by_group_list: Vec<Value> = group_rows
         .into_iter()
         .map(|g| {
-            let rate = if g.going > 0 {
-                (g.attended * 100) / g.going
+            let rate = if g.tracked_going > 0 {
+                (g.tracked_attended * 100) / g.tracked_going
             } else {
                 0
             };
@@ -248,15 +294,23 @@ pub(in crate::routes::admin) async fn events_report(
         })
         .collect();
 
+    let events_total = ev_rows.len() as i64;
+    let events_truncated = events_total > 200;
     let events_list: Vec<Value> = ev_rows
         .into_iter()
         .take(200)
         .map(|ev| {
-            let rate = if ev.going > 0 {
-                (ev.attended * 100) / ev.going
+            let tracked = ev.attendance_enabled == 1;
+            let rate = if tracked {
+                Some(if ev.going > 0 {
+                    (ev.attended * 100) / ev.going
+                } else {
+                    0
+                })
             } else {
-                0
+                None
             };
+            let show_ev_rides = can_rides && (rides_global || ev.created_by == u.id);
             json!({
                 "id": ev.id,
                 "title": ev.title,
@@ -267,15 +321,66 @@ pub(in crate::routes::admin) async fn events_report(
                 "going": ev.going,
                 "waitlist": ev.waitlist,
                 "attended": ev.attended,
-                "attendance_enabled": ev.attendance_enabled == 1,
+                "attendance_enabled": tracked,
                 "attendance_rate_pct": rate,
                 "need_ride": ev.need_ride,
                 "self_transport": ev.self_transport,
-                "rides_matched": if can_rides { Some(ev.rides_matched) } else { None },
-                "rides_unfilled": if can_rides { Some(ev.rides_unfilled) } else { None },
+                "rides_matched": if show_ev_rides { Some(ev.rides_matched) } else { None },
+                "rides_unfilled": if show_ev_rides { Some(ev.rides_unfilled) } else { None },
             })
         })
         .collect();
+
+    let comparison = if let Some(pw) = prev_period_window(&w) {
+        let (
+            prev_events_count,
+            prev_total_going,
+            prev_total_attended,
+            prev_tracked_going,
+            prev_tracked_attended,
+        ): (i64, i64, i64, i64, i64) = sqlx::query_as(
+            "WITH prev_ev AS (
+                SELECT e.id, e.attendance_enabled
+                FROM events e
+                WHERE e.status NOT IN ('draft', 'cancelled')
+                  AND e.starts_at >= $1 AND e.starts_at < $2
+                  AND ($3::BIGINT IS NULL OR e.created_by = $3)
+                  AND ($4::TEXT IS NULL OR e.kind = $4)
+                  AND ($5::BIGINT IS NULL
+                       OR EXISTS (SELECT 1 FROM event_groups eg WHERE eg.event_id = e.id AND eg.group_id = $5)
+                       OR EXISTS (SELECT 1 FROM event_signups es WHERE es.event_id = e.id AND es.as_group_id = $5))
+             )
+             SELECT
+                (SELECT COUNT(*) FROM prev_ev)::BIGINT,
+                COALESCE(COUNT(*) FILTER (WHERE s.status = 'going'), 0)::BIGINT,
+                COALESCE(COUNT(*) FILTER (WHERE s.status <> 'cancelled' AND s.attended = 1), 0)::BIGINT,
+                COALESCE(COUNT(*) FILTER (WHERE pe.attendance_enabled = 1 AND s.status = 'going'), 0)::BIGINT,
+                COALESCE(COUNT(*) FILTER (WHERE pe.attendance_enabled = 1 AND s.status <> 'cancelled' AND s.attended = 1), 0)::BIGINT
+             FROM prev_ev pe
+             LEFT JOIN event_signups s ON s.event_id = pe.id AND ($5::BIGINT IS NULL OR s.as_group_id = $5)",
+        )
+        .bind(&pw.start)
+        .bind(&pw.end)
+        .bind(scope_creator)
+        .bind(kind)
+        .bind(q.group_id)
+        .fetch_one(&st.db)
+        .await?;
+        let prev_rate = if prev_tracked_going > 0 {
+            (prev_tracked_attended * 100) / prev_tracked_going
+        } else {
+            0
+        };
+        json!({
+            "prev_period": pw.period_label,
+            "events_count_delta": events_count - prev_events_count,
+            "total_going_delta": total_going - prev_total_going,
+            "total_attended_delta": total_attended - prev_total_attended,
+            "attendance_rate_delta": attendance_rate_pct - prev_rate,
+        })
+    } else {
+        Value::Null
+    };
 
     Ok(Json(json!({
         "scope": if global_events { "global" } else { "own_events" },
@@ -283,8 +388,12 @@ pub(in crate::routes::admin) async fn events_report(
         "range": w.range,
         "from": w.start,
         "to": w.display_to,
+        "events_total": events_total,
+        "events_truncated": events_truncated,
+        "comparison": comparison,
         "totals": {
             "events_count": events_count,
+            "tracked_events_count": tracked_events_count,
             "cancelled_events": cancelled_events,
             "total_going": total_going,
             "total_waitlist": total_waitlist,

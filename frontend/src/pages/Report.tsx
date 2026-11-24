@@ -23,7 +23,13 @@ import {
   isAnimatedBadgeIcon,
   resolveBadgeTier,
 } from '../badgeIcon';
-import { downloadCsv, escapeCsv, exportReportPdf, fmtRmExport } from '../reportExport';
+import {
+  downloadCsv,
+  escapeCsv,
+  exportReportPdf,
+  fmtRmExport,
+  formatInclusivePeriodEnd,
+} from '../reportExport';
 import type { Badge, MonthReport } from '../types/domain';
 
 export default function Report() {
@@ -38,6 +44,8 @@ export default function Report() {
   const [range, setRange] = useState<'monthly' | 'quarterly' | 'yearly'>('monthly');
   const [type, setType] = useState<'all' | 'driver' | 'passenger'>('all');
   const [badgeFilter, setBadgeFilter] = useState<'mine' | 'all' | BadgeCategory>('mine');
+  const [exportingPdf, setExportingPdf] = useState(false);
+  const [exportErr, setExportErr] = useState<string | null>(null);
   const [y, m] = month.split('-').map(Number);
   const params = new URLSearchParams({ month, range, type });
   const { data: r, error } = useApi<MonthReport>(
@@ -67,13 +75,14 @@ export default function Report() {
   const badgeRule = (b: Badge) => (isZh ? b.rule_zh ?? b.rule : b.rule_en ?? b.rule);
 
   const fileBase = `grace-ride-report-${range}-${month}`;
+  const inclusivePeriodEnd = r ? formatInclusivePeriodEnd(r.period_end, r.period_end_inclusive) : '';
 
   const exportCsv = () => {
     if (!r) return;
     const lines: string[] = [];
     lines.push('Grace Ride — Report Export');
     lines.push(`User,${escapeCsv(`${r.user.name} (${r.user.id})`)}`);
-    lines.push(`Period,${escapeCsv(`${r.period_start} to ${r.period_end}`)}`);
+    lines.push(`Period,${escapeCsv(`${r.period_start} to ${inclusivePeriodEnd}`)}`);
     lines.push(`Range,${escapeCsv(r.range)}`);
     lines.push(`Type,${escapeCsv(r.type)}`);
     lines.push('');
@@ -138,84 +147,97 @@ export default function Report() {
   };
 
   const exportPdf = async () => {
-    if (!r) return;
-    const rangeMap: Record<string, string> = {
-      monthly: t('rangeMonthly'),
-      quarterly: t('rangeQuarterly'),
-      yearly: t('rangeYearly'),
-    };
-    const typeMap: Record<string, string> = {
-      all: t('typeAll'),
-      driver: t('typeDriver'),
-      passenger: t('typePassenger'),
-    };
-    const kinds = r.by_kind.map((k) => `${ft(EVENT_KIND[k.kind]?.label ?? k.kind)} × ${k.count}`);
-    const events = r.events.map((e) => `${e.title} — ${fmtDateTime(e.starts_at, ft)}`);
-    const badges = r.badges.map((b) => {
-      const tier = resolveBadgeTier(b);
-      const tierText = tier !== 'none' ? `[${t(`badgeTier_${tier}`)}]` : b.earned ? t('earned') : '';
-      return `${badgeName(b)} ${tierText} — ${badgeRule(b)} (${b.progress}/${b.target})`.trim();
-    });
-    const rows: [string, string][] = [];
-    if (r.events_attended != null) rows.push([t('events_attended'), String(r.events_attended)]);
-    if (drives && r.rides_driven != null) rows.push([t('rides_driven'), String(r.rides_driven)]);
-    if (r.rides_received != null) rows.push([t('rides_received'), String(r.rides_received)]);
-    if (drives && type !== 'passenger' && r.distance_km != null) {
-      rows.push([t('distance_km'), `${r.distance_km} km`]);
-    }
-    if (drives && type !== 'passenger' && r.reimbursement_cents != null) {
-      rows.push([t('reimbursement'), fmtRmExport(r.reimbursement_cents)]);
-    }
-    if (r.costs_paid_cents != null) {
-      rows.push([t('costs'), fmtRmExport(r.costs_paid_cents)]);
-    }
+    if (!r || exportingPdf) return;
+    setExportErr(null);
+    setExportingPdf(true);
+    try {
+      const rangeMap: Record<string, string> = {
+        monthly: t('rangeMonthly'),
+        quarterly: t('rangeQuarterly'),
+        yearly: t('rangeYearly'),
+      };
+      const typeMap: Record<string, string> = {
+        all: t('typeAll'),
+        driver: t('typeDriver'),
+        passenger: t('typePassenger'),
+      };
+      const kinds = r.by_kind.map((k) => `${ft(EVENT_KIND[k.kind]?.label ?? k.kind)} × ${k.count}`);
+      const events = r.events.map((e) => `${e.title} — ${fmtDateTime(e.starts_at, ft)}`);
+      const badges = r.badges.map((b) => {
+        const tier = resolveBadgeTier(b);
+        const tierText = tier !== 'none' ? `[${t(`badgeTier_${tier}`)}]` : b.earned ? t('earned') : '';
+        return `${badgeName(b)} ${tierText} — ${badgeRule(b)} (${b.progress}/${b.target})`.trim();
+      });
+      const rows: [string, string][] = [];
+      if (r.events_attended != null) rows.push([t('events_attended'), String(r.events_attended)]);
+      if (drives && r.rides_driven != null) rows.push([t('rides_driven'), String(r.rides_driven)]);
+      if (r.rides_received != null) rows.push([t('rides_received'), String(r.rides_received)]);
+      if (drives && type !== 'passenger' && r.distance_km != null) {
+        rows.push([t('distance_km'), `${r.distance_km} km`]);
+      }
+      if (drives && type !== 'passenger' && r.reimbursement_cents != null) {
+        rows.push([t('reimbursement'), fmtRmExport(r.reimbursement_cents)]);
+      }
+      if (r.costs_paid_cents != null) {
+        rows.push([t('costs'), fmtRmExport(r.costs_paid_cents)]);
+      }
 
-    const extraSections = [];
-    if (r.reimbursements_summary) {
-      const rs = r.reimbursements_summary;
-      const items = [
-        `${t('reimbTotalClaims')}: ${rs.claim_count}`,
-        ...(rs.pending_count != null && rs.pending_cents != null
-          ? [`${t('reimbPending')}: ${rs.pending_count} (${fmtRmExport(rs.pending_cents)})`]
-          : []),
-        `${t('reimbApproved')}: ${rs.approved_count} (${fmtRmExport(rs.approved_cents)})`,
-        `${t('reimbPaid')}: ${rs.paid_count} (${fmtRmExport(rs.paid_cents)})`,
-      ];
-      extraSections.push({ heading: t('myReimbursements'), items });
-    }
-    if (r.organised_events) {
-      const oe = r.organised_events;
-      const items = [
-        `${t('organisedCount')}: ${oe.events_count}`,
-        `${t('organisedAttendance')}: ${oe.total_attended}/${oe.total_going} (${oe.attendance_rate_pct}%)`,
-        ...(oe.settlements
-          ? [
-              `${t('organisedBills')}: ${oe.settlements.count} · ${t('billsCollected')}: ${fmtRmExport(oe.settlements.collected_cents)} · ${t('billsOutstanding')}: ${fmtRmExport(oe.settlements.outstanding_cents)}`,
-            ]
-          : []),
-      ];
-      extraSections.push({ heading: t('organisedEvents'), items });
-    }
+      const extraSections = [];
+      if (r.reimbursements_summary) {
+        const rs = r.reimbursements_summary;
+        const items = [
+          `${t('reimbTotalClaims')}: ${rs.claim_count}`,
+          ...(rs.pending_count != null && rs.pending_cents != null
+            ? [`${t('reimbPending')}: ${rs.pending_count} (${fmtRmExport(rs.pending_cents)})`]
+            : []),
+          `${t('reimbApproved')}: ${rs.approved_count} (${fmtRmExport(rs.approved_cents)})`,
+          `${t('reimbPaid')}: ${rs.paid_count} (${fmtRmExport(rs.paid_cents)})`,
+        ];
+        extraSections.push({ heading: t('myReimbursements'), items });
+      }
+      if (r.organised_events) {
+        const oe = r.organised_events;
+        const items = [
+          `${t('organisedCount')}: ${oe.events_count}`,
+          `${t('organisedAttendance')}: ${oe.total_attended}/${oe.total_going} (${oe.attendance_rate_pct}%)`,
+          ...(oe.settlements
+            ? [
+                `${t('organisedBills')}: ${oe.settlements.count} · ${t('billsCollected')}: ${fmtRmExport(oe.settlements.collected_cents)} · ${t('billsOutstanding')}: ${fmtRmExport(oe.settlements.outstanding_cents)}`,
+              ]
+            : []),
+        ];
+        extraSections.push({ heading: t('organisedEvents'), items });
+      }
 
-    await exportReportPdf({
-      fileBase,
-      title: t('pdfTitle'),
-      meta: [
-        `${t('user')}: ${r.user.name} (${r.user.id})`,
-        `${t('period')}: ${r.period_start} to ${r.period_end}`,
-        `${t('range')}: ${rangeMap[r.range] ?? r.range}`,
-        `${t('type')}: ${typeMap[r.type] ?? r.type}`,
-      ],
-      summaryHeading: t('summary'),
-      summaryRows: rows,
-      sections: [
-        { heading: t('byKind'), items: kinds },
-        { heading: t('events'), items: events },
-        ...extraSections,
-        { heading: t('badges'), items: badges },
-      ],
-    });
+      await exportReportPdf({
+        fileBase,
+        title: t('pdfTitle'),
+        meta: [
+          `${t('user')}: ${r.user.name} (${r.user.id})`,
+          `${t('period')}: ${r.period_start} to ${inclusivePeriodEnd}`,
+          `${t('range')}: ${rangeMap[r.range] ?? r.range}`,
+          `${t('type')}: ${typeMap[r.type] ?? r.type}`,
+        ],
+        summaryHeading: t('summary'),
+        summaryRows: rows,
+        sections: [
+          { heading: t('byKind'), items: kinds },
+          { heading: t('events'), items: events },
+          ...extraSections,
+          { heading: t('badges'), items: badges },
+        ],
+      });
+    } catch (e) {
+      setExportErr(e instanceof Error ? e.message : String(e));
+    } finally {
+      setExportingPdf(false);
+    }
   };
+
+  const emptyEventsText =
+    range === 'monthly'
+      ? t('noEvents', { y, m })
+      : t('noEventsInPeriod', { period: `${r?.period_start ?? ''} – ${inclusivePeriodEnd}` });
 
   return (
     <Page width="wide">
@@ -268,7 +290,8 @@ export default function Report() {
                 variant="ghost"
                 size="sm"
                 onClick={exportPdf}
-                disabled={!r}
+                disabled={!r || exportingPdf}
+                loading={exportingPdf}
                 icon={<Download size={16} />}
               >
                 {t('exportPdf')}
@@ -277,7 +300,7 @@ export default function Report() {
           }
         />
 
-        <ErrorBox error={error} />
+        <ErrorBox error={error || exportErr} />
 
         {!r ? (
           <Spinner />
@@ -340,7 +363,7 @@ export default function Report() {
                       .join(' · ')}
                   </p>
                 ) : (
-                  <p className="muted">{t('noEvents', { y, m })}</p>
+                  <p className="muted">{emptyEventsText}</p>
                 )}
 
                 {r.events.length > 0 ? (
@@ -353,7 +376,7 @@ export default function Report() {
                     ))}
                   </div>
                 ) : (
-                  <EmptyState title={t('noEvents', { y, m })} />
+                  <EmptyState title={emptyEventsText} />
                 )}
                 <p className="muted tiny">{t('note')}</p>
               </Card>

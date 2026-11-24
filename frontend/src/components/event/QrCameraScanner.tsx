@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { AlertCircle } from 'lucide-react';
 import jsQR from 'jsqr';
+import { useWakeLock } from '../../hooks/useWakeLock';
 
 export interface QrCameraScannerProps {
   onScan: (decodedText: string) => void;
@@ -27,6 +28,7 @@ export function QrCameraScanner({
   const isScanningRef = useRef<boolean>(false);
   const onScanRef = useRef(onScan);
   onScanRef.current = onScan;
+  useWakeLock(active && !cameraError);
 
   useEffect(() => {
     const stopCamera = () => {

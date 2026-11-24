@@ -1,8 +1,27 @@
 import { defineConfig } from 'vitest/config';
 import react from '@vitejs/plugin-react';
+import type { Plugin } from 'vite';
+
+// One id per build: the running app compares it with /version.json to offer "update now".
+const BUILD_ID = (process.env.GITHUB_SHA ?? '').slice(0, 12) || Date.now().toString(36);
+
+function versionManifest(): Plugin {
+  return {
+    name: 'grace-ride-version-json',
+    apply: 'build',
+    generateBundle() {
+      this.emitFile({
+        type: 'asset',
+        fileName: 'version.json',
+        source: JSON.stringify({ build: BUILD_ID }),
+      });
+    },
+  };
+}
 
 export default defineConfig({
-  plugins: [react()],
+  plugins: [react(), versionManifest()],
+  define: { __APP_BUILD_ID__: JSON.stringify(BUILD_ID) },
   server: {
     port: 5173,
     proxy: { '/api': 'http://127.0.0.1:8080' },

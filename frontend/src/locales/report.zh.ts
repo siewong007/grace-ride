@@ -9,6 +9,7 @@ export default {
   reimbursement: '建议报销金额',
   events: '已出席活动',
   noEvents: '{y} 年 {m} 月没有出席记录。',
+  noEventsInPeriod: '{period}期间没有出席记录。',
   note: '出席次数以签到或负责人核实为准；接送次数只计算已完成行程。',
   badges: '感谢徽章',
   badgesDesc: '小小徽章，大大感谢。非金钱奖励，可在「我的」中选择不参与。',

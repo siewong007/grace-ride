@@ -59,6 +59,7 @@ export default {
   copy: '复制链接',
   copied: '已复制链接',
   share: '通过 WhatsApp 分享',
+  shareNative: '分享…',
   shareText: '{name}您好，这是您前往{event}的接送：{url}',
   state: {
     open: '尚未打开',

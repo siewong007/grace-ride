@@ -4,6 +4,7 @@ import { useTranslation } from 'react-i18next';
 import { del, post } from '../../api';
 import { fmtDateTime, useFormatT } from '../../format';
 import type { Ride } from '../RideCard';
+import { canNativeShare, openWhatsApp, shareOrFallback } from '../../webShare';
 import { Button, ErrorBox, Field, Modal, useAction, useToast } from '../ui';
 
 export function CareLinkModal({ ride, onClose }: { ride: Ride; onClose: () => void }) {
@@ -78,14 +79,13 @@ export function CareLinkModal({ ride, onClose }: { ride: Ride; onClose: () => vo
               variant="secondary"
               icon={<Share2 size={16} />}
               onClick={() =>
-                window.open(
-                  `https://wa.me/?text=${encodeURIComponent(`${t('careLinkShareText')}: ${link.url}`)}`,
-                  '_blank',
-                  'noopener,noreferrer',
+                void shareOrFallback(
+                  { title: t('careLinkTitle'), text: t('careLinkShareText'), url: link.url },
+                  () => openWhatsApp(`${t('careLinkShareText')}: ${link.url}`),
                 )
               }
             >
-              {t('shareWhatsApp')}
+              {canNativeShare() ? t('shareNative') : t('shareWhatsApp')}
             </Button>
             <Button variant="danger" size="sm" disabled={busy} onClick={revoke}>
               {t('careLinkRevokeOld')}

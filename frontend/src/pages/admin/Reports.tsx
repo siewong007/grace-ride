@@ -42,7 +42,13 @@ import {
   isAnimatedBadgeIcon,
   resolveBadgeTier,
 } from '../../badgeIcon';
-import { downloadCsv, escapeCsv, exportReportPdf, fmtRmExport } from '../../reportExport';
+import {
+  downloadCsv,
+  escapeCsv,
+  exportReportPdf,
+  fmtRmExport,
+  formatInclusivePeriodEnd,
+} from '../../reportExport';
 import type { Badge, MonthReport, ReportCapabilities } from '../../types/domain';
 import DemandReportPanel from './reports/DemandReportPanel';
 import EventsReportPanel from './reports/EventsReportPanel';
@@ -91,13 +97,19 @@ export default function AdminReports() {
   const [searchParams, setSearchParams] = useSearchParams();
   const [selectedId, setSelectedId] = useState<number | null>(me?.id ?? null);
   const defaultMonth = `${new Date().getFullYear()}-${String(new Date().getMonth() + 1).padStart(2, '0')}`;
-  const [month, setMonth] = useState(defaultMonth);
-  const [range, setRange] = useState<'monthly' | 'quarterly' | 'yearly'>('monthly');
-  const [useCustomPeriod, setUseCustomPeriod] = useState(false);
-  const [fromDate, setFromDate] = useState(`${defaultMonth}-01`);
-  const [toDate, setToDate] = useState(() => monthLastDay(defaultMonth));
+  const rawMonth = searchParams.get('month');
+  const month = rawMonth && /^\d{4}-\d{2}$/.test(rawMonth) ? rawMonth : defaultMonth;
+  const rawRange = searchParams.get('range');
+  const range: 'monthly' | 'quarterly' | 'yearly' =
+    rawRange === 'quarterly' || rawRange === 'yearly' ? rawRange : 'monthly';
+  const useCustomPeriod = searchParams.get('custom') === '1';
+  const fromDate = searchParams.get('from') || `${month}-01`;
+  const toDate = searchParams.get('to') || monthLastDay(month);
+  const groupId = searchParams.get('group_id') || '';
   const [type, setType] = useState<'all' | 'driver' | 'passenger'>('all');
   const [badgeFilter, setBadgeFilter] = useState<'all' | BadgeCategory>('all');
+  const [exportingPdf, setExportingPdf] = useState(false);
+  const [exportErr, setExportErr] = useState<string | null>(null);
   const [y, m] = month.split('-').map(Number);
 
   const [editingBadge, setEditingBadge] = useState<{
@@ -108,6 +120,17 @@ export default function AdminReports() {
   const [selectedIcon, setSelectedIcon] = useState('');
   const [customIcon, setCustomIcon] = useState('');
   const { busy: savingIcon, error: iconErr, run: runIconAction } = useAction();
+
+  const updateParams = (mutate: (next: URLSearchParams) => void) => {
+    setSearchParams(
+      (prev) => {
+        const next = new URLSearchParams(prev);
+        mutate(next);
+        return next;
+      },
+      { replace: true },
+    );
+  };
 
   const { data: capsData } = useApi<ReportCapabilities>('/admin/reports/capabilities');
   const caps: ReportCapabilities = useMemo(() => {
@@ -152,48 +175,93 @@ export default function AdminReports() {
     [caps, t],
   );
 
+  const defaultTab: ReportTab =
+    !caps.member_reports_global && caps.overview ? 'overview' : 'member';
   const rawTab = searchParams.get('tab');
   const reportTab: ReportTab = tabItems.some((item) => item.value === rawTab)
     ? (rawTab as ReportTab)
-    : 'member';
+    : defaultTab;
 
   const setReportTab = (nextTab: ReportTab) => {
-    const next = new URLSearchParams(searchParams);
-    if (nextTab === 'member') {
-      next.delete('tab');
-    } else {
-      next.set('tab', nextTab);
-    }
-    setSearchParams(next, { replace: true });
+    updateParams((next) => {
+      if (nextTab === defaultTab) {
+        next.delete('tab');
+      } else {
+        next.set('tab', nextTab);
+      }
+    });
+  };
+
+  const setGroupId = (nextGroupId: string) => {
+    updateParams((next) => {
+      if (nextGroupId) next.set('group_id', nextGroupId);
+      else next.delete('group_id');
+    });
+  };
+
+  const handleOpenMember = (userId: number) => {
+    setSelectedId(userId);
+    setReportTab('member');
+  };
+
+  const handleOpenEventsGroup = (gid: number) => {
+    updateParams((next) => {
+      next.set('tab', 'events');
+      next.set('group_id', String(gid));
+    });
   };
 
   const periodState: PeriodFilterState = {
     month,
     onMonthChange: (nextMonth) => {
-      setMonth(nextMonth);
-      if (!useCustomPeriod && nextMonth) {
-        setFromDate(`${nextMonth}-01`);
-        setToDate(monthLastDay(nextMonth));
-      }
+      updateParams((next) => {
+        if (!nextMonth || nextMonth === defaultMonth) next.delete('month');
+        else next.set('month', nextMonth);
+        if (next.get('custom') !== '1') {
+          next.delete('from');
+          next.delete('to');
+        }
+      });
     },
     range,
-    onRangeChange: setRange,
+    onRangeChange: (nextRange) => {
+      updateParams((next) => {
+        if (nextRange === 'monthly') next.delete('range');
+        else next.set('range', nextRange);
+      });
+    },
     useCustom: useCustomPeriod,
     onToggleCustom: (custom) => {
-      if (custom && (!fromDate || !toDate)) {
-        setFromDate(`${month}-01`);
-        setToDate(monthLastDay(month));
-      }
-      setUseCustomPeriod(custom);
+      updateParams((next) => {
+        if (custom) {
+          next.set('custom', '1');
+          if (!next.get('from')) next.set('from', `${month}-01`);
+          if (!next.get('to')) next.set('to', monthLastDay(month));
+        } else {
+          next.delete('custom');
+          next.delete('from');
+          next.delete('to');
+        }
+      });
     },
     fromDate,
     toDate,
-    onFromChange: setFromDate,
-    onToChange: setToDate,
+    onFromChange: (d) => {
+      updateParams((next) => {
+        if (d) next.set('from', d);
+        else next.delete('from');
+      });
+    },
+    onToChange: (d) => {
+      updateParams((next) => {
+        if (d) next.set('to', d);
+        else next.delete('to');
+      });
+    },
   };
 
   const { data: membersData } = useApi<Member[] | { items: Member[] }>(
-    caps.member_reports_global ? '/admin/users?q=' : null,
+    caps.member_reports_global && reportTab === 'member' ? '/admin/users?q=' : null,
   );
   const members = Array.isArray(membersData) ? membersData : membersData?.items ?? [];
   // The picker lists everyone, so a search box narrows it. The chosen member always stays listed.
@@ -216,7 +284,7 @@ export default function AdminReports() {
     ...(effectiveTargetId ? { user_id: String(effectiveTargetId) } : {}),
   });
   const { data: r, error, loading, reload: reloadReport } = useApi<MonthReport>(
-    `/reports/monthly?${params.toString()}`,
+    reportTab === 'member' ? `/reports/monthly?${params.toString()}` : null,
   );
 
   const saveBadgeIcon = () =>
@@ -240,13 +308,21 @@ export default function AdminReports() {
     }, t('reports.badgeIconUpdated'));
 
   const fileBase = `grace-ride-admin-report-${range}-${month}-${effectiveTargetId ?? 'self'}`;
+  const showBadges = r?.visible_sections?.badges !== false;
+  const inclusivePeriodEnd = r
+    ? formatInclusivePeriodEnd(r.period_end, r.period_end_inclusive)
+    : '';
+  const emptyEventsText =
+    range === 'monthly'
+      ? t('reports.noEvents', { y, m })
+      : t('reports.noEventsPeriod', { start: r?.period_start ?? '', end: inclusivePeriodEnd });
 
   const exportCsv = () => {
     if (!r) return;
     const lines: string[] = [];
     lines.push('Grace Ride — Admin Report Export');
     lines.push(`User,${escapeCsv(`${r.user.name} (${r.user.id})`)}`);
-    lines.push(`Period,${escapeCsv(`${r.period_start} to ${r.period_end}`)}`);
+    lines.push(`Period,${escapeCsv(`${r.period_start} to ${inclusivePeriodEnd}`)}`);
     lines.push(`Range,${escapeCsv(r.range)}`);
     lines.push(`Type,${escapeCsv(r.type)}`);
     lines.push('');
@@ -284,78 +360,94 @@ export default function AdminReports() {
         lines.push(`${e.id},${escapeCsv(e.title)},${escapeCsv(e.kind)},${escapeCsv(e.starts_at)}`);
       }
     }
-    lines.push('');
-    lines.push('Badge Key,Name,Tier,Rule,Progress,Target,Earned');
-    for (const b of r.badges) {
-      const tier = resolveBadgeTier(b);
-      lines.push(
-        `${escapeCsv(b.key)},${escapeCsv(badgeName(b))},${escapeCsv(tier)},${escapeCsv(badgeRule(b))},${b.progress},${b.target},${b.earned}`,
-      );
+    if (showBadges) {
+      lines.push('');
+      lines.push('Badge Key,Name,Tier,Rule,Progress,Target,Earned');
+      for (const b of r.badges) {
+        const tier = resolveBadgeTier(b);
+        lines.push(
+          `${escapeCsv(b.key)},${escapeCsv(badgeName(b))},${escapeCsv(tier)},${escapeCsv(badgeRule(b))},${b.progress},${b.target},${b.earned}`,
+        );
+      }
     }
     downloadCsv(fileBase, lines);
   };
 
   const exportPdf = async () => {
-    if (!r) return;
-    const showEvents = r.visible_sections?.events !== false;
-    const kinds = showEvents
-      ? r.by_kind.map((k) => `${ft(EVENT_KIND[k.kind]?.label ?? k.kind)} × ${k.count}`)
-      : [];
-    const events = showEvents
-      ? r.events.map((e) => `${e.title} — ${fmtDateTime(e.starts_at, ft)}`)
-      : [];
-    const badges = r.badges.map((b) => {
-      const tier = resolveBadgeTier(b);
-      const tierText =
-        tier !== 'none' ? `[${t(`reports.badgeTier_${tier}`)}]` : b.earned ? t('reports.earned') : '';
-      return `${badgeName(b)} ${tierText} — ${badgeRule(b)} (${b.progress}/${b.target})`.trim();
-    });
-    const rows: [string, string][] = [];
-    if (r.events_attended != null) rows.push([t('reports.events_attended'), String(r.events_attended)]);
-    if (r.rides_driven != null) rows.push([t('reports.rides_driven'), String(r.rides_driven)]);
-    if (r.rides_received != null) rows.push([t('reports.rides_received'), String(r.rides_received)]);
-    if (r.distance_km != null) rows.push([t('reports.distance_km'), `${r.distance_km} km`]);
-    if (r.reimbursement_cents != null) {
-      rows.push([t('reports.reimbursement'), fmtRmExport(r.reimbursement_cents)]);
-    }
-    if (r.costs_paid_cents != null) {
-      rows.push([t('reports.costs'), fmtRmExport(r.costs_paid_cents)]);
-    }
+    if (!r || exportingPdf) return;
+    setExportErr(null);
+    setExportingPdf(true);
+    try {
+      const showEvents = r.visible_sections?.events !== false;
+      const kinds = showEvents
+        ? r.by_kind.map((k) => `${ft(EVENT_KIND[k.kind]?.label ?? k.kind)} × ${k.count}`)
+        : [];
+      const events = showEvents
+        ? r.events.map((e) => `${e.title} — ${fmtDateTime(e.starts_at, ft)}`)
+        : [];
+      const badges = showBadges
+        ? r.badges.map((b) => {
+            const tier = resolveBadgeTier(b);
+            const tierText =
+              tier !== 'none'
+                ? `[${t(`reports.badgeTier_${tier}`)}]`
+                : b.earned
+                ? t('reports.earned')
+                : '';
+            return `${badgeName(b)} ${tierText} — ${badgeRule(b)} (${b.progress}/${b.target})`.trim();
+          })
+        : [];
+      const rows: [string, string][] = [];
+      if (r.events_attended != null) rows.push([t('reports.events_attended'), String(r.events_attended)]);
+      if (r.rides_driven != null) rows.push([t('reports.rides_driven'), String(r.rides_driven)]);
+      if (r.rides_received != null) rows.push([t('reports.rides_received'), String(r.rides_received)]);
+      if (r.distance_km != null) rows.push([t('reports.distance_km'), `${r.distance_km} km`]);
+      if (r.reimbursement_cents != null) {
+        rows.push([t('reports.reimbursement'), fmtRmExport(r.reimbursement_cents)]);
+      }
+      if (r.costs_paid_cents != null) {
+        rows.push([t('reports.costs'), fmtRmExport(r.costs_paid_cents)]);
+      }
 
-    const extraSections = [];
-    if (r.reimbursements_summary) {
-      const rs = r.reimbursements_summary;
-      extraSections.push({
-        heading: t('reports.memberReimbTitle'),
-        items: [
-          `${t('reports.reimbClaimsInScope')}: ${rs.claim_count}`,
-          ...(rs.pending_count != null && rs.pending_cents != null
-            ? [`${t('reports.reimbPendingReview')}: ${rs.pending_count} (${fmtRmExport(rs.pending_cents)})`]
-            : []),
-          `${t('reports.reimbApproved')}: ${rs.approved_count} (${fmtRmExport(rs.approved_cents)})`,
-          `${t('reports.payoutsPaid')}: ${rs.paid_count} (${fmtRmExport(rs.paid_cents)})`,
+      const extraSections = [];
+      if (r.reimbursements_summary) {
+        const rs = r.reimbursements_summary;
+        extraSections.push({
+          heading: t('reports.memberReimbTitle'),
+          items: [
+            `${t('reports.reimbClaimsInScope')}: ${rs.claim_count}`,
+            ...(rs.pending_count != null && rs.pending_cents != null
+              ? [`${t('reports.reimbPendingReview')}: ${rs.pending_count} (${fmtRmExport(rs.pending_cents)})`]
+              : []),
+            `${t('reports.reimbApproved')}: ${rs.approved_count} (${fmtRmExport(rs.approved_cents)})`,
+            `${t('reports.payoutsPaid')}: ${rs.paid_count} (${fmtRmExport(rs.paid_cents)})`,
+          ],
+        });
+      }
+
+      await exportReportPdf({
+        fileBase,
+        title: t('reports.pdfTitle'),
+        meta: [
+          `${t('reports.user')}: ${r.user.name} (${r.user.id})`,
+          `${t('reports.period')}: ${r.period_start} to ${inclusivePeriodEnd}`,
+          `${t('reports.range')}: ${t(RANGE_LABEL[r.range] ?? 'reports.rangeMonthly')}`,
+          `${t('reports.type')}: ${t(TYPE_LABEL[r.type] ?? 'reports.typeAll')}`,
+        ],
+        summaryHeading: t('reports.summary'),
+        summaryRows: rows,
+        sections: [
+          ...(showEvents ? [{ heading: t('reports.byKind'), items: kinds }] : []),
+          ...(showEvents ? [{ heading: t('reports.events'), items: events }] : []),
+          ...extraSections,
+          ...(showBadges ? [{ heading: t('reports.badges'), items: badges }] : []),
         ],
       });
+    } catch (e) {
+      setExportErr(e instanceof Error ? e.message : String(e));
+    } finally {
+      setExportingPdf(false);
     }
-
-    await exportReportPdf({
-      fileBase,
-      title: t('reports.pdfTitle'),
-      meta: [
-        `${t('reports.user')}: ${r.user.name} (${r.user.id})`,
-        `${t('reports.period')}: ${r.period_start} to ${r.period_end}`,
-        `${t('reports.range')}: ${t(RANGE_LABEL[r.range] ?? 'reports.rangeMonthly')}`,
-        `${t('reports.type')}: ${t(TYPE_LABEL[r.type] ?? 'reports.typeAll')}`,
-      ],
-      summaryHeading: t('reports.summary'),
-      summaryRows: rows,
-      sections: [
-        ...(showEvents ? [{ heading: t('reports.byKind'), items: kinds }] : []),
-        ...(showEvents ? [{ heading: t('reports.events'), items: events }] : []),
-        ...extraSections,
-        { heading: t('reports.badges'), items: badges },
-      ],
-    });
   };
 
   const hasPartialRedaction = Boolean(
@@ -364,7 +456,8 @@ export default function AdminReports() {
       (!r.visible_sections.events ||
         !r.visible_sections.costs_paid ||
         !r.visible_sections.driving ||
-        !r.visible_sections.passenger_rides),
+        !r.visible_sections.passenger_rides ||
+        !r.visible_sections.badges),
   );
 
   return (
@@ -390,7 +483,8 @@ export default function AdminReports() {
                   variant="secondary"
                   size="sm"
                   onClick={exportPdf}
-                  disabled={!r}
+                  disabled={!r || exportingPdf}
+                  loading={exportingPdf}
                   icon={<Download size={16} />}
                 >
                   {t('reports.exportPdf')}
@@ -399,7 +493,6 @@ export default function AdminReports() {
             ) : undefined
           }
         />
-        <ErrorBox error={error} />
 
         <Tabs
           value={reportTab}
@@ -409,15 +502,29 @@ export default function AdminReports() {
         />
 
         {reportTab === 'overview' && caps.overview ? (
-          <OverviewReportPanel period={periodState} />
+          <OverviewReportPanel
+            period={periodState}
+            onOpenMember={caps.member_reports_global ? handleOpenMember : undefined}
+            onOpenEventsGroup={caps.events ? handleOpenEventsGroup : undefined}
+          />
         ) : reportTab === 'events' && caps.events ? (
-          <EventsReportPanel period={periodState} />
+          <EventsReportPanel
+            period={periodState}
+            groupId={groupId}
+            onGroupChange={setGroupId}
+          />
         ) : reportTab === 'demand' && caps.demand ? (
-          <DemandReportPanel period={periodState} />
+          <DemandReportPanel
+            period={periodState}
+            groupId={groupId}
+            onGroupChange={setGroupId}
+          />
         ) : reportTab === 'finance' && caps.finance ? (
           <FinanceReportPanel period={periodState} />
         ) : (
           <>
+            <ErrorBox error={error || exportErr} />
+
             {!caps.member_reports_global && (
               <Notice tone="info">{t('reports.ownReportOnlyNotice')}</Notice>
             )}
@@ -435,7 +542,7 @@ export default function AdminReports() {
                 <select
                   className="input"
                   value={range}
-                  onChange={(e) => setRange(e.target.value as typeof range)}
+                  onChange={(e) => periodState.onRangeChange(e.target.value as typeof range)}
                 >
                   <option value="monthly">{t('reports.rangeMonthly')}</option>
                   <option value="quarterly">{t('reports.rangeQuarterly')}</option>
@@ -460,7 +567,11 @@ export default function AdminReports() {
                       className="input"
                       type="search"
                       value={memberQuery}
-                      placeholder={t('reports.findMemberHint')}
+                      placeholder={
+                        can('admin_members')
+                          ? t('reports.findMemberHint')
+                          : t('reports.findMemberNameOnly')
+                      }
                       onChange={(e) => setMemberQuery(e.target.value)}
                     />
                   </Field>
@@ -576,218 +687,222 @@ export default function AdminReports() {
                   </Card>
                 )}
 
-                <div className={r.visible_sections?.events !== false ? 'grid cols-2' : 'stack'}>
-                  {r.visible_sections?.events !== false && (
-                    <Card className="stack-sm">
-                      <div>
-                        <h3>{t('reports.events')}</h3>
-                        {r.by_kind.length > 0 ? (
-                          <p className="bold">
-                            {r.by_kind
-                              .map((k) => `${ft(EVENT_KIND[k.kind]?.label ?? k.kind)} × ${k.count}`)
-                              .join(' · ')}
-                          </p>
-                        ) : (
-                          <p className="muted">{t('reports.noEvents', { y, m })}</p>
-                        )}
-                      </div>
-                      {r.events.length > 0 ? (
-                        <div className="list">
-                          {r.events.map((e) => (
-                            <Link key={e.id} to={`/events/${e.id}`} className="item">
-                              <span className="grow min-w-0 ellipsis">{e.title}</span>
-                              <span className="muted small">{fmtDateTime(e.starts_at, ft)}</span>
-                            </Link>
-                          ))}
+                {(r.visible_sections?.events !== false || showBadges) && (
+                  <div className={r.visible_sections?.events !== false && showBadges ? 'grid cols-2' : 'stack'}>
+                    {r.visible_sections?.events !== false && (
+                      <Card className="stack-sm">
+                        <div>
+                          <h3>{t('reports.events')}</h3>
+                          {r.by_kind.length > 0 ? (
+                            <p className="bold">
+                              {r.by_kind
+                                .map((k) => `${ft(EVENT_KIND[k.kind]?.label ?? k.kind)} × ${k.count}`)
+                                .join(' · ')}
+                            </p>
+                          ) : (
+                            <p className="muted">{emptyEventsText}</p>
+                          )}
                         </div>
-                      ) : (
-                        <EmptyState title={t('reports.noEvents', { y, m })} />
-                      )}
-                      <p className="muted tiny">{t('reports.note')}</p>
-                    </Card>
-                  )}
-
-                  <Card className="stack">
-                    <div>
-                      <h3 className="row nowrap gap-sm">
-                        <Award size={20} aria-hidden="true" />
-                        <span>{t('reports.badges')}</span>
-                      </h3>
-                      <p className="muted small">{t('reports.badgesDesc')}</p>
-                    </div>
-
-                    {r.badges.length === 0 ? (
-                      <p className="muted">{t('reports.noBadges')}</p>
-                    ) : (
-                      (() => {
-                        const hasCategories = r.badges.some((b) => !!b.category);
-                        const visibleBadges =
-                          !hasCategories || badgeFilter === 'all'
-                            ? r.badges
-                            : r.badges.filter((b) => b.category === badgeFilter);
-
-                        const renderBadgeCard = (b: Badge) => {
-                          const percent =
-                            b.target > 0
-                              ? Math.min(100, Math.round((b.progress / b.target) * 100))
-                              : 100;
-                          const isAnim = isAnimatedBadgeIcon(b.icon);
-                          const catClass = b.category ? `badge-cat-${b.category}` : '';
-                          const tier = resolveBadgeTier(b);
-                          const hasTiers = Array.isArray(b.tiers) && b.tiers.length > 0;
-                          const progressText =
-                            tier === 'platinum' ? (
-                              <span className="row nowrap gap-xs text-primary bold">
-                                <CheckCircle2 size={14} aria-hidden="true" />
-                                <span>{t('reports.badgeMaxTier')}</span>
-                              </span>
-                            ) : b.next_tier && b.next_target != null ? (
-                              t('reports.badgeNextTier', {
-                                tier: t(`reports.badgeTier_${b.next_tier}`),
-                                progress: b.progress,
-                                target: b.next_target,
-                              })
-                            ) : b.earned ? (
-                              <span className="row nowrap gap-xs text-primary bold">
-                                <CheckCircle2 size={14} aria-hidden="true" />
-                                <span>{t('reports.earned')}</span>
-                              </span>
-                            ) : (
-                              `${Math.min(b.progress, b.target)}/${b.target}`
-                            );
-                          return (
-                            <div key={b.key} className="card flat tight badge-card">
-                              <div
-                                className={`badge-char ${b.earned ? 'earned' : ''} ${isAnim ? 'badge-animated' : ''} ${catClass} badge-tier-${tier}`.trim()}
-                                aria-hidden="true"
-                              >
-                                <BadgeIcon badge={b} fallbackChar={badgeChar(b)} />
-                                {tier !== 'none' && (
-                                  <span className={`badge-tier-crest badge-tier-${tier}`}>
-                                    {BADGE_TIER_ROMAN[tier]}
-                                  </span>
-                                )}
-                              </div>
-                              <div className="grow min-w-0 stack-xs">
-                                <div className="row between nowrap gap-xs">
-                                  <div className="row nowrap gap-xs items-center min-w-0">
-                                    <strong className="ellipsis">{badgeName(b)}</strong>
-                                    {tier !== 'none' && (
-                                      <span className={`badge-tier-pill badge-tier-${tier}`}>
-                                        {t(`reports.badgeTier_${tier}`)}
-                                      </span>
-                                    )}
-                                    {caps.member_badge_icon_edit && (
-                                      <Button
-                                        variant="ghost"
-                                        size="sm"
-                                        className="btn-icon-tight"
-                                        onClick={() => {
-                                          setEditingBadge({
-                                            badge: b,
-                                            userId: r.user.id,
-                                            userName: r.user.name,
-                                          });
-                                          setSelectedIcon(b.icon ?? '');
-                                          setCustomIcon(
-                                            ACHIEVEMENT_ICONS[b.icon ?? ''] ? '' : (b.icon ?? ''),
-                                          );
-                                        }}
-                                        title={t('reports.changeBadgeIcon')}
-                                        aria-label={`${t('reports.changeBadgeIcon')} - ${badgeName(b)}`}
-                                      >
-                                        <Pencil size={13} aria-hidden="true" />
-                                      </Button>
-                                    )}
-                                  </div>
-                                  <span className="small muted nowrap">{progressText}</span>
-                                </div>
-                                <div className={`bar badge-tier-${tier}`}>
-                                  <div style={{ width: `${percent}%` }} />
-                                </div>
-                                {hasTiers && (
-                                  <div className="badge-tier-steps">
-                                    {b.tiers!.map((step) => {
-                                      const isNext = !step.reached && b.next_tier === step.tier;
-                                      return (
-                                        <span
-                                          key={step.tier}
-                                          className={`badge-tier-step badge-tier-${step.tier}${step.reached ? ' reached' : ''}${isNext ? ' next' : ''}`}
-                                        >
-                                          {t(`reports.badgeTier_${step.tier}`)} {step.target}
-                                        </span>
-                                      );
-                                    })}
-                                  </div>
-                                )}
-                                <div className="muted tiny">{badgeRule(b)}</div>
-                              </div>
-                            </div>
-                          );
-                        };
-
-                        const categories: BadgeCategory[] = ['member', 'driver', 'traffic_lead'];
-                        const filterOptions: { value: 'all' | BadgeCategory; label: string }[] = [
-                          { value: 'all', label: t('reports.badgeFilterAll') },
-                          { value: 'member', label: t('reports.badgeRole_member') },
-                          { value: 'driver', label: t('reports.badgeRole_driver') },
-                          { value: 'traffic_lead', label: t('reports.badgeRole_traffic_lead') },
-                        ];
-
-                        return (
-                          <div className="stack-sm">
-                            {hasCategories && (
-                              <div
-                                className="badge-filter-row"
-                                role="tablist"
-                                aria-label={t('reports.badges')}
-                              >
-                                {filterOptions.map((opt) => (
-                                  <button
-                                    key={opt.value}
-                                    type="button"
-                                    role="tab"
-                                    aria-selected={badgeFilter === opt.value}
-                                    className={`chip${badgeFilter === opt.value ? ' on' : ''}`}
-                                    onClick={() => setBadgeFilter(opt.value)}
-                                  >
-                                    {opt.label}
-                                  </button>
-                                ))}
-                              </div>
-                            )}
-                            {hasCategories ? (
-                              categories.map((cat) => {
-                                const group = visibleBadges.filter((b) => b.category === cat);
-                                if (group.length === 0) return null;
-                                const earnedCount = group.filter((b) => b.earned).length;
-                                return (
-                                  <div key={cat} className="stack-xs">
-                                    <div className="badge-group-header">
-                                      <span
-                                        className={`badge-role-dot badge-cat-${cat}`}
-                                        aria-hidden="true"
-                                      />
-                                      <span className="bold small">
-                                        {t(`reports.badgeRole_${cat}`)}
-                                      </span>
-                                      <span className="muted tiny">
-                                        {earnedCount}/{group.length}
-                                      </span>
-                                    </div>
-                                    <div className="stack-sm">{group.map(renderBadgeCard)}</div>
-                                  </div>
-                                );
-                              })
-                            ) : (
-                              <div className="stack-sm">{visibleBadges.map(renderBadgeCard)}</div>
-                            )}
+                        {r.events.length > 0 ? (
+                          <div className="list">
+                            {r.events.map((e) => (
+                              <Link key={e.id} to={`/events/${e.id}`} className="item">
+                                <span className="grow min-w-0 ellipsis">{e.title}</span>
+                                <span className="muted small">{fmtDateTime(e.starts_at, ft)}</span>
+                              </Link>
+                            ))}
                           </div>
-                        );
-                      })()
+                        ) : (
+                          <EmptyState title={emptyEventsText} />
+                        )}
+                        <p className="muted tiny">{t('reports.note')}</p>
+                      </Card>
                     )}
-                  </Card>
-                </div>
+
+                    {showBadges && (
+                      <Card className="stack">
+                        <div>
+                          <h3 className="row nowrap gap-sm">
+                            <Award size={20} aria-hidden="true" />
+                            <span>{t('reports.badges')}</span>
+                          </h3>
+                          <p className="muted small">{t('reports.badgesDesc')}</p>
+                        </div>
+
+                        {r.badges.length === 0 ? (
+                          <p className="muted">{t('reports.noBadges')}</p>
+                        ) : (
+                          (() => {
+                            const hasCategories = r.badges.some((b) => !!b.category);
+                            const visibleBadges =
+                              !hasCategories || badgeFilter === 'all'
+                                ? r.badges
+                                : r.badges.filter((b) => b.category === badgeFilter);
+
+                            const renderBadgeCard = (b: Badge) => {
+                              const percent =
+                                b.target > 0
+                                  ? Math.min(100, Math.round((b.progress / b.target) * 100))
+                                  : 100;
+                              const isAnim = isAnimatedBadgeIcon(b.icon);
+                              const catClass = b.category ? `badge-cat-${b.category}` : '';
+                              const tier = resolveBadgeTier(b);
+                              const hasTiers = Array.isArray(b.tiers) && b.tiers.length > 0;
+                              const progressText =
+                                tier === 'platinum' ? (
+                                  <span className="row nowrap gap-xs text-primary bold">
+                                    <CheckCircle2 size={14} aria-hidden="true" />
+                                    <span>{t('reports.badgeMaxTier')}</span>
+                                  </span>
+                                ) : b.next_tier && b.next_target != null ? (
+                                  t('reports.badgeNextTier', {
+                                    tier: t(`reports.badgeTier_${b.next_tier}`),
+                                    progress: b.progress,
+                                    target: b.next_target,
+                                  })
+                                ) : b.earned ? (
+                                  <span className="row nowrap gap-xs text-primary bold">
+                                    <CheckCircle2 size={14} aria-hidden="true" />
+                                    <span>{t('reports.earned')}</span>
+                                  </span>
+                                ) : (
+                                  `${Math.min(b.progress, b.target)}/${b.target}`
+                                );
+                              return (
+                                <div key={b.key} className="card flat tight badge-card">
+                                  <div
+                                    className={`badge-char ${b.earned ? 'earned' : ''} ${isAnim ? 'badge-animated' : ''} ${catClass} badge-tier-${tier}`.trim()}
+                                    aria-hidden="true"
+                                  >
+                                    <BadgeIcon badge={b} fallbackChar={badgeChar(b)} />
+                                    {tier !== 'none' && (
+                                      <span className={`badge-tier-crest badge-tier-${tier}`}>
+                                        {BADGE_TIER_ROMAN[tier]}
+                                      </span>
+                                    )}
+                                  </div>
+                                  <div className="grow min-w-0 stack-xs">
+                                    <div className="row between nowrap gap-xs">
+                                      <div className="row nowrap gap-xs items-center min-w-0">
+                                        <strong className="ellipsis">{badgeName(b)}</strong>
+                                        {tier !== 'none' && (
+                                          <span className={`badge-tier-pill badge-tier-${tier}`}>
+                                            {t(`reports.badgeTier_${tier}`)}
+                                          </span>
+                                        )}
+                                        {caps.member_badge_icon_edit && (
+                                          <Button
+                                            variant="ghost"
+                                            size="sm"
+                                            className="btn-icon-tight"
+                                            onClick={() => {
+                                              setEditingBadge({
+                                                badge: b,
+                                                userId: r.user.id,
+                                                userName: r.user.name,
+                                              });
+                                              setSelectedIcon(b.icon ?? '');
+                                              setCustomIcon(
+                                                ACHIEVEMENT_ICONS[b.icon ?? ''] ? '' : (b.icon ?? ''),
+                                              );
+                                            }}
+                                            title={t('reports.changeBadgeIcon')}
+                                            aria-label={`${t('reports.changeBadgeIcon')} - ${badgeName(b)}`}
+                                          >
+                                            <Pencil size={13} aria-hidden="true" />
+                                          </Button>
+                                        )}
+                                      </div>
+                                      <span className="small muted nowrap">{progressText}</span>
+                                    </div>
+                                    <div className={`bar badge-tier-${tier}`}>
+                                      <div style={{ width: `${percent}%` }} />
+                                    </div>
+                                    {hasTiers && (
+                                      <div className="badge-tier-steps">
+                                        {b.tiers!.map((step) => {
+                                          const isNext = !step.reached && b.next_tier === step.tier;
+                                          return (
+                                            <span
+                                              key={step.tier}
+                                              className={`badge-tier-step badge-tier-${step.tier}${step.reached ? ' reached' : ''}${isNext ? ' next' : ''}`}
+                                            >
+                                              {t(`reports.badgeTier_${step.tier}`)} {step.target}
+                                            </span>
+                                          );
+                                        })}
+                                      </div>
+                                    )}
+                                    <div className="muted tiny">{badgeRule(b)}</div>
+                                  </div>
+                                </div>
+                              );
+                            };
+
+                            const categories: BadgeCategory[] = ['member', 'driver', 'traffic_lead'];
+                            const filterOptions: { value: 'all' | BadgeCategory; label: string }[] = [
+                              { value: 'all', label: t('reports.badgeFilterAll') },
+                              { value: 'member', label: t('reports.badgeRole_member') },
+                              { value: 'driver', label: t('reports.badgeRole_driver') },
+                              { value: 'traffic_lead', label: t('reports.badgeRole_traffic_lead') },
+                            ];
+
+                            return (
+                              <div className="stack-sm">
+                                {hasCategories && (
+                                  <div
+                                    className="badge-filter-row"
+                                    role="tablist"
+                                    aria-label={t('reports.badges')}
+                                  >
+                                    {filterOptions.map((opt) => (
+                                      <button
+                                        key={opt.value}
+                                        type="button"
+                                        role="tab"
+                                        aria-selected={badgeFilter === opt.value}
+                                        className={`chip${badgeFilter === opt.value ? ' on' : ''}`}
+                                        onClick={() => setBadgeFilter(opt.value)}
+                                      >
+                                        {opt.label}
+                                      </button>
+                                    ))}
+                                  </div>
+                                )}
+                                {hasCategories ? (
+                                  categories.map((cat) => {
+                                    const group = visibleBadges.filter((b) => b.category === cat);
+                                    if (group.length === 0) return null;
+                                    const earnedCount = group.filter((b) => b.earned).length;
+                                    return (
+                                      <div key={cat} className="stack-xs">
+                                        <div className="badge-group-header">
+                                          <span
+                                            className={`badge-role-dot badge-cat-${cat}`}
+                                            aria-hidden="true"
+                                          />
+                                          <span className="bold small">
+                                            {t(`reports.badgeRole_${cat}`)}
+                                          </span>
+                                          <span className="muted tiny">
+                                            {earnedCount}/{group.length}
+                                          </span>
+                                        </div>
+                                        <div className="stack-sm">{group.map(renderBadgeCard)}</div>
+                                      </div>
+                                    );
+                                  })
+                                ) : (
+                                  <div className="stack-sm">{visibleBadges.map(renderBadgeCard)}</div>
+                                )}
+                              </div>
+                            );
+                          })()
+                        )}
+                      </Card>
+                    )}
+                  </div>
+                )}
               </>
             )}
           </>

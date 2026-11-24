@@ -1,6 +1,9 @@
 export {};
 
 declare global {
+  /** Unique per production build; compared with /version.json to detect a new deploy. */
+  const __APP_BUILD_ID__: string;
+
   interface DetectedBarcode {
     readonly rawValue: string;
     readonly format: string;

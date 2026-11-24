@@ -21,4 +21,7 @@ export default {
   preview: 'Preview: Tue 8:30 AM · North gate',
   quickTextSize: 'Text size ({size})',
   switchLang: 'Switch language',
+  updateAvailable: 'A new version of Grace Ride is ready.',
+  updateNow: 'Update now',
+  updateLater: 'Later',
 };

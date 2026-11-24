@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
 import QRCode from 'qrcode';
-import { Copy, Maximize2, Minimize2, RefreshCw } from 'lucide-react';
+import { Copy, Maximize2, Minimize2, RefreshCw, Share2 } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import { post, useApi } from '../../api';
 import {
@@ -11,6 +11,8 @@ import {
   useConfirm,
 } from '../ui';
 import { fmtDateTime, useFormatT } from '../../format';
+import { useWakeLock } from '../../hooks/useWakeLock';
+import { canNativeShare, shareOrFallback } from '../../webShare';
 import type { EventItem } from '../../pages/Events';
 
 export function AttendanceQrModal({
@@ -29,6 +31,7 @@ export function AttendanceQrModal({
   const [qrUrl, setQrUrl] = useState<string | null>(null);
   const [fullscreen, setFullscreen] = useState(false);
   const [copied, setCopied] = useState(false);
+  useWakeLock(true);
 
   const checkinUrl = `${window.location.origin}/events/${event.id}/checkin${
     event.checkin_code ? `?code=${encodeURIComponent(event.checkin_code)}` : ''
@@ -127,6 +130,18 @@ export function AttendanceQrModal({
           <Button variant="secondary" size="sm" icon={<Copy size={16} />} onClick={handleCopy}>
             {copied ? t('qrLinkCopied') : t('qrCopyLink')}
           </Button>
+          {canNativeShare() && (
+            <Button
+              variant="secondary"
+              size="sm"
+              icon={<Share2 size={16} />}
+              onClick={() =>
+                void shareOrFallback({ title: event.title, url: checkinUrl }, () => void handleCopy())
+              }
+            >
+              {t('qrShareLink')}
+            </Button>
+          )}
           <Button
             variant="ghost"
             size="sm"
@@ -193,6 +208,7 @@ export function MemberPassQrModal({
   const { t } = useTranslation('eventDetail');
   const [qrUrl, setQrUrl] = useState<string | null>(null);
   const payload = `GRPASS:${event.id}:${passCode}`;
+  useWakeLock(true);
 
   useEffect(() => {
     QRCode.toDataURL(payload, { margin: 1, width: 240, errorCorrectionLevel: 'M' })

@@ -84,6 +84,7 @@ export default {
   qrExitFullscreen: 'Exit full screen',
   qrCopyLink: 'Copy check-in link',
   qrLinkCopied: 'Check-in link copied to clipboard',
+  qrShareLink: 'Share check-in link',
   qrResetCode: 'Reset QR code',
   qrResetConfirm: 'Resetting the check-in code will invalidate any previously displayed or printed QR code. Continue?',
   qrResetDone: 'Check-in code refreshed',

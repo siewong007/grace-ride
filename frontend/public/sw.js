@@ -1,4 +1,4 @@
-const SHELL_CACHE = 'grace-ride-shell-v4';
+const SHELL_CACHE = 'grace-ride-shell-v5';
 const STATIC_ASSETS = [
   '/',
   '/index.html',
@@ -55,7 +55,9 @@ self.addEventListener('install', (event) => {
     caches
       .open(SHELL_CACHE)
       .then((cache) => cache.addAll(STATIC_ASSETS))
-      .then(() => self.skipWaiting()),
+      // First install takes over at once; an update waits until the user taps
+      // "Update now" (SKIP_WAITING below) so the page never changes under them.
+      .then(() => (self.registration.active ? undefined : self.skipWaiting())),
   );
 });
 
@@ -186,6 +188,10 @@ self.addEventListener('pushsubscriptionchange', (event) => {
 
 self.addEventListener('message', (event) => {
   const msg = event.data;
+  if (msg && msg.type === 'SKIP_WAITING') {
+    self.skipWaiting();
+    return;
+  }
   if (msg && msg.type === 'SHOW_NOTIFICATION') {
     event.waitUntil(
       self.registration.showNotification(msg.title || 'Grace Ride', {

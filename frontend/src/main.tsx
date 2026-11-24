@@ -5,7 +5,8 @@ import * as Sentry from '@sentry/react';
 import App from './App';
 import { AuthProvider } from './auth';
 import { ConfirmProvider, ToastProvider } from './components/ui';
-import { ErrorBoundary, OfflineBanner, SkipLink } from './components/AppChrome';
+import { ErrorBoundary, OfflineBanner, SkipLink, UpdateBanner } from './components/AppChrome';
+import { startUpdateWatch } from './appUpdate';
 import { hideSplash } from './splash';
 import './i18n';
 import './prefs';
@@ -62,9 +63,12 @@ if (typeof window !== 'undefined') {
   }, 15_000);
 }
 
-if (typeof window !== 'undefined' && 'serviceWorker' in navigator && import.meta.env.PROD) {
+if (typeof window !== 'undefined' && import.meta.env.PROD) {
   window.addEventListener('load', () => {
-    navigator.serviceWorker.register('/sw.js').catch(() => {});
+    startUpdateWatch();
+    // Ask the browser not to evict today's offline ride snapshot and queued trip actions
+    // under storage pressure (granted silently for installed PWAs / engaged sites).
+    void navigator.storage?.persist?.().catch(() => false);
   });
 }
 
@@ -74,6 +78,7 @@ ReactDOM.createRoot(document.getElementById('root')!).render(
       <BrowserRouter>
         <SkipLink />
         <OfflineBanner />
+        <UpdateBanner />
         <AuthProvider>
           <ToastProvider>
             <ConfirmProvider>

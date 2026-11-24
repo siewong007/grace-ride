@@ -6,6 +6,7 @@ import { useTranslation } from 'react-i18next';
 import { Copy, Share2, UserPlus } from 'lucide-react';
 import { post, useApi } from '../api';
 import { Button, ErrorBox, Field, Modal, Pill, useAction, useConfirm, useToast } from './ui';
+import { canNativeShare, openWhatsApp, shareOrFallback } from '../webShare';
 import { fmtDateTime, parseLocal, useFormatT } from '../format';
 
 interface VisitorPass {
@@ -194,9 +195,9 @@ function SendLink({ event, name, url, onClose }: { event: string; name: string; 
           <Button
             variant="primary"
             icon={<Share2 size={18} />}
-            onClick={() => window.open(`https://wa.me/?text=${encodeURIComponent(text)}`, '_blank', 'noopener,noreferrer')}
+            onClick={() => void shareOrFallback({ text }, () => openWhatsApp(text))}
           >
-            {t('share')}
+            {canNativeShare() ? t('shareNative') : t('share')}
           </Button>
           <Button
             variant="secondary"

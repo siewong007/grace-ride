@@ -23,7 +23,7 @@ pub(crate) use family::FAMILY_CAP;
 pub(crate) use guides::any_admin_page;
 pub(crate) use push::telegram_webhook_secret;
 pub use reports::compute_badges;
-pub(crate) use reports::parse_report_month;
+pub(crate) use reports::{parse_report_month, BADGE_KEYS};
 
 /// Escape LIKE wildcards so a search term is matched literally.
 pub(super) fn like_pattern(q: &str) -> String {

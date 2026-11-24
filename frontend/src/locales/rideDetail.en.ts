@@ -149,6 +149,7 @@ export default {
   chatBtn: 'Chat',
   addToCalendar: 'Add to calendar',
   shareWhatsApp: 'Share via WhatsApp',
+  shareNative: 'Share…',
   shareRideText: 'Grace Ride Details:\nTime: {time}\nPickup: {pickup}\nDestination: {dest}\nDriver: {driver}',
   readinessTitle: 'Trip Readiness Check',
   readinessPrompt: 'Please confirm your status so your driver can coordinate:',

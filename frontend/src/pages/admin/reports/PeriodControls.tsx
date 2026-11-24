@@ -15,9 +15,25 @@ export interface PeriodFilterState {
   onToChange: (d: string) => void;
 }
 
-export function buildPeriodQuery(p: PeriodFilterState): string {
+export interface GroupFilterOption {
+  id: number;
+  name: string;
+  is_all?: boolean;
+  is_visitor?: boolean;
+}
+
+export function isPeriodRangeInvalid(p: PeriodFilterState): 'order' | 'span' | null {
+  if (!p.useCustom || !p.fromDate || !p.toDate) return null;
+  if (p.toDate < p.fromDate) return 'order';
+  const diffMs = Date.parse(`${p.toDate}T00:00:00Z`) - Date.parse(`${p.fromDate}T00:00:00Z`);
+  if (Number.isFinite(diffMs) && diffMs / 86_400_000 > 366) return 'span';
+  return null;
+}
+
+export function buildPeriodQuery(p: PeriodFilterState): string | null {
+  if (isPeriodRangeInvalid(p)) return null;
   const params = new URLSearchParams();
-  if (p.useCustom && p.fromDate && p.toDate && p.toDate >= p.fromDate) {
+  if (p.useCustom && p.fromDate && p.toDate) {
     params.set('from', p.fromDate);
     params.set('to', p.toDate);
   } else {
@@ -25,6 +41,70 @@ export function buildPeriodQuery(p: PeriodFilterState): string {
     params.set('range', p.range);
   }
   return params.toString();
+}
+
+export function DeltaPill({
+  delta,
+  unit = '',
+  invertGood = false,
+  formatAbs,
+  prevPeriod,
+}: {
+  delta: number | null | undefined;
+  unit?: string;
+  invertGood?: boolean;
+  formatAbs?: (absVal: number) => string;
+  prevPeriod?: string;
+}) {
+  const { t } = useTranslation('admin');
+  if (delta == null) return null;
+  const absText = formatAbs ? formatAbs(Math.abs(delta)) : `${Math.abs(delta)}${unit}`;
+  const label = delta > 0 ? `+${absText}` : delta < 0 ? `-${absText}` : t('reports.deltaFlat');
+  const tone =
+    delta === 0
+      ? 'neutral'
+      : (delta > 0) !== invertGood
+      ? 'success'
+      : 'danger';
+  return (
+    <span
+      className="report-delta"
+      title={prevPeriod ? t('reports.vsPrevPeriod', { period: prevPeriod }) : undefined}
+    >
+      <Pill tone={tone}>{label}</Pill>
+    </span>
+  );
+}
+
+export function MiniSeriesChart({
+  title,
+  items,
+  formatVal,
+}: {
+  title: string;
+  items: { month: string; value: number }[];
+  formatVal?: (v: number) => string;
+}) {
+  const max = Math.max(1, ...items.map((i) => i.value));
+  return (
+    <Card className="stack-sm">
+      <h4>{title}</h4>
+      <div className="report-chart" role="img" aria-label={title}>
+        {items.map((item) => {
+          const pct = Math.max(4, Math.round((item.value / max) * 100));
+          return (
+            <div key={item.month} className="report-chart-col">
+              <span className="muted tiny">{formatVal ? formatVal(item.value) : item.value}</span>
+              <div className="report-chart-track">
+                <div className="report-chart-fill" style={{ height: `${pct}%` }} />
+              </div>
+              <span className="muted tiny">{item.month.slice(5)}</span>
+            </div>
+          );
+        })}
+      </div>
+    </Card>
+  );
 }
 
 export function PeriodControls({
@@ -39,7 +119,7 @@ export function PeriodControls({
   actions?: ReactNode;
 }) {
   const { t } = useTranslation('admin');
-  const rangeInvalid = period.useCustom && period.fromDate && period.toDate && period.toDate < period.fromDate;
+  const invalidReason = isPeriodRangeInvalid(period);
 
   return (
     <Card className="stack-sm">
@@ -116,7 +196,12 @@ export function PeriodControls({
         )}
         {extraFilter}
       </div>
-      {rangeInvalid && <p className="muted tiny">{t('reports.invalidDateRange')}</p>}
+      {invalidReason === 'order' && (
+        <p className="muted tiny">{t('reports.invalidDateRange')}</p>
+      )}
+      {invalidReason === 'span' && (
+        <p className="muted tiny">{t('reports.customRangeTooLong')}</p>
+      )}
     </Card>
   );
 }

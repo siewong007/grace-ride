@@ -51,9 +51,48 @@ pub(crate) fn parse_report_month(raw: &str) -> Option<(i32, u32)> {
     Some((year, month))
 }
 
+pub(crate) const BADGE_KEYS: &[&str] = &[
+    "member_first_journey",
+    "member_fellowship",
+    "member_punctual",
+    "member_warm_welcome",
+    "night",
+    "regular",
+    "carpool",
+    "driver_helping_hands",
+    "traffic_dispatcher",
+    "traffic_planner",
+    "traffic_marshal",
+    "traffic_guardian",
+];
+
+#[derive(Debug, Clone, Copy)]
+pub(crate) struct BadgeScope {
+    pub events: bool,
+    pub passenger_rides: bool,
+    pub driving: bool,
+    pub traffic_lead: bool,
+}
+
+impl BadgeScope {
+    pub const fn all() -> Self {
+        Self {
+            events: true,
+            passenger_rides: true,
+            driving: true,
+            traffic_lead: true,
+        }
+    }
+
+    pub const fn any(self) -> bool {
+        self.events || self.passenger_rides || self.driving || self.traffic_lead
+    }
+}
+
 struct BadgeDef {
     key: &'static str,
     category: &'static str,
+    visible: bool,
     role_match: bool,
     ch_zh: &'static str,
     ch_en: &'static str,
@@ -128,6 +167,19 @@ pub(crate) fn resolve_badge_tier(progress: i64, tiers: [i64; 4]) -> ResolvedBadg
 }
 
 pub async fn compute_badges(st: &AppState, user_id: i64, lang: Lang) -> AppResult<Vec<Value>> {
+    compute_badges_scoped(st, user_id, lang, BadgeScope::all()).await
+}
+
+pub(crate) async fn compute_badges_scoped(
+    st: &AppState,
+    user_id: i64,
+    lang: Lang,
+    scope: BadgeScope,
+) -> AppResult<Vec<Value>> {
+    if !scope.any() {
+        return Ok(vec![]);
+    }
+
     let (opt_out, carpool): (i64, i64) =
         sqlx::query_as("SELECT badges_opt_out, carpool_enabled FROM users WHERE id=$1")
             .bind(user_id)
@@ -137,100 +189,89 @@ pub async fn compute_badges(st: &AppState, user_id: i64, lang: Lang) -> AppResul
         return Ok(vec![]);
     }
 
-    let roles: Vec<String> =
+    let roles: Vec<String> = if scope.driving || scope.traffic_lead {
         sqlx::query_scalar("SELECT role_key FROM member_roles WHERE user_id = $1")
             .bind(user_id)
             .fetch_all(&st.db)
-            .await?;
+            .await?
+    } else {
+        Vec::new()
+    };
 
-    // Normal Member metrics
-    let (member_rides,): (i64,) =
-        sqlx::query_as("SELECT COUNT(*) FROM rides WHERE passenger_id=$1 AND status='completed'")
+    // Normal Member metrics (consolidated into 1 query, gated by scope)
+    let (member_rides, member_events, member_ready, member_care): (i64, i64, i64, i64) = if scope
+        .events
+        || scope.passenger_rides
+    {
+        sqlx::query_as(
+                "SELECT
+                    CASE WHEN $2 THEN COALESCE((SELECT COUNT(*) FROM rides WHERE passenger_id=$1 AND status='completed'), 0) ELSE 0 END::BIGINT,
+                    CASE WHEN $3 THEN COALESCE((SELECT COUNT(*) FROM event_signups s JOIN events e ON e.id = s.event_id WHERE s.user_id=$1 AND s.attended=1 AND s.status <> 'cancelled' AND e.status NOT IN ('draft', 'cancelled')), 0) ELSE 0 END::BIGINT,
+                    CASE WHEN $2 THEN COALESCE((SELECT COUNT(*) FROM rides WHERE passenger_id=$1 AND readiness_status='ready'), 0) ELSE 0 END::BIGINT,
+                    CASE WHEN $2 THEN (COALESCE((SELECT COUNT(*) FROM rides WHERE passenger_id=$1 AND is_proxy=1 AND status <> 'cancelled'), 0) + COALESCE((SELECT COUNT(*) FROM visitor_passes WHERE host_id=$1), 0)) ELSE 0 END::BIGINT",
+            )
             .bind(user_id)
+            .bind(scope.passenger_rides)
+            .bind(scope.events)
             .fetch_one(&st.db)
-            .await?;
-    let (member_events,): (i64,) =
-        sqlx::query_as("SELECT COUNT(*) FROM event_signups WHERE user_id=$1 AND attended=1")
-            .bind(user_id)
-            .fetch_one(&st.db)
-            .await?;
-    let (member_ready,): (i64,) = sqlx::query_as(
-        "SELECT COUNT(*) FROM rides WHERE passenger_id=$1 AND readiness_status='ready'",
-    )
-    .bind(user_id)
-    .fetch_one(&st.db)
-    .await?;
-    let (member_care,): (i64,) = sqlx::query_as(
-        "SELECT ((SELECT COUNT(*) FROM rides WHERE passenger_id=$1 AND is_proxy=1 AND status <> 'cancelled') + (SELECT COUNT(*) FROM visitor_passes WHERE host_id=$1))::BIGINT",
-    )
-    .bind(user_id)
-    .fetch_one(&st.db)
-    .await?;
+            .await?
+    } else {
+        (0, 0, 0, 0)
+    };
 
-    // Driver metrics
-    let (night,): (i64,) = sqlx::query_as(
-        "SELECT COUNT(*) FROM rides WHERE driver_id=$1 AND status='completed' AND (substr(pickup_at,12,2) >= '21' OR substr(pickup_at,12,2) < '05')",
-    )
-    .bind(user_id)
-    .fetch_one(&st.db)
-    .await?;
-    let (months,): (i64,) = sqlx::query_as(
-        "SELECT COUNT(DISTINCT substr(pickup_at,1,7)) FROM rides WHERE driver_id=$1 AND status='completed' AND pickup_at >= $2",
-    )
-    .bind(user_id)
-    .bind(
-        crate::util::today_local()
+    // Driver metrics (consolidated into 1 query)
+    let (total, night, months, shared): (i64, i64, i64, i64) = if scope.driving {
+        let cutoff = crate::util::today_local()
             .checked_sub_months(chrono::Months::new(12))
             .unwrap_or_default()
             .format("%Y-%m-%d")
-            .to_string(),
-    )
-    .fetch_one(&st.db)
-    .await?;
-    let (total,): (i64,) =
-        sqlx::query_as("SELECT COUNT(*) FROM rides WHERE driver_id=$1 AND status='completed'")
+            .to_string();
+        sqlx::query_as(
+            "SELECT
+                COUNT(*)::BIGINT,
+                COUNT(*) FILTER (WHERE substr(pickup_at,12,2) >= '21' OR substr(pickup_at,12,2) < '05')::BIGINT,
+                COUNT(DISTINCT substr(pickup_at,1,7)) FILTER (WHERE pickup_at >= $2)::BIGINT,
+                COALESCE((SELECT COUNT(*) FROM (SELECT trip_id FROM rides WHERE driver_id=$1 AND status='completed' AND trip_id IS NOT NULL GROUP BY trip_id HAVING COUNT(*) >= 2) t), 0)::BIGINT
+             FROM rides
+             WHERE driver_id=$1 AND status='completed'",
+        )
+        .bind(user_id)
+        .bind(&cutoff)
+        .fetch_one(&st.db)
+        .await?
+    } else {
+        (0, 0, 0, 0)
+    };
+
+    // Traffic Lead metrics (consolidated into 1 query)
+    let (tl_approved, tl_plans, tl_assigns, tl_steward): (i64, i64, i64, i64) = if scope
+        .traffic_lead
+    {
+        sqlx::query_as(
+                "SELECT
+                    COALESCE((SELECT COUNT(*) FROM rides WHERE approved_by=$1), 0)::BIGINT,
+                    (COALESCE((SELECT COUNT(*) FROM event_plan_drafts WHERE reviewed_by=$1 AND status='approved'), 0)
+                     + COALESCE((SELECT COUNT(*) FROM ride_change_drafts WHERE reviewed_by=$1 AND status='approved'), 0))::BIGINT,
+                    COALESCE((SELECT COUNT(*) FROM audit_logs WHERE actor_id=$1 AND action='ride.plan_assign'), 0)::BIGINT,
+                    (COALESCE((SELECT COUNT(*) FROM help_tickets WHERE assignee_id=$1 AND status IN ('answered', 'closed')), 0)
+                     + COALESCE((SELECT COUNT(*) FROM reimbursements WHERE reviewed_by=$1), 0))::BIGINT",
+            )
             .bind(user_id)
             .fetch_one(&st.db)
-            .await?;
-    let (shared,): (i64,) = sqlx::query_as(
-        "SELECT COUNT(*) FROM (SELECT trip_id FROM rides WHERE driver_id=$1 AND status='completed' AND trip_id IS NOT NULL GROUP BY trip_id HAVING COUNT(*) >= 2)",
-    )
-    .bind(user_id)
-    .fetch_one(&st.db)
-    .await?;
+            .await?
+    } else {
+        (0, 0, 0, 0)
+    };
 
-    // Traffic Lead metrics
-    let (tl_approved,): (i64,) = sqlx::query_as("SELECT COUNT(*) FROM rides WHERE approved_by=$1")
-        .bind(user_id)
-        .fetch_one(&st.db)
-        .await?;
-    let (tl_plans,): (i64,) = sqlx::query_as(
-        "SELECT ((SELECT COUNT(*) FROM event_plan_drafts WHERE reviewed_by=$1 AND status='approved') + (SELECT COUNT(*) FROM ride_change_drafts WHERE reviewed_by=$1 AND status='approved'))::BIGINT",
-    )
-    .bind(user_id)
-    .fetch_one(&st.db)
-    .await?;
-    let (tl_assigns,): (i64,) = sqlx::query_as(
-        "SELECT COUNT(*) FROM audit_logs WHERE actor_id=$1 AND action='ride.plan_assign'",
-    )
-    .bind(user_id)
-    .fetch_one(&st.db)
-    .await?;
-    let (tl_steward,): (i64,) = sqlx::query_as(
-        "SELECT ((SELECT COUNT(*) FROM help_tickets WHERE assignee_id=$1 AND status IN ('answered', 'closed')) + (SELECT COUNT(*) FROM reimbursements WHERE reviewed_by=$1))::BIGINT",
-    )
-    .bind(user_id)
-    .fetch_one(&st.db)
-    .await?;
-
-    let is_driver = roles.iter().any(|r| r == "driver") || total > 0;
-    let is_traffic_lead = can_approve_transport_plan(&roles)
-        || roles
-            .iter()
-            .any(|r| r == TRAFFIC_MEMBER_ROLE || r == TRANSPORT_ROLE)
-        || tl_approved > 0
-        || tl_plans > 0
-        || tl_assigns > 0;
+    let is_driver = scope.driving && (roles.iter().any(|r| r == "driver") || total > 0);
+    let is_traffic_lead = scope.traffic_lead
+        && (can_approve_transport_plan(&roles)
+            || roles
+                .iter()
+                .any(|r| r == TRAFFIC_MEMBER_ROLE || r == TRANSPORT_ROLE)
+            || tl_approved > 0
+            || tl_plans > 0
+            || tl_assigns > 0);
 
     let custom_icons: Vec<(String, String)> =
         sqlx::query_as("SELECT badge_key, icon FROM user_badge_icons WHERE user_id = $1")
@@ -240,12 +281,13 @@ pub async fn compute_badges(st: &AppState, user_id: i64, lang: Lang) -> AppResul
             .unwrap_or_default();
     let icon_map: std::collections::HashMap<String, String> = custom_icons.into_iter().collect();
 
-    // Criteria are public (徽章获得条件应公开透明).
+    // Criteria are public (徽章获得条件应公开透明), while domain progress is filtered by caller privilege scope.
     let defs = [
         // Normal Member
         BadgeDef {
             key: "member_first_journey",
             category: "member",
+            visible: scope.passenger_rides,
             role_match: true,
             ch_zh: "行",
             ch_en: "J",
@@ -260,6 +302,7 @@ pub async fn compute_badges(st: &AppState, user_id: i64, lang: Lang) -> AppResul
         BadgeDef {
             key: "member_fellowship",
             category: "member",
+            visible: scope.events,
             role_match: true,
             ch_zh: "聚",
             ch_en: "F",
@@ -274,6 +317,7 @@ pub async fn compute_badges(st: &AppState, user_id: i64, lang: Lang) -> AppResul
         BadgeDef {
             key: "member_punctual",
             category: "member",
+            visible: scope.passenger_rides,
             role_match: true,
             ch_zh: "准",
             ch_en: "P",
@@ -288,6 +332,7 @@ pub async fn compute_badges(st: &AppState, user_id: i64, lang: Lang) -> AppResul
         BadgeDef {
             key: "member_warm_welcome",
             category: "member",
+            visible: scope.passenger_rides,
             role_match: true,
             ch_zh: "暖",
             ch_en: "W",
@@ -303,6 +348,7 @@ pub async fn compute_badges(st: &AppState, user_id: i64, lang: Lang) -> AppResul
         BadgeDef {
             key: "night",
             category: "driver",
+            visible: scope.driving,
             role_match: is_driver,
             ch_zh: "宵",
             ch_en: "N",
@@ -317,6 +363,7 @@ pub async fn compute_badges(st: &AppState, user_id: i64, lang: Lang) -> AppResul
         BadgeDef {
             key: "regular",
             category: "driver",
+            visible: scope.driving,
             role_match: is_driver,
             ch_zh: "勤",
             ch_en: "R",
@@ -331,6 +378,7 @@ pub async fn compute_badges(st: &AppState, user_id: i64, lang: Lang) -> AppResul
         BadgeDef {
             key: "carpool",
             category: "driver",
+            visible: scope.driving,
             role_match: is_driver,
             ch_zh: "爱",
             ch_en: "C",
@@ -345,6 +393,7 @@ pub async fn compute_badges(st: &AppState, user_id: i64, lang: Lang) -> AppResul
         BadgeDef {
             key: "driver_helping_hands",
             category: "driver",
+            visible: scope.driving,
             role_match: is_driver,
             ch_zh: "护",
             ch_en: "H",
@@ -360,6 +409,7 @@ pub async fn compute_badges(st: &AppState, user_id: i64, lang: Lang) -> AppResul
         BadgeDef {
             key: "traffic_dispatcher",
             category: "traffic_lead",
+            visible: scope.traffic_lead,
             role_match: is_traffic_lead,
             ch_zh: "通",
             ch_en: "G",
@@ -374,6 +424,7 @@ pub async fn compute_badges(st: &AppState, user_id: i64, lang: Lang) -> AppResul
         BadgeDef {
             key: "traffic_planner",
             category: "traffic_lead",
+            visible: scope.traffic_lead,
             role_match: is_traffic_lead,
             ch_zh: "规",
             ch_en: "P",
@@ -388,6 +439,7 @@ pub async fn compute_badges(st: &AppState, user_id: i64, lang: Lang) -> AppResul
         BadgeDef {
             key: "traffic_marshal",
             category: "traffic_lead",
+            visible: scope.traffic_lead,
             role_match: is_traffic_lead,
             ch_zh: "调",
             ch_en: "M",
@@ -402,6 +454,7 @@ pub async fn compute_badges(st: &AppState, user_id: i64, lang: Lang) -> AppResul
         BadgeDef {
             key: "traffic_guardian",
             category: "traffic_lead",
+            visible: scope.traffic_lead,
             role_match: is_traffic_lead,
             ch_zh: "管",
             ch_en: "S",
@@ -417,6 +470,7 @@ pub async fn compute_badges(st: &AppState, user_id: i64, lang: Lang) -> AppResul
 
     Ok(defs
         .iter()
+        .filter(|d| d.visible)
         .map(|d| {
             let ch = t(lang, d.ch_zh, d.ch_en);
             let name = t(lang, d.name_zh, d.name_en);
@@ -617,17 +671,23 @@ pub(super) async fn monthly_report(
         (Vec::new(), Vec::new(), None)
     } else {
         let attended: Vec<(String, i64)> = sqlx::query_as(
-                "SELECT e.kind, COUNT(*) FROM event_signups s JOIN events e ON e.id=s.event_id
-                 WHERE s.user_id=$1 AND s.attended=1 AND e.starts_at >= $2 AND e.starts_at < $3 GROUP BY e.kind",
-            )
-            .bind(target)
-            .bind(&start)
-            .bind(&end)
-            .fetch_all(&st.db)
-            .await?;
+            "SELECT e.kind, COUNT(*) FROM event_signups s JOIN events e ON e.id=s.event_id
+                 WHERE s.user_id=$1 AND s.attended=1 AND s.status <> 'cancelled'
+                   AND e.status NOT IN ('draft', 'cancelled')
+                   AND e.starts_at >= $2 AND e.starts_at < $3
+                 GROUP BY e.kind",
+        )
+        .bind(target)
+        .bind(&start)
+        .bind(&end)
+        .fetch_all(&st.db)
+        .await?;
         let events: Vec<(i64, String, String, String)> = sqlx::query_as(
                 "SELECT e.id, e.title, e.kind, e.starts_at FROM event_signups s JOIN events e ON e.id=s.event_id
-                 WHERE s.user_id=$1 AND s.attended=1 AND e.starts_at >= $2 AND e.starts_at < $3 ORDER BY e.starts_at",
+                 WHERE s.user_id=$1 AND s.attended=1 AND s.status <> 'cancelled'
+                   AND e.status NOT IN ('draft', 'cancelled')
+                   AND e.starts_at >= $2 AND e.starts_at < $3
+                 ORDER BY e.starts_at",
             )
             .bind(target)
             .bind(&start)
@@ -642,8 +702,13 @@ pub(super) async fn monthly_report(
         None
     } else {
         let (p,): (i64,) = sqlx::query_as(
-            "SELECT COALESCE(SUM(sh.amount_cents),0)::BIGINT FROM settlement_shares sh JOIN settlements s ON s.id=sh.settlement_id JOIN events e ON e.id=s.event_id
-             WHERE sh.user_id=$1 AND sh.status='confirmed' AND e.starts_at >= $2 AND e.starts_at < $3",
+            "SELECT COALESCE(SUM(sh.amount_cents),0)::BIGINT
+             FROM settlement_shares sh
+             JOIN settlements s ON s.id=sh.settlement_id
+             JOIN events e ON e.id=s.event_id
+             WHERE sh.user_id=$1 AND sh.status='confirmed'
+               AND s.status <> 'draft' AND e.status <> 'draft'
+               AND e.starts_at >= $2 AND e.starts_at < $3",
         )
         .bind(target)
         .bind(&start)
@@ -737,14 +802,30 @@ pub(super) async fn monthly_report(
     };
 
     let organised_events = if can_organised {
-        let (events_count, total_going, total_attended): (i64, i64, i64) = sqlx::query_as(
+        let (
+            events_count,
+            tracked_events_count,
+            total_going,
+            tracked_going,
+            total_attended,
+            tracked_attended,
+        ): (i64, i64, i64, i64, i64, i64) = sqlx::query_as(
             "SELECT
                 COUNT(*) FILTER (WHERE e.status <> 'cancelled')::BIGINT,
+                COUNT(*) FILTER (WHERE e.status <> 'cancelled' AND e.attendance_enabled = 1)::BIGINT,
                 COALESCE((SELECT COUNT(*) FROM event_signups s JOIN events e2 ON e2.id = s.event_id
                           WHERE e2.created_by = $1 AND e2.status NOT IN ('draft', 'cancelled')
                             AND e2.starts_at >= $2 AND e2.starts_at < $3 AND s.status = 'going'), 0)::BIGINT,
                 COALESCE((SELECT COUNT(*) FROM event_signups s JOIN events e2 ON e2.id = s.event_id
                           WHERE e2.created_by = $1 AND e2.status NOT IN ('draft', 'cancelled')
+                            AND e2.attendance_enabled = 1
+                            AND e2.starts_at >= $2 AND e2.starts_at < $3 AND s.status = 'going'), 0)::BIGINT,
+                COALESCE((SELECT COUNT(*) FROM event_signups s JOIN events e2 ON e2.id = s.event_id
+                          WHERE e2.created_by = $1 AND e2.status NOT IN ('draft', 'cancelled')
+                            AND e2.starts_at >= $2 AND e2.starts_at < $3 AND s.status <> 'cancelled' AND s.attended = 1), 0)::BIGINT,
+                COALESCE((SELECT COUNT(*) FROM event_signups s JOIN events e2 ON e2.id = s.event_id
+                          WHERE e2.created_by = $1 AND e2.status NOT IN ('draft', 'cancelled')
+                            AND e2.attendance_enabled = 1
                             AND e2.starts_at >= $2 AND e2.starts_at < $3 AND s.status <> 'cancelled' AND s.attended = 1), 0)::BIGINT
              FROM events e
              WHERE e.created_by = $1 AND e.status <> 'draft' AND e.starts_at >= $2 AND e.starts_at < $3",
@@ -754,8 +835,8 @@ pub(super) async fn monthly_report(
         .bind(&end)
         .fetch_one(&st.db)
         .await?;
-        let attendance_rate_pct = if total_going > 0 {
-            (total_attended * 100) / total_going
+        let attendance_rate_pct = if tracked_going > 0 {
+            (tracked_attended * 100) / tracked_going
         } else {
             0
         };
@@ -774,7 +855,7 @@ pub(super) async fn monthly_report(
                            COALESCE((SELECT SUM(sh.amount_cents) FROM settlement_shares sh WHERE sh.settlement_id = s.id AND sh.status = 'confirmed'), 0)::BIGINT AS collected_cents
                     FROM settlements s
                     JOIN events e ON e.id = s.event_id
-                    WHERE s.created_by = $1 AND s.status <> 'draft'
+                    WHERE s.created_by = $1 AND s.status <> 'draft' AND e.status <> 'draft'
                       AND e.starts_at >= $2 AND e.starts_at < $3
                 )
                 SELECT COUNT(*)::BIGINT,
@@ -801,6 +882,7 @@ pub(super) async fn monthly_report(
         };
         json!({
             "events_count": events_count,
+            "tracked_events_count": tracked_events_count,
             "total_going": total_going,
             "total_attended": total_attended,
             "attendance_rate_pct": attendance_rate_pct,
@@ -810,6 +892,40 @@ pub(super) async fn monthly_report(
         Value::Null
     };
 
+    let period_end_inclusive = chrono::NaiveDate::parse_from_str(&end, "%Y-%m-%d")
+        .map(|d| {
+            (d - chrono::Duration::days(1))
+                .format("%Y-%m-%d")
+                .to_string()
+        })
+        .unwrap_or_else(|_| end.clone());
+
+    let badge_scope = if is_self {
+        BadgeScope::all()
+    } else {
+        BadgeScope {
+            events: can_events,
+            passenger_rides: can_passenger_rides,
+            driving: can_driving,
+            traffic_lead: can_driving
+                && (u.can(Page::AdminRides, Act::View) || u.can(Page::AdminPlan, Act::View))
+                && u.traffic_is_global(),
+        }
+    };
+    let badges = compute_badges_scoped(&st, target, report_lang, badge_scope).await?;
+
+    if !is_self {
+        crate::util::audit(
+            &st.db,
+            Some(u.id),
+            "report.member_view",
+            "user",
+            Some(target),
+            &format!("{range} {month} type={rtype}"),
+        )
+        .await;
+    }
+
     Ok(Json(json!({
         "user": {"id": target, "name": name},
         "month": month,
@@ -817,6 +933,7 @@ pub(super) async fn monthly_report(
         "type": rtype,
         "period_start": start,
         "period_end": end,
+        "period_end_inclusive": period_end_inclusive,
         "rides_driven": driven,
         "rides_received": received,
         "distance_km": dist_total,
@@ -832,11 +949,11 @@ pub(super) async fn monthly_report(
             "costs_paid": can_costs_paid,
             "reimbursements": can_reimb_summary,
             "organised": can_organised,
-            "badges": true,
+            "badges": badge_scope.any(),
         },
         "reimbursements_summary": reimbursements_summary,
         "organised_events": organised_events,
-        "badges": compute_badges(&st, target, report_lang).await?,
+        "badges": badges,
     })))
 }
 

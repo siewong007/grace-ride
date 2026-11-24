@@ -149,6 +149,7 @@ export default {
   chatBtn: '群聊',
   addToCalendar: '加入日历',
   shareWhatsApp: '分享至 WhatsApp',
+  shareNative: '分享…',
   shareRideText: '恩典同行接送信息：\n时间：{time}\n上车地点：{pickup}\n目的地：{dest}\n司机：{driver}',
   readinessTitle: '行程准备确认',
   readinessPrompt: '请确认您的出行状态，方便司机安排行程：',

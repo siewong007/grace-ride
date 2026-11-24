@@ -153,6 +153,9 @@
 │   │   ├── offlineSnapshot.ts / offlineQueue.ts # today's ride cache + offline trip status action queue
 │   │   ├── grokBotStudio.ts / fareSheet.ts / xlsxCodec.ts # avatar studio SVG/PNG helpers & fare XLSX/CSV codec
 │   │   ├── grokBotMotion.ts # Grok Bot motion engine: living idle, one-shot moves, shared rAF loop
+│   │   ├── appUpdate.ts     # SW registration + new-build detection (/version.json) for the update banner
+│   │   ├── webShare.ts      # native share sheet wrapper with WhatsApp/copy fallback
+│   │   ├── hooks/useWakeLock.ts # Screen Wake Lock during live trips and QR display/scan
 │   │   └── styles.css       # design tokens (colour, spacing, typography)
 │   └── .nvmrc               # pins Node 22
 ├── android/

@@ -9,11 +9,11 @@ use axum::{
 use chrono::{Datelike, NaiveDate};
 use serde_json::{json, Value};
 
-use super::{parse_period_window, PeriodQuery};
+use super::{parse_period_window, prev_period_window, PeriodQuery};
 use crate::auth::CurrentUser;
 use crate::error::{forbidden, AppResult};
 use crate::i18n::ErrorKey;
-use crate::perms::{Act, Page};
+use crate::perms::{sql_holds, Act, Page, Perm};
 use crate::state::AppState;
 use crate::util::require;
 
@@ -74,22 +74,24 @@ pub(in crate::routes::admin) async fn demand_report(
     .fetch_all(&st.db)
     .await?;
 
-    let (plan_visitors_count, plan_visitors_seats): (i64, i64) = if q.group_id.is_some() {
-        (0, 0)
-    } else {
-        sqlx::query_as(
-            "SELECT COUNT(*)::BIGINT, COALESCE(SUM(pv.seats), 0)::BIGINT
-             FROM plan_visitors pv
-             JOIN events e ON e.id = pv.event_id
-             WHERE e.starts_at >= $1 AND e.starts_at < $2 AND e.status <> 'draft'
-               AND ($3::BIGINT IS NULL OR e.created_by = $3)",
-        )
-        .bind(&w.start)
-        .bind(&w.end)
-        .bind(scope_creator)
-        .fetch_one(&st.db)
-        .await?
-    };
+    let (plan_visitors_count, plan_visitors_seats): (Option<i64>, Option<i64>) =
+        if q.group_id.is_some() {
+            (None, None)
+        } else {
+            let (cnt, seats): (i64, i64) = sqlx::query_as(
+                "SELECT COUNT(*)::BIGINT, COALESCE(SUM(pv.seats), 0)::BIGINT
+                 FROM plan_visitors pv
+                 JOIN events e ON e.id = pv.event_id
+                 WHERE e.starts_at >= $1 AND e.starts_at < $2 AND e.status <> 'draft'
+                   AND ($3::BIGINT IS NULL OR e.created_by = $3)",
+            )
+            .bind(&w.start)
+            .bind(&w.end)
+            .bind(scope_creator)
+            .fetch_one(&st.db)
+            .await?;
+            (Some(cnt), Some(seats))
+        };
 
     let (visitor_passes_count,): (i64,) = sqlx::query_as(
         "SELECT COUNT(*)::BIGINT
@@ -106,10 +108,30 @@ pub(in crate::routes::admin) async fn demand_report(
     .fetch_one(&st.db)
     .await?;
 
+    let drivers_by_area: HashMap<i64, i64> = if global_scope {
+        let drive_cond = sql_holds("u", Perm(Page::Drive, Act::Create));
+        let area_rows: Vec<(i64, i64)> = sqlx::query_as(crate::dyn_sql!(
+            "SELECT da.area_id, COUNT(DISTINCT da.user_id)::BIGINT
+             FROM driver_areas da
+             JOIN users u ON u.id = da.user_id
+             WHERE {drive_cond}
+             GROUP BY da.area_id"
+        ))
+        .fetch_all(&st.db)
+        .await?;
+        area_rows.into_iter().collect()
+    } else {
+        HashMap::new()
+    };
+
     let mut total_requests = 0_i64;
     let mut fulfilled = 0_i64;
+    let mut pending_confirmation = 0_i64;
     let mut unfilled = 0_i64;
     let mut completed = 0_i64;
+    let mut no_show = 0_i64;
+    let mut alt_transport = 0_i64;
+    let mut cancelled_total = 0_i64;
     let mut cancelled_unassigned = 0_i64;
     let mut wheelchair_requests = 0_i64;
     let mut stroller_requests = 0_i64;
@@ -147,11 +169,16 @@ pub(in crate::routes::admin) async fn demand_report(
 
     for r in &rows {
         let is_cancelled = r.status == "cancelled";
-        let is_closed_alt = matches!(r.status.as_str(), "no_show" | "alt_transport");
-        let is_unfilled = !is_cancelled && !is_closed_alt && r.driver_id.is_none();
+        let is_no_show = r.status == "no_show";
+        let is_alt = r.status == "alt_transport";
+        let is_closed_alt = is_no_show || is_alt;
         let is_fulfilled = matches!(r.status.as_str(), "confirmed" | "in_progress" | "completed");
+        let is_unfilled = !is_cancelled && !is_closed_alt && r.driver_id.is_none();
+        let is_pending_confirm =
+            !is_cancelled && !is_closed_alt && !is_fulfilled && r.driver_id.is_some();
 
         if is_cancelled {
+            cancelled_total += 1;
             if r.driver_id.is_none() {
                 cancelled_unassigned += 1;
             }
@@ -161,11 +188,20 @@ pub(in crate::routes::admin) async fn demand_report(
             if r.status == "completed" {
                 completed += 1;
             }
+            if is_no_show {
+                no_show += 1;
+            }
+            if is_alt {
+                alt_transport += 1;
+            }
             if let Some(did) = r.driver_id {
                 drivers_active.insert(did);
             }
             if is_fulfilled {
                 fulfilled += 1;
+            }
+            if is_pending_confirm {
+                pending_confirmation += 1;
             }
             if is_unfilled {
                 unfilled += 1;
@@ -175,10 +211,13 @@ pub(in crate::routes::admin) async fn demand_report(
             if assist_lower.contains("wheelchair") || r.assistance.contains("轮椅") {
                 wheelchair_requests += 1;
             }
-            if assist_lower.contains("stroller") {
+            if assist_lower.contains("stroller")
+                || r.assistance.contains("婴儿车")
+                || r.assistance.contains("推车")
+            {
                 stroller_requests += 1;
             }
-            if assist_lower.contains("oxygen") {
+            if assist_lower.contains("oxygen") || r.assistance.contains("氧气") {
                 oxygen_requests += 1;
             }
             if r.leg == "return" {
@@ -225,10 +264,11 @@ pub(in crate::routes::admin) async fn demand_report(
             }
         }
 
-        if r.pickup_at.len() >= 13 {
-            if let Ok(d) = NaiveDate::parse_from_str(&r.pickup_at[..10], "%Y-%m-%d") {
+        if let (Some(date_part), Some(hour_part)) = (r.pickup_at.get(..10), r.pickup_at.get(11..13))
+        {
+            if let Ok(d) = NaiveDate::parse_from_str(date_part, "%Y-%m-%d") {
                 let wd = d.weekday().num_days_from_sunday();
-                let hour: u32 = r.pickup_at[11..13].parse().unwrap_or(0);
+                let hour: u32 = hour_part.parse().unwrap_or(0);
                 let bucket_h = (hour / 2) * 2;
                 let slot_label = format!("{bucket_h:02}:00-{:02}:00", (bucket_h + 2).min(24));
                 let sb = by_slot.entry((wd, slot_label)).or_default();
@@ -265,6 +305,7 @@ pub(in crate::routes::admin) async fn demand_report(
                 "seats_needed": b.seats_needed,
                 "seats_unfilled": b.seats_unfilled,
                 "fulfillment_rate_pct": if b.total > 0 { (b.fulfilled * 100) / b.total } else { 100 },
+                "registered_drivers": if global_scope { Some(drivers_by_area.get(&area_id).copied().unwrap_or(0)) } else { None },
             })
         })
         .collect();
@@ -324,17 +365,54 @@ pub(in crate::routes::admin) async fn demand_report(
         100
     };
 
+    let comparison = if let Some(pw) = prev_period_window(&w) {
+        let (prev_total, prev_fulfilled, prev_unfilled): (i64, i64, i64) = sqlx::query_as(
+            "SELECT
+                COUNT(*) FILTER (WHERE r.status <> 'cancelled')::BIGINT,
+                COUNT(*) FILTER (WHERE r.status IN ('confirmed', 'in_progress', 'completed'))::BIGINT,
+                COUNT(*) FILTER (WHERE r.status NOT IN ('cancelled', 'no_show', 'alt_transport') AND r.driver_id IS NULL)::BIGINT
+             FROM rides r
+             WHERE r.pickup_at >= $1 AND r.pickup_at < $2
+               AND ($3::BIGINT IS NULL OR r.event_id IN (SELECT id FROM events WHERE created_by = $3))
+               AND ($4::BIGINT IS NULL OR r.as_group_id = $4)",
+        )
+        .bind(&pw.start)
+        .bind(&pw.end)
+        .bind(scope_creator)
+        .bind(q.group_id)
+        .fetch_one(&st.db)
+        .await?;
+        let prev_rate = if prev_total > 0 {
+            (prev_fulfilled * 100) / prev_total
+        } else {
+            100
+        };
+        json!({
+            "prev_period": pw.period_label,
+            "total_requests_delta": total_requests - prev_total,
+            "unfilled_delta": unfilled - prev_unfilled,
+            "fulfillment_rate_delta": fulfillment_rate_pct - prev_rate,
+        })
+    } else {
+        Value::Null
+    };
+
     Ok(Json(json!({
         "scope": if global_scope { "global" } else { "own_events" },
         "period": w.period_label,
         "range": w.range,
         "from": w.start,
         "to": w.display_to,
+        "comparison": comparison,
         "totals": {
             "total_requests": total_requests,
             "fulfilled": fulfilled,
+            "pending_confirmation": pending_confirmation,
             "unfilled": unfilled,
             "completed": completed,
+            "no_show": no_show,
+            "alt_transport": alt_transport,
+            "cancelled_total": cancelled_total,
             "cancelled_unassigned": cancelled_unassigned,
             "wheelchair_requests": wheelchair_requests,
             "stroller_requests": stroller_requests,

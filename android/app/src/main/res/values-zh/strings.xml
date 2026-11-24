@@ -233,6 +233,7 @@
     <string name="profile_notifications">通知</string>
     <string name="profile_family">家人与代订</string>
     <string name="profile_report">月度报告</string>
+    <string name="profile_admin_reports">同工报表</string>
     <string name="profile_reimbursements">报销</string>
     <string name="profile_help">帮助</string>
     <string name="profile_terms">使用条款</string>

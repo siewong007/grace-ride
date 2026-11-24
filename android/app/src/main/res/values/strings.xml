@@ -233,6 +233,7 @@
     <string name="profile_notifications">Notifications</string>
     <string name="profile_family">Family &amp; proxy riders</string>
     <string name="profile_report">Monthly report</string>
+    <string name="profile_admin_reports">Staff reports</string>
     <string name="profile_reimbursements">Reimbursements</string>
     <string name="profile_help">Help</string>
     <string name="profile_terms">Terms of use</string>

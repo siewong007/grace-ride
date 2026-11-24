@@ -9,6 +9,7 @@ export default {
   reimbursement: 'Suggested reimbursement',
   events: 'Events attended',
   noEvents: 'No attendance records in {y} {m}.',
+  noEventsInPeriod: 'No attendance records in {period}.',
   note: 'Attendance is based on check-in or organiser confirmation; rides count only completed trips.',
   badges: 'Thank-you badges',
   badgesDesc: 'Small badges, big thanks. Non-monetary; opt out in “Profile”.',

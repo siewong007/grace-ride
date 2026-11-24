@@ -2210,6 +2210,12 @@ main:focus { outline: none; }
   justify-content: center; gap: var(--space-2);
   background: var(--warning-soft); color: var(--text); border-bottom: 1px solid var(--warning);
 }
+.update-banner {
+  position: sticky; top: 0; z-index: 249; padding: var(--space-2) var(--space-4); gap: var(--space-2);
+  align-items: center; font-size: var(--fs-sm); font-weight: 600;
+  background: var(--info-soft); color: var(--text); border-bottom: 1px solid var(--info);
+}
+.update-banner .btn { flex-shrink: 0; }
 
 /* Larger touch targets for icon-only controls on phones. */
 @media (pointer: coarse) { .btn.sm { min-height: 44px; } .chip { min-height: 44px; } }
@@ -4524,6 +4530,9 @@ body[data-walkthrough="min"] .main { padding-bottom: calc(var(--nav-h) + env(saf
 .report-chart-track { flex: 1 1 auto; width: 100%; max-width: 32px; display: flex; align-items: flex-end; background: var(--surface-2); border-radius: var(--radius-sm); overflow: hidden; }
 .report-chart-fill { width: 100%; background: var(--primary); border-radius: var(--radius-sm); transition: height var(--transition-fast); }
 .report-table-scroll { overflow-x: auto; max-width: 100%; }
+.report-delta { display: inline-flex; align-items: center; font-size: var(--fs-xs); }
+.report-drill-btn { width: 100%; text-align: left; background: none; border: 0; font: inherit; color: inherit; cursor: pointer; }
+.report-drill-btn:hover { background: var(--surface-2); }
 .text-right { text-align: right; }
 .flex-wrap { flex-wrap: wrap; }
 
@@ -4551,9 +4560,11 @@ main p a:not(.btn), main .small a:not(.btn), main td a:not(.btn):not(.table-filt
 
 /* Printing a page (e.g. a report) leaves out the app frame. */
 @media print {
-  .sidebar, .topbar, .bottom-nav, .page-head-actions, .report-filters, .report-scope-bar, .report-period-controls, .toast-container, .shell-notice-container, .swipe-back-indicator, .swipe-tab-indicator { display: none !important; }
+  .sidebar, .topbar, .bottom-nav, .page-head-actions, .report-filters, .report-scope-bar, .report-period-controls, .tabs, .badge-filter-row, .btn, .toast-container, .shell-notice-container, .swipe-back-indicator, .swipe-tab-indicator { display: none !important; }
   .shell { display: block; }
   .main { padding: 0; max-width: none; }
+  .card { break-inside: avoid; box-shadow: none; }
+  .bar, .bar > div, .report-chart-fill { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
   body { background: #fff; color: #000; }
 }
 

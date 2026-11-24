@@ -4,15 +4,15 @@ use axum::{
     extract::{Path, State},
     Json,
 };
-use chrono::{Datelike, Duration, NaiveDate};
+use chrono::{Datelike, Duration, Months, NaiveDate};
 use serde::Deserialize;
 use serde_json::{json, Value};
 
 use crate::auth::CurrentUser;
-use crate::error::{bad, AppResult};
+use crate::error::{bad, forbidden, not_found, AppResult};
 use crate::i18n::ErrorKey;
-use crate::perms::{Act, Page};
-use crate::routes::community::parse_report_month;
+use crate::perms::{self, Act, Page};
+use crate::routes::community::{parse_report_month, BADGE_KEYS};
 use crate::state::AppState;
 use crate::util::{now, require, Lang};
 
@@ -60,7 +60,11 @@ pub(super) fn parse_period_window(
                 .map_err(|_| bad(lang, ErrorKey::InvalidAction))?;
             let td = NaiveDate::parse_from_str(t, "%Y-%m-%d")
                 .map_err(|_| bad(lang, ErrorKey::InvalidAction))?;
-            if td < fd || (td - fd).num_days() > 366 {
+            if td < fd
+                || (td - fd).num_days() > 366
+                || !(1900..=9998).contains(&fd.year())
+                || !(1900..=9998).contains(&td.year())
+            {
                 return Err(bad(lang, ErrorKey::InvalidAction));
             }
             let end_d = td.succ_opt().unwrap_or(td);
@@ -116,20 +120,70 @@ pub(super) fn parse_period_window(
                     )
                 }
             };
-            let end_incl = NaiveDate::parse_from_str(&end, "%Y-%m-%d")
-                .map(|d| d - Duration::days(1))
+            let end_incl_date =
+                NaiveDate::parse_from_str(&end, "%Y-%m-%d").map(|d| d - Duration::days(1));
+            let display_to = end_incl_date
+                .as_ref()
+                .map(|d| d.format("%Y-%m-%d").to_string())
+                .unwrap_or_else(|_| start.clone());
+            let end_ym_incl = end_incl_date
+                .as_ref()
                 .map(|d| d.format("%Y-%m").to_string())
                 .unwrap_or_else(|_| start[..7].to_string());
             Ok(PeriodWindow {
                 start,
-                end: end.clone(),
-                display_to: end,
+                end,
+                display_to,
                 period_label,
                 range: norm_range,
-                end_ym_incl: end_incl,
+                end_ym_incl,
             })
         }
     }
+}
+
+pub(super) fn prev_period_window(w: &PeriodWindow) -> Option<PeriodWindow> {
+    let fd = NaiveDate::parse_from_str(&w.start, "%Y-%m-%d").ok()?;
+    let td = NaiveDate::parse_from_str(&w.display_to, "%Y-%m-%d").ok()?;
+    let (prev_start, prev_disp_to, period_label) = match w.range.as_str() {
+        "monthly" => {
+            let ps = fd.checked_sub_months(Months::new(1))?;
+            let pd = fd - Duration::days(1);
+            let lbl = ps.format("%Y-%m").to_string();
+            (ps, pd, lbl)
+        }
+        "quarterly" => {
+            let ps = fd.checked_sub_months(Months::new(3))?;
+            let pd = fd - Duration::days(1);
+            let q = (ps.month() - 1) / 3 + 1;
+            let lbl = format!("{:04}-Q{q}", ps.year());
+            (ps, pd, lbl)
+        }
+        "yearly" => {
+            let ps = fd.checked_sub_months(Months::new(12))?;
+            let pd = fd - Duration::days(1);
+            let lbl = format!("{:04}", ps.year());
+            (ps, pd, lbl)
+        }
+        _ => {
+            let span = (td - fd).num_days() + 1;
+            let pd = fd - Duration::days(1);
+            let ps = fd - Duration::days(span);
+            let lbl = format!("{}..{}", ps.format("%Y-%m-%d"), pd.format("%Y-%m-%d"));
+            (ps, pd, lbl)
+        }
+    };
+    if prev_start.year() < 1900 {
+        return None;
+    }
+    Some(PeriodWindow {
+        start: prev_start.format("%Y-%m-%d").to_string(),
+        end: w.start.clone(),
+        display_to: prev_disp_to.format("%Y-%m-%d").to_string(),
+        period_label,
+        range: w.range.clone(),
+        end_ym_incl: prev_disp_to.format("%Y-%m").to_string(),
+    })
 }
 
 pub(super) fn month_buckets(w: &PeriodWindow) -> Vec<String> {
@@ -137,7 +191,7 @@ pub(super) fn month_buckets(w: &PeriodWindow) -> Vec<String> {
     else {
         return Vec::new();
     };
-    let Ok(last) = NaiveDate::parse_from_str(&format!("{}-01", &w.end_ym_incl), "%Y-%m-%d") else {
+    let Ok(last) = NaiveDate::parse_from_str(&format!("{}-01", w.end_ym_incl), "%Y-%m-%d") else {
         return Vec::new();
     };
     let mut out = Vec::new();
@@ -238,7 +292,24 @@ pub(super) async fn update_user_badge_icon(
     Json(req): Json<UpdateBadgeIconIn>,
 ) -> AppResult<Json<Value>> {
     require(&u, Page::AdminMembers, Act::Update)?;
+    if !BADGE_KEYS.contains(&badge_key.as_str()) {
+        return Err(bad(u.lang, ErrorKey::InvalidAction));
+    }
     let icon = req.icon.trim().to_string();
+    if !icon.is_empty() && (icon.chars().count() > 32 || icon.chars().any(|c| c.is_control())) {
+        return Err(bad(u.lang, ErrorKey::InvalidAction));
+    }
+    let target_roles: Option<String> = sqlx::query_scalar("SELECT roles FROM users WHERE id = $1")
+        .bind(user_id)
+        .fetch_optional(&st.db)
+        .await?;
+    let Some(target_roles) = target_roles else {
+        return Err(not_found(u.lang));
+    };
+    if user_id != u.id && !perms::outranks(&u.roles, &perms::parse_roles(&target_roles)) {
+        return Err(forbidden(u.lang, ErrorKey::NoPermission));
+    }
+
     if icon.is_empty() {
         sqlx::query("DELETE FROM user_badge_icons WHERE user_id = $1 AND badge_key = $2")
             .bind(user_id)

@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import { MapPin, Navigation } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import { post } from '../api';
+import { useWakeLock } from '../hooks/useWakeLock';
 import { Button, ErrorBox, Field, Modal, useAction } from './ui';
 
 export function requestPosition(): Promise<GeolocationPosition> {
@@ -130,6 +131,8 @@ export function ShareLocation() {
   const [state, setState] = useState<'idle' | 'on' | 'denied' | 'unsupported'>('idle');
   const last = useRef(0);
   const watchRef = useRef<number | null>(null);
+  // Driving with the screen off stops position updates on most phones.
+  useWakeLock(state === 'on' || state === 'idle');
 
   const startWatching = () => {
     if (!('geolocation' in navigator)) {

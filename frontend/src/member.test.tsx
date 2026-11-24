@@ -726,6 +726,55 @@ describe('Report page', () => {
       mockReport.badges = prev;
     }
   });
+
+  it('renders reimbursements_summary and organised_events cards when returned by the API', () => {
+    const prevReimb = (mockReport as Record<string, unknown>).reimbursements_summary;
+    const prevOrg = (mockReport as Record<string, unknown>).organised_events;
+    (mockReport as Record<string, unknown>).reimbursements_summary = {
+      claim_count: 3,
+      pending_count: 1,
+      pending_cents: 1800,
+      approved_count: 1,
+      approved_cents: 2200,
+      paid_count: 1,
+      paid_cents: 3000,
+      returned_count: 1,
+      rejected_count: 0,
+    };
+    (mockReport as Record<string, unknown>).organised_events = {
+      events_count: 2,
+      total_going: 10,
+      total_attended: 8,
+      attendance_rate_pct: 80,
+      settlements: {
+        count: 1,
+        gross_cents: 5000,
+        subsidy_cents: 1000,
+        collected_cents: 3000,
+        outstanding_cents: 1000,
+      },
+    };
+
+    try {
+      render(
+        <MemoryRouter>
+          <Report />
+        </MemoryRouter>
+      );
+      expect(screen.getByText('My reimbursements')).toBeInTheDocument();
+      expect(screen.getByText('1 · RM 18.00')).toBeInTheDocument();
+      expect(screen.getByText('1 returned')).toBeInTheDocument();
+      expect(screen.getByText('Events I organised')).toBeInTheDocument();
+      expect(screen.getByText('8 / 10 (80%)')).toBeInTheDocument();
+      expect(screen.getByText('RM 30.00')).toBeInTheDocument();
+      expect(screen.getByText('RM 10.00')).toBeInTheDocument();
+    } finally {
+      if (prevReimb === undefined) delete (mockReport as Record<string, unknown>).reimbursements_summary;
+      else (mockReport as Record<string, unknown>).reimbursements_summary = prevReimb;
+      if (prevOrg === undefined) delete (mockReport as Record<string, unknown>).organised_events;
+      else (mockReport as Record<string, unknown>).organised_events = prevOrg;
+    }
+  });
 });
 
 describe('Home page', () => {

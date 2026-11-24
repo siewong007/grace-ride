@@ -84,6 +84,7 @@ export default {
   qrExitFullscreen: '退出全屏',
   qrCopyLink: '复制签到链接',
   qrLinkCopied: '签到链接已复制到剪贴板',
+  qrShareLink: '分享签到链接',
   qrResetCode: '刷新二维码',
   qrResetConfirm: '刷新二维码将使之前出示或打印的二维码失效，是否继续？',
   qrResetDone: '二维码已刷新',

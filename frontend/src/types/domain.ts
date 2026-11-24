@@ -107,6 +107,7 @@ export interface MonthReportReimbursementsSummary {
 
 export interface MonthReportOrganisedEvents {
   events_count: number;
+  tracked_events_count?: number;
   total_going: number;
   total_attended: number;
   attendance_rate_pct: number;
@@ -126,6 +127,7 @@ export interface MonthReport {
   type: string;
   period_start: string;
   period_end: string;
+  period_end_inclusive?: string;
   rides_driven: number | null;
   rides_received: number | null;
   distance_km: number | null;
@@ -164,10 +166,37 @@ export interface OverviewReportData {
   range: string;
   from: string;
   to: string;
+  comparison?: {
+    prev_period: string;
+    transport: {
+      total_rides_delta: number;
+      completed_rides_delta: number;
+      fulfillment_rate_delta: number;
+    } | null;
+    events: {
+      events_count_delta: number;
+      total_attended_delta: number;
+      attendance_rate_delta: number;
+    } | null;
+    reimb_review: {
+      pending_count_delta: number;
+    } | null;
+    reimb_payouts: {
+      paid_cents_delta: number;
+    } | null;
+    bills: {
+      collected_cents_delta: number;
+      collection_rate_delta: number;
+    } | null;
+    membership: {
+      new_members_delta: number;
+    } | null;
+  } | null;
   transport: {
     scope: 'global' | 'own_events';
     total_rides: number;
     completed_rides: number;
+    pending_confirmation_rides?: number;
     unfilled_rides: number;
     cancelled_rides: number;
     no_show_rides: number;
@@ -187,6 +216,7 @@ export interface OverviewReportData {
   events: {
     scope: 'global' | 'own_events';
     events_count: number;
+    tracked_events_count?: number;
     total_going: number;
     total_attended: number;
     attendance_rate_pct: number;
@@ -244,8 +274,18 @@ export interface EventsReportData {
   range: string;
   from: string;
   to: string;
+  events_total?: number;
+  events_truncated?: boolean;
+  comparison?: {
+    prev_period: string;
+    events_count_delta: number;
+    total_going_delta: number;
+    total_attended_delta: number;
+    attendance_rate_delta: number;
+  } | null;
   totals: {
     events_count: number;
+    tracked_events_count?: number;
     cancelled_events: number;
     total_going: number;
     total_waitlist: number;
@@ -285,7 +325,7 @@ export interface EventsReportData {
     waitlist: number;
     attended: number;
     attendance_enabled: boolean;
-    attendance_rate_pct: number;
+    attendance_rate_pct: number | null;
     need_ride: number;
     self_transport: number;
     rides_matched: number | null;
@@ -299,19 +339,29 @@ export interface DemandReportData {
   range?: string;
   from?: string;
   to?: string;
+  comparison?: {
+    prev_period: string;
+    total_requests_delta: number;
+    unfilled_delta: number;
+    fulfillment_rate_delta: number;
+  } | null;
   totals: {
     total_requests: number;
     fulfilled: number;
+    pending_confirmation?: number;
     unfilled: number;
     completed: number;
+    no_show?: number;
+    alt_transport?: number;
+    cancelled_total?: number;
     cancelled_unassigned: number;
     wheelchair_requests: number;
     stroller_requests?: number;
     oxygen_requests?: number;
     return_requests: number;
     proxy_rides?: number;
-    plan_visitors_count?: number;
-    plan_visitors_seats?: number;
+    plan_visitors_count?: number | null;
+    plan_visitors_seats?: number | null;
     visitor_passes_count?: number;
     seats_unfilled: number;
     active_drivers: number;
@@ -329,6 +379,7 @@ export interface DemandReportData {
     seats_needed: number;
     seats_unfilled: number;
     fulfillment_rate_pct: number;
+    registered_drivers?: number | null;
   }[];
   by_slot: {
     weekday: number;
@@ -360,11 +411,27 @@ export interface FinanceReportData {
     reimb_payouts: boolean;
     bills: boolean;
   };
+  comparison?: {
+    prev_period: string;
+    reimb_review: {
+      pending_count_delta: number;
+      approved_cents_delta: number;
+    } | null;
+    reimb_payouts: {
+      paid_count_delta: number;
+      paid_cents_delta: number;
+    } | null;
+    bills: {
+      collected_cents_delta: number;
+      collection_rate_delta: number;
+    } | null;
+  } | null;
   reimbursement_review: {
     by_status: Record<
       'pending' | 'returned' | 'rejected' | 'approved' | 'paid',
       { count: number; amount_cents: number }
     >;
+    overdue_pending_count?: number;
     by_kind: { kind: string; count: number; amount_cents: number }[];
     high_amount_special_count: number;
     driver_mileage_rides: {
@@ -379,6 +446,8 @@ export interface FinanceReportData {
     approved_unpaid_cents: number;
     all_time_awaiting_count: number;
     all_time_awaiting_cents: number;
+    overdue_approved_count?: number;
+    overdue_approved_cents?: number;
     paid_count: number;
     paid_cents: number;
     payee_verified_count: number;
@@ -390,6 +459,8 @@ export interface FinanceReportData {
       paid_count: number;
       paid_cents: number;
     }[];
+    batches_total?: number;
+    batches_truncated?: boolean;
     batches: {
       id: number;
       month: string;
@@ -405,7 +476,9 @@ export interface FinanceReportData {
     }[];
     monthly_trend: {
       month: string;
+      approved_count?: number;
       approved_cents: number;
+      paid_count?: number;
       paid_cents: number;
       claim_count: number;
     }[];
@@ -416,6 +489,9 @@ export interface FinanceReportData {
       draft_count: number;
       published_count: number;
       closed_count: number;
+      overdue_settlements_count?: number;
+      settlements_total?: number;
+      settlements_truncated?: boolean;
       gross_cents: number;
       subsidy_cents: number;
       net_billed_cents: number;
@@ -433,6 +509,7 @@ export interface FinanceReportData {
       event_starts_at: string;
       organiser_name: string;
       status: string;
+      due_date?: string | null;
       gross_cents: number;
       subsidy_cents: number;
       net_billed_cents: number;

@@ -535,6 +535,12 @@ fun ProfileScreen(container: AppContainer, nav: NavHostController) {
                                     openInWebApp(context, container.webUrl("report"))
                                 }
                             }
+                            if (me.can("admin_reports")) {
+                                HorizontalDivider()
+                                ProfileRow(stringResource(R.string.profile_admin_reports), Icons.Outlined.BarChart) {
+                                    openInWebApp(context, container.webUrl("admin/reports"))
+                                }
+                            }
                             if (me.can("help")) {
                                 HorizontalDivider()
                                 ProfileRow(stringResource(R.string.profile_help), Icons.AutoMirrored.Outlined.HelpOutline) {

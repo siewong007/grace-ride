@@ -61,6 +61,7 @@ export default {
   copy: 'Copy link',
   copied: 'Link copied',
   share: 'Share on WhatsApp',
+  shareNative: 'Share…',
   shareText: 'Hi {name}, here is your ride to {event}: {url}',
   state: {
     open: 'Not opened yet',

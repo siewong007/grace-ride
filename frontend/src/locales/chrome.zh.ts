@@ -21,4 +21,7 @@ export default {
   preview: '预览：周二 上午 8:30 · 北门入口',
   quickTextSize: '字体大小（{size}）',
   switchLang: '切换语言',
+  updateAvailable: '恩典同行有新版本可用。',
+  updateNow: '立即更新',
+  updateLater: '稍后',
 };

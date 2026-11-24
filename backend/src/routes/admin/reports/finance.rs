@@ -9,14 +9,14 @@ use axum::{
 };
 use serde_json::{json, Value};
 
-use super::{parse_period_window, PeriodQuery, ReportCaps};
+use super::{month_buckets, parse_period_window, prev_period_window, PeriodQuery, ReportCaps};
 use crate::auth::CurrentUser;
 use crate::error::{forbidden, AppResult};
 use crate::i18n::ErrorKey;
 use crate::perms::{Act, Page};
 use crate::routes::plan_visitors::SPECIAL_HIGH_CENTS;
 use crate::state::AppState;
-use crate::util::require;
+use crate::util::{audit, minutes_ago, now, require};
 
 pub(in crate::routes::admin) async fn finance_report(
     State(st): State<AppState>,
@@ -36,6 +36,9 @@ pub(in crate::routes::admin) async fn finance_report(
         q.from.as_deref(),
         q.to.as_deref(),
     )?;
+
+    let cutoff_7d = minutes_ago(7 * 24 * 60);
+    let today = now()[..10].to_string();
 
     let reimbursement_review = if caps.reimb_review {
         let status_rows: Vec<(String, i64, i64)> = sqlx::query_as(
@@ -92,6 +95,15 @@ pub(in crate::routes::admin) async fn finance_report(
         .fetch_one(&st.db)
         .await?;
 
+        let (overdue_pending_count,): (i64,) = sqlx::query_as(
+            "SELECT COUNT(*)::BIGINT
+             FROM reimbursements
+             WHERE status = 'pending' AND created_at < $1",
+        )
+        .bind(&cutoff_7d)
+        .fetch_one(&st.db)
+        .await?;
+
         let (eligible_count, eligible_cents, excluded_count, receipt_needed_count): (
             i64,
             i64,
@@ -119,6 +131,7 @@ pub(in crate::routes::admin) async fn finance_report(
                 "approved": status_obj("approved"),
                 "paid": status_obj("paid"),
             },
+            "overdue_pending_count": overdue_pending_count,
             "by_kind": by_kind,
             "high_amount_special_count": high_amount_special_count,
             "driver_mileage_rides": {
@@ -158,6 +171,15 @@ pub(in crate::routes::admin) async fn finance_report(
              FROM reimbursements
              WHERE status = 'approved'",
         )
+        .fetch_one(&st.db)
+        .await?;
+
+        let (overdue_approved_count, overdue_approved_cents): (i64, i64) = sqlx::query_as(
+            "SELECT COUNT(*)::BIGINT, COALESCE(SUM(amount_cents), 0)::BIGINT
+             FROM reimbursements
+             WHERE status = 'approved' AND updated_at < $1",
+        )
+        .bind(&cutoff_7d)
         .fetch_one(&st.db)
         .await?;
 
@@ -218,6 +240,20 @@ pub(in crate::routes::admin) async fn finance_report(
             })
             .collect();
 
+        let (batches_total,): (i64,) = sqlx::query_as(
+            "SELECT COUNT(*)::BIGINT
+             FROM payout_batches b
+             WHERE (b.created_at >= $1 AND b.created_at < $2)
+                OR (b.month >= $3 AND b.month <= $4)",
+        )
+        .bind(&w.start)
+        .bind(&w.end)
+        .bind(&w.start[..7])
+        .bind(&w.end_ym_incl)
+        .fetch_one(&st.db)
+        .await?;
+        let batches_truncated = batches_total > 50;
+
         #[derive(sqlx::FromRow)]
         struct BatchRow {
             id: i64,
@@ -226,17 +262,21 @@ pub(in crate::routes::admin) async fn finance_report(
             status: String,
             claim_count: i64,
             total_cents: i64,
-            created_by: i64,
             created_by_name: String,
             paid_by: Option<i64>,
             paid_by_name: Option<String>,
             paid_at: Option<String>,
             paid_ref: String,
+            sod_violations: i64,
         }
         let batch_rows: Vec<BatchRow> = sqlx::query_as(
             "SELECT b.id, b.month, b.title, b.status, b.claim_count, b.total_cents,
-                    b.created_by, c.name AS created_by_name, b.paid_by, p.name AS paid_by_name,
-                    b.paid_at, b.paid_ref
+                    c.name AS created_by_name, b.paid_by, p.name AS paid_by_name,
+                    b.paid_at, b.paid_ref,
+                    COALESCE((SELECT COUNT(*) FROM reimbursements r
+                              WHERE r.batch_id = b.id
+                                AND (COALESCE(r.paid_by, b.paid_by) = r.user_id
+                                     OR COALESCE(r.paid_by, b.paid_by) = r.reviewed_by)), 0)::BIGINT AS sod_violations
              FROM payout_batches b
              JOIN users c ON c.id = b.created_by
              LEFT JOIN users p ON p.id = b.paid_by
@@ -255,8 +295,10 @@ pub(in crate::routes::admin) async fn finance_report(
         let batches: Vec<Value> = batch_rows
             .into_iter()
             .map(|b| {
+                // Segregation of duties holds when paid batches have an explicit payer and no
+                // claim inside the batch was paid by its applicant or its reviewer.
                 let maker_checker_ok =
-                    b.status != "paid" || (b.paid_by.is_some() && b.paid_by != Some(b.created_by));
+                    (b.status != "paid" || b.paid_by.is_some()) && b.sod_violations == 0;
                 json!({
                     "id": b.id,
                     "month": b.month,
@@ -273,42 +315,49 @@ pub(in crate::routes::admin) async fn finance_report(
             })
             .collect();
 
-        let trend_rows: Vec<(String, i64, i64, i64)> = sqlx::query_as(
-            "WITH entries AS (
-                SELECT substr(created_at, 1, 7) AS m,
-                       CASE WHEN status = 'approved' THEN amount_cents ELSE 0 END AS app_c,
-                       0::BIGINT AS paid_c,
-                       1::BIGINT AS cnt
-                FROM reimbursements
-                WHERE status IN ('approved', 'paid') AND created_at >= $1 AND created_at < $2
-                UNION ALL
-                SELECT substr(COALESCE(NULLIF(paid_at, ''), updated_at, created_at), 1, 7) AS m,
-                       0::BIGINT AS app_c,
-                       amount_cents AS paid_c,
-                       0::BIGINT AS cnt
-                FROM reimbursements
-                WHERE status = 'paid'
-                  AND COALESCE(NULLIF(paid_at, ''), updated_at, created_at) >= $1
-                  AND COALESCE(NULLIF(paid_at, ''), updated_at, created_at) < $2
-             )
-             SELECT m, COALESCE(SUM(app_c), 0)::BIGINT, COALESCE(SUM(paid_c), 0)::BIGINT, COALESCE(SUM(cnt), 0)::BIGINT
-             FROM entries
-             GROUP BY m
-             ORDER BY m ASC",
+        let trend_app_rows: Vec<(String, i64, i64)> = sqlx::query_as(
+            "SELECT substr(created_at, 1, 7) AS m, COUNT(*)::BIGINT, COALESCE(SUM(amount_cents), 0)::BIGINT
+             FROM reimbursements
+             WHERE status = 'approved' AND created_at >= $1 AND created_at < $2
+             GROUP BY m",
         )
         .bind(&w.start)
         .bind(&w.end)
         .fetch_all(&st.db)
         .await?;
-
-        let monthly_trend: Vec<Value> = trend_rows
+        let trend_paid_rows: Vec<(String, i64, i64)> = sqlx::query_as(
+            "SELECT substr(COALESCE(NULLIF(paid_at, ''), updated_at, created_at), 1, 7) AS m,
+                    COUNT(*)::BIGINT, COALESCE(SUM(amount_cents), 0)::BIGINT
+             FROM reimbursements
+             WHERE status = 'paid'
+               AND COALESCE(NULLIF(paid_at, ''), updated_at, created_at) >= $1
+               AND COALESCE(NULLIF(paid_at, ''), updated_at, created_at) < $2
+             GROUP BY m",
+        )
+        .bind(&w.start)
+        .bind(&w.end)
+        .fetch_all(&st.db)
+        .await?;
+        let mut trend_app_map: HashMap<String, (i64, i64)> = HashMap::new();
+        for (m, c, a) in trend_app_rows {
+            trend_app_map.insert(m, (c, a));
+        }
+        let mut trend_paid_map: HashMap<String, (i64, i64)> = HashMap::new();
+        for (m, c, a) in trend_paid_rows {
+            trend_paid_map.insert(m, (c, a));
+        }
+        let monthly_trend: Vec<Value> = month_buckets(&w)
             .into_iter()
-            .map(|(m, app_c, paid_c, cnt)| {
+            .map(|m| {
+                let (ac, aa) = trend_app_map.get(&m).copied().unwrap_or((0, 0));
+                let (pc, pa) = trend_paid_map.get(&m).copied().unwrap_or((0, 0));
                 json!({
                     "month": m,
-                    "approved_cents": app_c,
-                    "paid_cents": paid_c,
-                    "claim_count": cnt,
+                    "approved_count": ac,
+                    "approved_cents": aa,
+                    "paid_count": pc,
+                    "paid_cents": pa,
+                    "claim_count": ac + pc,
                 })
             })
             .collect();
@@ -318,11 +367,15 @@ pub(in crate::routes::admin) async fn finance_report(
             "approved_unpaid_cents": approved_unpaid_cents,
             "all_time_awaiting_count": all_time_awaiting_count,
             "all_time_awaiting_cents": all_time_awaiting_cents,
+            "overdue_approved_count": overdue_approved_count,
+            "overdue_approved_cents": overdue_approved_cents,
             "paid_count": paid_count,
             "paid_cents": paid_cents,
             "payee_verified_count": payee_verified_count,
             "payee_unverified_count": payee_unverified_count,
             "by_kind": by_kind,
+            "batches_total": batches_total,
+            "batches_truncated": batches_truncated,
             "batches": batches,
             "monthly_trend": monthly_trend,
         })
@@ -353,6 +406,7 @@ pub(in crate::routes::admin) async fn finance_report(
             organiser_name: String,
             status: String,
             subsidy_cents: i64,
+            due_date: Option<String>,
             gross_cents: i64,
             collected_cents: i64,
             pending_verification_cents: i64,
@@ -363,21 +417,46 @@ pub(in crate::routes::admin) async fn finance_report(
         }
 
         let bill_rows: Vec<BillRow> = sqlx::query_as(
-            "SELECT s.id, s.title, s.event_id, e.title AS event_title, e.starts_at AS event_starts_at,
-                    u.name AS organiser_name, s.status, s.subsidy_cents,
-                    COALESCE((SELECT SUM(si.amount_cents) FROM settlement_items si WHERE si.settlement_id = s.id), 0)::BIGINT AS gross_cents,
-                    COALESCE((SELECT SUM(sh.amount_cents) FROM settlement_shares sh WHERE sh.settlement_id = s.id AND sh.status = 'confirmed'), 0)::BIGINT AS collected_cents,
-                    COALESCE((SELECT SUM(sh.amount_cents) FROM settlement_shares sh WHERE sh.settlement_id = s.id AND sh.status = 'pending'), 0)::BIGINT AS pending_verification_cents,
-                    COALESCE((SELECT SUM(sh.amount_cents) FROM settlement_shares sh WHERE sh.settlement_id = s.id AND sh.status = 'needs_info'), 0)::BIGINT AS needs_info_cents,
-                    COALESCE((SELECT SUM(sh.amount_cents) FROM settlement_shares sh WHERE sh.settlement_id = s.id AND sh.status = 'unpaid'), 0)::BIGINT AS unpaid_cents,
-                    COALESCE((SELECT COUNT(*) FROM settlement_shares sh WHERE sh.settlement_id = s.id), 0)::BIGINT AS participant_count,
-                    COALESCE((SELECT COUNT(*) FROM settlement_shares sh WHERE sh.settlement_id = s.id AND sh.status = 'confirmed'), 0)::BIGINT AS confirmed_count
-             FROM settlements s
-             JOIN events e ON e.id = s.event_id
-             JOIN users u ON u.id = s.created_by
-             WHERE s.status <> 'draft' AND e.status <> 'draft'
-               AND e.starts_at >= $1 AND e.starts_at < $2
-             ORDER BY e.starts_at DESC, s.id DESC",
+            "WITH scoped AS (
+                SELECT s.id, s.title, s.event_id, e.title AS event_title, e.starts_at AS event_starts_at,
+                       u.name AS organiser_name, s.status, s.subsidy_cents, s.due_date
+                FROM settlements s
+                JOIN events e ON e.id = s.event_id
+                JOIN users u ON u.id = s.created_by
+                WHERE s.status <> 'draft' AND e.status <> 'draft'
+                  AND e.starts_at >= $1 AND e.starts_at < $2
+             ),
+             item_agg AS (
+                SELECT si.settlement_id, COALESCE(SUM(si.amount_cents), 0)::BIGINT AS gross_cents
+                FROM settlement_items si
+                JOIN scoped sc ON sc.id = si.settlement_id
+                GROUP BY si.settlement_id
+             ),
+             share_agg AS (
+                SELECT sh.settlement_id,
+                       COALESCE(SUM(sh.amount_cents) FILTER (WHERE sh.status = 'confirmed'), 0)::BIGINT AS collected_cents,
+                       COALESCE(SUM(sh.amount_cents) FILTER (WHERE sh.status = 'pending'), 0)::BIGINT AS pending_verification_cents,
+                       COALESCE(SUM(sh.amount_cents) FILTER (WHERE sh.status = 'needs_info'), 0)::BIGINT AS needs_info_cents,
+                       COALESCE(SUM(sh.amount_cents) FILTER (WHERE sh.status = 'unpaid'), 0)::BIGINT AS unpaid_cents,
+                       COUNT(*)::BIGINT AS participant_count,
+                       COUNT(*) FILTER (WHERE sh.status = 'confirmed')::BIGINT AS confirmed_count
+                FROM settlement_shares sh
+                JOIN scoped sc ON sc.id = sh.settlement_id
+                GROUP BY sh.settlement_id
+             )
+             SELECT sc.id, sc.title, sc.event_id, sc.event_title, sc.event_starts_at,
+                    sc.organiser_name, sc.status, sc.subsidy_cents, sc.due_date,
+                    COALESCE(ia.gross_cents, 0)::BIGINT AS gross_cents,
+                    COALESCE(sa.collected_cents, 0)::BIGINT AS collected_cents,
+                    COALESCE(sa.pending_verification_cents, 0)::BIGINT AS pending_verification_cents,
+                    COALESCE(sa.needs_info_cents, 0)::BIGINT AS needs_info_cents,
+                    COALESCE(sa.unpaid_cents, 0)::BIGINT AS unpaid_cents,
+                    COALESCE(sa.participant_count, 0)::BIGINT AS participant_count,
+                    COALESCE(sa.confirmed_count, 0)::BIGINT AS confirmed_count
+             FROM scoped sc
+             LEFT JOIN item_agg ia ON ia.settlement_id = sc.id
+             LEFT JOIN share_agg sa ON sa.settlement_id = sc.id
+             ORDER BY sc.event_starts_at DESC, sc.id DESC",
         )
         .bind(&w.start)
         .bind(&w.end)
@@ -386,6 +465,7 @@ pub(in crate::routes::admin) async fn finance_report(
 
         let mut published_count = 0_i64;
         let mut closed_count = 0_i64;
+        let mut overdue_settlements_count = 0_i64;
         let mut gross_total = 0_i64;
         let mut subsidy_total = 0_i64;
         let mut net_billed_total = 0_i64;
@@ -401,6 +481,15 @@ pub(in crate::routes::admin) async fn finance_report(
                 published_count += 1;
             }
             let net = (b.gross_cents - b.subsidy_cents).max(0);
+            let outstanding = (net - b.collected_cents).max(0);
+            if b.status == "published"
+                && outstanding > 0
+                && b.due_date
+                    .as_deref()
+                    .is_some_and(|d| !d.is_empty() && d < today.as_str())
+            {
+                overdue_settlements_count += 1;
+            }
             gross_total += b.gross_cents;
             subsidy_total += b.subsidy_cents;
             net_billed_total += net;
@@ -411,6 +500,8 @@ pub(in crate::routes::admin) async fn finance_report(
         }
 
         let total_settlements = published_count + closed_count;
+        let settlements_total = bill_rows.len() as i64;
+        let settlements_truncated = settlements_total > 100;
         let collection_rate_pct = if net_billed_total > 0 {
             (collected_total * 100) / net_billed_total
         } else {
@@ -431,6 +522,7 @@ pub(in crate::routes::admin) async fn finance_report(
                     "event_starts_at": b.event_starts_at,
                     "organiser_name": b.organiser_name,
                     "status": b.status,
+                    "due_date": b.due_date,
                     "gross_cents": b.gross_cents,
                     "subsidy_cents": b.subsidy_cents,
                     "net_billed_cents": net,
@@ -448,6 +540,9 @@ pub(in crate::routes::admin) async fn finance_report(
                 "draft_count": draft_count,
                 "published_count": published_count,
                 "closed_count": closed_count,
+                "overdue_settlements_count": overdue_settlements_count,
+                "settlements_total": settlements_total,
+                "settlements_truncated": settlements_truncated,
                 "gross_cents": gross_total,
                 "subsidy_cents": subsidy_total,
                 "net_billed_cents": net_billed_total,
@@ -463,6 +558,112 @@ pub(in crate::routes::admin) async fn finance_report(
         Value::Null
     };
 
+    let comparison = if let Some(pw) = prev_period_window(&w) {
+        let rev_comp = if caps.reimb_review {
+            let (prev_pend, prev_app_cents): (i64, i64) = sqlx::query_as(
+                "SELECT
+                    COUNT(*) FILTER (WHERE status = 'pending')::BIGINT,
+                    COALESCE(SUM(amount_cents) FILTER (WHERE status = 'approved'), 0)::BIGINT
+                 FROM reimbursements
+                 WHERE created_at >= $1 AND created_at < $2",
+            )
+            .bind(&pw.start)
+            .bind(&pw.end)
+            .fetch_one(&st.db)
+            .await?;
+            let cur_pend = reimbursement_review["by_status"]["pending"]["count"]
+                .as_i64()
+                .unwrap_or(0);
+            let cur_app_cents = reimbursement_review["by_status"]["approved"]["amount_cents"]
+                .as_i64()
+                .unwrap_or(0);
+            json!({
+                "pending_count_delta": cur_pend - prev_pend,
+                "approved_cents_delta": cur_app_cents - prev_app_cents,
+            })
+        } else {
+            Value::Null
+        };
+
+        let pay_comp = if caps.reimb_pay {
+            let (prev_paid_count, prev_paid_cents): (i64, i64) = sqlx::query_as(
+                "SELECT COUNT(*)::BIGINT, COALESCE(SUM(amount_cents), 0)::BIGINT
+                 FROM reimbursements
+                 WHERE status = 'paid'
+                   AND COALESCE(NULLIF(paid_at, ''), updated_at, created_at) >= $1
+                   AND COALESCE(NULLIF(paid_at, ''), updated_at, created_at) < $2",
+            )
+            .bind(&pw.start)
+            .bind(&pw.end)
+            .fetch_one(&st.db)
+            .await?;
+            let cur_paid_count = reimbursement_payouts["paid_count"].as_i64().unwrap_or(0);
+            let cur_paid_cents = reimbursement_payouts["paid_cents"].as_i64().unwrap_or(0);
+            json!({
+                "paid_count_delta": cur_paid_count - prev_paid_count,
+                "paid_cents_delta": cur_paid_cents - prev_paid_cents,
+            })
+        } else {
+            Value::Null
+        };
+
+        let bill_comp = if caps.bills {
+            let (prev_net, prev_collected): (i64, i64) = sqlx::query_as(
+                "WITH sc AS (
+                    SELECT s.subsidy_cents,
+                           COALESCE((SELECT SUM(si.amount_cents) FROM settlement_items si WHERE si.settlement_id = s.id), 0)::BIGINT AS gross_cents,
+                           COALESCE((SELECT SUM(sh.amount_cents) FROM settlement_shares sh WHERE sh.settlement_id = s.id AND sh.status = 'confirmed'), 0)::BIGINT AS collected_cents
+                    FROM settlements s
+                    JOIN events e ON e.id = s.event_id
+                    WHERE s.status <> 'draft' AND e.status <> 'draft'
+                      AND e.starts_at >= $1 AND e.starts_at < $2
+                )
+                SELECT COALESCE(SUM(GREATEST(0, gross_cents - subsidy_cents)), 0)::BIGINT,
+                       COALESCE(SUM(collected_cents), 0)::BIGINT
+                FROM sc",
+            )
+            .bind(&pw.start)
+            .bind(&pw.end)
+            .fetch_one(&st.db)
+            .await?;
+            let prev_rate = if prev_net > 0 {
+                (prev_collected * 100) / prev_net
+            } else {
+                0
+            };
+            let cur_collected = bills["totals"]["collected_cents"].as_i64().unwrap_or(0);
+            let cur_rate = bills["totals"]["collection_rate_pct"].as_i64().unwrap_or(0);
+            json!({
+                "collected_cents_delta": cur_collected - prev_collected,
+                "collection_rate_delta": cur_rate - prev_rate,
+            })
+        } else {
+            Value::Null
+        };
+
+        json!({
+            "prev_period": pw.period_label,
+            "reimb_review": rev_comp,
+            "reimb_payouts": pay_comp,
+            "bills": bill_comp,
+        })
+    } else {
+        Value::Null
+    };
+
+    audit(
+        &st.db,
+        Some(u.id),
+        "report.finance_view",
+        "finance_report",
+        None,
+        &format!(
+            "{} [review={},pay={},bills={}]",
+            w.period_label, caps.reimb_review, caps.reimb_pay, caps.bills
+        ),
+    )
+    .await;
+
     Ok(Json(json!({
         "period": w.period_label,
         "range": w.range,
@@ -473,6 +674,7 @@ pub(in crate::routes::admin) async fn finance_report(
             "reimb_payouts": caps.reimb_pay,
             "bills": caps.bills,
         },
+        "comparison": comparison,
         "reimbursement_review": reimbursement_review,
         "reimbursement_payouts": reimbursement_payouts,
         "bills": bills,

@@ -17,18 +17,51 @@ import {
 import { EVENT_KIND, fmtDateTime, useFormatT } from '../../../format';
 import { downloadCsv, escapeCsv, exportReportPdf } from '../../../reportExport';
 import type { EventsReportData } from '../../../types/domain';
-import { buildPeriodQuery, PeriodControls, type PeriodFilterState } from './PeriodControls';
+import {
+  buildPeriodQuery,
+  DeltaPill,
+  type GroupFilterOption,
+  PeriodControls,
+  type PeriodFilterState,
+} from './PeriodControls';
 
 const KIND_OPTIONS = ['badminton', 'bowling', 'kayak', 'walk', 'other'] as const;
 
-export default function EventsReportPanel({ period }: { period: PeriodFilterState }) {
+export default function EventsReportPanel({
+  period,
+  groupId: controlledGroupId,
+  onGroupChange,
+}: {
+  period: PeriodFilterState;
+  groupId?: string;
+  onGroupChange?: (next: string) => void;
+}) {
   const { t } = useTranslation('admin');
   const ft = useFormatT();
   const [kind, setKind] = useState('');
+  const [localGroupId, setLocalGroupId] = useState('');
+  const [exportingPdf, setExportingPdf] = useState(false);
+  const [exportErr, setExportErr] = useState<string | null>(null);
+  const groupId = controlledGroupId !== undefined ? controlledGroupId : localGroupId;
+  const setGroupId = onGroupChange ?? setLocalGroupId;
+
+  const { data: groupsData } = useApi<GroupFilterOption[]>('/groups');
+  const groups = Array.isArray(groupsData) ? groupsData.filter((g) => !g.is_visitor) : [];
+
   const baseQuery = buildPeriodQuery(period);
-  const query = kind ? `${baseQuery}&kind=${encodeURIComponent(kind)}` : baseQuery;
-  const { data, loading, error } = useApi<EventsReportData>(`/admin/reports/events?${query}`);
+  const query = (() => {
+    if (!baseQuery) return null;
+    const sp = new URLSearchParams(baseQuery);
+    if (kind) sp.set('kind', kind);
+    if (groupId) sp.set('group_id', groupId);
+    return sp.toString();
+  })();
+
+  const { data, loading, error } = useApi<EventsReportData>(
+    query ? `/admin/reports/events?${query}` : null,
+  );
   const ev = data && 'totals' in data ? data : null;
+  const cmp = ev?.comparison;
 
   const exportCsv = () => {
     if (!ev) return;
@@ -40,6 +73,9 @@ export default function EventsReportPanel({ period }: { period: PeriodFilterStat
     lines.push('');
     lines.push('Summary,Value');
     lines.push(`Events,${ev.totals.events_count}`);
+    if (ev.totals.tracked_events_count != null) {
+      lines.push(`Tracked attendance events,${ev.totals.tracked_events_count}`);
+    }
     lines.push(`Cancelled events,${ev.totals.cancelled_events}`);
     lines.push(`Total going,${ev.totals.total_going}`);
     lines.push(`Total waitlist,${ev.totals.total_waitlist}`);
@@ -67,7 +103,11 @@ export default function EventsReportPanel({ period }: { period: PeriodFilterStat
         : 'Event ID,Title,Kind,Starts At,Status,Organiser,Going,Attended,Attendance Rate (%)',
     );
     for (const item of ev.events) {
-      const base = `${item.id},${escapeCsv(item.title)},${escapeCsv(item.kind)},${escapeCsv(item.starts_at)},${escapeCsv(item.status)},${escapeCsv(item.creator_name)},${item.going},${item.attended},${item.attendance_rate_pct}%`;
+      const rateCell =
+        item.attendance_enabled && item.attendance_rate_pct != null
+          ? `${item.attendance_rate_pct}%`
+          : '';
+      const base = `${item.id},${escapeCsv(item.title)},${escapeCsv(item.kind)},${escapeCsv(item.starts_at)},${escapeCsv(item.status)},${escapeCsv(item.creator_name)},${item.going},${item.attended},${rateCell}`;
       lines.push(
         hasRideCols
           ? `${base},${item.rides_matched ?? ''},${item.rides_unfilled ?? ''}`
@@ -78,49 +118,57 @@ export default function EventsReportPanel({ period }: { period: PeriodFilterStat
   };
 
   const exportPdf = async () => {
-    if (!ev) return;
-    await exportReportPdf({
-      fileBase: `grace-ride-events-report-${ev.period}`,
-      title: t('reports.eventsPdfTitle'),
-      meta: [
-        `${t('reports.period')}: ${ev.period}`,
-        `${t('reports.window')}: ${ev.from} – ${ev.to}`,
-        `${t('reports.scopeLabel')}: ${ev.scope === 'global' ? t('reports.scopeGlobal') : t('reports.scopeOwnEvents')}`,
-      ],
-      summaryHeading: t('reports.summary'),
-      summaryRows: [
-        [t('reports.eventsCount'), String(ev.totals.events_count)],
-        [t('reports.totalGoing'), String(ev.totals.total_going)],
-        [t('reports.totalAttended'), String(ev.totals.total_attended)],
-        [t('reports.attendanceRate'), `${ev.totals.attendance_rate_pct}%`],
-        [t('reports.needRideCount'), String(ev.totals.need_ride_count)],
-        [t('reports.selfTransportCount'), String(ev.totals.self_transport_count)],
-        [t('reports.visitorPasses'), String(ev.totals.visitor_passes_count)],
-      ],
-      sections: [
-        {
-          heading: t('reports.byGroupHeading'),
-          items: ev.by_group.map(
-            (g) =>
-              `${g.group_name ?? t('reports.unassignedGroup')}: ${g.attended}/${g.going} (${g.attendance_rate_pct}%)`,
-          ),
-        },
-        {
-          heading: t('reports.byKind'),
-          items: ev.by_kind.map(
-            (k) =>
-              `${ft(EVENT_KIND[k.kind]?.label ?? k.kind)}: ${k.events_count} · ${k.attended}/${k.going} (${k.attendance_rate_pct}%)`,
-          ),
-        },
-        {
-          heading: t('reports.eventsListHeading'),
-          items: ev.events.map(
-            (item) =>
-              `${item.title} (${fmtDateTime(item.starts_at, ft)}) — ${item.attended}/${item.going} (${item.attendance_rate_pct}%)`,
-          ),
-        },
-      ],
-    });
+    if (!ev || exportingPdf) return;
+    setExportErr(null);
+    setExportingPdf(true);
+    try {
+      await exportReportPdf({
+        fileBase: `grace-ride-events-report-${ev.period}`,
+        title: t('reports.eventsPdfTitle'),
+        meta: [
+          `${t('reports.period')}: ${ev.period}`,
+          `${t('reports.window')}: ${ev.from} – ${ev.to}`,
+          `${t('reports.scopeLabel')}: ${ev.scope === 'global' ? t('reports.scopeGlobal') : t('reports.scopeOwnEvents')}`,
+        ],
+        summaryHeading: t('reports.summary'),
+        summaryRows: [
+          [t('reports.eventsCount'), String(ev.totals.events_count)],
+          [t('reports.totalGoing'), String(ev.totals.total_going)],
+          [t('reports.totalAttended'), String(ev.totals.total_attended)],
+          [t('reports.attendanceRate'), `${ev.totals.attendance_rate_pct}%`],
+          [t('reports.needRideCount'), String(ev.totals.need_ride_count)],
+          [t('reports.selfTransportCount'), String(ev.totals.self_transport_count)],
+          [t('reports.visitorPasses'), String(ev.totals.visitor_passes_count)],
+        ],
+        sections: [
+          {
+            heading: t('reports.byGroupHeading'),
+            items: ev.by_group.map(
+              (g) =>
+                `${g.group_name ?? t('reports.unassignedGroup')}: ${g.attended}/${g.going} (${g.attendance_rate_pct}%)`,
+            ),
+          },
+          {
+            heading: t('reports.byKind'),
+            items: ev.by_kind.map(
+              (k) =>
+                `${ft(EVENT_KIND[k.kind]?.label ?? k.kind)}: ${k.events_count} · ${k.attended}/${k.going} (${k.attendance_rate_pct}%)`,
+            ),
+          },
+          {
+            heading: t('reports.eventsListHeading'),
+            items: ev.events.map(
+              (item) =>
+                `${item.title} (${fmtDateTime(item.starts_at, ft)}) — ${item.attended}/${item.going} (${item.attendance_enabled && item.attendance_rate_pct != null ? `${item.attendance_rate_pct}%` : '—'})`,
+            ),
+          },
+        ],
+      });
+    } catch (e) {
+      setExportErr(e instanceof Error ? e.message : String(e));
+    } finally {
+      setExportingPdf(false);
+    }
   };
 
   return (
@@ -129,20 +177,38 @@ export default function EventsReportPanel({ period }: { period: PeriodFilterStat
         period={period}
         scope={ev?.scope}
         extraFilter={
-          <Field label={t('reports.eventKind')}>
-            <select
-              className="input"
-              value={kind}
-              onChange={(e) => setKind(e.target.value)}
-            >
-              <option value="">{t('reports.allKinds')}</option>
-              {KIND_OPTIONS.map((k) => (
-                <option key={k} value={k}>
-                  {ft(EVENT_KIND[k]?.label ?? k)}
-                </option>
-              ))}
-            </select>
-          </Field>
+          <>
+            <Field label={t('reports.eventKind')}>
+              <select
+                className="input"
+                value={kind}
+                onChange={(e) => setKind(e.target.value)}
+              >
+                <option value="">{t('reports.allKinds')}</option>
+                {KIND_OPTIONS.map((k) => (
+                  <option key={k} value={k}>
+                    {ft(EVENT_KIND[k]?.label ?? k)}
+                  </option>
+                ))}
+              </select>
+            </Field>
+            {groups.length > 0 && (
+              <Field label={t('reports.groupFilter')}>
+                <select
+                  className="input"
+                  value={groupId}
+                  onChange={(e) => setGroupId(e.target.value)}
+                >
+                  <option value="">{t('reports.allGroups')}</option>
+                  {groups.map((g) => (
+                    <option key={g.id} value={g.id}>
+                      {g.name}
+                    </option>
+                  ))}
+                </select>
+              </Field>
+            )}
+          </>
         }
         actions={
           <>
@@ -159,7 +225,8 @@ export default function EventsReportPanel({ period }: { period: PeriodFilterStat
               variant="secondary"
               size="sm"
               onClick={exportPdf}
-              disabled={!ev}
+              disabled={!ev || exportingPdf}
+              loading={exportingPdf}
               icon={<Download size={16} />}
             >
               {t('reports.exportPdf')}
@@ -172,7 +239,7 @@ export default function EventsReportPanel({ period }: { period: PeriodFilterStat
         <Notice tone="info">{t('reports.ownEventsScopeNotice')}</Notice>
       )}
 
-      <ErrorBox error={error} />
+      <ErrorBox error={error || exportErr} />
 
       {loading ? (
         <CardSkeleton count={3} />
@@ -181,10 +248,46 @@ export default function EventsReportPanel({ period }: { period: PeriodFilterStat
       ) : (
         <>
           <div className="grid cols-4">
-            <Stat label={t('reports.eventsCount')} value={ev.totals.events_count} />
-            <Stat label={t('reports.totalGoing')} value={ev.totals.total_going} />
-            <Stat label={t('reports.totalAttended')} value={ev.totals.total_attended} />
-            <Stat label={t('reports.attendanceRate')} value={`${ev.totals.attendance_rate_pct}%`} />
+            <Stat
+              label={t('reports.eventsCount')}
+              value={
+                <span className="row gap-xs items-baseline flex-wrap">
+                  <span>{ev.totals.events_count}</span>
+                  <DeltaPill delta={cmp?.events_count_delta} prevPeriod={cmp?.prev_period} />
+                </span>
+              }
+            />
+            <Stat
+              label={t('reports.totalGoing')}
+              value={
+                <span className="row gap-xs items-baseline flex-wrap">
+                  <span>{ev.totals.total_going}</span>
+                  <DeltaPill delta={cmp?.total_going_delta} prevPeriod={cmp?.prev_period} />
+                </span>
+              }
+            />
+            <Stat
+              label={t('reports.totalAttended')}
+              value={
+                <span className="row gap-xs items-baseline flex-wrap">
+                  <span>{ev.totals.total_attended}</span>
+                  <DeltaPill delta={cmp?.total_attended_delta} prevPeriod={cmp?.prev_period} />
+                </span>
+              }
+            />
+            <Stat
+              label={t('reports.attendanceRate')}
+              value={
+                <span className="row gap-xs items-baseline flex-wrap">
+                  <span>{ev.totals.attendance_rate_pct}%</span>
+                  <DeltaPill
+                    delta={cmp?.attendance_rate_delta}
+                    unit="%"
+                    prevPeriod={cmp?.prev_period}
+                  />
+                </span>
+              }
+            />
             <Stat label={t('reports.needRideCount')} value={ev.totals.need_ride_count} />
             <Stat label={t('reports.selfTransportCount')} value={ev.totals.self_transport_count} />
             <Stat label={t('reports.offerDriveCount')} value={ev.totals.offer_drive_count} />
@@ -193,6 +296,16 @@ export default function EventsReportPanel({ period }: { period: PeriodFilterStat
               <Stat label={t('reports.planVisitors')} value={ev.totals.plan_visitors_count} />
             )}
           </div>
+
+          {ev.totals.tracked_events_count != null &&
+            ev.totals.tracked_events_count < ev.totals.events_count && (
+              <p className="muted tiny">
+                {t('reports.attendanceTrackedNote', {
+                  tracked: ev.totals.tracked_events_count,
+                  total: ev.totals.events_count,
+                })}
+              </p>
+            )}
 
           <div className="grid cols-2">
             <Card className="stack-sm">
@@ -248,6 +361,14 @@ export default function EventsReportPanel({ period }: { period: PeriodFilterStat
 
           <Card className="stack-sm">
             <h3>{t('reports.eventsListHeading')}</h3>
+            {ev.events_truncated && (
+              <Notice tone="info">
+                {t('reports.listTruncatedNotice', {
+                  shown: ev.events.length,
+                  total: ev.events_total ?? ev.events.length,
+                })}
+              </Notice>
+            )}
             {ev.events.length === 0 ? (
               <p className="muted small">{t('reports.none')}</p>
             ) : (
@@ -267,7 +388,9 @@ export default function EventsReportPanel({ period }: { period: PeriodFilterStat
                     </div>
                     <div className="stack-xs text-right no-wrap">
                       <span className="bold small">
-                        {item.attended}/{item.going} ({item.attendance_rate_pct}%)
+                        {item.attendance_enabled && item.attendance_rate_pct != null
+                          ? `${item.attended}/${item.going} (${item.attendance_rate_pct}%)`
+                          : `${item.going} · —`}
                       </span>
                       {item.rides_matched != null && (
                         <span className="muted tiny">

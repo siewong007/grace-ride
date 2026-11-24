@@ -5,6 +5,7 @@ import { del, post, useApi } from '../../api';
 import { fmtAgo, fmtDistance, fmtDuration, fmtTime, useFormatT } from '../../format';
 import LiveMap, { MapPoint } from '../LiveMap';
 import type { Ride } from '../RideCard';
+import { useWakeLock } from '../../hooks/useWakeLock';
 import { ShareLocation } from '../TripActions';
 import type { RideEta } from '../TripRoute';
 import { Button, Card, Notice, Pill, useAction } from '../ui';
@@ -212,6 +213,7 @@ export function PassengerShareLocation({
   const { t } = useTranslation('rideDetail');
   const { run } = useAction();
   const [on, setOn] = useState(() => readShare(rideId));
+  useWakeLock(on);
   const [state, setState] = useState<'idle' | 'denied' | 'unsupported' | null>(null);
   const last = useRef(0);
   const onChangeRef = useRef(onChange);
