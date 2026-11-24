@@ -1,6 +1,7 @@
 package org.pjstatecm.graceride
 
 import androidx.compose.ui.graphics.Color
+import java.io.File
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.test.UnconfinedTestDispatcher
@@ -26,6 +27,7 @@ import org.pjstatecm.graceride.ui.Routes
 import org.pjstatecm.graceride.ui.components.AvatarStyle
 import org.pjstatecm.graceride.ui.components.BadgeIcons
 import org.pjstatecm.graceride.ui.components.BadgeTierStyle
+import org.pjstatecm.graceride.ui.components.EventIcons
 
 /** Regressions found by live emulator testing against the real dev backend. */
 @OptIn(ExperimentalCoroutinesApi::class)
@@ -102,14 +104,22 @@ class RegressionTest {
         assertFalse(AvatarStyle.isAnimatedAvatar(null))
 
         val reg = BadgeIcons.resolve(icon = "moon")
-        assertTrue(reg is BadgeIcons.ResolvedBadgeIcon.Vector)
+        assertTrue(reg is BadgeIcons.ResolvedBadgeIcon.GifAsset)
+        assertEquals(
+            "file:///android_asset/icons/badges/moon.gif",
+            (reg as BadgeIcons.ResolvedBadgeIcon.GifAsset).assetUri,
+        )
 
         for (animBadge in listOf(
             "badge_joy_rider", "badge_fellowship_sprout", "badge_punctual_clock", "badge_warm_welcome",
             "badge_helping_wheels", "badge_traffic_light", "badge_route_compass", "badge_traffic_whistle", "badge_care_shield",
         )) {
             val resolved = BadgeIcons.resolve(icon = animBadge)
-            assertTrue("$animBadge should resolve to Animated", resolved is BadgeIcons.ResolvedBadgeIcon.Animated)
+            assertTrue("$animBadge should resolve to GifAsset", resolved is BadgeIcons.ResolvedBadgeIcon.GifAsset)
+            assertEquals(
+                "file:///android_asset/icons/badges/$animBadge.gif",
+                (resolved as BadgeIcons.ResolvedBadgeIcon.GifAsset).assetUri,
+            )
         }
 
         val emoji = BadgeIcons.resolve(icon = "🦉")
@@ -118,6 +128,58 @@ class RegressionTest {
         val badge = Badge(key = "k", char = "N", icon = null)
         val fallback = BadgeIcons.resolve(badge = badge, fallbackChar = "R")
         assertEquals(BadgeIcons.ResolvedBadgeIcon.Text("R"), fallback)
+
+        assertEquals("file:///android_asset/icons/avatars/grace_car.gif", AvatarStyle.gifAssetUri("grace_car"))
+        assertEquals("file:///android_asset/icons/avatars/grok_gray.gif", AvatarStyle.gifAssetUri("grok"))
+        assertEquals("file:///android_asset/icons/avatars/grok_coral.gif", AvatarStyle.gifAssetUri("grok", "coral"))
+        assertEquals("file:///android_asset/icons/avatars/grok_coral.gif", AvatarStyle.gifAssetUri("grok:circle:coral", "white:hexagon"))
+        assertEquals("file:///android_asset/icons/avatars/muse_amber.gif", AvatarStyle.gifAssetUri("muse"))
+        assertEquals("file:///android_asset/icons/avatars/muse_pink.gif", AvatarStyle.gifAssetUri("muse", "pink"))
+        assertEquals("file:///android_asset/icons/avatars/car.gif", AvatarStyle.gifAssetUri("car"))
+        assertEquals(null, AvatarStyle.gifAssetUri(null))
+        assertEquals(null, AvatarStyle.gifAssetUri("initials::teal"))
+
+        assertEquals("file:///android_asset/icons/events/utensils.gif", EventIcons.gifAssetUri("utensils"))
+        assertEquals("file:///android_asset/icons/events/trophy.gif", EventIcons.gifAssetUri(null, "badminton"))
+        assertEquals(null, EventIcons.gifAssetUri("🍲"))
+    }
+
+    @Test fun bundledGifAssetsExistAndAreGif89a() {
+        val baseDir = listOf(
+            File("src/main/assets/icons"),
+            File("android/app/src/main/assets/icons"),
+        ).firstOrNull { it.isDirectory }
+            ?: throw AssertionError("Could not locate android/app/src/main/assets/icons")
+
+        val expectedFiles = mutableSetOf<String>()
+        for (icon in AvatarStyle.ALL_ICONS) {
+            expectedFiles += "avatars/$icon.gif"
+            if (icon == "grok" || icon == "muse") {
+                for (color in AvatarStyle.COLORS) {
+                    expectedFiles += "avatars/${icon}_$color.gif"
+                }
+            }
+        }
+        assertEquals(40, expectedFiles.count { it.startsWith("avatars/") })
+
+        for (badgeKey in BadgeIcons.allGifKeys) {
+            expectedFiles += "badges/$badgeKey.gif"
+        }
+        assertEquals(29, expectedFiles.count { it.startsWith("badges/") })
+
+        for (eventKey in EventIcons.PRESET_KEYS) {
+            expectedFiles += "events/$eventKey.gif"
+        }
+        assertEquals(28, expectedFiles.count { it.startsWith("events/") })
+        assertEquals(97, expectedFiles.size)
+
+        for (rel in expectedFiles) {
+            val file = File(baseDir, rel)
+            assertTrue("Missing asset $rel at ${file.absolutePath}", file.isFile)
+            val bytes = file.readBytes()
+            assertTrue("Asset $rel too short", bytes.size >= 6)
+            assertEquals("GIF89a", String(bytes, 0, 6, Charsets.US_ASCII))
+        }
     }
 
     @Test fun whiteAvatarAndMultiTierBadgesAreSupported() {
@@ -198,5 +260,10 @@ class RegressionTest {
         assertTrue(AvatarStyle.isShapeableAvatar("muse:droplet:pink"))
         assertFalse(AvatarStyle.isShapeableAvatar("car::purple"))
         assertEquals("blue", AvatarStyle.defaultColorFor("grace_car"))
+        assertEquals(
+            "file:///android_asset/icons/avatars/grok_coral.gif",
+            AvatarStyle.gifAssetUri("grok::coral", "white:hexagon"),
+        )
+        assertEquals(null, AvatarStyle.gifAssetUri("initials::teal", "white:rounded"))
     }
 }

@@ -1,3 +1,5 @@
+import fs from 'node:fs';
+import path from 'node:path';
 import { beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
@@ -5,6 +7,8 @@ import { MemoryRouter, Route, Routes } from 'react-router-dom';
 import { post, put } from './api';
 import i18n from './i18n';
 import { todayStr } from './format';
+import { AVATAR_COLORS, AVATAR_ICONS } from './avatarStyle';
+import { ACHIEVEMENT_ICONS, ANIMATED_BADGE_ICONS } from './badgeIcon';
 import { EVENT_ICONS, EventIcon } from './eventIcon';
 import EventForm from './pages/EventForm';
 import Events, { type EventItem } from './pages/Events';
@@ -55,15 +59,59 @@ beforeEach(() => {
 });
 
 describe('EventIcon', () => {
-  it('renders preset Lucide SVG, custom emoji, and kind-based fallback', () => {
+  it('renders animated GIF for preset key, custom emoji, and kind-based GIF fallback', () => {
     const { container, rerender } = render(<EventIcon icon="church" kind="other" size={18} />);
-    expect(container.querySelector('svg')).toBeInTheDocument();
+    expect(container.querySelector('img[src="/icons/events/church.gif"]')).toBeInTheDocument();
 
     rerender(<EventIcon icon="🍲" kind="other" size={18} />);
     expect(screen.getByText('🍲')).toBeInTheDocument();
 
     rerender(<EventIcon icon={null} kind="badminton" size={18} />);
-    expect(container.querySelector('svg')).toBeInTheDocument();
+    expect(container.querySelector('img[src="/icons/events/trophy.gif"]')).toBeInTheDocument();
+  });
+});
+
+describe('Animated GIF assets integrity', () => {
+  const iconsRoot = path.resolve(process.cwd(), 'public/icons');
+
+  const assertLoopingGif89a = (relPath: string) => {
+    const absPath = path.join(iconsRoot, relPath);
+    expect(fs.existsSync(absPath), `Missing GIF asset: ${absPath}`).toBe(true);
+    const buf = fs.readFileSync(absPath);
+    expect(buf.subarray(0, 6).toString('ascii'), `Invalid GIF header in ${relPath}`).toBe('GIF89a');
+    expect(buf.includes(Buffer.from('NETSCAPE2.0')), `Missing NETSCAPE2.0 loop block in ${relPath}`).toBe(true);
+  };
+
+  it('ships valid looping GIF89a files for all 40 avatars, 29 badges, and 28 events', () => {
+    const avatarKeys = Object.keys(AVATAR_ICONS);
+    expect(avatarKeys).toHaveLength(22);
+    const avatarFiles = new Set<string>();
+    for (const key of avatarKeys) {
+      avatarFiles.add(`avatars/${key}.gif`);
+      if (key === 'grok' || key === 'muse') {
+        for (const color of AVATAR_COLORS) {
+          avatarFiles.add(`avatars/${key}_${color}.gif`);
+        }
+      }
+    }
+    expect(avatarFiles.size).toBe(40);
+
+    const badgeKeys = new Set<string>([
+      ...Object.keys(ACHIEVEMENT_ICONS),
+      ...ANIMATED_BADGE_ICONS.map((b) => b.key),
+    ]);
+    expect(badgeKeys.size).toBe(29);
+    const badgeFiles = [...badgeKeys].map((k) => `badges/${k}.gif`);
+
+    const eventKeys = Object.keys(EVENT_ICONS);
+    expect(eventKeys).toHaveLength(28);
+    const eventFiles = eventKeys.map((k) => `events/${k}.gif`);
+
+    const allFiles = [...avatarFiles, ...badgeFiles, ...eventFiles];
+    expect(allFiles).toHaveLength(97);
+    for (const file of allFiles) {
+      assertLoopingGif89a(file);
+    }
   });
 });
 

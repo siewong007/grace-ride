@@ -715,6 +715,7 @@ describe('Report page', () => {
       );
       expect(container.querySelector('.badge-char.badge-tier-silver')).toBeInTheDocument();
       expect(container.querySelector('.badge-char.badge-tier-platinum')).toBeInTheDocument();
+      expect(container.querySelector('img[src="/icons/badges/badge_warm_welcome.gif"]')).toBeInTheDocument();
       expect(screen.getByText('Silver')).toBeInTheDocument();
       expect(screen.getByText('Platinum')).toBeInTheDocument();
       expect(screen.getByText('Next: Gold (12/25)')).toBeInTheDocument();

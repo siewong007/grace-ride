@@ -61,8 +61,8 @@ class EventsViewModel(private val container: AppContainer) : ViewModel() {
         viewModelScope.launch {
             try {
                 container.events.publish(id)
+                reloadData(first = false)
                 _state.value = _state.value.copy(actionNotice = EventActionNotice.PUBLISHED)
-                load(first = false)
             } catch (e: ApiException) {
                 _state.value = _state.value.copy(message = e.message)
             } finally {
@@ -77,12 +77,11 @@ class EventsViewModel(private val container: AppContainer) : ViewModel() {
         viewModelScope.launch {
             try {
                 container.events.unpublish(id)
-                val nextDrafts = if (_state.value.hideDrafts) _state.value.draftCount + 1 else _state.value.draftCount
-                _state.value = _state.value.copy(
-                    actionNotice = EventActionNotice.UNPUBLISHED,
-                    draftCount = nextDrafts,
-                )
-                load(first = false)
+                if (_state.value.hideDrafts) {
+                    _state.value = _state.value.copy(draftCount = _state.value.draftCount + 1)
+                }
+                reloadData(first = false)
+                _state.value = _state.value.copy(actionNotice = EventActionNotice.UNPUBLISHED)
             } catch (e: ApiException) {
                 _state.value = _state.value.copy(message = e.message)
             } finally {
@@ -103,68 +102,72 @@ class EventsViewModel(private val container: AppContainer) : ViewModel() {
 
     private fun load(first: Boolean) {
         viewModelScope.launch {
-            _state.value = _state.value.copy(loading = first, refreshing = !first)
-            try {
-                val tab = _state.value.tab
-                val hideDrafts = _state.value.hideDrafts
-                val events = when (tab) {
-                    2 -> container.events.past()
-                    3 -> container.events.managing(hideDrafts = hideDrafts)
-                    else -> container.events.upcoming()
-                }
-                val draftCount = if (tab == 3 && !hideDrafts) {
-                    events.count { it.status == "draft" }
-                } else {
-                    _state.value.draftCount
-                }
-                val requestsByEvent = if (tab == 0 && container.auth.me?.can("drive") == true) {
-                    try {
-                        container.rides.driverRequests(mineAreas = true)
-                            .mapNotNull { it.event?.id }
-                            .groupingBy { it }
-                            .eachCount()
-                    } catch (_: ApiException) {
-                        emptyMap()
-                    }
-                } else {
+            reloadData(first)
+        }
+    }
+
+    private suspend fun reloadData(first: Boolean) {
+        _state.value = _state.value.copy(loading = first, refreshing = !first)
+        try {
+            val tab = _state.value.tab
+            val hideDrafts = _state.value.hideDrafts
+            val events = when (tab) {
+                2 -> container.events.past()
+                3 -> container.events.managing(hideDrafts = hideDrafts)
+                else -> container.events.upcoming()
+            }
+            val draftCount = if (tab == 3 && !hideDrafts) {
+                events.count { it.status == "draft" }
+            } else {
+                _state.value.draftCount
+            }
+            val requestsByEvent = if (tab == 0 && container.auth.me?.can("drive") == true) {
+                try {
+                    container.rides.driverRequests(mineAreas = true)
+                        .mapNotNull { it.event?.id }
+                        .groupingBy { it }
+                        .eachCount()
+                } catch (_: ApiException) {
                     emptyMap()
                 }
-                val myRides = if (tab == 1 && container.auth.me?.can("rides") == true) {
-                    try {
-                        container.rides.upcoming()
-                    } catch (_: ApiException) {
-                        emptyList()
-                    }
-                } else {
-                    emptyList()
-                }
-                val myDrives = if (tab == 1 && container.auth.me?.can("drive") == true) {
-                    try {
-                        container.rides.drivingToday(KlTime.today(), KlTime.todayPlusDays(60))
-                    } catch (_: ApiException) {
-                        emptyList()
-                    }
-                } else {
-                    emptyList()
-                }
-                _state.value = _state.value.copy(
-                    loading = false,
-                    refreshing = false,
-                    events = events,
-                    myRides = myRides,
-                    myDrives = myDrives,
-                    requestsByEvent = requestsByEvent,
-                    draftCount = draftCount,
-                    error = null,
-                    offline = false,
-                )
-            } catch (e: ApiException) {
-                _state.value = _state.value.copy(
-                    loading = false, refreshing = false,
-                    error = if (e.status == 0) null else e.message,
-                    offline = e.status == 0,
-                )
+            } else {
+                emptyMap()
             }
+            val myRides = if (tab == 1 && container.auth.me?.can("rides") == true) {
+                try {
+                    container.rides.upcoming()
+                } catch (_: ApiException) {
+                    emptyList()
+                }
+            } else {
+                emptyList()
+            }
+            val myDrives = if (tab == 1 && container.auth.me?.can("drive") == true) {
+                try {
+                    container.rides.drivingToday(KlTime.today(), KlTime.todayPlusDays(60))
+                } catch (_: ApiException) {
+                    emptyList()
+                }
+            } else {
+                emptyList()
+            }
+            _state.value = _state.value.copy(
+                loading = false,
+                refreshing = false,
+                events = events,
+                myRides = myRides,
+                myDrives = myDrives,
+                requestsByEvent = requestsByEvent,
+                draftCount = draftCount,
+                error = null,
+                offline = false,
+            )
+        } catch (e: ApiException) {
+            _state.value = _state.value.copy(
+                loading = false, refreshing = false,
+                error = if (e.status == 0) null else e.message,
+                offline = e.status == 0,
+            )
         }
     }
 

@@ -33,6 +33,8 @@ import org.pjstatecm.graceride.di.AppContainer
 import org.pjstatecm.graceride.data.session.InMemoryStore
 import org.pjstatecm.graceride.domain.KlTime
 import org.pjstatecm.graceride.domain.inferAreaId
+import org.pjstatecm.graceride.ui.screens.events.EventActionNotice
+import org.pjstatecm.graceride.ui.screens.events.EventDetailViewModel
 import org.pjstatecm.graceride.ui.screens.events.EventsViewModel
 import org.pjstatecm.graceride.ui.screens.home.HomeViewModel
 import org.pjstatecm.graceride.ui.screens.login.LoginViewModel
@@ -777,5 +779,98 @@ class ViewModelTest {
         val delReq = server.takeRequest()
         assertEquals("DELETE", delReq.method)
         assertEquals("/api/proxy-riders/9", delReq.path)
+    }
+
+    @Test fun eventsManagingHideDraftsPublishAndUnpublish() = runBlocking {
+        signIn()
+        server.takeRequest() // /api/auth/me
+
+        val draftEv = """{"id":71,"title":"Secret Retreat","kind":"other","icon":"tent","starts_at":"2026-12-10 09:00:00","status":"draft","can_manage":true,"can_publish":true,"can_unpublish":false}"""
+        val pubEv = """{"id":72,"title":"Open Praise","kind":"other","icon":"music","starts_at":"2026-12-11 19:00:00","status":"published","can_manage":true,"can_publish":false,"can_unpublish":true}"""
+
+        server.enqueue(json("[]")) // init upcoming
+        server.enqueue(json("[]")) // driver requests
+        val vm = EventsViewModel(container)
+        vm.state.awaitUntil { !it.loading }
+        repeat(2) { server.takeRequest() }
+
+        server.enqueue(json("[$draftEv,$pubEv]"))
+        vm.setTab(3)
+        val managingState = vm.state.awaitUntil { !it.loading && it.tab == 3 }
+        assertEquals("/api/events?scope=managing", server.takeRequest().path)
+        assertEquals(2, managingState.events.size)
+        assertEquals(1, managingState.draftCount)
+        assertFalse(managingState.hideDrafts)
+
+        server.enqueue(json("[$pubEv]"))
+        vm.toggleHideDrafts()
+        val hiddenState = vm.state.awaitUntil { !it.refreshing && it.hideDrafts }
+        assertEquals("/api/events?scope=managing&hide_drafts=true", server.takeRequest().path)
+        assertEquals(1, hiddenState.events.size)
+        assertEquals(72L, hiddenState.events[0].id)
+
+        // Toggle back to show drafts and publish draft 71
+        server.enqueue(json("[$draftEv,$pubEv]"))
+        vm.toggleHideDrafts()
+        vm.state.awaitUntil { !it.refreshing && !it.hideDrafts }
+        server.takeRequest()
+
+        server.enqueue(json("""{"ok":true}"""))
+        server.enqueue(json("[$pubEv]"))
+        vm.publishEvent(71L)
+        val publishedState = vm.state.awaitUntil { it.actionNotice == EventActionNotice.PUBLISHED && !it.refreshing }
+        val pubReq = server.takeRequest()
+        assertEquals("POST", pubReq.method)
+        assertEquals("/api/events/71/publish", pubReq.path)
+        assertEquals("/api/events?scope=managing", server.takeRequest().path)
+        assertEquals(0, publishedState.draftCount)
+
+        // Unpublish event 72
+        vm.clearNotice()
+        server.enqueue(json("""{"ok":true}"""))
+        server.enqueue(json("[$draftEv]"))
+        vm.unpublishEvent(72L)
+        val unpubState = vm.state.awaitUntil { it.actionNotice == EventActionNotice.UNPUBLISHED && !it.refreshing }
+        val unpubReq = server.takeRequest()
+        assertEquals("POST", unpubReq.method)
+        assertEquals("/api/events/72/unpublish", unpubReq.path)
+        assertEquals("/api/events?scope=managing", server.takeRequest().path)
+        assertEquals(EventActionNotice.UNPUBLISHED, unpubState.actionNotice)
+    }
+
+    @Test fun eventDetailPublishAndUnpublishConflict() = runBlocking {
+        signIn()
+        server.takeRequest() // /api/auth/me
+
+        val draftDetail = """{"id":81,"title":"Draft Prayer","kind":"other","icon":"flame","starts_at":"2026-12-12 20:00:00","status":"draft","can_manage":true,"can_publish":true,"can_unpublish":false}"""
+        val pubDetail = """{"id":81,"title":"Draft Prayer","kind":"other","icon":"flame","starts_at":"2026-12-12 20:00:00","status":"published","can_manage":true,"can_publish":false,"can_unpublish":false}"""
+
+        server.enqueue(json(draftDetail))
+        val vm = EventDetailViewModel(container, 81L)
+        val init = vm.state.awaitUntil { !it.loading && it.event != null }
+        assertEquals("/api/events/81", server.takeRequest().path)
+        assertEquals("draft", init.event?.status)
+
+        server.enqueue(json("""{"ok":true}"""))
+        server.enqueue(json(pubDetail))
+        vm.publish()
+        val afterPub = vm.state.awaitUntil { !it.busy && it.actionNotice == EventActionNotice.PUBLISHED && it.event?.status == "published" }
+        val pubReq = server.takeRequest()
+        assertEquals("POST", pubReq.method)
+        assertEquals("/api/events/81/publish", pubReq.path)
+        assertEquals("/api/events/81", server.takeRequest().path)
+        assertEquals("published", afterPub.event?.status)
+
+        server.enqueue(
+            MockResponse()
+                .setResponseCode(409)
+                .setBody("""{"error":"Cannot hide event with active signups","code":"EVENT_CANNOT_HIDE_WITH_SIGNUPS"}""")
+        )
+        vm.unpublish()
+        val conflict = vm.state.awaitUntil { !it.busy && it.message != null }
+        val unpubReq = server.takeRequest()
+        assertEquals("POST", unpubReq.method)
+        assertEquals("/api/events/81/unpublish", unpubReq.path)
+        assertEquals("Cannot hide event with active signups", conflict.message)
     }
 }

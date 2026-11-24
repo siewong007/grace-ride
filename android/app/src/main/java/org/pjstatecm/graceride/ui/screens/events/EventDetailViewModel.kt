@@ -34,47 +34,51 @@ class EventDetailViewModel(private val container: AppContainer, private val id: 
 
     fun load() {
         viewModelScope.launch {
-            _state.value = _state.value.copy(loading = _state.value.event == null)
-            try {
-                val event = container.events.detail(id)
-                var outbound: Ride? = null
-                var returnRide: Ride? = null
-                var driving: List<Ride> = emptyList()
+            reloadDetail()
+        }
+    }
 
-                if (event.mySignup?.status == "going") {
-                    val canRides = container.auth.me?.can("rides") == true
-                    if (canRides && (event.myRide != null || event.myReturnRide != null)) {
-                        val upcoming = try {
-                            container.rides.upcoming()
+    private suspend fun reloadDetail() {
+        _state.value = _state.value.copy(loading = _state.value.event == null)
+        try {
+            val event = container.events.detail(id)
+            var outbound: Ride? = null
+            var returnRide: Ride? = null
+            var driving: List<Ride> = emptyList()
+
+            if (event.mySignup?.status == "going") {
+                val canRides = container.auth.me?.can("rides") == true
+                if (canRides && (event.myRide != null || event.myReturnRide != null)) {
+                    val upcoming = try {
+                        container.rides.upcoming()
+                    } catch (_: ApiException) {
+                        emptyList()
+                    }
+                    outbound = event.myRide?.id?.let { rid -> upcoming.find { it.id == rid } }
+                    returnRide = event.myReturnRide?.id?.let { rid -> upcoming.find { it.id == rid } }
+                }
+                if (container.auth.me?.can("drive") == true) {
+                    val day = KlTime.date(event.startsAt)
+                    if (day.length == 10) {
+                        driving = try {
+                            container.rides.drivingToday(day, day).filter { it.event?.id == event.id }
                         } catch (_: ApiException) {
                             emptyList()
                         }
-                        outbound = event.myRide?.id?.let { rid -> upcoming.find { it.id == rid } }
-                        returnRide = event.myReturnRide?.id?.let { rid -> upcoming.find { it.id == rid } }
-                    }
-                    if (container.auth.me?.can("drive") == true) {
-                        val day = KlTime.date(event.startsAt)
-                        if (day.length == 10) {
-                            driving = try {
-                                container.rides.drivingToday(day, day).filter { it.event?.id == event.id }
-                            } catch (_: ApiException) {
-                                emptyList()
-                            }
-                        }
                     }
                 }
-
-                _state.value = _state.value.copy(
-                    loading = false,
-                    event = event,
-                    outboundRide = outbound,
-                    returnRide = returnRide,
-                    drivingForEvent = driving,
-                    error = null,
-                )
-            } catch (e: ApiException) {
-                _state.value = _state.value.copy(loading = false, error = e.message)
             }
+
+            _state.value = _state.value.copy(
+                loading = false,
+                event = event,
+                outboundRide = outbound,
+                returnRide = returnRide,
+                drivingForEvent = driving,
+                error = null,
+            )
+        } catch (e: ApiException) {
+            _state.value = _state.value.copy(loading = false, error = e.message)
         }
     }
 
@@ -84,7 +88,7 @@ class EventDetailViewModel(private val container: AppContainer, private val id: 
         viewModelScope.launch {
             try {
                 container.events.signup(id, needRide, offerDrive, asGroupId)
-                load()
+                reloadDetail()
             } catch (e: ApiException) {
                 _state.value = _state.value.copy(message = e.message)
             } finally {
@@ -99,7 +103,7 @@ class EventDetailViewModel(private val container: AppContainer, private val id: 
         viewModelScope.launch {
             try {
                 container.events.withdraw(id)
-                load()
+                reloadDetail()
             } catch (e: ApiException) {
                 _state.value = _state.value.copy(message = e.message)
             } finally {
@@ -114,8 +118,8 @@ class EventDetailViewModel(private val container: AppContainer, private val id: 
         viewModelScope.launch {
             try {
                 container.events.publish(id)
+                reloadDetail()
                 _state.value = _state.value.copy(actionNotice = EventActionNotice.PUBLISHED)
-                load()
             } catch (e: ApiException) {
                 _state.value = _state.value.copy(message = e.message)
             } finally {
@@ -130,8 +134,8 @@ class EventDetailViewModel(private val container: AppContainer, private val id: 
         viewModelScope.launch {
             try {
                 container.events.unpublish(id)
+                reloadDetail()
                 _state.value = _state.value.copy(actionNotice = EventActionNotice.UNPUBLISHED)
-                load()
             } catch (e: ApiException) {
                 _state.value = _state.value.copy(message = e.message)
             } finally {

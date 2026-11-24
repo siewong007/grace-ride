@@ -2,13 +2,14 @@ import { beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { MemoryRouter, Route, Routes, useLocation } from 'react-router-dom';
-import { ApiError, api, post } from './api';
+import { ApiError, api, post, put } from './api';
 import i18n from './i18n';
 import { todayStr } from './format';
+import EventForm from './pages/EventForm';
 import Events, { type EventItem } from './pages/Events';
 import EventDetail from './pages/EventDetail';
 import Home from './pages/Home';
-import { ToastProvider } from './components/ui';
+import { ConfirmProvider, ToastProvider } from './components/ui';
 
 let mockApiData: Record<string, unknown> = {};
 let mockPermissions: Record<string, boolean> = {};
@@ -24,6 +25,7 @@ vi.mock('./api', async () => {
       return Promise.resolve([]);
     }),
     post: vi.fn().mockResolvedValue({ ok: true, status: 'going' }),
+    put: vi.fn().mockResolvedValue({ ok: true }),
     useApi: (path: string | null) => ({
       data: path ? (mockApiData[path] ?? null) : null,
       loading: false,
@@ -626,5 +628,213 @@ describe('Events tab redesign', () => {
     expect(screen.queryByRole('link', { name: /i need a ride/i })).not.toBeInTheDocument();
     expect(screen.queryByRole('link', { name: /i can drive/i })).not.toBeInTheDocument();
     expect(screen.getByRole('link', { name: /view event/i })).toHaveAttribute('href', '/events/90');
+  });
+
+  it('saves hidden draft on EventForm and supports Save & Publish when editing a draft', async () => {
+    const user = userEvent.setup();
+    mockApiData['/groups'] = [
+      { id: 1, name: 'All Members', description: '', is_all: true, member_count: 10, parent_id: null, is_visitor: false },
+    ];
+    mockApiData['/areas'] = [{ id: 1, name: 'SS2', active: true }];
+    vi.mocked(post).mockResolvedValue({ id: 91, status: 'draft' });
+
+    render(
+      <ConfirmProvider>
+        <ToastProvider>
+          <MemoryRouter initialEntries={['/events/new']}>
+            <Routes>
+              <Route path="/events/new" element={<EventForm />} />
+              <Route path="/events/:id" element={<div>Event detail page</div>} />
+            </Routes>
+          </MemoryRouter>
+        </ToastProvider>
+      </ConfirmProvider>,
+    );
+
+    await user.type(screen.getByPlaceholderText(/saturday badminton/i), 'Secret Cell Retreat');
+    await user.type(screen.getByLabelText(/^date$/i), '2099-12-01');
+    await user.type(screen.getByLabelText(/^time$/i), '10:00');
+    await user.type(screen.getByRole('combobox', { name: /location/i }), 'Hall A');
+    await user.click(screen.getByRole('checkbox', { name: /all members/i }));
+
+    await user.click(screen.getByRole('button', { name: /save as draft/i }));
+    await waitFor(() => {
+      expect(post).toHaveBeenCalledWith(
+        '/events',
+        expect.objectContaining({
+          title: 'Secret Cell Retreat',
+          status: 'draft',
+        }),
+      );
+    });
+
+    vi.clearAllMocks();
+    mockApiData['/events/91'] = {
+      id: 91,
+      title: 'Secret Cell Retreat',
+      kind: 'other',
+      icon: 'tent',
+      description: '',
+      starts_at: '2099-12-01T10:00',
+      location: 'Hall A',
+      capacity: 0,
+      cost_note: '',
+      signup_deadline: null,
+      status: 'draft',
+      group_ids: [1],
+      as_group_ids: [],
+      photo_file_id: null,
+      attendance_enabled: false,
+      mileage_claimable: false,
+      area: null,
+    };
+
+    render(
+      <ConfirmProvider>
+        <ToastProvider>
+          <MemoryRouter initialEntries={['/events/91/edit']}>
+            <Routes>
+              <Route path="/events/:id/edit" element={<EventForm />} />
+              <Route path="/events/:id" element={<div>Event detail page</div>} />
+            </Routes>
+          </MemoryRouter>
+        </ToastProvider>
+      </ConfirmProvider>,
+    );
+
+    expect(screen.getByText(/draft mode: hidden from members until published/i)).toBeInTheDocument();
+    await user.click(screen.getByRole('button', { name: /save & publish/i }));
+    await waitFor(() => {
+      expect(put).toHaveBeenCalledWith('/events/91', expect.objectContaining({ title: 'Secret Cell Retreat' }));
+      expect(post).toHaveBeenCalledWith('/events/91/publish', {});
+    });
+  });
+
+  it('supports draft pill, Hide/Show drafts toggle, Publish, and Hide to draft in I manage tab', async () => {
+    const user = userEvent.setup();
+    const draftEv = makeEvent({
+      id: 101,
+      title: 'Hidden Draft Picnic',
+      status: 'draft',
+      can_manage: true,
+      can_publish: true,
+      can_unpublish: false,
+    });
+    const pubEv = makeEvent({
+      id: 102,
+      title: 'Open Fellowship Night',
+      status: 'published',
+      going: 0,
+      can_manage: true,
+      can_publish: false,
+      can_unpublish: true,
+    });
+    mockApiData['/events?scope=managing'] = [draftEv, pubEv];
+
+    const { rerender } = render(
+      <ConfirmProvider>
+        <ToastProvider>
+          <MemoryRouter initialEntries={['/events?tab=managing']}>
+            <Events />
+          </MemoryRouter>
+        </ToastProvider>
+      </ConfirmProvider>,
+    );
+
+    expect(screen.getByText('Hidden Draft Picnic')).toBeInTheDocument();
+    expect(screen.getByText('Draft')).toBeInTheDocument();
+    expect(screen.getByText('Open Fellowship Night')).toBeInTheDocument();
+
+    // Publish draft directly from card
+    await user.click(screen.getByRole('button', { name: /^publish$/i }));
+    await waitFor(() => {
+      expect(post).toHaveBeenCalledWith('/events/101/publish', {});
+    });
+
+    // Hide published event to draft with confirmation modal
+    await user.click(screen.getByRole('button', { name: /hide to draft/i }));
+    const confirmDialog = await screen.findByRole('dialog');
+    await user.click(within(confirmDialog).getByRole('button', { name: /hide to draft/i }));
+    await waitFor(() => {
+      expect(post).toHaveBeenCalledWith('/events/102/unpublish', {});
+    });
+
+    // When all managed events are drafts and Hide drafts is toggled, empty state offers Show drafts
+    mockApiData['/events?scope=managing'] = [draftEv];
+    rerender(
+      <ConfirmProvider>
+        <ToastProvider>
+          <MemoryRouter initialEntries={['/events?tab=managing']}>
+            <Events />
+          </MemoryRouter>
+        </ToastProvider>
+      </ConfirmProvider>,
+    );
+    await user.click(screen.getByRole('button', { name: /hide drafts \(1\)/i }));
+    expect(screen.getByText(/all managed events are hidden drafts/i)).toBeInTheDocument();
+    await user.click(screen.getByRole('button', { name: /show drafts/i }));
+    expect(screen.getByText('Hidden Draft Picnic')).toBeInTheDocument();
+  });
+
+  it('shows draft banner and publish on EventDetail, and disables Hide to draft when signups exist', async () => {
+    const user = userEvent.setup();
+    const draftDetail = makeEvent({
+      id: 110,
+      title: 'Draft Youth Night',
+      status: 'draft',
+      can_manage: true,
+      can_publish: true,
+      can_unpublish: false,
+      going: 0,
+    });
+    mockApiData['/events/110'] = { ...draftDetail, group_ids: [1], my_ride: null, settlement: null };
+    mockApiData['/events/110/signups'] = [];
+
+    render(
+      <ConfirmProvider>
+        <ToastProvider>
+          <MemoryRouter initialEntries={['/events/110']}>
+            <Routes>
+              <Route path="/events/:id" element={<EventDetail />} />
+            </Routes>
+          </MemoryRouter>
+        </ToastProvider>
+      </ConfirmProvider>,
+    );
+
+    expect(screen.getByText(/this event is a draft and is currently hidden from members/i)).toBeInTheDocument();
+    expect(screen.queryByRole('region', { name: /my signup/i })).not.toBeInTheDocument();
+
+    await user.click(screen.getByRole('button', { name: /publish event/i }));
+    await waitFor(() => {
+      expect(post).toHaveBeenCalledWith('/events/110/publish');
+    });
+
+    const lockedPublished = makeEvent({
+      id: 111,
+      title: 'Published With Signups',
+      status: 'published',
+      can_manage: true,
+      can_publish: false,
+      can_unpublish: false,
+      going: 3,
+    });
+    mockApiData['/events/111'] = { ...lockedPublished, group_ids: [1], my_ride: null, settlement: null };
+    mockApiData['/events/111/signups'] = [];
+
+    render(
+      <ConfirmProvider>
+        <ToastProvider>
+          <MemoryRouter initialEntries={['/events/111']}>
+            <Routes>
+              <Route path="/events/:id" element={<EventDetail />} />
+            </Routes>
+          </MemoryRouter>
+        </ToastProvider>
+      </ConfirmProvider>,
+    );
+
+    expect(screen.getByRole('button', { name: /hide to draft/i })).toBeDisabled();
+    expect(screen.getByText(/cannot hide to draft while members have signed up or rides exist/i)).toBeInTheDocument();
   });
 });
