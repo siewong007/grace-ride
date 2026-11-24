@@ -45,18 +45,21 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.geometry.Offset
-import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.asComposePath
+import androidx.compose.ui.graphics.StrokeJoin
+import androidx.compose.ui.graphics.drawscope.DrawScope
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.res.stringResource
@@ -74,8 +77,6 @@ import kotlin.math.abs
 import kotlin.math.cos
 import kotlin.math.exp
 import kotlin.math.hypot
-import kotlin.math.pow
-import kotlin.math.sign
 import kotlin.math.sin
 import kotlin.math.tan
 import kotlin.random.Random
@@ -315,37 +316,6 @@ object GrokBotGeometry {
         Pair((rx / wSum) * 1.16f + 6f, (ry / wSum) * 1.16f)
     }
 
-    val EXCLAMATION_STEM_COORDS: FloatArray = buildPolar64Coords { theta ->
-        val c = cos(theta).toFloat()
-        val s = sin(theta).toFloat()
-        val y = s * 44f - 28f
-        val taper = 0.62f + 0.38f * ((1f - s) * 0.5f)
-        val x = sign(c) * abs(c).pow(0.72f) * (16.5f * taper)
-        Pair(x, y)
-    }
-
-    val ALERT_STEM_COORDS: FloatArray = buildPolar64Coords { theta ->
-        val c = cos(theta).toFloat()
-        val s = sin(theta).toFloat()
-        val y0 = s * 46f - 26f
-        val taper = 0.58f + 0.42f * ((1f - s) * 0.5f)
-        val x0 = sign(c) * abs(c).pow(0.72f) * (17.5f * taper)
-        val ang = (17.7 * PI / 180.0).toFloat()
-        Pair(x0 * cos(ang) - y0 * sin(ang) + 8f, x0 * sin(ang) + y0 * cos(ang))
-    }
-
-    val SLEEP_CORE_COORDS: FloatArray = buildPolar64Coords { theta ->
-        Pair(16f * cos(theta).toFloat(), 16f * sin(theta).toFloat() + 27f)
-    }
-
-    val BURST_CORE_COORDS: FloatArray = buildPolar64Coords { theta ->
-        Pair(16.7f * cos(theta).toFloat(), 16.7f * sin(theta).toFloat())
-    }
-
-    val COMET_HEAD_COORDS: FloatArray = buildPolar64Coords { theta ->
-        Pair(12.8f * cos(theta).toFloat(), 12.8f * sin(theta).toFloat())
-    }
-
     val FACE_DEFS: Map<String, GrokFaceDef> = mapOf(
         "neutral" to GrokFaceDef(pill(9.3f, 11.3f), pill(9.3f, 11.3f), -26f, -8f, 26f, -14f, -11f, -10f),
         "attentive" to GrokFaceDef(pill(10.5f, 11.5f), pill(10.5f, 11.5f), -26f, -10f, 28f, -12f, -5f, -4f),
@@ -394,24 +364,36 @@ object GrokBotGeometry {
         )
     }
 
-    fun computeFaceEyeTransforms(
+    fun buildEyeTransform(pose: GrokEyePose): GrokEyeTransform =
+        buildEyeTransform(pose.x, pose.y, pose.deg, pose.sy)
+
+    /** The face's eye cutouts and where they sit for a gaze offset (-1..1). */
+    fun computeFaceEyePoses(
         face: String,
         gazeX: Float = 0f,
         gazeY: Float = 0f,
         blinkScaleY: Float = 1f,
-    ): Pair<GrokEyeTransform, GrokEyeTransform> {
+    ): Pair<GrokEyePose, GrokEyePose> {
         val def = FACE_DEFS[face] ?: FACE_DEFS.getValue("neutral")
         val gx = (gazeX + def.gazeBiasX).coerceIn(-1f, 1f)
         val gy = (gazeY + def.gazeBiasY).coerceIn(-1f, 1f)
         val shiftX = gx * 18f
         val shiftY = gy * 14f
         val tilt = gx * 6f
-        val syL = def.lSy * blinkScaleY
-        val syR = def.rSy * blinkScaleY
         return Pair(
-            buildEyeTransform(def.lx + shiftX, def.ly + shiftY, def.lDeg + tilt, syL),
-            buildEyeTransform(def.rx + shiftX, def.ry + shiftY, def.rDeg + tilt, syR),
+            GrokEyePose(def.left, def.lx + shiftX, def.ly + shiftY, def.lDeg + tilt, def.lSy * blinkScaleY),
+            GrokEyePose(def.right, def.rx + shiftX, def.ry + shiftY, def.rDeg + tilt, def.rSy * blinkScaleY),
         )
+    }
+
+    fun computeFaceEyeTransforms(
+        face: String,
+        gazeX: Float = 0f,
+        gazeY: Float = 0f,
+        blinkScaleY: Float = 1f,
+    ): Pair<GrokEyeTransform, GrokEyeTransform> {
+        val (l, r) = computeFaceEyePoses(face, gazeX, gazeY, blinkScaleY)
+        return Pair(buildEyeTransform(l), buildEyeTransform(r))
     }
 
     fun lerpCoords(
@@ -552,6 +534,98 @@ fun renderGrokBotPngBitmap(spec: GrokBotSpec, size: Int = 512): Bitmap {
 
 private fun easeInOutSine(x: Float): Float = (-(cos(PI * x.coerceIn(0f, 1f)) - 1.0) / 2.0).toFloat()
 
+private fun DrawScope.drawStrokes(strokes: List<GrokStroke>, scale: Float, cx: Float, cy: Float, path: AndroidPath) {
+    for (s in strokes) {
+        val pts = s.points
+        path.reset()
+        path.moveTo(cx + pts[0] * scale, cy + pts[1] * scale)
+        var i = 2
+        while (i + 1 < pts.size) {
+            path.lineTo(cx + pts[i] * scale, cy + pts[i + 1] * scale)
+            i += 2
+        }
+        val e = s.ellipse
+        drawPath(
+            path.asComposePath(),
+            brush = Brush.linearGradient(
+                0f to Color(e.stops[0]),
+                0.5f to Color(e.stops[1]),
+                1f to Color(e.stops[2]),
+                start = Offset(cx + e.x1 * scale, cy + e.y1 * scale),
+                end = Offset(cx + e.x2 * scale, cy + e.y2 * scale),
+            ),
+            alpha = s.alpha.coerceIn(0f, 1f),
+            style = Stroke(width = e.width * scale, cap = StrokeCap.Round, join = StrokeJoin.Round),
+        )
+    }
+}
+
+private fun DrawScope.drawDots(dots: List<GrokDot>, scale: Float, cx: Float, cy: Float) {
+    for (d in dots) {
+        if (d.alpha <= 0.005f || d.r <= 0f) continue
+        drawCircle(Color(d.argb), radius = d.r * scale, center = Offset(cx + d.x * scale, cy + d.y * scale), alpha = d.alpha.coerceIn(0f, 1f))
+    }
+}
+
+/** Draws one complex-move frame in the web's layer order: back strokes and dots, body, front. */
+private fun DrawScope.drawMoveFrame(
+    f: GrokMoveFrame,
+    scale: Float,
+    cx: Float,
+    cy: Float,
+    eyeBackingColor: Color,
+    bodyBrush: Brush,
+    backingPath: AndroidPath,
+    bodyPath: AndroidPath,
+    scratchPath: AndroidPath,
+    scratchMatrix: AndroidMatrix,
+) {
+    drawStrokes(f.backStrokes, scale, cx, cy, scratchPath)
+    drawDots(f.dotsBack, scale, cx, cy)
+
+    fillBezierPath(f.body, backingPath, scale, cx, cy)
+    drawPath(backingPath.asComposePath(), color = eyeBackingColor)
+    fillBezierPath(f.body, bodyPath, scale, cx, cy)
+    val (le, re) = f.eyes
+    val lp = buildEyeAndroidPath(le.pill, GrokBotGeometry.buildEyeTransform(le), scale, cx, cy, scratchMatrix)
+    val rp = buildEyeAndroidPath(re.pill, GrokBotGeometry.buildEyeTransform(re), scale, cx, cy, scratchMatrix)
+    if (f.eyeOpacity >= 0.999f) {
+        bodyPath.op(lp, AndroidPath.Op.DIFFERENCE)
+        bodyPath.op(rp, AndroidPath.Op.DIFFERENCE)
+        drawPath(bodyPath.asComposePath(), brush = bodyBrush)
+    } else {
+        // Fading eyes: the web lowers the eye cutouts' opacity in the body mask, which shows the
+        // backing through the body by that much. Same result: the solid body, then the eye shapes
+        // (clipped to the body) in the backing colour at the eye opacity.
+        drawPath(bodyPath.asComposePath(), brush = bodyBrush)
+        if (f.eyeOpacity > 0.01f) {
+            lp.op(rp, AndroidPath.Op.UNION)
+            lp.op(bodyPath, AndroidPath.Op.INTERSECT)
+            drawPath(lp.asComposePath(), color = eyeBackingColor, alpha = f.eyeOpacity)
+        }
+    }
+
+    drawStrokes(f.frontStrokes, scale, cx, cy, scratchPath)
+    drawDots(f.dotsFront, scale, cx, cy)
+    f.alertDot?.let { a ->
+        if (a.alpha <= 0.005f) return@let
+        val pts = GrokBotMotion.ALERT_DOT_POINTS
+        val rad = 17.7 * PI / 180.0
+        val cs = cos(rad).toFloat() * 100f
+        val sn = sin(rad).toFloat() * 100f
+        scratchPath.reset()
+        var i = 0
+        while (i + 1 < pts.size) {
+            val x = cx + (a.x + pts[i] * cs - pts[i + 1] * sn) * scale
+            val y = cy + (a.y + pts[i] * sn + pts[i + 1] * cs) * scale
+            if (i == 0) scratchPath.moveTo(x, y) else scratchPath.lineTo(x, y)
+            i += 2
+        }
+        scratchPath.close()
+        drawPath(scratchPath.asComposePath(), color = Color(a.argb), alpha = a.alpha.coerceIn(0f, 1f))
+    }
+}
+
 @Composable
 fun GrokBotCanvas(
     spec: GrokBotSpec,
@@ -559,9 +633,31 @@ fun GrokBotCanvas(
     variant: String = "tile",
     gazeOffset: Offset = Offset.Zero,
     staticMovePreview: Boolean = false,
+    /** Bump to replay the current move (complex moves perform once, like the web studio). */
+    playKey: Int = 0,
     modifier: Modifier = Modifier,
 ) {
     val isDark = isSystemInDarkTheme()
+    // Complex moves run once on their own clock from the tap, then the bot settles back to idle.
+    val oneShot = move in GrokBotMotion.ONE_SHOT_MOVES
+    val tileStill = staticMovePreview && variant == "tile"
+    var moveT by remember { mutableFloatStateOf(Float.MAX_VALUE) }
+    LaunchedEffect(move, playKey, oneShot, tileStill) {
+        moveT = Float.MAX_VALUE
+        if (!oneShot || tileStill) return@LaunchedEffect
+        val dur = GrokBotMotion.duration(move)
+        val start = withFrameNanos { it }
+        moveT = 0f
+        while (true) {
+            val t = (withFrameNanos { it } - start) / 1_000_000_000f
+            moveT = t
+            if (t >= dur) break
+        }
+    }
+    val motionT = if (tileStill) GrokBotMotion.previewTime(move) else moveT
+    val motionActive = oneShot && (tileStill || motionT < GrokBotMotion.duration(move))
+    // The looped previews below never see a complex move; once one has finished the bot idles.
+    val loopMove = if (oneShot) "idle" else move
     var prevShape by remember { mutableStateOf(spec.shape) }
     var targetShape by remember { mutableStateOf(spec.shape) }
     val shapeMorphAnim = remember { Animatable(1f) }
@@ -593,6 +689,8 @@ fun GrokBotCanvas(
     }
 
     val workCoords = remember { FloatArray(386) }
+    val motionOut = remember { FloatArray(386) }
+    val motionScratch = remember { FloatArray(386) }
     val shapeBlendCoords = remember { FloatArray(386) }
     val bodyAndroidPath = remember { AndroidPath() }
     val backingAndroidPath = remember { AndroidPath() }
@@ -607,7 +705,15 @@ fun GrokBotCanvas(
         "ink" -> Color(0xFFF2F2F5)
         else -> if (isDark) Color(0xFF131519) else Color(0xFFFAF9F6)
     }
-    val accentStrokeColor = if (spec.color == "ink" && isDark) Color(0xFFE5E5EA) else Color(palette.stopColors[2])
+    val gradScale = if (variant == "stage") 1.264f else 1f
+    fun bodyBrush(scale: Float, cx: Float, cy: Float): Brush = Brush.radialGradient(
+        0f to Color(palette.stopColors[0]),
+        0.32f to Color(palette.stopColors[1]),
+        0.72f to Color(palette.stopColors[2]),
+        1f to Color(palette.stopColors[3]),
+        center = Offset(cx - 40f * gradScale * scale, cy - 50f * gradScale * scale),
+        radius = 193.75f * gradScale * scale,
+    )
 
     Canvas(modifier = modifier) {
         val span = if (variant == "stage") 316f else 250f
@@ -621,16 +727,31 @@ fun GrokBotCanvas(
         val toCoords = GrokBotGeometry.SHAPE_COORDS[targetShape] ?: GrokBotGeometry.SHAPE_COORDS.getValue("circle")
         GrokBotGeometry.lerpCoords(fromCoords, toCoords, if (prevShape == targetShape) 1f else shapeMorphT, shapeBlendCoords)
 
-        var bodyAlpha = 1f
-        var showEyes = true
-        var leftPill: GrokEyePill? = faceDef.left
-        var rightPill: GrokEyePill? = faceDef.right
+        if (motionActive) {
+            val f = GrokBotMotion.frame(
+                move = move,
+                t = motionT,
+                rest = shapeBlendCoords,
+                faceEyes = GrokBotGeometry.computeFaceEyePoses(spec.face, gx, gy),
+                color = spec.color,
+                tile = tileStill,
+                body = workCoords,
+                out = motionOut,
+                scratch = motionScratch,
+            )
+            if (f != null) {
+                drawMoveFrame(f, scale, cx, cy, eyeBackingColor, bodyBrush(scale, cx, cy), backingAndroidPath, bodyAndroidPath, extraStemPath, scratchMatrix)
+                return@Canvas
+            }
+        }
+
+        var leftPill: GrokEyePill = faceDef.left
+        var rightPill: GrokEyePill = faceDef.right
         var (leftTr, rightTr) = GrokBotGeometry.computeFaceEyeTransforms(spec.face, gx, gy, 1f)
         var notifCutout: Triple<Float, Float, Float>? = null
         var notifBadge: Triple<Float, Float, Float>? = null
-        var dotCircle: Triple<Float, Float, Float>? = null
 
-        when (move) {
+        when (loopMove) {
             "idle" -> {
                 val breath = if (isAnimated) sin(cycleSec * 1.9f) * 0.014f else 0f
                 val bobY = if (isAnimated) cos(cycleSec * 1.9f) * 1.6f else 0f
@@ -643,15 +764,6 @@ fun GrokBotCanvas(
                 val trs = GrokBotGeometry.computeFaceEyeTransforms(spec.face, gx, gy, blink)
                 leftTr = trs.first.copy(ty = trs.first.ty + bobY)
                 rightTr = trs.second.copy(ty = trs.second.ty + bobY)
-            }
-            "thinking" -> {
-                val ph = (cycleSec % 2.6f) / 2.6f
-                val lookUp = 0.55f + 0.2f * sin(ph * PI.toFloat() * 2f)
-                val tilt = -4f + sin(ph * PI.toFloat() * 2f) * 2.5f
-                GrokBotGeometry.lerpCoords(shapeBlendCoords, shapeBlendCoords, 0f, workCoords, 0.96f, tilt, -4f, 4f)
-                val trs = GrokBotGeometry.computeFaceEyeTransforms(spec.face, gx * 0.4f + 0.48f, gy * 0.4f - lookUp, 1f)
-                leftTr = trs.first
-                rightTr = trs.second
             }
             "wink" -> {
                 val ph = if (staticMovePreview) 0.5f else (cycleSec % 2.4f) / 2.4f
@@ -672,14 +784,6 @@ fun GrokBotCanvas(
                 leftTr = GrokBotGeometry.buildEyeTransform(-31.7f + gx * 12f, -6f + gy * 9f, 0f, sy)
                 rightTr = GrokBotGeometry.buildEyeTransform(31.7f + gx * 12f, -6f + gy * 9f, 0f, sy)
             }
-            "alert" -> {
-                val ph = if (staticMovePreview) 0.5f else (cycleSec % 2.2f) / 2.2f
-                val m = if (ph < 0.25f) easeInOutSine(ph / 0.25f) else if (ph < 0.78f) 1f else easeInOutSine((1f - ph) / 0.22f)
-                val shake = if (m > 0.7f && !staticMovePreview) sin(ph * PI.toFloat() * 16f) * 3.5f else 0f
-                GrokBotGeometry.lerpCoords(shapeBlendCoords, GrokBotGeometry.ALERT_STEM_COORDS, m, workCoords, 1f, shake)
-                showEyes = m < 0.38f
-                if (m > 0.25f) dotCircle = Triple(-15.77f, 52.87f, 17.5f * ((m - 0.25f) / 0.75f).coerceAtMost(1f))
-            }
             "notification" -> {
                 val ph = if (staticMovePreview) 0.5f else (cycleSec % 2.8f) / 2.8f
                 val pop = if (ph < 0.2f) easeInOutSine(ph / 0.2f) else if (ph < 0.85f) 1f else easeInOutSine((1f - ph) / 0.15f)
@@ -693,20 +797,6 @@ fun GrokBotCanvas(
                     notifCutout = Triple(74.32f, -67.07f, rBadge + 5.4f)
                     notifBadge = Triple(74.32f, -67.07f, rBadge)
                 }
-            }
-            "exclamation" -> {
-                val ph = if (staticMovePreview) 0.5f else (cycleSec % 2.4f) / 2.4f
-                val m = if (ph < 0.25f) easeInOutSine(ph / 0.25f) else if (ph < 0.78f) 1f else easeInOutSine((1f - ph) / 0.22f)
-                val bounceY = if (m > 0.6f && !staticMovePreview) -abs(sin(ph * PI.toFloat() * 4f)) * 5f else 0f
-                GrokBotGeometry.lerpCoords(shapeBlendCoords, GrokBotGeometry.EXCLAMATION_STEM_COORDS, m, workCoords, 1f, 0f, 0f, bounceY)
-                showEyes = m < 0.38f
-                if (m > 0.25f) dotCircle = Triple(0f, 52f + bounceY, 16.5f * ((m - 0.25f) / 0.75f).coerceAtMost(1f))
-            }
-            "sleep" -> {
-                val ph = if (staticMovePreview) 0.55f else (cycleSec % 3.6f) / 3.6f
-                val m = if (ph < 0.22f) easeInOutSine(ph / 0.22f) else if (ph < 0.82f) 1f else easeInOutSine((1f - ph) / 0.18f)
-                GrokBotGeometry.lerpCoords(shapeBlendCoords, GrokBotGeometry.SLEEP_CORE_COORDS, m, workCoords)
-                showEyes = m < 0.35f
             }
             "egg" -> {
                 val ph = if (staticMovePreview) 0.45f else (cycleSec % 2.6f) / 2.6f
@@ -738,93 +828,30 @@ fun GrokBotCanvas(
                 leftTr = GrokBotGeometry.buildEyeTransform(-21.3f + gx * 8f, -9f + gy * 6f, 0f)
                 rightTr = GrokBotGeometry.buildEyeTransform(18.7f + gx * 8f, -9f + gy * 6f, 0f)
             }
-            "orbit" -> {
-                val ph = if (staticMovePreview) 0.35f else (cycleSec % 3.2f) / 3.2f
-                GrokBotGeometry.lerpCoords(shapeBlendCoords, shapeBlendCoords, 0f, workCoords, 0.62f, sin(ph * PI.toFloat() * 2f) * 4f)
-                val trs = GrokBotGeometry.computeFaceEyeTransforms(spec.face, cos(ph * PI.toFloat() * 2f) * 0.55f, sin(ph * PI.toFloat() * 2f) * 0.3f, 1f)
-                leftTr = trs.first.copy(a = trs.first.a * 0.62f, b = trs.first.b * 0.62f, c = trs.first.c * 0.62f, d = trs.first.d * 0.62f, tx = trs.first.tx * 0.62f, ty = trs.first.ty * 0.62f)
-                rightTr = trs.second.copy(a = trs.second.a * 0.62f, b = trs.second.b * 0.62f, c = trs.second.c * 0.62f, d = trs.second.d * 0.62f, tx = trs.second.tx * 0.62f, ty = trs.second.ty * 0.62f)
-            }
-            "swirl" -> {
-                val ph = if (staticMovePreview) 0.5f else (cycleSec % 3.0f) / 3.0f
-                val m = if (ph < 0.2f) easeInOutSine(ph / 0.2f) else if (ph < 0.84f) 1f else easeInOutSine((1f - ph) / 0.16f)
-                bodyAlpha = (1f - m * 1.25f).coerceIn(0f, 1f)
-                GrokBotGeometry.lerpCoords(shapeBlendCoords, GrokBotGeometry.BURST_CORE_COORDS, m, workCoords, 1f, ph * 180f)
-                showEyes = bodyAlpha > 0.35f
-            }
-            "burst" -> {
-                val ph = if (staticMovePreview) 0.45f else (cycleSec % 2.4f) / 2.4f
-                val m = if (ph < 0.2f) easeInOutSine(ph / 0.2f) else if (ph < 0.82f) 1f else easeInOutSine((1f - ph) / 0.18f)
-                GrokBotGeometry.lerpCoords(shapeBlendCoords, GrokBotGeometry.BURST_CORE_COORDS, m, workCoords)
-                showEyes = m < 0.35f
-            }
-            "comet" -> {
-                val ph = if (staticMovePreview) 0.32f else (cycleSec % 2.4f) / 2.4f
-                val m = if (ph < 0.18f) easeInOutSine(ph / 0.18f) else if (ph < 0.85f) 1f else easeInOutSine((1f - ph) / 0.15f)
-                val ang = ph * PI.toFloat() * 2f - PI.toFloat() / 2f
-                val headR = 72f * m
-                GrokBotGeometry.lerpCoords(shapeBlendCoords, GrokBotGeometry.COMET_HEAD_COORDS, m, workCoords, 1f, 0f, cos(ang) * headR, sin(ang) * headR)
-                showEyes = m < 0.3f
-            }
             else -> {
                 GrokBotGeometry.lerpCoords(shapeBlendCoords, shapeBlendCoords, 0f, workCoords)
             }
         }
 
-        // Back layer (orbit back half)
-        if (move == "orbit") {
-            val ph = if (staticMovePreview) 0.35f else (cycleSec % 3.2f) / 3.2f
-            val ang = ph * PI.toFloat() * 2f
-            val satX = cos(ang) * 102f
-            val satY = sin(ang) * 34f
-            val finalX = cx + (satX * 0.906f - satY * -0.422f) * scale
-            val finalY = cy + (satX * -0.422f + satY * 0.906f) * scale
-            if (sin(ang) < 0f) {
-                drawCircle(accentStrokeColor, radius = 9.5f * scale, center = Offset(finalX, finalY))
-            }
-        }
+        fillBezierPath(workCoords, backingAndroidPath, scale, cx, cy)
+        drawPath(backingAndroidPath.asComposePath(), color = eyeBackingColor)
 
-        if (bodyAlpha > 0.01f) {
-            fillBezierPath(workCoords, backingAndroidPath, scale, cx, cy)
-            drawPath(backingAndroidPath.asComposePath(), color = eyeBackingColor.copy(alpha = bodyAlpha))
-
-            fillBezierPath(workCoords, bodyAndroidPath, scale, cx, cy)
-            if (showEyes && leftPill != null && rightPill != null) {
-                val lp = buildEyeAndroidPath(leftPill, leftTr, scale, cx, cy, scratchMatrix)
-                val rp = buildEyeAndroidPath(rightPill, rightTr, scale, cx, cy, scratchMatrix)
-                bodyAndroidPath.op(lp, AndroidPath.Op.DIFFERENCE)
-                bodyAndroidPath.op(rp, AndroidPath.Op.DIFFERENCE)
-            }
-            if (notifCutout != null) {
-                extraStemPath.reset()
-                extraStemPath.addCircle(
-                    cx + notifCutout.first * scale,
-                    cy + notifCutout.second * scale,
-                    notifCutout.third * scale,
-                    AndroidPath.Direction.CW,
-                )
-                bodyAndroidPath.op(extraStemPath, AndroidPath.Op.DIFFERENCE)
-            }
-
-            val gradScale = if (variant == "stage") 1.264f else 1f
-            val brush = Brush.radialGradient(
-                0f to Color(palette.stopColors[0]).copy(alpha = bodyAlpha),
-                0.32f to Color(palette.stopColors[1]).copy(alpha = bodyAlpha),
-                0.72f to Color(palette.stopColors[2]).copy(alpha = bodyAlpha),
-                1f to Color(palette.stopColors[3]).copy(alpha = bodyAlpha),
-                center = Offset(cx - 40f * gradScale * scale, cy - 50f * gradScale * scale),
-                radius = 193.75f * gradScale * scale,
+        fillBezierPath(workCoords, bodyAndroidPath, scale, cx, cy)
+        val lp = buildEyeAndroidPath(leftPill, leftTr, scale, cx, cy, scratchMatrix)
+        val rp = buildEyeAndroidPath(rightPill, rightTr, scale, cx, cy, scratchMatrix)
+        bodyAndroidPath.op(lp, AndroidPath.Op.DIFFERENCE)
+        bodyAndroidPath.op(rp, AndroidPath.Op.DIFFERENCE)
+        if (notifCutout != null) {
+            extraStemPath.reset()
+            extraStemPath.addCircle(
+                cx + notifCutout.first * scale,
+                cy + notifCutout.second * scale,
+                notifCutout.third * scale,
+                AndroidPath.Direction.CW,
             )
-            drawPath(bodyAndroidPath.asComposePath(), brush = brush)
-
-            if (dotCircle != null) {
-                drawCircle(
-                    brush = brush,
-                    radius = dotCircle.third * scale,
-                    center = Offset(cx + dotCircle.first * scale, cy + dotCircle.second * scale),
-                )
-            }
+            bodyAndroidPath.op(extraStemPath, AndroidPath.Op.DIFFERENCE)
         }
+        drawPath(bodyAndroidPath.asComposePath(), brush = bodyBrush(scale, cx, cy))
 
         if (notifBadge != null) {
             drawCircle(
@@ -832,92 +859,6 @@ fun GrokBotCanvas(
                 radius = notifBadge.third * scale,
                 center = Offset(cx + notifBadge.first * scale, cy + notifBadge.second * scale),
             )
-        }
-
-        // Foreground effects per move
-        when (move) {
-            "thinking" -> {
-                drawCircle(accentStrokeColor.copy(alpha = 0.72f), 5.5f * scale, Offset(cx + 68f * scale, cy - 58f * scale))
-                drawCircle(accentStrokeColor.copy(alpha = 0.88f), 9.5f * scale, Offset(cx + 86f * scale, cy - 78f * scale))
-                drawCircle(accentStrokeColor, 17f * scale, Offset(cx + 106f * scale, cy - 102f * scale))
-                drawCircle(eyeBackingColor, 2.4f * scale, Offset(cx + 99f * scale, cy - 102f * scale))
-                drawCircle(eyeBackingColor, 2.4f * scale, Offset(cx + 106f * scale, cy - 102f * scale))
-                drawCircle(eyeBackingColor, 2.4f * scale, Offset(cx + 113f * scale, cy - 102f * scale))
-            }
-            "sleep" -> {
-                val ph = if (staticMovePreview) 0.55f else (cycleSec % 3.6f) / 3.6f
-                val zOffsets = listOf(Triple(-4f, -6f, 16f), Triple(18f, -38f, 22f), Triple(-8f, -72f, 28f))
-                zOffsets.forEachIndexed { idx, (zx, zy, zw) ->
-                    val drift = if (staticMovePreview) 0f else ((ph + idx * 0.25f) % 1f) * -12f
-                    val x0 = cx + (zx - zw * 0.4f) * scale
-                    val x1 = cx + (zx + zw * 0.4f) * scale
-                    val y0 = cy + (zy + drift - zw * 0.35f) * scale
-                    val y1 = cy + (zy + drift + zw * 0.35f) * scale
-                    val sw = (5.5f + idx * 1.2f) * scale
-                    drawLine(accentStrokeColor, Offset(x0, y0), Offset(x1, y0), strokeWidth = sw, cap = StrokeCap.Round)
-                    drawLine(accentStrokeColor, Offset(x1, y0), Offset(x0, y1), strokeWidth = sw, cap = StrokeCap.Round)
-                    drawLine(accentStrokeColor, Offset(x0, y1), Offset(x1, y1), strokeWidth = sw, cap = StrokeCap.Round)
-                }
-            }
-            "orbit" -> {
-                val ph = if (staticMovePreview) 0.35f else (cycleSec % 3.2f) / 3.2f
-                val ang = ph * PI.toFloat() * 2f
-                val satX = cos(ang) * 102f
-                val satY = sin(ang) * 34f
-                val finalX = cx + (satX * 0.906f - satY * -0.422f) * scale
-                val finalY = cy + (satX * -0.422f + satY * 0.906f) * scale
-                if (sin(ang) >= 0f) {
-                    drawCircle(accentStrokeColor, radius = 11.5f * scale, center = Offset(finalX, finalY))
-                }
-            }
-            "swirl" -> {
-                val ph = if (staticMovePreview) 0.5f else (cycleSec % 3.0f) / 3.0f
-                val spin = ph * 360f
-                val swirlColors = listOf(Color(0xFF69D395), Color(0xFF69A3D3), Color(0xFF9C69D3), Color(0xFFD3699C))
-                val radii = listOf(38f, 56f, 74f, 92f)
-                radii.forEachIndexed { idx, r ->
-                    val d = r * 2f * scale
-                    drawArc(
-                        color = swirlColors[idx],
-                        startAngle = spin * (if (idx % 2 == 0) 1f else -1.2f) + idx * 55f,
-                        sweepAngle = 215f,
-                        useCenter = false,
-                        topLeft = Offset(cx - r * scale, cy - r * scale),
-                        size = Size(d, d),
-                        style = Stroke(width = 12f * scale, cap = StrokeCap.Round),
-                    )
-                }
-            }
-            "burst" -> {
-                val ph = if (staticMovePreview) 0.45f else (cycleSec % 2.4f) / 2.4f
-                val burst = sin(ph * PI.toFloat())
-                for (k in 0 until 8) {
-                    val a = (k * PI / 4.0).toFloat()
-                    val r0 = (32f + 12f * burst) * scale
-                    val r1 = (58f + 34f * burst) * scale
-                    drawLine(
-                        color = accentStrokeColor,
-                        start = Offset(cx + cos(a) * r0, cy + sin(a) * r0),
-                        end = Offset(cx + cos(a) * r1, cy + sin(a) * r1),
-                        strokeWidth = 11f * scale,
-                        cap = StrokeCap.Round,
-                    )
-                }
-            }
-            "comet" -> {
-                val ph = if (staticMovePreview) 0.32f else (cycleSec % 2.4f) / 2.4f
-                val headDeg = ph * 360f - 90f
-                val r = 72f * scale
-                drawArc(
-                    color = accentStrokeColor.copy(alpha = 0.55f),
-                    startAngle = headDeg - 135f,
-                    sweepAngle = 128f,
-                    useCenter = false,
-                    topLeft = Offset(cx - r, cy - r),
-                    size = Size(r * 2f, r * 2f),
-                    style = Stroke(width = 13f * scale, cap = StrokeCap.Round),
-                )
-            }
         }
     }
 }
@@ -1143,7 +1084,7 @@ fun GrokBotControlsPanel(
                         GrokOptionTile(
                             selected = selected,
                             label = stringResource(grokMoveLabelRes(mv)),
-                            onClick = { onMoveChange(if (selected && mv != "idle") "idle" else mv) },
+                            onClick = { onMoveChange(mv) },
                             modifier = Modifier.weight(1f),
                         ) {
                             GrokBotCanvas(

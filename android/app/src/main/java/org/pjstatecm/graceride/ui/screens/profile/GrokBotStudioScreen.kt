@@ -48,6 +48,7 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
@@ -110,6 +111,8 @@ fun GrokBotStudioScreen(
         )
     }
     var activeMove by remember { mutableStateOf("idle") }
+    // Bumped on every Move tap so picking the same move again replays it.
+    var movePlayKey by remember { mutableIntStateOf(0) }
     var gazeOffset by remember { mutableStateOf(Offset.Zero) }
     var stageSize by remember { mutableStateOf(IntSize(1, 1)) }
     var busy by remember { mutableStateOf(false) }
@@ -338,6 +341,7 @@ fun GrokBotStudioScreen(
                                 GrokBotCanvas(
                                     spec = spec,
                                     move = activeMove,
+                                    playKey = movePlayKey,
                                     variant = "stage",
                                     gazeOffset = gazeOffset,
                                     modifier = Modifier.size(200.dp),
@@ -432,7 +436,10 @@ fun GrokBotStudioScreen(
                             spec = spec,
                             onSpecChange = { spec = it },
                             activeMove = activeMove,
-                            onMoveChange = { activeMove = it },
+                            onMoveChange = {
+                                activeMove = it
+                                movePlayKey++
+                            },
                             tilePreviewSize = 48.dp,
                             cols = 4,
                         )

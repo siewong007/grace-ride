@@ -66,6 +66,7 @@ import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
@@ -633,6 +634,8 @@ private fun AvatarEditorDialog(
     var mode by remember { mutableStateOf(initialMode) }
     var studioSpec by remember { mutableStateOf(initGrokBot ?: GrokBotSpec.DEFAULT) }
     var studioMove by remember { mutableStateOf("idle") }
+    // Bumped on every Move tap so picking the same move again replays it.
+    var studioPlayKey by remember { mutableIntStateOf(0) }
     var icon by remember { mutableStateOf(initialIconBase) }
     var avatarShape by remember {
         mutableStateOf(initParsedIcon.shape ?: AvatarStyle.defaultAvatarShape(initialIconBase))
@@ -697,6 +700,7 @@ private fun AvatarEditorDialog(
                             GrokBotCanvas(
                                 spec = studioSpec,
                                 move = studioMove,
+                                playKey = studioPlayKey,
                                 variant = "stage",
                                 modifier = Modifier.size(116.dp),
                             )
@@ -870,7 +874,10 @@ private fun AvatarEditorDialog(
                                 spec = studioSpec,
                                 onSpecChange = { studioSpec = it },
                                 activeMove = studioMove,
-                                onMoveChange = { studioMove = it },
+                                onMoveChange = {
+                                    studioMove = it
+                                    studioPlayKey++
+                                },
                                 tilePreviewSize = 36.dp,
                                 cols = 4,
                             )
