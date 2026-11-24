@@ -1,5 +1,7 @@
 package org.pjstatecm.graceride.ui.screens.home
 
+import androidx.compose.animation.Crossfade
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -33,11 +35,11 @@ import org.pjstatecm.graceride.di.AppContainer
 import org.pjstatecm.graceride.domain.KlTime
 import org.pjstatecm.graceride.domain.Money
 import org.pjstatecm.graceride.ui.Routes
+import org.pjstatecm.graceride.ui.components.AnimatedOfflineBanner
 import org.pjstatecm.graceride.ui.components.EmptyView
 import org.pjstatecm.graceride.ui.components.ErrorView
 import org.pjstatecm.graceride.ui.components.EventCard
 import org.pjstatecm.graceride.ui.components.LoadingView
-import org.pjstatecm.graceride.ui.components.OfflineBanner
 import org.pjstatecm.graceride.ui.components.RideCard
 import org.pjstatecm.graceride.ui.components.SectionHeader
 import org.pjstatecm.graceride.ui.components.ShareCard
@@ -51,176 +53,200 @@ fun HomeScreen(container: AppContainer, nav: NavHostController) {
     val authState by container.auth.state.collectAsStateWithLifecycle()
     val unreadCount = (authState as? AuthState.SignedIn)?.me?.unread ?: state.me?.unread ?: 0
 
-    when {
-        state.loading -> LoadingView()
-        state.error != null && state.nextRide == null && state.events.isEmpty() && state.announcements.isEmpty() && state.drivingToday.isEmpty() && state.nextUpcomingDrive == null ->
-            ErrorView(state.error!!, onRetry = vm::refresh)
-        else -> PullToRefreshBox(isRefreshing = state.refreshing, onRefresh = vm::refresh) {
-            LazyColumn(
-                Modifier.fillMaxSize().padding(horizontal = Spacing.sm),
-                verticalArrangement = Arrangement.spacedBy(Spacing.sm),
-                contentPadding = androidx.compose.foundation.layout.PaddingValues(vertical = Spacing.sm),
-            ) {
-                item {
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.SpaceBetween,
-                        verticalAlignment = Alignment.CenterVertically,
+    val viewMode = when {
+        state.loading -> "loading"
+        state.error != null && state.nextRide == null && state.events.isEmpty() && state.announcements.isEmpty() && state.drivingToday.isEmpty() && state.nextUpcomingDrive == null -> "error"
+        else -> "content"
+    }
+
+    Crossfade(targetState = viewMode, animationSpec = tween(200), label = "home_state") { mode ->
+        when (mode) {
+            "loading" -> LoadingView()
+            "error" -> ErrorView(state.error ?: "", onRetry = vm::refresh)
+            else -> Column(Modifier.fillMaxSize()) {
+                AnimatedOfflineBanner(
+                    visible = state.offline,
+                    modifier = Modifier.padding(horizontal = Spacing.sm, vertical = Spacing.xxs),
+                )
+                PullToRefreshBox(isRefreshing = state.refreshing, onRefresh = vm::refresh, modifier = Modifier.weight(1f)) {
+                    LazyColumn(
+                        Modifier.fillMaxSize().padding(horizontal = Spacing.sm),
+                        verticalArrangement = Arrangement.spacedBy(Spacing.sm),
+                        contentPadding = androidx.compose.foundation.layout.PaddingValues(vertical = Spacing.sm),
                     ) {
-                        Text(
-                            stringResource(R.string.home_greeting, state.me?.name ?: ""),
-                            style = MaterialTheme.typography.headlineSmall,
-                            color = MaterialTheme.colorScheme.onSurface,
-                            modifier = Modifier.weight(1f),
-                        )
-                        IconButton(onClick = { nav.navigate(Routes.NOTIFICATIONS) }) {
-                            BadgedBox(
-                                badge = {
-                                    if (unreadCount > 0) {
-                                        Badge {
-                                            Text(if (unreadCount > 99) "99+" else unreadCount.toString())
-                                        }
-                                    }
-                                },
+                        item {
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                                verticalAlignment = Alignment.CenterVertically,
                             ) {
-                                Icon(
-                                    Icons.Outlined.Notifications,
-                                    contentDescription = stringResource(R.string.notif_title),
+                                Text(
+                                    stringResource(R.string.home_greeting, state.me?.name ?: ""),
+                                    style = MaterialTheme.typography.headlineSmall,
+                                    color = MaterialTheme.colorScheme.onSurface,
+                                    modifier = Modifier.weight(1f),
+                                )
+                                IconButton(onClick = { nav.navigate(Routes.NOTIFICATIONS) }) {
+                                    BadgedBox(
+                                        badge = {
+                                            if (unreadCount > 0) {
+                                                Badge {
+                                                    Text(if (unreadCount > 99) "99+" else unreadCount.toString())
+                                                }
+                                            }
+                                        },
+                                    ) {
+                                        Icon(
+                                            Icons.Outlined.Notifications,
+                                            contentDescription = stringResource(R.string.notif_title),
+                                        )
+                                    }
+                                }
+                            }
+                        }
+                        state.offlineSnapshotAt?.let { savedAt ->
+                            val cachedTime = java.time.Instant.ofEpochMilli(savedAt)
+                                .atZone(java.time.ZoneId.systemDefault())
+                                .format(java.time.format.DateTimeFormatter.ofPattern("HH:mm"))
+                            item {
+                                OutlinedCard(Modifier.fillMaxWidth()) {
+                                    Text(
+                                        stringResource(R.string.drive_offline_snapshot, cachedTime),
+                                        style = MaterialTheme.typography.bodySmall,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                        modifier = Modifier.padding(Spacing.sm),
+                                    )
+                                }
+                            }
+                        }
+
+                        state.nextRide?.let { ride ->
+                            item { SectionHeader(stringResource(R.string.home_next_ride)) }
+                            item {
+                                RideCard(ride, onClick = { nav.navigate(Routes.rideDetail(ride.id)) })
+                            }
+                        }
+
+                        if (state.unpaidShares.isNotEmpty()) {
+                            item {
+                                SectionHeader(
+                                    stringResource(R.string.home_unpaid_shares),
+                                    stringResource(R.string.home_view_all),
+                                ) { nav.navigate(Routes.COSTS) }
+                            }
+                            items(state.unpaidShares, key = { "share-${it.id}" }) { share ->
+                                ShareCard(
+                                    share,
+                                    onPay = { nav.navigate(Routes.COSTS) },
+                                    modifier = Modifier.animateItem(),
                                 )
                             }
                         }
-                    }
-                }
-                if (state.offline) item { OfflineBanner() }
-                state.offlineSnapshotAt?.let { savedAt ->
-                    val cachedTime = java.time.Instant.ofEpochMilli(savedAt)
-                        .atZone(java.time.ZoneId.systemDefault())
-                        .format(java.time.format.DateTimeFormatter.ofPattern("HH:mm"))
-                    item {
-                        OutlinedCard(Modifier.fillMaxWidth()) {
-                            Text(
-                                stringResource(R.string.drive_offline_snapshot, cachedTime),
-                                style = MaterialTheme.typography.bodySmall,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                modifier = Modifier.padding(Spacing.sm),
-                            )
-                        }
-                    }
-                }
 
-                state.nextRide?.let { ride ->
-                    item { SectionHeader(stringResource(R.string.home_next_ride)) }
-                    item {
-                        RideCard(ride, onClick = { nav.navigate(Routes.rideDetail(ride.id)) })
-                    }
-                }
-
-                if (state.unpaidShares.isNotEmpty()) {
-                    item {
-                        SectionHeader(
-                            stringResource(R.string.home_unpaid_shares),
-                            stringResource(R.string.home_view_all),
-                        ) { nav.navigate(Routes.COSTS) }
-                    }
-                    items(state.unpaidShares, key = { "share-${it.id}" }) { share ->
-                        ShareCard(share, onPay = { nav.navigate(Routes.COSTS) })
-                    }
-                }
-
-                if (state.me?.can("drive") == true && (state.drivingToday.isNotEmpty() || state.nextUpcomingDrive != null)) {
-                    item { SectionHeader(stringResource(R.string.home_today_driving)) }
-                    if (state.drivingToday.isNotEmpty()) {
-                        items(state.drivingToday, key = { "drive-${it.id}" }) { ride ->
-                            RideCard(ride, onClick = { nav.navigate(Routes.rideDetail(ride.id)) })
-                        }
-                    } else if (state.nextUpcomingDrive != null) {
-                        val upcoming = state.nextUpcomingDrive!!
-                        item {
-                            OutlinedCard(
-                                onClick = { nav.navigate(Routes.rideDetail(upcoming.id)) },
-                                modifier = Modifier.fillMaxWidth(),
-                            ) {
-                                Column(Modifier.padding(Spacing.sm)) {
-                                    Text(
-                                        stringResource(R.string.home_next_drive_upcoming, KlTime.displayDate(upcoming.pickupAt)),
-                                        style = MaterialTheme.typography.titleSmall,
-                                        color = MaterialTheme.colorScheme.onSurface,
+                        if (state.me?.can("drive") == true && (state.drivingToday.isNotEmpty() || state.nextUpcomingDrive != null)) {
+                            item { SectionHeader(stringResource(R.string.home_today_driving)) }
+                            if (state.drivingToday.isNotEmpty()) {
+                                items(state.drivingToday, key = { "drive-${it.id}" }) { ride ->
+                                    RideCard(
+                                        ride,
+                                        onClick = { nav.navigate(Routes.rideDetail(ride.id)) },
+                                        modifier = Modifier.animateItem(),
                                     )
-                                    Text(
-                                        "${KlTime.displayTime(upcoming.pickupAt)} · ${upcoming.passenger.name} · ${upcoming.area.name} → ${upcoming.destination}",
-                                        style = MaterialTheme.typography.bodySmall,
-                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                        modifier = Modifier.padding(top = Spacing.xxs),
-                                    )
+                                }
+                            } else if (state.nextUpcomingDrive != null) {
+                                val upcoming = state.nextUpcomingDrive!!
+                                item {
+                                    OutlinedCard(
+                                        onClick = { nav.navigate(Routes.rideDetail(upcoming.id)) },
+                                        modifier = Modifier.fillMaxWidth(),
+                                    ) {
+                                        Column(Modifier.padding(Spacing.sm)) {
+                                            Text(
+                                                stringResource(R.string.home_next_drive_upcoming, KlTime.displayDate(upcoming.pickupAt)),
+                                                style = MaterialTheme.typography.titleSmall,
+                                                color = MaterialTheme.colorScheme.onSurface,
+                                            )
+                                            Text(
+                                                "${KlTime.displayTime(upcoming.pickupAt)} · ${upcoming.passenger.name} · ${upcoming.area.name} → ${upcoming.destination}",
+                                                style = MaterialTheme.typography.bodySmall,
+                                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                                modifier = Modifier.padding(top = Spacing.xxs),
+                                            )
+                                        }
+                                    }
+                                }
+                            }
+                            val remainingUpcoming = if (state.drivingToday.isNotEmpty()) state.upcomingDrives else state.upcomingDrives.drop(1)
+                            if (remainingUpcoming.isNotEmpty()) {
+                                items(remainingUpcoming.take(3), key = { "upcoming-drive-${it.id}" }) { ride ->
+                                    OutlinedCard(
+                                        onClick = { nav.navigate(Routes.rideDetail(ride.id)) },
+                                        modifier = Modifier.fillMaxWidth().animateItem(),
+                                    ) {
+                                        Column(Modifier.padding(Spacing.sm)) {
+                                            Text(
+                                                stringResource(R.string.home_drive_for, ride.passenger.name),
+                                                style = MaterialTheme.typography.titleSmall,
+                                                color = MaterialTheme.colorScheme.onSurface,
+                                            )
+                                            Text(
+                                                "${KlTime.displayDate(ride.pickupAt)} · ${KlTime.displayTime(ride.pickupAt)} · ${ride.destination}",
+                                                style = MaterialTheme.typography.bodySmall,
+                                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                                modifier = Modifier.padding(top = Spacing.xxs),
+                                            )
+                                        }
+                                    }
                                 }
                             }
                         }
-                    }
-                    val remainingUpcoming = if (state.drivingToday.isNotEmpty()) state.upcomingDrives else state.upcomingDrives.drop(1)
-                    if (remainingUpcoming.isNotEmpty()) {
-                        items(remainingUpcoming.take(3), key = { "upcoming-drive-${it.id}" }) { ride ->
-                            OutlinedCard(
-                                onClick = { nav.navigate(Routes.rideDetail(ride.id)) },
-                                modifier = Modifier.fillMaxWidth(),
-                            ) {
-                                Column(Modifier.padding(Spacing.sm)) {
-                                    Text(
-                                        stringResource(R.string.home_drive_for, ride.passenger.name),
-                                        style = MaterialTheme.typography.titleSmall,
-                                        color = MaterialTheme.colorScheme.onSurface,
-                                    )
-                                    Text(
-                                        "${KlTime.displayDate(ride.pickupAt)} · ${KlTime.displayTime(ride.pickupAt)} · ${ride.destination}",
-                                        style = MaterialTheme.typography.bodySmall,
-                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                        modifier = Modifier.padding(top = Spacing.xxs),
-                                    )
+
+                        if (state.events.isNotEmpty()) {
+                            item {
+                                SectionHeader(
+                                    stringResource(R.string.home_upcoming_events),
+                                    stringResource(R.string.home_view_all),
+                                ) { nav.navigate(Routes.EVENTS) }
+                            }
+                            items(state.events, key = { "event-${it.id}" }) { event ->
+                                EventCard(
+                                    event,
+                                    onClick = { nav.navigate(Routes.eventDetail(event.id)) },
+                                    modifier = Modifier.animateItem(),
+                                )
+                            }
+                        }
+
+                        if (state.announcements.isNotEmpty()) {
+                            item { SectionHeader(stringResource(R.string.home_announcements)) }
+                            items(state.announcements, key = { "ann-${it.id}" }) { ann ->
+                                OutlinedCard(Modifier.fillMaxWidth().animateItem()) {
+                                    Column(Modifier.padding(Spacing.sm)) {
+                                        Text(ann.title, style = MaterialTheme.typography.titleSmall, color = MaterialTheme.colorScheme.onSurface)
+                                        if (ann.body.isNotBlank()) {
+                                            Text(
+                                                ann.body,
+                                                style = MaterialTheme.typography.bodyMedium,
+                                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                                maxLines = 4,
+                                                overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis,
+                                                modifier = Modifier.padding(top = Spacing.xxs),
+                                            )
+                                        }
+                                    }
                                 }
                             }
                         }
-                    }
-                }
 
-                if (state.events.isNotEmpty()) {
-                    item {
-                        SectionHeader(
-                            stringResource(R.string.home_upcoming_events),
-                            stringResource(R.string.home_view_all),
-                        ) { nav.navigate(Routes.EVENTS) }
-                    }
-                    items(state.events, key = { "event-${it.id}" }) { event ->
-                        EventCard(event, onClick = { nav.navigate(Routes.eventDetail(event.id)) })
-                    }
-                }
-
-                if (state.announcements.isNotEmpty()) {
-                    item { SectionHeader(stringResource(R.string.home_announcements)) }
-                    items(state.announcements, key = { "ann-${it.id}" }) { ann ->
-                        OutlinedCard(Modifier.fillMaxWidth()) {
-                            Column(Modifier.padding(Spacing.sm)) {
-                                Text(ann.title, style = MaterialTheme.typography.titleSmall, color = MaterialTheme.colorScheme.onSurface)
-                                if (ann.body.isNotBlank()) {
-                                    Text(
-                                        ann.body,
-                                        style = MaterialTheme.typography.bodyMedium,
-                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                        maxLines = 4,
-                                        overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis,
-                                        modifier = Modifier.padding(top = Spacing.xxs),
-                                    )
-                                }
-                            }
+                        if (state.nextRide == null &&
+                            state.drivingToday.isEmpty() &&
+                            state.nextUpcomingDrive == null &&
+                            state.events.isEmpty() &&
+                            state.announcements.isEmpty()
+                        ) {
+                            item { EmptyView(stringResource(R.string.home_no_ride)) }
                         }
                     }
-                }
-
-                if (state.nextRide == null &&
-                    state.drivingToday.isEmpty() &&
-                    state.nextUpcomingDrive == null &&
-                    state.events.isEmpty() &&
-                    state.announcements.isEmpty()
-                ) {
-                    item { EmptyView(stringResource(R.string.home_no_ride)) }
                 }
             }
         }

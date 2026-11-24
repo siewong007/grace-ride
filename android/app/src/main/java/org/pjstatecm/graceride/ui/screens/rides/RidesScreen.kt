@@ -1,5 +1,7 @@
 package org.pjstatecm.graceride.ui.screens.rides
 
+import androidx.compose.animation.Crossfade
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
@@ -27,10 +29,10 @@ import androidx.navigation.NavHostController
 import org.pjstatecm.graceride.R
 import org.pjstatecm.graceride.di.AppContainer
 import org.pjstatecm.graceride.ui.Routes
+import org.pjstatecm.graceride.ui.components.AnimatedOfflineBanner
 import org.pjstatecm.graceride.ui.components.EmptyView
 import org.pjstatecm.graceride.ui.components.ErrorView
 import org.pjstatecm.graceride.ui.components.LoadingView
-import org.pjstatecm.graceride.ui.components.OfflineBanner
 import org.pjstatecm.graceride.ui.components.RideCard
 import org.pjstatecm.graceride.ui.theme.Spacing
 
@@ -56,21 +58,40 @@ fun RidesScreen(container: AppContainer, nav: NavHostController) {
                 Tab(selected = state.tab == 0, onClick = { vm.setTab(0) }, text = { Text(stringResource(R.string.rides_tab_upcoming)) })
                 Tab(selected = state.tab == 1, onClick = { vm.setTab(1) }, text = { Text(stringResource(R.string.rides_tab_past)) })
             }
-            when {
-                state.loading -> LoadingView()
-                state.error != null && state.rides.isEmpty() -> ErrorView(state.error!!, vm::refresh)
-                else -> PullToRefreshBox(isRefreshing = state.refreshing, onRefresh = vm::refresh) {
-                    LazyColumn(
-                        Modifier.fillMaxSize().padding(horizontal = Spacing.sm),
-                        verticalArrangement = Arrangement.spacedBy(Spacing.xs),
-                        contentPadding = PaddingValues(vertical = Spacing.xs),
-                    ) {
-                        if (state.offline) item { OfflineBanner() }
-                        if (state.rides.isEmpty()) {
-                            item { EmptyView(stringResource(R.string.rides_empty)) }
-                        }
-                        items(state.rides, key = { it.id }) { ride ->
-                            RideCard(ride, onClick = { nav.navigate(Routes.rideDetail(ride.id)) })
+            AnimatedOfflineBanner(
+                visible = !state.loading && state.offline,
+                modifier = Modifier.padding(horizontal = Spacing.sm, vertical = Spacing.xxs),
+            )
+            val viewMode = when {
+                state.loading -> "loading"
+                state.error != null && state.rides.isEmpty() -> "error"
+                else -> "tab-${state.tab}"
+            }
+            Crossfade(
+                targetState = viewMode,
+                animationSpec = tween(200),
+                label = "rides_state",
+                modifier = Modifier.weight(1f),
+            ) { mode ->
+                when (mode) {
+                    "loading" -> LoadingView()
+                    "error" -> ErrorView(state.error ?: "", vm::refresh)
+                    else -> PullToRefreshBox(isRefreshing = state.refreshing, onRefresh = vm::refresh) {
+                        LazyColumn(
+                            Modifier.fillMaxSize().padding(horizontal = Spacing.sm),
+                            verticalArrangement = Arrangement.spacedBy(Spacing.xs),
+                            contentPadding = PaddingValues(vertical = Spacing.xs),
+                        ) {
+                            if (state.rides.isEmpty()) {
+                                item { EmptyView(stringResource(R.string.rides_empty)) }
+                            }
+                            items(state.rides, key = { it.id }) { ride ->
+                                RideCard(
+                                    ride,
+                                    onClick = { nav.navigate(Routes.rideDetail(ride.id)) },
+                                    modifier = Modifier.animateItem(),
+                                )
+                            }
                         }
                     }
                 }

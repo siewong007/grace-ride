@@ -1,5 +1,7 @@
 package org.pjstatecm.graceride.ui.screens.events
 
+import androidx.compose.animation.Crossfade
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -49,6 +51,7 @@ import org.pjstatecm.graceride.domain.KlTime
 import org.pjstatecm.graceride.domain.RideStatus
 import org.pjstatecm.graceride.domain.RideStatusKind
 import org.pjstatecm.graceride.ui.Routes
+import org.pjstatecm.graceride.ui.components.AnimatedOfflineBanner
 import org.pjstatecm.graceride.ui.components.DayOption
 import org.pjstatecm.graceride.ui.components.DayStrip
 import org.pjstatecm.graceride.ui.components.EmptyView
@@ -56,7 +59,6 @@ import org.pjstatecm.graceride.ui.components.ErrorView
 import org.pjstatecm.graceride.ui.components.EventCard
 import org.pjstatecm.graceride.ui.components.EventIcon
 import org.pjstatecm.graceride.ui.components.LoadingView
-import org.pjstatecm.graceride.ui.components.OfflineBanner
 import org.pjstatecm.graceride.ui.components.ScheduleTimeline
 import org.pjstatecm.graceride.ui.components.TimelineBadge
 import org.pjstatecm.graceride.ui.components.TimelineKind
@@ -135,29 +137,51 @@ fun EventsScreen(container: AppContainer, nav: NavHostController) {
                 }
             }
 
-            when {
-                state.loading -> LoadingView()
-                state.error != null && state.events.isEmpty() -> ErrorView(state.error!!, vm::refresh)
-                state.tab == 1 -> MyScheduleContent(state, vm::refresh, vm::selectDay, { vm.setTab(0) }, nav)
-                state.tab == 3 -> ManagingContent(
-                    state = state,
-                    onRefresh = vm::refresh,
-                    onToggleHideDrafts = vm::toggleHideDrafts,
-                    onOpenEvent = { nav.navigate(Routes.eventDetail(it)) },
-                    onPublishClick = { pendingPublish = it },
-                    onUnpublishClick = { pendingUnpublish = it },
-                )
-                else -> PullToRefreshBox(isRefreshing = state.refreshing, onRefresh = vm::refresh) {
-                    LazyColumn(
-                        Modifier.fillMaxSize().padding(horizontal = Spacing.sm),
-                        verticalArrangement = Arrangement.spacedBy(Spacing.xs),
-                        contentPadding = PaddingValues(vertical = Spacing.xs),
-                    ) {
-                        if (state.offline) item { OfflineBanner() }
-                        if (state.events.isEmpty()) item { EmptyView(stringResource(R.string.events_empty)) }
-                        items(state.events, key = { it.id }) { event ->
-                            val needed = if (state.tab == 0) state.requestsByEvent[event.id] ?: 0 else 0
-                            EventCard(event, onClick = { nav.navigate(Routes.eventDetail(event.id)) }, ridesNeeded = needed)
+            AnimatedOfflineBanner(
+                visible = !state.loading && state.offline,
+                modifier = Modifier.padding(horizontal = Spacing.sm, vertical = Spacing.xxs),
+            )
+
+            val viewMode = when {
+                state.loading -> "loading"
+                state.error != null && state.events.isEmpty() -> "error"
+                else -> "tab-${state.tab}"
+            }
+
+            Crossfade(
+                targetState = viewMode,
+                animationSpec = tween(200),
+                label = "events_tab",
+                modifier = Modifier.weight(1f),
+            ) { mode ->
+                when (mode) {
+                    "loading" -> LoadingView()
+                    "error" -> ErrorView(state.error ?: "", vm::refresh)
+                    "tab-1" -> MyScheduleContent(state, vm::refresh, vm::selectDay, { vm.setTab(0) }, nav)
+                    "tab-3" -> ManagingContent(
+                        state = state,
+                        onRefresh = vm::refresh,
+                        onToggleHideDrafts = vm::toggleHideDrafts,
+                        onOpenEvent = { nav.navigate(Routes.eventDetail(it)) },
+                        onPublishClick = { pendingPublish = it },
+                        onUnpublishClick = { pendingUnpublish = it },
+                    )
+                    else -> PullToRefreshBox(isRefreshing = state.refreshing, onRefresh = vm::refresh) {
+                        LazyColumn(
+                            Modifier.fillMaxSize().padding(horizontal = Spacing.sm),
+                            verticalArrangement = Arrangement.spacedBy(Spacing.xs),
+                            contentPadding = PaddingValues(vertical = Spacing.xs),
+                        ) {
+                            if (state.events.isEmpty()) item { EmptyView(stringResource(R.string.events_empty)) }
+                            items(state.events, key = { it.id }) { event ->
+                                val needed = if (state.tab == 0) state.requestsByEvent[event.id] ?: 0 else 0
+                                EventCard(
+                                    event,
+                                    onClick = { nav.navigate(Routes.eventDetail(event.id)) },
+                                    modifier = Modifier.animateItem(),
+                                    ridesNeeded = needed,
+                                )
+                            }
                         }
                     }
                 }
@@ -220,7 +244,6 @@ private fun ManagingContent(
             verticalArrangement = Arrangement.spacedBy(Spacing.xs),
             contentPadding = PaddingValues(vertical = Spacing.xs),
         ) {
-            if (state.offline) item { OfflineBanner() }
             item {
                 val filterLabel = if (!state.hideDrafts && state.draftCount > 0) {
                     stringResource(R.string.events_hide_drafts_count, state.draftCount)
@@ -259,6 +282,7 @@ private fun ManagingContent(
                     onClick = { onOpenEvent(event.id) },
                     onPublishClick = { onPublishClick(event) },
                     onUnpublishClick = { onUnpublishClick(event) },
+                    modifier = Modifier.animateItem(),
                 )
             }
         }
@@ -272,9 +296,10 @@ private fun ManagingEventCard(
     onClick: () -> Unit,
     onPublishClick: () -> Unit,
     onUnpublishClick: () -> Unit,
+    modifier: Modifier = Modifier,
 ) {
     val c = LocalStatusColors.current
-    OutlinedCard(onClick = onClick, modifier = Modifier.fillMaxWidth()) {
+    OutlinedCard(onClick = onClick, modifier = modifier.fillMaxWidth()) {
         Column(Modifier.padding(Spacing.sm), verticalArrangement = Arrangement.spacedBy(Spacing.xs)) {
             Row(
                 Modifier.fillMaxWidth(),
@@ -370,7 +395,6 @@ private fun MyScheduleContent(
                 horizontalAlignment = Alignment.CenterHorizontally,
                 verticalArrangement = Arrangement.Center,
             ) {
-                if (state.offline) item { OfflineBanner() }
                 item {
                     Column(
                         horizontalAlignment = Alignment.CenterHorizontally,
@@ -396,7 +420,6 @@ private fun MyScheduleContent(
                 verticalArrangement = Arrangement.spacedBy(Spacing.sm),
                 contentPadding = PaddingValues(vertical = Spacing.xs),
             ) {
-                if (state.offline) item { OfflineBanner() }
                 if (days.size >= 2) {
                     item {
                         DayStrip(
@@ -408,7 +431,10 @@ private fun MyScheduleContent(
                     }
                 }
                 items(visibleGroups, key = { it.first }) { (dayKey, nodes) ->
-                    Column(verticalArrangement = Arrangement.spacedBy(Spacing.xs)) {
+                    Column(
+                        verticalArrangement = Arrangement.spacedBy(Spacing.xs),
+                        modifier = Modifier.animateItem(),
+                    ) {
                         if (effectiveDay == "all") {
                             Text(
                                 KlTime.displayDate(dayKey),

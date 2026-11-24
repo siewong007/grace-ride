@@ -158,6 +158,9 @@ export function GettingStarted({ hasRide, hasEvent }: HomeData) {
         <h2 id="getting-started-title">{t('startTitle')}</h2>
         <span className="small muted nowrap">{t('progress', { done, total: steps.length })}</span>
       </div>
+      <div className="bar" aria-hidden="true">
+        <div style={{ width: `${Math.round((done / steps.length) * 100)}%` }} />
+      </div>
       <p className="muted small">{t('startBody')}</p>
       <StepList steps={steps} />
       <div className="row between align-center">

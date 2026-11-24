@@ -1,5 +1,7 @@
 package org.pjstatecm.graceride.ui.screens.notifications
 
+import androidx.compose.animation.Crossfade
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -370,50 +372,67 @@ fun NotificationsScreen(container: AppContainer, nav: NavHostController) {
                     }
                 }
 
-                when {
-                    state.loading -> LoadingView(Modifier.fillMaxSize())
-                    state.error != null -> ErrorView(state.error!!, { vm.load(reset = true) }, Modifier.fillMaxSize())
-                    state.items.isEmpty() -> EmptyView(stringResource(R.string.notif_empty), Modifier.fillMaxSize())
-                    else -> LazyColumn(
-                        Modifier.fillMaxSize().padding(horizontal = Spacing.sm),
-                        verticalArrangement = Arrangement.spacedBy(Spacing.xs),
-                        contentPadding = PaddingValues(vertical = Spacing.xs),
-                    ) {
-                        val groups = listOf(
-                            R.string.notif_today to todayItems,
-                            R.string.notif_yesterday to yesterdayItems,
-                            R.string.notif_earlier to earlierItems,
-                        )
-                        groups.forEach { (headerRes, rows) ->
-                            if (rows.isNotEmpty()) {
-                                item(key = "header-$headerRes") {
-                                    SectionHeader(stringResource(headerRes))
-                                }
-                                items(rows, key = { it.id }) { item ->
-                                    NotificationRowCard(
-                                        item = item,
-                                        onOpen = {
-                                            when (val dest = vm.open(item)) {
-                                                is NotifDestination.Native -> nav.navigate(dest.route)
-                                                is NotifDestination.Web -> openInWebApp(context, container.webUrl(dest.path))
-                                                NotifDestination.None -> {}
-                                            }
-                                        },
-                                        onToggleRead = { vm.toggleRead(item) },
-                                        onDelete = { vm.delete(item) },
-                                    )
+                val viewMode = when {
+                    state.loading -> "loading"
+                    state.error != null -> "error"
+                    state.items.isEmpty() -> "empty"
+                    else -> "content"
+                }
+
+                Crossfade(
+                    targetState = viewMode,
+                    animationSpec = tween(200),
+                    label = "notifications_state",
+                    modifier = Modifier.weight(1f),
+                ) { mode ->
+                    when (mode) {
+                        "loading" -> LoadingView(Modifier.fillMaxSize())
+                        "error" -> ErrorView(state.error ?: "", { vm.load(reset = true) }, Modifier.fillMaxSize())
+                        "empty" -> EmptyView(stringResource(R.string.notif_empty), Modifier.fillMaxSize())
+                        else -> LazyColumn(
+                            Modifier.fillMaxSize().padding(horizontal = Spacing.sm),
+                            verticalArrangement = Arrangement.spacedBy(Spacing.xs),
+                            contentPadding = PaddingValues(vertical = Spacing.xs),
+                        ) {
+                            val groups = listOf(
+                                R.string.notif_today to todayItems,
+                                R.string.notif_yesterday to yesterdayItems,
+                                R.string.notif_earlier to earlierItems,
+                            )
+                            groups.forEach { (headerRes, rows) ->
+                                if (rows.isNotEmpty()) {
+                                    item(key = "header-$headerRes") {
+                                        Box(Modifier.animateItem()) {
+                                            SectionHeader(stringResource(headerRes))
+                                        }
+                                    }
+                                    items(rows, key = { it.id }) { item ->
+                                        NotificationRowCard(
+                                            item = item,
+                                            onOpen = {
+                                                when (val dest = vm.open(item)) {
+                                                    is NotifDestination.Native -> nav.navigate(dest.route)
+                                                    is NotifDestination.Web -> openInWebApp(context, container.webUrl(dest.path))
+                                                    NotifDestination.None -> {}
+                                                }
+                                            },
+                                            onToggleRead = { vm.toggleRead(item) },
+                                            onDelete = { vm.delete(item) },
+                                            modifier = Modifier.animateItem(),
+                                        )
+                                    }
                                 }
                             }
-                        }
 
-                        if (state.nextBefore != null) {
-                            item(key = "load-more") {
-                                OutlinedButton(
-                                    onClick = { vm.loadMore() },
-                                    enabled = !state.loadingMore,
-                                    modifier = Modifier.fillMaxWidth().padding(vertical = Spacing.xs),
-                                ) {
-                                    Text(stringResource(R.string.notif_load_more))
+                            if (state.nextBefore != null) {
+                                item(key = "load-more") {
+                                    OutlinedButton(
+                                        onClick = { vm.loadMore() },
+                                        enabled = !state.loadingMore,
+                                        modifier = Modifier.fillMaxWidth().padding(vertical = Spacing.xs),
+                                    ) {
+                                        Text(stringResource(R.string.notif_load_more))
+                                    }
                                 }
                             }
                         }
@@ -430,8 +449,9 @@ private fun NotificationRowCard(
     onOpen: () -> Unit,
     onToggleRead: () -> Unit,
     onDelete: () -> Unit,
+    modifier: Modifier = Modifier,
 ) {
-    OutlinedCard(onClick = onOpen, modifier = Modifier.fillMaxWidth()) {
+    OutlinedCard(onClick = onOpen, modifier = modifier.fillMaxWidth()) {
         Row(
             modifier = Modifier.fillMaxWidth().padding(start = Spacing.sm, top = Spacing.xs, bottom = Spacing.xs, end = Spacing.xxs),
             verticalAlignment = Alignment.CenterVertically,

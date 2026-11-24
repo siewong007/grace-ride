@@ -36,7 +36,9 @@ export function Modal({
   children,
 }: ModalProps) {
   const { t } = useTranslation();
+  const backdropRef = useRef<HTMLDivElement>(null);
   const modalRef = useRef<HTMLDivElement>(null);
+  const bodyRef = useRef<HTMLDivElement>(null);
   const previousActiveElement = useRef<HTMLElement | null>(null);
   const onCloseRef = useRef(onClose);
   onCloseRef.current = onClose;
@@ -50,7 +52,7 @@ export function Modal({
     const originalOverflow = document.body.style.overflow;
     document.body.style.overflow = 'hidden';
 
-    const backdrop = modalRef.current?.parentElement;
+    const backdrop = backdropRef.current ?? modalRef.current?.parentElement ?? null;
     if (backdrop) {
       const index = Array.from(document.querySelectorAll('.modal-bg')).indexOf(backdrop);
       if (index > 0) backdrop.style.zIndex = String(100 + index * 10);
@@ -109,8 +111,150 @@ export function Modal({
     };
   }, []);
 
+  useEffect(() => {
+    const modal = modalRef.current;
+    const backdrop = backdropRef.current;
+    if (!modal || !backdrop) return;
+
+    let snapTimer: number | null = null;
+    let dismissTimer: number | null = null;
+    let gesture: {
+      startX: number;
+      startY: number;
+      lastY: number;
+      startTime: number;
+      startedOnHeader: boolean;
+      active: boolean;
+    } | null = null;
+
+    const clearTimers = () => {
+      if (snapTimer !== null) {
+        window.clearTimeout(snapTimer);
+        snapTimer = null;
+      }
+      if (dismissTimer !== null) {
+        window.clearTimeout(dismissTimer);
+        dismissTimer = null;
+      }
+    };
+
+    const isBottomSheetViewport = () =>
+      typeof window !== 'undefined' &&
+      (window.matchMedia?.('(max-width: 767px)').matches ?? window.innerWidth < 768);
+
+    const onTouchStart = (e: TouchEvent) => {
+      if (e.touches.length !== 1 || !isBottomSheetViewport()) {
+        gesture = null;
+        return;
+      }
+      const target = e.target instanceof Element ? e.target : null;
+      if (target?.closest('input, textarea, select, [role="slider"], .leaflet-container')) {
+        gesture = null;
+        return;
+      }
+      const startedOnHeader = Boolean(target?.closest('.sheet-handle, .modal-head'));
+      if (!startedOnHeader && (bodyRef.current?.scrollTop ?? 0) > 0) {
+        gesture = null;
+        return;
+      }
+      clearTimers();
+      modal.classList.remove('is-snapping', 'is-dismissing');
+      backdrop.classList.remove('is-snapping', 'is-dismissing');
+      const touch = e.touches[0];
+      gesture = {
+        startX: touch.clientX,
+        startY: touch.clientY,
+        lastY: touch.clientY,
+        startTime: Date.now(),
+        startedOnHeader,
+        active: false,
+      };
+    };
+
+    const onTouchMove = (e: TouchEvent) => {
+      if (!gesture || e.touches.length !== 1) return;
+      const touch = e.touches[0];
+      const dx = touch.clientX - gesture.startX;
+      const dy = touch.clientY - gesture.startY;
+      gesture.lastY = touch.clientY;
+
+      if (!gesture.active) {
+        if (Math.hypot(dx, dy) < 8) return;
+        const bodyAtTop = (bodyRef.current?.scrollTop ?? 0) <= 0;
+        if (dy > 0 && dy > Math.abs(dx) * 1.25 && (gesture.startedOnHeader || bodyAtTop)) {
+          gesture.active = true;
+          modal.classList.add('is-dragging');
+          backdrop.classList.add('is-dragging');
+        } else {
+          gesture = null;
+          return;
+        }
+      }
+
+      const dragY = Math.max(0, dy);
+      const progress = Math.min(1, dragY / 320);
+      modal.style.transform = `translate3d(0, ${dragY}px, 0)`;
+      backdrop.style.opacity = String(Math.max(0.2, 1 - progress * 0.75));
+    };
+
+    const finishDrag = (e?: TouchEvent) => {
+      const g = gesture;
+      gesture = null;
+      if (!g?.active) return;
+
+      const endY = e?.changedTouches?.[0]?.clientY ?? g.lastY;
+      const dy = Math.max(0, endY - g.startY);
+      const velocity = dy / Math.max(1, Date.now() - g.startTime);
+      const shouldDismiss = dy >= 96 || (dy >= 40 && velocity >= 0.55);
+      const reduce =
+        typeof window !== 'undefined' &&
+        (window.matchMedia?.('(prefers-reduced-motion: reduce)').matches ?? false);
+
+      modal.classList.remove('is-dragging');
+      backdrop.classList.remove('is-dragging');
+
+      if (shouldDismiss) {
+        if (reduce) {
+          onCloseRef.current();
+          return;
+        }
+        modal.classList.add('is-dismissing');
+        backdrop.classList.add('is-dismissing');
+        modal.style.transform = 'translate3d(0, 100%, 0)';
+        backdrop.style.opacity = '0';
+        dismissTimer = window.setTimeout(() => {
+          onCloseRef.current();
+        }, 160);
+      } else {
+        modal.classList.add('is-snapping');
+        backdrop.classList.add('is-snapping');
+        modal.style.transform = '';
+        backdrop.style.opacity = '';
+        snapTimer = window.setTimeout(() => {
+          modal.classList.remove('is-snapping');
+          backdrop.classList.remove('is-snapping');
+        }, 220);
+      }
+    };
+
+    const onTouchCancel = () => finishDrag();
+
+    modal.addEventListener('touchstart', onTouchStart, { passive: true });
+    modal.addEventListener('touchmove', onTouchMove, { passive: true });
+    modal.addEventListener('touchend', finishDrag, { passive: true });
+    modal.addEventListener('touchcancel', onTouchCancel, { passive: true });
+
+    return () => {
+      clearTimers();
+      modal.removeEventListener('touchstart', onTouchStart);
+      modal.removeEventListener('touchmove', onTouchMove);
+      modal.removeEventListener('touchend', finishDrag);
+      modal.removeEventListener('touchcancel', onTouchCancel);
+    };
+  }, []);
+
   return (
-    <div className="modal-bg" onClick={onClose} role="presentation">
+    <div ref={backdropRef} className="modal-bg" onClick={onClose} role="presentation">
       {/* eslint-disable-next-line jsx-a11y/no-noninteractive-element-interactions */}
       <div
         ref={modalRef}
@@ -133,7 +277,7 @@ export function Modal({
             <X size={20} aria-hidden="true" />
           </button>
         </div>
-        <div className="modal-body stack">{children}</div>
+        <div ref={bodyRef} className="modal-body stack">{children}</div>
         {footer && <div className="modal-footer row between">{footer}</div>}
       </div>
     </div>

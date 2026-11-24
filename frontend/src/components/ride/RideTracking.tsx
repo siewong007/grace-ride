@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { ChevronDown, ChevronUp, Clock, Hand, MapPin, Navigation } from 'lucide-react';
+import { ChevronDown, Clock, Hand, MapPin, Navigation } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import { del, post, useApi } from '../../api';
 import { fmtAgo, fmtDistance, fmtDuration, fmtTime, useFormatT } from '../../format';
@@ -65,7 +65,13 @@ export function CollapsibleTrackCard({ ride }: { ride: Ride }) {
   const { t } = useTranslation('rideDetail');
   const ft = useFormatT();
   const [collapsed, setCollapsed] = useState(false);
+  const bodyRef = useRef<HTMLDivElement>(null);
   const { data, reload } = useApi<RideLocation>(`/rides/${ride.id}/location`, 10000);
+
+  useEffect(() => {
+    const el = bodyRef.current;
+    if (el) el.inert = collapsed;
+  }, [collapsed]);
 
   const points: MapPoint[] = [];
   if (data?.sharing && data.lat != null && data.lng != null) {
@@ -129,44 +135,50 @@ export function CollapsibleTrackCard({ ride }: { ride: Ride }) {
             </span>
           )}
           <span className="muted" aria-hidden="true">
-            {collapsed ? <ChevronDown size={18} /> : <ChevronUp size={18} />}
+            <ChevronDown size={18} className={`collapsible-chevron${collapsed ? '' : ' is-open'}`} />
           </span>
         </div>
       </button>
 
-      {!collapsed && (
-        <div className="stack-sm">
-          {ride.viewer.is_driver && <ShareLocation />}
-          {eta && <EtaSummary ride={ride} eta={eta} />}
-          {points.length > 0 ? (
-            <LiveMap points={points} route={eta?.path} />
-          ) : (
-            !data?.sharing && <p className="muted small">{t('waitingLocation')}</p>
-          )}
-
-          {ride.viewer.is_driver && waiting && (
-            data?.passenger ? (
-              <p className="small row nowrap">
-                <Hand size={14} aria-hidden="true" />
-                <span>
-                  {ride.passenger.name} {t('passengerSharing')} {fmtAgo(data.passenger.updated_at, ft)}
-                </span>
-              </p>
+      <div
+        ref={bodyRef}
+        className={`collapsible-grid${collapsed ? '' : ' is-open'}`}
+        aria-hidden={collapsed || undefined}
+      >
+        <div className="collapsible-grid-inner">
+          <div className="stack-sm">
+            {ride.viewer.is_driver && <ShareLocation />}
+            {eta && <EtaSummary ride={ride} eta={eta} />}
+            {points.length > 0 ? (
+              <LiveMap points={points} route={eta?.path} />
             ) : (
-              <p className="muted small">{t('passengerNotSharing')}</p>
-            )
-          )}
+              !data?.sharing && <p className="muted small">{t('waitingLocation')}</p>
+            )}
 
-          {ride.viewer.is_passenger && waiting && (
-            <PassengerShareLocation
-              rideId={ride.id}
-              sharing={!!data?.passenger}
-              onChange={reload}
-            />
-          )}
-          <p className="muted tiny">{t('shareInfo')}</p>
+            {ride.viewer.is_driver && waiting && (
+              data?.passenger ? (
+                <p className="small row nowrap">
+                  <Hand size={14} aria-hidden="true" />
+                  <span>
+                    {ride.passenger.name} {t('passengerSharing')} {fmtAgo(data.passenger.updated_at, ft)}
+                  </span>
+                </p>
+              ) : (
+                <p className="muted small">{t('passengerNotSharing')}</p>
+              )
+            )}
+
+            {ride.viewer.is_passenger && waiting && (
+              <PassengerShareLocation
+                rideId={ride.id}
+                sharing={!!data?.passenger}
+                onChange={reload}
+              />
+            )}
+            <p className="muted tiny">{t('shareInfo')}</p>
+          </div>
         </div>
-      )}
+      </div>
     </Card>
   );
 }

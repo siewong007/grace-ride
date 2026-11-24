@@ -1,7 +1,7 @@
 import { ReactNode, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Link, NavLink, Navigate, Outlet, useLocation, useNavigate } from 'react-router-dom';
 import {
-  ArrowLeft, Bell, Calendar, Car, CarFront, ChevronDown, ChevronRight, ClipboardList, Clock, Fingerprint, HandCoins, Home,
+  ArrowLeft, Bell, Calendar, Car, CarFront, ChevronRight, ClipboardList, Clock, Fingerprint, HandCoins, Home,
   LayoutGrid, LifeBuoy, MapPinned, PanelLeftClose, PanelLeftOpen, Route, Search, Receipt, ShieldAlert, User, Wallet, BarChart3, WifiOff,
 } from 'lucide-react';
 import { useAuth } from '../auth';
@@ -66,6 +66,18 @@ function getPageTitle(pathname: string, t: (key: string) => string): string {
   return '';
 }
 
+function CollapsibleGroup({ open, children }: { open: boolean; children: ReactNode }) {
+  const ref = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (ref.current) ref.current.inert = !open;
+  }, [open]);
+  return (
+    <div ref={ref} className={`collapsible-grid${open ? ' is-open' : ''}`} aria-hidden={!open || undefined}>
+      <div className="collapsible-grid-inner">{children}</div>
+    </div>
+  );
+}
+
 export default function Layout() {
   return (
     <BackNavigationProvider>
@@ -92,6 +104,8 @@ function LayoutInner() {
   const [syncingQueue, setSyncingQueue] = useState(false);
   useOfflineQueueTick();
   const chrome = useMemo(() => ({ setBack, setHeadingVisible }), []);
+  const [navDir, setNavDir] = useState<'left' | 'right' | null>(null);
+  const navDirTimerRef = useRef<number | null>(null);
   const [jumpOpen, setJumpOpen] = useState(false);
   const openJump = useCallback(() => {
     try {
@@ -195,6 +209,12 @@ function LayoutInner() {
     );
     obs.observe(el);
     return () => obs.disconnect();
+  }, []);
+
+  useEffect(() => {
+    return () => {
+      if (navDirTimerRef.current !== null) window.clearTimeout(navDirTimerRef.current);
+    };
   }, []);
 
   const pendingOfflineCount = me ? getOfflineQueue(me.id).length : 0;
@@ -304,16 +324,18 @@ function LayoutInner() {
                   onClick={toggleTools}
                 >
                   <span>{t('sectionTools')} ({sidebarMemberTools.length})</span>
-                  {showToolsItems ? (
-                    <ChevronDown size={14} aria-hidden="true" />
-                  ) : (
-                    <ChevronRight size={14} aria-hidden="true" />
-                  )}
+                  <ChevronRight
+                    size={14}
+                    className={`sidebar-section-chevron${showToolsItems ? ' is-open' : ''}`}
+                    aria-hidden="true"
+                  />
                 </button>
               ) : (
                 <div className="section-label" aria-hidden="true">{t('sectionTools')}</div>
               )}
-              {showToolsItems && sidebarMemberTools.map(sidebarLink)}
+              <CollapsibleGroup open={showToolsItems}>
+                {sidebarMemberTools.map(sidebarLink)}
+              </CollapsibleGroup>
             </div>
           );
         })()}
@@ -383,7 +405,7 @@ function LayoutInner() {
                 className="topbar-bell"
               >
                 {me.unread > 0 && (
-                  <span className="dot" aria-hidden="true">
+                  <span key={me.unread > 9 ? '9+' : me.unread} className="dot" aria-hidden="true">
                     {me.unread > 9 ? '9+' : me.unread}
                   </span>
                 )}
@@ -438,7 +460,7 @@ function LayoutInner() {
             </Notice>
           </div>
         )}
-        <main className="main" id="main">
+        <main className="main" id="main" data-nav-dir={navDir ?? undefined}>
           <PageChromeContext.Provider value={chrome}>
             <GuideRunnerProvider>
               <GuideHeaderActionContext.Provider value={<PageHeaderGuideButton />}>
@@ -522,7 +544,13 @@ function LayoutInner() {
         search={loc.search}
         canGoBack={canSwipeBack}
         canGoForward={canSwipeForward}
-        onAction={(action) => {
+        onAction={(action, direction) => {
+          if (navDirTimerRef.current !== null) window.clearTimeout(navDirTimerRef.current);
+          setNavDir(direction ?? null);
+          navDirTimerRef.current = window.setTimeout(() => {
+            setNavDir(null);
+            navDirTimerRef.current = null;
+          }, 280);
           if (action.type === 'history-back') navigate(-1);
           else if (action.type === 'history-forward') navigate(1);
           else navigate(action.to);

@@ -1,4 +1,4 @@
-import type { ReactNode } from 'react';
+import { ReactNode, useCallback, useLayoutEffect, useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { Calendar, CarFront, QrCode, Repeat, UserCheck } from 'lucide-react';
 
@@ -95,15 +95,52 @@ export function DayStrip({
   allLabel: string;
   ariaLabel?: string;
 }) {
+  const stripRef = useRef<HTMLDivElement>(null);
+  const btnRefs = useRef<Record<string, HTMLButtonElement | null>>({});
+  const [indicator, setIndicator] = useState<{ left: number; width: number }>({ left: 0, width: 0 });
+
+  const measure = useCallback(() => {
+    const btn = btnRefs.current[selectedDay];
+    if (!btn || btn.offsetWidth === 0) {
+      setIndicator((cur) => (cur.width === 0 ? cur : { left: 0, width: 0 }));
+      return;
+    }
+    const left = btn.offsetLeft;
+    const width = btn.offsetWidth;
+    setIndicator((cur) => (cur.left === left && cur.width === width ? cur : { left, width }));
+  }, [selectedDay]);
+
+  useLayoutEffect(() => {
+    measure();
+    const el = stripRef.current;
+    if (!el) return;
+    let ro: ResizeObserver | undefined;
+    if (typeof ResizeObserver !== 'undefined') {
+      ro = new ResizeObserver(measure);
+      ro.observe(el);
+    }
+    window.addEventListener('resize', measure);
+    return () => {
+      ro?.disconnect();
+      window.removeEventListener('resize', measure);
+    };
+  }, [measure, days.length]);
+
+  const hasIndicator = indicator.width > 0;
+
   return (
     <div
-      className="day-strip"
+      ref={stripRef}
+      className={`day-strip${hasIndicator ? ' has-indicator' : ''}`}
       role="group"
       aria-label={ariaLabel}
       data-no-swipe-back
       data-no-swipe-next
     >
       <button
+        ref={(el) => {
+          btnRefs.current.all = el;
+        }}
         type="button"
         className={`day-strip-btn${selectedDay === 'all' ? ' is-active' : ''}`}
         aria-pressed={selectedDay === 'all'}
@@ -116,6 +153,9 @@ export function DayStrip({
         return (
           <button
             key={d.key}
+            ref={(el) => {
+              btnRefs.current[d.key] = el;
+            }}
             type="button"
             className={`day-strip-btn${active ? ' is-active' : ''}`}
             aria-pressed={active}
@@ -129,6 +169,13 @@ export function DayStrip({
           </button>
         );
       })}
+      {hasIndicator && (
+        <span
+          className="day-strip-indicator"
+          aria-hidden="true"
+          style={{ width: `${indicator.width}px`, transform: `translateX(${indicator.left}px)` }}
+        />
+      )}
     </div>
   );
 }

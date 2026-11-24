@@ -1,5 +1,7 @@
 package org.pjstatecm.graceride.ui.screens.events
 
+import androidx.compose.animation.Crossfade
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
@@ -113,32 +115,43 @@ fun EventDetailScreen(container: AppContainer, nav: NavHostController, id: Long)
         },
         snackbarHost = { SnackbarHost(snackbar) },
     ) { padding ->
-        when {
-            state.loading -> LoadingView(Modifier.padding(padding))
-            state.event == null -> ErrorView(state.error ?: "", vm::load, Modifier.padding(padding))
-            else -> {
-                val event = state.event!!
-                // A withdrawn signup stays in the payload with status "cancelled";
-                // treat it as no signup so the member can sign up again.
-                val signup = event.mySignup?.takeIf { it.status == "going" || it.status == "waitlist" }
-                val open = event.status == "published"
-                val myRide = event.myRide
-                val isGoing = signup?.status == "going"
-                val hasTransport = myRide != null || state.drivingForEvent.isNotEmpty()
-                val canCreateRide = container.auth.me?.can("rides", "create") == true
-                val timelineNodes = buildEventWorkflowNodes(
-                    event = event,
-                    signup = signup,
-                    outboundRide = state.outboundRide,
-                    returnRide = state.returnRide,
-                    drivingForEvent = state.drivingForEvent,
-                    onOpenRide = { rideId -> nav.navigate(Routes.rideDetail(rideId)) },
-                )
+        val viewMode = when {
+            state.loading -> "loading"
+            state.event == null -> "error"
+            else -> "content"
+        }
+        Crossfade(
+            targetState = viewMode,
+            animationSpec = tween(200),
+            label = "event_detail_state",
+            modifier = Modifier.padding(padding),
+        ) { mode ->
+            when (mode) {
+                "loading" -> LoadingView()
+                "error" -> ErrorView(state.error ?: "", vm::load)
+                else -> {
+                    val event = state.event!!
+                    // A withdrawn signup stays in the payload with status "cancelled";
+                    // treat it as no signup so the member can sign up again.
+                    val signup = event.mySignup?.takeIf { it.status == "going" || it.status == "waitlist" }
+                    val open = event.status == "published"
+                    val myRide = event.myRide
+                    val isGoing = signup?.status == "going"
+                    val hasTransport = myRide != null || state.drivingForEvent.isNotEmpty()
+                    val canCreateRide = container.auth.me?.can("rides", "create") == true
+                    val timelineNodes = buildEventWorkflowNodes(
+                        event = event,
+                        signup = signup,
+                        outboundRide = state.outboundRide,
+                        returnRide = state.returnRide,
+                        drivingForEvent = state.drivingForEvent,
+                        onOpenRide = { rideId -> nav.navigate(Routes.rideDetail(rideId)) },
+                    )
 
-                Column(
-                    Modifier.fillMaxSize().padding(padding).verticalScroll(rememberScrollState()).padding(Spacing.sm),
-                    verticalArrangement = Arrangement.spacedBy(Spacing.sm),
-                ) {
+                    Column(
+                        Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(Spacing.sm),
+                        verticalArrangement = Arrangement.spacedBy(Spacing.sm),
+                    ) {
                     Row(
                         verticalAlignment = Alignment.CenterVertically,
                         horizontalArrangement = Arrangement.spacedBy(Spacing.xs),
@@ -291,6 +304,7 @@ fun EventDetailScreen(container: AppContainer, nav: NavHostController, id: Long)
                 }
             }
         }
+    }
     }
 
     val event = state.event

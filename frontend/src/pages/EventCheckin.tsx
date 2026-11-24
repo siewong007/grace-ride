@@ -136,7 +136,7 @@ export default function EventCheckin() {
             </div>
           ) : checkedIn || info?.my_attended ? (
             <div className="stack items-center">
-              <div style={{ color: 'var(--success)', marginBottom: '0.5rem' }}>
+              <div className="checkin-success-mark" aria-hidden="true">
                 <CheckCircle2 size={64} />
               </div>
               <h2>{alreadyAttended || info?.my_attended ? t('alreadyAttendedNote') : t('checkinSuccess')}</h2>

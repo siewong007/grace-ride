@@ -157,12 +157,14 @@ export function StatusTimeline({ ride }: { ride: Ride }) {
     },
   ];
 
+  const isLive = ride.status === 'in_progress';
+
   return (
     <section className="detail-section stack-sm">
       <h2>{t('statusTimeline')}</h2>
       <div className="status-timeline">
         {steps.map((st, i) => (
-          <div key={i} className={`timeline-step ${st.state}`}>
+          <div key={i} className={`timeline-step ${st.state}${st.state === 'current' && isLive ? ' is-live' : ''}`}>
             <div className="timeline-step-indicator">
               <div className="timeline-step-icon">
                 {st.state === 'done' ? (

@@ -303,6 +303,11 @@ export function QrCameraScanner({
               borderBottomRightRadius: '10px',
             }}
           />
+          {active && (
+            <div className="qr-scan-track" aria-hidden="true">
+              <div className="qr-scan-line" />
+            </div>
+          )}
         </div>
 
         {/* Viewfinder Guide Caption */}

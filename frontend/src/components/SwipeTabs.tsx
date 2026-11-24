@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
+import { ChevronLeft, ChevronRight } from 'lucide-react';
 import {
   decideSwipeAction,
   type BottomTab,
@@ -81,8 +82,10 @@ export function SwipeTabsGesture({
   search: string;
   canGoBack: boolean;
   canGoForward: boolean;
-  onAction: (action: SwipeTabsAction) => void;
+  onAction: (action: SwipeTabsAction, direction?: 'left' | 'right') => void;
 }) {
+  const leftRef = useRef<HTMLDivElement>(null);
+  const rightRef = useRef<HTMLDivElement>(null);
   const stateRef = useRef({
     tabs,
     helpDesk: Boolean(helpDesk),
@@ -104,10 +107,24 @@ export function SwipeTabsGesture({
 
   useEffect(() => {
     if (!enabled) return;
-    let g: { x: number; y: number; t: number; locked: 'left' | 'right' | null } | null = null;
+    let g: { x: number; y: number; t: number; locked: 'left' | 'right' | null; canSwipe: boolean } | null = null;
+
+    const resetIndicators = () => {
+      if (leftRef.current) {
+        leftRef.current.classList.remove('is-active', 'is-ready');
+        leftRef.current.style.opacity = '0';
+        leftRef.current.style.transform = 'translate3d(-48px, -50%, 0)';
+      }
+      if (rightRef.current) {
+        rightRef.current.classList.remove('is-active', 'is-ready');
+        rightRef.current.style.opacity = '0';
+        rightRef.current.style.transform = 'translate3d(48px, -50%, 0)';
+      }
+    };
 
     const start = (e: TouchEvent) => {
       g = null;
+      resetIndicators();
       if (e.touches.length !== 1) return;
       if (document.querySelector('[role="dialog"][aria-modal="true"]')) return;
       if (hasTextSelection()) return;
@@ -123,13 +140,14 @@ export function SwipeTabsGesture({
         )
       ) return;
       if (inHorizontalScroller(target)) return;
-      g = { x: touch.clientX, y: touch.clientY, t: Date.now(), locked: null };
+      g = { x: touch.clientX, y: touch.clientY, t: Date.now(), locked: null, canSwipe: false };
     };
 
     const move = (e: TouchEvent) => {
       if (!g) return;
       if (e.touches.length !== 1) {
         g = null;
+        resetIndicators();
         return;
       }
       const touch = e.touches[0];
@@ -137,14 +155,53 @@ export function SwipeTabsGesture({
       const dy = touch.clientY - g.y;
       if (!g.locked) {
         if (Math.hypot(dx, dy) < LOCK_DISTANCE_PX) return;
-        if (Math.abs(dx) > Math.abs(dy) * 1.6) g.locked = dx < 0 ? 'left' : 'right';
-        else g = null;
+        if (Math.abs(dx) > Math.abs(dy) * 1.6) {
+          const dir = dx < 0 ? 'left' : 'right';
+          const cur = stateRef.current;
+          const previewAction = decideSwipeAction({
+            direction: dir,
+            pathname: cur.pathname,
+            search: cur.search,
+            tabs: cur.tabs,
+            helpDesk: cur.helpDesk,
+            canGoBack: cur.canGoBack,
+            canGoForward: cur.canGoForward,
+          });
+          g.locked = dir;
+          g.canSwipe = previewAction.type !== 'none';
+        } else {
+          g = null;
+          return;
+        }
+      }
+      if (!g.canSwipe) return;
+
+      const along = g.locked === 'left' ? -dx : dx;
+      const progress = Math.min(1, Math.max(0, along) / THRESHOLD_PX);
+      const ready = progress >= 1;
+      const el = g.locked === 'right' ? leftRef.current : rightRef.current;
+      const other = g.locked === 'right' ? rightRef.current : leftRef.current;
+      if (other) {
+        other.classList.remove('is-active', 'is-ready');
+        other.style.opacity = '0';
+      }
+      if (el) {
+        const reduced =
+          typeof window !== 'undefined' &&
+          typeof window.matchMedia === 'function' &&
+          window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+        const offset = reduced ? 0 : Math.round((1 - progress) * 48) * (g.locked === 'right' ? -1 : 1);
+        el.style.transform = `translate3d(${offset}px, -50%, 0)`;
+        el.style.opacity = along > 0 ? String(Math.min(1, 0.2 + progress * 0.8)) : '0';
+        el.classList.toggle('is-active', along > 0);
+        el.classList.toggle('is-ready', ready);
       }
     };
 
     const end = (e: TouchEvent) => {
       const s = g;
       g = null;
+      resetIndicators();
       if (!s || !s.locked) return;
       const touch = e.changedTouches?.[0];
       if (!touch) return;
@@ -168,11 +225,12 @@ export function SwipeTabsGesture({
         canGoBack: cur.canGoBack,
         canGoForward: cur.canGoForward,
       });
-      if (action.type !== 'none') cur.onAction(action);
+      if (action.type !== 'none') cur.onAction(action, s.locked);
     };
 
     const cancel = () => {
       g = null;
+      resetIndicators();
     };
 
     window.addEventListener('touchstart', start, { passive: true });
@@ -180,6 +238,7 @@ export function SwipeTabsGesture({
     window.addEventListener('touchend', end, { passive: true });
     window.addEventListener('touchcancel', cancel, { passive: true });
     return () => {
+      resetIndicators();
       window.removeEventListener('touchstart', start);
       window.removeEventListener('touchmove', move);
       window.removeEventListener('touchend', end);
@@ -187,5 +246,16 @@ export function SwipeTabsGesture({
     };
   }, [enabled]);
 
-  return null;
+  if (!enabled) return null;
+
+  return (
+    <>
+      <div ref={leftRef} className="swipe-tab-indicator left" aria-hidden="true">
+        <ChevronLeft size={20} />
+      </div>
+      <div ref={rightRef} className="swipe-tab-indicator right" aria-hidden="true">
+        <ChevronRight size={20} />
+      </div>
+    </>
+  );
 }

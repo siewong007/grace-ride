@@ -1,7 +1,7 @@
-import { createContext, ReactNode, useContext, useEffect, useState } from 'react';
+import { createContext, ReactNode, useContext, useEffect, useRef, useState } from 'react';
 import { useLocation, useNavigate, Link } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
-import { AlertTriangle, ChevronDown, ChevronUp, ExternalLink, HelpCircle, Info, Lightbulb, X } from 'lucide-react';
+import { AlertTriangle, ChevronDown, ExternalLink, HelpCircle, Info, Lightbulb, X } from 'lucide-react';
 import { markDone } from '../guideProgress';
 import StepText, { inline } from './StepText';
 import type { GuideDetailData, GuideStep, GuideSummary } from '../types/help';
@@ -68,6 +68,12 @@ function WalkthroughCard({ active, minimised, onMinimise, onPrev, onNext, onStop
   const listLink =
     target && !(isPatternLink(step!.link) && (pathname === target || pathname.startsWith(`${target}/`))) ? target : null;
 
+  const bodyWrapRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    const el = bodyWrapRef.current;
+    if (el) el.inert = minimised;
+  }, [minimised]);
+
   return (
     <aside className={`guide-card ${minimised ? 'min' : ''}`} role="region" aria-label={t('walkthroughBar', 'Guide walkthrough')}>
       <div className="guide-card-head">
@@ -78,16 +84,24 @@ function WalkthroughCard({ active, minimised, onMinimise, onPrev, onNext, onStop
         </div>
         <button type="button" className="icon-btn sm ghost" onClick={() => onMinimise(!minimised)} aria-expanded={!minimised}
           aria-label={minimised ? t('expandStep', 'Expand') : t('collapseStep', 'Collapse')}>
-          {minimised ? <ChevronUp size={18} aria-hidden="true" /> : <ChevronDown size={18} aria-hidden="true" />}
+          <ChevronDown
+            size={18}
+            className={`guide-card-chevron${minimised ? ' is-min' : ''}`}
+            aria-hidden="true"
+          />
         </button>
         <button type="button" className="icon-btn sm ghost" onClick={onStop} aria-label={t('closeWalkthrough', 'Exit walkthrough')}>
           <X size={18} aria-hidden="true" />
         </button>
       </div>
 
-      {!minimised && (
-        <>
-          <div className="guide-card-body">
+      <div
+        ref={bodyWrapRef}
+        className={`collapsible-grid${minimised ? '' : ' is-open'}`}
+        aria-hidden={minimised || undefined}
+      >
+        <div className="collapsible-grid-inner">
+          <div key={stepIndex} className="guide-card-body guide-step-enter">
             <h2 className="guide-card-title">{stepTitle || t('stepNumber', { n: stepIndex + 1 })}</h2>
             {stepBody && <StepText text={stepBody} />}
             {stepNote && (
@@ -137,8 +151,8 @@ function WalkthroughCard({ active, minimised, onMinimise, onPrev, onNext, onStop
               {last ? t('finish', 'Finish') : t('next', 'Next')}
             </button>
           </div>
-        </>
-      )}
+        </div>
+      </div>
     </aside>
   );
 }

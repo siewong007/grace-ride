@@ -1,4 +1,4 @@
-import { createContext, ReactNode, useCallback, useContext, useMemo, useState } from 'react';
+import { createContext, CSSProperties, ReactNode, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react';
 import { AlertCircle, CheckCircle2, Info, X } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 
@@ -8,6 +8,14 @@ export interface ToastMessage {
   id: string;
   text: string;
   variant: ToastVariant;
+  durationMs: number;
+  leaving?: boolean;
+}
+
+const TOAST_LEAVE_MS = 160;
+
+function prefersReducedMotion() {
+  return typeof window !== 'undefined' && (window.matchMedia?.('(prefers-reduced-motion: reduce)').matches ?? false);
 }
 
 export interface ToastFn {
@@ -31,24 +39,75 @@ const ToastCtx = createContext<ToastFn>(noopToast);
 export function ToastProvider({ children }: { children: ReactNode }) {
   const { t: tr } = useTranslation();
   const [toasts, setToasts] = useState<ToastMessage[]>([]);
+  const timersRef = useRef<Map<string, number>>(new Map());
 
-  const remove = useCallback((id: string) => {
-    setToasts((cur) => cur.filter((t) => t.id !== id));
+  useEffect(() => {
+    const timers = timersRef.current;
+    return () => {
+      timers.forEach((timerId) => window.clearTimeout(timerId));
+      timers.clear();
+    };
   }, []);
+
+  const clearTimer = useCallback((key: string) => {
+    const timer = timersRef.current.get(key);
+    if (timer !== undefined) {
+      window.clearTimeout(timer);
+      timersRef.current.delete(key);
+    }
+  }, []);
+
+  const removeImmediate = useCallback(
+    (id: string) => {
+      clearTimer(id);
+      clearTimer(`leave:${id}`);
+      setToasts((cur) => cur.filter((t) => t.id !== id));
+    },
+    [clearTimer],
+  );
+
+  const dismiss = useCallback(
+    (id: string) => {
+      clearTimer(id);
+      if (prefersReducedMotion()) {
+        removeImmediate(id);
+        return;
+      }
+      setToasts((cur) => {
+        const target = cur.find((t) => t.id === id);
+        if (!target || target.leaving) return cur;
+        return cur.map((t) => (t.id === id ? { ...t, leaving: true } : t));
+      });
+      if (!timersRef.current.has(`leave:${id}`)) {
+        const leaveTimer = window.setTimeout(() => removeImmediate(id), TOAST_LEAVE_MS);
+        timersRef.current.set(`leave:${id}`, leaveTimer);
+      }
+    },
+    [clearTimer, removeImmediate],
+  );
 
   const add = useCallback(
     (text: string, variant: ToastVariant = 'info') => {
       const id = Math.random().toString(36).slice(2, 9);
+      const durationMs = variant === 'error' ? 6000 : 3000;
       setToasts((cur) => {
-        const next = [...cur, { id, text, variant }];
-        return next.slice(-3); // queue up to 3
+        const next = [...cur, { id, text, variant, durationMs }];
+        const sliced = next.slice(-3); // queue up to 3
+        const keptIds = new Set(sliced.map((t) => t.id));
+        for (const item of cur) {
+          if (!keptIds.has(item.id)) {
+            clearTimer(item.id);
+            clearTimer(`leave:${item.id}`);
+          }
+        }
+        return sliced;
       });
-      const dur = variant === 'error' ? 6000 : 3000;
-      setTimeout(() => {
-        remove(id);
-      }, dur);
+      const autoTimer = window.setTimeout(() => {
+        dismiss(id);
+      }, durationMs);
+      timersRef.current.set(id, autoTimer);
     },
-    [remove],
+    [clearTimer, dismiss],
   );
 
   const toastFn: ToastFn = useMemo(() => {
@@ -67,8 +126,9 @@ export function ToastProvider({ children }: { children: ReactNode }) {
           {toasts.map((t) => (
             <div
               key={t.id}
-              className={`toast toast-${t.variant}`}
+              className={`toast toast-${t.variant}${t.leaving ? ' is-leaving' : ''}`}
               role={t.variant === 'error' ? 'alert' : 'status'}
+              style={{ '--toast-dur': `${t.durationMs}ms` } as CSSProperties}
             >
               <span className="toast-icon" aria-hidden="true">
                 {t.variant === 'success' && <CheckCircle2 size={18} />}
@@ -79,11 +139,12 @@ export function ToastProvider({ children }: { children: ReactNode }) {
               <button
                 type="button"
                 className="toast-close"
-                onClick={() => remove(t.id)}
+                onClick={() => dismiss(t.id)}
                 aria-label={tr('close')}
               >
                 <X size={16} />
               </button>
+              <span className="toast-progress" aria-hidden="true" />
             </div>
           ))}
         </div>

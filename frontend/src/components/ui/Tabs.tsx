@@ -1,4 +1,4 @@
-import React, { ReactNode, useId } from 'react';
+import React, { ReactNode, useCallback, useId, useLayoutEffect, useRef, useState } from 'react';
 
 export interface TabItem {
   value: string;
@@ -20,6 +20,36 @@ export interface TabsProps {
  */
 export function Tabs({ value, onChange, items, ariaLabel, className = '' }: TabsProps) {
   const idPrefix = useId();
+  const listRef = useRef<HTMLDivElement>(null);
+  const btnRefs = useRef<Record<string, HTMLButtonElement | null>>({});
+  const [indicator, setIndicator] = useState<{ left: number; width: number }>({ left: 0, width: 0 });
+
+  const measure = useCallback(() => {
+    const btn = btnRefs.current[value];
+    if (!btn || btn.offsetWidth === 0) {
+      setIndicator((cur) => (cur.width === 0 ? cur : { left: 0, width: 0 }));
+      return;
+    }
+    const left = btn.offsetLeft;
+    const width = btn.offsetWidth;
+    setIndicator((cur) => (cur.left === left && cur.width === width ? cur : { left, width }));
+  }, [value]);
+
+  useLayoutEffect(() => {
+    measure();
+    const listEl = listRef.current;
+    if (!listEl) return;
+    let ro: ResizeObserver | undefined;
+    if (typeof ResizeObserver !== 'undefined') {
+      ro = new ResizeObserver(measure);
+      ro.observe(listEl);
+    }
+    window.addEventListener('resize', measure);
+    return () => {
+      ro?.disconnect();
+      window.removeEventListener('resize', measure);
+    };
+  }, [measure, items.length]);
 
   const handleKeyDown = (e: React.KeyboardEvent<HTMLButtonElement>, index: number) => {
     let nextIndex: number;
@@ -40,13 +70,23 @@ export function Tabs({ value, onChange, items, ariaLabel, className = '' }: Tabs
     btn?.focus();
   };
 
+  const hasIndicator = indicator.width > 0;
+
   return (
-    <div className={`tabs ${className}`.trim()} role="tablist" aria-label={ariaLabel}>
+    <div
+      ref={listRef}
+      className={`tabs${hasIndicator ? ' has-indicator' : ''} ${className}`.trim()}
+      role="tablist"
+      aria-label={ariaLabel}
+    >
       {items.map((item, idx) => {
         const isSelected = item.value === value;
         return (
           <button
             key={item.value}
+            ref={(el) => {
+              btnRefs.current[item.value] = el;
+            }}
             id={`${idPrefix}-tab-${item.value}`}
             type="button"
             role="tab"
@@ -66,6 +106,13 @@ export function Tabs({ value, onChange, items, ariaLabel, className = '' }: Tabs
           </button>
         );
       })}
+      {hasIndicator && (
+        <span
+          className="tabs-indicator"
+          aria-hidden="true"
+          style={{ width: `${indicator.width}px`, transform: `translateX(${indicator.left}px)` }}
+        />
+      )}
     </div>
   );
 }

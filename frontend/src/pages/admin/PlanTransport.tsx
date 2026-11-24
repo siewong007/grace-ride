@@ -1689,19 +1689,22 @@ function PassengerCard({
 }) {
   const { t } = useTranslation('plan');
   const ft = useFormatT();
+  const [dragging, setDragging] = useState(false);
   const current = draft[r.id] ?? null;
   const driver = plan.drivers.find((d) => d.id === current);
   const selectId = `plan-ride-${r.id}`;
   const metaLine = [r.area.name, fmtTime(r.pickup_at, ft), r.pickup_address].filter(Boolean).join(' · ');
   return (
     <article
-      className={`plan-passenger ${changed ? 'is-changed' : ''}`}
+      className={`plan-passenger ${changed ? 'is-changed' : ''}${dragging ? ' is-dragging' : ''}`}
       draggable={canUpdate}
       onDragStart={(e) => {
         if (!canUpdate) return;
+        setDragging(true);
         e.dataTransfer.setData(DRAG_TYPE, String(r.id));
         e.dataTransfer.effectAllowed = 'move';
       }}
+      onDragEnd={() => setDragging(false)}
     >
       <div className="plan-passenger-head">
         <strong className="plan-passenger-name">

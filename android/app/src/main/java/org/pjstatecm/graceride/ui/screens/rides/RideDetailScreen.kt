@@ -1,5 +1,7 @@
 package org.pjstatecm.graceride.ui.screens.rides
 
+import androidx.compose.animation.Crossfade
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.FlowRow
@@ -88,15 +90,26 @@ fun RideDetailScreen(container: AppContainer, nav: NavHostController, id: Long) 
         },
         snackbarHost = { SnackbarHost(snackbar) },
     ) { padding ->
-        when {
-            state.loading -> LoadingView(Modifier.padding(padding))
-            state.ride == null -> ErrorView(state.error ?: "", vm::load, Modifier.padding(padding))
-            else -> {
-                val ride = state.ride!!
-                Column(
-                    Modifier.fillMaxSize().padding(padding).verticalScroll(rememberScrollState()).padding(Spacing.sm),
-                    verticalArrangement = Arrangement.spacedBy(Spacing.sm),
-                ) {
+        val viewMode = when {
+            state.loading -> "loading"
+            state.ride == null -> "error"
+            else -> "content"
+        }
+        Crossfade(
+            targetState = viewMode,
+            animationSpec = tween(200),
+            label = "ride_detail_state",
+            modifier = Modifier.padding(padding),
+        ) { mode ->
+            when (mode) {
+                "loading" -> LoadingView()
+                "error" -> ErrorView(state.error ?: "", vm::load)
+                else -> {
+                    val ride = state.ride!!
+                    Column(
+                        Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(Spacing.sm),
+                        verticalArrangement = Arrangement.spacedBy(Spacing.sm),
+                    ) {
                     Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
                         Text(KlTime.display(ride.pickupAt), style = MaterialTheme.typography.titleLarge, color = MaterialTheme.colorScheme.onSurface)
                         RideStatusPill(ride.status)
@@ -295,6 +308,7 @@ fun RideDetailScreen(container: AppContainer, nav: NavHostController, id: Long) 
                 }
             }
         }
+    }
     }
 
     if (confirmCancel) {

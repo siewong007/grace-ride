@@ -65,6 +65,7 @@ export function AutoLockProvider({ children }: { children: ReactNode }) {
   const bgRef = useRef<HTMLDivElement>(null);
   const [unlocking, setUnlocking] = useState(false);
   const [unlockError, setUnlockError] = useState<string | null>(null);
+  const [shaking, setShaking] = useState(false);
   const [code, setCode] = useState('');
   const [showCode, setShowCode] = useState(false);
   // Set only when the idle timer locked this tab, so the card can say why.
@@ -188,6 +189,17 @@ export function AutoLockProvider({ children }: { children: ReactNode }) {
   }, [isLocked, codeView]);
 
   // Unlocking needs a fresh passkey, TOTP/backup code, or dev-mode unlock; never opens on a plain click without auth.
+  const triggerShake = useCallback(() => {
+    if (
+      typeof window !== 'undefined' &&
+      window.matchMedia?.('(prefers-reduced-motion: reduce)').matches
+    ) {
+      return;
+    }
+    setShaking(false);
+    window.requestAnimationFrame(() => setShaking(true));
+  }, []);
+
   const handleUnlock = async () => {
     if (unlocking) return;
     setUnlocking(true);
@@ -198,6 +210,7 @@ export function AutoLockProvider({ children }: { children: ReactNode }) {
       await Promise.resolve(refresh()).catch(() => {});
     } catch (e) {
       setUnlockError((e as Error).message || t('unlockFailed'));
+      triggerShake();
     } finally {
       setUnlocking(false);
     }
@@ -215,6 +228,7 @@ export function AutoLockProvider({ children }: { children: ReactNode }) {
       await Promise.resolve(refresh()).catch(() => {});
     } catch (e) {
       setUnlockError((e as Error).message || t('unlockFailed'));
+      triggerShake();
     } finally {
       setUnlocking(false);
     }
@@ -230,6 +244,7 @@ export function AutoLockProvider({ children }: { children: ReactNode }) {
       await Promise.resolve(refresh()).catch(() => {});
     } catch (e) {
       setUnlockError((e as Error).message || t('unlockFailed'));
+      triggerShake();
     } finally {
       setUnlocking(false);
     }
@@ -261,7 +276,10 @@ export function AutoLockProvider({ children }: { children: ReactNode }) {
           aria-label={t('sessionLocked')}
         >
           <div className="lock-stack">
-            <div className="lock-card">
+            <div
+              className={`lock-card${shaking ? ' is-shaking' : ''}`}
+              onAnimationEnd={() => setShaking(false)}
+            >
               <div className="lock-avatar">
                 <Avatar name={me.name} fileId={me.photo_file_id} color={me.avatar_color} icon={me.avatar_icon} size="lg" />
                 <span className="lock-badge" aria-hidden="true">

@@ -4,6 +4,15 @@ import android.Manifest
 import android.os.Build
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.Crossfade
+import androidx.compose.animation.core.tween
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.slideInHorizontally
+import androidx.compose.animation.slideInVertically
+import androidx.compose.animation.slideOutHorizontally
+import androidx.compose.animation.slideOutVertically
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
@@ -91,155 +100,192 @@ fun GraceRideAppRoot(
         }
     }
 
-    if (authState is AuthState.Loading) {
-        Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-            CircularProgressIndicator()
-        }
-        return
-    }
-
-    val navController = rememberNavController()
-    val backStack by navController.currentBackStackEntryAsState()
-    val currentRoute = backStack?.destination?.route
-    val deepLink by (
-        pendingDeepLink?.collectAsStateWithLifecycle()
-            ?: androidx.compose.runtime.remember { androidx.compose.runtime.mutableStateOf<String?>(null) }
-        )
-
-    LaunchedEffect(authState, deepLink, currentRoute) {
-        val signedIn = authState as? AuthState.SignedIn ?: return@LaunchedEffect
-        if (!signedIn.me.termsAccepted) return@LaunchedEffect
-        val rawLink = deepLink ?: return@LaunchedEffect
-        if (currentRoute == null) return@LaunchedEffect
-        when (val dest = NotifLinkRouter.resolve(rawLink)) {
-            is NotifDestination.Native -> navController.navigate(dest.route) {
-                launchSingleTop = true
+    Crossfade(
+        targetState = authState is AuthState.Loading,
+        animationSpec = tween(200),
+        label = "auth_loading",
+    ) { isLoading ->
+        if (isLoading) {
+            Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                CircularProgressIndicator()
             }
-            is NotifDestination.Web -> openInWebApp(context, container.webUrl(dest.path))
-            NotifDestination.None -> {}
-        }
-        pendingDeepLink?.value = null
-    }
+        } else {
+            val navController = rememberNavController()
+            val backStack by navController.currentBackStackEntryAsState()
+            val currentRoute = backStack?.destination?.route
+            val deepLink by (
+                pendingDeepLink?.collectAsStateWithLifecycle()
+                    ?: androidx.compose.runtime.remember { androidx.compose.runtime.mutableStateOf<String?>(null) }
+                )
 
-    // Session state drives the global navigation, mirroring RequireAuth on the web.
-    LaunchedEffect(authState) {
-        // Wait until the NavHost has installed its graph: on activity recreation
-        // this effect can fire before the first navigation destination exists.
-        val route = androidx.compose.runtime.snapshotFlow { currentRoute }
-            .filterNotNull()
-            .first()
-        val target = when (authState) {
-            is AuthState.SignedOut -> Routes.LOGIN
-            is AuthState.Locked -> Routes.UNLOCK
-            is AuthState.Pending -> Routes.PENDING
-            is AuthState.SignedIn -> {
-                val signedIn = authState as AuthState.SignedIn
-                if (!signedIn.me.termsAccepted) {
-                    Routes.TERMS
-                } else if (route in setOf(Routes.LOGIN, Routes.UNLOCK, Routes.PENDING, Routes.TERMS)) {
-                    Routes.HOME
-                } else {
-                    null
+            LaunchedEffect(authState, deepLink, currentRoute) {
+                val signedIn = authState as? AuthState.SignedIn ?: return@LaunchedEffect
+                if (!signedIn.me.termsAccepted) return@LaunchedEffect
+                val rawLink = deepLink ?: return@LaunchedEffect
+                if (currentRoute == null) return@LaunchedEffect
+                when (val dest = NotifLinkRouter.resolve(rawLink)) {
+                    is NotifDestination.Native -> navController.navigate(dest.route) {
+                        launchSingleTop = true
+                    }
+                    is NotifDestination.Web -> openInWebApp(context, container.webUrl(dest.path))
+                    NotifDestination.None -> {}
+                }
+                pendingDeepLink?.value = null
+            }
+
+            // Session state drives the global navigation, mirroring RequireAuth on the web.
+            LaunchedEffect(authState) {
+                // Wait until the NavHost has installed its graph: on activity recreation
+                // this effect can fire before the first navigation destination exists.
+                val route = androidx.compose.runtime.snapshotFlow { currentRoute }
+                    .filterNotNull()
+                    .first()
+                val target = when (authState) {
+                    is AuthState.SignedOut -> Routes.LOGIN
+                    is AuthState.Locked -> Routes.UNLOCK
+                    is AuthState.Pending -> Routes.PENDING
+                    is AuthState.SignedIn -> {
+                        val signedIn = authState as AuthState.SignedIn
+                        if (!signedIn.me.termsAccepted) {
+                            Routes.TERMS
+                        } else if (route in setOf(Routes.LOGIN, Routes.UNLOCK, Routes.PENDING, Routes.TERMS)) {
+                            Routes.HOME
+                        } else {
+                            null
+                        }
+                    }
+                    else -> null
+                }
+                if (target != null && target != route) {
+                    navController.navigate(target) {
+                        popUpTo(0) { inclusive = true }
+                        launchSingleTop = true
+                    }
                 }
             }
-            else -> null
-        }
-        if (target != null && target != route) {
-            navController.navigate(target) {
-                popUpTo(0) { inclusive = true }
-                launchSingleTop = true
+
+            val start = when (authState) {
+                is AuthState.SignedIn ->
+                    if ((authState as AuthState.SignedIn).me.termsAccepted) Routes.HOME else Routes.TERMS
+                is AuthState.Locked -> Routes.UNLOCK
+                is AuthState.Pending -> Routes.PENDING
+                else -> Routes.LOGIN
             }
-        }
-    }
 
-    val start = when (authState) {
-        is AuthState.SignedIn ->
-            if ((authState as AuthState.SignedIn).me.termsAccepted) Routes.HOME else Routes.TERMS
-        is AuthState.Locked -> Routes.UNLOCK
-        is AuthState.Pending -> Routes.PENDING
-        else -> Routes.LOGIN
-    }
-
-    Scaffold(
-        bottomBar = {
-            if (currentRoute in Routes.tabs) {
-                NavigationBar {
-                    NavigationBarItem(
-                        selected = currentRoute == Routes.HOME,
-                        onClick = { navController.navigateTab(Routes.HOME) },
-                        icon = { Icon(Icons.Outlined.Home, contentDescription = null) },
-                        label = { Text(stringResource(R.string.nav_home)) },
-                    )
-                    NavigationBarItem(
-                        selected = currentRoute == Routes.EVENTS,
-                        onClick = { navController.navigateTab(Routes.EVENTS) },
-                        icon = { Icon(Icons.Outlined.Event, contentDescription = null) },
-                        label = { Text(stringResource(R.string.nav_events)) },
-                    )
-                    NavigationBarItem(
-                        selected = currentRoute == Routes.PROFILE,
-                        onClick = { navController.navigateTab(Routes.PROFILE) },
-                        icon = { Icon(Icons.Outlined.Person, contentDescription = null) },
-                        label = { Text(stringResource(R.string.nav_profile)) },
-                    )
+            Scaffold(
+                bottomBar = {
+                    AnimatedVisibility(
+                        visible = currentRoute in Routes.tabs,
+                        enter = slideInVertically(tween(200)) { it } + fadeIn(tween(180)),
+                        exit = slideOutVertically(tween(160)) { it } + fadeOut(tween(140)),
+                    ) {
+                        NavigationBar {
+                            NavigationBarItem(
+                                selected = currentRoute == Routes.HOME,
+                                onClick = { navController.navigateTab(Routes.HOME) },
+                                icon = { Icon(Icons.Outlined.Home, contentDescription = null) },
+                                label = { Text(stringResource(R.string.nav_home)) },
+                            )
+                            NavigationBarItem(
+                                selected = currentRoute == Routes.EVENTS,
+                                onClick = { navController.navigateTab(Routes.EVENTS) },
+                                icon = { Icon(Icons.Outlined.Event, contentDescription = null) },
+                                label = { Text(stringResource(R.string.nav_events)) },
+                            )
+                            NavigationBarItem(
+                                selected = currentRoute == Routes.PROFILE,
+                                onClick = { navController.navigateTab(Routes.PROFILE) },
+                                icon = { Icon(Icons.Outlined.Person, contentDescription = null) },
+                                label = { Text(stringResource(R.string.nav_profile)) },
+                            )
+                        }
+                    }
+                },
+            ) { padding ->
+                NavHost(
+                    navController = navController,
+                    startDestination = start,
+                    modifier = Modifier.padding(padding),
+                    enterTransition = {
+                        if (initialState.destination.route in Routes.tabs && targetState.destination.route in Routes.tabs) {
+                            fadeIn(tween(180))
+                        } else {
+                            slideInHorizontally(tween(220)) { it / 5 } + fadeIn(tween(200))
+                        }
+                    },
+                    exitTransition = {
+                        if (initialState.destination.route in Routes.tabs && targetState.destination.route in Routes.tabs) {
+                            fadeOut(tween(140))
+                        } else {
+                            slideOutHorizontally(tween(200)) { -it / 10 } + fadeOut(tween(160))
+                        }
+                    },
+                    popEnterTransition = {
+                        if (initialState.destination.route in Routes.tabs && targetState.destination.route in Routes.tabs) {
+                            fadeIn(tween(180))
+                        } else {
+                            slideInHorizontally(tween(220)) { -it / 6 } + fadeIn(tween(180))
+                        }
+                    },
+                    popExitTransition = {
+                        if (initialState.destination.route in Routes.tabs && targetState.destination.route in Routes.tabs) {
+                            fadeOut(tween(140))
+                        } else {
+                            slideOutHorizontally(tween(200)) { it / 5 } + fadeOut(tween(160))
+                        }
+                    },
+                ) {
+                    composable(Routes.LOGIN) { LoginScreen(container) }
+                    composable(Routes.UNLOCK) { UnlockScreen(container) }
+                    composable(Routes.PENDING) { PendingScreen(container) }
+                    composable(Routes.TERMS) { TermsScreen(container) }
+                    composable(Routes.HOME) { HomeScreen(container, navController) }
+                    composable(Routes.RIDES) { RidesScreen(container, navController) }
+                    composable(Routes.RIDE_DETAIL) { entry ->
+                        RideDetailScreen(container, navController, entry.arguments?.getString("id")?.toLongOrNull() ?: 0L)
+                    }
+                    composable(
+                        route = Routes.RIDE_NEW,
+                        arguments = listOf(
+                            androidx.navigation.navArgument("eventId") { nullable = true; defaultValue = null },
+                            androidx.navigation.navArgument("proxy") { nullable = true; defaultValue = null },
+                        ),
+                    ) { entry ->
+                        RideNewScreen(
+                            container,
+                            navController,
+                            entry.arguments?.getString("eventId")?.toLongOrNull(),
+                            entry.arguments?.getString("proxy") == "1",
+                        )
+                    }
+                    composable(Routes.EVENTS) { EventsScreen(container, navController) }
+                    composable(Routes.EVENT_DETAIL) { entry ->
+                        EventDetailScreen(container, navController, entry.arguments?.getString("id")?.toLongOrNull() ?: 0L)
+                    }
+                    composable(Routes.COSTS) { CostsScreen(container, navController) }
+                    composable(Routes.HISTORY) { HistoryScreen(container, navController) }
+                    composable(Routes.PROFILE) { ProfileScreen(container, navController) }
+                    composable(Routes.DRIVER_SETTINGS) { DriverSettingsScreen(container, navController) }
+                    composable(Routes.PROXY_RIDERS) { ProxyRidersScreen(container, navController) }
+                    composable(Routes.SAVED_ADDRESSES) { SavedAddressesScreen(container, navController) }
+                    composable(Routes.NOTIFICATIONS) { NotificationsScreen(container, navController) }
+                    composable(
+                        route = Routes.STUDIO,
+                        arguments = listOf(
+                            androidx.navigation.navArgument("shape") { nullable = true; defaultValue = null },
+                            androidx.navigation.navArgument("color") { nullable = true; defaultValue = null },
+                            androidx.navigation.navArgument("face") { nullable = true; defaultValue = null },
+                        ),
+                    ) { entry ->
+                        GrokBotStudioScreen(
+                            container = container,
+                            nav = navController,
+                            initialShape = entry.arguments?.getString("shape"),
+                            initialColor = entry.arguments?.getString("color"),
+                            initialFace = entry.arguments?.getString("face"),
+                        )
+                    }
                 }
-            }
-        },
-    ) { padding ->
-        NavHost(
-            navController = navController,
-            startDestination = start,
-            modifier = Modifier.padding(padding),
-        ) {
-            composable(Routes.LOGIN) { LoginScreen(container) }
-            composable(Routes.UNLOCK) { UnlockScreen(container) }
-            composable(Routes.PENDING) { PendingScreen(container) }
-            composable(Routes.TERMS) { TermsScreen(container) }
-            composable(Routes.HOME) { HomeScreen(container, navController) }
-            composable(Routes.RIDES) { RidesScreen(container, navController) }
-            composable(Routes.RIDE_DETAIL) { entry ->
-                RideDetailScreen(container, navController, entry.arguments?.getString("id")?.toLongOrNull() ?: 0L)
-            }
-            composable(
-                route = Routes.RIDE_NEW,
-                arguments = listOf(
-                    androidx.navigation.navArgument("eventId") { nullable = true; defaultValue = null },
-                    androidx.navigation.navArgument("proxy") { nullable = true; defaultValue = null },
-                ),
-            ) { entry ->
-                RideNewScreen(
-                    container,
-                    navController,
-                    entry.arguments?.getString("eventId")?.toLongOrNull(),
-                    entry.arguments?.getString("proxy") == "1",
-                )
-            }
-            composable(Routes.EVENTS) { EventsScreen(container, navController) }
-            composable(Routes.EVENT_DETAIL) { entry ->
-                EventDetailScreen(container, navController, entry.arguments?.getString("id")?.toLongOrNull() ?: 0L)
-            }
-            composable(Routes.COSTS) { CostsScreen(container, navController) }
-            composable(Routes.HISTORY) { HistoryScreen(container, navController) }
-            composable(Routes.PROFILE) { ProfileScreen(container, navController) }
-            composable(Routes.DRIVER_SETTINGS) { DriverSettingsScreen(container, navController) }
-            composable(Routes.PROXY_RIDERS) { ProxyRidersScreen(container, navController) }
-            composable(Routes.SAVED_ADDRESSES) { SavedAddressesScreen(container, navController) }
-            composable(Routes.NOTIFICATIONS) { NotificationsScreen(container, navController) }
-            composable(
-                route = Routes.STUDIO,
-                arguments = listOf(
-                    androidx.navigation.navArgument("shape") { nullable = true; defaultValue = null },
-                    androidx.navigation.navArgument("color") { nullable = true; defaultValue = null },
-                    androidx.navigation.navArgument("face") { nullable = true; defaultValue = null },
-                ),
-            ) { entry ->
-                GrokBotStudioScreen(
-                    container = container,
-                    nav = navController,
-                    initialShape = entry.arguments?.getString("shape"),
-                    initialColor = entry.arguments?.getString("color"),
-                    initialFace = entry.arguments?.getString("face"),
-                )
             }
         }
     }

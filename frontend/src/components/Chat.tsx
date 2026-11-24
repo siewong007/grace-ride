@@ -87,6 +87,8 @@ export default function Chat({
   const logRef = useRef<HTMLDivElement>(null);
   const stickRef = useRef(true);
   const prevCountRef = useRef(0);
+  const prevIdsRef = useRef<Set<number> | null>(null);
+  const animatedIdsRef = useRef<Set<number>>(new Set());
   const readUpToRef = useRef(0);
   // Read receipts count only once the chat log is actually on screen (it often sits
   // below the fold of the ride page). Without IntersectionObserver, assume it is.
@@ -128,7 +130,10 @@ export default function Chat({
   const scrollToBottom = () => {
     const el = logRef.current;
     if (!el) return;
-    el.scrollTo?.({ top: el.scrollHeight });
+    const reduce =
+      typeof window !== 'undefined' &&
+      (window.matchMedia?.('(prefers-reduced-motion: reduce)').matches ?? false);
+    el.scrollTo?.({ top: el.scrollHeight, behavior: reduce ? 'auto' : 'smooth' });
     stickRef.current = true;
     setHasUnreadBelow(false);
     markRead();
@@ -146,7 +151,20 @@ export default function Chat({
   };
 
   useEffect(() => {
-    const count = data?.messages?.length ?? 0;
+    const msgs = data?.messages;
+    if (msgs) {
+      if (prevIdsRef.current === null) {
+        prevIdsRef.current = new Set(msgs.map((m) => m.id));
+      } else {
+        for (const m of msgs) {
+          if (!prevIdsRef.current.has(m.id)) {
+            prevIdsRef.current.add(m.id);
+            animatedIdsRef.current.add(m.id);
+          }
+        }
+      }
+    }
+    const count = msgs?.length ?? 0;
     if (count > prevCountRef.current) {
       if (stickRef.current || prevCountRef.current === 0) {
         logRef.current?.scrollTo?.({ top: logRef.current.scrollHeight });
@@ -156,7 +174,7 @@ export default function Chat({
       }
     }
     prevCountRef.current = count;
-  }, [data?.messages?.length]);
+  }, [data?.messages]);
 
   useEffect(() => {
     if (pickerFor === null) return;
@@ -233,9 +251,12 @@ export default function Chat({
       <div className="chat">
         <div className="chat-log" ref={logRef} onScroll={onLogScroll} aria-live="polite">
           {data.messages.map((m) => {
+            const isEntering =
+              animatedIdsRef.current.has(m.id) ||
+              (prevIdsRef.current !== null && !prevIdsRef.current.has(m.id));
             if (m.user_id === null) {
               return (
-                <div key={m.id} className="bubble system">
+                <div key={m.id} className={`bubble system${isEntering ? ' bubble-enter' : ''}`}>
                   {m.body}
                 </div>
               );
@@ -244,7 +265,7 @@ export default function Chat({
             const myReaction = reactions.find((r) => r.mine)?.emoji;
             return (
               <Fragment key={m.id}>
-                <div className={`bubble ${m.mine ? 'mine' : ''}`}>
+                <div className={`bubble ${m.mine ? 'mine' : ''}${isEntering ? ' bubble-enter' : ''}`}>
                   {!m.mine && <div className="who">{m.name}</div>}
                   <div>{m.body}</div>
                   <div className="at">
@@ -317,7 +338,7 @@ export default function Chat({
             );
           })}
           {pending && (
-            <div className="bubble mine pending-bubble">
+            <div className="bubble mine pending-bubble bubble-enter">
               <div>{pending.body}</div>
               <div className="at">
                 {pending.failed ? (

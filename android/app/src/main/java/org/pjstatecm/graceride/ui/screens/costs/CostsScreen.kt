@@ -2,6 +2,8 @@ package org.pjstatecm.graceride.ui.screens.costs
 
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.animation.Crossfade
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
@@ -47,10 +49,10 @@ import coil.compose.AsyncImage
 import org.pjstatecm.graceride.R
 import org.pjstatecm.graceride.di.AppContainer
 import org.pjstatecm.graceride.domain.Money
+import org.pjstatecm.graceride.ui.components.AnimatedOfflineBanner
 import org.pjstatecm.graceride.ui.components.EmptyView
 import org.pjstatecm.graceride.ui.components.ErrorView
 import org.pjstatecm.graceride.ui.components.LoadingView
-import org.pjstatecm.graceride.ui.components.OfflineBanner
 import org.pjstatecm.graceride.ui.components.ShareCard
 import org.pjstatecm.graceride.ui.theme.Spacing
 
@@ -87,23 +89,44 @@ fun CostsScreen(container: AppContainer, nav: NavHostController) {
         },
         snackbarHost = { SnackbarHost(snackbar) },
     ) { padding ->
-        when {
-            state.loading -> LoadingView(Modifier.padding(padding))
-            state.error != null && state.shares.isEmpty() -> ErrorView(state.error!!, vm::refresh, Modifier.padding(padding))
-            else -> PullToRefreshBox(
-                isRefreshing = state.refreshing,
-                onRefresh = vm::refresh,
-                modifier = Modifier.padding(padding),
-            ) {
-                LazyColumn(
-                    Modifier.fillMaxSize().padding(horizontal = Spacing.sm),
-                    verticalArrangement = Arrangement.spacedBy(Spacing.xs),
-                    contentPadding = PaddingValues(vertical = Spacing.xs),
-                ) {
-                    if (state.offline) item { OfflineBanner() }
-                    if (state.shares.isEmpty()) item { EmptyView(stringResource(R.string.costs_empty)) }
-                    items(state.shares, key = { it.id }) { share ->
-                        ShareCard(share, onPay = { vm.openPay(share) })
+        val viewMode = when {
+            state.loading -> "loading"
+            state.error != null && state.shares.isEmpty() -> "error"
+            else -> "content"
+        }
+        Crossfade(
+            targetState = viewMode,
+            animationSpec = tween(200),
+            label = "costs_state",
+            modifier = Modifier.padding(padding),
+        ) { mode ->
+            when (mode) {
+                "loading" -> LoadingView()
+                "error" -> ErrorView(state.error ?: "", vm::refresh)
+                else -> Column(Modifier.fillMaxSize()) {
+                    AnimatedOfflineBanner(
+                        visible = state.offline,
+                        modifier = Modifier.padding(horizontal = Spacing.sm, vertical = Spacing.xxs),
+                    )
+                    PullToRefreshBox(
+                        isRefreshing = state.refreshing,
+                        onRefresh = vm::refresh,
+                        modifier = Modifier.weight(1f),
+                    ) {
+                        LazyColumn(
+                            Modifier.fillMaxSize().padding(horizontal = Spacing.sm),
+                            verticalArrangement = Arrangement.spacedBy(Spacing.xs),
+                            contentPadding = PaddingValues(vertical = Spacing.xs),
+                        ) {
+                            if (state.shares.isEmpty()) item { EmptyView(stringResource(R.string.costs_empty)) }
+                            items(state.shares, key = { it.id }) { share ->
+                                ShareCard(
+                                    share,
+                                    onPay = { vm.openPay(share) },
+                                    modifier = Modifier.animateItem(),
+                                )
+                            }
+                        }
                     }
                 }
             }

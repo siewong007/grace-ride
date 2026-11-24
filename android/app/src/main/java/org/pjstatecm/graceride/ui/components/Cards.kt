@@ -1,5 +1,8 @@
 package org.pjstatecm.graceride.ui.components
 
+import androidx.compose.animation.animateColorAsState
+import androidx.compose.animation.animateContentSize
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -12,6 +15,7 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.res.stringResource
@@ -47,7 +51,9 @@ fun StatusPill(text: String, kind: RideStatusKind, modifier: Modifier = Modifier
         RideStatusKind.DONE -> c.info to c.infoSoft
         RideStatusKind.CANCELLED -> c.danger to c.dangerSoft
     }
-    Surface(color = bg, contentColor = fg, shape = CircleShape, modifier = modifier) {
+    val animBg by animateColorAsState(bg, tween(200), label = "pill_bg")
+    val animFg by animateColorAsState(fg, tween(200), label = "pill_fg")
+    Surface(color = animBg, contentColor = animFg, shape = CircleShape, modifier = modifier) {
         Text(
             text,
             style = MaterialTheme.typography.labelMedium,
@@ -78,7 +84,7 @@ fun SectionHeader(title: String, actionText: String? = null, onAction: (() -> Un
 @Composable
 fun RideCard(ride: Ride, onClick: () -> Unit, modifier: Modifier = Modifier) {
     OutlinedCard(onClick = onClick, modifier = modifier.fillMaxWidth()) {
-        Column(Modifier.padding(Spacing.sm)) {
+        Column(Modifier.padding(Spacing.sm).animateContentSize(tween(200))) {
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
                 Text(
                     friendlyTime(ride.pickupAt),
@@ -134,7 +140,7 @@ fun EventCard(
     ridesNeeded: Int = 0,
 ) {
     OutlinedCard(onClick = onClick, modifier = modifier.fillMaxWidth()) {
-        Column(Modifier.padding(Spacing.sm)) {
+        Column(Modifier.padding(Spacing.sm).animateContentSize(tween(200))) {
             Row(
                 Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.SpaceBetween,
@@ -216,7 +222,7 @@ fun EventCard(
 fun ShareCard(share: Share, onPay: () -> Unit, modifier: Modifier = Modifier) {
     val c = LocalStatusColors.current
     OutlinedCard(modifier = modifier.fillMaxWidth()) {
-        Column(Modifier.padding(Spacing.sm)) {
+        Column(Modifier.padding(Spacing.sm).animateContentSize(tween(200))) {
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
                 Text(
                     Money.rm(share.amountCents),

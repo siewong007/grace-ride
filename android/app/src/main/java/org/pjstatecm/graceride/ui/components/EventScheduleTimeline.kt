@@ -1,5 +1,12 @@
 package org.pjstatecm.graceride.ui.components
 
+import androidx.compose.animation.animateColorAsState
+import androidx.compose.animation.core.FastOutSlowInEasing
+import androidx.compose.animation.core.RepeatMode
+import androidx.compose.animation.core.animateFloat
+import androidx.compose.animation.core.infiniteRepeatable
+import androidx.compose.animation.core.rememberInfiniteTransition
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -33,10 +40,12 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
@@ -129,19 +138,57 @@ fun ScheduleTimeline(
                         .fillMaxHeight(),
                 ) {
                     Spacer(Modifier.height(14.dp))
-                    val dotModifier = when (node.state) {
-                        TimelineState.ACTIVE -> Modifier
-                            .size(12.dp)
-                            .background(MaterialTheme.colorScheme.primary, CircleShape)
-                        TimelineState.DONE -> Modifier
-                            .size(12.dp)
-                            .background(MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.6f), CircleShape)
-                        TimelineState.UPCOMING -> Modifier
-                            .size(12.dp)
-                            .background(MaterialTheme.colorScheme.surface, CircleShape)
-                            .border(2.dp, MaterialTheme.colorScheme.outlineVariant, CircleShape)
+                    when (node.state) {
+                        TimelineState.ACTIVE -> {
+                            val halo = rememberInfiniteTransition(label = "timeline_active")
+                            val haloScale by halo.animateFloat(
+                                initialValue = 1.0f,
+                                targetValue = 1.9f,
+                                animationSpec = infiniteRepeatable(
+                                    animation = tween(1800, easing = FastOutSlowInEasing),
+                                    repeatMode = RepeatMode.Restart,
+                                ),
+                                label = "halo_scale",
+                            )
+                            val haloAlpha by halo.animateFloat(
+                                initialValue = 0.35f,
+                                targetValue = 0f,
+                                animationSpec = infiniteRepeatable(
+                                    animation = tween(1800, easing = FastOutSlowInEasing),
+                                    repeatMode = RepeatMode.Restart,
+                                ),
+                                label = "halo_alpha",
+                            )
+                            Box(modifier = Modifier.size(12.dp), contentAlignment = Alignment.Center) {
+                                Box(
+                                    modifier = Modifier
+                                        .matchParentSize()
+                                        .graphicsLayer {
+                                            scaleX = haloScale
+                                            scaleY = haloScale
+                                            alpha = haloAlpha
+                                        }
+                                        .background(MaterialTheme.colorScheme.primary, CircleShape),
+                                )
+                                Box(
+                                    modifier = Modifier
+                                        .matchParentSize()
+                                        .background(MaterialTheme.colorScheme.primary, CircleShape),
+                                )
+                            }
+                        }
+                        TimelineState.DONE -> Box(
+                            modifier = Modifier
+                                .size(12.dp)
+                                .background(MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.6f), CircleShape),
+                        )
+                        TimelineState.UPCOMING -> Box(
+                            modifier = Modifier
+                                .size(12.dp)
+                                .background(MaterialTheme.colorScheme.surface, CircleShape)
+                                .border(2.dp, MaterialTheme.colorScheme.outlineVariant, CircleShape),
+                        )
                     }
-                    Box(modifier = dotModifier)
                     if (!isLast) {
                         Box(
                             modifier = Modifier
@@ -270,6 +317,16 @@ private fun DayStripItem(
     selected: Boolean,
     onClick: () -> Unit,
 ) {
+    val labelColor by animateColorAsState(
+        targetValue = if (selected) MaterialTheme.colorScheme.onSurface else MaterialTheme.colorScheme.onSurfaceVariant,
+        animationSpec = tween(180),
+        label = "day_strip_label",
+    )
+    val barColor by animateColorAsState(
+        targetValue = if (selected) MaterialTheme.colorScheme.primary else Color.Transparent,
+        animationSpec = tween(180),
+        label = "day_strip_bar",
+    )
     Column(
         horizontalAlignment = Alignment.CenterHorizontally,
         verticalArrangement = Arrangement.Center,
@@ -282,7 +339,7 @@ private fun DayStripItem(
             text = weekday,
             style = MaterialTheme.typography.labelLarge,
             fontWeight = FontWeight.Bold,
-            color = if (selected) MaterialTheme.colorScheme.onSurface else MaterialTheme.colorScheme.onSurfaceVariant,
+            color = labelColor,
             modifier = Modifier.padding(top = Spacing.xs),
         )
         if (!dateLabel.isNullOrBlank()) {
@@ -297,7 +354,7 @@ private fun DayStripItem(
             modifier = Modifier
                 .width(36.dp)
                 .height(2.dp)
-                .background(if (selected) MaterialTheme.colorScheme.primary else Color.Transparent),
+                .background(barColor),
         )
     }
 }
