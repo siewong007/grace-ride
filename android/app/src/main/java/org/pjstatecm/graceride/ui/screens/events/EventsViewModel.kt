@@ -42,7 +42,7 @@ class EventsViewModel(private val container: AppContainer) : ViewModel() {
 
     fun setTab(tab: Int) {
         if (tab == _state.value.tab) return
-        _state.value = _state.value.copy(tab = tab, selectedDay = "all")
+        _state.value = _state.value.copy(tab = tab, selectedDay = "all", loading = true)
         load(first = true)
     }
 
@@ -51,7 +51,7 @@ class EventsViewModel(private val container: AppContainer) : ViewModel() {
     }
 
     fun toggleHideDrafts() {
-        _state.value = _state.value.copy(hideDrafts = !_state.value.hideDrafts)
+        _state.value = _state.value.copy(hideDrafts = !_state.value.hideDrafts, refreshing = true)
         load(first = false)
     }
 
@@ -101,6 +101,7 @@ class EventsViewModel(private val container: AppContainer) : ViewModel() {
     fun refresh() = load(first = false)
 
     private fun load(first: Boolean) {
+        _state.value = _state.value.copy(loading = first, refreshing = !first)
         viewModelScope.launch {
             reloadData(first)
         }

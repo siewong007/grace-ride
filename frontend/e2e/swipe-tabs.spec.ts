@@ -113,11 +113,14 @@ test.describe('Mobile bottom-tab swipe (iPhone 13)', () => {
     await page.goto('/');
     const bottomNav = page.getByRole('navigation', { name: 'Bottom navigation' });
     await expect(bottomNav).toBeVisible();
+    await expect(bottomNav.getByRole('link', { name: /Home/ })).toHaveAttribute('aria-current', 'page');
     await swipe(page, 'left');
     await expect(page).toHaveURL(/\/events$/);
+    await expect(bottomNav.getByRole('link', { name: /Events/ })).toHaveAttribute('aria-current', 'page');
     await expect(page.getByRole('heading', { level: 1 })).toBeVisible();
     await swipe(page, 'left');
     await expect(page).toHaveURL(/\/me$/);
+    await expect(bottomNav.getByRole('link', { name: /Profile/ })).toHaveAttribute('aria-current', 'page');
     await expect(page.getByRole('heading', { name: 'Grace Member' })).toBeVisible();
     await swipe(page, 'left');
     await expect(page).toHaveURL(/\/me$/);
@@ -134,15 +137,20 @@ test.describe('Mobile bottom-tab swipe (iPhone 13)', () => {
   test('staff swipe includes the Admin tab', async ({ page }) => {
     await mockApi(page, 'staff');
     await page.goto('/events');
-    await expect(page.getByRole('navigation', { name: 'Bottom navigation' }).getByRole('link', { name: /Admin/ })).toBeVisible();
+    const bottomNav = page.getByRole('navigation', { name: 'Bottom navigation' });
+    await expect(bottomNav.getByRole('link', { name: /Events/ })).toHaveAttribute('aria-current', 'page');
+    await expect(bottomNav.getByRole('link', { name: /Admin/ })).toBeVisible();
     await swipe(page, 'left');
     await expect(page).toHaveURL(/\/admin\/menu$/);
+    await expect(bottomNav.getByRole('link', { name: /Admin/ })).toHaveAttribute('aria-current', 'page');
     await expect(page.getByRole('heading', { name: 'Admin' })).toBeVisible();
     await swipe(page, 'left');
     await expect(page).toHaveURL(/\/me$/);
+    await expect(bottomNav.getByRole('link', { name: /Profile/ })).toHaveAttribute('aria-current', 'page');
     await expect(page.getByRole('heading', { name: 'Staff' })).toBeVisible();
     await swipe(page, 'right');
     await expect(page).toHaveURL(/\/admin\/menu$/);
+    await expect(bottomNav.getByRole('link', { name: /Admin/ })).toHaveAttribute('aria-current', 'page');
   });
 
   test('swipe on an event detail with no history falls back to the neighbouring tab', async ({ page }) => {
