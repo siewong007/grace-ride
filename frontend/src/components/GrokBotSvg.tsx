@@ -302,9 +302,32 @@ export default function GrokBotSvg({
             <stop offset="100%" stopColor={stops[2]} />
           </linearGradient>
         ))}
+        {(['rg', 'cm'] as const).flatMap((kind) =>
+          (kind === 'rg' ? GROKBOT_SVG_META.rings : GROKBOT_SVG_META.comet).map((g, idx) => (
+            <linearGradient
+              key={`${kind}${idx}`}
+              id={`${uid}-${kind}${idx}`}
+              x1={g.x1}
+              y1={g.y1}
+              x2={g.x2}
+              y2={g.y2}
+              gradientUnits="userSpaceOnUse"
+            >
+              <stop offset="0" stopColor={g.stops[0]} />
+              <stop offset="0.5" stopColor={g.stops[1]} />
+              <stop offset="1" stopColor={g.stops[2]} />
+            </linearGradient>
+          )),
+        )}
       </defs>
 
-      <g ref={backLayerRef} fill="none" strokeLinecap="round" strokeLinejoin="round" />
+      <g
+        ref={backLayerRef}
+        fill="none"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        dangerouslySetInnerHTML={isStatic && initialFrame.back ? { __html: initialFrame.back } : undefined}
+      />
 
       <g ref={bodyWrapRef}>
         <path ref={backingBodyRef} d={initialFrame.bodyD ?? ''} fill={backingFill} />

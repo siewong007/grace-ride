@@ -13,6 +13,8 @@ import {
   coordsToBezier64Path,
   eyePoseMatrix,
   faceEyePoses,
+  GLYPH_COORDS,
+  GROKBOT_ALERT_DOT_PATH,
   GROKBOT_COLOR_PALETTES,
   GROKBOT_SHAPE_EYE_LAYOUT,
   GROKBOT_SVG_META,
@@ -23,6 +25,7 @@ import {
   type GrokBotShape,
   lerpCoords,
   MOVE_EYE_PATHS,
+  PILL,
   SHAPE_COORDS,
 } from './grokBotStudio';
 
@@ -33,9 +36,20 @@ const DEG = Math.PI / 180;
 const clamp01 = (v: number) => (v < 0 ? 0 : v > 1 ? 1 : v);
 const lerp = (a: number, b: number, t: number) => a + (b - a) * t;
 const easeOutCubic = (x: number) => 1 - Math.pow(1 - x, 3);
-const easeInCubic = (x: number) => x * x * x;
-const easeInOutCubic = (x: number) => (x < 0.5 ? 4 * x * x * x : 1 - Math.pow(-2 * x + 2, 3) / 2);
 const easeInOutSine = (x: number) => -(Math.cos(Math.PI * x) - 1) / 2;
+const easeOutQuart = (x: number) => 1 - Math.pow(1 - x, 4);
+/** Piecewise-linear lookup over a flat [x0, y0, x1, y1, …] table, clamped at both ends. */
+function pl(x: number, tbl: readonly number[]): number {
+  if (x <= tbl[0]) return tbl[1];
+  for (let i = 2; i < tbl.length; i += 2) {
+    if (x <= tbl[i]) {
+      const x0 = tbl[i - 2];
+      const y0 = tbl[i - 1];
+      return y0 + ((tbl[i + 1] - y0) * (x - x0)) / (tbl[i] - x0);
+    }
+  }
+  return tbl[tbl.length - 1];
+}
 const easeOutBack = (x: number) => {
   const c1 = 1.70158;
   const c3 = c1 + 1;
@@ -87,20 +101,6 @@ function affine(src: Float32Array, sx: number, sy: number, rotDeg: number, tx: n
   return rephase(out);
 }
 
-/** Tapered stem (wide top, narrow foot) used for the "!" glyphs, rotated `deg` about its centre. */
-function stem(halfH: number, halfW: number, cx: number, cy: number, deg: number): Float32Array {
-  const cos = Math.cos(deg * DEG);
-  const sin = Math.sin(deg * DEG);
-  return buildPolar64Coords((theta) => {
-    const c = Math.cos(theta);
-    const s = Math.sin(theta);
-    const taper = 1 - 0.42 * ((1 + s) * 0.5);
-    const x = Math.sign(c) * Math.pow(Math.abs(c), 0.7) * halfW * taper;
-    const y = s * halfH;
-    return [x * cos - y * sin + cx, x * sin + y * cos + cy];
-  });
-}
-
 const CIRCLE = SHAPE_COORDS.circle; // r ≈ 100
 const TARGETS = {
   egg: buildPolar64Coords((theta) => {
@@ -109,10 +109,9 @@ const TARGETS = {
   }),
   hexTall: affine(SHAPE_COORDS.hexagon, 0.97, 0.97, 90, 0, 3),
   play: affine(SHAPE_COORDS.triangle, 0.98, 0.98, 8, 0, 20),
-  orbit: affine(SHAPE_COORDS.triangle, 0.98, 0.98, 0, 0, 16),
-  exclamation: stem(42, 13, 0, -22, 0),
-  alert: stem(35, 11, 0, -32, 17.7),
 };
+/** Scratch outline for the orbit's spinning circle. */
+const orbitCircle = new Float32Array(N);
 
 /** Writes the circle scaled to radius `r` at (cx, cy). */
 function dot(out: Float32Array, r: number, cx: number, cy: number): Float32Array {
@@ -218,75 +217,82 @@ function ringArc(r: Ring, from: number, to: number): { back: string; front: stri
 const strokePath = (d: string, uid: string, grad: number, width: number, opacity: number) =>
   d ? `<path d="${d}" stroke="url(#${uid}-sw${grad % 4})" stroke-width="${width}" opacity="${opacity.toFixed(2)}"/>` : '';
 
-const SWIRL_RINGS: Ring[] = [
-  { cx: 0, cy: -4, rx: 137, ry: 27, tilt: 8, phase: 2.4 },
-  { cx: 6, cy: 9, rx: 128, ry: 40, tilt: 58, phase: 3.6 },
-  { cx: 11, cy: 9, rx: 140, ry: 18, tilt: 64, phase: 4.4 },
-];
-const ORBIT_RINGS: Ring[] = [
-  ...SWIRL_RINGS,
-  { cx: 2, cy: 17, rx: 140, ry: 30, tilt: -34, phase: 0.6 },
-  { cx: -10, cy: 30, rx: 130, ry: 22, tilt: -6, phase: 1.4 },
-  { cx: -8, cy: -6, rx: 122, ry: 26, tilt: 20, phase: 5.2 },
-];
-const RING_WIDTHS = [5.26, 6.02, 5.62, 5.17, 5.26, 5.55];
-
-/** Catmull-Rom sample of the comet's flight path (upper-left hook → lower-right hook). */
-const COMET_PTS: [number, number][] = [
-  [-58, -26],
-  [-70, -38],
-  [-68, -52],
-  [-50, -50],
-  [-18, -30],
-  [20, -2],
-  [52, 22],
-  [68, 40],
-  [64, 54],
-];
-const COMET_PATH: [number, number][] = (() => {
-  const out: [number, number][] = [];
-  const p = COMET_PTS;
-  for (let i = 0; i < p.length - 1; i++) {
-    const p0 = p[Math.max(0, i - 1)];
-    const p1 = p[i];
-    const p2 = p[i + 1];
-    const p3 = p[Math.min(p.length - 1, i + 2)];
-    for (let k = 0; k < 12; k++) {
-      const t = k / 12;
-      const t2 = t * t;
-      const t3 = t2 * t;
-      out.push([
-        0.5 * (2 * p1[0] + (-p0[0] + p2[0]) * t + (2 * p0[0] - 5 * p1[0] + 4 * p2[0] - p3[0]) * t2 + (-p0[0] + 3 * p1[0] - 3 * p2[0] + p3[0]) * t3),
-        0.5 * (2 * p1[1] + (-p0[1] + p2[1]) * t + (2 * p0[1] - 5 * p1[1] + 4 * p2[1] - p3[1]) * t2 + (-p0[1] + 3 * p1[1] - 3 * p2[1] + p3[1]) * t3),
-      ]);
-    }
-  }
-  out.push(p[p.length - 1]);
-  return out;
-})();
-
-function cometStrands(u0: number, u1: number, uid: string): string {
-  if (u1 - u0 < 0.005) return '';
-  const last = COMET_PATH.length - 1;
-  const i0 = Math.max(0, Math.floor(u0 * last));
-  const i1 = Math.min(last, Math.ceil(u1 * last));
-  let html = '';
-  for (let s = 0; s < 4; s++) {
-    const off = (s - 1.5) * 3.4;
-    let d = '';
-    for (let i = i0; i <= i1; i++) {
-      const [x, y] = COMET_PATH[i];
-      const [nx0, ny0] = COMET_PATH[Math.min(last, i + 1)];
-      const [px, py] = COMET_PATH[Math.max(0, i - 1)];
-      const tx = nx0 - px;
-      const ty = ny0 - py;
-      const len = Math.hypot(tx, ty) || 1;
-      d += `${i === i0 ? 'M' : 'L'}${f1(x - (ty / len) * off)} ${f1(y + (tx / len) * off)}`;
-    }
-    html += strokePath(d, uid, s, 9.5, 1);
-  }
-  return html;
+interface Ell {
+  cx: number;
+  cy: number;
+  rx: number;
+  ry: number;
+  tilt: number;
 }
+
+/**
+ * Arc of an ellipse over [u0, u1] turns (θ = 2πu in the ellipse's own frame), split into the half
+ * behind the body and the half in front of it (cos θ < 0), the way the reference layers its strokes.
+ */
+function ellArc(e: Ell, u0: number, u1: number): { back: string; front: string } {
+  let back = '';
+  let front = '';
+  if (u1 - u0 <= 0.002) return { back, front };
+  const cos = Math.cos(e.tilt * DEG);
+  const sin = Math.sin(e.tilt * DEG);
+  const n = Math.max(2, Math.ceil(128 * (u1 - u0)));
+  let prev = '';
+  let side: boolean | null = null;
+  for (let i = 0; i <= n; i++) {
+    const th = TAU * (u0 + ((u1 - u0) * i) / n);
+    const lx = e.rx * Math.cos(th);
+    const ly = e.ry * Math.sin(th);
+    const pt = `${f1(lx * cos - ly * sin + e.cx)} ${f1(lx * sin + ly * cos + e.cy)}`;
+    const isFront = Math.cos(th) < 0;
+    if (isFront !== side) {
+      const seg = prev ? `M${prev}L${pt}` : `M${pt}`;
+      if (isFront) front += seg;
+      else back += seg;
+      side = isFront;
+    } else if (isFront) front += `L${pt}`;
+    else back += `L${pt}`;
+    prev = pt;
+  }
+  return { back, front };
+}
+
+const gradStroke = (d: string, gradId: string, width: number, opacity: number) =>
+  d ? `<path d="${d}" stroke="url(#${gradId})" stroke-width="${width}" opacity="${opacity.toFixed(2)}"/>` : '';
+
+/** The orbit/swirl rings never move, so their halves are built once. */
+const RING_ARCS = GROKBOT_SVG_META.rings.map((r) => ellArc(r, 0, 1));
+
+/** Orbit ring opacity while the rings appear one after another (reference stage, t in s). */
+const ORBIT_RING_IN: readonly (readonly number[])[] = [
+  [0.07, 0, 0.1, 0.02, 0.15, 0.07, 0.2, 0.14, 0.25, 0.24, 0.3, 0.36, 0.35, 0.43, 0.4, 0.5, 0.45, 0.56, 0.5, 0.62, 0.55, 0.69, 0.6, 0.75, 0.65, 0.81, 0.7, 0.87, 0.75, 0.94, 0.8, 1],
+  [0.17, 0, 0.2, 0.05, 0.25, 0.12, 0.3, 0.21, 0.35, 0.32, 0.4, 0.45, 0.45, 0.56, 0.5, 0.62, 0.55, 0.69, 0.6, 0.75, 0.65, 0.81, 0.7, 0.87, 0.75, 0.94, 0.8, 1],
+  [0.28, 0, 0.3, 0.05, 0.35, 0.13, 0.4, 0.23, 0.45, 0.36, 0.5, 0.5, 0.55, 0.66, 0.6, 0.75, 0.65, 0.81, 0.7, 0.87, 0.75, 0.94, 0.8, 1],
+  [0.39, 0, 0.4, 0.02, 0.45, 0.11, 0.5, 0.23, 0.55, 0.37, 0.6, 0.52, 0.65, 0.7, 0.7, 0.87, 0.75, 0.94, 0.8, 1],
+  [0.53, 0, 0.55, 0.07, 0.6, 0.2, 0.65, 0.35, 0.7, 0.52, 0.75, 0.72, 0.8, 0.93, 0.85, 1],
+  [0.655, 0, 0.7, 0.15, 0.75, 0.31, 0.8, 0.5, 0.85, 0.67, 0.92, 0.89, 0.95, 1],
+];
+
+/**
+ * While the orbit triangle spins, the eyes (circle layout) sway with the spin phase φ (0–120°, one
+ * third of a turn): horizontal offsets of the left and right eye, sampled from the reference.
+ */
+const ORBIT_EYE_L = [0, 2.4, 7.5, -1.1, 17.5, -3.5, 22.5, -3.7, 30, -1.1, 37.5, 1.3, 47.5, 3.2, 52.5, 5.4, 62.5, 6.4, 72.5, 7.4, 82.5, 7.3, 90, 6.7, 97.5, 6.4, 105, 5.1, 112.5, 3.4, 120, 2.4];
+const ORBIT_EYE_R = [0, -6.5, 7.5, -7.4, 17.5, -8.1, 22.5, -8.3, 30, -7.45, 37.5, -7.2, 47.5, -6.3, 52.5, -4, 62.5, -2.2, 67.5, -0.1, 72.5, 2.7, 82.5, 2.7, 90, 0.65, 97.5, -2.1, 105, -4.05, 112.5, -5.8, 120, -6.5];
+
+/** Extra spin angle (deg) while the orbit triangle winds up to its steady 450°/s. */
+const ORBIT_SPIN_LAG = [0, 0, 0.05, 22, 0.1, 42, 0.15, 46, 0.2, 34, 0.25, 16, 0.3, 6, 0.35, 2, 0.45, 0];
+
+/** Horizontal centroid of the alert glyph: it slides right, pauses, then hurries back. */
+const ALERT_X = [0, -8.4, 0.2, -7.97, 0.3, -6.8, 0.4, -4.18, 0.5, 0.6, 0.6, 7.79, 0.7, 18.29, 0.8, 32.58, 0.9, 46.9, 1.0, 57.4, 1.1, 64.72, 1.2, 69.41, 1.3, 72.06, 1.4, 73.24, 1.5, 73.56, 1.65, 73.57, 2.05, 10.25];
+
+/** Burst particles: birth time (s), starting angle (deg) and distance; each spirals into the dot. */
+const BURST_PARTICLES: readonly (readonly [number, number, number])[] = [
+  [0.035, -116, 57.5],
+  [0.205, -128, 61],
+  [0.405, -7.5, 60],
+  [0.615, -102, 61],
+  [0.815, 53, 64],
+];
 
 /* --------------------------------------------------------------------- moves */
 
@@ -307,7 +313,10 @@ interface Ctx {
 interface Fx {
   back?: string;
   front?: string;
+  /** Solid dots drawn over the body (also shown on Move tiles). */
   dots?: string;
+  /** Solid dots drawn behind the body (also shown on Move tiles). */
+  dotsBack?: string;
   badge?: { cx: number; cy: number; r: number };
 }
 
@@ -315,11 +324,17 @@ interface MoveDef {
   dur: number;
   inDur: number;
   outDur: number;
+  /** Seconds after the click before the body starts morphing (keeps the reference timings on one clock). */
+  inDelay?: number;
+  /** Hidden eyes start fading this long after the click (defaults to `inDelay`). */
+  eyeInDelay?: number;
+  /** Pill-shaped eyes resize smoothly into the move's eyes instead of swapping mid-blink. */
+  morphEyes?: boolean;
   /** Time (s) used for the static Move tile. */
   preview: number;
   body?: (c: Ctx) => Float32Array;
   eyes?: (c: Ctx) => [GrokBotEyePose, GrokBotEyePose];
-  /** Eyes squash shut and fade while the body becomes a glyph or dot. */
+  /** Eyes slide together and fade out while the body becomes a glyph or dot. */
   hideEyes?: boolean;
   /** For hideEyes moves that pop back into a circle with a face before the end (0..1). */
   eyeReturn?: (t: number) => number;
@@ -338,32 +353,38 @@ function pose(d: string, x: number, y: number, deg: number, c: Ctx, sy = 1): Gro
   return { d, x: x + c.gx * 11, y: y + c.gy * 7, deg, sy };
 }
 
-/** Body pops from a small dot to a full circle between `t0` and `t0 + 0.5`. */
-function popCircle(c: Ctx, rFrom: number, t0: number): Float32Array | null {
+/** Body pops from a small dot at (cx, cy) to the full circle between `t0` and `t0 + 0.45`. */
+function popCircle(c: Ctx, rFrom: number, t0: number, cx = 0, cy = 0): Float32Array | null {
   if (c.t < t0) return null;
-  const k = easeOutCubic(clamp01((c.t - t0) / 0.5));
-  return dot(c.out, lerp(rFrom, 100, k), 0, 0);
+  const k = easeOutCubic(clamp01((c.t - t0) / 0.45));
+  return dot(c.out, lerp(rFrom, 100, k), cx * (1 - k), cy * (1 - k));
 }
 
 const MOVES: Record<GrokBotMove, MoveDef> = {
   idle: { dur: 0.32, inDur: 0.32, outDur: 0, preview: 0 },
 
   thinking: {
-    dur: 2.95,
-    inDur: 0.3,
-    outDur: 0.35,
+    dur: 2.915,
+    inDur: 0.27,
+    outDur: 0.3,
     preview: 1.0,
     hideEyes: true,
-    body: (c) => dot(c.out, 16.5 + 4.1 * thinkPulse(c.t, 1), 0, 0),
-    fx: (c, env) => ({
-      dots: [-1, 1]
-        .map((side) => {
-          const w = thinkPulse(c.t, side < 0 ? 0 : 2);
-          const r = 16.5 + 4.1 * w;
-          return `<circle cx="${side < 0 ? -55.5 : 53.3}" cy="0" r="${r.toFixed(2)}" fill="${c.solid}" opacity="${((0.55 + 0.45 * w) * env).toFixed(2)}"/>`;
-        })
-        .join(''),
-    }),
+    // The body is the centre dot; the side dots slide out of it, then each swells in turn.
+    body: (c) => dot(c.out, 16.5 + 4.13 * thinkSwell(c.t, 1), -1.7, -0.4),
+    fx: (c, env) => {
+      const slide = easeOutQuart(clamp01(c.t / 0.3));
+      return {
+        dots: ([
+          [-56.2, 0],
+          [52.7, 2],
+        ] as const)
+          .map(([x, idx]) => {
+            const w = thinkSwell(c.t, idx);
+            return `<circle cx="${f1(-1.7 + (x + 1.7) * slide)}" cy="-0.4" r="${(16.5 + 4.13 * w).toFixed(2)}" fill="${c.solid}" opacity="${((0.55 + 0.45 * w) * env).toFixed(2)}"/>`;
+          })
+          .join(''),
+      };
+    },
   },
 
   wink: {
@@ -393,19 +414,24 @@ const MOVES: Record<GrokBotMove, MoveDef> = {
   },
 
   alert: {
-    dur: 2.35,
+    dur: 2.367,
     inDur: 0.3,
-    outDur: 0.32,
+    outDur: 0.3,
+    inDelay: 0.05,
     preview: 0.3,
     hideEyes: true,
+    // A tilted "!" slides right, pauses, then hurries back; glyph and dot bob against each other.
     body: (c) => {
-      lerpCoords(c.out, TARGETS.alert, TARGETS.alert, 0, alertX(c.t), 0, 0, 1);
+      const x = pl(c.t, ALERT_X);
+      const y = -32.4 - 0.5 * Math.cos((TAU * (c.t - 0.95)) / 0.4);
+      lerpCoords(c.out, GLYPH_COORDS.alert, GLYPH_COORDS.alert, 0, x - 46.9, y + 32.7);
       return c.out;
     },
     fx: (c, env) => {
-      const x = alertX(c.t) - 17;
+      const x = pl(c.t, ALERT_X) - 17.72;
+      const y = 22.83 + 1.42 * Math.cos((TAU * (c.t - 0.95)) / 0.4);
       return {
-        dots: `<circle cx="${f1(x)}" cy="21.4" r="${(12.5 * env).toFixed(2)}" fill="${c.solid}" opacity="${env.toFixed(2)}"/>`,
+        dots: `<path d="${GROKBOT_ALERT_DOT_PATH}" fill="${c.solid}" opacity="${env.toFixed(2)}" transform="translate(${f1(x)} ${f1(y)}) rotate(17.7) scale(100)"/>`,
       };
     },
   },
@@ -428,27 +454,27 @@ const MOVES: Record<GrokBotMove, MoveDef> = {
   },
 
   exclamation: {
-    dur: 2.35,
+    dur: 2.367,
     inDur: 0.3,
-    outDur: 0.32,
+    outDur: 0.3,
+    inDelay: 0.05,
     preview: 1.0,
     hideEyes: true,
-    body: (c) => {
-      lerpCoords(c.out, TARGETS.exclamation, TARGETS.exclamation, 0, 0, -0.4 * Math.sin(c.t * 4), 0, 1);
-      return c.out;
-    },
+    body: () => GLYPH_COORDS.exclamation,
     fx: (c, env) => ({
-      dots: `<circle cx="-1" cy="${f1(52 + 0.6 * Math.sin(c.t * 4 + 0.6))}" r="${(11.3 * env).toFixed(2)}" fill="${c.solid}" opacity="${env.toFixed(2)}"/>`,
+      dots: `<circle cx="-1.2" cy="52.6" r="11.3" fill="${c.solid}" opacity="${env.toFixed(2)}"/>`,
     }),
   },
 
   sleep: {
-    dur: 2.8,
+    dur: 2.767,
     inDur: 0.3,
-    outDur: 0.4,
+    outDur: 0.3,
+    inDelay: 0.05,
     preview: 0.95,
     hideEyes: true,
-    body: (c) => dot(c.out, 16, 0, 11 + 19 * Math.cos((TAU * (c.t - 0.74)) / 0.62)),
+    // A small dot bouncing every 0.6 s.
+    body: (c) => dot(c.out, 15.85, 0.05, 11.15 + 19.05 * Math.cos((TAU * (c.t - 0.767)) / 0.6)),
   },
 
   egg: {
@@ -499,131 +525,180 @@ const MOVES: Record<GrokBotMove, MoveDef> = {
   },
 
   orbit: {
-    dur: 2.8,
-    inDur: 0.25,
-    outDur: 0.35,
-    preview: 0.4,
+    dur: 2.87,
+    inDur: 0.35,
+    outDur: 0.3,
+    preview: 1.0,
     endsOnCircle: true,
+    morphEyes: true,
+    // A triangle spinning 450°/s about the centre while six rings appear; it rounds into a circle.
     body: (c) => {
-      const spin = (c.t * TAU) / 0.8;
-      lerpCoords(c.out, TARGETS.orbit, TARGETS.orbit, 0, 0, 0, spin, 1);
-      if (c.t > 2.15) {
-        // Pop out of the spin into a round "ta-da" before settling back to the chosen shape.
-        const k = easeOutCubic(clamp01((c.t - 2.15) / 0.3));
-        lerpCoords(c.out, c.out, CIRCLE, k);
+      // The spin eases in (lagging up to 46°), and the body freezes once it starts settling back.
+      const t = Math.min(c.t, 2.52);
+      const rot = ((1.001 - t) * 450 + pl(t, ORBIT_SPIN_LAG)) * DEG;
+      lerpCoords(c.out, GLYPH_COORDS.orbit, GLYPH_COORDS.orbit, 0, 0, 0, rot, 1);
+      const k = orbitRound(t);
+      if (k > 0) {
+        // The circle's anchors trail the triangle's by 90° so the rounding doesn't twist.
+        lerpCoords(orbitCircle, CIRCLE, CIRCLE, 0, 0, 0, rot - 90 * DEG, 1);
+        lerpCoords(c.out, c.out, orbitCircle, k);
       }
       return c.out;
     },
     eyes: (c) => {
-      const play: [GrokBotEyePose, GrokBotEyePose] = [
-        pose(MOVE_EYE_PATHS.smallPlayEye, -11, 9, -6, c),
-        pose(MOVE_EYE_PATHS.smallPlayEye, 28, 6, -6, c),
+      const k = orbitRound(c.t);
+      const ph = ((((c.t - 1.001) * 450) % 120) + 120) % 120;
+      const dl = pl(ph, ORBIT_EYE_L) * (1 - k);
+      const dr = pl(ph, ORBIT_EYE_R) * (1 - k);
+      const d = PILL(9, +lerp(8, 11.5, k).toFixed(2));
+      const [l, r] = c.faceEyesCircle;
+      return [
+        { d, x: l.x + dl, y: l.y - 0.24 * dl, deg: l.deg, sy: l.sy },
+        { d, x: r.x + dr, y: r.y - 0.24 * dr, deg: r.deg, sy: r.sy },
       ];
-      return blendEyes(play, c.faceEyesCircle, easeInOutCubic(clamp01((c.t - 2.15) / 0.3)));
     },
-    fx: (c, env) => {
+    fx: (c) => {
+      const fade = 1 - easeOutCubic(clamp01((c.t - 2.53) / 0.3));
       let back = '';
       let front = '';
-      ORBIT_RINGS.forEach((r, i) => {
-        const draw = easeOutCubic(clamp01((c.t - 0.05 - i * 0.1) / 0.35));
-        const arc = ringArc(r, 0, draw);
-        const op = env * (1 - clamp01((c.t - 2.25) / 0.2));
-        back += strokePath(arc.back, c.uid, i, RING_WIDTHS[i], op);
-        front += strokePath(arc.front, c.uid, i, RING_WIDTHS[i], op);
+      GROKBOT_SVG_META.rings.forEach((r, i) => {
+        const op = pl(c.t, ORBIT_RING_IN[i]) * fade;
+        if (op <= 0.005) return;
+        back += gradStroke(RING_ARCS[i].back, `${c.uid}-rg${i}`, r.width, op);
+        front += gradStroke(RING_ARCS[i].front, `${c.uid}-rg${i}`, r.width, op);
       });
       return { back, front };
     },
   },
 
   swirl: {
-    dur: 1.25,
-    inDur: 0.2,
-    outDur: 0.2,
+    dur: 1.3,
+    inDur: 0.05,
+    outDur: 0.05,
     preview: 0.6,
+    // Three of the orbit rings flash in one after another around a blink, then fade together.
+    eyes: (c) => {
+      const blink = 1 - 0.77 * bump((c.t - 0.13) / 0.1);
+      const e = c.faceEyes;
+      return [
+        { ...e[0], sy: e[0].sy * blink },
+        { ...e[1], sy: e[1].sy * blink },
+      ];
+    },
     fx: (c) => {
-      const head = easeOutCubic(clamp01(c.t / 0.4));
-      const tail = easeInCubic(clamp01((c.t - 0.72) / 0.48));
-      const op = 1 - clamp01((c.t - 0.95) / 0.3);
+      const fade = clamp01((1.27 - c.t) / 0.34);
       let back = '';
       let front = '';
-      SWIRL_RINGS.forEach((r, i) => {
-        const arc = ringArc(r, tail, head);
-        back += strokePath(arc.back, c.uid, i, RING_WIDTHS[i], op);
-        front += strokePath(arc.front, c.uid, i, RING_WIDTHS[i], op);
-      });
+      for (let i = 0; i < 3; i++) {
+        const op = clamp01((c.t - [0.075, 0.12, 0.17][i]) / 0.125) * fade;
+        if (op <= 0.005) continue;
+        const r = GROKBOT_SVG_META.rings[i];
+        back += gradStroke(RING_ARCS[i].back, `${c.uid}-rg${i}`, r.width, op);
+        front += gradStroke(RING_ARCS[i].front, `${c.uid}-rg${i}`, r.width, op);
+      }
       return { back, front };
     },
   },
 
   burst: {
-    dur: 2.65,
-    inDur: 0.3,
-    outDur: 0.27,
-    preview: 0.8,
+    dur: 2.767,
+    inDur: 0.42,
+    outDur: 0.3,
+    inDelay: 0.05,
+    eyeInDelay: 0,
+    preview: 0.7,
     hideEyes: true,
     endsOnCircle: true,
-    eyeReturn: (t) => clamp01((t - 1.85) / 0.4),
-    body: (c) => popCircle(c, 16.5, 1.65) ?? dot(c.out, 16.5, 0, 0),
+    eyeReturn: (t) => clamp01((t - 1.86) / 0.385),
+    // Dark particles spiral in from all sides, lightening as they merge into the dot behind it;
+    // then the dot pops into a big round bot.
+    body: (c) => popCircle(c, 16.6, 1.698, 0.3, 0) ?? dot(c.out, 16.6, 0.3, 0),
     fx: (c) => {
-      let dots = '';
-      for (let k = 0; k < 8; k++) {
-        const born = 0.15 + k * 0.18;
-        const age = (c.t - born) / 0.5;
-        if (age < 0 || age > 1) continue;
-        const ang = k * 2.39996 + c.t * 0.8;
-        const dist = 17 + easeOutCubic(age) * 34;
-        const r = lerp(6.8, 4, age);
-        const op = age < 0.6 ? 1 : 1 - (age - 0.6) / 0.4;
-        dots += `<circle cx="${f1(Math.cos(ang) * dist)}" cy="${f1(Math.sin(ang) * dist)}" r="${r.toFixed(2)}" fill="${mixHex(c.solid, c.deep, age)}" opacity="${op.toFixed(2)}"/>`;
+      const light = mixHex(c.solid, '#000000', 0.12);
+      let dotsBack = '';
+      for (const [born, a0, d0] of BURST_PARTICLES) {
+        const age = c.t - born;
+        if (age < 0 || age > 0.6) continue;
+        const u = age / 0.6;
+        const ang = (a0 + 60 * u) * DEG;
+        const dist = 11 + (d0 - 11) * Math.pow(1 - u, 1.8);
+        const r = 4 + 2.8 * Math.min(1, age / 0.53);
+        const op = Math.min(1, age / 0.06, (0.6 - age) / 0.1);
+        dotsBack += `<circle cx="${f1(Math.cos(ang) * dist)}" cy="${f1(Math.sin(ang) * dist)}" r="${r.toFixed(2)}" fill="${mixHex(c.deep, light, Math.pow(u, 0.75))}" opacity="${op.toFixed(2)}"/>`;
       }
-      return { dots };
+      return { dotsBack };
     },
   },
 
   comet: {
-    dur: 2.7,
-    inDur: 0.3,
-    outDur: 0.28,
-    preview: 0.8,
+    dur: 2.75,
+    inDur: 0.36,
+    outDur: 0.3,
+    inDelay: 0.04,
+    eyeInDelay: 0,
+    preview: 0.9,
     hideEyes: true,
     endsOnCircle: true,
     eyeReturn: (t) => clamp01((t - 2.0) / 0.35),
-    body: (c) => popCircle(c, 13, 1.88) ?? dot(c.out, 13, 0, 0),
+    // A four-strand rainbow tail (a third of a loop long) circles the dot once at a steady pace,
+    // passing behind it on the way out and in front of it on the way back.
+    body: (c) => popCircle(c, 13, 1.85, -0.4, 2) ?? dot(c.out, 13, -0.4, 2),
     fx: (c) => {
-      const u = easeInOutSine(clamp01((c.t - 0.12) / 1.65));
-      const tailLag = Math.min(0.42, u);
-      const u0 = Math.max(0, u - tailLag);
-      const ends = c.t > 1.77 ? clamp01((c.t - 1.77) / 0.12) : 0; // tail catches the head on arrival
-      return { back: cometStrands(lerp(u0, u, ends), u, c.uid) };
+      const op = clamp01((c.t - 0.15) / 0.25) * clamp01((1.95 - c.t) / 0.3);
+      if (op <= 0.005) return {};
+      const u0 = 0.367 + 0.5835 * (c.t - 0.201);
+      let back = '';
+      let front = '';
+      GROKBOT_SVG_META.comet.forEach((e, i) => {
+        const arc = ellArc(e, u0, u0 + 0.341);
+        back += gradStroke(arc.back, `${c.uid}-cm${i}`, e.width, op);
+        front += gradStroke(arc.front, `${c.uid}-cm${i}`, e.width, op);
+      });
+      return { back, front };
     },
   },
 };
 
-/** Sequential pulse of the three thinking dots (0 = left, 1 = centre, 2 = right). */
-function thinkPulse(t: number, idx: number): number {
-  const phase = (((t - 0.5 - idx * 0.5) % 1.5) + 1.5) % 1.5;
-  return Math.max(bump(phase / 0.32), bump((phase - 1.5) / 0.32));
+/**
+ * Swell of thinking dot `idx` (0 = left, 1 = centre, 2 = right): each dot in turn grows over 0.35 s,
+ * holds 0.35 s, then snaps back, one dot every 0.5 s.
+ */
+function thinkSwell(t: number, idx: number): number {
+  const ph = (((t - 0.05 - idx * 0.5) % 1.5) + 1.5) % 1.5;
+  if (ph < 0.35) return Math.pow(ph / 0.35, 1.4);
+  return ph < 0.7 ? 1 : 0;
 }
 
-/** Horizontal slide of the alert glyph: across to the right, a beat, then back toward the centre. */
-function alertX(t: number): number {
-  if (t < 0.3) return lerp(0, -5, t / 0.3);
-  if (t < 1.3) return lerp(-5, 73, easeInOutSine((t - 0.3) / 1.0));
-  if (t < 1.55) return 73;
-  if (t < 2.05) return lerp(73, 10, easeInOutSine((t - 1.55) / 0.5));
-  return lerp(10, 0, clamp01((t - 2.05) / 0.35));
+/** How far the orbit's spinning triangle has rounded into a circle (0..1). */
+function orbitRound(t: number): number {
+  return easeInOutSine(clamp01((t - 1.75) / 0.6));
 }
+
+const PILL_RE = /^M-([\d.]+) -([\d.]+)A/;
 
 function blendEyes(
   a: [GrokBotEyePose, GrokBotEyePose],
   b: [GrokBotEyePose, GrokBotEyePose],
   w: number,
+  morph = false,
 ): [GrokBotEyePose, GrokBotEyePose] {
   if (w <= 0) return a;
   if (w >= 1) return b;
   const one = (p: GrokBotEyePose, q: GrokBotEyePose): GrokBotEyePose => {
     const sameShape = p.d === q.d;
-    // Different cutouts swap while squashed shut, so the change reads as a blink.
+    // Two pills can resize into each other; any other change of cutout swaps while squashed shut,
+    // so it reads as a blink.
+    const pa = morph && !sameShape ? PILL_RE.exec(p.d) : null;
+    const pb = pa ? PILL_RE.exec(q.d) : null;
+    if (pa && pb) {
+      return {
+        d: PILL(+lerp(+pa[1], +pb[1], w).toFixed(2), +lerp(+pa[2], +pb[2], w).toFixed(2)),
+        x: lerp(p.x, q.x, w),
+        y: lerp(p.y, q.y, w),
+        deg: lerp(p.deg, q.deg, w),
+        sy: lerp(p.sy, q.sy, w),
+      };
+    }
     const squash = sameShape ? 1 : Math.max(0.04, Math.abs(1 - 2 * w));
     return {
       d: sameShape || w < 0.5 ? p.d : q.d,
@@ -676,7 +751,7 @@ function frameFor(
 ): { eyes: [GrokBotEyePose, GrokBotEyePose]; eyeOpacity: number; fx: Fx; env: number } {
   const t = c.t;
   const outStart = def.dur - def.outDur;
-  const envIn = def.inDur > 0 ? easeOutCubic(clamp01(t / def.inDur)) : 1;
+  const envIn = def.inDur > 0 ? easeOutCubic(clamp01((t - (def.inDelay ?? 0)) / def.inDur)) : 1;
   // The reference snaps back quickly, then settles: a front-loaded ease.
   const envOut = def.outDur > 0 ? 1 - easeOutCubic(clamp01((t - outStart) / def.outDur)) : 1;
   const env = Math.min(envIn, envOut);
@@ -689,22 +764,20 @@ function frameFor(
   let eyes: [GrokBotEyePose, GrokBotEyePose];
   let eyeOpacity = 1;
   if (def.hideEyes) {
-    const closing = t < outStart ? envIn : 0;
-    let vis = t < outStart ? 1 - envIn : 1 - envOut;
-    let sy = 1 - 0.92 * closing;
+    // As in the reference, the eyes keep their shape: they slide in toward the shrinking body's
+    // centre and fade out, then reverse on the way back.
+    const eyeIn = easeOutCubic(clamp01((t - (def.eyeInDelay ?? def.inDelay ?? 0)) / 0.3));
+    const k = t < outStart ? eyeIn : envOut;
     const back = def.eyeReturn ? def.eyeReturn(t) : 0;
-    if (back > 0) {
-      vis = Math.max(vis, back);
-      sy = 1;
-    }
+    const squeeze = back > 0 ? 1 : 1 - 0.78 * k;
     const base = def.endsOnCircle ? settled : c.faceEyes;
     eyes = [
-      { ...base[0], sy: base[0].sy * sy },
-      { ...base[1], sy: base[1].sy * sy },
+      { ...base[0], x: base[0].x * squeeze, y: base[0].y * squeeze },
+      { ...base[1], x: base[1].x * squeeze, y: base[1].y * squeeze },
     ];
-    eyeOpacity = tile ? 0 : vis;
+    eyeOpacity = tile ? 0 : Math.max(1 - k, back);
   } else {
-    eyes = blendEyes(settled, def.eyes ? def.eyes(c) : settled, def.eyes ? env : 0);
+    eyes = blendEyes(settled, def.eyes ? def.eyes(c) : settled, def.eyes ? env : 0, def.morphEyes);
   }
   const fx = def.fx ? def.fx(c, env) : {};
   return { eyes, eyeOpacity, fx, env };
@@ -749,7 +822,8 @@ export function staticGrokBotFrame(
     eyes: eyeOut(r.eyes),
     eyeOpacity: r.eyeOpacity,
     badge: r.fx.badge ?? null,
-    back: '',
+    // Tiles are stills without strokes, like the reference picker: only the solid dots.
+    back: r.fx.dotsBack ?? '',
     front: r.fx.dots ?? '',
   };
 }
@@ -921,7 +995,7 @@ export class GrokBotAnimator {
       eyes: eyeOut(eyes),
       eyeOpacity,
       badge: fx.badge ?? null,
-      back: fx.back ?? '',
+      back: (fx.back ?? '') + (fx.dotsBack ?? ''),
       front: (fx.front ?? '') + (fx.dots ?? ''),
     };
   }
