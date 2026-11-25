@@ -1,5 +1,8 @@
 package org.pjstatecm.graceride.ui
 
+import androidx.navigation.NavHostController
+import java.net.URLEncoder
+
 object Routes {
     const val LOGIN = "login"
     const val UNLOCK = "unlock"
@@ -23,9 +26,9 @@ object Routes {
     fun studio(shape: String? = null, color: String? = null, face: String? = null): String = buildString {
         append("studio")
         val params = mutableListOf<String>()
-        if (!shape.isNullOrBlank()) params.add("shape=$shape")
-        if (!color.isNullOrBlank()) params.add("color=$color")
-        if (!face.isNullOrBlank()) params.add("face=$face")
+        if (!shape.isNullOrBlank()) params.add("shape=${URLEncoder.encode(shape, "UTF-8")}")
+        if (!color.isNullOrBlank()) params.add("color=${URLEncoder.encode(color, "UTF-8")}")
+        if (!face.isNullOrBlank()) params.add("face=${URLEncoder.encode(face, "UTF-8")}")
         if (params.isNotEmpty()) {
             append("?")
             append(params.joinToString("&"))
@@ -47,4 +50,12 @@ object Routes {
     }
 
     val tabs = setOf(HOME, EVENTS, PROFILE)
+}
+
+fun NavHostController.navigateTab(route: String) {
+    navigate(route) {
+        popUpTo(Routes.HOME) { saveState = true }
+        launchSingleTop = true
+        restoreState = true
+    }
 }

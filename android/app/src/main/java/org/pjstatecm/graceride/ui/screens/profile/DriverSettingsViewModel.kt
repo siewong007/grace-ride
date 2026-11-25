@@ -169,6 +169,10 @@ class DriverSettingsViewModel(private val container: AppContainer) : ViewModel()
         _state.value = _state.value.copy(message = null)
     }
 
+    fun clearError() {
+        _state.value = _state.value.copy(error = null)
+    }
+
     fun saveProfile() {
         val s = _state.value
         if (s.busy) return

@@ -54,6 +54,7 @@ import org.pjstatecm.graceride.data.api.Place
 import org.pjstatecm.graceride.data.api.ProxyRider
 import org.pjstatecm.graceride.data.api.ProxyRiderReq
 import org.pjstatecm.graceride.di.AppContainer
+import org.pjstatecm.graceride.domain.ProxyRelationships
 import org.pjstatecm.graceride.domain.inferAreaId
 import org.pjstatecm.graceride.ui.components.EmptyView
 import org.pjstatecm.graceride.ui.components.ErrorView
@@ -174,8 +175,11 @@ fun ProxyRidersScreen(container: AppContainer, nav: NavHostController) {
                                         ) {
                                             Text(rider.name, style = MaterialTheme.typography.titleMedium)
                                             if (rider.relationship.isNotBlank()) {
+                                                val relLabel = ProxyRelationships.labelRes(rider.relationship)
+                                                    ?.let { stringResource(it) }
+                                                    ?: rider.relationship
                                                 Text(
-                                                    rider.relationship,
+                                                    relLabel,
                                                     style = MaterialTheme.typography.labelMedium,
                                                     color = MaterialTheme.colorScheme.primary,
                                                 )
@@ -280,13 +284,9 @@ private fun ProxyRiderDialog(
     var areaExpanded by remember { mutableStateOf(false) }
     var confirmDelete by remember { mutableStateOf(false) }
 
-    val relOptions = listOf(
-        "parent" to stringResource(R.string.ride_new_relationship_parent),
-        "cell_member" to stringResource(R.string.proxy_rel_cell),
-        "spouse" to stringResource(R.string.ride_new_relationship_spouse),
-        "friend" to stringResource(R.string.ride_new_relationship_friend),
-        "other" to stringResource(R.string.ride_new_relationship_other),
-    )
+    val relOptions = ProxyRelationships.keys.map { key ->
+        key to (ProxyRelationships.labelRes(key)?.let { stringResource(it) } ?: key)
+    }
 
     AlertDialog(
         onDismissRequest = onDismiss,

@@ -4,10 +4,13 @@ import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.assertIsEnabled
 import androidx.compose.ui.test.assertIsNotEnabled
 import androidx.compose.ui.test.junit4.createComposeRule
-import androidx.compose.ui.test.onNodeWithText
+import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.onNodeWithTag
+import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performScrollToIndex
+import androidx.compose.ui.test.performTextInput
+import androidx.navigation.compose.rememberNavController
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import okhttp3.mockwebserver.MockResponse
 import okhttp3.mockwebserver.MockWebServer
@@ -21,12 +24,19 @@ import org.pjstatecm.graceride.data.api.Ride
 import org.pjstatecm.graceride.data.api.RideArea
 import org.pjstatecm.graceride.data.api.RidePassenger
 import org.pjstatecm.graceride.data.api.RideViewer
+import org.pjstatecm.graceride.data.api.Share
 import org.pjstatecm.graceride.data.session.InMemoryStore
 import org.pjstatecm.graceride.di.AppContainer
 import org.pjstatecm.graceride.ui.components.EmptyView
 import org.pjstatecm.graceride.ui.components.ErrorView
 import org.pjstatecm.graceride.ui.components.RideCard
+import org.pjstatecm.graceride.ui.components.ShareCard
+import org.pjstatecm.graceride.ui.screens.events.EventDetailScreen
 import org.pjstatecm.graceride.ui.screens.login.LoginScreen
+import org.pjstatecm.graceride.ui.screens.login.UnlockScreen
+import org.pjstatecm.graceride.ui.screens.profile.ProxyRidersScreen
+import org.pjstatecm.graceride.ui.screens.rides.RideNewScreen
+import org.pjstatecm.graceride.ui.screens.rides.RidesScreen
 import org.pjstatecm.graceride.ui.theme.GraceRideTheme
 
 @RunWith(AndroidJUnit4::class)
@@ -130,5 +140,106 @@ class ComposeUiTest {
                 false
             }
         }
+    }
+
+    @Test fun shareCardNeedsInfoShowsNoteAndResubmit() {
+        val share = Share(
+            id = 5,
+            settlementId = 2,
+            title = "Fuel split",
+            eventTitle = "Sunday Service",
+            amountCents = 1550,
+            status = "needs_info",
+            note = "Receipt blurry, re-upload",
+        )
+        var clicked = false
+        compose.setContent {
+            GraceRideTheme { ShareCard(share, onPay = { clicked = true }) }
+        }
+        compose.onNodeWithText("More info needed").assertIsDisplayed()
+        compose.onNodeWithText("Receipt blurry, re-upload").assertIsDisplayed()
+        compose.onNodeWithText("Resubmit proof").performClick()
+        assertTrue(clicked)
+    }
+
+    @Test fun ridesScreenHasTopAppBarAndBackButton() {
+        server.enqueue(MockResponse().setBody("[]"))
+        compose.setContent {
+            GraceRideTheme {
+                val nav = rememberNavController()
+                RidesScreen(container, nav)
+            }
+        }
+        compose.onNodeWithText("My rides").assertIsDisplayed()
+        compose.onNodeWithContentDescription("Navigate back").assertIsDisplayed()
+    }
+
+    @Test fun unlockScreenBackupModeAcceptsAlphanumericCode() {
+        compose.setContent {
+            GraceRideTheme { UnlockScreen(container) }
+        }
+        compose.onNodeWithText("Backup code").performClick()
+        compose.onNodeWithText("Backup code").performTextInput("ABCD-1234")
+        compose.onNodeWithText("ABCD-1234").assertIsDisplayed()
+    }
+
+    @Test fun eventDetailPastEventHidesSignupAndShowsReturnOnlyRide() {
+        val pastEvent = """{"id":30,"title":"Past Gathering","starts_at":"2020-01-01 09:00:00","status":"published",
+            "my_signup":{"status":"going"},"my_return_ride":{"id":77,"status":"completed"}}"""
+        server.enqueue(MockResponse().setBody(pastEvent))
+        compose.setContent {
+            GraceRideTheme {
+                val nav = rememberNavController()
+                EventDetailScreen(container, nav, 30L)
+            }
+        }
+        compose.waitUntil(5_000) {
+            try {
+                compose.onNodeWithText("Past Gathering").assertIsDisplayed()
+                true
+            } catch (_: AssertionError) {
+                false
+            }
+        }
+        compose.onNodeWithText("Return ride").assertIsDisplayed()
+        compose.onNodeWithText("Request a ride").assertDoesNotExist()
+        compose.onNodeWithText("Withdraw").assertDoesNotExist()
+    }
+
+    @Test fun rideNewWithoutEventHasTopAppBarAndBrowseButton() {
+        server.enqueue(MockResponse().setBody("[]"))
+        compose.setContent {
+            GraceRideTheme {
+                val nav = rememberNavController()
+                RideNewScreen(container, nav, eventId = null)
+            }
+        }
+        compose.onNodeWithContentDescription("Navigate back").assertIsDisplayed()
+        compose.onNodeWithText("Browse events").assertIsDisplayed()
+    }
+
+    @Test fun proxyRidersScreenLocalizesCellMemberLabel() {
+        server.enqueue(
+            MockResponse().setBody(
+                """[{"id":4,"name":"Uncle Lim","phone":"0123456","relationship":"cell_member","notes":"","area_id":null,"pickup_address":"10 SS2","gate_notes":""}]"""
+            )
+        )
+        server.enqueue(MockResponse().setBody("[]"))
+        compose.setContent {
+            GraceRideTheme {
+                val nav = rememberNavController()
+                ProxyRidersScreen(container, nav)
+            }
+        }
+        compose.waitUntil(5_000) {
+            try {
+                compose.onNodeWithText("Uncle Lim").assertIsDisplayed()
+                true
+            } catch (_: AssertionError) {
+                false
+            }
+        }
+        compose.onNodeWithText("Cell group member").assertIsDisplayed()
+        compose.onNodeWithText("cell_member").assertDoesNotExist()
     }
 }

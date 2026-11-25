@@ -54,7 +54,7 @@ import DemandReportPanel from './reports/DemandReportPanel';
 import EventsReportPanel from './reports/EventsReportPanel';
 import FinanceReportPanel from './reports/FinanceReportPanel';
 import OverviewReportPanel from './reports/OverviewReportPanel';
-import type { PeriodFilterState } from './reports/PeriodControls';
+import { type PeriodFilterState, StatCountAmount } from './reports/PeriodControls';
 
 interface Member {
   id: number;
@@ -460,12 +460,21 @@ export default function AdminReports() {
         !r.visible_sections.badges),
   );
 
+  const tabMeta: Record<ReportTab, { title: string; subtitle: string }> = {
+    member: { title: t('reports.title'), subtitle: t('reports.desc') },
+    overview: { title: t('reports.overviewTab'), subtitle: t('reports.overviewDesc') },
+    events: { title: t('reports.eventsTab'), subtitle: t('reports.eventsDesc') },
+    demand: { title: t('reports.demandTab'), subtitle: t('reports.demandDesc') },
+    finance: { title: t('reports.financeTab'), subtitle: t('reports.financeDesc') },
+  };
+  const { title: pageTitle, subtitle: pageSubtitle } = tabMeta[reportTab];
+
   return (
     <Page width="wide">
       <div className="stack">
         <PageHeader
-          title={t('reports.title')}
-          subtitle={t('reports.desc')}
+          title={pageTitle}
+          subtitle={pageSubtitle}
           back={ADMIN_HOME}
           actions={
             reportTab === 'member' ? (
@@ -605,94 +614,110 @@ export default function AdminReports() {
                   <p className="muted small">{t('reports.partialVisibilityNote')}</p>
                 )}
 
-                <div className="grid cols-4">
-                  {r.events_attended != null && (
-                    <Stat
-                      label={t('reports.attendance')}
-                      value={r.events_attended}
-                      icon={<Calendar size={20} />}
-                    />
-                  )}
-                  {r.rides_driven != null && (
-                    <Stat
-                      label={t('reports.driven')}
-                      value={r.rides_driven}
-                      icon={<CarFront size={20} />}
-                    />
-                  )}
-                  {r.rides_received != null && (
-                    <Stat
-                      label={t('reports.received')}
-                      value={r.rides_received}
-                      icon={<CarFront size={20} />}
-                    />
-                  )}
-                  {r.costs_paid_cents != null && (
-                    <Stat
-                      label={t('reports.costs')}
-                      value={rm(r.costs_paid_cents)}
-                      icon={<DollarSign size={20} />}
-                    />
-                  )}
-                  {r.distance_km != null && (
-                    <Stat
-                      label={t('reports.distance')}
-                      value={`${r.distance_km} km`}
-                      icon={<Map size={20} />}
-                    />
-                  )}
-                  {r.reimbursement_cents != null && (
-                    <Stat
-                      label={t('reports.reimbursement')}
-                      value={rm(r.reimbursement_cents)}
-                      icon={<DollarSign size={20} />}
-                    />
-                  )}
-                </div>
-
-                {r.reimbursements_summary && (
-                  <Card className="stack-sm">
-                    <div className="row between nowrap gap-sm items-center">
-                      <h3 className="row nowrap gap-sm items-center">
-                        <Receipt size={18} aria-hidden="true" />
-                        <span>{t('reports.memberReimbTitle')}</span>
-                      </h3>
-                      <Pill tone="neutral">
-                        {t('reports.reimbClaimsInScope')}: {r.reimbursements_summary.claim_count}
-                      </Pill>
-                    </div>
-                    <div className="grid cols-4">
-                      {r.reimbursements_summary.pending_count != null &&
-                        r.reimbursements_summary.pending_cents != null && (
-                          <Stat
-                            label={t('reports.reimbPendingReview')}
-                            value={`${r.reimbursements_summary.pending_count} · ${rm(r.reimbursements_summary.pending_cents)}`}
-                          />
-                        )}
-                      <Stat
-                        label={t('reports.reimbApproved')}
-                        value={`${r.reimbursements_summary.approved_count} · ${rm(r.reimbursements_summary.approved_cents)}`}
-                      />
-                      <Stat
-                        label={t('reports.payoutsPaid')}
-                        value={`${r.reimbursements_summary.paid_count} · ${rm(r.reimbursements_summary.paid_cents)}`}
-                      />
-                      {r.reimbursements_summary.returned_count != null && (
+                {(() => {
+                  const visibleStatCount =
+                    (r.events_attended != null ? 1 : 0) +
+                    (r.rides_driven != null ? 1 : 0) +
+                    (r.rides_received != null ? 1 : 0) +
+                    (r.costs_paid_cents != null ? 1 : 0) +
+                    (r.distance_km != null ? 1 : 0) +
+                    (r.reimbursement_cents != null ? 1 : 0);
+                  return (
+                    <div className={`report-stats${visibleStatCount === 6 || visibleStatCount === 3 ? ' cols-3' : ''}`}>
+                      {r.events_attended != null && (
                         <Stat
-                          label={t('reports.reimbReturned')}
-                          value={r.reimbursements_summary.returned_count}
+                          label={t('reports.attendance')}
+                          value={r.events_attended}
+                          icon={<Calendar size={20} />}
+                        />
+                      )}
+                      {r.rides_driven != null && (
+                        <Stat
+                          label={t('reports.driven')}
+                          value={r.rides_driven}
+                          icon={<CarFront size={20} />}
+                        />
+                      )}
+                      {r.rides_received != null && (
+                        <Stat
+                          label={t('reports.received')}
+                          value={r.rides_received}
+                          icon={<CarFront size={20} />}
+                        />
+                      )}
+                      {r.costs_paid_cents != null && (
+                        <Stat
+                          label={t('reports.costs')}
+                          value={<span className="nowrap">{rm(r.costs_paid_cents)}</span>}
+                          icon={<DollarSign size={20} />}
+                        />
+                      )}
+                      {r.distance_km != null && (
+                        <Stat
+                          label={t('reports.distance')}
+                          value={<span className="nowrap">{r.distance_km} km</span>}
+                          icon={<Map size={20} />}
+                        />
+                      )}
+                      {r.reimbursement_cents != null && (
+                        <Stat
+                          label={t('reports.reimbursement')}
+                          value={<span className="nowrap">{rm(r.reimbursement_cents)}</span>}
+                          icon={<DollarSign size={20} />}
                         />
                       )}
                     </div>
-                  </Card>
-                )}
+                  );
+                })()}
+
+                {r.reimbursements_summary && (() => {
+                  const rs = r.reimbursements_summary;
+                  const hasPending = rs.pending_count != null && rs.pending_cents != null;
+                  const hasReturned = rs.returned_count != null;
+                  const reimbStatCount = 2 + (hasPending ? 1 : 0) + (hasReturned ? 1 : 0);
+                  return (
+                    <Card className="stack-sm">
+                      <div className="row between gap-sm items-center flex-wrap">
+                        <h2 className="row nowrap gap-sm items-center">
+                          <Receipt size={18} aria-hidden="true" />
+                          <span>{t('reports.memberReimbTitle')}</span>
+                        </h2>
+                        <Pill tone="neutral">
+                          {t('reports.reimbClaimsInScope')}: {rs.claim_count}
+                        </Pill>
+                      </div>
+                      <div className={`report-stats${reimbStatCount === 3 ? ' cols-3' : ''}`}>
+                        {hasPending && (
+                          <Stat
+                            label={t('reports.reimbPendingReview')}
+                            value={<StatCountAmount count={rs.pending_count!} cents={rs.pending_cents!} />}
+                          />
+                        )}
+                        <Stat
+                          label={t('reports.reimbApproved')}
+                          value={<StatCountAmount count={rs.approved_count} cents={rs.approved_cents} />}
+                        />
+                        <Stat
+                          label={t('reports.payoutsPaid')}
+                          value={<StatCountAmount count={rs.paid_count} cents={rs.paid_cents} />}
+                        />
+                        {hasReturned && (
+                          <Stat
+                            label={t('reports.reimbReturned')}
+                            value={rs.returned_count}
+                          />
+                        )}
+                      </div>
+                    </Card>
+                  );
+                })()}
 
                 {(r.visible_sections?.events !== false || showBadges) && (
-                  <div className={r.visible_sections?.events !== false && showBadges ? 'grid cols-2' : 'stack'}>
+                  <div className={r.visible_sections?.events !== false && showBadges ? 'report-cols-2' : 'stack'}>
                     {r.visible_sections?.events !== false && (
                       <Card className="stack-sm">
                         <div>
-                          <h3>{t('reports.events')}</h3>
+                          <h2>{t('reports.events')}</h2>
                           {r.by_kind.length > 0 ? (
                             <p className="bold">
                               {r.by_kind
@@ -722,10 +747,10 @@ export default function AdminReports() {
                     {showBadges && (
                       <Card className="stack">
                         <div>
-                          <h3 className="row nowrap gap-sm">
+                          <h2 className="row nowrap gap-sm items-center">
                             <Award size={20} aria-hidden="true" />
                             <span>{t('reports.badges')}</span>
-                          </h3>
+                          </h2>
                           <p className="muted small">{t('reports.badgesDesc')}</p>
                         </div>
 
@@ -782,9 +807,9 @@ export default function AdminReports() {
                                     )}
                                   </div>
                                   <div className="grow min-w-0 stack-xs">
-                                    <div className="row between nowrap gap-xs">
-                                      <div className="row nowrap gap-xs items-center min-w-0">
-                                        <strong className="ellipsis">{badgeName(b)}</strong>
+                                    <div className="row between gap-xs items-center">
+                                      <div className="row gap-xs items-center min-w-0 flex-wrap">
+                                        <strong>{badgeName(b)}</strong>
                                         {tier !== 'none' && (
                                           <span className={`badge-tier-pill badge-tier-${tier}`}>
                                             {t(`reports.badgeTier_${tier}`)}

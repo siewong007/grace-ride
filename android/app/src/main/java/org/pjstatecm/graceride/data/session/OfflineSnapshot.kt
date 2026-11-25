@@ -43,4 +43,8 @@ object OfflineSnapshotStore {
             null
         }
     }
+
+    fun clear(store: SecureStore) {
+        store.remove(KEY)
+    }
 }

@@ -9,6 +9,7 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Button
 import androidx.compose.material3.CircularProgressIndicator
@@ -27,6 +28,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
@@ -69,10 +71,18 @@ fun LoginScreen(container: AppContainer) {
             textAlign = TextAlign.Center,
             modifier = Modifier.padding(top = Spacing.xs),
         )
+        OutlinedTextField(
+            value = state.email,
+            onValueChange = vm::setEmail,
+            label = { Text(stringResource(R.string.login_email)) },
+            singleLine = true,
+            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Email),
+            modifier = Modifier.fillMaxWidth().padding(top = Spacing.md),
+        )
         Button(
             onClick = { vm.signInWithPasskey(context) },
             enabled = !state.signingIn,
-            modifier = Modifier.fillMaxWidth().padding(top = Spacing.md).height(52.dp),
+            modifier = Modifier.fillMaxWidth().padding(top = Spacing.sm).height(52.dp),
         ) {
             if (state.signingIn) {
                 CircularProgressIndicator(Modifier.size(22.dp), strokeWidth = 2.dp, color = MaterialTheme.colorScheme.onPrimary)
@@ -89,7 +99,8 @@ fun LoginScreen(container: AppContainer) {
                 modifier = Modifier.padding(top = Spacing.sm),
             )
         }
-        state.error?.let {
+        val errText = state.error ?: state.errorRes?.let { stringResource(it) }
+        errText?.let {
             Text(
                 it,
                 style = MaterialTheme.typography.bodyMedium,
@@ -109,14 +120,14 @@ fun LoginScreen(container: AppContainer) {
             OutlinedTextField(
                 value = serverField,
                 onValueChange = { serverField = it },
-                label = { Text("API server (debug)") },
+                label = { Text(stringResource(R.string.login_server_url)) },
                 singleLine = true,
                 modifier = Modifier.fillMaxWidth().padding(top = Spacing.xs),
             )
             OutlinedButton(
                 onClick = { vm.applyServer(serverField) },
                 modifier = Modifier.fillMaxWidth().padding(top = Spacing.xs),
-            ) { Text("Apply server") }
+            ) { Text(stringResource(R.string.login_apply_server)) }
             state.devUsers.forEach { user ->
                 OutlinedButton(
                     onClick = { vm.devLogin(user.email) },

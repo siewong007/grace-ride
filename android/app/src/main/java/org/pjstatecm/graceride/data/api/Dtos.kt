@@ -1,14 +1,50 @@
 package org.pjstatecm.graceride.data.api
 
+import kotlinx.serialization.KSerializer
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
+import kotlinx.serialization.descriptors.PrimitiveKind
+import kotlinx.serialization.descriptors.PrimitiveSerialDescriptor
+import kotlinx.serialization.descriptors.SerialDescriptor
+import kotlinx.serialization.encoding.Decoder
+import kotlinx.serialization.encoding.Encoder
+import kotlinx.serialization.json.JsonDecoder
+import kotlinx.serialization.json.JsonEncoder
+import kotlinx.serialization.json.JsonNull
 import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.JsonPrimitive
+import kotlinx.serialization.json.booleanOrNull
+import kotlinx.serialization.json.longOrNull
+
+object FlexibleBooleanSerializer : KSerializer<Boolean?> {
+    override val descriptor: SerialDescriptor =
+        PrimitiveSerialDescriptor("FlexibleBoolean", PrimitiveKind.STRING)
+
+    override fun deserialize(decoder: Decoder): Boolean? {
+        val jsonDecoder = decoder as? JsonDecoder
+            ?: return decoder.decodeBoolean()
+        return when (val el = jsonDecoder.decodeJsonElement()) {
+            is JsonNull -> null
+            is JsonPrimitive -> el.booleanOrNull ?: el.longOrNull?.let { it != 0L }
+            else -> null
+        }
+    }
+
+    override fun serialize(encoder: Encoder, value: Boolean?) {
+        val jsonEncoder = encoder as? JsonEncoder
+        if (jsonEncoder != null) {
+            jsonEncoder.encodeJsonElement(if (value == null) JsonNull else JsonPrimitive(value))
+        } else if (value != null) {
+            encoder.encodeBoolean(value)
+        }
+    }
+}
 
 @Serializable
 data class OkResponse(val ok: Boolean = true)
 
 @Serializable
-data class GroupRef(val id: Long, val name: String)
+data class GroupRef(val id: Long, val name: String = "")
 
 @Serializable
 data class Me(
@@ -49,6 +85,9 @@ data class Me(
 
 @Serializable
 data class DevUser(val name: String, val email: String, val roles: String = "")
+
+@Serializable
+data class PasskeyStartReq(val email: String)
 
 @Serializable
 data class PasskeyStart(val challenge_id: String, val options: JsonObject)
@@ -100,7 +139,7 @@ data class SavedPlaceReq(
 data class CreateSavedPlaceRes(val id: Long, val ok: Boolean = true)
 
 @Serializable
-data class RideArea(val id: Long, val name: String)
+data class RideArea(val id: Long, val name: String = "")
 
 @Serializable
 data class RideEvent(
@@ -242,7 +281,7 @@ data class MySignup(
     val status: String,
     @SerialName("need_ride") val needRide: Boolean = false,
     @SerialName("offer_drive") val offerDrive: Boolean = false,
-    val attended: Boolean? = null,
+    @Serializable(with = FlexibleBooleanSerializer::class) val attended: Boolean? = null,
     @SerialName("pass_code") val passCode: String? = null,
     @SerialName("as_group") val asGroup: GroupRef? = null,
 )

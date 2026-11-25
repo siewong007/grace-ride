@@ -1,6 +1,8 @@
 package org.pjstatecm.graceride.di
 
 import android.content.Context
+import kotlinx.coroutines.flow.MutableStateFlow
+import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
 import okhttp3.Interceptor
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.OkHttpClient
@@ -9,6 +11,7 @@ import org.pjstatecm.graceride.data.api.ApiService
 import org.pjstatecm.graceride.data.api.AuthEventBus
 import org.pjstatecm.graceride.data.api.apiJson
 import org.pjstatecm.graceride.data.repo.AuthRepository
+import org.pjstatecm.graceride.data.repo.AuthState
 import org.pjstatecm.graceride.data.repo.CommunityRepository
 import org.pjstatecm.graceride.data.repo.EventsRepository
 import org.pjstatecm.graceride.data.repo.RidesRepository
@@ -46,7 +49,12 @@ class AppContainer(context: Context?, storeOverride: SecureStore? = null) {
         private set
 
     fun setBaseUrl(url: String) {
-        val normalized = if (url.endsWith("/")) url else "$url/"
+        val trimmed = url.trim()
+        val parsed = trimmed.toHttpUrlOrNull()
+        require(parsed != null && parsed.scheme in setOf("http", "https") && parsed.host.isNotBlank()) {
+            "Invalid server URL"
+        }
+        val normalized = if (trimmed.endsWith("/")) trimmed else "$trimmed/"
         baseUrl = normalized
         if (BuildConfig.DEBUG) secureStore.putString("base_url_override", normalized)
         rebuildApi()
@@ -80,9 +88,24 @@ class AppContainer(context: Context?, storeOverride: SecureStore? = null) {
             .build()
             .create(ApiService::class.java)
 
+    // Single backing AuthState flow so collectors never observe a stale instance
+    // if rebuildApi() constructs a fresh AuthRepository for a new server host.
+    private val sharedAuthState = MutableStateFlow<AuthState>(AuthState.Loading)
+
+    /** Callback wired by [org.pjstatecm.graceride.GraceRideApp] to evict image caches on sign-out. */
+    @Volatile
+    var onSessionCleared: (() -> Unit)? = null
+
     // Repositories are rebuilt with the API when the base URL changes (debug
     // server override); holding stale Retrofit instances would keep the old host.
-    var auth: AuthRepository = AuthRepository(api, authEvents, cookieJar)
+    var auth: AuthRepository = AuthRepository(
+        api,
+        authEvents,
+        cookieJar,
+        sharedAuthState,
+        store = secureStore,
+        onCleared = { onSessionCleared?.invoke() },
+    )
         private set
     var rides: RidesRepository = RidesRepository(api, authEvents)
         private set
@@ -92,19 +115,43 @@ class AppContainer(context: Context?, storeOverride: SecureStore? = null) {
         private set
     var community: CommunityRepository = CommunityRepository(api, authEvents)
         private set
-    var realtimeStream: RealtimeStreamClient =
-        RealtimeStreamClient(okHttp, { baseUrl }, auth, community, appContext)
+    var realtimeStream: RealtimeStreamClient = RealtimeStreamClient(
+        okHttp,
+        { baseUrl },
+        auth,
+        community,
+        appContext,
+        authEvents = authEvents,
+        langProvider = { lang },
+        hideLockDetailsProvider = { secureStore.getString("notif_hide_lock_details") == "1" },
+    )
         private set
 
     private fun rebuildApi() {
         realtimeStream.stop()
         api = buildApi()
-        auth = AuthRepository(api, authEvents, cookieJar)
+        auth = AuthRepository(
+            api,
+            authEvents,
+            cookieJar,
+            sharedAuthState,
+            store = secureStore,
+            onCleared = { onSessionCleared?.invoke() },
+        )
         rides = RidesRepository(api, authEvents)
         events = EventsRepository(api, authEvents)
         shares = SharesRepository(api, authEvents)
         community = CommunityRepository(api, authEvents)
-        realtimeStream = RealtimeStreamClient(okHttp, { baseUrl }, auth, community, appContext)
+        realtimeStream = RealtimeStreamClient(
+            okHttp,
+            { baseUrl },
+            auth,
+            community,
+            appContext,
+            authEvents = authEvents,
+            langProvider = { lang },
+            hideLockDetailsProvider = { secureStore.getString("notif_hide_lock_details") == "1" },
+        )
         if (appContext != null) {
             realtimeStream.start()
         }

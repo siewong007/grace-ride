@@ -7,6 +7,7 @@ import {
   Card,
   EmptyState,
   ErrorBox,
+  Field,
   Page,
   PageHeader,
   Pill,
@@ -248,37 +249,8 @@ export default function Report() {
           back="/me"
           actions={
             <>
-              <input
-                className="input report-month-input"
-                type="month"
-                value={month}
-                onChange={(e) => setMonth(e.target.value)}
-                aria-label={t('monthLabel')}
-              />
-              <select
-                className="input"
-                value={range}
-                onChange={(e) => setRange(e.target.value as 'monthly' | 'quarterly' | 'yearly')}
-                aria-label={t('rangeLabel')}
-              >
-                <option value="monthly">{t('rangeMonthly')}</option>
-                <option value="quarterly">{t('rangeQuarterly')}</option>
-                <option value="yearly">{t('rangeYearly')}</option>
-              </select>
-              {drives && (
-                <select
-                  className="input"
-                  value={type}
-                  onChange={(e) => setType(e.target.value as 'all' | 'driver' | 'passenger')}
-                  aria-label={t('typeLabel')}
-                >
-                  <option value="all">{t('typeAll')}</option>
-                  <option value="driver">{t('typeDriver')}</option>
-                  <option value="passenger">{t('typePassenger')}</option>
-                </select>
-              )}
               <Button
-                variant="ghost"
+                variant="secondary"
                 size="sm"
                 onClick={exportCsv}
                 disabled={!r}
@@ -287,7 +259,7 @@ export default function Report() {
                 {t('exportCsv')}
               </Button>
               <Button
-                variant="ghost"
+                variant="secondary"
                 size="sm"
                 onClick={exportPdf}
                 disabled={!r || exportingPdf}
@@ -300,6 +272,41 @@ export default function Report() {
           }
         />
 
+        <Card className={`report-filters report-filters-self${drives ? '' : ' cols-2-mobile'}`}>
+          <Field label={t('monthLabel')}>
+            <input
+              className="input"
+              type="month"
+              value={month}
+              onChange={(e) => setMonth(e.target.value)}
+            />
+          </Field>
+          <Field label={t('rangeLabel')}>
+            <select
+              className="input"
+              value={range}
+              onChange={(e) => setRange(e.target.value as 'monthly' | 'quarterly' | 'yearly')}
+            >
+              <option value="monthly">{t('rangeMonthly')}</option>
+              <option value="quarterly">{t('rangeQuarterly')}</option>
+              <option value="yearly">{t('rangeYearly')}</option>
+            </select>
+          </Field>
+          {drives && (
+            <Field label={t('typeLabel')}>
+              <select
+                className="input"
+                value={type}
+                onChange={(e) => setType(e.target.value as 'all' | 'driver' | 'passenger')}
+              >
+                <option value="all">{t('typeAll')}</option>
+                <option value="driver">{t('typeDriver')}</option>
+                <option value="passenger">{t('typePassenger')}</option>
+              </select>
+            </Field>
+          )}
+        </Card>
+
         <ErrorBox error={error || exportErr} />
 
         {!r ? (
@@ -307,55 +314,66 @@ export default function Report() {
         ) : (
           <>
             {/* Stat tiles using standard Stat component */}
-            <div className="grid cols-4">
-              {r.events_attended != null && (
-                <Stat
-                  label={t('attendance')}
-                  value={r.events_attended}
-                  icon={<Calendar size={20} />}
-                />
-              )}
-              {drives && r.rides_driven != null && (
-                <Stat
-                  label={t('driven')}
-                  value={r.rides_driven}
-                  icon={<CarFront size={20} />}
-                />
-              )}
-              {r.rides_received != null && (
-                <Stat
-                  label={t('received')}
-                  value={r.rides_received}
-                  icon={<CarFront size={20} />}
-                />
-              )}
-              {r.costs_paid_cents != null && (
-                <Stat
-                  label={t('costs')}
-                  value={<span className="nowrap">{rm(r.costs_paid_cents)}</span>}
-                  icon={<DollarSign size={20} />}
-                />
-              )}
-              {drives && type !== 'passenger' && r.distance_km != null && (
-                <Stat
-                  label={t('distance')}
-                  value={`${r.distance_km} km`}
-                  icon={<Map size={20} />}
-                />
-              )}
-              {drives && type !== 'passenger' && r.reimbursement_cents != null && (
-                <Stat
-                  label={t('reimbursement')}
-                  value={<span className="nowrap">{rm(r.reimbursement_cents)}</span>}
-                  icon={<DollarSign size={20} />}
-                />
-              )}
-            </div>
+            {(() => {
+              const statCount =
+                (r.events_attended != null ? 1 : 0) +
+                (drives && r.rides_driven != null ? 1 : 0) +
+                (r.rides_received != null ? 1 : 0) +
+                (r.costs_paid_cents != null ? 1 : 0) +
+                (drives && type !== 'passenger' && r.distance_km != null ? 1 : 0) +
+                (drives && type !== 'passenger' && r.reimbursement_cents != null ? 1 : 0);
+              return (
+                <div className={`report-stats${statCount === 6 || statCount === 3 ? ' cols-3' : ''}`}>
+                  {r.events_attended != null && (
+                    <Stat
+                      label={t('attendance')}
+                      value={r.events_attended}
+                      icon={<Calendar size={20} />}
+                    />
+                  )}
+                  {drives && r.rides_driven != null && (
+                    <Stat
+                      label={t('driven')}
+                      value={r.rides_driven}
+                      icon={<CarFront size={20} />}
+                    />
+                  )}
+                  {r.rides_received != null && (
+                    <Stat
+                      label={t('received')}
+                      value={r.rides_received}
+                      icon={<CarFront size={20} />}
+                    />
+                  )}
+                  {r.costs_paid_cents != null && (
+                    <Stat
+                      label={t('costs')}
+                      value={<span className="nowrap">{rm(r.costs_paid_cents)}</span>}
+                      icon={<DollarSign size={20} />}
+                    />
+                  )}
+                  {drives && type !== 'passenger' && r.distance_km != null && (
+                    <Stat
+                      label={t('distance')}
+                      value={<span className="nowrap">{r.distance_km} km</span>}
+                      icon={<Map size={20} />}
+                    />
+                  )}
+                  {drives && type !== 'passenger' && r.reimbursement_cents != null && (
+                    <Stat
+                      label={t('reimbursement')}
+                      value={<span className="nowrap">{rm(r.reimbursement_cents)}</span>}
+                      icon={<DollarSign size={20} />}
+                    />
+                  )}
+                </div>
+              );
+            })()}
 
             <div className="split">
               {/* Left Column: Events attended */}
               <Card className="stack-sm">
-                <h3>{t('events')}</h3>
+                <h2>{t('events')}</h2>
                 {r.by_kind.length > 0 ? (
                   <p className="bold">
                     {r.by_kind
@@ -384,10 +402,10 @@ export default function Report() {
               {/* Right Column: Badges as cards */}
               <Card className="stack">
                 <div>
-                  <h3 className="row nowrap gap-sm">
+                  <h2 className="row nowrap gap-sm items-center">
                     <Award size={20} aria-hidden="true" />
                     <span>{t('badges')}</span>
-                  </h3>
+                  </h2>
                   <p className="muted small">{t('badgesDesc')}</p>
                 </div>
 
@@ -441,9 +459,9 @@ export default function Report() {
                           )}
                         </div>
                         <div className="grow min-w-0 stack-xs">
-                          <div className="row between nowrap gap-xs">
-                            <div className="row nowrap gap-xs items-center min-w-0">
-                              <strong className="ellipsis">{badgeName(b)}</strong>
+                          <div className="row between gap-xs items-center">
+                            <div className="row gap-xs items-center min-w-0 flex-wrap">
+                              <strong>{badgeName(b)}</strong>
                               {tier !== 'none' && (
                                 <span className={`badge-tier-pill badge-tier-${tier}`}>
                                   {t(`badgeTier_${tier}`)}
@@ -533,14 +551,14 @@ export default function Report() {
             </div>
 
             {(r.reimbursements_summary || r.organised_events) && (
-              <div className={r.reimbursements_summary && r.organised_events ? 'grid cols-2' : 'stack'}>
+              <div className={r.reimbursements_summary && r.organised_events ? 'report-cols-2' : 'stack'}>
                 {r.reimbursements_summary && (
                   <Card className="stack-sm">
-                    <div className="row between nowrap gap-sm items-center">
-                      <h3 className="row nowrap gap-sm items-center">
+                    <div className="row between gap-sm items-center flex-wrap">
+                      <h2 className="row nowrap gap-sm items-center">
                         <Receipt size={18} aria-hidden="true" />
                         <span>{t('myReimbursements')}</span>
-                      </h3>
+                      </h2>
                       <Link className="btn ghost sm" to="/reimbursements">
                         {t('openReimbursements')}
                       </Link>
@@ -599,12 +617,12 @@ export default function Report() {
 
                 {r.organised_events && (
                   <Card className="stack-sm">
-                    <div className="row between nowrap gap-sm items-center">
-                      <h3 className="row nowrap gap-sm items-center">
+                    <div className="row between gap-sm items-center flex-wrap">
+                      <h2 className="row nowrap gap-sm items-center">
                         <Calendar size={18} aria-hidden="true" />
                         <span>{t('organisedEvents')}</span>
-                      </h3>
-                      <div className="row gap-xs">
+                      </h2>
+                      <div className="row gap-xs nowrap">
                         <Link className="btn ghost sm" to="/events">
                           {t('openEvents')}
                         </Link>

@@ -26,7 +26,7 @@ export default {
   badgeTier_platinum: 'Platinum',
   badgeNextTier: 'Next: {tier} ({progress}/{target})',
   badgeMaxTier: 'Max tier',
-  earned: 'Earned ✓',
+  earned: 'Earned',
   rule: 'Rule',
   monthLabel: 'Month',
   rangeLabel: 'Period',

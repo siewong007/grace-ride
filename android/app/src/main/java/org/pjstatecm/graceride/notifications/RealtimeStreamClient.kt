@@ -8,6 +8,7 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -26,6 +27,8 @@ import okhttp3.Response
 import okhttp3.sse.EventSource
 import okhttp3.sse.EventSourceListener
 import okhttp3.sse.EventSources
+import org.pjstatecm.graceride.data.api.AuthEvent
+import org.pjstatecm.graceride.data.api.AuthEventBus
 import org.pjstatecm.graceride.data.repo.AuthRepository
 import org.pjstatecm.graceride.data.repo.AuthState
 import org.pjstatecm.graceride.data.repo.CommunityRepository
@@ -38,6 +41,9 @@ class RealtimeStreamClient(
     private val auth: AuthRepository,
     private val community: CommunityRepository,
     private val appContext: Context?,
+    private val authEvents: AuthEventBus? = null,
+    private val langProvider: (() -> String)? = null,
+    private val hideLockDetailsProvider: (() -> Boolean)? = null,
 ) {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private val started = AtomicBoolean(false)
@@ -54,6 +60,8 @@ class RealtimeStreamClient(
     private var lastSeenNotifId: Long = 0L
     @Volatile
     private var baselineInitialized: Boolean = false
+    @Volatile
+    private var lastUserId: Long? = null
 
     private val sseClient: OkHttpClient by lazy {
         okHttp.newBuilder()
@@ -82,6 +90,12 @@ class RealtimeStreamClient(
 
         supervisorJob = scope.launch {
             combine(auth.state, isForeground) { st, fg ->
+                val uid = (st as? AuthState.SignedIn)?.me?.id
+                if (uid != lastUserId) {
+                    lastUserId = uid
+                    baselineInitialized = false
+                    lastSeenNotifId = 0L
+                }
                 st is AuthState.SignedIn && fg
             }.distinctUntilChanged().collectLatest { shouldConnect ->
                 activeSource?.cancel()
@@ -98,15 +112,21 @@ class RealtimeStreamClient(
         activeSource = null
         supervisorJob?.cancel()
         supervisorJob = null
+        if (started.compareAndSet(true, false) && appContext != null) {
+            scope.launch(Dispatchers.Main.immediate) {
+                ProcessLifecycleOwner.get().lifecycle.removeObserver(lifecycleObserver)
+            }
+        }
     }
 
     private suspend fun runSseLoop() {
         var backoffMs = 2_000L
         val factory = EventSources.createFactory(sseClient)
-        while (scope.isActive) {
+        while (currentCoroutineContext().isActive) {
             val url = baseUrlProvider().trimEnd('/') + "/api/stream"
             val req = Request.Builder().url(url).get().build()
             val closedSignal = kotlinx.coroutines.CompletableDeferred<Unit>()
+            var terminalAuthStatus = false
             val source = factory.newEventSource(
                 req,
                 object : EventSourceListener() {
@@ -143,14 +163,30 @@ class RealtimeStreamClient(
                         t: Throwable?,
                         response: Response?,
                     ) {
+                        when (response?.code) {
+                            401 -> {
+                                terminalAuthStatus = true
+                                auth.onUnauthorized()
+                                authEvents?.emit(AuthEvent.Unauthorized)
+                            }
+                            423 -> {
+                                terminalAuthStatus = true
+                                auth.onLocked()
+                                authEvents?.emit(AuthEvent.Locked)
+                            }
+                        }
                         closedSignal.complete(Unit)
                     }
                 },
             )
             activeSource = source
-            closedSignal.await()
-            activeSource = null
-            if (!scope.isActive) break
+            try {
+                closedSignal.await()
+            } finally {
+                source.cancel()
+                if (activeSource === source) activeSource = null
+            }
+            if (terminalAuthStatus || !currentCoroutineContext().isActive) break
             delay(backoffMs)
             backoffMs = (backoffMs * 2).coerceAtMost(30_000L)
         }
@@ -169,10 +205,19 @@ class RealtimeStreamClient(
                     return@withLock
                 }
                 if (surfaceNew && appContext != null && maxId > lastSeenNotifId) {
+                    val lang = langProvider?.invoke()
+                    val hideLockDetails = hideLockDetailsProvider?.invoke() ?: false
                     page.items
                         .filter { it.id > lastSeenNotifId && !it.read }
                         .sortedBy { it.id }
-                        .forEach { NotificationHelper.showNotification(appContext, it) }
+                        .forEach {
+                            NotificationHelper.showNotification(
+                                appContext,
+                                it,
+                                lang = lang,
+                                hideLockDetails = hideLockDetails,
+                            )
+                        }
                 }
                 if (maxId > lastSeenNotifId) {
                     lastSeenNotifId = maxId

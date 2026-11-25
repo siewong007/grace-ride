@@ -53,6 +53,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.semantics.Role
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.navigation.NavHostController
@@ -93,11 +94,13 @@ fun DriverSettingsScreen(container: AppContainer, nav: NavHostController) {
     }
 
     val openAddVehicle = {
+        vm.clearError()
         editingVehicle = null
         showVehicleDialog = true
     }
 
     val openEditVehicle: (DriverVehicle) -> Unit = { v ->
+        vm.clearError()
         editingVehicle = v
         showVehicleDialog = true
     }
@@ -188,7 +191,7 @@ fun DriverSettingsScreen(container: AppContainer, nav: NavHostController) {
                                                 }
                                             }
                                             Text(
-                                                "${v.color} · ${v.model} (${v.seats} seats)",
+                                                stringResource(R.string.driver_vehicle_summary, v.color, v.model, v.seats),
                                                 style = MaterialTheme.typography.bodyMedium,
                                                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                                             )
@@ -301,7 +304,7 @@ fun DriverSettingsScreen(container: AppContainer, nav: NavHostController) {
                             ) {
                                 OutlinedTextField(
                                     value = waitOptions.firstOrNull { it.first == state.gateWaitMins }?.second
-                                        ?: "${state.gateWaitMins} min",
+                                        ?: stringResource(R.string.driver_wait_mins_fallback, state.gateWaitMins),
                                     onValueChange = {},
                                     readOnly = true,
                                     label = { Text(stringResource(R.string.driver_gate_wait)) },
@@ -410,7 +413,12 @@ private fun VehicleDialog(
                     Column(Modifier.padding(Spacing.sm)) {
                         Text(plate.trim().uppercase().ifBlank { "VXX 1234" }, style = MaterialTheme.typography.titleLarge)
                         Text(
-                            "${color.trim().ifBlank { "White" }} · ${model.trim().ifBlank { "Perodua Myvi" }} ($seats seats)",
+                            stringResource(
+                                R.string.driver_vehicle_summary,
+                                color.trim().ifBlank { stringResource(R.string.driver_placeholder_color) },
+                                model.trim().ifBlank { stringResource(R.string.driver_placeholder_model) },
+                                seats,
+                            ),
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                         )
@@ -544,7 +552,7 @@ private fun VehicleCheckRow(checked: Boolean, label: String, onCheckedChange: (B
         verticalAlignment = Alignment.CenterVertically,
         modifier = Modifier
             .fillMaxWidth()
-            .toggleable(value = checked, onValueChange = onCheckedChange)
+            .toggleable(value = checked, role = Role.Checkbox, onValueChange = onCheckedChange)
             .padding(vertical = Spacing.xxs),
     ) {
         Checkbox(checked = checked, onCheckedChange = null)

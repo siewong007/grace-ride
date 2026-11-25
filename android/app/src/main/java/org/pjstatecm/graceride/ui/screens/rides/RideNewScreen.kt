@@ -51,6 +51,8 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.LocalLifecycleOwner
@@ -59,12 +61,14 @@ import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.navigation.NavHostController
 import org.pjstatecm.graceride.R
 import org.pjstatecm.graceride.di.AppContainer
+import org.pjstatecm.graceride.domain.DatePickerUtc
 import org.pjstatecm.graceride.domain.KlTime
+import org.pjstatecm.graceride.domain.ProxyRelationships
 import org.pjstatecm.graceride.ui.Routes
+import org.pjstatecm.graceride.ui.components.ErrorView
 import org.pjstatecm.graceride.ui.components.LoadingView
+import org.pjstatecm.graceride.ui.navigateTab
 import org.pjstatecm.graceride.ui.theme.Spacing
-import java.time.Instant
-import java.time.ZoneId
 
 @OptIn(ExperimentalMaterial3Api::class, ExperimentalLayoutApi::class)
 @Composable
@@ -77,11 +81,12 @@ fun RideNewScreen(
     val vm: RideNewViewModel = viewModel(factory = RideNewViewModel.factory(container, eventId, initialProxy))
     val s by vm.state.collectAsStateWithLifecycle()
     val lifecycleOwner = LocalLifecycleOwner.current
+    var resumedOnce by remember { mutableStateOf(false) }
 
     DisposableEffect(lifecycleOwner) {
         val observer = LifecycleEventObserver { _, event ->
             if (event == Lifecycle.Event.ON_RESUME) {
-                vm.refreshPlacesAndProxies()
+                if (resumedOnce) vm.refreshPlacesAndProxies() else resumedOnce = true
             }
         }
         lifecycleOwner.lifecycle.addObserver(observer)
@@ -91,20 +96,33 @@ fun RideNewScreen(
     // Rides exist only for events: without one, point the member at the events
     // list, exactly like the web's /rides/new without ?event=.
     if (eventId == null) {
-        Column(
-            Modifier.fillMaxSize().padding(Spacing.md),
-            verticalArrangement = Arrangement.Center,
-            horizontalAlignment = Alignment.CenterHorizontally,
-        ) {
-            Text(stringResource(R.string.ride_new_event_first_title), style = MaterialTheme.typography.titleLarge, color = MaterialTheme.colorScheme.onSurface)
-            Text(
-                stringResource(R.string.ride_new_event_first_desc),
-                style = MaterialTheme.typography.bodyMedium,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                modifier = Modifier.padding(top = Spacing.xs),
-            )
-            Button(onClick = { nav.navigate(Routes.EVENTS) }, modifier = Modifier.padding(top = Spacing.sm)) {
-                Text(stringResource(R.string.ride_new_browse_events))
+        Scaffold(
+            topBar = {
+                TopAppBar(
+                    title = { Text(stringResource(R.string.ride_new_title)) },
+                    navigationIcon = {
+                        IconButton(onClick = { nav.popBackStack() }) {
+                            Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = stringResource(R.string.a11y_back))
+                        }
+                    },
+                )
+            },
+        ) { padding ->
+            Column(
+                Modifier.fillMaxSize().padding(padding).padding(Spacing.md),
+                verticalArrangement = Arrangement.Center,
+                horizontalAlignment = Alignment.CenterHorizontally,
+            ) {
+                Text(stringResource(R.string.ride_new_event_first_title), style = MaterialTheme.typography.titleLarge, color = MaterialTheme.colorScheme.onSurface)
+                Text(
+                    stringResource(R.string.ride_new_event_first_desc),
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.padding(top = Spacing.xs),
+                )
+                Button(onClick = { nav.navigateTab(Routes.EVENTS) }, modifier = Modifier.padding(top = Spacing.sm)) {
+                    Text(stringResource(R.string.ride_new_browse_events))
+                }
             }
         }
         return
@@ -119,7 +137,7 @@ fun RideNewScreen(
 
     LaunchedEffect(s.createdId) {
         s.createdId?.let {
-            nav.navigate(Routes.rideDetail(it)) {
+            nav.navigate(Routes.rideDetail(it, justBooked = true)) {
                 popUpTo(Routes.RIDE_NEW) { inclusive = true }
             }
         }
@@ -140,6 +158,7 @@ fun RideNewScreen(
         val ev = s.event
         when {
             s.loading -> LoadingView(Modifier.padding(padding))
+            s.loadError != null && ev == null -> ErrorView(s.loadError ?: "", vm::retryLoad, Modifier.padding(padding))
             ev != null && ev.mySignup?.status != "going" -> {
                 Column(
                     Modifier.fillMaxSize().padding(padding).padding(Spacing.md),
@@ -193,7 +212,7 @@ fun RideNewScreen(
                             selected = s.tripType == type,
                             onClick = { vm.setTripType(type) },
                             shape = SegmentedButtonDefaults.itemShape(index = idx, count = tripOptions.size),
-                            label = { Text(label, maxLines = 1) },
+                            label = { Text(label, maxLines = 1, overflow = TextOverflow.Ellipsis) },
                         )
                     }
                 }
@@ -278,19 +297,15 @@ fun RideNewScreen(
                                 singleLine = true,
                                 modifier = Modifier.fillMaxWidth(),
                             )
-                            val relationships = listOf(
-                                "parent" to stringResource(R.string.ride_new_relationship_parent),
-                                "child" to stringResource(R.string.ride_new_relationship_child),
-                                "spouse" to stringResource(R.string.ride_new_relationship_spouse),
-                                "friend" to stringResource(R.string.ride_new_relationship_friend),
-                                "other" to stringResource(R.string.ride_new_relationship_other),
-                            )
+                            val relationships = ProxyRelationships.keys.map { key ->
+                                key to (ProxyRelationships.labelRes(key)?.let { stringResource(it) } ?: key)
+                            }
                             ExposedDropdownMenuBox(
                                 expanded = relationshipExpanded,
                                 onExpandedChange = { relationshipExpanded = it },
                             ) {
                                 OutlinedTextField(
-                                    value = relationships.firstOrNull { it.first == s.riderRelationship }?.second
+                                    value = ProxyRelationships.labelRes(s.riderRelationship)?.let { stringResource(it) }
                                         ?: s.riderRelationship,
                                     onValueChange = {},
                                     readOnly = true,
@@ -319,6 +334,7 @@ fun RideNewScreen(
                                     .fillMaxWidth()
                                     .toggleable(
                                         value = s.saveProxyRider,
+                                        role = Role.Checkbox,
                                         onValueChange = { checked -> vm.update { it.copy(saveProxyRider = checked) } },
                                     ),
                             ) {
@@ -425,6 +441,7 @@ fun RideNewScreen(
                             .fillMaxWidth()
                             .toggleable(
                                 value = s.saveAddress,
+                                role = Role.Checkbox,
                                 onValueChange = { checked ->
                                     vm.update { cur ->
                                         val nextLabel = if (checked && cur.saveAddressLabel.isBlank()) {
@@ -477,14 +494,19 @@ fun RideNewScreen(
                 // Assistance chips (canonical backend enum)
                 Text(stringResource(R.string.ride_new_assistance), style = MaterialTheme.typography.titleSmall)
                 FlowRow(horizontalArrangement = Arrangement.spacedBy(Spacing.xs)) {
-                    listOf("" to "None", "wheelchair" to "Wheelchair", "stroller" to "Stroller", "oxygen" to "Oxygen", "other" to "Other")
-                        .forEach { (value, label) ->
-                            FilterChip(
-                                selected = s.assistance == value,
-                                onClick = { vm.update { it.copy(assistance = value) } },
-                                label = { Text(label) },
-                            )
-                        }
+                    listOf(
+                        "" to R.string.ride_new_assist_none,
+                        "wheelchair" to R.string.ride_new_assist_wheelchair,
+                        "stroller" to R.string.ride_new_assist_stroller,
+                        "oxygen" to R.string.ride_new_assist_oxygen,
+                        "other" to R.string.ride_new_assist_other,
+                    ).forEach { (value, labelRes) ->
+                        FilterChip(
+                            selected = s.assistance == value,
+                            onClick = { vm.update { it.copy(assistance = value) } },
+                            label = { Text(stringResource(labelRes)) },
+                        )
+                    }
                 }
 
                 OutlinedTextField(
@@ -495,7 +517,8 @@ fun RideNewScreen(
                     minLines = 2,
                 )
 
-                s.error?.let {
+                val errMsg = s.error ?: s.errorRes?.let { stringResource(it) }
+                errMsg?.let {
                     Text(it, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodyMedium)
                 }
 
@@ -509,13 +532,13 @@ fun RideNewScreen(
     }
 
     if (showDate) {
-        val pickerState = rememberDatePickerState(initialSelectedDateMillis = s.date.atStartOfDay(ZoneId.systemDefault()).toInstant().toEpochMilli())
+        val pickerState = rememberDatePickerState(initialSelectedDateMillis = DatePickerUtc.toPickerMillis(s.date))
         DatePickerDialog(
             onDismissRequest = { showDate = false },
             confirmButton = {
                 TextButton(onClick = {
                     pickerState.selectedDateMillis?.let { millis ->
-                        vm.update { it.copy(date = Instant.ofEpochMilli(millis).atZone(ZoneId.systemDefault()).toLocalDate()) }
+                        vm.update { it.copy(date = DatePickerUtc.fromPickerMillis(millis)) }
                     }
                     showDate = false
                 }) { Text(stringResource(R.string.common_confirm)) }
@@ -532,13 +555,13 @@ fun RideNewScreen(
         )
     }
     if (showReturnDate) {
-        val pickerState = rememberDatePickerState(initialSelectedDateMillis = s.returnDate.atStartOfDay(ZoneId.systemDefault()).toInstant().toEpochMilli())
+        val pickerState = rememberDatePickerState(initialSelectedDateMillis = DatePickerUtc.toPickerMillis(s.returnDate))
         DatePickerDialog(
             onDismissRequest = { showReturnDate = false },
             confirmButton = {
                 TextButton(onClick = {
                     pickerState.selectedDateMillis?.let { millis ->
-                        vm.update { it.copy(returnDate = Instant.ofEpochMilli(millis).atZone(ZoneId.systemDefault()).toLocalDate()) }
+                        vm.update { it.copy(returnDate = DatePickerUtc.fromPickerMillis(millis)) }
                     }
                     showReturnDate = false
                 }) { Text(stringResource(R.string.common_confirm)) }

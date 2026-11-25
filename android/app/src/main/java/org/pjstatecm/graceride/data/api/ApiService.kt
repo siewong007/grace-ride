@@ -26,7 +26,7 @@ interface ApiService {
     @POST("api/auth/lock") suspend fun lock(): OkResponse
     @POST("api/auth/unlock") suspend fun unlock(@Body body: UnlockReq): OkResponse
     @POST("api/auth/terms") suspend fun acceptTerms(@Body body: TermsReq): OkResponse
-    @POST("api/auth/passkey/login/start") suspend fun passkeyLoginStart(): PasskeyStart
+    @POST("api/auth/passkey/login/start") suspend fun passkeyLoginStart(@Body body: PasskeyStartReq): PasskeyStart
     @POST("api/auth/passkey/login/finish") suspend fun passkeyLoginFinish(@Body body: PasskeyFinishReq): OkResponse
     @POST("api/auth/passkey/register/start") suspend fun passkeyRegisterStart(): PasskeyStart
     @POST("api/auth/passkey/register/finish") suspend fun passkeyRegisterFinish(@Body body: PasskeyFinishReq): OkResponse

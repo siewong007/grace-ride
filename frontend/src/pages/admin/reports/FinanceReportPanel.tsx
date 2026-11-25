@@ -19,9 +19,11 @@ import type { FinanceReportData } from '../../../types/domain';
 import {
   buildPeriodQuery,
   DeltaPill,
+  fmtCompactRm,
   MiniSeriesChart,
   PeriodControls,
   type PeriodFilterState,
+  StatCountAmount,
 } from './PeriodControls';
 
 export default function FinanceReportPanel({ period }: { period: PeriodFilterState }) {
@@ -255,9 +257,9 @@ export default function FinanceReportPanel({ period }: { period: PeriodFilterSta
         <>
           {f.reimbursement_review && (
             <Card className="stack">
-              <div className="row between nowrap gap-sm items-center flex-wrap">
+              <div className="row between gap-sm items-center flex-wrap">
                 <div className="row gap-xs items-center flex-wrap">
-                  <h3>{t('reports.reimbReviewTitle')}</h3>
+                  <h2>{t('reports.reimbReviewTitle')}</h2>
                   {(f.reimbursement_review.overdue_pending_count ?? 0) > 0 && (
                     <Pill tone="warning">
                       {t('reports.overduePendingTag', {
@@ -270,15 +272,15 @@ export default function FinanceReportPanel({ period }: { period: PeriodFilterSta
                   {t('reports.openReimbQueue')}
                 </Link>
               </div>
-              <div className="grid cols-4">
+              <div className="report-stats">
                 <Stat
                   label={t('reports.reimbPendingReview')}
                   value={
-                    <span className="row gap-xs items-baseline flex-wrap">
-                      <span>
-                        {f.reimbursement_review.by_status.pending.count} ·{' '}
-                        {rm(f.reimbursement_review.by_status.pending.amount_cents)}
-                      </span>
+                    <span className="report-stat-val">
+                      <StatCountAmount
+                        count={f.reimbursement_review.by_status.pending.count}
+                        cents={f.reimbursement_review.by_status.pending.amount_cents}
+                      />
                       <DeltaPill
                         delta={cmp?.reimb_review?.pending_count_delta}
                         invertGood
@@ -294,11 +296,11 @@ export default function FinanceReportPanel({ period }: { period: PeriodFilterSta
                 <Stat
                   label={t('reports.reimbApproved')}
                   value={
-                    <span className="row gap-xs items-baseline flex-wrap">
-                      <span>
-                        {f.reimbursement_review.by_status.approved.count} ·{' '}
-                        {rm(f.reimbursement_review.by_status.approved.amount_cents)}
-                      </span>
+                    <span className="report-stat-val">
+                      <StatCountAmount
+                        count={f.reimbursement_review.by_status.approved.count}
+                        cents={f.reimbursement_review.by_status.approved.amount_cents}
+                      />
                       <DeltaPill
                         delta={cmp?.reimb_review?.approved_cents_delta}
                         formatAbs={rm}
@@ -313,12 +315,12 @@ export default function FinanceReportPanel({ period }: { period: PeriodFilterSta
                 />
               </div>
 
-              <div className="grid cols-2">
+              <div className="report-cols-2">
                 <div className="stack-xs">
-                  <h4>{t('reports.reimbByKind')}</h4>
+                  <h3>{t('reports.reimbByKind')}</h3>
                   <div className="list">
                     {f.reimbursement_review.by_kind.map((k) => (
-                      <div key={k.kind} className="item row between nowrap gap-sm">
+                      <div key={k.kind} className="item report-kv-item">
                         <span className="bold">{t(`reports.reimbKind_${k.kind}`)}</span>
                         <span className="small muted nowrap">
                           {k.count} · {rm(k.amount_cents)}
@@ -336,22 +338,22 @@ export default function FinanceReportPanel({ period }: { period: PeriodFilterSta
                 </div>
 
                 <div className="stack-xs">
-                  <h4>{t('reports.driverMileageSummary')}</h4>
+                  <h3>{t('reports.driverMileageSummary')}</h3>
                   <div className="list">
-                    <div className="item row between nowrap gap-sm">
+                    <div className="item report-kv-item">
                       <span className="muted">{t('reports.driverMileageEligible')}</span>
                       <span className="bold nowrap">
                         {f.reimbursement_review.driver_mileage_rides.eligible_count} ·{' '}
                         {rm(f.reimbursement_review.driver_mileage_rides.eligible_cents)}
                       </span>
                     </div>
-                    <div className="item row between nowrap gap-sm">
+                    <div className="item report-kv-item">
                       <span className="muted">{t('reports.driverMileageExcluded')}</span>
                       <span className="bold">
                         {f.reimbursement_review.driver_mileage_rides.excluded_count}
                       </span>
                     </div>
-                    <div className="item row between nowrap gap-sm">
+                    <div className="item report-kv-item">
                       <span className="muted">{t('reports.driverMileageReceiptNeeded')}</span>
                       <span className="bold">
                         {f.reimbursement_review.driver_mileage_rides.receipt_needed_count}
@@ -365,9 +367,9 @@ export default function FinanceReportPanel({ period }: { period: PeriodFilterSta
 
           {f.reimbursement_payouts && (
             <Card className="stack">
-              <div className="row between nowrap gap-sm items-center flex-wrap">
+              <div className="row between gap-sm items-center flex-wrap">
                 <div className="row gap-xs items-center flex-wrap">
-                  <h3>{t('reports.payoutsTitle')}</h3>
+                  <h2>{t('reports.payoutsTitle')}</h2>
                   {(f.reimbursement_payouts.overdue_approved_count ?? 0) > 0 && (
                     <Pill tone="warning">
                       {t('reports.overdueApprovedTag', {
@@ -380,23 +382,33 @@ export default function FinanceReportPanel({ period }: { period: PeriodFilterSta
                   {t('reports.openReimbQueue')}
                 </Link>
               </div>
-              <div className="grid cols-4">
+              <div className="report-stats">
                 <Stat
                   label={t('reports.reimbApprovedAwaiting')}
-                  value={`${f.reimbursement_payouts.approved_unpaid_count} · ${rm(f.reimbursement_payouts.approved_unpaid_cents)}`}
+                  value={
+                    <StatCountAmount
+                      count={f.reimbursement_payouts.approved_unpaid_count}
+                      cents={f.reimbursement_payouts.approved_unpaid_cents}
+                    />
+                  }
                 />
                 <Stat
                   label={t('reports.allTimeAwaitingPayout')}
-                  value={`${f.reimbursement_payouts.all_time_awaiting_count} · ${rm(f.reimbursement_payouts.all_time_awaiting_cents)}`}
+                  value={
+                    <StatCountAmount
+                      count={f.reimbursement_payouts.all_time_awaiting_count}
+                      cents={f.reimbursement_payouts.all_time_awaiting_cents}
+                    />
+                  }
                 />
                 <Stat
                   label={t('reports.payoutsPaid')}
                   value={
-                    <span className="row gap-xs items-baseline flex-wrap">
-                      <span>
-                        {f.reimbursement_payouts.paid_count} ·{' '}
-                        {rm(f.reimbursement_payouts.paid_cents)}
-                      </span>
+                    <span className="report-stat-val">
+                      <StatCountAmount
+                        count={f.reimbursement_payouts.paid_count}
+                        cents={f.reimbursement_payouts.paid_cents}
+                      />
                       <DeltaPill
                         delta={cmp?.reimb_payouts?.paid_cents_delta}
                         formatAbs={rm}
@@ -407,7 +419,13 @@ export default function FinanceReportPanel({ period }: { period: PeriodFilterSta
                 />
                 <Stat
                   label={t('reports.payeeVerifiedRatio')}
-                  value={`${f.reimbursement_payouts.payee_verified_count} / ${f.reimbursement_payouts.payee_verified_count + f.reimbursement_payouts.payee_unverified_count}`}
+                  value={
+                    <span className="nowrap">
+                      {f.reimbursement_payouts.payee_verified_count} /{' '}
+                      {f.reimbursement_payouts.payee_verified_count +
+                        f.reimbursement_payouts.payee_unverified_count}
+                    </span>
+                  }
                 />
               </div>
 
@@ -415,18 +433,20 @@ export default function FinanceReportPanel({ period }: { period: PeriodFilterSta
                 <MiniSeriesChart
                   title={t('reports.trendPayouts')}
                   items={payoutTrendSeries}
-                  formatVal={(v) => rm(v)}
+                  formatVal={fmtCompactRm}
+                  formatTooltip={rm}
+                  headingLevel="h3"
                 />
               )}
 
-              <div className="grid cols-2">
+              <div className="report-cols-2">
                 <div className="stack-xs">
-                  <h4>{t('reports.payoutsByKind')}</h4>
+                  <h3>{t('reports.payoutsByKind')}</h3>
                   <div className="list">
                     {f.reimbursement_payouts.by_kind.map((k) => (
-                      <div key={k.kind} className="item row between nowrap gap-sm">
+                      <div key={k.kind} className="item report-kv-item">
                         <span className="bold">{t(`reports.reimbKind_${k.kind}`)}</span>
-                        <span className="small muted nowrap">
+                        <span className="small muted">
                           {t('reports.payoutKindLine', {
                             approved: rm(k.approved_cents),
                             paid: rm(k.paid_cents),
@@ -438,7 +458,7 @@ export default function FinanceReportPanel({ period }: { period: PeriodFilterSta
                 </div>
 
                 <div className="stack-xs">
-                  <h4>{t('reports.payoutBatches')}</h4>
+                  <h3>{t('reports.payoutBatches')}</h3>
                   {f.reimbursement_payouts.batches_truncated && (
                     <Notice tone="info">
                       {t('reports.listTruncatedNotice', {
@@ -454,10 +474,10 @@ export default function FinanceReportPanel({ period }: { period: PeriodFilterSta
                   ) : (
                     <div className="list">
                       {f.reimbursement_payouts.batches.map((b) => (
-                        <div key={b.id} className="item">
+                        <div key={b.id} className="item report-batch-item">
                           <div className="grow min-w-0 stack-xs">
                             <div className="row gap-xs items-center flex-wrap">
-                              <span className="bold ellipsis">{b.title}</span>
+                              <span className="bold">{b.title}</span>
                               <Pill tone={b.status === 'paid' ? 'success' : 'warning'}>
                                 {t(`reports.batchStatus_${b.status}`, { defaultValue: b.status })}
                               </Pill>
@@ -475,7 +495,7 @@ export default function FinanceReportPanel({ period }: { period: PeriodFilterSta
                           <div className="row gap-xs items-center nowrap">
                             <span className="bold nowrap">{rm(b.total_cents)}</span>
                             <a
-                              className="btn ghost sm"
+                              className="btn ghost sm btn-icon-action"
                               href={`/api/payout-batches/${b.id}/export`}
                               download
                               title={t('reports.downloadBatchCsv')}
@@ -495,9 +515,9 @@ export default function FinanceReportPanel({ period }: { period: PeriodFilterSta
 
           {f.bills && (
             <Card className="stack">
-              <div className="row between nowrap gap-sm items-center flex-wrap">
+              <div className="row between gap-sm items-center flex-wrap">
                 <div className="row gap-xs items-center flex-wrap">
-                  <h3>{t('reports.billsTitle')}</h3>
+                  <h2>{t('reports.billsTitle')}</h2>
                   {(f.bills.totals.overdue_settlements_count ?? 0) > 0 && (
                     <Pill tone="warning">
                       {t('reports.overdueBillsTag', {
@@ -510,20 +530,20 @@ export default function FinanceReportPanel({ period }: { period: PeriodFilterSta
                   {t('reports.openSettlementsList')}
                 </Link>
               </div>
-              <div className="grid cols-4">
+              <div className="report-stats">
                 <Stat
                   label={t('reports.billsTotal')}
                   value={f.bills.totals.total_settlements}
                 />
                 <Stat
                   label={t('reports.billsNetBilled')}
-                  value={rm(f.bills.totals.net_billed_cents)}
+                  value={<span className="nowrap">{rm(f.bills.totals.net_billed_cents)}</span>}
                 />
                 <Stat
                   label={t('reports.billsCollected')}
                   value={
-                    <span className="row gap-xs items-baseline flex-wrap">
-                      <span>{rm(f.bills.totals.collected_cents)}</span>
+                    <span className="report-stat-val">
+                      <span className="nowrap">{rm(f.bills.totals.collected_cents)}</span>
                       <DeltaPill
                         delta={cmp?.bills?.collected_cents_delta}
                         formatAbs={rm}
@@ -535,7 +555,7 @@ export default function FinanceReportPanel({ period }: { period: PeriodFilterSta
                 <Stat
                   label={t('reports.collectionRate')}
                   value={
-                    <span className="row gap-xs items-baseline flex-wrap">
+                    <span className="report-stat-val">
                       <span>{f.bills.totals.collection_rate_pct}%</span>
                       <DeltaPill
                         delta={cmp?.bills?.collection_rate_delta}
@@ -547,19 +567,19 @@ export default function FinanceReportPanel({ period }: { period: PeriodFilterSta
                 />
                 <Stat
                   label={t('reports.billsSubsidy')}
-                  value={rm(f.bills.totals.subsidy_cents)}
+                  value={<span className="nowrap">{rm(f.bills.totals.subsidy_cents)}</span>}
                 />
                 <Stat
                   label={t('reports.billsPendingProof')}
-                  value={rm(f.bills.totals.pending_verification_cents)}
+                  value={<span className="nowrap">{rm(f.bills.totals.pending_verification_cents)}</span>}
                 />
                 <Stat
                   label={t('reports.billsNeedsInfo')}
-                  value={rm(f.bills.totals.needs_info_cents)}
+                  value={<span className="nowrap">{rm(f.bills.totals.needs_info_cents)}</span>}
                 />
                 <Stat
                   label={t('reports.billsUnpaid')}
-                  value={rm(f.bills.totals.unpaid_cents)}
+                  value={<span className="nowrap">{rm(f.bills.totals.unpaid_cents)}</span>}
                 />
               </div>
 

@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { Download, FileText } from 'lucide-react';
+import { ChevronRight, Download, FileText } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import { useApi } from '../../../api';
 import { Button, Card, CardSkeleton, EmptyState, ErrorBox, Pill, Stat } from '../../../components/ui';
@@ -9,9 +9,11 @@ import type { OverviewReportData } from '../../../types/domain';
 import {
   buildPeriodQuery,
   DeltaPill,
+  fmtCompactRm,
   MiniSeriesChart,
   PeriodControls,
   type PeriodFilterState,
+  StatCountAmount,
 } from './PeriodControls';
 
 export default function OverviewReportPanel({
@@ -263,19 +265,19 @@ export default function OverviewReportPanel({
         <>
           {o.transport && (
             <Card className="stack-sm">
-              <div className="row between nowrap gap-sm items-center">
-                <h3>{t('reports.overviewTransport')}</h3>
+              <div className="row between gap-sm items-center flex-wrap">
+                <h2>{t('reports.overviewTransport')}</h2>
                 <Pill tone={o.transport.scope === 'global' ? 'info' : 'warning'}>
                   {o.transport.scope === 'global'
                     ? t('reports.scopeGlobal')
                     : t('reports.scopeOwnEvents')}
                 </Pill>
               </div>
-              <div className="grid cols-4">
+              <div className="report-stats">
                 <Stat
                   label={t('reports.demandTotal')}
                   value={
-                    <span className="row gap-xs items-baseline flex-wrap">
+                    <span className="report-stat-val">
                       <span>{o.transport.total_rides}</span>
                       <DeltaPill
                         delta={cmp?.transport?.total_rides_delta}
@@ -287,7 +289,7 @@ export default function OverviewReportPanel({
                 <Stat
                   label={t('reports.overviewCompletedRides')}
                   value={
-                    <span className="row gap-xs items-baseline flex-wrap">
+                    <span className="report-stat-val">
                       <span>{o.transport.completed_rides}</span>
                       <DeltaPill
                         delta={cmp?.transport?.completed_rides_delta}
@@ -300,7 +302,7 @@ export default function OverviewReportPanel({
                 <Stat
                   label={t('reports.demandFulfillmentRate')}
                   value={
-                    <span className="row gap-xs items-baseline flex-wrap">
+                    <span className="report-stat-val">
                       <span>{o.transport.fulfillment_rate_pct}%</span>
                       <DeltaPill
                         delta={cmp?.transport?.fulfillment_rate_delta}
@@ -310,7 +312,10 @@ export default function OverviewReportPanel({
                     </span>
                   }
                 />
-                <Stat label={t('reports.distance')} value={`${o.transport.total_distance_km} km`} />
+                <Stat
+                  label={t('reports.distance')}
+                  value={<span className="nowrap">{o.transport.total_distance_km} km</span>}
+                />
                 <Stat label={t('reports.demandActiveDrivers')} value={o.transport.active_drivers} />
                 <Stat label={t('reports.uniquePassengers')} value={o.transport.unique_passengers} />
                 <Stat label={t('reports.cancelledRides')} value={o.transport.cancelled_rides} />
@@ -343,19 +348,19 @@ export default function OverviewReportPanel({
 
           {o.events && (
             <Card className="stack-sm">
-              <div className="row between nowrap gap-sm items-center">
-                <h3>{t('reports.overviewEvents')}</h3>
+              <div className="row between gap-sm items-center flex-wrap">
+                <h2>{t('reports.overviewEvents')}</h2>
                 <Pill tone={o.events.scope === 'global' ? 'info' : 'warning'}>
                   {o.events.scope === 'global'
                     ? t('reports.scopeGlobal')
                     : t('reports.scopeOwnEvents')}
                 </Pill>
               </div>
-              <div className="grid cols-4">
+              <div className="report-stats">
                 <Stat
                   label={t('reports.eventsCount')}
                   value={
-                    <span className="row gap-xs items-baseline flex-wrap">
+                    <span className="report-stat-val">
                       <span>{o.events.events_count}</span>
                       <DeltaPill
                         delta={cmp?.events?.events_count_delta}
@@ -368,7 +373,7 @@ export default function OverviewReportPanel({
                 <Stat
                   label={t('reports.totalAttended')}
                   value={
-                    <span className="row gap-xs items-baseline flex-wrap">
+                    <span className="report-stat-val">
                       <span>{o.events.total_attended}</span>
                       <DeltaPill
                         delta={cmp?.events?.total_attended_delta}
@@ -380,7 +385,7 @@ export default function OverviewReportPanel({
                 <Stat
                   label={t('reports.attendanceRate')}
                   value={
-                    <span className="row gap-xs items-baseline flex-wrap">
+                    <span className="report-stat-val">
                       <span>{o.events.attendance_rate_pct}%</span>
                       <DeltaPill
                         delta={cmp?.events?.attendance_rate_delta}
@@ -405,15 +410,16 @@ export default function OverviewReportPanel({
 
           {o.reimb_review && (
             <Card className="stack-sm">
-              <h3>{t('reports.overviewReimbReview')}</h3>
-              <div className="grid cols-4">
+              <h2>{t('reports.overviewReimbReview')}</h2>
+              <div className="report-stats cols-3">
                 <Stat
                   label={t('reports.reimbPendingReview')}
                   value={
-                    <span className="row gap-xs items-baseline flex-wrap">
-                      <span>
-                        {o.reimb_review.pending_count} · {rm(o.reimb_review.pending_cents)}
-                      </span>
+                    <span className="report-stat-val">
+                      <StatCountAmount
+                        count={o.reimb_review.pending_count}
+                        cents={o.reimb_review.pending_cents}
+                      />
                       <DeltaPill
                         delta={cmp?.reimb_review?.pending_count_delta}
                         invertGood
@@ -425,27 +431,32 @@ export default function OverviewReportPanel({
                 <Stat label={t('reports.reimbReturned')} value={o.reimb_review.returned_count} />
                 <Stat
                   label={t('reports.reimbApprovedAwaiting')}
-                  value={`${o.reimb_review.approved_count} · ${rm(o.reimb_review.approved_cents)}`}
+                  value={
+                    <StatCountAmount
+                      count={o.reimb_review.approved_count}
+                      cents={o.reimb_review.approved_cents}
+                    />
+                  }
                 />
               </div>
             </Card>
           )}
 
           {o.finance && (
-            <div className={o.finance.reimb_payouts && o.finance.bills ? 'grid cols-2' : 'stack'}>
+            <div className={o.finance.reimb_payouts && o.finance.bills ? 'report-cols-2' : 'stack'}>
               {o.finance.reimb_payouts && (
                 <Card className="stack-sm">
-                  <h3>{t('reports.overviewPayouts')}</h3>
-                  <div className="grid cols-2">
+                  <h2>{t('reports.overviewPayouts')}</h2>
+                  <div className="report-stats cols-2">
                     <Stat
                       label={t('reports.reimbApprovedAwaiting')}
-                      value={rm(o.finance.reimb_payouts.approved_unpaid_cents)}
+                      value={<span className="nowrap">{rm(o.finance.reimb_payouts.approved_unpaid_cents)}</span>}
                     />
                     <Stat
                       label={t('reports.payoutsPaid')}
                       value={
-                        <span className="row gap-xs items-baseline flex-wrap">
-                          <span>{rm(o.finance.reimb_payouts.paid_cents)}</span>
+                        <span className="report-stat-val">
+                          <span className="nowrap">{rm(o.finance.reimb_payouts.paid_cents)}</span>
                           <DeltaPill
                             delta={cmp?.reimb_payouts?.paid_cents_delta}
                             formatAbs={rm}
@@ -468,13 +479,13 @@ export default function OverviewReportPanel({
 
               {o.finance.bills && (
                 <Card className="stack-sm">
-                  <h3>{t('reports.overviewBills')}</h3>
-                  <div className="grid cols-2">
+                  <h2>{t('reports.overviewBills')}</h2>
+                  <div className="report-stats cols-2">
                     <Stat
                       label={t('reports.billsCollected')}
                       value={
-                        <span className="row gap-xs items-baseline flex-wrap">
-                          <span>{rm(o.finance.bills.collected_cents)}</span>
+                        <span className="report-stat-val">
+                          <span className="nowrap">{rm(o.finance.bills.collected_cents)}</span>
                           <DeltaPill
                             delta={cmp?.bills?.collected_cents_delta}
                             formatAbs={rm}
@@ -485,12 +496,12 @@ export default function OverviewReportPanel({
                     />
                     <Stat
                       label={t('reports.billsOutstanding')}
-                      value={rm(o.finance.bills.outstanding_cents)}
+                      value={<span className="nowrap">{rm(o.finance.bills.outstanding_cents)}</span>}
                     />
                     <Stat
                       label={t('reports.collectionRate')}
                       value={
-                        <span className="row gap-xs items-baseline flex-wrap">
+                        <span className="report-stat-val">
                           <span>{o.finance.bills.collection_rate_pct}%</span>
                           <DeltaPill
                             delta={cmp?.bills?.collection_rate_delta}
@@ -512,14 +523,14 @@ export default function OverviewReportPanel({
 
           {o.membership && (
             <Card className="stack-sm">
-              <h3>{t('reports.overviewMembership')}</h3>
-              <div className="grid cols-4">
+              <h2>{t('reports.overviewMembership')}</h2>
+              <div className="report-stats">
                 <Stat label={t('reports.activeMembers')} value={o.membership.active_members} />
                 <Stat label={t('reports.pendingMembers')} value={o.membership.pending_members} />
                 <Stat
                   label={t('reports.newMembers')}
                   value={
-                    <span className="row gap-xs items-baseline flex-wrap">
+                    <span className="report-stat-val">
                       <span>{o.membership.new_members_in_period}</span>
                       <DeltaPill
                         delta={cmp?.membership?.new_members_delta}
@@ -534,56 +545,63 @@ export default function OverviewReportPanel({
           )}
 
           {o.monthly_series.length > 1 && (
-            <div className="grid cols-2">
+            <div className="report-cols-2">
               {ridesSeries.length > 1 && (
-                <MiniSeriesChart title={t('reports.trendRides')} items={ridesSeries} />
+                <MiniSeriesChart title={t('reports.trendRides')} items={ridesSeries} headingLevel="h2" />
               )}
               {eventsSeries.length > 1 && (
-                <MiniSeriesChart title={t('reports.trendAttendance')} items={eventsSeries} />
+                <MiniSeriesChart title={t('reports.trendAttendance')} items={eventsSeries} headingLevel="h2" />
               )}
               {payoutsSeries.length > 1 && (
                 <MiniSeriesChart
                   title={t('reports.trendPayouts')}
                   items={payoutsSeries}
-                  formatVal={(v) => rm(v)}
+                  formatVal={fmtCompactRm}
+                  formatTooltip={rm}
+                  headingLevel="h2"
                 />
               )}
               {billsSeries.length > 1 && (
                 <MiniSeriesChart
                   title={t('reports.trendBills')}
                   items={billsSeries}
-                  formatVal={(v) => rm(v)}
+                  formatVal={fmtCompactRm}
+                  formatTooltip={rm}
+                  headingLevel="h2"
                 />
               )}
             </div>
           )}
 
           {(o.transport?.top_drivers.length || o.events?.top_groups.length) ? (
-            <div className={o.transport?.top_drivers.length && o.events?.top_groups.length ? 'grid cols-2' : 'stack'}>
+            <div className={o.transport?.top_drivers.length && o.events?.top_groups.length ? 'report-cols-2' : 'stack'}>
               {o.transport && o.transport.top_drivers.length > 0 && (
                 <Card className="stack-sm">
-                  <h3>{t('reports.topDrivers')}</h3>
+                  <h2>{t('reports.topDrivers')}</h2>
                   <div className="list">
                     {o.transport.top_drivers.map((d) =>
                       onOpenMember ? (
                         <button
                           key={d.user_id}
                           type="button"
-                          className="item row between nowrap gap-sm report-drill-btn"
+                          className="item report-rank-row report-drill-btn"
                           onClick={() => onOpenMember(d.user_id)}
                         >
-                          <span className="bold ellipsis">{d.name}</span>
-                          <span className="small muted nowrap">
-                            {d.completed_rides} {t('reports.ridesUnit')} · {d.distance_km} km
-                            {d.carpool_trips > 0
-                              ? ` · ${d.carpool_trips} ${t('reports.carpoolUnit')}`
-                              : ''}
+                          <span className="bold">{d.name}</span>
+                          <span className="report-rank-meta small muted">
+                            <span>
+                              {d.completed_rides} {t('reports.ridesUnit')} · {d.distance_km} km
+                              {d.carpool_trips > 0
+                                ? ` · ${d.carpool_trips} ${t('reports.carpoolUnit')}`
+                                : ''}
+                            </span>
+                            <ChevronRight size={16} className="report-drill-chevron" aria-hidden="true" />
                           </span>
                         </button>
                       ) : (
-                        <div key={d.user_id} className="item row between nowrap gap-sm">
-                          <span className="bold ellipsis">{d.name}</span>
-                          <span className="small muted nowrap">
+                        <div key={d.user_id} className="item report-rank-row">
+                          <span className="bold">{d.name}</span>
+                          <span className="report-rank-meta small muted">
                             {d.completed_rides} {t('reports.ridesUnit')} · {d.distance_km} km
                             {d.carpool_trips > 0
                               ? ` · ${d.carpool_trips} ${t('reports.carpoolUnit')}`
@@ -598,29 +616,32 @@ export default function OverviewReportPanel({
 
               {o.events && o.events.top_groups.length > 0 && (
                 <Card className="stack-sm">
-                  <h3>{t('reports.topGroups')}</h3>
+                  <h2>{t('reports.topGroups')}</h2>
                   <div className="list">
                     {o.events.top_groups.map((g, idx) =>
                       onOpenEventsGroup && g.group_id != null ? (
                         <button
                           key={g.group_id}
                           type="button"
-                          className="item row between nowrap gap-sm report-drill-btn"
+                          className="item report-rank-row report-drill-btn"
                           onClick={() => onOpenEventsGroup(g.group_id!)}
                         >
-                          <span className="bold ellipsis">
+                          <span className="bold">
                             {g.group_name ?? t('reports.unassignedGroup')}
                           </span>
-                          <span className="small muted nowrap">
-                            {g.attended} / {g.going} {t('reports.attendedShort')}
+                          <span className="report-rank-meta small muted">
+                            <span>
+                              {g.attended} / {g.going} {t('reports.attendedShort')}
+                            </span>
+                            <ChevronRight size={16} className="report-drill-chevron" aria-hidden="true" />
                           </span>
                         </button>
                       ) : (
-                        <div key={g.group_id ?? `none-${idx}`} className="item row between nowrap gap-sm">
-                          <span className="bold ellipsis">
+                        <div key={g.group_id ?? `none-${idx}`} className="item report-rank-row">
+                          <span className="bold">
                             {g.group_name ?? t('reports.unassignedGroup')}
                           </span>
-                          <span className="small muted nowrap">
+                          <span className="report-rank-meta small muted">
                             {g.attended} / {g.going} {t('reports.attendedShort')}
                           </span>
                         </div>

@@ -247,11 +247,11 @@ export default function DemandReportPanel({
         <EmptyState title={t('reports.none')} />
       ) : (
         <>
-          <div className="grid cols-4">
+          <div className="report-stats">
             <Stat
               label={t('reports.demandTotal')}
               value={
-                <span className="row gap-xs items-baseline flex-wrap">
+                <span className="report-stat-val">
                   <span>{d.totals.total_requests}</span>
                   <DeltaPill delta={cmp?.total_requests_delta} prevPeriod={cmp?.prev_period} />
                 </span>
@@ -261,7 +261,7 @@ export default function DemandReportPanel({
             <Stat
               label={t('reports.demandUnfilled')}
               value={
-                <span className="row gap-xs items-baseline flex-wrap">
+                <span className="report-stat-val">
                   <span>{d.totals.unfilled}</span>
                   <DeltaPill
                     delta={cmp?.unfilled_delta}
@@ -274,7 +274,7 @@ export default function DemandReportPanel({
             <Stat
               label={t('reports.demandFulfillmentRate')}
               value={
-                <span className="row gap-xs items-baseline flex-wrap">
+                <span className="report-stat-val">
                   <span>{d.totals.fulfillment_rate_pct}%</span>
                   <DeltaPill
                     delta={cmp?.fulfillment_rate_delta}
@@ -334,34 +334,36 @@ export default function DemandReportPanel({
             </div>
           )}
 
-          <div className="grid cols-2">
+          <div className="report-cols-2">
             <Card className="stack-sm">
-              <h3>{t('reports.demandByArea')}</h3>
+              <h2>{t('reports.demandByArea')}</h2>
               {d.by_area.length === 0 ? (
                 <p className="muted small">{t('reports.none')}</p>
               ) : (
                 <div className="stack-sm">
                   {d.by_area.map((a) => (
                     <div key={a.area_id} className="report-bar-row">
-                      <div className="row between nowrap gap-sm">
-                        <span className="bold ellipsis">
+                      <div className="report-bar-head">
+                        <span className="bold">
                           {(isZh ? a.area_name_zh || a.area_name_en : a.area_name_en || a.area_name_zh) ||
                             `#${a.area_id}`}
                         </span>
-                        <span className="small muted nowrap">
+                        <span className="small muted">
                           {t('reports.demandAreaLine', {
                             total: a.total,
                             unfilled: a.unfilled,
                             rate: a.fulfillment_rate_pct,
                           })}
-                          {a.registered_drivers != null
-                            ? ` · ${t('reports.registeredDriversTag', { count: a.registered_drivers })}`
-                            : ''}
                         </span>
                       </div>
                       <div className="bar">
                         <div style={{ width: `${Math.min(100, a.fulfillment_rate_pct)}%` }} />
                       </div>
+                      {a.registered_drivers != null && (
+                        <div className="muted tiny">
+                          {t('reports.registeredDriversTag', { count: a.registered_drivers })}
+                        </div>
+                      )}
                     </div>
                   ))}
                 </div>
@@ -369,13 +371,13 @@ export default function DemandReportPanel({
             </Card>
 
             <Card className="stack-sm">
-              <h3>{t('reports.demandBySlot')}</h3>
+              <h2>{t('reports.demandBySlot')}</h2>
               {d.by_slot.length === 0 ? (
                 <p className="muted small">{t('reports.none')}</p>
               ) : (
                 <div className="list">
                   {d.by_slot.map((s) => (
-                    <div key={`${s.weekday}-${s.slot}`} className="item row between nowrap gap-sm">
+                    <div key={`${s.weekday}-${s.slot}`} className="item report-kv-item">
                       <span className="bold">
                         {t(`reports.weekdays.${WEEKDAY_KEYS[s.weekday] ?? 'sun'}`)} · {s.slot}
                       </span>
@@ -391,15 +393,15 @@ export default function DemandReportPanel({
 
           {d.by_group && d.by_group.length > 0 && (
             <Card className="stack-sm">
-              <h3>{t('reports.demandByGroup')}</h3>
-              <div className="grid cols-2">
+              <h2>{t('reports.demandByGroup')}</h2>
+              <div className="report-cols-2">
                 {d.by_group.map((g, idx) => (
                   <div key={g.group_id ?? `none-${idx}`} className="report-bar-row">
-                    <div className="row between nowrap gap-sm">
-                      <span className="bold ellipsis">
+                    <div className="report-bar-head">
+                      <span className="bold">
                         {g.group_name ?? t('reports.unassignedGroup')}
                       </span>
-                      <span className="small muted nowrap">
+                      <span className="small muted">
                         {t('reports.demandAreaLine', {
                           total: g.total,
                           unfilled: g.unfilled,

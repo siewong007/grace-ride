@@ -3,7 +3,7 @@ package org.pjstatecm.graceride.ui
 import android.content.ActivityNotFoundException
 import android.content.Context
 import android.content.Intent
-import android.net.Uri
+import androidx.core.net.toUri
 
 /**
  * Hands off web-only workflows (trip chat, live map, QR check-in, reimbursements,
@@ -11,7 +11,7 @@ import android.net.Uri
  * browser activity is available.
  */
 fun openInWebApp(context: Context, url: String) {
-    val intent = Intent(Intent.ACTION_VIEW, Uri.parse(url)).apply {
+    val intent = Intent(Intent.ACTION_VIEW, url.toUri()).apply {
         addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
     }
     try {

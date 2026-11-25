@@ -56,34 +56,56 @@ class HomeViewModel(private val container: AppContainer) : ViewModel() {
                 container.auth.refresh()
             }
             val me = container.auth.me
-            var offline = false
-            var error: String? = null
 
-            suspend fun <T> section(allowed: Boolean, block: suspend () -> T, fallback: T): T {
-                if (!allowed) return fallback
+            data class SectionResult<T>(
+                val data: T,
+                val ok: Boolean = false,
+                val offline: Boolean = false,
+                val error: String? = null,
+            )
+
+            suspend fun <T> section(allowed: Boolean, block: suspend () -> T, fallback: T): SectionResult<T> {
+                if (!allowed) return SectionResult(fallback)
                 return try {
-                    block()
+                    SectionResult(block(), ok = true)
                 } catch (e: ApiException) {
-                    if (e.status == 0) offline = true else error = e.message
-                    fallback
+                    SectionResult(fallback, ok = false, offline = e.status == 0, error = if (e.status == 0) null else e.message)
                 }
             }
 
-            var ridesOk = false
-            var drivingOk = false
-            val rides = section(me?.can("rides") == true, { container.rides.upcoming().also { ridesOk = true } }, emptyList<Ride>())
-            val events = section(me?.can("events") == true, { container.events.upcoming() }, emptyList<EventItem>())
-            val shares = section(me?.can("costs") == true, { container.shares.mine() }, emptyList<Share>())
-            val ann = section(true, { container.community.announcements() }, emptyList<Announcement>())
             val today = KlTime.today()
             val nextWeek = KlTime.todayPlusDays(7)
-            val drivingAll = section(me?.can("drive") == true, { container.rides.drivingToday(today, nextWeek).also { drivingOk = true } }, emptyList<Ride>())
+            val (ridesRes, eventsRes, sharesRes, annRes, drivingRes) = coroutineScope {
+                val rDef = async { section(me?.can("rides") == true, { container.rides.upcoming() }, emptyList<Ride>()) }
+                val eDef = async { section(me?.can("events") == true, { container.events.upcoming() }, emptyList<EventItem>()) }
+                val sDef = async { section(me?.can("costs") == true, { container.shares.mine() }, emptyList<Share>()) }
+                val aDef = async { section(true, { container.community.announcements() }, emptyList<Announcement>()) }
+                val dDef = async { section(me?.can("drive") == true, { container.rides.drivingToday(today, nextWeek) }, emptyList<Ride>()) }
+                listOf(rDef.await(), eDef.await(), sDef.await(), aDef.await(), dDef.await()).let {
+                    @Suppress("UNCHECKED_CAST")
+                    Tuple5(
+                        it[0] as SectionResult<List<Ride>>,
+                        it[1] as SectionResult<List<EventItem>>,
+                        it[2] as SectionResult<List<Share>>,
+                        it[3] as SectionResult<List<Announcement>>,
+                        it[4] as SectionResult<List<Ride>>,
+                    )
+                }
+            }
+
+            val rides = ridesRes.data
+            val events = eventsRes.data
+            val shares = sharesRes.data
+            val ann = annRes.data
+            val drivingAll = drivingRes.data
+            val offline = ridesRes.offline || eventsRes.offline || sharesRes.offline || annRes.offline || drivingRes.offline
+            val error = listOfNotNull(ridesRes.error, eventsRes.error, sharesRes.error, annRes.error, drivingRes.error).firstOrNull()
 
             var effectiveRides = rides
             var effectiveDrivingAll = drivingAll
             var offlineSnapshotAt: Long? = null
             if (me != null) {
-                if (ridesOk || drivingOk) {
+                if (ridesRes.ok || drivingRes.ok) {
                     OfflineSnapshotStore.save(container.secureStore, me.id, (rides + drivingAll).distinctBy { it.id })
                 } else if (offline && rides.isEmpty() && drivingAll.isEmpty()) {
                     val snap = OfflineSnapshotStore.load(container.secureStore, me.id)
@@ -102,20 +124,21 @@ class HomeViewModel(private val container: AppContainer) : ViewModel() {
             val next = effectiveRides
                 .filter { it.status in RideStatus.active && it.viewer.isPassenger }
                 .minByOrNull { it.pickupAt }
+            val unpaidShares = shares.filter { it.status == "unpaid" || it.status == "needs_info" }.take(3)
 
             _state.value = HomeUiState(
                 loading = false,
                 refreshing = false,
                 offline = offline,
                 offlineSnapshotAt = offlineSnapshotAt,
-                error = if (effectiveRides.isEmpty() && events.isEmpty() && ann.isEmpty() && effectiveDrivingAll.isEmpty()) error else null,
+                error = if (effectiveRides.isEmpty() && events.isEmpty() && unpaidShares.isEmpty() && ann.isEmpty() && effectiveDrivingAll.isEmpty()) error else null,
                 me = me,
                 nextRide = next,
                 drivingToday = drivingToday,
                 nextUpcomingDrive = nextUpcomingDrive,
                 upcomingDrives = upcomingDrives,
                 events = events.take(3),
-                unpaidShares = shares.filter { it.status == "unpaid" }.take(3),
+                unpaidShares = unpaidShares,
                 announcements = ann.sortedByDescending { it.pinned }.take(3),
             )
         }
@@ -125,3 +148,5 @@ class HomeViewModel(private val container: AppContainer) : ViewModel() {
         fun factory(container: AppContainer) = viewModelFactory { initializer { HomeViewModel(container) } }
     }
 }
+
+private data class Tuple5<A, B, C, D, E>(val a: A, val b: B, val c: C, val d: D, val e: E)

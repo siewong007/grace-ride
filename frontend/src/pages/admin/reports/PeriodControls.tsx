@@ -1,6 +1,7 @@
 import type { ReactNode } from 'react';
 import { useTranslation } from 'react-i18next';
 import { Card, Field, Pill } from '../../../components/ui';
+import { rm } from '../../../format';
 
 export interface PeriodFilterState {
   month: string;
@@ -76,29 +77,65 @@ export function DeltaPill({
   );
 }
 
+export function fmtCompactRm(cents: number): string {
+  const val = cents / 100;
+  if (val === 0) return 'RM 0';
+  if (Math.abs(val) >= 1000) {
+    const k = (val / 1000).toFixed(Math.abs(val) >= 10_000 ? 1 : 2).replace(/\.?0+$/, '');
+    return `RM ${k}k`;
+  }
+  return `RM ${Math.round(val)}`;
+}
+
+export function StatCountAmount({ count, cents }: { count: number; cents: number }) {
+  return (
+    <span className="report-stat-val">
+      <span className="nowrap">{count} ·</span>
+      <span className="nowrap">{rm(cents)}</span>
+    </span>
+  );
+}
+
 export function MiniSeriesChart({
   title,
   items,
   formatVal,
+  formatTooltip,
+  headingLevel = 'h2',
 }: {
   title: string;
   items: { month: string; value: number }[];
   formatVal?: (v: number) => string;
+  formatTooltip?: (v: number) => string;
+  headingLevel?: 'h2' | 'h3';
 }) {
   const max = Math.max(1, ...items.map((i) => i.value));
+  const spansYears = new Set(items.map((i) => i.month.slice(0, 4))).size > 1;
+  const Heading = headingLevel === 'h3' ? 'h3' : 'h2';
   return (
     <Card className="stack-sm">
-      <h4>{title}</h4>
-      <div className="report-chart" role="img" aria-label={title}>
-        {items.map((item) => {
-          const pct = Math.max(4, Math.round((item.value / max) * 100));
+      <Heading>{title}</Heading>
+      {/* eslint-disable-next-line jsx-a11y/no-noninteractive-tabindex -- scrollable region must be keyboard-focusable */}
+      <div className="report-chart" role="region" aria-label={title} tabIndex={0}>
+        {items.map((item, idx) => {
+          const pct = item.value <= 0 ? 0 : Math.max(6, Math.round((item.value / max) * 100));
+          const shortLabel = formatVal ? formatVal(item.value) : String(item.value);
+          const fullLabel = formatTooltip ? formatTooltip(item.value) : shortLabel;
+          const monthPart = item.month.slice(5);
+          const monthLabel =
+            spansYears && (idx === 0 || monthPart === '01')
+              ? `${item.month.slice(2, 4)}/${monthPart}`
+              : monthPart;
           return (
-            <div key={item.month} className="report-chart-col">
-              <span className="muted tiny">{formatVal ? formatVal(item.value) : item.value}</span>
+            <div key={item.month} className="report-chart-col" title={`${item.month}: ${fullLabel}`}>
+              <span className="report-chart-val">{shortLabel}</span>
               <div className="report-chart-track">
-                <div className="report-chart-fill" style={{ height: `${pct}%` }} />
+                <div
+                  className={`report-chart-fill${item.value <= 0 ? ' is-zero' : ''}`}
+                  style={{ height: `${pct}%` }}
+                />
               </div>
-              <span className="muted tiny">{item.month.slice(5)}</span>
+              <span className="muted tiny nowrap">{monthLabel}</span>
             </div>
           );
         })}
@@ -197,10 +234,10 @@ export function PeriodControls({
         {extraFilter}
       </div>
       {invalidReason === 'order' && (
-        <p className="muted tiny">{t('reports.invalidDateRange')}</p>
+        <p className="report-inline-error" role="alert">{t('reports.invalidDateRange')}</p>
       )}
       {invalidReason === 'span' && (
-        <p className="muted tiny">{t('reports.customRangeTooLong')}</p>
+        <p className="report-inline-error" role="alert">{t('reports.customRangeTooLong')}</p>
       )}
     </Card>
   );

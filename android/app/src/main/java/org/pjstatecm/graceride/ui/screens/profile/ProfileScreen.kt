@@ -41,6 +41,7 @@ import androidx.compose.material.icons.outlined.AutoAwesome
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Badge
 import androidx.compose.material3.Button
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.ExposedDropdownMenuBox
@@ -80,6 +81,7 @@ import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.navigation.NavHostController
 import org.pjstatecm.graceride.R
 import org.pjstatecm.graceride.data.api.Me
+import org.pjstatecm.graceride.data.api.PasskeyInfo
 import org.pjstatecm.graceride.data.api.UpdateNotificationPrefsReq
 import org.pjstatecm.graceride.data.repo.AuthState
 import org.pjstatecm.graceride.di.AppContainer
@@ -104,12 +106,20 @@ fun ProfileScreen(container: AppContainer, nav: NavHostController) {
     val authState by container.auth.state.collectAsStateWithLifecycle()
     val context = LocalContext.current
     val activity = context as? android.app.Activity
-    val me = state.me
+    val liveMe = when (val a = authState) {
+        is AuthState.SignedIn -> a.me
+        is AuthState.Pending -> a.me
+        is AuthState.Locked -> a.me
+        else -> null
+    }
+    val me = liveMe ?: state.me
     val unreadCount = (authState as? AuthState.SignedIn)?.me?.unread ?: me?.unread ?: 0
     val snackbar = remember { SnackbarHostState() }
     val savedMsg = stringResource(R.string.profile_saved)
     val prefsSavedMsg = stringResource(R.string.notif_pref_saved)
+    val invalidTgMsg = stringResource(R.string.notif_tg_invalid_id)
     var showAvatarEditor by remember { mutableStateOf(false) }
+    var pendingDeletePasskey by remember { mutableStateOf<PasskeyInfo?>(null) }
 
     var name by remember { mutableStateOf(me?.name ?: "") }
     var phone by remember { mutableStateOf(me?.phone ?: "") }
@@ -128,7 +138,7 @@ fun ProfileScreen(container: AppContainer, nav: NavHostController) {
         }
     }
 
-    LaunchedEffect(me) {
+    LaunchedEffect(me?.id, me?.name, me?.phone, me?.telegramChatId) {
         if (me != null) {
             name = me.name
             phone = me.phone
@@ -162,6 +172,15 @@ fun ProfileScreen(container: AppContainer, nav: NavHostController) {
                 snackbar.showSnackbar(savedMsg)
                 vm.clearMessage()
             }
+        }
+    }
+
+    LaunchedEffect(state.error, showAvatarEditor) {
+        val err = state.error
+        if (err != null && !showAvatarEditor) {
+            val displayErr = if (err == "invalid_telegram_chat_id") invalidTgMsg else err
+            snackbar.showSnackbar(displayErr)
+            vm.clearError()
         }
     }
 
@@ -272,25 +291,36 @@ fun ProfileScreen(container: AppContainer, nav: NavHostController) {
                 }
             }
 
-            item { SectionHeader(stringResource(R.string.profile_section_rides)) }
-            item {
-                OutlinedCard(Modifier.fillMaxWidth()) {
-                    Column {
-                        ProfileRow(stringResource(R.string.saved_addresses_title), Icons.Outlined.LocationOn) { nav.navigate(Routes.SAVED_ADDRESSES) }
-                        if (me?.can("rides") == true) {
-                            HorizontalDivider()
-                            ProfileRow(stringResource(R.string.proxy_riders_title), Icons.Outlined.Groups) { nav.navigate(Routes.PROXY_RIDERS) }
+            val showRidesSection = me?.can("rides") == true || me?.can("drive") == true || me?.can("costs") == true
+            if (showRidesSection) {
+                item { SectionHeader(stringResource(R.string.profile_section_rides)) }
+                item {
+                    OutlinedCard(Modifier.fillMaxWidth()) {
+                        Column {
+                            var hasAbove = false
+                            if (me?.can("rides") == true) {
+                                ProfileRow(stringResource(R.string.saved_addresses_title), Icons.Outlined.LocationOn) { nav.navigate(Routes.SAVED_ADDRESSES) }
+                                hasAbove = true
+                                HorizontalDivider()
+                                ProfileRow(stringResource(R.string.proxy_riders_title), Icons.Outlined.Groups) { nav.navigate(Routes.PROXY_RIDERS) }
+                            }
+                            if (me?.can("drive") == true) {
+                                if (hasAbove) HorizontalDivider()
+                                ProfileRow(stringResource(R.string.driver_settings_title), Icons.Outlined.DirectionsCar) { nav.navigate(Routes.DRIVER_SETTINGS) }
+                                hasAbove = true
+                            }
+                            if (me?.can("rides") == true) {
+                                if (hasAbove) HorizontalDivider()
+                                ProfileRow(stringResource(R.string.rides_title), Icons.Outlined.ChevronRight) { nav.navigate(Routes.RIDES) }
+                                HorizontalDivider()
+                                ProfileRow(stringResource(R.string.history_title), Icons.Outlined.History) { nav.navigate(Routes.HISTORY) }
+                                hasAbove = true
+                            }
+                            if (me?.can("costs") == true) {
+                                if (hasAbove) HorizontalDivider()
+                                ProfileRow(stringResource(R.string.costs_title), Icons.Outlined.Payments) { nav.navigate(Routes.COSTS) }
+                            }
                         }
-                        if (me?.can("drive") == true) {
-                            HorizontalDivider()
-                            ProfileRow(stringResource(R.string.driver_settings_title), Icons.Outlined.DirectionsCar) { nav.navigate(Routes.DRIVER_SETTINGS) }
-                        }
-                        HorizontalDivider()
-                        ProfileRow(stringResource(R.string.rides_title), Icons.Outlined.ChevronRight) { nav.navigate(Routes.RIDES) }
-                        HorizontalDivider()
-                        ProfileRow(stringResource(R.string.history_title), Icons.Outlined.History) { nav.navigate(Routes.HISTORY) }
-                        HorizontalDivider()
-                        ProfileRow(stringResource(R.string.costs_title), Icons.Outlined.Payments) { nav.navigate(Routes.COSTS) }
                     }
                 }
             }
@@ -309,13 +339,13 @@ fun ProfileScreen(container: AppContainer, nav: NavHostController) {
                                 Row(verticalAlignment = Alignment.CenterVertically) {
                                     Icon(Icons.Outlined.Key, contentDescription = null, tint = MaterialTheme.colorScheme.onSurfaceVariant)
                                     Text(
-                                        key.label.ifBlank { "Passkey #${key.id}" },
+                                        key.label.ifBlank { stringResource(R.string.profile_passkey_default, key.id) },
                                         style = MaterialTheme.typography.bodyMedium,
                                         modifier = Modifier.padding(start = Spacing.xs),
                                     )
                                 }
-                                IconButton(onClick = { vm.deletePasskey(key.id) }) {
-                                    Icon(Icons.Outlined.Delete, contentDescription = stringResource(R.string.common_cancel), tint = MaterialTheme.colorScheme.error)
+                                IconButton(onClick = { pendingDeletePasskey = key }) {
+                                    Icon(Icons.Outlined.Delete, contentDescription = stringResource(R.string.common_delete), tint = MaterialTheme.colorScheme.error)
                                 }
                             }
                         }
@@ -329,9 +359,13 @@ fun ProfileScreen(container: AppContainer, nav: NavHostController) {
 
                         var lockExpanded by remember { mutableStateOf(false) }
                         val lockOptions = listOf(0, 5, 15, 30, 60)
+                        val autoLockLabel: @Composable (Int) -> String = { mins ->
+                            if (mins == 0) stringResource(R.string.profile_auto_lock_off)
+                            else stringResource(R.string.profile_auto_lock_mins, mins)
+                        }
                         ExposedDropdownMenuBox(expanded = lockExpanded, onExpandedChange = { lockExpanded = it }) {
                             OutlinedTextField(
-                                value = if ((me?.autoLockMins ?: 0) == 0) "Off" else "${me?.autoLockMins} min",
+                                value = autoLockLabel(me?.autoLockMins ?: 0),
                                 onValueChange = {},
                                 readOnly = true,
                                 label = { Text(stringResource(R.string.profile_auto_lock)) },
@@ -341,7 +375,7 @@ fun ProfileScreen(container: AppContainer, nav: NavHostController) {
                             ExposedDropdownMenu(expanded = lockExpanded, onDismissRequest = { lockExpanded = false }) {
                                 lockOptions.forEach { mins ->
                                     DropdownMenuItem(
-                                        text = { Text(if (mins == 0) "Off" else "$mins min") },
+                                        text = { Text(autoLockLabel(mins)) },
                                         onClick = { vm.setAutoLock(mins); lockExpanded = false },
                                     )
                                 }
@@ -422,18 +456,20 @@ fun ProfileScreen(container: AppContainer, nav: NavHostController) {
                                 Text(stringResource(R.string.notif_pref_hide_lock), Modifier.weight(1f))
                                 Switch(checked = hideLockDetails, onCheckedChange = { hideLockDetails = it })
                             }
-                            Text(
-                                stringResource(R.string.notif_pref_driver_remind),
-                                style = MaterialTheme.typography.titleSmall,
-                                modifier = Modifier.padding(top = Spacing.xxs),
-                            )
-                            FlowRow(horizontalArrangement = Arrangement.spacedBy(Spacing.xs)) {
-                                listOf(30, 60, 90, 120).forEach { mins ->
-                                    FilterChip(
-                                        selected = driverRemindMins == mins,
-                                        onClick = { driverRemindMins = mins },
-                                        label = { Text(stringResource(R.string.notif_pref_driver_mins, mins)) },
-                                    )
+                            if (me.can("drive")) {
+                                Text(
+                                    stringResource(R.string.notif_pref_driver_remind),
+                                    style = MaterialTheme.typography.titleSmall,
+                                    modifier = Modifier.padding(top = Spacing.xxs),
+                                )
+                                FlowRow(horizontalArrangement = Arrangement.spacedBy(Spacing.xs)) {
+                                    listOf(30, 60, 90, 120).forEach { mins ->
+                                        FilterChip(
+                                            selected = driverRemindMins == mins,
+                                            onClick = { driverRemindMins = mins },
+                                            label = { Text(stringResource(R.string.notif_pref_driver_mins, mins)) },
+                                        )
+                                    }
                                 }
                             }
                             Text(
@@ -587,22 +623,49 @@ fun ProfileScreen(container: AppContainer, nav: NavHostController) {
             me = me,
             photoUrlFor = container::fileUrl,
             busy = state.busy,
-            onDismiss = { showAvatarEditor = false },
+            error = state.error,
+            onDismiss = {
+                vm.clearError()
+                showAvatarEditor = false
+            },
             onOpenFullStudio = { spec ->
+                vm.clearError()
                 showAvatarEditor = false
                 nav.navigate(Routes.studio(spec.shape, spec.color, spec.face))
             },
             onSavePhoto = { uri, color ->
                 if (uri != null) {
-                    vm.saveAvatarPhoto(context, uri, color)
+                    vm.saveAvatarPhoto(context, uri, color) { showAvatarEditor = false }
                 } else if (me.photoFileId != null) {
-                    vm.saveAvatarPhotoColor(me.photoFileId, color)
+                    vm.saveAvatarPhotoColor(me.photoFileId, color) { showAvatarEditor = false }
                 }
-                showAvatarEditor = false
             },
             onSaveStyle = { icon, color ->
-                vm.saveAvatarStyle(icon, color)
-                showAvatarEditor = false
+                vm.saveAvatarStyle(icon, color) { showAvatarEditor = false }
+            },
+        )
+    }
+
+    pendingDeletePasskey?.let { pk ->
+        val pkLabel = pk.label.ifBlank { stringResource(R.string.profile_passkey_default, pk.id) }
+        AlertDialog(
+            onDismissRequest = { pendingDeletePasskey = null },
+            title = { Text(stringResource(R.string.profile_passkey_delete_title)) },
+            text = { Text(stringResource(R.string.profile_passkey_delete_confirm, pkLabel)) },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        vm.deletePasskey(pk.id)
+                        pendingDeletePasskey = null
+                    },
+                ) {
+                    Text(stringResource(R.string.common_delete), color = MaterialTheme.colorScheme.error)
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { pendingDeletePasskey = null }) {
+                    Text(stringResource(R.string.common_cancel))
+                }
             },
         )
     }
@@ -614,6 +677,7 @@ private fun AvatarEditorDialog(
     me: Me,
     photoUrlFor: (Long) -> String,
     busy: Boolean,
+    error: String?,
     onDismiss: () -> Unit,
     onOpenFullStudio: (GrokBotSpec) -> Unit,
     onSavePhoto: (Uri?, String) -> Unit,
@@ -907,7 +971,9 @@ private fun AvatarEditorDialog(
                     }
                 }
 
-                if (mode != AvatarMode.PHOTO && mode != AvatarMode.STUDIO) {
+                val showFgColorPicker = mode == AvatarMode.INITIALS ||
+                    (mode == AvatarMode.ANIMATED && AvatarStyle.isShapeableAvatar(icon))
+                if (showFgColorPicker) {
                     Text(stringResource(R.string.profile_avatar_fg_color), style = MaterialTheme.typography.labelMedium)
                     FlowRow(
                         horizontalArrangement = Arrangement.spacedBy(Spacing.xs),
@@ -997,6 +1063,13 @@ private fun AvatarEditorDialog(
                         }
                     }
                 }
+                error?.let { err ->
+                    Text(
+                        err,
+                        color = MaterialTheme.colorScheme.error,
+                        style = MaterialTheme.typography.bodySmall,
+                    )
+                }
             }
         },
         confirmButton = {
@@ -1010,7 +1083,11 @@ private fun AvatarEditorDialog(
                     }
                 },
             ) {
-                Text(stringResource(R.string.profile_avatar_save))
+                if (busy) {
+                    CircularProgressIndicator(Modifier.size(16.dp), strokeWidth = 2.dp, color = MaterialTheme.colorScheme.onPrimary)
+                } else {
+                    Text(stringResource(R.string.profile_avatar_save))
+                }
             }
         },
         dismissButton = {

@@ -89,6 +89,11 @@ class PersistentCookieJar(
         }
     }
 
+    fun hasCookies(): Boolean = synchronized(lock) {
+        val now = System.currentTimeMillis()
+        cache.any { it.expiresAt > now }
+    }
+
     fun clear() {
         synchronized(lock) {
             cache.clear()

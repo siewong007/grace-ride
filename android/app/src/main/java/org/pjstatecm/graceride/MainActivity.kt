@@ -25,7 +25,7 @@ class MainActivity : ComponentActivity() {
     override fun attachBaseContext(newBase: Context) {
         // Per-app language (zh/en), independent of the device locale on API < 33.
         val lang = (newBase.applicationContext as GraceRideApp).container.lang
-        val locale = Locale(lang)
+        val locale = Locale.forLanguageTag(lang)
         Locale.setDefault(locale)
         val config = Configuration(newBase.resources.configuration)
         config.setLocale(locale)
@@ -35,6 +35,7 @@ class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         installSplashScreen()
         super.onCreate(savedInstanceState)
+        NotificationHelper.ensureChannels(this, container.lang)
         enableEdgeToEdge()
         intent?.getStringExtra(NotificationHelper.EXTRA_NOTIF_LINK)?.let {
             pendingDeepLink.value = it

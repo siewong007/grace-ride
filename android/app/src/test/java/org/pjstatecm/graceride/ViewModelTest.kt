@@ -88,13 +88,27 @@ class ViewModelTest {
         container.auth.refresh()
     }
 
+    private fun dispatchByPath(routes: Map<String, () -> MockResponse>) {
+        server.dispatcher = object : okhttp3.mockwebserver.Dispatcher() {
+            override fun dispatch(request: okhttp3.mockwebserver.RecordedRequest): MockResponse {
+                val rawPath = request.path ?: ""
+                val matched = routes.entries.firstOrNull { (prefix, _) -> rawPath.startsWith(prefix) }
+                return matched?.value?.invoke() ?: MockResponse().setBody("[]")
+            }
+        }
+    }
+
     @Test fun homeLoadsAllSections() = runBlocking {
         signIn()
-        server.enqueue(json("[${Fixtures.RIDE}]"))       // rides
-        server.enqueue(json("[${Fixtures.EVENT}]"))      // events
-        server.enqueue(json("[${Fixtures.SHARE}]"))      // shares
-        server.enqueue(json("[${Fixtures.ANN}]"))        // announcements
-        server.enqueue(json("[]"))                       // driver schedule
+        dispatchByPath(
+            mapOf(
+                "/api/rides" to { json("[${Fixtures.RIDE}]") },
+                "/api/events" to { json("[${Fixtures.EVENT}]") },
+                "/api/me/shares" to { json("[${Fixtures.SHARE}]") },
+                "/api/announcements" to { json("[${Fixtures.ANN}]") },
+                "/api/driver/schedule" to { json("[]") },
+            )
+        )
 
         val vm = HomeViewModel(container)
         val state = vm.state.awaitUntil { !it.loading }
@@ -108,11 +122,15 @@ class ViewModelTest {
 
     @Test fun homeSurvivesSectionFailure() = runBlocking {
         signIn()
-        server.enqueue(MockResponse().setResponseCode(500).setBody("""{"error":"boom"}""")) // rides
-        server.enqueue(json("[${Fixtures.EVENT}]"))
-        server.enqueue(json("[]"))
-        server.enqueue(json("[${Fixtures.ANN}]"))
-        server.enqueue(json("[]"))
+        dispatchByPath(
+            mapOf(
+                "/api/rides" to { MockResponse().setResponseCode(500).setBody("""{"error":"boom"}""") },
+                "/api/events" to { json("[${Fixtures.EVENT}]") },
+                "/api/me/shares" to { json("[]") },
+                "/api/announcements" to { json("[${Fixtures.ANN}]") },
+                "/api/driver/schedule" to { json("[]") },
+            )
+        )
 
         val vm = HomeViewModel(container)
         val state = vm.state.awaitUntil { !it.loading }
@@ -181,11 +199,11 @@ class ViewModelTest {
             "area":{"id":2,"name":"PJ Section 14"},"destination":"Church Hall","seats":1,
             "passenger":{"id":3,"name":"Passenger Later"},"viewer":{"is_passenger":false,"is_driver":true,"is_staff":false}}"""
 
-        server.enqueue(json("[]"))
-        server.enqueue(json("[]"))
-        server.enqueue(json("[]"))
-        server.enqueue(json("[]"))
-        server.enqueue(json("[$driveToday,$driveLater]"))
+        dispatchByPath(
+            mapOf(
+                "/api/driver/schedule" to { json("[$driveToday,$driveLater]") },
+            )
+        )
 
         val vm = HomeViewModel(container)
         val state = vm.state.awaitUntil { !it.loading }
@@ -209,11 +227,12 @@ class ViewModelTest {
             "area":{"id":2,"name":"PJ Section 14"},"destination":"Church Hall","seats":1,
             "passenger":{"id":2,"name":"Rider Two"},"viewer":{"is_passenger":false,"is_driver":true,"is_staff":false}}"""
 
-        server.enqueue(json("[$passengerRide]"))
-        server.enqueue(json("[]"))
-        server.enqueue(json("[]"))
-        server.enqueue(json("[]"))
-        server.enqueue(json("[$driverRide]"))
+        dispatchByPath(
+            mapOf(
+                "/api/rides" to { json("[$passengerRide]") },
+                "/api/driver/schedule" to { json("[$driverRide]") },
+            )
+        )
 
         val vm = HomeViewModel(container)
         val online = vm.state.awaitUntil { !it.loading }
@@ -391,7 +410,7 @@ class ViewModelTest {
         blockedVm.state.awaitUntil { !it.loading && it.event != null }
         repeat(4) { server.takeRequest() }
         blockedVm.submit()
-        assertNotNull(blockedVm.state.value.error)
+        assertNotNull(blockedVm.state.value.error ?: blockedVm.state.value.errorRes)
 
         // Proxy booking sends proxy fields and rejects blank riderName
         server.enqueue(json(areasJson))
@@ -404,7 +423,7 @@ class ViewModelTest {
         repeat(4) { server.takeRequest() }
 
         proxyVm.submit()
-        assertNotNull(proxyVm.state.value.error)
+        assertNotNull(proxyVm.state.value.error ?: proxyVm.state.value.errorRes)
 
         proxyVm.update {
             it.copy(

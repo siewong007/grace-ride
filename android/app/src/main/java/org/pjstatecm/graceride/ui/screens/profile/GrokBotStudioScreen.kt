@@ -184,13 +184,21 @@ fun GrokBotStudioScreen(
                             val resolver = context.contentResolver
                             val uri = resolver.insert(MediaStore.Images.Media.EXTERNAL_CONTENT_URI, values)
                                 ?: error("Insert failed")
-                            resolver.openOutputStream(uri)?.use { out ->
-                                bmp.compress(Bitmap.CompressFormat.PNG, 100, out)
+                            try {
+                                val out = resolver.openOutputStream(uri) ?: error("Open stream failed")
+                                out.use { stream ->
+                                    if (!bmp.compress(Bitmap.CompressFormat.PNG, 100, stream)) {
+                                        error("PNG compress failed")
+                                    }
+                                }
+                                values.clear()
+                                values.put(MediaStore.Images.Media.IS_PENDING, 0)
+                                resolver.update(uri, values, null, null)
+                                uri
+                            } catch (t: Throwable) {
+                                resolver.delete(uri, null, null)
+                                throw t
                             }
-                            values.clear()
-                            values.put(MediaStore.Images.Media.IS_PENDING, 0)
-                            resolver.update(uri, values, null, null)
-                            uri
                         } finally {
                             bmp.recycle()
                         }
@@ -245,7 +253,10 @@ fun GrokBotStudioScreen(
                 title = { Text(stringResource(R.string.studio_title)) },
                 navigationIcon = {
                     IconButton(onClick = { nav.popBackStack() }) {
-                        Icon(Icons.AutoMirrored.Outlined.ArrowBack, contentDescription = null)
+                        Icon(
+                            Icons.AutoMirrored.Outlined.ArrowBack,
+                            contentDescription = stringResource(R.string.a11y_back),
+                        )
                     }
                 },
             )

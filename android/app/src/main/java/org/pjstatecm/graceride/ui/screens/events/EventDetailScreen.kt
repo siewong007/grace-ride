@@ -39,6 +39,7 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -48,7 +49,11 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.unit.dp
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
+import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.navigation.NavHostController
@@ -86,6 +91,18 @@ fun EventDetailScreen(container: AppContainer, nav: NavHostController, id: Long)
     var confirmWithdraw by remember { mutableStateOf(false) }
     var confirmPublish by remember { mutableStateOf(false) }
     var confirmUnpublish by remember { mutableStateOf(false) }
+    val lifecycleOwner = LocalLifecycleOwner.current
+    var resumedOnce by remember { mutableStateOf(false) }
+
+    DisposableEffect(lifecycleOwner) {
+        val obs = LifecycleEventObserver { _, event ->
+            if (event == Lifecycle.Event.ON_RESUME) {
+                if (resumedOnce) vm.load() else resumedOnce = true
+            }
+        }
+        lifecycleOwner.lifecycle.addObserver(obs)
+        onDispose { lifecycleOwner.lifecycle.removeObserver(obs) }
+    }
 
     LaunchedEffect(state.message) {
         state.message?.let {
@@ -134,10 +151,15 @@ fun EventDetailScreen(container: AppContainer, nav: NavHostController, id: Long)
                     // A withdrawn signup stays in the payload with status "cancelled";
                     // treat it as no signup so the member can sign up again.
                     val signup = event.mySignup?.takeIf { it.status == "going" || it.status == "waitlist" }
-                    val open = event.status == "published"
+                    val nowKl = KlTime.nowStamp()
+                    val isPast = event.startsAt.take(16).replace('T', ' ') < nowKl
+                    val deadlinePassed = !event.signupDeadline.isNullOrBlank() &&
+                        event.signupDeadline.take(16).replace('T', ' ') < nowKl
+                    val open = event.status == "published" && !isPast
+                    val canSignUp = open && !deadlinePassed
                     val myRide = event.myRide
                     val isGoing = signup?.status == "going"
-                    val hasTransport = myRide != null || state.drivingForEvent.isNotEmpty()
+                    val hasTransport = myRide != null || event.myReturnRide != null || state.drivingForEvent.isNotEmpty()
                     val canCreateRide = container.auth.me?.can("rides", "create") == true
                     val timelineNodes = buildEventWorkflowNodes(
                         event = event,
@@ -211,10 +233,16 @@ fun EventDetailScreen(container: AppContainer, nav: NavHostController, id: Long)
                         }
                     }
 
-                    if (open && signup == null) {
+                    if (canSignUp && signup == null) {
                         Button(onClick = { showSignup = true }, enabled = !state.busy, modifier = Modifier.fillMaxWidth()) {
                             Text(stringResource(R.string.event_signup))
                         }
+                    } else if (open && deadlinePassed && signup == null) {
+                        Text(
+                            stringResource(R.string.event_signup_closed),
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
                     } else if (open && signup != null) {
                         OutlinedButton(onClick = { confirmWithdraw = true }, enabled = !state.busy, modifier = Modifier.fillMaxWidth()) {
                             Text(stringResource(R.string.event_withdraw), color = MaterialTheme.colorScheme.error)
@@ -309,6 +337,7 @@ fun EventDetailScreen(container: AppContainer, nav: NavHostController, id: Long)
 
     val event = state.event
     if (showSignup && event != null) {
+        val canOfferDrive = container.auth.me?.can("drive", "create") == true
         var needRide by remember { mutableStateOf(false) }
         var offerDrive by remember { mutableStateOf(false) }
         var groupId by remember { mutableStateOf(event.joinAs.firstOrNull()?.id) }
@@ -325,23 +354,33 @@ fun EventDetailScreen(container: AppContainer, nav: NavHostController, id: Long)
                             .fillMaxWidth()
                             .toggleable(
                                 value = needRide,
-                                onValueChange = { needRide = it },
+                                role = Role.Checkbox,
+                                onValueChange = { checked ->
+                                    needRide = checked
+                                    if (checked) offerDrive = false
+                                },
                             ),
                     ) {
                         Checkbox(checked = needRide, onCheckedChange = null)
                         Text(stringResource(R.string.event_need_ride), modifier = Modifier.padding(start = Spacing.xs))
                     }
-                    Row(
-                        verticalAlignment = Alignment.CenterVertically,
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .toggleable(
-                                value = offerDrive,
-                                onValueChange = { offerDrive = it },
-                            ),
-                    ) {
-                        Checkbox(checked = offerDrive, onCheckedChange = null)
-                        Text(stringResource(R.string.event_offer_drive), modifier = Modifier.padding(start = Spacing.xs))
+                    if (canOfferDrive) {
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .toggleable(
+                                    value = offerDrive,
+                                    role = Role.Checkbox,
+                                    onValueChange = { checked ->
+                                        offerDrive = checked
+                                        if (checked) needRide = false
+                                    },
+                                ),
+                        ) {
+                            Checkbox(checked = offerDrive, onCheckedChange = null)
+                            Text(stringResource(R.string.event_offer_drive), modifier = Modifier.padding(start = Spacing.xs))
+                        }
                     }
                     if (event.joinAs.size > 1) {
                         ExposedDropdownMenuBox(expanded = groupExpanded, onExpandedChange = { groupExpanded = it }) {
@@ -426,9 +465,9 @@ private fun buildEventWorkflowNodes(
     drivingForEvent: List<Ride>,
     onOpenRide: (Long) -> Unit,
 ): List<TimelineNode> {
-    val open = event.status == "published"
+    val open = event.status == "published" && event.startsAt.take(16).replace('T', ' ') >= KlTime.nowStamp()
     val going = signup?.status == "going"
-    val hasTransport = event.myRide != null || drivingForEvent.isNotEmpty()
+    val hasTransport = event.myRide != null || event.myReturnRide != null || drivingForEvent.isNotEmpty()
     val eventTime = KlTime.time(event.startsAt)
     val nodes = mutableListOf<TimelineNode>()
 

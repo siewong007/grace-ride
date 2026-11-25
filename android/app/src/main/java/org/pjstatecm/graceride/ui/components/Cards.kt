@@ -232,6 +232,7 @@ fun ShareCard(share: Share, onPay: () -> Unit, modifier: Modifier = Modifier) {
                 val (fg, bg, label) = when (share.status) {
                     "confirmed" -> Triple(c.success, c.successSoft, R.string.costs_status_confirmed)
                     "pending" -> Triple(c.info, c.infoSoft, R.string.costs_status_submitted)
+                    "needs_info" -> Triple(c.warning, c.warningSoft, R.string.share_needs_info)
                     else -> Triple(c.warning, c.warningSoft, R.string.costs_status_pending)
                 }
                 Surface(color = bg, contentColor = fg, shape = CircleShape) {
@@ -256,9 +257,21 @@ fun ShareCard(share: Share, onPay: () -> Unit, modifier: Modifier = Modifier) {
                     modifier = Modifier.padding(top = Spacing.xxs),
                 )
             }
-            if (share.status == "unpaid") {
+            share.note.takeIf { it.isNotBlank() }?.let { noteText ->
+                Text(
+                    noteText,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = c.warning,
+                    modifier = Modifier.padding(top = Spacing.xxs),
+                )
+            }
+            if (share.status == "unpaid" || share.status == "needs_info") {
                 TextButton(onClick = onPay, modifier = Modifier.padding(top = Spacing.xxs)) {
-                    Text(stringResource(R.string.costs_pay))
+                    Text(
+                        stringResource(
+                            if (share.status == "needs_info") R.string.costs_resubmit else R.string.costs_pay,
+                        ),
+                    )
                 }
             }
         }

@@ -247,11 +247,11 @@ export default function EventsReportPanel({
         <EmptyState title={t('reports.none')} />
       ) : (
         <>
-          <div className="grid cols-4">
+          <div className={ev.totals.plan_visitors_count != null ? 'report-stats cols-3' : 'report-stats'}>
             <Stat
               label={t('reports.eventsCount')}
               value={
-                <span className="row gap-xs items-baseline flex-wrap">
+                <span className="report-stat-val">
                   <span>{ev.totals.events_count}</span>
                   <DeltaPill delta={cmp?.events_count_delta} prevPeriod={cmp?.prev_period} />
                 </span>
@@ -260,7 +260,7 @@ export default function EventsReportPanel({
             <Stat
               label={t('reports.totalGoing')}
               value={
-                <span className="row gap-xs items-baseline flex-wrap">
+                <span className="report-stat-val">
                   <span>{ev.totals.total_going}</span>
                   <DeltaPill delta={cmp?.total_going_delta} prevPeriod={cmp?.prev_period} />
                 </span>
@@ -269,7 +269,7 @@ export default function EventsReportPanel({
             <Stat
               label={t('reports.totalAttended')}
               value={
-                <span className="row gap-xs items-baseline flex-wrap">
+                <span className="report-stat-val">
                   <span>{ev.totals.total_attended}</span>
                   <DeltaPill delta={cmp?.total_attended_delta} prevPeriod={cmp?.prev_period} />
                 </span>
@@ -278,7 +278,7 @@ export default function EventsReportPanel({
             <Stat
               label={t('reports.attendanceRate')}
               value={
-                <span className="row gap-xs items-baseline flex-wrap">
+                <span className="report-stat-val">
                   <span>{ev.totals.attendance_rate_pct}%</span>
                   <DeltaPill
                     delta={cmp?.attendance_rate_delta}
@@ -307,17 +307,17 @@ export default function EventsReportPanel({
               </p>
             )}
 
-          <div className="grid cols-2">
+          <div className="report-cols-2">
             <Card className="stack-sm">
-              <h3>{t('reports.byGroupHeading')}</h3>
+              <h2>{t('reports.byGroupHeading')}</h2>
               {ev.by_group.length === 0 ? (
                 <p className="muted small">{t('reports.none')}</p>
               ) : (
                 <div className="stack-sm">
                   {ev.by_group.map((g, idx) => (
                     <div key={g.group_id ?? `none-${idx}`} className="report-bar-row">
-                      <div className="row between nowrap gap-sm">
-                        <span className="bold ellipsis">
+                      <div className="report-bar-head">
+                        <span className="bold">
                           {g.group_name ?? t('reports.unassignedGroup')}
                         </span>
                         <span className="small muted nowrap">
@@ -341,13 +341,13 @@ export default function EventsReportPanel({
             </Card>
 
             <Card className="stack-sm">
-              <h3>{t('reports.byKind')}</h3>
+              <h2>{t('reports.byKind')}</h2>
               {ev.by_kind.length === 0 ? (
                 <p className="muted small">{t('reports.none')}</p>
               ) : (
                 <div className="list">
                   {ev.by_kind.map((k) => (
-                    <div key={k.kind} className="item row between nowrap gap-sm">
+                    <div key={k.kind} className="item report-kv-item">
                       <span className="bold">{ft(EVENT_KIND[k.kind]?.label ?? k.kind)}</span>
                       <span className="small muted nowrap">
                         {k.events_count} · {k.attended}/{k.going} ({k.attendance_rate_pct}%)
@@ -360,7 +360,7 @@ export default function EventsReportPanel({
           </div>
 
           <Card className="stack-sm">
-            <h3>{t('reports.eventsListHeading')}</h3>
+            <h2>{t('reports.eventsListHeading')}</h2>
             {ev.events_truncated && (
               <Notice tone="info">
                 {t('reports.listTruncatedNotice', {

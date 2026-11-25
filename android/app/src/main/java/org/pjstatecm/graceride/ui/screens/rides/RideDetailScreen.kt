@@ -24,12 +24,14 @@ import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedCard
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
+import androidx.compose.material3.SnackbarDuration
 import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -40,13 +42,20 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
+import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.navigation.NavHostController
 import org.pjstatecm.graceride.R
 import org.pjstatecm.graceride.di.AppContainer
+import org.pjstatecm.graceride.domain.Assistance
 import org.pjstatecm.graceride.domain.KlTime
+import org.pjstatecm.graceride.domain.ProxyRelationships
+import org.pjstatecm.graceride.domain.Readiness
 import org.pjstatecm.graceride.domain.RideStatus
+import org.pjstatecm.graceride.ui.Routes
 import org.pjstatecm.graceride.ui.components.ErrorView
 import org.pjstatecm.graceride.ui.components.LoadingView
 import org.pjstatecm.graceride.ui.components.MemberAvatar
@@ -57,7 +66,12 @@ import org.pjstatecm.graceride.ui.theme.Spacing
 
 @OptIn(ExperimentalMaterial3Api::class, androidx.compose.foundation.layout.ExperimentalLayoutApi::class)
 @Composable
-fun RideDetailScreen(container: AppContainer, nav: NavHostController, id: Long) {
+fun RideDetailScreen(
+    container: AppContainer,
+    nav: NavHostController,
+    id: Long,
+    justBooked: Boolean = false,
+) {
     val vm: RideDetailViewModel = viewModel(factory = RideDetailViewModel.factory(container, id))
     val state by vm.state.collectAsStateWithLifecycle()
     val context = LocalContext.current
@@ -66,6 +80,31 @@ fun RideDetailScreen(container: AppContainer, nav: NavHostController, id: Long) 
     var confirmWithdraw by remember { mutableStateOf(false) }
     var withdrawReason by remember { mutableStateOf("") }
     val staleMsg = stringResource(R.string.error_ride_changed)
+    val bookedMsg = stringResource(R.string.ride_new_success)
+    val lifecycleOwner = LocalLifecycleOwner.current
+    var resumedOnce by remember { mutableStateOf(false) }
+
+    DisposableEffect(lifecycleOwner) {
+        val obs = LifecycleEventObserver { _, event ->
+            if (event == Lifecycle.Event.ON_RESUME) {
+                if (resumedOnce) vm.load() else resumedOnce = true
+            }
+        }
+        lifecycleOwner.lifecycle.addObserver(obs)
+        onDispose { lifecycleOwner.lifecycle.removeObserver(obs) }
+    }
+
+    LaunchedEffect(justBooked) {
+        if (justBooked) {
+            snackbar.showSnackbar(bookedMsg, duration = SnackbarDuration.Long)
+        }
+    }
+
+    LaunchedEffect(Unit) {
+        container.realtimeStream.refreshEvents.collect { kind ->
+            if (kind != "resume") vm.load()
+        }
+    }
 
     LaunchedEffect(state.message, state.staleReload) {
         if (state.staleReload) {
@@ -117,6 +156,20 @@ fun RideDetailScreen(container: AppContainer, nav: NavHostController, id: Long) 
                     if (ride.leg == "return") {
                         Text(stringResource(R.string.ride_leg_return), style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.primary)
                     }
+                    if (ride.delayMinutes > 0) {
+                        Text(
+                            stringResource(R.string.ride_driver_delay, ride.delayMinutes),
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = LocalStatusColors.current.warning,
+                        )
+                    }
+                    ride.arrivedAtGateAt?.takeIf { it.isNotBlank() }?.let { arrived ->
+                        Text(
+                            stringResource(R.string.ride_arrived_gate, KlTime.time(arrived)),
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = LocalStatusColors.current.info,
+                        )
+                    }
                     if (ride.needsAttention) {
                         Text(
                             stringResource(R.string.ride_attention) + (if (ride.attentionReason.isNotBlank()) ": " + ride.attentionReason else ""),
@@ -130,13 +183,27 @@ fun RideDetailScreen(container: AppContainer, nav: NavHostController, id: Long) 
                             InfoRow(stringResource(R.string.ride_pickup), ride.area.name + (ride.pickupAddress?.let { " — $it" } ?: ""))
                             InfoRow(stringResource(R.string.ride_destination), ride.destination)
                             InfoRow(stringResource(R.string.ride_seats), ride.seats.toString())
-                            if (ride.assistance.isNotBlank()) InfoRow(stringResource(R.string.ride_assistance), ride.assistance)
+                            if (ride.assistance.isNotBlank()) {
+                                InfoRow(
+                                    stringResource(R.string.ride_assistance),
+                                    Assistance.labelRes(ride.assistance)?.let { stringResource(it) } ?: ride.assistance,
+                                )
+                            }
                             if (ride.notes.isNotBlank()) InfoRow(stringResource(R.string.ride_notes), ride.notes)
                             ride.event?.title?.let { InfoRow(stringResource(R.string.ride_event), it) }
+                            if (ride.readinessStatus in Readiness.values) {
+                                InfoRow(
+                                    stringResource(R.string.ride_readiness_status),
+                                    stringResource(Readiness.labelRes(ride.readinessStatus)),
+                                )
+                            }
                             if (ride.isProxy && ride.proxy != null) {
+                                val relLabel = ride.proxy.riderRelationship.takeIf { it.isNotBlank() }?.let { rel ->
+                                    ProxyRelationships.labelRes(rel)?.let { res -> stringResource(res) } ?: rel
+                                }
                                 val proxySummary = listOfNotNull(
                                     ride.proxy.riderName.takeIf { it.isNotBlank() },
-                                    ride.proxy.riderRelationship.takeIf { it.isNotBlank() },
+                                    relLabel,
                                 ).joinToString(" · ")
                                 if (proxySummary.isNotBlank()) {
                                     InfoRow(stringResource(R.string.ride_new_rider_name), proxySummary)
@@ -147,7 +214,7 @@ fun RideDetailScreen(container: AppContainer, nav: NavHostController, id: Long) 
                                 if (!ride.viewer.isPassenger && ride.proxy.bookerName.isNotBlank()) {
                                     InfoRow(
                                         stringResource(R.string.ride_proxy_booker, ride.proxy.bookerName),
-                                        ride.proxy.bookerPhone ?: "",
+                                        ride.proxy.bookerPhone?.takeIf { it.isNotBlank() } ?: "—",
                                     )
                                 }
                             }
@@ -163,17 +230,33 @@ fun RideDetailScreen(container: AppContainer, nav: NavHostController, id: Long) 
                                         avatarIcon = d.avatarIcon,
                                         size = 40.dp,
                                     )
-                                    InfoRow(stringResource(R.string.ride_driver), d.name ?: "—")
+                                    InfoRow(stringResource(R.string.ride_driver), d.name?.takeIf { it.isNotBlank() } ?: "—")
                                 }
                                 d.vehicle?.let { v ->
-                                    InfoRow(stringResource(R.string.ride_vehicle), listOfNotNull(v.model, v.color, v.plate).joinToString(" · "))
+                                    val vSummary = listOfNotNull(
+                                        v.model.takeIf { it.isNotBlank() },
+                                        v.color?.takeIf { it.isNotBlank() },
+                                        v.plate?.takeIf { it.isNotBlank() },
+                                    ).joinToString(" · ")
+                                    if (vSummary.isNotBlank()) {
+                                        InfoRow(stringResource(R.string.ride_vehicle), vSummary)
+                                    }
                                 }
-                                d.phone?.let { InfoRow(stringResource(R.string.profile_phone), it) }
+                                d.phone?.takeIf { it.isNotBlank() }?.let { InfoRow(stringResource(R.string.profile_phone), it) }
                             }
                             if (!ride.viewer.isPassenger) {
                                 InfoRow(stringResource(R.string.ride_passenger), ride.passenger.name)
-                                ride.passenger.phone?.let { InfoRow(stringResource(R.string.profile_phone), it) }
+                                ride.passenger.phone?.takeIf { it.isNotBlank() }?.let { InfoRow(stringResource(R.string.profile_phone), it) }
                             }
+                        }
+                    }
+
+                    ride.pairedRideId?.let { pairedId ->
+                        OutlinedButton(
+                            onClick = { nav.navigate(Routes.rideDetail(pairedId)) },
+                            modifier = Modifier.fillMaxWidth(),
+                        ) {
+                            Text(stringResource(R.string.ride_view_paired))
                         }
                     }
 
@@ -305,10 +388,10 @@ fun RideDetailScreen(container: AppContainer, nav: NavHostController, id: Long) 
                             Text(stringResource(R.string.ride_open_web_live))
                         }
                     }
+                    }
                 }
             }
         }
-    }
     }
 
     if (confirmCancel) {

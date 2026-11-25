@@ -14,6 +14,7 @@ import androidx.compose.animation.slideInVertically
 import androidx.compose.animation.slideOutHorizontally
 import androidx.compose.animation.slideOutVertically
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.consumeWindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material.icons.Icons
@@ -34,7 +35,6 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
-import androidx.navigation.NavGraph.Companion.findStartDestination
 import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
 import androidx.navigation.compose.currentBackStackEntryAsState
@@ -164,12 +164,14 @@ fun GraceRideAppRoot(
                 }
             }
 
-            val start = when (authState) {
-                is AuthState.SignedIn ->
-                    if ((authState as AuthState.SignedIn).me.termsAccepted) Routes.HOME else Routes.TERMS
-                is AuthState.Locked -> Routes.UNLOCK
-                is AuthState.Pending -> Routes.PENDING
-                else -> Routes.LOGIN
+            val start = androidx.compose.runtime.remember {
+                when (authState) {
+                    is AuthState.SignedIn ->
+                        if ((authState as AuthState.SignedIn).me.termsAccepted) Routes.HOME else Routes.TERMS
+                    is AuthState.Locked -> Routes.UNLOCK
+                    is AuthState.Pending -> Routes.PENDING
+                    else -> Routes.LOGIN
+                }
             }
 
             Scaffold(
@@ -205,7 +207,7 @@ fun GraceRideAppRoot(
                 NavHost(
                     navController = navController,
                     startDestination = start,
-                    modifier = Modifier.padding(padding),
+                    modifier = Modifier.padding(padding).consumeWindowInsets(padding),
                     enterTransition = {
                         if (initialState.destination.route in Routes.tabs && targetState.destination.route in Routes.tabs) {
                             fadeIn(tween(180))
@@ -241,8 +243,18 @@ fun GraceRideAppRoot(
                     composable(Routes.TERMS) { TermsScreen(container) }
                     composable(Routes.HOME) { HomeScreen(container, navController) }
                     composable(Routes.RIDES) { RidesScreen(container, navController) }
-                    composable(Routes.RIDE_DETAIL) { entry ->
-                        RideDetailScreen(container, navController, entry.arguments?.getString("id")?.toLongOrNull() ?: 0L)
+                    composable(
+                        route = Routes.RIDE_DETAIL,
+                        arguments = listOf(
+                            androidx.navigation.navArgument("new") { nullable = true; defaultValue = null },
+                        ),
+                    ) { entry ->
+                        RideDetailScreen(
+                            container = container,
+                            nav = navController,
+                            id = entry.arguments?.getString("id")?.toLongOrNull() ?: 0L,
+                            justBooked = entry.arguments?.getString("new") == "1",
+                        )
                     }
                     composable(
                         route = Routes.RIDE_NEW,
@@ -288,13 +300,5 @@ fun GraceRideAppRoot(
                 }
             }
         }
-    }
-}
-
-private fun androidx.navigation.NavHostController.navigateTab(route: String) {
-    navigate(route) {
-        popUpTo(graph.findStartDestination().id) { saveState = true }
-        launchSingleTop = true
-        restoreState = true
     }
 }

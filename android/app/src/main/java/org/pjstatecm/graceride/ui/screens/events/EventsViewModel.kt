@@ -4,6 +4,7 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewmodel.initializer
 import androidx.lifecycle.viewmodel.viewModelFactory
 import androidx.lifecycle.viewModelScope
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -37,12 +38,21 @@ data class EventsUiState(
 class EventsViewModel(private val container: AppContainer) : ViewModel() {
     private val _state = MutableStateFlow(EventsUiState())
     val state: StateFlow<EventsUiState> = _state.asStateFlow()
+    private var loadJob: Job? = null
 
     init { load(first = true) }
 
     fun setTab(tab: Int) {
         if (tab == _state.value.tab) return
-        _state.value = _state.value.copy(tab = tab, selectedDay = "all", loading = true)
+        _state.value = _state.value.copy(
+            tab = tab,
+            selectedDay = "all",
+            events = emptyList(),
+            myRides = emptyList(),
+            myDrives = emptyList(),
+            error = null,
+            loading = true,
+        )
         load(first = true)
     }
 
@@ -101,8 +111,9 @@ class EventsViewModel(private val container: AppContainer) : ViewModel() {
     fun refresh() = load(first = false)
 
     private fun load(first: Boolean) {
+        loadJob?.cancel()
         _state.value = _state.value.copy(loading = first, refreshing = !first)
-        viewModelScope.launch {
+        loadJob = viewModelScope.launch {
             reloadData(first)
         }
     }

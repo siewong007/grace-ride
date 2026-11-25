@@ -4,6 +4,7 @@ import android.content.Context
 import android.net.Uri
 import androidx.credentials.CreatePublicKeyCredentialRequest
 import androidx.credentials.CredentialManager
+import androidx.credentials.exceptions.CreateCredentialCancellationException
 import androidx.credentials.exceptions.CreateCredentialException
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
@@ -61,6 +62,7 @@ class ProfileViewModel(private val container: AppContainer) : ViewModel() {
         viewModelScope.launch {
             try {
                 val prefs = container.community.notificationPrefs()
+                container.secureStore.putString("notif_hide_lock_details", if (prefs.hideLockDetails) "1" else "0")
                 _state.value = _state.value.copy(notifPrefs = prefs)
             } catch (_: ApiException) { }
         }
@@ -68,6 +70,10 @@ class ProfileViewModel(private val container: AppContainer) : ViewModel() {
 
     fun clearMessage() {
         _state.value = _state.value.copy(message = null)
+    }
+
+    fun clearError() {
+        _state.value = _state.value.copy(error = null)
     }
 
     fun clearTelegramStatus() {
@@ -110,6 +116,7 @@ class ProfileViewModel(private val container: AppContainer) : ViewModel() {
             try {
                 container.community.updateNotificationPrefs(req)
                 val prefs = container.community.notificationPrefs()
+                container.secureStore.putString("notif_hide_lock_details", if (prefs.hideLockDetails) "1" else "0")
                 container.auth.refresh()
                 _state.value = _state.value.copy(
                     busy = false,
@@ -151,7 +158,7 @@ class ProfileViewModel(private val container: AppContainer) : ViewModel() {
         }
     }
 
-    fun saveAvatarStyle(avatarIcon: String, avatarColor: String) {
+    fun saveAvatarStyle(avatarIcon: String, avatarColor: String, onDone: () -> Unit = {}) {
         if (_state.value.busy) return
         _state.value = _state.value.copy(busy = true, error = null, message = null)
         viewModelScope.launch {
@@ -169,13 +176,14 @@ class ProfileViewModel(private val container: AppContainer) : ViewModel() {
                     me = container.auth.me,
                     message = "saved",
                 )
+                onDone()
             } catch (e: ApiException) {
                 _state.value = _state.value.copy(busy = false, error = e.message)
             }
         }
     }
 
-    fun saveAvatarPhotoColor(photoFileId: Long, avatarColor: String) {
+    fun saveAvatarPhotoColor(photoFileId: Long, avatarColor: String, onDone: () -> Unit = {}) {
         if (_state.value.busy) return
         _state.value = _state.value.copy(busy = true, error = null, message = null)
         viewModelScope.launch {
@@ -192,13 +200,14 @@ class ProfileViewModel(private val container: AppContainer) : ViewModel() {
                     me = container.auth.me,
                     message = "saved",
                 )
+                onDone()
             } catch (e: ApiException) {
                 _state.value = _state.value.copy(busy = false, error = e.message)
             }
         }
     }
 
-    fun saveAvatarPhoto(context: Context, uri: Uri, avatarColor: String) {
+    fun saveAvatarPhoto(context: Context, uri: Uri, avatarColor: String, onDone: () -> Unit = {}) {
         if (_state.value.busy) return
         _state.value = _state.value.copy(busy = true, error = null, message = null)
         viewModelScope.launch {
@@ -231,6 +240,7 @@ class ProfileViewModel(private val container: AppContainer) : ViewModel() {
                     me = container.auth.me,
                     message = "saved",
                 )
+                onDone()
             } catch (e: ApiException) {
                 _state.value = _state.value.copy(busy = false, error = e.message)
             } catch (e: Exception) {
@@ -282,6 +292,8 @@ class ProfileViewModel(private val container: AppContainer) : ViewModel() {
                     ?: throw IllegalStateException("Unexpected credential type")
                 container.auth.passkeyRegisterFinish(start.challenge_id, credential.registrationResponseJson)
                 loadPasskeys()
+            } catch (_: CreateCredentialCancellationException) {
+                // User dismissed the passkey creation prompt cleanly.
             } catch (e: CreateCredentialException) {
                 _state.value = _state.value.copy(error = e.message)
             } catch (e: ApiException) {

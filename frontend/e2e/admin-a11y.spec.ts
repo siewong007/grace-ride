@@ -6,10 +6,12 @@ import AxeBuilder from '@axe-core/playwright';
 import { mockAdminApi } from './adminMocks';
 
 const SCREENS = [
-  '/admin/menu', '/admin', '/admin/rides', '/admin/rides/101', '/admin/live',
+  '/report', '/admin/menu', '/admin', '/admin/rides', '/admin/rides/101', '/admin/live',
   '/admin/members', '/admin/members?tab=invites', '/admin/members?tab=recovery',
   '/admin/roles', '/admin/reimbursements', '/admin/reimbursements?tab=payout',
-  '/admin/reports', '/admin/announcements', '/admin/settings', '/admin/audit', '/admin/events/1/plan',
+  '/admin/reports', '/admin/reports?tab=overview&range=yearly', '/admin/reports?tab=events',
+  '/admin/reports?tab=demand', '/admin/reports?tab=finance&range=yearly',
+  '/admin/announcements', '/admin/settings', '/admin/audit', '/admin/events/1/plan',
 ];
 
 const { defaultBrowserType: _ignored, ...phone } = devices['iPhone 13'];
@@ -81,4 +83,26 @@ test.describe('landscape phone sticky bars (640-767px)', () => {
     const stickyBar = page.locator('.ride-detail-sticky-bar');
     await expect(stickyBar).toBeVisible();
   });
+});
+
+test.describe('reports dark mode & heading hierarchy', () => {
+  test.use({ viewport: { width: 1440, height: 900 } });
+  test.beforeEach(async ({ context }) => mockAdminApi(context));
+
+  for (const path of ['/report', '/admin/reports?tab=finance&range=yearly']) {
+    test(`${path} passes axe contrast, scrollable region, and heading-order checks in dark mode`, async ({ page }) => {
+      await page.addInitScript(() => {
+        document.documentElement.dataset.theme = 'dark';
+      });
+      await open(page, path);
+      await page.evaluate(() => {
+        document.documentElement.dataset.theme = 'dark';
+      });
+      const axe = await new AxeBuilder({ page }).analyze();
+      const bad = axe.violations.filter(
+        (v) => v.impact === 'serious' || v.impact === 'critical' || v.id === 'heading-order',
+      );
+      expect(bad.map((v) => `${v.id}: ${v.nodes[0]?.target.join(' ')}`)).toEqual([]);
+    });
+  }
 });

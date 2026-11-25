@@ -147,6 +147,8 @@ class SavedAddressesViewModel(private val container: AppContainer) : ViewModel()
                         address = place.address,
                         gate_notes = place.gateNotes,
                         is_default = true,
+                        lat = place.lat,
+                        lng = place.lng,
                     ),
                 )
                 val places = container.rides.savedPlaces()

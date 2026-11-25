@@ -24,6 +24,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.semantics.Role
 import kotlinx.coroutines.launch
 import org.pjstatecm.graceride.R
 import org.pjstatecm.graceride.data.api.ApiException
@@ -82,7 +83,7 @@ fun TermsScreen(container: AppContainer) {
         }
         item {
             Row(
-                Modifier.fillMaxWidth().toggleable(value = checked, onValueChange = { checked = it }),
+                Modifier.fillMaxWidth().toggleable(value = checked, role = Role.Checkbox, onValueChange = { checked = it }),
                 verticalAlignment = Alignment.CenterVertically,
             ) {
                 Checkbox(checked = checked, onCheckedChange = null)

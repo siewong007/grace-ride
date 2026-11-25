@@ -4,6 +4,7 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewmodel.initializer
 import androidx.lifecycle.viewmodel.viewModelFactory
 import androidx.lifecycle.viewModelScope
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -29,11 +30,13 @@ data class EventDetailUiState(
 class EventDetailViewModel(private val container: AppContainer, private val id: Long) : ViewModel() {
     private val _state = MutableStateFlow(EventDetailUiState())
     val state: StateFlow<EventDetailUiState> = _state.asStateFlow()
+    private var loadJob: Job? = null
 
     init { load() }
 
     fun load() {
-        viewModelScope.launch {
+        loadJob?.cancel()
+        loadJob = viewModelScope.launch {
             reloadDetail()
         }
     }
@@ -56,6 +59,21 @@ class EventDetailViewModel(private val container: AppContainer, private val id: 
                     }
                     outbound = event.myRide?.id?.let { rid -> upcoming.find { it.id == rid } }
                     returnRide = event.myReturnRide?.id?.let { rid -> upcoming.find { it.id == rid } }
+                    if ((event.myRide != null && outbound == null) ||
+                        (event.myReturnRide != null && returnRide == null)
+                    ) {
+                        val past = try {
+                            container.rides.past()
+                        } catch (_: ApiException) {
+                            emptyList()
+                        }
+                        if (outbound == null) {
+                            outbound = event.myRide?.id?.let { rid -> past.find { it.id == rid } }
+                        }
+                        if (returnRide == null) {
+                            returnRide = event.myReturnRide?.id?.let { rid -> past.find { it.id == rid } }
+                        }
+                    }
                 }
                 if (container.auth.me?.can("drive") == true) {
                     val day = KlTime.date(event.startsAt)

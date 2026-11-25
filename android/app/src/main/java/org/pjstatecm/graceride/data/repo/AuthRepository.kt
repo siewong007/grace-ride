@@ -12,9 +12,13 @@ import org.pjstatecm.graceride.data.api.Me
 import org.pjstatecm.graceride.data.api.OkResponse
 import org.pjstatecm.graceride.data.api.PasskeyFinishReq
 import org.pjstatecm.graceride.data.api.PasskeyStart
+import org.pjstatecm.graceride.data.api.PasskeyStartReq
 import org.pjstatecm.graceride.data.api.UnlockReq
 import org.pjstatecm.graceride.data.api.apiCall
+import org.pjstatecm.graceride.data.api.apiJson
+import org.pjstatecm.graceride.data.session.OfflineSnapshotStore
 import org.pjstatecm.graceride.data.session.PersistentCookieJar
+import org.pjstatecm.graceride.data.session.SecureStore
 
 sealed interface AuthState {
     data object Loading : AuthState
@@ -28,8 +32,10 @@ class AuthRepository(
     private val api: ApiService,
     private val bus: AuthEventBus,
     private val cookies: PersistentCookieJar,
+    private val _state: MutableStateFlow<AuthState> = MutableStateFlow(AuthState.Loading),
+    private val store: SecureStore? = null,
+    private val onCleared: (() -> Unit)? = null,
 ) {
-    private val _state = MutableStateFlow<AuthState>(AuthState.Loading)
     val state: StateFlow<AuthState> = _state.asStateFlow()
 
     val me: Me?
@@ -40,28 +46,50 @@ class AuthRepository(
             else -> null
         }
 
+    private fun stateFor(m: Me): AuthState = when {
+        m.locked -> AuthState.Locked(m)
+        m.status == "pending" -> AuthState.Pending(m)
+        else -> AuthState.SignedIn(m)
+    }
+
+    private fun cacheMe(m: Me) {
+        store?.putString(CACHED_ME_KEY, apiJson.encodeToString(Me.serializer(), m))
+    }
+
+    private fun loadCachedMe(): Me? {
+        val raw = store?.getString(CACHED_ME_KEY) ?: return null
+        return runCatching { apiJson.decodeFromString(Me.serializer(), raw) }.getOrNull()
+    }
+
+    private fun clearLocalSession() {
+        cookies.clear()
+        store?.remove(CACHED_ME_KEY)
+        store?.remove(HIDE_LOCK_DETAILS_KEY)
+        store?.let { OfflineSnapshotStore.clear(it) }
+        onCleared?.invoke()
+    }
+
     suspend fun refresh() {
         try {
             val m = apiCall(bus) { api.me() }
-            _state.value = when {
-                m.locked -> AuthState.Locked(m)
-                m.status == "pending" -> AuthState.Pending(m)
-                else -> AuthState.SignedIn(m)
-            }
+            cacheMe(m)
+            _state.value = stateFor(m)
         } catch (e: ApiException) {
             if (e.status == 401 || e.status == 403) {
+                clearLocalSession()
                 _state.value = AuthState.SignedOut
             }
-            // Network failure while loading: stay signed out; the login screen
-            // surfaces the error when the member tries to sign in.
+            // Offline cold-start with valid session cookies: restore last verified profile
+            // so the member can still view cached today's rides until connectivity returns.
             else if (_state.value is AuthState.Loading) {
-                _state.value = AuthState.SignedOut
+                val cached = if (e.status == 0 && cookies.hasCookies()) loadCachedMe() else null
+                _state.value = if (cached != null) stateFor(cached) else AuthState.SignedOut
             }
         }
     }
 
     fun onUnauthorized() {
-        cookies.clear()
+        clearLocalSession()
         _state.value = AuthState.SignedOut
     }
 
@@ -97,7 +125,8 @@ class AuthRepository(
         refresh()
     }
 
-    suspend fun passkeyLoginStart(): PasskeyStart = apiCall(bus) { api.passkeyLoginStart() }
+    suspend fun passkeyLoginStart(email: String): PasskeyStart =
+        apiCall(bus) { api.passkeyLoginStart(PasskeyStartReq(email.trim())) }
 
     suspend fun passkeyLoginFinish(challengeId: String, credentialJson: String) {
         apiCall(bus) {
@@ -141,7 +170,7 @@ class AuthRepository(
         } catch (_: ApiException) {
             // Even if the server call fails, drop the local credential.
         }
-        cookies.clear()
+        clearLocalSession()
         _state.value = AuthState.SignedOut
     }
 
@@ -150,12 +179,17 @@ class AuthRepository(
             apiCall(bus) { api.logoutAll() }
         } catch (_: ApiException) {
         }
-        cookies.clear()
+        clearLocalSession()
         _state.value = AuthState.SignedOut
     }
 
     suspend fun acceptTerms() {
         apiCall(bus) { api.acceptTerms(org.pjstatecm.graceride.data.api.TermsReq(accepted = true)) }
         refresh()
+    }
+
+    companion object {
+        private const val CACHED_ME_KEY = "cached_me_v1"
+        private const val HIDE_LOCK_DETAILS_KEY = "notif_hide_lock_details"
     }
 }

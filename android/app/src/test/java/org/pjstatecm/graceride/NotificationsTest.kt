@@ -12,9 +12,11 @@ import okhttp3.mockwebserver.MockWebServer
 import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Test
+import java.util.concurrent.TimeUnit
 import org.pjstatecm.graceride.data.api.NotificationPageDto
 import org.pjstatecm.graceride.data.api.NotificationPrefsDto
 import org.pjstatecm.graceride.data.api.apiJson
@@ -151,34 +153,52 @@ class NotificationsTest {
                 cancelAndIgnoreRemainingEvents()
             }
         }
-        server.takeRequest()
+        val reqInit = server.takeRequest(5, TimeUnit.SECONDS)
+        assertNotNull(reqInit)
 
         server.enqueue(json(filtered))
         vm.setCategory("ride")
-        val reqFilter = server.takeRequest()
-        assertTrue(reqFilter.path!!.contains("category=ride"))
+        val reqFilter = server.takeRequest(5, TimeUnit.SECONDS)
+        assertNotNull(reqFilter)
+        assertTrue(reqFilter!!.path!!.contains("category=ride"))
+        kotlinx.coroutines.withTimeout(5.seconds) {
+            vm.state.test {
+                var st = awaitItem()
+                while (st.loading || st.nextBefore != 15L) st = awaitItem()
+                cancelAndIgnoreRemainingEvents()
+            }
+        }
 
         server.enqueue(json(page2))
         vm.loadMore()
-        val reqMore = server.takeRequest()
-        assertTrue(reqMore.path!!.contains("before=15"))
+        val reqMore = server.takeRequest(5, TimeUnit.SECONDS)
+        assertNotNull(reqMore)
+        assertTrue(reqMore!!.path!!.contains("before=15"))
+        kotlinx.coroutines.withTimeout(5.seconds) {
+            vm.state.test {
+                var st = awaitItem()
+                while (st.loadingMore || st.items.size < 2) st = awaitItem()
+                cancelAndIgnoreRemainingEvents()
+            }
+        }
         assertEquals(2, vm.state.value.items.size)
 
         server.enqueue(json("""{"ok":true,"unread":1}"""))
         vm.toggleRead(vm.state.value.items[0])
         assertTrue(vm.state.value.items[0].read)
-        assertEquals("/api/notifications/20/read", server.takeRequest().path)
+        assertEquals("/api/notifications/20/read", server.takeRequest(5, TimeUnit.SECONDS)?.path)
 
         server.enqueue(json("""{"ok":true,"unread":2}"""))
         vm.toggleRead(vm.state.value.items[0])
         assertFalse(vm.state.value.items[0].read)
-        assertEquals("/api/notifications/20/unread", server.takeRequest().path)
+        assertEquals("/api/notifications/20/unread", server.takeRequest(5, TimeUnit.SECONDS)?.path)
 
         server.enqueue(json("""{"ok":true,"unread":1}"""))
         vm.delete(vm.state.value.items[1])
         assertEquals(1, vm.state.value.items.size)
-        val delReq = server.takeRequest()
-        assertEquals("DELETE", delReq.method)
+        val delReq = server.takeRequest(5, TimeUnit.SECONDS)
+        assertNotNull(delReq)
+        assertEquals("DELETE", delReq!!.method)
         assertEquals("/api/notifications/14", delReq.path)
     }
 

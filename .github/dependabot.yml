@@ -17,3 +17,7 @@ updates:
   - package-ecosystem: docker
     directory: /deploy
     schedule: { interval: monthly }
+  - package-ecosystem: gradle
+    directory: /android
+    schedule: { interval: weekly }
+    open-pull-requests-limit: 5

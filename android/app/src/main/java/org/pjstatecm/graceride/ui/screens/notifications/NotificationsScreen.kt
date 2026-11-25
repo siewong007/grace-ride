@@ -16,7 +16,9 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.outlined.HelpOutline
@@ -38,12 +40,16 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedCard
 import androidx.compose.material3.Scaffold
+import androidx.compose.material3.SnackbarHost
+import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.pulltorefresh.PullToRefreshBox
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -59,6 +65,7 @@ import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.lifecycle.viewmodel.initializer
 import androidx.lifecycle.viewmodel.viewModelFactory
 import androidx.navigation.NavHostController
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -70,6 +77,7 @@ import org.pjstatecm.graceride.di.AppContainer
 import org.pjstatecm.graceride.domain.KlTime
 import org.pjstatecm.graceride.ui.NotifDestination
 import org.pjstatecm.graceride.ui.NotifLinkRouter
+import org.pjstatecm.graceride.ui.Routes
 import org.pjstatecm.graceride.ui.components.EmptyView
 import org.pjstatecm.graceride.ui.components.ErrorView
 import org.pjstatecm.graceride.ui.components.LoadingView
@@ -93,6 +101,7 @@ data class NotifUiState(
 class NotificationsViewModel(private val container: AppContainer) : ViewModel() {
     private val _state = MutableStateFlow(NotifUiState())
     val state: StateFlow<NotifUiState> = _state.asStateFlow()
+    private var loadJob: Job? = null
 
     init {
         load(reset = true)
@@ -105,21 +114,31 @@ class NotificationsViewModel(private val container: AppContainer) : ViewModel() 
         }
     }
 
+    fun clearError() {
+        _state.value = _state.value.copy(error = null)
+    }
+
     fun load(reset: Boolean = true) {
-        viewModelScope.launch {
-            val cur = _state.value
-            _state.value = cur.copy(
-                loading = reset && cur.items.isEmpty(),
-                refreshing = !reset,
-                error = null,
-            )
+        loadJob?.cancel()
+        val cur = _state.value
+        val targetUnreadOnly = cur.unreadOnly
+        val targetCategory = cur.category
+        _state.value = cur.copy(
+            loading = reset && cur.items.isEmpty(),
+            refreshing = !reset,
+            error = null,
+        )
+        loadJob = viewModelScope.launch {
             try {
                 val page = container.community.notificationsPage(
                     before = null,
                     limit = 30,
-                    unreadOnly = cur.unreadOnly,
-                    category = cur.category,
+                    unreadOnly = targetUnreadOnly,
+                    category = targetCategory,
                 )
+                if (_state.value.unreadOnly != targetUnreadOnly || _state.value.category != targetCategory) {
+                    return@launch
+                }
                 container.auth.updateUnread(page.unread)
                 _state.value = _state.value.copy(
                     loading = false,
@@ -131,11 +150,13 @@ class NotificationsViewModel(private val container: AppContainer) : ViewModel() 
                     error = null,
                 )
             } catch (e: ApiException) {
-                _state.value = _state.value.copy(
-                    loading = false,
-                    refreshing = false,
-                    error = e.message,
-                )
+                if (_state.value.unreadOnly == targetUnreadOnly && _state.value.category == targetCategory) {
+                    _state.value = _state.value.copy(
+                        loading = false,
+                        refreshing = false,
+                        error = e.message,
+                    )
+                }
             }
         }
     }
@@ -146,16 +167,22 @@ class NotificationsViewModel(private val container: AppContainer) : ViewModel() 
         val cur = _state.value
         val before = cur.nextBefore ?: return
         if (cur.loadingMore) return
+        val targetUnreadOnly = cur.unreadOnly
+        val targetCategory = cur.category
         viewModelScope.launch {
             _state.value = _state.value.copy(loadingMore = true, loadMoreError = false)
             try {
                 val page = container.community.notificationsPage(
                     before = before,
                     limit = 30,
-                    unreadOnly = cur.unreadOnly,
-                    category = cur.category,
+                    unreadOnly = targetUnreadOnly,
+                    category = targetCategory,
                 )
                 val latest = _state.value
+                if (latest.unreadOnly != targetUnreadOnly || latest.category != targetCategory) {
+                    _state.value = latest.copy(loadingMore = false)
+                    return@launch
+                }
                 val existingIds = latest.items.map { it.id }.toSet()
                 val merged = latest.items + page.items.filter { it.id !in existingIds }
                 _state.value = latest.copy(
@@ -165,21 +192,35 @@ class NotificationsViewModel(private val container: AppContainer) : ViewModel() 
                     unreadCount = page.unread,
                 )
             } catch (_: ApiException) {
-                _state.value = _state.value.copy(loadingMore = false, loadMoreError = true)
+                if (_state.value.unreadOnly == targetUnreadOnly && _state.value.category == targetCategory) {
+                    _state.value = _state.value.copy(loadingMore = false, loadMoreError = true)
+                }
             }
         }
     }
 
     fun setUnreadOnly(enabled: Boolean) {
         if (_state.value.unreadOnly == enabled) return
-        _state.value = _state.value.copy(unreadOnly = enabled, nextBefore = null)
+        _state.value = _state.value.copy(
+            unreadOnly = enabled,
+            items = emptyList(),
+            nextBefore = null,
+            error = null,
+            loading = true,
+        )
         load(reset = true)
     }
 
     fun setCategory(category: String?) {
         val normalized = category?.takeIf { it.isNotBlank() }
         if (_state.value.category == normalized) return
-        _state.value = _state.value.copy(category = normalized, nextBefore = null)
+        _state.value = _state.value.copy(
+            category = normalized,
+            items = emptyList(),
+            nextBefore = null,
+            error = null,
+            loading = true,
+        )
         load(reset = true)
     }
 
@@ -299,20 +340,32 @@ fun NotificationsScreen(container: AppContainer, nav: NavHostController) {
     val vm: NotificationsViewModel = viewModel(factory = NotificationsViewModel.factory(container))
     val state by vm.state.collectAsStateWithLifecycle()
     val context = LocalContext.current
+    val snackbar = remember { SnackbarHostState() }
     val hasUnread = state.unreadCount > 0 || state.items.any { !it.read }
+
+    LaunchedEffect(state.error, state.items.size) {
+        val err = state.error
+        if (err != null && state.items.isNotEmpty()) {
+            snackbar.showSnackbar(err)
+            vm.clearError()
+        }
+    }
 
     val today = KlTime.today()
     val yesterday = KlTime.todayPlusDays(-1)
-    val todayItems = mutableListOf<NotificationItem>()
-    val yesterdayItems = mutableListOf<NotificationItem>()
-    val earlierItems = mutableListOf<NotificationItem>()
-    state.items.forEach { item ->
-        val day = KlTime.parse(item.createdAt)?.let { KlTime.date(item.createdAt) } ?: item.createdAt.take(10)
-        when (day) {
-            today -> todayItems += item
-            yesterday -> yesterdayItems += item
-            else -> earlierItems += item
+    val (todayItems, yesterdayItems, earlierItems) = remember(state.items, today, yesterday) {
+        val t = mutableListOf<NotificationItem>()
+        val y = mutableListOf<NotificationItem>()
+        val e = mutableListOf<NotificationItem>()
+        state.items.forEach { item ->
+            val day = KlTime.parse(item.createdAt)?.let { KlTime.date(item.createdAt) } ?: item.createdAt.take(10)
+            when (day) {
+                today -> t += item
+                yesterday -> y += item
+                else -> e += item
+            }
         }
+        Triple(t, y, e)
     }
 
     Scaffold(
@@ -333,6 +386,7 @@ fun NotificationsScreen(container: AppContainer, nav: NavHostController) {
                 },
             )
         },
+        snackbarHost = { SnackbarHost(snackbar) },
     ) { padding ->
         PullToRefreshBox(
             isRefreshing = state.refreshing,
@@ -374,7 +428,7 @@ fun NotificationsScreen(container: AppContainer, nav: NavHostController) {
 
                 val viewMode = when {
                     state.loading -> "loading"
-                    state.error != null -> "error"
+                    state.error != null && state.items.isEmpty() -> "error"
                     state.items.isEmpty() -> "empty"
                     else -> "content"
                 }
@@ -388,7 +442,12 @@ fun NotificationsScreen(container: AppContainer, nav: NavHostController) {
                     when (mode) {
                         "loading" -> LoadingView(Modifier.fillMaxSize())
                         "error" -> ErrorView(state.error ?: "", { vm.load(reset = true) }, Modifier.fillMaxSize())
-                        "empty" -> EmptyView(stringResource(R.string.notif_empty), Modifier.fillMaxSize())
+                        "empty" -> Box(
+                            Modifier.fillMaxSize().verticalScroll(rememberScrollState()),
+                            contentAlignment = Alignment.Center,
+                        ) {
+                            EmptyView(stringResource(R.string.notif_empty))
+                        }
                         else -> LazyColumn(
                             Modifier.fillMaxSize().padding(horizontal = Spacing.sm),
                             verticalArrangement = Arrangement.spacedBy(Spacing.xs),
@@ -411,7 +470,11 @@ fun NotificationsScreen(container: AppContainer, nav: NavHostController) {
                                             item = item,
                                             onOpen = {
                                                 when (val dest = vm.open(item)) {
-                                                    is NotifDestination.Native -> nav.navigate(dest.route)
+                                                    is NotifDestination.Native -> {
+                                                        if (dest.route != Routes.NOTIFICATIONS) {
+                                                            nav.navigate(dest.route) { launchSingleTop = true }
+                                                        }
+                                                    }
                                                     is NotifDestination.Web -> openInWebApp(context, container.webUrl(dest.path))
                                                     NotifDestination.None -> {}
                                                 }
@@ -424,6 +487,17 @@ fun NotificationsScreen(container: AppContainer, nav: NavHostController) {
                                 }
                             }
 
+                            if (state.loadMoreError) {
+                                item(key = "load-more-error") {
+                                    Text(
+                                        stringResource(R.string.error_network),
+                                        style = MaterialTheme.typography.bodySmall,
+                                        color = MaterialTheme.colorScheme.error,
+                                        modifier = Modifier.padding(top = Spacing.xs),
+                                    )
+                                }
+                            }
+
                             if (state.nextBefore != null) {
                                 item(key = "load-more") {
                                     OutlinedButton(
@@ -431,7 +505,11 @@ fun NotificationsScreen(container: AppContainer, nav: NavHostController) {
                                         enabled = !state.loadingMore,
                                         modifier = Modifier.fillMaxWidth().padding(vertical = Spacing.xs),
                                     ) {
-                                        Text(stringResource(R.string.notif_load_more))
+                                        Text(
+                                            stringResource(
+                                                if (state.loadMoreError) R.string.common_retry else R.string.notif_load_more,
+                                            ),
+                                        )
                                     }
                                 }
                             }

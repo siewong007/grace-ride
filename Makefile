@@ -4,7 +4,7 @@ BACKEND_CARGO = $(patsubst ./%,../%,$(CARGO))
 
 .DEFAULT_GOAL := help
 
-.PHONY: help dev-api dev-web db-up db-down fmt lint test test-api test-web test-e2e audit build image up backup restore restore-drill osrm-setup capacity
+.PHONY: help dev-api dev-web db-up db-down fmt lint lint-android test test-api test-web test-android test-e2e audit build image up backup restore restore-drill osrm-setup capacity
 
 help: ## Show available Make targets
 	@grep -E '^[a-zA-Z0-9_-]+:.*?## ' $(MAKEFILE_LIST) | awk 'BEGIN {FS = ":.*?## "}; {printf "  \033[36m%-15s\033[0m %s\n", $$1, $$2}'
@@ -28,6 +28,9 @@ lint: ## Run Rust fmt/clippy (--locked) and frontend ESLint
 	cd backend && $(BACKEND_CARGO) fmt --check && $(BACKEND_CARGO) clippy --all-targets --locked -- -D warnings
 	cd frontend && npm run lint
 
+lint-android: ## Run Android Lint check
+	cd android && ./gradlew :app:lintDebug --no-daemon
+
 test: ## Run backend Cargo tests + frontend typecheck & Vitest suites
 	cd backend && $(BACKEND_CARGO) test --locked
 	cd frontend && npm run typecheck && npm test
@@ -37,6 +40,9 @@ test-api: ## Run backend unit + integration tests (--locked)
 
 test-web: ## Run frontend TypeScript typecheck + Vitest suites
 	cd frontend && npm run typecheck && npm test
+
+test-android: ## Run Android unit tests and compile instrumentation tests
+	cd android && ./gradlew :app:testDebugUnitTest :app:compileDebugAndroidTestKotlin --no-daemon
 
 test-e2e: ## Run Playwright browser end-to-end suites
 	cd frontend && npm run test:e2e

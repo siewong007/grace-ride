@@ -1,5 +1,6 @@
 package org.pjstatecm.graceride.ui.screens.rides
 
+import androidx.annotation.StringRes
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import androidx.lifecycle.viewmodel.initializer
@@ -10,6 +11,7 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
+import org.pjstatecm.graceride.R
 import org.pjstatecm.graceride.data.api.ApiException
 import org.pjstatecm.graceride.data.api.Area
 import org.pjstatecm.graceride.data.api.CreateRideReq
@@ -37,7 +39,7 @@ data class RideNewUiState(
     val riderPhone: String = "",
     val riderRelationship: String = "parent",
     val saveProxyRider: Boolean = false,
-    val date: LocalDate = LocalDate.now().plusDays(1),
+    val date: LocalDate = KlTime.todayDate().plusDays(1),
     val hour: Int = 9,
     val minute: Int = 0,
     val areaId: Long? = null,
@@ -48,13 +50,15 @@ data class RideNewUiState(
     val notes: String = "",
     val saveAddress: Boolean = false,
     val saveAddressLabel: String = "",
-    val returnDate: LocalDate = LocalDate.now().plusDays(1),
+    val returnDate: LocalDate = KlTime.todayDate().plusDays(1),
     val returnHour: Int = 12,
     val returnMinute: Int = 0,
     val suggestions: List<Place> = emptyList(),
     val pickedPlace: Place? = null,
     val submitting: Boolean = false,
+    val loadError: String? = null,
     val error: String? = null,
+    @StringRes val errorRes: Int? = null,
     val createdId: Long? = null,
 )
 
@@ -72,11 +76,16 @@ class RideNewViewModel(
         RideNewUiState(loading = eventId != null, isProxy = initialProxy)
     )
     val state: StateFlow<RideNewUiState> = _state.asStateFlow()
+    private var loadJob: Job? = null
     private var searchJob: Job? = null
     private var lastAppliedPlaceNotes: String? = null
 
-    init {
-        viewModelScope.launch {
+    init { retryLoad() }
+
+    fun retryLoad() {
+        loadJob?.cancel()
+        _state.value = _state.value.copy(loading = eventId != null, loadError = null)
+        loadJob = viewModelScope.launch {
             try {
                 val areas = container.rides.areas()
                 val saved = try { container.rides.savedPlaces() } catch (_: ApiException) { emptyList() }
@@ -95,24 +104,23 @@ class RideNewViewModel(
                 var returnMinute = _state.value.returnMinute
                 var destination = _state.value.destination
                 if (eventId != null) {
-                    event = try { container.events.detail(eventId) } catch (_: ApiException) { null }
-                    event?.let { e ->
-                        KlTime.parse(e.startsAt)?.let { dt ->
-                            val startMins = dt.hour * 60 + dt.minute
-                            val outMins = (startMins - 40).coerceAtLeast(0)
-                            val retMins = (startMins + 120).coerceAtMost(23 * 60 + 59)
-                            date = dt.toLocalDate()
-                            hour = outMins / 60
-                            minute = outMins % 60
-                            returnDate = date
-                            returnHour = retMins / 60
-                            returnMinute = retMins % 60
-                        }
-                        destination = e.location
+                    event = container.events.detail(eventId)
+                    KlTime.parse(event.startsAt)?.let { dt ->
+                        val startMins = dt.hour * 60 + dt.minute
+                        val outMins = (startMins - 40).coerceAtLeast(0)
+                        val retMins = (startMins + 120).coerceAtMost(23 * 60 + 59)
+                        date = dt.toLocalDate()
+                        hour = outMins / 60
+                        minute = outMins % 60
+                        returnDate = date
+                        returnHour = retMins / 60
+                        returnMinute = retMins % 60
                     }
+                    destination = event.location
                 }
                 _state.value = _state.value.copy(
                     loading = false,
+                    loadError = null,
                     event = event,
                     areas = areas.filter { it.active },
                     savedPlaces = saved,
@@ -129,12 +137,14 @@ class RideNewViewModel(
                     notes = if (_state.value.notes.isBlank() && defaultNotes.isNotBlank()) defaultNotes else _state.value.notes,
                 )
             } catch (e: ApiException) {
-                _state.value = _state.value.copy(loading = false, error = e.message)
+                _state.value = _state.value.copy(loading = false, loadError = e.message)
             }
         }
     }
 
-    fun update(f: (RideNewUiState) -> RideNewUiState) { _state.value = f(_state.value) }
+    fun update(f: (RideNewUiState) -> RideNewUiState) {
+        _state.value = f(_state.value).copy(error = null, errorRes = null)
+    }
 
     fun refreshPlacesAndProxies() {
         viewModelScope.launch {
@@ -318,19 +328,19 @@ class RideNewViewModel(
         val event = s.event
         val areaId = s.areaId
         if (event == null) {
-            _state.value = s.copy(error = "Choose an event first.")
+            _state.value = s.copy(error = null, errorRes = R.string.ride_new_err_no_event)
             return
         }
         if (event.mySignup?.status != "going") {
-            _state.value = s.copy(error = "Please sign up for this event first.")
+            _state.value = s.copy(error = null, errorRes = R.string.ride_new_err_need_signup)
             return
         }
         if (s.isProxy && s.riderName.isBlank()) {
-            _state.value = s.copy(error = "Please enter the rider's name.")
+            _state.value = s.copy(error = null, errorRes = R.string.ride_new_err_rider_name)
             return
         }
         if (areaId == null || s.address.isBlank() || s.destination.isBlank()) {
-            _state.value = s.copy(error = "Please fill in area, pickup address and destination.")
+            _state.value = s.copy(error = null, errorRes = R.string.ride_new_err_required)
             return
         }
         val pickupAt = KlTime.apiStamp(s.date, s.hour, s.minute)
@@ -342,15 +352,15 @@ class RideNewViewModel(
         val isEventLocation = memberAddr.equals(event.location.trim(), ignoreCase = true)
         val shouldSaveAddress = !s.isProxy && s.saveAddress && memberAddr.isNotEmpty() && !alreadySaved && !isEventLocation && s.savedPlaces.size < 50
         if (shouldSaveAddress && label.isEmpty()) {
-            _state.value = s.copy(error = "Please enter a label for the saved address (e.g. Home) or untick Save address.")
+            _state.value = s.copy(error = null, errorRes = R.string.ride_new_err_save_label)
             return
         }
         val returnPickupAt = if (isRound) KlTime.apiStamp(s.returnDate, s.returnHour, s.returnMinute) else null
         if (isRound && returnPickupAt != null && returnPickupAt <= pickupAt) {
-            _state.value = s.copy(error = "Return pickup time must be after outbound pickup time.")
+            _state.value = s.copy(error = null, errorRes = R.string.ride_new_err_return_after)
             return
         }
-        _state.value = s.copy(submitting = true, error = null)
+        _state.value = s.copy(submitting = true, error = null, errorRes = null)
         viewModelScope.launch {
             try {
                 val res = container.rides.create(

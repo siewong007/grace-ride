@@ -22,6 +22,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
@@ -64,8 +65,16 @@ class UnlockViewModel(private val container: AppContainer) : ViewModel() {
     }
 
     fun devUnlock() {
+        if (_state.value.busy) return
+        _state.value = _state.value.copy(busy = true, error = null)
         viewModelScope.launch {
-            try { container.auth.devUnlock() } catch (_: ApiException) {}
+            try {
+                container.auth.devUnlock()
+            } catch (e: ApiException) {
+                _state.value = _state.value.copy(error = e.message)
+            } finally {
+                _state.value = _state.value.copy(busy = false)
+            }
         }
     }
 
@@ -100,7 +109,10 @@ fun UnlockScreen(container: AppContainer) {
             onValueChange = { code = it },
             label = { Text(stringResource(if (state.useBackup) R.string.unlock_backup else R.string.unlock_code)) },
             singleLine = true,
-            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.NumberPassword),
+            keyboardOptions = KeyboardOptions(
+                keyboardType = if (state.useBackup) KeyboardType.Ascii else KeyboardType.NumberPassword,
+                imeAction = ImeAction.Done,
+            ),
             modifier = Modifier.fillMaxWidth().padding(top = Spacing.md),
         )
         state.error?.let {
@@ -115,8 +127,12 @@ fun UnlockScreen(container: AppContainer) {
             Text(stringResource(if (state.useBackup) R.string.unlock_code else R.string.unlock_backup))
         }
         if (BuildConfig.DEBUG) {
-            OutlinedButton(onClick = { vm.devUnlock() }, modifier = Modifier.fillMaxWidth().padding(top = Spacing.xs)) {
-                Text("Dev unlock")
+            OutlinedButton(
+                onClick = { vm.devUnlock() },
+                enabled = !state.busy,
+                modifier = Modifier.fillMaxWidth().padding(top = Spacing.xs),
+            ) {
+                Text(stringResource(R.string.unlock_dev_btn))
             }
         }
         TextButton(onClick = { vm.signOut() }, modifier = Modifier.padding(top = Spacing.sm)) {

@@ -4,6 +4,7 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewmodel.initializer
 import androidx.lifecycle.viewmodel.viewModelFactory
 import androidx.lifecycle.viewModelScope
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -24,18 +25,24 @@ data class RideDetailUiState(
 class RideDetailViewModel(private val container: AppContainer, private val id: Long) : ViewModel() {
     private val _state = MutableStateFlow(RideDetailUiState())
     val state: StateFlow<RideDetailUiState> = _state.asStateFlow()
+    private var loadJob: Job? = null
 
     init { load() }
 
     fun load() {
-        viewModelScope.launch {
-            _state.value = _state.value.copy(loading = _state.value.ride == null)
-            try {
-                val ride = container.rides.detail(id)
-                _state.value = _state.value.copy(loading = false, ride = ride, error = null)
-            } catch (e: ApiException) {
-                _state.value = _state.value.copy(loading = false, error = e.message)
-            }
+        loadJob?.cancel()
+        loadJob = viewModelScope.launch {
+            reloadRide()
+        }
+    }
+
+    private suspend fun reloadRide() {
+        _state.value = _state.value.copy(loading = _state.value.ride == null)
+        try {
+            val ride = container.rides.detail(id)
+            _state.value = _state.value.copy(loading = false, ride = ride, error = null)
+        } catch (e: ApiException) {
+            _state.value = _state.value.copy(loading = false, error = e.message)
         }
     }
 
@@ -45,12 +52,12 @@ class RideDetailViewModel(private val container: AppContainer, private val id: L
         viewModelScope.launch {
             try {
                 block()
-                load()
+                reloadRide()
             } catch (e: ApiException) {
                 if (e.code == "RIDE_STATUS_CHANGED") {
                     // Optimistic concurrency: someone else moved the ride. Re-fetch.
                     _state.value = _state.value.copy(staleReload = true)
-                    load()
+                    reloadRide()
                 } else {
                     _state.value = _state.value.copy(message = e.message)
                 }

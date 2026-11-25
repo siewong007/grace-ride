@@ -33,6 +33,16 @@ export function Tabs({ value, onChange, items, ariaLabel, className = '' }: Tabs
     const left = btn.offsetLeft;
     const width = btn.offsetWidth;
     setIndicator((cur) => (cur.left === left && cur.width === width ? cur : { left, width }));
+
+    const listEl = listRef.current;
+    if (listEl && listEl.scrollWidth > listEl.clientWidth) {
+      const right = left + width;
+      if (left < listEl.scrollLeft) {
+        listEl.scrollLeft = Math.max(0, left - 12);
+      } else if (right > listEl.scrollLeft + listEl.clientWidth) {
+        listEl.scrollLeft = right - listEl.clientWidth + 12;
+      }
+    }
   }, [value]);
 
   useLayoutEffect(() => {

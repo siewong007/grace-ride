@@ -6,6 +6,7 @@ import android.content.Context
 import android.content.pm.PackageManager
 import android.location.LocationManager
 import android.os.Build
+import android.os.CancellationSignal
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.clickable
@@ -53,20 +54,26 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.navigation.NavHostController
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
 import org.pjstatecm.graceride.R
 import org.pjstatecm.graceride.data.api.Area
 import org.pjstatecm.graceride.data.api.Place
@@ -362,9 +369,20 @@ private fun SavedAddressDialog(
     var lat by remember(editing) { mutableStateOf(editing?.lat) }
     var lng by remember(editing) { mutableStateOf(editing?.lng) }
     var gpsStatus by remember { mutableStateOf("idle") }
+    var gpsPinnedManually by remember(editing) { mutableStateOf(false) }
     var areaExpanded by remember { mutableStateOf(false) }
     var confirmDelete by remember { mutableStateOf(false) }
     val context = LocalContext.current
+    val scope = rememberCoroutineScope()
+    var activeSignal by remember { mutableStateOf<CancellationSignal?>(null) }
+    var gpsTimeoutJob by remember { mutableStateOf<Job?>(null) }
+
+    DisposableEffect(Unit) {
+        onDispose {
+            gpsTimeoutJob?.cancel()
+            activeSignal?.cancel()
+        }
+    }
 
     @SuppressLint("MissingPermission")
     fun captureGpsLocation() {
@@ -373,6 +391,8 @@ private fun SavedAddressDialog(
             gpsStatus = "denied"
             return
         }
+        gpsTimeoutJob?.cancel()
+        activeSignal?.cancel()
         gpsStatus = "locating"
         try {
             val provider = when {
@@ -381,16 +401,34 @@ private fun SavedAddressDialog(
                 else -> null
             }
             val applyLoc: (android.location.Location?) -> Unit = { loc ->
+                gpsTimeoutJob?.cancel()
+                activeSignal = null
                 if (loc != null) {
                     lat = loc.latitude
                     lng = loc.longitude
+                    gpsPinnedManually = true
                     gpsStatus = "captured"
                 } else {
                     gpsStatus = "denied"
                 }
             }
             if (provider != null && Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
-                lm.getCurrentLocation(provider, null, context.mainExecutor) { loc ->
+                val signal = CancellationSignal()
+                activeSignal = signal
+                gpsTimeoutJob = scope.launch {
+                    delay(15_000)
+                    if (gpsStatus == "locating") {
+                        signal.cancel()
+                        val fallback = try {
+                            lm.getLastKnownLocation(LocationManager.GPS_PROVIDER)
+                                ?: lm.getLastKnownLocation(LocationManager.NETWORK_PROVIDER)
+                        } catch (_: SecurityException) {
+                            null
+                        }
+                        applyLoc(fallback)
+                    }
+                }
+                lm.getCurrentLocation(provider, signal, context.mainExecutor) { loc ->
                     if (loc != null) {
                         applyLoc(loc)
                     } else {
@@ -473,13 +511,20 @@ private fun SavedAddressDialog(
                     onValueChange = {
                         if (it.length <= 200) {
                             address = it
-                            val unchanged = editing != null && it.trim() == editing.address.trim()
-                            if (unchanged) {
-                                lat = editing?.lat
-                                lng = editing?.lng
-                            } else {
+                            if (it.isBlank()) {
                                 lat = null
                                 lng = null
+                                gpsPinnedManually = false
+                                gpsStatus = "idle"
+                            } else if (!gpsPinnedManually) {
+                                val unchanged = editing != null && it.trim() == editing.address.trim()
+                                if (unchanged) {
+                                    lat = editing?.lat
+                                    lng = editing?.lng
+                                } else {
+                                    lat = null
+                                    lng = null
+                                }
                             }
                             if (areaId == null && it.trim().length >= 3) {
                                 areaId = inferAreaId(it, areas)
@@ -499,6 +544,7 @@ private fun SavedAddressDialog(
                                         address = s.label.take(200)
                                         lat = s.lat
                                         lng = s.lng
+                                        gpsPinnedManually = false
                                         gpsStatus = "idle"
                                         if (areaId == null) {
                                             areaId = inferAreaId(s.label, areas)
@@ -526,23 +572,36 @@ private fun SavedAddressDialog(
                         modifier = Modifier.padding(start = Spacing.xs),
                     )
                 }
-                if (gpsStatus == "captured") {
-                    Text(
-                        stringResource(R.string.saved_addresses_gps_captured),
-                        style = MaterialTheme.typography.labelSmall,
-                        color = MaterialTheme.colorScheme.primary,
-                    )
+                if (gpsStatus == "captured" || (gpsStatus != "denied" && lat != null && lng != null)) {
+                    Row(
+                        Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        Text(
+                            stringResource(
+                                if (gpsStatus == "captured") R.string.saved_addresses_gps_captured
+                                else R.string.saved_addresses_pinned,
+                            ),
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.primary,
+                        )
+                        TextButton(
+                            onClick = {
+                                lat = null
+                                lng = null
+                                gpsPinnedManually = false
+                                gpsStatus = "idle"
+                            },
+                        ) {
+                            Text(stringResource(R.string.saved_addresses_gps_clear))
+                        }
+                    }
                 } else if (gpsStatus == "denied") {
                     Text(
                         stringResource(R.string.saved_addresses_gps_denied),
                         style = MaterialTheme.typography.labelSmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    )
-                } else if (lat != null && lng != null) {
-                    Text(
-                        stringResource(R.string.saved_addresses_pinned),
-                        style = MaterialTheme.typography.labelSmall,
-                        color = MaterialTheme.colorScheme.primary,
                     )
                 }
                 ExposedDropdownMenuBox(expanded = areaExpanded, onExpandedChange = { areaExpanded = it }) {
@@ -579,7 +638,7 @@ private fun SavedAddressDialog(
                     verticalAlignment = Alignment.CenterVertically,
                     modifier = Modifier
                         .fillMaxWidth()
-                        .toggleable(value = isDefault, onValueChange = { isDefault = it })
+                        .toggleable(value = isDefault, role = Role.Checkbox, onValueChange = { isDefault = it })
                         .padding(vertical = Spacing.xxs),
                 ) {
                     Checkbox(checked = isDefault, onCheckedChange = null)

@@ -177,7 +177,8 @@ fun CostsScreen(container: AppContainer, nav: NavHostController) {
                         else stringResource(R.string.costs_proof_photo) + " ✓"
                     )
                 }
-                state.sheetError?.let {
+                val sheetErrText = state.sheetError ?: state.sheetErrorRes?.let { stringResource(it) }
+                sheetErrText?.let {
                     Text(it, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodyMedium)
                 }
                 Button(

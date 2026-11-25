@@ -8,6 +8,7 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withTimeout
 import org.pjstatecm.graceride.GraceRideApp
 
 class ReadinessActionReceiver : BroadcastReceiver() {
@@ -22,11 +23,13 @@ class ReadinessActionReceiver : BroadcastReceiver() {
         val pending = goAsync()
         CoroutineScope(SupervisorJob() + Dispatchers.IO).launch {
             try {
-                app.container.rides.readiness(rideId, status)
-                if (notifId > 0) {
-                    NotificationManagerCompat.from(context).cancel(notifId)
+                withTimeout(8_000) {
+                    app.container.rides.readiness(rideId, status)
+                    if (notifId > 0) {
+                        NotificationManagerCompat.from(context).cancel(notifId)
+                    }
+                    app.container.auth.refresh()
                 }
-                app.container.auth.refresh()
             } catch (_: Exception) {
                 // Keep notification intact so user can tap into the ride detail screen.
             } finally {

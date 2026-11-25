@@ -26,7 +26,7 @@ export default {
   badgeTier_platinum: '铂金',
   badgeNextTier: '下一级：{tier}（{progress}/{target}）',
   badgeMaxTier: '最高等级',
-  earned: '已获得 ✓',
+  earned: '已获得',
   rule: '规则',
   monthLabel: '月份',
   rangeLabel: '时段',

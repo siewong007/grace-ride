@@ -4,6 +4,7 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewmodel.initializer
 import androidx.lifecycle.viewmodel.viewModelFactory
 import androidx.lifecycle.viewModelScope
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -24,19 +25,21 @@ data class RidesUiState(
 class RidesViewModel(private val container: AppContainer) : ViewModel() {
     private val _state = MutableStateFlow(RidesUiState())
     val state: StateFlow<RidesUiState> = _state.asStateFlow()
+    private var loadJob: Job? = null
 
     init { load(first = true) }
 
     fun setTab(tab: Int) {
         if (tab == _state.value.tab) return
-        _state.value = _state.value.copy(tab = tab)
+        _state.value = _state.value.copy(tab = tab, rides = emptyList(), error = null, loading = true)
         load(first = true)
     }
 
     fun refresh() = load(first = false)
 
     private fun load(first: Boolean) {
-        viewModelScope.launch {
+        loadJob?.cancel()
+        loadJob = viewModelScope.launch {
             _state.value = _state.value.copy(loading = first, refreshing = !first)
             try {
                 val rides = if (_state.value.tab == 0) container.rides.upcoming() else container.rides.past()

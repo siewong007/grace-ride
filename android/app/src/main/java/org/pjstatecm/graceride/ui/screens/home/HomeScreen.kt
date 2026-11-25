@@ -22,10 +22,18 @@ import androidx.compose.material3.OutlinedCard
 import androidx.compose.material3.Text
 import androidx.compose.material3.pulltorefresh.PullToRefreshBox
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.res.stringResource
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
+import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.navigation.NavHostController
@@ -35,6 +43,7 @@ import org.pjstatecm.graceride.di.AppContainer
 import org.pjstatecm.graceride.domain.KlTime
 import org.pjstatecm.graceride.domain.Money
 import org.pjstatecm.graceride.ui.Routes
+import org.pjstatecm.graceride.ui.navigateTab
 import org.pjstatecm.graceride.ui.components.AnimatedOfflineBanner
 import org.pjstatecm.graceride.ui.components.EmptyView
 import org.pjstatecm.graceride.ui.components.ErrorView
@@ -52,10 +61,34 @@ fun HomeScreen(container: AppContainer, nav: NavHostController) {
     val state by vm.state.collectAsStateWithLifecycle()
     val authState by container.auth.state.collectAsStateWithLifecycle()
     val unreadCount = (authState as? AuthState.SignedIn)?.me?.unread ?: state.me?.unread ?: 0
+    val lifecycleOwner = LocalLifecycleOwner.current
+    var resumedOnce by remember { mutableStateOf(false) }
+
+    DisposableEffect(lifecycleOwner) {
+        val obs = LifecycleEventObserver { _, event ->
+            if (event == Lifecycle.Event.ON_RESUME) {
+                if (resumedOnce) vm.refresh() else resumedOnce = true
+            }
+        }
+        lifecycleOwner.lifecycle.addObserver(obs)
+        onDispose { lifecycleOwner.lifecycle.removeObserver(obs) }
+    }
+
+    LaunchedEffect(Unit) {
+        container.realtimeStream.refreshEvents.collect { kind ->
+            if (kind != "resume") vm.refresh()
+        }
+    }
 
     val viewMode = when {
         state.loading -> "loading"
-        state.error != null && state.nextRide == null && state.events.isEmpty() && state.announcements.isEmpty() && state.drivingToday.isEmpty() && state.nextUpcomingDrive == null -> "error"
+        state.error != null &&
+            state.nextRide == null &&
+            state.unpaidShares.isEmpty() &&
+            state.events.isEmpty() &&
+            state.announcements.isEmpty() &&
+            state.drivingToday.isEmpty() &&
+            state.nextUpcomingDrive == null -> "error"
         else -> "content"
     }
 
@@ -105,9 +138,7 @@ fun HomeScreen(container: AppContainer, nav: NavHostController) {
                             }
                         }
                         state.offlineSnapshotAt?.let { savedAt ->
-                            val cachedTime = java.time.Instant.ofEpochMilli(savedAt)
-                                .atZone(java.time.ZoneId.systemDefault())
-                                .format(java.time.format.DateTimeFormatter.ofPattern("HH:mm"))
+                            val cachedTime = KlTime.formatEpochMillis(savedAt)
                             item {
                                 OutlinedCard(Modifier.fillMaxWidth()) {
                                     Text(
@@ -206,7 +237,7 @@ fun HomeScreen(container: AppContainer, nav: NavHostController) {
                                 SectionHeader(
                                     stringResource(R.string.home_upcoming_events),
                                     stringResource(R.string.home_view_all),
-                                ) { nav.navigate(Routes.EVENTS) }
+                                ) { nav.navigateTab(Routes.EVENTS) }
                             }
                             items(state.events, key = { "event-${it.id}" }) { event ->
                                 EventCard(
@@ -239,6 +270,7 @@ fun HomeScreen(container: AppContainer, nav: NavHostController) {
                         }
 
                         if (state.nextRide == null &&
+                            state.unpaidShares.isEmpty() &&
                             state.drivingToday.isEmpty() &&
                             state.nextUpcomingDrive == null &&
                             state.events.isEmpty() &&
