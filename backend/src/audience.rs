@@ -23,10 +23,15 @@ use crate::perms::{Act, Page};
 pub const MATCH_GROUP_SQL: &str = "COALESCE((SELECT vp.host_group_id FROM visitor_passes vp WHERE vp.ride_id = r.id ORDER BY vp.id DESC LIMIT 1), r.as_group_id)";
 
 /// Every member's drive scope (their groups and every group below them), by user id.
-pub async fn drive_scopes(db: &PgPool) -> Result<HashMap<i64, Vec<i64>>, sqlx::Error> {
+pub async fn drive_scopes_on<'e, E: sqlx::PgExecutor<'e>>(
+    db: E,
+) -> Result<HashMap<i64, Vec<i64>>, sqlx::Error> {
     let rows: Vec<(i64, Vec<i64>)> = sqlx::query_as(
         "WITH RECURSIVE down(user_id, id) AS (
              SELECT user_id, group_id FROM group_members
+             UNION
+             SELECT u.id, g.id FROM users u CROSS JOIN groups g
+             WHERE u.status = 'active' AND g.is_all = 1
              UNION
              SELECT d.user_id, g.id FROM groups g JOIN down d ON g.parent_id = d.id
          ) SELECT user_id, array_agg(DISTINCT id) FROM down GROUP BY user_id",
@@ -34,6 +39,10 @@ pub async fn drive_scopes(db: &PgPool) -> Result<HashMap<i64, Vec<i64>>, sqlx::E
     .fetch_all(db)
     .await?;
     Ok(rows.into_iter().collect())
+}
+
+pub async fn drive_scopes(db: &PgPool) -> Result<HashMap<i64, Vec<i64>>, sqlx::Error> {
+    drive_scopes_on(db).await
 }
 
 /// The member's (groups + ancestors, groups + descendants). See `CurrentUser`.
@@ -45,6 +54,8 @@ pub async fn group_scopes(db: &PgPool, user_id: i64) -> Result<(Vec<i64>, Vec<i6
              SELECT g.parent_id FROM groups g JOIN up ON g.id = up.id WHERE g.parent_id IS NOT NULL
          ), down AS (
              SELECT group_id AS id FROM group_members WHERE user_id = $1
+             UNION
+             SELECT g.id FROM groups g WHERE g.is_all = 1
              UNION
              SELECT g.id FROM groups g JOIN down ON g.parent_id = down.id
          )

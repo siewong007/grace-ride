@@ -1,6 +1,7 @@
 import { FormEvent, useMemo, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
+import '../../styles/planTransport.css';
 import {
   AlertCircle,
   Calendar,

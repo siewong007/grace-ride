@@ -3,7 +3,9 @@
 use std::net::SocketAddr;
 
 use grace_ride::{init, jobs, router, state::Config};
-use tracing_subscriber::EnvFilter;
+use tracing_subscriber::{
+    filter::LevelFilter, layer::SubscriberExt, util::SubscriberInitExt, EnvFilter, Layer,
+};
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
@@ -20,6 +22,14 @@ async fn main() -> anyhow::Result<()> {
     // of building the struct literally. Performance tracing stays off (the default).
     let mut sentry_options = sentry::ClientOptions::default();
     sentry_options.release = sentry::release_name!();
+    sentry_options.before_send = Some(std::sync::Arc::new(|mut event| {
+        if let Some(user) = event.user.as_mut() {
+            user.email = None;
+            user.username = None;
+            user.ip_address = None;
+        }
+        Some(event)
+    }));
     let _sentry = sentry::init((
         std::env::var("SENTRY_DSN").unwrap_or_default(),
         sentry_options,
@@ -29,13 +39,15 @@ async fn main() -> anyhow::Result<()> {
 
     let filter = EnvFilter::try_from_default_env()
         .unwrap_or_else(|_| "grace_ride=info,tower_http=info".into());
+    let registry = tracing_subscriber::registry()
+        .with(filter)
+        .with(sentry::integrations::tracing::ErrorLayer::new().with_filter(LevelFilter::ERROR));
     if cfg.json_logs {
-        tracing_subscriber::fmt()
-            .json()
-            .with_env_filter(filter)
+        registry
+            .with(tracing_subscriber::fmt::layer().json())
             .init();
     } else {
-        tracing_subscriber::fmt().with_env_filter(filter).init();
+        registry.with(tracing_subscriber::fmt::layer()).init();
     }
     if cfg.dev_mode {
         tracing::warn!("DEV_MODE is on: demo accounts are on the login page and do not need a password. Never use in production.");
@@ -43,7 +55,7 @@ async fn main() -> anyhow::Result<()> {
 
     let state = init(cfg.clone()).await?;
     let shutdown_tx = state.shutdown.clone();
-    jobs::spawn_with_shutdown(state.db.clone(), cfg.clone(), shutdown_tx.subscribe());
+    let bg = jobs::spawn_with_shutdown(state.db.clone(), cfg.clone(), shutdown_tx.subscribe());
     let app = router(state);
 
     let addr: SocketAddr = cfg.bind.parse()?;
@@ -60,6 +72,8 @@ async fn main() -> anyhow::Result<()> {
     .with_graceful_shutdown(shutdown(shutdown_tx))
     .await?;
 
+    bg.join_with_timeout(std::time::Duration::from_secs(10))
+        .await;
     tracing::info!("shut down cleanly");
     Ok(())
 }

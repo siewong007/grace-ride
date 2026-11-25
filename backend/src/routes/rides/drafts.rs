@@ -15,8 +15,10 @@ use crate::state::AppState;
 use crate::util::{audit, in_minutes, notify_many, now, require, ErrorKey};
 
 use super::staff::{
-    exec_set_reimbursement_excluded, exec_staff_alt_transport, exec_staff_approve,
-    exec_staff_reassign, exec_staff_return,
+    exec_set_reimbursement_excluded_after, exec_set_reimbursement_excluded_tx,
+    exec_staff_alt_transport_after, exec_staff_alt_transport_tx, exec_staff_approve_after,
+    exec_staff_approve_tx, exec_staff_reassign_after, exec_staff_reassign_tx,
+    exec_staff_return_after, exec_staff_return_tx,
 };
 use super::{load_ride, traffic_owned_events_sql, traffic_scope_ok};
 
@@ -783,6 +785,13 @@ pub(super) async fn approve_ride_draft(
         return Err(forbidden(u.lang, ErrorKey::CannotViewRide));
     }
 
+    let stamp = now();
+    let mut tx = st.db.begin().await?;
+    sqlx::query("SELECT pg_advisory_xact_lock(hashtextextended('grace_ride_ride_draft', $1))")
+        .bind(id)
+        .execute(&mut *tx)
+        .await?;
+
     let draft_info: Option<(
         String,
         Option<i64>,
@@ -791,34 +800,73 @@ pub(super) async fn approve_ride_draft(
         String,
         Option<i64>,
         i64,
+        Option<i64>,
+        Option<String>,
+        Option<String>,
     )> = sqlx::query_as(
-        "SELECT action, driver_id, reason, reimbursement_excluded, status, submitted_by, created_by
-             FROM ride_change_drafts
-             WHERE id = $1 AND ride_id = $2",
+        "SELECT d.action, d.driver_id, d.reason, d.reimbursement_excluded, d.status,
+                d.submitted_by, d.created_by, d.locked_by, u.name, d.lock_expires_at
+         FROM ride_change_drafts d
+         LEFT JOIN users u ON u.id = d.locked_by
+         WHERE d.id = $1 AND d.ride_id = $2
+         FOR UPDATE OF d",
     )
     .bind(did)
     .bind(id)
-    .fetch_optional(&st.db)
+    .fetch_optional(&mut *tx)
     .await?;
 
-    let Some((action, driver_id, reason, excl, status, submitted_by, created_by)) = draft_info
+    let Some((
+        action,
+        driver_id,
+        reason,
+        excl,
+        status,
+        submitted_by,
+        created_by,
+        locked_by,
+        locked_by_name,
+        lock_expires_at,
+    )) = draft_info
     else {
         return Err(bad(u.lang, ErrorKey::RideDraftNotFound));
     };
     if !matches!(status.as_str(), "draft" | "pending_approval" | "returned") {
         return Err(conflict(u.lang, ErrorKey::DraftNotEditable));
     }
+    assert_not_locked_by_other(
+        &u,
+        locked_by,
+        locked_by_name.as_deref(),
+        lock_expires_at.as_deref(),
+        &stamp,
+    )?;
 
-    match action.as_str() {
-        "approve" => exec_staff_approve(&st, &u, &r).await?,
+    enum PostApply {
+        Approve(i64),
+        Reassign(i64, Option<i64>),
+        Return,
+        AltTransport(String),
+        ReimbExcluded(bool),
+    }
+
+    let post_apply = match action.as_str() {
+        "approve" => {
+            let approved_id = exec_staff_approve_tx(&mut tx, &u, &r).await?;
+            PostApply::Approve(approved_id)
+        }
         "reassign" => {
             let drv = driver_id.ok_or_else(|| bad(u.lang, ErrorKey::DriverNotFound))?;
-            exec_staff_reassign(&st, &u, &r, drv).await?;
+            let outside = exec_staff_reassign_tx(&mut tx, &st, &u, &r, drv).await?;
+            PostApply::Reassign(drv, outside)
         }
-        "return" => exec_staff_return(&st, &u, &r, &reason).await?,
+        "return" => {
+            exec_staff_return_tx(&mut tx, &u, &r, &reason).await?;
+            PostApply::Return
+        }
         "alt_transport" => {
-            exec_staff_alt_transport(
-                &st,
+            let note = exec_staff_alt_transport_tx(
+                &mut tx,
                 &u,
                 &r,
                 if reason.is_empty() {
@@ -828,17 +876,17 @@ pub(super) async fn approve_ride_draft(
                 },
             )
             .await?;
+            PostApply::AltTransport(note)
         }
         "reimbursement_excluded" => {
             let ex = excl.unwrap_or(1) == 1;
-            exec_set_reimbursement_excluded(&st, &u, &r, ex).await?;
+            exec_set_reimbursement_excluded_tx(&mut tx, &r, ex).await?;
+            PostApply::ReimbExcluded(ex)
         }
         _ => return Err(bad(u.lang, ErrorKey::InvalidAction)),
-    }
+    };
 
-    let stamp = now();
-    let mut tx = st.db.begin().await?;
-    sqlx::query(
+    let updated_rows = sqlx::query(
         "UPDATE ride_change_drafts
          SET status = 'approved',
              reviewed_by = $1,
@@ -848,14 +896,18 @@ pub(super) async fn approve_ride_draft(
              locked_by = NULL,
              locked_at = NULL,
              lock_expires_at = NULL
-         WHERE id = $3 AND ride_id = $4",
+         WHERE id = $3 AND ride_id = $4 AND status IN ('draft', 'pending_approval', 'returned')",
     )
     .bind(u.id)
     .bind(&stamp)
     .bind(did)
     .bind(id)
     .execute(&mut *tx)
-    .await?;
+    .await?
+    .rows_affected();
+    if updated_rows == 0 {
+        return Err(conflict(u.lang, ErrorKey::DraftNotEditable));
+    }
 
     sqlx::query(
         "UPDATE ride_change_drafts
@@ -872,6 +924,18 @@ pub(super) async fn approve_ride_draft(
     .execute(&mut *tx)
     .await?;
     tx.commit().await?;
+
+    match post_apply {
+        PostApply::Approve(approved_id) => exec_staff_approve_after(&st, &u, approved_id).await?,
+        PostApply::Reassign(drv, outside) => {
+            exec_staff_reassign_after(&st, &u, &r, drv, outside).await
+        }
+        PostApply::Return => exec_staff_return_after(&st, &u, &r, &reason).await,
+        PostApply::AltTransport(note) => exec_staff_alt_transport_after(&st, &u, &r, note).await,
+        PostApply::ReimbExcluded(ex) => {
+            exec_set_reimbursement_excluded_after(&st, &u, &r, ex).await
+        }
+    }
 
     let mut targets = Vec::new();
     if let Some(sub) = submitted_by {
@@ -940,14 +1004,21 @@ pub(super) async fn return_ride_draft(
     let notes = req.notes.unwrap_or_default().trim().to_string();
     let stamp = now();
 
+    let mut tx = st.db.begin().await?;
+    sqlx::query("SELECT pg_advisory_xact_lock(hashtextextended('grace_ride_ride_draft', $1))")
+        .bind(id)
+        .execute(&mut *tx)
+        .await?;
+
     let prev: Option<(String, Option<i64>, i64)> = sqlx::query_as(
         "SELECT status, submitted_by, created_by
          FROM ride_change_drafts
-         WHERE id = $1 AND ride_id = $2",
+         WHERE id = $1 AND ride_id = $2
+         FOR UPDATE",
     )
     .bind(did)
     .bind(id)
-    .fetch_optional(&st.db)
+    .fetch_optional(&mut *tx)
     .await?;
 
     let Some((status, submitted_by, created_by)) = prev else {
@@ -957,7 +1028,7 @@ pub(super) async fn return_ride_draft(
         return Err(conflict(u.lang, ErrorKey::DraftNotEditable));
     }
 
-    sqlx::query(
+    let returned_rows = sqlx::query(
         "UPDATE ride_change_drafts
          SET status = 'returned',
              reviewed_by = $1,
@@ -967,15 +1038,20 @@ pub(super) async fn return_ride_draft(
              locked_by = NULL,
              locked_at = NULL,
              lock_expires_at = NULL
-         WHERE id = $4 AND ride_id = $5",
+         WHERE id = $4 AND ride_id = $5 AND status IN ('pending_approval', 'draft', 'returned')",
     )
     .bind(u.id)
     .bind(&stamp)
     .bind(&notes)
     .bind(did)
     .bind(id)
-    .execute(&st.db)
-    .await?;
+    .execute(&mut *tx)
+    .await?
+    .rows_affected();
+    if returned_rows == 0 {
+        return Err(conflict(u.lang, ErrorKey::DraftNotEditable));
+    }
+    tx.commit().await?;
 
     let mut targets = Vec::new();
     if let Some(sub) = submitted_by {

@@ -8,6 +8,7 @@ import {
 } from 'react';
 import { Link, useInRouterContext } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
+import '../styles/grokBotStudio.css';
 import { Check, Download, ExternalLink, ImagePlus, Shuffle, Trash2, ZoomIn, ZoomOut } from 'lucide-react';
 import { put, uploadFile } from '../api';
 import {

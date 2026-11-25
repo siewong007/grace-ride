@@ -260,7 +260,8 @@ pub(super) const RIDE_SELECT: &str = "SELECT r.id, r.passenger_id, r.driver_id, 
     COALESCE(e.mileage_claimable, 0) AS event_mileage_claimable,
     ea.name AS event_area_name,
     (SELECT f.amount_cents FROM area_fares f
-      WHERE f.area_a_id = LEAST(r.pickup_area_id, e.area_id)
+      WHERE e.area_id IS NOT NULL
+        AND f.area_a_id = LEAST(r.pickup_area_id, e.area_id)
         AND f.area_b_id = GREATEST(r.pickup_area_id, e.area_id)) AS route_fare_cents
     FROM rides r
     JOIN areas a ON a.id = r.pickup_area_id

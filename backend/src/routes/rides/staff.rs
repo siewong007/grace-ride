@@ -22,23 +22,20 @@ use super::{
 
 // ---------------- 交通组 (staff) ----------------
 
-pub(super) async fn exec_staff_approve(
-    st: &AppState,
+pub(super) async fn exec_staff_approve_tx(
+    tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
     u: &CurrentUser,
     r: &RideRow,
-) -> AppResult<()> {
+) -> AppResult<i64> {
     let id = r.id;
     let d = r
         .driver_id
         .ok_or_else(|| bad(u.lang, ErrorKey::NoDriverYet))?;
-    // Same driver-row lock as `driver_claim` / `staff_reassign`, so two approvals for one
-    // driver can't both pass the capacity check and overbook the car.
-    let mut tx = st.db.begin().await?;
     sqlx::query("SELECT id FROM users WHERE id=$1 FOR UPDATE")
         .bind(d)
-        .fetch_optional(&mut *tx)
+        .fetch_optional(&mut **tx)
         .await?;
-    let (load, cap) = driver_load_on(&mut tx, d, &r.pickup_at, Some(id)).await?;
+    let (load, cap) = driver_load_on(tx, d, &r.pickup_at, Some(id)).await?;
     if load + r.seats > cap {
         return Err(bad(u.lang, ErrorKey::NotEnoughDriverSeats { load, cap }));
     }
@@ -50,18 +47,36 @@ pub(super) async fn exec_staff_approve(
     .bind(now())
     .bind(id)
     .bind(d)
-    .execute(&mut *tx)
+    .execute(&mut **tx)
     .await?;
     if approved.rows_affected() == 0 {
         return Err(conflict(u.lang, ErrorKey::RideStatusChanged));
     }
-    assign_trip(&mut tx, r).await?;
-    tx.commit().await?;
+    assign_trip(tx, r).await?;
+    Ok(id)
+}
+
+pub(super) async fn exec_staff_approve_after(
+    st: &AppState,
+    u: &CurrentUser,
+    id: i64,
+) -> AppResult<()> {
     let r = load_ride(st, u.lang, id).await?;
     let trip = r.trip_id.unwrap_or(id);
     announce_confirmed(st, &r, trip, false).await;
     audit(&st.db, Some(u.id), "ride.approve", "ride", Some(id), "").await;
     Ok(())
+}
+
+pub(super) async fn exec_staff_approve(
+    st: &AppState,
+    u: &CurrentUser,
+    r: &RideRow,
+) -> AppResult<()> {
+    let mut tx = st.db.begin().await?;
+    let id = exec_staff_approve_tx(&mut tx, u, r).await?;
+    tx.commit().await?;
+    exec_staff_approve_after(st, u, id).await
 }
 
 pub(super) async fn staff_approve(
@@ -78,16 +93,13 @@ pub(super) async fn staff_approve(
     Ok(Json(json!({"ok": true})))
 }
 
-pub(super) async fn exec_staff_return(
-    st: &AppState,
+pub(super) async fn exec_staff_return_tx(
+    tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
     u: &CurrentUser,
     r: &RideRow,
     reason: &str,
 ) -> AppResult<()> {
     let id = r.id;
-    // One statement, and only while the ride still has the driver loaded above: as two
-    // steps a driver could claim the reopened ride in between, and clearing the driver
-    // afterwards left it waiting on a passenger reply with nobody driving.
     let returned = sqlx::query(
         "UPDATE rides SET status='pending_driver', driver_id=NULL, trip_id=NULL,
                 attention_reason=$1, updated_at=$2
@@ -98,11 +110,21 @@ pub(super) async fn exec_staff_return(
     .bind(now())
     .bind(id)
     .bind(r.driver_id)
-    .execute(&st.db)
+    .execute(&mut **tx)
     .await?;
     if returned.rows_affected() == 0 {
         return Err(conflict(u.lang, ErrorKey::RideStatusChanged));
     }
+    Ok(())
+}
+
+pub(super) async fn exec_staff_return_after(
+    st: &AppState,
+    u: &CurrentUser,
+    r: &RideRow,
+    reason: &str,
+) {
+    let id = r.id;
     notify(
         &st.db,
         r.passenger_id,
@@ -126,6 +148,18 @@ pub(super) async fn exec_staff_return(
         .await;
     }
     audit(&st.db, Some(u.id), "ride.return", "ride", Some(id), reason).await;
+}
+
+pub(super) async fn exec_staff_return(
+    st: &AppState,
+    u: &CurrentUser,
+    r: &RideRow,
+    reason: &str,
+) -> AppResult<()> {
+    let mut tx = st.db.begin().await?;
+    exec_staff_return_tx(&mut tx, u, r, reason).await?;
+    tx.commit().await?;
+    exec_staff_return_after(st, u, r, reason).await;
     Ok(())
 }
 
@@ -151,19 +185,20 @@ pub(super) struct ReassignReq {
     driver_id: i64,
 }
 
-pub(super) async fn exec_staff_reassign(
+pub(super) async fn exec_staff_reassign_tx(
+    tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
     st: &AppState,
     u: &CurrentUser,
     r: &RideRow,
     driver_id: i64,
-) -> AppResult<()> {
+) -> AppResult<Option<i64>> {
     let id = r.id;
     let (can_drive,): (bool,) = sqlx::query_as(crate::dyn_sql!(
         "SELECT {} FROM users u WHERE u.id=$1 AND u.status='active'",
         perms::sql_holds("u", Perm(Page::Drive, Act::Create))
     ))
     .bind(driver_id)
-    .fetch_optional(&st.db)
+    .fetch_optional(&mut **tx)
     .await?
     .ok_or_else(|| bad(u.lang, ErrorKey::DriverNotFound))?;
     if !can_drive {
@@ -172,38 +207,24 @@ pub(super) async fn exec_staff_reassign(
     if driver_id == r.passenger_id {
         return Err(bad(u.lang, ErrorKey::DriverCannotBePassenger));
     }
-    // Transport staff may go outside the rider's group; that is recorded.
+    let mut outside_group: Option<i64> = None;
     if let Some(g) = r.match_group_id {
         let (_, scope) = crate::audience::group_scopes(&st.db, driver_id).await?;
         if !scope.contains(&g) {
-            audit(
-                &st.db,
-                Some(u.id),
-                "ride.assign_outside_group",
-                "ride",
-                Some(id),
-                format!("driver {} is outside group {g}", driver_id),
-            )
-            .await;
+            outside_group = Some(g);
         }
     }
-    // Lock the new driver's row for the capacity check + reassignment, the same lock
-    // `driver_claim` takes, so concurrent assignments to one driver serialise and the
-    // second sees the first booking in `load` instead of overbooking the car.
-    let mut tx = st.db.begin().await?;
     sqlx::query("SELECT id FROM users WHERE id=$1 FOR UPDATE")
         .bind(driver_id)
-        .fetch_optional(&mut *tx)
+        .fetch_optional(&mut **tx)
         .await?;
-    let (load, cap) = driver_load_on(&mut tx, driver_id, &r.pickup_at, Some(id)).await?;
+    let (load, cap) = driver_load_on(tx, driver_id, &r.pickup_at, Some(id)).await?;
     if load + r.seats > cap {
         return Err(bad(
             u.lang,
             ErrorKey::NotEnoughDriverSeatsReassign { load, cap },
         ));
     }
-    // One statement, and only while the ride still has the driver loaded above, so a
-    // withdrawal or claim in between is not silently overwritten (or half-applied).
     let reassigned = sqlx::query(
         "UPDATE rides SET status='pending_driver_confirm', driver_id=$1, trip_id=NULL, approved_by=$2,
                 needs_attention=1, attention_reason='等待新司机确认', updated_at=$3
@@ -215,12 +236,36 @@ pub(super) async fn exec_staff_reassign(
     .bind(now())
     .bind(id)
     .bind(r.driver_id)
-    .execute(&mut *tx)
+    .execute(&mut **tx)
     .await?;
     if reassigned.rows_affected() == 0 {
         return Err(conflict(u.lang, ErrorKey::RideStatusChanged));
     }
-    tx.commit().await?;
+    Ok(outside_group)
+}
+
+pub(super) async fn exec_staff_reassign_after(
+    st: &AppState,
+    u: &CurrentUser,
+    r: &RideRow,
+    driver_id: i64,
+    outside_group: Option<i64>,
+) {
+    let id = r.id;
+    if let Some(g) = outside_group {
+        audit(
+            &st.db,
+            Some(u.id),
+            "ride.assign_outside_group",
+            "ride",
+            Some(id),
+            format!("driver {} is outside group {g}", driver_id),
+        )
+        .await;
+    }
+    if let (Some(old), Some(t)) = (r.driver_id, r.trip_id) {
+        st.routing.invalidate(old, t).await;
+    }
     if let Some(old) = r.driver_id.filter(|o| *o != driver_id) {
         let line = format!("{} · {}", r.p_name, r.pickup_at.replace('T', " "));
         notify(
@@ -232,7 +277,6 @@ pub(super) async fn exec_staff_reassign(
         )
         .await;
         if let Some(t) = r.trip_id {
-            st.routing.invalidate(old, t).await;
             system_message(
                 &st.db,
                 t,
@@ -276,6 +320,18 @@ pub(super) async fn exec_staff_reassign(
         format!("driver {:?} → {}", r.driver_id, driver_id),
     )
     .await;
+}
+
+pub(super) async fn exec_staff_reassign(
+    st: &AppState,
+    u: &CurrentUser,
+    r: &RideRow,
+    driver_id: i64,
+) -> AppResult<()> {
+    let mut tx = st.db.begin().await?;
+    let outside_group = exec_staff_reassign_tx(&mut tx, st, u, r, driver_id).await?;
+    tx.commit().await?;
+    exec_staff_reassign_after(st, u, r, driver_id, outside_group).await;
     Ok(())
 }
 
@@ -294,20 +350,18 @@ pub(super) async fn staff_reassign(
     Ok(Json(json!({"ok": true})))
 }
 
-pub(super) async fn exec_staff_alt_transport(
-    st: &AppState,
+pub(super) async fn exec_staff_alt_transport_tx(
+    tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
     u: &CurrentUser,
     r: &RideRow,
     reason: Option<&str>,
-) -> AppResult<()> {
+) -> AppResult<String> {
     let id = r.id;
     let note = reason
         .map(str::trim)
         .filter(|s| !s.is_empty())
         .unwrap_or("已批准使用 Grab 替代交通")
         .to_string();
-    // One statement, and only while the ride still has the driver loaded above, so the
-    // driver who is told the ride was taken off them is the one it was taken from.
     let switched = sqlx::query(
         "UPDATE rides SET status='alt_transport', driver_id=NULL, trip_id=NULL, needs_attention=0,
                 attention_reason=$1, approved_by=$2, updated_at=$3
@@ -319,11 +373,21 @@ pub(super) async fn exec_staff_alt_transport(
     .bind(now())
     .bind(id)
     .bind(r.driver_id)
-    .execute(&st.db)
+    .execute(&mut **tx)
     .await?;
     if switched.rows_affected() == 0 {
         return Err(conflict(u.lang, ErrorKey::RideStatusChanged));
     }
+    Ok(note)
+}
+
+pub(super) async fn exec_staff_alt_transport_after(
+    st: &AppState,
+    u: &CurrentUser,
+    r: &RideRow,
+    note: String,
+) {
+    let id = r.id;
     if let (Some(d), Some(t)) = (r.driver_id, r.trip_id) {
         st.routing.invalidate(d, t).await;
     }
@@ -365,6 +429,18 @@ pub(super) async fn exec_staff_alt_transport(
         note,
     )
     .await;
+}
+
+pub(super) async fn exec_staff_alt_transport(
+    st: &AppState,
+    u: &CurrentUser,
+    r: &RideRow,
+    reason: Option<&str>,
+) -> AppResult<()> {
+    let mut tx = st.db.begin().await?;
+    let note = exec_staff_alt_transport_tx(&mut tx, u, r, reason).await?;
+    tx.commit().await?;
+    exec_staff_alt_transport_after(st, u, r, note).await;
     Ok(())
 }
 
@@ -389,9 +465,8 @@ pub(super) struct ReimbExcludedReq {
     excluded: bool,
 }
 
-pub(super) async fn exec_set_reimbursement_excluded(
-    st: &AppState,
-    u: &CurrentUser,
+pub(super) async fn exec_set_reimbursement_excluded_tx(
+    tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
     r: &RideRow,
     excluded: bool,
 ) -> AppResult<()> {
@@ -400,8 +475,17 @@ pub(super) async fn exec_set_reimbursement_excluded(
         .bind(val)
         .bind(now())
         .bind(r.id)
-        .execute(&st.db)
+        .execute(&mut **tx)
         .await?;
+    Ok(())
+}
+
+pub(super) async fn exec_set_reimbursement_excluded_after(
+    st: &AppState,
+    u: &CurrentUser,
+    r: &RideRow,
+    excluded: bool,
+) {
     audit(
         &st.db,
         Some(u.id),
@@ -415,6 +499,18 @@ pub(super) async fn exec_set_reimbursement_excluded(
         },
     )
     .await;
+}
+
+pub(super) async fn exec_set_reimbursement_excluded(
+    st: &AppState,
+    u: &CurrentUser,
+    r: &RideRow,
+    excluded: bool,
+) -> AppResult<()> {
+    let mut tx = st.db.begin().await?;
+    exec_set_reimbursement_excluded_tx(&mut tx, r, excluded).await?;
+    tx.commit().await?;
+    exec_set_reimbursement_excluded_after(st, u, r, excluded).await;
     Ok(())
 }
 
@@ -424,7 +520,9 @@ pub(super) async fn staff_set_reimbursement_excluded(
     Path(id): Path<i64>,
     Json(req): Json<ReimbExcludedReq>,
 ) -> AppResult<Json<Value>> {
-    if !u.can(Page::AdminRides, Act::Update) && !u.is_traffic_lead() {
+    if !u.can(Page::AdminRides, Act::Update)
+        && !(u.can(Page::AdminRides, Act::View) && u.is_traffic_lead())
+    {
         return Err(forbidden(u.lang, ErrorKey::NoPermission));
     }
     let r = load_ride(&st, u.lang, id).await?;
@@ -541,7 +639,7 @@ pub(super) async fn admin_rides(
 
         let page = q.page.unwrap_or(1).max(1);
         let limit = q.limit.unwrap_or(50).clamp(1, 200);
-        let offset = (page - 1) * limit;
+        let offset = (page - 1).saturating_mul(limit);
 
         let sql = format!(
             "{RIDE_SELECT} WHERE {} ORDER BY {order} LIMIT ${n} OFFSET ${}",

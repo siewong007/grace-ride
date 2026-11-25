@@ -108,6 +108,15 @@ pub(super) async fn driver_claim(
     // for different rides by the same driver then serialise; the second sees the first
     // booking in `load` and is rejected instead of overbooking the car.
     let mut tx = st.db.begin().await?;
+    if let Some(event_id) = r.event_id {
+        let ev_status: Option<String> = sqlx::query_scalar("SELECT status FROM events WHERE id=$1")
+            .bind(event_id)
+            .fetch_optional(&mut *tx)
+            .await?;
+        if ev_status.as_deref() != Some("published") {
+            return Err(bad(u.lang, ErrorKey::EventNotOpen));
+        }
+    }
     sqlx::query("SELECT id FROM users WHERE id=$1 FOR UPDATE")
         .bind(u.id)
         .fetch_optional(&mut *tx)
@@ -423,6 +432,15 @@ pub(super) async fn driver_confirm_assignment(
     // Only while this driver still holds the assignment: staff may have reassigned it.
     // `reminder_sent=0`: a new driver means the pickup reminder goes out again.
     let mut tx = st.db.begin().await?;
+    if let Some(event_id) = r.event_id {
+        let ev_status: Option<String> = sqlx::query_scalar("SELECT status FROM events WHERE id=$1")
+            .bind(event_id)
+            .fetch_optional(&mut *tx)
+            .await?;
+        if ev_status.as_deref() != Some("published") {
+            return Err(bad(u.lang, ErrorKey::EventNotOpen));
+        }
+    }
     sqlx::query("SELECT id FROM users WHERE id=$1 FOR UPDATE")
         .bind(u.id)
         .fetch_optional(&mut *tx)
@@ -486,7 +504,7 @@ pub(super) async fn start_ride(
     let max_live_drivers: i64 = sqlx::query_scalar::<_, String>(
         "SELECT value FROM system_settings WHERE key='max_live_drivers'",
     )
-    .fetch_optional(&st.db)
+    .fetch_optional(&mut *tx)
     .await
     .ok()
     .flatten()
@@ -595,11 +613,13 @@ pub(super) async fn pickup(
     // Only while the trip is still running: a no-show or completion saved since the read
     // above has ended the ride.
     let picked = sqlx::query(
-        "UPDATE rides SET picked_up_at=$1, updated_at=$2 WHERE id=$3 AND status='in_progress'",
+        "UPDATE rides SET picked_up_at=$1, updated_at=$2
+         WHERE id=$3 AND driver_id=$4 AND status='in_progress' AND picked_up_at IS NULL",
     )
     .bind(now())
     .bind(now())
     .bind(id)
+    .bind(u.id)
     .execute(&st.db)
     .await?;
     if picked.rows_affected() == 0 {
@@ -838,49 +858,80 @@ pub(super) async fn complete(
     // areas pays the highest of its fares once, so the rides of one trip share it.
     // A pair with no fare yet pays nothing and asks the driver for their mileage receipt.
     let mut tx = st.db.begin().await?;
-    if let Some(t) = r.trip_id {
+    let locked_ride: Option<(String, Option<i64>, Option<i64>, Option<i64>, i64, i64)> =
+        sqlx::query_as(
+            "SELECT r.status, r.driver_id, r.trip_id, r.event_id, r.reimbursement_excluded,
+                    COALESCE(e.mileage_claimable, 0)
+             FROM rides r
+             LEFT JOIN events e ON e.id = r.event_id
+             WHERE r.id = $1
+             FOR UPDATE OF r",
+        )
+        .bind(id)
+        .fetch_optional(&mut *tx)
+        .await?;
+    let Some((
+        locked_status,
+        locked_driver_id,
+        locked_trip_id,
+        locked_event_id,
+        locked_reimb_excluded,
+        locked_mileage_claimable,
+    )) = locked_ride
+    else {
+        return Err(conflict(u.lang, ErrorKey::RideStatusChanged));
+    };
+    if locked_driver_id != Some(u.id) {
+        return Err(forbidden(u.lang, ErrorKey::NotRideDriver));
+    }
+    if locked_status != "in_progress" {
+        return Err(conflict(u.lang, ErrorKey::RideStatusChanged));
+    }
+    if let Some(t) = locked_trip_id {
         sqlx::query("SELECT pg_advisory_xact_lock(hashtextextended('grace_ride_trip_fare', $1))")
             .bind(t)
             .execute(&mut *tx)
             .await?;
     }
-    let (reimbursement_cents, receipt_needed): (i64, i64) = if r.event_id.is_some()
-        && r.event_mileage_claimable == 1
-        && r.reimbursement_excluded == 0
+    let (reimbursement_cents, receipt_needed): (i64, i64) = if locked_event_id.is_some()
+        && locked_mileage_claimable == 1
+        && locked_reimb_excluded == 0
     {
         // Rides still travelling in this trip count too, so the fare is the same
         // whichever rider is dropped off first.
         let fares: Vec<Option<i64>> = sqlx::query_scalar(
             "SELECT (SELECT f.amount_cents FROM area_fares f
-                          WHERE f.area_a_id = LEAST(x.pickup_area_id, e.area_id)
+                          WHERE e.area_id IS NOT NULL
+                            AND f.area_a_id = LEAST(x.pickup_area_id, e.area_id)
                             AND f.area_b_id = GREATEST(x.pickup_area_id, e.area_id))
                  FROM rides x JOIN events e ON e.id = x.event_id
                  WHERE x.reimbursement_excluded = 0
-                    AND (x.id = $1
+                   AND e.mileage_claimable = 1
+                   AND (x.id = $1
                     OR ($2::BIGINT IS NOT NULL AND x.trip_id = $2 AND x.driver_id = $3
                         AND x.status IN ('confirmed','in_progress','completed')))",
         )
         .bind(id)
-        .bind(r.trip_id)
+        .bind(locked_trip_id)
         .bind(u.id)
         .fetch_all(&mut *tx)
         .await?;
         match fares.into_iter().flatten().max() {
             Some(fare) => {
-                let paid: i64 = match r.trip_id {
-                        Some(t) => {
-                            sqlx::query_scalar(
-                                "SELECT COALESCE(SUM(reimbursement_amount_cents),0)::BIGINT
-                                 FROM rides WHERE trip_id=$1 AND id<>$2 AND driver_id=$3 AND status='completed'",
-                            )
-                            .bind(t)
-                            .bind(id)
-                            .bind(u.id)
-                            .fetch_one(&mut *tx)
-                            .await?
-                        }
-                        None => 0,
-                    };
+                let paid: i64 = match locked_trip_id {
+                    Some(t) => {
+                        sqlx::query_scalar(
+                            "SELECT COALESCE(SUM(reimbursement_amount_cents),0)::BIGINT
+                             FROM rides WHERE trip_id=$1 AND id<>$2 AND driver_id=$3 AND status='completed'",
+                        )
+                        .bind(t)
+                        .bind(id)
+                        .bind(u.id)
+                        .fetch_one(&mut *tx)
+                        .await?
+                    }
+                    None => 0,
+                };
                 ((fare - paid).max(0), 0)
             }
             None => (0, 1),

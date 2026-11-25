@@ -6,7 +6,7 @@ use serde_json::{json, Value};
 use totp_rs::Secret;
 
 use super::passkeys::require_recent_sign_in;
-use super::{hash_password, totp_for, verify_password, verify_totp};
+use super::{hash_password_async, totp_for, verify_password_async, verify_totp};
 use crate::auth::CurrentUser;
 use crate::error::{bad, AppError, AppResult};
 use crate::i18n::ErrorKey;
@@ -397,6 +397,7 @@ pub(super) async fn set_password(
     u: CurrentUser,
     Json(req): Json<PwReq>,
 ) -> AppResult<Json<Value>> {
+    require_recent_sign_in(&st, &u).await?;
     if req.new_password.chars().count() < 10 {
         return Err(bad(u.lang, ErrorKey::PasswordTooShort));
     }
@@ -405,7 +406,8 @@ pub(super) async fn set_password(
         .fetch_one(&st.db)
         .await?;
     if let Some(h) = hash {
-        if !verify_password(req.current.as_deref().unwrap_or(""), &h) {
+        let current = req.current.unwrap_or_default();
+        if !verify_password_async(current, h).await? {
             audit(
                 &st.db,
                 Some(u.id),
@@ -418,8 +420,9 @@ pub(super) async fn set_password(
             return Err(bad(u.lang, ErrorKey::CurrentPasswordIncorrect));
         }
     }
+    let new_hash = hash_password_async(req.new_password).await?;
     sqlx::query("UPDATE users SET password_hash=$1 WHERE id=$2")
-        .bind(hash_password(&req.new_password)?)
+        .bind(new_hash)
         .bind(u.id)
         .execute(&st.db)
         .await?;

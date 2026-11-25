@@ -1,7 +1,6 @@
 # Grace Ride on the AIC cloud VPS (vps-av1w).
 #
 # Host Caddy owns ports 80/443. This stack binds only 127.0.0.1:8090.
-# Payroll uses :8080, saliminn :3030/:8081, shopping :4000/:8082.
 # Postgres is not published. Maintenance: docker exec grace-ride-db.
 #
 # /opt/grace-ride/secrets.env supplies POSTGRES_PASSWORD, ADMIN_EMAIL, IMAGE_TAG,
@@ -114,9 +113,12 @@ services:
     logging: *default-logging
     networks:
       - database
+      - egress
 
 networks:
   database:
+    internal: true
+  egress: {}
 
 volumes:
   pg-data:

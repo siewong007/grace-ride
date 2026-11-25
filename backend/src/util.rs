@@ -165,6 +165,40 @@ pub fn norm_dt(s: &str) -> Option<String> {
     parse_dt(s).map(|d| d.format("%Y-%m-%dT%H:%M").to_string())
 }
 
+const AUDIT_ENTITY_NAME_EXPR: &str = "COALESCE(
+    CASE $3::text
+        WHEN 'user' THEN (SELECT name FROM users WHERE id = $4)
+        WHEN 'ride' THEN (SELECT p.name FROM rides r JOIN users p ON p.id = r.passenger_id WHERE r.id = $4)
+        WHEN 'event' THEN (SELECT title FROM events WHERE id = $4)
+        WHEN 'group' THEN (SELECT name FROM groups WHERE id = $4)
+        WHEN 'area' THEN (SELECT name FROM areas WHERE id = $4)
+        WHEN 'settlement' THEN (SELECT title FROM settlements WHERE id = $4)
+        WHEN 'settlement_share' THEN (SELECT p.name FROM settlement_shares s JOIN users p ON p.id = s.user_id WHERE s.id = $4)
+        WHEN 'reimbursement' THEN (SELECT p.name FROM reimbursements r JOIN users p ON p.id = r.user_id WHERE r.id = $4)
+        WHEN 'announcement' THEN (SELECT title FROM announcements WHERE id = $4)
+        WHEN 'help_ticket' THEN (SELECT subject FROM help_tickets WHERE id = $4)
+        WHEN 'file' THEN (SELECT NULLIF(original_name, '') FROM files WHERE id = $4)
+        WHEN 'invite' THEN (SELECT COALESCE(NULLIF(name, ''), NULLIF(email, '')) FROM invites WHERE id = $4)
+        WHEN 'recovery' THEN (SELECT email FROM recovery_requests WHERE id = $4)
+        WHEN 'visitor_pass' THEN (SELECT name FROM visitor_passes WHERE id = $4)
+        WHEN 'guide_workflow' THEN (SELECT COALESCE(NULLIF(title_zh, ''), title_en) FROM guide_workflows WHERE id = $4)
+        WHEN 'role' THEN CASE
+            WHEN $2 = 'role.update' THEN COALESCE(
+                (SELECT NULLIF(name, '') FROM roles WHERE key = split_part($5, ':', 1)),
+                NULLIF(split_part($5, ':', 1), ''))
+            ELSE substring($5 from '^(.*) \\([a-z][a-z0-9_]*\\)[:;]')
+        END
+    END,
+    CASE
+        WHEN $2 IN ('group.create', 'group.update', 'group.delete', 'area.create',
+                    'announcement.create', 'announcement.update', 'announcement.delete',
+                    'settlement.create', 'event.create', 'event.cancel')
+            THEN NULLIF($5, '')
+        WHEN $2 = 'settlement.delete' THEN NULLIF(regexp_replace($5, '^draft: ', ''), '')
+    END,
+    ''
+)";
+
 pub async fn audit(
     db: &PgPool,
     actor: Option<i64>,
@@ -173,17 +207,19 @@ pub async fn audit(
     entity_id: Option<i64>,
     detail: impl AsRef<str>,
 ) {
-    let r = sqlx::query(
-        "INSERT INTO audit_logs (actor_id, action, entity, entity_id, detail, created_at) VALUES ($1,$2,$3,$4,$5,$6)",
-    )
-    .bind(actor)
-    .bind(action)
-    .bind(entity)
-    .bind(entity_id)
-    .bind(detail.as_ref())
-    .bind(now())
-    .execute(db)
-    .await;
+    let sql = crate::dyn_sql!(
+        "INSERT INTO audit_logs (actor_id, action, entity, entity_id, entity_name, detail, created_at)
+         VALUES ($1,$2,$3,$4,{AUDIT_ENTITY_NAME_EXPR},$5,$6)"
+    );
+    let r = sqlx::query(sql)
+        .bind(actor)
+        .bind(action)
+        .bind(entity)
+        .bind(entity_id)
+        .bind(detail.as_ref())
+        .bind(now())
+        .execute(db)
+        .await;
     if let Err(e) = r {
         tracing::error!("audit insert failed: {e}");
     }
@@ -201,18 +237,20 @@ pub async fn audit_many<'e>(
     if entity_ids.is_empty() {
         return Ok(());
     }
-    sqlx::query(
-        "INSERT INTO audit_logs (actor_id, action, entity, entity_id, detail, created_at)
-         SELECT $1, $2, $3, id, $5, $6 FROM unnest($4::BIGINT[]) AS id",
-    )
-    .bind(actor)
-    .bind(action)
-    .bind(entity)
-    .bind(entity_ids)
-    .bind(detail)
-    .bind(now())
-    .execute(db)
-    .await?;
+    let sql = crate::dyn_sql!(
+        "INSERT INTO audit_logs (actor_id, action, entity, entity_id, entity_name, detail, created_at)
+         SELECT $1, $2, $3, t.id, {}, $5, $6 FROM unnest($4::BIGINT[]) AS t(id)",
+        AUDIT_ENTITY_NAME_EXPR.replace("$4", "t.id")
+    );
+    sqlx::query(sql)
+        .bind(actor)
+        .bind(action)
+        .bind(entity)
+        .bind(entity_ids)
+        .bind(detail)
+        .bind(now())
+        .execute(db)
+        .await?;
     Ok(())
 }
 

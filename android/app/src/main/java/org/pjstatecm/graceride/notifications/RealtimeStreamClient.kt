@@ -29,11 +29,14 @@ import okhttp3.sse.EventSourceListener
 import okhttp3.sse.EventSources
 import org.pjstatecm.graceride.data.api.AuthEvent
 import org.pjstatecm.graceride.data.api.AuthEventBus
+import org.pjstatecm.graceride.data.api.NotificationDto
 import org.pjstatecm.graceride.data.repo.AuthRepository
 import org.pjstatecm.graceride.data.repo.AuthState
 import org.pjstatecm.graceride.data.repo.CommunityRepository
+import org.pjstatecm.graceride.data.session.SecureStore
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicBoolean
+import kotlin.random.Random
 
 class RealtimeStreamClient(
     private val okHttp: OkHttpClient,
@@ -44,6 +47,7 @@ class RealtimeStreamClient(
     private val authEvents: AuthEventBus? = null,
     private val langProvider: (() -> String)? = null,
     private val hideLockDetailsProvider: (() -> Boolean)? = null,
+    private val store: SecureStore? = null,
 ) {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private val started = AtomicBoolean(false)
@@ -93,8 +97,17 @@ class RealtimeStreamClient(
                 val uid = (st as? AuthState.SignedIn)?.me?.id
                 if (uid != lastUserId) {
                     lastUserId = uid
-                    baselineInitialized = false
-                    lastSeenNotifId = 0L
+                    val saved = uid?.let { readWatermark(store, it) }
+                    if (saved != null) {
+                        lastSeenNotifId = saved
+                        baselineInitialized = true
+                    } else {
+                        lastSeenNotifId = 0L
+                        baselineInitialized = false
+                    }
+                    if (uid != null && appContext != null) {
+                        runCatching { BackgroundNotificationWorker.schedule(appContext) }
+                    }
                 }
                 st is AuthState.SignedIn && fg
             }.distinctUntilChanged().collectLatest { shouldConnect ->
@@ -187,44 +200,97 @@ class RealtimeStreamClient(
                 if (activeSource === source) activeSource = null
             }
             if (terminalAuthStatus || !currentCoroutineContext().isActive) break
-            delay(backoffMs)
+            val jitterMs = Random.nextLong(0L, (backoffMs / 4).coerceAtLeast(1L))
+            delay(backoffMs + jitterMs)
             backoffMs = (backoffMs * 2).coerceAtMost(30_000L)
         }
     }
 
     private suspend fun syncLatestAndNotify(surfaceNew: Boolean) {
-        if (auth.state.value !is AuthState.SignedIn) return
+        val uid = (auth.state.value as? AuthState.SignedIn)?.me?.id ?: return
         syncMutex.withLock {
             try {
-                val page = community.notificationsPage(limit = 5)
-                auth.updateUnread(page.unread)
-                val maxId = page.items.maxOfOrNull { it.id } ?: 0L
-                if (!baselineInitialized) {
-                    lastSeenNotifId = maxId
-                    baselineInitialized = true
-                    return@withLock
-                }
-                if (surfaceNew && appContext != null && maxId > lastSeenNotifId) {
-                    val lang = langProvider?.invoke()
-                    val hideLockDetails = hideLockDetailsProvider?.invoke() ?: false
-                    page.items
-                        .filter { it.id > lastSeenNotifId && !it.read }
-                        .sortedBy { it.id }
-                        .forEach {
-                            NotificationHelper.showNotification(
-                                appContext,
-                                it,
-                                lang = lang,
-                                hideLockDetails = hideLockDetails,
-                            )
-                        }
-                }
-                if (maxId > lastSeenNotifId) {
-                    lastSeenNotifId = maxId
-                }
+                val prevId = if (store != null) readWatermark(store, uid) else if (baselineInitialized) lastSeenNotifId else null
+                val result = syncNotifications(
+                    community = community,
+                    auth = auth,
+                    store = store,
+                    userId = uid,
+                    inMemoryLastSeenId = prevId,
+                    appContext = appContext,
+                    surfaceNew = surfaceNew,
+                    lang = langProvider?.invoke(),
+                    hideLockDetails = hideLockDetailsProvider?.invoke() ?: false,
+                )
+                lastSeenNotifId = result.newWatermark
+                baselineInitialized = true
             } catch (_: Exception) {
                 // Ignore transient errors during SSE background sync.
             }
+        }
+    }
+
+    data class SyncResult(
+        val newWatermark: Long,
+        val surfaced: List<NotificationDto>,
+    )
+
+    companion object {
+        fun watermarkKey(userId: Long): String = "notif_last_seen_id_$userId"
+
+        fun readWatermark(store: SecureStore?, userId: Long): Long? =
+            store?.getString(watermarkKey(userId))?.toLongOrNull()
+
+        fun writeWatermark(store: SecureStore?, userId: Long, id: Long) {
+            store?.putString(watermarkKey(userId), id.toString())
+        }
+
+        /**
+         * Fetch the latest notifications page, update the unread badge count, maintain the
+         * per-user watermark in [store], and emit OS notifications for unread items newer than
+         * the previous watermark when [surfaceNew] is true.
+         */
+        suspend fun syncNotifications(
+            community: CommunityRepository,
+            auth: AuthRepository,
+            store: SecureStore?,
+            userId: Long,
+            inMemoryLastSeenId: Long? = null,
+            appContext: Context? = null,
+            surfaceNew: Boolean = true,
+            lang: String? = null,
+            hideLockDetails: Boolean = false,
+        ): SyncResult {
+            val page = community.notificationsPage(limit = 5)
+            auth.updateUnread(page.unread)
+            val maxId = page.items.maxOfOrNull { it.id } ?: 0L
+            val existing = readWatermark(store, userId) ?: inMemoryLastSeenId
+            if (existing == null) {
+                writeWatermark(store, userId, maxId)
+                return SyncResult(newWatermark = maxId, surfaced = emptyList())
+            }
+            val newlySurfaced = if (surfaceNew && maxId > existing) {
+                page.items
+                    .filter { it.id > existing && !it.read }
+                    .sortedBy { it.id }
+            } else {
+                emptyList()
+            }
+            if (appContext != null) {
+                newlySurfaced.forEach {
+                    NotificationHelper.showNotification(
+                        appContext,
+                        it,
+                        lang = lang,
+                        hideLockDetails = hideLockDetails,
+                    )
+                }
+            }
+            val nextWatermark = maxOf(existing, maxId)
+            if (nextWatermark > existing) {
+                writeWatermark(store, userId, nextWatermark)
+            }
+            return SyncResult(newWatermark = nextWatermark, surfaced = newlySurfaced)
         }
     }
 }

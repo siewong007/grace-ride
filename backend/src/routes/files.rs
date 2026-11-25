@@ -4,13 +4,14 @@
 use axum::{
     body::{Body, Bytes},
     extract::{DefaultBodyLimit, Multipart, Path, State},
-    http::{header, StatusCode},
+    http::{header, HeaderMap, StatusCode},
     response::Response,
     routing::{get, post},
     Json, Router,
 };
 use serde::Deserialize;
 use serde_json::{json, Value};
+use tokio::io::AsyncReadExt;
 
 use crate::auth::CurrentUser;
 use crate::error::{bad, forbidden, not_found, too_many_requests, AppError, AppResult};
@@ -58,6 +59,55 @@ pub fn sniff(b: &[u8]) -> Option<(&'static str, &'static str)> {
     }
 }
 
+/// A JPEG without its APP1 (Exif, incl. GPS location; XMP) and APP13 (IPTC) segments.
+/// `None` when the data is not a well-formed JPEG header or nothing was removed.
+pub fn strip_jpeg_metadata(data: &[u8]) -> Option<Vec<u8>> {
+    if !data.starts_with(&[0xFF, 0xD8]) {
+        return None;
+    }
+    let mut out = Vec::with_capacity(data.len());
+    out.extend_from_slice(&data[..2]);
+    let mut pos = 2;
+    let mut removed = false;
+    loop {
+        if pos + 1 >= data.len() || data[pos] != 0xFF {
+            return None;
+        }
+        let marker = data[pos + 1];
+        // Fill bytes before a marker.
+        if marker == 0xFF {
+            pos += 1;
+            continue;
+        }
+        // Start of scan or end of image: the rest is image data, copied as it is.
+        if marker == 0xDA || marker == 0xD9 {
+            out.extend_from_slice(&data[pos..]);
+            break;
+        }
+        // Markers without a length.
+        if marker == 0x01 || (0xD0..=0xD7).contains(&marker) {
+            out.extend_from_slice(&data[pos..pos + 2]);
+            pos += 2;
+            continue;
+        }
+        if pos + 4 > data.len() {
+            return None;
+        }
+        let len = u16::from_be_bytes([data[pos + 2], data[pos + 3]]) as usize;
+        if len < 2 || pos + 2 + len > data.len() {
+            return None;
+        }
+        let end = pos + 2 + len;
+        if marker == 0xE1 || marker == 0xED {
+            removed = true;
+        } else {
+            out.extend_from_slice(&data[pos..end]);
+        }
+        pos = end;
+    }
+    removed.then_some(out)
+}
+
 async fn upload(
     State(st): State<AppState>,
     u: CurrentUser,
@@ -90,30 +140,47 @@ async fn upload(
         }
         // Trust the bytes, not the browser-supplied Content-Type.
         let (mime, ext) = sniff(&data).ok_or_else(|| bad(u.lang, ErrorKey::InvalidFileType))?;
+        // Strip EXIF/XMP/IPTC (including GPS tags) on all JPEG uploads regardless of usage.
+        let stripped = if mime == "image/jpeg" {
+            strip_jpeg_metadata(&data)
+        } else {
+            None
+        };
+        let payload = stripped.as_deref().unwrap_or(&data);
         let mime = mime.to_string();
         let stored = format!("{}.{}", uuid::Uuid::new_v4(), ext);
+        let path = st.cfg.upload_dir.join(&stored);
         tokio::fs::create_dir_all(&st.cfg.upload_dir)
             .await
             .map_err(anyhow::Error::from)?;
-        tokio::fs::write(st.cfg.upload_dir.join(&stored), &data)
+        tokio::fs::write(&path, payload)
             .await
             .map_err(anyhow::Error::from)?;
-        let (id,): (i64,) = sqlx::query_as("INSERT INTO files (owner_id, stored_name, mime, original_name, size, created_at) VALUES ($1,$2,$3,$4,$5,$6) RETURNING id")
-            .bind(u.id)
-            .bind(&stored)
-            .bind(&mime)
-            .bind(original.chars().take(120).collect::<String>())
-            .bind(data.len() as i64)
-            .bind(now())
-            .fetch_one(&st.db)
-            .await?;
+        let inserted: Result<(i64,), sqlx::Error> = sqlx::query_as(
+            "INSERT INTO files (owner_id, stored_name, mime, original_name, size, created_at) VALUES ($1,$2,$3,$4,$5,$6) RETURNING id",
+        )
+        .bind(u.id)
+        .bind(&stored)
+        .bind(&mime)
+        .bind(original.chars().take(120).collect::<String>())
+        .bind(payload.len() as i64)
+        .bind(now())
+        .fetch_one(&st.db)
+        .await;
+        let (id,) = match inserted {
+            Ok(row) => row,
+            Err(e) => {
+                let _ = tokio::fs::remove_file(&path).await;
+                return Err(e.into());
+            }
+        };
         audit(
             &st.db,
             Some(u.id),
             "file.upload",
             "file",
             Some(id),
-            format!("{mime}, {} bytes", data.len()),
+            format!("{mime}, {} bytes", payload.len()),
         )
         .await;
         return Ok(Json(json!({ "id": id, "mime": mime, "name": original })));
@@ -121,27 +188,34 @@ async fn upload(
     Err(bad(u.lang, ErrorKey::NoFileReceived))
 }
 
-pub async fn can_access_file(st: &AppState, u: &CurrentUser, file_id: i64) -> AppResult<bool> {
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum FileAccess {
+    Denied,
+    Private,
+    CacheableMedia,
+}
+
+async fn file_access(st: &AppState, u: &CurrentUser, file_id: i64) -> AppResult<FileAccess> {
     let (owner,): (i64,) = sqlx::query_as("SELECT owner_id FROM files WHERE id=$1")
         .bind(file_id)
         .fetch_optional(&st.db)
         .await?
         .ok_or(not_found(u.lang))?;
-    if owner == u.id {
-        return Ok(true);
-    }
     // Pending (unapproved) accounts can only access files they uploaded themselves.
     if u.status != "active" {
-        return Ok(false);
+        return Ok(if owner == u.id {
+            FileAccess::Private
+        } else {
+            FileAccess::Denied
+        });
     }
-    let bills = u.can(Page::AdminBills, Act::View);
     // Profile photos are visible to members (passengers recognise their driver).
     let (photo,): (i64,) = sqlx::query_as("SELECT COUNT(*) FROM users WHERE photo_file_id=$1")
         .bind(file_id)
         .fetch_one(&st.db)
         .await?;
     if photo > 0 {
-        return Ok(true);
+        return Ok(FileAccess::CacheableMedia);
     }
     // Pickup-area photos: every active member (passengers recognise where to wait).
     let (area_photo,): (i64,) = sqlx::query_as("SELECT COUNT(*) FROM area_photos WHERE file_id=$1")
@@ -149,7 +223,7 @@ pub async fn can_access_file(st: &AppState, u: &CurrentUser, file_id: i64) -> Ap
         .fetch_one(&st.db)
         .await?;
     if area_photo > 0 {
-        return Ok(true);
+        return Ok(FileAccess::CacheableMedia);
     }
     // Event cover photos: everyone who can see the event.
     let events: Vec<i64> = sqlx::query_scalar("SELECT id FROM events WHERE photo_file_id=$1")
@@ -158,76 +232,8 @@ pub async fn can_access_file(st: &AppState, u: &CurrentUser, file_id: i64) -> Ap
         .await?;
     for ev in events {
         if crate::routes::events::can_see_event(st, u, ev).await? {
-            return Ok(true);
+            return Ok(FileAccess::CacheableMedia);
         }
-    }
-    // Settlement expense receipts: 账单查阅 (finance). The organiser attaches only their own
-    // uploads (checked when the bill is saved) and reaches them through the owner
-    // check above, so naming another member's file id on a bill opens nothing.
-    // Participants see the bill lines but not the receipts.
-    if bills {
-        let (item,): (i64,) =
-            sqlx::query_as("SELECT COUNT(*) FROM settlement_items WHERE receipt_file_id=$1")
-                .bind(file_id)
-                .fetch_one(&st.db)
-                .await?;
-        if item > 0 {
-            return Ok(true);
-        }
-    }
-    // Payment proofs: payer (owner), organiser/payee, 账单查阅 (finance).
-    let (proof,): (i64,) = sqlx::query_as(
-        "SELECT COUNT(*) FROM settlement_shares sh JOIN settlements s ON s.id=sh.settlement_id
-         WHERE sh.proof_file_id=$1 AND (s.created_by=$2 OR $3)",
-    )
-    .bind(file_id)
-    .bind(u.id)
-    .bind(bills)
-    .fetch_one(&st.db)
-    .await?;
-    if proof > 0 {
-        return Ok(true);
-    }
-    // Payee DuitNow / TNG QR codes attached to bills: visible to participants once published and to finance.
-    let (qr,): (i64,) = sqlx::query_as(
-        "SELECT COUNT(*) FROM settlements s LEFT JOIN settlement_shares sh ON sh.settlement_id=s.id
-         WHERE s.payee_qr_file_id=$1 AND ((sh.user_id=$2 AND s.status <> 'draft') OR $3)",
-    )
-    .bind(file_id)
-    .bind(u.id)
-    .bind(bills)
-    .fetch_one(&st.db)
-    .await?;
-    if qr > 0 {
-        return Ok(true);
-    }
-    // Help request photos: the request's member and 帮助台 staff.
-    let (help,): (i64,) = sqlx::query_as(
-        "SELECT COUNT(*) FROM help_replies r JOIN help_tickets t ON t.id=r.ticket_id
-         WHERE r.file_id=$1 AND (t.user_id=$2 OR $3)",
-    )
-    .bind(file_id)
-    .bind(u.id)
-    .bind(u.can(Page::AdminHelp, Act::View))
-    .fetch_one(&st.db)
-    .await?;
-    if help > 0 {
-        return Ok(true);
-    }
-    // Grab reimbursement receipts: claimant, 报销审核 (交通组), 报销付款 (finance).
-    // The claimant is named explicitly so a receipt uploaded by staff on their behalf
-    // stays visible to them too.
-    let (reimb,): (i64,) = sqlx::query_as(
-        "SELECT COUNT(*) FROM reimbursements WHERE receipt_file_id=$1 AND (user_id=$2 OR $3 OR $4)",
-    )
-    .bind(file_id)
-    .bind(u.id)
-    .bind(u.can(Page::AdminReimbReview, Act::View))
-    .bind(u.can(Page::AdminReimbPay, Act::View))
-    .fetch_one(&st.db)
-    .await?;
-    if reimb > 0 {
-        return Ok(true);
     }
     // Guide step screenshots: members who may view Help and can see that guide.
     if u.can(Page::Help, Act::View) {
@@ -244,28 +250,149 @@ pub async fn can_access_file(st: &AppState, u: &CurrentUser, file_id: i64) -> Ap
         .fetch_one(&st.db)
         .await?;
         if guide > 0 {
-            return Ok(true);
+            return Ok(FileAccess::CacheableMedia);
         }
     }
-    Ok(false)
+    if owner == u.id {
+        return Ok(FileAccess::Private);
+    }
+    let bills = u.can(Page::AdminBills, Act::View);
+    if bills {
+        let (item,): (i64,) =
+            sqlx::query_as("SELECT COUNT(*) FROM settlement_items WHERE receipt_file_id=$1")
+                .bind(file_id)
+                .fetch_one(&st.db)
+                .await?;
+        if item > 0 {
+            return Ok(FileAccess::Private);
+        }
+    }
+    // Payment proofs: payer (owner), organiser/payee, 账单查阅 (finance).
+    let (proof,): (i64,) = sqlx::query_as(
+        "SELECT COUNT(*) FROM settlement_shares sh JOIN settlements s ON s.id=sh.settlement_id
+         WHERE sh.proof_file_id=$1 AND (s.created_by=$2 OR $3)",
+    )
+    .bind(file_id)
+    .bind(u.id)
+    .bind(bills)
+    .fetch_one(&st.db)
+    .await?;
+    if proof > 0 {
+        return Ok(FileAccess::Private);
+    }
+    // Payee DuitNow / TNG QR codes attached to bills: visible to participants once published and to finance.
+    let (qr,): (i64,) = sqlx::query_as(
+        "SELECT COUNT(*) FROM settlements s LEFT JOIN settlement_shares sh ON sh.settlement_id=s.id
+         WHERE s.payee_qr_file_id=$1 AND ((sh.user_id=$2 AND s.status <> 'draft') OR $3)",
+    )
+    .bind(file_id)
+    .bind(u.id)
+    .bind(bills)
+    .fetch_one(&st.db)
+    .await?;
+    if qr > 0 {
+        return Ok(FileAccess::Private);
+    }
+    // Help request photos: the request's member and 帮助台 staff.
+    let (help,): (i64,) = sqlx::query_as(
+        "SELECT COUNT(*) FROM help_replies r JOIN help_tickets t ON t.id=r.ticket_id
+         WHERE r.file_id=$1 AND (t.user_id=$2 OR $3)",
+    )
+    .bind(file_id)
+    .bind(u.id)
+    .bind(u.can(Page::AdminHelp, Act::View))
+    .fetch_one(&st.db)
+    .await?;
+    if help > 0 {
+        return Ok(FileAccess::Private);
+    }
+    // Grab reimbursement receipts: claimant, 报销审核 (交通组), 报销付款 (finance).
+    let (reimb,): (i64,) = sqlx::query_as(
+        "SELECT COUNT(*) FROM reimbursements WHERE receipt_file_id=$1 AND (user_id=$2 OR $3 OR $4)",
+    )
+    .bind(file_id)
+    .bind(u.id)
+    .bind(u.can(Page::AdminReimbReview, Act::View))
+    .bind(u.can(Page::AdminReimbPay, Act::View))
+    .fetch_one(&st.db)
+    .await?;
+    if reimb > 0 {
+        return Ok(FileAccess::Private);
+    }
+    Ok(FileAccess::Denied)
+}
+
+pub async fn can_access_file(st: &AppState, u: &CurrentUser, file_id: i64) -> AppResult<bool> {
+    Ok(file_access(st, u, file_id).await? != FileAccess::Denied)
+}
+
+fn etag_matches(headers: &HeaderMap, etag: &str) -> bool {
+    let Some(raw) = headers
+        .get(header::IF_NONE_MATCH)
+        .and_then(|v| v.to_str().ok())
+    else {
+        return false;
+    };
+    raw.split(',')
+        .map(str::trim)
+        .any(|tag| tag == "*" || tag == etag || tag.strip_prefix("W/") == Some(etag))
 }
 
 async fn download(
     State(st): State<AppState>,
     u: CurrentUser,
+    headers: HeaderMap,
     Path(id): Path<i64>,
 ) -> AppResult<Response> {
-    if !can_access_file(&st, &u, id).await? {
+    let access = file_access(&st, &u, id).await?;
+    if access == FileAccess::Denied {
         return Err(forbidden(u.lang, ErrorKey::CannotViewFile));
     }
-    let (stored, mime, name): (String, String, String) =
-        sqlx::query_as("SELECT stored_name, mime, original_name FROM files WHERE id=$1")
+    let (stored, mime, name, size): (String, String, String, i64) =
+        sqlx::query_as("SELECT stored_name, mime, original_name, size FROM files WHERE id=$1")
             .bind(id)
             .fetch_one(&st.db)
             .await?;
-    let data = tokio::fs::read(st.cfg.upload_dir.join(&stored))
+    let etag = format!("\"{stored}-{size}\"");
+    let cache_control = if access == FileAccess::CacheableMedia {
+        "private, no-cache"
+    } else {
+        "private, no-store"
+    };
+    if access == FileAccess::CacheableMedia && etag_matches(&headers, &etag) {
+        return Response::builder()
+            .status(StatusCode::NOT_MODIFIED)
+            .header(header::ETAG, &etag)
+            .header(header::CACHE_CONTROL, cache_control)
+            .header("X-Content-Type-Options", "nosniff")
+            .header(
+                "Content-Security-Policy",
+                "default-src 'none'; img-src 'self'; sandbox",
+            )
+            .body(Body::empty())
+            .map_err(|e| AppError::Other(anyhow::anyhow!(e)));
+    }
+    let mut file = tokio::fs::File::open(st.cfg.upload_dir.join(&stored))
         .await
         .map_err(|_| not_found(u.lang))?;
+    let content_len = file
+        .metadata()
+        .await
+        .map(|m| m.len())
+        .unwrap_or_else(|_| size.max(0) as u64);
+    let stream = async_stream::stream! {
+        let mut buf = vec![0u8; 64 * 1024];
+        loop {
+            match file.read(&mut buf).await {
+                Ok(0) => break,
+                Ok(n) => yield Ok::<Bytes, std::io::Error>(Bytes::copy_from_slice(&buf[..n])),
+                Err(e) => {
+                    yield Err(e);
+                    break;
+                }
+            }
+        }
+    };
     let safe_name: String = name
         .chars()
         .filter(|c| c.is_ascii_alphanumeric() || matches!(c, '.' | '-' | '_'))
@@ -285,7 +412,9 @@ async fn download(
     Response::builder()
         .status(StatusCode::OK)
         .header(header::CONTENT_TYPE, mime)
-        .header(header::CACHE_CONTROL, "private, no-store")
+        .header(header::CONTENT_LENGTH, content_len.to_string())
+        .header(header::ETAG, &etag)
+        .header(header::CACHE_CONTROL, cache_control)
         .header("X-Content-Type-Options", "nosniff")
         .header(
             "Content-Security-Policy",
@@ -295,7 +424,7 @@ async fn download(
             header::CONTENT_DISPOSITION,
             format!("{disposition}; filename=\"{safe_name}\""),
         )
-        .body(Body::from(data))
+        .body(Body::from_stream(stream))
         .map_err(|e| AppError::Other(anyhow::anyhow!(e)))
 }
 
@@ -524,4 +653,33 @@ async fn extract_ref(
         "ref": best,
         "candidates": candidates,
     })))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::strip_jpeg_metadata;
+
+    #[test]
+    fn strips_exif_and_keeps_the_image() {
+        let app0 = [0xFF, 0xE0, 0x00, 0x04, 0x4A, 0x46];
+        let exif = [0xFF, 0xE1, 0x00, 0x06, b'E', b'x', b'i', b'f'];
+        let scan = [0xFF, 0xDA, 0x00, 0x02, 0x11, 0x22, 0xFF, 0xD9];
+        let mut jpg = vec![0xFF, 0xD8];
+        jpg.extend_from_slice(&app0);
+        jpg.extend_from_slice(&exif);
+        jpg.extend_from_slice(&scan);
+        let clean = strip_jpeg_metadata(&jpg).expect("exif removed");
+        let mut want = vec![0xFF, 0xD8];
+        want.extend_from_slice(&app0);
+        want.extend_from_slice(&scan);
+        assert_eq!(clean, want);
+    }
+
+    #[test]
+    fn leaves_clean_or_broken_files_alone() {
+        let clean = [0xFF, 0xD8, 0xFF, 0xDA, 0x00, 0x02, 0xFF, 0xD9];
+        assert_eq!(strip_jpeg_metadata(&clean), None);
+        assert_eq!(strip_jpeg_metadata(&[0xFF, 0xD8, 0xFF, 0xE1, 0xFF]), None);
+        assert_eq!(strip_jpeg_metadata(b"\x89PNG"), None);
+    }
 }

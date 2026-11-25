@@ -1,75 +1,35 @@
-//! Centralized notification delivery engine:
-//! - Structured notification metadata (category, event_type, priority, entity)
-//! - Per-user preferences (muted categories, quiet hours, lock-screen privacy)
-//! - Durable Postgres outbox (`notification_deliveries`) with bounded retries & backoff
-//! - DNS-pinned SSRF-safe HTTP dispatch + HMAC-SHA256 signed webhooks
-//! - Throttled offline alerts for trip group chat
+//! Durable Postgres notification delivery outbox (`notification_deliveries`) with bounded retries.
 
 use std::{
     collections::{HashMap, HashSet},
-    net::{IpAddr, SocketAddr},
-    sync::{Arc, OnceLock, RwLock},
-    time::{Duration, Instant},
+    sync::Arc,
 };
 
-use ring::hmac;
 use serde_json::{json, Value};
 use sqlx::PgPool;
-use url::Url;
 
 use crate::{
     i18n::Lang,
-    perms::{Act, Page, Perm},
-    util::{in_minutes, is_dev_mode, minutes_ago, now, t},
+    util::{in_minutes, is_dev_mode, now, t},
     web_push::{PushMessage, PushOutcome, VapidSigner},
 };
 
-pub const VALID_CATEGORIES: &[&str] = &[
-    "ride",
-    "event",
-    "cost",
-    "help",
-    "announcement",
-    "family",
-    "admin",
-    "chat",
-    "general",
-];
+use super::meta::{absolute_url, is_in_quiet_hours};
+use super::ssrf::{build_pinned_client_with_url, sign_webhook_headers};
 
 const RETRY_BACKOFF_SECS: &[i64] = &[30, 120, 600, 1800, 7200];
 const MAX_ATTEMPTS: i64 = 5;
 
-#[derive(Clone, Debug, Default)]
-pub struct NotifMeta {
-    pub category: &'static str,
-    pub event_type: String,
-    pub priority: &'static str,
-    pub entity_type: &'static str,
-    pub entity_id: Option<i64>,
-    pub tag: String,
-}
-
 #[derive(Clone, Debug)]
-pub struct BatchNotifItem {
-    pub user_id: i64,
-    pub title_zh: String,
-    pub title_en: String,
-    pub body_zh: String,
-    pub body_en: String,
-    pub link: String,
-    pub meta: NotifMeta,
-}
-
-#[derive(Clone, Debug)]
-struct EnqueueItem {
-    notification_id: Option<i64>,
-    user_id: i64,
-    title: String,
-    body: String,
-    link: String,
-    category: String,
-    priority: String,
-    tag: String,
+pub(super) struct EnqueueItem {
+    pub(super) notification_id: Option<i64>,
+    pub(super) user_id: i64,
+    pub(super) title: String,
+    pub(super) body: String,
+    pub(super) link: String,
+    pub(super) category: String,
+    pub(super) priority: String,
+    pub(super) tag: String,
 }
 
 #[derive(Clone, Debug)]
@@ -113,154 +73,6 @@ struct ClaimedDelivery {
     attempts: i64,
 }
 
-static PINNED_CLIENTS: OnceLock<RwLock<HashMap<(String, bool), (Instant, reqwest::Client)>>> =
-    OnceLock::new();
-
-pub fn validate_telegram_chat_id(raw: &str) -> bool {
-    let trimmed = raw.trim();
-    if trimmed.is_empty() {
-        return true;
-    }
-    let digits = trimmed.strip_prefix('-').unwrap_or(trimmed);
-    (5..=20).contains(&digits.len()) && digits.bytes().all(|b| b.is_ascii_digit())
-}
-
-pub fn absolute_url(link: &str) -> String {
-    let trimmed = link.trim();
-    if trimmed.is_empty() {
-        return String::new();
-    }
-    if trimmed.starts_with("https://") || trimmed.starts_with("http://") {
-        return trimmed.to_string();
-    }
-    let base = crate::util::public_url();
-    if base.is_empty() {
-        return trimmed.to_string();
-    }
-    if trimmed.starts_with('/') {
-        format!("{base}{trimmed}")
-    } else {
-        format!("{base}/{trimmed}")
-    }
-}
-
-pub fn infer_meta(link: &str, title_en: &str) -> NotifMeta {
-    let clean_path = link.split('?').next().unwrap_or(link).trim();
-    let mut category = "general";
-    let mut entity_type = "";
-    let mut entity_id: Option<i64> = None;
-    let mut tag = String::new();
-
-    if let Some(id) = parse_trailing_id(clean_path, "/rides/") {
-        category = "ride";
-        entity_type = "ride";
-        entity_id = Some(id);
-        tag = format!("ride-{id}");
-    } else if let Some(id) = parse_trailing_id(clean_path, "/admin/rides/") {
-        category = "ride";
-        entity_type = "ride";
-        entity_id = Some(id);
-        tag = format!("ride-{id}");
-    } else if clean_path == "/drive"
-        || clean_path == "/rides"
-        || clean_path.starts_with("/admin/rides")
-    {
-        category = "ride";
-    } else if let Some(id) = parse_trailing_id(clean_path, "/events/") {
-        category = "event";
-        entity_type = "event";
-        entity_id = Some(id);
-        tag = format!("event-{id}");
-    } else if clean_path.starts_with("/events") {
-        category = "event";
-    } else if let Some(id) = parse_trailing_id(clean_path, "/reimbursements/") {
-        category = "cost";
-        entity_type = "reimbursement";
-        entity_id = Some(id);
-        tag = format!("reimb-{id}");
-    } else if let Some(id) = parse_trailing_id(clean_path, "/settlements/") {
-        category = "cost";
-        entity_type = "settlement";
-        entity_id = Some(id);
-        tag = format!("settlement-{id}");
-    } else if clean_path.starts_with("/costs")
-        || clean_path.starts_with("/settlements")
-        || clean_path.starts_with("/reimbursements")
-        || clean_path.starts_with("/admin/reimbursements")
-    {
-        category = "cost";
-    } else if let Some(id) = parse_trailing_id(clean_path, "/help/") {
-        category = "help";
-        entity_type = "help";
-        entity_id = Some(id);
-        tag = format!("help-{id}");
-    } else if clean_path.starts_with("/help") {
-        category = "help";
-    } else if clean_path.starts_with("/me/family") {
-        category = "family";
-    } else if clean_path.starts_with("/admin/") {
-        category = "admin";
-    } else if title_en.to_ascii_lowercase().contains("announcement") {
-        category = "announcement";
-    }
-
-    let lower = title_en.to_ascii_lowercase();
-    let priority = if link.contains("action=readiness")
-        || lower.contains("arrived")
-        || lower.contains("delayed")
-        || lower.contains("unable to attend")
-        || lower.contains("running late")
-        || lower.contains("departed")
-        || lower.contains("no driver")
-        || lower.contains("ride reminder")
-        || lower.contains("reassignment")
-        || lower.contains("cannot drive")
-    {
-        "urgent"
-    } else if category == "announcement" || lower.contains("report") || lower.contains("mileage") {
-        "low"
-    } else {
-        "normal"
-    };
-
-    NotifMeta {
-        category,
-        event_type: String::new(),
-        priority,
-        entity_type,
-        entity_id,
-        tag,
-    }
-}
-
-fn parse_trailing_id(path: &str, prefix: &str) -> Option<i64> {
-    let rest = path.strip_prefix(prefix)?;
-    let num_part = rest.split('/').next()?;
-    num_part.parse::<i64>().ok()
-}
-
-pub fn is_valid_hhmm(raw: &str) -> bool {
-    let Some((h, m)) = raw.split_once(':') else {
-        return false;
-    };
-    if h.len() != 2 || m.len() != 2 {
-        return false;
-    }
-    matches!((h.parse::<u8>(), m.parse::<u8>()), (Ok(0..=23), Ok(0..=59)))
-}
-
-pub fn is_in_quiet_hours(start: &str, end: &str, now_hhmm: &str) -> bool {
-    if start.is_empty() || end.is_empty() || start == end {
-        return false;
-    }
-    if start < end {
-        now_hhmm >= start && now_hhmm < end
-    } else {
-        // Overnight window (e.g. 22:00 to 07:00)
-        now_hhmm >= start || now_hhmm < end
-    }
-}
-
 fn should_deliver_external(pref: &UserAlertPref, category: &str, priority: &str) -> bool {
     if priority == "urgent" {
         return true;
@@ -284,501 +96,6 @@ fn redact_if_needed(lang: Lang, hide_lock: bool, title: &str, body: &str) -> (St
     )
     .to_string();
     (t_str, b_str)
-}
-
-pub fn sign_webhook_headers(secret: &str, body: &[u8]) -> (String, Option<String>) {
-    let ts = chrono::Utc::now().timestamp().to_string();
-    let trimmed = secret.trim();
-    if trimmed.is_empty() {
-        return (ts, None);
-    }
-    let key = hmac::Key::new(hmac::HMAC_SHA256, trimmed.as_bytes());
-    let mut ctx = hmac::Context::with_key(&key);
-    ctx.update(ts.as_bytes());
-    ctx.update(b".");
-    ctx.update(body);
-    let sig = ctx.sign();
-    (ts, Some(format!("sha256={}", hex::encode(sig.as_ref()))))
-}
-
-fn is_metadata_ip(ip: IpAddr) -> bool {
-    match ip {
-        IpAddr::V4(v4) => v4 == std::net::Ipv4Addr::new(169, 254, 169, 254),
-        IpAddr::V6(v6) => v6.to_ipv4_mapped() == Some(std::net::Ipv4Addr::new(169, 254, 169, 254)),
-    }
-}
-
-fn is_non_global_v4(v4: std::net::Ipv4Addr) -> bool {
-    let o = v4.octets();
-    let cgnat = o[0] == 100 && (o[1] & 0b1100_0000) == 64;
-    let bench = o[0] == 198 && (o[1] == 18 || o[1] == 19);
-    let this_net = o[0] == 0;
-    this_net
-        || v4.is_private()
-        || v4.is_loopback()
-        || v4.is_link_local()
-        || v4.is_broadcast()
-        || v4.is_documentation()
-        || v4.is_multicast()
-        || v4.is_unspecified()
-        || cgnat
-        || bench
-        || o[0] >= 240
-}
-
-fn is_non_global_ip(ip: IpAddr) -> bool {
-    match ip {
-        IpAddr::V4(v4) => is_non_global_v4(v4),
-        IpAddr::V6(v6) => {
-            if let Some(mapped) = v6.to_ipv4_mapped() {
-                return is_non_global_v4(mapped);
-            }
-            let segs = v6.segments();
-            let is_ipv4_compat =
-                segs[0..6] == [0, 0, 0, 0, 0, 0] && !v6.is_loopback() && !v6.is_unspecified();
-            if is_ipv4_compat {
-                let mapped = std::net::Ipv4Addr::new(
-                    (segs[6] >> 8) as u8,
-                    segs[6] as u8,
-                    (segs[7] >> 8) as u8,
-                    segs[7] as u8,
-                );
-                return is_non_global_v4(mapped);
-            }
-            let unicast_link_local = (segs[0] & 0xffc0) == 0xfe80;
-            let unique_local = (segs[0] & 0xfe00) == 0xfc00;
-            let doc = segs[0] == 0x2001 && segs[1] == 0x0db8;
-            v6.is_loopback()
-                || v6.is_unspecified()
-                || v6.is_multicast()
-                || unicast_link_local
-                || unique_local
-                || doc
-        }
-    }
-}
-
-pub async fn resolve_and_validate_http_target(
-    raw: &str,
-    max_len: usize,
-    dev_mode: bool,
-) -> Option<(Url, Option<(String, Vec<SocketAddr>)>)> {
-    let trimmed = raw.trim();
-    if trimmed.is_empty() || trimmed.len() > max_len {
-        return None;
-    }
-    let parsed = Url::parse(trimmed).ok()?;
-    if !parsed.username().is_empty() || parsed.password().is_some() {
-        return None;
-    }
-    let scheme = parsed.scheme();
-    if dev_mode {
-        if scheme != "https" && scheme != "http" {
-            return None;
-        }
-    } else if scheme != "https" {
-        return None;
-    }
-    let host = parsed.host()?;
-    let host_lower = parsed
-        .host_str()
-        .unwrap_or_default()
-        .trim_end_matches('.')
-        .to_ascii_lowercase();
-    if host_lower.is_empty()
-        || host_lower == "metadata.google.internal"
-        || host_lower == "169.254.169.254"
-    {
-        return None;
-    }
-    match host {
-        url::Host::Ipv4(v4) => {
-            let ip = IpAddr::V4(v4);
-            if is_metadata_ip(ip) || (!dev_mode && is_non_global_v4(v4)) {
-                return None;
-            }
-            Some((parsed, None))
-        }
-        url::Host::Ipv6(v6) => {
-            let ip = IpAddr::V6(v6);
-            if is_metadata_ip(ip) || (!dev_mode && is_non_global_ip(ip)) {
-                return None;
-            }
-            Some((parsed, None))
-        }
-        url::Host::Domain(domain) => {
-            let d = domain.trim_end_matches('.').to_ascii_lowercase();
-            if d == "metadata.google.internal" {
-                return None;
-            }
-            if dev_mode {
-                return Some((parsed, None));
-            }
-            if d == "localhost"
-                || d.ends_with(".localhost")
-                || d.ends_with(".local")
-                || d.ends_with(".internal")
-                || !d.contains('.')
-            {
-                return None;
-            }
-            let port = parsed.port_or_known_default().unwrap_or(443);
-            let addrs = tokio::net::lookup_host((d.as_str(), port)).await.ok()?;
-            let mut valid = Vec::new();
-            for addr in addrs {
-                if is_non_global_ip(addr.ip()) {
-                    return None;
-                }
-                valid.push(addr);
-            }
-            if valid.is_empty() {
-                return None;
-            }
-            Some((parsed, Some((d, valid))))
-        }
-    }
-}
-
-pub async fn build_pinned_client(raw_url: &str, dev_mode: bool) -> Option<reqwest::Client> {
-    let key = (raw_url.trim().to_string(), dev_mode);
-    let cache = PINNED_CLIENTS.get_or_init(|| RwLock::new(HashMap::new()));
-    if let Ok(guard) = cache.read() {
-        if let Some((at, client)) = guard.get(&key) {
-            if at.elapsed() < Duration::from_secs(60) {
-                return Some(client.clone());
-            }
-        }
-    }
-
-    let (_, pin) = resolve_and_validate_http_target(raw_url, 1000, dev_mode).await?;
-    let client = match pin {
-        Some((domain, addrs)) => reqwest::Client::builder()
-            .redirect(reqwest::redirect::Policy::none())
-            .timeout(Duration::from_secs(5))
-            .resolve_to_addrs(&domain, &addrs)
-            .build()
-            .ok()?,
-        None => crate::util::alert_client().clone(),
-    };
-    if let Ok(mut guard) = cache.write() {
-        if guard.len() >= 32 {
-            guard.clear();
-        }
-        guard.insert(key, (Instant::now(), client.clone()));
-    }
-    Some(client)
-}
-
-pub async fn notify_with(
-    db: &PgPool,
-    user_id: i64,
-    title: (&str, &str),
-    body: (&str, &str),
-    link: &str,
-    meta: NotifMeta,
-) {
-    let lang = user_lang(db, user_id).await;
-    let title_s = t(lang, title.0, title.1).to_string();
-    let body_s = t(lang, body.0, body.1).to_string();
-    let row: sqlx::Result<(i64,)> = sqlx::query_as(
-        "INSERT INTO notifications
-            (user_id, title, body, link, category, event_type, priority, entity_type, entity_id, created_at)
-         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)
-         RETURNING id",
-    )
-    .bind(user_id)
-    .bind(&title_s)
-    .bind(&body_s)
-    .bind(link)
-    .bind(meta.category)
-    .bind(&meta.event_type)
-    .bind(meta.priority)
-    .bind(meta.entity_type)
-    .bind(meta.entity_id)
-    .bind(now())
-    .fetch_one(db)
-    .await;
-
-    match row {
-        Ok((notif_id,)) => {
-            enqueue_external_deliveries(
-                db,
-                vec![EnqueueItem {
-                    notification_id: Some(notif_id),
-                    user_id,
-                    title: title_s,
-                    body: body_s,
-                    link: link.to_string(),
-                    category: meta.category.to_string(),
-                    priority: meta.priority.to_string(),
-                    tag: meta.tag,
-                }],
-            )
-            .await;
-        }
-        Err(e) => tracing::error!("notify failed: {e}"),
-    }
-}
-
-pub async fn notify_many_with(
-    db: &PgPool,
-    user_ids: &[i64],
-    title: (&str, &str),
-    body: (&str, &str),
-    link: &str,
-    meta: NotifMeta,
-) {
-    if user_ids.is_empty() {
-        return;
-    }
-    let rows: sqlx::Result<Vec<(i64, i64, String, String)>> = sqlx::query_as(
-        "INSERT INTO notifications
-            (user_id, title, body, link, category, event_type, priority, entity_type, entity_id, created_at)
-         SELECT u.id,
-                CASE WHEN u.lang = 'en' THEN $3 ELSE $2 END,
-                CASE WHEN u.lang = 'en' THEN $5 ELSE $4 END,
-                $6, $7, $8, $9, $10, $11, $12
-         FROM users u WHERE u.id = ANY($1) AND u.status = 'active'
-         RETURNING id, user_id, title, body",
-    )
-    .bind(user_ids)
-    .bind(title.0)
-    .bind(title.1)
-    .bind(body.0)
-    .bind(body.1)
-    .bind(link)
-    .bind(meta.category)
-    .bind(&meta.event_type)
-    .bind(meta.priority)
-    .bind(meta.entity_type)
-    .bind(meta.entity_id)
-    .bind(now())
-    .fetch_all(db)
-    .await;
-
-    match rows {
-        Ok(inserted) => {
-            let items = inserted
-                .into_iter()
-                .map(|(nid, uid, title_s, body_s)| EnqueueItem {
-                    notification_id: Some(nid),
-                    user_id: uid,
-                    title: title_s,
-                    body: body_s,
-                    link: link.to_string(),
-                    category: meta.category.to_string(),
-                    priority: meta.priority.to_string(),
-                    tag: meta.tag.clone(),
-                })
-                .collect();
-            enqueue_external_deliveries(db, items).await;
-        }
-        Err(e) => tracing::error!("notify_many failed: {e}"),
-    }
-}
-
-pub async fn notify_batch(db: &PgPool, items: Vec<BatchNotifItem>) {
-    if items.is_empty() {
-        return;
-    }
-    let uids: Vec<i64> = items.iter().map(|i| i.user_id).collect();
-    let lang_rows: Vec<(i64, String)> =
-        sqlx::query_as("SELECT id, lang FROM users WHERE id = ANY($1)")
-            .bind(&uids)
-            .fetch_all(db)
-            .await
-            .unwrap_or_default();
-    let lang_map: HashMap<i64, Lang> = lang_rows
-        .into_iter()
-        .map(|(id, l)| (id, Lang::from_code(&l)))
-        .collect();
-
-    let ts_now = now();
-    let mut b_uid = Vec::with_capacity(items.len());
-    let mut b_title = Vec::with_capacity(items.len());
-    let mut b_body = Vec::with_capacity(items.len());
-    let mut b_link = Vec::with_capacity(items.len());
-    let mut b_cat = Vec::with_capacity(items.len());
-    let mut b_ev = Vec::with_capacity(items.len());
-    let mut b_prio = Vec::with_capacity(items.len());
-    let mut b_ent_type = Vec::with_capacity(items.len());
-    let mut b_ent_id: Vec<Option<i64>> = Vec::with_capacity(items.len());
-    let mut b_ts = Vec::with_capacity(items.len());
-    let mut tags = Vec::with_capacity(items.len());
-
-    for item in items {
-        let lang = lang_map.get(&item.user_id).copied().unwrap_or(Lang::Zh);
-        let title_s = t(lang, &item.title_zh, &item.title_en).to_string();
-        let body_s = t(lang, &item.body_zh, &item.body_en).to_string();
-        b_uid.push(item.user_id);
-        b_title.push(title_s);
-        b_body.push(body_s);
-        b_link.push(item.link);
-        b_cat.push(item.meta.category.to_string());
-        b_ev.push(item.meta.event_type);
-        b_prio.push(item.meta.priority.to_string());
-        b_ent_type.push(item.meta.entity_type.to_string());
-        b_ent_id.push(item.meta.entity_id);
-        b_ts.push(ts_now.clone());
-        tags.push(item.meta.tag);
-    }
-
-    let inserted: sqlx::Result<Vec<(i64, i64, String, String, String, String, String)>> =
-        sqlx::query_as(
-            "INSERT INTO notifications
-                (user_id, title, body, link, category, event_type, priority, entity_type, entity_id, created_at)
-             SELECT * FROM UNNEST(
-                $1::BIGINT[], $2::TEXT[], $3::TEXT[], $4::TEXT[], $5::TEXT[],
-                $6::TEXT[], $7::TEXT[], $8::TEXT[], $9::BIGINT[], $10::TEXT[]
-             )
-             RETURNING id, user_id, title, body, link, category, priority",
-        )
-        .bind(&b_uid)
-        .bind(&b_title)
-        .bind(&b_body)
-        .bind(&b_link)
-        .bind(&b_cat)
-        .bind(&b_ev)
-        .bind(&b_prio)
-        .bind(&b_ent_type)
-        .bind(&b_ent_id)
-        .bind(&b_ts)
-        .fetch_all(db)
-        .await;
-
-    match inserted {
-        Ok(rows) => {
-            let mut enq = Vec::with_capacity(rows.len());
-            for ((nid, uid, title, body, link, category, priority), tag) in
-                rows.into_iter().zip(tags)
-            {
-                enq.push(EnqueueItem {
-                    notification_id: Some(nid),
-                    user_id: uid,
-                    title,
-                    body,
-                    link,
-                    category,
-                    priority,
-                    tag,
-                });
-            }
-            enqueue_external_deliveries(db, enq).await;
-        }
-        Err(e) => tracing::error!("notify_batch failed: {e}"),
-    }
-}
-
-pub async fn notify_perm_except(
-    db: &PgPool,
-    page: Page,
-    act: Act,
-    exclude_user_id: Option<i64>,
-    title: (&str, &str),
-    body: (&str, &str),
-    link: &str,
-) {
-    let users: Vec<(i64,)> = sqlx::query_as(crate::dyn_sql!(
-        "SELECT u.id FROM users u WHERE {}",
-        crate::perms::sql_holds("u", Perm(page, act))
-    ))
-    .fetch_all(db)
-    .await
-    .unwrap_or_default();
-    let ids: Vec<i64> = users
-        .into_iter()
-        .map(|(id,)| id)
-        .filter(|id| exclude_user_id != Some(*id))
-        .collect();
-    let meta = infer_meta(link, title.1);
-    notify_many_with(db, &ids, title, body, link, meta).await;
-}
-
-/// Send live SSE `"chat"` ticks to every participant on the trip and queue throttled
-/// external push/Telegram/webhook alerts for participants who have no open SSE stream.
-pub async fn notify_trip_chat(
-    db: &PgPool,
-    trip_id: i64,
-    ride_id: i64,
-    sender_id: i64,
-    sender_name: &str,
-    message_body: &str,
-) {
-    let ids: Vec<(i64,)> = sqlx::query_as(
-        "SELECT passenger_id FROM rides WHERE trip_id=$1 AND status <> 'cancelled'
-         UNION SELECT driver_id FROM rides WHERE trip_id=$1 AND driver_id IS NOT NULL",
-    )
-    .bind(trip_id)
-    .fetch_all(db)
-    .await
-    .unwrap_or_default();
-
-    let mut offline_ids = Vec::new();
-    for (uid,) in ids {
-        crate::stream::publish(uid, "chat");
-        if uid != sender_id && !crate::stream::has_active_stream(uid) {
-            offline_ids.push(uid);
-        }
-    }
-    if offline_ids.is_empty() {
-        return;
-    }
-
-    let tag = format!("trip-chat-{trip_id}");
-    let recently_sent: Vec<(i64,)> = sqlx::query_as(
-        "SELECT DISTINCT user_id FROM notification_deliveries
-         WHERE user_id = ANY($1) AND tag = $2 AND created_at >= $3",
-    )
-    .bind(&offline_ids)
-    .bind(&tag)
-    .bind(minutes_ago(1))
-    .fetch_all(db)
-    .await
-    .unwrap_or_default();
-    let recent_set: HashSet<i64> = recently_sent.into_iter().map(|(u,)| u).collect();
-    let target_ids: Vec<i64> = offline_ids
-        .into_iter()
-        .filter(|uid| !recent_set.contains(uid))
-        .collect();
-    if target_ids.is_empty() {
-        return;
-    }
-
-    let lang_rows: Vec<(i64, String)> =
-        sqlx::query_as("SELECT id, lang FROM users WHERE id = ANY($1) AND status = 'active'")
-            .bind(&target_ids)
-            .fetch_all(db)
-            .await
-            .unwrap_or_default();
-    let preview: String = message_body.chars().take(120).collect();
-    let body_text = format!("{sender_name}: {preview}");
-    let link = format!("/rides/{ride_id}");
-
-    let mut enq = Vec::with_capacity(lang_rows.len());
-    for (uid, lang_s) in lang_rows {
-        let lang = Lang::from_code(&lang_s);
-        enq.push(EnqueueItem {
-            notification_id: None,
-            user_id: uid,
-            title: t(lang, "行程群聊新消息", "New trip chat message").to_string(),
-            body: body_text.clone(),
-            link: link.clone(),
-            category: "chat".to_string(),
-            priority: "normal".to_string(),
-            tag: tag.clone(),
-        });
-    }
-    enqueue_external_deliveries(db, enq).await;
-}
-
-async fn user_lang(db: &PgPool, user_id: i64) -> Lang {
-    let row: Option<(String,)> = sqlx::query_as("SELECT lang FROM users WHERE id=$1")
-        .bind(user_id)
-        .fetch_optional(db)
-        .await
-        .ok()
-        .flatten();
-    row.map(|(l,)| Lang::from_code(&l)).unwrap_or(Lang::Zh)
 }
 
 async fn load_alert_secrets(db: &PgPool) -> AlertSecrets {
@@ -810,7 +127,7 @@ async fn load_alert_secrets(db: &PgPool) -> AlertSecrets {
     s
 }
 
-async fn enqueue_external_deliveries(db: &PgPool, items: Vec<EnqueueItem>) {
+pub(super) async fn enqueue_external_deliveries(db: &PgPool, items: Vec<EnqueueItem>) {
     if items.is_empty() {
         return;
     }
@@ -1040,8 +357,8 @@ async fn enqueue_external_deliveries(db: &PgPool, items: Vec<EnqueueItem>) {
                 "whatsapp_webhook",
                 None,
                 meta_ref,
-                item.title.clone(),
-                item.body.clone(),
+                ext_title.clone(),
+                ext_body.clone(),
                 badge,
             );
         }
@@ -1160,11 +477,12 @@ pub async fn process_delivery_ids(db: &PgPool, ids: &[i64]) -> anyhow::Result<us
     if ids.is_empty() {
         return Ok(0);
     }
+    let ts_now = now();
     let lease_until = in_minutes(5);
     let claimed: Vec<ClaimedDelivery> = sqlx::query_as(
         "WITH target AS (
              SELECT id FROM notification_deliveries
-             WHERE id = ANY($1) AND status IN ('pending', 'retry')
+             WHERE id = ANY($1) AND status IN ('pending', 'retry') AND next_attempt_at <= $3
              FOR UPDATE SKIP LOCKED
          )
          UPDATE notification_deliveries d
@@ -1177,6 +495,7 @@ pub async fn process_delivery_ids(db: &PgPool, ids: &[i64]) -> anyhow::Result<us
     )
     .bind(ids)
     .bind(&lease_until)
+    .bind(&ts_now)
     .fetch_all(db)
     .await?;
 
@@ -1254,12 +573,12 @@ async fn dispatch_claimed_rows(db: &PgPool, rows: Vec<ClaimedDelivery>) {
     let user_langs = Arc::new(user_langs);
 
     let pinned_webhook = if !secrets.alert_webhook_url.is_empty() {
-        build_pinned_client(&secrets.alert_webhook_url, dev_mode).await
+        build_pinned_client_with_url(&secrets.alert_webhook_url, dev_mode).await
     } else {
         None
     };
     let pinned_mobile = if !secrets.mobile_push_webhook_url.is_empty() {
-        build_pinned_client(&secrets.mobile_push_webhook_url, dev_mode).await
+        build_pinned_client_with_url(&secrets.mobile_push_webhook_url, dev_mode).await
     } else {
         None
     };
@@ -1321,8 +640,8 @@ async fn deliver_one(
     mob_tokens: &HashMap<i64, (String, String, String)>,
     user_langs: &HashMap<i64, Lang>,
     client: &reqwest::Client,
-    pinned_webhook: Option<&reqwest::Client>,
-    pinned_mobile: Option<&reqwest::Client>,
+    pinned_webhook: Option<&(String, reqwest::Client)>,
+    pinned_mobile: Option<&(String, reqwest::Client)>,
     subject: &str,
     dev_mode: bool,
 ) {
@@ -1348,6 +667,13 @@ async fn deliver_one(
                     .await;
                 return;
             }
+            let Some((pinned_ep_url, pinned_ep_client)) =
+                build_pinned_client_with_url(endpoint, dev_mode).await
+            else {
+                mark_delivery_terminal(db, row.id, next_attempt, "failed", "endpoint blocked")
+                    .await;
+                return;
+            };
             let lang = user_langs.get(&row.user_id).copied().unwrap_or(Lang::Zh);
             let urgency = match row.priority.as_str() {
                 "urgent" => "high",
@@ -1373,10 +699,10 @@ async fn deliver_one(
                 None
             };
             let outcome = crate::web_push::send_push_message_rich(
-                client,
+                &pinned_ep_client,
                 signer,
                 subject,
-                endpoint,
+                &pinned_ep_url,
                 p256dh,
                 auth,
                 &PushMessage {
@@ -1521,13 +847,14 @@ async fn deliver_one(
                     }
                 }
                 Err(e) => {
-                    tracing::warn!(delivery_id = row.id, error = %e, "telegram delivery error");
-                    schedule_retry(db, row.id, next_attempt, &e.to_string(), None).await;
+                    let err = e.without_url().to_string();
+                    tracing::warn!(delivery_id = row.id, error = %err, "telegram delivery error");
+                    schedule_retry(db, row.id, next_attempt, &err, None).await;
                 }
             }
         }
         "whatsapp_webhook" => {
-            let Some(pinned) = pinned_webhook else {
+            let Some((target_url, pinned)) = pinned_webhook else {
                 mark_delivery_terminal(db, row.id, next_attempt, "failed", "webhook blocked").await;
                 return;
             };
@@ -1551,7 +878,7 @@ async fn deliver_one(
             .unwrap_or_default();
             let (ts, sig) = sign_webhook_headers(&secrets.alert_webhook_secret, &payload_bytes);
             let mut req = pinned
-                .post(&secrets.alert_webhook_url)
+                .post(target_url)
                 .header("Content-Type", "application/json")
                 .header("X-GraceRide-Timestamp", ts)
                 .header("X-GraceRide-Delivery-Id", row.id.to_string());
@@ -1578,13 +905,14 @@ async fn deliver_one(
                     }
                 }
                 Err(e) => {
-                    tracing::warn!(delivery_id = row.id, error = %e, "webhook delivery error");
-                    schedule_retry(db, row.id, next_attempt, &e.to_string(), None).await;
+                    let err = e.without_url().to_string();
+                    tracing::warn!(delivery_id = row.id, error = %err, "webhook delivery error");
+                    schedule_retry(db, row.id, next_attempt, &err, None).await;
                 }
             }
         }
         "mobile_push" => {
-            let Some(pinned) = pinned_mobile else {
+            let Some((target_url, pinned)) = pinned_mobile else {
                 mark_delivery_terminal(
                     db,
                     row.id,
@@ -1621,7 +949,7 @@ async fn deliver_one(
             .unwrap_or_default();
             let (ts, sig) = sign_webhook_headers(&secrets.alert_webhook_secret, &payload_bytes);
             let mut req = pinned
-                .post(&secrets.mobile_push_webhook_url)
+                .post(target_url)
                 .header("Content-Type", "application/json")
                 .header("X-GraceRide-Timestamp", ts)
                 .header("X-GraceRide-Delivery-Id", row.id.to_string());
@@ -1662,7 +990,8 @@ async fn deliver_one(
                     }
                 }
                 Err(e) => {
-                    schedule_retry(db, row.id, next_attempt, &e.to_string(), None).await;
+                    let err = e.without_url().to_string();
+                    schedule_retry(db, row.id, next_attempt, &err, None).await;
                 }
             }
         }
@@ -1720,49 +1049,4 @@ async fn mark_delivery_terminal(db: &PgPool, id: i64, attempts: i64, status: &st
     .bind(delivered_at)
     .execute(db)
     .await;
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn quiet_hours_handles_overnight_and_daytime_windows() {
-        assert!(is_in_quiet_hours("22:00", "07:00", "23:30"));
-        assert!(is_in_quiet_hours("22:00", "07:00", "06:59"));
-        assert!(!is_in_quiet_hours("22:00", "07:00", "07:00"));
-        assert!(!is_in_quiet_hours("22:00", "07:00", "14:00"));
-
-        assert!(is_in_quiet_hours("13:00", "15:00", "13:45"));
-        assert!(!is_in_quiet_hours("13:00", "15:00", "15:00"));
-        assert!(!is_in_quiet_hours("", "", "23:00"));
-    }
-
-    #[test]
-    fn telegram_chat_id_validation() {
-        assert!(validate_telegram_chat_id(""));
-        assert!(validate_telegram_chat_id("123456789"));
-        assert!(validate_telegram_chat_id("-1001234567890"));
-        assert!(!validate_telegram_chat_id("@username"));
-        assert!(!validate_telegram_chat_id("123"));
-        assert!(!validate_telegram_chat_id("abc12345"));
-    }
-
-    #[test]
-    fn category_and_priority_inference() {
-        let m1 = infer_meta("/rides/42?action=readiness", "Ride reminder");
-        assert_eq!(m1.category, "ride");
-        assert_eq!(m1.priority, "urgent");
-        assert_eq!(m1.entity_id, Some(42));
-        assert_eq!(m1.tag, "ride-42");
-
-        let m2 = infer_meta("/", "New announcement");
-        assert_eq!(m2.category, "announcement");
-        assert_eq!(m2.priority, "low");
-
-        let m3 = infer_meta("/help/15", "Help center has replied");
-        assert_eq!(m3.category, "help");
-        assert_eq!(m3.priority, "normal");
-        assert_eq!(m3.entity_id, Some(15));
-    }
 }

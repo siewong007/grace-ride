@@ -21,19 +21,35 @@ use crate::perms::{Act, Page};
 use crate::state::Config;
 use crate::util::{audit_many, notify_many, now};
 
+pub struct BackgroundHandles {
+    delivery: tokio::task::JoinHandle<()>,
+    scheduler: tokio::task::JoinHandle<()>,
+}
+
+impl BackgroundHandles {
+    /// Await background workers during graceful shutdown, bounding the wait so a stuck
+    /// external push or DB call cannot exceed container stop grace periods.
+    pub async fn join_with_timeout(self, timeout: Duration) {
+        let _ = tokio::time::timeout(timeout, async {
+            let _ = tokio::join!(self.delivery, self.scheduler);
+        })
+        .await;
+    }
+}
+
 pub fn spawn(db: PgPool, cfg: Config) {
     let (_tx, rx) = tokio::sync::watch::channel(false);
-    spawn_with_shutdown(db, cfg, rx);
+    let _ = spawn_with_shutdown(db, cfg, rx);
 }
 
 pub fn spawn_with_shutdown(
     db: PgPool,
     cfg: Config,
     mut shutdown: tokio::sync::watch::Receiver<bool>,
-) {
+) -> BackgroundHandles {
     let delivery_db = db.clone();
     let mut delivery_shutdown = shutdown.clone();
-    tokio::spawn(async move {
+    let delivery = tokio::spawn(async move {
         let mut delivery_tick = tokio::time::interval(Duration::from_secs(15));
         delivery_tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
         loop {
@@ -60,7 +76,7 @@ pub fn spawn_with_shutdown(
         }
     });
 
-    tokio::spawn(async move {
+    let scheduler = tokio::spawn(async move {
         let mut tick = tokio::time::interval(Duration::from_secs(60));
         tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
         let every = Duration::from_secs(cfg.housekeeping_interval_mins.max(1) as u64 * 60);
@@ -91,6 +107,11 @@ pub fn spawn_with_shutdown(
             }
         }
     });
+
+    BackgroundHandles {
+        delivery,
+        scheduler,
+    }
 }
 
 /// Run a single tick of the background jobs.
@@ -101,16 +122,35 @@ pub async fn run_once(db: &PgPool, cfg: &Config) -> anyhow::Result<()> {
 }
 
 /// The once-a-minute part: reminders, escalation, closing finished visitor links.
+/// Each sub-job runs independently so a failure in one cannot starve the rest.
 pub async fn run_reminders(db: &PgPool) -> anyhow::Result<()> {
-    ride_reminders(db).await?;
-    event_reminders(db).await?;
-    escalate_unmatched(db).await?;
-    expire_stale_requests(db).await?;
-    // Standing weekly ride & driver schedules.
-    crate::routes::rides::process_recurring_schedules(db).await?;
-    // Visitor links close for good once their journey is over.
-    crate::routes::visitors::close_finished(db).await?;
-    Ok(())
+    let mut first_err: Option<anyhow::Error> = None;
+    macro_rules! run_step {
+        ($name:literal, $fut:expr) => {
+            if let Err(e) = $fut.await {
+                tracing::error!(job = $name, "reminder sub-job failed: {e:?}");
+                if first_err.is_none() {
+                    first_err = Some(e.into());
+                }
+            }
+        };
+    }
+    run_step!("ride_reminders", ride_reminders(db));
+    run_step!("event_reminders", event_reminders(db));
+    run_step!("escalate_unmatched", escalate_unmatched(db));
+    run_step!("expire_stale_requests", expire_stale_requests(db));
+    run_step!(
+        "process_recurring_schedules",
+        crate::routes::rides::process_recurring_schedules(db)
+    );
+    run_step!(
+        "visitors_close_finished",
+        crate::routes::visitors::close_finished(db)
+    );
+    match first_err {
+        Some(e) => Err(e),
+        None => Ok(()),
+    }
 }
 
 fn ts_in(minutes: i64) -> String {
@@ -361,22 +401,25 @@ async fn event_reminders(db: &PgPool) -> anyhow::Result<()> {
 }
 
 async fn escalate_unmatched(db: &PgPool) -> anyhow::Result<()> {
-    let rows: Vec<(i64, String, String)> = sqlx::query_as(
+    let rows: Vec<(i64, String, String, Option<i64>)> = sqlx::query_as(
         "WITH due AS (
              UPDATE rides SET needs_attention=1,
                     attention_reason='接送前 12 小时仍未有司机 / No driver confirmed 12h before pickup',
                     updated_at=$3
              WHERE status='pending_driver' AND needs_attention=0 AND pickup_at <= $1 AND pickup_at >= $2
-             RETURNING id, passenger_id, pickup_at
+             RETURNING id, passenger_id, pickup_at, event_id
          )
-         SELECT due.id, p.name, due.pickup_at FROM due JOIN users p ON p.id = due.passenger_id",
+         SELECT due.id, p.name, due.pickup_at, e.created_by
+         FROM due
+         JOIN users p ON p.id = due.passenger_id
+         LEFT JOIN events e ON e.id = due.event_id",
     )
     .bind(ts_in(12 * 60))
     .bind(ts_in(0))
     .bind(now())
     .fetch_all(db)
     .await?;
-    let ids: Vec<i64> = rows.iter().map(|(id, _, _)| *id).collect();
+    let ids: Vec<i64> = rows.iter().map(|(id, _, _, _)| *id).collect();
     audit_many(
         db,
         None,
@@ -387,37 +430,54 @@ async fn escalate_unmatched(db: &PgPool) -> anyhow::Result<()> {
     )
     .await?;
     if !rows.is_empty() {
-        let staff_ids: Vec<i64> = sqlx::query_scalar(crate::dyn_sql!(
-            "SELECT u.id FROM users u WHERE {}",
-            crate::perms::sql_holds("u", crate::perms::Perm(Page::AdminRides, Act::Update))
+        let global_staff_ids: Vec<i64> = sqlx::query_scalar(crate::dyn_sql!(
+            "SELECT u.id FROM users u WHERE {} AND {}",
+            crate::perms::sql_holds("u", crate::perms::Perm(Page::AdminRides, Act::Update)),
+            crate::perms::sql_holds("u", crate::perms::Perm(Page::AdminDashboard, Act::View))
         ))
         .fetch_all(db)
         .await
         .unwrap_or_default();
-        if !staff_ids.is_empty() {
-            let mut batch = Vec::with_capacity(rows.len() * staff_ids.len());
-            for (id, name, at) in rows {
-                let body = format!("{name} · {}", at.replace('T', " "));
-                let link = format!("/admin/rides/{id}");
-                for &sid in &staff_ids {
-                    batch.push(BatchNotifItem {
-                        user_id: sid,
-                        title_zh: "没人接单".into(),
-                        title_en: "No driver".into(),
-                        body_zh: body.clone(),
-                        body_en: body.clone(),
-                        link: link.clone(),
-                        meta: NotifMeta {
-                            category: "ride",
-                            event_type: "escalate_unmatched".into(),
-                            priority: "urgent",
-                            entity_type: "ride",
-                            entity_id: Some(id),
-                            tag: format!("ride-{id}"),
-                        },
-                    });
+        let all_ride_updaters: std::collections::HashSet<i64> =
+            sqlx::query_scalar::<_, i64>(crate::dyn_sql!(
+                "SELECT u.id FROM users u WHERE {}",
+                crate::perms::sql_holds("u", crate::perms::Perm(Page::AdminRides, Act::Update))
+            ))
+            .fetch_all(db)
+            .await
+            .unwrap_or_default()
+            .into_iter()
+            .collect();
+        let mut batch = Vec::new();
+        for (id, name, at, event_created_by) in rows {
+            let body = format!("{name} · {}", at.replace('T', " "));
+            let link = format!("/admin/rides/{id}");
+            let mut recipients: Vec<i64> = global_staff_ids.clone();
+            if let Some(cid) = event_created_by {
+                if all_ride_updaters.contains(&cid) && !recipients.contains(&cid) {
+                    recipients.push(cid);
                 }
             }
+            for sid in recipients {
+                batch.push(BatchNotifItem {
+                    user_id: sid,
+                    title_zh: "没人接单".into(),
+                    title_en: "No driver".into(),
+                    body_zh: body.clone(),
+                    body_en: body.clone(),
+                    link: link.clone(),
+                    meta: NotifMeta {
+                        category: "ride",
+                        event_type: "escalate_unmatched".into(),
+                        priority: "urgent",
+                        entity_type: "ride",
+                        entity_id: Some(id),
+                        tag: format!("ride-{id}"),
+                    },
+                });
+            }
+        }
+        if !batch.is_empty() {
             notify_batch(db, batch).await;
         }
     }
@@ -544,5 +604,80 @@ async fn housekeeping(db: &PgPool, cfg: &Config) -> anyhow::Result<()> {
         .bind(now())
         .execute(db)
         .await?;
+    purge_orphan_files(db, &cfg.upload_dir).await?;
+    Ok(())
+}
+
+/// Remove uploaded files that have been unreferenced for more than 24 hours, plus any
+/// orphaned UUID-named disk blobs missing from `files` (e.g. failed inserts or interrupted writes).
+async fn purge_orphan_files(db: &PgPool, upload_dir: &std::path::Path) -> anyhow::Result<()> {
+    let cutoff = ts_in(-24 * 60);
+    let stale: Vec<String> = sqlx::query_scalar(
+        "DELETE FROM files f
+         WHERE f.created_at < $1
+           AND NOT EXISTS (SELECT 1 FROM users u WHERE u.photo_file_id = f.id)
+           AND NOT EXISTS (SELECT 1 FROM area_photos ap WHERE ap.file_id = f.id)
+           AND NOT EXISTS (SELECT 1 FROM events e WHERE e.photo_file_id = f.id)
+           AND NOT EXISTS (SELECT 1 FROM settlement_items si WHERE si.receipt_file_id = f.id)
+           AND NOT EXISTS (SELECT 1 FROM settlement_shares ss WHERE ss.proof_file_id = f.id)
+           AND NOT EXISTS (SELECT 1 FROM settlements s WHERE s.payee_qr_file_id = f.id)
+           AND NOT EXISTS (SELECT 1 FROM help_replies hr WHERE hr.file_id = f.id)
+           AND NOT EXISTS (SELECT 1 FROM reimbursements r WHERE r.receipt_file_id = f.id)
+           AND NOT EXISTS (
+               SELECT 1 FROM guide_workflows gw
+               WHERE gw.steps @> jsonb_build_array(jsonb_build_object('image_file_id', f.id))
+           )
+         RETURNING f.stored_name",
+    )
+    .bind(&cutoff)
+    .fetch_all(db)
+    .await?;
+
+    for stored in stale {
+        let _ = tokio::fs::remove_file(upload_dir.join(stored)).await;
+    }
+
+    let Ok(mut entries) = tokio::fs::read_dir(upload_dir).await else {
+        return Ok(());
+    };
+    let mut disk_candidates: Vec<(String, std::path::PathBuf)> = Vec::new();
+    let age_cutoff = std::time::SystemTime::now() - Duration::from_secs(24 * 3600);
+    while let Ok(Some(entry)) = entries.next_entry().await {
+        let Ok(meta) = entry.metadata().await else {
+            continue;
+        };
+        if !meta.is_file() {
+            continue;
+        }
+        let is_old = meta.modified().is_ok_and(|m| m < age_cutoff);
+        if !is_old {
+            continue;
+        }
+        let Some(name) = entry.file_name().to_str().map(str::to_string) else {
+            continue;
+        };
+        if let Some((stem, ext)) = name.split_once('.') {
+            if uuid::Uuid::parse_str(stem).is_ok()
+                && !ext.is_empty()
+                && ext.bytes().all(|b| b.is_ascii_alphanumeric())
+            {
+                disk_candidates.push((name, entry.path()));
+            }
+        }
+    }
+    if !disk_candidates.is_empty() {
+        let names: Vec<String> = disk_candidates.iter().map(|(n, _)| n.clone()).collect();
+        let live: Vec<String> =
+            sqlx::query_scalar("SELECT stored_name FROM files WHERE stored_name = ANY($1)")
+                .bind(&names)
+                .fetch_all(db)
+                .await?;
+        let live_set: std::collections::HashSet<String> = live.into_iter().collect();
+        for (name, path) in disk_candidates {
+            if !live_set.contains(&name) {
+                let _ = tokio::fs::remove_file(path).await;
+            }
+        }
+    }
     Ok(())
 }

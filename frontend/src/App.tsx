@@ -4,6 +4,7 @@ import { useAuth } from './auth';
 import { BackNavigationProvider } from './components/BackNavigation';
 import Layout from './components/Layout';
 import { NoAccess, Page, Spinner } from './components/ui';
+import { ensureLocaleNamespaces, type Namespace } from './i18n';
 import type { Act, PageKey } from './perms';
 import { ADMIN_MENU_PERMS, TRAFFIC_HUB_PERMS } from './staffNav';
 import { hideSplash, holdSplash } from './splash';
@@ -13,50 +14,74 @@ import Home from './pages/Home';
 import TermsPage from './components/Terms';
 
 // Route-level code splitting: the login screen and home page load first; everything
-// else (admin tools, Leaflet maps, cost splitting) downloads only when visited.
-const named = <M extends Record<string, unknown>, K extends keyof M>(load: () => Promise<M>, key: K) =>
-  lazy(() => load().then((m) => ({ default: m[key] as ComponentType })));
-const Invite = lazy(() => import('./pages/Invite'));
-const Visit = lazy(() => import('./pages/Visit'));
-const CarePass = lazy(() => import('./pages/CarePass'));
-const Rides = lazy(() => import('./pages/Rides'));
-const RideNew = lazy(() => import('./pages/RideNew'));
-const RideDetail = lazy(() => import('./pages/RideDetail'));
-const Drive = lazy(() => import('./pages/Drive'));
-const Events = lazy(() => import('./pages/Events'));
-const EventDetail = lazy(() => import('./pages/EventDetail'));
-const EventCheckin = lazy(() => import('./pages/EventCheckin'));
-const EventForm = lazy(() => import('./pages/EventForm'));
-const Settlements = lazy(() => import('./pages/Settlements'));
-const SettlementDetail = named(() => import('./pages/Settlements'), 'SettlementDetail');
-const SettlementForm = named(() => import('./pages/Settlements'), 'SettlementForm');
-const Costs = lazy(() => import('./pages/Costs'));
-const Reimbursements = lazy(() => import('./pages/Reimbursements'));
-const ReimbursementDetail = named(() => import('./pages/Reimbursements'), 'ReimbursementDetail');
-const ReimbursementForm = named(() => import('./pages/Reimbursements'), 'ReimbursementForm');
-const Help = lazy(() => import('./pages/Help'));
-const HelpDetail = lazy(() => import('./pages/HelpDetail'));
-const HelpGuideDetail = lazy(() => import('./pages/HelpGuideDetail'));
-const HelpGuideEditor = lazy(() => import('./pages/HelpGuideEditor'));
-const Report = lazy(() => import('./pages/Report'));
-const Notifications = lazy(() => import('./pages/Notifications'));
-const Profile = lazy(() => import('./pages/Profile'));
-const GrokBotStudioPage = lazy(() => import('./pages/GrokBotStudioPage'));
-const NotFound = lazy(() => import('./pages/NotFound'));
-const Licenses = lazy(() => import('./pages/Licenses'));
-const AdminDashboard = lazy(() => import('./pages/admin/Dashboard'));
-const AdminRides = lazy(() => import('./pages/admin/Rides'));
-const AdminLive = lazy(() => import('./pages/admin/Live'));
-const AdminMembers = lazy(() => import('./pages/admin/Members'));
-const AdminSettings = lazy(() => import('./pages/admin/Settings'));
-const AdminReimbursements = lazy(() => import('./pages/admin/Reimbursements'));
-const AdminAnnouncements = lazy(() => import('./pages/admin/Announcements'));
-const AdminAudit = lazy(() => import('./pages/admin/Audit'));
-const AdminReports = lazy(() => import('./pages/admin/Reports'));
-const PlanTransport = lazy(() => import('./pages/admin/PlanTransport'));
-const AdminRoles = lazy(() => import('./pages/admin/Roles'));
-const AdminMenu = lazy(() => import('./pages/admin/Menu'));
-const TrafficHub = lazy(() => import('./pages/admin/TrafficHub'));
+// else (admin tools, Leaflet maps, cost splitting) downloads only when visited, with
+// its route translation namespaces loaded in parallel.
+const lazyRoute = <M extends { default: ComponentType<never> } | { default: ComponentType }>(
+  load: () => Promise<M>,
+  ns: readonly Namespace[] = [],
+) =>
+  lazy(async () => {
+    const [mod] = await Promise.all([
+      load(),
+      ns.length ? ensureLocaleNamespaces(ns) : Promise.resolve(),
+    ]);
+    return mod as { default: ComponentType };
+  });
+
+const namedRoute = <M extends Record<string, unknown>, K extends keyof M>(
+  load: () => Promise<M>,
+  key: K,
+  ns: readonly Namespace[] = [],
+) =>
+  lazy(async () => {
+    const [mod] = await Promise.all([
+      load(),
+      ns.length ? ensureLocaleNamespaces(ns) : Promise.resolve(),
+    ]);
+    return { default: mod[key] as ComponentType };
+  });
+
+const Invite = lazyRoute(() => import('./pages/Invite'), ['invite']);
+const Visit = lazyRoute(() => import('./pages/Visit'), ['visit']);
+const CarePass = lazyRoute(() => import('./pages/CarePass'), ['visit']);
+const Rides = lazyRoute(() => import('./pages/Rides'), ['rides']);
+const RideNew = lazyRoute(() => import('./pages/RideNew'), ['rideNew']);
+const RideDetail = lazyRoute(() => import('./pages/RideDetail'), ['rideDetail']);
+const Drive = lazyRoute(() => import('./pages/Drive'), ['drive']);
+const Events = lazyRoute(() => import('./pages/Events'), ['events']);
+const EventDetail = lazyRoute(() => import('./pages/EventDetail'), ['eventDetail']);
+const EventCheckin = lazyRoute(() => import('./pages/EventCheckin'), ['eventDetail']);
+const EventForm = lazyRoute(() => import('./pages/EventForm'), ['eventForm']);
+const Settlements = lazyRoute(() => import('./pages/Settlements'), ['settlements']);
+const SettlementDetail = namedRoute(() => import('./pages/Settlements'), 'SettlementDetail', ['settlements']);
+const SettlementForm = namedRoute(() => import('./pages/Settlements'), 'SettlementForm', ['settlements']);
+const Costs = lazyRoute(() => import('./pages/Costs'), ['costs']);
+const Reimbursements = lazyRoute(() => import('./pages/Reimbursements'), ['reimbursements']);
+const ReimbursementDetail = namedRoute(() => import('./pages/Reimbursements'), 'ReimbursementDetail', ['reimbursements']);
+const ReimbursementForm = namedRoute(() => import('./pages/Reimbursements'), 'ReimbursementForm', ['reimbursements']);
+const Help = lazyRoute(() => import('./pages/Help'), ['help']);
+const HelpDetail = lazyRoute(() => import('./pages/HelpDetail'), ['help']);
+const HelpGuideDetail = lazyRoute(() => import('./pages/HelpGuideDetail'), ['help']);
+const HelpGuideEditor = lazyRoute(() => import('./pages/HelpGuideEditor'), ['help']);
+const Report = lazyRoute(() => import('./pages/Report'), ['report']);
+const Notifications = lazyRoute(() => import('./pages/Notifications'), ['notifications']);
+const Profile = lazyRoute(() => import('./pages/Profile'), ['profile', 'studio', 'rideNew']);
+const GrokBotStudioPage = lazyRoute(() => import('./pages/GrokBotStudioPage'), ['studio']);
+const NotFound = lazyRoute(() => import('./pages/NotFound'));
+const Licenses = lazyRoute(() => import('./pages/Licenses'));
+const AdminDashboard = lazyRoute(() => import('./pages/admin/Dashboard'), ['admin']);
+const AdminRides = lazyRoute(() => import('./pages/admin/Rides'), ['admin']);
+const AdminLive = lazyRoute(() => import('./pages/admin/Live'), ['admin']);
+const AdminMembers = lazyRoute(() => import('./pages/admin/Members'), ['admin']);
+const AdminSettings = lazyRoute(() => import('./pages/admin/Settings'), ['admin']);
+const AdminReimbursements = lazyRoute(() => import('./pages/admin/Reimbursements'), ['admin']);
+const AdminAnnouncements = lazyRoute(() => import('./pages/admin/Announcements'), ['admin']);
+const AdminAudit = lazyRoute(() => import('./pages/admin/Audit'), ['admin']);
+const AdminReports = lazyRoute(() => import('./pages/admin/Reports'), ['admin']);
+const PlanTransport = lazyRoute(() => import('./pages/admin/PlanTransport'), ['plan']);
+const AdminRoles = lazyRoute(() => import('./pages/admin/Roles'), ['admin']);
+const AdminMenu = lazyRoute(() => import('./pages/admin/Menu'), ['admin']);
+const TrafficHub = lazyRoute(() => import('./pages/admin/TrafficHub'), ['admin', 'plan']);
 
 /** Wrap a lazily-loaded page so only the content area shows a spinner while it loads. */
 const page = (el: ReactNode) => <Suspense fallback={<PageLoading />}>{el}</Suspense>;

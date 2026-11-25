@@ -1,6 +1,7 @@
 import { KeyboardEvent as ReactKeyboardEvent, useId, useRef, useState } from 'react';
 import { Check } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
+import '../styles/grokBotStudio.css';
 import {
   GROKBOT_COLOR_PALETTES,
   GROKBOT_COLORS,

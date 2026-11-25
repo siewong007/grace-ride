@@ -189,14 +189,9 @@ pub async fn session_alive(db: &sqlx::PgPool, session_id: &str) -> bool {
     .map_or(true, |n| n > 0)
 }
 
-/// Checks session liveness including server-enforced idle auto-lock.
+/// Checks session liveness including server-enforced idle auto-lock in one query.
 async fn session_alive_checked(st: &AppState, session_id: &str) -> bool {
-    if !session_alive(&st.db, session_id).await {
-        return false;
-    }
-    crate::security::evaluate_session_lock(st, session_id, false)
-        .await
-        .is_none()
+    crate::security::evaluate_session_alive_and_lock(st, session_id).await
 }
 
 pub async fn handler(

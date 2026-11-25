@@ -548,7 +548,7 @@ pub(super) async fn test_alert_webhook(
             "ok": false,
             "status_code": 0,
             "latency_ms": latency_ms,
-            "error": e.to_string(),
+            "error": e.without_url().to_string(),
         }))),
     }
 }

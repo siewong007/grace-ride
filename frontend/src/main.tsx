@@ -1,14 +1,13 @@
 import React from 'react';
 import ReactDOM from 'react-dom/client';
 import { BrowserRouter } from 'react-router-dom';
-import * as Sentry from '@sentry/react';
 import App from './App';
 import { AuthProvider } from './auth';
 import { ConfirmProvider, ToastProvider } from './components/ui';
 import { ErrorBoundary, OfflineBanner, SkipLink, UpdateBanner } from './components/AppChrome';
 import { startUpdateWatch } from './appUpdate';
 import { hideSplash } from './splash';
-import './i18n';
+import { initI18n } from './i18n';
 import './prefs';
 import './pwaInstall';
 // Jost for the Grace Ride wordmark (Light "Ride", Medium splash captions, Bold "Grace").
@@ -19,22 +18,25 @@ import '@fontsource/jost/latin-700.css';
 import './styles.css';
 
 // Sentry: opt-in error monitoring. Set VITE_SENTRY_DSN in the production environment.
+// Dynamically imported only when configured so zero-DSN builds stay lean.
 // Never send personal data (names, phone numbers, addresses) in Sentry events.
 if (import.meta.env.VITE_SENTRY_DSN) {
-  Sentry.init({
-    dsn: import.meta.env.VITE_SENTRY_DSN,
-    environment: import.meta.env.MODE,
-    integrations: [],
-    tracesSampleRate: 0.0, // Errors only; performance tracing is off.
-    beforeSend(event) {
-      // Strip any PII that may appear in breadcrumbs or extras.
-      if (event.user) {
-        delete event.user.email;
-        delete event.user.username;
-        delete event.user.ip_address;
-      }
-      return event;
-    },
+  void import('@sentry/react').then((Sentry) => {
+    Sentry.init({
+      dsn: import.meta.env.VITE_SENTRY_DSN,
+      environment: import.meta.env.MODE,
+      integrations: [],
+      tracesSampleRate: 0.0, // Errors only; performance tracing is off.
+      beforeSend(event) {
+        // Strip any PII that may appear in breadcrumbs or extras.
+        if (event.user) {
+          delete event.user.email;
+          delete event.user.username;
+          delete event.user.ip_address;
+        }
+        return event;
+      },
+    });
   });
 }
 
@@ -72,21 +74,23 @@ if (typeof window !== 'undefined' && import.meta.env.PROD) {
   });
 }
 
-ReactDOM.createRoot(document.getElementById('root')!).render(
-  <React.StrictMode>
-    <ErrorBoundary>
-      <BrowserRouter>
-        <SkipLink />
-        <OfflineBanner />
-        <UpdateBanner />
-        <AuthProvider>
-          <ToastProvider>
-            <ConfirmProvider>
-              <App />
-            </ConfirmProvider>
-          </ToastProvider>
-        </AuthProvider>
-      </BrowserRouter>
-    </ErrorBoundary>
-  </React.StrictMode>,
-);
+void initI18n().then(() => {
+  ReactDOM.createRoot(document.getElementById('root')!).render(
+    <React.StrictMode>
+      <ErrorBoundary>
+        <BrowserRouter>
+          <SkipLink />
+          <OfflineBanner />
+          <UpdateBanner />
+          <AuthProvider>
+            <ToastProvider>
+              <ConfirmProvider>
+                <App />
+              </ConfirmProvider>
+            </ToastProvider>
+          </AuthProvider>
+        </BrowserRouter>
+      </ErrorBoundary>
+    </React.StrictMode>,
+  );
+});

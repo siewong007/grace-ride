@@ -91,9 +91,12 @@ pub fn arrange(riders: &[Rider], cars: &[Car], fixed: &HashMap<i64, i64>) -> Arr
     let mut groups: Vec<Vec<usize>> = vec![Vec::new(); cars.len()];
     let mut open: Vec<usize> = Vec::new();
     for (i, r) in riders.iter().enumerate() {
-        match fixed.get(&r.ride_id).and_then(|d| car_idx.get(d)) {
-            Some(&c) => groups[c].push(i),
-            None => open.push(i),
+        if let Some(driver_id) = fixed.get(&r.ride_id) {
+            if let Some(&c) = car_idx.get(driver_id) {
+                groups[c].push(i);
+            }
+        } else {
+            open.push(i);
         }
     }
 

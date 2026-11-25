@@ -151,6 +151,9 @@ fn validate(req: &EventIn, lang: Lang) -> AppResult<(String, Option<String>)> {
     if req.title.trim().is_empty() {
         return Err(bad(lang, ErrorKey::EventNameRequired));
     }
+    if req.cost_note.as_deref().unwrap_or("").chars().count() > 100 {
+        return Err(bad(lang, ErrorKey::InvalidAction));
+    }
     if !KINDS.contains(&req.kind.as_str()) {
         return Err(bad(lang, ErrorKey::InvalidEventType));
     }
@@ -222,8 +225,13 @@ pub(super) async fn create_event(
     };
     let att_enabled = req.attendance_enabled.unwrap_or(true);
     let mileage_claimable = req.mileage_claimable.unwrap_or(false);
-    if mileage_claimable && !crate::perms::can_authorise_event_mileage(&u.roles) {
-        return Err(forbidden(u.lang, ErrorKey::MileageAuthorisationRestricted));
+    if mileage_claimable {
+        if !crate::perms::can_authorise_event_mileage(&u.roles) {
+            return Err(forbidden(u.lang, ErrorKey::MileageAuthorisationRestricted));
+        }
+        if !u.mfa_ok {
+            return Err(forbidden(u.lang, ErrorKey::MfaRequired));
+        }
     }
 
     let dl_delta = dl.as_deref().and_then(|d| {
@@ -376,7 +384,7 @@ pub(super) async fn duplicate_event(
         .unwrap_or(&src.title)
         .to_string();
     let att_enabled = src.attendance_enabled == 1;
-    let can_auth = crate::perms::can_authorise_event_mileage(&u.roles);
+    let can_auth = crate::perms::can_authorise_event_mileage(&u.roles) && u.mfa_ok;
     let mileage_claimable = if can_auth {
         src.mileage_claimable == 1
     } else {
@@ -503,27 +511,41 @@ pub(super) async fn update_event(
     // Same event lock as `signup` / `withdraw`: places a raised capacity opens go to the
     // waitlist, in order, before any signup queued behind this save can take them.
     let mut tx = st.db.begin().await?;
-    let (event_status,): (String,) =
-        sqlx::query_as("SELECT status FROM events WHERE id=$1 FOR UPDATE")
-            .bind(id)
-            .fetch_one(&mut *tx)
-            .await?;
+    let (
+        event_status,
+        cur_starts_at,
+        cur_location,
+        cur_att_enabled,
+        cur_checkin_code,
+        cur_mileage_claimable,
+    ): (String, String, String, i64, Option<String>, i64) = sqlx::query_as(
+        "SELECT status, starts_at, location, attendance_enabled, checkin_code, mileage_claimable
+         FROM events WHERE id=$1 FOR UPDATE",
+    )
+    .bind(id)
+    .fetch_one(&mut *tx)
+    .await?;
     // A cancelled event stays cancelled: editing it would re-notify members and move its
     // (already cancelled) rides.
     if event_status == "cancelled" {
         return Err(bad(u.lang, ErrorKey::EventNotOpen));
     }
     let capacity = req.capacity.unwrap_or(0).max(0);
-    let att_enabled = req.attendance_enabled.unwrap_or(e.attendance_enabled == 1);
-    let can_auth = crate::perms::can_authorise_event_mileage(&u.roles);
-    let target_mileage = req.mileage_claimable.unwrap_or(e.mileage_claimable == 1);
-    if target_mileage != (e.mileage_claimable == 1) && !can_auth {
-        return Err(forbidden(u.lang, ErrorKey::MileageAuthorisationRestricted));
+    let att_enabled = req.attendance_enabled.unwrap_or(cur_att_enabled == 1);
+    let has_mileage_role = crate::perms::can_authorise_event_mileage(&u.roles);
+    let target_mileage = req.mileage_claimable.unwrap_or(cur_mileage_claimable == 1);
+    if target_mileage != (cur_mileage_claimable == 1) {
+        if !has_mileage_role {
+            return Err(forbidden(u.lang, ErrorKey::MileageAuthorisationRestricted));
+        }
+        if !u.mfa_ok {
+            return Err(forbidden(u.lang, ErrorKey::MfaRequired));
+        }
     }
-    let checkin_code = if att_enabled && e.checkin_code.is_none() {
+    let checkin_code = if att_enabled && cur_checkin_code.is_none() {
         Some(random_token(10))
     } else {
-        e.checkin_code.clone()
+        cur_checkin_code
     };
     sqlx::query("UPDATE events SET title=$1, kind=$2, description=$3, starts_at=$4, location=$5, capacity=$6, cost_note=$7, signup_deadline=$8, photo_file_id=$9, attendance_enabled=$10, checkin_code=$11, mileage_claimable=$12, area_id=$13, icon=$14 WHERE id=$15")
         .bind(req.title.trim())
@@ -549,7 +571,7 @@ pub(super) async fn update_event(
     let promoted = promote_waitlist(&mut tx, id, capacity, &event_status).await?;
     tx.commit().await?;
     notify_promoted(&st, id, req.title.trim(), &promoted).await;
-    if event_status == "published" && (at != e.starts_at || req.location.trim() != e.location) {
+    if event_status == "published" && (at != cur_starts_at || req.location.trim() != cur_location) {
         let body = format!(
             "{} · {} · {}",
             req.title.trim(),
@@ -568,8 +590,8 @@ pub(super) async fn update_event(
         crate::routes::rides::event_moved(
             &st,
             id,
-            (&e.starts_at, &at),
-            (&e.location, req.location.trim()),
+            (&cur_starts_at, &at),
+            (&cur_location, req.location.trim()),
         )
         .await?;
     }

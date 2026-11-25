@@ -7,7 +7,6 @@ mod totp;
 pub use invites_recovery::TERMS_VERSION;
 
 use std::net::SocketAddr;
-use std::sync::OnceLock;
 
 use argon2::{
     password_hash::{phc::PasswordHash, PasswordHasher, PasswordVerifier},
@@ -38,11 +37,6 @@ use crate::util::{audit, in_hours, now, random_token, Lang};
 /// presented as if it were a token.
 pub(super) const INVITE_BY_TOKEN: &str =
     "((kind <> 'recovery' AND token = $1) OR (kind = 'recovery' AND token = $2))";
-
-/// Password login is disabled. All authentication is via passkey (WebAuthn).
-/// Per-account lockout does not apply to passkey auth.
-#[allow(dead_code)]
-const MAX_FAILURES: i64 = 0; // disable password lockout since password login is disabled
 
 pub fn router() -> Router<AppState> {
     Router::new()
@@ -114,12 +108,16 @@ pub(super) fn verify_password(pw: &str, hash: &str) -> bool {
         .unwrap_or(false)
 }
 
-/// Verifying against a fixed dummy hash when the account does not exist keeps response
-/// time the same, so attackers cannot discover which emails are members.
-#[allow(dead_code)]
-fn dummy_hash() -> &'static str {
-    static H: OnceLock<String> = OnceLock::new();
-    H.get_or_init(|| hash_password("dummy-password-for-timing").unwrap_or_default())
+pub(super) async fn hash_password_async(pw: String) -> AppResult<String> {
+    tokio::task::spawn_blocking(move || hash_password(&pw))
+        .await
+        .map_err(|e| AppError::Other(anyhow::anyhow!("argon2 task: {e}")))?
+}
+
+pub(super) async fn verify_password_async(pw: String, hash: String) -> AppResult<bool> {
+    tokio::task::spawn_blocking(move || verify_password(&pw, &hash))
+        .await
+        .map_err(|e| AppError::Other(anyhow::anyhow!("argon2 task: {e}")))
 }
 
 /// Accepts the code for the previous, current or next 30 s step, and refuses any step
@@ -340,22 +338,13 @@ async fn turnstile_config(State(st): State<AppState>) -> Json<Value> {
 }
 
 #[derive(Deserialize)]
-#[allow(dead_code)]
 struct LoginReq {
+    #[allow(dead_code)]
     email: String,
+    #[allow(dead_code)]
     password: String,
+    #[allow(dead_code)]
     code: Option<String>,
-}
-
-#[allow(dead_code)]
-async fn record_failure(st: &AppState, email: &str, ip: &str) -> AppResult<()> {
-    sqlx::query("INSERT INTO login_failures (email, ip, created_at) VALUES ($1,$2,$3)")
-        .bind(email)
-        .bind(ip)
-        .bind(now())
-        .execute(&st.db)
-        .await?;
-    Ok(())
 }
 
 async fn login_password(

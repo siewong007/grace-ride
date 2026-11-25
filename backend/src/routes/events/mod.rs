@@ -63,7 +63,11 @@ pub const KINDS: &[&str] = &["badminton", "bowling", "kayak", "walk", "other"];
 
 /// A member sees an event if it targets one of their groups or a group above one of
 /// theirs (or the 全体会员 group), or if they created it / are staff. See `crate::audience`.
-pub async fn can_see_event(st: &AppState, u: &CurrentUser, event_id: i64) -> AppResult<bool> {
+pub async fn can_see_event_on<'e, E: sqlx::PgExecutor<'e>>(
+    db: E,
+    u: &CurrentUser,
+    event_id: i64,
+) -> AppResult<bool> {
     let (n,): (i64,) = sqlx::query_as(crate::dyn_sql!(
         "SELECT COUNT(*) FROM events e WHERE e.id = $1 AND {}",
         visible_events_sql("$2", "$3")
@@ -71,9 +75,13 @@ pub async fn can_see_event(st: &AppState, u: &CurrentUser, event_id: i64) -> App
     .bind(event_id)
     .bind(u.id)
     .bind(&u.group_scope)
-    .fetch_one(&st.db)
+    .fetch_one(db)
     .await?;
     Ok((n > 0 && u.can(Page::Events, Act::View)) || u.can(Page::AdminEvents, Act::View))
+}
+
+pub async fn can_see_event(st: &AppState, u: &CurrentUser, event_id: i64) -> AppResult<bool> {
+    can_see_event_on(&st.db, u, event_id).await
 }
 
 /// The organiser may change their own event while they hold the matching 活动

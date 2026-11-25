@@ -10,6 +10,7 @@ import type { Ride } from '../components/RideCard';
 import { Button, CardSkeleton, EmptyState, ErrorBox, ListSkeleton, Notice, Page, Pill, StatusPill, useAction } from '../components/ui';
 import { fmtAgo, fmtDateTime, fmtDay, fmtTime, greeting, localDate, RIDE_STATUS, RIDE_STATUS_PASSENGER, rm, todayStr, useFormatT } from '../format';
 import { loadTodayRidesSnapshot, saveTodayRidesSnapshot } from '../offlineSnapshot';
+import { ensureLocaleNamespaces } from '../i18n';
 import { canApprovePlan } from '../perms';
 import type { AdminCounts } from '../staffNav';
 import type { EventItem } from './Events';
@@ -73,6 +74,10 @@ export default function Home() {
   const { t, i18n } = useTranslation('home');
   const ft = useFormatT();
   const { me, can } = useAuth();
+
+  useEffect(() => {
+    void ensureLocaleNamespaces(['rideDetail']);
+  }, []);
   // Each block loads only when the member may open the page it belongs to.
   const rides = useApi<Ride[]>(can('rides') ? '/rides' : null, 30000);
   const events = useApi<EventItem[]>(can('events') ? '/events' : null);

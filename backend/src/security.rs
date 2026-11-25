@@ -20,13 +20,39 @@ use axum::{
 };
 use serde_json::json;
 
-use axum_extra::extract::CookieJar;
-
-use crate::auth::{hash_token, SESSION_COOKIE, SESSION_COOKIE_SECURE};
+use crate::auth::{extract_session_token, hash_token};
 use crate::error::{forbidden, locked};
 use crate::i18n::ErrorKey;
+use crate::perms::{self, PermSet};
 use crate::state::AppState;
 use crate::util::{now, t, Lang};
+
+#[derive(Clone, Debug, sqlx::FromRow)]
+pub(crate) struct ResolvedSessionData {
+    pub id: i64,
+    pub name: String,
+    pub email: String,
+    pub roles: String,
+    pub status: String,
+    pub mfa_ok: i64,
+    pub expires_at: String,
+    pub created_at: String,
+    pub lang: String,
+    pub granted: String,
+    pub session_id: String,
+    pub locked_at: Option<String>,
+    pub last_seen_at: String,
+    pub auto_lock_mins: i64,
+    pub totp_enabled: i64,
+    pub passkey_count: i64,
+    pub org_timeout: Option<String>,
+}
+
+#[derive(Clone, Debug)]
+pub(crate) enum ResolvedSession {
+    Invalid,
+    Valid(Box<ResolvedSessionData>),
+}
 
 /// Fixed-window counter keyed by "bucket:ip". Single-process is fine: the app runs
 /// as one instance of this app. Move to Redis if it is ever scaled horizontally.
@@ -165,6 +191,10 @@ pub async fn rate_limit(State(st): State<AppState>, req: Request, next: Next) ->
         || path == "/api/push/telegram/link-token"
     {
         Some(("push_sub", 30, 600))
+    } else if path == "/api/auth/password" {
+        Some(("password", 5, 300))
+    } else if path == "/api/me/family/people" {
+        Some(("family_add", 10, 600))
     } else if path == "/api/admin/settings/alerts/test-webhook" {
         Some(("test_webhook", 10, 600))
     } else {
@@ -176,27 +206,28 @@ pub async fn rate_limit(State(st): State<AppState>, req: Request, next: Next) ->
             .get::<ConnectInfo<SocketAddr>>()
             .map(|c| c.0);
         let ip = client_ip(req.headers(), peer, st.cfg.trust_proxy);
-        // Code checks count per member and per address; everything else per address.
-        if bucket == "totp" {
-            if let Some(owner) = totp_owner(&st, req.headers()).await {
-                if let Err(wait) =
-                    st.limiter
-                        .check(&format!("totp:{owner}"), limit, Duration::from_secs(secs))
-                {
+        // Credential/enumeration checks count per member and per address; everything else per address.
+        if matches!(bucket, "totp" | "password" | "family_add") {
+            if let Some(owner) = session_user_key(&st, req.headers()).await {
+                if let Err(wait) = st.limiter.check(
+                    &format!("{bucket}:{owner}"),
+                    limit,
+                    Duration::from_secs(secs),
+                ) {
                     tracing::warn!(bucket, ip, "rate limited");
                     return too_many(wait, Lang::from_headers(req.headers()));
                 }
                 if let Err(wait) = st.limiter.check(
-                    &format!("totp-ip:{ip}"),
+                    &format!("{bucket}-ip:{ip}"),
                     limit.saturating_mul(3),
                     Duration::from_secs(secs),
                 ) {
-                    tracing::warn!(bucket = "totp-ip", ip, "rate limited");
+                    tracing::warn!(bucket = format!("{bucket}-ip").as_str(), ip, "rate limited");
                     return too_many(wait, Lang::from_headers(req.headers()));
                 }
             } else if let Err(wait) =
                 st.limiter
-                    .check(&format!("totp:{ip}"), limit, Duration::from_secs(secs))
+                    .check(&format!("{bucket}:{ip}"), limit, Duration::from_secs(secs))
             {
                 tracing::warn!(bucket, ip, "rate limited");
                 return too_many(wait, Lang::from_headers(req.headers()));
@@ -212,18 +243,11 @@ pub async fn rate_limit(State(st): State<AppState>, req: Request, next: Next) ->
     next.run(req).await
 }
 
-/// Whose two-step code is being guessed: the member behind the session cookie. Keyed by
-/// member, not session, because anyone holding the password can sign in again for a
-/// fresh session, and per-session counting would hand them a new allowance each time.
-/// `None` (no cookie, or not a live session) falls back to the address; such requests
-/// are refused as unauthenticated anyway.
-async fn totp_owner(st: &AppState, headers: &HeaderMap) -> Option<String> {
-    let jar = CookieJar::from_headers(headers);
-    let token = jar
-        .get(SESSION_COOKIE_SECURE)
-        .or_else(|| jar.get(SESSION_COOKIE))?
-        .value()
-        .to_string();
+/// Whose session is making this request: the member behind the session cookie. Keyed by
+/// member, not session, because per-session counting would hand a fresh allowance per session.
+/// `None` (no cookie, or not a live session) falls back to the address.
+async fn session_user_key(st: &AppState, headers: &HeaderMap) -> Option<String> {
+    let token = extract_session_token(headers, st.cfg.secure_cookies())?;
     if token.len() != 48 {
         return None;
     }
@@ -290,6 +314,72 @@ struct LockRow {
     org_timeout: Option<String>,
 }
 
+struct LockFields<'a> {
+    locked_at: Option<&'a str>,
+    last_seen_at: &'a str,
+    auto_lock_mins: i64,
+    lang: &'a str,
+    expires_at: &'a str,
+    status: &'a str,
+    totp_enabled: i64,
+    passkey_count: i64,
+    org_timeout: Option<&'a str>,
+}
+
+async fn eval_lock_fields(
+    st: &AppState,
+    token_hash: &str,
+    fields: LockFields<'_>,
+    touch: bool,
+) -> Option<(Lang, bool)> {
+    let now_str = now();
+    if fields.expires_at < now_str.as_str() {
+        return None;
+    }
+    let has_unlock_method = fields.passkey_count > 0 || fields.totp_enabled == 1 || st.cfg.dev_mode;
+    if fields.locked_at.is_some() {
+        return Some((Lang::from_code(fields.lang), !has_unlock_method));
+    }
+    let org_timeout = fields
+        .org_timeout
+        .and_then(|v| v.parse::<i64>().ok())
+        .unwrap_or(st.cfg.session_timeout_mins);
+    let effective_mins = if fields.auto_lock_mins > 0 {
+        fields.auto_lock_mins
+    } else if fields.auto_lock_mins == 0 {
+        org_timeout
+    } else {
+        0
+    };
+    if effective_mins > 0
+        && fields.status == "active"
+        && has_unlock_method
+        && fields.last_seen_at < crate::util::minutes_ago(effective_mins).as_str()
+    {
+        if let Err(e) =
+            sqlx::query("UPDATE sessions SET locked_at = $1 WHERE token = $2 AND locked_at IS NULL")
+                .bind(&now_str)
+                .bind(token_hash)
+                .execute(&st.db)
+                .await
+        {
+            tracing::warn!("failed to set session locked_at: {e}");
+        }
+        return Some((Lang::from_code(fields.lang), false));
+    }
+    if touch && fields.last_seen_at < crate::util::minutes_ago(1).as_str() {
+        if let Err(e) = sqlx::query("UPDATE sessions SET last_seen_at = $1 WHERE token = $2")
+            .bind(&now_str)
+            .bind(token_hash)
+            .execute(&st.db)
+            .await
+        {
+            tracing::warn!("failed to touch session last_seen_at: {e}");
+        }
+    }
+    None
+}
+
 /// Evaluates whether a session is currently locked (or has exceeded its idle timeout),
 /// engaging `sessions.locked_at` when idle and updating `last_seen_at` if `touch` is true.
 /// Returns `Some((lang, is_locked_without_mfa))` when the session is locked.
@@ -312,110 +402,176 @@ pub async fn evaluate_session_lock(
     .ok()
     .flatten();
     let row = row?;
-    let now_str = now();
-    if row.expires_at < now_str {
-        return None;
-    }
-    let has_unlock_method = row.passkey_count > 0 || row.totp_enabled == 1 || st.cfg.dev_mode;
-    if row.locked_at.is_some() {
-        return Some((Lang::from_code(&row.lang), !has_unlock_method));
-    }
-    let org_timeout = row
-        .org_timeout
-        .and_then(|v| v.parse::<i64>().ok())
-        .unwrap_or(st.cfg.session_timeout_mins);
-    let effective_mins = if row.auto_lock_mins > 0 {
-        row.auto_lock_mins
-    } else if row.auto_lock_mins == 0 {
-        org_timeout
-    } else {
-        0
-    };
-    if effective_mins > 0
-        && row.status == "active"
-        && has_unlock_method
-        && row.last_seen_at < crate::util::minutes_ago(effective_mins)
-    {
-        if let Err(e) =
-            sqlx::query("UPDATE sessions SET locked_at = $1 WHERE token = $2 AND locked_at IS NULL")
-                .bind(&now_str)
-                .bind(token_hash)
-                .execute(&st.db)
-                .await
-        {
-            tracing::warn!("failed to set session locked_at: {e}");
-        }
-        return Some((Lang::from_code(&row.lang), false));
-    }
-    if touch && row.last_seen_at < crate::util::minutes_ago(1) {
-        if let Err(e) = sqlx::query("UPDATE sessions SET last_seen_at = $1 WHERE token = $2")
-            .bind(&now_str)
-            .bind(token_hash)
-            .execute(&st.db)
-            .await
-        {
-            tracing::warn!("failed to touch session last_seen_at: {e}");
-        }
-    }
-    None
+    eval_lock_fields(
+        st,
+        token_hash,
+        LockFields {
+            locked_at: row.locked_at.as_deref(),
+            last_seen_at: &row.last_seen_at,
+            auto_lock_mins: row.auto_lock_mins,
+            lang: &row.lang,
+            expires_at: &row.expires_at,
+            status: &row.status,
+            totp_enabled: row.totp_enabled,
+            passkey_count: row.passkey_count,
+            org_timeout: row.org_timeout.as_deref(),
+        },
+        touch,
+    )
+    .await
 }
 
-/// Server-enforced screen lock: blocks API access when the current session is locked
-/// or has been inactive longer than the user's configured auto-lock timeout.
-pub async fn session_lock_guard(State(st): State<AppState>, req: Request, next: Next) -> Response {
-    let path = req.uri().path().to_string();
-    if lock_bypass_path(&path) {
-        return next.run(req).await;
+#[derive(sqlx::FromRow)]
+struct LockAliveRow {
+    locked_at: Option<String>,
+    last_seen_at: String,
+    created_at: String,
+    auto_lock_mins: i64,
+    lang: String,
+    expires_at: String,
+    status: String,
+    totp_enabled: i64,
+    passkey_count: i64,
+    org_timeout: Option<String>,
+    granted: String,
+}
+
+/// Checks session existence, status, expiration, 12h privileged cap, and idle auto-lock in one query for SSE.
+/// A database hiccup keeps the stream alive (`true`); only a clear expired/locked/disabled
+/// state returns `false`.
+pub(crate) async fn evaluate_session_alive_and_lock(st: &AppState, token_hash: &str) -> bool {
+    let now_str = now();
+    let res: Result<Option<LockAliveRow>, _> = sqlx::query_as(
+        "SELECT s.locked_at, s.last_seen_at, s.created_at, u.auto_lock_mins, u.lang, s.expires_at,
+                u.status, u.totp_enabled,
+                (SELECT COUNT(*) FROM passkeys p WHERE p.user_id = u.id) AS passkey_count,
+                (SELECT value FROM system_settings WHERE key = 'session_timeout_mins') AS org_timeout,
+                COALESCE((SELECT string_agg(rp.permission, ',') FROM role_permissions rp
+                          WHERE rp.role_key = $3
+                             OR rp.role_key IN (SELECT role_key FROM member_roles WHERE user_id = u.id)), '') AS granted
+         FROM sessions s JOIN users u ON u.id = s.user_id
+         WHERE s.token = $1 AND s.expires_at > $2 AND s.locked_at IS NULL AND u.status IN ('active', 'pending')",
+    )
+    .bind(token_hash)
+    .bind(&now_str)
+    .bind(perms::MEMBER_ROLE)
+    .fetch_optional(&st.db)
+    .await;
+    match res {
+        Err(_) => true,
+        Ok(None) => false,
+        Ok(Some(row)) => {
+            if row.status == "active" {
+                let privileged = PermSet::from_keys(row.granted.split(',')).privileged();
+                if privileged && row.created_at < crate::util::minutes_ago(12 * 60) {
+                    return false;
+                }
+            }
+            eval_lock_fields(
+                st,
+                token_hash,
+                LockFields {
+                    locked_at: row.locked_at.as_deref(),
+                    last_seen_at: &row.last_seen_at,
+                    auto_lock_mins: row.auto_lock_mins,
+                    lang: &row.lang,
+                    expires_at: &row.expires_at,
+                    status: &row.status,
+                    totp_enabled: row.totp_enabled,
+                    passkey_count: row.passkey_count,
+                    org_timeout: row.org_timeout.as_deref(),
+                },
+                false,
+            )
+            .await
+            .is_none()
+        }
     }
-    let jar = CookieJar::from_headers(req.headers());
-    let token = jar
-        .get(SESSION_COOKIE_SECURE)
-        .or_else(|| jar.get(SESSION_COOKIE))
-        .map(|c| c.value().to_string());
+}
+
+/// Unified per-request guard: resolves the session + user + permissions + lock/pending state
+/// in a single database query and attaches `ResolvedSession` to request extensions so
+/// `CurrentUser` does not query `sessions` / `users` again.
+pub async fn session_guard(State(st): State<AppState>, mut req: Request, next: Next) -> Response {
+    let path = req.uri().path().to_string();
+    let token = extract_session_token(req.headers(), st.cfg.secure_cookies());
     let Some(token) = token.filter(|t| t.len() == 48) else {
         return next.run(req).await;
     };
     let token_hash = hash_token(&token);
-    if let Some((lang, no_mfa)) = evaluate_session_lock(&st, &token_hash, true).await {
-        let sub = path.strip_prefix("/api").unwrap_or(&path);
-        if no_mfa
-            && (sub == "/auth/passkey/register/start" || sub == "/auth/passkey/register/finish")
-        {
-            return next.run(req).await;
-        }
-        return locked(lang, ErrorKey::SessionLocked).into_response();
-    }
-    next.run(req).await
-}
-
-/// A member who has accepted an invite but is not yet approved may use their
-/// profile, passkey, and photo. Every other API route stays closed.
-pub async fn pending_guard(State(st): State<AppState>, req: Request, next: Next) -> Response {
-    let path = req.uri().path().to_string();
-    if pending_profile_only(&path) {
-        return next.run(req).await;
-    }
-    let jar = CookieJar::from_headers(req.headers());
-    let token = jar
-        .get(SESSION_COOKIE_SECURE)
-        .or_else(|| jar.get(SESSION_COOKIE))
-        .map(|c| c.value().to_string());
-    let Some(token) = token.filter(|t| t.len() == 48) else {
-        return next.run(req).await;
-    };
-    let row: Option<(String, String, String)> = sqlx::query_as(
-        "SELECT u.status, u.lang, s.expires_at FROM sessions s JOIN users u ON u.id = s.user_id WHERE s.token = $1",
+    let row: Option<ResolvedSessionData> = sqlx::query_as(
+        "SELECT u.id, u.name, u.email, u.roles, u.status, s.mfa_ok, s.expires_at, s.created_at, u.lang,
+                COALESCE((SELECT string_agg(rp.permission, ',') FROM role_permissions rp
+                          WHERE rp.role_key = $2
+                             OR rp.role_key IN (SELECT role_key FROM member_roles WHERE user_id = u.id)), '') AS granted,
+                s.token AS session_id,
+                s.locked_at, s.last_seen_at, u.auto_lock_mins, u.totp_enabled,
+                (SELECT COUNT(*) FROM passkeys p WHERE p.user_id = u.id) AS passkey_count,
+                (SELECT value FROM system_settings WHERE key = 'session_timeout_mins') AS org_timeout
+         FROM sessions s JOIN users u ON u.id = s.user_id
+         WHERE s.token = $1 AND u.status IN ('active', 'pending')",
     )
-    .bind(hash_token(&token))
+    .bind(&token_hash)
+    .bind(perms::MEMBER_ROLE)
     .fetch_optional(&st.db)
     .await
     .ok()
     .flatten();
-    if let Some((status, lang, expires)) = row {
-        if status == "pending" && expires >= now() {
-            return forbidden(Lang::from_code(&lang), ErrorKey::AccountPending).into_response();
+
+    let Some(data) = row else {
+        req.extensions_mut().insert(ResolvedSession::Invalid);
+        return next.run(req).await;
+    };
+
+    let now_str = now();
+    if data.expires_at < now_str {
+        req.extensions_mut().insert(ResolvedSession::Invalid);
+        return next.run(req).await;
+    }
+
+    let explicit_lang = req
+        .headers()
+        .get(header::ACCEPT_LANGUAGE)
+        .and_then(|v| v.to_str().ok())
+        .and_then(Lang::parse_accept_language);
+    let user_lang = explicit_lang.unwrap_or_else(|| Lang::from_code(&data.lang));
+    crate::error::set_request_lang(user_lang);
+
+    if data.status == "pending" && !pending_profile_only(&path) {
+        return forbidden(Lang::from_code(&data.lang), ErrorKey::AccountPending).into_response();
+    }
+
+    if !lock_bypass_path(&path) {
+        if let Some((lang, no_mfa)) = eval_lock_fields(
+            &st,
+            &token_hash,
+            LockFields {
+                locked_at: data.locked_at.as_deref(),
+                last_seen_at: &data.last_seen_at,
+                auto_lock_mins: data.auto_lock_mins,
+                lang: &data.lang,
+                expires_at: &data.expires_at,
+                status: &data.status,
+                totp_enabled: data.totp_enabled,
+                passkey_count: data.passkey_count,
+                org_timeout: data.org_timeout.as_deref(),
+            },
+            true,
+        )
+        .await
+        {
+            let sub = path.strip_prefix("/api").unwrap_or(&path);
+            if !(no_mfa
+                && (sub == "/auth/passkey/register/start"
+                    || sub == "/auth/passkey/register/finish"))
+            {
+                return locked(lang, ErrorKey::SessionLocked).into_response();
+            }
         }
     }
+
+    req.extensions_mut()
+        .insert(ResolvedSession::Valid(Box::new(data)));
     next.run(req).await
 }
 

@@ -38,7 +38,7 @@ RUN touch src/main.rs src/lib.rs \
 # ---------- Runtime ----------
 FROM debian:bookworm-slim
 RUN apt-get update \
-  && apt-get install -y --no-install-recommends ca-certificates libssl3 tzdata \
+  && apt-get install -y --no-install-recommends ca-certificates tzdata \
   && rm -rf /var/lib/apt/lists/* \
   && useradd --system --uid 10001 --home /app --shell /usr/sbin/nologin grace \
   && mkdir -p /data/uploads && chown -R grace /data

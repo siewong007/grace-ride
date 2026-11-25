@@ -97,6 +97,8 @@ export default {
     "ONLY_ORGANISER_CAN_RECORD_ATTENDANCE": "只有活动负责人可以记录出席",
     "ATTENDANCE_MODULE_DISABLED": "此活动未开启出席签到模块",
     "INVALID_CHECKIN_CODE": "签到码无效或已更新",
+    "CHECKIN_OUTSIDE_WINDOW": "签到于活动开始前 2 小时开放，至开始后 12 小时关闭",
+    "CHECKIN_CODE_AMBIGUOUS": "此签到码对应多个活动，请扫描该活动页面上的二维码签到",
     "MEMBERS_ONLY_ATTENDANCE": "出席签到仅限正式会员",
     "EVENT_NOT_OPEN_TO_GROUP": "此活动不对您所属的群体开放",
     "JOIN_AS_REQUIRED": "请选择您以哪个群体参加",
@@ -114,6 +116,7 @@ export default {
     "ONLY_GOING_CAN_INVITE_VISITOR": "只有已报名参加的会员或活动负责人可以邀请访客",
     "INVALID_PASS_CODE": "找不到对应的活动通行码",
     "CARE_PASS_CLOSED": "此平安接送追踪链接已关闭或过期",
+    "CARE_PASS_NOT_OPEN_YET": "此链接将于接送前 24 小时开放",
     "MILEAGE_AUTHORISATION_RESTRICTED": "只有超级管理员、会长或副会长可以允许活动报销里程车费",
     "EVENT_NOT_DRAFT": "此活动不是草稿状态",
     "EVENT_CANNOT_HIDE_WITH_SIGNUPS": "已有会员报名或预约接送，无法退回草稿"
@@ -174,7 +177,12 @@ export default {
     "DRIVER_CANNOT_BE_PASSENGER": "司机不能是乘客本人",
     "ONLY_PASSENGER_OR_STAFF_CAN_CANCEL": "只有乘客或交通组可以取消",
     "ONLY_VOLUNTEER_DRIVERS_CAN_VIEW": "只有志愿司机可以查看",
-    "ONLY_VOLUNTEER_DRIVERS_CAN_CHOOSE": "只有志愿司机可以选择接送"
+    "ONLY_VOLUNTEER_DRIVERS_CAN_CHOOSE": "只有志愿司机可以选择接送",
+    "ONLY_TRAFFIC_LEAD_CAN_APPROVE": "只有交通组组长可以审批接送安排",
+    "PLAN_DRAFT_NOT_FOUND": "未找到接送安排草稿",
+    "DRAFT_LOCKED_BY_OTHER": "{name} 正在编辑此草稿版本，请稍后再试或新建草稿版本",
+    "DRAFT_NOT_EDITABLE": "此草稿版本已审批或已归档，请新建草稿版本",
+    "RIDE_DRAFT_NOT_FOUND": "找不到该接送修改草稿"
   },
   "settlements": {
     "SETTLEMENT_NAME_REQUIRED": "请填写结算名称",

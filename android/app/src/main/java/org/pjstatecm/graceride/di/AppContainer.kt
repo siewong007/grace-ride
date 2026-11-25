@@ -49,6 +49,7 @@ class AppContainer(context: Context?, storeOverride: SecureStore? = null) {
         private set
 
     fun setBaseUrl(url: String) {
+        require(BuildConfig.DEBUG) { "Server URL override is only available in debug builds" }
         val trimmed = url.trim()
         val parsed = trimmed.toHttpUrlOrNull()
         require(parsed != null && parsed.scheme in setOf("http", "https") && parsed.host.isNotBlank()) {
@@ -124,6 +125,7 @@ class AppContainer(context: Context?, storeOverride: SecureStore? = null) {
         authEvents = authEvents,
         langProvider = { lang },
         hideLockDetailsProvider = { secureStore.getString("notif_hide_lock_details") == "1" },
+        store = secureStore,
     )
         private set
 
@@ -151,6 +153,7 @@ class AppContainer(context: Context?, storeOverride: SecureStore? = null) {
             authEvents = authEvents,
             langProvider = { lang },
             hideLockDetailsProvider = { secureStore.getString("notif_hide_lock_details") == "1" },
+            store = secureStore,
         )
         if (appContext != null) {
             realtimeStream.start()

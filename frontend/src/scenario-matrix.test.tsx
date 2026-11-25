@@ -463,8 +463,45 @@ describe('Scenario Matrix — Frontend Components & Service Worker', () => {
         URL,
         Promise,
       });
-      return { listeners, storedKeys, mockCache, fakeWindow, mockSelf };
+      return { listeners, storedKeys, mockCache, fakeWindow, mockSelf, mockFetch };
     }
+
+    it('uses stale-while-revalidate for unhashed static files and cache-first for /assets/*', async () => {
+      const { listeners, mockSelf, mockFetch, mockCache } = loadSwHarness();
+      const onFetch = listeners.get('fetch')!;
+      const cachedBoot = { ok: true, status: 200, fromCache: true };
+      const freshBoot = { ok: true, status: 200, clone: () => ({ ok: true, status: 200 }) };
+      mockSelf.caches.match.mockResolvedValue(cachedBoot);
+      mockFetch.mockResolvedValue(freshBoot);
+
+      // 1. /assets/* hit must be pure cache-first (no background network fetch).
+      let assetPromise: Promise<unknown> | undefined;
+      onFetch({
+        request: { method: 'GET', url: 'https://graceride.org/assets/app-abc123.js', mode: 'cors' },
+        respondWith: (p: Promise<unknown>) => {
+          assetPromise = p;
+        },
+      });
+      expect(await assetPromise).toBe(cachedBoot);
+      expect(mockFetch).not.toHaveBeenCalled();
+
+      // 2. Unhashed static asset (/theme-boot.js) returns cached immediately AND revalidates in background.
+      const waitUntilPromises: Promise<unknown>[] = [];
+      let bootPromise: Promise<unknown> | undefined;
+      onFetch({
+        request: { method: 'GET', url: 'https://graceride.org/theme-boot.js', mode: 'no-cors' },
+        respondWith: (p: Promise<unknown>) => {
+          bootPromise = p;
+        },
+        waitUntil: (p: Promise<unknown>) => {
+          waitUntilPromises.push(p);
+        },
+      });
+      expect(await bootPromise).toBe(cachedBoot);
+      expect(mockFetch).toHaveBeenCalledTimes(1);
+      await Promise.all(waitUntilPromises);
+      expect(mockCache.put).toHaveBeenCalledTimes(1);
+    });
 
     it('never intercepts /api/* and never caches bearer capability URLs', async () => {
       const { listeners, storedKeys, mockCache } = loadSwHarness();

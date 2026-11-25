@@ -334,6 +334,8 @@ describe('Notifications filters, actions and subscribe_failed', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Rides' }));
     expect(useApiPaths).toContain('/notifications?limit=30&unread_only=true&category=ride');
 
+    fireEvent.click(screen.getByRole('button', { name: 'All' }));
+
     fireEvent.click(screen.getByRole('button', { name: 'Mark as read' }));
     await waitFor(() => expect(post).toHaveBeenCalledWith('/notifications/101/read'));
 

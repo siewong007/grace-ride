@@ -48,6 +48,7 @@ async fn setup() -> (Router, AppState) {
         housekeeping_interval_mins: 60,
         notification_retention_days: 90,
         turnstile: Default::default(),
+        android_cert_sha256_fingerprints: Vec::new(),
     };
     cfg.validate().unwrap();
     let state = init(cfg).await.unwrap();
@@ -1466,6 +1467,7 @@ fn production_config_rejects_dev_mode_and_plain_http() {
         housekeeping_interval_mins: 60,
         notification_retention_days: 90,
         turnstile: Default::default(),
+        android_cert_sha256_fingerprints: Vec::new(),
     };
     assert!(
         cfg.validate().is_err(),

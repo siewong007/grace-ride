@@ -23,6 +23,23 @@ pub const SESSION_COOKIE: &str = "gr_session";
 /// Secure, Path=/ and has no Domain — it cannot be planted by a sibling subdomain.
 pub const SESSION_COOKIE_SECURE: &str = "__Host-gr_session";
 
+pub fn session_cookie_name(secure_cookies: bool) -> &'static str {
+    if secure_cookies {
+        SESSION_COOKIE_SECURE
+    } else {
+        SESSION_COOKIE
+    }
+}
+
+pub fn extract_session_token(
+    headers: &axum::http::HeaderMap,
+    secure_cookies: bool,
+) -> Option<String> {
+    let jar = CookieJar::from_headers(headers);
+    jar.get(session_cookie_name(secure_cookies))
+        .map(|c| c.value().to_string())
+}
+
 pub fn hash_token(token: &str) -> String {
     hex::encode(Sha256::digest(token.as_bytes()))
 }
@@ -71,7 +88,7 @@ impl CurrentUser {
 
     /// Whether the user has authority to approve transport arrangement plans as traffic lead.
     pub fn is_traffic_lead(&self) -> bool {
-        perms::can_approve_transport_plan(&self.roles)
+        self.mfa_ok && perms::can_approve_transport_plan(&self.roles)
     }
 }
 
@@ -103,22 +120,63 @@ impl FromRequestParts<AppState> for CurrentUser {
             .and_then(Lang::parse_accept_language);
         let unauth_lang = explicit_lang.unwrap_or(Lang::Zh);
 
-        // The session cookie is the only credential. `security::pending_guard` reads the
-        // same cookie to keep unapproved members out; a second way to present the token
-        // (it used to be accepted as a Bearer header) would walk straight past that guard.
-        let jar = CookieJar::from_headers(&parts.headers);
-        let token = jar
-            .get(SESSION_COOKIE_SECURE)
-            .or_else(|| jar.get(SESSION_COOKIE))
-            .map(|c| c.value().to_string())
+        // The session cookie is the only credential. `security::session_guard` reads the
+        // same cookie to keep unapproved/locked members out and caches the resolved session
+        // in request extensions; a second way to present the token would walk past that guard.
+        if let Some(resolved) = parts.extensions.get::<crate::security::ResolvedSession>() {
+            match resolved {
+                crate::security::ResolvedSession::Invalid => {
+                    return Err(unauthorized(unauth_lang));
+                }
+                crate::security::ResolvedSession::Valid(srow) => {
+                    let user_lang = explicit_lang.unwrap_or_else(|| Lang::from_code(&srow.lang));
+                    crate::error::set_request_lang(user_lang);
+                    if srow.expires_at < now() {
+                        return Err(unauthorized(user_lang));
+                    }
+                    let perms = if srow.status == "active" {
+                        PermSet::from_keys(srow.granted.split(','))
+                    } else {
+                        PermSet::default()
+                    };
+                    let privileged = perms.privileged();
+                    if privileged && srow.created_at < crate::util::minutes_ago(12 * 60) {
+                        return Err(unauthorized(user_lang));
+                    }
+                    let (group_scope, drive_scope) = if srow.status == "active" {
+                        crate::audience::group_scopes(&state.db, srow.id).await?
+                    } else {
+                        (Vec::new(), Vec::new())
+                    };
+                    return Ok(CurrentUser {
+                        id: srow.id,
+                        name: srow.name.clone(),
+                        email: srow.email.clone(),
+                        roles: perms::parse_roles(&srow.roles),
+                        perms,
+                        status: srow.status.clone(),
+                        mfa_ok: if privileged {
+                            srow.mfa_ok == 1
+                        } else {
+                            srow.mfa_ok == 1 || state.cfg.dev_mode
+                        },
+                        lang: user_lang,
+                        session_id: srow.session_id.clone(),
+                        group_scope,
+                        drive_scope,
+                    });
+                }
+            }
+        }
+
+        let token = extract_session_token(&parts.headers, state.cfg.secure_cookies())
             .ok_or(unauthorized(unauth_lang))?;
         if token.len() != 48 {
             return Err(unauthorized(unauth_lang));
         }
         let session_id = hash_token(&token);
 
-        // Permissions are read with the session on every request, so a change to a role
-        // or to a member's roles applies to their very next call.
+        // Fallback path when CurrentUser is extracted without `security::session_guard`.
         let row: Option<SessionRow> = sqlx::query_as(
             "SELECT u.id, u.name, u.email, u.roles, u.status, s.mfa_ok, s.expires_at, s.created_at, u.lang,
                     COALESCE((SELECT string_agg(rp.permission, ',') FROM role_permissions rp
@@ -134,6 +192,7 @@ impl FromRequestParts<AppState> for CurrentUser {
 
         let srow = row.ok_or(unauthorized(unauth_lang))?;
         let user_lang = explicit_lang.unwrap_or_else(|| Lang::from_code(&srow.lang));
+        crate::error::set_request_lang(user_lang);
         if srow.expires_at < now() {
             return Err(unauthorized(user_lang));
         }

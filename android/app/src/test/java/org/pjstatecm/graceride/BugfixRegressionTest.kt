@@ -29,6 +29,7 @@ import org.pjstatecm.graceride.data.repo.AuthState
 import org.pjstatecm.graceride.data.session.InMemoryStore
 import org.pjstatecm.graceride.data.session.PersistentCookieJar
 import org.pjstatecm.graceride.di.AppContainer
+import org.pjstatecm.graceride.domain.Assistance
 import org.pjstatecm.graceride.domain.DatePickerUtc
 import org.pjstatecm.graceride.domain.KlTime
 import org.pjstatecm.graceride.domain.PasskeyOptions

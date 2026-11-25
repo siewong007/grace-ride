@@ -607,7 +607,10 @@ pub fn sql_has_any_role(alias: &str, roles: &[&str]) -> String {
 }
 
 /// Permissions granted by the given roles, plus the `member` role.
-pub async fn for_roles(db: &PgPool, roles: &[String]) -> sqlx::Result<PermSet> {
+pub async fn for_roles<'e, E: sqlx::PgExecutor<'e>>(
+    db: E,
+    roles: &[String],
+) -> sqlx::Result<PermSet> {
     let rows: Vec<(String,)> = sqlx::query_as(
         "SELECT DISTINCT permission FROM role_permissions WHERE role_key = $1 OR role_key = ANY($2)",
     )

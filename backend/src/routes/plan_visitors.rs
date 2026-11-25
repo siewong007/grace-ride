@@ -356,13 +356,22 @@ async fn delete_visitor(
 ) -> AppResult<Json<Value>> {
     require(&u, Page::AdminPlan, Act::Update)?;
     load_event(&st, &u, id).await?;
-    owned(&st, &u, id, vid).await?;
+    let mut tx = st.db.begin().await?;
+    let row: Option<(i64,)> =
+        sqlx::query_as("SELECT id FROM plan_visitors WHERE id = $1 AND event_id = $2 FOR UPDATE")
+            .bind(vid)
+            .bind(id)
+            .fetch_optional(&mut *tx)
+            .await?;
+    if row.is_none() {
+        return Err(not_found(u.lang));
+    }
     // A visitor with a live (not rejected) special reimbursement stays on record.
     let live: bool = sqlx::query_scalar(
         "SELECT EXISTS (SELECT 1 FROM reimbursements WHERE plan_visitor_id = $1 AND status <> 'rejected')",
     )
     .bind(vid)
-    .fetch_one(&st.db)
+    .fetch_one(&mut *tx)
     .await?;
     if live {
         return Err(conflict(u.lang, ErrorKey::VisitorHasReimbursement));
@@ -370,8 +379,9 @@ async fn delete_visitor(
     sqlx::query("DELETE FROM plan_visitors WHERE id=$1 AND event_id=$2")
         .bind(vid)
         .bind(id)
-        .execute(&st.db)
+        .execute(&mut *tx)
         .await?;
+    tx.commit().await?;
     audit(
         &st.db,
         Some(u.id),
@@ -401,6 +411,9 @@ struct SpecialIn {
 fn clean_special(u: &CurrentUser, req: &SpecialIn) -> AppResult<String> {
     if req.amount_cents <= 0 {
         return Err(bad(u.lang, ErrorKey::AmountMustBePositive));
+    }
+    if req.amount_cents > 10_000_000 {
+        return Err(bad(u.lang, ErrorKey::AmountRangeInvalid));
     }
     let reason = req.reason.trim().to_string();
     if reason.is_empty() {

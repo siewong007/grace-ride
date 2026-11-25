@@ -136,8 +136,18 @@ afterEach(() => {
 });
 
 describe('CSS animation & keyframe integrity', () => {
-  it('defines @keyframes fadeIn and every referenced animation name in styles.css', () => {
-    const css = fs.readFileSync(path.resolve(__dirname, 'styles.css'), 'utf-8');
+  it('defines @keyframes fadeIn and every referenced animation name in styles', () => {
+    const stylesDir = path.resolve(__dirname, 'styles');
+    const cssParts = [
+      fs.readFileSync(path.resolve(__dirname, 'styles.css'), 'utf-8'),
+      ...(fs.existsSync(stylesDir)
+        ? fs
+            .readdirSync(stylesDir)
+            .filter((f) => f.endsWith('.css'))
+            .map((f) => fs.readFileSync(path.join(stylesDir, f), 'utf-8'))
+        : []),
+    ];
+    const css = cssParts.join('\n');
     const definedKeyframes = new Set(
       Array.from(css.matchAll(/@keyframes\s+([a-zA-Z0-9_-]+)/g), (m) => m[1]),
     );

@@ -6,6 +6,7 @@ import coil.ImageLoader
 import coil.annotation.ExperimentalCoilApi
 import coil.decode.ImageDecoderDecoder
 import org.pjstatecm.graceride.di.AppContainer
+import org.pjstatecm.graceride.notifications.BackgroundNotificationWorker
 import org.pjstatecm.graceride.notifications.NotificationHelper
 
 class GraceRideApp : Application() {
@@ -29,6 +30,7 @@ class GraceRideApp : Application() {
         container.onSessionCleared = {
             imageLoader.memoryCache?.clear()
             runCatching { imageLoader.diskCache?.clear() }
+            runCatching { BackgroundNotificationWorker.cancel(this) }
         }
     }
 }

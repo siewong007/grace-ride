@@ -1,5 +1,5 @@
 import { createContext, ReactNode, useCallback, useContext, useEffect, useMemo, useState } from 'react';
-import { api, subscribe } from './api';
+import { api, isSessionLocked, isStreamConnected, subscribe } from './api';
 import { clearOfflineSnapshots } from './offlineSnapshot';
 import { resetPushState, syncAppBadge } from './pushNotifications';
 import type { Act, Can, PageKey } from './perms';
@@ -82,11 +82,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       setMe(null);
     };
     window.addEventListener('gr:unauthorized', onUnauth);
-    // Keep the unread badge fresh.
-    const t = setInterval(() => document.visibilityState === 'visible' && refresh(), 30000);
     return () => {
       window.removeEventListener('gr:unauthorized', onUnauth);
-      clearInterval(t);
     };
   }, [refresh]);
 
@@ -99,7 +96,14 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   useEffect(() => {
     if (meId == null) return;
-    return subscribe((kind) => {
+    let skipped = 0;
+    const t = setInterval(() => {
+      if (document.visibilityState !== 'visible' || isSessionLocked()) return;
+      if (isStreamConnected() && ++skipped < 4) return;
+      skipped = 0;
+      void refresh();
+    }, 30_000);
+    const unsub = subscribe((kind) => {
       if (kind.startsWith('unread:')) {
         const nextUnread = Number.parseInt(kind.slice(7), 10);
         if (Number.isFinite(nextUnread) && nextUnread >= 0) {
@@ -111,6 +115,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         void refresh();
       }
     });
+    return () => {
+      clearInterval(t);
+      unsub();
+    };
   }, [meId, refresh]);
 
   const granted = useMemo(() => new Set(me?.permissions ?? []), [me?.permissions]);

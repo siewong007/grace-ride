@@ -55,45 +55,45 @@ fn audit_attendance(action: &str, detail: &str) -> Option<(i64, &'static str)> {
     Some((member.parse().ok()?, status))
 }
 
-/// SQL for the name of what an audit entry is about. The live record comes first; once
-/// that is gone (or for roles, which have no numeric id) the name the entry itself
-/// carried in `detail` stands in, so a deleted item still reads as more than a number.
-fn audit_name_sql(lang: Lang) -> String {
+/// Live lookup SQL used only for legacy/unpopulated rows (`entity_name = ''`) or
+/// locale-specific `guide_workflow` titles on the bounded page/export rows.
+fn audit_name_sql(lang: Lang, alias: &str) -> String {
     let guide_title = match lang {
         Lang::Zh => "title_zh",
         Lang::En => "title_en",
     };
     format!(
         r"COALESCE(
-            CASE a.entity
-                WHEN 'user' THEN (SELECT name FROM users WHERE id = a.entity_id)
-                WHEN 'ride' THEN (SELECT p.name FROM rides r JOIN users p ON p.id = r.passenger_id WHERE r.id = a.entity_id)
-                WHEN 'event' THEN (SELECT title FROM events WHERE id = a.entity_id)
-                WHEN 'group' THEN (SELECT name FROM groups WHERE id = a.entity_id)
-                WHEN 'area' THEN (SELECT name FROM areas WHERE id = a.entity_id)
-                WHEN 'settlement' THEN (SELECT title FROM settlements WHERE id = a.entity_id)
-                WHEN 'settlement_share' THEN (SELECT p.name FROM settlement_shares s JOIN users p ON p.id = s.user_id WHERE s.id = a.entity_id)
-                WHEN 'reimbursement' THEN (SELECT p.name FROM reimbursements r JOIN users p ON p.id = r.user_id WHERE r.id = a.entity_id)
-                WHEN 'announcement' THEN (SELECT title FROM announcements WHERE id = a.entity_id)
-                WHEN 'help_ticket' THEN (SELECT subject FROM help_tickets WHERE id = a.entity_id)
-                WHEN 'file' THEN (SELECT NULLIF(original_name, '') FROM files WHERE id = a.entity_id)
-                WHEN 'invite' THEN (SELECT COALESCE(NULLIF(name, ''), NULLIF(email, '')) FROM invites WHERE id = a.entity_id)
-                WHEN 'recovery' THEN (SELECT email FROM recovery_requests WHERE id = a.entity_id)
-                WHEN 'visitor_pass' THEN (SELECT name FROM visitor_passes WHERE id = a.entity_id)
-                WHEN 'guide_workflow' THEN (SELECT {guide_title} FROM guide_workflows WHERE id = a.entity_id)
+            CASE WHEN {alias}.entity = 'guide_workflow' THEN (SELECT {guide_title} FROM guide_workflows WHERE id = {alias}.entity_id) END,
+            NULLIF({alias}.entity_name, ''),
+            CASE {alias}.entity
+                WHEN 'user' THEN (SELECT name FROM users WHERE id = {alias}.entity_id)
+                WHEN 'ride' THEN (SELECT p.name FROM rides r JOIN users p ON p.id = r.passenger_id WHERE r.id = {alias}.entity_id)
+                WHEN 'event' THEN (SELECT title FROM events WHERE id = {alias}.entity_id)
+                WHEN 'group' THEN (SELECT name FROM groups WHERE id = {alias}.entity_id)
+                WHEN 'area' THEN (SELECT name FROM areas WHERE id = {alias}.entity_id)
+                WHEN 'settlement' THEN (SELECT title FROM settlements WHERE id = {alias}.entity_id)
+                WHEN 'settlement_share' THEN (SELECT p.name FROM settlement_shares s JOIN users p ON p.id = s.user_id WHERE s.id = {alias}.entity_id)
+                WHEN 'reimbursement' THEN (SELECT p.name FROM reimbursements r JOIN users p ON p.id = r.user_id WHERE r.id = {alias}.entity_id)
+                WHEN 'announcement' THEN (SELECT title FROM announcements WHERE id = {alias}.entity_id)
+                WHEN 'help_ticket' THEN (SELECT subject FROM help_tickets WHERE id = {alias}.entity_id)
+                WHEN 'file' THEN (SELECT NULLIF(original_name, '') FROM files WHERE id = {alias}.entity_id)
+                WHEN 'invite' THEN (SELECT COALESCE(NULLIF(name, ''), NULLIF(email, '')) FROM invites WHERE id = {alias}.entity_id)
+                WHEN 'recovery' THEN (SELECT email FROM recovery_requests WHERE id = {alias}.entity_id)
+                WHEN 'visitor_pass' THEN (SELECT name FROM visitor_passes WHERE id = {alias}.entity_id)
                 WHEN 'role' THEN CASE
-                    WHEN a.action = 'role.update' THEN COALESCE(
-                        (SELECT NULLIF(name, '') FROM roles WHERE key = split_part(a.detail, ':', 1)),
-                        NULLIF(split_part(a.detail, ':', 1), ''))
-                    ELSE substring(a.detail from '^(.*) \([a-z][a-z0-9_]*\)[:;]')
+                    WHEN {alias}.action = 'role.update' THEN COALESCE(
+                        (SELECT NULLIF(name, '') FROM roles WHERE key = split_part({alias}.detail, ':', 1)),
+                        NULLIF(split_part({alias}.detail, ':', 1), ''))
+                    ELSE substring({alias}.detail from '^(.*) \([a-z][a-z0-9_]*\)[:;]')
                 END
             END,
             CASE
-                WHEN a.action IN ('group.create', 'group.update', 'group.delete', 'area.create',
+                WHEN {alias}.action IN ('group.create', 'group.update', 'group.delete', 'area.create',
                                   'announcement.create', 'announcement.update', 'announcement.delete',
                                   'settlement.create', 'event.create', 'event.cancel')
-                    THEN NULLIF(a.detail, '')
-                WHEN a.action = 'settlement.delete' THEN NULLIF(regexp_replace(a.detail, '^draft: ', ''), '')
+                    THEN NULLIF({alias}.detail, '')
+                WHEN {alias}.action = 'settlement.delete' THEN NULLIF(regexp_replace({alias}.detail, '^draft: ', ''), '')
             END
         )"
     )
@@ -131,21 +131,28 @@ pub(super) async fn audit_log(
     let entity = q.entity.filter(|e| !e.is_empty());
     let limit = q.limit.unwrap_or(AUDIT_PAGE).clamp(1, AUDIT_PAGE_MAX);
     let sql = format!(
-        "SELECT a.id, a.actor_id, u.name, a.action, a.entity, a.entity_id,
+        "WITH paged AS (
+             SELECT a.id, a.actor_id, u.name AS actor_name, a.action, a.entity, a.entity_id,
+                    a.entity_name, a.detail, a.created_at
+             FROM audit_logs a LEFT JOIN users u ON u.id=a.actor_id
+             WHERE ($1::text IS NULL OR a.entity = $1)
+               AND ($2::bigint IS NULL OR a.entity_id = $2)
+               AND ($3::text IS NULL OR a.action ILIKE $3 ESCAPE '\\' OR a.entity ILIKE $3 ESCAPE '\\' OR a.detail ILIKE $3 ESCAPE '\\' OR u.name ILIKE $3 ESCAPE '\\' OR a.entity_name ILIKE $3 ESCAPE '\\'
+                    OR (a.entity = 'guide_workflow' AND EXISTS (SELECT 1 FROM guide_workflows gw WHERE gw.id = a.entity_id AND (gw.title_zh ILIKE $3 ESCAPE '\\' OR gw.title_en ILIKE $3 ESCAPE '\\'))))
+               AND ($4::text IS NULL OR a.created_at >= $4)
+               AND ($5::text IS NULL OR a.created_at < $5)
+               AND ($6::bigint IS NULL OR a.id < $6)
+               AND ($7::text IS NULL OR a.action = $7)
+               AND ($8::bigint IS NULL OR a.actor_id = $8)
+             ORDER BY a.id DESC LIMIT $9
+         )
+         SELECT paged.id, paged.actor_id, paged.actor_name, paged.action, paged.entity, paged.entity_id,
                 {name},
-                CASE WHEN a.entity = 'ride' THEN (SELECT pickup_at FROM rides WHERE id = a.entity_id) END,
-                a.detail, a.created_at
-         FROM audit_logs a LEFT JOIN users u ON u.id=a.actor_id
-         WHERE ($1::text IS NULL OR a.entity = $1)
-           AND ($2::bigint IS NULL OR a.entity_id = $2)
-           AND ($3::text IS NULL OR a.action ILIKE $3 ESCAPE '\\' OR a.entity ILIKE $3 ESCAPE '\\' OR a.detail ILIKE $3 ESCAPE '\\' OR u.name ILIKE $3 ESCAPE '\\' OR {name} ILIKE $3 ESCAPE '\\')
-           AND ($4::text IS NULL OR a.created_at >= $4)
-           AND ($5::text IS NULL OR a.created_at < $5)
-           AND ($6::bigint IS NULL OR a.id < $6)
-           AND ($7::text IS NULL OR a.action = $7)
-           AND ($8::bigint IS NULL OR a.actor_id = $8)
-         ORDER BY a.id DESC LIMIT $9",
-        name = audit_name_sql(u.lang),
+                CASE WHEN paged.entity = 'ride' THEN (SELECT pickup_at FROM rides WHERE id = paged.entity_id) END,
+                paged.detail, paged.created_at
+         FROM paged
+         ORDER BY paged.id DESC",
+        name = audit_name_sql(u.lang, "paged"),
     );
     // One row more than the page shows whether another page follows.
     let mut rows: Vec<(
@@ -293,13 +300,14 @@ pub(super) async fn audit_export(
          FROM audit_logs a LEFT JOIN users u ON u.id=a.actor_id \
          WHERE ($1::text IS NULL OR a.entity = $1) \
            AND ($2::bigint IS NULL OR a.entity_id = $2) \
-           AND ($3::text IS NULL OR a.action ILIKE $3 ESCAPE '\\' OR a.entity ILIKE $3 ESCAPE '\\' OR a.detail ILIKE $3 ESCAPE '\\' OR u.name ILIKE $3 ESCAPE '\\' OR {name} ILIKE $3 ESCAPE '\\') \
+           AND ($3::text IS NULL OR a.action ILIKE $3 ESCAPE '\\' OR a.entity ILIKE $3 ESCAPE '\\' OR a.detail ILIKE $3 ESCAPE '\\' OR u.name ILIKE $3 ESCAPE '\\' OR a.entity_name ILIKE $3 ESCAPE '\\' \
+                OR (a.entity = 'guide_workflow' AND EXISTS (SELECT 1 FROM guide_workflows gw WHERE gw.id = a.entity_id AND (gw.title_zh ILIKE $3 ESCAPE '\\' OR gw.title_en ILIKE $3 ESCAPE '\\')))) \
            AND ($4::text IS NULL OR a.created_at >= $4) \
            AND ($5::text IS NULL OR a.created_at < $5) \
            AND ($6::text IS NULL OR a.action = $6) \
            AND ($7::bigint IS NULL OR a.actor_id = $7) \
          ORDER BY a.id DESC LIMIT $8",
-        name = audit_name_sql(u.lang),
+        name = audit_name_sql(u.lang, "a"),
     );
     let stream = async_stream::stream! {
         // UTF-8 BOM so Excel and spreadsheet viewers recognize UTF-8 encoding (CJK text).

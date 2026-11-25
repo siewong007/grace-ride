@@ -2,6 +2,7 @@ import { CSSProperties, useEffect, useRef, useState } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
 import { Check, ChevronDown, Copy, Download, FileCode2, Image as ImageIcon, Link2, Shuffle } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
+import '../styles/grokBotStudio.css';
 import { put } from '../api';
 import { useAuth } from '../auth';
 import GrokBotControls from '../components/GrokBotControls';

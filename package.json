@@ -10,7 +10,7 @@
   },
   "lint-staged": {
     "frontend/**/*.{ts,tsx}": [
-      "eslint --fix"
+      "bash -c 'cd frontend && npx eslint --fix \"${@/#frontend\\//}\"' --"
     ],
     "backend/**/*.rs": [
       "rustfmt --edition 2021"

@@ -662,7 +662,7 @@ pub(super) async fn telegram_test(
         Err(e) => Ok(Json(json!({
             "ok": true,
             "delivered": false,
-            "error": e.to_string(),
+            "error": e.without_url().to_string(),
         }))),
     }
 }

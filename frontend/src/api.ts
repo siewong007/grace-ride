@@ -31,9 +31,12 @@ export class ApiError extends Error {
   }
 }
 
-export async function api<T = unknown>(path: string, opts: { method?: string; body?: unknown } = {}): Promise<T> {
+export async function api<T = unknown>(
+  path: string,
+  opts: { method?: string; body?: unknown; signal?: AbortSignal } = {},
+): Promise<T> {
   const acceptLanguage = i18n.language || 'zh';
-  const res = await fetch(`/api${path}`, {
+  const init: RequestInit = {
     method: opts.method ?? (opts.body !== undefined ? 'POST' : 'GET'),
     headers:
       opts.body !== undefined
@@ -41,7 +44,11 @@ export async function api<T = unknown>(path: string, opts: { method?: string; bo
         : { 'Accept-Language': acceptLanguage },
     body: opts.body !== undefined ? JSON.stringify(opts.body) : undefined,
     credentials: 'same-origin',
-  });
+  };
+  if (opts.signal !== undefined) {
+    init.signal = opts.signal;
+  }
+  const res = await fetch(`/api${path}`, init);
   const text = await res.text();
   let data: ErrorBody = null;
   if (text) {
@@ -134,6 +141,10 @@ export function isStreamConnected(): boolean {
   return streamOpen;
 }
 
+export function isSessionLocked(): boolean {
+  return sessionLocked;
+}
+
 function openStream() {
   if (
     stream ||
@@ -218,6 +229,7 @@ export function useApi<T>(path: string | null, pollMs?: number, streamKinds?: st
   const errorRef = useRef<string | null>(error);
   const streamKindsRef = useRef(streamKinds);
   const requestId = useRef(0);
+  const abortRef = useRef<AbortController | null>(null);
   pathRef.current = path;
   hasDataRef.current = data !== null;
   errorRef.current = error;
@@ -225,24 +237,34 @@ export function useApi<T>(path: string | null, pollMs?: number, streamKinds?: st
 
   const reload = useCallback(async () => {
     const currentRequest = ++requestId.current;
+    abortRef.current?.abort();
     const requestPath = pathRef.current;
     const isCurrent = () =>
       requestId.current === currentRequest && pathRef.current === requestPath;
     if (!requestPath) {
+      abortRef.current = null;
       setLoading(false);
       setRefreshing(false);
       return;
     }
+    const controller = new AbortController();
+    abortRef.current = controller;
     if (hasDataRef.current) setRefreshing(true);
     try {
-      const d = await api<T>(requestPath);
+      const d = await api<T>(requestPath, { signal: controller.signal });
       if (isCurrent()) {
         setData(d);
         setError(null);
       }
     } catch (e) {
+      if ((e as Error)?.name === 'AbortError' || controller.signal.aborted) {
+        return;
+      }
       if (isCurrent()) setError((e as Error).message);
     } finally {
+      if (abortRef.current === controller) {
+        abortRef.current = null;
+      }
       if (isCurrent()) {
         setLoading(false);
         setRefreshing(false);
@@ -254,6 +276,8 @@ export function useApi<T>(path: string | null, pollMs?: number, streamKinds?: st
     const requests = requestId;
     if (!path) {
       requests.current++;
+      abortRef.current?.abort();
+      abortRef.current = null;
       prevBaseRef.current = null;
       setLoading(false);
       setRefreshing(false);
@@ -278,6 +302,8 @@ export function useApi<T>(path: string | null, pollMs?: number, streamKinds?: st
     if (!pollMs) {
       return () => {
         window.removeEventListener('gr:session-unlocked', onUnlocked);
+        abortRef.current?.abort();
+        abortRef.current = null;
         requests.current++;
       };
     }
@@ -298,6 +324,8 @@ export function useApi<T>(path: string | null, pollMs?: number, streamKinds?: st
       window.removeEventListener('gr:session-unlocked', onUnlocked);
       clearInterval(t);
       unsub();
+      abortRef.current?.abort();
+      abortRef.current = null;
       requests.current++;
     };
   }, [path, pollMs, reload]);

@@ -47,6 +47,9 @@ pub struct Config {
     pub notification_retention_days: i64,
     /// Optional Cloudflare Turnstile verification on public web auth/onboarding/visitor flows.
     pub turnstile: TurnstileConfig,
+    /// Optional comma-separated SHA-256 signing certificate fingerprints (colon-hex)
+    /// for native Android passkeys (`android:apk-key-hash:` + `/.well-known/assetlinks.json`).
+    pub android_cert_sha256_fingerprints: Vec<String>,
 }
 
 /// How the app talks to Postgres.
@@ -158,6 +161,10 @@ impl Config {
             housekeeping_interval_mins: num("HOUSEKEEPING_INTERVAL_MINS", 60)?,
             notification_retention_days: num("NOTIFICATION_RETENTION_DAYS", 90)?,
             turnstile: TurnstileConfig::from_env(),
+            android_cert_sha256_fingerprints: parse_android_fingerprints(&env(
+                "ANDROID_CERT_SHA256_FINGERPRINTS",
+                "",
+            ))?,
         };
         cfg.validate()?;
         Ok(cfg)
@@ -207,6 +214,9 @@ impl Config {
             }
         }
         self.turnstile.validate(local)?;
+        for fp in &self.android_cert_sha256_fingerprints {
+            android_apk_key_hash_origin(fp)?;
+        }
         Ok(())
     }
 
@@ -238,14 +248,60 @@ pub struct AppState {
     pub shutdown: watch::Sender<bool>,
 }
 
-pub fn build_webauthn(public_url: &str) -> anyhow::Result<Webauthn> {
+pub fn normalize_android_cert_fingerprint(raw: &str) -> anyhow::Result<String> {
+    let hex_only: String = raw.trim().chars().filter(|c| *c != ':').collect();
+    if hex_only.len() != 64 || !hex_only.chars().all(|c| c.is_ascii_hexdigit()) {
+        anyhow::bail!(
+            "ANDROID_CERT_SHA256_FINGERPRINTS entries must be 32-byte hex SHA-256 fingerprints"
+        );
+    }
+    let upper = hex_only.to_ascii_uppercase();
+    let pairs: Vec<&str> = (0..upper.len())
+        .step_by(2)
+        .map(|i| &upper[i..i + 2])
+        .collect();
+    Ok(pairs.join(":"))
+}
+
+fn parse_android_fingerprints(raw: &str) -> anyhow::Result<Vec<String>> {
+    let mut out = Vec::new();
+    for part in raw.split(',').map(str::trim).filter(|s| !s.is_empty()) {
+        let norm = normalize_android_cert_fingerprint(part)?;
+        if !out.contains(&norm) {
+            out.push(norm);
+        }
+    }
+    Ok(out)
+}
+
+pub fn android_apk_key_hash_origin(fingerprint: &str) -> anyhow::Result<Url> {
+    use base64::Engine as _;
+    let hex_only: String = fingerprint.chars().filter(|c| *c != ':').collect();
+    let bytes = hex::decode(hex_only)?;
+    if bytes.len() != 32 {
+        anyhow::bail!("Android SHA-256 fingerprint must be 32 bytes");
+    }
+    let b64 = base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(&bytes);
+    Ok(Url::parse(&format!("android:apk-key-hash:{b64}"))?)
+}
+
+pub fn build_webauthn_with_android_certs(
+    public_url: &str,
+    android_certs: &[String],
+) -> anyhow::Result<Webauthn> {
     let origin = Url::parse(public_url)?;
     let rp_id = origin
         .host_str()
         .ok_or_else(|| anyhow::anyhow!("PUBLIC_URL has no host"))?
         .to_string();
-    let w = WebauthnBuilder::new(&rp_id, &origin)?
-        .rp_name("恩典同行 Grace Ride")
-        .build()?;
-    Ok(w)
+    let mut builder = WebauthnBuilder::new(&rp_id, &origin)?.rp_name("恩典同行 Grace Ride");
+    for fp in android_certs {
+        let apk_origin = android_apk_key_hash_origin(fp)?;
+        builder = builder.append_allowed_origin(&apk_origin);
+    }
+    Ok(builder.build()?)
+}
+
+pub fn build_webauthn(public_url: &str) -> anyhow::Result<Webauthn> {
+    build_webauthn_with_android_certs(public_url, &[])
 }

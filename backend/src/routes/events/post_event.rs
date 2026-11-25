@@ -74,14 +74,14 @@ async fn check_post_event_auth(
     let (created_by, title, area_id, status) = row.ok_or_else(|| not_found(u.lang))?;
 
     let allowed = can_manage(u, created_by, Act::Update)
-        || u.can(Page::AdminPlan, Act::Update)
-        || u.can(Page::AdminRides, Act::Update)
+        || (u.can(Page::AdminPlan, Act::Update) && (u.traffic_is_global() || created_by == u.id))
+        || (u.can(Page::AdminRides, Act::Update) && (u.traffic_is_global() || created_by == u.id))
         || u.can(Page::AdminEvents, Act::Update);
 
     if !allowed {
         return Err(forbidden(u.lang, ErrorKey::NoPermission));
     }
-    if status == "draft" {
+    if status != "published" && status != "finished" {
         return Err(bad(u.lang, ErrorKey::EventNotOpen));
     }
 
@@ -93,8 +93,9 @@ pub(super) async fn get_post_event_drivers(
     u: CurrentUser,
     Path(event_id): Path<i64>,
 ) -> AppResult<Json<PostEventDriversResponse>> {
-    let (_created_by, event_title, event_area_id) =
-        check_post_event_auth(&st, &u, event_id).await?;
+    let (created_by, event_title, event_area_id) = check_post_event_auth(&st, &u, event_id).await?;
+    let show_phone = u.can(Page::AdminMembers, Act::View)
+        || (u.can(Page::AdminRides, Act::View) && (u.traffic_is_global() || created_by == u.id));
 
     // 1. Fetch available active areas with fares relative to event area
     let areas_with_fares: Vec<(i64, String, Option<i64>)> = if let Some(ea_id) = event_area_id {
@@ -178,7 +179,7 @@ pub(super) async fn get_post_event_drivers(
         )> = sqlx::query_as(
             "SELECT u.name, u.phone, v.model, v.plate, v.color
                  FROM users u
-                 LEFT JOIN vehicles v ON v.user_id = u.id
+                 LEFT JOIN vehicles v ON v.user_id = u.id AND v.is_active = 1
                  WHERE u.id = $1 AND u.status = 'active'",
         )
         .bind(did)
@@ -293,7 +294,7 @@ pub(super) async fn get_post_event_drivers(
         driver_items.push(PostEventDriverItem {
             id: did,
             name,
-            phone,
+            phone: if show_phone { phone } else { String::new() },
             vehicle,
             default_area,
             passenger_stats,
@@ -355,8 +356,20 @@ pub(super) async fn create_post_event_reimbursements(
     .execute(&mut *tx)
     .await?;
 
+    let mut lock_driver_ids: Vec<i64> = req.claims.iter().map(|c| c.driver_id).collect();
+    lock_driver_ids.sort_unstable();
+    lock_driver_ids.dedup();
+    for did in &lock_driver_ids {
+        sqlx::query(
+            "SELECT pg_advisory_xact_lock(hashtextextended('grace_ride_reimbursement_claim', $1))",
+        )
+        .bind(did)
+        .execute(&mut *tx)
+        .await?;
+    }
+
     let timestamp = now();
-    let mut created_ids: Vec<(i64, i64, i64, bool)> = Vec::new();
+    let mut created_ids: Vec<(i64, i64, i64, bool, bool)> = Vec::new();
     let mut total_cents: i64 = 0;
     let mut approved_count: usize = 0;
     let mut approved_cents: i64 = 0;
@@ -364,8 +377,11 @@ pub(super) async fn create_post_event_reimbursements(
     let mut pending_cents: i64 = 0;
 
     for claim in &req.claims {
-        if claim.amount_cents < 0 || claim.amount_cents > 50_000 {
+        if claim.amount_cents <= 0 || claim.amount_cents > 50_000 {
             return Err(bad(u.lang, ErrorKey::AmountRangeInvalid));
+        }
+        if !matches!(claim.trip_type.as_str(), "supper" | "direct_return") {
+            return Err(bad(u.lang, ErrorKey::InvalidAction));
         }
 
         let driver: Option<(String, String)> =
@@ -374,6 +390,26 @@ pub(super) async fn create_post_event_reimbursements(
                 .fetch_optional(&mut *tx)
                 .await?;
         let (driver_name, driver_phone) = driver.ok_or_else(|| not_found(u.lang))?;
+
+        let participated_as_driver: bool = sqlx::query_scalar(
+            "SELECT EXISTS (
+                 SELECT 1 FROM rides
+                 WHERE event_id = $1 AND driver_id = $2 AND status <> 'cancelled'
+             ) OR EXISTS (
+                 SELECT 1 FROM plan_visitors
+                 WHERE event_id = $1 AND driver_id = $2
+             ) OR EXISTS (
+                 SELECT 1 FROM event_signups
+                 WHERE event_id = $1 AND user_id = $2 AND status = 'going' AND offer_drive = 1
+             )",
+        )
+        .bind(event_id)
+        .bind(claim.driver_id)
+        .fetch_one(&mut *tx)
+        .await?;
+        if !participated_as_driver {
+            return Err(bad(u.lang, ErrorKey::InvalidAction));
+        }
 
         let dest_area: Option<(String,)> =
             sqlx::query_as("SELECT name FROM areas WHERE id = $1 AND active = 1")
@@ -425,21 +461,24 @@ pub(super) async fn create_post_event_reimbursements(
             trip_label, event_title, dest_area_name, note_suffix
         );
 
-        let (claim_status, claim_reviewer): (&str, Option<i64>) = if is_excluded {
-            ("pending", None)
-        } else {
-            ("approved", Some(u.id))
-        };
+        let can_auto_approve =
+            !is_excluded && u.can(Page::AdminReimbReview, Act::Update) && claim.driver_id != u.id;
+        let (claim_status, claim_reviewer, claim_requester): (&str, Option<i64>, Option<i64>) =
+            if can_auto_approve {
+                ("approved", Some(u.id), None)
+            } else {
+                ("pending", None, Some(u.id))
+            };
 
         let (reimb_id,): (i64,) = sqlx::query_as(
             "INSERT INTO reimbursements (
                 user_id, event_id, destination_area_id, trip_type, amount_cents, description,
-                receipt_file_id, payee_name, payee_phone, status, kind, reviewed_by,
+                receipt_file_id, payee_name, payee_phone, status, kind, reviewed_by, requested_by,
                 created_at, updated_at
             ) VALUES (
                 $1, $2, $3, $4, $5, $6,
-                NULL, $7, $8, $9, 'mileage', $10,
-                $11, $11
+                NULL, $7, $8, $9, 'mileage', $10, $11,
+                $12, $12
             ) RETURNING id",
         )
         .bind(claim.driver_id)
@@ -452,13 +491,21 @@ pub(super) async fn create_post_event_reimbursements(
         .bind(&driver_phone)
         .bind(claim_status)
         .bind(claim_reviewer)
+        .bind(claim_requester)
         .bind(&timestamp)
         .fetch_one(&mut *tx)
         .await?;
 
-        created_ids.push((reimb_id, claim.driver_id, claim.amount_cents, is_excluded));
+        let needs_review = !can_auto_approve;
+        created_ids.push((
+            reimb_id,
+            claim.driver_id,
+            claim.amount_cents,
+            needs_review,
+            is_excluded,
+        ));
         total_cents += claim.amount_cents;
-        if is_excluded {
+        if needs_review {
             pending_count += 1;
             pending_cents += claim.amount_cents;
         } else {
@@ -470,22 +517,36 @@ pub(super) async fn create_post_event_reimbursements(
     tx.commit().await?;
 
     // Disperse notifications
-    for (rid, did, amt, is_excluded) in &created_ids {
-        if *is_excluded {
-            notify(
-                &st.db,
-                *did,
-                ("活动车贴已提交审核", "Post-event mileage submitted for review"),
+    for (rid, did, amt, needs_review, is_excluded) in &created_ids {
+        if *needs_review {
+            let (zh, en) = if *is_excluded {
                 (
-                    &format!(
+                    format!(
                         "交通组已为您提交活动车贴 {}（因行程标记为不包报销，需等待审核）。",
                         fmt_rm(*amt)
                     ),
-                    &format!(
+                    format!(
                         "Post-event mileage claim of {} was submitted for review (ride marked no reimbursement).",
                         fmt_rm(*amt)
                     ),
+                )
+            } else {
+                (
+                    format!("活动车贴 {} 已提交审核。", fmt_rm(*amt)),
+                    format!(
+                        "Post-event mileage claim of {} was submitted for review.",
+                        fmt_rm(*amt)
+                    ),
+                )
+            };
+            notify(
+                &st.db,
+                *did,
+                (
+                    "活动车贴已提交审核",
+                    "Post-event mileage submitted for review",
                 ),
+                (&zh, &en),
                 &format!("/reimbursements/{rid}"),
             )
             .await;

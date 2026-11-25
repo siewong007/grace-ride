@@ -281,10 +281,25 @@ pub(super) async fn invite_accept(
     // back to unused, so the person can retry with a corrected email. The conditional
     // UPDATE still makes the link single use under double submit.
     let mut tx = st.db.begin().await?;
+    if kind == "recovery" {
+        let id = rec_user.ok_or_else(|| bad(lang, ErrorKey::RecoveryLinkInvalid))?;
+        let u_status: Option<(String,)> =
+            sqlx::query_as("SELECT status FROM users WHERE id=$1 FOR UPDATE")
+                .bind(id)
+                .fetch_optional(&mut *tx)
+                .await?;
+        if !matches!(
+            u_status.as_ref().map(|s| s.0.as_str()),
+            Some("active" | "pending")
+        ) {
+            return Err(forbidden(lang, ErrorKey::AuthDisabled));
+        }
+    }
+    let ts_now = now();
     let r = sqlx::query(
-        "UPDATE invites SET used_at=$1, email=$2, name=$3 WHERE id=$4 AND used_at IS NULL",
+        "UPDATE invites SET used_at=$1, email=$2, name=$3 WHERE id=$4 AND used_at IS NULL AND expires_at >= $1",
     )
-    .bind(now())
+    .bind(&ts_now)
     .bind(&joined_email)
     .bind(&joined_name)
     .bind(inv_id)

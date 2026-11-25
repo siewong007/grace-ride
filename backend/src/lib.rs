@@ -44,7 +44,7 @@ use tower_http::{
 };
 
 use security::RateLimiter;
-use state::{build_webauthn, AppState, Config, DbConfig};
+use state::{build_webauthn_with_android_certs, AppState, Config, DbConfig};
 
 /// Largest request body for every route except uploads (`routes::files` raises it).
 /// The biggest real request, a transport plan or a bill, is a few kilobytes; the cap
@@ -250,7 +250,10 @@ pub async fn init(cfg: Config) -> anyhow::Result<AppState> {
         )
         .await;
     }
-    let webauthn = Arc::new(build_webauthn(&cfg.public_url)?);
+    let webauthn = Arc::new(build_webauthn_with_android_certs(
+        &cfg.public_url,
+        &cfg.android_cert_sha256_fingerprints,
+    )?);
     let turnstile = Arc::new(turnstile::TurnstileVerifier::new(
         cfg.turnstile.clone(),
         &cfg.public_url,
@@ -321,9 +324,27 @@ async fn request_id_middleware(mut req: Request, next: Next) -> Response {
             .unwrap_or_else(|_| HeaderValue::from_static("req"))
     });
     req.headers_mut().insert(REQ_ID.clone(), id_val.clone());
-    let mut res = next.run(req).await;
+    let req_lang = crate::i18n::Lang::from_headers(req.headers());
+    let mut res = crate::error::scope_lang(req_lang, next.run(req)).await;
     res.headers_mut().insert(REQ_ID.clone(), id_val);
     res
+}
+
+async fn assetlinks_json(State(st): State<AppState>) -> Json<Value> {
+    if st.cfg.android_cert_sha256_fingerprints.is_empty() {
+        return Json(json!([]));
+    }
+    Json(json!([{
+        "relation": [
+            "delegate_permission/common.handle_all_urls",
+            "delegate_permission/common.get_login_creds"
+        ],
+        "target": {
+            "namespace": "android_app",
+            "package_name": "org.pjstatecm.graceride",
+            "sha256_cert_fingerprints": st.cfg.android_cert_sha256_fingerprints,
+        }
+    }]))
 }
 
 pub fn router(state: AppState) -> Router {
@@ -331,12 +352,10 @@ pub fn router(state: AppState) -> Router {
         .route("/stream", get(stream::handler))
         .route("/health", get(health))
         .fallback(api_not_found)
-        .layer(from_fn_with_state(
-            state.clone(),
-            security::session_lock_guard,
-        ))
-        .layer(from_fn_with_state(state.clone(), security::pending_guard));
-    let mut app = Router::new().nest("/api", api);
+        .layer(from_fn_with_state(state.clone(), security::session_guard));
+    let mut app = Router::new()
+        .nest("/api", api)
+        .route("/.well-known/assetlinks.json", get(assetlinks_json));
 
     // In production the compiled React app is served from the same origin.
     if let Some(dir) = &state.cfg.static_dir {

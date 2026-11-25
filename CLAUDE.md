@@ -102,7 +102,10 @@
 │   │   │   │   ├── mod.rs           # settlement listing, detail, summary, router
 │   │   │   │   ├── manage.rs        # settlement CRUD, close, revise, publish
 │   │   │   │   └── shares.rs        # passenger share proof & confirmation
-│   │   │   ├── plan.rs              # transport planning board, multi-version drafts, lease locks, Traffic Hub plans
+│   │   │   ├── plan/                # transport planning board, multi-version drafts, lease locks, Traffic Hub plans
+│   │   │   │   ├── mod.rs           # router, board loaders, list_traffic_plans, get_plan, arrange_plan
+│   │   │   │   ├── drafts.rs        # draft CRUD, 10-min lease locks, request-approval, return
+│   │   │   │   └── apply.rs         # transactional plan apply & approval
 │   │   │   ├── plan_visitors.rs     # plan visitors (for the record) & visitor special reimbursements
 │   │   │   └── visitors.rs          # one-time guest ride pass
 │   │   ├── arrange.rs       # accessibility-aware event transport auto-arrange heuristics
@@ -110,10 +113,14 @@
 │   │   ├── audience.rs      # recursive group audience logic
 │   │   ├── error.rs         # AppError, AppResult, ErrorKey
 │   │   ├── i18n/            # bilingual error messages (zh-CN / en)
-│   │   ├── jobs.rs          # housekeeping and reminder background jobs
+│   │   ├── jobs.rs          # housekeeping, orphan-file GC, and reminder background jobs
 │   │   ├── lib.rs           # AppState wiring, top-level router
-│   │   ├── main.rs          # entry point
-│   │   ├── notifications.rs # centralized metadata, preference & quiet-hours filter, durable outbox dispatcher
+│   │   ├── main.rs          # entry point & Sentry ErrorLayer + PII scrubber
+│   │   ├── notifications/   # centralized notification engine directory module
+│   │   │   ├── mod.rs       # dispatch & formatting entry points
+│   │   │   ├── meta.rs      # categories, priorities, deep-link inference & unit tests
+│   │   │   ├── ssrf.rs      # DNS-pinned SSRF guards & HMAC-SHA256 webhook signing
+│   │   │   └── outbox.rs    # durable notification_deliveries outbox & channel workers
 │   │   ├── perms.rs         # 73 permissions, 29 pages, 14 built-in roles, 5-tier role hierarchy
 │   │   ├── routing/         # OSRM geocoder / router integration directory module
 │   │   │   ├── mod.rs       # config, routing state, Haversine geometry
@@ -128,7 +135,7 @@
 │   │   ├── turnstile.rs     # opt-in Cloudflare Turnstile siteverify verifier & config
 │   │   ├── util.rs          # audit log, notify, require/require_one, fmt helpers, dyn_sql!
 │   │   └── web_push.rs      # VAPID web-push implementation
-│   ├── migrations/          # squashed 0001_init.sql baseline + additive migrations (0002–0007)
+│   ├── migrations/          # squashed 0001_init.sql baseline + additive migrations (0002–0009)
 │   ├── tests/               # integration tests (uses TEST_DATABASE_URL; isolated schema per test)
 │   ├── .cargo/audit.toml    # suppressed cargo-audit advisories with justification
 │   ├── rust-toolchain.toml  # pins Rust stable + clippy + rustfmt
@@ -143,8 +150,9 @@
 │   │   │   ├── drive/       # schedule, requests, and settings tabs for Drive
 │   │   │   ├── ui/          # shared UI primitives (re-exported via components/ui.tsx)
 │   │   │   └── ...          # AreaPhotos, AvatarEditor, GrokBotSvg/Controls, LiveMap, LocationPinPicker, TurnstileWidget, Chat, etc.
-│   │   ├── locales/         # i18next namespace TypeScript modules (*.en.ts, *.zh.ts, terms.ms.ts)
+│   │   ├── locales/         # i18next core bundles (core.{en,zh}.ts) + route-lazy namespace loaders
 │   │   ├── hooks/           # custom React hooks
+│   │   ├── styles/          # isolated feature CSS (grokBotStudio.css, planTransport.css)
 │   │   ├── types/           # TypeScript type declarations
 │   │   ├── api.ts           # typed fetch wrappers
 │   │   ├── auth.tsx         # auth context and session management

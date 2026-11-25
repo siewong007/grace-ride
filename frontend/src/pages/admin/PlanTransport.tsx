@@ -4,6 +4,7 @@
 import { DragEvent, FormEvent, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useParams, useSearchParams } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
+import '../../styles/planTransport.css';
 import {
   Accessibility,
   AlertCircle,

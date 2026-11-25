@@ -97,6 +97,8 @@ export default {
     "ONLY_ORGANISER_CAN_RECORD_ATTENDANCE": "Only the event organiser can record attendance",
     "ATTENDANCE_MODULE_DISABLED": "The attendance module is not enabled for this event",
     "INVALID_CHECKIN_CODE": "The check-in code is invalid or has expired",
+    "CHECKIN_OUTSIDE_WINDOW": "Check-in opens 2 hours before the event starts and closes 12 hours after it starts",
+    "CHECKIN_CODE_AMBIGUOUS": "This code matches more than one event; scan the QR code on the event's own page",
     "MEMBERS_ONLY_ATTENDANCE": "Attendance check-in is for members only",
     "EVENT_NOT_OPEN_TO_GROUP": "This event is not open to your groups",
     "JOIN_AS_REQUIRED": "Choose which group you are joining as",
@@ -114,6 +116,7 @@ export default {
     "ONLY_GOING_CAN_INVITE_VISITOR": "Only members going to the event, or its organiser, can invite a visitor",
     "INVALID_PASS_CODE": "No matching member pass code found for this event",
     "CARE_PASS_CLOSED": "This safe-arrival status link is closed or expired",
+    "CARE_PASS_NOT_OPEN_YET": "This link opens 24 hours before pickup",
     "MILEAGE_AUTHORISATION_RESTRICTED": "Only the super admin, President or Vice-President can allow an event to be claimable for mileage",
     "EVENT_NOT_DRAFT": "This event is not a draft",
     "EVENT_CANNOT_HIDE_WITH_SIGNUPS": "Cannot hide to draft while active signups or rides exist"
@@ -174,7 +177,12 @@ export default {
     "DRIVER_CANNOT_BE_PASSENGER": "The driver cannot be the passenger themselves",
     "ONLY_PASSENGER_OR_STAFF_CAN_CANCEL": "Only the passenger or transport staff can cancel",
     "ONLY_VOLUNTEER_DRIVERS_CAN_VIEW": "Only volunteer drivers can view",
-    "ONLY_VOLUNTEER_DRIVERS_CAN_CHOOSE": "Only volunteer drivers can choose rides"
+    "ONLY_VOLUNTEER_DRIVERS_CAN_CHOOSE": "Only volunteer drivers can choose rides",
+    "ONLY_TRAFFIC_LEAD_CAN_APPROVE": "Only the traffic lead can approve transport arrangements",
+    "PLAN_DRAFT_NOT_FOUND": "Transport arrangement draft not found",
+    "DRAFT_LOCKED_BY_OTHER": "{name} is currently editing this draft version. Wait or create a new draft version.",
+    "DRAFT_NOT_EDITABLE": "This draft version is already approved or archived. Create a new draft version.",
+    "RIDE_DRAFT_NOT_FOUND": "Ride change draft not found."
   },
   "settlements": {
     "SETTLEMENT_NAME_REQUIRED": "Please enter a settlement name",

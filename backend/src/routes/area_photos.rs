@@ -388,6 +388,8 @@ async fn reorder_photos(
     Ok(Json(json!({"ok": true})))
 }
 
+pub use crate::routes::files::strip_jpeg_metadata;
+
 /// Rewrite a stored JPEG without its metadata segments. Leaves the file as it is when it
 /// cannot be parsed or has nothing to strip.
 async fn strip_jpeg_file(st: &AppState, stored: &str) {
@@ -406,55 +408,6 @@ async fn strip_jpeg_file(st: &AppState, stored: &str) {
                 .await;
         }
     }
-}
-
-/// A JPEG without its APP1 (Exif, incl. GPS location; XMP) and APP13 (IPTC) segments.
-/// `None` when the data is not a well-formed JPEG header or nothing was removed.
-pub fn strip_jpeg_metadata(data: &[u8]) -> Option<Vec<u8>> {
-    if !data.starts_with(&[0xFF, 0xD8]) {
-        return None;
-    }
-    let mut out = Vec::with_capacity(data.len());
-    out.extend_from_slice(&data[..2]);
-    let mut pos = 2;
-    let mut removed = false;
-    loop {
-        if pos + 1 >= data.len() || data[pos] != 0xFF {
-            return None;
-        }
-        let marker = data[pos + 1];
-        // Fill bytes before a marker.
-        if marker == 0xFF {
-            pos += 1;
-            continue;
-        }
-        // Start of scan or end of image: the rest is image data, copied as it is.
-        if marker == 0xDA || marker == 0xD9 {
-            out.extend_from_slice(&data[pos..]);
-            break;
-        }
-        // Markers without a length.
-        if marker == 0x01 || (0xD0..=0xD7).contains(&marker) {
-            out.extend_from_slice(&data[pos..pos + 2]);
-            pos += 2;
-            continue;
-        }
-        if pos + 4 > data.len() {
-            return None;
-        }
-        let len = u16::from_be_bytes([data[pos + 2], data[pos + 3]]) as usize;
-        if len < 2 || pos + 2 + len > data.len() {
-            return None;
-        }
-        let end = pos + 2 + len;
-        if marker == 0xE1 || marker == 0xED {
-            removed = true;
-        } else {
-            out.extend_from_slice(&data[pos..end]);
-        }
-        pos = end;
-    }
-    removed.then_some(out)
 }
 
 #[cfg(test)]

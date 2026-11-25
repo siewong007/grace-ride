@@ -264,13 +264,19 @@ pub(super) async fn update_user(
     let new_roles = sorted(parse_roles(&req.roles.join(",")));
     let old_parsed = parse_roles(&old_roles);
     let roles_changed = new_roles != sorted(old_parsed.clone());
+    // Chain of command (see `perms::RANKED_ROLES`). Read the caller's roles under the
+    // lock rather than trusting `u`, which was loaded before it.
+    let (caller_raw,): (String,) = sqlx::query_as("SELECT roles FROM users WHERE id=$1")
+        .bind(u.id)
+        .fetch_one(&mut *tx)
+        .await?;
+    let caller_roles = parse_roles(&caller_raw);
+    let caller_super = perms::is_superadmin(&caller_roles);
     // The super admin role, and the account of anyone holding it, is changed only by a
     // super admin; and the last active one can be neither demoted nor disabled.
     let was_super = perms::is_superadmin(&old_parsed) && old_status == "active";
     let stays_super = perms::is_superadmin(&new_roles) && req.status == "active";
-    if (perms::is_superadmin(&old_parsed) || perms::is_superadmin(&new_roles))
-        && !perms::is_superadmin(&u.roles)
-    {
+    if (perms::is_superadmin(&old_parsed) || perms::is_superadmin(&new_roles)) && !caller_super {
         return Err(forbidden(u.lang, ErrorKey::SuperadminOnly));
     }
     if was_super
@@ -281,14 +287,6 @@ pub(super) async fn update_user(
     {
         return Err(bad(u.lang, ErrorKey::LastSuperadmin));
     }
-    // Chain of command (see `perms::RANKED_ROLES`). Read the caller's roles under the
-    // lock rather than trusting `u`, which was loaded before it.
-    let (caller_raw,): (String,) = sqlx::query_as("SELECT roles FROM users WHERE id=$1")
-        .bind(u.id)
-        .fetch_one(&mut *tx)
-        .await?;
-    let caller_roles = parse_roles(&caller_raw);
-    let caller_super = perms::is_superadmin(&caller_roles);
     // Permissions. A change that only moves chain-of-command roles, or disables or
     // re-enables somebody the caller outranks, is authorised by rank alone (the checks
     // above and below decide which ones): Finance appoints and commands Audit without
@@ -327,7 +325,7 @@ pub(super) async fn update_user(
             return Err(bad(u.lang, ErrorKey::CannotDisableSelf));
         }
         if roles_changed {
-            let after = perms::for_roles(&st.db, &new_roles).await?;
+            let after = perms::for_roles(&mut *tx, &new_roles).await?;
             // Nobody removes their own right to manage roles, so someone always holds it.
             if !after.has(Page::AdminRoles, Act::Update) {
                 return Err(bad(u.lang, ErrorKey::CannotDisableSelf));
@@ -336,9 +334,12 @@ pub(super) async fn update_user(
             // themselves; another administrator must decide.
             // Compare with what the caller holds now (read under the lock), not with
             // the permissions loaded when the request arrived.
-            let current = perms::for_roles(&st.db, &old_parsed).await?;
+            let current = perms::for_roles(&mut *tx, &old_parsed).await?;
             if after.new_finance(&current) {
                 return Err(forbidden(u.lang, ErrorKey::CannotGrantSelfFinance));
+            }
+            if !caller_super && after.keys().iter().any(|k| !current.keys().contains(k)) {
+                return Err(forbidden(u.lang, ErrorKey::CannotGrantUnheldPermission));
             }
         }
     }
@@ -396,25 +397,47 @@ pub(super) async fn update_user(
             }
         }
     }
-    // Disabling or re-enabling an administrator is as much a demotion as removing the
-    // role, so it needs the same standing.
-    if req.status != old_status
-        && old_parsed.iter().any(|r| r == perms::ADMIN_ROLE)
-        && !perms::can_manage_admins(&caller_roles)
-    {
+    let power = perms::admin_power_keys();
+    let old_power = if old_parsed.is_empty() {
+        0
+    } else {
+        sqlx::query_scalar::<_, i64>(
+            "SELECT COUNT(*) FROM role_permissions WHERE role_key = ANY($1) AND permission = ANY($2)",
+        )
+        .bind(&old_parsed)
+        .bind(&power)
+        .fetch_one(&mut *tx)
+        .await?
+    };
+    let new_power = if new_roles.is_empty() {
+        0
+    } else if !roles_changed {
+        old_power
+    } else {
+        sqlx::query_scalar::<_, i64>(
+            "SELECT COUNT(*) FROM role_permissions WHERE role_key = ANY($1) AND permission = ANY($2)",
+        )
+        .bind(&new_roles)
+        .bind(&power)
+        .fetch_one(&mut *tx)
+        .await?
+    };
+    let was_admin = old_parsed.iter().any(|r| r == perms::ADMIN_ROLE) || old_power > 0;
+    let becomes_admin = new_roles.iter().any(|r| r == perms::ADMIN_ROLE) || new_power > 0;
+    // Disabling or re-enabling an administrator (or admin-equivalent holder) is as much a
+    // demotion as removing the role, so it needs the same standing.
+    if req.status != old_status && was_admin && !perms::can_manage_admins(&caller_roles) {
         return Err(forbidden(u.lang, ErrorKey::AdminAppointmentRestricted));
     }
     // Appointing or demoting an administrator is reserved for the super admin,
     // President and Vice-President. Other staff may hold admin tools without that power.
-    let was_admin = old_parsed.iter().any(|r| r == perms::ADMIN_ROLE);
-    let becomes_admin = new_roles.iter().any(|r| r == perms::ADMIN_ROLE);
-    if roles_changed && was_admin != becomes_admin && !perms::can_manage_admins(&u.roles) {
+    if roles_changed && was_admin != becomes_admin && !perms::can_manage_admins(&caller_roles) {
         return Err(forbidden(u.lang, ErrorKey::AdminAppointmentRestricted));
     }
     // A Vice-President promoting an ordinary member to administrator must first
     // confirm that the President has acknowledged the appointment.
     let president_ack =
-        roles_changed && !was_admin && becomes_admin && perms::needs_president_ack(&u.roles);
+        roles_changed && !was_admin && becomes_admin && perms::needs_president_ack(&caller_roles);
     if president_ack && !req.president_acknowledged {
         return Err(forbidden(
             u.lang,
@@ -433,7 +456,7 @@ pub(super) async fn update_user(
         .execute(&mut *tx)
         .await?;
     let mut released: Vec<i64> = Vec::new();
-    if roles_changed && perms::for_roles(&st.db, &new_roles).await?.privileged() {
+    if roles_changed && perms::for_roles(&mut *tx, &new_roles).await?.privileged() {
         // The session check caps staff sessions at 12 hours from sign-in; this also
         // shortens the stored expiry so open streams (which only check expires_at)
         // end on time.
@@ -459,7 +482,11 @@ pub(super) async fn update_user(
         .bind(minutes_ago(1))
         .execute(&mut *tx)
         .await?;
-        sqlx::query("UPDATE users SET calendar_token_hash=NULL WHERE id=$1")
+        sqlx::query("UPDATE users SET calendar_token_hash=NULL, telegram_chat_id='' WHERE id=$1")
+            .bind(id)
+            .execute(&mut *tx)
+            .await?;
+        sqlx::query("DELETE FROM telegram_link_tokens WHERE user_id=$1")
             .bind(id)
             .execute(&mut *tx)
             .await?;

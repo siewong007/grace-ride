@@ -89,6 +89,7 @@ async fn setup_with_turnstile(turnstile: TurnstileConfig) -> (Router, AppState) 
         housekeeping_interval_mins: 60,
         notification_retention_days: 90,
         turnstile,
+        android_cert_sha256_fingerprints: Vec::new(),
     };
     cfg.validate().unwrap();
     let state = init(cfg).await.unwrap();
@@ -148,6 +149,7 @@ fn production_config_validates_turnstile_rules() {
         housekeeping_interval_mins: 60,
         notification_retention_days: 90,
         turnstile: Default::default(),
+        android_cert_sha256_fingerprints: Vec::new(),
     };
 
     // Half-configured rejected

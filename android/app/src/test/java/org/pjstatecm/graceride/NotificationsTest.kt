@@ -23,6 +23,7 @@ import org.pjstatecm.graceride.data.api.apiJson
 import org.pjstatecm.graceride.data.repo.AuthState
 import org.pjstatecm.graceride.data.session.InMemoryStore
 import org.pjstatecm.graceride.di.AppContainer
+import org.pjstatecm.graceride.notifications.RealtimeStreamClient
 import org.pjstatecm.graceride.ui.NotifDestination
 import org.pjstatecm.graceride.ui.NotifLinkRouter
 import org.pjstatecm.graceride.ui.Routes
@@ -213,5 +214,82 @@ class NotificationsTest {
         vm.saveProfile("Alice", "+60123456789", "@not_a_number")
         assertEquals("invalid_telegram_chat_id", vm.state.value.error)
         assertEquals(2, server.requestCount)
+    }
+
+    @Test fun syncNotificationsPersistsPerUserWatermarkAndDeduplicates() = runBlocking {
+        val store = InMemoryStore()
+        val syncContainer = AppContainer(null, store)
+        syncContainer.setBaseUrl(server.url("/").toString())
+
+        // Initial baseline establishes watermark at 10 without surfacing old items.
+        val initialPage = """
+            {
+              "items": [
+                {"id":10,"title":"Existing","body":"Already there","link":"/rides/1","read":false,"created_at":"2026-11-24 08:00:00","category":"ride"}
+              ],
+              "next_before": null,
+              "unread": 1
+            }
+        """.trimIndent()
+        server.enqueue(json(initialPage))
+        val first = RealtimeStreamClient.syncNotifications(
+            community = syncContainer.community,
+            auth = syncContainer.auth,
+            store = store,
+            userId = 1L,
+            surfaceNew = true,
+        )
+        assertEquals(10L, first.newWatermark)
+        assertTrue(first.surfaced.isEmpty())
+        assertEquals("10", store.getString(RealtimeStreamClient.watermarkKey(1L)))
+
+        // Subsequent poll surfaces only unread items above watermark 10.
+        val secondPage = """
+            {
+              "items": [
+                {"id":12,"title":"New unread","body":"Fresh","link":"/rides/2","read":false,"created_at":"2026-11-24 09:00:00","category":"ride"},
+                {"id":11,"title":"Already read","body":"Read on web","link":"/rides/1","read":true,"created_at":"2026-11-24 08:30:00","category":"ride"},
+                {"id":10,"title":"Existing","body":"Already there","link":"/rides/1","read":false,"created_at":"2026-11-24 08:00:00","category":"ride"}
+              ],
+              "next_before": null,
+              "unread": 2
+            }
+        """.trimIndent()
+        server.enqueue(json(secondPage))
+        val second = RealtimeStreamClient.syncNotifications(
+            community = syncContainer.community,
+            auth = syncContainer.auth,
+            store = store,
+            userId = 1L,
+            surfaceNew = true,
+        )
+        assertEquals(12L, second.newWatermark)
+        assertEquals(listOf(12L), second.surfaced.map { it.id })
+        assertEquals("12", store.getString(RealtimeStreamClient.watermarkKey(1L)))
+
+        // Re-running with the same page does not duplicate notification 12.
+        server.enqueue(json(secondPage))
+        val third = RealtimeStreamClient.syncNotifications(
+            community = syncContainer.community,
+            auth = syncContainer.auth,
+            store = store,
+            userId = 1L,
+            surfaceNew = true,
+        )
+        assertEquals(12L, third.newWatermark)
+        assertTrue(third.surfaced.isEmpty())
+
+        // Different user maintains an independent baseline watermark.
+        server.enqueue(json(secondPage))
+        val otherUser = RealtimeStreamClient.syncNotifications(
+            community = syncContainer.community,
+            auth = syncContainer.auth,
+            store = store,
+            userId = 2L,
+            surfaceNew = true,
+        )
+        assertEquals(12L, otherUser.newWatermark)
+        assertTrue(otherUser.surfaced.isEmpty())
+        assertEquals("12", store.getString(RealtimeStreamClient.watermarkKey(2L)))
     }
 }

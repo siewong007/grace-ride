@@ -1,4 +1,5 @@
-const SHELL_CACHE = 'grace-ride-shell-v5';
+const SW_BUILD_ID = '__GR_SW_BUILD_ID__';
+const SHELL_CACHE = `grace-ride-shell-${SW_BUILD_ID}`;
 const STATIC_ASSETS = [
   '/',
   '/index.html',
@@ -13,9 +14,12 @@ const MAX_RUNTIME_ASSETS = 200;
 const NOTIFICATION_ICON = '/icon-192.png?v=2';
 const NOTIFICATION_BADGE = '/badge-monochrome.png';
 
-function isCacheableStaticPath(pathname) {
+function isHashedAssetPath(pathname) {
+  return pathname.startsWith('/assets/');
+}
+
+function isUnhashedStaticPath(pathname) {
   return (
-    pathname.startsWith('/assets/') ||
     pathname.startsWith('/icons/') ||
     pathname === '/theme-boot.js' ||
     pathname === '/manifest.webmanifest' ||
@@ -103,7 +107,7 @@ self.addEventListener('fetch', (event) => {
     return;
   }
 
-  if (isCacheableStaticPath(url.pathname)) {
+  if (isHashedAssetPath(url.pathname)) {
     event.respondWith(
       caches.match(request).then(
         (cached) =>
@@ -119,6 +123,35 @@ self.addEventListener('fetch', (event) => {
             return res;
           }),
       ),
+    );
+    return;
+  }
+
+  if (isUnhashedStaticPath(url.pathname)) {
+    const revalidate = fetch(request)
+      .then((res) => {
+        if (res.ok) {
+          const copy = res.clone();
+          return caches.open(SHELL_CACHE).then((c) => {
+            c.put(request, copy);
+            trimRuntimeCache(c);
+            return res;
+          });
+        }
+        return res;
+      });
+    event.respondWith(
+      caches.match(request).then((cached) => {
+        if (cached) {
+          if (typeof event.waitUntil === 'function') {
+            event.waitUntil(revalidate.catch(() => undefined));
+          } else {
+            void revalidate.catch(() => undefined);
+          }
+          return cached;
+        }
+        return revalidate;
+      }),
     );
   }
 });
