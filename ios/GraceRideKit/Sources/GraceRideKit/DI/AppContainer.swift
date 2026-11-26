@@ -92,7 +92,8 @@ public final class AppContainer {
         urlSessionConfiguration: URLSessionConfiguration? = nil,
         apiOverride: (any GraceRideAPIProtocol)? = nil,
         debugMode: Bool? = nil,
-        initialBaseURL: String? = nil
+        initialBaseURL: String? = nil,
+        uptimeProvider: @escaping @Sendable () -> TimeInterval = { ProcessInfo.processInfo.systemUptime }
     ) {
         let isDebug: Bool
         if let debugMode {
@@ -206,7 +207,8 @@ public final class AppContainer {
                     container.onSessionLocked?()
                     container.realtimeStream.onAuthChanged()
                 }
-            }
+            },
+            uptimeProvider: uptimeProvider
         )
         self.auth = authRepo
 

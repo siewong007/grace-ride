@@ -134,6 +134,7 @@ final class SecurityAndOfflineTests: XCTestCase {
         )
         defer { try? FileManager.default.removeItem(at: tmpDir) }
 
+        let simulatedUptime: TimeInterval = 10_000.0
         let store = InMemorySecureStore()
         let makeContainer = {
             AppContainer(
@@ -144,7 +145,8 @@ final class SecurityAndOfflineTests: XCTestCase {
                 widgetUserDefaults: nil,
                 urlSessionConfiguration: cfg,
                 debugMode: true,
-                initialBaseURL: "http://127.0.0.1:8080/"
+                initialBaseURL: "http://127.0.0.1:8080/",
+                uptimeProvider: { simulatedUptime }
             )
         }
 
@@ -179,7 +181,7 @@ final class SecurityAndOfflineTests: XCTestCase {
 
         // 2. Monotonic uptime expiry (even when wall-clock looks fresh) forces lock
         store.putString(AuthRepository.cachedMeAtKey, String(nowMs))
-        store.putString(AuthRepository.cachedMeUptimeKey, String(max(0.0, ProcessInfo.processInfo.systemUptime - 15 * 60.0)))
+        store.putString(AuthRepository.cachedMeUptimeKey, String(simulatedUptime - 15 * 60.0))
         let uptimeExpired = makeContainer()
         try await uptimeExpired.auth.refresh()
         if case .locked = uptimeExpired.auth.state {
@@ -190,7 +192,7 @@ final class SecurityAndOfflineTests: XCTestCase {
 
         // 3. Simulated reboot (saved uptime higher than current systemUptime) forces lock
         store.putString(AuthRepository.cachedMeAtKey, String(nowMs))
-        store.putString(AuthRepository.cachedMeUptimeKey, String(ProcessInfo.processInfo.systemUptime + 5000.0))
+        store.putString(AuthRepository.cachedMeUptimeKey, String(simulatedUptime + 5000.0))
         let rebooted = makeContainer()
         try await rebooted.auth.refresh()
         if case .locked = rebooted.auth.state {

@@ -43,10 +43,23 @@ fn plan_has_seq_scan(node: &Value) -> bool {
 }
 
 async fn explain_plan(db: &sqlx::PgPool, query: String) -> Value {
+    let mut tx = db.begin().await.expect("begin explain tx");
+    for setting in [
+        "SET LOCAL random_page_cost = 1.1",
+        "SET LOCAL effective_io_concurrency = 200",
+        "SET LOCAL work_mem = '16MB'",
+        "SET LOCAL jit = off",
+    ] {
+        sqlx::query(setting)
+            .execute(&mut *tx)
+            .await
+            .expect("set planner parameter");
+    }
     let rows: Vec<(Value,)> = sqlx::query_as(sqlx::AssertSqlSafe(query))
-        .fetch_all(db)
+        .fetch_all(&mut *tx)
         .await
         .expect("explain query");
+    tx.rollback().await.expect("rollback explain tx");
     rows[0].0[0]["Plan"].clone()
 }
 
