@@ -92,12 +92,13 @@ test.describe('reports dark mode & heading hierarchy', () => {
   for (const path of ['/report', '/admin/reports?tab=finance&range=yearly']) {
     test(`${path} passes axe contrast, scrollable region, and heading-order checks in dark mode`, async ({ page }) => {
       await page.addInitScript(() => {
+        window.localStorage.setItem('gr-prefs', JSON.stringify({ theme: 'dark', textSize: 'normal' }));
         document.documentElement.dataset.theme = 'dark';
       });
       await open(page, path);
-      await page.evaluate(() => {
-        document.documentElement.dataset.theme = 'dark';
-      });
+      await expect
+        .poll(() => page.evaluate(() => document.documentElement.dataset.theme))
+        .toBe('dark');
       const axe = await new AxeBuilder({ page }).analyze();
       const bad = axe.violations.filter(
         (v) => v.impact === 'serious' || v.impact === 'critical' || v.id === 'heading-order',

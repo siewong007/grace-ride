@@ -48,8 +48,8 @@ const Rides = lazyRoute(() => import('./pages/Rides'), ['rides']);
 const RideNew = lazyRoute(() => import('./pages/RideNew'), ['rideNew']);
 const RideDetail = lazyRoute(() => import('./pages/RideDetail'), ['rideDetail']);
 const Drive = lazyRoute(() => import('./pages/Drive'), ['drive']);
-const Events = lazyRoute(() => import('./pages/Events'), ['events']);
-const EventDetail = lazyRoute(() => import('./pages/EventDetail'), ['eventDetail']);
+const Events = lazyRoute(() => import('./pages/Events'), ['events', 'eventDetail']);
+const EventDetail = lazyRoute(() => import('./pages/EventDetail'), ['eventDetail', 'plan', 'events']);
 const EventCheckin = lazyRoute(() => import('./pages/EventCheckin'), ['eventDetail']);
 const EventForm = lazyRoute(() => import('./pages/EventForm'), ['eventForm']);
 const Settlements = lazyRoute(() => import('./pages/Settlements'), ['settlements']);
@@ -78,10 +78,10 @@ const AdminReimbursements = lazyRoute(() => import('./pages/admin/Reimbursements
 const AdminAnnouncements = lazyRoute(() => import('./pages/admin/Announcements'), ['admin']);
 const AdminAudit = lazyRoute(() => import('./pages/admin/Audit'), ['admin']);
 const AdminReports = lazyRoute(() => import('./pages/admin/Reports'), ['admin']);
-const PlanTransport = lazyRoute(() => import('./pages/admin/PlanTransport'), ['plan']);
+const PlanTransport = lazyRoute(() => import('./pages/admin/PlanTransport'), ['plan', 'events']);
 const AdminRoles = lazyRoute(() => import('./pages/admin/Roles'), ['admin']);
 const AdminMenu = lazyRoute(() => import('./pages/admin/Menu'), ['admin']);
-const TrafficHub = lazyRoute(() => import('./pages/admin/TrafficHub'), ['admin', 'plan']);
+const TrafficHub = lazyRoute(() => import('./pages/admin/TrafficHub'), ['admin', 'plan', 'events']);
 
 /** Wrap a lazily-loaded page so only the content area shows a spinner while it loads. */
 const page = (el: ReactNode) => <Suspense fallback={<PageLoading />}>{el}</Suspense>;
