@@ -13,8 +13,8 @@ use crate::error::{bad, conflict, forbidden, AppResult};
 use crate::perms::{Act, Page};
 use crate::state::AppState;
 use crate::util::{
-    audit, norm_dt, notify, notify_many, notify_perm, now, require, split_cursor, system_message,
-    ErrorKey,
+    audit, norm_dt, notify, notify_many, notify_perm, now, pickup_window_bounds, require,
+    split_cursor, system_message, ErrorKey,
 };
 
 use super::driver::driver_load;
@@ -543,13 +543,18 @@ pub(super) async fn get_ride(
             v["driver_load"] = json!({ "seats_used": load, "capacity": cap });
         }
         // Passenger time conflicts
+        let (lo, hi) =
+            pickup_window_bounds(&r.pickup_at, 65).unwrap_or_else(|| ("".into(), "9999".into()));
         let conflicts: Vec<(i64, String)> = sqlx::query_as(
             "SELECT id, pickup_at FROM rides WHERE passenger_id=$1 AND id != $2 AND status IN ('pending_approval','confirmed','in_progress')
+             AND pickup_at >= $4 AND pickup_at <= $5
              AND abs(EXTRACT(EPOCH FROM (pickup_at::timestamp - $3::timestamp))) < 3600",
         )
         .bind(r.passenger_id)
         .bind(r.id)
         .bind(&r.pickup_at)
+        .bind(&lo)
+        .bind(&hi)
         .fetch_all(&st.db)
         .await?;
         v["passenger_conflicts"] = json!(conflicts

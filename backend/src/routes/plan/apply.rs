@@ -78,18 +78,19 @@ async fn apply_plan_impl(
         return Err(bad(u.lang, ErrorKey::EventNotOpen));
     }
 
-    let target_draft: Option<(i64, String, String, Option<i64>, Option<i64>, i64)> =
+    let target_draft: Option<(i64, String, String, Option<i64>, Option<i64>, Option<i64>)> =
         if let Some(did) = req.draft_id {
-            let row: Option<(i64, String, String, Option<i64>, Option<i64>, i64)> = sqlx::query_as(
-                "SELECT id, status, visitors, submitted_by, created_by, updated_by
+            let row: Option<(i64, String, String, Option<i64>, Option<i64>, Option<i64>)> =
+                sqlx::query_as(
+                    "SELECT id, status, visitors, submitted_by, created_by, updated_by
                  FROM event_plan_drafts
                  WHERE id = $1 AND event_id = $2
                  FOR UPDATE",
-            )
-            .bind(did)
-            .bind(id)
-            .fetch_optional(&mut *tx)
-            .await?;
+                )
+                .bind(did)
+                .bind(id)
+                .fetch_optional(&mut *tx)
+                .await?;
             let Some(r) = row else {
                 return Err(bad(u.lang, ErrorKey::PlanDraftNotFound));
             };
@@ -149,10 +150,10 @@ async fn apply_plan_impl(
     prelock.extend(existing_assigned);
     let mut lock_order: Vec<i64> = prelock.into_iter().collect();
     lock_order.sort_unstable();
-    for d in &lock_order {
-        sqlx::query("SELECT id FROM users WHERE id=$1 FOR UPDATE")
-            .bind(d)
-            .fetch_optional(&mut *tx)
+    if !lock_order.is_empty() {
+        sqlx::query("SELECT id FROM users WHERE id = ANY($1) ORDER BY id FOR UPDATE")
+            .bind(&lock_order)
+            .fetch_all(&mut *tx)
             .await?;
     }
 
@@ -346,7 +347,7 @@ async fn apply_plan_impl(
     {
         let draft_visitors: Vec<DraftVisitorEntry> =
             serde_json::from_str(&visitors_raw).unwrap_or_default();
-        let visitor_author = submitted_by.or(created_by).unwrap_or(updated_by);
+        let visitor_author = submitted_by.or(created_by).or(updated_by);
 
         for dv in &draft_visitors {
             match dv.op.as_str() {

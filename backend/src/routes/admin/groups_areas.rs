@@ -231,15 +231,15 @@ pub(super) async fn set_group_members(
         .bind(id)
         .execute(&mut *tx)
         .await?;
-    for uid in &req.user_ids {
-        sqlx::query(
-            "INSERT INTO group_members (group_id, user_id) VALUES ($1,$2) ON CONFLICT DO NOTHING",
-        )
-        .bind(id)
-        .bind(uid)
-        .execute(&mut *tx)
-        .await?;
-    }
+    sqlx::query(
+        "INSERT INTO group_members (group_id, user_id)
+         SELECT $1, uid FROM UNNEST($2::BIGINT[]) AS uid
+         ON CONFLICT DO NOTHING",
+    )
+    .bind(id)
+    .bind(&req.user_ids)
+    .execute(&mut *tx)
+    .await?;
     tx.commit().await?;
     let added: Vec<i64> = req
         .user_ids

@@ -87,24 +87,26 @@ pub(crate) async fn apply_readiness(
             if r.picked_up_at.is_some() {
                 return Err(conflict(lang, ErrorKey::PassengerAlreadyPickedUp));
             }
+            let reason = unable_reason(req.notes.as_deref());
             let cancelled = sqlx::query(
-                "UPDATE rides SET status='cancelled', needs_attention=0, updated_at=$1
-                 WHERE id=$2 AND status IN ('confirmed','in_progress') AND picked_up_at IS NULL",
+                "UPDATE rides
+                 SET status='cancelled',
+                     needs_attention=0,
+                     readiness_status='unable_to_join',
+                     readiness_updated_at=$1,
+                     attention_reason=$2,
+                     completed_at=COALESCE(completed_at, $1),
+                     updated_at=$1
+                 WHERE id=$3 AND status IN ('confirmed','in_progress') AND picked_up_at IS NULL",
             )
-            .bind(now())
+            .bind(&timestamp)
+            .bind(format!("乘客无法出席：{reason}"))
             .bind(id)
             .execute(&st.db)
             .await?;
             if cancelled.rows_affected() == 0 {
                 return Err(conflict(lang, ErrorKey::RideStatusChanged));
             }
-            let reason = unable_reason(req.notes.as_deref());
-            sqlx::query("UPDATE rides SET readiness_status='unable_to_join', readiness_updated_at=$1, attention_reason=$2, completed_at=COALESCE(completed_at, $1) WHERE id=$3")
-                .bind(&timestamp)
-                .bind(format!("乘客无法出席：{reason}"))
-                .bind(id)
-                .execute(&st.db)
-                .await?;
             clear_passenger_location(st, id).await?;
             if let Some(d) = r.driver_id {
                 clear_location_if_idle(st, d).await?;
@@ -161,12 +163,18 @@ pub(crate) async fn apply_readiness(
         }
     } else if req.status == "delayed_5m" || req.status == "delayed_10m" {
         let mins = if req.status == "delayed_5m" { 5 } else { 10 };
-        sqlx::query("UPDATE rides SET readiness_status=$1, readiness_updated_at=$2 WHERE id=$3")
-            .bind(&req.status)
-            .bind(&timestamp)
-            .bind(id)
-            .execute(&st.db)
-            .await?;
+        let res = sqlx::query(
+            "UPDATE rides SET readiness_status=$1, readiness_updated_at=$2, updated_at=$2
+             WHERE id=$3 AND status IN ('confirmed','in_progress') AND picked_up_at IS NULL",
+        )
+        .bind(&req.status)
+        .bind(&timestamp)
+        .bind(id)
+        .execute(&st.db)
+        .await?;
+        if res.rows_affected() == 0 {
+            return Err(conflict(lang, ErrorKey::RideStatusChanged));
+        }
         if let Some(d) = r.driver_id {
             notify(
                 &st.db,
@@ -205,13 +213,17 @@ pub(crate) async fn apply_readiness(
         )
         .await;
     } else if req.status == "ready" {
-        sqlx::query(
-            "UPDATE rides SET readiness_status='ready', readiness_updated_at=$1 WHERE id=$2",
+        let res = sqlx::query(
+            "UPDATE rides SET readiness_status='ready', readiness_updated_at=$1, updated_at=$1
+             WHERE id=$2 AND status IN ('confirmed','in_progress') AND picked_up_at IS NULL",
         )
         .bind(&timestamp)
         .bind(id)
         .execute(&st.db)
         .await?;
+        if res.rows_affected() == 0 {
+            return Err(conflict(lang, ErrorKey::RideStatusChanged));
+        }
         if let Some(d) = r.driver_id {
             notify(
                 &st.db,
@@ -273,11 +285,18 @@ pub(super) async fn post_driver_delay(
     if req.delay_minutes < 0 || req.delay_minutes > 120 {
         return Err(bad(u.lang, ErrorKey::InvalidAction));
     }
-    sqlx::query("UPDATE rides SET delay_minutes=$1 WHERE id=$2")
-        .bind(req.delay_minutes)
-        .bind(id)
-        .execute(&st.db)
-        .await?;
+    let res = sqlx::query(
+        "UPDATE rides SET delay_minutes=$1, updated_at=$2
+         WHERE id=$3 AND status IN ('confirmed','in_progress') AND picked_up_at IS NULL",
+    )
+    .bind(req.delay_minutes)
+    .bind(now())
+    .bind(id)
+    .execute(&st.db)
+    .await?;
+    if res.rows_affected() == 0 {
+        return Err(conflict(u.lang, ErrorKey::RideStatusChanged));
+    }
 
     let mins = req.delay_minutes;
     let drv_name = r.d_name.as_deref().unwrap_or(&u.name);
@@ -346,11 +365,17 @@ pub(super) async fn post_arrived_gate(
     }
 
     let timestamp = now();
-    sqlx::query("UPDATE rides SET arrived_at_gate_at=$1 WHERE id=$2")
-        .bind(&timestamp)
-        .bind(id)
-        .execute(&st.db)
-        .await?;
+    let res = sqlx::query(
+        "UPDATE rides SET arrived_at_gate_at=$1, updated_at=$1
+         WHERE id=$2 AND status IN ('confirmed','in_progress') AND picked_up_at IS NULL",
+    )
+    .bind(&timestamp)
+    .bind(id)
+    .execute(&st.db)
+    .await?;
+    if res.rows_affected() == 0 {
+        return Err(conflict(u.lang, ErrorKey::RideStatusChanged));
+    }
 
     let drv_name = r.d_name.as_deref().unwrap_or(&u.name);
     let veh = format!(

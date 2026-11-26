@@ -61,7 +61,7 @@ pub async fn connect_db(url: &str) -> anyhow::Result<PgPool> {
 /// Run migrations on a connection of their own (no statement timeout: building an
 /// index may take a while), then open the pool every request uses.
 pub async fn connect_db_with(url: &str, cfg: &DbConfig) -> anyhow::Result<PgPool> {
-    let opts = PgConnectOptions::from_str(url)?;
+    let opts = PgConnectOptions::from_str(url)?.statement_cache_capacity(512);
     let session = session_settings(cfg);
 
     let mut conn = PgConnection::connect_with(&opts).await?;
@@ -74,7 +74,9 @@ pub async fn connect_db_with(url: &str, cfg: &DbConfig) -> anyhow::Result<PgPool
 
     let db = PgPoolOptions::new()
         .max_connections(cfg.max_connections)
-        .min_connections(1)
+        .min_connections(2.min(cfg.max_connections))
+        .idle_timeout(Some(Duration::from_secs(300)))
+        .max_lifetime(Some(Duration::from_secs(1800)))
         .acquire_timeout(Duration::from_secs(cfg.acquire_timeout_secs))
         .after_connect(move |conn, _meta| {
             let session = session.clone();

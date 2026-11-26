@@ -123,7 +123,7 @@ pub(super) async fn create_payout_batch(
         sqlx::query_as(
             "SELECT id, amount_cents FROM reimbursements
              WHERE status = 'approved' AND batch_id IS NULL
-               AND substr(created_at, 1, 7) <= $1
+               AND created_at < ($1 || '-99')
                AND user_id <> $2 AND reviewed_by IS DISTINCT FROM $2 AND requested_by IS DISTINCT FROM $2
              FOR UPDATE",
         )

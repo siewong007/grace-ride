@@ -319,139 +319,106 @@ enum FileAccess {
     CacheableMedia,
 }
 
-async fn file_access(st: &AppState, u: &CurrentUser, file_id: i64) -> AppResult<FileAccess> {
-    let row: Option<(i64,)> = sqlx::query_as("SELECT owner_id FROM files WHERE id=$1")
-        .bind(file_id)
-        .fetch_optional(&st.db)
-        .await?;
-    let Some((owner,)) = row else {
+type FileMeta = (String, String, String, i64);
+
+async fn load_file_and_access(
+    st: &AppState,
+    u: &CurrentUser,
+    file_id: i64,
+) -> AppResult<(FileAccess, Option<FileMeta>)> {
+    let row: Option<(i64, String, String, String, i64)> = sqlx::query_as(
+        "SELECT owner_id, stored_name, mime, original_name, size FROM files WHERE id=$1",
+    )
+    .bind(file_id)
+    .fetch_optional(&st.db)
+    .await?;
+    let Some((owner, stored_name, mime, original_name, size)) = row else {
         return Err(forbidden(u.lang, ErrorKey::CannotViewFile));
     };
+    let meta = Some((stored_name, mime, original_name, size));
     // Pending (unapproved) accounts can only access files they uploaded themselves.
     if u.status != "active" {
-        return Ok(if owner == u.id {
-            FileAccess::Private
-        } else {
-            FileAccess::Denied
-        });
+        return Ok((
+            if owner == u.id {
+                FileAccess::Private
+            } else {
+                FileAccess::Denied
+            },
+            meta,
+        ));
     }
-    // Profile photos are visible to members (passengers recognise their driver).
-    let (photo,): (i64,) = sqlx::query_as("SELECT COUNT(*) FROM users WHERE photo_file_id=$1")
-        .bind(file_id)
-        .fetch_one(&st.db)
-        .await?;
-    if photo > 0 {
-        return Ok(FileAccess::CacheableMedia);
+    // Public/cacheable media: profile photos, pickup-area photos, guide screenshots, and event cover photos.
+    let needle = json!([{"image_file_id": file_id}]).to_string();
+    let (is_public_media, events): (bool, Vec<i64>) = sqlx::query_as(
+        "SELECT
+            (EXISTS (SELECT 1 FROM users WHERE photo_file_id = $1)
+             OR EXISTS (SELECT 1 FROM area_photos WHERE file_id = $1)
+             OR ($2 AND EXISTS (
+                 SELECT 1 FROM guide_workflows
+                 WHERE steps @> $3::jsonb AND ($4 OR published) AND ($5 OR audience = 'member')
+             ))),
+            COALESCE(ARRAY(SELECT id FROM events WHERE photo_file_id = $1), '{}'::BIGINT[])",
+    )
+    .bind(file_id)
+    .bind(u.can(Page::Help, Act::View))
+    .bind(needle)
+    .bind(u.can(Page::AdminHelp, Act::Update))
+    .bind(crate::routes::community::any_admin_page(u))
+    .fetch_one(&st.db)
+    .await?;
+    if is_public_media {
+        return Ok((FileAccess::CacheableMedia, meta));
     }
-    // Pickup-area photos: every active member (passengers recognise where to wait).
-    let (area_photo,): (i64,) = sqlx::query_as("SELECT COUNT(*) FROM area_photos WHERE file_id=$1")
-        .bind(file_id)
-        .fetch_one(&st.db)
-        .await?;
-    if area_photo > 0 {
-        return Ok(FileAccess::CacheableMedia);
-    }
-    // Event cover photos: everyone who can see the event.
-    let events: Vec<i64> = sqlx::query_scalar("SELECT id FROM events WHERE photo_file_id=$1")
-        .bind(file_id)
-        .fetch_all(&st.db)
-        .await?;
     for ev in events {
         if crate::routes::events::can_see_event(st, u, ev).await? {
-            return Ok(FileAccess::CacheableMedia);
-        }
-    }
-    // Guide step screenshots: members who may view Help and can see that guide.
-    if u.can(Page::Help, Act::View) {
-        let staff = crate::routes::community::any_admin_page(u);
-        let can_edit = u.can(Page::AdminHelp, Act::Update);
-        let needle = json!([{"image_file_id": file_id}]).to_string();
-        let (guide,): (i64,) = sqlx::query_as(
-            "SELECT COUNT(*) FROM guide_workflows
-             WHERE steps @> $1::jsonb AND ($2 OR published) AND ($3 OR audience='member')",
-        )
-        .bind(needle)
-        .bind(can_edit)
-        .bind(staff)
-        .fetch_one(&st.db)
-        .await?;
-        if guide > 0 {
-            return Ok(FileAccess::CacheableMedia);
+            return Ok((FileAccess::CacheableMedia, meta));
         }
     }
     if owner == u.id {
-        return Ok(FileAccess::Private);
+        return Ok((FileAccess::Private, meta));
     }
     let bills = u.can(Page::AdminBills, Act::View);
-    if bills {
-        let (item,): (i64,) =
-            sqlx::query_as("SELECT COUNT(*) FROM settlement_items WHERE receipt_file_id=$1")
-                .bind(file_id)
-                .fetch_one(&st.db)
-                .await?;
-        if item > 0 {
-            return Ok(FileAccess::Private);
-        }
-    }
-    // Payment proofs: payer (owner), organiser/payee, 账单查阅 (finance).
-    let (proof,): (i64,) = sqlx::query_as(
-        "SELECT COUNT(*) FROM settlement_shares sh JOIN settlements s ON s.id=sh.settlement_id
-         WHERE sh.proof_file_id=$1 AND (s.created_by=$2 OR $3)",
+    let has_private_access: bool = sqlx::query_scalar(
+        "SELECT
+            ($2 AND EXISTS (SELECT 1 FROM settlement_items WHERE receipt_file_id = $1))
+         OR EXISTS (
+             SELECT 1 FROM settlement_shares sh JOIN settlements s ON s.id = sh.settlement_id
+             WHERE sh.proof_file_id = $1 AND (s.created_by = $3 OR $2)
+         )
+         OR EXISTS (
+             SELECT 1 FROM settlements s LEFT JOIN settlement_shares sh ON sh.settlement_id = s.id
+             WHERE s.payee_qr_file_id = $1 AND ((sh.user_id = $3 AND s.status <> 'draft') OR $2)
+         )
+         OR EXISTS (
+             SELECT 1 FROM help_replies r JOIN help_tickets t ON t.id = r.ticket_id
+             WHERE r.file_id = $1 AND (t.user_id = $3 OR $4)
+         )
+         OR EXISTS (
+             SELECT 1 FROM reimbursements
+             WHERE receipt_file_id = $1
+               AND (user_id = $3 OR $5 OR ($6 AND status IN ('approved', 'paid')))
+         )",
     )
     .bind(file_id)
-    .bind(u.id)
     .bind(bills)
-    .fetch_one(&st.db)
-    .await?;
-    if proof > 0 {
-        return Ok(FileAccess::Private);
-    }
-    // Payee DuitNow / TNG QR codes attached to bills: visible to participants once published and to finance.
-    let (qr,): (i64,) = sqlx::query_as(
-        "SELECT COUNT(*) FROM settlements s LEFT JOIN settlement_shares sh ON sh.settlement_id=s.id
-         WHERE s.payee_qr_file_id=$1 AND ((sh.user_id=$2 AND s.status <> 'draft') OR $3)",
-    )
-    .bind(file_id)
-    .bind(u.id)
-    .bind(bills)
-    .fetch_one(&st.db)
-    .await?;
-    if qr > 0 {
-        return Ok(FileAccess::Private);
-    }
-    // Help request photos: the request's member and 帮助台 staff.
-    let (help,): (i64,) = sqlx::query_as(
-        "SELECT COUNT(*) FROM help_replies r JOIN help_tickets t ON t.id=r.ticket_id
-         WHERE r.file_id=$1 AND (t.user_id=$2 OR $3)",
-    )
-    .bind(file_id)
     .bind(u.id)
     .bind(u.can(Page::AdminHelp, Act::View))
-    .fetch_one(&st.db)
-    .await?;
-    if help > 0 {
-        return Ok(FileAccess::Private);
-    }
-    // Grab reimbursement receipts: claimant, 报销审核 (all statuses), 报销付款 (approved/paid only).
-    let (reimb,): (i64,) = sqlx::query_as(
-        "SELECT COUNT(*) FROM reimbursements
-         WHERE receipt_file_id=$1
-           AND (user_id=$2 OR $3 OR ($4 AND status IN ('approved','paid')))",
-    )
-    .bind(file_id)
-    .bind(u.id)
     .bind(u.can(Page::AdminReimbReview, Act::View))
     .bind(u.can(Page::AdminReimbPay, Act::View))
     .fetch_one(&st.db)
     .await?;
-    if reimb > 0 {
-        return Ok(FileAccess::Private);
-    }
-    Ok(FileAccess::Denied)
+    Ok((
+        if has_private_access {
+            FileAccess::Private
+        } else {
+            FileAccess::Denied
+        },
+        meta,
+    ))
 }
 
 pub async fn can_access_file(st: &AppState, u: &CurrentUser, file_id: i64) -> AppResult<bool> {
-    Ok(file_access(st, u, file_id).await? != FileAccess::Denied)
+    Ok(load_file_and_access(st, u, file_id).await?.0 != FileAccess::Denied)
 }
 
 fn etag_matches(headers: &HeaderMap, etag: &str) -> bool {
@@ -472,15 +439,10 @@ async fn download(
     headers: HeaderMap,
     Path(id): Path<i64>,
 ) -> AppResult<Response> {
-    let access = file_access(&st, &u, id).await?;
-    if access == FileAccess::Denied {
+    let (access, meta) = load_file_and_access(&st, &u, id).await?;
+    let Some((stored, mime, name, size)) = meta.filter(|_| access != FileAccess::Denied) else {
         return Err(forbidden(u.lang, ErrorKey::CannotViewFile));
-    }
-    let (stored, mime, name, size): (String, String, String, i64) =
-        sqlx::query_as("SELECT stored_name, mime, original_name, size FROM files WHERE id=$1")
-            .bind(id)
-            .fetch_one(&st.db)
-            .await?;
+    };
     let etag = format!("\"{stored}-{size}\"");
     let cache_control = if access == FileAccess::CacheableMedia {
         "private, no-cache"

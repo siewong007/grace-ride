@@ -11,7 +11,7 @@
 //! Each reminder and escalation claims its rows with `UPDATE … RETURNING` before
 //! notifying, so a row is handled once even if two ticks (or two instances) overlap.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::time::{Duration, Instant};
 
 use sqlx::PgPool;
@@ -201,7 +201,7 @@ async fn ride_reminders(db: &PgPool) -> anyhow::Result<()> {
     .fetch_all(db)
     .await?;
 
-    let mut batch = Vec::new();
+    let mut due = Vec::new();
     for c in passenger_candidates {
         let prompt = c.readiness_prompt_mins.unwrap_or(45);
         let lead = if prompt <= 0 {
@@ -209,52 +209,59 @@ async fn ride_reminders(db: &PgPool) -> anyhow::Result<()> {
         } else {
             prompt.clamp(5, 180)
         };
-        if c.pickup_at > ts_in(lead) {
-            continue;
+        if c.pickup_at <= ts_in(lead) {
+            due.push((c, prompt));
         }
-        let claimed = sqlx::query(
-            "UPDATE rides SET reminder_sent=1 WHERE id=$1 AND status='confirmed' AND reminder_sent=0",
+    }
+    let mut batch = Vec::new();
+    if !due.is_empty() {
+        let due_ids: Vec<i64> = due.iter().map(|(c, _)| c.id).collect();
+        let claimed_ids: HashSet<i64> = sqlx::query_scalar(
+            "UPDATE rides SET reminder_sent=1 WHERE id = ANY($1) AND status='confirmed' AND reminder_sent=0 RETURNING id",
         )
-        .bind(c.id)
-        .execute(db)
+        .bind(&due_ids)
+        .fetch_all(db)
         .await?
-        .rows_affected();
-        if claimed == 0 || prompt <= 0 {
-            continue;
+        .into_iter()
+        .collect();
+        for (c, prompt) in due {
+            if !claimed_ids.contains(&c.id) || prompt <= 0 {
+                continue;
+            }
+            let time = c.pickup_at.get(11..16).unwrap_or(&c.pickup_at);
+            let rider_disp = if c.is_proxy == 1 && !c.rider_name.is_empty() {
+                c.rider_name.clone()
+            } else {
+                "您".to_string()
+            };
+            let rider_disp_en = if c.is_proxy == 1 && !c.rider_name.is_empty() {
+                c.rider_name.clone()
+            } else {
+                "you".to_string()
+            };
+            batch.push(BatchNotifItem {
+                user_id: c.passenger_id,
+                title_zh: "接送提醒".into(),
+                title_en: "Ride reminder".into(),
+                body_zh: format!(
+                    "司机 {} 将于 {time} 到 {} 接 {rider_disp}。请确认长辈/乘车人是否准备就绪或告知需稍候/无法出行。",
+                    c.driver_name, c.area_name
+                ),
+                body_en: format!(
+                    "Driver {} will pick up {rider_disp_en} at {} at {time}. Please tap to confirm readiness, delay, or inability to join.",
+                    c.driver_name, c.area_name
+                ),
+                link: format!("/rides/{}?action=readiness", c.id),
+                meta: NotifMeta {
+                    category: "ride",
+                    event_type: "ride_reminder".into(),
+                    priority: "urgent",
+                    entity_type: "ride",
+                    entity_id: Some(c.id),
+                    tag: format!("ride-{}", c.id),
+                },
+            });
         }
-        let time = c.pickup_at.get(11..16).unwrap_or(&c.pickup_at);
-        let rider_disp = if c.is_proxy == 1 && !c.rider_name.is_empty() {
-            c.rider_name.clone()
-        } else {
-            "您".to_string()
-        };
-        let rider_disp_en = if c.is_proxy == 1 && !c.rider_name.is_empty() {
-            c.rider_name.clone()
-        } else {
-            "you".to_string()
-        };
-        batch.push(BatchNotifItem {
-            user_id: c.passenger_id,
-            title_zh: "接送提醒".into(),
-            title_en: "Ride reminder".into(),
-            body_zh: format!(
-                "司机 {} 将于 {time} 到 {} 接 {rider_disp}。请确认长辈/乘车人是否准备就绪或告知需稍候/无法出行。",
-                c.driver_name, c.area_name
-            ),
-            body_en: format!(
-                "Driver {} will pick up {rider_disp_en} at {} at {time}. Please tap to confirm readiness, delay, or inability to join.",
-                c.driver_name, c.area_name
-            ),
-            link: format!("/rides/{}?action=readiness", c.id),
-            meta: NotifMeta {
-                category: "ride",
-                event_type: "ride_reminder".into(),
-                priority: "urgent",
-                entity_type: "ride",
-                entity_id: Some(c.id),
-                tag: format!("ride-{}", c.id),
-            },
-        });
     }
 
     // Pass 2: Driver pre-trip reminder (governed by driver's own lead-time preference and grouped by trip_id).
@@ -379,23 +386,33 @@ async fn event_reminders(db: &PgPool) -> anyhow::Result<()> {
     .bind(ts_in(0))
     .fetch_all(db)
     .await?;
-    for (id, title, at, loc) in due {
-        let users: Vec<(i64,)> = sqlx::query_as(
-            "SELECT user_id FROM event_signups WHERE event_id=$1 AND status='going'",
+    if !due.is_empty() {
+        let due_ids: Vec<i64> = due.iter().map(|(id, ..)| *id).collect();
+        let rows: Vec<(i64, i64)> = sqlx::query_as(
+            "SELECT event_id, user_id FROM event_signups WHERE event_id = ANY($1) AND status='going'",
         )
-        .bind(id)
+        .bind(&due_ids)
         .fetch_all(db)
         .await?;
-        let ids: Vec<i64> = users.into_iter().map(|(u,)| u).collect();
-        let body = format!("{title} · {} · {loc}", at.replace('T', " "));
-        notify_many(
-            db,
-            &ids,
-            ("活动提醒", "Event reminder"),
-            (&body, &body),
-            &format!("/events/{id}"),
-        )
-        .await;
+        let mut by_event: HashMap<i64, Vec<i64>> = HashMap::new();
+        for (ev_id, uid) in rows {
+            by_event.entry(ev_id).or_default().push(uid);
+        }
+        for (id, title, at, loc) in due {
+            let ids = by_event.remove(&id).unwrap_or_default();
+            if ids.is_empty() {
+                continue;
+            }
+            let body = format!("{title} · {} · {loc}", at.replace('T', " "));
+            notify_many(
+                db,
+                &ids,
+                ("活动提醒", "Event reminder"),
+                (&body, &body),
+                &format!("/events/{id}"),
+            )
+            .await;
+        }
     }
     Ok(())
 }
@@ -602,6 +619,10 @@ async fn housekeeping(db: &PgPool, cfg: &Config) -> anyhow::Result<()> {
         .await?;
     sqlx::query("DELETE FROM telegram_link_tokens WHERE expires_at < $1")
         .bind(now())
+        .execute(db)
+        .await?;
+    sqlx::query("DELETE FROM oauth_states WHERE created_at < $1")
+        .bind(t(-30))
         .execute(db)
         .await?;
     purge_orphan_files(db, &cfg.upload_dir).await?;

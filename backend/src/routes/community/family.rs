@@ -517,6 +517,8 @@ pub(super) async fn add_person(
         .fetch_one(&mut *tx)
         .await?;
         if disabled > 0 {
+            // Release tx connection before acquiring another connection for audit() on small pools.
+            drop(tx);
             audit(
                 &st.db,
                 Some(u.id),

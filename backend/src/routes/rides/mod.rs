@@ -253,16 +253,13 @@ pub(super) const RIDE_SELECT: &str = "SELECT r.id, r.passenger_id, r.driver_id, 
     r.is_proxy, r.rider_name, r.rider_phone, r.rider_relationship,
     r.leg, r.paired_ride_id,
     r.as_group_id, ag.name AS as_group_name,
-    COALESCE((SELECT vp.host_group_id FROM visitor_passes vp WHERE vp.ride_id = r.id ORDER BY vp.id DESC LIMIT 1), r.as_group_id) AS match_group_id,
+    COALESCE(vp_latest.host_group_id, r.as_group_id) AS match_group_id,
     e.created_by AS event_created_by,
-    COALESCE((SELECT bool_or(g.is_all = 1) FROM event_groups eg JOIN groups g ON g.id = eg.group_id WHERE eg.event_id = r.event_id), false) AS event_is_all,
-    COALESCE((SELECT array_agg(eg.group_id) FROM event_groups eg WHERE eg.event_id = r.event_id), '{}'::BIGINT[]) AS event_group_ids,
+    COALESCE(eg_agg.event_is_all, false) AS event_is_all,
+    COALESCE(eg_agg.event_group_ids, '{}'::BIGINT[]) AS event_group_ids,
     COALESCE(e.mileage_claimable, 0) AS event_mileage_claimable,
     ea.name AS event_area_name,
-    (SELECT f.amount_cents FROM area_fares f
-      WHERE e.area_id IS NOT NULL
-        AND f.area_a_id = LEAST(r.pickup_area_id, e.area_id)
-        AND f.area_b_id = GREATEST(r.pickup_area_id, e.area_id)) AS route_fare_cents
+    af.amount_cents AS route_fare_cents
     FROM rides r
     JOIN areas a ON a.id = r.pickup_area_id
     JOIN users p ON p.id = r.passenger_id
@@ -270,7 +267,23 @@ pub(super) const RIDE_SELECT: &str = "SELECT r.id, r.passenger_id, r.driver_id, 
     LEFT JOIN vehicles v ON v.user_id = r.driver_id AND v.is_active = 1
     LEFT JOIN events e ON e.id = r.event_id
     LEFT JOIN groups ag ON ag.id = r.as_group_id
-    LEFT JOIN areas ea ON ea.id = e.area_id";
+    LEFT JOIN areas ea ON ea.id = e.area_id
+    LEFT JOIN area_fares af ON e.area_id IS NOT NULL
+        AND af.area_a_id = LEAST(r.pickup_area_id, e.area_id)
+        AND af.area_b_id = GREATEST(r.pickup_area_id, e.area_id)
+    LEFT JOIN LATERAL (
+        SELECT vp.host_group_id
+        FROM visitor_passes vp
+        WHERE vp.ride_id = r.id
+        ORDER BY vp.id DESC LIMIT 1
+    ) vp_latest ON TRUE
+    LEFT JOIN LATERAL (
+        SELECT bool_or(g.is_all = 1) AS event_is_all,
+               array_agg(eg.group_id) AS event_group_ids
+        FROM event_groups eg
+        JOIN groups g ON g.id = eg.group_id
+        WHERE eg.event_id = r.event_id
+    ) eg_agg ON r.event_id IS NOT NULL";
 
 pub async fn load_ride(st: &AppState, lang: Lang, id: i64) -> AppResult<RideRow> {
     sqlx::query_as::<_, RideRow>(crate::dyn_sql!("{RIDE_SELECT} WHERE r.id = $1"))
@@ -480,9 +493,10 @@ async fn search_places(
 
 async fn list_areas(State(st): State<AppState>, _u: CurrentUser) -> AppResult<Json<Value>> {
     let rows: Vec<(i64, String, i64, i64)> = sqlx::query_as(
-        "SELECT a.id, a.name, a.active,
-                (SELECT COUNT(*) FROM area_photos p WHERE p.area_id = a.id) AS photo_count
-         FROM areas a ORDER BY a.name",
+        "SELECT a.id, a.name, a.active, COALESCE(ap.photo_count, 0)::BIGINT
+         FROM areas a
+         LEFT JOIN (SELECT area_id, COUNT(*)::BIGINT AS photo_count FROM area_photos GROUP BY area_id) ap ON ap.area_id = a.id
+         ORDER BY a.name",
     )
     .fetch_all(&st.db)
     .await?;

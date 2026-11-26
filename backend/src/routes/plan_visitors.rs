@@ -182,7 +182,16 @@ pub(crate) struct Clean {
     pub(crate) driver_id: Option<i64>,
 }
 
-pub(crate) async fn clean(st: &AppState, u: &CurrentUser, req: VisitorIn) -> AppResult<Clean> {
+pub(crate) struct ValidatedFields {
+    pub(crate) name: String,
+    pub(crate) phone: String,
+    pub(crate) notes: String,
+    pub(crate) pickup_address: String,
+    pub(crate) seats: i64,
+    pub(crate) leg: String,
+}
+
+pub(crate) fn validate_fields(u: &CurrentUser, req: &VisitorIn) -> AppResult<ValidatedFields> {
     let name = req.name.trim().to_string();
     if name.is_empty() {
         return Err(bad(u.lang, ErrorKey::VisitorNameRequired));
@@ -201,10 +210,22 @@ pub(crate) async fn clean(st: &AppState, u: &CurrentUser, req: VisitorIn) -> App
     if !(1..=8).contains(&seats) {
         return Err(bad(u.lang, ErrorKey::SeatsRange));
     }
-    let leg = req.leg.unwrap_or_else(|| "outbound".into());
+    let leg = req.leg.as_deref().unwrap_or("outbound").to_string();
     if leg != "outbound" && leg != "return" {
         return Err(bad(u.lang, ErrorKey::InvalidAction));
     }
+    Ok(ValidatedFields {
+        name,
+        phone,
+        notes,
+        pickup_address,
+        seats,
+        leg,
+    })
+}
+
+pub(crate) async fn clean(st: &AppState, u: &CurrentUser, req: VisitorIn) -> AppResult<Clean> {
+    let fields = validate_fields(u, &req)?;
     if let Some(a) = req.area_id {
         let found: bool = sqlx::query_scalar("SELECT EXISTS (SELECT 1 FROM areas WHERE id = $1)")
             .bind(a)
@@ -229,13 +250,13 @@ pub(crate) async fn clean(st: &AppState, u: &CurrentUser, req: VisitorIn) -> App
         }
     }
     Ok(Clean {
-        name,
-        phone,
-        notes,
+        name: fields.name,
+        phone: fields.phone,
+        notes: fields.notes,
         area_id: req.area_id,
-        pickup_address,
-        seats,
-        leg,
+        pickup_address: fields.pickup_address,
+        seats: fields.seats,
+        leg: fields.leg,
         driver_id: req.driver_id,
     })
 }

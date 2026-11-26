@@ -484,10 +484,10 @@ async fn remove(
         return Err(forbidden(u.lang, ErrorKey::AdminAppointmentRestricted));
     }
     guard_own_access(&mut tx, &u, &key, None).await?;
-    // Members who held the role simply lose it.
+    // Members who held the role simply lose it (indexed via member_roles).
     let held = sqlx::query(
         "UPDATE users SET roles = array_to_string(array_remove(string_to_array(roles, ','), $1), ',')
-         WHERE $1 = ANY(string_to_array(roles, ','))",
+         WHERE id IN (SELECT user_id FROM member_roles WHERE role_key = $1)",
     )
     .bind(&key)
     .execute(&mut *tx)

@@ -1,5 +1,7 @@
 //! Transport planning draft management, single-editor locks, and approval workflow.
 
+use std::collections::{HashMap, HashSet};
+
 use axum::{
     extract::{Path, State},
     Json,
@@ -9,8 +11,8 @@ use serde_json::{json, Value};
 
 use crate::auth::CurrentUser;
 use crate::error::{bad, conflict, forbidden, locked, not_found, AppResult};
-use crate::perms::{self, Act, Page};
-use crate::routes::plan_visitors::{clean as clean_visitor, VisitorIn};
+use crate::perms::{self, Act, Page, Perm};
+use crate::routes::plan_visitors::{validate_fields as validate_visitor_fields, VisitorIn};
 use crate::state::AppState;
 use crate::util::{audit, in_minutes, now, require, ErrorKey};
 
@@ -31,8 +33,8 @@ pub(super) struct DraftRow {
     pub(super) visitors: String,
     pub(super) created_by: Option<i64>,
     pub(super) created_by_name: Option<String>,
-    pub(super) updated_by: i64,
-    pub(super) updated_by_name: String,
+    pub(super) updated_by: Option<i64>,
+    pub(super) updated_by_name: Option<String>,
     pub(super) submitted_by: Option<i64>,
     pub(super) submitted_by_name: Option<String>,
     pub(super) submitted_at: Option<String>,
@@ -58,7 +60,7 @@ pub(super) const DRAFT_SELECT: &str =
         d.locked_by, u4.name AS locked_by_name, d.locked_at, d.lock_expires_at,
         d.created_at, d.updated_at
  FROM event_plan_drafts d
- JOIN users u1 ON u1.id = d.updated_by
+ LEFT JOIN users u1 ON u1.id = d.updated_by
  LEFT JOIN users u0 ON u0.id = d.created_by
  LEFT JOIN users u2 ON u2.id = d.submitted_by
  LEFT JOIN users u3 ON u3.id = d.reviewed_by
@@ -78,10 +80,13 @@ pub(super) fn draft_to_json(d: &DraftRow, viewer_id: i64, now_str: &str) -> Valu
         .map(|cid| {
             json!({
                 "id": cid,
-                "name": d.created_by_name.clone().unwrap_or_else(|| d.updated_by_name.clone()),
+                "name": d.created_by_name.clone().or_else(|| d.updated_by_name.clone()),
             })
         })
-        .unwrap_or_else(|| json!({ "id": d.updated_by, "name": d.updated_by_name }));
+        .or_else(|| {
+            d.updated_by
+                .map(|uid| json!({ "id": uid, "name": d.updated_by_name }))
+        });
     json!({
         "id": d.id,
         "event_id": d.event_id,
@@ -91,7 +96,7 @@ pub(super) fn draft_to_json(d: &DraftRow, viewer_id: i64, now_str: &str) -> Valu
         "assignments": parsed_assignments,
         "visitors": parsed_visitors,
         "created_by": created_by,
-        "updated_by": { "id": d.updated_by, "name": d.updated_by_name },
+        "updated_by": d.updated_by.map(|uid| json!({ "id": uid, "name": d.updated_by_name })),
         "created_at": d.created_at,
         "updated_at": d.updated_at,
         "submitted_by": d.submitted_by.map(|sid| json!({ "id": sid, "name": d.submitted_by_name })),
@@ -205,43 +210,101 @@ async fn clean_draft_visitors(
     if entries.len() > MAX_DRAFT_VISITORS {
         return Err(bad(u.lang, ErrorKey::InvalidAction));
     }
+
+    let mut check_live_ids = Vec::new();
+    let mut delete_ids = Vec::new();
+    let mut area_ids = Vec::new();
+    let mut driver_ids = Vec::new();
+    for v in entries {
+        let op = v.op.trim();
+        if !matches!(op, "add" | "update" | "delete") {
+            return Err(bad(u.lang, ErrorKey::InvalidAction));
+        }
+        if op == "update" || op == "delete" {
+            let Some(vid) = v.live_visitor_id else {
+                return Err(bad(u.lang, ErrorKey::InvalidAction));
+            };
+            check_live_ids.push(vid);
+            if op == "delete" {
+                delete_ids.push(vid);
+                continue;
+            }
+        }
+        if let Some(aid) = v.area_id {
+            area_ids.push(aid);
+        }
+        if let Some(did) = v.driver_id {
+            driver_ids.push(did);
+        }
+    }
+
+    let valid_live_ids: HashSet<i64> = if check_live_ids.is_empty() {
+        HashSet::new()
+    } else {
+        sqlx::query_scalar("SELECT id FROM plan_visitors WHERE event_id = $1 AND id = ANY($2)")
+            .bind(event_id)
+            .bind(&check_live_ids)
+            .fetch_all(&st.db)
+            .await?
+            .into_iter()
+            .collect()
+    };
+    let live_reimb_ids: HashSet<i64> = if delete_ids.is_empty() {
+        HashSet::new()
+    } else {
+        sqlx::query_scalar(
+            "SELECT DISTINCT plan_visitor_id FROM reimbursements
+             WHERE plan_visitor_id = ANY($1) AND status <> 'rejected'",
+        )
+        .bind(&delete_ids)
+        .fetch_all(&st.db)
+        .await?
+        .into_iter()
+        .collect()
+    };
+    let area_names: HashMap<i64, String> = if area_ids.is_empty() {
+        HashMap::new()
+    } else {
+        sqlx::query_as::<_, (i64, String)>("SELECT id, name FROM areas WHERE id = ANY($1)")
+            .bind(&area_ids)
+            .fetch_all(&st.db)
+            .await?
+            .into_iter()
+            .collect()
+    };
+    let valid_drivers: HashMap<i64, String> = if driver_ids.is_empty() {
+        HashMap::new()
+    } else {
+        sqlx::query_as::<_, (i64, String)>(crate::dyn_sql!(
+            "SELECT u.id, u.name FROM users u
+             JOIN vehicles v ON v.user_id = u.id AND v.is_active = 1
+             WHERE u.id = ANY($1) AND {}",
+            perms::sql_holds("u", Perm(Page::Drive, Act::Create))
+        ))
+        .bind(&driver_ids)
+        .fetch_all(&st.db)
+        .await?
+        .into_iter()
+        .collect()
+    };
+
     let mut out = Vec::with_capacity(entries.len());
     for (idx, v) in entries.iter().enumerate() {
         let op = v.op.trim().to_string();
-        if !matches!(op.as_str(), "add" | "update" | "delete") {
-            return Err(bad(u.lang, ErrorKey::InvalidAction));
-        }
         let temp_id = if v.temp_id.trim().is_empty() {
             format!("v-{}", idx + 1)
         } else {
             v.temp_id.trim().to_string()
         };
         if op == "update" || op == "delete" {
-            let Some(vid) = v.live_visitor_id else {
-                return Err(bad(u.lang, ErrorKey::InvalidAction));
-            };
-            let exists: bool = sqlx::query_scalar(
-                "SELECT EXISTS (SELECT 1 FROM plan_visitors WHERE id = $1 AND event_id = $2)",
-            )
-            .bind(vid)
-            .bind(event_id)
-            .fetch_one(&st.db)
-            .await?;
-            if !exists {
+            let vid = v.live_visitor_id.expect("checked above");
+            if !valid_live_ids.contains(&vid) {
                 return Err(bad(u.lang, ErrorKey::InvalidAction));
             }
         }
         if op == "delete" {
-            let Some(vid) = v.live_visitor_id else {
-                return Err(bad(u.lang, ErrorKey::InvalidAction));
-            };
-            let live_reimb: bool = sqlx::query_scalar(
-                "SELECT EXISTS (SELECT 1 FROM reimbursements WHERE plan_visitor_id = $1 AND status <> 'rejected')",
-            )
-            .bind(vid)
-            .fetch_one(&st.db)
-            .await?;
-            if live_reimb {
+            let vid = v.live_visitor_id.expect("checked above");
+            if live_reimb_ids.contains(&vid) {
                 return Err(conflict(u.lang, ErrorKey::VisitorHasReimbursement));
             }
             out.push(DraftVisitorEntry {
@@ -261,10 +324,9 @@ async fn clean_draft_visitors(
             });
             continue;
         }
-        let cleaned = clean_visitor(
-            st,
+        let cleaned = validate_visitor_fields(
             u,
-            VisitorIn {
+            &VisitorIn {
                 name: v.name.clone(),
                 phone: v.phone.clone(),
                 notes: v.notes.clone(),
@@ -274,24 +336,23 @@ async fn clean_draft_visitors(
                 leg: v.leg.clone(),
                 driver_id: v.driver_id,
             },
-        )
-        .await?;
-        let area_name: Option<String> = match cleaned.area_id {
-            Some(aid) => {
-                sqlx::query_scalar("SELECT name FROM areas WHERE id = $1")
-                    .bind(aid)
-                    .fetch_optional(&st.db)
-                    .await?
-            }
+        )?;
+        let area_name = match v.area_id {
+            Some(aid) => Some(
+                area_names
+                    .get(&aid)
+                    .cloned()
+                    .ok_or_else(|| bad(u.lang, ErrorKey::InvalidAction))?,
+            ),
             None => None,
         };
-        let driver_name: Option<String> = match cleaned.driver_id {
-            Some(did) => {
-                sqlx::query_scalar("SELECT name FROM users WHERE id = $1")
-                    .bind(did)
-                    .fetch_optional(&st.db)
-                    .await?
-            }
+        let driver_name = match v.driver_id {
+            Some(did) => Some(
+                valid_drivers
+                    .get(&did)
+                    .cloned()
+                    .ok_or_else(|| bad(u.lang, ErrorKey::DriverNotFound))?,
+            ),
             None => None,
         };
         out.push(DraftVisitorEntry {
@@ -301,12 +362,12 @@ async fn clean_draft_visitors(
             name: cleaned.name,
             phone: cleaned.phone,
             notes: cleaned.notes,
-            area_id: cleaned.area_id,
+            area_id: v.area_id,
             area_name,
             pickup_address: cleaned.pickup_address,
             seats: Some(cleaned.seats),
             leg: Some(cleaned.leg),
-            driver_id: cleaned.driver_id,
+            driver_id: v.driver_id,
             driver_name,
         });
     }
@@ -572,7 +633,7 @@ pub(super) async fn delete_draft(
     let row: Option<(
         String,
         Option<i64>,
-        i64,
+        Option<i64>,
         Option<i64>,
         Option<String>,
         Option<String>,
@@ -596,7 +657,7 @@ pub(super) async fn delete_draft(
     if status == "approved" {
         return Err(conflict(u.lang, ErrorKey::DraftNotEditable));
     }
-    let is_owner = created_by.unwrap_or(updated_by) == u.id;
+    let is_owner = created_by.or(updated_by) == Some(u.id);
     if !is_owner && !u.is_traffic_lead() {
         return Err(forbidden(u.lang, ErrorKey::Forbidden));
     }

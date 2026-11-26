@@ -37,7 +37,9 @@ pub(super) async fn driver_requests(
         "r.passenger_id != $1".to_string(),
         "r.pickup_at >= $2".to_string(),
         // Event rides go only to drivers from the rider's group or a group above it.
-        format!("({MATCH_GROUP_SQL} IS NULL OR {MATCH_GROUP_SQL} = ANY($3))"),
+        format!(
+            "(SELECT _mg.id IS NULL OR _mg.id = ANY($3) FROM (SELECT {MATCH_GROUP_SQL} AS id) _mg)"
+        ),
     ];
     let mut n = 4;
     if q.area_id.is_some() {
@@ -101,7 +103,7 @@ pub(super) async fn driver_schedule(
     let from = q.from.unwrap_or_else(|| now()[..10].to_string());
     let to = q.to.unwrap_or_else(|| from.clone());
     let rows = sqlx::query_as::<_, RideRow>(crate::dyn_sql!(
-        "{RIDE_SELECT} WHERE r.driver_id=$1 AND substr(r.pickup_at,1,10) BETWEEN $2 AND $3
+        "{RIDE_SELECT} WHERE r.driver_id=$1 AND r.pickup_at >= ($2 || 'T') AND r.pickup_at < ($3 || 'U')
          AND r.status NOT IN ('cancelled') ORDER BY r.pickup_at"
     ))
     .bind(u.id)
@@ -338,15 +340,15 @@ pub(super) async fn put_driver_profile(
         .bind(u.id)
         .execute(&mut *tx)
         .await?;
-    for a in &req.area_ids {
-        sqlx::query(
-            "INSERT INTO driver_areas (user_id, area_id) VALUES ($1,$2) ON CONFLICT DO NOTHING",
-        )
-        .bind(u.id)
-        .bind(a)
-        .execute(&mut *tx)
-        .await?;
-    }
+    sqlx::query(
+        "INSERT INTO driver_areas (user_id, area_id)
+         SELECT $1, aid FROM UNNEST($2::BIGINT[]) AS aid
+         ON CONFLICT DO NOTHING",
+    )
+    .bind(u.id)
+    .bind(&req.area_ids)
+    .execute(&mut *tx)
+    .await?;
     let mut detail = format!(
         "carpool {}; spare seats {}; areas {:?}",
         if req.carpool_enabled { "on" } else { "off" },
@@ -538,6 +540,12 @@ pub(super) async fn create_driver_vehicle(
         .fetch_optional(&mut *tx)
         .await?;
         if let Some((other_id, other_seats)) = other {
+            // Deactivate first so partial unique index idx_vehicles_user_active never collides mid-tx.
+            sqlx::query("UPDATE vehicles SET is_active=0 WHERE user_id=$1 AND plate=$2")
+                .bind(u.id)
+                .bind(&plate)
+                .execute(&mut *tx)
+                .await?;
             sqlx::query("UPDATE vehicles SET is_active=1 WHERE id=$1 AND user_id=$2")
                 .bind(other_id)
                 .bind(u.id)
@@ -666,6 +674,12 @@ pub(super) async fn update_driver_vehicle(
         .fetch_optional(&mut *tx)
         .await?;
         if let Some((other_id, other_seats)) = other {
+            // Deactivate current vehicle before activating another to satisfy idx_vehicles_user_active.
+            sqlx::query("UPDATE vehicles SET is_active=0 WHERE id=$1 AND user_id=$2")
+                .bind(id)
+                .bind(u.id)
+                .execute(&mut *tx)
+                .await?;
             sqlx::query("UPDATE vehicles SET is_active=1 WHERE id=$1 AND user_id=$2")
                 .bind(other_id)
                 .bind(u.id)

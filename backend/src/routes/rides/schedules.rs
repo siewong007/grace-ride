@@ -390,8 +390,9 @@ async fn apply_recurring_schedule_for_date(
         let open_sql = format!(
             "SELECT COUNT(*) FROM rides r
              WHERE r.status='pending_driver' AND r.pickup_area_id=$1
-               AND substr(r.pickup_at,1,10)=$2 AND r.passenger_id != $3
-               AND ({MATCH_GROUP_SQL} IS NULL OR {MATCH_GROUP_SQL} = ANY($4))"
+               AND r.pickup_at >= ($2 || 'T') AND r.pickup_at < ($2 || 'U')
+               AND r.passenger_id != $3
+               AND (SELECT _mg.id IS NULL OR _mg.id = ANY($4) FROM (SELECT {MATCH_GROUP_SQL} AS id) _mg)"
         );
         let (open,): (i64,) = sqlx::query_as(sqlx::AssertSqlSafe(&*open_sql))
             .bind(s.area_id)

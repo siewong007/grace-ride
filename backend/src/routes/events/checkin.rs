@@ -172,10 +172,18 @@ async fn do_checkin(
 
     let choices = join_choices(&st.db, u, id).await.unwrap_or_default();
     let mut tx = st.db.begin().await?;
-    let (capacity,): (i64,) = sqlx::query_as("SELECT capacity FROM events WHERE id=$1 FOR UPDATE")
-        .bind(id)
-        .fetch_one(&mut *tx)
-        .await?;
+    let (capacity, ev_status, att_enabled): (i64, String, i64) = sqlx::query_as(
+        "SELECT capacity, status, attendance_enabled FROM events WHERE id=$1 FOR UPDATE",
+    )
+    .bind(id)
+    .fetch_one(&mut *tx)
+    .await?;
+    if ev_status != "published" {
+        return Err(bad(u.lang, ErrorKey::EventNotOpen));
+    }
+    if att_enabled != 1 {
+        return Err(bad(u.lang, ErrorKey::AttendanceModuleDisabled));
+    }
     let existing: Option<(Option<i64>, String)> = sqlx::query_as(
         "SELECT attended, status FROM event_signups WHERE event_id = $1 AND user_id = $2 FOR UPDATE",
     )
@@ -362,10 +370,18 @@ pub(super) async fn scan_member_pass(
     }
 
     let mut tx = st.db.begin().await?;
-    let (capacity,): (i64,) = sqlx::query_as("SELECT capacity FROM events WHERE id=$1 FOR UPDATE")
-        .bind(id)
-        .fetch_one(&mut *tx)
-        .await?;
+    let (capacity, ev_status, att_enabled): (i64, String, i64) = sqlx::query_as(
+        "SELECT capacity, status, attendance_enabled FROM events WHERE id=$1 FOR UPDATE",
+    )
+    .bind(id)
+    .fetch_one(&mut *tx)
+    .await?;
+    if ev_status != "published" {
+        return Err(bad(u.lang, ErrorKey::EventNotOpen));
+    }
+    if att_enabled != 1 {
+        return Err(bad(u.lang, ErrorKey::AttendanceModuleDisabled));
+    }
     let row: Option<(i64, String, String, String, Option<i64>)> = sqlx::query_as(
         "SELECT es.user_id, u.name, u.status, es.status, es.attended
          FROM event_signups es JOIN users u ON u.id = es.user_id

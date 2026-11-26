@@ -144,7 +144,7 @@ impl FromRequestParts<AppState> for CurrentUser {
                         return Err(unauthorized(user_lang));
                     }
                     let (group_scope, drive_scope) = if srow.status == "active" {
-                        crate::audience::group_scopes(&state.db, srow.id).await?
+                        (srow.group_scope.clone(), srow.drive_scope.clone())
                     } else {
                         (Vec::new(), Vec::new())
                     };

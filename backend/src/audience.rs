@@ -43,7 +43,10 @@ pub async fn drive_scopes(db: &PgPool) -> Result<HashMap<i64, Vec<i64>>, sqlx::E
 }
 
 /// The member's (groups + ancestors, groups + descendants). See `CurrentUser`.
-pub async fn group_scopes(db: &PgPool, user_id: i64) -> Result<(Vec<i64>, Vec<i64>), sqlx::Error> {
+pub async fn group_scopes_on<'e, E: sqlx::PgExecutor<'e>>(
+    db: E,
+    user_id: i64,
+) -> Result<(Vec<i64>, Vec<i64>), sqlx::Error> {
     sqlx::query_as(
         "WITH RECURSIVE up AS (
              SELECT group_id AS id FROM group_members WHERE user_id = $1
@@ -60,6 +63,11 @@ pub async fn group_scopes(db: &PgPool, user_id: i64) -> Result<(Vec<i64>, Vec<i6
     .bind(user_id)
     .fetch_one(db)
     .await
+}
+
+/// The member's (groups + ancestors, groups + descendants). See `CurrentUser`.
+pub async fn group_scopes(db: &PgPool, user_id: i64) -> Result<(Vec<i64>, Vec<i64>), sqlx::Error> {
+    group_scopes_on(db, user_id).await
 }
 
 /// SQL condition: event `e` is visible to the member whose id is bound at `me` and whose

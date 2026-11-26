@@ -29,7 +29,13 @@ services:
         SELECT 'CREATE DATABASE grace_ride_test'
         WHERE NOT EXISTS (SELECT FROM pg_database WHERE datname = 'grace_ride_test')\gexec
         SQL
-        exec docker-entrypoint.sh postgres
+        exec docker-entrypoint.sh postgres \
+          -c random_page_cost=1.1 \
+          -c effective_io_concurrency=200 \
+          -c work_mem=16MB \
+          -c maintenance_work_mem=64MB \
+          -c jit=off \
+          -c log_min_duration_statement=250
     volumes:
       - grace-ride-dev-pg:/var/lib/postgresql
     shm_size: 128m

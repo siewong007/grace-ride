@@ -187,7 +187,6 @@ pub(super) struct ReassignReq {
 
 pub(super) async fn exec_staff_reassign_tx(
     tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
-    st: &AppState,
     u: &CurrentUser,
     r: &RideRow,
     driver_id: i64,
@@ -209,7 +208,7 @@ pub(super) async fn exec_staff_reassign_tx(
     }
     let mut outside_group: Option<i64> = None;
     if let Some(g) = r.match_group_id {
-        let (_, scope) = crate::audience::group_scopes(&st.db, driver_id).await?;
+        let (_, scope) = crate::audience::group_scopes_on(&mut **tx, driver_id).await?;
         if !scope.contains(&g) {
             outside_group = Some(g);
         }
@@ -329,7 +328,7 @@ pub(super) async fn exec_staff_reassign(
     driver_id: i64,
 ) -> AppResult<()> {
     let mut tx = st.db.begin().await?;
-    let outside_group = exec_staff_reassign_tx(&mut tx, st, u, r, driver_id).await?;
+    let outside_group = exec_staff_reassign_tx(&mut tx, u, r, driver_id).await?;
     tx.commit().await?;
     exec_staff_reassign_after(st, u, r, driver_id, outside_group).await;
     Ok(())

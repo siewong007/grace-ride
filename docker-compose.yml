@@ -5,6 +5,20 @@ services:
   db:
     image: postgres:18-alpine
     restart: unless-stopped
+    command:
+      - postgres
+      - -c
+      - random_page_cost=1.1
+      - -c
+      - effective_io_concurrency=200
+      - -c
+      - work_mem=16MB
+      - -c
+      - maintenance_work_mem=64MB
+      - -c
+      - jit=off
+      - -c
+      - log_min_duration_statement=250
     environment:
       POSTGRES_USER: grace
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env.production}

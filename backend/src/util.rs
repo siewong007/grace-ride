@@ -165,6 +165,17 @@ pub fn norm_dt(s: &str) -> Option<String> {
     parse_dt(s).map(|d| d.format("%Y-%m-%dT%H:%M").to_string())
 }
 
+/// Inclusive SARGable text bounds (`[at - margin_mins, at + margin_mins]`) for `pickup_at`.
+pub fn pickup_window_bounds(at: &str, margin_mins: i64) -> Option<(String, String)> {
+    parse_dt(at).map(|d| {
+        let delta = Duration::minutes(margin_mins);
+        (
+            (d - delta).format("%Y-%m-%dT%H:%M:%S").to_string(),
+            (d + delta).format("%Y-%m-%dT%H:%M:%S").to_string(),
+        )
+    })
+}
+
 const AUDIT_ENTITY_NAME_EXPR: &str = "COALESCE(
     CASE $3::text
         WHEN 'user' THEN (SELECT name FROM users WHERE id = $4)

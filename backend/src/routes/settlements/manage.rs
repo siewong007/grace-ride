@@ -135,10 +135,18 @@ pub(super) async fn list_mine_organised(
 
         let rows: Vec<(i64, String, String, String, i64, i64, i64)> = sqlx::query_as(
             "SELECT s.id, s.title, e.title, s.status,
-                (SELECT COALESCE(SUM(amount_cents),0)::BIGINT FROM settlement_shares WHERE settlement_id=s.id),
-                (SELECT COUNT(*) FROM settlement_shares WHERE settlement_id=s.id AND status='confirmed'),
-                (SELECT COUNT(*) FROM settlement_shares WHERE settlement_id=s.id)
-             FROM settlements s JOIN events e ON e.id=s.event_id WHERE (s.created_by=$1 AND $2) OR $3 ORDER BY s.id DESC LIMIT $4 OFFSET $5",
+                    COALESCE(sh.total_cents, 0)::BIGINT,
+                    COALESCE(sh.confirmed_cnt, 0)::BIGINT,
+                    COALESCE(sh.total_cnt, 0)::BIGINT
+             FROM settlements s
+             JOIN events e ON e.id = s.event_id
+             LEFT JOIN LATERAL (
+                 SELECT COALESCE(SUM(amount_cents), 0)::BIGINT AS total_cents,
+                        COUNT(*) FILTER (WHERE status = 'confirmed')::BIGINT AS confirmed_cnt,
+                        COUNT(*)::BIGINT AS total_cnt
+                 FROM settlement_shares WHERE settlement_id = s.id
+             ) sh ON TRUE
+             WHERE (s.created_by=$1 AND $2) OR $3 ORDER BY s.id DESC LIMIT $4 OFFSET $5",
         )
         .bind(u.id)
         .bind(own)
@@ -166,10 +174,18 @@ pub(super) async fn list_mine_organised(
 
     let rows: Vec<(i64, String, String, String, i64, i64, i64)> = sqlx::query_as(
         "SELECT s.id, s.title, e.title, s.status,
-            (SELECT COALESCE(SUM(amount_cents),0)::BIGINT FROM settlement_shares WHERE settlement_id=s.id),
-            (SELECT COUNT(*) FROM settlement_shares WHERE settlement_id=s.id AND status='confirmed'),
-            (SELECT COUNT(*) FROM settlement_shares WHERE settlement_id=s.id)
-         FROM settlements s JOIN events e ON e.id=s.event_id WHERE (s.created_by=$1 AND $2) OR $3 ORDER BY s.id DESC LIMIT 200",
+                COALESCE(sh.total_cents, 0)::BIGINT,
+                COALESCE(sh.confirmed_cnt, 0)::BIGINT,
+                COALESCE(sh.total_cnt, 0)::BIGINT
+         FROM settlements s
+         JOIN events e ON e.id = s.event_id
+         LEFT JOIN LATERAL (
+             SELECT COALESCE(SUM(amount_cents), 0)::BIGINT AS total_cents,
+                    COUNT(*) FILTER (WHERE status = 'confirmed')::BIGINT AS confirmed_cnt,
+                    COUNT(*)::BIGINT AS total_cnt
+             FROM settlement_shares WHERE settlement_id = s.id
+         ) sh ON TRUE
+         WHERE (s.created_by=$1 AND $2) OR $3 ORDER BY s.id DESC LIMIT 200",
     )
     .bind(u.id)
     .bind(own)

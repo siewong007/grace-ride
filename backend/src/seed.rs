@@ -20,11 +20,14 @@ use chrono::{Datelike, Duration, NaiveDate, Weekday};
 use rand::rngs::StdRng;
 use rand::seq::{IndexedRandom, SliceRandom};
 use rand::{RngExt as _, SeedableRng};
+use serde::Serialize;
 use serde_json::json;
 use sqlx::PgPool;
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
+use std::path::Path;
 use uuid::Uuid;
 
+use crate::perms::{Act, Page, Perm};
 use crate::routes::auth::hash_password;
 use crate::state::Config;
 use crate::util::{audit, in_days, now, random_token, today_local};
@@ -32,10 +35,15 @@ use crate::util::{audit, in_days, now, random_token, today_local};
 pub const DEMO_PASSWORD: &str = "GraceRide2026!";
 pub const DEMO_BATCH: &str = "demo-2026";
 pub const EDGE_BATCH: &str = "edge-2026";
+pub const SCENARIO_BATCH: &str = "scenario-2026";
+pub const SCALE_BATCH: &str = "scale-2026";
 const PRNG_SEED: u64 = 0x6772_6163_655f_7365;
 const GENERATED_MEMBER_ID_BASE: i64 = 10001;
 const GENERATED_EVENT_ID_BASE: i64 = 1001;
 const GENERATED_RIDE_ID_BASE: i64 = 30001;
+const SCENARIO_ID_BASE: i64 = 91_001;
+const SCENARIO_EVENT_ID_BASE: i64 = 9101;
+const SCALE_ENTITY_ID_BASE: i64 = 200_001;
 pub const SIMULATED_TOTP_SECRET: &str = "MFRGGZDF73DGXYP3";
 const LEGACY_DEMO_EMAILS: &[&str] = &[
     "admin@example.org",
@@ -233,14 +241,21 @@ pub async fn run(db: &PgPool, cfg: &Config) -> anyhow::Result<()> {
 }
 
 async fn ensure_demo_batches(db: &PgPool) -> anyhow::Result<()> {
-    for (batch, note) in [
-        (DEMO_BATCH, "Core demo fixtures"),
-        (EDGE_BATCH, "Edge / scale fixtures"),
+    for (batch, scale, note) in [
+        (DEMO_BATCH, "core", "Core demo fixtures"),
+        (EDGE_BATCH, "core", "Edge / scale fixtures"),
+        (
+            SCENARIO_BATCH,
+            "full",
+            "Comprehensive feature scenario fixtures",
+        ),
+        (SCALE_BATCH, "scale", "Synthetic scale fixtures"),
     ] {
         sqlx::query(
-            "INSERT INTO demo_batches (batch, scale, note) VALUES ($1, 'core', $2) ON CONFLICT (batch) DO NOTHING",
+            "INSERT INTO demo_batches (batch, scale, note) VALUES ($1, $2, $3) ON CONFLICT (batch) DO NOTHING",
         )
         .bind(batch)
+        .bind(scale)
         .bind(note)
         .execute(db)
         .await?;
@@ -793,7 +808,11 @@ fn demo_user<'a>(
     };
     sqlx::query_as::<_, (i64,)>(
         "INSERT INTO users (id, name, email, phone, roles, status, password_hash, webauthn_uuid, totp_secret, totp_enabled, demo_batch, created_at, terms_accepted_at, terms_version)
-         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14) RETURNING id",
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)
+         ON CONFLICT (id) DO UPDATE SET
+             name=EXCLUDED.name, email=EXCLUDED.email, phone=EXCLUDED.phone,
+             roles=EXCLUDED.roles, status=EXCLUDED.status, demo_batch=EXCLUDED.demo_batch
+         RETURNING id",
     )
     .bind(id)
     .bind(name)
@@ -841,7 +860,7 @@ async fn insert_member(
     if passkey {
         // SIMULATED passkey record: cred_id and payload are fabricated for demo
         // display only. They cannot complete a real WebAuthn ceremony.
-        sqlx::query("INSERT INTO passkeys (id, user_id, cred_id, passkey, label, demo_batch, created_at) VALUES ($1,$2,$3,$4,$5,$6,$7)")
+        sqlx::query("INSERT INTO passkeys (id, user_id, cred_id, passkey, label, demo_batch, created_at) VALUES ($1,$2,$3,$4,$5,$6,$7) ON CONFLICT (id) DO NOTHING")
             .bind(id)
             .bind(id)
             .bind(format!("sim-cred-{id:05}"))
@@ -1100,7 +1119,7 @@ async fn seed_core(db: &PgPool) -> anyhow::Result<()> {
         (auditor, 2),
     ] {
         sqlx::query("INSERT INTO group_members (group_id, user_id, demo_batch) VALUES ($1,$2,$3) ON CONFLICT DO NOTHING")
-            .bind(g).bind(uid).bind(DEMO_BATCH).execute(db).await?;
+            .bind(g as i64).bind(uid).bind(DEMO_BATCH).execute(db).await?;
     }
 
     // --- vehicles + driver preferences ---
@@ -1142,7 +1161,7 @@ async fn seed_core(db: &PgPool) -> anyhow::Result<()> {
         (guorong, 7),
     ] {
         sqlx::query("INSERT INTO driver_areas (user_id, area_id, demo_batch) VALUES ($1,$2,$3) ON CONFLICT DO NOTHING")
-            .bind(uid).bind(area).bind(DEMO_BATCH).execute(db).await?;
+            .bind(uid).bind(area as i64).bind(DEMO_BATCH).execute(db).await?;
     }
     let tomorrow = today + Duration::days(1);
     let kl_hm = |d: NaiveDate, h: i32, m: i32| kl(d, h, m);
@@ -1237,8 +1256,8 @@ async fn seed_core(db: &PgPool) -> anyhow::Result<()> {
     for (eid, title, kind, desc, at, loc, cap, cost, by, groups) in events {
         let deadline = format!("{}T12:00", &at[..10]);
         let status = if eid == 5 { "finished" } else { "published" };
-        sqlx::query_as::<_, (i64,)>("INSERT INTO events (id, title, kind, description, starts_at, location, capacity, cost_note, created_by, signup_deadline, status, demo_batch) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12) RETURNING id")
-            .bind(eid).bind(title).bind(kind).bind(desc).bind(&at).bind(loc).bind(cap).bind(cost).bind(by).bind(&deadline).bind(status).bind(DEMO_BATCH).fetch_one(db).await?;
+        sqlx::query_as::<_, (i64,)>("INSERT INTO events (id, title, kind, description, starts_at, location, capacity, cost_note, created_by, signup_deadline, status, demo_batch) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12) ON CONFLICT (id) DO UPDATE SET title=EXCLUDED.title, starts_at=EXCLUDED.starts_at, status=EXCLUDED.status, demo_batch=EXCLUDED.demo_batch RETURNING id")
+            .bind(eid).bind(title).bind(kind).bind(desc).bind(&at).bind(loc).bind(cap as i64).bind(cost).bind(by).bind(&deadline).bind(status).bind(DEMO_BATCH).fetch_one(db).await?;
         for g in groups {
             sqlx::query("INSERT INTO event_groups (event_id, group_id, demo_batch) VALUES ($1,$2,$3) ON CONFLICT DO NOTHING")
                 .bind(eid).bind(g).bind(DEMO_BATCH).execute(db).await?;
@@ -1390,8 +1409,8 @@ async fn seed_core(db: &PgPool) -> anyhow::Result<()> {
         } else {
             None
         };
-        sqlx::query_as::<_, (i64,)>("INSERT INTO rides (id, passenger_id, driver_id, pickup_at, pickup_area_id, pickup_address, destination, seats, assistance, status, created_at, updated_at, completed_at, demo_batch) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14) RETURNING id")
-            .bind(id).bind(p).bind(d).bind(&at).bind(area).bind(addr).bind(dest).bind(seats).bind(assistance).bind(status).bind(now()).bind(now()).bind(completed).bind(DEMO_BATCH).fetch_one(db).await?;
+        sqlx::query_as::<_, (i64,)>("INSERT INTO rides (id, passenger_id, driver_id, pickup_at, pickup_area_id, pickup_address, destination, seats, assistance, status, created_at, updated_at, completed_at, demo_batch) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14) ON CONFLICT (id) DO UPDATE SET status=EXCLUDED.status, demo_batch=EXCLUDED.demo_batch RETURNING id")
+            .bind(id).bind(p).bind(d).bind(&at).bind(area as i64).bind(addr).bind(dest).bind(seats as i64).bind(assistance).bind(status).bind(now()).bind(now()).bind(completed).bind(DEMO_BATCH).fetch_one(db).await?;
         if matches!(status, "confirmed" | "completed") {
             sqlx::query("UPDATE rides SET trip_id=id, approved_by=$1 WHERE id=$2")
                 .bind(transport)
@@ -1426,7 +1445,7 @@ async fn seed_core(db: &PgPool) -> anyhow::Result<()> {
     sqlx::query("INSERT INTO notifications (id, user_id, title, body, link, demo_batch, created_at) VALUES ($1,$2,'本周有新的接送报名','蒲种有一位会员等待司机。','/admin/rides',$3,$4) ON CONFLICT DO NOTHING")
         .bind(7001i64).bind(transport).bind(DEMO_BATCH).bind(now()).execute(db).await?;
     sqlx::query("INSERT INTO notifications (id, user_id, title, body, link, demo_batch, created_at) VALUES ($1,$2,'费用分摊已发布','上周羽毛球费用，每人 RM28.00。','/settlements',$3,$4) ON CONFLICT DO NOTHING")
-        .bind(7002).bind(fala).bind(DEMO_BATCH).bind(now()).execute(db).await?;
+        .bind(7002i64).bind(fala).bind(DEMO_BATCH).bind(now()).execute(db).await?;
     sqlx::query("INSERT INTO notifications (id, user_id, title, body, link, demo_batch, created_at) VALUES ($1,$2,'委任管理员需会长确认','把普通会员升为管理员前，请先取得会长同意，并在确认提示中勾选确认。','/admin/members',$3,$4) ON CONFLICT DO NOTHING")
         .bind(7003i64).bind(vice_president).bind(DEMO_BATCH).bind(now()).execute(db).await?;
 
@@ -1434,14 +1453,14 @@ async fn seed_core(db: &PgPool) -> anyhow::Result<()> {
     sqlx::query("INSERT INTO help_tickets (id, user_id, subject, status, demo_batch, created_at, updated_at) VALUES ($1,$2,'周日接送可以改到北门吗？','answered',$3,$4,$4) ON CONFLICT DO NOTHING")
         .bind(501i64).bind(yawen).bind(DEMO_BATCH).bind(now()).execute(db).await?;
     sqlx::query("INSERT INTO help_replies (id, ticket_id, user_id, body, demo_batch, created_at) VALUES ($1,$2,$3,'可以，请在报名里把上车点改成北门入口。',$4,$5) ON CONFLICT DO NOTHING")
-        .bind(901i64).bind(501).bind(transport).bind(DEMO_BATCH).bind(now()).execute(db).await?;
+        .bind(901i64).bind(501i64).bind(transport).bind(DEMO_BATCH).bind(now()).execute(db).await?;
 
     // --- settlement: 上周羽毛球费用 (event 5, equal split RM28 each, reconciles to RM168.00) ---
     let due = kl(today + Duration::days(7), 23, 59);
-    let settle = sqlx::query_as::<_, (i64,)>("INSERT INTO settlements (id, event_id, created_by, title, split_mode, subsidy_cents, payee_name, payee_account, due_date, status, version, demo_batch, created_at, updated_at) VALUES ($1,$2,$3,'上周羽毛球费用','equal',0,'李德明','012-300 0004',$4,'published',1,$5,$6,$6) RETURNING id")
-        .bind(40001i64).bind(5).bind(deming).bind(&due).bind(DEMO_BATCH).bind(now()).fetch_one(db).await?.0;
+    let settle = sqlx::query_as::<_, (i64,)>("INSERT INTO settlements (id, event_id, created_by, title, split_mode, subsidy_cents, payee_name, payee_account, due_date, status, version, demo_batch, created_at, updated_at) VALUES ($1,$2,$3,'上周羽毛球费用','equal',0,'李德明','012-300 0004',$4,'published',1,$5,$6,$6) ON CONFLICT (id) DO UPDATE SET title=EXCLUDED.title, demo_batch=EXCLUDED.demo_batch RETURNING id")
+        .bind(40001i64).bind(5i64).bind(deming).bind(&due).bind(DEMO_BATCH).bind(now()).fetch_one(db).await?.0;
     sqlx::query("INSERT INTO settlement_items (id, settlement_id, label, amount_cents, receipt_file_id, demo_batch) VALUES ($1,$2,'场租',12000,NULL,$3) ON CONFLICT DO NOTHING").bind(41001i64).bind(settle).bind(DEMO_BATCH).execute(db).await?;
-    sqlx::query("INSERT INTO settlement_items (id, settlement_id, label, amount_cents, receipt_file_id, demo_batch) VALUES ($1,$2,'羽球',4800,NULL,$3) ON CONFLICT DO NOTHING").bind(41002).bind(settle).bind(DEMO_BATCH).execute(db).await?;
+    sqlx::query("INSERT INTO settlement_items (id, settlement_id, label, amount_cents, receipt_file_id, demo_batch) VALUES ($1,$2,'羽球',4800,NULL,$3) ON CONFLICT DO NOTHING").bind(41002i64).bind(settle).bind(DEMO_BATCH).execute(db).await?;
     for (uid, status) in [
         (deming, "confirmed"),
         (fala, "unpaid"),
@@ -1721,7 +1740,7 @@ pub async fn seed_edge(db: &PgPool) -> anyhow::Result<()> {
         (90006i64, 7i64),
     ] {
         let _ = sqlx::query_as::<_, (i64,)>(
-            "INSERT INTO driver_areas (user_id, area_id, demo_batch) VALUES ($1,$2,$3) RETURNING user_id",
+            "INSERT INTO driver_areas (user_id, area_id, demo_batch) VALUES ($1,$2,$3) ON CONFLICT DO NOTHING RETURNING user_id",
         )
         .bind(uid)
         .bind(area)
@@ -2476,7 +2495,7 @@ pub async fn seed_edge(db: &PgPool) -> anyhow::Result<()> {
             "012-300 9007",
             "paid",
             "Paid via DuitNow",
-            Some(90001i64),
+            Some(90002i64),
             1,
             "DNT-2026-05",
             Some(90001i64),
@@ -2738,7 +2757,9 @@ pub async fn seed_edge(db: &PgPool) -> anyhow::Result<()> {
     for (id, user_id, ride_id, subject, status, assignee_id) in edge_tickets {
         let inserted: (i64,) = sqlx::query_as(
             "INSERT INTO help_tickets (id, user_id, ride_id, subject, status, assignee_id, demo_batch, created_at, updated_at)
-             VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9) RETURNING id",
+             VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)
+             ON CONFLICT (id) DO UPDATE SET status=EXCLUDED.status, demo_batch=EXCLUDED.demo_batch
+             RETURNING id",
         )
         .bind(id)
         .bind(user_id)
@@ -2949,48 +2970,2826 @@ pub async fn seed_edge(db: &PgPool) -> anyhow::Result<()> {
     tracing::info!("Edge-case fixtures seeded ({} batches)", EDGE_BATCH);
     Ok(())
 }
-/// Align each IDENTITY sequence with MAX(id) after seed inserts with fixed ids.
-async fn sync_identity_sequences(db: &PgPool) -> anyhow::Result<()> {
-    for table in [
-        "users",
-        "invites",
-        "passkeys",
-        "biometric_credentials",
-        "recovery_requests",
-        "areas",
-        "groups",
-        "files",
-        "events",
-        "event_signups",
-        "rides",
-        "ride_messages",
-        "notifications",
-        "announcements",
-        "help_tickets",
-        "help_replies",
-        "audit_logs",
-        "login_failures",
-        "oauth_accounts",
-        "reimbursements",
-        "settlements",
-        "settlement_items",
-        "settlement_shares",
-        "settlement_revisions",
-        "proxy_riders",
-        "guide_workflows",
-    ] {
-        let sql = format!(
-            "SELECT setval(pg_get_serial_sequence('{table}', 'id'), COALESCE((SELECT MAX(id) FROM {table}), 1), (SELECT MAX(id) FROM {table}) IS NOT NULL)"
+/// Align every IDENTITY / serial sequence in the active schema with `MAX(col)` after
+/// seed inserts with explicit IDs.
+pub async fn sync_identity_sequences(db: &PgPool) -> anyhow::Result<()> {
+    let seq_cols: Vec<(String, String, String)> = sqlx::query_as(
+        "SELECT table_schema, table_name, column_name
+         FROM information_schema.columns
+         WHERE table_schema = current_schema()
+           AND (is_identity = 'YES' OR column_default LIKE 'nextval%')
+         ORDER BY table_name, ordinal_position",
+    )
+    .fetch_all(db)
+    .await?;
+    for (schema, table, col) in seq_cols {
+        let fq_table = format!(
+            "\"{}\".\"{}\"",
+            schema.replace('"', "\"\""),
+            table.replace('"', "\"\"")
         );
-        sqlx::query(sqlx::AssertSqlSafe(&*sql)).execute(db).await?;
+        let q_col = format!("\"{}\"", col.replace('"', "\"\""));
+        let sql = format!(
+            "SELECT setval(
+                 pg_get_serial_sequence(format('%I.%I', $1, $2), $3),
+                 COALESCE((SELECT MAX({q_col}) FROM {fq_table}), 1),
+                 (SELECT MAX({q_col}) FROM {fq_table}) IS NOT NULL
+             )"
+        );
+        sqlx::query(sqlx::AssertSqlSafe(&*sql))
+            .bind(&schema)
+            .bind(&table)
+            .bind(&col)
+            .execute(db)
+            .await?;
     }
     Ok(())
 }
-/// Scalable fictional membership: `scale` additional members with stable ids
-/// starting at GENERATED_MEMBER_ID_BASE, plus vehicles, service areas and invites.
-async fn seed_scale(db: &PgPool, scale: i64) -> anyhow::Result<()> {
+
+/// Refresh PostgreSQL planner statistics for tables in `current_schema()` only.
+/// Avoids bare `ANALYZE`, which scans every schema owned by the role across the
+/// entire database and can time out or contend on sibling test schemas.
+pub async fn analyze_current_schema(db: &PgPool) -> anyhow::Result<()> {
+    let tables: Vec<(String, String)> = sqlx::query_as(
+        "SELECT schemaname, tablename
+         FROM pg_tables
+         WHERE schemaname = current_schema()
+         ORDER BY tablename",
+    )
+    .fetch_all(db)
+    .await?;
+    if tables.is_empty() {
+        return Ok(());
+    }
+    let list = tables
+        .iter()
+        .map(|(s, t)| {
+            format!(
+                "\"{}\".\"{}\"",
+                s.replace('"', "\"\""),
+                t.replace('"', "\"\"")
+            )
+        })
+        .collect::<Vec<_>>()
+        .join(", ");
+    let sql = format!("ANALYZE {list}");
+    let mut tx = db.begin().await?;
+    sqlx::query("SET LOCAL statement_timeout = 0")
+        .execute(&mut *tx)
+        .await?;
+    sqlx::query(sqlx::AssertSqlSafe(&*sql))
+        .execute(&mut *tx)
+        .await?;
+    tx.commit().await?;
+    Ok(())
+}
+
+/// Minimal valid 1x1 transparent PNG so file download routes have real disk payloads.
+const MINIMAL_PNG: &[u8] = &[
+    0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A, 0x00, 0x00, 0x00, 0x0D, 0x49, 0x48, 0x44, 0x52,
+    0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x01, 0x08, 0x06, 0x00, 0x00, 0x00, 0x1F, 0x15, 0xC4,
+    0x89, 0x00, 0x00, 0x00, 0x0A, 0x49, 0x44, 0x41, 0x54, 0x78, 0x9C, 0x63, 0x00, 0x01, 0x00, 0x00,
+    0x05, 0x00, 0x01, 0x0D, 0x0A, 0x2D, 0xB4, 0x00, 0x00, 0x00, 0x00, 0x49, 0x45, 0x4E, 0x44, 0xAE,
+    0x42, 0x60, 0x82,
+];
+
+/// Comprehensive scenario fixtures stamped with `SCENARIO_BATCH` covering every feature,
+/// state transition, table, hierarchy, and workflow without colliding with `seed_core`,
+/// `seed_edge`, or `seed_scale`.
+pub async fn seed_scenarios(db: &PgPool) -> anyhow::Result<()> {
+    seed_scenarios_with_uploads(db, None).await
+}
+
+/// Like [`seed_scenarios`], and when `uploads_dir` is provided, writes real minimal PNG
+/// artifacts for all seeded `files` rows so `/api/files/{id}` downloads succeed end-to-end.
+pub async fn seed_scenarios_with_uploads(
+    db: &PgPool,
+    uploads_dir: Option<&Path>,
+) -> anyhow::Result<()> {
+    insert_reference_data(db).await?;
+    ensure_demo_batches(db).await?;
+    crate::perms::sync(db).await?;
+
+    let pw = hash_password(DEMO_PASSWORD).map_err(|e| anyhow::anyhow!("{e}"))?;
+    let now_ts = now();
+    let today = today_local();
+    let mut rng = Rng::new();
+
+    // --- 1. Custom non-system role (must exist before inserting users referencing it) ---
+    sqlx::query(
+        "INSERT INTO roles (key, name, description, is_system, created_at)
+         VALUES ('c_scen_usher', '司事接待组', 'Scenario custom usher role for event check-in & ride lookup', 0, $1)
+         ON CONFLICT (key) DO UPDATE SET name = EXCLUDED.name, description = EXCLUDED.description",
+    )
+    .bind(&now_ts)
+    .execute(db)
+    .await?;
+    for perm in [
+        Perm(Page::Events, Act::View).key(),
+        Perm(Page::Events, Act::Update).key(),
+        Perm(Page::Rides, Act::View).key(),
+    ] {
+        sqlx::query("INSERT INTO role_permissions (role_key, permission) VALUES ('c_scen_usher', $1) ON CONFLICT DO NOTHING")
+            .bind(perm)
+            .execute(db)
+            .await?;
+    }
+
+    // --- 2. Scenario users (91001..=91015) ---
+    let super_id = SCENARIO_ID_BASE; // 91001
+    let admin_id = SCENARIO_ID_BASE + 1; // 91002
+    let lead_id = SCENARIO_ID_BASE + 2; // 91003
+    let transport_id = SCENARIO_ID_BASE + 3; // 91004
+    let fin_creator_id = SCENARIO_ID_BASE + 4; // 91005
+    let fin_payer_id = SCENARIO_ID_BASE + 5; // 91006
+    let carpool_driver_id = SCENARIO_ID_BASE + 6; // 91007
+    let single_driver_id = SCENARIO_ID_BASE + 7; // 91008
+    let elder_id = SCENARIO_ID_BASE + 8; // 91009
+    let caregiver_id = SCENARIO_ID_BASE + 9; // 91010
+    let fam_member_id = SCENARIO_ID_BASE + 10; // 91011
+    let fam_applicant_id = SCENARIO_ID_BASE + 11; // 91012
+    let usher_id = SCENARIO_ID_BASE + 12; // 91013
+    let pending_id = SCENARIO_ID_BASE + 13; // 91014
+    let oauth_id = SCENARIO_ID_BASE + 14; // 91015
+
+    let scen_users = [
+        (
+            super_id,
+            "Scenario Superadmin",
+            "scen.superadmin@example.org",
+            "012-310 9101",
+            "superadmin",
+            "active",
+            "zh",
+            1i64,
+            4i64,
+            true,
+            true,
+        ),
+        (
+            admin_id,
+            "Scenario Admin",
+            "scen.admin@example.org",
+            "012-310 9102",
+            "admin",
+            "active",
+            "zh",
+            0,
+            1,
+            true,
+            false,
+        ),
+        (
+            lead_id,
+            "Scenario Traffic Lead",
+            "scen.trafficlead@example.org",
+            "012-310 9103",
+            "traffic_head,driver",
+            "active",
+            "zh",
+            1,
+            3,
+            true,
+            false,
+        ),
+        (
+            transport_id,
+            "Scenario Transport",
+            "scen.transport@example.org",
+            "012-310 9104",
+            "transport,driver",
+            "active",
+            "zh",
+            0,
+            2,
+            false,
+            false,
+        ),
+        (
+            fin_creator_id,
+            "Scenario Finance Maker",
+            "scen.finance1@example.org",
+            "012-310 9105",
+            "finance",
+            "active",
+            "zh",
+            0,
+            1,
+            true,
+            false,
+        ),
+        (
+            fin_payer_id,
+            "Scenario Finance Checker",
+            "scen.finance2@example.org",
+            "012-310 9106",
+            "finance",
+            "active",
+            "en",
+            0,
+            1,
+            true,
+            false,
+        ),
+        (
+            carpool_driver_id,
+            "Scenario Carpool Driver",
+            "scen.carpool@example.org",
+            "012-310 9107",
+            "driver",
+            "active",
+            "zh",
+            1,
+            4,
+            false,
+            false,
+        ),
+        (
+            single_driver_id,
+            "Scenario Single Driver",
+            "scen.driver@example.org",
+            "012-310 9108",
+            "driver",
+            "active",
+            "zh",
+            0,
+            1,
+            false,
+            false,
+        ),
+        (
+            elder_id,
+            "Scenario Elder",
+            "scen.elder@example.org",
+            "012-310 9109",
+            "",
+            "active",
+            "zh",
+            0,
+            1,
+            false,
+            false,
+        ),
+        (
+            caregiver_id,
+            "Scenario Caregiver",
+            "scen.caregiver@example.org",
+            "012-310 9110",
+            "",
+            "active",
+            "zh",
+            0,
+            1,
+            false,
+            false,
+        ),
+        (
+            fam_member_id,
+            "Scenario Family Member",
+            "scen.familymember@example.org",
+            "012-310 9111",
+            "",
+            "active",
+            "zh",
+            0,
+            1,
+            false,
+            false,
+        ),
+        (
+            fam_applicant_id,
+            "Scenario Family Applicant",
+            "scen.familyapplicant@example.org",
+            "012-310 9112",
+            "",
+            "active",
+            "zh",
+            0,
+            1,
+            false,
+            false,
+        ),
+        (
+            usher_id,
+            "Scenario Usher",
+            "scen.usher@example.org",
+            "012-310 9113",
+            "c_scen_usher",
+            "active",
+            "en",
+            0,
+            1,
+            false,
+            false,
+        ),
+        (
+            pending_id,
+            "Scenario Pending",
+            "scen.pending@example.org",
+            "012-310 9114",
+            "",
+            "pending",
+            "zh",
+            0,
+            1,
+            false,
+            false,
+        ),
+        (
+            oauth_id,
+            "Scenario OAuth EN",
+            "scen.oauth@example.org",
+            "012-310 9115",
+            "",
+            "active",
+            "en",
+            0,
+            1,
+            false,
+            false,
+        ),
+    ];
+
+    for (uid, name, email, phone, roles, status, lang, carpool, spare, totp, passkey) in scen_users
+    {
+        insert_member(
+            db,
+            &mut rng,
+            uid,
+            name,
+            email,
+            phone,
+            roles,
+            status,
+            SCENARIO_BATCH,
+            &pw,
+            totp,
+            passkey,
+        )
+        .await;
+        sqlx::query(
+            "UPDATE users SET lang=$1, carpool_enabled=$2, spare_seats=$3, avatar_color='#2E6F40', avatar_icon='car' WHERE id=$4",
+        )
+        .bind(lang)
+        .bind(carpool)
+        .bind(spare)
+        .bind(uid)
+        .execute(db)
+        .await?;
+    }
+    sqlx::query(
+        "UPDATE users SET readiness_prompt_mins=60, gate_wait_mins=10, caregiver_user_id=$1, onboarding_dismissed_at=$2 WHERE id=$3",
+    )
+    .bind(caregiver_id)
+    .bind(&now_ts)
+    .bind(elder_id)
+    .execute(db)
+    .await?;
+    sqlx::query("UPDATE users SET password_hash=NULL WHERE id=$1")
+        .bind(oauth_id)
+        .execute(db)
+        .await?;
+
+    // Biometric credential (65-byte uncompressed SEC1 key) & OAuth link
+    let bio_pubkey: Vec<u8> = vec![0x04; 65];
+    sqlx::query(
+        "INSERT INTO biometric_credentials (id, user_id, cred_id, public_key, label, attested, created_at, updated_at)
+         VALUES ($1,$2,$3,$4,$5,TRUE,$6,$6) ON CONFLICT (cred_id) DO NOTHING",
+    )
+    .bind(SCENARIO_ID_BASE)
+    .bind(super_id)
+    .bind("scen-bio-cred-91001-01")
+    .bind(&bio_pubkey)
+    .bind("Scenario Pixel 9")
+    .bind(&now_ts)
+    .execute(db)
+    .await?;
+    sqlx::query(
+        "INSERT INTO oauth_accounts (id, user_id, provider, provider_user_id, email, created_at)
+         VALUES ($1,$2,'google','scen-google-91015','scen.oauth@example.org',$3)
+         ON CONFLICT (provider, provider_user_id) DO NOTHING",
+    )
+    .bind(SCENARIO_ID_BASE)
+    .bind(oauth_id)
+    .bind(&now_ts)
+    .execute(db)
+    .await?;
+
+    // --- 3. Hierarchical sub-groups & group memberships ---
+    let (college_gid,): (i64,) = sqlx::query_as(
+        "INSERT INTO groups (name, description, is_all, parent_id, is_visitor, demo_batch)
+         VALUES ('青年团契 · 大学组', 'Sub-group under 青年团契', 0, 2, 0, $1)
+         ON CONFLICT (name) DO UPDATE SET parent_id = EXCLUDED.parent_id, description = EXCLUDED.description
+         RETURNING id",
+    )
+    .bind(SCENARIO_BATCH)
+    .fetch_one(db)
+    .await?;
+    let (freshman_gid,): (i64,) = sqlx::query_as(
+        "INSERT INTO groups (name, description, is_all, parent_id, is_visitor, demo_batch)
+         VALUES ('大学组 · 新生迎新', 'Grandchild group for hierarchy tests', 0, $1, 0, $2)
+         ON CONFLICT (name) DO UPDATE SET parent_id = EXCLUDED.parent_id, description = EXCLUDED.description
+         RETURNING id",
+    )
+    .bind(college_gid)
+    .bind(SCENARIO_BATCH)
+    .fetch_one(db)
+    .await?;
+
+    for (uid, gid) in [
+        (super_id, 1i64),
+        (admin_id, 1),
+        (lead_id, 2),
+        (lead_id, 3),
+        (transport_id, 2),
+        (carpool_driver_id, 2),
+        (carpool_driver_id, 3),
+        (single_driver_id, college_gid),
+        (elder_id, college_gid),
+        (caregiver_id, freshman_gid),
+        (fam_member_id, freshman_gid),
+        (usher_id, 2),
+        (oauth_id, 1),
+    ] {
+        sqlx::query("INSERT INTO group_members (group_id, user_id, demo_batch) VALUES ($1,$2,$3) ON CONFLICT DO NOTHING")
+            .bind(gid)
+            .bind(uid)
+            .bind(SCENARIO_BATCH)
+            .execute(db)
+            .await?;
+    }
+
+    // --- 4. Files & optional PNG materialization ---
+    if let Some(dir) = uploads_dir {
+        std::fs::create_dir_all(dir)?;
+    }
+    let scen_files = [
+        (
+            SCENARIO_ID_BASE,
+            super_id,
+            "scen_avatar_super.png",
+            "super_avatar.png",
+        ),
+        (
+            SCENARIO_ID_BASE + 1,
+            admin_id,
+            "scen_area_pj.png",
+            "pj_area.png",
+        ),
+        (
+            SCENARIO_ID_BASE + 2,
+            admin_id,
+            "scen_area_ss2.png",
+            "ss2_area.png",
+        ),
+        (
+            SCENARIO_ID_BASE + 3,
+            lead_id,
+            "scen_event_cover.png",
+            "event_cover.png",
+        ),
+        (
+            SCENARIO_ID_BASE + 4,
+            carpool_driver_id,
+            "scen_reimb_grab.png",
+            "grab_receipt.png",
+        ),
+        (
+            SCENARIO_ID_BASE + 5,
+            single_driver_id,
+            "scen_reimb_mileage.png",
+            "toll_receipt.png",
+        ),
+        (
+            SCENARIO_ID_BASE + 6,
+            lead_id,
+            "scen_settle_qr.png",
+            "duitnow_qr.png",
+        ),
+        (
+            SCENARIO_ID_BASE + 7,
+            lead_id,
+            "scen_settle_item.png",
+            "court_receipt.png",
+        ),
+        (
+            SCENARIO_ID_BASE + 8,
+            elder_id,
+            "scen_settle_proof.png",
+            "payment_proof.png",
+        ),
+        (
+            SCENARIO_ID_BASE + 9,
+            usher_id,
+            "scen_help_guide.png",
+            "screenshot.png",
+        ),
+    ];
+    for (fid, owner_id, stored_name, orig_name) in scen_files {
+        if let Some(dir) = uploads_dir {
+            std::fs::write(dir.join(stored_name), MINIMAL_PNG)?;
+        }
+        sqlx::query(
+            "INSERT INTO files (id, owner_id, stored_name, mime, original_name, size, demo_batch, created_at)
+             VALUES ($1,$2,$3,'image/png',$4,$5,$6,$7)
+             ON CONFLICT (id) DO UPDATE SET stored_name=EXCLUDED.stored_name, size=EXCLUDED.size, demo_batch=EXCLUDED.demo_batch",
+        )
+        .bind(fid)
+        .bind(owner_id)
+        .bind(stored_name)
+        .bind(orig_name)
+        .bind(MINIMAL_PNG.len() as i64)
+        .bind(SCENARIO_BATCH)
+        .bind(&now_ts)
+        .execute(db)
+        .await?;
+    }
+    sqlx::query("UPDATE users SET photo_file_id = $1 WHERE id IN ($2, $3)")
+        .bind(SCENARIO_ID_BASE)
+        .bind(super_id)
+        .bind(carpool_driver_id)
+        .execute(db)
+        .await?;
+
+    // --- 5. Vehicles, driver areas, area fares, area photos, geocode cache ---
+    sqlx::query("UPDATE vehicles SET is_active = 0 WHERE user_id IN ($1, $2, $3, $4)")
+        .bind(lead_id)
+        .bind(transport_id)
+        .bind(carpool_driver_id)
+        .bind(single_driver_id)
+        .execute(db)
+        .await?;
+    for (uid, model, color, plate, seats, vtype, wc, ls, cs, active) in [
+        (
+            carpool_driver_id,
+            "Toyota Vellfire",
+            "白色",
+            "SCN 7001",
+            7i64,
+            "standard",
+            1i64,
+            1i64,
+            1i64,
+            1i64,
+        ),
+        (
+            carpool_driver_id,
+            "Perodua Bezza",
+            "银色",
+            "SCN 7002",
+            5,
+            "standard",
+            0,
+            0,
+            0,
+            0,
+        ),
+        (
+            single_driver_id,
+            "Hyundai Staria",
+            "灰色",
+            "SCN 8001",
+            8,
+            "other",
+            1,
+            0,
+            1,
+            1,
+        ),
+        (
+            lead_id,
+            "Honda CR-V",
+            "蓝色",
+            "SCN 3001",
+            5,
+            "standard",
+            0,
+            1,
+            0,
+            1,
+        ),
+        (
+            transport_id,
+            "Proton X70",
+            "黑色",
+            "SCN 4001",
+            5,
+            "standard",
+            0,
+            0,
+            0,
+            1,
+        ),
+    ] {
+        sqlx::query(
+            "INSERT INTO vehicles (user_id, model, color, plate, seats, demo_batch, vehicle_type, wheelchair_ok, low_step, child_seat, is_active, updated_at)
+             VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)
+             ON CONFLICT (user_id, plate) DO UPDATE SET
+                 model=EXCLUDED.model, color=EXCLUDED.color, seats=EXCLUDED.seats,
+                 vehicle_type=EXCLUDED.vehicle_type, wheelchair_ok=EXCLUDED.wheelchair_ok,
+                 low_step=EXCLUDED.low_step, child_seat=EXCLUDED.child_seat,
+                 is_active=EXCLUDED.is_active, demo_batch=EXCLUDED.demo_batch, updated_at=EXCLUDED.updated_at",
+        )
+        .bind(uid)
+        .bind(model)
+        .bind(color)
+        .bind(plate)
+        .bind(seats)
+        .bind(SCENARIO_BATCH)
+        .bind(vtype)
+        .bind(wc)
+        .bind(ls)
+        .bind(cs)
+        .bind(active)
+        .bind(&now_ts)
+        .execute(db)
+        .await?;
+    }
+    for (uid, aid) in [
+        (lead_id, 1i64),
+        (lead_id, 2),
+        (transport_id, 1),
+        (transport_id, 3),
+        (carpool_driver_id, 1),
+        (carpool_driver_id, 2),
+        (carpool_driver_id, 4),
+        (carpool_driver_id, 5),
+        (single_driver_id, 1),
+        (single_driver_id, 6),
+    ] {
+        sqlx::query("INSERT INTO driver_areas (user_id, area_id, demo_batch) VALUES ($1,$2,$3) ON CONFLICT DO NOTHING")
+            .bind(uid)
+            .bind(aid)
+            .bind(SCENARIO_BATCH)
+            .execute(db)
+            .await?;
+    }
+    for a in 1i64..=6 {
+        for b in a..=6 {
+            let cents = if a == b { 500 } else { 800 + (b - a) * 300 };
+            sqlx::query(
+                "INSERT INTO area_fares (area_a_id, area_b_id, amount_cents, updated_at)
+                 VALUES ($1,$2,$3,$4)
+                 ON CONFLICT (area_a_id, area_b_id) DO UPDATE SET amount_cents=EXCLUDED.amount_cents, updated_at=EXCLUDED.updated_at",
+            )
+            .bind(a)
+            .bind(b)
+            .bind(cents)
+            .bind(&now_ts)
+            .execute(db)
+            .await?;
+        }
+    }
+    for (id, area_id, file_id, caption, sort_order) in [
+        (
+            SCENARIO_ID_BASE,
+            1i64,
+            SCENARIO_ID_BASE + 1,
+            "PJ Church North Entrance",
+            0i64,
+        ),
+        (
+            SCENARIO_ID_BASE + 1,
+            2,
+            SCENARIO_ID_BASE + 2,
+            "SS2 Pickup Landmark",
+            1,
+        ),
+    ] {
+        sqlx::query(
+            "INSERT INTO area_photos (id, area_id, file_id, caption, sort_order, created_by, demo_batch, created_at, updated_at)
+             VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$8) ON CONFLICT (file_id) DO NOTHING",
+        )
+        .bind(id)
+        .bind(area_id)
+        .bind(file_id)
+        .bind(caption)
+        .bind(sort_order)
+        .bind(admin_id)
+        .bind(SCENARIO_BATCH)
+        .bind(&now_ts)
+        .execute(db)
+        .await?;
+    }
+    for (q, lat, lng, approx) in [
+        ("PJ State CMC 教会", 3.1069f64, 101.6458f64, false),
+        ("PJ 室内羽球馆", 3.1125, 101.6305, false),
+        ("Sunway Pyramid 保龄球馆", 3.0733, 101.6075, true),
+    ] {
+        sqlx::query(
+            "INSERT INTO geocode_cache (query, lat, lng, approx, updated_at)
+             VALUES ($1,$2,$3,$4,$5) ON CONFLICT (query) DO NOTHING",
+        )
+        .bind(q)
+        .bind(lat)
+        .bind(lng)
+        .bind(approx)
+        .bind(&now_ts)
+        .execute(db)
+        .await?;
+    }
+
+    // --- 6. Scenario events (9101..=9106) & signups ---
+    let ev_draft = SCENARIO_EVENT_ID_BASE; // 9101
+    let ev_pub = SCENARIO_EVENT_ID_BASE + 1; // 9102
+    let ev_full = SCENARIO_EVENT_ID_BASE + 2; // 9103
+    let ev_finished = SCENARIO_EVENT_ID_BASE + 3; // 9104
+    let ev_cancelled = SCENARIO_EVENT_ID_BASE + 4; // 9105
+    let ev_series2 = SCENARIO_EVENT_ID_BASE + 5; // 9106
+    let next_sun = next_weekday(today, Weekday::Sun);
+    let past_day = today - Duration::days(12);
+    let tomorrow = today + Duration::days(1);
+
+    let scen_events = [
+        (
+            ev_draft,
+            "草稿：青年交流营",
+            "other",
+            "Draft scenario event",
+            kl(tomorrow + Duration::days(10), 9, 0),
+            "PJ State CMC 教会",
+            30i64,
+            "draft",
+            None::<&str>,
+            None::<&str>,
+            0i64,
+            Some(1i64),
+            None::<i64>,
+            Some("📝"),
+        ),
+        (
+            ev_pub,
+            "场景主日崇拜与宵夜团契",
+            "other",
+            "Full transport + mileage + check-in event",
+            kl(next_sun, 9, 30),
+            "PJ State CMC 教会",
+            50,
+            "published",
+            Some("SCEN26"),
+            Some("scen-series-1"),
+            1,
+            Some(1),
+            Some(SCENARIO_ID_BASE + 3),
+            Some("⛪"),
+        ),
+        (
+            ev_full,
+            "场景满额皮划艇",
+            "kayak",
+            "Full capacity waitlist event",
+            kl(tomorrow + Duration::days(3), 8, 0),
+            "Putrajaya 湖畔",
+            2,
+            "published",
+            None,
+            None,
+            0,
+            Some(6),
+            None,
+            Some("🛶"),
+        ),
+        (
+            ev_finished,
+            "场景已结束羽毛球赛",
+            "badminton",
+            "Completed event for post-event reports & settlements",
+            kl(past_day, 19, 30),
+            "PJ 室内羽球馆",
+            16,
+            "finished",
+            Some("SCENFIN"),
+            None,
+            1,
+            Some(2),
+            None,
+            Some("🏸"),
+        ),
+        (
+            ev_cancelled,
+            "场景已取消保龄球",
+            "bowling",
+            "Cancelled scenario event",
+            kl(tomorrow + Duration::days(4), 14, 0),
+            "Sunway Pyramid 保龄球馆",
+            12,
+            "cancelled",
+            None,
+            None,
+            0,
+            Some(4),
+            None,
+            Some("🎳"),
+        ),
+        (
+            ev_series2,
+            "场景主日崇拜与宵夜团契 · 下周",
+            "other",
+            "Series follow-up event",
+            kl(next_sun + Duration::days(7), 9, 30),
+            "PJ State CMC 教会",
+            50,
+            "published",
+            Some("SCEN27"),
+            Some("scen-series-1"),
+            1,
+            Some(1),
+            None,
+            Some("⛪"),
+        ),
+    ];
+    for (
+        eid,
+        title,
+        kind,
+        desc,
+        starts_at,
+        loc,
+        cap,
+        status,
+        code,
+        series,
+        mileage,
+        area_id,
+        photo_id,
+        icon,
+    ) in scen_events
+    {
+        sqlx::query(
+            "INSERT INTO events (id, title, kind, description, starts_at, location, capacity, cost_note, created_by, signup_deadline, status, demo_batch, attendance_enabled, checkin_code, series_id, mileage_claimable, area_id, photo_file_id, icon)
+             VALUES ($1,$2,$3,$4,$5,$6,$7,'RM15 预算',$8,$9,$10,$11,1,$12,$13,$14,$15,$16,$17)
+             ON CONFLICT (id) DO UPDATE SET
+                 title=EXCLUDED.title, starts_at=EXCLUDED.starts_at, status=EXCLUDED.status,
+                 checkin_code=EXCLUDED.checkin_code, photo_file_id=EXCLUDED.photo_file_id, demo_batch=EXCLUDED.demo_batch",
+        )
+        .bind(eid)
+        .bind(title)
+        .bind(kind)
+        .bind(desc)
+        .bind(&starts_at)
+        .bind(loc)
+        .bind(cap)
+        .bind(lead_id)
+        .bind(format!("{}T08:00", &starts_at[..10]))
+        .bind(status)
+        .bind(SCENARIO_BATCH)
+        .bind(code)
+        .bind(series)
+        .bind(mileage)
+        .bind(area_id)
+        .bind(photo_id)
+        .bind(icon)
+        .execute(db)
+        .await?;
+    }
+    for (eid, gid) in [
+        (ev_draft, 2i64),
+        (ev_pub, college_gid),
+        (ev_pub, 3),
+        (ev_full, 1),
+        (ev_finished, 2),
+        (ev_finished, 3),
+        (ev_cancelled, 2),
+        (ev_series2, college_gid),
+    ] {
+        sqlx::query("INSERT INTO event_groups (event_id, group_id, demo_batch) VALUES ($1,$2,$3) ON CONFLICT DO NOTHING")
+            .bind(eid)
+            .bind(gid)
+            .bind(SCENARIO_BATCH)
+            .execute(db)
+            .await?;
+    }
+    for gid in [2i64, 3i64] {
+        sqlx::query("INSERT INTO event_attribution_groups (event_id, group_id) VALUES ($1,$2) ON CONFLICT DO NOTHING")
+            .bind(ev_pub)
+            .bind(gid)
+            .execute(db)
+            .await?;
+    }
+    for (
+        eid,
+        uid,
+        status,
+        need_ride,
+        offer_drive,
+        offer_seats,
+        self_tr,
+        attended,
+        as_grp,
+        pass_code,
+    ) in [
+        (
+            ev_pub,
+            elder_id,
+            "going",
+            1i64,
+            0i64,
+            0i64,
+            0i64,
+            Some(1i64),
+            Some(college_gid),
+            Some("PASS9102"),
+        ),
+        (
+            ev_pub,
+            caregiver_id,
+            "going",
+            1,
+            0,
+            0,
+            0,
+            Some(1),
+            Some(freshman_gid),
+            Some("PASS9103"),
+        ),
+        (
+            ev_pub,
+            fam_member_id,
+            "going",
+            0,
+            0,
+            0,
+            1,
+            None,
+            Some(freshman_gid),
+            None,
+        ),
+        (
+            ev_pub,
+            carpool_driver_id,
+            "going",
+            0,
+            1,
+            4,
+            0,
+            Some(1),
+            Some(2),
+            None,
+        ),
+        (
+            ev_pub,
+            single_driver_id,
+            "going",
+            0,
+            1,
+            1,
+            0,
+            None,
+            Some(college_gid),
+            None,
+        ),
+        (
+            ev_pub,
+            oauth_id,
+            "waitlist",
+            0,
+            0,
+            0,
+            0,
+            None,
+            Some(1),
+            None,
+        ),
+        (
+            ev_pub,
+            fam_applicant_id,
+            "cancelled",
+            0,
+            0,
+            0,
+            0,
+            None,
+            Some(1),
+            None,
+        ),
+        (ev_full, elder_id, "going", 0, 0, 0, 0, None, Some(1), None),
+        (
+            ev_full,
+            caregiver_id,
+            "going",
+            0,
+            0,
+            0,
+            0,
+            None,
+            Some(1),
+            None,
+        ),
+        (
+            ev_full,
+            fam_member_id,
+            "waitlist",
+            0,
+            0,
+            0,
+            0,
+            None,
+            Some(1),
+            None,
+        ),
+        (
+            ev_finished,
+            elder_id,
+            "going",
+            1,
+            0,
+            0,
+            0,
+            Some(1),
+            Some(2),
+            None,
+        ),
+        (
+            ev_finished,
+            caregiver_id,
+            "going",
+            1,
+            0,
+            0,
+            0,
+            Some(1),
+            Some(3),
+            None,
+        ),
+        (
+            ev_finished,
+            carpool_driver_id,
+            "going",
+            0,
+            1,
+            3,
+            0,
+            Some(1),
+            Some(2),
+            None,
+        ),
+        (
+            ev_finished,
+            usher_id,
+            "going",
+            0,
+            0,
+            0,
+            1,
+            Some(0),
+            Some(2),
+            None,
+        ),
+    ] {
+        sqlx::query(
+            "INSERT INTO event_signups (event_id, user_id, status, need_ride, offer_drive, offer_seats, self_transport, attended, as_group_id, pass_code, demo_batch)
+             VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)
+             ON CONFLICT (event_id, user_id) DO UPDATE SET
+                 status=EXCLUDED.status, need_ride=EXCLUDED.need_ride, offer_drive=EXCLUDED.offer_drive,
+                 offer_seats=EXCLUDED.offer_seats, self_transport=EXCLUDED.self_transport,
+                 attended=EXCLUDED.attended, pass_code=EXCLUDED.pass_code, demo_batch=EXCLUDED.demo_batch",
+        )
+        .bind(eid)
+        .bind(uid)
+        .bind(status)
+        .bind(need_ride)
+        .bind(offer_drive)
+        .bind(offer_seats)
+        .bind(self_tr)
+        .bind(attended)
+        .bind(as_grp)
+        .bind(pass_code)
+        .bind(SCENARIO_BATCH)
+        .execute(db)
+        .await?;
+    }
+
+    // --- 7. Rides (91001..=91016): all 10 statuses, both legs, paired rides, readiness, proxy, locations, chat ---
+    let mut ride_ids = Vec::with_capacity(16);
+    for offset in 0..16 {
+        ride_ids.push(SCENARIO_ID_BASE + offset);
+    }
+    let future_pickup = kl(next_sun, 8, 30);
+    let return_pickup = kl(next_sun, 12, 15);
+    let past_pickup = kl(past_day, 18, 45);
+    let soon_pickup = kl(tomorrow, 9, 0);
+
+    #[allow(clippy::type_complexity)]
+    let scen_rides: Vec<(
+        i64,
+        i64,
+        Option<i64>,
+        Option<i64>,
+        &str,
+        i64,
+        &str,
+        &str,
+        i64,
+        &str,
+        &str,
+        &str,
+        Option<i64>,
+        &str,
+        Option<&str>,
+        i64,
+        &str,
+        i64,
+        &str,
+        Option<i64>,
+        &str,
+        &str,
+        i64,
+        i64,
+        i64,
+        Option<i64>,
+        &str,
+        &str,
+        &str,
+    )> = vec![
+        (
+            ride_ids[0],
+            elder_id,
+            None,
+            Some(ev_pub),
+            &future_pickup,
+            1,
+            "No 18, Jalan PJ 1",
+            "PJ State CMC 教会",
+            1,
+            "wheelchair",
+            "Needs ramp",
+            "pending_driver",
+            None,
+            "outbound",
+            None,
+            1,
+            "unconfirmed",
+            0,
+            "direct_home",
+            Some(college_gid),
+            "",
+            "",
+            0,
+            0,
+            1,
+            None,
+            "",
+            "",
+            "",
+        ),
+        (
+            ride_ids[1],
+            caregiver_id,
+            Some(single_driver_id),
+            Some(ev_pub),
+            &future_pickup,
+            2,
+            "Jalan SS2/24",
+            "PJ State CMC 教会",
+            1,
+            "",
+            "",
+            "pending_passenger",
+            None,
+            "outbound",
+            None,
+            0,
+            "unconfirmed",
+            0,
+            "unspecified",
+            Some(freshman_gid),
+            "",
+            "",
+            0,
+            0,
+            0,
+            None,
+            "",
+            "",
+            "",
+        ),
+        (
+            ride_ids[2],
+            fam_member_id,
+            Some(single_driver_id),
+            Some(ev_pub),
+            &soon_pickup,
+            2,
+            "Jalan SS2/25",
+            "PJ State CMC 教会",
+            1,
+            "",
+            "",
+            "pending_approval",
+            None,
+            "outbound",
+            None,
+            0,
+            "ready",
+            0,
+            "unspecified",
+            Some(freshman_gid),
+            "",
+            "",
+            0,
+            0,
+            0,
+            None,
+            "",
+            "",
+            "",
+        ),
+        (
+            ride_ids[3],
+            elder_id,
+            Some(carpool_driver_id),
+            Some(ev_pub),
+            &soon_pickup,
+            1,
+            "No 18, Jalan PJ 1",
+            "PJ State CMC 教会",
+            1,
+            "",
+            "",
+            "pending_driver_confirm",
+            None,
+            "outbound",
+            None,
+            1,
+            "ready",
+            0,
+            "unspecified",
+            Some(college_gid),
+            "",
+            "",
+            0,
+            0,
+            0,
+            None,
+            "",
+            "",
+            "",
+        ),
+        (
+            ride_ids[4],
+            elder_id,
+            Some(carpool_driver_id),
+            Some(ev_pub),
+            &future_pickup,
+            1,
+            "No 18, Jalan PJ 1",
+            "PJ State CMC 教会",
+            1,
+            "wheelchair",
+            "Paired outbound",
+            "confirmed",
+            Some(SCENARIO_ID_BASE),
+            "outbound",
+            Some("ready"),
+            0,
+            "ready",
+            0,
+            "unspecified",
+            Some(college_gid),
+            "approved for Sunday",
+            "",
+            0,
+            0,
+            1,
+            Some(caregiver_id),
+            "Elder Parent",
+            "012-310 9199",
+            "parent",
+        ),
+        (
+            ride_ids[5],
+            elder_id,
+            Some(carpool_driver_id),
+            Some(ev_pub),
+            &return_pickup,
+            1,
+            "PJ State CMC 教会",
+            "宵夜团契 · SS2",
+            1,
+            "wheelchair",
+            "Paired return supper",
+            "confirmed",
+            Some(SCENARIO_ID_BASE),
+            "return",
+            Some("delayed_5m"),
+            0,
+            "delayed_5m",
+            5,
+            "supper",
+            Some(college_gid),
+            "return supper leg",
+            "",
+            0,
+            0,
+            0,
+            Some(caregiver_id),
+            "Elder Parent",
+            "012-310 9199",
+            "parent",
+        ),
+        (
+            ride_ids[6],
+            caregiver_id,
+            Some(single_driver_id),
+            Some(ev_pub),
+            &soon_pickup,
+            2,
+            "Jalan SS2/24",
+            "PJ State CMC 教会",
+            1,
+            "",
+            "Live trip now",
+            "in_progress",
+            Some(SCENARIO_ID_BASE + 1),
+            "outbound",
+            Some("delayed_10m"),
+            0,
+            "delayed_10m",
+            10,
+            "direct_home",
+            Some(freshman_gid),
+            "on the way",
+            "",
+            0,
+            0,
+            0,
+            None,
+            "",
+            "",
+            "",
+        ),
+        (
+            ride_ids[7],
+            caregiver_id,
+            Some(carpool_driver_id),
+            Some(ev_pub),
+            &return_pickup,
+            2,
+            "PJ State CMC 教会",
+            "Jalan SS2/24",
+            1,
+            "",
+            "Return direct home",
+            "completed",
+            Some(SCENARIO_ID_BASE + 2),
+            "return",
+            Some("ready"),
+            0,
+            "ready",
+            0,
+            "direct_home",
+            Some(freshman_gid),
+            "",
+            "",
+            0,
+            1,
+            0,
+            None,
+            "",
+            "",
+            "",
+        ),
+        (
+            ride_ids[8],
+            fam_member_id,
+            Some(carpool_driver_id),
+            Some(ev_pub),
+            &return_pickup,
+            4,
+            "PJ State CMC 教会",
+            "SS15",
+            1,
+            "",
+            "Unspecified return excluded",
+            "completed",
+            Some(SCENARIO_ID_BASE + 3),
+            "return",
+            Some("ready"),
+            0,
+            "ready",
+            0,
+            "unspecified",
+            Some(freshman_gid),
+            "",
+            "",
+            1,
+            0,
+            0,
+            None,
+            "",
+            "",
+            "",
+        ),
+        (
+            ride_ids[9],
+            usher_id,
+            Some(single_driver_id),
+            Some(ev_pub),
+            &return_pickup,
+            1,
+            "PJ State CMC 教会",
+            "PJ New Town",
+            1,
+            "",
+            "Cancelled by passenger",
+            "cancelled",
+            None,
+            "return",
+            Some("unable_to_join"),
+            0,
+            "unable_to_join",
+            0,
+            "supper",
+            Some(2),
+            "",
+            "",
+            0,
+            0,
+            0,
+            None,
+            "",
+            "",
+            "",
+        ),
+        (
+            ride_ids[10],
+            oauth_id,
+            Some(single_driver_id),
+            Some(ev_finished),
+            &past_pickup,
+            2,
+            "SS2 Gate",
+            "PJ 室内羽球馆",
+            1,
+            "",
+            "",
+            "no_show",
+            None,
+            "outbound",
+            None,
+            0,
+            "unconfirmed",
+            0,
+            "unspecified",
+            Some(1),
+            "",
+            "",
+            0,
+            0,
+            0,
+            None,
+            "",
+            "",
+            "",
+        ),
+        (
+            ride_ids[11],
+            caregiver_id,
+            Some(single_driver_id),
+            Some(ev_finished),
+            &past_pickup,
+            2,
+            "SS2 Gate",
+            "PJ 室内羽球馆",
+            1,
+            "",
+            "",
+            "alt_transport",
+            None,
+            "outbound",
+            None,
+            0,
+            "unable_to_join",
+            0,
+            "unspecified",
+            Some(3),
+            "",
+            "",
+            0,
+            0,
+            0,
+            None,
+            "",
+            "",
+            "",
+        ),
+        (
+            ride_ids[12],
+            elder_id,
+            Some(carpool_driver_id),
+            Some(ev_pub),
+            &future_pickup,
+            1,
+            "Visitor Pickup 1",
+            "PJ State CMC 教会",
+            1,
+            "",
+            "Visitor open unclaimed",
+            "pending_driver",
+            None,
+            "outbound",
+            None,
+            0,
+            "unconfirmed",
+            0,
+            "unspecified",
+            Some(4),
+            "",
+            "",
+            0,
+            0,
+            1,
+            None,
+            "Visitor One",
+            "012-319 0001",
+            "visitor",
+        ),
+        (
+            ride_ids[13],
+            caregiver_id,
+            Some(single_driver_id),
+            Some(ev_pub),
+            &soon_pickup,
+            2,
+            "Visitor Pickup 2",
+            "PJ State CMC 教会",
+            1,
+            "",
+            "Visitor claimed live",
+            "in_progress",
+            Some(SCENARIO_ID_BASE + 4),
+            "outbound",
+            Some("ready"),
+            0,
+            "ready",
+            0,
+            "unspecified",
+            Some(4),
+            "",
+            "",
+            0,
+            0,
+            1,
+            None,
+            "Visitor Two",
+            "012-319 0002",
+            "visitor",
+        ),
+        (
+            ride_ids[14],
+            fam_member_id,
+            Some(carpool_driver_id),
+            Some(ev_finished),
+            &past_pickup,
+            2,
+            "Visitor Pickup 3",
+            "PJ 室内羽球馆",
+            1,
+            "",
+            "Visitor completed",
+            "completed",
+            Some(SCENARIO_ID_BASE + 2),
+            "outbound",
+            Some("ready"),
+            0,
+            "ready",
+            0,
+            "unspecified",
+            Some(4),
+            "",
+            "",
+            0,
+            0,
+            1,
+            None,
+            "Visitor Three",
+            "012-319 0003",
+            "visitor",
+        ),
+        (
+            ride_ids[15],
+            usher_id,
+            None,
+            Some(ev_cancelled),
+            &soon_pickup,
+            1,
+            "Visitor Pickup 4",
+            "Sunway Pyramid 保龄球馆",
+            1,
+            "",
+            "Cancelled event visitor",
+            "cancelled",
+            None,
+            "outbound",
+            None,
+            0,
+            "unable_to_join",
+            0,
+            "unspecified",
+            Some(4),
+            "",
+            "",
+            0,
+            0,
+            1,
+            None,
+            "Visitor Four",
+            "012-319 0004",
+            "visitor",
+        ),
+    ];
+
+    for (
+        rid,
+        pid,
+        did,
+        eid,
+        p_at,
+        area_id,
+        p_addr,
+        dest,
+        seats,
+        assist,
+        notes,
+        status,
+        trip_id,
+        leg,
+        _readiness_hint,
+        needs_att,
+        readiness_st,
+        delay_mins,
+        supper,
+        as_gid,
+        attn_reason,
+        _unused,
+        reimb_excl,
+        mileage_rec,
+        is_proxy,
+        _cg,
+        r_name,
+        r_phone,
+        r_rel,
+    ) in scen_rides
+    {
+        let started_at = matches!(status, "in_progress" | "completed").then_some(p_at.to_string());
+        let picked_at = (status == "completed").then_some(p_at.to_string());
+        let completed_at = (status == "completed").then_some(p_at.to_string());
+        let arrived_at = (status == "in_progress").then_some(now_ts.clone());
+        let approved_by = trip_id.map(|_| lead_id);
+        sqlx::query(
+            "INSERT INTO rides (id, passenger_id, driver_id, event_id, pickup_at, pickup_area_id,
+                 pickup_address, destination, seats, assistance, notes, status, needs_attention,
+                 attention_reason, approved_by, trip_id, started_at, picked_up_at, completed_at,
+                 arrived_at_gate_at, readiness_status, readiness_updated_at, delay_minutes,
+                 supper_choice, leg, as_group_id, reimbursement_excluded, mileage_receipt_needed,
+                 is_proxy, rider_name, rider_phone, rider_relationship, distance_km, reimbursement_amount_cents,
+                 demo_batch, created_at, updated_at)
+             VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26,$27,$28,$29,$30,$31,$32,12,1800,$33,$34,$34)
+             ON CONFLICT (id) DO UPDATE SET
+                 driver_id=EXCLUDED.driver_id, status=EXCLUDED.status, trip_id=EXCLUDED.trip_id,
+                 supper_choice=EXCLUDED.supper_choice, readiness_status=EXCLUDED.readiness_status,
+                 demo_batch=EXCLUDED.demo_batch, updated_at=EXCLUDED.updated_at",
+        )
+        .bind(rid)
+        .bind(pid)
+        .bind(did)
+        .bind(eid)
+        .bind(p_at)
+        .bind(area_id)
+        .bind(p_addr)
+        .bind(dest)
+        .bind(seats)
+        .bind(assist)
+        .bind(notes)
+        .bind(status)
+        .bind(needs_att)
+        .bind(attn_reason)
+        .bind(approved_by)
+        .bind(trip_id)
+        .bind(started_at)
+        .bind(picked_at)
+        .bind(completed_at)
+        .bind(arrived_at)
+        .bind(readiness_st)
+        .bind(&now_ts)
+        .bind(delay_mins)
+        .bind(supper)
+        .bind(leg)
+        .bind(as_gid)
+        .bind(reimb_excl)
+        .bind(mileage_rec)
+        .bind(is_proxy)
+        .bind(r_name)
+        .bind(r_phone)
+        .bind(r_rel)
+        .bind(SCENARIO_BATCH)
+        .bind(&now_ts)
+        .execute(db)
+        .await?;
+    }
+    sqlx::query("UPDATE rides SET paired_ride_id = $1 WHERE id = $2")
+        .bind(ride_ids[5])
+        .bind(ride_ids[4])
+        .execute(db)
+        .await?;
+    sqlx::query("UPDATE rides SET paired_ride_id = $1 WHERE id = $2")
+        .bind(ride_ids[4])
+        .bind(ride_ids[5])
+        .execute(db)
+        .await?;
+
+    // Live locations & chat
+    for (did, lat, lng) in [
+        (carpool_driver_id, 3.1180f64, 101.6220f64),
+        (single_driver_id, 3.1245, 101.6310),
+    ] {
+        sqlx::query(
+            "INSERT INTO driver_locations (driver_id, lat, lng, heading, demo_batch, updated_at)
+             VALUES ($1,$2,$3,90.0,$4,$5)
+             ON CONFLICT (driver_id) DO UPDATE SET lat=EXCLUDED.lat, lng=EXCLUDED.lng, updated_at=EXCLUDED.updated_at",
+        )
+        .bind(did)
+        .bind(lat)
+        .bind(lng)
+        .bind(SCENARIO_BATCH)
+        .bind(&now_ts)
+        .execute(db)
+        .await?;
+    }
+    sqlx::query(
+        "INSERT INTO passenger_locations (ride_id, lat, lng, updated_at)
+         VALUES ($1, 3.1210, 101.6260, $2) ON CONFLICT (ride_id) DO UPDATE SET lat=EXCLUDED.lat, lng=EXCLUDED.lng, updated_at=EXCLUDED.updated_at",
+    )
+    .bind(ride_ids[6])
+    .bind(&now_ts)
+    .execute(db)
+    .await?;
+    for (mid, tid, uid, body) in [
+        (
+            SCENARIO_ID_BASE,
+            SCENARIO_ID_BASE,
+            None::<i64>,
+            "Scenario trip chat opened.",
+        ),
+        (
+            SCENARIO_ID_BASE + 1,
+            SCENARIO_ID_BASE,
+            Some(carpool_driver_id),
+            "Will pick up at north gate on time.",
+        ),
+        (
+            SCENARIO_ID_BASE + 2,
+            SCENARIO_ID_BASE,
+            Some(elder_id),
+            "Got it, thank you!",
+        ),
+        (
+            SCENARIO_ID_BASE + 3,
+            SCENARIO_ID_BASE + 1,
+            Some(single_driver_id),
+            "Approaching SS2 now.",
+        ),
+    ] {
+        sqlx::query(
+            "INSERT INTO ride_messages (id, trip_id, user_id, body, demo_batch, created_at)
+             VALUES ($1,$2,$3,$4,$5,$6) ON CONFLICT (id) DO NOTHING",
+        )
+        .bind(mid)
+        .bind(tid)
+        .bind(uid)
+        .bind(body)
+        .bind(SCENARIO_BATCH)
+        .bind(&now_ts)
+        .execute(db)
+        .await?;
+    }
+    sqlx::query(
+        "INSERT INTO ride_message_reactions (message_id, user_id, emoji, created_at, updated_at)
+         VALUES ($1,$2,'👍',$3,$3) ON CONFLICT (message_id, user_id) DO NOTHING",
+    )
+    .bind(SCENARIO_ID_BASE + 1)
+    .bind(elder_id)
+    .bind(&now_ts)
+    .execute(db)
+    .await?;
+    sqlx::query(
+        "INSERT INTO ride_chat_reads (trip_id, user_id, last_delivered_id, last_read_id, created_at, updated_at)
+         VALUES ($1,$2,$3,$4,$5,$5) ON CONFLICT (trip_id, user_id) DO UPDATE SET last_delivered_id=EXCLUDED.last_delivered_id, last_read_id=EXCLUDED.last_read_id",
+    )
+    .bind(SCENARIO_ID_BASE)
+    .bind(elder_id)
+    .bind(SCENARIO_ID_BASE + 2)
+    .bind(SCENARIO_ID_BASE + 1)
+    .bind(&now_ts)
+    .execute(db)
+    .await?;
+
+    // --- 8. Proxy riders, plan visitors, plan/ride drafts, visitor & caregiver passes ---
+    sqlx::query(
+        "INSERT INTO proxy_riders (id, user_id, name, phone, relationship, notes, created_at, updated_at)
+         VALUES ($1,$2,'Elder Parent','012-310 9199','parent','Wheelchair ramp needed',$3,$3)
+         ON CONFLICT (id) DO NOTHING",
+    )
+    .bind(SCENARIO_ID_BASE)
+    .bind(caregiver_id)
+    .bind(&now_ts)
+    .execute(db)
+    .await?;
+    for (pvid, name, leg, did) in [
+        (
+            SCENARIO_ID_BASE,
+            "Plan Visitor Alpha",
+            "outbound",
+            Some(carpool_driver_id),
+        ),
+        (
+            SCENARIO_ID_BASE + 1,
+            "Plan Visitor Beta",
+            "return",
+            Some(single_driver_id),
+        ),
+        (
+            SCENARIO_ID_BASE + 2,
+            "Plan Visitor Unassigned",
+            "outbound",
+            None,
+        ),
+    ] {
+        sqlx::query(
+            "INSERT INTO plan_visitors (id, event_id, name, phone, notes, area_id, pickup_address, seats, leg, driver_id, created_by, created_at, updated_at, demo_batch)
+             VALUES ($1,$2,$3,'012-318 0001','Scenario plan visitor',1,'PJ Gate',1,$4,$5,$6,$7,$7,$8)
+             ON CONFLICT (id) DO NOTHING",
+        )
+        .bind(pvid)
+        .bind(ev_pub)
+        .bind(name)
+        .bind(leg)
+        .bind(did)
+        .bind(lead_id)
+        .bind(&now_ts)
+        .bind(SCENARIO_BATCH)
+        .execute(db)
+        .await?;
+    }
+    for (did, ver, label, status, locked_by) in [
+        (
+            SCENARIO_ID_BASE,
+            1i64,
+            "v1 Superseded",
+            "superseded",
+            None::<i64>,
+        ),
+        (SCENARIO_ID_BASE + 1, 2, "v2 Returned", "returned", None),
+        (SCENARIO_ID_BASE + 2, 3, "v3 Approved", "approved", None),
+        (
+            SCENARIO_ID_BASE + 3,
+            4,
+            "v4 Pending Approval",
+            "pending_approval",
+            None,
+        ),
+        (
+            SCENARIO_ID_BASE + 4,
+            5,
+            "v5 Active Locked Draft",
+            "draft",
+            Some(lead_id),
+        ),
+    ] {
+        let lock_exp = locked_by.map(|_| in_days(1));
+        sqlx::query(
+            "INSERT INTO event_plan_drafts (id, event_id, version, label, status, assignments, visitors, created_by, updated_by, locked_by, locked_at, lock_expires_at, created_at, updated_at)
+             VALUES ($1,$2,$3,$4,$5,'[]','[]',$6,$6,$7,$8,$9,$10,$10)
+             ON CONFLICT (id) DO NOTHING",
+        )
+        .bind(did)
+        .bind(ev_pub)
+        .bind(ver)
+        .bind(label)
+        .bind(status)
+        .bind(lead_id)
+        .bind(locked_by)
+        .bind(locked_by.map(|_| now_ts.clone()))
+        .bind(lock_exp)
+        .bind(&now_ts)
+        .execute(db)
+        .await?;
+    }
+    for (rcd_id, ride_id, ver, action, driver_opt, reimb_excl, status) in [
+        (
+            SCENARIO_ID_BASE,
+            ride_ids[0],
+            1i64,
+            "reassign",
+            Some(carpool_driver_id),
+            None::<i64>,
+            "draft",
+        ),
+        (
+            SCENARIO_ID_BASE + 1,
+            ride_ids[1],
+            1,
+            "approve",
+            None,
+            None,
+            "pending_approval",
+        ),
+        (
+            SCENARIO_ID_BASE + 2,
+            ride_ids[2],
+            1,
+            "return",
+            None,
+            None,
+            "returned",
+        ),
+        (
+            SCENARIO_ID_BASE + 3,
+            ride_ids[3],
+            1,
+            "alt_transport",
+            None,
+            None,
+            "approved",
+        ),
+        (
+            SCENARIO_ID_BASE + 4,
+            ride_ids[8],
+            1,
+            "reimbursement_excluded",
+            None,
+            Some(1i64),
+            "superseded",
+        ),
+    ] {
+        sqlx::query(
+            "INSERT INTO ride_change_drafts (id, ride_id, version, action, driver_id, reason, reimbursement_excluded, status, created_by, updated_by, created_at, updated_at)
+             VALUES ($1,$2,$3,$4,$5,'Scenario draft change',$6,$7,$8,$8,$9,$9)
+             ON CONFLICT (id) DO NOTHING",
+        )
+        .bind(rcd_id)
+        .bind(ride_id)
+        .bind(ver)
+        .bind(action)
+        .bind(driver_opt)
+        .bind(reimb_excl)
+        .bind(status)
+        .bind(transport_id)
+        .bind(&now_ts)
+        .execute(db)
+        .await?;
+    }
+
+    // Visitor passes + claimed visitor session + caregiver passes
+    let pass_open_tok = crate::auth::hash_token("scen-visit-pass-open-91001-000000000000000000000");
+    let pass_claimed_tok =
+        crate::auth::hash_token("scen-visit-pass-used-91002-000000000000000000000");
+    let pass_sess_tok = crate::auth::hash_token("scen-visit-sess-91002-token-00000000000000000000");
+    for (vpid, tok, ev, r_opt, name, claimed, closed, reason) in [
+        (
+            SCENARIO_ID_BASE,
+            pass_open_tok,
+            ev_pub,
+            Some(ride_ids[12]),
+            "Visitor One",
+            None::<String>,
+            None::<String>,
+            None::<&str>,
+        ),
+        (
+            SCENARIO_ID_BASE + 1,
+            pass_claimed_tok,
+            ev_pub,
+            Some(ride_ids[13]),
+            "Visitor Two",
+            Some(now_ts.clone()),
+            None,
+            None,
+        ),
+        (
+            SCENARIO_ID_BASE + 2,
+            crate::auth::hash_token("scen-visit-pass-done-91003-000000000000000000000"),
+            ev_finished,
+            Some(ride_ids[14]),
+            "Visitor Three",
+            Some(now_ts.clone()),
+            Some(now_ts.clone()),
+            Some("completed"),
+        ),
+        (
+            SCENARIO_ID_BASE + 3,
+            crate::auth::hash_token("scen-visit-pass-revk-91004-000000000000000000000"),
+            ev_pub,
+            Some(ride_ids[9]),
+            "Visitor Revoked",
+            None,
+            Some(now_ts.clone()),
+            Some("revoked"),
+        ),
+        (
+            SCENARIO_ID_BASE + 4,
+            crate::auth::hash_token("scen-visit-pass-expd-91005-000000000000000000000"),
+            ev_cancelled,
+            Some(ride_ids[15]),
+            "Visitor Cancelled",
+            None,
+            Some(now_ts.clone()),
+            Some("cancelled"),
+        ),
+    ] {
+        sqlx::query(
+            "INSERT INTO visitor_passes (id, token_hash, event_id, host_id, host_group_id, ride_id, name, phone, valid_from, valid_until, claimed_at, closed_at, closed_reason, created_at)
+             VALUES ($1,$2,$3,$4,$5,$6,$7,'012-319 0000',$8,$9,$10,$11,$12,$8)
+             ON CONFLICT (id) DO NOTHING",
+        )
+        .bind(vpid)
+        .bind(tok)
+        .bind(ev)
+        .bind(caregiver_id)
+        .bind(freshman_gid)
+        .bind(r_opt)
+        .bind(name)
+        .bind(&now_ts)
+        .bind(in_days(14))
+        .bind(claimed)
+        .bind(closed)
+        .bind(reason)
+        .execute(db)
+        .await?;
+    }
+    sqlx::query(
+        "INSERT INTO visitor_sessions (token_hash, pass_id, expires_at)
+         VALUES ($1,$2,$3) ON CONFLICT (token_hash) DO NOTHING",
+    )
+    .bind(pass_sess_tok)
+    .bind(SCENARIO_ID_BASE + 1)
+    .bind(in_days(7))
+    .execute(db)
+    .await?;
+    for (cpid, tok, closed) in [
+        (
+            SCENARIO_ID_BASE,
+            crate::auth::hash_token("scen-caregiver-open-91001"),
+            None::<String>,
+        ),
+        (
+            SCENARIO_ID_BASE + 1,
+            crate::auth::hash_token("scen-caregiver-closed-91002"),
+            Some(now_ts.clone()),
+        ),
+    ] {
+        sqlx::query(
+            "INSERT INTO caregiver_passes (id, token_hash, ride_id, created_by, label, valid_until, closed_at, created_at)
+             VALUES ($1,$2,$3,$4,'Caregiver Link',$5,$6,$7) ON CONFLICT (id) DO NOTHING",
+        )
+        .bind(cpid)
+        .bind(tok)
+        .bind(ride_ids[4])
+        .bind(caregiver_id)
+        .bind(in_days(7))
+        .bind(closed)
+        .bind(&now_ts)
+        .execute(db)
+        .await?;
+    }
+
+    // --- 9. Families, invites, recovery requests ---
+    sqlx::query(
+        "INSERT INTO families (id, name, owner_id, created_at) VALUES ($1,'ScenarioTan Family',$2,$3) ON CONFLICT (id) DO NOTHING",
+    )
+    .bind(SCENARIO_ID_BASE)
+    .bind(caregiver_id)
+    .bind(&now_ts)
+    .execute(db)
+    .await?;
+    for uid in [caregiver_id, fam_member_id, elder_id] {
+        sqlx::query(
+            "INSERT INTO family_members (family_id, user_id, created_at) VALUES ($1,$2,$3) ON CONFLICT (family_id, user_id) DO NOTHING",
+        )
+        .bind(SCENARIO_ID_BASE)
+        .bind(uid)
+        .bind(&now_ts)
+        .execute(db)
+        .await?;
+    }
+    sqlx::query(
+        "INSERT INTO family_requests (id, family_id, user_id, created_at) VALUES ($1,$2,$3,$4) ON CONFLICT (id) DO NOTHING",
+    )
+    .bind(SCENARIO_ID_BASE)
+    .bind(SCENARIO_ID_BASE)
+    .bind(fam_applicant_id)
+    .bind(&now_ts)
+    .execute(db)
+    .await?;
+    for (iid, kind, email, phone, fam_opt, user_opt, used_at, expires_at) in [
+        (
+            SCENARIO_ID_BASE,
+            "invite",
+            "scen.invite1@example.org",
+            "",
+            None::<i64>,
+            None::<i64>,
+            None::<String>,
+            in_days(5),
+        ),
+        (
+            SCENARIO_ID_BASE + 1,
+            "family",
+            "scen.familymember@example.org",
+            "012-310 9111",
+            Some(SCENARIO_ID_BASE),
+            Some(fam_member_id),
+            Some(now_ts.clone()),
+            in_days(5),
+        ),
+        (
+            SCENARIO_ID_BASE + 2,
+            "recovery",
+            "scen.elder@example.org",
+            "",
+            None,
+            Some(elder_id),
+            None,
+            kl(today - Duration::days(2), 12, 0),
+        ),
+    ] {
+        sqlx::query(
+            "INSERT INTO invites (id, token, kind, email, phone, name, roles, group_ids, user_id, created_by, expires_at, used_at, family_id, demo_batch, created_at)
+             VALUES ($1,$2,$3,$4,$5,'Invited Member','member','[1]'::jsonb,$6,$7,$8,$9,$10,$11,$12)
+             ON CONFLICT (id) DO NOTHING",
+        )
+        .bind(iid)
+        .bind(crate::auth::hash_token(&format!("scen-invite-tok-{iid}")))
+        .bind(kind)
+        .bind(email)
+        .bind(phone)
+        .bind(user_opt)
+        .bind(admin_id)
+        .bind(expires_at)
+        .bind(used_at)
+        .bind(fam_opt)
+        .bind(SCENARIO_BATCH)
+        .bind(&now_ts)
+        .execute(db)
+        .await?;
+    }
+    for (rqid, email, status, resolved_by) in [
+        (
+            SCENARIO_ID_BASE,
+            "scen.elder@example.org",
+            "pending",
+            None::<i64>,
+        ),
+        (
+            SCENARIO_ID_BASE + 1,
+            "scen.usher@example.org",
+            "approved",
+            Some(admin_id),
+        ),
+        (
+            SCENARIO_ID_BASE + 2,
+            "scen.pending@example.org",
+            "rejected",
+            Some(admin_id),
+        ),
+    ] {
+        sqlx::query(
+            "INSERT INTO recovery_requests (id, email, reason, status, resolved_by, created_at)
+             VALUES ($1,$2,'Lost passkey on phone',$3,$4,$5) ON CONFLICT (id) DO NOTHING",
+        )
+        .bind(rqid)
+        .bind(email)
+        .bind(status)
+        .bind(resolved_by)
+        .bind(&now_ts)
+        .execute(db)
+        .await?;
+    }
+
+    // --- 10. Financial SoD flows: payout_batches, reimbursements, settlements ---
+    let paid_month = format!("{:04}-{:02}", today.year(), today.month());
+    sqlx::query(
+        "INSERT INTO payout_batches (id, month, title, total_cents, claim_count, status, paid_ref, created_by, paid_by, paid_at, created_at)
+         VALUES ($1,$2,'Scenario Open Batch',2500,1,'open','',$3,NULL,NULL,$4)
+         ON CONFLICT (id) DO NOTHING",
+    )
+    .bind(SCENARIO_ID_BASE)
+    .bind(&paid_month)
+    .bind(fin_creator_id)
+    .bind(&now_ts)
+    .execute(db)
+    .await?;
+    sqlx::query(
+        "INSERT INTO payout_batches (id, month, title, total_cents, claim_count, status, paid_ref, created_by, paid_by, paid_at, created_at)
+         VALUES ($1,$2,'Scenario Paid Batch',5700,2,'paid','SCEN-BATCH-2026',$3,$4,$5,$5)
+         ON CONFLICT (id) DO NOTHING",
+    )
+    .bind(SCENARIO_ID_BASE + 1)
+    .bind(&paid_month)
+    .bind(fin_creator_id)
+    .bind(fin_payer_id)
+    .bind(&now_ts)
+    .execute(db)
+    .await?;
+
+    let overdue_ts = kl(today - Duration::days(10), 10, 0);
+    #[allow(clippy::type_complexity)]
+    let scen_reimbs: Vec<(
+        i64,
+        i64,
+        Option<i64>,
+        i64,
+        &str,
+        Option<i64>,
+        &str,
+        Option<i64>,
+        i64,
+        &str,
+        Option<i64>,
+        Option<String>,
+        &str,
+        &str,
+        Option<i64>,
+        Option<i64>,
+        Option<i64>,
+        &str,
+    )> = vec![
+        (
+            SCENARIO_ID_BASE,
+            elder_id,
+            Some(ride_ids[0]),
+            1800,
+            "Pending Grab claim",
+            Some(SCENARIO_ID_BASE + 4),
+            "pending",
+            None,
+            0,
+            "",
+            None,
+            None,
+            "grab",
+            "standard",
+            None,
+            Some(ev_pub),
+            None,
+            &now_ts,
+        ),
+        (
+            SCENARIO_ID_BASE + 1,
+            elder_id,
+            None,
+            2200,
+            "Returned Grab claim",
+            Some(SCENARIO_ID_BASE + 4),
+            "returned",
+            Some(transport_id),
+            0,
+            "",
+            None,
+            None,
+            "grab",
+            "standard",
+            None,
+            Some(ev_pub),
+            None,
+            &now_ts,
+        ),
+        (
+            SCENARIO_ID_BASE + 2,
+            caregiver_id,
+            None,
+            1200,
+            "Rejected Grab claim",
+            Some(SCENARIO_ID_BASE + 4),
+            "rejected",
+            Some(transport_id),
+            0,
+            "",
+            None,
+            None,
+            "grab",
+            "standard",
+            None,
+            Some(ev_pub),
+            None,
+            &now_ts,
+        ),
+        (
+            SCENARIO_ID_BASE + 3,
+            carpool_driver_id,
+            None,
+            2500,
+            "Approved Grab in open batch",
+            Some(SCENARIO_ID_BASE + 4),
+            "approved",
+            Some(lead_id),
+            1,
+            "",
+            None,
+            None,
+            "grab",
+            "direct_return",
+            Some(SCENARIO_ID_BASE),
+            Some(ev_pub),
+            None,
+            &now_ts,
+        ),
+        (
+            SCENARIO_ID_BASE + 4,
+            single_driver_id,
+            None,
+            1900,
+            "Overdue unbatched approved claim",
+            Some(SCENARIO_ID_BASE + 5),
+            "approved",
+            Some(transport_id),
+            0,
+            "",
+            None,
+            None,
+            "mileage",
+            "direct_return",
+            None,
+            Some(ev_finished),
+            None,
+            &overdue_ts,
+        ),
+        (
+            SCENARIO_ID_BASE + 5,
+            carpool_driver_id,
+            Some(ride_ids[7]),
+            3200,
+            "Paid mileage supper claim",
+            Some(SCENARIO_ID_BASE + 5),
+            "paid",
+            Some(lead_id),
+            1,
+            "SCEN-DNT-01",
+            Some(fin_payer_id),
+            Some(now_ts.clone()),
+            "mileage",
+            "supper",
+            Some(SCENARIO_ID_BASE + 1),
+            Some(ev_finished),
+            None,
+            &now_ts,
+        ),
+        (
+            SCENARIO_ID_BASE + 6,
+            single_driver_id,
+            None,
+            2500,
+            "Paid visitor special allowance",
+            None,
+            "paid",
+            Some(transport_id),
+            1,
+            "SCEN-DNT-02",
+            Some(fin_payer_id),
+            Some(now_ts.clone()),
+            "visitor_special",
+            "standard",
+            Some(SCENARIO_ID_BASE + 1),
+            Some(ev_pub),
+            Some(SCENARIO_ID_BASE + 1),
+            &now_ts,
+        ),
+        (
+            SCENARIO_ID_BASE + 7,
+            carpool_driver_id,
+            None,
+            3500,
+            "Pending visitor special request",
+            None,
+            "pending",
+            None,
+            0,
+            "",
+            None,
+            None,
+            "visitor_special",
+            "standard",
+            None,
+            Some(ev_pub),
+            Some(SCENARIO_ID_BASE),
+            &now_ts,
+        ),
+    ];
+    for (
+        rid,
+        uid,
+        ride_id,
+        amt,
+        desc,
+        rec_fid,
+        status,
+        rev_by,
+        verified,
+        paid_ref,
+        paid_by,
+        paid_at,
+        kind,
+        ttype,
+        batch_id,
+        ev_id,
+        pv_id,
+        upd_at,
+    ) in scen_reimbs
+    {
+        let req_by = (kind == "visitor_special").then_some(lead_id);
+        let special_reason = if kind == "visitor_special" {
+            "Late-night detour for elderly visitor"
+        } else {
+            ""
+        };
+        sqlx::query(
+            "INSERT INTO reimbursements (id, user_id, ride_id, amount_cents, description, receipt_file_id, payee_name, payee_phone, status, review_note, reviewed_by, payee_verified, paid_ref, paid_by, paid_at, kind, event_id, trip_type, batch_id, plan_visitor_id, special_reason, requested_by, demo_batch, created_at, updated_at)
+             VALUES ($1,$2,$3,$4,$5,$6,'Scenario Payee','012-310 9107',$7,'Scenario note',$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22)
+             ON CONFLICT (id) DO NOTHING",
+        )
+        .bind(rid)
+        .bind(uid)
+        .bind(ride_id)
+        .bind(amt)
+        .bind(desc)
+        .bind(rec_fid)
+        .bind(status)
+        .bind(rev_by)
+        .bind(verified)
+        .bind(paid_ref)
+        .bind(paid_by)
+        .bind(paid_at)
+        .bind(kind)
+        .bind(ev_id)
+        .bind(ttype)
+        .bind(batch_id)
+        .bind(pv_id)
+        .bind(special_reason)
+        .bind(req_by)
+        .bind(SCENARIO_BATCH)
+        .bind(&now_ts)
+        .bind(upd_at)
+        .execute(db)
+        .await?;
+    }
+
+    // Settlements + items + shares + revisions
+    sqlx::query(
+        "INSERT INTO settlements (id, event_id, created_by, title, split_mode, subsidy_cents, payee_name, payee_account, payee_qr_file_id, due_date, status, version, demo_batch, created_at, updated_at)
+         VALUES ($1,$2,$3,'场景活动费用分摊','custom',500,'Traffic Lead','DNT-SCEN',$4,$5,'published',2,$6,$7,$7)
+         ON CONFLICT (id) DO NOTHING",
+    )
+    .bind(SCENARIO_ID_BASE)
+    .bind(ev_finished)
+    .bind(lead_id)
+    .bind(Some(SCENARIO_ID_BASE + 6))
+    .bind(in_days(7))
+    .bind(SCENARIO_BATCH)
+    .bind(&now_ts)
+    .execute(db)
+    .await?;
+    for (si_id, label, amt, rec) in [
+        (
+            SCENARIO_ID_BASE,
+            "Court Rental",
+            3500i64,
+            Some(SCENARIO_ID_BASE + 7),
+        ),
+        (SCENARIO_ID_BASE + 1, "Refreshments", 1500, None),
+    ] {
+        sqlx::query(
+            "INSERT INTO settlement_items (id, settlement_id, label, amount_cents, receipt_file_id, demo_batch)
+             VALUES ($1,$2,$3,$4,$5,$6) ON CONFLICT (id) DO NOTHING",
+        )
+        .bind(si_id)
+        .bind(SCENARIO_ID_BASE)
+        .bind(label)
+        .bind(amt)
+        .bind(rec)
+        .bind(SCENARIO_BATCH)
+        .execute(db)
+        .await?;
+    }
+    for (sh_id, uid, amt, status, proof, txn) in [
+        (
+            SCENARIO_ID_BASE,
+            elder_id,
+            1500i64,
+            "pending",
+            Some(SCENARIO_ID_BASE + 8),
+            "SCEN-TXN-91001",
+        ),
+        (
+            SCENARIO_ID_BASE + 1,
+            caregiver_id,
+            1500,
+            "confirmed",
+            None,
+            "SCEN-TXN-91002",
+        ),
+        (
+            SCENARIO_ID_BASE + 2,
+            usher_id,
+            1500,
+            "needs_info",
+            None,
+            "SCEN-TXN-91003",
+        ),
+    ] {
+        sqlx::query(
+            "INSERT INTO settlement_shares (id, settlement_id, user_id, amount_cents, status, proof_file_id, txn_ref, paid_date, note, demo_batch, updated_at)
+             VALUES ($1,$2,$3,$4,$5,$6,$7,$8,'',$9,$8) ON CONFLICT (id) DO NOTHING",
+        )
+        .bind(sh_id)
+        .bind(SCENARIO_ID_BASE)
+        .bind(uid)
+        .bind(amt)
+        .bind(status)
+        .bind(proof)
+        .bind(txn)
+        .bind(&now_ts)
+        .bind(SCENARIO_BATCH)
+        .execute(db)
+        .await?;
+    }
+    sqlx::query(
+        "INSERT INTO settlement_revisions (id, settlement_id, version, snapshot, reason, created_by, demo_batch, created_at)
+         VALUES ($1,$2,1,$3::jsonb,'Scenario initial publish',$4,$5,$6) ON CONFLICT (id) DO NOTHING",
+    )
+    .bind(SCENARIO_ID_BASE)
+    .bind(SCENARIO_ID_BASE)
+    .bind(r#"{"title":"场景活动费用分摊","total_cents":5000}"#)
+    .bind(lead_id)
+    .bind(SCENARIO_BATCH)
+    .bind(&now_ts)
+    .execute(db)
+    .await?;
+
+    // --- 11. Saved places, recurring schedules, badges, announcements, push, deliveries, help, guide, audit ---
+    for (sp_id, label, area_id, addr, def) in [
+        (
+            SCENARIO_ID_BASE,
+            "Home (PJ)",
+            1i64,
+            "No 18, Jalan PJ 1",
+            1i64,
+        ),
+        (
+            SCENARIO_ID_BASE + 1,
+            "Clinic (SS2)",
+            2,
+            "Jalan SS2/24 Clinic",
+            0,
+        ),
+    ] {
+        sqlx::query(
+            "INSERT INTO saved_places (id, user_id, label, area_id, address, gate_notes, lat, lng, is_default, created_at, updated_at)
+             VALUES ($1,$2,$3,$4,$5,'Wait at north guardhouse',3.11,101.62,$6,$7,$7)
+             ON CONFLICT (id) DO NOTHING",
+        )
+        .bind(sp_id)
+        .bind(elder_id)
+        .bind(label)
+        .bind(area_id)
+        .bind(addr)
+        .bind(def)
+        .bind(&now_ts)
+        .execute(db)
+        .await?;
+    }
+    for (rs_id, uid, kind, label, aid) in [
+        (
+            SCENARIO_ID_BASE,
+            elder_id,
+            "passenger",
+            "Sunday Service Pickup",
+            1i64,
+        ),
+        (
+            SCENARIO_ID_BASE + 1,
+            carpool_driver_id,
+            "driver",
+            "Sunday Morning Drive Slot",
+            1,
+        ),
+    ] {
+        sqlx::query(
+            "INSERT INTO recurring_ride_schedules (id, user_id, kind, label, weekday, pickup_time, area_id, pickup_address, destination, seats, assistance, notes, lead_days, active, created_at, updated_at)
+             VALUES ($1,$2,$3,$4,0,'08:30',$5,'No 18 Jalan PJ 1','PJ State CMC 教会',1,'','',3,1,$6,$6)
+             ON CONFLICT (id) DO NOTHING",
+        )
+        .bind(rs_id)
+        .bind(uid)
+        .bind(kind)
+        .bind(label)
+        .bind(aid)
+        .bind(&now_ts)
+        .execute(db)
+        .await?;
+    }
+    sqlx::query(
+        "INSERT INTO user_badge_icons (user_id, badge_key, icon, updated_at, updated_by)
+         VALUES ($1,'first_drive','🚐',$2,$3) ON CONFLICT (user_id, badge_key) DO NOTHING",
+    )
+    .bind(carpool_driver_id)
+    .bind(&now_ts)
+    .bind(admin_id)
+    .execute(db)
+    .await?;
+    sqlx::query(
+        "INSERT INTO announcements (id, title, body, pinned, targeted, created_by, demo_batch, created_at)
+         VALUES ($1,'大学组交通群公告','请大学组成员准时在北门等候。',0,1,$2,$3,$4) ON CONFLICT (id) DO NOTHING",
+    )
+    .bind(SCENARIO_ID_BASE)
+    .bind(lead_id)
+    .bind(SCENARIO_BATCH)
+    .bind(&now_ts)
+    .execute(db)
+    .await?;
+    sqlx::query(
+        "INSERT INTO announcement_groups (announcement_id, group_id) VALUES ($1,$2) ON CONFLICT (announcement_id, group_id) DO NOTHING",
+    )
+    .bind(SCENARIO_ID_BASE)
+    .bind(college_gid)
+    .execute(db)
+    .await?;
+    for (uid, muted, quiet_s, quiet_e) in [
+        (carpool_driver_id, "[]", "23:00", "06:30"),
+        (elder_id, r#"["chat"]"#, "", ""),
+    ] {
+        sqlx::query(
+            "INSERT INTO user_notification_prefs (user_id, muted_categories, quiet_hours_start, quiet_hours_end, hide_lock_details, driver_remind_mins, telegram_blocked, updated_at)
+             VALUES ($1,$2,$3,$4,1,45,0,$5) ON CONFLICT (user_id) DO NOTHING",
+        )
+        .bind(uid)
+        .bind(muted)
+        .bind(quiet_s)
+        .bind(quiet_e)
+        .bind(&now_ts)
+        .execute(db)
+        .await?;
+    }
+    sqlx::query(
+        "INSERT INTO push_subscriptions (id, user_id, endpoint, p256dh, auth, user_agent, device_label, created_at)
+         VALUES ($1,$2,'https://push.example.org/scen/91007','scen-p256dh','scen-auth','Mozilla/5.0','Desktop Chrome',$3)
+         ON CONFLICT (id) DO NOTHING",
+    )
+    .bind(SCENARIO_ID_BASE)
+    .bind(carpool_driver_id)
+    .bind(&now_ts)
+    .execute(db)
+    .await?;
+    for (mp_id, uid, plat, prov, tok) in [
+        (
+            SCENARIO_ID_BASE,
+            carpool_driver_id,
+            "ios",
+            "apns",
+            "scen-apns-token-91007",
+        ),
+        (
+            SCENARIO_ID_BASE + 1,
+            elder_id,
+            "android",
+            "fcm",
+            "scen-fcm-token-91009",
+        ),
+    ] {
+        sqlx::query(
+            "INSERT INTO mobile_push_tokens (id, user_id, platform, provider, token, device_label, created_at)
+             VALUES ($1,$2,$3,$4,$5,'Scenario Device',$6) ON CONFLICT (id) DO NOTHING",
+        )
+        .bind(mp_id)
+        .bind(uid)
+        .bind(plat)
+        .bind(prov)
+        .bind(tok)
+        .bind(&now_ts)
+        .execute(db)
+        .await?;
+    }
+    sqlx::query(
+        "INSERT INTO notifications (id, user_id, title, body, link, category, event_type, priority, entity_type, entity_id, demo_batch, created_at)
+         VALUES ($1,$2,'接送提醒','司机即将抵达北门。','/rides/91005','ride','ride_reminder','urgent','ride',$3,$4,$5)
+         ON CONFLICT (id) DO NOTHING",
+    )
+    .bind(SCENARIO_ID_BASE)
+    .bind(elder_id)
+    .bind(ride_ids[4])
+    .bind(SCENARIO_BATCH)
+    .bind(&now_ts)
+    .execute(db)
+    .await?;
+    for (nd_id, channel, status, err) in [
+        (SCENARIO_ID_BASE, "mobile_push", "pending", ""),
+        (SCENARIO_ID_BASE + 1, "telegram", "retry", "429 retry-after"),
+        (SCENARIO_ID_BASE + 2, "web_push", "delivered", ""),
+        (
+            SCENARIO_ID_BASE + 3,
+            "whatsapp_webhook",
+            "failed",
+            "502 bad gateway",
+        ),
+        (SCENARIO_ID_BASE + 4, "web_push", "gone", "410 expired"),
+    ] {
+        sqlx::query(
+            "INSERT INTO notification_deliveries (id, notification_id, user_id, channel, target_id, target_ref, title, body, link, category, priority, status, attempts, last_error, created_at)
+             VALUES ($1,$2,$3,$4,$5,'scen-ref','Scenario Delivery','Outbox delivery test','/rides/91005','ride','normal',$6,1,$7,$8)
+             ON CONFLICT (id) DO NOTHING",
+        )
+        .bind(nd_id)
+        .bind(SCENARIO_ID_BASE)
+        .bind(elder_id)
+        .bind(channel)
+        .bind(SCENARIO_ID_BASE)
+        .bind(status)
+        .bind(err)
+        .bind(&now_ts)
+        .execute(db)
+        .await?;
+    }
+    sqlx::query(
+        "INSERT INTO help_tickets (id, user_id, ride_id, subject, status, assignee_id, demo_batch, created_at, updated_at)
+         VALUES ($1,$2,$3,'长辈上车指引照片','answered',$4,$5,$6,$6) ON CONFLICT (id) DO NOTHING",
+    )
+    .bind(SCENARIO_ID_BASE)
+    .bind(elder_id)
+    .bind(ride_ids[4])
+    .bind(usher_id)
+    .bind(SCENARIO_BATCH)
+    .bind(&now_ts)
+    .execute(db)
+    .await?;
+    sqlx::query(
+        "INSERT INTO help_replies (id, ticket_id, user_id, body, file_id, demo_batch, created_at)
+         VALUES ($1,$2,$3,'请参考附件中的集合门照片。',$4,$5,$6) ON CONFLICT (id) DO NOTHING",
+    )
+    .bind(SCENARIO_ID_BASE)
+    .bind(SCENARIO_ID_BASE)
+    .bind(usher_id)
+    .bind(SCENARIO_ID_BASE + 9)
+    .bind(SCENARIO_BATCH)
+    .bind(&now_ts)
+    .execute(db)
+    .await?;
+    let guide_steps = json!([{
+        "title_en": "Meet at north gate",
+        "title_zh": "北门集合",
+        "body_en": "Follow the posted sign photo.",
+        "body_zh": "请按附图所示位置等候。",
+        "image_file_id": SCENARIO_ID_BASE + 9,
+        "link": "/rides"
+    }])
+    .to_string();
+    sqlx::query(
+        "INSERT INTO guide_workflows (id, slug, title_zh, title_en, summary_zh, summary_en, audience, steps, sort_order, published, updated_by, updated_at)
+         VALUES ($1,'scen-guide-screenshots','场景附图指南','Scenario guide with screenshots','包含步骤截图文件的成员指南','Member guide referencing scenario screenshot file','member',$2::jsonb,2,TRUE,$3,$4)
+         ON CONFLICT (id) DO NOTHING",
+    )
+    .bind(SCENARIO_ID_BASE)
+    .bind(&guide_steps)
+    .bind(admin_id)
+    .bind(&now_ts)
+    .execute(db)
+    .await?;
+    sqlx::query(
+        "INSERT INTO guide_feedback (guide_id, user_id, helpful, created_at)
+         VALUES ($1,$2,TRUE,$3) ON CONFLICT (guide_id, user_id) DO NOTHING",
+    )
+    .bind(SCENARIO_ID_BASE)
+    .bind(elder_id)
+    .bind(&now_ts)
+    .execute(db)
+    .await?;
+    sqlx::query(
+        "INSERT INTO audit_logs (id, actor_id, action, entity, entity_id, entity_name, detail, demo_batch, created_at)
+         VALUES ($1,$2,'seed.scenarios','event',$3,'场景主日崇拜与宵夜团契','Seeded full scenario fixtures',$4,$5)
+         ON CONFLICT (id) DO NOTHING",
+    )
+    .bind(SCENARIO_ID_BASE)
+    .bind(super_id)
+    .bind(ev_pub)
+    .bind(SCENARIO_BATCH)
+    .bind(&now_ts)
+    .execute(db)
+    .await?;
+
+    sync_identity_sequences(db).await?;
+    tracing::info!("Scenario fixtures seeded ({SCENARIO_BATCH})");
+    Ok(())
+}
+
+/// Scalable synthetic dataset using bulk `UNNEST` inserts inside one transaction so
+/// large benchmarks (`scale` = 1..=50_000 members + proportional vehicles, events,
+/// signups, rides, reimbursements, notifications, audit logs) run quickly and cleanly.
+pub async fn seed_scale(db: &PgPool, scale: i64) -> anyhow::Result<()> {
+    insert_reference_data(db).await?;
+    ensure_demo_batches(db).await?;
+    crate::perms::sync(db).await?;
+
     let n = scale.clamp(1, 50_000);
     let pw = hash_password(DEMO_PASSWORD).map_err(|e| anyhow::anyhow!("{e}"))?;
+    let now_ts = now();
     let today = today_local();
     let mut rng = Rng::new();
     let mut plate_pool = HashSet::new();
@@ -2998,62 +5797,845 @@ async fn seed_scale(db: &PgPool, scale: i64) -> anyhow::Result<()> {
         plate_pool.insert(p.to_string());
     }
 
-    // --- generated members ---
+    let n_usize = n as usize;
+    let mut u_ids = Vec::with_capacity(n_usize);
+    let mut u_names = Vec::with_capacity(n_usize);
+    let mut u_emails = Vec::with_capacity(n_usize);
+    let mut u_phones = Vec::with_capacity(n_usize);
+    let mut u_roles = Vec::with_capacity(n_usize);
+    let mut u_statuses = Vec::with_capacity(n_usize);
+    let mut u_passwords = Vec::with_capacity(n_usize);
+    let mut u_uuids = Vec::with_capacity(n_usize);
+    let mut u_terms = Vec::with_capacity(n_usize);
+    let mut u_carpool = Vec::with_capacity(n_usize);
+    let mut u_spare = Vec::with_capacity(n_usize);
+
+    let mut active_drivers = Vec::new();
+    let mut active_members = Vec::new();
+    let mut v_uids = Vec::new();
+    let mut v_models = Vec::new();
+    let mut v_colors = Vec::new();
+    let mut v_plates = Vec::new();
+    let mut v_seats = Vec::new();
+    let mut da_uids = Vec::new();
+    let mut da_areas = Vec::new();
+    let mut gm_gids = Vec::new();
+    let mut gm_uids = Vec::new();
+
     for i in 0..n {
         let id = GENERATED_MEMBER_ID_BASE + i;
         let seq = i + 1;
         let name = format!("{} {}", rng.pick(GIVEN_NAMES), rng.pick(FAMILY_NAMES));
         let email = format!("grdemo{:05}@example.org", id);
         let phone = format!("012-300 {:04}", seq);
-        let _address = rng.pick(ADDRESSES);
         let (roles, status) = if rng.bool(0.03) {
-            ("".to_string(), "disabled")
+            ("", "disabled")
         } else if rng.bool(0.55) {
-            ("".to_string(), "active")
+            ("", "active")
         } else if rng.bool(0.18 / 0.45) {
-            ("driver".to_string(), "active")
+            ("driver", "active")
         } else if rng.bool(0.06 / 0.27) {
-            ("driver,leader".to_string(), "active")
+            ("driver,leader", "active")
         } else if rng.bool(0.08 / 0.21) {
-            ("leader".to_string(), "active")
+            ("leader", "active")
         } else if rng.bool(0.04 / 0.13) {
-            ("transport,driver".to_string(), "active")
+            ("transport,driver", "active")
         } else if rng.bool(0.03 / 0.09) {
-            ("transport".to_string(), "active")
+            ("transport", "active")
         } else if rng.bool(0.02 / 0.06) {
-            ("finance".to_string(), "active")
+            ("finance", "active")
         } else {
-            ("admin".to_string(), "active")
+            ("admin", "active")
         };
-        let totp = i < 20;
-        let passkey = i < 15;
-        insert_member(
-            db, &mut rng, id, &name, &email, &phone, &roles, &status, DEMO_BATCH, &pw, totp,
-            passkey,
-        )
-        .await;
+        let active = status == "active";
+        let is_driver = active && roles.contains("driver") && rng.bool(0.90);
+        let carpool = if is_driver && rng.bool(0.40) { 1 } else { 0 };
+        let spare = if carpool == 1 { rng.range(2, 4) } else { 1 };
 
-        if roles.contains("driver") && rng.bool(0.90) {
-            let carpool = if rng.bool(0.40) { 1 } else { 0 };
-            let spare = if carpool == 1 { rng.range(2, 4) } else { 1 };
-            let plate = rng.unique_plate(&mut plate_pool);
-            sqlx::query("INSERT INTO vehicles (user_id, model, color, plate, seats, demo_batch, is_active) VALUES ($1,$2,$3,$4,5,$5,1) ON CONFLICT(user_id, plate) DO UPDATE SET model=excluded.model, color=excluded.color, seats=excluded.seats, is_active=excluded.is_active, demo_batch=excluded.demo_batch")
-                .bind(id).bind(rng.pick(VEHICLE_MODELS)).bind(rng.pick(VEHICLE_COLORS)).bind(plate).bind(DEMO_BATCH).execute(db).await?;
-            sqlx::query("UPDATE users SET carpool_enabled=$1, spare_seats=$2 WHERE id=$3")
-                .bind(carpool)
-                .bind(spare)
-                .bind(id)
-                .execute(db)
-                .await?;
-            let mut areas: Vec<i64> = vec![1, 2, 4, 5, 7, 8];
+        u_ids.push(id);
+        u_names.push(name);
+        u_emails.push(email);
+        u_phones.push(phone);
+        u_roles.push(roles.to_string());
+        u_statuses.push(status.to_string());
+        u_passwords.push(if active { Some(pw.clone()) } else { None });
+        u_uuids.push(stable_uuid(id));
+        u_terms.push(if active { Some(now_ts.clone()) } else { None });
+        u_carpool.push(carpool);
+        u_spare.push(spare);
+
+        if active {
+            active_members.push(id);
+            gm_gids.push(1i64 + (i % 3));
+            gm_uids.push(id);
+        }
+        if is_driver {
+            active_drivers.push(id);
+            v_uids.push(id);
+            v_models.push(rng.pick(VEHICLE_MODELS).to_string());
+            v_colors.push(rng.pick(VEHICLE_COLORS).to_string());
+            v_plates.push(rng.unique_plate(&mut plate_pool));
+            v_seats.push(5i64);
+            let mut areas: Vec<i64> = vec![1, 2, 3, 4, 5, 6, 7, 8];
             rng.shuffle(&mut areas);
-            for area in areas.into_iter().take(rng.range(1, 4) as usize) {
-                sqlx::query("INSERT INTO driver_areas (user_id, area_id, demo_batch) VALUES ($1,$2,$3) ON CONFLICT DO NOTHING")
-                    .bind(id).bind(area).bind(DEMO_BATCH).execute(db).await?;
+            for a in areas.into_iter().take(rng.range(1, 4) as usize) {
+                da_uids.push(id);
+                da_areas.push(a);
             }
         }
     }
-    drop(plate_pool);
-    let _ = today;
+
+    let mut tx = db.begin().await?;
+    sqlx::query("SET LOCAL statement_timeout = 0")
+        .execute(&mut *tx)
+        .await?;
+    sqlx::query(
+        "INSERT INTO users (id, name, email, phone, roles, status, password_hash, webauthn_uuid, demo_batch, created_at, terms_accepted_at, terms_version, carpool_enabled, spare_seats)
+         SELECT t.id, t.name, t.email, t.phone, t.roles, t.status, t.password_hash, t.webauthn_uuid, $12, $13, t.terms_accepted_at, $14, t.carpool_enabled, t.spare_seats
+         FROM UNNEST(
+             $1::BIGINT[], $2::TEXT[], $3::TEXT[], $4::TEXT[], $5::TEXT[], $6::TEXT[],
+             $7::TEXT[], $8::TEXT[], $9::TEXT[], $10::BIGINT[], $11::BIGINT[]
+         ) AS t(id, name, email, phone, roles, status, password_hash, webauthn_uuid, terms_accepted_at, carpool_enabled, spare_seats)
+         ON CONFLICT (id) DO UPDATE SET
+             name=EXCLUDED.name, email=EXCLUDED.email, roles=EXCLUDED.roles,
+             status=EXCLUDED.status, carpool_enabled=EXCLUDED.carpool_enabled,
+             spare_seats=EXCLUDED.spare_seats, demo_batch=EXCLUDED.demo_batch",
+    )
+    .bind(&u_ids)
+    .bind(&u_names)
+    .bind(&u_emails)
+    .bind(&u_phones)
+    .bind(&u_roles)
+    .bind(&u_statuses)
+    .bind(&u_passwords)
+    .bind(&u_uuids)
+    .bind(&u_terms)
+    .bind(&u_carpool)
+    .bind(&u_spare)
+    .bind(SCALE_BATCH)
+    .bind(&now_ts)
+    .bind(crate::routes::auth::TERMS_VERSION)
+    .execute(&mut *tx)
+    .await?;
+
+    if !v_uids.is_empty() {
+        sqlx::query("UPDATE vehicles SET is_active = 0 WHERE user_id = ANY($1) AND is_active = 1")
+            .bind(&v_uids)
+            .execute(&mut *tx)
+            .await?;
+        sqlx::query(
+            "INSERT INTO vehicles (user_id, model, color, plate, seats, demo_batch, is_active)
+             SELECT u, m, c, p, s, $6, 1
+             FROM UNNEST($1::BIGINT[], $2::TEXT[], $3::TEXT[], $4::TEXT[], $5::BIGINT[]) AS t(u, m, c, p, s)
+             ON CONFLICT (user_id, plate) DO UPDATE SET model=EXCLUDED.model, is_active=1, demo_batch=EXCLUDED.demo_batch",
+        )
+        .bind(&v_uids)
+        .bind(&v_models)
+        .bind(&v_colors)
+        .bind(&v_plates)
+        .bind(&v_seats)
+        .bind(SCALE_BATCH)
+        .execute(&mut *tx)
+        .await?;
+    }
+    if !da_uids.is_empty() {
+        sqlx::query(
+            "INSERT INTO driver_areas (user_id, area_id, demo_batch)
+             SELECT u, a, $3 FROM UNNEST($1::BIGINT[], $2::BIGINT[]) AS t(u, a)
+             ON CONFLICT DO NOTHING",
+        )
+        .bind(&da_uids)
+        .bind(&da_areas)
+        .bind(SCALE_BATCH)
+        .execute(&mut *tx)
+        .await?;
+    }
+    if !gm_uids.is_empty() {
+        sqlx::query(
+            "INSERT INTO group_members (group_id, user_id, demo_batch)
+             SELECT g, u, $3 FROM UNNEST($1::BIGINT[], $2::BIGINT[]) AS t(g, u)
+             ON CONFLICT DO NOTHING",
+        )
+        .bind(&gm_gids)
+        .bind(&gm_uids)
+        .bind(SCALE_BATCH)
+        .execute(&mut *tx)
+        .await?;
+    }
+
+    // Proportional events, signups, rides, reimbursements, notifications, audit_logs
+    if !active_members.is_empty() {
+        let ev_count = (n / 2).clamp(200, 1000);
+        let mut e_ids = Vec::with_capacity(ev_count as usize);
+        let mut e_titles = Vec::with_capacity(ev_count as usize);
+        let mut e_kinds = Vec::with_capacity(ev_count as usize);
+        let mut e_starts = Vec::with_capacity(ev_count as usize);
+        let mut e_locs = Vec::with_capacity(ev_count as usize);
+        let mut e_caps = Vec::with_capacity(ev_count as usize);
+        let mut e_creators = Vec::with_capacity(ev_count as usize);
+        let mut e_statuses = Vec::with_capacity(ev_count as usize);
+        let mut e_codes = Vec::with_capacity(ev_count as usize);
+        let mut eg_eids = Vec::with_capacity(ev_count as usize);
+        let mut eg_gids = Vec::with_capacity(ev_count as usize);
+        let kinds = ["badminton", "bowling", "kayak", "walk", "other"];
+        for ei in 0..ev_count {
+            let eid = GENERATED_EVENT_ID_BASE + ei;
+            let day_off = (ei % 60) - 30;
+            let dt = today + Duration::days(day_off);
+            let status = if day_off < -2 {
+                "finished"
+            } else if ei % 15 == 0 {
+                "cancelled"
+            } else {
+                "published"
+            };
+            e_ids.push(eid);
+            e_titles.push(format!("Scale Event #{eid}"));
+            e_kinds.push(kinds[(ei as usize) % kinds.len()].to_string());
+            e_starts.push(kl(dt, 9 + (ei as i32 % 10), 0));
+            e_locs.push(DESTINATIONS[(ei as usize) % DESTINATIONS.len()].to_string());
+            e_caps.push(if ei % 4 == 0 { 0 } else { 20 });
+            e_creators.push(active_members[(ei as usize) % active_members.len()]);
+            e_statuses.push(status.to_string());
+            e_codes.push(format!("SCL{eid:04}"));
+            eg_eids.push(eid);
+            eg_gids.push(1 + (ei % 3));
+        }
+        sqlx::query(
+            "INSERT INTO events (id, title, kind, description, starts_at, location, capacity, created_by, status, checkin_code, demo_batch, created_at)
+             SELECT id, title, kind, title, starts_at, loc, cap, creator, st, code, $10, $11
+             FROM UNNEST($1::BIGINT[], $2::TEXT[], $3::TEXT[], $4::TEXT[], $5::TEXT[], $6::BIGINT[], $7::BIGINT[], $8::TEXT[], $9::TEXT[])
+             AS t(id, title, kind, starts_at, loc, cap, creator, st, code)
+             ON CONFLICT (id) DO UPDATE SET status=EXCLUDED.status, starts_at=EXCLUDED.starts_at, checkin_code=EXCLUDED.checkin_code, demo_batch=EXCLUDED.demo_batch",
+        )
+        .bind(&e_ids)
+        .bind(&e_titles)
+        .bind(&e_kinds)
+        .bind(&e_starts)
+        .bind(&e_locs)
+        .bind(&e_caps)
+        .bind(&e_creators)
+        .bind(&e_statuses)
+        .bind(&e_codes)
+        .bind(SCALE_BATCH)
+        .bind(&now_ts)
+        .execute(&mut *tx)
+        .await?;
+        sqlx::query(
+            "INSERT INTO event_groups (event_id, group_id, demo_batch)
+             SELECT e, g, $3 FROM UNNEST($1::BIGINT[], $2::BIGINT[]) AS t(e, g) ON CONFLICT DO NOTHING",
+        )
+        .bind(&eg_eids)
+        .bind(&eg_gids)
+        .bind(SCALE_BATCH)
+        .execute(&mut *tx)
+        .await?;
+
+        let signup_target = (n * 2).clamp(400, 60_000) as usize;
+        let mut s_eids = Vec::with_capacity(signup_target);
+        let mut s_uids = Vec::with_capacity(signup_target);
+        let mut s_st = Vec::with_capacity(signup_target);
+        let mut s_need = Vec::with_capacity(signup_target);
+        let mut s_codes = Vec::with_capacity(signup_target);
+        let mut seen_su = HashSet::with_capacity(signup_target);
+        for si in 0..signup_target {
+            let eid = e_ids[si % e_ids.len()];
+            let uid = active_members[(si + (si / e_ids.len())) % active_members.len()];
+            if seen_su.insert((eid, uid)) {
+                s_eids.push(eid);
+                s_uids.push(uid);
+                s_st.push(if si % 11 == 0 { "waitlist" } else { "going" });
+                s_need.push(i64::from(si % 2 == 0));
+                s_codes.push(format!("PS{eid}_{uid}"));
+            }
+        }
+        sqlx::query(
+            "INSERT INTO event_signups (event_id, user_id, status, need_ride, pass_code, demo_batch, created_at)
+             SELECT e, u, s, nr, pc, $6, $7 FROM UNNEST($1::BIGINT[], $2::BIGINT[], $3::TEXT[], $4::BIGINT[], $5::TEXT[]) AS t(e, u, s, nr, pc)
+             ON CONFLICT (event_id, user_id) DO NOTHING",
+        )
+        .bind(&s_eids)
+        .bind(&s_uids)
+        .bind(&s_st)
+        .bind(&s_need)
+        .bind(&s_codes)
+        .bind(SCALE_BATCH)
+        .bind(&now_ts)
+        .execute(&mut *tx)
+        .await?;
+
+        let ride_count = (n * 3).min(150_000);
+        let rc = ride_count as usize;
+        let mut r_ids = Vec::with_capacity(rc);
+        let mut r_pids = Vec::with_capacity(rc);
+        let mut r_dids: Vec<Option<i64>> = Vec::with_capacity(rc);
+        let mut r_eids: Vec<Option<i64>> = Vec::with_capacity(rc);
+        let mut r_at = Vec::with_capacity(rc);
+        let mut r_area = Vec::with_capacity(rc);
+        let mut r_addr = Vec::with_capacity(rc);
+        let mut r_dest = Vec::with_capacity(rc);
+        let mut r_status = Vec::with_capacity(rc);
+        let mut r_trip: Vec<Option<i64>> = Vec::with_capacity(rc);
+        let mut r_leg = Vec::with_capacity(rc);
+        let ride_statuses = [
+            "pending_driver",
+            "confirmed",
+            "completed",
+            "pending_approval",
+            "in_progress",
+            "cancelled",
+            "no_show",
+            "pending_driver_confirm",
+        ];
+        for ri in 0..ride_count {
+            let rid = SCALE_ENTITY_ID_BASE + ri;
+            let pid = active_members[(ri as usize) % active_members.len()];
+            let status = ride_statuses[(ri as usize) % ride_statuses.len()];
+            let did = if status == "pending_driver" || active_drivers.is_empty() {
+                None
+            } else {
+                let candidate = active_drivers[(ri as usize) % active_drivers.len()];
+                if candidate == pid {
+                    active_drivers.iter().copied().find(|&d| d != pid)
+                } else {
+                    Some(candidate)
+                }
+            };
+            let eid = if ri % 5 == 0 {
+                None
+            } else {
+                Some(e_ids[(ri as usize) % e_ids.len()])
+            };
+            let day_off = (ri % 60) - 30;
+            let dt = today + Duration::days(day_off);
+            let pickup_at = format!("{}T{:02}:{:02}:00", dt, 7 + (ri % 13), (ri % 4) * 15);
+            let trip = (matches!(status, "confirmed" | "in_progress" | "completed")
+                && did.is_some())
+            .then_some(rid);
+            r_ids.push(rid);
+            r_pids.push(pid);
+            r_dids.push(did);
+            r_eids.push(eid);
+            r_at.push(pickup_at);
+            r_area.push(1 + (ri % 8));
+            r_addr.push(ADDRESSES[(ri as usize) % ADDRESSES.len()].to_string());
+            r_dest.push(DESTINATIONS[(ri as usize) % DESTINATIONS.len()].to_string());
+            r_status.push(status.to_string());
+            r_trip.push(trip);
+            r_leg.push(if ri % 3 == 0 { "return" } else { "outbound" });
+        }
+        sqlx::query(
+            "INSERT INTO rides (id, passenger_id, driver_id, event_id, pickup_at, pickup_area_id, pickup_address, destination, seats, status, trip_id, leg, demo_batch, created_at, updated_at)
+             SELECT id, p, d, e, at, area, addr, dest, 1, st, trip, leg, $12, $13, $13
+             FROM UNNEST($1::BIGINT[], $2::BIGINT[], $3::BIGINT[], $4::BIGINT[], $5::TEXT[], $6::BIGINT[], $7::TEXT[], $8::TEXT[], $9::TEXT[], $10::BIGINT[], $11::TEXT[])
+             AS t(id, p, d, e, at, area, addr, dest, st, trip, leg)
+             ON CONFLICT (id) DO NOTHING",
+        )
+        .bind(&r_ids)
+        .bind(&r_pids)
+        .bind(&r_dids)
+        .bind(&r_eids)
+        .bind(&r_at)
+        .bind(&r_area)
+        .bind(&r_addr)
+        .bind(&r_dest)
+        .bind(&r_status)
+        .bind(&r_trip)
+        .bind(&r_leg)
+        .bind(SCALE_BATCH)
+        .bind(&now_ts)
+        .execute(&mut *tx)
+        .await?;
+
+        let notif_count = n.min(20_000) as usize;
+        let mut n_ids = Vec::with_capacity(notif_count);
+        let mut n_uids = Vec::with_capacity(notif_count);
+        let mut n_read: Vec<Option<String>> = Vec::with_capacity(notif_count);
+        for ni in 0..notif_count {
+            n_ids.push(SCALE_ENTITY_ID_BASE + ni as i64);
+            n_uids.push(active_members[ni % active_members.len()]);
+            n_read.push((ni % 2 == 0).then(|| now_ts.clone()));
+        }
+        sqlx::query(
+            "INSERT INTO notifications (id, user_id, title, body, link, read_at, demo_batch, created_at)
+             SELECT id, uid, 'Scale Notice', 'Synthetic scale notification', '/rides', rd, $4, $5
+             FROM UNNEST($1::BIGINT[], $2::BIGINT[], $3::TEXT[]) AS t(id, uid, rd)
+             ON CONFLICT (id) DO NOTHING",
+        )
+        .bind(&n_ids)
+        .bind(&n_uids)
+        .bind(&n_read)
+        .bind(SCALE_BATCH)
+        .bind(&now_ts)
+        .execute(&mut *tx)
+        .await?;
+
+        let rb_count = n.min(20_000) as usize;
+        let mut rb_ids = Vec::with_capacity(rb_count);
+        let mut rb_uids = Vec::with_capacity(rb_count);
+        let mut rb_amts = Vec::with_capacity(rb_count);
+        let mut rb_sts = Vec::with_capacity(rb_count);
+        let mut rb_revs: Vec<Option<i64>> = Vec::with_capacity(rb_count);
+        let mut rb_paid_by: Vec<Option<i64>> = Vec::with_capacity(rb_count);
+        let mut rb_paid_at: Vec<Option<String>> = Vec::with_capacity(rb_count);
+        let mut rb_refs = Vec::with_capacity(rb_count);
+        let mut rb_kinds = Vec::with_capacity(rb_count);
+        let mut rb_eids = Vec::with_capacity(rb_count);
+        let mut rb_ts = Vec::with_capacity(rb_count);
+        let mut al_ids = Vec::with_capacity(rb_count);
+        let mut al_actors = Vec::with_capacity(rb_count);
+        let mut al_eids = Vec::with_capacity(rb_count);
+        let mut al_ts = Vec::with_capacity(rb_count);
+        let m_len = active_members.len();
+        for i in 0..rb_count {
+            let sid = SCALE_ENTITY_ID_BASE + i as i64;
+            let uid = active_members[i % m_len];
+            let day_ts = format!(
+                "{}T10:{:02}:00",
+                today - Duration::days((i % 180) as i64),
+                i % 60
+            );
+            let (st_val, rev_opt, pb_opt, pa_opt, pref) = if m_len >= 3 && i % 3 == 0 {
+                (
+                    "paid",
+                    Some(active_members[(i + 1) % m_len]),
+                    Some(active_members[(i + 2) % m_len]),
+                    Some(day_ts.clone()),
+                    format!("SCL-DNT-{sid}"),
+                )
+            } else if m_len >= 2 && i % 3 == 1 {
+                (
+                    "approved",
+                    Some(active_members[(i + 1) % m_len]),
+                    None,
+                    None,
+                    String::new(),
+                )
+            } else {
+                ("pending", None, None, None, String::new())
+            };
+            rb_ids.push(sid);
+            rb_uids.push(uid);
+            rb_amts.push(1000 + ((i as i64 % 5) * 500));
+            rb_sts.push(st_val.to_string());
+            rb_revs.push(rev_opt);
+            rb_paid_by.push(pb_opt);
+            rb_paid_at.push(pa_opt);
+            rb_refs.push(pref);
+            rb_kinds.push(if i % 2 == 0 { "grab" } else { "mileage" }.to_string());
+            rb_eids.push(Some(e_ids[i % e_ids.len()]));
+            rb_ts.push(day_ts.clone());
+
+            al_ids.push(sid);
+            al_actors.push(Some(uid));
+            al_eids.push(Some(e_ids[i % e_ids.len()]));
+            al_ts.push(day_ts);
+        }
+        sqlx::query(
+            "INSERT INTO reimbursements (id, user_id, amount_cents, description, payee_name, payee_phone, status, reviewed_by, paid_ref, paid_by, paid_at, kind, event_id, demo_batch, created_at, updated_at)
+             SELECT id, uid, amt, 'Scale claim', 'Scale Payee', '012-300 0000', st, rev, pref, pb, pa, kind, eid, $12, ts, ts
+             FROM UNNEST($1::BIGINT[], $2::BIGINT[], $3::BIGINT[], $4::TEXT[], $5::BIGINT[], $6::TEXT[], $7::BIGINT[], $8::TEXT[], $9::TEXT[], $10::BIGINT[], $11::TEXT[])
+             AS t(id, uid, amt, st, rev, pref, pb, pa, kind, eid, ts)
+             ON CONFLICT (id) DO NOTHING",
+        )
+        .bind(&rb_ids)
+        .bind(&rb_uids)
+        .bind(&rb_amts)
+        .bind(&rb_sts)
+        .bind(&rb_revs)
+        .bind(&rb_refs)
+        .bind(&rb_paid_by)
+        .bind(&rb_paid_at)
+        .bind(&rb_kinds)
+        .bind(&rb_eids)
+        .bind(&rb_ts)
+        .bind(SCALE_BATCH)
+        .execute(&mut *tx)
+        .await?;
+        sqlx::query(
+            "INSERT INTO audit_logs (id, actor_id, action, entity, entity_id, entity_name, detail, demo_batch, created_at)
+             SELECT id, actor, 'scale.event', 'event', eid, 'Scale Event', 'Scale synthetic audit detail', $5, ts
+             FROM UNNEST($1::BIGINT[], $2::BIGINT[], $3::BIGINT[], $4::TEXT[]) AS t(id, actor, eid, ts)
+             ON CONFLICT (id) DO NOTHING",
+        )
+        .bind(&al_ids)
+        .bind(&al_actors)
+        .bind(&al_eids)
+        .bind(&al_ts)
+        .bind(SCALE_BATCH)
+        .execute(&mut *tx)
+        .await?;
+    }
+
+    tx.commit().await?;
+    sync_identity_sequences(db).await?;
+    analyze_current_schema(db).await?;
+    tracing::info!("Scale fixtures seeded (users={n}, batch={SCALE_BATCH})");
     Ok(())
+}
+
+/// Seed the full development dataset (`core` + `edge` + `scenarios` + optional `scale`)
+/// idempotently, align sequences, and refresh planner statistics (`ANALYZE`).
+pub async fn seed_full(
+    db: &PgPool,
+    uploads_dir: Option<&Path>,
+    scale: i64,
+) -> anyhow::Result<SeedVerificationReport> {
+    insert_reference_data(db).await?;
+    ensure_demo_batches(db).await?;
+    crate::perms::sync(db).await?;
+    seed_core(db).await?;
+    seed_edge(db).await?;
+    seed_scenarios_with_uploads(db, uploads_dir).await?;
+    if scale > 0 {
+        seed_scale(db, scale).await?;
+    } else {
+        sync_identity_sequences(db).await?;
+        analyze_current_schema(db).await?;
+    }
+    seed_verify(db).await
+}
+
+/// Remove seeded fixtures (preserving canonical areas/groups/settings/starter guides and
+/// any real non-seed user rows) in FK-safe order, then realign identity sequences.
+pub async fn seed_reset(db: &PgPool, include_core: bool) -> anyhow::Result<()> {
+    let mut batches: Vec<&str> = vec![EDGE_BATCH, SCENARIO_BATCH, SCALE_BATCH];
+    if include_core {
+        batches.push(DEMO_BATCH);
+    }
+    let min_uid = if include_core { 1i64 } else { 10_001 };
+    let mut tx = db.begin().await?;
+    sqlx::query("SET LOCAL statement_timeout = 0")
+        .execute(&mut *tx)
+        .await?;
+    let target_uids: Vec<i64> = sqlx::query_scalar(
+        "SELECT id FROM users WHERE demo_batch = ANY($1) OR (id BETWEEN $2 AND 91999 AND demo_batch IS NOT NULL)",
+    )
+    .bind(&batches)
+    .bind(min_uid)
+    .fetch_all(&mut *tx)
+    .await?;
+
+    enum BindMode {
+        Both,
+        BatchesOnly,
+        UidsOnly,
+        None,
+    }
+    let stmts: &[(BindMode, &str)] = &[
+        (BindMode::BatchesOnly, "DELETE FROM passenger_locations WHERE ride_id IN (SELECT id FROM rides WHERE demo_batch = ANY($1))"),
+        (BindMode::BatchesOnly, "DELETE FROM ride_change_drafts WHERE ride_id IN (SELECT id FROM rides WHERE demo_batch = ANY($1))"),
+        (BindMode::Both, "DELETE FROM caregiver_passes WHERE ride_id IN (SELECT id FROM rides WHERE demo_batch = ANY($1)) OR created_by = ANY($2)"),
+        (BindMode::Both, "DELETE FROM visitor_sessions WHERE pass_id IN (SELECT id FROM visitor_passes WHERE host_id = ANY($2) OR event_id IN (SELECT id FROM events WHERE demo_batch = ANY($1)))"),
+        (BindMode::Both, "DELETE FROM visitor_passes WHERE host_id = ANY($2) OR event_id IN (SELECT id FROM events WHERE demo_batch = ANY($1))"),
+        (BindMode::Both, "DELETE FROM ride_chat_reads WHERE user_id = ANY($2) OR trip_id IN (SELECT DISTINCT trip_id FROM rides WHERE demo_batch = ANY($1) AND trip_id IS NOT NULL)"),
+        (BindMode::Both, "DELETE FROM ride_message_reactions WHERE user_id = ANY($2) OR message_id IN (SELECT id FROM ride_messages WHERE demo_batch = ANY($1))"),
+        (BindMode::BatchesOnly, "DELETE FROM ride_messages WHERE demo_batch = ANY($1)"),
+        (BindMode::BatchesOnly, "DELETE FROM settlement_revisions WHERE demo_batch = ANY($1)"),
+        (BindMode::BatchesOnly, "DELETE FROM settlement_shares WHERE demo_batch = ANY($1)"),
+        (BindMode::BatchesOnly, "DELETE FROM settlement_items WHERE demo_batch = ANY($1)"),
+        (BindMode::BatchesOnly, "DELETE FROM settlements WHERE demo_batch = ANY($1)"),
+        (BindMode::Both, "DELETE FROM notification_deliveries WHERE user_id = ANY($2) OR notification_id IN (SELECT id FROM notifications WHERE demo_batch = ANY($1))"),
+        (BindMode::UidsOnly, "DELETE FROM mobile_push_tokens WHERE user_id = ANY($1)"),
+        (BindMode::UidsOnly, "DELETE FROM push_subscriptions WHERE user_id = ANY($1)"),
+        (BindMode::UidsOnly, "DELETE FROM user_notification_prefs WHERE user_id = ANY($1)"),
+        (BindMode::Both, "DELETE FROM notifications WHERE demo_batch = ANY($1) OR user_id = ANY($2)"),
+        (BindMode::BatchesOnly, "DELETE FROM help_replies WHERE demo_batch = ANY($1)"),
+        (BindMode::BatchesOnly, "DELETE FROM help_tickets WHERE demo_batch = ANY($1)"),
+        (BindMode::UidsOnly, "DELETE FROM guide_feedback WHERE user_id = ANY($1) OR guide_id >= 90001"),
+        (BindMode::None, "DELETE FROM guide_workflows WHERE id >= 90001"),
+        (BindMode::Both, "DELETE FROM reimbursements WHERE demo_batch = ANY($1) OR user_id = ANY($2)"),
+        (BindMode::UidsOnly, "DELETE FROM payout_batches WHERE created_by = ANY($1) OR id >= 91001"),
+        (BindMode::BatchesOnly, "DELETE FROM plan_visitors WHERE demo_batch = ANY($1) OR event_id IN (SELECT id FROM events WHERE demo_batch = ANY($1))"),
+        (BindMode::BatchesOnly, "DELETE FROM event_plan_drafts WHERE event_id IN (SELECT id FROM events WHERE demo_batch = ANY($1))"),
+        (BindMode::BatchesOnly, "DELETE FROM event_attribution_groups WHERE event_id IN (SELECT id FROM events WHERE demo_batch = ANY($1))"),
+        (BindMode::BatchesOnly, "DELETE FROM event_groups WHERE demo_batch = ANY($1) OR event_id IN (SELECT id FROM events WHERE demo_batch = ANY($1))"),
+        (BindMode::Both, "DELETE FROM event_signups WHERE demo_batch = ANY($1) OR user_id = ANY($2)"),
+        (BindMode::Both, "DELETE FROM rides WHERE demo_batch = ANY($1) OR passenger_id = ANY($2) OR driver_id = ANY($2)"),
+        (BindMode::None, "DELETE FROM trips WHERE NOT EXISTS (SELECT 1 FROM rides r WHERE r.trip_id = trips.id)"),
+        (BindMode::Both, "DELETE FROM events WHERE demo_batch = ANY($1) OR created_by = ANY($2)"),
+        (BindMode::BatchesOnly, "DELETE FROM area_photos WHERE demo_batch = ANY($1)"),
+        (BindMode::Both, "DELETE FROM driver_locations WHERE demo_batch = ANY($1) OR driver_id = ANY($2)"),
+        (BindMode::Both, "DELETE FROM driver_areas WHERE demo_batch = ANY($1) OR user_id = ANY($2)"),
+        (BindMode::Both, "DELETE FROM vehicles WHERE demo_batch = ANY($1) OR user_id = ANY($2)"),
+        (BindMode::UidsOnly, "DELETE FROM family_requests WHERE user_id = ANY($1) OR family_id >= 91001"),
+        (BindMode::Both, "DELETE FROM invites WHERE demo_batch = ANY($1) OR created_by = ANY($2)"),
+        (BindMode::UidsOnly, "DELETE FROM family_members WHERE user_id = ANY($1) OR family_id >= 91001"),
+        (BindMode::UidsOnly, "DELETE FROM families WHERE owner_id = ANY($1) OR id >= 91001"),
+        (BindMode::None, "DELETE FROM recovery_requests WHERE id >= 91001"),
+        (BindMode::UidsOnly, "DELETE FROM saved_places WHERE user_id = ANY($1)"),
+        (BindMode::UidsOnly, "DELETE FROM recurring_ride_schedules WHERE user_id = ANY($1)"),
+        (BindMode::UidsOnly, "DELETE FROM proxy_riders WHERE user_id = ANY($1) OR id >= 11001"),
+        (BindMode::UidsOnly, "DELETE FROM user_badge_icons WHERE user_id = ANY($1)"),
+        (BindMode::UidsOnly, "DELETE FROM oauth_accounts WHERE user_id = ANY($1)"),
+        (BindMode::UidsOnly, "DELETE FROM biometric_credentials WHERE user_id = ANY($1)"),
+        (BindMode::Both, "DELETE FROM passkeys WHERE demo_batch = ANY($1) OR user_id = ANY($2)"),
+        (BindMode::UidsOnly, "DELETE FROM sessions WHERE user_id = ANY($1)"),
+        (BindMode::BatchesOnly, "DELETE FROM announcement_groups WHERE announcement_id IN (SELECT id FROM announcements WHERE demo_batch = ANY($1))"),
+        (BindMode::BatchesOnly, "DELETE FROM announcements WHERE demo_batch = ANY($1)"),
+        (BindMode::Both, "DELETE FROM audit_logs WHERE demo_batch = ANY($1) OR actor_id = ANY($2)"),
+        (BindMode::Both, "DELETE FROM group_members WHERE demo_batch = ANY($1) OR user_id = ANY($2)"),
+        (BindMode::BatchesOnly, "DELETE FROM groups WHERE demo_batch = ANY($1) AND parent_id IS NOT NULL AND id > 4"),
+        (BindMode::Both, "DELETE FROM files WHERE demo_batch = ANY($1) OR owner_id = ANY($2)"),
+        (BindMode::UidsOnly, "DELETE FROM users WHERE id = ANY($1)"),
+        (BindMode::None, "DELETE FROM role_permissions WHERE role_key = 'c_scen_usher'"),
+        (BindMode::None, "DELETE FROM roles WHERE key = 'c_scen_usher'"),
+    ];
+    for (mode, sql) in stmts {
+        let q = sqlx::query(sqlx::AssertSqlSafe(*sql));
+        let q = match mode {
+            BindMode::Both => q.bind(&batches).bind(&target_uids),
+            BindMode::BatchesOnly => q.bind(&batches),
+            BindMode::UidsOnly => q.bind(&target_uids),
+            BindMode::None => q,
+        };
+        q.execute(&mut *tx).await?;
+    }
+    tx.commit().await?;
+    sync_identity_sequences(db).await?;
+    Ok(())
+}
+
+#[derive(Debug, Serialize)]
+pub struct SeedVerificationReport {
+    pub unvalidated_constraints: i64,
+    pub role_sync_drift: i64,
+    pub orphan_trips: i64,
+    pub reimbursement_sod_violations: i64,
+    pub payout_batch_dual_control_violations: i64,
+    pub multiple_active_vehicles: i64,
+    pub sequence_lags: Vec<String>,
+    pub counts: HashMap<String, i64>,
+}
+
+/// Verify database relational integrity, SoD invariants, role trigger sync, unique active
+/// vehicles, and identity sequence alignment. Fails loudly if any invariant is violated.
+pub async fn seed_verify(db: &PgPool) -> anyhow::Result<SeedVerificationReport> {
+    let unvalidated_constraints: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM pg_constraint WHERE connamespace = current_schema()::regnamespace AND NOT convalidated",
+    )
+    .fetch_one(db)
+    .await?;
+
+    let role_sync_drift: i64 = sqlx::query_scalar(
+        "WITH expected AS (
+             SELECT u.id AS user_id, r.key AS role_key
+             FROM users u
+             CROSS JOIN LATERAL unnest(listed_role_keys(u.roles)) AS rk(key)
+             JOIN roles r ON r.key = rk.key
+         ), missing AS (
+             SELECT 1 FROM expected e
+             WHERE NOT EXISTS (SELECT 1 FROM member_roles mr WHERE mr.user_id = e.user_id AND mr.role_key = e.role_key)
+         ), extra AS (
+             SELECT 1 FROM member_roles mr
+             WHERE NOT EXISTS (SELECT 1 FROM expected e WHERE e.user_id = mr.user_id AND e.role_key = mr.role_key)
+         )
+         SELECT (SELECT COUNT(*) FROM missing) + (SELECT COUNT(*) FROM extra)",
+    )
+    .fetch_one(db)
+    .await?;
+
+    let orphan_trips: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM trips t WHERE NOT EXISTS (SELECT 1 FROM rides r WHERE r.trip_id = t.id)",
+    )
+    .fetch_one(db)
+    .await?;
+
+    let reimbursement_sod_violations: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*)
+         FROM reimbursements r
+         LEFT JOIN payout_batches b ON b.id = r.batch_id
+         WHERE COALESCE(r.paid_by, b.paid_by) IS NOT NULL
+           AND (
+               COALESCE(r.paid_by, b.paid_by) = r.user_id
+               OR COALESCE(r.paid_by, b.paid_by) = r.reviewed_by
+               OR COALESCE(r.paid_by, b.paid_by) = r.requested_by
+           )",
+    )
+    .fetch_one(db)
+    .await?;
+
+    let payout_batch_dual_control_violations: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM payout_batches WHERE paid_by IS NOT NULL AND paid_by = created_by",
+    )
+    .fetch_one(db)
+    .await?;
+
+    let multiple_active_vehicles: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM (SELECT user_id FROM vehicles WHERE is_active = 1 GROUP BY user_id HAVING COUNT(*) > 1) s",
+    )
+    .fetch_one(db)
+    .await?;
+
+    let seq_cols: Vec<(String, String, String)> = sqlx::query_as(
+        "SELECT table_schema, table_name, column_name
+         FROM information_schema.columns
+         WHERE table_schema = current_schema()
+           AND (is_identity = 'YES' OR column_default LIKE 'nextval%')
+         ORDER BY table_name",
+    )
+    .fetch_all(db)
+    .await?;
+    let mut sequence_lags = Vec::new();
+    for (schema, table, col) in seq_cols {
+        let fq_table = format!(
+            "\"{}\".\"{}\"",
+            schema.replace('"', "\"\""),
+            table.replace('"', "\"\"")
+        );
+        let q_col = format!("\"{}\"", col.replace('"', "\"\""));
+        let max_id: Option<i64> = sqlx::query_scalar(crate::dyn_sql!(
+            "SELECT MAX({q_col})::BIGINT FROM {fq_table}"
+        ))
+        .fetch_one(db)
+        .await?;
+        let Some(max_id) = max_id else {
+            continue;
+        };
+        let seq_name: Option<String> =
+            sqlx::query_scalar("SELECT pg_get_serial_sequence(format('%I.%I', $1, $2), $3)")
+                .bind(&schema)
+                .bind(&table)
+                .bind(&col)
+                .fetch_one(db)
+                .await?;
+        let Some(seq_name) = seq_name else {
+            continue;
+        };
+        let (last_val, is_called): (i64, bool) = sqlx::query_as(crate::dyn_sql!(
+            "SELECT last_value, is_called FROM {seq_name}"
+        ))
+        .fetch_one(db)
+        .await?;
+        if !is_called || last_val < max_id {
+            sequence_lags.push(format!(
+                "{table}.{col} (seq={last_val}, called={is_called}, max={max_id})"
+            ));
+        }
+    }
+
+    let mut counts = HashMap::new();
+    for table in [
+        "users",
+        "vehicles",
+        "events",
+        "event_signups",
+        "rides",
+        "trips",
+        "reimbursements",
+        "payout_batches",
+        "settlements",
+        "files",
+        "notifications",
+        "notification_deliveries",
+        "event_plan_drafts",
+        "ride_change_drafts",
+        "visitor_passes",
+        "caregiver_passes",
+        "families",
+    ] {
+        let n: i64 = sqlx::query_scalar(crate::dyn_sql!("SELECT COUNT(*)::BIGINT FROM {table}"))
+            .fetch_one(db)
+            .await?;
+        counts.insert(table.to_string(), n);
+    }
+
+    let report = SeedVerificationReport {
+        unvalidated_constraints,
+        role_sync_drift,
+        orphan_trips,
+        reimbursement_sod_violations,
+        payout_batch_dual_control_violations,
+        multiple_active_vehicles,
+        sequence_lags,
+        counts,
+    };
+    if report.unvalidated_constraints > 0
+        || report.role_sync_drift > 0
+        || report.orphan_trips > 0
+        || report.reimbursement_sod_violations > 0
+        || report.payout_batch_dual_control_violations > 0
+        || report.multiple_active_vehicles > 0
+        || !report.sequence_lags.is_empty()
+    {
+        anyhow::bail!(
+            "seed verification failed: {}",
+            serde_json::to_string_pretty(&report)?
+        );
+    }
+    Ok(report)
+}
+
+/// CLI handler for `grace-ride seed <core|edge|scenarios|scale [N]|full [--scale N]|reset|verify>`.
+pub async fn run_cli(
+    db: &PgPool,
+    cfg: &Config,
+    args: &[String],
+) -> anyhow::Result<serde_json::Value> {
+    if !cfg.dev_mode {
+        anyhow::bail!("seed CLI is dev-mode only (set DEV_MODE=true)");
+    }
+    let sub = args.first().map(String::as_str).unwrap_or("help");
+    match sub {
+        "core" => {
+            insert_reference_data(db).await?;
+            ensure_demo_batches(db).await?;
+            crate::perms::sync(db).await?;
+            seed_core(db).await?;
+            let report = seed_verify(db).await?;
+            Ok(json!({ "command": "core", "report": report }))
+        }
+        "edge" => {
+            crate::perms::sync(db).await?;
+            seed_edge(db).await?;
+            let report = seed_verify(db).await?;
+            Ok(json!({ "command": "edge", "report": report }))
+        }
+        "scenarios" => {
+            seed_scenarios_with_uploads(db, Some(&cfg.upload_dir)).await?;
+            let report = seed_verify(db).await?;
+            Ok(json!({ "command": "scenarios", "report": report }))
+        }
+        "scale" => {
+            let n: i64 = args
+                .get(1)
+                .map(|s| s.parse())
+                .transpose()?
+                .unwrap_or(200);
+            seed_scale(db, n).await?;
+            let report = seed_verify(db).await?;
+            Ok(json!({ "command": "scale", "scale": n, "report": report }))
+        }
+        "full" => {
+            let mut scale = 200i64;
+            let mut idx = 1usize;
+            while idx < args.len() {
+                if args[idx] == "--scale" {
+                    scale = args
+                        .get(idx + 1)
+                        .ok_or_else(|| anyhow::anyhow!("--scale requires a number"))?
+                        .parse()?;
+                    idx += 2;
+                } else {
+                    scale = args[idx].parse()?;
+                    idx += 1;
+                }
+            }
+            let report = seed_full(db, Some(&cfg.upload_dir), scale).await?;
+            Ok(json!({ "command": "full", "scale": scale, "report": report }))
+        }
+        "reset" => {
+            let include_core = !args.iter().any(|a| a == "--keep-core");
+            seed_reset(db, include_core).await?;
+            let report = seed_verify(db).await?;
+            Ok(json!({ "command": "reset", "include_core": include_core, "report": report }))
+        }
+        "verify" => {
+            let report = seed_verify(db).await?;
+            Ok(json!({ "command": "verify", "report": report }))
+        }
+        other => anyhow::bail!(
+            "unknown seed subcommand '{other}'; expected one of: core, edge, scenarios, scale [N], full [--scale N], reset [--keep-core], verify"
+        ),
+    }
 }

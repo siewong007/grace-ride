@@ -11,8 +11,12 @@ use tracing_subscriber::{
 async fn main() -> anyhow::Result<()> {
     let _ = dotenvy::dotenv();
     // `grace-ride healthcheck` is used by the container HEALTHCHECK (no curl in the image).
-    if std::env::args().nth(1).as_deref() == Some("healthcheck") {
+    let arg1 = std::env::args().nth(1);
+    if arg1.as_deref() == Some("healthcheck") {
         return healthcheck().await;
+    }
+    if arg1.as_deref() == Some("seed") {
+        return run_seed_cli().await;
     }
 
     // Sentry: opt-in error and panic monitoring. Set SENTRY_DSN to enable.
@@ -102,6 +106,23 @@ async fn main() -> anyhow::Result<()> {
     bg.join_with_timeout(std::time::Duration::from_secs(10))
         .await;
     tracing::info!("shut down cleanly");
+    Ok(())
+}
+
+async fn run_seed_cli() -> anyhow::Result<()> {
+    let cfg = Config::from_env()?;
+    if !cfg.dev_mode {
+        anyhow::bail!("seed CLI is dev-mode only (set DEV_MODE=true on localhost)");
+    }
+    cfg.validate_production_secrets()?;
+    grace_ride::util::set_timezone(cfg.db.timezone);
+    grace_ride::util::set_dev_mode(cfg.dev_mode);
+    grace_ride::util::set_public_url(&cfg.public_url);
+    let db = grace_ride::connect_db_with(&cfg.database_url, &cfg.db).await?;
+    grace_ride::perms::sync(&db).await?;
+    let args: Vec<String> = std::env::args().skip(2).collect();
+    let val = grace_ride::seed::run_cli(&db, &cfg, &args).await?;
+    println!("{}", serde_json::to_string_pretty(&val)?);
     Ok(())
 }
 

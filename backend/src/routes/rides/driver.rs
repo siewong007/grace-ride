@@ -11,11 +11,14 @@ use crate::error::{bad, conflict, forbidden, AppResult};
 use crate::notifications::{notify_batch, BatchNotifItem, NotifMeta};
 use crate::perms::{Act, Page};
 use crate::state::AppState;
-use crate::util::{audit, fmt_rm, notify, notify_perm, now, require, system_message, ErrorKey};
+use crate::util::{
+    audit, audit_many, fmt_rm, notify, notify_perm, now, pickup_window_bounds, require,
+    system_message, ErrorKey,
+};
 
 use super::location::{clear_location_if_idle, clear_passenger_location};
 use super::passenger::ReasonReq;
-use super::{load_ride, traffic_can, RideRow};
+use super::{load_ride, traffic_can, RideRow, RIDE_SELECT};
 
 // ---------------- Driver ----------------
 
@@ -26,13 +29,17 @@ pub(super) async fn driver_load_on(
     at: &str,
     exclude: Option<i64>,
 ) -> AppResult<(i64, i64)> {
+    let (lo, hi) = pickup_window_bounds(at, 65).unwrap_or_else(|| ("".into(), "9999".into()));
     let (load,): (i64,) = sqlx::query_as(
         "SELECT COALESCE(SUM(seats),0)::BIGINT FROM rides WHERE driver_id=$1 AND id != $2 AND status IN ('pending_passenger','pending_approval','pending_driver_confirm','confirmed','in_progress')
+         AND pickup_at >= $4 AND pickup_at <= $5
          AND abs(EXTRACT(EPOCH FROM (pickup_at::timestamp - $3::timestamp))) < 3600",
     )
     .bind(driver)
     .bind(exclude.unwrap_or(-1))
     .bind(at)
+    .bind(&lo)
+    .bind(&hi)
     .fetch_one(&mut *conn)
     .await?;
     let row: Option<(i64, i64, Option<i64>)> = sqlx::query_as(
@@ -109,10 +116,11 @@ pub(super) async fn driver_claim(
     // booking in `load` and is rejected instead of overbooking the car.
     let mut tx = st.db.begin().await?;
     if let Some(event_id) = r.event_id {
-        let ev_status: Option<String> = sqlx::query_scalar("SELECT status FROM events WHERE id=$1")
-            .bind(event_id)
-            .fetch_optional(&mut *tx)
-            .await?;
+        let ev_status: Option<String> =
+            sqlx::query_scalar("SELECT status FROM events WHERE id=$1 FOR SHARE")
+                .bind(event_id)
+                .fetch_optional(&mut *tx)
+                .await?;
         if ev_status.as_deref() != Some("published") {
             return Err(bad(u.lang, ErrorKey::EventNotOpen));
         }
@@ -307,6 +315,8 @@ async fn new_trip_id(conn: &mut sqlx::PgConnection, ride_id: i64) -> AppResult<i
 /// Run while holding the driver's row lock, so two rides confirmed for one driver at the
 /// same moment join the same trip instead of each opening their own.
 pub(super) async fn assign_trip(conn: &mut sqlx::PgConnection, r: &RideRow) -> AppResult<i64> {
+    let (lo, hi) =
+        pickup_window_bounds(&r.pickup_at, 65).unwrap_or_else(|| ("".into(), "9999".into()));
     let existing: Option<(i64,)> = sqlx::query_as(
         "SELECT trip_id FROM rides
          WHERE driver_id=$1 AND id != $2 AND trip_id IS NOT NULL AND status IN ('confirmed','in_progress')
@@ -315,6 +325,7 @@ pub(super) async fn assign_trip(conn: &mut sqlx::PgConnection, r: &RideRow) -> A
                (leg <> 'return' AND destination = $3)
                OR (leg = 'return' AND (($6::BIGINT IS NOT NULL AND event_id = $6) OR pickup_address = $7))
            )
+           AND pickup_at >= $8 AND pickup_at <= $9
            AND abs(EXTRACT(EPOCH FROM (pickup_at::timestamp - $4::timestamp))) < 3600
          LIMIT 1",
     )
@@ -325,6 +336,8 @@ pub(super) async fn assign_trip(conn: &mut sqlx::PgConnection, r: &RideRow) -> A
     .bind(&r.leg)
     .bind(r.event_id)
     .bind(&r.pickup_address)
+    .bind(&lo)
+    .bind(&hi)
     .fetch_optional(&mut *conn)
     .await?;
     let trip = match existing {
@@ -433,10 +446,11 @@ pub(super) async fn driver_confirm_assignment(
     // `reminder_sent=0`: a new driver means the pickup reminder goes out again.
     let mut tx = st.db.begin().await?;
     if let Some(event_id) = r.event_id {
-        let ev_status: Option<String> = sqlx::query_scalar("SELECT status FROM events WHERE id=$1")
-            .bind(event_id)
-            .fetch_optional(&mut *tx)
-            .await?;
+        let ev_status: Option<String> =
+            sqlx::query_scalar("SELECT status FROM events WHERE id=$1 FOR SHARE")
+                .bind(event_id)
+                .fetch_optional(&mut *tx)
+                .await?;
         if ev_status.as_deref() != Some("published") {
             return Err(bad(u.lang, ErrorKey::EventNotOpen));
         }
@@ -548,11 +562,20 @@ pub(super) async fn start_ride(
     .await?;
     tx.commit().await?;
     let mut started = vec![r.clone()];
-    for (other,) in &others {
-        started.push(load_ride(&st, u.lang, *other).await?);
+    if !others.is_empty() {
+        let other_ids: Vec<i64> = others.iter().map(|(id,)| *id).collect();
+        let mut extra: Vec<RideRow> = sqlx::query_as(crate::dyn_sql!(
+            "{RIDE_SELECT} WHERE r.id = ANY($1) ORDER BY r.id"
+        ))
+        .bind(&other_ids)
+        .fetch_all(&st.db)
+        .await?;
+        started.append(&mut extra);
     }
     let mut start_notifs = Vec::with_capacity(started.len());
+    let mut started_ids = Vec::with_capacity(started.len());
     for ride in &started {
+        started_ids.push(ride.id);
         start_notifs.push(BatchNotifItem {
             user_id: ride.passenger_id,
             title_zh: "司机已出发".into(),
@@ -575,7 +598,9 @@ pub(super) async fn start_ride(
                 tag: format!("ride-{}", ride.id),
             },
         });
-        audit(&st.db, Some(u.id), "ride.start", "ride", Some(ride.id), "").await;
+    }
+    if let Err(e) = audit_many(&st.db, Some(u.id), "ride.start", "ride", &started_ids, "").await {
+        tracing::error!("audit_many ride.start failed: {e}");
     }
     notify_batch(&st.db, start_notifs).await;
     if let Some(t) = r.trip_id {

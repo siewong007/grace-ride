@@ -586,11 +586,11 @@ pub fn sql_holds(alias: &str, perm: Perm) -> String {
     )
 }
 
-/// SQL condition: the `users` row aliased `alias` is active and holds `role` as an exact
-/// comma-separated token in `roles`. `role` is a built-in role constant, never from input.
+/// SQL condition: the `users` row aliased `alias` is active and holds `role` via
+/// trigger-maintained `member_roles`. `role` is a built-in role constant, never from input.
 pub fn sql_has_role(alias: &str, role: &str) -> String {
     format!(
-        "({alias}.status = 'active' AND string_to_array(replace({alias}.roles, ' ', ''), ',') && ARRAY['{role}'])"
+        "({alias}.status = 'active' AND EXISTS (SELECT 1 FROM member_roles mr WHERE mr.user_id = {alias}.id AND mr.role_key = '{role}'))"
     )
 }
 
@@ -602,7 +602,7 @@ pub fn sql_has_any_role(alias: &str, roles: &[&str]) -> String {
         .collect::<Vec<_>>()
         .join(", ");
     format!(
-        "({alias}.status = 'active' AND string_to_array(replace({alias}.roles, ' ', ''), ',') && ARRAY[{arr}])"
+        "({alias}.status = 'active' AND EXISTS (SELECT 1 FROM member_roles mr WHERE mr.user_id = {alias}.id AND mr.role_key IN ({arr})))"
     )
 }
 

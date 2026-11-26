@@ -265,6 +265,9 @@ pub(super) async fn bulk_put_fares(
     let mut created: usize = 0;
     let mut updated: usize = 0;
     let mut unchanged: usize = 0;
+    let mut area_a_ids: Vec<i64> = Vec::with_capacity(deduped.len());
+    let mut area_b_ids: Vec<i64> = Vec::with_capacity(deduped.len());
+    let mut amounts: Vec<i64> = Vec::with_capacity(deduped.len());
     for (&(lo, hi), &cents) in &deduped {
         match existing_map.get(&(lo, hi)) {
             Some(&prev) if prev == cents => {
@@ -272,35 +275,32 @@ pub(super) async fn bulk_put_fares(
             }
             Some(_) => {
                 updated += 1;
-                sqlx::query(
-                    "INSERT INTO area_fares (area_a_id, area_b_id, amount_cents, updated_at)
-                     VALUES ($1, $2, $3, $4)
-                     ON CONFLICT (area_a_id, area_b_id) DO UPDATE
-                     SET amount_cents = EXCLUDED.amount_cents, updated_at = EXCLUDED.updated_at",
-                )
-                .bind(lo)
-                .bind(hi)
-                .bind(cents)
-                .bind(&ts)
-                .execute(&mut *tx)
-                .await?;
+                area_a_ids.push(lo);
+                area_b_ids.push(hi);
+                amounts.push(cents);
             }
             None => {
                 created += 1;
-                sqlx::query(
-                    "INSERT INTO area_fares (area_a_id, area_b_id, amount_cents, updated_at)
-                     VALUES ($1, $2, $3, $4)
-                     ON CONFLICT (area_a_id, area_b_id) DO UPDATE
-                     SET amount_cents = EXCLUDED.amount_cents, updated_at = EXCLUDED.updated_at",
-                )
-                .bind(lo)
-                .bind(hi)
-                .bind(cents)
-                .bind(&ts)
-                .execute(&mut *tx)
-                .await?;
+                area_a_ids.push(lo);
+                area_b_ids.push(hi);
+                amounts.push(cents);
             }
         }
+    }
+    if !area_a_ids.is_empty() {
+        sqlx::query(
+            "INSERT INTO area_fares (area_a_id, area_b_id, amount_cents, updated_at)
+             SELECT a, b, c, $4
+             FROM UNNEST($1::BIGINT[], $2::BIGINT[], $3::BIGINT[]) AS t(a, b, c)
+             ON CONFLICT (area_a_id, area_b_id) DO UPDATE
+             SET amount_cents = EXCLUDED.amount_cents, updated_at = EXCLUDED.updated_at",
+        )
+        .bind(&area_a_ids)
+        .bind(&area_b_ids)
+        .bind(&amounts)
+        .bind(&ts)
+        .execute(&mut *tx)
+        .await?;
     }
 
     tx.commit().await?;

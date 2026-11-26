@@ -47,10 +47,8 @@ pub(super) async fn list_users(
             ],
         )?;
     }
-    let like = format!(
-        "%{}%",
-        escape_like(q.q.as_deref().unwrap_or_default().trim())
-    );
+    let search = q.q.as_deref().unwrap_or_default().trim();
+    let like = (!search.is_empty()).then(|| format!("%{}%", escape_like(search)));
     // Without 成员 · view only the name can order the list: sorting by email would line
     // names up by an address the caller can't see, leaking it the same way a search would.
     let sortable: &[(&str, &str)] = if staff {
@@ -74,17 +72,21 @@ pub(super) async fn list_users(
     // Search ignores letter case. Without 成员 · view the caller sees names only, so the
     // search matches names only (matching email or phone would reveal them a character
     // at a time) and only active members can be picked.
-    let mut conds = vec![if staff {
-        "(u.name ILIKE $1 ESCAPE '\\' OR u.email ILIKE $1 ESCAPE '\\' OR u.phone ILIKE $1 ESCAPE '\\')".to_string()
-    } else {
-        "u.name ILIKE $1 ESCAPE '\\'".to_string()
-    }];
+    let mut conds: Vec<String> = Vec::new();
+    let mut n = 1;
+    if like.is_some() {
+        conds.push(if staff {
+            format!("(u.name ILIKE ${n} ESCAPE '\\' OR u.email ILIKE ${n} ESCAPE '\\' OR u.phone ILIKE ${n} ESCAPE '\\')")
+        } else {
+            format!("u.name ILIKE ${n} ESCAPE '\\'")
+        });
+        n += 1;
+    }
     let status = if staff {
         q.status.clone()
     } else {
         Some("active".to_string())
     };
-    let mut n = 2;
     if q.role.is_some() {
         conds.push(format!(
             "EXISTS (SELECT 1 FROM member_roles mr WHERE mr.user_id = u.id AND mr.role_key = ${n})"
@@ -95,9 +97,13 @@ pub(super) async fn list_users(
         conds.push(format!("u.status = ${n}"));
         n += 1;
     }
-    let where_sql = conds.join(" AND ");
+    let where_sql = if conds.is_empty() {
+        "TRUE".to_string()
+    } else {
+        conds.join(" AND ")
+    };
 
-    type Row = (
+    type StaffRow = (
         i64,
         String,
         String,
@@ -112,7 +118,7 @@ pub(super) async fn list_users(
         Option<String>,
         Option<String>,
     );
-    let to_json = |(
+    let to_staff_json = |(
         id,
         name,
         email,
@@ -126,26 +132,25 @@ pub(super) async fn list_users(
         color,
         icon,
         family_name,
-    ): Row| {
-        if staff {
-            json!({"id": id, "name": name, "email": email, "phone": phone, "roles": parse_roles(&roles), "status": status,
-                   "created_at": created, "passkeys": pk, "groups": groups.unwrap_or_default(),
-                   "photo_file_id": photo, "avatar_color": color, "avatar_icon": icon,
-                   "family_name": family_name})
-        } else {
-            json!({"id": id, "name": name})
-        }
+    ): StaffRow| {
+        json!({"id": id, "name": name, "email": email, "phone": phone, "roles": parse_roles(&roles), "status": status,
+               "created_at": created, "passkeys": pk, "groups": groups.unwrap_or_default(),
+               "photo_file_id": photo, "avatar_color": color, "avatar_icon": icon,
+               "family_name": family_name})
     };
-    let select = "SELECT u.id, u.name, u.email, u.phone, u.roles, u.status, u.created_at, (SELECT COUNT(*) FROM passkeys p WHERE p.user_id=u.id),
+    let staff_select = "SELECT u.id, u.name, u.email, u.phone, u.roles, u.status, u.created_at, (SELECT COUNT(*) FROM passkeys p WHERE p.user_id=u.id),
                 (SELECT string_agg(g.name, '、') FROM group_members gm JOIN groups g ON g.id=gm.group_id WHERE gm.user_id=u.id),
                 u.photo_file_id, u.avatar_color, u.avatar_icon,
                 (SELECT f.name FROM family_members fm JOIN families f ON f.id = fm.family_id WHERE fm.user_id = u.id)
              FROM users u";
+    let picker_select = "SELECT u.id, u.name FROM users u";
 
     if q.page.is_some() || q.limit.is_some() {
         let count_sql = format!("SELECT COUNT(*) FROM users u WHERE {where_sql}");
-        let mut count_query =
-            sqlx::query_as::<_, (i64,)>(sqlx::AssertSqlSafe(&*count_sql)).bind(&like);
+        let mut count_query = sqlx::query_as::<_, (i64,)>(sqlx::AssertSqlSafe(&*count_sql));
+        if let Some(l) = &like {
+            count_query = count_query.bind(l);
+        }
         if let Some(r) = &q.role {
             count_query = count_query.bind(r);
         }
@@ -158,24 +163,53 @@ pub(super) async fn list_users(
         let limit = q.limit.unwrap_or(50).clamp(1, 200);
         let offset = (page - 1) * limit;
 
-        let sql = format!(
-            "{select} WHERE {where_sql} ORDER BY {order} LIMIT ${n} OFFSET ${}",
-            n + 1
-        );
-        let mut query = sqlx::query_as::<_, Row>(sqlx::AssertSqlSafe(&*sql)).bind(&like);
-        if let Some(r) = &q.role {
-            query = query.bind(r);
-        }
-        if let Some(s) = &status {
-            query = query.bind(s);
-        }
-        query = query.bind(limit).bind(offset);
-        let out: Vec<Value> = query
-            .fetch_all(&st.db)
-            .await?
-            .into_iter()
-            .map(to_json)
-            .collect();
+        let out: Vec<Value> = if staff {
+            let sql = format!(
+                "{staff_select} WHERE {where_sql} ORDER BY {order} LIMIT ${n} OFFSET ${}",
+                n + 1
+            );
+            let mut query = sqlx::query_as::<_, StaffRow>(sqlx::AssertSqlSafe(&*sql));
+            if let Some(l) = &like {
+                query = query.bind(l);
+            }
+            if let Some(r) = &q.role {
+                query = query.bind(r);
+            }
+            if let Some(s) = &status {
+                query = query.bind(s);
+            }
+            query
+                .bind(limit)
+                .bind(offset)
+                .fetch_all(&st.db)
+                .await?
+                .into_iter()
+                .map(to_staff_json)
+                .collect()
+        } else {
+            let sql = format!(
+                "{picker_select} WHERE {where_sql} ORDER BY {order} LIMIT ${n} OFFSET ${}",
+                n + 1
+            );
+            let mut query = sqlx::query_as::<_, (i64, String)>(sqlx::AssertSqlSafe(&*sql));
+            if let Some(l) = &like {
+                query = query.bind(l);
+            }
+            if let Some(r) = &q.role {
+                query = query.bind(r);
+            }
+            if let Some(s) = &status {
+                query = query.bind(s);
+            }
+            query
+                .bind(limit)
+                .bind(offset)
+                .fetch_all(&st.db)
+                .await?
+                .into_iter()
+                .map(|(id, name)| json!({"id": id, "name": name}))
+                .collect()
+        };
         let total_pages = if total == 0 {
             1
         } else {
@@ -191,20 +225,43 @@ pub(super) async fn list_users(
     }
 
     // Unpaged (member pickers): the same filters, applied before the cap.
-    let sql = format!("{select} WHERE {where_sql} ORDER BY {order} LIMIT 2000");
-    let mut query = sqlx::query_as::<_, Row>(sqlx::AssertSqlSafe(&*sql)).bind(&like);
-    if let Some(r) = &q.role {
-        query = query.bind(r);
-    }
-    if let Some(s) = &status {
-        query = query.bind(s);
-    }
-    let out: Vec<Value> = query
-        .fetch_all(&st.db)
-        .await?
-        .into_iter()
-        .map(to_json)
-        .collect();
+    let out: Vec<Value> = if staff {
+        let sql = format!("{staff_select} WHERE {where_sql} ORDER BY {order} LIMIT 2000");
+        let mut query = sqlx::query_as::<_, StaffRow>(sqlx::AssertSqlSafe(&*sql));
+        if let Some(l) = &like {
+            query = query.bind(l);
+        }
+        if let Some(r) = &q.role {
+            query = query.bind(r);
+        }
+        if let Some(s) = &status {
+            query = query.bind(s);
+        }
+        query
+            .fetch_all(&st.db)
+            .await?
+            .into_iter()
+            .map(to_staff_json)
+            .collect()
+    } else {
+        let sql = format!("{picker_select} WHERE {where_sql} ORDER BY {order} LIMIT 2000");
+        let mut query = sqlx::query_as::<_, (i64, String)>(sqlx::AssertSqlSafe(&*sql));
+        if let Some(l) = &like {
+            query = query.bind(l);
+        }
+        if let Some(r) = &q.role {
+            query = query.bind(r);
+        }
+        if let Some(s) = &status {
+            query = query.bind(s);
+        }
+        query
+            .fetch_all(&st.db)
+            .await?
+            .into_iter()
+            .map(|(id, name)| json!({"id": id, "name": name}))
+            .collect()
+    };
     Ok(Json(json!(out)))
 }
 
@@ -562,13 +619,15 @@ pub(super) async fn update_user(
             .bind(id)
             .execute(&mut *tx)
             .await?;
-        for g in &gids {
-            sqlx::query("INSERT INTO group_members (group_id, user_id) VALUES ($1,$2) ON CONFLICT DO NOTHING")
-                .bind(g)
-                .bind(id)
-                .execute(&mut *tx)
-                .await?;
-        }
+        sqlx::query(
+            "INSERT INTO group_members (group_id, user_id)
+             SELECT gid, $2 FROM UNNEST($1::BIGINT[]) AS gid
+             ON CONFLICT DO NOTHING",
+        )
+        .bind(&gids)
+        .bind(id)
+        .execute(&mut *tx)
+        .await?;
         if gids != old {
             groups_note = format!("; groups {old:?} → {gids:?}");
         }

@@ -279,62 +279,64 @@ struct MeRow {
     push_opt_in: i64,
     caregiver_user_id: Option<i64>,
     onboarding_dismissed_at: Option<String>,
+    locked_at: Option<String>,
+    passkey_count: i64,
+    biometric_count: i64,
+    unread_count: i64,
+    org_timeout: Option<String>,
+    groups_json: Value,
 }
 
 async fn me(State(st): State<AppState>, u: CurrentUser) -> AppResult<Json<Value>> {
+    let _ = crate::security::evaluate_session_lock(&st, &u.session_id, false).await;
     let row: MeRow = sqlx::query_as(
-        "SELECT phone, photo_file_id, avatar_color, avatar_icon, totp_enabled, password_hash, badges_opt_out, carpool_enabled, spare_seats, terms_accepted_at, readiness_prompt_mins, gate_wait_mins, auto_lock_mins, totp_backup_codes, terms_version, telegram_chat_id, whatsapp_opt_in, push_opt_in, caregiver_user_id, onboarding_dismissed_at FROM users WHERE id=$1",
+        "SELECT u.phone, u.photo_file_id, u.avatar_color, u.avatar_icon, u.totp_enabled, u.password_hash,
+                u.badges_opt_out, u.carpool_enabled, u.spare_seats, u.terms_accepted_at,
+                u.readiness_prompt_mins, u.gate_wait_mins, u.auto_lock_mins, u.totp_backup_codes,
+                u.terms_version, u.telegram_chat_id, u.whatsapp_opt_in, u.push_opt_in,
+                u.caregiver_user_id, u.onboarding_dismissed_at,
+                s.locked_at,
+                (SELECT COUNT(*) FROM passkeys p WHERE p.user_id = u.id) AS passkey_count,
+                (SELECT COUNT(*) FROM biometric_credentials b WHERE b.user_id = u.id) AS biometric_count,
+                (SELECT COUNT(*) FROM notifications n WHERE n.user_id = u.id AND n.read_at IS NULL) AS unread_count,
+                (SELECT value FROM system_settings WHERE key = 'session_timeout_mins') AS org_timeout,
+                COALESCE((
+                    SELECT jsonb_agg(jsonb_build_object('id', g.id, 'name', g.name) ORDER BY g.name)
+                    FROM groups g
+                    JOIN group_members m ON m.group_id = g.id
+                    WHERE m.user_id = u.id
+                ), '[]'::jsonb) AS groups_json
+         FROM users u
+         JOIN sessions s ON s.token = $2
+         WHERE u.id = $1",
     )
     .bind(u.id)
+    .bind(&u.session_id)
     .fetch_one(&st.db)
     .await?;
-    let _ = crate::security::evaluate_session_lock(&st, &u.session_id, false).await;
-    let (locked_at,): (Option<String>,) =
-        sqlx::query_as("SELECT locked_at FROM sessions WHERE token=$1")
-            .bind(&u.session_id)
-            .fetch_one(&st.db)
-            .await?;
     let backup_codes_count = row
         .totp_backup_codes
         .as_deref()
         .and_then(|s| serde_json::from_str::<Vec<String>>(s).ok())
         .map(|v| v.len())
         .unwrap_or(0);
-    let passkeys: (i64,) = sqlx::query_as("SELECT COUNT(*) FROM passkeys WHERE user_id=$1")
-        .bind(u.id)
-        .fetch_one(&st.db)
-        .await?;
-    let biometrics: (i64,) =
-        sqlx::query_as("SELECT COUNT(*) FROM biometric_credentials WHERE user_id=$1")
-            .bind(u.id)
-            .fetch_one(&st.db)
-            .await?;
-    let unread: (i64,) =
-        sqlx::query_as("SELECT COUNT(*) FROM notifications WHERE user_id=$1 AND read_at IS NULL")
-            .bind(u.id)
-            .fetch_one(&st.db)
-            .await?;
-    let groups: Vec<(i64, String)> = sqlx::query_as(
-        "SELECT g.id, g.name FROM groups g JOIN group_members m ON m.group_id=g.id WHERE m.user_id=$1 ORDER BY g.name",
-    )
-    .bind(u.id)
-    .fetch_all(&st.db)
-    .await?;
     // Built-in roles are named by the app in the member's language; custom ones carry
     // the name their administrator typed.
-    let custom: Vec<(String, String)> =
+    let custom: Vec<(String, String)> = if u.roles.is_empty() {
+        Vec::new()
+    } else {
         sqlx::query_as("SELECT key, name FROM roles WHERE key = ANY($1) AND is_system = 0")
             .bind(&u.roles)
             .fetch_all(&st.db)
-            .await?;
+            .await?
+    };
     let role_names: serde_json::Map<String, Value> =
         custom.into_iter().map(|(k, n)| (k, json!(n))).collect();
-    let session_timeout: i64 =
-        sqlx::query_scalar("SELECT value FROM system_settings WHERE key = 'session_timeout_mins'")
-            .fetch_optional(&st.db)
-            .await?
-            .and_then(|v: String| v.parse::<i64>().ok())
-            .unwrap_or(st.cfg.session_timeout_mins);
+    let session_timeout = row
+        .org_timeout
+        .as_deref()
+        .and_then(|v| v.parse::<i64>().ok())
+        .unwrap_or(st.cfg.session_timeout_mins);
     Ok(Json(json!({
         "id": u.id, "name": u.name, "email": u.email, "phone": row.phone, "photo_file_id": row.photo_file_id,
         "avatar_color": row.avatar_color, "avatar_icon": row.avatar_icon,
@@ -345,11 +347,11 @@ async fn me(State(st): State<AppState>, u: CurrentUser) -> AppResult<Json<Value>
         // until the member signs in with a passkey or 2FA (`privileged` says they exist).
         "permissions": u.perms.usable_keys(u.mfa_ok),
         "mfa_ok": u.mfa_ok, "totp_enabled": row.totp_enabled == 1,
-        "has_password": row.password_hash.is_some(), "passkey_count": passkeys.0, "biometric_count": biometrics.0,
+        "has_password": row.password_hash.is_some(), "passkey_count": row.passkey_count, "biometric_count": row.biometric_count,
         "badges_opt_out": row.badges_opt_out == 1, "carpool_enabled": row.carpool_enabled == 1, "spare_seats": row.spare_seats,
         "readiness_prompt_mins": row.readiness_prompt_mins.unwrap_or(45), "gate_wait_mins": row.gate_wait_mins.unwrap_or(5),
         "auto_lock_mins": row.auto_lock_mins.unwrap_or(0), "session_timeout_mins": session_timeout, "backup_codes_count": backup_codes_count,
-        "locked": locked_at.is_some(),
+        "locked": row.locked_at.is_some(),
         "telegram_chat_id": row.telegram_chat_id,
         "whatsapp_opt_in": row.whatsapp_opt_in == 1,
         "push_opt_in": row.push_opt_in == 1,
@@ -357,8 +359,8 @@ async fn me(State(st): State<AppState>, u: CurrentUser) -> AppResult<Json<Value>
         "onboarding_dismissed": row.onboarding_dismissed_at.is_some(),
         "terms_accepted": row.terms_accepted_at.is_some() && row.terms_version >= TERMS_VERSION,
         "terms_version": TERMS_VERSION,
-        "privileged": u.perms.privileged(), "unread": unread.0,
-        "groups": groups.into_iter().map(|(id, name)| json!({"id": id, "name": name})).collect::<Vec<_>>(),
+        "privileged": u.perms.privileged(), "unread": row.unread_count,
+        "groups": row.groups_json,
         "dev_mode": st.cfg.dev_mode,
     })))
 }

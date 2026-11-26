@@ -47,6 +47,8 @@ pub(crate) struct ResolvedSessionData {
     pub passkey_count: i64,
     pub biometric_count: i64,
     pub org_timeout: Option<String>,
+    pub group_scope: Vec<i64>,
+    pub drive_scope: Vec<i64>,
 }
 
 #[derive(Clone, Debug)]
@@ -576,17 +578,38 @@ pub async fn session_guard(State(st): State<AppState>, mut req: Request, next: N
     };
     let token_hash = hash_token(&token);
     let row: Option<ResolvedSessionData> = sqlx::query_as(
-        "SELECT u.id, u.name, u.email, u.roles, u.status, s.mfa_ok, s.expires_at, s.created_at, u.lang,
+        "WITH RECURSIVE sess AS (
+             SELECT u.id, u.name, u.email, u.roles, u.status, s.mfa_ok, s.expires_at, s.created_at, u.lang,
+                    s.token AS session_id, s.locked_at, s.last_seen_at, u.auto_lock_mins, u.totp_enabled
+             FROM sessions s JOIN users u ON u.id = s.user_id
+             WHERE s.token = $1 AND u.status IN ('active', 'pending')
+         ), up AS (
+             SELECT gm.group_id AS id
+             FROM sess
+             JOIN group_members gm ON gm.user_id = sess.id
+             WHERE sess.status = 'active'
+             UNION
+             SELECT g.parent_id FROM groups g JOIN up ON g.id = up.id WHERE g.parent_id IS NOT NULL
+         ), down AS (
+             SELECT gm.group_id AS id
+             FROM sess
+             JOIN group_members gm ON gm.user_id = sess.id
+             WHERE sess.status = 'active'
+             UNION
+             SELECT g.id FROM groups g JOIN down ON g.parent_id = down.id
+         )
+         SELECT sess.id, sess.name, sess.email, sess.roles, sess.status, sess.mfa_ok, sess.expires_at, sess.created_at, sess.lang,
                 COALESCE((SELECT string_agg(rp.permission, ',') FROM role_permissions rp
                           WHERE rp.role_key = $2
-                             OR rp.role_key IN (SELECT role_key FROM member_roles WHERE user_id = u.id)), '') AS granted,
-                s.token AS session_id,
-                s.locked_at, s.last_seen_at, u.auto_lock_mins, u.totp_enabled,
-                (SELECT COUNT(*) FROM passkeys p WHERE p.user_id = u.id) AS passkey_count,
-                (SELECT COUNT(*) FROM biometric_credentials b WHERE b.user_id = u.id) AS biometric_count,
-                (SELECT value FROM system_settings WHERE key = 'session_timeout_mins') AS org_timeout
-         FROM sessions s JOIN users u ON u.id = s.user_id
-         WHERE s.token = $1 AND u.status IN ('active', 'pending')",
+                             OR rp.role_key IN (SELECT role_key FROM member_roles WHERE user_id = sess.id)), '') AS granted,
+                sess.session_id,
+                sess.locked_at, sess.last_seen_at, sess.auto_lock_mins, sess.totp_enabled,
+                (SELECT COUNT(*) FROM passkeys p WHERE p.user_id = sess.id) AS passkey_count,
+                (SELECT COUNT(*) FROM biometric_credentials b WHERE b.user_id = sess.id) AS biometric_count,
+                (SELECT value FROM system_settings WHERE key = 'session_timeout_mins') AS org_timeout,
+                COALESCE((SELECT array_agg(id) FROM up), '{}'::BIGINT[]) AS group_scope,
+                COALESCE((SELECT array_agg(id) FROM down), '{}'::BIGINT[]) AS drive_scope
+         FROM sess",
     )
     .bind(&token_hash)
     .bind(perms::MEMBER_ROLE)

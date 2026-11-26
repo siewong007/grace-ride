@@ -166,64 +166,74 @@ pub(in crate::routes::admin) async fn finance_report(
         .fetch_one(&st.db)
         .await?;
 
-        let (all_time_awaiting_count, all_time_awaiting_cents): (i64, i64) = sqlx::query_as(
-            "SELECT COUNT(*)::BIGINT, COALESCE(SUM(amount_cents), 0)::BIGINT
+        let (
+            all_time_awaiting_count,
+            all_time_awaiting_cents,
+            overdue_approved_count,
+            overdue_approved_cents,
+        ): (i64, i64, i64, i64) = sqlx::query_as(
+            "SELECT
+                COUNT(*)::BIGINT,
+                COALESCE(SUM(amount_cents), 0)::BIGINT,
+                COUNT(*) FILTER (WHERE updated_at < $1)::BIGINT,
+                COALESCE(SUM(amount_cents) FILTER (WHERE updated_at < $1), 0)::BIGINT
              FROM reimbursements
              WHERE status = 'approved'",
-        )
-        .fetch_one(&st.db)
-        .await?;
-
-        let (overdue_approved_count, overdue_approved_cents): (i64, i64) = sqlx::query_as(
-            "SELECT COUNT(*)::BIGINT, COALESCE(SUM(amount_cents), 0)::BIGINT
-             FROM reimbursements
-             WHERE status = 'approved' AND updated_at < $1",
         )
         .bind(&cutoff_7d)
         .fetch_one(&st.db)
         .await?;
 
-        let (paid_count, paid_cents): (i64, i64) = sqlx::query_as(
-            "SELECT COUNT(*)::BIGINT, COALESCE(SUM(amount_cents), 0)::BIGINT
-             FROM reimbursements
-             WHERE status = 'paid'
-               AND COALESCE(NULLIF(paid_at, ''), updated_at, created_at) >= $1
-               AND COALESCE(NULLIF(paid_at, ''), updated_at, created_at) < $2",
-        )
-        .bind(&w.start)
-        .bind(&w.end)
-        .fetch_one(&st.db)
-        .await?;
-
-        let kind_app: Vec<(String, i64, i64)> = sqlx::query_as(
-            "SELECT kind, COUNT(*)::BIGINT, COALESCE(SUM(amount_cents), 0)::BIGINT
+        let app_rows: Vec<(String, String, i64, i64)> = sqlx::query_as(
+            "SELECT kind, substr(created_at, 1, 7) AS m,
+                    COUNT(*)::BIGINT, COALESCE(SUM(amount_cents), 0)::BIGINT
              FROM reimbursements
              WHERE status = 'approved' AND created_at >= $1 AND created_at < $2
-             GROUP BY kind",
+             GROUP BY kind, m",
         )
         .bind(&w.start)
         .bind(&w.end)
         .fetch_all(&st.db)
         .await?;
-        let kind_paid: Vec<(String, i64, i64)> = sqlx::query_as(
-            "SELECT kind, COUNT(*)::BIGINT, COALESCE(SUM(amount_cents), 0)::BIGINT
+
+        let paid_rows: Vec<(String, String, i64, i64)> = sqlx::query_as(
+            "SELECT kind,
+                    substr(COALESCE(NULLIF(paid_at, ''), updated_at, created_at), 1, 7) AS m,
+                    COUNT(*)::BIGINT, COALESCE(SUM(amount_cents), 0)::BIGINT
              FROM reimbursements
              WHERE status = 'paid'
                AND COALESCE(NULLIF(paid_at, ''), updated_at, created_at) >= $1
                AND COALESCE(NULLIF(paid_at, ''), updated_at, created_at) < $2
-             GROUP BY kind",
+             GROUP BY kind, m",
         )
         .bind(&w.start)
         .bind(&w.end)
         .fetch_all(&st.db)
         .await?;
+
         let mut app_map: HashMap<String, (i64, i64)> = HashMap::new();
-        for (k, c, a) in kind_app {
-            app_map.insert(k, (c, a));
+        let mut trend_app_map: HashMap<String, (i64, i64)> = HashMap::new();
+        for (k, m, c, a) in app_rows {
+            let e_k = app_map.entry(k).or_insert((0, 0));
+            e_k.0 += c;
+            e_k.1 += a;
+            let e_m = trend_app_map.entry(m).or_insert((0, 0));
+            e_m.0 += c;
+            e_m.1 += a;
         }
+        let mut paid_count = 0i64;
+        let mut paid_cents = 0i64;
         let mut paid_map: HashMap<String, (i64, i64)> = HashMap::new();
-        for (k, c, a) in kind_paid {
-            paid_map.insert(k, (c, a));
+        let mut trend_paid_map: HashMap<String, (i64, i64)> = HashMap::new();
+        for (k, m, c, a) in paid_rows {
+            paid_count += c;
+            paid_cents += a;
+            let e_k = paid_map.entry(k).or_insert((0, 0));
+            e_k.0 += c;
+            e_k.1 += a;
+            let e_m = trend_paid_map.entry(m).or_insert((0, 0));
+            e_m.0 += c;
+            e_m.1 += a;
         }
         let by_kind: Vec<Value> = ["grab", "mileage", "visitor_special"]
             .into_iter()
@@ -317,37 +327,6 @@ pub(in crate::routes::admin) async fn finance_report(
             })
             .collect();
 
-        let trend_app_rows: Vec<(String, i64, i64)> = sqlx::query_as(
-            "SELECT substr(created_at, 1, 7) AS m, COUNT(*)::BIGINT, COALESCE(SUM(amount_cents), 0)::BIGINT
-             FROM reimbursements
-             WHERE status = 'approved' AND created_at >= $1 AND created_at < $2
-             GROUP BY m",
-        )
-        .bind(&w.start)
-        .bind(&w.end)
-        .fetch_all(&st.db)
-        .await?;
-        let trend_paid_rows: Vec<(String, i64, i64)> = sqlx::query_as(
-            "SELECT substr(COALESCE(NULLIF(paid_at, ''), updated_at, created_at), 1, 7) AS m,
-                    COUNT(*)::BIGINT, COALESCE(SUM(amount_cents), 0)::BIGINT
-             FROM reimbursements
-             WHERE status = 'paid'
-               AND COALESCE(NULLIF(paid_at, ''), updated_at, created_at) >= $1
-               AND COALESCE(NULLIF(paid_at, ''), updated_at, created_at) < $2
-             GROUP BY m",
-        )
-        .bind(&w.start)
-        .bind(&w.end)
-        .fetch_all(&st.db)
-        .await?;
-        let mut trend_app_map: HashMap<String, (i64, i64)> = HashMap::new();
-        for (m, c, a) in trend_app_rows {
-            trend_app_map.insert(m, (c, a));
-        }
-        let mut trend_paid_map: HashMap<String, (i64, i64)> = HashMap::new();
-        for (m, c, a) in trend_paid_rows {
-            trend_paid_map.insert(m, (c, a));
-        }
         let monthly_trend: Vec<Value> = month_buckets(&w)
             .into_iter()
             .map(|m| {

@@ -148,25 +148,26 @@ pub(super) async fn list_messages(
         }
     }
 
-    let members: Vec<(String,)> = sqlx::query_as(
-        "SELECT DISTINCT u.name FROM rides r JOIN users u ON u.id = r.passenger_id OR u.id = r.driver_id
-         WHERE r.trip_id=$1 AND r.status NOT IN ('cancelled','no_show','alt_transport')",
-    )
-    .bind(trip)
-    .fetch_all(&st.db)
-    .await?;
+    let members: Vec<(String,)> =
+        sqlx::query_as("SELECT name FROM users WHERE id = ANY($1) ORDER BY name")
+            .bind(&acc.members)
+            .fetch_all(&st.db)
+            .await?;
 
-    // Reactions, grouped per message and emoji in first-reacted order.
-    let reaction_rows: Vec<(i64, String, i64, Option<String>)> = sqlx::query_as(
-        "SELECT r.message_id, r.emoji, r.user_id, u.name FROM ride_message_reactions r
-         JOIN ride_messages m ON m.id = r.message_id
-         LEFT JOIN users u ON u.id = r.user_id
-         WHERE m.trip_id=$1 AND m.id > $2 ORDER BY r.created_at, r.user_id",
-    )
-    .bind(trip)
-    .bind(after)
-    .fetch_all(&st.db)
-    .await?;
+    // Reactions, grouped per message and emoji in first-reacted order (scoped to fetched messages).
+    let message_ids: Vec<i64> = rows.iter().map(|r| r.0).collect();
+    let reaction_rows: Vec<(i64, String, i64, Option<String>)> = if message_ids.is_empty() {
+        Vec::new()
+    } else {
+        sqlx::query_as(
+            "SELECT r.message_id, r.emoji, r.user_id, u.name FROM ride_message_reactions r
+             LEFT JOIN users u ON u.id = r.user_id
+             WHERE r.message_id = ANY($1) ORDER BY r.created_at, r.user_id",
+        )
+        .bind(&message_ids)
+        .fetch_all(&st.db)
+        .await?
+    };
     let mut reactions: HashMap<i64, Vec<(String, Vec<String>, bool)>> = HashMap::new();
     for (mid, emoji, uid, name) in reaction_rows {
         let list = reactions.entry(mid).or_default();

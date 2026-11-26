@@ -72,7 +72,7 @@ struct Pass {
     id: i64,
     event_id: i64,
     host_id: i64,
-    host_group_id: i64,
+    host_group_id: Option<i64>,
     ride_id: Option<i64>,
     name: String,
     phone: String,
@@ -164,12 +164,24 @@ async fn close_if_done(db: &PgPool, p: &mut Pass) -> AppResult<()> {
 pub async fn close_finished(db: &PgPool) -> Result<(), sqlx::Error> {
     let n = now();
     sqlx::query(
-        "UPDATE visitor_passes vp SET closed_at = $1, closed_reason = CASE
-             WHEN (SELECT status FROM rides WHERE id = vp.ride_id) = 'completed' THEN 'completed'
-             WHEN vp.ride_id IS NULL OR (SELECT status FROM rides WHERE id = vp.ride_id) = ANY($2) THEN 'cancelled'
-             ELSE 'expired' END
-         WHERE vp.closed_at IS NULL
-           AND (vp.valid_until < $1 OR vp.ride_id IS NULL OR (SELECT status FROM rides WHERE id = vp.ride_id) = ANY($2))",
+        "UPDATE visitor_passes vp
+         SET closed_at = $1,
+             closed_reason = CASE
+                 WHEN src.ev_status = 'cancelled' THEN 'cancelled'
+                 WHEN src.ride_status = 'completed' THEN 'completed'
+                 WHEN src.ride_status IS NULL OR src.ride_status = ANY($2) THEN 'cancelled'
+                 ELSE 'expired'
+             END
+         FROM (
+             SELECT vp2.id, e.status AS ev_status, r.status AS ride_status
+             FROM visitor_passes vp2
+             LEFT JOIN events e ON e.id = vp2.event_id
+             LEFT JOIN rides r ON r.id = vp2.ride_id
+             WHERE vp2.closed_at IS NULL
+         ) src
+         WHERE vp.id = src.id
+           AND vp.closed_at IS NULL
+           AND (vp.valid_until < $1 OR src.ev_status = 'cancelled' OR src.ride_status IS NULL OR src.ride_status = ANY($2))",
     )
     .bind(&n)
     .bind(&ENDED[..])
@@ -194,24 +206,38 @@ pub async fn event_moved(db: &PgPool, event_id: i64, starts_at: &str) -> AppResu
     .bind(event_id)
     .fetch_all(db)
     .await?;
+    if open.is_empty() {
+        return Ok(());
+    }
+    let mut pass_ids = Vec::with_capacity(open.len());
+    let mut untils = Vec::with_capacity(open.len());
     for (pass, pickup) in open {
         let latest = if pickup.as_str() > starts_at {
             pickup
         } else {
             starts_at.to_string()
         };
-        let until = shift(&latest, CLOSES_AFTER_HOURS);
-        sqlx::query("UPDATE visitor_passes SET valid_until=$1 WHERE id=$2")
-            .bind(&until)
-            .bind(pass)
-            .execute(db)
-            .await?;
-        sqlx::query("UPDATE visitor_sessions SET expires_at=$1 WHERE pass_id=$2")
-            .bind(&until)
-            .bind(pass)
-            .execute(db)
-            .await?;
+        pass_ids.push(pass);
+        untils.push(shift(&latest, CLOSES_AFTER_HOURS));
     }
+    sqlx::query(
+        "UPDATE visitor_passes vp SET valid_until = u.until
+         FROM UNNEST($1::BIGINT[], $2::TEXT[]) AS u(id, until)
+         WHERE vp.id = u.id",
+    )
+    .bind(&pass_ids)
+    .bind(&untils)
+    .execute(db)
+    .await?;
+    sqlx::query(
+        "UPDATE visitor_sessions vs SET expires_at = u.until
+         FROM UNNEST($1::BIGINT[], $2::TEXT[]) AS u(id, until)
+         WHERE vs.pass_id = u.id",
+    )
+    .bind(&pass_ids)
+    .bind(&untils)
+    .execute(db)
+    .await?;
     Ok(())
 }
 
@@ -641,7 +667,7 @@ async fn create_pass(
         id: 0,
         event_id,
         host_id: u.id,
-        host_group_id: host_group,
+        host_group_id: Some(host_group),
         ride_id: Some(ride_id),
         name: name.clone(),
         phone,
@@ -703,8 +729,55 @@ async fn list_passes(
         .await?;
     let all = can_manage(&u, created_by, Act::View)
         || (u.can(Page::AdminRides, Act::View) && (u.traffic_is_global() || created_by == u.id));
-    let mut passes: Vec<Pass> = sqlx::query_as(crate::dyn_sql!(
-        "SELECT {PASS_COLS} FROM visitor_passes p
+    let n = now();
+    sqlx::query(
+        "WITH closed AS (
+             UPDATE visitor_passes vp
+             SET closed_at = $2,
+                 closed_reason = CASE
+                     WHEN src.ev_status = 'cancelled' THEN 'cancelled'
+                     WHEN src.ride_status = 'completed' THEN 'completed'
+                     WHEN src.ride_status IS NULL OR src.ride_status = ANY($3) THEN 'cancelled'
+                     ELSE 'expired'
+                 END
+             FROM (
+                 SELECT vp2.id, e.status AS ev_status, r.status AS ride_status
+                 FROM visitor_passes vp2
+                 JOIN events e ON e.id = vp2.event_id
+                 LEFT JOIN rides r ON r.id = vp2.ride_id
+                 WHERE vp2.event_id = $1 AND vp2.closed_at IS NULL
+                   AND ($4 OR vp2.host_id = $5)
+             ) src
+             WHERE vp.id = src.id
+               AND vp.closed_at IS NULL
+               AND (vp.valid_until < $2 OR src.ev_status = 'cancelled' OR src.ride_status IS NULL OR src.ride_status = ANY($3))
+             RETURNING vp.id
+         )
+         DELETE FROM visitor_sessions s
+         USING closed c
+         WHERE s.pass_id = c.id",
+    )
+    .bind(event_id)
+    .bind(&n)
+    .bind(&ENDED[..])
+    .bind(all)
+    .bind(u.id)
+    .execute(&st.db)
+    .await?;
+
+    #[derive(sqlx::FromRow)]
+    struct PassListRow {
+        #[sqlx(flatten)]
+        pass: Pass,
+        ride_status: Option<String>,
+        host_name: String,
+    }
+
+    let passes: Vec<PassListRow> = sqlx::query_as(crate::dyn_sql!(
+        "SELECT {PASS_COLS}, r.status AS ride_status, h.name AS host_name
+         FROM visitor_passes p
+         LEFT JOIN rides r ON r.id = p.ride_id
+         JOIN users h ON h.id = p.host_id
          WHERE p.event_id = $1 AND ($2 OR p.host_id = $3) AND p.closed_reason IS DISTINCT FROM 'reissued'
          ORDER BY p.id DESC"
     ))
@@ -713,32 +786,25 @@ async fn list_passes(
     .bind(u.id)
     .fetch_all(&st.db)
     .await?;
-    let mut out = Vec::new();
-    for p in passes.iter_mut() {
-        close_if_done(&st.db, p).await?;
-        let ride_status: Option<String> = match p.ride_id {
-            Some(r) => {
-                sqlx::query_scalar("SELECT status FROM rides WHERE id=$1")
-                    .bind(r)
-                    .fetch_optional(&st.db)
-                    .await?
-            }
-            None => None,
-        };
-        out.push(json!({
-            "id": p.id,
-            "name": p.name,
-            "phone": p.phone,
-            "ride_id": p.ride_id,
-            "ride_status": ride_status,
-            "host": { "id": p.host_id, "name": host_name(&st, p.host_id).await? },
-            // For the host, "used" means the visitor has opened it.
-            "state": match state_of(p, false) { "used" => "claimed", s => s },
-            "closed_reason": p.closed_reason,
-            "valid_from": p.valid_from,
-            "valid_until": p.valid_until,
-        }));
-    }
+    let out: Vec<Value> = passes
+        .into_iter()
+        .map(|row| {
+            let p = row.pass;
+            json!({
+                "id": p.id,
+                "name": p.name,
+                "phone": p.phone,
+                "ride_id": p.ride_id,
+                "ride_status": row.ride_status,
+                "host": { "id": p.host_id, "name": row.host_name },
+                // For the host, "used" means the visitor has opened it.
+                "state": match state_of(&p, false) { "used" => "claimed", s => s },
+                "closed_reason": p.closed_reason,
+                "valid_from": p.valid_from,
+                "valid_until": p.valid_until,
+            })
+        })
+        .collect();
     Ok(Json(json!(out)))
 }
 

@@ -346,16 +346,7 @@ pub(super) async fn invite_accept(
 
     let uid = if kind == "recovery" {
         let id = rec_user.ok_or_else(|| bad(lang, ErrorKey::RecoveryLinkInvalid))?;
-        let u_status: Option<(String,)> = sqlx::query_as("SELECT status FROM users WHERE id=$1")
-            .bind(id)
-            .fetch_optional(&mut *tx)
-            .await?;
-        if !matches!(
-            u_status.as_ref().map(|s| s.0.as_str()),
-            Some("active" | "pending")
-        ) {
-            return Err(forbidden(lang, ErrorKey::AuthDisabled));
-        }
+        // Account row is already locked FOR UPDATE and status validated above.
         // A recovery link signs in as the member. Once one is used, no sibling
         // recovery link may remain live (e.g. one issued before a replacement).
         sqlx::query("UPDATE invites SET expires_at=$1 WHERE kind='recovery' AND user_id=$2 AND id<>$3 AND used_at IS NULL")

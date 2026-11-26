@@ -36,10 +36,10 @@ struct RideDraftRow {
     reason: String,
     reimbursement_excluded: Option<i64>,
     status: String,
-    created_by: i64,
-    created_by_name: String,
-    updated_by: i64,
-    updated_by_name: String,
+    created_by: Option<i64>,
+    created_by_name: Option<String>,
+    updated_by: Option<i64>,
+    updated_by_name: Option<String>,
     locked_by: Option<i64>,
     locked_by_name: Option<String>,
     locked_at: Option<String>,
@@ -82,8 +82,8 @@ const RIDE_DRAFT_SELECT: &str = "SELECT d.id, d.ride_id, d.version, d.action, d.
  LEFT JOIN events e ON e.id = r.event_id
  LEFT JOIN users drv ON drv.id = d.driver_id
  LEFT JOIN users cur_drv ON cur_drv.id = r.driver_id
- JOIN users u0 ON u0.id = d.created_by
- JOIN users u1 ON u1.id = d.updated_by
+ LEFT JOIN users u0 ON u0.id = d.created_by
+ LEFT JOIN users u1 ON u1.id = d.updated_by
  LEFT JOIN users u2 ON u2.id = d.submitted_by
  LEFT JOIN users u3 ON u3.id = d.reviewed_by
  LEFT JOIN users u4 ON u4.id = d.locked_by";
@@ -104,8 +104,8 @@ fn ride_draft_json(d: &RideDraftRow, viewer_id: i64, now_str: &str) -> Value {
         "reason": d.reason,
         "reimbursement_excluded": d.reimbursement_excluded.map(|v| v == 1),
         "status": d.status,
-        "created_by": { "id": d.created_by, "name": d.created_by_name },
-        "updated_by": { "id": d.updated_by, "name": d.updated_by_name },
+        "created_by": d.created_by.map(|id| json!({ "id": id, "name": d.created_by_name })),
+        "updated_by": d.updated_by.map(|id| json!({ "id": id, "name": d.updated_by_name })),
         "submitted_by": d.submitted_by.map(|id| json!({ "id": id, "name": d.submitted_by_name })),
         "submitted_at": d.submitted_at,
         "reviewed_by": d.reviewed_by.map(|id| json!({ "id": id, "name": d.reviewed_by_name })),
@@ -799,7 +799,7 @@ pub(super) async fn approve_ride_draft(
         Option<i64>,
         String,
         Option<i64>,
-        i64,
+        Option<i64>,
         Option<i64>,
         Option<String>,
         Option<String>,
@@ -857,7 +857,7 @@ pub(super) async fn approve_ride_draft(
         }
         "reassign" => {
             let drv = driver_id.ok_or_else(|| bad(u.lang, ErrorKey::DriverNotFound))?;
-            let outside = exec_staff_reassign_tx(&mut tx, &st, &u, &r, drv).await?;
+            let outside = exec_staff_reassign_tx(&mut tx, &u, &r, drv).await?;
             PostApply::Reassign(drv, outside)
         }
         "return" => {
@@ -943,8 +943,10 @@ pub(super) async fn approve_ride_draft(
             targets.push(sub);
         }
     }
-    if created_by != u.id && !targets.contains(&created_by) {
-        targets.push(created_by);
+    if let Some(creator) = created_by {
+        if creator != u.id && !targets.contains(&creator) {
+            targets.push(creator);
+        }
     }
     if !targets.is_empty() {
         notify_many(
@@ -1010,7 +1012,7 @@ pub(super) async fn return_ride_draft(
         .execute(&mut *tx)
         .await?;
 
-    let prev: Option<(String, Option<i64>, i64)> = sqlx::query_as(
+    let prev: Option<(String, Option<i64>, Option<i64>)> = sqlx::query_as(
         "SELECT status, submitted_by, created_by
          FROM ride_change_drafts
          WHERE id = $1 AND ride_id = $2
@@ -1059,8 +1061,10 @@ pub(super) async fn return_ride_draft(
             targets.push(sub);
         }
     }
-    if created_by != u.id && !targets.contains(&created_by) {
-        targets.push(created_by);
+    if let Some(creator) = created_by {
+        if creator != u.id && !targets.contains(&creator) {
+            targets.push(creator);
+        }
     }
     if !targets.is_empty() {
         let suffix_zh = if notes.is_empty() {
@@ -1122,12 +1126,18 @@ pub(super) async fn delete_ride_draft(
     }
     let stamp = now();
     let mut tx = st.db.begin().await?;
-    let row: Option<(String, i64, Option<i64>, Option<String>, Option<String>)> = sqlx::query_as(
+    let row: Option<(
+        String,
+        Option<i64>,
+        Option<i64>,
+        Option<String>,
+        Option<String>,
+    )> = sqlx::query_as(
         "SELECT d.status, d.created_by, d.locked_by, u.name, d.lock_expires_at
-         FROM ride_change_drafts d
-         LEFT JOIN users u ON u.id = d.locked_by
-         WHERE d.id = $1 AND d.ride_id = $2
-         FOR UPDATE OF d",
+             FROM ride_change_drafts d
+             LEFT JOIN users u ON u.id = d.locked_by
+             WHERE d.id = $1 AND d.ride_id = $2
+             FOR UPDATE OF d",
     )
     .bind(did)
     .bind(id)
@@ -1140,7 +1150,7 @@ pub(super) async fn delete_ride_draft(
     if status == "approved" {
         return Err(conflict(u.lang, ErrorKey::DraftNotEditable));
     }
-    if created_by != u.id && !u.is_traffic_lead() {
+    if created_by != Some(u.id) && !u.is_traffic_lead() {
         return Err(forbidden(u.lang, ErrorKey::Forbidden));
     }
     if !u.is_traffic_lead() {

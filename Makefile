@@ -4,7 +4,7 @@ BACKEND_CARGO = $(patsubst ./%,../%,$(CARGO))
 
 .DEFAULT_GOAL := help
 
-.PHONY: help dev-api dev-web db-up db-down fmt lint lint-android test test-api test-web test-android test-ios test-e2e audit build image up deploy-aic backup restore restore-drill osrm-setup capacity
+.PHONY: help dev-api dev-web db-up db-down fmt lint lint-android test test-api test-web test-android test-ios test-e2e audit build image up deploy-aic backup restore restore-drill osrm-setup capacity seed-full seed-scenarios seed-scale seed-verify seed-reset
 
 help: ## Show available Make targets
 	@grep -E '^[a-zA-Z0-9_-]+:.*?## ' $(MAKEFILE_LIST) | awk 'BEGIN {FS = ":.*?## "}; {printf "  \033[36m%-15s\033[0m %s\n", $$1, $$2}'
@@ -97,6 +97,21 @@ restore-drill: ## Non-destructive restore & upload-reconciliation drill (ARCHIVE
 
 osrm-setup: ## Download & build self-hosted Malaysia OSRM routing graph (OSRM_DATA_DIR=./osrm-data)
 	./scripts/setup_osrm_malaysia.sh "$${OSRM_DATA_DIR:-./osrm-data}"
+
+seed-full: ## Seed core, edge, full scenarios & 200 scale fixtures into dev DB
+	cd backend && $(BACKEND_CARGO) run -- seed full --scale $${SCALE:-200}
+
+seed-scenarios: ## Seed comprehensive feature-scenario fixtures into dev DB
+	cd backend && $(BACKEND_CARGO) run -- seed scenarios
+
+seed-scale: ## Seed scalable synthetic benchmark fixtures into dev DB (SCALE=500)
+	cd backend && $(BACKEND_CARGO) run -- seed scale $${SCALE:-500}
+
+seed-verify: ## Verify DB constraints, role sync, SoD invariants & identity sequences
+	cd backend && $(BACKEND_CARGO) run -- seed verify
+
+seed-reset: ## Reset seeded demo/edge/scenario/scale fixtures in dev DB
+	cd backend && $(BACKEND_CARGO) run -- seed reset
 
 capacity: ## Run 1,000-member / 10-driver capacity baseline suite
 	./scripts/capacity_baseline.sh

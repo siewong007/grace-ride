@@ -810,25 +810,28 @@ pub(super) async fn monthly_report(
             total_attended,
             tracked_attended,
         ): (i64, i64, i64, i64, i64, i64) = sqlx::query_as(
-            "SELECT
-                COUNT(*) FILTER (WHERE e.status <> 'cancelled')::BIGINT,
-                COUNT(*) FILTER (WHERE e.status <> 'cancelled' AND e.attendance_enabled = 1)::BIGINT,
-                COALESCE((SELECT COUNT(*) FROM event_signups s JOIN events e2 ON e2.id = s.event_id
-                          WHERE e2.created_by = $1 AND e2.status NOT IN ('draft', 'cancelled')
-                            AND e2.starts_at >= $2 AND e2.starts_at < $3 AND s.status = 'going'), 0)::BIGINT,
-                COALESCE((SELECT COUNT(*) FROM event_signups s JOIN events e2 ON e2.id = s.event_id
-                          WHERE e2.created_by = $1 AND e2.status NOT IN ('draft', 'cancelled')
-                            AND e2.attendance_enabled = 1
-                            AND e2.starts_at >= $2 AND e2.starts_at < $3 AND s.status = 'going'), 0)::BIGINT,
-                COALESCE((SELECT COUNT(*) FROM event_signups s JOIN events e2 ON e2.id = s.event_id
-                          WHERE e2.created_by = $1 AND e2.status NOT IN ('draft', 'cancelled')
-                            AND e2.starts_at >= $2 AND e2.starts_at < $3 AND s.status <> 'cancelled' AND s.attended = 1), 0)::BIGINT,
-                COALESCE((SELECT COUNT(*) FROM event_signups s JOIN events e2 ON e2.id = s.event_id
-                          WHERE e2.created_by = $1 AND e2.status NOT IN ('draft', 'cancelled')
-                            AND e2.attendance_enabled = 1
-                            AND e2.starts_at >= $2 AND e2.starts_at < $3 AND s.status <> 'cancelled' AND s.attended = 1), 0)::BIGINT
-             FROM events e
-             WHERE e.created_by = $1 AND e.status <> 'draft' AND e.starts_at >= $2 AND e.starts_at < $3",
+            "WITH ev AS (
+                 SELECT id, attendance_enabled
+                 FROM events
+                 WHERE created_by = $1
+                   AND status NOT IN ('draft', 'cancelled')
+                   AND starts_at >= $2 AND starts_at < $3
+             ), sg AS (
+                 SELECT
+                     COUNT(*) FILTER (WHERE s.status = 'going')::BIGINT AS total_going,
+                     COUNT(*) FILTER (WHERE ev.attendance_enabled = 1 AND s.status = 'going')::BIGINT AS tracked_going,
+                     COUNT(*) FILTER (WHERE s.status <> 'cancelled' AND s.attended = 1)::BIGINT AS total_attended,
+                     COUNT(*) FILTER (WHERE ev.attendance_enabled = 1 AND s.status <> 'cancelled' AND s.attended = 1)::BIGINT AS tracked_attended
+                 FROM ev
+                 JOIN event_signups s ON s.event_id = ev.id
+             )
+             SELECT
+                 (SELECT COUNT(*)::BIGINT FROM ev),
+                 (SELECT COUNT(*) FILTER (WHERE attendance_enabled = 1)::BIGINT FROM ev),
+                 COALESCE((SELECT total_going FROM sg), 0)::BIGINT,
+                 COALESCE((SELECT tracked_going FROM sg), 0)::BIGINT,
+                 COALESCE((SELECT total_attended FROM sg), 0)::BIGINT,
+                 COALESCE((SELECT tracked_attended FROM sg), 0)::BIGINT",
         )
         .bind(target)
         .bind(&start)

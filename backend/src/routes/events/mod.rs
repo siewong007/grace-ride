@@ -166,18 +166,37 @@ pub(super) struct EventRow {
 const EVENT_SELECT: &str = "SELECT e.id, e.title, e.kind, e.description, e.starts_at, e.location, e.capacity, e.cost_note,
     e.signup_deadline, e.status, e.created_by, c.name AS creator_name, e.photo_file_id,
     e.attendance_enabled, e.checkin_code, e.series_id, e.mileage_claimable, e.area_id, e.icon,
-    (SELECT name FROM areas WHERE id = e.area_id) AS area_name,
-    (SELECT COUNT(*) FROM event_signups s WHERE s.event_id=e.id AND s.status='going') AS going,
-    (SELECT COUNT(*) FROM event_signups s WHERE s.event_id=e.id AND s.status='waitlist') AS waitlist,
-    (SELECT COUNT(*) FROM event_signups s WHERE s.event_id=e.id AND s.status!='cancelled' AND s.attended=1) AS attended_count,
-    (SELECT COUNT(*) FROM rides r WHERE r.event_id=e.id AND r.status='pending_driver') AS unassigned_rides,
-    (SELECT COUNT(*) FROM rides r WHERE r.event_id=e.id AND r.status!='cancelled') AS active_rides,
-    (SELECT COUNT(*) FROM settlements st WHERE st.event_id=e.id) AS settlement_count,
+    ea.name AS area_name,
+    COALESCE(es_agg.going, 0)::BIGINT AS going,
+    COALESCE(es_agg.waitlist, 0)::BIGINT AS waitlist,
+    COALESCE(es_agg.attended_count, 0)::BIGINT AS attended_count,
+    COALESCE(r_agg.unassigned_rides, 0)::BIGINT AS unassigned_rides,
+    COALESCE(r_agg.active_rides, 0)::BIGINT AS active_rides,
+    COALESCE(st_agg.settlement_count, 0)::BIGINT AS settlement_count,
     ms.status AS my_status, ms.need_ride AS my_need_ride, ms.offer_drive AS my_offer_drive, ms.self_transport AS my_self_transport, ms.attended AS my_attended,
-    ms.as_group_id AS my_as_group_id, (SELECT name FROM groups WHERE id = ms.as_group_id) AS my_as_group, ms.pass_code AS my_pass_code,
-    (SELECT string_agg(g.name, '、') FROM event_groups eg JOIN groups g ON g.id=eg.group_id WHERE eg.event_id=e.id) AS groups
+    ms.as_group_id AS my_as_group_id, mg.name AS my_as_group, ms.pass_code AS my_pass_code,
+    eg_agg.groups AS groups
     FROM events e JOIN users c ON c.id = e.created_by
-    LEFT JOIN event_signups ms ON ms.event_id = e.id AND ms.user_id = $1";
+    LEFT JOIN areas ea ON ea.id = e.area_id
+    LEFT JOIN event_signups ms ON ms.event_id = e.id AND ms.user_id = $1
+    LEFT JOIN groups mg ON mg.id = ms.as_group_id
+    LEFT JOIN LATERAL (
+        SELECT COUNT(*) FILTER (WHERE s.status='going') AS going,
+               COUNT(*) FILTER (WHERE s.status='waitlist') AS waitlist,
+               COUNT(*) FILTER (WHERE s.status!='cancelled' AND s.attended=1) AS attended_count
+        FROM event_signups s WHERE s.event_id = e.id
+    ) es_agg ON TRUE
+    LEFT JOIN LATERAL (
+        SELECT COUNT(*) FILTER (WHERE r.status='pending_driver') AS unassigned_rides,
+               COUNT(*) FILTER (WHERE r.status!='cancelled') AS active_rides
+        FROM rides r WHERE r.event_id = e.id
+    ) r_agg ON TRUE
+    LEFT JOIN LATERAL (
+        SELECT COUNT(*) AS settlement_count FROM settlements st WHERE st.event_id = e.id
+    ) st_agg ON TRUE
+    LEFT JOIN LATERAL (
+        SELECT string_agg(g.name, '、') AS groups FROM event_groups eg JOIN groups g ON g.id=eg.group_id WHERE eg.event_id=e.id
+    ) eg_agg ON TRUE";
 
 fn event_json(e: &EventRow, u: &CurrentUser) -> Value {
     let can_edit = can_manage(u, e.created_by, Act::Update);

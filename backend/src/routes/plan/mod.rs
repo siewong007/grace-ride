@@ -201,9 +201,24 @@ async fn query_other_window_on<'e, E: sqlx::PgExecutor<'e>>(
     from: &str,
     to: &str,
 ) -> AppResult<HashMap<i64, (i64, i64)>> {
+    let lo = crate::util::parse_dt(from)
+        .map(|d| {
+            (d - chrono::Duration::minutes(65))
+                .format("%Y-%m-%dT%H:%M:%S")
+                .to_string()
+        })
+        .unwrap_or_default();
+    let hi = crate::util::parse_dt(to)
+        .map(|d| {
+            (d + chrono::Duration::minutes(65))
+                .format("%Y-%m-%dT%H:%M:%S")
+                .to_string()
+        })
+        .unwrap_or_else(|| "9999".to_string());
     let rows: Vec<(i64, i64, i64)> = sqlx::query_as(
         "SELECT driver_id, COALESCE(SUM(seats),0)::BIGINT, COUNT(*) FROM rides
          WHERE driver_id IS NOT NULL AND event_id IS DISTINCT FROM $1 AND status = ANY($2)
+           AND pickup_at >= $5 AND pickup_at <= $6
            AND pickup_at::timestamp BETWEEN $3::timestamp - interval '1 hour' AND $4::timestamp + interval '1 hour'
          GROUP BY driver_id",
     )
@@ -211,6 +226,8 @@ async fn query_other_window_on<'e, E: sqlx::PgExecutor<'e>>(
     .bind(&HOLDING[..])
     .bind(from)
     .bind(to)
+    .bind(&lo)
+    .bind(&hi)
     .fetch_all(db)
     .await?;
     Ok(rows.into_iter().map(|(d, s, n)| (d, (s, n))).collect())
@@ -360,17 +377,37 @@ async fn list_traffic_plans(State(st): State<AppState>, u: CurrentUser) -> AppRe
 
     let sql = format!(
         "SELECT e.id, e.title, e.kind, e.icon, e.starts_at, e.location, e.status,
-                (SELECT name FROM areas WHERE id = e.area_id) AS area_name,
-                (SELECT string_agg(g.name, '、') FROM event_groups eg JOIN groups g ON g.id = eg.group_id WHERE eg.event_id = e.id) AS groups,
+                ea.name AS area_name,
+                eg_agg.groups AS groups,
                 e.mileage_claimable,
-                (SELECT COUNT(*) FROM rides r WHERE r.event_id = e.id AND r.status NOT IN ('cancelled','no_show','alt_transport')) AS ride_count,
-                (SELECT COUNT(*) FROM rides r WHERE r.event_id = e.id AND r.status = 'pending_driver') AS unassigned_count,
-                (SELECT COUNT(*) FROM rides r WHERE r.event_id = e.id AND r.status IN ('pending_driver_confirm','pending_passenger','pending_approval')) AS pending_confirm_count,
-                (SELECT COUNT(*) FROM plan_visitors pv WHERE pv.event_id = e.id) AS visitor_count,
-                (SELECT COUNT(*) FROM event_plan_drafts d WHERE d.event_id = e.id AND d.status <> 'superseded') AS draft_count,
-                (SELECT COUNT(*) FROM event_plan_drafts d WHERE d.event_id = e.id AND d.status = 'pending_approval') AS pending_draft_count,
-                (SELECT COUNT(*) FROM event_plan_drafts d WHERE d.event_id = e.id AND d.status = 'returned') AS returned_draft_count
+                COALESCE(r_agg.ride_count, 0)::BIGINT AS ride_count,
+                COALESCE(r_agg.unassigned_count, 0)::BIGINT AS unassigned_count,
+                COALESCE(r_agg.pending_confirm_count, 0)::BIGINT AS pending_confirm_count,
+                COALESCE(pv_agg.visitor_count, 0)::BIGINT AS visitor_count,
+                COALESCE(d_agg.draft_count, 0)::BIGINT AS draft_count,
+                COALESCE(d_agg.pending_draft_count, 0)::BIGINT AS pending_draft_count,
+                COALESCE(d_agg.returned_draft_count, 0)::BIGINT AS returned_draft_count
          FROM events e
+         LEFT JOIN areas ea ON ea.id = e.area_id
+         LEFT JOIN LATERAL (
+             SELECT string_agg(g.name, '、') AS groups
+             FROM event_groups eg JOIN groups g ON g.id = eg.group_id WHERE eg.event_id = e.id
+         ) eg_agg ON TRUE
+         LEFT JOIN LATERAL (
+             SELECT COUNT(*) FILTER (WHERE r.status NOT IN ('cancelled','no_show','alt_transport')) AS ride_count,
+                    COUNT(*) FILTER (WHERE r.status = 'pending_driver') AS unassigned_count,
+                    COUNT(*) FILTER (WHERE r.status IN ('pending_driver_confirm','pending_passenger','pending_approval')) AS pending_confirm_count
+             FROM rides r WHERE r.event_id = e.id
+         ) r_agg ON TRUE
+         LEFT JOIN LATERAL (
+             SELECT COUNT(*) AS visitor_count FROM plan_visitors pv WHERE pv.event_id = e.id
+         ) pv_agg ON TRUE
+         LEFT JOIN LATERAL (
+             SELECT COUNT(*) FILTER (WHERE d.status <> 'superseded') AS draft_count,
+                    COUNT(*) FILTER (WHERE d.status = 'pending_approval') AS pending_draft_count,
+                    COUNT(*) FILTER (WHERE d.status = 'returned') AS returned_draft_count
+             FROM event_plan_drafts d WHERE d.event_id = e.id
+         ) d_agg ON TRUE
          WHERE {scope_cond}
            AND (
                (e.status = 'published' AND e.starts_at >= $2)

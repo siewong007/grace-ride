@@ -2,7 +2,7 @@
 //! Allows Traffic Leads and Event Organisers to log driver destinations and auto-generate
 //! approved mileage reimbursements without requiring individual passenger booking records.
 
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 
 use axum::{
     extract::{Path, State},
@@ -173,145 +173,152 @@ pub(super) async fn get_post_event_drivers(
     let mut sorted_driver_ids: Vec<i64> = driver_ids.into_iter().collect();
     sorted_driver_ids.sort_unstable();
 
-    // 3. For each driver, load profile, return passenger supper stats, default home area, and existing claim
-    let mut driver_items = Vec::new();
-    for did in sorted_driver_ids {
-        let user_info: Option<(
+    // 3. Batch-load profiles, default home areas, return passenger supper stats, ride counts, and existing claims
+    let mut driver_items = Vec::with_capacity(sorted_driver_ids.len());
+    if !sorted_driver_ids.is_empty() {
+        let user_rows: Vec<(
+            i64,
             String,
             String,
             Option<String>,
             Option<String>,
             Option<String>,
         )> = sqlx::query_as(
-            "SELECT u.name, u.phone, v.model, v.plate, v.color
-                 FROM users u
-                 LEFT JOIN vehicles v ON v.user_id = u.id AND v.is_active = 1
-                 WHERE u.id = $1 AND u.status = 'active'",
+            "SELECT u.id, u.name, u.phone, v.model, v.plate, v.color
+             FROM users u
+             LEFT JOIN vehicles v ON v.user_id = u.id AND v.is_active = 1
+             WHERE u.id = ANY($1) AND u.status = 'active'",
         )
-        .bind(did)
-        .fetch_optional(&st.db)
+        .bind(&sorted_driver_ids)
+        .fetch_all(&st.db)
         .await?;
+        let user_map: HashMap<i64, (String, String, Option<String>, Option<String>)> = user_rows
+            .into_iter()
+            .map(|(uid, name, phone, model, plate, _color)| (uid, (name, phone, model, plate)))
+            .collect();
 
-        let Some((name, phone, v_model, v_plate, _v_color)) = user_info else {
-            continue;
-        };
+        let area_rows: Vec<(i64, i64, String, Option<i64>)> = sqlx::query_as(
+            "SELECT DISTINCT ON (da.user_id) da.user_id, a.id, a.name, f.amount_cents
+             FROM driver_areas da
+             JOIN areas a ON a.id = da.area_id
+             LEFT JOIN area_fares f ON $1::BIGINT IS NOT NULL
+                 AND f.area_a_id = LEAST($1, a.id)
+                 AND f.area_b_id = GREATEST($1, a.id)
+             WHERE da.user_id = ANY($2)
+             ORDER BY da.user_id, da.area_id",
+        )
+        .bind(event_area_id)
+        .bind(&sorted_driver_ids)
+        .fetch_all(&st.db)
+        .await?;
+        let mut area_map: HashMap<i64, AreaFareOption> = HashMap::with_capacity(area_rows.len());
+        for (uid, aid, aname, fare) in area_rows {
+            area_map.insert(
+                uid,
+                AreaFareOption {
+                    id: aid,
+                    name: aname,
+                    fare_cents: fare,
+                },
+            );
+        }
 
-        let vehicle = match (v_model, v_plate) {
-            (Some(m), Some(p)) => Some(format!("{} · {}", m, p)),
-            (Some(m), None) => Some(m),
-            _ => None,
-        };
-
-        // Driver's default registered area
-        let default_area_row: Option<(i64, String, Option<i64>)> =
-            if let Some(ea_id) = event_area_id {
-                sqlx::query_as(
-                    "SELECT a.id, a.name, f.amount_cents
-                 FROM driver_areas da
-                 JOIN areas a ON a.id = da.area_id
-                 LEFT JOIN area_fares f ON (
-                     (f.area_a_id = LEAST($1, a.id) AND f.area_b_id = GREATEST($1, a.id))
-                 )
-                 WHERE da.user_id = $2
-                 LIMIT 1",
-                )
-                .bind(ea_id)
-                .bind(did)
-                .fetch_optional(&st.db)
-                .await?
-            } else {
-                sqlx::query_as(
-                    "SELECT a.id, a.name, NULL::BIGINT
-                 FROM driver_areas da
-                 JOIN areas a ON a.id = da.area_id
-                 WHERE da.user_id = $1
-                 LIMIT 1",
-                )
-                .bind(did)
-                .fetch_optional(&st.db)
-                .await?
-            };
-
-        let default_area = default_area_row.map(|(aid, aname, fare)| AreaFareOption {
-            id: aid,
-            name: aname,
-            fare_cents: fare,
-        });
-
-        // Passenger supper choices stats on return rides
-        let (total_ret, supper_ret, home_ret, unspecified_ret): (i64, i64, i64, i64) = sqlx::query_as(
+        let ride_stats_rows: Vec<(i64, i64, i64, i64, i64, i64, i64)> = sqlx::query_as(
             "SELECT
+                driver_id::BIGINT,
+                COUNT(*) FILTER (WHERE leg = 'return')::BIGINT,
+                COUNT(*) FILTER (WHERE leg = 'return' AND supper_choice = 'supper')::BIGINT,
+                COUNT(*) FILTER (WHERE leg = 'return' AND supper_choice = 'direct_home')::BIGINT,
+                COUNT(*) FILTER (WHERE leg = 'return' AND (supper_choice = 'unspecified' OR supper_choice IS NULL))::BIGINT,
                 COUNT(*)::BIGINT,
-                COUNT(*) FILTER (WHERE supper_choice = 'supper')::BIGINT,
-                COUNT(*) FILTER (WHERE supper_choice = 'direct_home')::BIGINT,
-                COUNT(*) FILTER (WHERE supper_choice = 'unspecified' OR supper_choice IS NULL)::BIGINT
+                COUNT(*) FILTER (WHERE reimbursement_excluded = 1)::BIGINT
              FROM rides
-             WHERE event_id = $1 AND driver_id = $2 AND leg = 'return' AND status <> 'cancelled'",
+             WHERE event_id = $1 AND driver_id = ANY($2) AND status <> 'cancelled'
+             GROUP BY driver_id",
         )
         .bind(event_id)
-        .bind(did)
-        .fetch_one(&st.db)
+        .bind(&sorted_driver_ids)
+        .fetch_all(&st.db)
         .await?;
+        let mut stats_map: HashMap<i64, (i64, i64, i64, i64, i64, i64)> =
+            HashMap::with_capacity(ride_stats_rows.len());
+        for (uid, t_ret, s_ret, h_ret, u_ret, t_all, ex_all) in ride_stats_rows {
+            stats_map.insert(uid, (t_ret, s_ret, h_ret, u_ret, t_all, ex_all));
+        }
 
-        let passenger_stats = DriverReturnPassengerStats {
-            total: total_ret,
-            supper: supper_ret,
-            direct_home: home_ret,
-            unspecified: unspecified_ret,
-        };
-
-        let suggested_trip_type = if supper_ret > 0 {
-            "supper".to_string()
-        } else {
-            "direct_return".to_string()
-        };
-
-        // Existing claim check
-        let existing_claim: Option<(i64, i64, String, String)> = sqlx::query_as(
-            "SELECT id, amount_cents, status, trip_type
+        let claim_rows: Vec<(i64, i64, String)> = sqlx::query_as(
+            "SELECT DISTINCT ON (user_id) user_id, amount_cents, status
              FROM reimbursements
-             WHERE event_id = $1 AND user_id = $2 AND status <> 'rejected'
+             WHERE event_id = $1 AND user_id = ANY($2) AND status <> 'rejected'
                AND kind <> 'visitor_special'
-             ORDER BY id DESC LIMIT 1",
+             ORDER BY user_id, id DESC",
         )
         .bind(event_id)
-        .bind(did)
-        .fetch_optional(&st.db)
+        .bind(&sorted_driver_ids)
+        .fetch_all(&st.db)
         .await?;
+        let mut claim_map: HashMap<i64, (i64, String)> = HashMap::with_capacity(claim_rows.len());
+        for (uid, amt, st_val) in claim_rows {
+            claim_map.insert(uid, (amt, st_val));
+        }
 
-        let (already_claimed, claimed_amount_cents, claimed_status) = match existing_claim {
-            Some((_, amt, st_val, _)) => (true, Some(amt), Some(st_val)),
-            None => (false, None, None),
-        };
+        for did in sorted_driver_ids {
+            let Some((name, phone, v_model, v_plate)) = user_map.get(&did) else {
+                continue;
+            };
+            let vehicle = match (v_model.as_ref(), v_plate.as_ref()) {
+                (Some(m), Some(p)) => Some(format!("{} · {}", m, p)),
+                (Some(m), None) => Some(m.clone()),
+                _ => None,
+            };
+            let default_area = area_map.remove(&did);
+            let (
+                total_ret,
+                supper_ret,
+                home_ret,
+                unspecified_ret,
+                total_ride_count,
+                excluded_ride_count,
+            ) = stats_map.get(&did).copied().unwrap_or((0, 0, 0, 0, 0, 0));
+            let passenger_stats = DriverReturnPassengerStats {
+                total: total_ret,
+                supper: supper_ret,
+                direct_home: home_ret,
+                unspecified: unspecified_ret,
+            };
+            let suggested_trip_type = if supper_ret > 0 {
+                "supper".to_string()
+            } else {
+                "direct_return".to_string()
+            };
+            let (already_claimed, claimed_amount_cents, claimed_status) =
+                match claim_map.remove(&did) {
+                    Some((amt, st_val)) => (true, Some(amt), Some(st_val)),
+                    None => (false, None, None),
+                };
+            let reimbursement_excluded =
+                total_ride_count > 0 && excluded_ride_count == total_ride_count;
 
-        let (total_ride_count, excluded_ride_count): (i64, i64) = sqlx::query_as(
-            "SELECT COUNT(*)::BIGINT,
-                    COUNT(*) FILTER (WHERE reimbursement_excluded = 1)::BIGINT
-             FROM rides
-             WHERE event_id = $1 AND driver_id = $2 AND status <> 'cancelled'",
-        )
-        .bind(event_id)
-        .bind(did)
-        .fetch_one(&st.db)
-        .await?;
-        let reimbursement_excluded =
-            total_ride_count > 0 && excluded_ride_count == total_ride_count;
-
-        driver_items.push(PostEventDriverItem {
-            id: did,
-            name,
-            phone: if show_phone { phone } else { String::new() },
-            vehicle,
-            default_area,
-            passenger_stats,
-            suggested_trip_type,
-            already_claimed,
-            claimed_amount_cents,
-            claimed_status,
-            reimbursement_excluded,
-            excluded_ride_count,
-            total_ride_count,
-        });
+            driver_items.push(PostEventDriverItem {
+                id: did,
+                name: name.clone(),
+                phone: if show_phone {
+                    phone.clone()
+                } else {
+                    String::new()
+                },
+                vehicle,
+                default_area,
+                passenger_stats,
+                suggested_trip_type,
+                already_claimed,
+                claimed_amount_cents,
+                claimed_status,
+                reimbursement_excluded,
+                excluded_ride_count,
+                total_ride_count,
+            });
+        }
     }
 
     Ok(Json(PostEventDriversResponse {
