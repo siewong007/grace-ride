@@ -201,15 +201,21 @@ pub(super) async fn approve_recovery(
     if !matches!(status.as_str(), "pending" | "awaiting_second") {
         return Err(conflict(u.lang, ErrorKey::RequestAlreadyHandled));
     }
-    let roles: String = sqlx::query_scalar("SELECT roles FROM users WHERE id=$1")
-        .bind(uid)
-        .fetch_one(&mut *tx)
-        .await?;
+    let (roles, last_privileged_at): (String, Option<String>) =
+        sqlx::query_as("SELECT roles, last_privileged_at FROM users WHERE id=$1")
+            .bind(uid)
+            .fetch_one(&mut *tx)
+            .await?;
     let target_roles = parse_roles(&roles);
     guard_recovery_authority(&mut tx, u.lang, u.id, &caller_roles, uid, &target_roles).await?;
+    let cooldown_cutoff = crate::util::in_hours(-30 * 24);
+    let recently_privileged = last_privileged_at
+        .as_deref()
+        .is_some_and(|ts| ts >= cooldown_cutoff.as_str());
     let target_privileged = perms::for_roles(&mut *tx, &target_roles)
         .await?
-        .privileged();
+        .privileged()
+        || recently_privileged;
     // Recovering a privileged account needs two different admins: the first
     // only flags the request, the second confirms and receives the link.
     if status == "pending" && target_privileged {
@@ -285,8 +291,16 @@ pub(super) async fn approve_recovery(
         .bind(uid)
         .execute(&mut *tx)
         .await?;
-    sqlx::query("UPDATE users SET totp_enabled=0, totp_secret=NULL, totp_last_step=0, totp_backup_codes=NULL, calendar_token_hash=NULL, telegram_chat_id='' WHERE id=$1")
+    sqlx::query("UPDATE users SET password_hash=NULL, totp_enabled=0, totp_secret=NULL, totp_last_step=0, totp_backup_codes=NULL, calendar_token_hash=NULL, telegram_chat_id='' WHERE id=$1")
         .bind(uid)
+        .execute(&mut *tx)
+        .await?;
+    sqlx::query("DELETE FROM oauth_accounts WHERE user_id=$1")
+        .bind(uid)
+        .execute(&mut *tx)
+        .await?;
+    sqlx::query("DELETE FROM login_failures WHERE email=lower($1)")
+        .bind(&email)
         .execute(&mut *tx)
         .await?;
     sqlx::query("DELETE FROM telegram_link_tokens WHERE user_id=$1")
@@ -305,7 +319,13 @@ pub(super) async fn approve_recovery(
         .bind(uid)
         .execute(&mut *tx)
         .await?;
+    sqlx::query("DELETE FROM password_reset_tokens WHERE user_id=$1")
+        .bind(uid)
+        .execute(&mut *tx)
+        .await?;
     tx.commit().await?;
+    st.limiter
+        .reset(&format!("pw_attempt:user:{}", email.to_lowercase()));
     audit(
         &st.db,
         Some(u.id),

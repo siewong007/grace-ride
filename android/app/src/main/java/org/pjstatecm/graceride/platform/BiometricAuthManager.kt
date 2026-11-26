@@ -395,6 +395,9 @@ class BiometricAuthManager(
     @Volatile
     private var backgroundedAtMs: Long? = null
 
+    @Volatile
+    var onRelocked: (() -> Unit)? = null
+
     fun availability(context: Context?): BiometricAvailability = driver.availability(context)
 
     fun ensureLoaded() {
@@ -486,6 +489,7 @@ class BiometricAuthManager(
         backgroundedAtMs = null
         if (leftAt != null && _enrollment.value != null && nowMs - leftAt >= IDLE_RELOCK_MS) {
             _appUnlocked.value = false
+            onRelocked?.invoke()
         }
     }
 

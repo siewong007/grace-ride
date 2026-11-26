@@ -12,8 +12,7 @@ use crate::notifications::{notify_batch, BatchNotifItem, NotifMeta};
 use crate::perms::{Act, Page};
 use crate::state::AppState;
 use crate::util::{
-    audit, audit_many, fmt_rm, notify, notify_perm, now, pickup_window_bounds, require,
-    system_message, ErrorKey,
+    audit, audit_many, fmt_rm, notify, now, pickup_window_bounds, require, system_message, ErrorKey,
 };
 
 use super::location::{clear_location_if_idle, clear_passenger_location};
@@ -42,6 +41,28 @@ pub(super) async fn driver_load_on(
     .bind(&hi)
     .fetch_one(&mut *conn)
     .await?;
+    let (visitor_load,): (i64,) = sqlx::query_as(
+        "SELECT COALESCE(SUM(pv.seats),0)::BIGINT
+         FROM plan_visitors pv
+         JOIN events e ON e.id = pv.event_id
+         CROSS JOIN LATERAL (
+             SELECT COALESCE(MIN(er.pickup_at), e.starts_at) AS slot_at
+             FROM rides er
+             WHERE er.event_id = pv.event_id AND er.leg = pv.leg AND er.status <> 'cancelled'
+         ) leg_time
+         WHERE pv.driver_id = $1
+           AND e.status = 'published'
+           AND NULLIF(BTRIM(leg_time.slot_at), '') IS NOT NULL
+           AND leg_time.slot_at >= $3 AND leg_time.slot_at <= $4
+           AND abs(EXTRACT(EPOCH FROM (leg_time.slot_at::timestamp - $2::timestamp))) < 3600",
+    )
+    .bind(driver)
+    .bind(at)
+    .bind(&lo)
+    .bind(&hi)
+    .fetch_one(&mut *conn)
+    .await?;
+    let total_load = load + visitor_load;
     let row: Option<(i64, i64, Option<i64>)> = sqlx::query_as(
         "SELECT u.carpool_enabled, u.spare_seats, v.seats FROM users u LEFT JOIN vehicles v ON v.user_id=u.id AND v.is_active=1 WHERE u.id=$1",
     )
@@ -53,12 +74,12 @@ pub(super) async fn driver_load_on(
     // Without 共乘模式 a driver takes one booking per time slot.
     let cap = if carpool == 1 {
         cap
-    } else if load > 0 {
-        load
+    } else if total_load > 0 {
+        total_load
     } else {
         cap
     };
-    Ok((load, cap))
+    Ok((total_load, cap))
 }
 
 pub(super) async fn driver_load(
@@ -97,33 +118,30 @@ pub(super) async fn driver_claim(
     let Some(event_id) = r.event_id else {
         return Err(bad(u.lang, ErrorKey::EventDriveNeedsSignup));
     };
-    let signed: Option<(i64,)> = sqlx::query_as(
-        "SELECT id FROM event_signups WHERE event_id=$1 AND user_id=$2 AND status='going'",
-    )
-    .bind(event_id)
-    .bind(u.id)
-    .fetch_optional(&st.db)
-    .await?;
-    if signed.is_none() {
-        return Err(bad(u.lang, ErrorKey::EventDriveNeedsSignup));
-    }
     // The request list already hides past pickups; the claim itself must refuse them too.
     if r.pickup_at.as_str() < &now()[..16] {
         return Err(bad(u.lang, ErrorKey::PickupTimeInPast));
     }
-    // Lock the driver's row for the whole capacity check + claim. Two concurrent claims
-    // for different rides by the same driver then serialise; the second sees the first
-    // booking in `load` and is rejected instead of overbooking the car.
+    // Lock the event signup and the driver's row for the whole capacity check + claim.
+    // Two concurrent claims (or a concurrent withdrawal) then serialise properly.
     let mut tx = st.db.begin().await?;
-    if let Some(event_id) = r.event_id {
-        let ev_status: Option<String> =
-            sqlx::query_scalar("SELECT status FROM events WHERE id=$1 FOR SHARE")
-                .bind(event_id)
-                .fetch_optional(&mut *tx)
-                .await?;
-        if ev_status.as_deref() != Some("published") {
-            return Err(bad(u.lang, ErrorKey::EventNotOpen));
-        }
+    let ev_status: Option<String> =
+        sqlx::query_scalar("SELECT status FROM events WHERE id=$1 FOR SHARE")
+            .bind(event_id)
+            .fetch_optional(&mut *tx)
+            .await?;
+    if ev_status.as_deref() != Some("published") {
+        return Err(bad(u.lang, ErrorKey::EventNotOpen));
+    }
+    let signed: Option<(i64,)> = sqlx::query_as(
+        "SELECT id FROM event_signups WHERE event_id=$1 AND user_id=$2 AND status='going' FOR SHARE",
+    )
+    .bind(event_id)
+    .bind(u.id)
+    .fetch_optional(&mut *tx)
+    .await?;
+    if signed.is_none() {
+        return Err(bad(u.lang, ErrorKey::EventDriveNeedsSignup));
     }
     sqlx::query("SELECT id FROM users WHERE id=$1 FOR UPDATE")
         .bind(u.id)
@@ -255,10 +273,10 @@ pub(super) async fn driver_withdraw(
         r.pickup_at.replace('T', " "),
         reason
     );
-    notify_perm(
+    crate::notifications::notify_traffic_for_event(
         &st.db,
-        Page::AdminRides,
-        Act::Update,
+        r.event_created_by,
+        None,
         ("需要重新安排司机", "Driver needs reassignment"),
         (&line, &line),
         &format!("/admin/rides/{id}"),
@@ -535,21 +553,22 @@ pub(super) async fn start_ride(
         ));
     }
     let started_at = now();
-    let began = sqlx::query(
+    let locked_trip_id: Option<Option<i64>> = sqlx::query_scalar(
         "UPDATE rides SET status='in_progress', started_at=$1, updated_at=$1
-         WHERE id=$2 AND driver_id=$3 AND status='confirmed'",
+         WHERE id=$2 AND driver_id=$3 AND status='confirmed'
+         RETURNING trip_id",
     )
     .bind(&started_at)
     .bind(id)
     .bind(u.id)
-    .execute(&mut *tx)
+    .fetch_optional(&mut *tx)
     .await?;
-    if began.rows_affected() == 0 {
+    let Some(locked_trip_id) = locked_trip_id else {
         return Err(conflict(u.lang, ErrorKey::RideStatusChanged));
-    }
+    };
     // The driver sets off once for the whole carpool: every other confirmed passenger in
     // this trip starts too, so each of them can follow the car and see their ETA.
-    let trip = r.trip_id.unwrap_or(id);
+    let trip = locked_trip_id.unwrap_or(id);
     let others: Vec<(i64,)> = sqlx::query_as(
         "UPDATE rides SET status='in_progress', started_at=$1, updated_at=$1
          WHERE driver_id=$2 AND trip_id=$3 AND id != $4 AND status='confirmed' RETURNING id",
@@ -603,7 +622,7 @@ pub(super) async fn start_ride(
         tracing::error!("audit_many ride.start failed: {e}");
     }
     notify_batch(&st.db, start_notifs).await;
-    if let Some(t) = r.trip_id {
+    if let Some(t) = locked_trip_id {
         let names: Vec<&str> = started.iter().map(|x| x.p_name.as_str()).collect();
         system_message(
             &st.db,
@@ -753,7 +772,7 @@ pub(super) async fn no_show(
 ) -> AppResult<Json<Value>> {
     let r = load_ride(&st, u.lang, id).await?;
     let is_driver = r.driver_id == Some(u.id);
-    if !is_driver && !traffic_can(&u, &r, Act::Update) {
+    if !(is_driver && u.can(Page::Drive, Act::Update)) && !traffic_can(&u, &r, Act::Update) {
         return Err(forbidden(u.lang, ErrorKey::NotRideDriver));
     }
     // A passenger who has been picked up showed up. Checked in the update itself too, so a
@@ -829,10 +848,10 @@ pub(super) async fn no_show(
     )
     .await;
     let line = format!("{} · {}", r.p_name, r.pickup_at.replace('T', " "));
-    notify_perm(
+    crate::notifications::notify_traffic_for_event(
         &st.db,
-        Page::AdminRides,
-        Act::Update,
+        r.event_created_by,
+        None,
         ("乘客未到场", "Passenger no-show"),
         (&line, &line),
         &format!("/admin/rides/{id}"),
@@ -959,7 +978,34 @@ pub(super) async fn complete(
                 };
                 ((fare - paid).max(0), 0)
             }
-            None => (0, 1),
+            None => {
+                // Only one ride per unpriced carpool trip requests a mileage receipt so
+                // a multi-passenger trip cannot trigger multiple mileage claims.
+                let already_handled: bool = if let Some(t) = locked_trip_id {
+                    sqlx::query_scalar(
+                        "SELECT EXISTS (
+                             SELECT 1 FROM rides s
+                             WHERE s.trip_id = $1 AND s.driver_id = $2 AND s.id <> $3
+                               AND (
+                                   s.mileage_receipt_needed = 1
+                                   OR s.reimbursement_amount_cents > 0
+                                   OR EXISTS (
+                                       SELECT 1 FROM reimbursements r
+                                       WHERE r.ride_id = s.id AND r.kind = 'mileage' AND r.status <> 'rejected'
+                                   )
+                               )
+                         )",
+                    )
+                    .bind(t)
+                    .bind(u.id)
+                    .bind(id)
+                    .fetch_one(&mut *tx)
+                    .await?
+                } else {
+                    false
+                };
+                (0, i64::from(!already_handled))
+            }
         }
     } else {
         (0, 0)

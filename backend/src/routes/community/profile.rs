@@ -5,7 +5,7 @@ use serde::Deserialize;
 use serde_json::{json, Value};
 
 use crate::auth::CurrentUser;
-use crate::error::{bad, forbidden, not_found, AppResult};
+use crate::error::{bad, forbidden, AppResult};
 use crate::i18n::ErrorKey;
 use crate::state::AppState;
 use crate::util::{audit, check_name, check_phone, now};
@@ -197,16 +197,15 @@ pub(super) async fn update_profile(
     }
     check_avatar_color(u.lang, &req.avatar_color)?;
     check_avatar_icon(u.lang, &req.avatar_icon)?;
+    let mut tx = st.db.begin().await?;
     if let Some(f) = req.photo_file_id {
-        let (owner, mime): (i64, String) =
-            sqlx::query_as("SELECT owner_id, mime FROM files WHERE id=$1")
+        let (mime,): (String,) =
+            sqlx::query_as("SELECT mime FROM files WHERE id=$1 AND owner_id=$2 FOR KEY SHARE")
                 .bind(f)
-                .fetch_optional(&st.db)
+                .bind(u.id)
+                .fetch_optional(&mut *tx)
                 .await?
-                .ok_or(not_found(u.lang))?;
-        if owner != u.id {
-            return Err(forbidden(u.lang, ErrorKey::InvalidPhoto));
-        }
+                .ok_or_else(|| forbidden(u.lang, ErrorKey::InvalidPhoto))?;
         if !mime.starts_with("image/") {
             return Err(bad(u.lang, ErrorKey::InvalidPhoto));
         }
@@ -226,7 +225,7 @@ pub(super) async fn update_profile(
         )
         .bind(cg)
         .bind(u.id)
-        .fetch_optional(&st.db)
+        .fetch_optional(&mut *tx)
         .await?;
         if ok.is_none() {
             return Err(bad(u.lang, ErrorKey::InvalidAction));
@@ -243,7 +242,7 @@ pub(super) async fn update_profile(
             let current_tg: String =
                 sqlx::query_scalar("SELECT COALESCE(telegram_chat_id, '') FROM users WHERE id=$1")
                     .bind(u.id)
-                    .fetch_one(&st.db)
+                    .fetch_one(&mut *tx)
                     .await?;
             if trimmed != current_tg.trim() {
                 return Err(bad(u.lang, ErrorKey::TelegramPairingRequired));
@@ -286,7 +285,7 @@ pub(super) async fn update_profile(
     .bind(req.clear_photo.unwrap_or(false))
     .bind(req.avatar_color.as_deref())
     .bind(req.avatar_icon.as_deref())
-    .execute(&st.db)
+    .execute(&mut *tx)
     .await?;
     if clear_tg_blocked {
         let _ = sqlx::query(
@@ -294,9 +293,10 @@ pub(super) async fn update_profile(
         )
         .bind(u.id)
         .bind(now())
-        .execute(&st.db)
+        .execute(&mut *tx)
         .await;
     }
+    tx.commit().await?;
     // Which fields were sent, not their values: the log is read by staff.
     let changed: Vec<&str> = [
         ("name", req.name.is_some()),

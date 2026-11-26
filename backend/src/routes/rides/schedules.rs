@@ -14,7 +14,7 @@ use crate::auth::CurrentUser;
 use crate::error::{bad, forbidden, not_found, AppResult};
 use crate::perms::{Act, Page, Perm};
 use crate::state::AppState;
-use crate::util::{audit, notify, now, ErrorKey};
+use crate::util::{notify, now, ErrorKey};
 
 // ---------------- Standing / Recurring Ride & Driver Schedules ----------------
 
@@ -80,6 +80,7 @@ pub(super) async fn list_recurring_schedules(
     State(st): State<AppState>,
     u: CurrentUser,
 ) -> AppResult<Json<Value>> {
+    crate::util::require_one(&u, &[(Page::Rides, Act::View), (Page::Drive, Act::View)])?;
     let rows: Vec<RecurringScheduleRow> = sqlx::query_as(
         "SELECT s.id, s.user_id, s.kind, s.label, s.weekday, s.pickup_time, s.area_id, a.name AS area_name,
                 s.pickup_address, s.destination, s.seats, s.assistance, s.notes, s.lead_days, s.active,
@@ -243,6 +244,10 @@ pub(super) async fn delete_recurring_schedule(
     u: CurrentUser,
     Path(id): Path<i64>,
 ) -> AppResult<Json<Value>> {
+    crate::util::require_one(
+        &u,
+        &[(Page::Rides, Act::Delete), (Page::Drive, Act::Delete)],
+    )?;
     let res = sqlx::query("DELETE FROM recurring_ride_schedules WHERE id=$1 AND user_id=$2")
         .bind(id)
         .bind(u.id)
@@ -265,11 +270,6 @@ struct ActiveScheduleRow {
     pickup_time: String,
     area_id: i64,
     area_name: String,
-    pickup_address: String,
-    destination: String,
-    seats: i64,
-    assistance: String,
-    notes: String,
     lead_days: i64,
     active: i64,
     last_generated_date: Option<String>,
@@ -280,151 +280,75 @@ async fn apply_recurring_schedule_for_date(
     s: &ActiveScheduleRow,
     target_date: &str,
 ) -> anyhow::Result<Option<i64>> {
+    if s.kind != "driver" {
+        return Ok(None);
+    }
     let mut tx = db.begin().await?;
-    let locked: Option<(i64, Option<String>)> = sqlx::query_as(
-        "SELECT active, last_generated_date FROM recurring_ride_schedules WHERE id=$1 FOR UPDATE",
+    let locked: Option<(i64, Option<String>, i64, String)> = sqlx::query_as(
+        "SELECT active, last_generated_date, weekday, pickup_time
+         FROM recurring_ride_schedules WHERE id=$1 FOR UPDATE",
     )
     .bind(s.id)
     .fetch_optional(&mut *tx)
     .await?;
-    let Some((active, last_gen)) = locked else {
+    let Some((active, last_gen, locked_weekday, locked_time)) = locked else {
         return Ok(None);
     };
-    if active != 1 || last_gen.as_deref().is_some_and(|d| d >= target_date) {
+    if active != 1
+        || locked_weekday != s.weekday
+        || locked_time != s.pickup_time
+        || last_gen.as_deref().is_some_and(|d| d >= target_date)
+    {
         return Ok(None);
     }
 
-    if s.kind == "passenger" {
-        let pickup_at = format!("{target_date}T{}", s.pickup_time);
-        let existing_count: (i64,) = sqlx::query_as(
-            "SELECT COUNT(*) FROM rides
-             WHERE passenger_id=$1 AND pickup_at=$2
-               AND status NOT IN ('cancelled','no_show','alt_transport')",
-        )
-        .bind(s.user_id)
-        .bind(&pickup_at)
-        .fetch_one(&mut *tx)
-        .await?;
-        sqlx::query(
-            "UPDATE recurring_ride_schedules SET last_generated_date=$1, updated_at=$2 WHERE id=$3",
-        )
-        .bind(target_date)
-        .bind(now())
-        .bind(s.id)
-        .execute(&mut *tx)
-        .await?;
-        if existing_count.0 > 0 {
-            tx.commit().await?;
-            return Ok(None);
-        }
-        let (assistance, notes) = super::normalize_assistance(&s.assistance, &s.notes);
-        let (ride_id,): (i64,) = sqlx::query_as(
-            "INSERT INTO rides (passenger_id, pickup_at, pickup_area_id, pickup_address, destination, seats, assistance, notes, created_at, updated_at)
-             VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10) RETURNING id",
-        )
-        .bind(s.user_id)
-        .bind(&pickup_at)
+    sqlx::query(
+        "UPDATE recurring_ride_schedules SET last_generated_date=$1, updated_at=$2 WHERE id=$3",
+    )
+    .bind(target_date)
+    .bind(now())
+    .bind(s.id)
+    .execute(&mut *tx)
+    .await?;
+    tx.commit().await?;
+    let (_, drive_scope) = crate::audience::group_scopes(db, s.user_id).await?;
+    let open_sql = format!(
+        "SELECT COUNT(*) FROM rides r
+         WHERE r.status='pending_driver' AND r.pickup_area_id=$1
+           AND r.pickup_at >= ($2 || 'T') AND r.pickup_at < ($2 || 'U')
+           AND r.passenger_id != $3
+           AND (SELECT _mg.id IS NULL OR _mg.id = ANY($4) FROM (SELECT {MATCH_GROUP_SQL} AS id) _mg)"
+    );
+    let (open,): (i64,) = sqlx::query_as(sqlx::AssertSqlSafe(&*open_sql))
         .bind(s.area_id)
-        .bind(&s.pickup_address)
-        .bind(&s.destination)
-        .bind(s.seats)
-        .bind(&assistance)
-        .bind(&notes)
-        .bind(now())
-        .bind(now())
-        .fetch_one(&mut *tx)
-        .await?;
-        tx.commit().await?;
-        audit(
-            db,
-            Some(s.user_id),
-            "ride.create_recurring",
-            "ride",
-            Some(ride_id),
-            &pickup_at,
-        )
-        .await;
-        notify(
-            db,
-            s.user_id,
-            ("已为您建立周期接送", "Recurring ride created"),
-            (
-                &format!(
-                    "{} · {} → {}",
-                    pickup_at.replace('T', " "),
-                    s.area_name,
-                    s.destination
-                ),
-                &format!(
-                    "{} · {} → {}",
-                    pickup_at.replace('T', " "),
-                    s.area_name,
-                    s.destination
-                ),
-            ),
-            &format!("/rides/{ride_id}"),
-        )
-        .await;
-        let _ = super::notify_area_drivers_pool(
-            db,
-            s.area_id,
-            None,
-            s.user_id,
-            &pickup_at,
-            &s.user_name,
-            s.seats,
-        )
-        .await;
-        Ok(Some(ride_id))
-    } else {
-        sqlx::query(
-            "UPDATE recurring_ride_schedules SET last_generated_date=$1, updated_at=$2 WHERE id=$3",
-        )
         .bind(target_date)
-        .bind(now())
-        .bind(s.id)
-        .execute(&mut *tx)
+        .bind(s.user_id)
+        .bind(&drive_scope)
+        .fetch_one(db)
         .await?;
-        tx.commit().await?;
-        let (_, drive_scope) = crate::audience::group_scopes(db, s.user_id).await?;
-        let open_sql = format!(
-            "SELECT COUNT(*) FROM rides r
-             WHERE r.status='pending_driver' AND r.pickup_area_id=$1
-               AND r.pickup_at >= ($2 || 'T') AND r.pickup_at < ($2 || 'U')
-               AND r.passenger_id != $3
-               AND (SELECT _mg.id IS NULL OR _mg.id = ANY($4) FROM (SELECT {MATCH_GROUP_SQL} AS id) _mg)"
-        );
-        let (open,): (i64,) = sqlx::query_as(sqlx::AssertSqlSafe(&*open_sql))
-            .bind(s.area_id)
-            .bind(target_date)
-            .bind(s.user_id)
-            .bind(&drive_scope)
-            .fetch_one(db)
-            .await?;
-        let label = if s.label.is_empty() {
-            s.area_name.clone()
-        } else {
-            s.label.clone()
-        };
-        notify(
-            db,
-            s.user_id,
-            ("周期出车时段提醒", "Standing drive schedule reminder"),
-            (
-                &format!(
-                    "{label} · {target_date} {} · 目前有 {open} 笔待接送请求（{}）",
-                    s.pickup_time, s.user_name
-                ),
-                &format!(
-                    "{label} · {target_date} {} · {open} open ride request(s) in your area",
-                    s.pickup_time
-                ),
+    let label = if s.label.is_empty() {
+        s.area_name.clone()
+    } else {
+        s.label.clone()
+    };
+    notify(
+        db,
+        s.user_id,
+        ("周期出车时段提醒", "Standing drive schedule reminder"),
+        (
+            &format!(
+                "{label} · {target_date} {} · 目前有 {open} 笔待接送请求（{}）",
+                s.pickup_time, s.user_name
             ),
-            "/drive",
-        )
-        .await;
-        Ok(Some(0))
-    }
+            &format!(
+                "{label} · {target_date} {} · {open} open ride request(s) in your area",
+                s.pickup_time
+            ),
+        ),
+        "/drive",
+    )
+    .await;
+    Ok(Some(0))
 }
 
 /// Generate upcoming rides / driver reminders from standing weekly schedules.
@@ -434,7 +358,7 @@ pub async fn process_recurring_schedules(db: &PgPool) -> anyhow::Result<usize> {
     let now_hm = crate::util::local_now().format("%H:%M").to_string();
     let query_sql = format!(
         "SELECT s.id, s.user_id, u.name AS user_name, s.kind, s.label, s.weekday, s.pickup_time, s.area_id, a.name AS area_name,
-                s.pickup_address, s.destination, s.seats, s.assistance, s.notes, s.lead_days, s.active, s.last_generated_date
+                s.lead_days, s.active, s.last_generated_date
          FROM recurring_ride_schedules s
          JOIN users u ON u.id = s.user_id
          JOIN areas a ON a.id = s.area_id
@@ -482,7 +406,7 @@ pub(super) async fn generate_recurring_schedule(
 ) -> AppResult<Json<Value>> {
     let row: Option<(ActiveScheduleRow, i64)> = sqlx::query_as::<_, ActiveScheduleRow>(
         "SELECT s.id, s.user_id, u.name AS user_name, s.kind, s.label, s.weekday, s.pickup_time, s.area_id, a.name AS area_name,
-                s.pickup_address, s.destination, s.seats, s.assistance, s.notes, s.lead_days, s.active, s.last_generated_date
+                s.lead_days, s.active, s.last_generated_date
          FROM recurring_ride_schedules s
          JOIN users u ON u.id = s.user_id
          JOIN areas a ON a.id = s.area_id
@@ -668,17 +592,43 @@ pub async fn event_moved(
         .fetch_one(&st.db)
         .await?;
     let body = format!("{} · {} · {}", title, new_at.replace('T', " "), new_place);
+    let body_masked_zh = format!("教会活动 · {} · {}", new_at.replace('T', " "), new_place);
+    let body_masked_en = format!(
+        "Church event · {} · {}",
+        new_at.replace('T', " "),
+        new_place
+    );
     let ids: Vec<i64> = driver_trips
         .into_iter()
         .map(|(d, _)| d)
         .collect::<std::collections::BTreeSet<_>>()
         .into_iter()
         .collect();
+    let mut visible_ids: Vec<i64> = Vec::new();
+    let mut masked_ids: Vec<i64> = Vec::new();
+    for d in ids {
+        if crate::audience::member_sees_event(&st.db, d, event_id)
+            .await
+            .unwrap_or(false)
+        {
+            visible_ids.push(d);
+        } else {
+            masked_ids.push(d);
+        }
+    }
     crate::util::notify_many(
         &st.db,
-        &ids,
+        &visible_ids,
         ("接送的活动已更改", "Event for your ride has changed"),
         (&body, &body),
+        "/drive",
+    )
+    .await;
+    crate::util::notify_many(
+        &st.db,
+        &masked_ids,
+        ("接送的活动已更改", "Event for your ride has changed"),
+        (&body_masked_zh, &body_masked_en),
         "/drive",
     )
     .await;

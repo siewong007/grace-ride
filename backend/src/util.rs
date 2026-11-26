@@ -283,8 +283,11 @@ pub async fn notify(
 /// Wake every member's open tab for this trip (new chat message).
 pub async fn notify_trip(db: &PgPool, trip_id: i64) {
     let ids: Vec<(i64,)> = sqlx::query_as(
-        "SELECT passenger_id FROM rides WHERE trip_id=$1 AND status <> 'cancelled'
-         UNION SELECT driver_id FROM rides WHERE trip_id=$1 AND driver_id IS NOT NULL",
+        "SELECT passenger_id FROM rides
+          WHERE trip_id=$1 AND status NOT IN ('cancelled', 'no_show', 'alt_transport')
+         UNION SELECT driver_id FROM rides
+          WHERE trip_id=$1 AND driver_id IS NOT NULL
+            AND status NOT IN ('cancelled', 'no_show', 'alt_transport')",
     )
     .bind(trip_id)
     .fetch_all(db)
@@ -292,6 +295,27 @@ pub async fn notify_trip(db: &PgPool, trip_id: i64) {
     .unwrap_or_default();
     for (id,) in ids {
         crate::stream::publish(id, "chat");
+    }
+}
+
+/// Sanitize a single CSV cell against spreadsheet formula injection (`=`, `+`, `-`, `@`, `|`, `%`,
+/// `\t`, `\r`, or leading C0 control/BOM characters) and apply RFC 4180 quoting.
+pub fn escape_csv_cell(s: &str) -> String {
+    let starts_ctrl = s
+        .chars()
+        .next()
+        .is_some_and(|c| c == '\t' || c == '\r' || c.is_control() || c == '\u{FEFF}');
+    let trimmed =
+        s.trim_start_matches(|c: char| c.is_whitespace() || c.is_control() || c == '\u{FEFF}');
+    let sanitized = if starts_ctrl || trimmed.starts_with(['=', '+', '-', '@', '|', '%']) {
+        format!("'{s}")
+    } else {
+        s.to_string()
+    };
+    if sanitized.contains([',', '"', '\n', '\r']) {
+        format!("\"{}\"", sanitized.replace('"', "\"\""))
+    } else {
+        sanitized
     }
 }
 
@@ -317,7 +341,7 @@ pub fn alert_client() -> &'static reqwest::Client {
             .redirect(reqwest::redirect::Policy::none())
             .timeout(std::time::Duration::from_secs(5))
             .build()
-            .unwrap_or_default()
+            .expect("HTTP client build failed")
     })
 }
 

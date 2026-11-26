@@ -466,16 +466,48 @@ pub(super) struct ReimbExcludedReq {
 
 pub(super) async fn exec_set_reimbursement_excluded_tx(
     tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+    lang: crate::util::Lang,
     r: &RideRow,
     excluded: bool,
 ) -> AppResult<()> {
-    let val: i64 = if excluded { 1 } else { 0 };
-    sqlx::query("UPDATE rides SET reimbursement_excluded = $1, updated_at = $2 WHERE id = $3")
-        .bind(val)
-        .bind(now())
+    let status: Option<String> =
+        sqlx::query_scalar("SELECT status FROM rides WHERE id=$1 FOR UPDATE")
+            .bind(r.id)
+            .fetch_optional(&mut **tx)
+            .await?;
+    let Some(status) = status else {
+        return Err(conflict(lang, ErrorKey::RideStatusChanged));
+    };
+    if matches!(status.as_str(), "cancelled" | "no_show" | "alt_transport") {
+        return Err(bad(lang, ErrorKey::InvalidAction));
+    }
+    if excluded {
+        let live_mileage: bool = sqlx::query_scalar(
+            "SELECT EXISTS (
+                 SELECT 1 FROM reimbursements
+                 WHERE ride_id = $1 AND kind = 'mileage' AND status <> 'rejected'
+             )",
+        )
         .bind(r.id)
-        .execute(&mut **tx)
+        .fetch_one(&mut **tx)
         .await?;
+        if live_mileage {
+            return Err(conflict(lang, ErrorKey::ReimbursementAlreadyClaimed));
+        }
+    }
+    let val: i64 = if excluded { 1 } else { 0 };
+    sqlx::query(
+        "UPDATE rides
+         SET reimbursement_excluded = $1,
+             mileage_receipt_needed = CASE WHEN $1 = 1 THEN 0 ELSE mileage_receipt_needed END,
+             updated_at = $2
+         WHERE id = $3",
+    )
+    .bind(val)
+    .bind(now())
+    .bind(r.id)
+    .execute(&mut **tx)
+    .await?;
     Ok(())
 }
 
@@ -507,7 +539,7 @@ pub(super) async fn exec_set_reimbursement_excluded(
     excluded: bool,
 ) -> AppResult<()> {
     let mut tx = st.db.begin().await?;
-    exec_set_reimbursement_excluded_tx(&mut tx, r, excluded).await?;
+    exec_set_reimbursement_excluded_tx(&mut tx, u.lang, r, excluded).await?;
     tx.commit().await?;
     exec_set_reimbursement_excluded_after(st, u, r, excluded).await;
     Ok(())
@@ -519,11 +551,7 @@ pub(super) async fn staff_set_reimbursement_excluded(
     Path(id): Path<i64>,
     Json(req): Json<ReimbExcludedReq>,
 ) -> AppResult<Json<Value>> {
-    if !u.can(Page::AdminRides, Act::Update)
-        && !(u.can(Page::AdminRides, Act::View) && u.is_traffic_lead())
-    {
-        return Err(forbidden(u.lang, ErrorKey::NoPermission));
-    }
+    require(&u, Page::AdminRides, Act::Update)?;
     let r = load_ride(&st, u.lang, id).await?;
     if !traffic_scope_ok(&u, r.event_created_by) {
         return Err(forbidden(u.lang, ErrorKey::CannotViewRide));

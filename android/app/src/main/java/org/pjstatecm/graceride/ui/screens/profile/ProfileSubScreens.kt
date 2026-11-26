@@ -158,6 +158,7 @@ fun PersonalDetailsScreen(container: AppContainer, nav: NavHostController) {
     val vm: ProfileViewModel = viewModel(factory = ProfileViewModel.factory(container))
     val state by vm.state.collectAsStateWithLifecycle()
     val authState by container.auth.state.collectAsStateWithLifecycle()
+    SecureScreenEffect()
     val view = LocalView.current
     val snackbar = remember { SnackbarHostState() }
     val savedMsg = stringResource(R.string.profile_saved)
@@ -496,6 +497,7 @@ fun NotificationSettingsScreen(container: AppContainer, nav: NavHostController) 
     val vm: ProfileViewModel = viewModel(factory = ProfileViewModel.factory(container))
     val state by vm.state.collectAsStateWithLifecycle()
     val authState by container.auth.state.collectAsStateWithLifecycle()
+    SecureScreenEffect()
     val appLang by container.langFlow.collectAsStateWithLifecycle()
     val context = LocalContext.current
     val view = LocalView.current

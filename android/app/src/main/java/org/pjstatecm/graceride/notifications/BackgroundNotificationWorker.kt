@@ -49,37 +49,42 @@ class BackgroundNotificationWorker(
         val me = signedIn?.me ?: return Result.success()
         if (!me.termsAccepted) return Result.success()
         val uid = me.id
+        container.biometric.ensureLoaded()
+        val bioLocked = container.biometric.requiresAppGate(uid)
 
         return try {
             val prefs = runSuspendCatching { container.community.notificationPrefs(passive = true) }.getOrNull()?.also {
                 RealtimeStreamClient.writeCachedPrefs(container.secureStore, it)
             } ?: RealtimeStreamClient.readCachedPrefs(container.secureStore)
-            val hideLockDetails = container.secureStore.getString("notif_hide_lock_details") == "1"
+            val hideLockDetails = bioLocked || container.secureStore.getString("notif_hide_lock_details") == "1"
             RealtimeStreamClient.syncNotifications(
                 community = container.community,
                 auth = container.auth,
                 store = container.secureStore,
                 userId = uid,
                 appContext = applicationContext,
-                surfaceNew = true,
+                surfaceNew = !bioLocked,
                 lang = container.lang,
                 hideLockDetails = hideLockDetails,
                 prefs = prefs,
                 passive = true,
             )
-            // Keep home-screen widget fresh when scheduled worker wakes up.
-            val nextRide = if (me.can("rides")) {
-                runSuspendCatching {
-                    container.rides.upcoming(passive = true)
-                        .filter { it.status in org.pjstatecm.graceride.domain.RideStatus.active && it.viewer.isPassenger }
-                        .minByOrNull { KlTime.sortKey(it.pickupAt) }
-                }.getOrNull()
-            } else null
-            val nextEvent = if (nextRide == null && me.can("events")) {
-                runSuspendCatching { container.events.upcoming(passive = true).firstOrNull() }.getOrNull()
-            } else null
+            // Keep home-screen widget fresh when scheduled worker wakes up, unless locked.
             val stillSignedIn = (container.auth.state.value as? AuthState.SignedIn)?.me?.id == uid
-            if (stillSignedIn) {
+            if (bioLocked) {
+                org.pjstatecm.graceride.widget.WidgetSnapshotStore.clear(applicationContext)
+                org.pjstatecm.graceride.widget.refreshGraceRideWidget(applicationContext)
+            } else if (stillSignedIn) {
+                val nextRide = if (me.can("rides")) {
+                    runSuspendCatching {
+                        container.rides.upcoming(passive = true)
+                            .filter { it.status in org.pjstatecm.graceride.domain.RideStatus.active && it.viewer.isPassenger }
+                            .minByOrNull { KlTime.sortKey(it.pickupAt) }
+                    }.getOrNull()
+                } else null
+                val nextEvent = if (nextRide == null && me.can("events")) {
+                    runSuspendCatching { container.events.upcoming(passive = true).firstOrNull() }.getOrNull()
+                } else null
                 org.pjstatecm.graceride.widget.WidgetSnapshotStore.saveFromHome(
                     applicationContext,
                     signedIn = true,

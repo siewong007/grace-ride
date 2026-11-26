@@ -44,6 +44,30 @@ class ChatReplyReceiver : BroadcastReceiver() {
             var tapPending: android.app.PendingIntent? = null
             var ctx = context
             try {
+                app.container.biometric.ensureLoaded()
+                val uid = app.container.auth.me?.id ?: app.container.biometric.enrollment.value?.userId
+                val sessionLocked = app.container.auth.state.value is org.pjstatecm.graceride.data.repo.AuthState.Locked ||
+                    (uid != null && app.container.biometric.requiresAppGate(uid))
+                if (sessionLocked) {
+                    if (notifId > 0) {
+                        val lang = app.container.lang
+                        NotificationHelper.ensureChannels(context, lang)
+                        ctx = NotificationHelper.localizedContext(context, lang)
+                        val unlockAlert = NotificationCompat.Builder(context, NotificationHelper.CHANNEL_CHAT)
+                            .setSmallIcon(R.drawable.ic_launcher_monochrome)
+                            .setContentTitle(ctx.getString(R.string.app_name))
+                            .setContentText(ctx.getString(R.string.notif_locked_generic))
+                            .setCategory(NotificationCompat.CATEGORY_MESSAGE)
+                            .setVisibility(NotificationCompat.VISIBILITY_PUBLIC)
+                            .setAutoCancel(true)
+                            .build()
+                        try {
+                            NotificationManagerCompat.from(context).notify(notifId, unlockAlert)
+                        } catch (_: SecurityException) {
+                        }
+                    }
+                    return@launch
+                }
                 withTimeout(7_500) {
                     val lang = app.container.lang
                     val hideLockDetails = app.container.secureStore.getString("notif_hide_lock_details") == "1"

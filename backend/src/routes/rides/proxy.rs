@@ -55,6 +55,7 @@ pub(super) async fn list_proxy_riders(
     State(st): State<AppState>,
     u: CurrentUser,
 ) -> AppResult<Json<Value>> {
+    crate::util::require(&u, crate::perms::Page::Rides, crate::perms::Act::View)?;
     let rows: Vec<ProxyRiderRow> = sqlx::query_as(
         "SELECT id, user_id, name, phone, relationship, notes, area_id, pickup_address, gate_notes, caregiver_user_id, created_at, updated_at
          FROM proxy_riders WHERE user_id=$1 ORDER BY name",
@@ -248,6 +249,7 @@ pub(super) async fn delete_proxy_rider(
     u: CurrentUser,
     Path(id): Path<i64>,
 ) -> AppResult<Json<Value>> {
+    crate::util::require(&u, crate::perms::Page::Rides, crate::perms::Act::Delete)?;
     let res = sqlx::query("DELETE FROM proxy_riders WHERE id=$1 AND user_id=$2")
         .bind(id)
         .bind(u.id)

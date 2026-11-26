@@ -359,7 +359,9 @@ private object SecureWindowRegistry {
         val next = (prev - 1).coerceAtLeast(0)
         if (next == 0) {
             counts.remove(window)
-            window.clearFlags(android.view.WindowManager.LayoutParams.FLAG_SECURE)
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                window.clearFlags(android.view.WindowManager.LayoutParams.FLAG_SECURE)
+            }
         } else {
             counts[window] = next
         }

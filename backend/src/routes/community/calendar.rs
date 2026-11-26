@@ -75,16 +75,29 @@ pub(super) async fn revoke_calendar_feed(
 }
 
 fn escape_ics_text(s: &str) -> String {
-    s.replace('\\', "\\\\")
-        .replace(';', "\\;")
-        .replace(',', "\\,")
-        .replace('\r', "")
-        .replace('\n', "\\n")
+    let mut out = String::with_capacity(s.len());
+    for c in s.chars() {
+        match c {
+            '\\' => out.push_str("\\\\"),
+            ';' => out.push_str("\\;"),
+            ',' => out.push_str("\\,"),
+            '\r' => {}
+            '\n' => out.push_str("\\n"),
+            '\u{2028}' | '\u{2029}' => out.push(' '),
+            c if c.is_control() => {}
+            c => out.push(c),
+        }
+    }
+    out
 }
 
 fn fmt_ics_dt(raw: &str) -> String {
     let Some(dt) = parse_dt(raw) else {
-        return raw.replace(['-', ':'], "").chars().take(15).collect();
+        return raw
+            .chars()
+            .filter(|c| c.is_ascii_digit() || *c == 'T' || *c == 'Z')
+            .take(16)
+            .collect();
     };
     use chrono::TimeZone;
     crate::util::zone()

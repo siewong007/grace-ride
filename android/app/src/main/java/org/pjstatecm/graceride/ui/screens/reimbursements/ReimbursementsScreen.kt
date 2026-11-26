@@ -58,6 +58,7 @@ import org.pjstatecm.graceride.domain.KlTime
 import org.pjstatecm.graceride.domain.Money
 import org.pjstatecm.graceride.domain.RideStatusKind
 import org.pjstatecm.graceride.ui.AppRoute
+import org.pjstatecm.graceride.ui.SecureScreenEffect
 import org.pjstatecm.graceride.ui.UiHaptics
 import org.pjstatecm.graceride.ui.components.AnimatedOfflineBanner
 import org.pjstatecm.graceride.ui.components.EmptyView
@@ -96,6 +97,7 @@ internal fun reimbKindLabel(kind: String): String = when (kind) {
 @Composable
 fun ReimbursementsScreen(container: AppContainer, nav: NavHostController) {
     val vm: ReimbursementsViewModel = viewModel(factory = ReimbursementsViewModel.factory(container))
+    SecureScreenEffect()
     val state by vm.state.collectAsStateWithLifecycle()
     val authState by container.auth.state.collectAsStateWithLifecycle()
     val me = (authState as? AuthState.SignedIn)?.me ?: container.auth.me

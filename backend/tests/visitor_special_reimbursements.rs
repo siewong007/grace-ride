@@ -315,6 +315,17 @@ async fn only_traffic_leads_ask_and_the_request_is_checked() {
     let admin_id = user_id(&st, "admin@example.org").await;
     let cell_id = user_id(&st, "cellleader@example.org").await;
     let d = driver(&st).await;
+    // Give the test driver a 9-seat church van (max DB seats=9, spare_seats=8) so 7 test visitors fit.
+    sqlx::query("UPDATE users SET spare_seats = 8 WHERE id = $1")
+        .bind(d)
+        .execute(&st.db)
+        .await
+        .unwrap();
+    sqlx::query("UPDATE vehicles SET seats = 9 WHERE user_id = $1 AND is_active = 1")
+        .bind(d)
+        .execute(&st.db)
+        .await
+        .unwrap();
     let ev = event_by(&st, admin_id, "Camp").await;
     let other = event_by(&st, cell_id, "Cell supper").await;
     sqlx::query("UPDATE users SET roles = 'traffic_member' WHERE email = 'amina@example.org'")

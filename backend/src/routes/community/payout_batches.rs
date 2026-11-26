@@ -109,6 +109,7 @@ pub(super) async fn create_payout_batch(
             "SELECT id, amount_cents FROM reimbursements
              WHERE id = ANY($1) AND status = 'approved' AND batch_id IS NULL
                AND user_id <> $2 AND reviewed_by IS DISTINCT FROM $2 AND requested_by IS DISTINCT FROM $2
+             ORDER BY id
              FOR UPDATE",
         )
         .bind(&unique_ids)
@@ -125,6 +126,7 @@ pub(super) async fn create_payout_batch(
              WHERE status = 'approved' AND batch_id IS NULL
                AND created_at < ($1 || '-99')
                AND user_id <> $2 AND reviewed_by IS DISTINCT FROM $2 AND requested_by IS DISTINCT FROM $2
+             ORDER BY id
              FOR UPDATE",
         )
         .bind(&month)
@@ -190,18 +192,7 @@ pub(super) async fn create_payout_batch(
 }
 
 fn csv_cell(v: &str) -> String {
-    let needs_neutralize = v.starts_with(['=', '+', '-', '@', '|', '%', '\t', '\r'])
-        || v.trim_start().starts_with(['=', '+', '-', '@', '|', '%']);
-    let safe = if needs_neutralize {
-        format!("'{v}")
-    } else {
-        v.to_string()
-    };
-    if safe.contains([',', '"', '\n', '\r']) {
-        format!("\"{}\"", safe.replace('"', "\"\""))
-    } else {
-        safe
-    }
+    crate::util::escape_csv_cell(v)
 }
 
 pub(super) async fn export_payout_batch_csv(
@@ -321,12 +312,13 @@ pub(super) async fn pay_payout_batch(
     }
 
     let mut tx = st.db.begin().await?;
-    let batch: Option<(String, i64)> =
-        sqlx::query_as("SELECT status, created_by FROM payout_batches WHERE id=$1 FOR UPDATE")
-            .bind(id)
-            .fetch_optional(&mut *tx)
-            .await?;
-    let Some((status, created_by)) = batch else {
+    let batch: Option<(String, i64, i64, i64)> = sqlx::query_as(
+        "SELECT status, created_by, total_cents, claim_count FROM payout_batches WHERE id=$1 FOR UPDATE",
+    )
+    .bind(id)
+    .fetch_optional(&mut *tx)
+    .await?;
+    let Some((status, created_by, batch_total_cents, batch_claim_count)) = batch else {
         return Err(not_found(u.lang));
     };
     if status != "open" {
@@ -337,13 +329,29 @@ pub(super) async fn pay_payout_batch(
     }
     let claims: Vec<(i64, i64, Option<i64>, Option<i64>, i64)> = sqlx::query_as(
         "SELECT id, user_id, reviewed_by, requested_by, amount_cents FROM reimbursements
-         WHERE batch_id=$1 AND status='approved' FOR UPDATE",
+         WHERE batch_id=$1 AND status='approved' ORDER BY id FOR UPDATE",
     )
     .bind(id)
     .fetch_all(&mut *tx)
     .await?;
     if claims.is_empty() {
         return Err(bad(u.lang, ErrorKey::BatchEmpty));
+    }
+    let non_approved_in_batch: bool = sqlx::query_scalar(
+        "SELECT EXISTS (SELECT 1 FROM reimbursements WHERE batch_id=$1 AND status <> 'approved')",
+    )
+    .bind(id)
+    .fetch_one(&mut *tx)
+    .await?;
+    if non_approved_in_batch || claims.len() as i64 != batch_claim_count {
+        return Err(conflict(u.lang, ErrorKey::ReimbursementProcessed));
+    }
+    let claims_sum: i64 = claims
+        .iter()
+        .try_fold(0i64, |acc, (_, _, _, _, amt)| acc.checked_add(*amt))
+        .ok_or_else(|| bad(u.lang, ErrorKey::InvalidAction))?;
+    if claims_sum != batch_total_cents {
+        return Err(conflict(u.lang, ErrorKey::ReimbursementProcessed));
     }
     for &(_cid, uid, reviewed_by, requested_by, _amt) in &claims {
         if uid == u.id || requested_by == Some(u.id) {

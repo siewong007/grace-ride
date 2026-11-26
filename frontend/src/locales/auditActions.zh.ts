@@ -1,10 +1,18 @@
 /** 操作记录动作代码的名称。键是把代码里的 "." 换成 "_"。 */
 export default {
   login_passkey: '用通行密钥登入',
+  login_password: '用密码登入',
+  login_google: '用 Google 账号登入',
   login_reauth: '用通行密钥再次验证身份',
   login_dev: '登入（开发）',
   login_failed: '登入失败',
   password_failed: '密码登入失败',
+  google_link: '验证并绑定了 Google 账号',
+  google_link_failed: 'Google 账号绑定失败',
+  google_unlink: '解除了 Google 账号绑定',
+  password_reset_verified: '通过 Google 验证以重设密码',
+  password_reset_denied: '密码重设被拒',
+  password_reset: '通过 Google 验证重设了密码',
   logout: '已登出',
   logout_all: '已在所有设备登出',
   passkey_register: '登记了通行密钥',

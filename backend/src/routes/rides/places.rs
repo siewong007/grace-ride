@@ -72,6 +72,7 @@ pub(super) async fn list_saved_places(
     State(st): State<AppState>,
     u: CurrentUser,
 ) -> AppResult<Json<Value>> {
+    crate::util::require(&u, crate::perms::Page::Rides, crate::perms::Act::View)?;
     let rows: Vec<SavedPlaceRow> = sqlx::query_as(
         "SELECT sp.id, sp.user_id, sp.label, sp.area_id, a.name AS area_name, sp.address, sp.gate_notes, sp.lat, sp.lng, sp.is_default, sp.created_at, sp.updated_at
          FROM saved_places sp LEFT JOIN areas a ON a.id = sp.area_id
@@ -258,6 +259,7 @@ pub(super) async fn delete_saved_place(
     u: CurrentUser,
     Path(id): Path<i64>,
 ) -> AppResult<Json<Value>> {
+    crate::util::require(&u, crate::perms::Page::Rides, crate::perms::Act::Delete)?;
     let res = sqlx::query("DELETE FROM saved_places WHERE id=$1 AND user_id=$2")
         .bind(id)
         .bind(u.id)

@@ -58,8 +58,10 @@ private struct ServerErrorPayload: Decodable {
     let error: String?
 }
 
-private final class HTTPClientRedirectDelegate: NSObject, URLSessionTaskDelegate, Sendable {
-    func urlSession(
+public final class CookieStrippingRedirectDelegate: NSObject, URLSessionTaskDelegate, Sendable {
+    public override init() {}
+
+    public func urlSession(
         _ session: URLSession,
         task: URLSessionTask,
         willPerformHTTPRedirection response: HTTPURLResponse,
@@ -90,7 +92,7 @@ public final class HTTPClient: @unchecked Sendable {
     public let cookieJar: PersistentCookieJar
     public let authEvents: AuthEventBus
     public let session: URLSession
-    private let delegate = HTTPClientRedirectDelegate()
+    private let delegate = CookieStrippingRedirectDelegate()
     private let langProvider: @Sendable () -> String
 
     public init(

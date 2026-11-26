@@ -80,6 +80,7 @@ async fn passkey_register_and_login_soft_authenticator() {
     )
     .await;
     assert_eq!(finish.status, StatusCode::OK, "{}", finish.json);
+    let cookie = cookie_from(&finish).expect("rotated cookie");
 
     let listed = call(&app, Method::GET, "/api/auth/passkeys", Some(&cookie), None).await;
     assert_eq!(listed.status, StatusCode::OK);
@@ -260,6 +261,7 @@ async fn totp_setup_enable_and_replay_rejected() {
     )
     .await;
     assert_eq!(en.status, StatusCode::OK, "{}", en.json);
+    let cookie = cookie_from(&en).expect("rotated cookie");
 
     // Replay same step (same code) must fail via totp_last_step.
     let replay = call(
@@ -1818,6 +1820,10 @@ async fn adding_or_removing_a_sign_in_method_needs_a_recent_sign_in() {
         }
     };
     // Nothing set up yet: an old session may add the first passkey (new member, after recovery).
+    sqlx::query("UPDATE users SET password_hash = NULL WHERE email = 'sophie@example.org'")
+        .execute(&st.db)
+        .await
+        .unwrap();
     let age = |minutes: i64| {
         let db = st.db.clone();
         async move {
@@ -1831,6 +1837,7 @@ async fn adding_or_removing_a_sign_in_method_needs_a_recent_sign_in() {
     age(120).await;
     let first = register(cookie.clone()).await;
     assert_eq!(first.status, StatusCode::OK, "{}", first.json);
+    let cookie = cookie_from(&first).expect("rotated cookie");
 
     // With a passkey on the account, the same old session can't add, remove or set up 2FA.
     for (path, method) in [
@@ -1879,6 +1886,7 @@ async fn a_passkey_check_renews_the_recent_sign_in_without_signing_out() {
     )
     .await;
     assert_eq!(done.status, StatusCode::OK, "{}", done.json);
+    let cookie = cookie_from(&done).expect("rotated cookie");
 
     sqlx::query("UPDATE sessions SET created_at=$1")
         .bind(grace_ride::util::minutes_ago(120))
@@ -1925,6 +1933,7 @@ async fn a_passkey_check_renews_the_recent_sign_in_without_signing_out() {
     )
     .await;
     assert_eq!(rfinish.status, StatusCode::OK, "{}", rfinish.json);
+    let cookie = cookie_from(&rfinish).expect("rotated cookie");
 
     let setup = call(
         &app,

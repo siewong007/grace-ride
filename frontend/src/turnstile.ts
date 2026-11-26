@@ -5,6 +5,8 @@ export const TURNSTILE_SCRIPT_URL =
 
 export type TurnstileAction =
   | 'passkey_login'
+  | 'password_login'
+  | 'password_reset'
   | 'recovery_request'
   | 'invite_accept'
   | 'visitor_claim';

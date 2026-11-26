@@ -8,12 +8,13 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 cd "$REPO_ROOT"
 
-VPS_HOST="${VPS_HOST:-162.19.81.122}"
-VPS_PORT="${VPS_PORT:-20049}"
-VPS_USER="${VPS_USER:-root}"
-VPS_SSH_KEY="${VPS_SSH_KEY:-/Volumes/APPLE EXTERNAL SSD /Personal Projects/hotel-app/deploy/credentials/aic-vps-ed25519}"
-VPS_HOST_KEY='[162.19.81.122]:20049 ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIIxenH95jfg3hxfkumJpZJyV7phwCNDrXrAL0wUXnta9'
-VPS_HOST_FP='SHA256:HV6OszvuYmwmWRLEY7z7jm8GojWZJppJlDBHIhJVUxw'
+: "${VPS_HOST:?set VPS_HOST}"
+: "${VPS_PORT:?set VPS_PORT}"
+[[ "$VPS_PORT" =~ ^[0-9]+$ ]] || { echo "VPS_PORT must be numeric" >&2; exit 1; }
+: "${VPS_USER:?set VPS_USER}"
+: "${VPS_SSH_KEY:?set VPS_SSH_KEY}"
+: "${VPS_HOST_KEY:?set VPS_HOST_KEY}"
+VPS_HOST_FP="${VPS_HOST_FP:-}"
 PUBLIC_URL="${PUBLIC_URL:-https://graceride.saliminn.my}"
 
 [[ -f "$VPS_SSH_KEY" ]] || { echo "Missing SSH private key: $VPS_SSH_KEY" >&2; exit 1; }
@@ -34,13 +35,19 @@ else
 fi
 [[ "$TAG" =~ ^[a-z0-9-]+$ ]] || { echo "Invalid image tag: $TAG" >&2; exit 1; }
 
-TMP_DIR="$(mktemp -d /tmp/grace-ride-deploy.XXXXXX)"
+TMP_DIR="$(mktemp -d)"
+chmod 0700 "$TMP_DIR"
 SSH_READY=0
+REMOTE_STAGE=""
 
 install -m 0600 /dev/null "$TMP_DIR/known_hosts"
 printf '%s\n' "$VPS_HOST_KEY" > "$TMP_DIR/known_hosts"
-ssh-keygen -lf "$TMP_DIR/known_hosts" | grep -Fq "$VPS_HOST_FP" \
-  || { echo "Pinned host key fingerprint mismatch" >&2; exit 1; }
+if [[ -n "$VPS_HOST_FP" ]]; then
+  ssh-keygen -lf "$TMP_DIR/known_hosts" | grep -Fq "$VPS_HOST_FP" \
+    || { echo "Pinned host key fingerprint mismatch" >&2; exit 1; }
+else
+  ssh-keygen -lf "$TMP_DIR/known_hosts" >/dev/null
+fi
 
 ssh_opts=(
   -i "$VPS_SSH_KEY"
@@ -62,9 +69,9 @@ scp_opts=(
 )
 
 cleanup() {
-  if [[ "$SSH_READY" == "1" ]]; then
+  if [[ "$SSH_READY" == "1" && -n "$REMOTE_STAGE" && "$REMOTE_STAGE" =~ ^/opt/grace-ride/\.deploy\.[A-Za-z0-9]+$ ]]; then
     ssh "${ssh_opts[@]}" "$VPS_USER@$VPS_HOST" \
-      "rm -f -- /tmp/grace-ride-$TAG.tar.gz.part /tmp/grace-ride-$TAG.tar.gz /tmp/docker-compose.aic.$TAG.yml /tmp/docker-compose.osrm.$TAG.yml" \
+      "rm -rf -- '$REMOTE_STAGE'" \
       >/dev/null 2>&1 || true
   fi
   rm -rf "$TMP_DIR"
@@ -110,18 +117,23 @@ if [[ "$USE_EXISTING" == "1" ]]; then
 else
   echo "[deploy] Uploading compose manifests and image tarball..."
 fi
+REMOTE_STAGE=$(ssh "${ssh_opts[@]}" "$VPS_USER@$VPS_HOST" \
+  "install -d -m 0700 /opt/grace-ride && mktemp -d /opt/grace-ride/.deploy.XXXXXX")
+[[ "$REMOTE_STAGE" =~ ^/opt/grace-ride/\.deploy\.[A-Za-z0-9]+$ ]] \
+  || { echo "Unexpected remote stage path: $REMOTE_STAGE" >&2; exit 1; }
+
 scp "${scp_opts[@]}" \
   deploy/docker-compose.aic.yml \
-  "$VPS_USER@$VPS_HOST:/tmp/docker-compose.aic.$TAG.yml"
+  "$VPS_USER@$VPS_HOST:$REMOTE_STAGE/docker-compose.aic.$TAG.yml"
 if [[ -f deploy/docker-compose.osrm.yml ]]; then
   scp "${scp_opts[@]}" \
     deploy/docker-compose.osrm.yml \
-    "$VPS_USER@$VPS_HOST:/tmp/docker-compose.osrm.$TAG.yml"
+    "$VPS_USER@$VPS_HOST:$REMOTE_STAGE/docker-compose.osrm.$TAG.yml"
 fi
 if [[ "$USE_EXISTING" == "0" ]]; then
   scp "${scp_opts[@]}" \
     "$TMP_DIR/grace-ride-$TAG.tar.gz" \
-    "$VPS_USER@$VPS_HOST:/tmp/grace-ride-$TAG.tar.gz.part"
+    "$VPS_USER@$VPS_HOST:$REMOTE_STAGE/grace-ride-$TAG.tar.gz.part"
 fi
 
 echo "[deploy] Rolling out grace-ride:$TAG on VPS..."
@@ -129,9 +141,10 @@ ssh "${ssh_opts[@]}" \
   -o ServerAliveInterval=15 \
   -o ServerAliveCountMax=8 \
   "$VPS_USER@$VPS_HOST" \
-  "TAG='$TAG' USE_EXISTING='$USE_EXISTING' bash -s" <<'REMOTE'
+  "TAG='$TAG' USE_EXISTING='$USE_EXISTING' REMOTE_STAGE='$REMOTE_STAGE' bash -s" <<'REMOTE'
 set -euo pipefail
 [[ "$TAG" =~ ^[a-z0-9-]+$ ]]
+[[ "$REMOTE_STAGE" =~ ^/opt/grace-ride/\.deploy\.[A-Za-z0-9]+$ ]]
 
 docker image prune -f >/dev/null 2>&1 || true
 avail=$(df --output=avail -B1 / | tail -n 1 | tr -d ' ')
@@ -145,15 +158,15 @@ install -d -m 0750 /opt/grace-ride
 if [[ -f /opt/grace-ride/docker-compose.aic.yml ]]; then
   cp -a /opt/grace-ride/docker-compose.aic.yml /opt/grace-ride/docker-compose.aic.yml.prev
 fi
-install -m 0644 "/tmp/docker-compose.aic.$TAG.yml" /opt/grace-ride/docker-compose.aic.yml
-rm -f "/tmp/docker-compose.aic.$TAG.yml"
+install -m 0644 "$REMOTE_STAGE/docker-compose.aic.$TAG.yml" /opt/grace-ride/docker-compose.aic.yml
+rm -f "$REMOTE_STAGE/docker-compose.aic.$TAG.yml"
 
-if [[ -f "/tmp/docker-compose.osrm.$TAG.yml" ]]; then
+if [[ -f "$REMOTE_STAGE/docker-compose.osrm.$TAG.yml" ]]; then
   if [[ -f /opt/grace-ride/docker-compose.osrm.yml ]]; then
     cp -a /opt/grace-ride/docker-compose.osrm.yml /opt/grace-ride/docker-compose.osrm.yml.prev
   fi
-  install -m 0644 "/tmp/docker-compose.osrm.$TAG.yml" /opt/grace-ride/docker-compose.osrm.yml
-  rm -f "/tmp/docker-compose.osrm.$TAG.yml"
+  install -m 0644 "$REMOTE_STAGE/docker-compose.osrm.$TAG.yml" /opt/grace-ride/docker-compose.osrm.yml
+  rm -f "$REMOTE_STAGE/docker-compose.osrm.$TAG.yml"
 fi
 
 old_image=$(docker inspect -f '{{.Config.Image}}' grace-ride 2>/dev/null || echo '')
@@ -162,9 +175,13 @@ if [[ -z "$old_image" ]]; then
   old_image="grace-ride:none"
 fi
 old_tag=${old_image#grace-ride:}
+if [[ ! "$old_tag" =~ ^[A-Za-z0-9._-]+$ ]]; then
+  old_tag="none"
+fi
 
 set_image_tag() {
   local tag="$1"
+  [[ "$tag" =~ ^[A-Za-z0-9._-]+$ ]] || { echo "Invalid image tag: $tag" >&2; exit 1; }
   if grep -q '^IMAGE_TAG=' /opt/grace-ride/secrets.env; then
     sed -i "s/^IMAGE_TAG=.*/IMAGE_TAG=${tag}/" /opt/grace-ride/secrets.env
   else
@@ -191,15 +208,22 @@ ensure_secrets_encryption_key() {
 
 write_pre_roll_dump() {
   local dump_base="/opt/grace-ride/pre-roll-backups/pre-${TAG}.dump"
-  local age_pub
+  local age_pub allow_plain
   age_pub=$(grep -E '^BACKUP_AGE_RECIPIENT=' /opt/grace-ride/secrets.env 2>/dev/null | head -n 1 | cut -d= -f2- | tr -d "\"'\r\n" || true)
-  if [[ -n "$age_pub" ]] && command -v age >/dev/null 2>&1; then
-    docker exec grace-ride-db pg_dump -U grace -d grace_ride -Fc | age -r "$age_pub" -o "${dump_base}.age"
-    chmod 600 "${dump_base}.age"
-  else
-    docker exec grace-ride-db pg_dump -U grace -d grace_ride -Fc > "$dump_base"
-    chmod 600 "$dump_base"
-  fi
+  allow_plain=$(grep -E '^ALLOW_PLAINTEXT_PRE_ROLL_DUMP=' /opt/grace-ride/secrets.env 2>/dev/null | head -n 1 | cut -d= -f2- | tr -d "\"'\r\n" || true)
+  (
+    umask 077
+    if [[ -n "$age_pub" ]] && command -v age >/dev/null 2>&1; then
+      docker exec grace-ride-db pg_dump -U grace -d grace_ride -Fc | age -r "$age_pub" -o "${dump_base}.age"
+      chmod 600 "${dump_base}.age"
+    elif [[ "$allow_plain" == "true" ]]; then
+      docker exec grace-ride-db pg_dump -U grace -d grace_ride -Fc > "$dump_base"
+      chmod 600 "$dump_base"
+    else
+      echo "Refusing unencrypted pre-roll DB dump (set BACKUP_AGE_RECIPIENT + install age, or ALLOW_PLAINTEXT_PRE_ROLL_DUMP=true)" >&2
+      exit 1
+    fi
+  )
   ls -1t /opt/grace-ride/pre-roll-backups/pre-*.dump* 2>/dev/null | tail -n +3 | xargs -r rm -f
 }
 
@@ -215,11 +239,11 @@ if [[ "$(docker inspect -f '{{.State.Running}}' grace-ride-db 2>/dev/null || ech
   fi
 fi
 
-if [[ "$USE_EXISTING" == "0" || -f "/tmp/grace-ride-$TAG.tar.gz.part" ]]; then
-  mv "/tmp/grace-ride-$TAG.tar.gz.part" "/tmp/grace-ride-$TAG.tar.gz"
-  gzip -t "/tmp/grace-ride-$TAG.tar.gz"
-  gunzip -c "/tmp/grace-ride-$TAG.tar.gz" | docker load
-  rm -f "/tmp/grace-ride-$TAG.tar.gz"
+if [[ "$USE_EXISTING" == "0" ]]; then
+  mv "$REMOTE_STAGE/grace-ride-$TAG.tar.gz.part" "$REMOTE_STAGE/grace-ride-$TAG.tar.gz"
+  gzip -t "$REMOTE_STAGE/grace-ride-$TAG.tar.gz"
+  gunzip -c "$REMOTE_STAGE/grace-ride-$TAG.tar.gz" | docker load
+  rm -rf "$REMOTE_STAGE"
 fi
 
 net_internal=$(docker network inspect -f '{{.Internal}}' grace-ride_database 2>/dev/null || echo missing)

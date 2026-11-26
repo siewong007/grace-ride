@@ -40,6 +40,7 @@ import androidx.compose.material.icons.outlined.Sync
 import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.rememberModalBottomSheetState
 import org.pjstatecm.graceride.data.api.AreaPhotoDto
+import org.pjstatecm.graceride.ui.SecureScreenEffect
 import org.pjstatecm.graceride.ui.copyToClipboard
 import org.pjstatecm.graceride.ui.shareText
 import androidx.compose.material.icons.Icons
@@ -147,6 +148,7 @@ fun RideDetailScreen(
         key = "ride-$id",
         factory = RideDetailViewModel.factory(container, id),
     )
+    SecureScreenEffect()
     val state by vm.state.collectAsStateWithLifecycle()
     val authState by container.auth.state.collectAsStateWithLifecycle()
     val me = (authState as? org.pjstatecm.graceride.data.repo.AuthState.SignedIn)?.me ?: container.auth.me
@@ -1273,7 +1275,7 @@ fun RideDetailScreen(
                             ) {
                                 OutlinedButton(
                                     onClick = {
-                                        copyToClipboard(context, "care-link", fullUrl)
+                                        copyToClipboard(context, "care-link", fullUrl, sensitive = true)
                                         scope.launch { snackbar.showSnackbar(copiedToast) }
                                     },
                                     modifier = Modifier.weight(1f).defaultMinSize(minHeight = 48.dp),

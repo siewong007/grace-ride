@@ -32,7 +32,7 @@ use crate::i18n::ErrorKey;
 use crate::perms::{self, Act, Page, Perm};
 use crate::routes::plan::load_event;
 use crate::state::AppState;
-use crate::util::{audit, check_phone, fmt_rm, notify, notify_perm, now, require};
+use crate::util::{audit, check_phone, fmt_rm, notify, notify_perm, now, require, Lang};
 
 pub fn router() -> Router<AppState> {
     Router::new()
@@ -274,6 +274,64 @@ async fn open_event(st: &AppState, u: &CurrentUser, id: i64) -> AppResult<()> {
     Ok(())
 }
 
+async fn check_driver_for_visitor_tx(
+    tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+    lang: Lang,
+    event_id: i64,
+    driver_id: i64,
+    leg: &str,
+    seats: i64,
+    exclude_visitor_id: Option<i64>,
+) -> AppResult<()> {
+    sqlx::query("SELECT id FROM users WHERE id = $1 FOR UPDATE")
+        .bind(driver_id)
+        .fetch_optional(&mut **tx)
+        .await?
+        .ok_or_else(|| bad(lang, ErrorKey::DriverNotFound))?;
+    let row: Option<(i64, i64, Option<i64>)> = sqlx::query_as(crate::dyn_sql!(
+        "SELECT u.carpool_enabled, u.spare_seats, v.seats
+         FROM users u
+         JOIN vehicles v ON v.user_id = u.id AND v.is_active = 1
+         WHERE u.id = $1 AND {}",
+        perms::sql_holds("u", Perm(Page::Drive, Act::Create))
+    ))
+    .bind(driver_id)
+    .fetch_optional(&mut **tx)
+    .await?;
+    let Some((_carpool, spare, v_seats)) = row else {
+        return Err(bad(lang, ErrorKey::DriverNotFound));
+    };
+    let cap = super::rides::seat_capacity(spare, v_seats);
+    let (ride_seats,): (i64,) = sqlx::query_as(
+        "SELECT COALESCE(SUM(seats), 0)::BIGINT FROM rides
+         WHERE event_id = $1 AND driver_id = $2 AND leg = $3
+           AND status IN ('pending_passenger','pending_approval','pending_driver_confirm','confirmed','in_progress')",
+    )
+    .bind(event_id)
+    .bind(driver_id)
+    .bind(leg)
+    .fetch_one(&mut **tx)
+    .await?;
+    let (visitor_seats,): (i64,) = sqlx::query_as(
+        "SELECT COALESCE(SUM(seats), 0)::BIGINT FROM plan_visitors
+         WHERE event_id = $1 AND driver_id = $2 AND leg = $3 AND id IS DISTINCT FROM $4",
+    )
+    .bind(event_id)
+    .bind(driver_id)
+    .bind(leg)
+    .bind(exclude_visitor_id)
+    .fetch_one(&mut **tx)
+    .await?;
+    let load = ride_seats + visitor_seats;
+    if load + seats > cap {
+        return Err(bad(
+            lang,
+            ErrorKey::NotEnoughDriverSeatsReassign { load, cap },
+        ));
+    }
+    Ok(())
+}
+
 async fn create_visitor(
     State(st): State<AppState>,
     u: CurrentUser,
@@ -282,6 +340,18 @@ async fn create_visitor(
 ) -> AppResult<Json<Value>> {
     open_event(&st, &u, id).await?;
     let v = clean(&st, &u, req).await?;
+    let mut tx = st.db.begin().await?;
+    let ev_status: String = sqlx::query_scalar("SELECT status FROM events WHERE id = $1 FOR SHARE")
+        .bind(id)
+        .fetch_optional(&mut *tx)
+        .await?
+        .ok_or_else(|| not_found(u.lang))?;
+    if ev_status == "cancelled" {
+        return Err(conflict(u.lang, ErrorKey::InvalidStatus));
+    }
+    if let Some(d) = v.driver_id {
+        check_driver_for_visitor_tx(&mut tx, u.lang, id, d, &v.leg, v.seats, None).await?;
+    }
     let stamp = now();
     let vid: i64 = sqlx::query_scalar(
         "INSERT INTO plan_visitors (event_id, name, phone, notes, area_id, pickup_address, seats, leg,
@@ -299,8 +369,9 @@ async fn create_visitor(
     .bind(v.driver_id)
     .bind(u.id)
     .bind(&stamp)
-    .fetch_one(&st.db)
+    .fetch_one(&mut *tx)
     .await?;
+    tx.commit().await?;
     audit(
         &st.db,
         Some(u.id),
@@ -340,6 +411,39 @@ async fn update_visitor(
     open_event(&st, &u, id).await?;
     owned(&st, &u, id, vid).await?;
     let v = clean(&st, &u, req).await?;
+    let mut tx = st.db.begin().await?;
+    let ev_status: String = sqlx::query_scalar("SELECT status FROM events WHERE id = $1 FOR SHARE")
+        .bind(id)
+        .fetch_optional(&mut *tx)
+        .await?
+        .ok_or_else(|| not_found(u.lang))?;
+    if ev_status == "cancelled" {
+        return Err(conflict(u.lang, ErrorKey::InvalidStatus));
+    }
+    let old_driver: Option<Option<i64>> = sqlx::query_scalar(
+        "SELECT driver_id FROM plan_visitors WHERE id = $1 AND event_id = $2 FOR UPDATE",
+    )
+    .bind(vid)
+    .bind(id)
+    .fetch_optional(&mut *tx)
+    .await?;
+    let Some(old_driver) = old_driver else {
+        return Err(not_found(u.lang));
+    };
+    if old_driver != v.driver_id {
+        let live_reimb: bool = sqlx::query_scalar(
+            "SELECT EXISTS (SELECT 1 FROM reimbursements WHERE plan_visitor_id = $1 AND status <> 'rejected')",
+        )
+        .bind(vid)
+        .fetch_one(&mut *tx)
+        .await?;
+        if live_reimb {
+            return Err(conflict(u.lang, ErrorKey::VisitorHasReimbursement));
+        }
+    }
+    if let Some(d) = v.driver_id {
+        check_driver_for_visitor_tx(&mut tx, u.lang, id, d, &v.leg, v.seats, Some(vid)).await?;
+    }
     sqlx::query(
         "UPDATE plan_visitors SET name=$3, phone=$4, notes=$5, area_id=$6, pickup_address=$7,
                 seats=$8, leg=$9, driver_id=$10, updated_at=$11
@@ -356,8 +460,9 @@ async fn update_visitor(
     .bind(&v.leg)
     .bind(v.driver_id)
     .bind(now())
-    .execute(&st.db)
+    .execute(&mut *tx)
     .await?;
+    tx.commit().await?;
     audit(
         &st.db,
         Some(u.id),
@@ -497,15 +602,19 @@ async fn request_special_reimbursement(
 
     let mut tx = st.db.begin().await?;
     // Lock the visitor so two requests sent together can't both pass the live check.
-    let (visitor, driver, event_title): (String, Option<i64>, String) = sqlx::query_as(
-        "SELECT v.name, v.driver_id, e.title FROM plan_visitors v JOIN events e ON e.id = v.event_id
-         WHERE v.id = $1 AND v.event_id = $2 FOR UPDATE OF v",
-    )
-    .bind(vid)
-    .bind(id)
-    .fetch_optional(&mut *tx)
-    .await?
-    .ok_or_else(|| not_found(u.lang))?;
+    let (visitor, driver, event_title, ev_status): (String, Option<i64>, String, String) =
+        sqlx::query_as(
+            "SELECT v.name, v.driver_id, e.title, e.status FROM plan_visitors v JOIN events e ON e.id = v.event_id
+             WHERE v.id = $1 AND v.event_id = $2 FOR UPDATE OF v",
+        )
+        .bind(vid)
+        .bind(id)
+        .fetch_optional(&mut *tx)
+        .await?
+        .ok_or_else(|| not_found(u.lang))?;
+    if !matches!(ev_status.as_str(), "published" | "finished") {
+        return Err(bad(u.lang, ErrorKey::EventNotOpen));
+    }
     let driver = driver.ok_or_else(|| bad(u.lang, ErrorKey::VisitorReimbNeedsDriver))?;
     let (payee, phone): (String, String) =
         sqlx::query_as("SELECT name, phone FROM users WHERE id = $1 AND status = 'active'")
@@ -587,18 +696,31 @@ async fn resubmit_special_reimbursement(
     open_event(&st, &u, id).await?;
     owned(&st, &u, id, vid).await?;
     let reason = clean_special(&u, &req)?;
-    let row: Option<(String, String, String)> = sqlx::query_as(
-        "SELECT v.name, r.payee_name, e.title FROM reimbursements r
+    let mut tx = st.db.begin().await?;
+    let row: Option<(String, Option<i64>, i64, String, String, String, String)> = sqlx::query_as(
+        "SELECT v.name, v.driver_id, r.user_id, r.payee_name, e.title, e.status, r.status
+         FROM reimbursements r
          JOIN plan_visitors v ON v.id = r.plan_visitor_id
          JOIN events e ON e.id = v.event_id
-         WHERE r.id = $1 AND r.plan_visitor_id = $2 AND v.event_id = $3 AND r.kind = 'visitor_special'",
+         WHERE r.id = $1 AND r.plan_visitor_id = $2 AND v.event_id = $3 AND r.kind = 'visitor_special'
+         FOR UPDATE OF r, v",
     )
     .bind(rid)
     .bind(vid)
     .bind(id)
-    .fetch_optional(&st.db)
+    .fetch_optional(&mut *tx)
     .await?;
-    let (visitor, payee, event_title) = row.ok_or_else(|| not_found(u.lang))?;
+    let (visitor, v_driver_id, r_user_id, payee, event_title, ev_status, r_status) =
+        row.ok_or_else(|| not_found(u.lang))?;
+    if !matches!(ev_status.as_str(), "published" | "finished") {
+        return Err(bad(u.lang, ErrorKey::EventNotOpen));
+    }
+    if v_driver_id != Some(r_user_id) {
+        return Err(bad(u.lang, ErrorKey::VisitorReimbNeedsDriver));
+    }
+    if r_status != "returned" {
+        return Err(bad(u.lang, ErrorKey::OnlyReturnedReimbCanBeResubmitted));
+    }
     // Only a returned one, and only if nobody changed it in between.
     let changed = sqlx::query(
         "UPDATE reimbursements SET amount_cents = $1, special_reason = $2, description = $3,
@@ -611,12 +733,13 @@ async fn resubmit_special_reimbursement(
     .bind(u.id)
     .bind(now())
     .bind(rid)
-    .execute(&st.db)
+    .execute(&mut *tx)
     .await?
     .rows_affected();
     if changed == 0 {
         return Err(bad(u.lang, ErrorKey::OnlyReturnedReimbCanBeResubmitted));
     }
+    tx.commit().await?;
     audit(
         &st.db,
         Some(u.id),

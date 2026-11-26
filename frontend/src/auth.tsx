@@ -24,6 +24,8 @@ export interface Me {
   totp_enabled: boolean;
   has_password: boolean;
   passkey_count: number;
+  google_verified?: boolean;
+  google_email?: string | null;
   badges_opt_out: boolean;
   readiness_prompt_mins?: number;
   gate_wait_mins?: number;
@@ -80,6 +82,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       setMe(await api<Me>('/auth/me'));
     } catch (err) {
       if (err instanceof ApiError && err.status === 401) {
+        syncAppBadge(0);
+        resetPushState();
+        clearClientSessionStorage();
         setMe(null);
       }
     } finally {

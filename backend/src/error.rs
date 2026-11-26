@@ -121,8 +121,21 @@ impl IntoResponse for AppError {
                 )
                     .into_response();
             }
+            AppError::Db(sqlx::Error::Database(db_err)) => {
+                tracing::error!(
+                    code = ?db_err.code(),
+                    constraint = ?db_err.constraint(),
+                    table = ?db_err.table(),
+                    "database error"
+                );
+                return (
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    Json(error_body(current_request_lang(), &ErrorKey::ServerError)),
+                )
+                    .into_response();
+            }
             AppError::Db(e) => {
-                tracing::error!("db error: {e:?}");
+                tracing::error!(error = %e, "db error");
                 return (
                     StatusCode::INTERNAL_SERVER_ERROR,
                     Json(error_body(current_request_lang(), &ErrorKey::ServerError)),

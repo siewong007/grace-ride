@@ -312,6 +312,12 @@ async fn delete_photo(
            AND NOT EXISTS (SELECT 1 FROM settlements WHERE payee_qr_file_id=f.id)
            AND NOT EXISTS (SELECT 1 FROM settlement_items WHERE receipt_file_id=f.id)
            AND NOT EXISTS (SELECT 1 FROM settlement_shares WHERE proof_file_id=f.id)
+           AND NOT EXISTS (
+               SELECT 1 FROM settlement_revisions sr
+               WHERE sr.snapshot @> jsonb_build_object('payee_qr_file_id', f.id)
+                  OR sr.snapshot->'items' @> jsonb_build_array(jsonb_build_object('receipt_file_id', f.id))
+                  OR sr.snapshot->'shares' @> jsonb_build_array(jsonb_build_object('proof_file_id', f.id))
+           )
            AND NOT EXISTS (SELECT 1 FROM reimbursements WHERE receipt_file_id=f.id)
            AND NOT EXISTS (SELECT 1 FROM guide_workflows
                            WHERE steps @> jsonb_build_array(jsonb_build_object('image_file_id', f.id)))
@@ -322,7 +328,9 @@ async fn delete_photo(
     .await?;
     tx.commit().await?;
     if let Some(stored) = stored {
-        let _ = tokio::fs::remove_file(st.cfg.upload_dir.join(stored)).await;
+        if let Ok(path) = crate::routes::files::safe_upload_path(&st.cfg.upload_dir, &stored) {
+            let _ = tokio::fs::remove_file(path).await;
+        }
     }
     audit(
         &st.db,
@@ -393,7 +401,9 @@ pub use crate::routes::files::strip_jpeg_metadata;
 /// Rewrite a stored JPEG without its metadata segments. Leaves the file as it is when it
 /// cannot be parsed or has nothing to strip.
 async fn strip_jpeg_file(st: &AppState, stored: &str) {
-    let path = st.cfg.upload_dir.join(stored);
+    let Ok(path) = crate::routes::files::safe_upload_path(&st.cfg.upload_dir, stored) else {
+        return;
+    };
     let Ok(data) = tokio::fs::read(&path).await else {
         return;
     };

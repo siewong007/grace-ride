@@ -393,7 +393,11 @@ function ReviewModal({
 
   const act = (action: string, msg: string) =>
     run(
-      () => post(`/reimbursements/${r.id}/review`, { action, note }).then(onDone),
+      () =>
+        post(
+          `/reimbursements/${r.id}/review`,
+          r.updated_at ? { action, note, expected_updated_at: r.updated_at } : { action, note },
+        ).then(onDone),
       msg,
     );
 

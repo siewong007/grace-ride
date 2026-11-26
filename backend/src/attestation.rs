@@ -176,6 +176,7 @@ fn parse_x509_time(node: &[u8]) -> anyhow::Result<(DateTime<Utc>, &[u8])> {
 
 struct ParsedCert<'a> {
     tbs_der: &'a [u8],
+    serial_hex: String,
     sig_alg_oid: &'a [u8],
     sig_bits: &'a [u8],
     issuer_der: &'a [u8],
@@ -225,7 +226,7 @@ fn parse_cert(der: &[u8]) -> anyhow::Result<ParsedCert<'_>> {
     if first_tag.class == 2 && first_tag.number == 0 {
         cur = after0;
     }
-    let (_ws, _serial, cur) = expect_universal(cur, 2)?;
+    let (_ws, serial_bytes, cur) = expect_universal(cur, 2)?;
     let (_tbs_sig_oid, _, cur) = parse_alg_id(cur)?;
     let (issuer_der, _issuer_val, cur) = expect_universal(cur, 16)?;
     let (_wv, validity_body, cur) = expect_universal(cur, 16)?;
@@ -291,6 +292,7 @@ fn parse_cert(der: &[u8]) -> anyhow::Result<ParsedCert<'_>> {
 
     Ok(ParsedCert {
         tbs_der,
+        serial_hex: normalize_serial_bytes(serial_bytes),
         sig_alg_oid,
         sig_bits,
         issuer_der,
@@ -493,14 +495,88 @@ pub fn trusted_root_spki_hashes() -> Vec<String> {
         .collect()
 }
 
-pub fn require_attestation_enabled() -> bool {
-    std::env::var("REQUIRE_BIOMETRIC_ATTESTATION")
-        .ok()
-        .map(|v| {
+static REVOKED_SERIALS: std::sync::OnceLock<std::sync::RwLock<std::collections::HashSet<String>>> =
+    std::sync::OnceLock::new();
+
+fn revoked_cache() -> &'static std::sync::RwLock<std::collections::HashSet<String>> {
+    REVOKED_SERIALS.get_or_init(|| std::sync::RwLock::new(std::collections::HashSet::new()))
+}
+
+fn normalize_serial_str(raw: &str) -> String {
+    let stripped: String = raw
+        .trim()
+        .strip_prefix("0x")
+        .or_else(|| raw.trim().strip_prefix("0X"))
+        .unwrap_or(raw.trim())
+        .chars()
+        .filter(|c| *c != ':' && !c.is_ascii_whitespace())
+        .collect::<String>()
+        .to_ascii_lowercase();
+    let trimmed = stripped.trim_start_matches('0');
+    if trimmed.is_empty() {
+        "0".to_string()
+    } else {
+        trimmed.to_string()
+    }
+}
+
+fn normalize_serial_bytes(bytes: &[u8]) -> String {
+    normalize_serial_str(&hex::encode(bytes))
+}
+
+pub fn update_revoked_serials(serials: std::collections::HashSet<String>) {
+    let normalized: std::collections::HashSet<String> = serials
+        .into_iter()
+        .map(|s| normalize_serial_str(&s))
+        .collect();
+    if let Ok(mut guard) = revoked_cache().write() {
+        *guard = normalized;
+    }
+}
+
+pub fn is_serial_revoked(serial_hex: &str) -> bool {
+    let norm = normalize_serial_str(serial_hex);
+    revoked_cache()
+        .read()
+        .map(|g| g.contains(&norm))
+        .unwrap_or(false)
+}
+
+pub async fn refresh_google_attestation_revocation_list(
+    client: &reqwest::Client,
+) -> anyhow::Result<usize> {
+    let resp = client
+        .get("https://android.googleapis.com/attestation/status")
+        .send()
+        .await?;
+    if !resp.status().is_success() {
+        anyhow::bail!("attestation CRL fetch returned HTTP {}", resp.status());
+    }
+    let body = resp.bytes().await?;
+    let val: serde_json::Value = serde_json::from_slice(&body)?;
+    let entries = val
+        .get("entries")
+        .and_then(|v| v.as_object())
+        .ok_or_else(|| anyhow::anyhow!("attestation CRL JSON missing entries object"))?;
+    let next: std::collections::HashSet<String> =
+        entries.keys().map(|k| normalize_serial_str(k)).collect();
+    let count = next.len();
+    update_revoked_serials(next);
+    Ok(count)
+}
+
+pub fn require_attestation_enabled_for(dev_mode: bool, android_certs: &[String]) -> bool {
+    match std::env::var("REQUIRE_BIOMETRIC_ATTESTATION") {
+        Ok(v) if !v.trim().is_empty() => {
             let l = v.trim().to_ascii_lowercase();
             l == "true" || l == "1"
-        })
-        .unwrap_or(false)
+        }
+        _ => !dev_mode && !android_certs.is_empty(),
+    }
+}
+
+pub fn require_attestation_enabled() -> bool {
+    require_attestation_enabled_for(false, &[])
 }
 
 pub fn verify_android_key_attestation(
@@ -511,6 +587,30 @@ pub fn verify_android_key_attestation(
     allowed_root_spki_sha256: &[String],
     now: DateTime<Utc>,
 ) -> anyhow::Result<()> {
+    let snapshot = revoked_cache()
+        .read()
+        .map(|g| g.clone())
+        .unwrap_or_default();
+    verify_android_key_attestation_with_revoked(
+        chain_der,
+        expected_pubkey_65,
+        expected_challenge,
+        expected_cert_sha256_fps,
+        allowed_root_spki_sha256,
+        now,
+        &snapshot,
+    )
+}
+
+pub fn verify_android_key_attestation_with_revoked(
+    chain_der: &[Vec<u8>],
+    expected_pubkey_65: &[u8],
+    expected_challenge: &str,
+    expected_cert_sha256_fps: &[String],
+    allowed_root_spki_sha256: &[String],
+    now: DateTime<Utc>,
+    revoked_serials: &std::collections::HashSet<String>,
+) -> anyhow::Result<()> {
     if chain_der.len() < 2 || chain_der.len() > 8 {
         anyhow::bail!("attestation certificate chain must contain 2..=8 certificates");
     }
@@ -519,6 +619,9 @@ pub fn verify_android_key_attestation(
         let c = parse_cert(der)?;
         if now < c.not_before || now > c.not_after {
             anyhow::bail!("attestation certificate expired or not yet valid");
+        }
+        if revoked_serials.contains(&c.serial_hex) {
+            anyhow::bail!("attestation certificate serial is revoked");
         }
         certs.push(c);
     }

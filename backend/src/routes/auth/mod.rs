@@ -1,13 +1,14 @@
-//! 登入与账号安全: invites, passkeys (WebAuthn), password + TOTP 2FA, account recovery.
+//! 登入与账号安全: invites, passkeys (WebAuthn), Google OAuth, password + TOTP 2FA, account recovery.
 
 mod biometrics;
+mod google;
 mod invites_recovery;
 mod passkeys;
 mod totp;
 
 pub use invites_recovery::TERMS_VERSION;
 
-use std::net::SocketAddr;
+use std::{net::SocketAddr, sync::OnceLock, time::Duration};
 
 use argon2::{
     password_hash::{phc::PasswordHash, PasswordHasher, PasswordVerifier},
@@ -25,11 +26,11 @@ use serde_json::{json, Value};
 use totp_rs::{Secret, Totp};
 
 use crate::auth::{hash_token, CurrentUser, SESSION_COOKIE, SESSION_COOKIE_SECURE};
-use crate::error::{bad, not_found, AppError, AppResult};
+use crate::error::{bad, forbidden, not_found, too_many_requests, AppError, AppResult};
 use crate::i18n::ErrorKey;
 use crate::perms;
 use crate::state::AppState;
-use crate::util::{audit, in_hours, now, random_token, Lang};
+use crate::util::{audit, in_hours, minutes_ago, now, random_token, Lang};
 
 /// Invite lookup by the token in the link. Recovery links sign their holder in as an
 /// existing member, so only their SHA-256 is stored ($2); a leaked database or backup
@@ -43,6 +44,24 @@ pub fn router() -> Router<AppState> {
     Router::new()
         .route("/auth/me", get(me))
         .route("/auth/turnstile", get(turnstile_config))
+        .route("/auth/google/config", get(google::google_config))
+        .route("/auth/google/start", post(google::google_start))
+        .route("/auth/google/link/start", post(google::google_link_start))
+        .route("/auth/google/callback", get(google::google_callback))
+        .route("/auth/google", delete(google::google_unlink))
+        .route("/auth/google/totp/status", get(google::google_totp_status))
+        .route(
+            "/auth/google/totp/complete",
+            post(google::google_totp_complete),
+        )
+        .route(
+            "/auth/password-reset/status",
+            get(google::password_reset_status),
+        )
+        .route(
+            "/auth/password-reset/complete",
+            post(google::password_reset_complete),
+        )
         .route("/auth/login", post(login_password))
         .route("/auth/dev-users", get(dev_users))
         .route("/auth/dev-login", post(dev_login))
@@ -201,6 +220,24 @@ pub(super) fn totp_for(secret_b32: &str, email: &str, lang: Lang) -> AppResult<T
         .map_err(|e| AppError::Other(anyhow::anyhow!("totp: {e}")))
 }
 
+fn build_session_cookie(state: &AppState, token: String, hours: i64) -> Cookie<'static> {
+    let secure = state.cfg.secure_cookies();
+    Cookie::build((
+        if secure {
+            SESSION_COOKIE_SECURE
+        } else {
+            SESSION_COOKIE
+        },
+        token,
+    ))
+    .http_only(true)
+    .same_site(SameSite::Lax)
+    .secure(secure)
+    .path("/")
+    .max_age(time::Duration::hours(hours))
+    .build()
+}
+
 /// Members stay signed in for 30 days on their own phone; accounts that can see other
 /// members' data (管理员 / 交通组 / 财务) get 12-hour sessions.
 pub(super) async fn create_session(
@@ -229,22 +266,95 @@ pub(super) async fn create_session(
     .bind(now())
     .execute(&state.db)
     .await?;
-    let secure = state.cfg.secure_cookies();
-    let cookie = Cookie::build((
-        if secure {
-            SESSION_COOKIE_SECURE
-        } else {
-            SESSION_COOKIE
-        },
-        token,
-    ))
-    .http_only(true)
-    .same_site(SameSite::Lax)
-    .secure(secure)
-    .path("/")
-    .max_age(time::Duration::hours(hours))
-    .build();
-    Ok(jar.add(cookie))
+    Ok(jar.add(build_session_cookie(state, token, hours)))
+}
+
+/// Rotate the current session token atomically upon privilege/MFA elevation or unlock,
+/// preserving push subscription linkage before deleting the superseded session row.
+pub(super) async fn rotate_session(
+    state: &AppState,
+    jar: CookieJar,
+    u: &CurrentUser,
+    mfa_ok: bool,
+    clear_lock: bool,
+    refresh_sign_in: bool,
+) -> AppResult<CookieJar> {
+    let mut tx = state.db.begin().await?;
+    let (roles,): (String,) = sqlx::query_as("SELECT roles FROM users WHERE id=$1")
+        .bind(u.id)
+        .fetch_one(&mut *tx)
+        .await?;
+    let role_list = perms::parse_roles(&roles);
+    let hours: i64 = if perms::for_roles(&mut *tx, &role_list).await?.privileged() {
+        12
+    } else {
+        24 * 30
+    };
+    let old_row: Option<(String, String, Option<String>)> = sqlx::query_as(
+        "SELECT created_at, expires_at, locked_at FROM sessions WHERE token=$1 FOR UPDATE",
+    )
+    .bind(&u.session_id)
+    .fetch_optional(&mut *tx)
+    .await?;
+    let Some((old_created_at, old_expires_at, old_locked_at)) = old_row else {
+        return Err(crate::error::unauthorized(u.lang));
+    };
+    let ts_now = now();
+    let fresh_exp = in_hours(hours);
+    let new_created_at = if refresh_sign_in {
+        ts_now.clone()
+    } else {
+        old_created_at
+    };
+    let new_expires_at = if refresh_sign_in {
+        fresh_exp
+    } else if old_expires_at < fresh_exp {
+        old_expires_at
+    } else {
+        fresh_exp
+    };
+    let new_locked_at = if clear_lock { None } else { old_locked_at };
+
+    let raw = random_token(48);
+    let new_hash = hash_token(&raw);
+    sqlx::query(
+        "INSERT INTO sessions (token, user_id, mfa_ok, expires_at, created_at, locked_at, last_seen_at, failed_totp_attempts)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,0)",
+    )
+    .bind(&new_hash)
+    .bind(u.id)
+    .bind(mfa_ok as i64)
+    .bind(&new_expires_at)
+    .bind(&new_created_at)
+    .bind(&new_locked_at)
+    .bind(&ts_now)
+    .execute(&mut *tx)
+    .await?;
+    sqlx::query("UPDATE push_subscriptions SET session_token = $1 WHERE session_token = $2")
+        .bind(&new_hash)
+        .bind(&u.session_id)
+        .execute(&mut *tx)
+        .await?;
+    sqlx::query("DELETE FROM sessions WHERE token = $1")
+        .bind(&u.session_id)
+        .execute(&mut *tx)
+        .await?;
+    tx.commit().await?;
+    Ok(jar.add(build_session_cookie(state, raw, hours)))
+}
+
+/// Revoke all other sessions for a user after credential/factor lifecycle changes.
+pub(super) async fn revoke_other_sessions(
+    db: &sqlx::PgPool,
+    user_id: i64,
+    keep_session_hash: &str,
+) -> sqlx::Result<u64> {
+    let res = sqlx::query("DELETE FROM sessions WHERE user_id = $1 AND token <> $2")
+        .bind(user_id)
+        .bind(keep_session_hash)
+        .execute(db)
+        .await?;
+    Ok(res.rows_affected())
 }
 
 fn clear_cookies(jar: CookieJar) -> CookieJar {
@@ -282,6 +392,7 @@ struct MeRow {
     locked_at: Option<String>,
     passkey_count: i64,
     biometric_count: i64,
+    google_email: Option<String>,
     unread_count: i64,
     org_timeout: Option<String>,
     groups_json: Value,
@@ -298,6 +409,7 @@ async fn me(State(st): State<AppState>, u: CurrentUser) -> AppResult<Json<Value>
                 s.locked_at,
                 (SELECT COUNT(*) FROM passkeys p WHERE p.user_id = u.id) AS passkey_count,
                 (SELECT COUNT(*) FROM biometric_credentials b WHERE b.user_id = u.id) AS biometric_count,
+                (SELECT oa.email FROM oauth_accounts oa WHERE oa.user_id = u.id AND oa.provider = 'google' AND oa.email = u.email LIMIT 1) AS google_email,
                 (SELECT COUNT(*) FROM notifications n WHERE n.user_id = u.id AND n.read_at IS NULL) AS unread_count,
                 (SELECT value FROM system_settings WHERE key = 'session_timeout_mins') AS org_timeout,
                 COALESCE((
@@ -337,6 +449,33 @@ async fn me(State(st): State<AppState>, u: CurrentUser) -> AppResult<Json<Value>
         .as_deref()
         .and_then(|v| v.parse::<i64>().ok())
         .unwrap_or(st.cfg.session_timeout_mins);
+    if row.locked_at.is_some() {
+        return Ok(Json(json!({
+            "id": u.id, "name": u.name, "email": "", "phone": "", "photo_file_id": Value::Null,
+            "avatar_color": row.avatar_color, "avatar_icon": row.avatar_icon,
+            "status": u.status,
+            "lang": u.lang.code(),
+            "roles": Vec::<String>::new(), "role_names": serde_json::Map::new(),
+            "permissions": Vec::<String>::new(),
+            "mfa_ok": u.mfa_ok, "totp_enabled": row.totp_enabled == 1,
+            "has_password": row.password_hash.is_some(), "passkey_count": row.passkey_count, "biometric_count": row.biometric_count,
+            "google_verified": row.google_email.is_some(), "google_email": Value::Null,
+            "badges_opt_out": row.badges_opt_out == 1, "carpool_enabled": row.carpool_enabled == 1, "spare_seats": row.spare_seats,
+            "readiness_prompt_mins": row.readiness_prompt_mins.unwrap_or(45), "gate_wait_mins": row.gate_wait_mins.unwrap_or(5),
+            "auto_lock_mins": row.auto_lock_mins.unwrap_or(0), "session_timeout_mins": session_timeout, "backup_codes_count": 0,
+            "locked": true,
+            "telegram_chat_id": "",
+            "whatsapp_opt_in": false,
+            "push_opt_in": false,
+            "caregiver_user_id": Value::Null,
+            "onboarding_dismissed": row.onboarding_dismissed_at.is_some(),
+            "terms_accepted": row.terms_accepted_at.is_some() && row.terms_version >= TERMS_VERSION,
+            "terms_version": TERMS_VERSION,
+            "privileged": false, "unread": 0,
+            "groups": Vec::<Value>::new(),
+            "dev_mode": st.cfg.dev_mode,
+        })));
+    }
     Ok(Json(json!({
         "id": u.id, "name": u.name, "email": u.email, "phone": row.phone, "photo_file_id": row.photo_file_id,
         "avatar_color": row.avatar_color, "avatar_icon": row.avatar_icon,
@@ -348,6 +487,7 @@ async fn me(State(st): State<AppState>, u: CurrentUser) -> AppResult<Json<Value>
         "permissions": u.perms.usable_keys(u.mfa_ok),
         "mfa_ok": u.mfa_ok, "totp_enabled": row.totp_enabled == 1,
         "has_password": row.password_hash.is_some(), "passkey_count": row.passkey_count, "biometric_count": row.biometric_count,
+        "google_verified": row.google_email.is_some(), "google_email": row.google_email,
         "badges_opt_out": row.badges_opt_out == 1, "carpool_enabled": row.carpool_enabled == 1, "spare_seats": row.spare_seats,
         "readiness_prompt_mins": row.readiness_prompt_mins.unwrap_or(45), "gate_wait_mins": row.gate_wait_mins.unwrap_or(5),
         "auto_lock_mins": row.auto_lock_mins.unwrap_or(0), "session_timeout_mins": session_timeout, "backup_codes_count": backup_codes_count,
@@ -374,32 +514,218 @@ async fn turnstile_config(State(st): State<AppState>) -> Json<Value> {
     }))
 }
 
+fn dummy_password_hash() -> &'static str {
+    static DUMMY: OnceLock<String> = OnceLock::new();
+    DUMMY.get_or_init(|| {
+        hash_password("dummy-timing-guard-placeholder")
+            .unwrap_or_else(|_| "$argon2id$v=19$m=19456,t=2,p=1$AAAAAAAAAAAAAAAAAAAAAA$AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA".to_string())
+    })
+}
+
+pub(super) enum SecondFactorOutcome {
+    Verified,
+    InvalidCode,
+}
+
+/// Shared TOTP / backup-code check used by both password login and Google 2FA completion.
+pub(super) async fn verify_totp_or_backup(
+    st: &AppState,
+    user_id: i64,
+    totp_secret: Option<&str>,
+    email: &str,
+    raw_code: &str,
+    lang: Lang,
+) -> AppResult<SecondFactorOutcome> {
+    if st
+        .limiter
+        .check(
+            &format!("totp:user:{user_id}"),
+            10,
+            Duration::from_secs(300),
+        )
+        .is_err()
+    {
+        return Err(too_many_requests(lang, ErrorKey::RateLimited));
+    }
+    let clean = raw_code.trim();
+    if clean.len() == 6 && clean.chars().all(|c| c.is_ascii_digit()) {
+        if let Some(sec_raw) = totp_secret {
+            let sec = crate::crypto::decrypt_secret(&format!("totp_secret:{user_id}"), sec_raw)
+                .map_err(|_| bad(lang, ErrorKey::Invalid2FaSecret))?;
+            match verify_totp(st, user_id, &sec, email, clean, lang).await {
+                Ok(()) => return Ok(SecondFactorOutcome::Verified),
+                Err(
+                    err @ AppError::BadRequest {
+                        key: ErrorKey::CodeAlreadyUsed,
+                        ..
+                    },
+                ) => {
+                    return Err(err);
+                }
+                Err(_) => {}
+            }
+        }
+    }
+    let norm = clean.replace(['-', ' '], "").to_uppercase();
+    if norm.len() == 8 {
+        match totp::consume_backup_code(st, user_id, &norm, lang).await {
+            Ok(_) => return Ok(SecondFactorOutcome::Verified),
+            Err(err @ AppError::TooManyRequests { .. }) => return Err(err),
+            Err(_) => {}
+        }
+    }
+    Ok(SecondFactorOutcome::InvalidCode)
+}
+
 #[derive(Deserialize)]
 struct LoginReq {
-    #[allow(dead_code)]
     email: String,
-    #[allow(dead_code)]
     password: String,
-    #[allow(dead_code)]
+    #[serde(default)]
     code: Option<String>,
+    #[serde(default)]
+    turnstile_token: Option<String>,
 }
 
 async fn login_password(
-    State(_st): State<AppState>,
-    _peer: Option<axum::Extension<ConnectInfo<SocketAddr>>>,
+    State(st): State<AppState>,
+    peer: Option<axum::Extension<ConnectInfo<SocketAddr>>>,
     headers: HeaderMap,
-    _jar: CookieJar,
-    Json(_req): Json<LoginReq>,
+    jar: CookieJar,
+    Json(req): Json<LoginReq>,
 ) -> AppResult<(CookieJar, Json<Value>)> {
-    // Password login is disabled. Members sign in with a passkey.
-    let lang = Lang::from_accept_language(
-        headers
-            .get(axum::http::header::ACCEPT_LANGUAGE)
-            .and_then(|v| v.to_str().ok())
-            .unwrap_or(""),
-    );
-    let _ = (_st, _req);
-    Err(bad(lang, ErrorKey::AuthDisabled))
+    let lang = visitor_lang(&headers);
+    let ip = crate::security::client_ip(&headers, peer.map(|p| p.0 .0), st.cfg.trust_proxy);
+    st.turnstile
+        .verify(
+            req.turnstile_token.as_deref(),
+            "password_login",
+            Some(&ip),
+            lang,
+        )
+        .await?;
+
+    let email = req.email.trim().to_lowercase();
+    if email.is_empty() || email.len() > 254 || req.password.is_empty() {
+        return Err(bad(lang, ErrorKey::InvalidCredentials));
+    }
+
+    let recent_failures: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM login_failures WHERE email = $1 AND created_at >= $2",
+    )
+    .bind(&email)
+    .bind(minutes_ago(15))
+    .fetch_one(&st.db)
+    .await?;
+    if recent_failures >= 5 {
+        return Err(too_many_requests(lang, ErrorKey::TooManyFailedLogins));
+    }
+    let attempt_key = format!("pw_attempt:user:{email}");
+    if st
+        .limiter
+        .check(&attempt_key, 5, Duration::from_secs(900))
+        .is_err()
+    {
+        return Err(too_many_requests(lang, ErrorKey::TooManyFailedLogins));
+    }
+
+    let user_row: Option<(i64, String, Option<String>, i64, Option<String>)> = sqlx::query_as(
+        "SELECT id, status, password_hash, totp_enabled, totp_secret
+         FROM users
+         WHERE email = $1",
+    )
+    .bind(&email)
+    .fetch_optional(&st.db)
+    .await?;
+
+    let (uid, status, stored_hash, totp_enabled, totp_secret) = match user_row {
+        Some(r) => (Some(r.0), Some(r.1), r.2, r.3, r.4),
+        None => (None, None, None, 0, None),
+    };
+
+    let hash_to_check = stored_hash
+        .clone()
+        .unwrap_or_else(|| dummy_password_hash().to_string());
+    let pw_ok = verify_password_async(req.password, hash_to_check).await?;
+    if !pw_ok || stored_hash.is_none() || uid.is_none() {
+        sqlx::query("INSERT INTO login_failures (email, ip, created_at) VALUES ($1, $2, $3)")
+            .bind(&email)
+            .bind(&ip)
+            .bind(now())
+            .execute(&st.db)
+            .await?;
+        audit(
+            &st.db,
+            None,
+            "password.failed",
+            "user",
+            uid,
+            format!("from {ip}"),
+        )
+        .await;
+        return Err(bad(lang, ErrorKey::InvalidCredentials));
+    }
+
+    let uid = uid.unwrap_or_default();
+    if !matches!(status.as_deref(), Some("active" | "pending")) {
+        st.limiter.decrement(&attempt_key);
+        audit(
+            &st.db,
+            None,
+            "login.failed",
+            "user",
+            Some(uid),
+            format!("account disabled; from {ip}"),
+        )
+        .await;
+        return Err(forbidden(lang, ErrorKey::AuthDisabled));
+    }
+
+    let mut mfa_ok = false;
+    if totp_enabled == 1 {
+        let code = req.code.as_deref().map(str::trim).unwrap_or("");
+        if code.is_empty() {
+            st.limiter.decrement(&attempt_key);
+            return Err(bad(lang, ErrorKey::TotpRequired));
+        }
+        match verify_totp_or_backup(&st, uid, totp_secret.as_deref(), &email, code, lang).await {
+            Ok(SecondFactorOutcome::Verified) => mfa_ok = true,
+            Ok(SecondFactorOutcome::InvalidCode) => {
+                sqlx::query(
+                    "INSERT INTO login_failures (email, ip, created_at) VALUES ($1, $2, $3)",
+                )
+                .bind(&email)
+                .bind(&ip)
+                .bind(now())
+                .execute(&st.db)
+                .await?;
+                audit(&st.db, None, "totp.failed", "user", Some(uid), "login").await;
+                return Err(bad(lang, ErrorKey::InvalidCode));
+            }
+            Err(err) => {
+                st.limiter.decrement(&attempt_key);
+                return Err(err);
+            }
+        }
+    }
+
+    st.limiter.reset(&attempt_key);
+    sqlx::query("DELETE FROM login_failures WHERE email = $1")
+        .bind(&email)
+        .execute(&st.db)
+        .await?;
+
+    let jar = create_session(&st, jar, uid, mfa_ok).await?;
+    audit(
+        &st.db,
+        Some(uid),
+        "login.password",
+        "user",
+        Some(uid),
+        if mfa_ok { "2fa" } else { "" },
+    )
+    .await;
+    Ok((jar, Json(json!({ "ok": true }))))
 }
 
 /// Demo accounts for local development. Production returns 404 and never lists members.

@@ -118,6 +118,31 @@ impl RateLimiter {
             Ok(())
         }
     }
+
+    pub fn reset(&self, key: &str) {
+        let target = if is_user_scoped_key(key) {
+            &self.user_windows
+        } else {
+            &self.ip_windows
+        };
+        let mut map = target.lock().unwrap_or_else(|e| e.into_inner());
+        map.remove(key);
+    }
+
+    pub fn decrement(&self, key: &str) {
+        let target = if is_user_scoped_key(key) {
+            &self.user_windows
+        } else {
+            &self.ip_windows
+        };
+        let mut map = target.lock().unwrap_or_else(|e| e.into_inner());
+        if let Some((_, _, count)) = map.get_mut(key) {
+            *count = count.saturating_sub(1);
+            if *count == 0 {
+                map.remove(key);
+            }
+        }
+    }
 }
 
 pub fn trusted_proxy_count() -> usize {
@@ -128,39 +153,63 @@ pub fn trusted_proxy_count() -> usize {
         .unwrap_or(1)
 }
 
-fn is_internal_proxy_ip(s: &str) -> bool {
-    match s.parse::<std::net::IpAddr>() {
-        Ok(std::net::IpAddr::V4(ip)) => ip.is_private() || ip.is_loopback() || ip.is_link_local(),
-        Ok(std::net::IpAddr::V6(ip)) => ip.is_loopback() || ((ip.segments()[0] & 0xfe00) == 0xfc00),
-        Err(_) => false,
+fn is_internal_proxy_ip(ip: std::net::IpAddr) -> bool {
+    let canonical = match ip {
+        std::net::IpAddr::V6(v6) => v6
+            .to_ipv4_mapped()
+            .map(std::net::IpAddr::V4)
+            .unwrap_or(std::net::IpAddr::V6(v6)),
+        other => other,
+    };
+    match canonical {
+        std::net::IpAddr::V4(v4) => {
+            let octets = v4.octets();
+            let is_cgnat = octets[0] == 100 && (octets[1] & 0xc0) == 64;
+            v4.is_private()
+                || v4.is_loopback()
+                || v4.is_link_local()
+                || v4.is_unspecified()
+                || is_cgnat
+        }
+        std::net::IpAddr::V6(v6) => {
+            let segs = v6.segments();
+            v6.is_loopback()
+                || v6.is_unspecified()
+                || ((segs[0] & 0xfe00) == 0xfc00)
+                || ((segs[0] & 0xffc0) == 0xfe80)
+        }
     }
 }
 
 pub fn client_ip(headers: &HeaderMap, req_ip: Option<SocketAddr>, trust_proxy: bool) -> String {
     if trust_proxy {
-        if let Some(raw) = headers.get("x-forwarded-for").and_then(|v| v.to_str().ok()) {
-            let hops: Vec<&str> = raw
-                .split(',')
-                .map(str::trim)
-                .filter(|s| !s.is_empty())
-                .collect();
-            if !hops.is_empty() {
-                if std::env::var("TRUSTED_PROXY_COUNT")
-                    .ok()
-                    .is_some_and(|v| !v.trim().is_empty())
-                {
-                    let idx = hops.len().saturating_sub(trusted_proxy_count());
-                    return hops[idx].to_string();
+        let mut hops: Vec<std::net::IpAddr> = Vec::new();
+        for hv in headers.get_all("x-forwarded-for") {
+            let Ok(raw) = hv.to_str() else {
+                continue;
+            };
+            for part in raw.split(',').map(str::trim).filter(|s| !s.is_empty()) {
+                if let Ok(ip) = part.parse::<std::net::IpAddr>() {
+                    hops.push(ip);
                 }
-                // Walk right-to-left skipping trailing private/internal proxy hops (e.g. "203.0.113.9, 10.0.0.1")
-                // while rejecting client-spoofed leftmost public entries (e.g. "9.9.9.9, 203.0.113.42").
-                for &hop in hops.iter().rev() {
-                    if !is_internal_proxy_ip(hop) {
-                        return hop.to_string();
-                    }
-                }
-                return hops[hops.len() - 1].to_string();
             }
+        }
+        if !hops.is_empty() {
+            if std::env::var("TRUSTED_PROXY_COUNT")
+                .ok()
+                .is_some_and(|v| !v.trim().is_empty())
+            {
+                let idx = hops.len().saturating_sub(trusted_proxy_count());
+                return hops[idx].to_string();
+            }
+            // Walk right-to-left skipping trailing private/internal proxy hops (e.g. "203.0.113.9, 10.0.0.1")
+            // while rejecting client-spoofed leftmost public entries (e.g. "9.9.9.9, 203.0.113.42").
+            for &hop in hops.iter().rev() {
+                if !is_internal_proxy_ip(hop) {
+                    return hop.to_string();
+                }
+            }
+            return hops[hops.len() - 1].to_string();
         }
     }
     req_ip
@@ -190,12 +239,16 @@ fn too_many(retry_after: u64, lang: Lang) -> Response {
 /// Rate limits for unauthenticated / credential endpoints.
 pub async fn rate_limit(State(st): State<AppState>, req: Request, next: Next) -> Response {
     let path = req.uri().path();
-    // Visitor links (preview and claim), but not the claimed browser's page, which polls.
-    let visit_link = path.starts_with("/api/visit/") && !path.starts_with("/api/visit/me");
+    // Visitor links (preview and claim), but not GET polling on the claimed session.
+    let visit_polling_get = req.method() == Method::GET && path.starts_with("/api/visit/me");
+    let visit_link = path.starts_with("/api/visit/") && !visit_polling_get;
     let care_link = path.starts_with("/api/care/");
     let calendar_link = path.starts_with("/api/calendar/");
     let rule: Option<(&str, u32, u64)> = if req.method() == Method::GET
         && !path.starts_with("/api/invites/")
+        && !(path.starts_with("/api/auth/google/")
+            && path != "/api/auth/google/config"
+            && path != "/api/auth/google/totp/status")
         && !visit_link
         && !care_link
         && !calendar_link
@@ -207,13 +260,25 @@ pub async fn rate_limit(State(st): State<AppState>, req: Request, next: Next) ->
         || path.starts_with("/api/auth/biometric/login")
     {
         Some(("login", 10, 60))
+    } else if path == "/api/auth/google/start"
+        || path == "/api/auth/google/link/start"
+        || path == "/api/auth/google/callback"
+    {
+        Some(("google_oauth", 20, 60))
     } else if path.starts_with("/api/auth/passkey/reauth/")
         || path.starts_with("/api/auth/biometric/reauth/")
     {
         Some(("reauth", 20, 300))
+    } else if path.starts_with("/api/auth/passkey/register/")
+        || path.starts_with("/api/auth/biometric/register/")
+        || path == "/api/auth/totp/setup"
+        || path == "/api/auth/totp/backup-codes/regenerate"
+    {
+        Some(("mfa_setup", 30, 300))
     } else if path == "/api/auth/totp/verify"
         || path == "/api/auth/totp/enable"
         || path == "/api/auth/unlock"
+        || path == "/api/auth/google/totp/complete"
     {
         // A 6-digit code has a million values: guesses are capped per member
         // (below), so neither a new address nor a new session buys more tries.
@@ -222,8 +287,15 @@ pub async fn rate_limit(State(st): State<AppState>, req: Request, next: Next) ->
         Some(("recovery", 3, 3600))
     } else if path.starts_with("/api/invites/") {
         Some(("invite", 20, 600))
+    } else if path == "/api/visit/me/readiness" {
+        Some(("visit_readiness", 15, 300))
     } else if visit_link {
         Some(("visit", 30, 600))
+    } else if req.method() == Method::POST
+        && path.starts_with("/api/rides/")
+        && path.ends_with("/readiness")
+    {
+        Some(("ride_readiness", 20, 300))
     } else if care_link {
         Some(("care", 60, 600))
     } else if calendar_link {
@@ -239,7 +311,7 @@ pub async fn rate_limit(State(st): State<AppState>, req: Request, next: Next) ->
         || path == "/api/push/telegram/link-token"
     {
         Some(("push_sub", 30, 600))
-    } else if path == "/api/auth/password" {
+    } else if path == "/api/auth/password" || path == "/api/auth/password-reset/complete" {
         Some(("password", 5, 300))
     } else if path == "/api/me/family/people" {
         Some(("family_add", 10, 600))
@@ -260,7 +332,10 @@ pub async fn rate_limit(State(st): State<AppState>, req: Request, next: Next) ->
             .map(|c| c.0);
         let ip = client_ip(req.headers(), peer, st.cfg.trust_proxy);
         // Credential/enumeration checks count per member and per address; everything else per address.
-        if matches!(bucket, "totp" | "password" | "family_add" | "checkin") {
+        if matches!(
+            bucket,
+            "totp" | "password" | "family_add" | "checkin" | "ride_readiness" | "mfa_setup"
+        ) {
             if let Some(owner) = session_user_key(&st, req.headers()).await {
                 if bucket == "family_add" {
                     if let Err(wait) = st.limiter.check(
@@ -348,6 +423,13 @@ fn lock_bypass_path(path: &str) -> bool {
     path == "/health"
         || path == "/auth/me"
         || path == "/auth/turnstile"
+        || path == "/auth/google/config"
+        || path == "/auth/google/start"
+        || path == "/auth/google/callback"
+        || path == "/auth/google/totp/status"
+        || path == "/auth/google/totp/complete"
+        || path == "/auth/password-reset/status"
+        || path == "/auth/password-reset/complete"
         || path == "/auth/lock"
         || path == "/auth/unlock"
         || path == "/auth/logout"
@@ -741,14 +823,33 @@ object-src 'none'; frame-ancestors 'none'; base-uri 'self'; form-action 'self'; 
 
 pub async fn security_headers(State(st): State<AppState>, req: Request, next: Next) -> Response {
     let path = req.uri().path().to_string();
+    let is_capability = path.starts_with("/invite/")
+        || path.starts_with("/visit/")
+        || path.starts_with("/care/")
+        || path.starts_with("/api/auth/google/")
+        || path.starts_with("/api/auth/password-reset/")
+        || req
+            .uri()
+            .query()
+            .is_some_and(|q| q.split('&').any(|kv| kv.starts_with("code=")));
     let mut res = next.run(req).await;
+    let status = res.status();
+    let is_html = res
+        .headers()
+        .get(header::CONTENT_TYPE)
+        .and_then(|v| v.to_str().ok())
+        .is_some_and(|ct| ct.to_ascii_lowercase().starts_with("text/html"));
     let h = res.headers_mut();
     let set = |h: &mut HeaderMap, k: &'static str, v: &'static str| {
         h.entry(k).or_insert(HeaderValue::from_static(v));
     };
     set(h, "x-content-type-options", "nosniff");
     set(h, "x-frame-options", "DENY");
-    set(h, "referrer-policy", "strict-origin-when-cross-origin");
+    if is_capability {
+        h.insert("referrer-policy", HeaderValue::from_static("no-referrer"));
+    } else {
+        set(h, "referrer-policy", "strict-origin-when-cross-origin");
+    }
     // Drivers share GPS and QR check-in scanner may use camera on this origin; nothing else may use sensors.
     set(
         h,
@@ -773,10 +874,16 @@ pub async fn security_headers(State(st): State<AppState>, req: Request, next: Ne
             "max-age=63072000; includeSubDomains",
         );
     }
-    if path.starts_with("/api/") {
+    if is_capability {
+        h.insert("cache-control", HeaderValue::from_static("no-store"));
+    } else if path.starts_with("/api/") {
         set(h, "cache-control", "no-store");
     } else if path.starts_with("/assets/") {
-        set(h, "cache-control", "public, max-age=31536000, immutable");
+        if status == StatusCode::OK && !is_html {
+            set(h, "cache-control", "public, max-age=31536000, immutable");
+        } else {
+            set(h, "cache-control", "no-store");
+        }
     } else {
         set(h, "cache-control", "no-cache");
     }

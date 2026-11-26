@@ -147,9 +147,11 @@ public final class RealtimeStreamClient {
             do {
                 let sseConfig = URLSessionConfiguration.ephemeral
                 sseConfig.httpShouldSetCookies = false
+                sseConfig.httpCookieAcceptPolicy = .never
                 sseConfig.timeoutIntervalForRequest = 3600
                 sseConfig.timeoutIntervalForResource = 0
-                let session = URLSession(configuration: sseConfig)
+                let redirectDelegate = CookieStrippingRedirectDelegate()
+                let session = URLSession(configuration: sseConfig, delegate: redirectDelegate, delegateQueue: nil)
                 defer { session.invalidateAndCancel() }
 
                 let (bytes, response) = try await session.bytes(for: req)

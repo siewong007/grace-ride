@@ -49,6 +49,12 @@ public final class KeychainSecureStore: SecureStore, @unchecked Sendable {
         "cached_me_at_ms",
         "cached_me_uptime_s",
         "today_rides_snapshot_v1",
+        "offline_cache_aes256_key_v1",
+    ]
+
+    /// Keys that must remain confined to the main app Keychain (never shared with extensions).
+    private static let appOnlyKeys: Set<String> = [
+        "offline_cache_aes256_key_v1",
     ]
 
     public static let sharedAccessGroupSuffix = "org.pjstatecm.graceride.shared"
@@ -116,7 +122,8 @@ public final class KeychainSecureStore: SecureStore, @unchecked Sendable {
     }
 
     public func getString(_ key: String) -> String? {
-        lock.withLock {
+        let useSharedGroup = (accessGroup?.isEmpty == false) && !Self.appOnlyKeys.contains(key)
+        return lock.withLock {
             func lookup(useGroup: Bool) -> (OSStatus, AnyObject?) {
                 var q = baseQuery(for: key, includeAccessGroup: useGroup)
                 q[kSecReturnData as String] = kCFBooleanTrue
@@ -124,8 +131,8 @@ public final class KeychainSecureStore: SecureStore, @unchecked Sendable {
                 var item: CFTypeRef?
                 return (SecItemCopyMatching(q as CFDictionary, &item), item)
             }
-            var (status, item) = lookup(useGroup: accessGroup != nil)
-            if status == errSecMissingEntitlement, accessGroup != nil {
+            var (status, item) = lookup(useGroup: useSharedGroup)
+            if status == errSecMissingEntitlement, useSharedGroup {
                 (status, item) = lookup(useGroup: false)
             }
             guard status == errSecSuccess, let data = item as? Data else {
@@ -138,6 +145,7 @@ public final class KeychainSecureStore: SecureStore, @unchecked Sendable {
     public func putString(_ key: String, _ value: String) {
         guard let data = value.data(using: .utf8) else { return }
         let accessible = accessibleAttribute(for: key)
+        let useSharedGroup = (accessGroup?.isEmpty == false) && !Self.appOnlyKeys.contains(key)
         lock.withLock {
             func write(useGroup: Bool) -> OSStatus {
                 let query = baseQuery(for: key, includeAccessGroup: useGroup)
@@ -160,16 +168,17 @@ public final class KeychainSecureStore: SecureStore, @unchecked Sendable {
                 }
                 return status
             }
-            let status = write(useGroup: accessGroup != nil)
-            if status == errSecMissingEntitlement, accessGroup != nil {
+            let status = write(useGroup: useSharedGroup)
+            if status == errSecMissingEntitlement, useSharedGroup {
                 _ = write(useGroup: false)
             }
         }
     }
 
     public func remove(_ key: String) {
+        let useSharedGroup = (accessGroup?.isEmpty == false) && !Self.appOnlyKeys.contains(key)
         lock.withLock {
-            if let accessGroup, !accessGroup.isEmpty {
+            if useSharedGroup {
                 let status = SecItemDelete(baseQuery(for: key, includeAccessGroup: true) as CFDictionary)
                 if status == errSecMissingEntitlement {
                     SecItemDelete(baseQuery(for: key, includeAccessGroup: false) as CFDictionary)
@@ -183,13 +192,9 @@ public final class KeychainSecureStore: SecureStore, @unchecked Sendable {
     public func clearAll() {
         lock.withLock {
             if let accessGroup, !accessGroup.isEmpty {
-                let status = SecItemDelete(baseQuery(for: nil, includeAccessGroup: true) as CFDictionary)
-                if status == errSecMissingEntitlement {
-                    SecItemDelete(baseQuery(for: nil, includeAccessGroup: false) as CFDictionary)
-                }
-            } else {
-                SecItemDelete(baseQuery(for: nil, includeAccessGroup: false) as CFDictionary)
+                SecItemDelete(baseQuery(for: nil, includeAccessGroup: true) as CFDictionary)
             }
+            SecItemDelete(baseQuery(for: nil, includeAccessGroup: false) as CFDictionary)
         }
     }
 }

@@ -35,18 +35,7 @@ pub(super) fn valid_area_name(s: &str) -> bool {
 }
 
 fn escape_csv_cell(s: &str) -> String {
-    let trimmed = s.trim_start();
-    let sanitized =
-        if s.starts_with(['\t', '\r']) || trimmed.starts_with(['=', '+', '-', '@', '|', '%']) {
-            format!("'{s}")
-        } else {
-            s.to_string()
-        };
-    if sanitized.contains([',', '"', '\n', '\r']) {
-        format!("\"{}\"", sanitized.replace('"', "\"\""))
-    } else {
-        sanitized
-    }
+    crate::util::escape_csv_cell(s)
 }
 
 pub(super) async fn list_fares(

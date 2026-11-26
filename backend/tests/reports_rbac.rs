@@ -1119,6 +1119,10 @@ async fn reports_hardening_metrics_and_custom_roles() {
     .fetch_one(&st.db)
     .await
     .unwrap();
+    sqlx::query("ALTER TABLE reimbursements DROP CONSTRAINT chk_reimbursements_reviewer_not_payer")
+        .execute(&st.db)
+        .await
+        .unwrap();
     sqlx::query(
         "INSERT INTO reimbursements (user_id, event_id, amount_cents, description, receipt_file_id, payee_name, payee_phone, status, reviewed_by, payee_verified, paid_ref, paid_by, paid_at, batch_id, created_at, updated_at)
          VALUES ($1, $2, 900, 'SoD Violation Claim', $3, 'Member', '0123456789', 'paid', $4, 1, 'REF-BAD', $4, '2031-05-21T12:00:00', $5, '2031-05-21T09:00:00', '2031-05-21T12:00:00')",
@@ -1128,6 +1132,12 @@ async fn reports_hardening_metrics_and_custom_roles() {
     .bind(receipt_id)
     .bind(admin_id)
     .bind(bad_b)
+    .execute(&st.db)
+    .await
+    .unwrap();
+    sqlx::query(
+        "ALTER TABLE reimbursements ADD CONSTRAINT chk_reimbursements_reviewer_not_payer CHECK (paid_by IS NULL OR reviewed_by IS NULL OR paid_by <> reviewed_by) NOT VALID",
+    )
     .execute(&st.db)
     .await
     .unwrap();

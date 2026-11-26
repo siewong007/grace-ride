@@ -1,10 +1,18 @@
 /** Names for audit action codes. Keys are the code with "." replaced by "_". */
 export default {
   login_passkey: 'Signed in with a passkey',
+  login_password: 'Signed in with a password',
+  login_google: 'Signed in with Google',
   login_reauth: 'Confirmed identity with a passkey',
   login_dev: 'Signed in (dev)',
   login_failed: 'Sign-in failed',
   password_failed: 'Password sign-in failed',
+  google_link: 'Verified and linked Google account',
+  google_link_failed: 'Google account link failed',
+  google_unlink: 'Disconnected Google account',
+  password_reset_verified: 'Verified Google account for password reset',
+  password_reset_denied: 'Password reset denied',
+  password_reset: 'Reset password via Google',
   logout: 'Signed out',
   logout_all: 'Signed out everywhere',
   passkey_register: 'Registered a passkey',

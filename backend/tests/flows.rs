@@ -263,6 +263,7 @@ async fn prod_app() -> Router {
         housekeeping_interval_mins: 60,
         notification_retention_days: 90,
         turnstile: Default::default(),
+        google_oauth: Default::default(),
         android_cert_sha256_fingerprints: Vec::new(),
         ios_app_ids: Vec::new(),
         require_biometric_attestation: false,
@@ -478,17 +479,18 @@ async fn auth_session_password_and_totp_branches() {
     )
     .await;
     let code = totp_code(&secret, "member@example.org");
-    assert_eq!(
-        must(
-            &app,
-            Method::POST,
-            "/api/auth/totp/enable",
-            Some(&c.member),
-            Some(json!({"code": code})),
-        )
-        .await["ok"],
-        true
-    );
+    let mut c = c;
+    let en_res = call(
+        &app,
+        Method::POST,
+        "/api/auth/totp/enable",
+        Some(&c.member),
+        Some(json!({"code": code})),
+    )
+    .await;
+    assert_eq!(en_res.status, StatusCode::OK, "{}", en_res.json);
+    assert_eq!(en_res.json["ok"], true);
+    c.member = cookie_from(&en_res).expect("rotated cookie");
     // Once enabled, a second enable is refused before the code is checked (no silent re-keying).
     deny(
         &app,
@@ -3762,7 +3764,6 @@ fn reachable_error_keys_match_handlers() {
         "REIMBURSEMENT_ONLY_PASSENGER",
         "REIMBURSEMENT_ONLY_NON_PENDING",
         "PASSKEY_NOT_FOUND",
-        "TOO_MANY_FAILED_LOGINS",
     ];
     let mut src = String::new();
     let mut stack = vec![std::path::PathBuf::from(concat!(

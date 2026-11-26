@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
+import { safeInternalPath } from '../guideLinks';
 import {
   Bell,
   BellOff,
@@ -241,14 +242,9 @@ export default function Notifications() {
       await run(() => post(`/notifications/${n.id}/read`));
     }
     refresh();
-    if (
-      n.link &&
-      n.link.startsWith('/') &&
-      !n.link.startsWith('//') &&
-      !n.link.startsWith('/api/') &&
-      !n.link.includes(':')
-    ) {
-      nav(n.link);
+    const safeLink = safeInternalPath(n.link, null);
+    if (safeLink) {
+      nav(safeLink);
     } else {
       reload();
     }

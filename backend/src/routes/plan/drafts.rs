@@ -66,7 +66,11 @@ pub(super) const DRAFT_SELECT: &str =
  LEFT JOIN users u3 ON u3.id = d.reviewed_by
  LEFT JOIN users u4 ON u4.id = d.locked_by";
 
-fn is_lock_active(locked_by: Option<i64>, lock_expires_at: Option<&str>, now_str: &str) -> bool {
+pub(super) fn is_lock_active(
+    locked_by: Option<i64>,
+    lock_expires_at: Option<&str>,
+    now_str: &str,
+) -> bool {
     locked_by.is_some() && lock_expires_at.is_some_and(|exp| exp > now_str)
 }
 
@@ -146,7 +150,7 @@ fn assert_draft_editable(u: &CurrentUser, status: &str) -> AppResult<()> {
     }
 }
 
-fn assert_not_locked_by_other(
+pub(super) fn assert_not_locked_by_other(
     u: &CurrentUser,
     locked_by: Option<i64>,
     locked_by_name: Option<&str>,

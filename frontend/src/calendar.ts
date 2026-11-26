@@ -62,11 +62,20 @@ export function formatIcsDate(isoStr: string): string {
 }
 
 function escapeIcsText(text: string): string {
-  return text
+  // Strip ASCII C0 control characters (except CR/LF/TAB) before normalizing line breaks.
+  let cleaned = '';
+  for (let i = 0; i < text.length; i += 1) {
+    const code = text.charCodeAt(i);
+    if ((code <= 0x08) || code === 0x0b || code === 0x0c || (code >= 0x0e && code <= 0x1f) || code === 0x7f) {
+      continue;
+    }
+    cleaned += text[i];
+  }
+  return cleaned
     .replace(/\\/g, '\\\\')
     .replace(/;/g, '\\;')
     .replace(/,/g, '\\,')
-    .replace(/\r?\n/g, '\\n');
+    .replace(/\r\n|\r|\n/g, '\\n');
 }
 
 export function generateIcs(event: CalendarEvent): string {

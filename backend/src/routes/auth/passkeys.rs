@@ -9,12 +9,12 @@ use axum::{
 };
 use axum_extra::extract::cookie::CookieJar;
 use base64::Engine as _;
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use webauthn_rs::fake::{FakePasskeyDistribution, WebauthnFakeCredentialGenerator};
 use webauthn_rs::prelude::*;
 
-use super::create_session;
+use super::{create_session, revoke_other_sessions, rotate_session};
 use crate::auth::CurrentUser;
 use crate::error::{bad, forbidden, AppError, AppResult};
 use crate::i18n::ErrorKey;
@@ -43,6 +43,23 @@ pub(super) async fn save_challenge(
         .bind(crate::util::minutes_ago(10))
         .execute(&st.db)
         .await?;
+    if user_id > 0 {
+        // Bound concurrent live challenges per `(user_id, kind)` (at most 5 after insert).
+        sqlx::query(
+            "DELETE FROM auth_challenges
+             WHERE user_id = $1 AND kind = $2
+               AND id NOT IN (
+                   SELECT id FROM auth_challenges
+                   WHERE user_id = $1 AND kind = $2
+                   ORDER BY created_at DESC, id DESC
+                   LIMIT 4
+               )",
+        )
+        .bind(user_id)
+        .bind(kind)
+        .execute(&st.db)
+        .await?;
+    }
     sqlx::query(
         "INSERT INTO auth_challenges (id, user_id, kind, state, created_at) VALUES ($1,$2,$3,$4,$5)",
     )
@@ -212,20 +229,32 @@ async fn decoy_challenge(st: &AppState, email: &str) -> AppResult<Value> {
 /// quietly add the thief's own device and keep access after the session ends.
 /// Accounts with nothing set up yet (new members, after recovery) are not held back.
 pub(super) async fn require_recent_sign_in(st: &AppState, u: &CurrentUser) -> AppResult<()> {
-    let (keys, biometrics, totp, signed_in): (i64, i64, i64, String) = sqlx::query_as(
+    let (keys, biometrics, totp, google_links, has_password, signed_in): (
+        i64,
+        i64,
+        i64,
+        i64,
+        bool,
+        String,
+    ) = sqlx::query_as(
         "SELECT (SELECT COUNT(*) FROM passkeys WHERE user_id=$1),
-                (SELECT COUNT(*) FROM biometric_credentials WHERE user_id=$1),
-                (SELECT totp_enabled FROM users WHERE id=$1),
-                (SELECT created_at FROM sessions WHERE token=$2)",
+            (SELECT COUNT(*) FROM biometric_credentials WHERE user_id=$1),
+            (SELECT totp_enabled FROM users WHERE id=$1),
+            (SELECT COUNT(*) FROM oauth_accounts WHERE user_id=$1 AND provider='google'),
+            (SELECT password_hash IS NOT NULL FROM users WHERE id=$1),
+            (SELECT created_at FROM sessions WHERE token=$2)",
     )
     .bind(u.id)
     .bind(&u.session_id)
     .fetch_one(&st.db)
     .await?;
-    if (keys > 0 || biometrics > 0 || totp == 1)
-        && (signed_in < minutes_ago(15) || (!u.mfa_ok && !st.cfg.dev_mode))
-    {
+    let has_strong_factor = keys > 0 || biometrics > 0 || totp == 1;
+    let has_any_factor = has_strong_factor || has_password || google_links > 0;
+    if has_any_factor && signed_in < minutes_ago(15) {
         return Err(forbidden(u.lang, ErrorKey::RecentSignInRequired));
+    }
+    if has_strong_factor && !u.mfa_ok && !st.cfg.dev_mode {
+        return Err(forbidden(u.lang, ErrorKey::MfaRequired));
     }
     Ok(())
 }
@@ -344,6 +373,12 @@ async fn touch_passkey(st: &AppState, uid: i64, res: &AuthenticationResult) -> A
     Ok(found)
 }
 
+#[derive(Serialize, Deserialize)]
+struct ReauthChallengeState {
+    session_id: String,
+    auth_state: PasskeyAuthentication,
+}
+
 /// Starts a passkey check for the member who is already signed in, so they can renew
 /// their "recent sign-in" without signing out first.
 pub(super) async fn passkey_reauth_start(
@@ -354,36 +389,45 @@ pub(super) async fn passkey_reauth_start(
     if keys.is_empty() {
         return Err(bad(u.lang, ErrorKey::PasskeyFailed));
     }
+
     let (rcr, auth_state) = st
         .webauthn
         .start_passkey_authentication(&keys)
         .map_err(|e| AppError::Other(anyhow::anyhow!("webauthn: {e:?}")))?;
+    let wrapped = ReauthChallengeState {
+        session_id: u.session_id.clone(),
+        auth_state,
+    };
     let cid = save_challenge(
         &st,
         u.id,
-        "auth",
-        serde_json::to_string(&auth_state).map_err(anyhow::Error::from)?,
+        "reauth",
+        serde_json::to_string(&wrapped).map_err(anyhow::Error::from)?,
     )
     .await?;
     Ok(Json(json!({ "challenge_id": cid, "options": rcr })))
 }
 
 /// Finishes the check. The passkey must belong to the signed-in member; on success the
-/// current session counts as signed in just now (the session itself is unchanged).
+/// session is rotated and counts as signed in just now.
 pub(super) async fn passkey_reauth_finish(
     State(st): State<AppState>,
+    jar: CookieJar,
     u: CurrentUser,
     Json(req): Json<LoginFinish>,
-) -> AppResult<Json<Value>> {
-    let (uid, state_json) = take_challenge(&st, &req.challenge_id, "auth", u.lang).await?;
+) -> AppResult<(CookieJar, Json<Value>)> {
+    let (uid, state_json) = take_challenge(&st, &req.challenge_id, "reauth", u.lang).await?;
     if uid != u.id {
         return Err(forbidden(u.lang, ErrorKey::ChallengeMismatch));
     }
-    let auth_state: PasskeyAuthentication =
+    let wrapped: ReauthChallengeState =
         serde_json::from_str(&state_json).map_err(anyhow::Error::from)?;
+    if wrapped.session_id != u.session_id {
+        return Err(forbidden(u.lang, ErrorKey::ChallengeMismatch));
+    }
     let Ok(res) = st
         .webauthn
-        .finish_passkey_authentication(&req.credential, &auth_state)
+        .finish_passkey_authentication(&req.credential, &wrapped.auth_state)
     else {
         audit(
             &st.db,
@@ -399,15 +443,9 @@ pub(super) async fn passkey_reauth_finish(
     if !touch_passkey(&st, u.id, &res).await? {
         return Err(bad(u.lang, ErrorKey::PasskeyFailed));
     }
-    sqlx::query(
-        "UPDATE sessions SET created_at=$1, locked_at=NULL, last_seen_at=$1, mfa_ok=1 WHERE token=$2",
-    )
-    .bind(now())
-    .bind(&u.session_id)
-    .execute(&st.db)
-    .await?;
+    let jar = rotate_session(&st, jar, &u, true, true, true).await?;
     audit(&st.db, Some(u.id), "login.reauth", "user", Some(u.id), "").await;
-    Ok(Json(json!({ "ok": true })))
+    Ok((jar, Json(json!({ "ok": true }))))
 }
 
 pub(super) async fn passkey_register_start(
@@ -448,9 +486,10 @@ pub(super) struct RegFinish {
 
 pub(super) async fn passkey_register_finish(
     State(st): State<AppState>,
+    jar: CookieJar,
     u: CurrentUser,
     Json(req): Json<RegFinish>,
-) -> AppResult<Json<Value>> {
+) -> AppResult<(CookieJar, Json<Value>)> {
     let (uid, state_json) = take_challenge(&st, &req.challenge_id, "reg", u.lang).await?;
     if uid != u.id {
         return Err(forbidden(u.lang, ErrorKey::ChallengeMismatch));
@@ -484,11 +523,8 @@ pub(super) async fn passkey_register_finish(
     .bind(now())
     .execute(&st.db)
     .await?;
-    // Registering a passkey upgrades the current session to strong auth.
-    sqlx::query("UPDATE sessions SET mfa_ok=1 WHERE token=$1")
-        .bind(&u.session_id)
-        .execute(&st.db)
-        .await?;
+    // Registering a passkey upgrades and rotates the current session.
+    let jar = rotate_session(&st, jar, &u, true, true, false).await?;
     audit(
         &st.db,
         Some(u.id),
@@ -498,7 +534,7 @@ pub(super) async fn passkey_register_finish(
         &label,
     )
     .await;
-    Ok(Json(json!({ "ok": true })))
+    Ok((jar, Json(json!({ "ok": true }))))
 }
 
 pub(super) async fn list_passkeys(
@@ -530,6 +566,7 @@ pub(super) async fn delete_passkey(
             .fetch_optional(&st.db)
             .await?;
     if let Some((label,)) = gone {
+        revoke_other_sessions(&st.db, u.id, &u.session_id).await?;
         audit(
             &st.db,
             Some(u.id),

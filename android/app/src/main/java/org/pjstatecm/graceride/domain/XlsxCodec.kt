@@ -67,6 +67,11 @@ data class XlsxWriteCell(
 object XlsxCodec {
     private const val MAX_FILE_BYTES = 5 * 1024 * 1024
     private const val MAX_UNCOMPRESSED_BYTES = 32 * 1024 * 1024
+    private const val MAX_SHEETS = 20
+    private const val MAX_ROWS = 2_000
+    private const val MAX_COLS = 256
+    private const val MAX_GRID_CELLS = 100_000L
+    private const val MAX_TOTAL_GRID_CELLS = 250_000L
     private val OLE2_MAGIC = byteArrayOf(
         0xD0.toByte(),
         0xCF.toByte(),
@@ -157,16 +162,30 @@ object XlsxCodec {
         if (sheetNodes.isEmpty()) {
             throw XlsxException(XlsxErrorCode.INVALID_XLSX, "Workbook contains no sheets")
         }
+        if (sheetNodes.size > MAX_SHEETS) {
+            throw XlsxException(XlsxErrorCode.TOO_LARGE, "Workbook contains too many sheets")
+        }
 
         val sheets = mutableListOf<XlsxSheet>()
+        val seenSheetPaths = HashSet<String>()
+        var totalGridCells = 0L
         sheetNodes.forEachIndexed { idx, sheetEl ->
             val sheetName = sheetEl.getAttribute("name").ifBlank { "Sheet ${idx + 1}" }
             val rId = sheetEl.attrNsOrLocal("r:id", "id")
             val target = relById[rId]?.target ?: "worksheets/sheet${idx + 1}.xml"
             val resolvedPath = resolveTarget(workbookPath, target)
+            if (!seenSheetPaths.add(resolvedPath.lowercase())) {
+                throw XlsxException(XlsxErrorCode.INVALID_XLSX, "Duplicate worksheet target $resolvedPath")
+            }
             val sheetXml = entries.findText(resolvedPath)
                 ?: throw XlsxException(XlsxErrorCode.INVALID_XLSX, "Missing worksheet $resolvedPath")
-            sheets += XlsxSheet(name = sheetName, rows = parseWorksheet(sheetXml, sharedStrings))
+            val parsedRows = parseWorksheet(sheetXml, sharedStrings)
+            val sheetCells = parsedRows.sumOf { it.size.toLong() }
+            totalGridCells += sheetCells
+            if (totalGridCells > MAX_TOTAL_GRID_CELLS) {
+                throw XlsxException(XlsxErrorCode.TOO_LARGE, "Workbook cell grid exceeds safe limit")
+            }
+            sheets += XlsxSheet(name = sheetName, rows = parsedRows)
         }
 
         return XlsxWorkbook(sheets = sheets)
@@ -325,6 +344,9 @@ object XlsxCodec {
                 val parsedRef = cEl.getAttribute("r").takeIf { it.isNotBlank() }?.let { parseCellRef(it) }
                 val r = parsedRef?.first ?: rowIdx
                 val c = parsedRef?.second ?: nextSequentialCol
+                if (r < 0 || c < 0 || r >= MAX_ROWS || c >= MAX_COLS) {
+                    throw XlsxException(XlsxErrorCode.TOO_LARGE, "Worksheet dimensions exceed safe limit")
+                }
                 nextSequentialCol = c + 1
                 if (r > maxRow) maxRow = r
                 if (c > maxCol) maxCol = c
@@ -354,6 +376,10 @@ object XlsxCodec {
         }
 
         if (maxRow < 0 || maxCol < 0) return emptyList()
+        val cellCount = (maxRow + 1).toLong() * (maxCol + 1).toLong()
+        if (cellCount > MAX_GRID_CELLS) {
+            throw XlsxException(XlsxErrorCode.TOO_LARGE, "Worksheet cell count exceeds safe limit")
+        }
         return (0..maxRow).map { r ->
             val rowMap = sparseRows[r]
             (0..maxCol).map { c ->

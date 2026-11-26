@@ -13,8 +13,8 @@ use crate::error::{bad, conflict, forbidden, AppResult};
 use crate::perms::{Act, Page};
 use crate::state::AppState;
 use crate::util::{
-    audit, norm_dt, notify, notify_many, notify_perm, now, pickup_window_bounds, require,
-    split_cursor, system_message, ErrorKey,
+    audit, norm_dt, notify, notify_many, now, pickup_window_bounds, require, split_cursor,
+    system_message, ErrorKey,
 };
 
 use super::driver::driver_load;
@@ -632,10 +632,10 @@ pub(super) async fn cancel_ride(
     }
     if old_status == "confirmed" {
         let line = format!("{} · {}", r.p_name, r.pickup_at.replace('T', " "));
-        notify_perm(
+        crate::notifications::notify_traffic_for_event(
             &st.db,
-            Page::AdminRides,
-            Act::Update,
+            r.event_created_by,
+            None,
             ("已确认的接送被取消", "A confirmed ride was cancelled"),
             (&line, &line),
             &format!("/admin/rides/{id}"),
@@ -698,10 +698,10 @@ pub(super) async fn passenger_respond(
             r.d_name.clone().unwrap_or_default(),
             r.pickup_at.replace('T', " ")
         );
-        notify_perm(
+        crate::notifications::notify_traffic_for_event(
             &st.db,
-            Page::AdminRides,
-            Act::Update,
+            r.event_created_by,
+            None,
             ("接送待审批", "Ride awaiting approval"),
             (&line, &line),
             &format!("/admin/rides/{id}"),

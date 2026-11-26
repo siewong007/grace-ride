@@ -1131,6 +1131,7 @@ async fn server_session_lock_and_rich_help_guides() {
     )
     .await;
     assert_eq!(unlocked.status, StatusCode::OK, "{}", unlocked.json);
+    let member = cookie_from(&unlocked).expect("rotated cookie");
 
     let after = call(&app, Method::GET, "/api/rides", Some(&member), None).await;
     assert_eq!(after.status, StatusCode::OK, "{}", after.json);

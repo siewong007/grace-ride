@@ -77,6 +77,7 @@ import coil.compose.AsyncImage
 import org.pjstatecm.graceride.R
 import org.pjstatecm.graceride.di.AppContainer
 import org.pjstatecm.graceride.domain.Money
+import org.pjstatecm.graceride.ui.SecureScreenEffect
 import org.pjstatecm.graceride.ui.UiHaptics
 import org.pjstatecm.graceride.ui.components.AnimatedOfflineBanner
 import org.pjstatecm.graceride.ui.components.CalloutBanner
@@ -94,6 +95,7 @@ import org.pjstatecm.graceride.ui.theme.tabular
 @Composable
 fun CostsScreen(container: AppContainer, nav: NavHostController) {
     val vm: CostsViewModel = viewModel(factory = CostsViewModel.factory(container))
+    SecureScreenEffect()
     val state by vm.state.collectAsStateWithLifecycle()
     val authState by container.auth.state.collectAsStateWithLifecycle()
     val me = (authState as? org.pjstatecm.graceride.data.repo.AuthState.SignedIn)?.me ?: container.auth.me

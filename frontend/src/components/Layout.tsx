@@ -500,7 +500,7 @@ function LayoutInner() {
             </Notice>
           </div>
         )}
-        {me.passkey_count === 0 && !me.dev_mode && !(pending && onMeRoot) && !(loc.pathname === '/me' && loc.search.includes('section=security')) && (
+        {me.passkey_count === 0 && !me.google_verified && !me.has_password && !me.dev_mode && !(pending && onMeRoot) && !(loc.pathname === '/me' && loc.search.includes('section=security')) && (
           <div className="shell-notice-container">
             <Notice tone="warning" icon={<Fingerprint size={20} />}>
               {t('noPasskeyNotice')}{' '}

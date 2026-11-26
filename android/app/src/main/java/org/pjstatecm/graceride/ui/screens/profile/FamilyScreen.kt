@@ -451,7 +451,7 @@ fun FamilyScreen(container: AppContainer, nav: NavHostController) {
                                         Row {
                                             IconButton(
                                                 onClick = {
-                                                    if (copyToClipboard(context, "Family invite", fullUrl)) {
+                                                    if (copyToClipboard(context, "Family invite", fullUrl, sensitive = true)) {
                                                         scope.launch { snackbar.showSnackbar(linkCopiedMsg) }
                                                     }
                                                 },

@@ -93,6 +93,7 @@ import org.pjstatecm.graceride.domain.RideStatusKind
 import org.pjstatecm.graceride.platform.CsvBuilder
 import org.pjstatecm.graceride.platform.ExportShare
 import org.pjstatecm.graceride.ui.AppRoute
+import org.pjstatecm.graceride.ui.SecureScreenEffect
 import org.pjstatecm.graceride.ui.UiHaptics
 import org.pjstatecm.graceride.ui.components.EmptyView
 import org.pjstatecm.graceride.ui.components.ErrorView
@@ -112,6 +113,7 @@ fun AdminReimbursementsScreen(
     initialTab: String = "review",
 ) {
     val authState by container.auth.state.collectAsStateWithLifecycle()
+    SecureScreenEffect()
     val me = (authState as? AuthState.SignedIn)?.me ?: container.auth.me
     val canReview = me?.can("admin_reimb_review") == true
     val canPay = me?.can("admin_reimb_pay") == true

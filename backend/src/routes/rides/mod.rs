@@ -30,7 +30,7 @@ mod schedules;
 mod staff;
 
 pub(crate) use driver::seat_capacity;
-pub(crate) use passenger::{normalize_assistance, notify_area_drivers, notify_area_drivers_pool};
+pub(crate) use passenger::{normalize_assistance, notify_area_drivers};
 pub(crate) use readiness::{apply_readiness, ReadinessReq};
 pub use schedules::{event_moved, process_recurring_schedules};
 
@@ -253,7 +253,7 @@ pub(super) const RIDE_SELECT: &str = "SELECT r.id, r.passenger_id, r.driver_id, 
     r.is_proxy, r.rider_name, r.rider_phone, r.rider_relationship,
     r.leg, r.paired_ride_id,
     r.as_group_id, ag.name AS as_group_name,
-    COALESCE(vp_latest.host_group_id, r.as_group_id) AS match_group_id,
+    CASE WHEN mg.is_all = 1 THEN NULL ELSE mg.id END AS match_group_id,
     e.created_by AS event_created_by,
     COALESCE(eg_agg.event_is_all, false) AS event_is_all,
     COALESCE(eg_agg.event_group_ids, '{}'::BIGINT[]) AS event_group_ids,
@@ -277,6 +277,7 @@ pub(super) const RIDE_SELECT: &str = "SELECT r.id, r.passenger_id, r.driver_id, 
         WHERE vp.ride_id = r.id
         ORDER BY vp.id DESC LIMIT 1
     ) vp_latest ON TRUE
+    LEFT JOIN groups mg ON mg.id = COALESCE(vp_latest.host_group_id, r.as_group_id)
     LEFT JOIN LATERAL (
         SELECT bool_or(g.is_all = 1) AS event_is_all,
                array_agg(eg.group_id) AS event_group_ids
@@ -382,7 +383,7 @@ pub fn ride_json(r: &RideRow, u: &CurrentUser) -> Value {
         },
         "seats": r.seats,
         "assistance": r.assistance,
-        "notes": r.notes,
+        "notes": if show_address { r.notes.clone() } else { String::new() },
         // Someone who may not see the event (an admin-assigned driver from outside its
         // groups, say) learns only that it is a church event.
         "event": r.event_id.map(|id| {

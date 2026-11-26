@@ -43,6 +43,7 @@ export interface Reimb {
   paid_ref: string | null;
   paid_at: string | null;
   created_at: string;
+  updated_at?: string;
   /** A traffic lead's special reimbursement for a plan visitor: who it was for and why. */
   visitor?: { id: number; name: string | null } | null;
   special_reason?: string | null;

@@ -93,7 +93,15 @@ public struct GraceRideApp: App {
         .onChange(of: scenePhase) { _, phase in
             switch phase {
             case .active:
+                container.auth.enforceIdleTimeoutIfNeeded()
                 container.realtimeStream.setForeground(true)
+                if case .loading = container.auth.state {
+                    break
+                } else if container.networkMonitor.isOnline {
+                    Task {
+                        try? await container.auth.refresh(throwOnError: false)
+                    }
+                }
             case .background:
                 container.auth.recordBackgroundTimestamp()
                 container.realtimeStream.setForeground(false)
@@ -181,10 +189,12 @@ public struct GraceRideApp: App {
                 info["link"] = link
                 if let rideId = NotifLinkRouter.extractRideId(link) {
                     info["rideId"] = rideId
-                    if item.category == "chat" {
-                        content.categoryIdentifier = "GR_TRIP_CHAT"
-                    } else if item.category == "ride" {
-                        content.categoryIdentifier = "GR_RIDE_UPDATE"
+                    if !hideDetails {
+                        if item.category == "chat" {
+                            content.categoryIdentifier = "GR_TRIP_CHAT"
+                        } else if item.category == "ride" {
+                            content.categoryIdentifier = "GR_RIDE_UPDATE"
+                        }
                     }
                 }
             }

@@ -40,9 +40,9 @@ curl -fL --retry 3 --output "$STAGING/${PBF_BASE}.osm.pbf.md5" "$MD5_URL"
 )
 
 echo "== Building OSRM MLD graph with ${OSRM_IMAGE} =="
-docker run --rm -v "$STAGING:/data" "$OSRM_IMAGE" osrm-extract -p /opt/car.lua "/data/${PBF_BASE}.osm.pbf"
-docker run --rm -v "$STAGING:/data" "$OSRM_IMAGE" osrm-partition "/data/${PBF_BASE}.osrm"
-docker run --rm -v "$STAGING:/data" "$OSRM_IMAGE" osrm-customize "/data/${PBF_BASE}.osrm"
+docker run --rm --cap-drop=ALL --security-opt=no-new-privileges --user "$(id -u):$(id -g)" --network=none -v "$STAGING:/data" "$OSRM_IMAGE" osrm-extract -p /opt/car.lua "/data/${PBF_BASE}.osm.pbf"
+docker run --rm --cap-drop=ALL --security-opt=no-new-privileges --user "$(id -u):$(id -g)" --network=none -v "$STAGING:/data" "$OSRM_IMAGE" osrm-partition "/data/${PBF_BASE}.osrm"
+docker run --rm --cap-drop=ALL --security-opt=no-new-privileges --user "$(id -u):$(id -g)" --network=none -v "$STAGING:/data" "$OSRM_IMAGE" osrm-customize "/data/${PBF_BASE}.osrm"
 
 # Remove raw PBF before swapping into place to save disk space.
 rm -f "$STAGING/${PBF_BASE}.osm.pbf" "$STAGING/${PBF_BASE}.osm.pbf.md5"

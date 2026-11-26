@@ -117,19 +117,47 @@ public enum Routes {
             || me.can("events", act: "update")
     }
 
-    /// Enforces web route permissions matching `frontend/src/App.tsx`, default-denying
-    /// all `/admin*` and unrecognized paths so normal members are never routed to admin pages.
-    public static func isWebPathPermitted(_ path: String, me: Me) -> Bool {
-        let raw = path.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !raw.isEmpty, raw.hasPrefix("/"), !raw.hasPrefix("//"), !raw.hasPrefix("/api/") else {
-            return false
+    /// Validates and extracts a clean normalized path (without query/fragment), rejecting
+    /// control characters, backslashes, encoded slashes/dots, and dot-traversal segments.
+    public static func sanitizeCleanPath(_ rawPath: String) -> String? {
+        let raw = rawPath.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !raw.isEmpty,
+              raw.hasPrefix("/"),
+              !raw.hasPrefix("//"),
+              !raw.hasPrefix("/api/") else {
+            return nil
         }
+        let hasUnsafeControl = raw.unicodeScalars.contains { scalar in
+            let v = scalar.value
+            return v < 0x20 || v == 0x7F
+        }
+        guard !hasUnsafeControl, !raw.contains("\\") else { return nil }
+
         var clean = raw.components(separatedBy: "?").first ?? raw
         clean = clean.components(separatedBy: "#").first ?? clean
+        let lowerClean = clean.lowercased()
+        guard !clean.contains(":"),
+              !lowerClean.contains("%2e"),
+              !lowerClean.contains("%2f"),
+              !lowerClean.contains("%5c") else {
+            return nil
+        }
+        let segments = clean.split(separator: "/", omittingEmptySubsequences: true)
+        guard !segments.contains(where: { $0 == "." || $0 == ".." }) else {
+            return nil
+        }
         while clean.count > 1 && clean.hasSuffix("/") {
             clean.removeLast()
         }
-        guard !clean.contains(":") else { return false }
+        return clean
+    }
+
+    /// Enforces web route permissions matching `frontend/src/App.tsx`, default-denying
+    /// all `/admin*` and unrecognized paths so normal members are never routed to admin pages.
+    public static func isWebPathPermitted(_ path: String, me: Me) -> Bool {
+        guard let clean = sanitizeCleanPath(path) else {
+            return false
+        }
 
         switch clean {
         case "/admin/menu": return adminMenuPerms.contains { me.can($0) }

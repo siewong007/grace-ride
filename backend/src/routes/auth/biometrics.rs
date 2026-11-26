@@ -12,8 +12,8 @@ use base64::Engine as _;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 
-use super::create_session;
 use super::passkeys::{require_recent_sign_in, save_challenge, take_challenge};
+use super::{create_session, revoke_other_sessions, rotate_session};
 use crate::auth::CurrentUser;
 use crate::error::{bad, forbidden, AppResult};
 use crate::i18n::ErrorKey;
@@ -111,9 +111,10 @@ pub(super) struct BioRegFinishReq {
 
 pub(super) async fn biometric_register_finish(
     State(st): State<AppState>,
+    jar: CookieJar,
     u: CurrentUser,
     Json(req): Json<BioRegFinishReq>,
-) -> AppResult<Json<Value>> {
+) -> AppResult<(CookieJar, Json<Value>)> {
     let (uid, challenge) = take_challenge(&st, &req.challenge_id, "bio_reg", u.lang).await?;
     if uid != u.id {
         return Err(forbidden(u.lang, ErrorKey::ChallengeMismatch));
@@ -149,7 +150,7 @@ pub(super) async fn biometric_register_finish(
             tracing::warn!(user_id = u.id, error = %err, "Android biometric attestation rejected");
             return Err(bad(u.lang, ErrorKey::BiometricRegistrationFailed));
         }
-        attested = true;
+        attested = !st.cfg.android_cert_sha256_fingerprints.is_empty();
     } else if attestation_required(&st) {
         return Err(bad(u.lang, ErrorKey::BiometricRegistrationFailed));
     }
@@ -199,12 +200,9 @@ pub(super) async fn biometric_register_finish(
     .bind(attested)
     .fetch_one(&mut *tx)
     .await?;
-    // Registering hardware-backed biometrics upgrades the current session to strong auth.
-    sqlx::query("UPDATE sessions SET mfa_ok=1 WHERE token=$1")
-        .bind(&u.session_id)
-        .execute(&mut *tx)
-        .await?;
     tx.commit().await?;
+    // Registering hardware-backed biometrics upgrades and rotates the current session.
+    let jar = rotate_session(&st, jar, &u, true, true, false).await?;
 
     audit(
         &st.db,
@@ -215,12 +213,15 @@ pub(super) async fn biometric_register_finish(
         &label,
     )
     .await;
-    Ok(Json(json!({
-        "ok": true,
-        "id": id,
-        "credential_id": cred_id,
-        "label": label,
-    })))
+    Ok((
+        jar,
+        Json(json!({
+            "ok": true,
+            "id": id,
+            "credential_id": cred_id,
+            "label": label,
+        })),
+    ))
 }
 
 #[derive(Deserialize)]
@@ -430,9 +431,10 @@ pub(super) async fn biometric_reauth_start(
 
 pub(super) async fn biometric_reauth_finish(
     State(st): State<AppState>,
+    jar: CookieJar,
     u: CurrentUser,
     Json(req): Json<BioFinishReq>,
-) -> AppResult<Json<Value>> {
+) -> AppResult<(CookieJar, Json<Value>)> {
     let (uid, state_json) = take_challenge(&st, &req.challenge_id, "bio_reauth", u.lang).await?;
     if uid != u.id {
         return Err(forbidden(u.lang, ErrorKey::ChallengeMismatch));
@@ -472,13 +474,7 @@ pub(super) async fn biometric_reauth_finish(
         .bind(st_data.cred_row_id)
         .execute(&st.db)
         .await?;
-    sqlx::query(
-        "UPDATE sessions SET created_at=$1, locked_at=NULL, last_seen_at=$1, mfa_ok=1 WHERE token=$2",
-    )
-    .bind(&ts_now)
-    .bind(&u.session_id)
-    .execute(&st.db)
-    .await?;
+    let jar = rotate_session(&st, jar, &u, true, true, true).await?;
     audit(
         &st.db,
         Some(u.id),
@@ -488,7 +484,7 @@ pub(super) async fn biometric_reauth_finish(
         "",
     )
     .await;
-    Ok(Json(json!({ "ok": true })))
+    Ok((jar, Json(json!({ "ok": true }))))
 }
 
 pub(super) async fn list_biometrics(
@@ -533,6 +529,7 @@ pub(super) async fn delete_biometric(
     .fetch_optional(&st.db)
     .await?;
     if let Some((label,)) = gone {
+        revoke_other_sessions(&st.db, u.id, &u.session_id).await?;
         audit(
             &st.db,
             Some(u.id),

@@ -26,6 +26,11 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import org.pjstatecm.graceride.R
 
+private val TURNSTILE_SITE_KEY_RE = Regex("^[A-Za-z0-9_-]{1,128}$")
+
+internal fun isValidTurnstileSiteKey(siteKey: String): Boolean =
+    TURNSTILE_SITE_KEY_RE.matches(siteKey)
+
 private val ALLOWED_TURNSTILE_ACTIONS = setOf(
     "passkey_login",
     "biometric_login",
@@ -55,7 +60,7 @@ fun TurnstileDialog(
     val cfLang = remember(locale) {
         if (locale?.language?.startsWith("zh", ignoreCase = true) == true) "zh-cn" else "en"
     }
-    var loadError by remember { mutableStateOf(false) }
+    var loadError by remember(siteKey) { mutableStateOf(!isValidTurnstileSiteKey(siteKey)) }
     val webViewHolder = remember { arrayOfNulls<WebView>(1) }
     val scope = rememberCoroutineScope()
     DisposableEffect(loadError) {

@@ -77,6 +77,23 @@ pub fn spawn_with_shutdown(
     });
 
     let scheduler = tokio::spawn(async move {
+        if !cfg.dev_mode {
+            let db_init = db.clone();
+            tokio::spawn(async move {
+                let _ = db_init;
+                if let Ok(client) = reqwest::Client::builder()
+                    .timeout(Duration::from_secs(10))
+                    .build()
+                {
+                    if let Err(e) =
+                        crate::attestation::refresh_google_attestation_revocation_list(&client)
+                            .await
+                    {
+                        tracing::warn!("initial Google attestation CRL refresh failed: {e}");
+                    }
+                }
+            });
+        }
         let mut tick = tokio::time::interval(Duration::from_secs(60));
         tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
         let every = Duration::from_secs(cfg.housekeeping_interval_mins.max(1) as u64 * 60);
@@ -101,6 +118,19 @@ pub fn spawn_with_shutdown(
             }
             if last_housekeeping.is_none_or(|t| t.elapsed() >= every) {
                 last_housekeeping = Some(Instant::now());
+                if !cfg.dev_mode {
+                    if let Ok(client) = reqwest::Client::builder()
+                        .timeout(Duration::from_secs(10))
+                        .build()
+                    {
+                        if let Err(e) =
+                            crate::attestation::refresh_google_attestation_revocation_list(&client)
+                                .await
+                        {
+                            tracing::warn!("Google attestation CRL refresh failed: {e}");
+                        }
+                    }
+                }
                 if let Err(e) = housekeeping(&db, &cfg).await {
                     tracing::error!("housekeeping failed: {e:?}");
                 }
@@ -625,16 +655,21 @@ async fn housekeeping(db: &PgPool, cfg: &Config) -> anyhow::Result<()> {
         .bind(t(-30))
         .execute(db)
         .await?;
+    sqlx::query("DELETE FROM password_reset_tokens WHERE expires_at < $1")
+        .bind(now())
+        .execute(db)
+        .await?;
     purge_orphan_files(db, &cfg.upload_dir).await?;
     Ok(())
 }
 
 /// Remove uploaded files that have been unreferenced for more than 24 hours, plus any
 /// orphaned UUID-named disk blobs missing from `files` (e.g. failed inserts or interrupted writes).
-async fn purge_orphan_files(db: &PgPool, upload_dir: &std::path::Path) -> anyhow::Result<()> {
+pub async fn purge_orphan_files(db: &PgPool, upload_dir: &std::path::Path) -> anyhow::Result<()> {
     let cutoff = ts_in(-24 * 60);
-    let stale: Vec<String> = sqlx::query_scalar(
-        "DELETE FROM files f
+    let mut tx = db.begin().await?;
+    let candidates: Vec<(i64, String)> = sqlx::query_as(
+        "SELECT f.id, f.stored_name FROM files f
          WHERE f.created_at < $1
            AND NOT EXISTS (SELECT 1 FROM users u WHERE u.photo_file_id = f.id)
            AND NOT EXISTS (SELECT 1 FROM area_photos ap WHERE ap.file_id = f.id)
@@ -642,20 +677,64 @@ async fn purge_orphan_files(db: &PgPool, upload_dir: &std::path::Path) -> anyhow
            AND NOT EXISTS (SELECT 1 FROM settlement_items si WHERE si.receipt_file_id = f.id)
            AND NOT EXISTS (SELECT 1 FROM settlement_shares ss WHERE ss.proof_file_id = f.id)
            AND NOT EXISTS (SELECT 1 FROM settlements s WHERE s.payee_qr_file_id = f.id)
+           AND NOT EXISTS (
+               SELECT 1 FROM settlement_revisions sr
+               WHERE sr.snapshot @> jsonb_build_object('payee_qr_file_id', f.id)
+                  OR sr.snapshot->'items' @> jsonb_build_array(jsonb_build_object('receipt_file_id', f.id))
+                  OR sr.snapshot->'shares' @> jsonb_build_array(jsonb_build_object('proof_file_id', f.id))
+           )
            AND NOT EXISTS (SELECT 1 FROM help_replies hr WHERE hr.file_id = f.id)
            AND NOT EXISTS (SELECT 1 FROM reimbursements r WHERE r.receipt_file_id = f.id)
            AND NOT EXISTS (
                SELECT 1 FROM guide_workflows gw
                WHERE gw.steps @> jsonb_build_array(jsonb_build_object('image_file_id', f.id))
            )
-         RETURNING f.stored_name",
+         ORDER BY f.id
+         LIMIT 500
+         FOR UPDATE OF f SKIP LOCKED",
     )
     .bind(&cutoff)
-    .fetch_all(db)
+    .fetch_all(&mut *tx)
     .await?;
+    let candidate_ids: Vec<i64> = candidates.iter().map(|(id, _)| *id).collect();
+    let stale: Vec<String> = if candidate_ids.is_empty() {
+        Vec::new()
+    } else {
+        sqlx::query_scalar(
+            "DELETE FROM files f
+             WHERE f.id = ANY($1)
+               AND f.created_at < $2
+               AND NOT EXISTS (SELECT 1 FROM users u WHERE u.photo_file_id = f.id)
+               AND NOT EXISTS (SELECT 1 FROM area_photos ap WHERE ap.file_id = f.id)
+               AND NOT EXISTS (SELECT 1 FROM events e WHERE e.photo_file_id = f.id)
+               AND NOT EXISTS (SELECT 1 FROM settlement_items si WHERE si.receipt_file_id = f.id)
+               AND NOT EXISTS (SELECT 1 FROM settlement_shares ss WHERE ss.proof_file_id = f.id)
+               AND NOT EXISTS (SELECT 1 FROM settlements s WHERE s.payee_qr_file_id = f.id)
+               AND NOT EXISTS (
+                   SELECT 1 FROM settlement_revisions sr
+                   WHERE sr.snapshot @> jsonb_build_object('payee_qr_file_id', f.id)
+                      OR sr.snapshot->'items' @> jsonb_build_array(jsonb_build_object('receipt_file_id', f.id))
+                      OR sr.snapshot->'shares' @> jsonb_build_array(jsonb_build_object('proof_file_id', f.id))
+               )
+               AND NOT EXISTS (SELECT 1 FROM help_replies hr WHERE hr.file_id = f.id)
+               AND NOT EXISTS (SELECT 1 FROM reimbursements r WHERE r.receipt_file_id = f.id)
+               AND NOT EXISTS (
+                   SELECT 1 FROM guide_workflows gw
+                   WHERE gw.steps @> jsonb_build_array(jsonb_build_object('image_file_id', f.id))
+               )
+             RETURNING f.stored_name",
+        )
+        .bind(&candidate_ids)
+        .bind(&cutoff)
+        .fetch_all(&mut *tx)
+        .await?
+    };
+    tx.commit().await?;
 
     for stored in stale {
-        let _ = tokio::fs::remove_file(upload_dir.join(stored)).await;
+        if let Ok(path) = crate::routes::files::safe_upload_path(upload_dir, &stored) {
+            let _ = tokio::fs::remove_file(path).await;
+        }
     }
 
     let Ok(mut entries) = tokio::fs::read_dir(upload_dir).await else {
@@ -664,10 +743,10 @@ async fn purge_orphan_files(db: &PgPool, upload_dir: &std::path::Path) -> anyhow
     let mut disk_candidates: Vec<(String, std::path::PathBuf)> = Vec::new();
     let age_cutoff = std::time::SystemTime::now() - Duration::from_secs(24 * 3600);
     while let Ok(Some(entry)) = entries.next_entry().await {
-        let Ok(meta) = entry.metadata().await else {
+        let Ok(meta) = tokio::fs::symlink_metadata(entry.path()).await else {
             continue;
         };
-        if !meta.is_file() {
+        if !meta.is_file() || meta.file_type().is_symlink() {
             continue;
         }
         let is_old = meta.modified().is_ok_and(|m| m < age_cutoff);
@@ -682,7 +761,9 @@ async fn purge_orphan_files(db: &PgPool, upload_dir: &std::path::Path) -> anyhow
                 && !ext.is_empty()
                 && ext.bytes().all(|b| b.is_ascii_alphanumeric())
             {
-                disk_candidates.push((name, entry.path()));
+                if let Ok(safe_path) = crate::routes::files::safe_upload_path(upload_dir, &name) {
+                    disk_candidates.push((name, safe_path));
+                }
             }
         }
     }

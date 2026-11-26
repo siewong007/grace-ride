@@ -1,4 +1,4 @@
-import { ReactNode, useEffect, useState } from 'react';
+import { FormEvent, ReactNode, useEffect, useState } from 'react';
 import { useLocation, useNavigate, useSearchParams } from 'react-router-dom';
 import {
   BarChart3,
@@ -29,7 +29,7 @@ import {
   Car,
   CarFront,
 } from 'lucide-react';
-import { del, post, put, useApi } from '../api';
+import { api, apiMessage, del, post, put, useApi } from '../api';
 import { useAuth } from '../auth';
 import { parseGrokBotIcon } from '../avatarStyle';
 import { useAutoLock } from '../components/AutoLock';
@@ -69,7 +69,7 @@ export default function Profile() {
   const { lock, canLock } = useAutoLock();
   const passkeys = useApi<{ id: number; label: string; created_at: string; last_used: string | null }[]>('/auth/passkeys');
   // The open section lives in the URL so the header back button and swipe-back both return to the list.
-  const [searchParams] = useSearchParams();
+  const [searchParams, setSearchParams] = useSearchParams();
   const sectionParam = searchParams.get('section');
   const open: SectionKey | null =
     (['personal', 'preferences', 'places', 'calendar', 'security'] as const).find((k) => k === sectionParam) ?? null;
@@ -182,6 +182,51 @@ export default function Profile() {
   const push = usePushNotifications();
   const [showInstallModal, setShowInstallModal] = useState(false);
   const { busy, error, run } = useAction();
+  const googleAct = useAction();
+  const pwAct = useAction();
+  const [googleEnabled, setGoogleEnabled] = useState(false);
+  const [googleBanner, setGoogleBanner] = useState<string | null>(null);
+  const [googleErr, setGoogleErr] = useState<string | null>(null);
+  const [pwOpen, setPwOpen] = useState(false);
+  const [curPw, setCurPw] = useState('');
+  const [newPw, setNewPw] = useState('');
+  const [confirmPw, setConfirmPw] = useState('');
+  const [pwFormErr, setPwFormErr] = useState('');
+
+  useEffect(() => {
+    if (open !== 'security') return;
+    let live = true;
+    void api<{ enabled?: boolean }>('/auth/google/config')
+      .then((res) => {
+        if (live) setGoogleEnabled(Boolean(res?.enabled));
+      })
+      .catch(() => {
+        if (live) setGoogleEnabled(false);
+      });
+    return () => {
+      live = false;
+    };
+  }, [open]);
+
+  useEffect(() => {
+    if (open !== 'security') return;
+    const gStatus = searchParams.get('google');
+    const gErr = searchParams.get('google_error');
+    if (!gStatus && !gErr) return;
+    const next = new URLSearchParams(searchParams);
+    next.delete('google');
+    next.delete('google_error');
+    setSearchParams(next, { replace: true });
+    if (gStatus === 'linked') {
+      setGoogleErr(null);
+      setGoogleBanner(t('googleLinkedDone'));
+      void refresh();
+    } else if (gErr) {
+      setGoogleBanner(null);
+      setGoogleErr(apiMessage({ code: gErr }, 'network'));
+    }
+  }, [open, searchParams, setSearchParams, refresh, t]);
+
   if (!me) return null;
 
   if (loc.pathname === '/me/family') {
@@ -229,6 +274,7 @@ export default function Profile() {
   const securityHint = [
     t('passkeyCount', { count: me.passkey_count }),
     me.totp_enabled ? t('twoFaOnShort') : t('twoFaOffShort'),
+    ...(me.google_verified ? [t('googleVerifiedShort')] : []),
   ].join(' · ');
   const savedPlaces = Array.isArray(savedPlacesApi.data) ? savedPlacesApi.data : [];
   const placesHint =
@@ -409,6 +455,63 @@ export default function Profile() {
         else await refresh();
         nav('/login');
       });
+    }
+  };
+
+  const handleConnectGoogle = () => {
+    setGoogleBanner(null);
+    setGoogleErr(null);
+    void googleAct.run(async () => {
+      const res = await recentSignIn(() =>
+        post<{ url: string }>('/auth/google/link/start', { redirect: '/me?section=security' }),
+      );
+      if (res?.url) {
+        window.location.assign(res.url);
+      }
+    });
+  };
+
+  const handleDisconnectGoogle = async () => {
+    const ok = await confirm({
+      title: t('unlinkGoogle'),
+      body: t('unlinkGoogleConfirm'),
+      confirmLabel: t('unlinkGoogle'),
+      tone: 'danger',
+    });
+    if (!ok) return;
+    setGoogleBanner(null);
+    setGoogleErr(null);
+    await googleAct.run(async () => {
+      await recentSignIn(() => del('/auth/google'));
+      await refresh();
+    }, t('googleUnlinkedDone'));
+  };
+
+  const handleSavePassword = async (e: FormEvent) => {
+    e.preventDefault();
+    if (newPw.length < 10) {
+      setPwFormErr(apiMessage({ code: 'PASSWORD_TOO_SHORT' }, 'network'));
+      return;
+    }
+    if (newPw !== confirmPw) {
+      setPwFormErr(t('passwordsDoNotMatch'));
+      return;
+    }
+    setPwFormErr('');
+    const ok = await pwAct.run(async () => {
+      await recentSignIn(() =>
+        post(
+          '/auth/password',
+          me.has_password ? { current: curPw, new_password: newPw } : { new_password: newPw },
+        ),
+      );
+      await refresh();
+    }, t('passwordSaved'));
+    if (ok) {
+      setPwOpen(false);
+      setCurPw('');
+      setNewPw('');
+      setConfirmPw('');
     }
   };
 
@@ -814,7 +917,7 @@ export default function Profile() {
                       {telegramBot && (
                         <a
                           className="btn secondary sm"
-                          href={`https://t.me/${telegramBot}`}
+                          href={`https://t.me/${encodeURIComponent(telegramBot)}`}
                           target="_blank"
                           rel="noopener noreferrer"
                         >
@@ -1022,6 +1125,143 @@ export default function Profile() {
                 </Button>
               </div>
 
+              <div className="divider" />
+              <div className="stack-sm">
+                <div className="row between">
+                  <strong>{t('googleAccount')}</strong>
+                  <Pill tone={me.google_verified ? 'success' : 'neutral'}>
+                    {me.google_verified ? t('googleVerified') : t('googleNotVerified')}
+                  </Pill>
+                </div>
+                <p className="muted small">
+                  {me.google_verified
+                    ? t('googleLinkedAs', { email: me.google_email || me.email })
+                    : t('googleAccountDesc', { email: me.email })}
+                </p>
+                {googleBanner && <Notice tone="success">{googleBanner}</Notice>}
+                <ErrorBox error={googleErr ?? googleAct.error} />
+                {!me.google_verified ? (
+                  googleEnabled ? (
+                    <Button
+                      variant="secondary"
+                      disabled={busy || googleAct.busy}
+                      loading={googleAct.busy}
+                      onClick={handleConnectGoogle}
+                    >
+                      {t('verifyGoogleBtn')}
+                    </Button>
+                  ) : (
+                    <p className="muted tiny no-margin">{t('googleNotConfiguredHint')}</p>
+                  )
+                ) : (
+                  <div className="btn-row">
+                    <Button
+                      variant="danger"
+                      size="sm"
+                      disabled={busy || googleAct.busy}
+                      loading={googleAct.busy}
+                      onClick={handleDisconnectGoogle}
+                    >
+                      {t('unlinkGoogle')}
+                    </Button>
+                  </div>
+                )}
+              </div>
+
+              <div className="divider" />
+              <div className="stack-sm">
+                <div className="row between">
+                  <strong>{t('passwordTitle')}</strong>
+                  <Pill tone={me.has_password ? 'success' : 'neutral'}>
+                    {me.has_password ? t('passwordSet') : t('passwordNotSet')}
+                  </Pill>
+                </div>
+                <p className="muted small">
+                  {me.google_verified ? t('passwordDescVerified') : t('passwordDescUnverified')}
+                </p>
+                {!pwOpen ? (
+                  <div>
+                    <Button
+                      variant="secondary"
+                      size="sm"
+                      disabled={busy || pwAct.busy}
+                      onClick={() => {
+                        setPwOpen(true);
+                        setPwFormErr('');
+                        pwAct.setError(null);
+                      }}
+                    >
+                      <KeyRound size={16} />
+                      {me.has_password ? t('changePasswordBtn') : t('setPasswordBtn')}
+                    </Button>
+                  </div>
+                ) : (
+                  <form className="stack-sm" onSubmit={handleSavePassword}>
+                    {me.has_password && (
+                      <Field label={t('currentPassword')}>
+                        <input
+                          className="input"
+                          type="password"
+                          autoComplete="current-password"
+                          required
+                          value={curPw}
+                          onChange={(e) => setCurPw(e.target.value)}
+                        />
+                      </Field>
+                    )}
+                    <Field label={t('newPassword')} hint={t('passwordMinHint')}>
+                      <input
+                        className="input"
+                        type="password"
+                        autoComplete="new-password"
+                        minLength={10}
+                        required
+                        value={newPw}
+                        onChange={(e) => {
+                          setNewPw(e.target.value);
+                          if (pwFormErr) setPwFormErr('');
+                        }}
+                      />
+                    </Field>
+                    <Field label={t('confirmPassword')}>
+                      <input
+                        className="input"
+                        type="password"
+                        autoComplete="new-password"
+                        minLength={10}
+                        required
+                        value={confirmPw}
+                        onChange={(e) => {
+                          setConfirmPw(e.target.value);
+                          if (pwFormErr) setPwFormErr('');
+                        }}
+                      />
+                    </Field>
+                    <ErrorBox error={pwFormErr || pwAct.error} />
+                    <div className="btn-row">
+                      <Button variant="primary" size="sm" type="submit" loading={pwAct.busy} disabled={pwAct.busy}>
+                        {t('save')}
+                      </Button>
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        type="button"
+                        disabled={pwAct.busy}
+                        onClick={() => {
+                          setPwOpen(false);
+                          setCurPw('');
+                          setNewPw('');
+                          setConfirmPw('');
+                          setPwFormErr('');
+                        }}
+                      >
+                        {t('cancel')}
+                      </Button>
+                    </div>
+                  </form>
+                )}
+              </div>
+
               {me.status !== 'pending' && (
                 <>
                   <div className="divider" />
@@ -1068,7 +1308,7 @@ export default function Profile() {
                           <RefreshCw size={16} />
                           {t('regenBackupCodes')}
                         </Button>
-                        {me.privileged && !me.mfa_ok && (
+                        {!me.mfa_ok && (
                           <Button variant="primary" size="sm" onClick={() => setShowVerify2fa(true)}>
                             <KeyRound size={16} />
                             {t('verify2fa')}

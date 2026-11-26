@@ -216,12 +216,16 @@ pub(super) async fn set_group_members(
     if known != req.user_ids.len() as i64 {
         return Err(bad(u.lang, ErrorKey::InvalidAction));
     }
-    let exists: Option<i64> = sqlx::query_scalar("SELECT id FROM groups WHERE id=$1 FOR KEY SHARE")
-        .bind(id)
-        .fetch_optional(&mut *tx)
-        .await?;
-    if exists.is_none() {
+    let group_flags: Option<(i64, i64)> =
+        sqlx::query_as("SELECT is_all, is_visitor FROM groups WHERE id=$1 FOR KEY SHARE")
+            .bind(id)
+            .fetch_optional(&mut *tx)
+            .await?;
+    let Some((is_all, is_visitor)) = group_flags else {
         return Err(not_found(u.lang));
+    };
+    if is_all == 1 || is_visitor == 1 {
+        return Err(bad(u.lang, ErrorKey::InvalidAction));
     }
     let old: Vec<i64> = sqlx::query_scalar("SELECT user_id FROM group_members WHERE group_id=$1")
         .bind(id)

@@ -20,21 +20,30 @@ set -Eeuo pipefail
 DATA_DIR="${1:-./backend/data}"
 BACKUP_DIR="${2:-./backups}"
 KEEP_DAYS="${3:-30}"
+[[ "$KEEP_DAYS" =~ ^[0-9]+$ ]] || { echo "KEEP_DAYS must be a non-negative integer" >&2; exit 1; }
 STAMP="$(date +%Y%m%d-%H%M%S)"
-DEST="$BACKUP_DIR/grace-ride-$STAMP"
 PG_CONTAINER="${PG_CONTAINER:-${DOCKER_DB_CONTAINER:-}}"
 
-if [[ "${REQUIRE_ENCRYPTION:-false}" == "true" && -z "${BACKUP_AGE_RECIPIENT:-}" && -z "${BACKUP_GPG_RECIPIENT:-}" ]]; then
+if [[ "${REQUIRE_ENCRYPTION:-true}" == "true" && -z "${BACKUP_AGE_RECIPIENT:-}" && -z "${BACKUP_GPG_RECIPIENT:-}" ]]; then
   echo "REQUIRE_ENCRYPTION=true but neither BACKUP_AGE_RECIPIENT nor BACKUP_GPG_RECIPIENT is set" >&2
   exit 1
 fi
 
 umask 077
-mkdir -p "$DEST" "$DATA_DIR/uploads"
-ARCHIVE="$DEST.tar.gz"
+mkdir -p "$BACKUP_DIR" "$DATA_DIR/uploads"
+STAGE_DIR="$(mktemp -d)"
+chmod 0700 "$STAGE_DIR"
+DEST="$STAGE_DIR/grace-ride-$STAMP"
+mkdir -p "$DEST"
+PGPASS_TMP=""
+SAFE_PG_URL=""
+ARCHIVE="$BACKUP_DIR/grace-ride-$STAMP.tar.gz"
 SUCCESS=0
 cleanup() {
-  rm -rf "$DEST"
+  rm -rf "$STAGE_DIR"
+  if [[ -n "$PGPASS_TMP" ]]; then
+    rm -f "$PGPASS_TMP"
+  fi
   if (( SUCCESS == 0 )); then
     rm -f "$ARCHIVE" "${ARCHIVE}.age" "${ARCHIVE}.gpg"
   elif [[ -n "${BACKUP_AGE_RECIPIENT:-}" || -n "${BACKUP_GPG_RECIPIENT:-}" ]]; then
@@ -43,13 +52,37 @@ cleanup() {
 }
 trap cleanup EXIT
 
+prepare_pgpass_url() {
+  local raw="$1"
+  if [[ "$raw" =~ ^(postgres(ql)?://)([^:/@?#]+):([^@/?#]+)@(.+)$ ]]; then
+    local scheme="${BASH_REMATCH[1]}"
+    local user="${BASH_REMATCH[3]}"
+    local pass="${BASH_REMATCH[4]}"
+    local rest="${BASH_REMATCH[5]}"
+    local esc_user="${user//\\/\\\\}"
+    esc_user="${esc_user//:/\\:}"
+    local esc_pass="${pass//\\/\\\\}"
+    esc_pass="${esc_pass//:/\\:}"
+    if [[ -z "$PGPASS_TMP" ]]; then
+      PGPASS_TMP="$(mktemp)"
+      chmod 0600 "$PGPASS_TMP"
+    fi
+    printf '*:*:*:%s:%s\n' "$esc_user" "$esc_pass" > "$PGPASS_TMP"
+    export PGPASSFILE="$PGPASS_TMP"
+    SAFE_PG_URL="${scheme}${user}@${rest}"
+  else
+    SAFE_PG_URL="$raw"
+  fi
+}
+
 pg_dump_args=(--format=custom --no-owner)
 if [[ -n "${BACKUP_SCHEMA:-}" ]]; then
   pg_dump_args+=(--schema "$BACKUP_SCHEMA")
 fi
 
 if [[ -n "${DATABASE_URL:-}" ]]; then
-  pg_dump "${pg_dump_args[@]}" --file "$DEST/db.dump" "$DATABASE_URL"
+  prepare_pgpass_url "$DATABASE_URL"
+  pg_dump "${pg_dump_args[@]}" --file "$DEST/db.dump" "$SAFE_PG_URL"
   test -s "$DEST/db.dump" || { echo "pg_dump produced an empty file" >&2; exit 1; }
   pg_restore --list "$DEST/db.dump" >/dev/null || { echo "dump sanity check failed" >&2; exit 1; }
 elif [[ -n "${PG_CONTAINER:-}" ]]; then
@@ -64,7 +97,7 @@ else
 fi
 
 tar -C "$DATA_DIR" -czf "$DEST/uploads.tar.gz" uploads
-tar -C "$BACKUP_DIR" -czf "$ARCHIVE" "grace-ride-$STAMP"
+tar -C "$STAGE_DIR" -czf "$ARCHIVE" "grace-ride-$STAMP"
 rm -rf "$DEST"
 
 FINAL_ARCHIVE="$ARCHIVE"
@@ -73,12 +106,12 @@ if [[ -n "${BACKUP_AGE_RECIPIENT:-}" ]]; then
   rm -f "$ARCHIVE"
   FINAL_ARCHIVE="${ARCHIVE}.age"
 elif [[ -n "${BACKUP_GPG_RECIPIENT:-}" ]]; then
-  gpg --batch --yes --trust-model always --encrypt -r "$BACKUP_GPG_RECIPIENT" -o "${ARCHIVE}.gpg" "$ARCHIVE"
+  gpg --batch --yes --encrypt -r "$BACKUP_GPG_RECIPIENT" -o "${ARCHIVE}.gpg" "$ARCHIVE"
   rm -f "$ARCHIVE"
   FINAL_ARCHIVE="${ARCHIVE}.gpg"
 fi
 
 SUCCESS=1
-find "$BACKUP_DIR" \( -name 'grace-ride-*.tar.gz' -o -name 'grace-ride-*.tar.gz.age' -o -name 'grace-ride-*.tar.gz.gpg' \) -mtime +"$KEEP_DAYS" -delete
+find "$BACKUP_DIR" -maxdepth 1 \( -name 'grace-ride-*.tar.gz' -o -name 'grace-ride-*.tar.gz.age' -o -name 'grace-ride-*.tar.gz.gpg' \) -mtime +"$KEEP_DAYS" -delete
 echo "Backup written: $FINAL_ARCHIVE"
 # Contains personal data (addresses, receipts): store encrypted and off-site.

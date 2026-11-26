@@ -525,9 +525,9 @@ pub(super) async fn update_event(
     .bind(id)
     .fetch_one(&mut *tx)
     .await?;
-    // A cancelled event stays cancelled: editing it would re-notify members and move its
-    // (already cancelled) rides.
-    if event_status == "cancelled" {
+    // A cancelled or finished event cannot be mutated; finished event settings/areas/mileage
+    // must remain immutable once closed.
+    if matches!(event_status.as_str(), "cancelled" | "finished") {
         return Err(bad(u.lang, ErrorKey::EventNotOpen));
     }
     let capacity = req.capacity.unwrap_or(0).max(0);
@@ -730,7 +730,18 @@ pub(super) async fn unpublish_event(
             .bind(id)
             .fetch_one(&mut *tx)
             .await?;
-    if active_signups > 0 || active_rides > 0 || settlements > 0 {
+    let (extra_refs,): (i64,) = sqlx::query_as(
+        "SELECT (
+             (SELECT COUNT(*) FROM reimbursements WHERE event_id=$1)
+           + (SELECT COUNT(*) FROM plan_visitors WHERE event_id=$1)
+           + (SELECT COUNT(*) FROM event_plan_drafts WHERE event_id=$1)
+           + (SELECT COUNT(*) FROM event_signups WHERE event_id=$1 AND attended=1)
+         )::BIGINT",
+    )
+    .bind(id)
+    .fetch_one(&mut *tx)
+    .await?;
+    if active_signups > 0 || active_rides > 0 || settlements > 0 || extra_refs > 0 {
         return Err(conflict(u.lang, ErrorKey::EventCannotHideWithSignups));
     }
     sqlx::query("UPDATE events SET status='draft' WHERE id=$1")
@@ -813,14 +824,37 @@ pub(super) async fn cancel_event(
             }
         }
     }
+    let mut visible_drivers: Vec<i64> = Vec::new();
+    let mut masked_drivers: Vec<i64> = Vec::new();
+    for d in driver_ids {
+        if crate::audience::member_sees_event(&st.db, d, id)
+            .await
+            .unwrap_or(false)
+        {
+            visible_drivers.push(d);
+        } else {
+            masked_drivers.push(d);
+        }
+    }
     notify_many(
         &st.db,
-        &driver_ids,
+        &visible_drivers,
         (
             "活动已取消，接送随之取消",
             "Event cancelled, ride cancelled with it",
         ),
         (e.title.as_str(), e.title.as_str()),
+        "/drive",
+    )
+    .await;
+    notify_many(
+        &st.db,
+        &masked_drivers,
+        (
+            "活动已取消，接送随之取消",
+            "Event cancelled, ride cancelled with it",
+        ),
+        ("教会活动", "Church event"),
         "/drive",
     )
     .await;

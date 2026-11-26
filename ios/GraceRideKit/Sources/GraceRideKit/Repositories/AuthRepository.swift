@@ -109,12 +109,15 @@ public final class AuthRepository {
         return try? JSONDecoder().decode(Me.self, from: data)
     }
 
-    private func isCachedIdleExpired(
+    public func isCachedIdleExpired(
         _ m: Me,
         nowMillis: Int64 = PersistentCookieJar.currentMillis(),
         nowUptime: TimeInterval = ProcessInfo.processInfo.systemUptime
     ) -> Bool {
-        guard m.autoLockMins > 0 else { return false }
+        let effectiveMins = m.autoLockMins > 0
+            ? m.autoLockMins
+            : (m.autoLockMins == -1 ? 0 : m.sessionTimeoutMins)
+        guard effectiveMins > 0 else { return false }
         guard let savedStr = store?.getString(Self.cachedMeAtKey),
               let savedAt = Int64(savedStr) else {
             return true
@@ -124,7 +127,7 @@ public final class AuthRepository {
             return true
         }
         let elapsedMins = (nowMillis - savedAt) / 60_000
-        if elapsedMins >= Int64(m.autoLockMins) {
+        if elapsedMins >= Int64(effectiveMins) {
             return true
         }
         if let uptimeStr = store?.getString(Self.cachedMeUptimeKey),
@@ -134,11 +137,28 @@ public final class AuthRepository {
                 return true
             }
             let elapsedUptimeMins = Int64((nowUptime - savedUptime) / 60.0)
-            if elapsedUptimeMins >= Int64(m.autoLockMins) {
+            if elapsedUptimeMins >= Int64(effectiveMins) {
                 return true
             }
         }
         return false
+    }
+
+    @discardableResult
+    public func enforceIdleTimeoutIfNeeded(
+        nowMillis: Int64 = PersistentCookieJar.currentMillis(),
+        nowUptime: TimeInterval = ProcessInfo.processInfo.systemUptime
+    ) -> Bool {
+        switch state {
+        case .signedIn(let m), .pending(let m):
+            if isCachedIdleExpired(m, nowMillis: nowMillis, nowUptime: nowUptime) {
+                onLocked()
+                return true
+            }
+            return false
+        case .loading, .signedOut, .locked:
+            return false
+        }
     }
 
     private func clearLocalSessionIfNeeded() {
@@ -195,6 +215,8 @@ public final class AuthRepository {
                             }
                             state = stateFor(cached)
                         }
+                    } else if !cookies.hasCookies() {
+                        clearLocalSessionIfNeeded()
                     } else {
                         state = .signedOut
                     }

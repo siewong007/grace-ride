@@ -167,15 +167,8 @@ object WidgetSnapshotStore {
             }
     }
 
-    private fun Ride.statusLabel(ctx: Context): String {
-        val base = ctx.getString(RideStatus.labelRes(status))
-        val driverName = driver?.name?.trim()?.takeIf { it.isNotEmpty() }
-        return if (status == "confirmed" && driverName != null) {
-            "$base · $driverName"
-        } else {
-            base
-        }
-    }
+    private fun Ride.statusLabel(ctx: Context): String =
+        ctx.getString(RideStatus.labelRes(status))
 }
 
 class GraceRideWidget : GlanceAppWidget() {

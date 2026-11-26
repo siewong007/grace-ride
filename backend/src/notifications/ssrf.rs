@@ -30,14 +30,26 @@ pub fn sign_webhook_headers(secret: &str, body: &[u8]) -> (String, Option<String
 
 fn is_metadata_ip(ip: IpAddr) -> bool {
     match ip {
-        IpAddr::V4(v4) => v4 == std::net::Ipv4Addr::new(169, 254, 169, 254),
-        IpAddr::V6(v6) => v6.to_ipv4_mapped() == Some(std::net::Ipv4Addr::new(169, 254, 169, 254)),
+        IpAddr::V4(v4) => {
+            v4 == std::net::Ipv4Addr::new(169, 254, 169, 254)
+                || v4 == std::net::Ipv4Addr::new(169, 254, 170, 2)
+                || v4 == std::net::Ipv4Addr::new(100, 100, 100, 200)
+        }
+        IpAddr::V6(v6) => {
+            let s = v6.segments();
+            v6.to_ipv4_mapped()
+                .is_some_and(|v4| is_metadata_ip(IpAddr::V4(v4)))
+                || (s[0..6] == [0, 0, 0, 0, 0, 0] && s[6] == 0xa9fe && s[7] == 0xa9fe)
+                || s == [0xfd00, 0x0ec2, 0, 0, 0, 0, 0, 0x0254]
+        }
     }
 }
 
 fn is_non_global_v4(v4: std::net::Ipv4Addr) -> bool {
     let o = v4.octets();
     let cgnat = o[0] == 100 && (o[1] & 0b1100_0000) == 64;
+    let ietf_proto = o[0] == 192 && o[1] == 0 && o[2] == 0;
+    let six_to_four_relay = o[0] == 192 && o[1] == 88 && o[2] == 99;
     let bench = o[0] == 198 && (o[1] == 18 || o[1] == 19);
     let this_net = o[0] == 0;
     this_net
@@ -49,6 +61,8 @@ fn is_non_global_v4(v4: std::net::Ipv4Addr) -> bool {
         || v4.is_multicast()
         || v4.is_unspecified()
         || cgnat
+        || ietf_proto
+        || six_to_four_relay
         || bench
         || o[0] >= 240
 }
@@ -76,6 +90,9 @@ fn is_non_global_ip(ip: IpAddr) -> bool {
             let site_local = (segs[0] & 0xffc0) == 0xfec0;
             let unique_local = (segs[0] & 0xfe00) == 0xfc00;
             let doc = segs[0] == 0x2001 && segs[1] == 0x0db8;
+            // Covers 2001::/23 (Teredo 2001::/32, Benchmarking 2001:2::/48, ORCHIDv2 2001:20::/28, etc.)
+            let special_2001 = segs[0] == 0x2001 && segs[1] < 0x0200;
+            let doc_3fff = segs[0] == 0x3fff && segs[1] < 0x1000;
             let nat64_well_known = segs[0] == 0x0064
                 && segs[1] == 0xff9b
                 && segs[2] == 0
@@ -93,6 +110,8 @@ fn is_non_global_ip(ip: IpAddr) -> bool {
                 || site_local
                 || unique_local
                 || doc
+                || special_2001
+                || doc_3fff
                 || nat64_well_known
                 || nat64_local
                 || six_to_four
@@ -121,6 +140,9 @@ pub async fn resolve_and_validate_http_target(
             return None;
         }
     } else if scheme != "https" {
+        return None;
+    }
+    if !dev_mode && !matches!(parsed.port(), None | Some(443)) {
         return None;
     }
     let host = parsed.host()?;

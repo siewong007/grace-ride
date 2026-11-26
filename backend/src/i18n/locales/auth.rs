@@ -27,6 +27,8 @@ pub enum AuthError<'a> {
     PhoneInvalid,
     RecentSignInRequired,
     EmailAlreadyRegistered,
+    TooManyFailedLogins,
+    TotpRequired,
     AuthDisabled,
     AccountPending,
     TermsRequired,
@@ -34,6 +36,15 @@ pub enum AuthError<'a> {
     UnlockMethodRequired,
     TurnstileRequired,
     TurnstileFailed,
+    GoogleNotConfigured,
+    GoogleAuthCancelled,
+    GoogleAuthFailed,
+    GoogleEmailUnverified,
+    GoogleNotMember,
+    GoogleNotVerified,
+    GoogleEmailMismatch,
+    GoogleAlreadyLinked,
+    PasswordResetInvalid,
 }
 
 pub fn render(lang: Lang, key: AuthError<'_>) -> String {
@@ -110,10 +121,20 @@ pub fn render(lang: Lang, key: AuthError<'_>) -> String {
         AuthError::EmailAlreadyRegistered => {
             pair(lang, "此电邮已经注册", "This email is already registered")
         }
+        AuthError::TooManyFailedLogins => pair(
+            lang,
+            "登入失败次数过多，账号已暂时锁定 15 分钟。可改用通行密钥或 Google 登入。",
+            "Too many failed logins; the account is locked for 15 minutes. You can sign in with a passkey or Google instead.",
+        ),
+        AuthError::TotpRequired => pair(
+            lang,
+            "请输入 6 位双重验证码或 8 位备用码以完成登入。",
+            "Enter your 6-digit authenticator code or 8-character backup code to finish signing in.",
+        ),
         AuthError::AuthDisabled => pair(
             lang,
-            "此应用使用通行密钥登入，不使用密码。",
-            "This app signs in with a passkey, not a password.",
+            "此账号已停用，请联系管理员。",
+            "This account is disabled. Please contact an admin.",
         ),
         AuthError::AccountPending => pair(
             lang,
@@ -144,6 +165,49 @@ pub fn render(lang: Lang, key: AuthError<'_>) -> String {
             lang,
             "人机验证失败或已过期，请重试",
             "Human verification failed or expired; please try again",
+        ),
+        AuthError::GoogleNotConfigured => pair(
+            lang,
+            "此服务器尚未开启 Google 登入功能。",
+            "Google sign-in is not configured on this server.",
+        ),
+        AuthError::GoogleAuthCancelled => {
+            pair(lang, "已取消 Google 验证。", "Google sign-in was cancelled.")
+        }
+        AuthError::GoogleAuthFailed => pair(
+            lang,
+            "Google 验证失败或已过期，请重试。",
+            "Google verification failed or expired. Please try again.",
+        ),
+        AuthError::GoogleEmailUnverified => pair(
+            lang,
+            "您的 Google 账号电邮尚未通过 Google 验证。",
+            "Your Google account email is not verified by Google.",
+        ),
+        AuthError::GoogleNotMember => pair(
+            lang,
+            "此 Google 账号不是恩典同行会员。请先向管理员索取邀请链接加入。",
+            "This Google account is not registered as a Grace Ride member. Ask an admin for an invite link first.",
+        ),
+        AuthError::GoogleNotVerified => pair(
+            lang,
+            "此电邮已是会员，但尚未验证绑定 Google 账号。请先使用通行密钥或密码登入，并在「我的 → 账号安全」中完成 Google 账号验证。",
+            "A member account exists for this email, but its Google account has not been verified yet. Sign in with your passkey or password and verify Google in Profile → Account Security.",
+        ),
+        AuthError::GoogleEmailMismatch => pair(
+            lang,
+            "所选的 Google 账号电邮与您注册的恩典同行电邮不一致。",
+            "The selected Google account email does not match your registered Grace Ride email.",
+        ),
+        AuthError::GoogleAlreadyLinked => pair(
+            lang,
+            "此 Google 账号已绑定到另一位会员的账号。",
+            "This Google account is already verified on another member account.",
+        ),
+        AuthError::PasswordResetInvalid => pair(
+            lang,
+            "密码重置验证无效或已过期，请重新通过 Google 验证。",
+            "Password reset verification expired or is invalid. Verify with Google again to continue.",
         ),
     }
 }

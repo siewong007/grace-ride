@@ -40,13 +40,42 @@ const PATTERN_LISTS: [string, string][] = [
 ];
 
 /**
+ * Validates that a link target is a strictly same-origin internal app route.
+ * Rejects protocol-relative URLs, backslashes, scheme colons, control chars, and `/api` paths.
+ */
+export function safeInternalPath(raw: string | null | undefined, fallback: string): string;
+export function safeInternalPath(raw: string | null | undefined, fallback: null): string | null;
+export function safeInternalPath(raw: string | null | undefined, fallback: string | null = '/'): string | null {
+  if (typeof raw !== 'string') return fallback;
+  const trimmed = raw.trim();
+  if (!trimmed || !trimmed.startsWith('/') || trimmed.startsWith('//')) return fallback;
+  if (trimmed.includes('\\') || trimmed.includes(':')) return fallback;
+  for (let i = 0; i < trimmed.length; i += 1) {
+    const code = trimmed.charCodeAt(i);
+    if (code <= 0x1f || code === 0x7f) return fallback;
+  }
+  try {
+    const parsed = new URL(trimmed, 'https://grace-ride.local');
+    if (parsed.origin !== 'https://grace-ride.local') return fallback;
+    if (parsed.pathname === '/api' || parsed.pathname.startsWith('/api/') || parsed.pathname.startsWith('//')) {
+      return fallback;
+    }
+    return `${parsed.pathname}${parsed.search}${parsed.hash}`;
+  } catch {
+    return fallback;
+  }
+}
+
+/**
  * The page to send someone to for this step: the link itself, or for an item-page
  * pattern the list it is picked from (null when there is none).
  */
 export function navigableLink(link: string): string | null {
   if (!link) return null;
-  if (!isPatternLink(link)) return link;
-  const path = linkPath(link);
+  const safe = safeInternalPath(link, null);
+  if (!safe) return null;
+  if (!isPatternLink(safe)) return safe;
+  const path = linkPath(safe);
   return PATTERN_LISTS.find(([prefix]) => path.startsWith(prefix))?.[1] ?? null;
 }
 

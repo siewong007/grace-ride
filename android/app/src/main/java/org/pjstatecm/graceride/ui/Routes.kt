@@ -497,16 +497,38 @@ object Routes {
             me.can("events", "update")
 
     /**
+     * Validates and canonicalizes an internal app path, returning `null` if it contains
+     * control characters, backslashes, encoded separators/dots, dot segments, scheme prefixes,
+     * protocol-relative prefixes (`//`), or `/api/` prefixes.
+     */
+    fun sanitizeCleanPath(path: String): String? {
+        val raw = path.trim()
+        if (raw.isEmpty() || !raw.startsWith("/") || raw.startsWith("//")) {
+            return null
+        }
+        if (raw.any { it.code < 0x20 || it.code == 0x7F } || raw.contains('\\')) {
+            return null
+        }
+        val clean = raw.substringBefore('?').substringBefore('#').trimEnd('/').ifEmpty { "/" }
+        if (clean == "/api" || clean.startsWith("/api/") || clean.contains(':')) {
+            return null
+        }
+        val lower = clean.lowercase()
+        if (lower.contains("%2e") || lower.contains("%2f") || lower.contains("%5c")) {
+            return null
+        }
+        if (clean != "/" && clean.split('/').drop(1).any { it == "." || it == ".." }) {
+            return null
+        }
+        return clean
+    }
+
+    /**
      * Enforces web route permissions matching `frontend/src/App.tsx`, default-denying
      * all `/admin*` and unrecognized paths so normal members are never sent to admin web pages.
      */
     fun isWebPathPermitted(path: String, me: org.pjstatecm.graceride.data.api.Me): Boolean {
-        val raw = path.trim()
-        if (raw.isEmpty() || !raw.startsWith("/") || raw.startsWith("//") || raw.startsWith("/api/")) {
-            return false
-        }
-        val clean = raw.substringBefore('?').substringBefore('#').trimEnd('/').ifEmpty { "/" }
-        if (clean.contains(':')) return false
+        val clean = sanitizeCleanPath(path) ?: return false
         return when {
             clean == "/admin/menu" -> adminMenuPerms.any { me.can(it) }
             clean == "/admin/traffic" -> trafficHubPerms.any { me.can(it) }

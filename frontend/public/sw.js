@@ -18,15 +18,19 @@ function isHashedAssetPath(pathname) {
   return pathname.startsWith('/assets/');
 }
 
+const EXACT_UNHASHED_STATIC_PATHS = new Set([
+  '/theme-boot.js',
+  '/manifest.webmanifest',
+  '/icon.svg',
+  '/icon-192.png',
+  '/icon-512.png',
+  '/icon-maskable-512.png',
+  '/apple-touch-icon.png',
+  '/badge-monochrome.png',
+]);
+
 function isUnhashedStaticPath(pathname) {
-  return (
-    pathname.startsWith('/icons/') ||
-    pathname === '/theme-boot.js' ||
-    pathname === '/manifest.webmanifest' ||
-    pathname.startsWith('/icon') ||
-    pathname === '/apple-touch-icon.png' ||
-    pathname === '/badge-monochrome.png'
-  );
+  return pathname.startsWith('/icons/') || EXACT_UNHASHED_STATIC_PATHS.has(pathname);
 }
 
 function trimRuntimeCache(cache) {
@@ -76,6 +80,13 @@ self.addEventListener('activate', (event) => {
   );
 });
 
+function contentTypeOf(res) {
+  return (res && res.headers && typeof res.headers.get === 'function'
+    ? res.headers.get('content-type') || ''
+    : ''
+  ).toLowerCase();
+}
+
 self.addEventListener('fetch', (event) => {
   const { request } = event;
   if (request.method !== 'GET') return;
@@ -92,7 +103,7 @@ self.addEventListener('fetch', (event) => {
     event.respondWith(
       fetch(request)
         .then((res) => {
-          const ct = res.headers.get('content-type') || '';
+          const ct = contentTypeOf(res);
           if (!isSensitiveRoute && res.ok && ct.includes('text/html')) {
             const copy = res.clone();
             // Store under canonical '/index.html' rather than request.url so bearer
@@ -113,7 +124,8 @@ self.addEventListener('fetch', (event) => {
         (cached) =>
           cached ||
           fetch(request).then((res) => {
-            if (res.ok) {
+            const ct = contentTypeOf(res);
+            if (res.ok && !ct.includes('text/html')) {
               const copy = res.clone();
               caches.open(SHELL_CACHE).then((c) => {
                 c.put(request, copy);
@@ -130,7 +142,8 @@ self.addEventListener('fetch', (event) => {
   if (isUnhashedStaticPath(url.pathname)) {
     const revalidate = fetch(request)
       .then((res) => {
-        if (res.ok) {
+        const ct = contentTypeOf(res);
+        if (res.ok && !ct.includes('text/html')) {
           const copy = res.clone();
           return caches.open(SHELL_CACHE).then((c) => {
             c.put(request, copy);

@@ -309,13 +309,24 @@ pub(super) async fn push_test(
     let subject = crate::util::vapid_subject();
     let mut delivered = 0usize;
     for (sub_id, endpoint, p256dh, auth) in subs {
-        let Some(client) =
-            crate::notifications::build_pinned_client(&endpoint, st.cfg.dev_mode).await
+        if !crate::util::validate_push_endpoint(&endpoint, st.cfg.dev_mode).await {
+            continue;
+        }
+        let Some((target_endpoint, client)) =
+            crate::notifications::build_pinned_client_with_url(&endpoint, st.cfg.dev_mode).await
         else {
             continue;
         };
         match crate::web_push::send_push_message(
-            &client, &signer, &subject, &endpoint, &p256dh, &auth, title, body, "/me",
+            &client,
+            &signer,
+            &subject,
+            &target_endpoint,
+            &p256dh,
+            &auth,
+            title,
+            body,
+            "/me",
         )
         .await
         {

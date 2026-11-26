@@ -234,31 +234,7 @@ pub(super) struct AuditExportQuery {
 }
 
 fn escape_csv_field(s: &str) -> String {
-    // Prefix single quote on formula triggers (=, +, -, @, \t, \r, |, %) to prevent spreadsheet injection.
-    let trimmed = s.trim_start();
-    let sanitized = if s.starts_with('\t')
-        || s.starts_with('\r')
-        || trimmed.starts_with('=')
-        || trimmed.starts_with('+')
-        || trimmed.starts_with('-')
-        || trimmed.starts_with('@')
-        || trimmed.starts_with('|')
-        || trimmed.starts_with('%')
-    {
-        format!("'{s}")
-    } else {
-        s.to_string()
-    };
-
-    if sanitized.contains('"')
-        || sanitized.contains(',')
-        || sanitized.contains('\n')
-        || sanitized.contains('\r')
-    {
-        format!("\"{}\"", sanitized.replace('"', "\"\""))
-    } else {
-        sanitized
-    }
+    crate::util::escape_csv_cell(s)
 }
 
 const AUDIT_EXPORT_MAX: i64 = 50_000;
@@ -330,7 +306,7 @@ pub(super) async fn audit_export(
                     let line = format!(
                         "{},{},{},{},{},{},{},{},{}\r\n",
                         id,
-                        at,
+                        escape_csv_field(&at),
                         aid.map(|v| v.to_string()).unwrap_or_default(),
                         escape_csv_field(&actor.unwrap_or_else(|| "System".to_string())),
                         escape_csv_field(&act),

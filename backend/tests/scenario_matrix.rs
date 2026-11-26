@@ -73,6 +73,7 @@ async fn idle_auto_lock_org_default_user_override_disabled_and_backup_code_unloc
     )
     .await;
     assert_eq!(enable_res.status, StatusCode::OK, "{}", enable_res.json);
+    let member = cookie_from(&enable_res).expect("rotated cookie");
     let backup_codes: Vec<String> = enable_res.json["backup_codes"]
         .as_array()
         .unwrap()
@@ -151,6 +152,7 @@ async fn idle_auto_lock_org_default_user_override_disabled_and_backup_code_unloc
     )
     .await;
     assert_eq!(ok_unlock.status, StatusCode::OK, "{}", ok_unlock.json);
+    let member = cookie_from(&ok_unlock).expect("rotated cookie");
 
     let ok_rides = call(&app, Method::GET, "/api/rides", Some(&member), None).await;
     assert_eq!(ok_rides.status, StatusCode::OK, "{}", ok_rides.json);
@@ -223,6 +225,7 @@ async fn idle_auto_lock_org_default_user_override_disabled_and_backup_code_unloc
     )
     .await;
     assert_eq!(ok_unlock_2.status, StatusCode::OK, "{}", ok_unlock_2.json);
+    let member = cookie_from(&ok_unlock_2).expect("rotated cookie");
     assert_eq!(
         call(&app, Method::GET, "/api/rides", Some(&member), None)
             .await

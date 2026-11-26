@@ -87,7 +87,8 @@ pub(super) async fn list_users(
     } else {
         Some("active".to_string())
     };
-    if q.role.is_some() {
+    let role_filter = if staff { q.role.as_deref() } else { None };
+    if role_filter.is_some() {
         conds.push(format!(
             "EXISTS (SELECT 1 FROM member_roles mr WHERE mr.user_id = u.id AND mr.role_key = ${n})"
         ));
@@ -151,7 +152,7 @@ pub(super) async fn list_users(
         if let Some(l) = &like {
             count_query = count_query.bind(l);
         }
-        if let Some(r) = &q.role {
+        if let Some(r) = role_filter {
             count_query = count_query.bind(r);
         }
         if let Some(s) = &status {
@@ -161,7 +162,7 @@ pub(super) async fn list_users(
 
         let page = q.page.unwrap_or(1).max(1);
         let limit = q.limit.unwrap_or(50).clamp(1, 200);
-        let offset = (page - 1) * limit;
+        let offset = (page - 1).saturating_mul(limit);
 
         let out: Vec<Value> = if staff {
             let sql = format!(
@@ -172,7 +173,7 @@ pub(super) async fn list_users(
             if let Some(l) = &like {
                 query = query.bind(l);
             }
-            if let Some(r) = &q.role {
+            if let Some(r) = role_filter {
                 query = query.bind(r);
             }
             if let Some(s) = &status {
@@ -195,7 +196,7 @@ pub(super) async fn list_users(
             if let Some(l) = &like {
                 query = query.bind(l);
             }
-            if let Some(r) = &q.role {
+            if let Some(r) = role_filter {
                 query = query.bind(r);
             }
             if let Some(s) = &status {
@@ -213,7 +214,7 @@ pub(super) async fn list_users(
         let total_pages = if total == 0 {
             1
         } else {
-            (total + limit - 1) / limit
+            total.saturating_add(limit - 1) / limit
         };
         return Ok(Json(json!({
             "items": out,
@@ -231,7 +232,7 @@ pub(super) async fn list_users(
         if let Some(l) = &like {
             query = query.bind(l);
         }
-        if let Some(r) = &q.role {
+        if let Some(r) = role_filter {
             query = query.bind(r);
         }
         if let Some(s) = &status {
@@ -249,7 +250,7 @@ pub(super) async fn list_users(
         if let Some(l) = &like {
             query = query.bind(l);
         }
-        if let Some(r) = &q.role {
+        if let Some(r) = role_filter {
             query = query.bind(r);
         }
         if let Some(s) = &status {
@@ -282,6 +283,9 @@ pub(super) async fn update_user(
     Path(id): Path<i64>,
     Json(req): Json<UserUpdate>,
 ) -> AppResult<Json<Value>> {
+    if !u.mfa_ok {
+        return Err(forbidden(u.lang, ErrorKey::MfaRequired));
+    }
     // Somebody in the chain of command may appoint the level below without holding the
     // members page (Finance appoints Audit), but only for a change that moves chain
     // roles and nothing else. That is decided below, once the member's roles are known.
@@ -529,19 +533,57 @@ pub(super) async fn update_user(
             ErrorKey::PresidentAcknowledgementRequired,
         ));
     }
+    let was_priv = perms::for_roles(&mut *tx, &old_parsed).await?.privileged();
+    let now_priv = if roles_changed {
+        perms::for_roles(&mut *tx, &new_roles).await?.privileged()
+    } else {
+        was_priv
+    };
+    if roles_changed && now_priv && !was_priv {
+        let recently_recovered_by_caller: Option<i64> = sqlx::query_scalar(
+            "SELECT id FROM invites
+             WHERE kind = 'recovery'
+               AND user_id = $1
+               AND created_by = $2
+               AND (
+                   (used_at IS NULL AND expires_at > $3)
+                   OR used_at >= $4
+               )
+             LIMIT 1",
+        )
+        .bind(id)
+        .bind(u.id)
+        .bind(now())
+        .bind(crate::util::in_hours(-72))
+        .fetch_optional(&mut *tx)
+        .await?;
+        if recently_recovered_by_caller.is_some() {
+            return Err(forbidden(u.lang, ErrorKey::SecondAdminRequired));
+        }
+    }
     let roles = if roles_changed {
         new_roles.join(",")
     } else {
         old_roles.clone()
     };
-    sqlx::query("UPDATE users SET roles=$1, status=$2 WHERE id=$3")
-        .bind(&roles)
-        .bind(&req.status)
-        .bind(id)
-        .execute(&mut *tx)
-        .await?;
+    if roles_changed && (was_priv || now_priv) {
+        sqlx::query("UPDATE users SET roles=$1, status=$2, last_privileged_at=$3 WHERE id=$4")
+            .bind(&roles)
+            .bind(&req.status)
+            .bind(now())
+            .bind(id)
+            .execute(&mut *tx)
+            .await?;
+    } else {
+        sqlx::query("UPDATE users SET roles=$1, status=$2 WHERE id=$3")
+            .bind(&roles)
+            .bind(&req.status)
+            .bind(id)
+            .execute(&mut *tx)
+            .await?;
+    }
     let mut released: Vec<i64> = Vec::new();
-    if roles_changed && perms::for_roles(&mut *tx, &new_roles).await?.privileged() {
+    if roles_changed && now_priv {
         // The session check caps staff sessions at 12 hours from sign-in; this also
         // shortens the stored expiry so open streams (which only check expires_at)
         // end on time.
@@ -557,6 +599,10 @@ pub(super) async fn update_user(
             .execute(&mut *tx)
             .await?;
         sqlx::query("DELETE FROM auth_challenges WHERE user_id=$1")
+            .bind(id)
+            .execute(&mut *tx)
+            .await?;
+        sqlx::query("DELETE FROM password_reset_tokens WHERE user_id=$1")
             .bind(id)
             .execute(&mut *tx)
             .await?;
@@ -602,10 +648,12 @@ pub(super) async fn update_user(
     if let Some(mut gids) = req.group_ids {
         gids.sort_unstable();
         gids.dedup();
-        let (known,): (i64,) = sqlx::query_as("SELECT COUNT(*) FROM groups WHERE id=ANY($1)")
-            .bind(&gids)
-            .fetch_one(&mut *tx)
-            .await?;
+        let (known,): (i64,) = sqlx::query_as(
+            "SELECT COUNT(*) FROM groups WHERE id=ANY($1) AND is_all = 0 AND is_visitor = 0",
+        )
+        .bind(&gids)
+        .fetch_one(&mut *tx)
+        .await?;
         if known != gids.len() as i64 {
             return Err(bad(u.lang, ErrorKey::InvalidAction));
         }

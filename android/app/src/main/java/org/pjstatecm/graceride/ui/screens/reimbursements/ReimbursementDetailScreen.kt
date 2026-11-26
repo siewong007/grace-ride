@@ -68,6 +68,7 @@ import org.pjstatecm.graceride.di.AppContainer
 import org.pjstatecm.graceride.domain.KlTime
 import org.pjstatecm.graceride.domain.Money
 import org.pjstatecm.graceride.ui.AppRoute
+import org.pjstatecm.graceride.ui.SecureScreenEffect
 import org.pjstatecm.graceride.ui.UiHaptics
 import org.pjstatecm.graceride.ui.components.DetailSkeleton
 import org.pjstatecm.graceride.ui.components.ErrorView
@@ -89,6 +90,7 @@ fun ReimbursementDetailScreen(
         key = "reimb-$id",
         factory = ReimbursementDetailViewModel.factory(container, id),
     )
+    SecureScreenEffect()
     val state by vm.state.collectAsStateWithLifecycle()
     val authState by container.auth.state.collectAsStateWithLifecycle()
     val me = (authState as? AuthState.SignedIn)?.me ?: container.auth.me

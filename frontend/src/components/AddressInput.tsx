@@ -71,10 +71,11 @@ export function AddressInput({
       api<Place[]>(`/places?q=${encodeURIComponent(q)}`)
         .then((hits) => {
           if (mine !== seq.current) return; // a newer keystroke won
-          setOptions(hits);
+          const list = Array.isArray(hits) ? hits : [];
+          setOptions(list);
           setActive(-1);
           setSearching(false);
-          setNoMatch(hits.length === 0);
+          setNoMatch(list.length === 0);
         })
         .catch(() => {
           if (mine !== seq.current) return;

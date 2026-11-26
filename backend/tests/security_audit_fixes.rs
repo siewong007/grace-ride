@@ -1548,18 +1548,16 @@ async fn totp_enable_already_enabled_and_disabled_account_auth_blocks() {
     assert_eq!(setup_res.status, StatusCode::OK, "{}", setup_res.json);
     let secret = setup_res.json["secret"].as_str().unwrap().to_string();
     let code = totp_code(&secret, "member@example.org");
-    assert_eq!(
-        call(
-            &app,
-            Method::POST,
-            "/api/auth/totp/enable",
-            Some(&member),
-            Some(json!({ "code": code }))
-        )
-        .await
-        .status,
-        StatusCode::OK
-    );
+    let en_res = call(
+        &app,
+        Method::POST,
+        "/api/auth/totp/enable",
+        Some(&member),
+        Some(json!({ "code": code })),
+    )
+    .await;
+    assert_eq!(en_res.status, StatusCode::OK);
+    let member = cookie_from(&en_res).expect("rotated cookie");
 
     let reenable = call(
         &app,

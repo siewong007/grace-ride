@@ -32,26 +32,24 @@ public enum NotifLinkRouter {
         }
         let path = url.path.isEmpty ? "/" : url.path
         let query = url.query.map { $0.isEmpty ? "" : "?\($0)" } ?? ""
+        let candidate = path + query
+        guard Routes.sanitizeCleanPath(candidate) != nil else {
+            return nil
+        }
         if scheme == "graceride" && host == "open" {
-            return path + query
+            return candidate
         }
         if scheme == "https" && (trustedHosts.contains(host) || extraTrustedHosts.contains(host)) {
-            return path + query
+            return candidate
         }
         return nil
     }
 
     public static func resolve(_ link: String?) -> NotifDestination {
         guard let raw = link?.trimmingCharacters(in: .whitespacesAndNewlines),
-              !raw.isEmpty,
-              raw.hasPrefix("/"),
-              !raw.hasPrefix("//"),
-              !raw.hasPrefix("/api/") else {
+              let clean = Routes.sanitizeCleanPath(raw) else {
             return .none
         }
-
-        let clean = raw.components(separatedBy: "?").first?.components(separatedBy: "#").first ?? raw
-        guard !clean.contains(":") else { return .none }
 
         let queryAndFrag = raw.contains("?") ? String(raw.split(separator: "?", maxSplits: 1)[1]) : ""
         let query = queryAndFrag.components(separatedBy: "#").first ?? ""

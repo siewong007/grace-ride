@@ -4,10 +4,9 @@ import android.app.Application
 import android.os.StrictMode
 import coil.Coil
 import coil.ImageLoader
-import coil.annotation.ExperimentalCoilApi
 import coil.decode.ImageDecoderDecoder
-import coil.disk.DiskCache
 import coil.memory.MemoryCache
+import coil.request.CachePolicy
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.ProcessLifecycleOwner
@@ -21,7 +20,6 @@ class GraceRideApp : Application() {
     lateinit var container: AppContainer
         private set
 
-    @OptIn(ExperimentalCoilApi::class)
     override fun onCreate() {
         super.onCreate()
         if (BuildConfig.DEBUG) {
@@ -46,7 +44,10 @@ class GraceRideApp : Application() {
             },
         )
         // Images (avatars, DuitNow QRs, receipts) are cookie-authenticated:
-        // share the session OkHttp client with Coil.
+        // keep only an in-memory cache (no plaintext disk image_cache) and purge legacy files.
+        container.appScope.launch {
+            runCatching { File(cacheDir, "image_cache").deleteRecursively() }
+        }
         val imageLoader = ImageLoader.Builder(this)
             .okHttpClient(container.okHttp.newBuilder().cache(null).build())
             .components { add(ImageDecoderDecoder.Factory()) }
@@ -55,19 +56,14 @@ class GraceRideApp : Application() {
                     .maxSizePercent(0.20)
                     .build()
             }
-            .diskCache {
-                DiskCache.Builder()
-                    .directory(File(cacheDir, "image_cache"))
-                    .maxSizeBytes(32L * 1024L * 1024L)
-                    .build()
-            }
+            .diskCachePolicy(CachePolicy.DISABLED)
             .crossfade(true)
             .build()
         Coil.setImageLoader(imageLoader)
         container.onSessionCleared = {
             imageLoader.memoryCache?.clear()
             container.appScope.launch {
-                runCatching { imageLoader.diskCache?.clear() }
+                runCatching { File(cacheDir, "image_cache").deleteRecursively() }
                 runCatching { container.okHttp.cache?.evictAll() }
             }
             runCatching { BackgroundNotificationWorker.cancel(this) }
@@ -75,7 +71,7 @@ class GraceRideApp : Application() {
         container.onSessionLocked = {
             imageLoader.memoryCache?.clear()
             container.appScope.launch {
-                runCatching { imageLoader.diskCache?.clear() }
+                runCatching { File(cacheDir, "image_cache").deleteRecursively() }
                 runCatching { container.okHttp.cache?.evictAll() }
             }
         }

@@ -78,39 +78,61 @@ async fn apply_plan_impl(
         return Err(bad(u.lang, ErrorKey::EventNotOpen));
     }
 
-    let target_draft: Option<(i64, String, String, Option<i64>, Option<i64>, Option<i64>)> =
-        if let Some(did) = req.draft_id {
-            let row: Option<(i64, String, String, Option<i64>, Option<i64>, Option<i64>)> =
-                sqlx::query_as(
-                    "SELECT id, status, visitors, submitted_by, created_by, updated_by
-                 FROM event_plan_drafts
-                 WHERE id = $1 AND event_id = $2
-                 FOR UPDATE",
-                )
-                .bind(did)
-                .bind(id)
-                .fetch_optional(&mut *tx)
-                .await?;
-            let Some(r) = row else {
-                return Err(bad(u.lang, ErrorKey::PlanDraftNotFound));
-            };
-            if !matches!(r.1.as_str(), "draft" | "pending_approval" | "returned") {
-                return Err(conflict(u.lang, ErrorKey::DraftNotEditable));
-            }
-            Some(r)
-        } else {
-            sqlx::query_as(
-                "SELECT id, status, visitors, submitted_by, created_by, updated_by
-                 FROM event_plan_drafts
-                 WHERE event_id = $1 AND status = 'pending_approval'
-                 ORDER BY version DESC, id DESC
-                 LIMIT 1
-                 FOR UPDATE",
-            )
-            .bind(id)
-            .fetch_optional(&mut *tx)
-            .await?
+    type TargetDraft = (
+        i64,
+        String,
+        String,
+        Option<i64>,
+        Option<i64>,
+        Option<i64>,
+        Option<i64>,
+        Option<String>,
+        Option<String>,
+    );
+    let target_draft: Option<TargetDraft> = if let Some(did) = req.draft_id {
+        let row: Option<TargetDraft> = sqlx::query_as(
+            "SELECT d.id, d.status, d.visitors, d.submitted_by, d.created_by, d.updated_by,
+                    d.locked_by, lbu.name, d.lock_expires_at
+             FROM event_plan_drafts d
+             LEFT JOIN users lbu ON lbu.id = d.locked_by
+             WHERE d.id = $1 AND d.event_id = $2
+             FOR UPDATE OF d",
+        )
+        .bind(did)
+        .bind(id)
+        .fetch_optional(&mut *tx)
+        .await?;
+        let Some(r) = row else {
+            return Err(bad(u.lang, ErrorKey::PlanDraftNotFound));
         };
+        if !matches!(r.1.as_str(), "draft" | "pending_approval" | "returned") {
+            return Err(conflict(u.lang, ErrorKey::DraftNotEditable));
+        }
+        Some(r)
+    } else {
+        sqlx::query_as(
+            "SELECT d.id, d.status, d.visitors, d.submitted_by, d.created_by, d.updated_by,
+                    d.locked_by, lbu.name, d.lock_expires_at
+             FROM event_plan_drafts d
+             LEFT JOIN users lbu ON lbu.id = d.locked_by
+             WHERE d.event_id = $1 AND d.status = 'pending_approval'
+             ORDER BY d.version DESC, d.id DESC
+             LIMIT 1
+             FOR UPDATE OF d",
+        )
+        .bind(id)
+        .fetch_optional(&mut *tx)
+        .await?
+    };
+    if let Some(ref td) = target_draft {
+        super::drafts::assert_not_locked_by_other(
+            u,
+            td.6,
+            td.7.as_deref(),
+            td.8.as_deref(),
+            &now(),
+        )?;
+    }
 
     // Permission check:
     // - Approving a draft (or calling /plan/approve) always requires traffic lead authority.
@@ -130,7 +152,9 @@ async fn apply_plan_impl(
 
     let draft_visitors_parsed: Vec<DraftVisitorEntry> = target_draft
         .as_ref()
-        .map(|(_, _, visitors_raw, _, _, _)| serde_json::from_str(visitors_raw).unwrap_or_default())
+        .map(|(_, _, visitors_raw, _, _, _, _, _, _)| {
+            serde_json::from_str(visitors_raw).unwrap_or_default()
+        })
         .unwrap_or_default();
 
     // Lock all potentially touched drivers in sorted order BEFORE reading rides/drivers/load
@@ -343,6 +367,9 @@ async fn apply_plan_impl(
         submitted_by,
         created_by,
         updated_by,
+        _locked_by,
+        _locked_by_name,
+        _lock_expires_at,
     )) = target_draft
     {
         let draft_visitors: Vec<DraftVisitorEntry> =
@@ -352,6 +379,16 @@ async fn apply_plan_impl(
         for dv in &draft_visitors {
             match dv.op.as_str() {
                 "add" => {
+                    if let Some(aid) = dv.area_id {
+                        let area_ok: bool =
+                            sqlx::query_scalar("SELECT EXISTS (SELECT 1 FROM areas WHERE id = $1)")
+                                .bind(aid)
+                                .fetch_one(&mut *tx)
+                                .await?;
+                        if !area_ok {
+                            return Err(bad(u.lang, ErrorKey::InvalidAction));
+                        }
+                    }
                     if let Some(d) = dv.driver_id {
                         if !driver.contains_key(&d) {
                             return Err(bad(u.lang, ErrorKey::DriverNotFound));
@@ -390,6 +427,37 @@ async fn apply_plan_impl(
                     let Some(vid) = dv.live_visitor_id else {
                         return Err(conflict(u.lang, ErrorKey::RideStatusChanged));
                     };
+                    let old_driver: Option<Option<i64>> = sqlx::query_scalar(
+                        "SELECT driver_id FROM plan_visitors WHERE id = $1 AND event_id = $2 FOR UPDATE",
+                    )
+                    .bind(vid)
+                    .bind(id)
+                    .fetch_optional(&mut *tx)
+                    .await?;
+                    let Some(old_driver) = old_driver else {
+                        return Err(conflict(u.lang, ErrorKey::RideStatusChanged));
+                    };
+                    if old_driver != dv.driver_id {
+                        let live_reimb: bool = sqlx::query_scalar(
+                            "SELECT EXISTS (SELECT 1 FROM reimbursements WHERE plan_visitor_id = $1 AND status <> 'rejected')",
+                        )
+                        .bind(vid)
+                        .fetch_one(&mut *tx)
+                        .await?;
+                        if live_reimb {
+                            return Err(conflict(u.lang, ErrorKey::VisitorHasReimbursement));
+                        }
+                    }
+                    if let Some(aid) = dv.area_id {
+                        let area_ok: bool =
+                            sqlx::query_scalar("SELECT EXISTS (SELECT 1 FROM areas WHERE id = $1)")
+                                .bind(aid)
+                                .fetch_one(&mut *tx)
+                                .await?;
+                        if !area_ok {
+                            return Err(bad(u.lang, ErrorKey::InvalidAction));
+                        }
+                    }
                     if let Some(d) = dv.driver_id {
                         if !driver.contains_key(&d) {
                             return Err(bad(u.lang, ErrorKey::DriverNotFound));

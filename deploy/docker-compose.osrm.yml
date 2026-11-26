@@ -29,7 +29,7 @@ services:
       - "${OSRM_DATA_DIR:-/opt/grace-ride/osrm-data}:/data:ro"
     read_only: true
     tmpfs:
-      - /tmp
+      - "/tmp:noexec,nosuid,nodev,size=64m"
     cap_drop:
       - ALL
     security_opt:
@@ -53,4 +53,12 @@ services:
         max-size: "10m"
         max-file: "3"
     networks:
-      - database
+      - routing
+
+  app:
+    networks:
+      - routing
+
+networks:
+  routing:
+    internal: true

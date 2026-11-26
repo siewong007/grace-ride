@@ -43,8 +43,11 @@ const OLE2_MAGIC = [0xd0, 0xcf, 0x11, 0xe0, 0xa1, 0xb1, 0x1a, 0xe1];
 const MAX_ZIP_ENTRIES = 500;
 const MAX_ENTRY_BYTES = 10 * 1024 * 1024;
 const MAX_TOTAL_BYTES = 20 * 1024 * 1024;
+const MAX_SHEETS = 20;
 const MAX_SHEET_ROWS = 5_000;
 const MAX_SHEET_COLS = 500;
+const MAX_GRID_CELLS = 100_000;
+const MAX_TOTAL_GRID_CELLS = 250_000;
 
 const utf8Decoder = new TextDecoder('utf-8');
 const utf8Encoder = new TextEncoder();
@@ -357,7 +360,11 @@ function parseSharedStrings(doc: Document): string[] {
   return out;
 }
 
-function parseWorksheet(doc: Document, sharedStrings: string[]): XlsxSheetCell[][] {
+function parseWorksheet(
+  doc: Document,
+  sharedStrings: string[],
+  cellBudget: { remaining: number },
+): XlsxSheetCell[][] {
   const sheetData = findDirectChild(doc.documentElement, 'sheetData');
   if (!sheetData) return [];
 
@@ -424,6 +431,12 @@ function parseWorksheet(doc: Document, sharedStrings: string[]): XlsxSheetCell[]
 
   if (maxRow < 0 || maxCol < 0) return [];
 
+  const gridCells = (maxRow + 1) * (maxCol + 1);
+  if (gridCells > MAX_GRID_CELLS || gridCells > cellBudget.remaining) {
+    throw new XlsxError('TOO_LARGE', 'Worksheet cell grid exceeds supported bounds');
+  }
+  cellBudget.remaining -= gridCells;
+
   const grid: XlsxSheetCell[][] = [];
   for (let r = 0; r <= maxRow; r++) {
     const srcRow = rowMap.get(r);
@@ -487,6 +500,11 @@ export async function readXlsxWorkbook(bytes: Uint8Array): Promise<XlsxWorkbook>
 
   const sheets: XlsxSheet[] = [];
   const sheetEls = childElements(sheetsEl, 'sheet');
+  if (sheetEls.length > MAX_SHEETS) {
+    throw new XlsxError('TOO_LARGE', 'Workbook contains too many sheets');
+  }
+  const seenSheetPaths = new Set<string>();
+  const cellBudget = { remaining: MAX_TOTAL_GRID_CELLS };
   for (let i = 0; i < sheetEls.length; i++) {
     const sheetEl = sheetEls[i];
     const name = sheetEl.getAttribute('name') || `Sheet${i + 1}`;
@@ -497,6 +515,11 @@ export async function readXlsxWorkbook(bytes: Uint8Array): Promise<XlsxWorkbook>
     const rel = rid ? wbRels.get(rid) : undefined;
     if (rel && rel.type && !rel.type.endsWith('/worksheet')) continue;
     const sheetPath = rel?.target ?? (wbDir ? `${wbDir}/worksheets/sheet${i + 1}.xml` : `worksheets/sheet${i + 1}.xml`);
+    const normalizedSheetPath = normalizeZipPath(sheetPath).toLowerCase();
+    if (seenSheetPaths.has(normalizedSheetPath)) {
+      throw new XlsxError('INVALID_XLSX', `Duplicate worksheet reference ${sheetPath}`);
+    }
+    seenSheetPaths.add(normalizedSheetPath);
     const sheetDoc = await readEntryDoc(sheetPath);
     if (!sheetDoc) {
       if (rel) {
@@ -506,7 +529,7 @@ export async function readXlsxWorkbook(bytes: Uint8Array): Promise<XlsxWorkbook>
     }
     sheets.push({
       name,
-      rows: parseWorksheet(sheetDoc, sharedStrings),
+      rows: parseWorksheet(sheetDoc, sharedStrings, cellBudget),
     });
   }
 

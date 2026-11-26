@@ -62,6 +62,7 @@ import org.pjstatecm.graceride.R
 import org.pjstatecm.graceride.data.api.ChatMessageDto
 import org.pjstatecm.graceride.di.AppContainer
 import org.pjstatecm.graceride.domain.KlTime
+import org.pjstatecm.graceride.ui.SecureScreenEffect
 import org.pjstatecm.graceride.ui.UiHaptics
 import org.pjstatecm.graceride.ui.components.EmptyView
 import org.pjstatecm.graceride.ui.components.InlineButtonSpinner
@@ -79,6 +80,7 @@ fun TripChatSheet(
         key = "trip-chat-$rideId",
         factory = TripChatViewModel.factory(container, rideId),
     )
+    SecureScreenEffect()
     val state by vm.state.collectAsStateWithLifecycle()
     val view = LocalView.current
     var draft by remember { mutableStateOf("") }

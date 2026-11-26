@@ -44,7 +44,7 @@ pub(super) async fn mark_attendance(
     }
     let v = req.attended.map(|a| a as i64);
     let mut tx = st.db.begin().await?;
-    let ev_status: String = sqlx::query_scalar("SELECT status FROM events WHERE id=$1 FOR SHARE")
+    let ev_status: String = sqlx::query_scalar("SELECT status FROM events WHERE id=$1 FOR UPDATE")
         .bind(id)
         .fetch_one(&mut *tx)
         .await?;
@@ -451,12 +451,22 @@ pub(super) async fn reset_checkin_code(
     if !can_manage(&u, e.created_by, Act::Update) {
         return Err(forbidden(u.lang, ErrorKey::OnlyOrganiserCanEdit));
     }
+    let mut tx = st.db.begin().await?;
+    let ev_status: String =
+        sqlx::query_scalar("SELECT status FROM events WHERE id = $1 FOR UPDATE")
+            .bind(id)
+            .fetch_one(&mut *tx)
+            .await?;
+    if matches!(ev_status.as_str(), "cancelled" | "finished") {
+        return Err(bad(u.lang, ErrorKey::EventNotOpen));
+    }
     let new_code = random_token(10);
     sqlx::query("UPDATE events SET checkin_code = $1 WHERE id = $2")
         .bind(&new_code)
         .bind(id)
-        .execute(&st.db)
+        .execute(&mut *tx)
         .await?;
+    tx.commit().await?;
     audit(
         &st.db,
         Some(u.id),

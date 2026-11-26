@@ -61,6 +61,8 @@ export const SECURITY_ACTIONS = [
   'login.failed',
   'totp.failed',
   'password.failed',
+  'google.link_failed',
+  'password.reset_denied',
   'recovery.reject',
 ];
 
@@ -96,10 +98,18 @@ export const ACTION_CATEGORIES = [
     category: 'security',
     actions: [
       'login.passkey',
+      'login.password',
+      'login.google',
       'login.reauth',
       'login.dev',
       'login.failed',
       'password.failed',
+      'google.link',
+      'google.link_failed',
+      'google.unlink',
+      'password.reset_verified',
+      'password.reset_denied',
+      'password.reset',
       'logout',
       'passkey.register',
       'passkey.delete',

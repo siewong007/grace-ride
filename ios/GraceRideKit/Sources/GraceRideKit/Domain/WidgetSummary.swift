@@ -175,9 +175,6 @@ public enum WidgetSnapshotStore {
         let zh = lang.hasPrefix("zh")
         switch ride.status {
         case "confirmed":
-            if let name = ride.driver?.name, !name.isEmpty {
-                return zh ? "司机：\(name)" : "Driver: \(name)"
-            }
             return zh ? "已确认" : "Confirmed"
         case "in_progress":
             return zh ? "进行中" : "On the way"

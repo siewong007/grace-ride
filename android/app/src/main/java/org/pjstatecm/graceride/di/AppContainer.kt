@@ -217,10 +217,29 @@ class AppContainer(
         rebuildApi()
     }
 
+    fun clearTransientMediaAndExports(minAgeMs: Long = 0L) {
+        val cacheRoot = appContext?.cacheDir ?: return
+        val cutoff = System.currentTimeMillis() - minAgeMs
+        for (dirName in TRANSIENT_MEDIA_DIRS) {
+            val dir = File(cacheRoot, dirName)
+            if (!dir.exists()) continue
+            if (minAgeMs <= 0L) {
+                runCatching { dir.deleteRecursively() }
+            } else {
+                dir.listFiles()?.forEach { child ->
+                    if (child.lastModified() <= cutoff) {
+                        runCatching { child.deleteRecursively() }
+                    }
+                }
+            }
+        }
+    }
+
     /** Warms up Keystore-backed storage and migrates legacy non-secret UI prefs off the main thread. */
     fun warmUpStorage() {
         (secureStore as? EncryptedPrefsStore)?.warmUp()
         biometric.ensureLoaded()
+        clearTransientMediaAndExports(minAgeMs = 5L * 60L * 1000L)
         cookieJar.hasCookies()
         uiPrefs?.let { prefs ->
             if (!prefs.contains("lang")) {
@@ -319,6 +338,7 @@ class AppContainer(
             offlineQueue.clear()
             appScope.launch {
                 offlineCache.clearAll()
+                clearTransientMediaAndExports()
                 appContext?.let { ctx ->
                     runCatching { androidx.core.app.NotificationManagerCompat.from(ctx).cancelAll() }
                     runCatching {
@@ -338,6 +358,7 @@ class AppContainer(
             rides.clearAreasCache()
             appScope.launch {
                 offlineCache.clearAll()
+                clearTransientMediaAndExports()
                 appContext?.let { ctx ->
                     runCatching { androidx.core.app.NotificationManagerCompat.from(ctx).cancelAll() }
                     runCatching {
@@ -356,6 +377,7 @@ class AppContainer(
             rides.clearAreasCache()
             offlineQueue.clear()
             offlineCache.clearUser(prevId)
+            clearTransientMediaAndExports()
             appContext?.let { ctx ->
                 runCatching { androidx.core.app.NotificationManagerCompat.from(ctx).cancelAll() }
                 runCatching {
@@ -372,6 +394,25 @@ class AppContainer(
     )
 
     init {
+        biometric.onRelocked = {
+            rides.clearAreasCache()
+            appScope.launch {
+                offlineCache.clearAll()
+                clearTransientMediaAndExports()
+                appContext?.let { ctx ->
+                    runCatching { androidx.core.app.NotificationManagerCompat.from(ctx).cancelAll() }
+                    runCatching {
+                        org.pjstatecm.graceride.service.LiveTripLocationService.stop(ctx, notifyServer = false)
+                    }
+                    runCatching {
+                        androidx.core.content.pm.ShortcutManagerCompat.removeDynamicShortcuts(ctx, listOf("drive_hub"))
+                    }
+                    org.pjstatecm.graceride.widget.WidgetSnapshotStore.clear(ctx)
+                    org.pjstatecm.graceride.widget.refreshGraceRideWidget(ctx)
+                }
+            }
+            onSessionLocked?.invoke()
+        }
         appScope.launch {
             authEvents.events.collect { event ->
                 when (event) {
@@ -397,7 +438,11 @@ class AppContainer(
         }
         appScope.launch {
             networkMonitor.isOnline.drop(1).filter { it }.collect {
-                if (auth.state.value is AuthState.SignedIn && offlineQueue.pending.value.isNotEmpty()) {
+                val signedIn = auth.state.value as? AuthState.SignedIn
+                if (signedIn != null &&
+                    !biometric.requiresAppGate(signedIn.me.id) &&
+                    offlineQueue.pending.value.isNotEmpty()
+                ) {
                     runSuspendCatching { offlineQueue.flush(rides) }
                 }
             }
@@ -433,6 +478,7 @@ class AppContainer(
         private val THEME_MODES = setOf("system", "light", "dark")
         private val TEXT_SCALE_MODES = setOf("normal", "large", "xl")
         private val NAV_APP_MODES = setOf("ask", "waze", "google")
+        private val TRANSIENT_MEDIA_DIRS = listOf("image_cache", "shared_exports", "shared_plans", "shared_avatars")
         private const val HTTP_CACHE_BYTES = 10L * 1024L * 1024L
         private const val KEY_LANG_PENDING_SYNC = "lang_pending_sync"
     }

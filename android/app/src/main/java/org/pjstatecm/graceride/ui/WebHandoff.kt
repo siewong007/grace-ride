@@ -21,7 +21,12 @@ import androidx.core.net.toUri
 fun openInWebApp(context: Context, url: String) {
     val uri = url.toUri()
     val scheme = uri.scheme?.lowercase()
-    val isWebUrl = scheme == "http" || scheme == "https"
+    val isHttpAllowed = scheme == "https" || (scheme == "http" && org.pjstatecm.graceride.BuildConfig.DEBUG)
+    val isTelegram = scheme == "tg"
+    if (!isHttpAllowed && !isTelegram) {
+        return
+    }
+    val isWebUrl = isHttpAllowed
     if (isWebUrl) {
         val customTabsPkg = runCatching { CustomTabsClient.getPackageName(context, null) }
             .getOrNull()

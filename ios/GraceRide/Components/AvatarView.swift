@@ -6,13 +6,14 @@ import UIKit
 public final class AuthenticatedImageCache {
     public static let shared = AuthenticatedImageCache()
     private let cache = NSCache<NSNumber, UIImage>()
+    private static let redirectDelegate = CookieStrippingRedirectDelegate()
     private static let ephemeralSession: URLSession = {
         let cfg = URLSessionConfiguration.ephemeral
         cfg.urlCache = nil
         cfg.requestCachePolicy = .reloadIgnoringLocalCacheData
         cfg.httpShouldSetCookies = false
         cfg.httpCookieAcceptPolicy = .never
-        return URLSession(configuration: cfg)
+        return URLSession(configuration: cfg, delegate: redirectDelegate, delegateQueue: nil)
     }()
 
     private init() {

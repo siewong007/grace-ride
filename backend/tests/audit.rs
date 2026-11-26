@@ -71,6 +71,7 @@ async fn sign_in_and_account_security_events_are_logged() {
     )
     .await;
     assert_eq!(finish.status, StatusCode::OK, "{}", finish.json);
+    let cookie = cookie_from(&finish).expect("rotated cookie");
     assert_eq!(
         logged(&st, "passkey.register").await.last().unwrap(),
         &(Some(uid), Some(uid), "Audit key".to_string())

@@ -127,7 +127,7 @@ impl Default for RoutingState {
                 .pool_idle_timeout(Duration::from_secs(10))
                 .timeout(Duration::from_secs(8))
                 .build()
-                .unwrap_or_default(),
+                .expect("HTTP client build failed"),
         }
     }
 }

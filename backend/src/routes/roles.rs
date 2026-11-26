@@ -407,6 +407,24 @@ async fn update(
         .execute(&mut *tx)
         .await?;
     write_permissions(&mut tx, &key, &set).await?;
+    if before.privileged() || set.privileged() {
+        let stamp = crate::util::now();
+        if key == MEMBER_ROLE {
+            sqlx::query("UPDATE users SET last_privileged_at = $1 WHERE status = 'active'")
+                .bind(&stamp)
+                .execute(&mut *tx)
+                .await?;
+        } else {
+            sqlx::query(
+                "UPDATE users SET last_privileged_at = $1
+                 WHERE id IN (SELECT user_id FROM member_roles WHERE role_key = $2)",
+            )
+            .bind(&stamp)
+            .bind(&key)
+            .execute(&mut *tx)
+            .await?;
+        }
+    }
     if set.privileged() && !before.privileged() {
         if key == MEMBER_ROLE {
             sqlx::query(
@@ -484,15 +502,28 @@ async fn remove(
         return Err(forbidden(u.lang, ErrorKey::AdminAppointmentRestricted));
     }
     guard_own_access(&mut tx, &u, &key, None).await?;
-    // Members who held the role simply lose it (indexed via member_roles).
-    let held = sqlx::query(
-        "UPDATE users SET roles = array_to_string(array_remove(string_to_array(roles, ','), $1), ',')
-         WHERE id IN (SELECT user_id FROM member_roles WHERE role_key = $1)",
-    )
-    .bind(&key)
-    .execute(&mut *tx)
-    .await?
-    .rows_affected();
+    let held = if before.privileged() {
+        sqlx::query(
+            "UPDATE users SET roles = array_to_string(array_remove(string_to_array(roles, ','), $1), ','),
+                              last_privileged_at = $2
+             WHERE id IN (SELECT user_id FROM member_roles WHERE role_key = $1)",
+        )
+        .bind(&key)
+        .bind(crate::util::now())
+        .execute(&mut *tx)
+        .await?
+        .rows_affected()
+    } else {
+        // Members who held the role simply lose it (indexed via member_roles).
+        sqlx::query(
+            "UPDATE users SET roles = array_to_string(array_remove(string_to_array(roles, ','), $1), ',')
+             WHERE id IN (SELECT user_id FROM member_roles WHERE role_key = $1)",
+        )
+        .bind(&key)
+        .execute(&mut *tx)
+        .await?
+        .rows_affected()
+    };
     sqlx::query("DELETE FROM roles WHERE key = $1")
         .bind(&key)
         .execute(&mut *tx)

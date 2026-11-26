@@ -1,12 +1,16 @@
 //! TOTP 2FA setup/verification, backup codes, session lock/unlock, and password update.
 
 use axum::{extract::State, Json};
+use axum_extra::extract::cookie::CookieJar;
 use serde::Deserialize;
 use serde_json::{json, Value};
 use totp_rs::Secret;
 
 use super::passkeys::require_recent_sign_in;
-use super::{hash_password_async, totp_for, verify_password_async, verify_totp};
+use super::{
+    hash_password_async, revoke_other_sessions, rotate_session, totp_for, verify_password_async,
+    verify_totp,
+};
 use crate::auth::CurrentUser;
 use crate::error::{bad, AppError, AppResult};
 use crate::i18n::ErrorKey;
@@ -74,9 +78,10 @@ fn generate_backup_codes(user_id: i64) -> (Vec<String>, Vec<String>) {
 
 pub(super) async fn totp_enable(
     State(st): State<AppState>,
+    jar: CookieJar,
     u: CurrentUser,
     Json(req): Json<CodeReq>,
-) -> AppResult<Json<Value>> {
+) -> AppResult<(CookieJar, Json<Value>)> {
     require_recent_sign_in(&st, &u).await?;
     let (secret, enabled): (Option<String>, i64) =
         sqlx::query_as("SELECT totp_secret, totp_enabled FROM users WHERE id=$1")
@@ -101,15 +106,15 @@ pub(super) async fn totp_enable(
         .bind(u.id)
         .execute(&st.db)
         .await?;
-    sqlx::query("UPDATE sessions SET mfa_ok=1 WHERE token=$1")
-        .bind(&u.session_id)
-        .execute(&st.db)
-        .await?;
+    let jar = rotate_session(&st, jar, &u, true, true, false).await?;
     audit(&st.db, Some(u.id), "totp.enable", "user", Some(u.id), "").await;
-    Ok(Json(json!({ "ok": true, "backup_codes": plain_codes })))
+    Ok((
+        jar,
+        Json(json!({ "ok": true, "backup_codes": plain_codes })),
+    ))
 }
 
-async fn consume_backup_code(
+pub(super) async fn consume_backup_code(
     st: &AppState,
     user_id: i64,
     raw: &str,
@@ -225,9 +230,10 @@ pub(super) struct UnlockReq {
 
 pub(super) async fn unlock_session(
     State(st): State<AppState>,
+    jar: CookieJar,
     u: CurrentUser,
     Json(req): Json<UnlockReq>,
-) -> AppResult<Json<Value>> {
+) -> AppResult<(CookieJar, Json<Value>)> {
     let (totp_enabled, totp_secret, passkey_count, biometric_count): (
         i64,
         Option<String>,
@@ -299,20 +305,7 @@ pub(super) async fn unlock_session(
         return Err(bad(u.lang, ErrorKey::UnlockMethodRequired));
     }
 
-    let ts_now = now();
-    if mfa_verified {
-        sqlx::query("UPDATE sessions SET locked_at=NULL, last_seen_at=$1, mfa_ok=1, failed_totp_attempts=0 WHERE token=$2")
-            .bind(&ts_now)
-            .bind(&u.session_id)
-            .execute(&st.db)
-            .await?;
-    } else {
-        sqlx::query("UPDATE sessions SET locked_at=NULL, last_seen_at=$1 WHERE token=$2")
-            .bind(&ts_now)
-            .bind(&u.session_id)
-            .execute(&st.db)
-            .await?;
-    }
+    let jar = rotate_session(&st, jar, &u, mfa_verified || u.mfa_ok, true, false).await?;
     audit(
         &st.db,
         Some(u.id),
@@ -322,7 +315,7 @@ pub(super) async fn unlock_session(
         if mfa_verified { "2fa" } else { "dev" },
     )
     .await;
-    Ok(Json(json!({ "ok": true })))
+    Ok((jar, Json(json!({ "ok": true }))))
 }
 
 async fn record_totp_failure(st: &AppState, u: &CurrentUser, default_err: AppError) -> AppError {
@@ -356,9 +349,10 @@ async fn record_totp_failure(st: &AppState, u: &CurrentUser, default_err: AppErr
 
 pub(super) async fn totp_verify(
     State(st): State<AppState>,
+    jar: CookieJar,
     u: CurrentUser,
     Json(req): Json<CodeReq>,
-) -> AppResult<Json<Value>> {
+) -> AppResult<(CookieJar, Json<Value>)> {
     let row: Option<(Option<String>, Option<String>)> = sqlx::query_as(
         "SELECT totp_secret, totp_backup_codes FROM users WHERE id=$1 AND totp_enabled=1",
     )
@@ -380,10 +374,7 @@ pub(super) async fn totp_verify(
                 .await
                 .is_ok()
             {
-                sqlx::query("UPDATE sessions SET mfa_ok=1, failed_totp_attempts=0 WHERE token=$1")
-                    .bind(&u.session_id)
-                    .execute(&st.db)
-                    .await?;
+                let jar = rotate_session(&st, jar, &u, true, true, false).await?;
                 audit(
                     &st.db,
                     Some(u.id),
@@ -393,7 +384,7 @@ pub(super) async fn totp_verify(
                     "totp",
                 )
                 .await;
-                return Ok(Json(json!({ "ok": true, "method": "totp" })));
+                return Ok((jar, Json(json!({ "ok": true, "method": "totp" }))));
             }
         }
     }
@@ -408,10 +399,7 @@ pub(super) async fn totp_verify(
     if norm.len() == 8 {
         match consume_backup_code(&st, u.id, &norm, u.lang).await {
             Ok(remaining) => {
-                sqlx::query("UPDATE sessions SET mfa_ok=1, failed_totp_attempts=0 WHERE token=$1")
-                    .bind(&u.session_id)
-                    .execute(&st.db)
-                    .await?;
+                let jar = rotate_session(&st, jar, &u, true, true, false).await?;
                 audit(
                     &st.db,
                     Some(u.id),
@@ -421,11 +409,14 @@ pub(super) async fn totp_verify(
                     format!("remaining: {remaining}"),
                 )
                 .await;
-                return Ok(Json(json!({
-                    "ok": true,
-                    "method": "backup_code",
-                    "remaining_backup_codes": remaining
-                })));
+                return Ok((
+                    jar,
+                    Json(json!({
+                        "ok": true,
+                        "method": "backup_code",
+                        "remaining_backup_codes": remaining
+                    })),
+                ));
             }
             Err(err @ AppError::TooManyRequests { .. }) => return Err(err),
             Err(_) => {}
@@ -464,6 +455,7 @@ pub(super) async fn totp_regenerate_backup_codes(
         .bind(u.id)
         .execute(&st.db)
         .await?;
+    revoke_other_sessions(&st.db, u.id, &u.session_id).await?;
     audit(
         &st.db,
         Some(u.id),
@@ -516,6 +508,7 @@ pub(super) async fn set_password(
         .bind(u.id)
         .execute(&st.db)
         .await?;
+    revoke_other_sessions(&st.db, u.id, &u.session_id).await?;
     audit(&st.db, Some(u.id), "password.set", "user", Some(u.id), "").await;
     Ok(Json(json!({ "ok": true })))
 }

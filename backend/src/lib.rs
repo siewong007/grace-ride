@@ -10,6 +10,7 @@ pub mod audience;
 pub mod auth;
 pub mod crypto;
 pub mod error;
+pub mod google_oauth;
 pub mod i18n;
 pub mod jobs;
 pub mod notifications;
@@ -262,6 +263,10 @@ pub async fn init(cfg: Config) -> anyhow::Result<AppState> {
         cfg.turnstile.clone(),
         &cfg.public_url,
     ));
+    let google_oauth = Arc::new(google_oauth::GoogleOAuthClient::new(
+        cfg.google_oauth.clone(),
+        &cfg.public_url,
+    ));
     let (shutdown, _) = tokio::sync::watch::channel(false);
     Ok(AppState {
         db,
@@ -270,6 +275,7 @@ pub async fn init(cfg: Config) -> anyhow::Result<AppState> {
         limiter: Arc::new(RateLimiter::default()),
         routing: Arc::new(routing::RoutingState::default()),
         turnstile,
+        google_oauth,
         events: stream::channel(),
         shutdown,
     })
@@ -426,8 +432,42 @@ pub fn router(state: AppState) -> Router {
         );
 
     // In production the compiled React app is served from the same origin.
+    // Static assets are served explicitly without SPA index.html fallback so missing
+    // asset paths return 404 (never 200 text/html).
     if let Some(dir) = &state.cfg.static_dir {
         app = app
+            .nest_service("/assets", ServeDir::new(dir.join("assets")))
+            .nest_service("/icons", ServeDir::new(dir.join("icons")))
+            .route_service("/sw.js", ServeFile::new(dir.join("sw.js")))
+            .route_service("/version.json", ServeFile::new(dir.join("version.json")))
+            .route_service(
+                "/manifest.webmanifest",
+                ServeFile::new(dir.join("manifest.webmanifest")),
+            )
+            .route_service("/theme-boot.js", ServeFile::new(dir.join("theme-boot.js")))
+            .route_service("/icon.svg", ServeFile::new(dir.join("icon.svg")))
+            .route_service("/icon-192.png", ServeFile::new(dir.join("icon-192.png")))
+            .route_service("/icon-512.png", ServeFile::new(dir.join("icon-512.png")))
+            .route_service(
+                "/icon-maskable-512.png",
+                ServeFile::new(dir.join("icon-maskable-512.png")),
+            )
+            .route_service(
+                "/apple-touch-icon.png",
+                ServeFile::new(dir.join("apple-touch-icon.png")),
+            )
+            .route_service(
+                "/badge-monochrome.png",
+                ServeFile::new(dir.join("badge-monochrome.png")),
+            )
+            .route_service(
+                "/third-party-licenses.json",
+                ServeFile::new(dir.join("third-party-licenses.json")),
+            )
+            .route_service(
+                "/third-party-licenses.txt",
+                ServeFile::new(dir.join("third-party-licenses.txt")),
+            )
             .fallback_service(ServeDir::new(dir).fallback(ServeFile::new(dir.join("index.html"))));
     }
 

@@ -1,16 +1,17 @@
 name: Deploy production
 
 # A push to master whose CI run passes builds the image on a GitHub runner and
-# rolls it onto the AIC VPS. The runner cannot reach the host over IPv6, so SSH uses the
-# forwarded port 20049. The pinned host key is
-# SHA256:HV6OszvuYmwmWRLEY7z7jm8GojWZJppJlDBHIhJVUxw.
+# rolls it onto the AIC VPS.
 #
 # Required GitHub Environment (`production`) secret:
-#   - VPS_SSH_PRIVATE_KEY  (private key accepted for the VPS deploy user at 162.19.81.122:20049;
-#                           the same key the hotel-app deploy uses)
-# Optional GitHub repository/environment variable:
-#   - VPS_USER             (defaults to `root`; set to a dedicated deploy user once provisioned)
-# Host, port and the pinned host key are public and live in `env:` below.
+#   - VPS_SSH_PRIVATE_KEY  (private SSH key for the VPS deploy user)
+# Required GitHub Environment (`production`) variables (`vars.*`):
+#   - VPS_HOST             (VPS hostname or IP)
+#   - VPS_PORT             (SSH port)
+#   - VPS_USER             (SSH deploy user)
+#   - VPS_HOST_KEY         (SSH known_hosts entry for the pinned host key)
+# Optional GitHub Environment (`production`) variable:
+#   - VPS_HOST_FP          (expected SSH SHA256 fingerprint verified via ssh-keygen -lf)
 #
 # The database container and its volume stay in place across upgrades; on a brand-new VPS
 # where `grace-ride-db` is not running yet, it is started and awaited first.
@@ -35,12 +36,11 @@ concurrency:
   cancel-in-progress: false
 
 env:
-  # Public connection details are pinned in the workflow (same as the hotel-app
-  # and online-shopping deploys) so a lost repo variable cannot break the deploy.
-  VPS_HOST: 162.19.81.122
-  VPS_PORT: "20049"
-  VPS_USER: ${{ vars.VPS_USER || 'root' }}
-  VPS_HOST_KEY: "[162.19.81.122]:20049 ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIIxenH95jfg3hxfkumJpZJyV7phwCNDrXrAL0wUXnta9"
+  VPS_HOST: ${{ vars.VPS_HOST }}
+  VPS_PORT: ${{ vars.VPS_PORT }}
+  VPS_USER: ${{ vars.VPS_USER }}
+  VPS_HOST_KEY: ${{ vars.VPS_HOST_KEY }}
+  VPS_HOST_FP: ${{ vars.VPS_HOST_FP }}
   PUBLIC_URL: https://graceride.saliminn.my
 
 jobs:
@@ -105,6 +105,12 @@ jobs:
           if [[ -f deploy/docker-compose.osrm.yml ]]; then
             cp deploy/docker-compose.osrm.yml "$RUNNER_TEMP/deploy-bundle/docker-compose.osrm.yml"
           fi
+          (
+            cd "$RUNNER_TEMP/deploy-bundle"
+            files=("grace-ride-$sha.tar.gz" "docker-compose.aic.yml")
+            [[ -f docker-compose.osrm.yml ]] && files+=("docker-compose.osrm.yml")
+            sha256sum "${files[@]}" > SHA256SUMS
+          )
 
       - name: Upload deploy bundle
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
@@ -133,6 +139,7 @@ jobs:
         run: |
           set -euo pipefail
           [[ "$SHA" =~ ^[0-9a-f]{40}$ ]]
+          (cd "$RUNNER_TEMP/deploy-bundle" && sha256sum -c SHA256SUMS)
           gzip -t "$RUNNER_TEMP/deploy-bundle/grace-ride-$SHA.tar.gz"
           mv "$RUNNER_TEMP/deploy-bundle/grace-ride-$SHA.tar.gz" "$RUNNER_TEMP/grace-ride-$SHA.tar.gz"
 
@@ -142,15 +149,21 @@ jobs:
           VPS_SSH_PRIVATE_KEY: ${{ secrets.VPS_SSH_PRIVATE_KEY }}
         run: |
           set -euo pipefail
-          test -n "$VPS_SSH_PRIVATE_KEY"
-          test -n "$VPS_HOST_KEY"
-          test -n "$VPS_HOST"
+          test -n "${VPS_SSH_PRIVATE_KEY:-}" || { echo "VPS_SSH_PRIVATE_KEY secret is required" >&2; exit 1; }
+          test -n "${VPS_HOST_KEY:-}" || { echo "VPS_HOST_KEY var is required" >&2; exit 1; }
+          test -n "${VPS_HOST:-}" || { echo "VPS_HOST var is required" >&2; exit 1; }
+          test -n "${VPS_PORT:-}" || { echo "VPS_PORT var is required" >&2; exit 1; }
+          [[ "$VPS_PORT" =~ ^[0-9]+$ ]] || { echo "VPS_PORT must be numeric" >&2; exit 1; }
+          test -n "${VPS_USER:-}" || { echo "VPS_USER var is required" >&2; exit 1; }
           install -m 0600 /dev/null "$RUNNER_TEMP/vps-key"
           printf '%s\n' "$VPS_SSH_PRIVATE_KEY" > "$RUNNER_TEMP/vps-key"
           install -m 0600 /dev/null "$RUNNER_TEMP/vps-known-hosts"
           printf '%s\n' "$VPS_HOST_KEY" > "$RUNNER_TEMP/vps-known-hosts"
-          ssh-keygen -lf "$RUNNER_TEMP/vps-known-hosts" \
-            | grep -Fq 'SHA256:HV6OszvuYmwmWRLEY7z7jm8GojWZJppJlDBHIhJVUxw'
+          if [[ -n "${VPS_HOST_FP:-}" ]]; then
+            ssh-keygen -lf "$RUNNER_TEMP/vps-known-hosts" | grep -Fq "$VPS_HOST_FP"
+          else
+            ssh-keygen -lf "$RUNNER_TEMP/vps-known-hosts" >/dev/null
+          fi
 
       - name: Upload the image and roll the app
         shell: bash
@@ -173,25 +186,32 @@ jobs:
           fi
           echo "OLD_TAG=$prev_tag" >> "$GITHUB_ENV"
 
+          remote_stage=$(ssh "${ssh_opts[@]}" -p "$VPS_PORT" "$VPS_USER@$VPS_HOST" \
+            "install -d -m 0700 /opt/grace-ride && mktemp -d /opt/grace-ride/.deploy.XXXXXX")
+          [[ "$remote_stage" =~ ^/opt/grace-ride/\.deploy\.[A-Za-z0-9]+$ ]] \
+            || { echo "Unexpected remote stage path: $remote_stage" >&2; exit 1; }
+          echo "REMOTE_STAGE=$remote_stage" >> "$GITHUB_ENV"
+
           scp "${ssh_opts[@]}" -P "$VPS_PORT" \
             "$RUNNER_TEMP/deploy-bundle/docker-compose.aic.yml" \
-            "$VPS_USER@$VPS_HOST:/tmp/docker-compose.aic.$SHA.yml"
+            "$VPS_USER@$VPS_HOST:$remote_stage/docker-compose.aic.$SHA.yml"
           if [[ -f "$RUNNER_TEMP/deploy-bundle/docker-compose.osrm.yml" ]]; then
             scp "${ssh_opts[@]}" -P "$VPS_PORT" \
               "$RUNNER_TEMP/deploy-bundle/docker-compose.osrm.yml" \
-              "$VPS_USER@$VPS_HOST:/tmp/docker-compose.osrm.$SHA.yml"
+              "$VPS_USER@$VPS_HOST:$remote_stage/docker-compose.osrm.$SHA.yml"
           fi
           scp "${ssh_opts[@]}" -P "$VPS_PORT" \
             "$RUNNER_TEMP/grace-ride-$SHA.tar.gz" \
-            "$VPS_USER@$VPS_HOST:/tmp/grace-ride-$SHA.tar.gz.part"
+            "$VPS_USER@$VPS_HOST:$remote_stage/grace-ride-$SHA.tar.gz.part"
 
           ssh "${ssh_opts[@]}" -p "$VPS_PORT" \
             -o ServerAliveInterval=15 \
             -o ServerAliveCountMax=8 \
             "$VPS_USER@$VPS_HOST" \
-            "SHA='$SHA' bash -s" <<'REMOTE'
+            "SHA='$SHA' REMOTE_STAGE='$remote_stage' bash -s" <<'REMOTE'
           set -euo pipefail
           [[ "$SHA" =~ ^[0-9a-f]{40}$ ]]
+          [[ "$REMOTE_STAGE" =~ ^/opt/grace-ride/\.deploy\.[A-Za-z0-9]+$ ]]
           avail=$(df --output=avail -B1 / | tail -n 1 | tr -d ' ')
           if [[ "$avail" -lt 1500000000 ]]; then
             echo "Not enough free disk for a Grace Ride roll" >&2
@@ -202,14 +222,14 @@ jobs:
           if [[ -f /opt/grace-ride/docker-compose.aic.yml ]]; then
             cp -a /opt/grace-ride/docker-compose.aic.yml /opt/grace-ride/docker-compose.aic.yml.prev
           fi
-          install -m 0644 "/tmp/docker-compose.aic.$SHA.yml" /opt/grace-ride/docker-compose.aic.yml
-          rm -f "/tmp/docker-compose.aic.$SHA.yml"
-          if [[ -f "/tmp/docker-compose.osrm.$SHA.yml" ]]; then
+          install -m 0644 "$REMOTE_STAGE/docker-compose.aic.$SHA.yml" /opt/grace-ride/docker-compose.aic.yml
+          rm -f "$REMOTE_STAGE/docker-compose.aic.$SHA.yml"
+          if [[ -f "$REMOTE_STAGE/docker-compose.osrm.$SHA.yml" ]]; then
             if [[ -f /opt/grace-ride/docker-compose.osrm.yml ]]; then
               cp -a /opt/grace-ride/docker-compose.osrm.yml /opt/grace-ride/docker-compose.osrm.yml.prev
             fi
-            install -m 0644 "/tmp/docker-compose.osrm.$SHA.yml" /opt/grace-ride/docker-compose.osrm.yml
-            rm -f "/tmp/docker-compose.osrm.$SHA.yml"
+            install -m 0644 "$REMOTE_STAGE/docker-compose.osrm.$SHA.yml" /opt/grace-ride/docker-compose.osrm.yml
+            rm -f "$REMOTE_STAGE/docker-compose.osrm.$SHA.yml"
           fi
 
           old_image=$(docker inspect -f '{{.Config.Image}}' grace-ride 2>/dev/null || echo '')
@@ -218,9 +238,13 @@ jobs:
             old_image="grace-ride:none"
           fi
           old_tag=${old_image#grace-ride:}
+          if [[ ! "$old_tag" =~ ^[A-Za-z0-9._-]+$ ]]; then
+            old_tag="none"
+          fi
 
           set_image_tag() {
             local tag="$1"
+            [[ "$tag" =~ ^[A-Za-z0-9._-]+$ ]] || { echo "Invalid image tag: $tag" >&2; exit 1; }
             if grep -q '^IMAGE_TAG=' /opt/grace-ride/secrets.env; then
               sed -i "s/^IMAGE_TAG=.*/IMAGE_TAG=${tag}/" /opt/grace-ride/secrets.env
             else
@@ -247,15 +271,22 @@ jobs:
 
           write_pre_roll_dump() {
             local dump_base="/opt/grace-ride/pre-roll-backups/pre-${SHA}.dump"
-            local age_pub
+            local age_pub allow_plain
             age_pub=$(grep -E '^BACKUP_AGE_RECIPIENT=' /opt/grace-ride/secrets.env 2>/dev/null | head -n 1 | cut -d= -f2- | tr -d "\"'\r\n" || true)
-            if [[ -n "$age_pub" ]] && command -v age >/dev/null 2>&1; then
-              docker exec grace-ride-db pg_dump -U grace -d grace_ride -Fc | age -r "$age_pub" -o "${dump_base}.age"
-              chmod 600 "${dump_base}.age"
-            else
-              docker exec grace-ride-db pg_dump -U grace -d grace_ride -Fc > "$dump_base"
-              chmod 600 "$dump_base"
-            fi
+            allow_plain=$(grep -E '^ALLOW_PLAINTEXT_PRE_ROLL_DUMP=' /opt/grace-ride/secrets.env 2>/dev/null | head -n 1 | cut -d= -f2- | tr -d "\"'\r\n" || true)
+            (
+              umask 077
+              if [[ -n "$age_pub" ]] && command -v age >/dev/null 2>&1; then
+                docker exec grace-ride-db pg_dump -U grace -d grace_ride -Fc | age -r "$age_pub" -o "${dump_base}.age"
+                chmod 600 "${dump_base}.age"
+              elif [[ "$allow_plain" == "true" ]]; then
+                docker exec grace-ride-db pg_dump -U grace -d grace_ride -Fc > "$dump_base"
+                chmod 600 "$dump_base"
+              else
+                echo "Refusing unencrypted pre-roll DB dump (set BACKUP_AGE_RECIPIENT + install age, or ALLOW_PLAINTEXT_PRE_ROLL_DUMP=true)" >&2
+                exit 1
+              fi
+            )
             ls -1t /opt/grace-ride/pre-roll-backups/pre-*.dump* 2>/dev/null | tail -n +3 | xargs -r rm -f
           }
 
@@ -271,10 +302,10 @@ jobs:
             fi
           fi
 
-          mv "/tmp/grace-ride-$SHA.tar.gz.part" "/tmp/grace-ride-$SHA.tar.gz"
-          gzip -t "/tmp/grace-ride-$SHA.tar.gz"
-          gunzip -c "/tmp/grace-ride-$SHA.tar.gz" | docker load
-          rm -f "/tmp/grace-ride-$SHA.tar.gz"
+          mv "$REMOTE_STAGE/grace-ride-$SHA.tar.gz.part" "$REMOTE_STAGE/grace-ride-$SHA.tar.gz"
+          gzip -t "$REMOTE_STAGE/grace-ride-$SHA.tar.gz"
+          gunzip -c "$REMOTE_STAGE/grace-ride-$SHA.tar.gz" | docker load
+          rm -rf "$REMOTE_STAGE"
 
           net_internal=$(docker network inspect -f '{{.Internal}}' grace-ride_database 2>/dev/null || echo missing)
           if [[ "$net_internal" == "false" ]] && grep -qE '^[[:space:]]+internal:[[:space:]]+true' /opt/grace-ride/docker-compose.aic.yml; then
@@ -458,6 +489,10 @@ jobs:
             if [[ "${{ steps.public_check.outcome }}" == "success" ]]; then
               clean_prev="/opt/grace-ride/docker-compose.aic.yml.prev /opt/grace-ride/docker-compose.osrm.yml.prev"
             fi
+            clean_stage=""
+            if [[ -n "${REMOTE_STAGE:-}" && "$REMOTE_STAGE" =~ ^/opt/grace-ride/\.deploy\.[A-Za-z0-9]+$ ]]; then
+              clean_stage="$REMOTE_STAGE"
+            fi
             ssh \
               -i "$RUNNER_TEMP/vps-key" \
               -p "$VPS_PORT" \
@@ -467,7 +502,7 @@ jobs:
               -o StrictHostKeyChecking=yes \
               -o "UserKnownHostsFile=$RUNNER_TEMP/vps-known-hosts" \
               "$VPS_USER@$VPS_HOST" \
-              "rm -f -- /tmp/grace-ride-$SHA.tar.gz.part /tmp/grace-ride-$SHA.tar.gz /tmp/docker-compose.aic.$SHA.yml /tmp/docker-compose.osrm.$SHA.yml $clean_prev" \
+              "rm -rf -- ${clean_stage} && rm -f -- $clean_prev" \
               || true
           fi
           rm -f "$RUNNER_TEMP/vps-key" "$RUNNER_TEMP/vps-known-hosts" "$RUNNER_TEMP/grace-ride-$SHA.tar.gz"

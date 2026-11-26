@@ -123,6 +123,7 @@ async fn biometric_register_login_reauth_and_delete_round_trip() {
     )
     .await;
     assert_eq!(reg_finish.status, StatusCode::OK, "{}", reg_finish.json);
+    let cookie = extract_session_cookie(&reg_finish.headers).expect("rotated cookie");
     let bio_id = reg_finish.json["id"].as_i64().unwrap();
     let cred_id = reg_finish.json["credential_id"]
         .as_str()
@@ -291,6 +292,7 @@ async fn biometric_register_login_reauth_and_delete_round_trip() {
     )
     .await;
     assert_eq!(rfinish.status, StatusCode::OK, "{}", rfinish.json);
+    let bio_cookie = extract_session_cookie(&rfinish.headers).expect("rotated cookie");
 
     let unblocked = call(&app, Method::GET, "/api/rides", Some(&bio_cookie), None).await;
     assert_eq!(unblocked.status, StatusCode::OK);
@@ -337,6 +339,7 @@ async fn biometric_register_login_reauth_and_delete_round_trip() {
     )
     .await;
     assert_eq!(rfinish2.status, StatusCode::OK);
+    let bio_cookie = extract_session_cookie(&rfinish2.headers).expect("rotated cookie");
 
     let del_ok = call(
         &app,
@@ -362,7 +365,7 @@ async fn biometric_register_login_reauth_and_delete_round_trip() {
 #[tokio::test]
 async fn biometric_registration_caps_at_ten_and_recovery_revokes_credentials() {
     let (app, st) = setup().await;
-    let member_cookie = login(&st, "member@example.org").await;
+    let mut member_cookie = login(&st, "member@example.org").await;
 
     let mut cred_ids = Vec::new();
     for idx in 0..11 {
@@ -390,6 +393,7 @@ async fn biometric_registration_caps_at_ten_and_recovery_revokes_credentials() {
         )
         .await;
         assert_eq!(rf.status, StatusCode::OK, "{idx}: {}", rf.json);
+        member_cookie = extract_session_cookie(&rf.headers).expect("rotated cookie");
         cred_ids.push((rf.json["credential_id"].as_str().unwrap().to_string(), key));
     }
 

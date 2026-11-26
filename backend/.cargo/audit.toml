@@ -1,8 +1,10 @@
 # cargo-audit configuration
 [advisories]
-# RUSTSEC-2023-0071 (rsa Marvin attack): `rsa` is pulled into Cargo.lock only by
-# sqlx-mysql, which this project never compiles (postgres feature only).
-# `cargo tree -i rsa --target all` prints nothing. Re-evaluate if MySQL support is added.
+# RUSTSEC-2023-0071 (rsa Marvin attack): `rsa v0.10.0-rc.19` is pulled in via
+# `webauthn-rs -> webauthn-rs-core -> crypto-glue -> rsa` for RSA attestation /
+# verification; no patched release of `rsa` exists upstream. Passkeys here prefer
+# ECDSA (ES256 / P-256) and do not expose an RSA decryption oracle.
+# `cargo tree -i rsa --target all` tracks this chain; remove once `rsa` fixes it.
 # RUSTSEC-2026-0459 (`libsqlite3-sys`): pulled in via `sqlx-macros-core -> sqlx-sqlite`
 # in Cargo.lock only; never linked into the PostgreSQL-only runtime binary.
 ignore = [

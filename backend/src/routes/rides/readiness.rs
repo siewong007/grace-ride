@@ -9,9 +9,9 @@ use serde_json::{json, Value};
 
 use crate::auth::CurrentUser;
 use crate::error::{bad, conflict, forbidden, AppResult};
-use crate::perms::Act;
+use crate::perms::{Act, Page};
 use crate::state::AppState;
-use crate::util::{audit, notify, now, system_message, ErrorKey, Lang};
+use crate::util::{audit, notify, now, require, system_message, ErrorKey, Lang};
 
 use super::location::{clear_location_if_idle, clear_passenger_location};
 use super::{load_ride, traffic_can, RideRow};
@@ -46,6 +46,16 @@ pub(super) async fn post_readiness(
     if !is_passenger && !is_admin {
         return Err(forbidden(u.lang, ErrorKey::OnlyPassengerCanRespond));
     }
+    if !is_admin {
+        if req.status == "unable_to_join" {
+            crate::util::require_one(
+                &u,
+                &[(Page::Rides, Act::Update), (Page::Rides, Act::Delete)],
+            )?;
+        } else {
+            require(&u, Page::Rides, Act::Update)?;
+        }
+    }
 
     apply_readiness(&st, u.lang, &r, Some(u.id), &req).await
 }
@@ -73,6 +83,10 @@ pub(crate) async fn apply_readiness(
     let valid_statuses = ["ready", "delayed_5m", "delayed_10m", "unable_to_join"];
     if !valid_statuses.contains(&req.status.as_str()) {
         return Err(bad(lang, ErrorKey::InvalidStatus));
+    }
+    if req.status != "unable_to_join" && r.readiness_status.as_deref() == Some(req.status.as_str())
+    {
+        return Ok(Json(json!({"ok": true, "status": req.status})));
     }
 
     let timestamp = now();
@@ -271,6 +285,9 @@ pub(super) async fn post_driver_delay(
     if !is_driver && !is_admin {
         return Err(forbidden(u.lang, ErrorKey::NotRideDriver));
     }
+    if !is_admin {
+        require(&u, Page::Drive, Act::Update)?;
+    }
 
     // Trip-progress updates (readiness / delay / gate arrival) only apply while the ride
     // is active. A completed or otherwise terminal ride must not accept new updates,
@@ -352,6 +369,9 @@ pub(super) async fn post_arrived_gate(
     let is_admin = traffic_can(&u, &r, Act::Update);
     if !is_driver && !is_admin {
         return Err(forbidden(u.lang, ErrorKey::NotRideDriver));
+    }
+    if !is_admin {
+        require(&u, Page::Drive, Act::Update)?;
     }
 
     // Trip-progress updates (readiness / delay / gate arrival) only apply while the ride
@@ -457,6 +477,9 @@ pub(super) async fn post_supper_choice(
     let is_admin = traffic_can(&u, &r, Act::Update);
     if !is_passenger && !is_admin {
         return Err(forbidden(u.lang, ErrorKey::OnlyPassengerCanRespond));
+    }
+    if !is_admin {
+        require(&u, Page::Rides, Act::Update)?;
     }
     if r.leg != "return"
         || matches!(

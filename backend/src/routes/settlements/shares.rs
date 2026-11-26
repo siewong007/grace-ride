@@ -55,18 +55,26 @@ pub(super) async fn submit_proof(
         .execute(&mut *tx)
         .await?;
 
-    // Holding the bill (as a revision does) means a revision saved at the same moment
-    // either finishes first, and this reads its result, or waits for this proof. Without
-    // it the revision rewrote the share from a stale read: the proof's 'pending' went
-    // back to 'unpaid', or the share and its proof were deleted outright.
-    let row: Option<(i64, i64, String, String, i64, String)> = sqlx::query_as(
-        "SELECT sh.user_id, s.id, sh.status, s.status, s.created_by, s.title FROM settlement_shares sh JOIN settlements s ON s.id=sh.settlement_id WHERE sh.id=$1
-         FOR UPDATE OF s, sh",
+    // Lock the settlement first (matching revision/close lock order) and then the share,
+    // so concurrent revisions cannot overwrite or orphan a just-submitted payment proof.
+    let settlement_row: Option<(i64, String, i64, String)> = sqlx::query_as(
+        "SELECT s.id, s.status, s.created_by, s.title
+         FROM settlements s
+         WHERE s.id = (SELECT settlement_id FROM settlement_shares WHERE id=$1)
+         FOR UPDATE OF s",
     )
     .bind(id)
     .fetch_optional(&mut *tx)
     .await?;
-    let (owner, sid, status, s_status, payee, title) = row.ok_or(not_found(u.lang))?;
+    let (sid, s_status, payee, title) = settlement_row.ok_or(not_found(u.lang))?;
+    let share_row: Option<(i64, String)> = sqlx::query_as(
+        "SELECT user_id, status FROM settlement_shares WHERE id=$1 AND settlement_id=$2 FOR UPDATE",
+    )
+    .bind(id)
+    .bind(sid)
+    .fetch_optional(&mut *tx)
+    .await?;
+    let (owner, status) = share_row.ok_or(not_found(u.lang))?;
     if owner != u.id {
         return Err(forbidden(u.lang, ErrorKey::ProofOnlyForOwnShare));
     }
@@ -74,7 +82,7 @@ pub(super) async fn submit_proof(
     if s_status != "published" || !matches!(status.as_str(), "unpaid" | "needs_info") {
         return Err(bad(u.lang, ErrorKey::ProofNotNeededNow));
     }
-    let (fowner,): (i64,) = sqlx::query_as("SELECT owner_id FROM files WHERE id=$1")
+    let (fowner,): (i64,) = sqlx::query_as("SELECT owner_id FROM files WHERE id=$1 FOR KEY SHARE")
         .bind(req.proof_file_id)
         .fetch_optional(&mut *tx)
         .await?
@@ -88,7 +96,10 @@ pub(super) async fn submit_proof(
     }
     // Duplicate screenshot / reference protection: scoped to this settlement or this member's shares.
     let (dup,): (i64,) = sqlx::query_as(
-        "SELECT COUNT(*) FROM settlement_shares WHERE (settlement_id = $1 OR user_id = $2) AND id != $3 AND (txn_ref = $4 OR proof_file_id = $5)",
+        "SELECT COUNT(*) FROM settlement_shares
+         WHERE (settlement_id = $1 OR user_id = $2)
+           AND id != $3
+           AND (LOWER(BTRIM(txn_ref)) = LOWER($4) OR proof_file_id = $5)",
     )
     .bind(sid)
     .bind(u.id)
@@ -104,7 +115,8 @@ pub(super) async fn submit_proof(
     // refusing here would tell the member that reference exists somewhere. Accept it and
     // flag it to whoever verifies this share instead.
     let (elsewhere,): (i64,) = sqlx::query_as(
-        "SELECT COUNT(*) FROM settlement_shares WHERE txn_ref = $1 AND user_id <> $2 AND settlement_id <> $3",
+        "SELECT COUNT(*) FROM settlement_shares
+         WHERE LOWER(BTRIM(txn_ref)) = LOWER($1) AND user_id <> $2 AND settlement_id <> $3",
     )
     .bind(txn)
     .bind(u.id)
@@ -165,17 +177,26 @@ pub(super) async fn verify(
     Path(id): Path<i64>,
     Json(req): Json<VerifyIn>,
 ) -> AppResult<Json<Value>> {
-    // The bill is held, as for a proof, so a revision can't change the amount between
-    // this read and the payee's confirmation landing on it.
+    // Lock the parent settlement before its share so lock order matches revisions/closing.
     let mut tx = st.db.begin().await?;
-    let row: Option<(i64, i64, i64, String, i64, String)> = sqlx::query_as(
-        "SELECT sh.user_id, s.id, s.created_by, s.title, sh.amount_cents, s.status FROM settlement_shares sh JOIN settlements s ON s.id=sh.settlement_id WHERE sh.id=$1
-         FOR UPDATE OF s, sh",
+    let settlement_row: Option<(i64, i64, String, String)> = sqlx::query_as(
+        "SELECT s.id, s.created_by, s.title, s.status
+         FROM settlements s
+         WHERE s.id = (SELECT settlement_id FROM settlement_shares WHERE id=$1)
+         FOR UPDATE OF s",
     )
     .bind(id)
     .fetch_optional(&mut *tx)
     .await?;
-    let (member, _sid, payee, title, amt, s_status) = row.ok_or(not_found(u.lang))?;
+    let (sid, payee, title, s_status) = settlement_row.ok_or(not_found(u.lang))?;
+    let share_row: Option<(i64, i64)> = sqlx::query_as(
+        "SELECT user_id, amount_cents FROM settlement_shares WHERE id=$1 AND settlement_id=$2 FOR UPDATE",
+    )
+    .bind(id)
+    .bind(sid)
+    .fetch_optional(&mut *tx)
+    .await?;
+    let (member, amt) = share_row.ok_or(not_found(u.lang))?;
     if payee != u.id || !u.can(Page::Settlements, Act::Update) {
         return Err(forbidden(u.lang, ErrorKey::OnlyPayeeCanVerify));
     }

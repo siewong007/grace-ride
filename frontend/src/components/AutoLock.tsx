@@ -118,7 +118,9 @@ export function AutoLockProvider({ children }: { children: ReactNode }) {
   useEffect(() => {
     if (meId !== null && (readStore(LOCKED_KEY) === meId || me?.locked)) {
       writeStore(LOCKED_KEY, meId);
+      clearOfflineSnapshots();
       setIsLocked(true);
+      window.dispatchEvent(new Event('gr:session-locked'));
     }
   }, [meId, me?.locked]);
 

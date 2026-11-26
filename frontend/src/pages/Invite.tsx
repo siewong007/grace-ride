@@ -1,16 +1,17 @@
 import { FormEvent, useEffect, useState } from 'react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
-import { Fingerprint } from 'lucide-react';
-import { ApiError, post, useApi } from '../api';
+import { Check, Copy, ExternalLink, Fingerprint, KeyRound } from 'lucide-react';
+import { api, ApiError, apiMessage, post, useApi } from '../api';
 import { useAuth } from '../auth';
 import { clearAutoLock } from '../components/AutoLock';
-import { clearOfflineSnapshots } from '../offlineSnapshot';
+import { clearClientSessionStorage } from '../offlineSnapshot';
 import { LogoMark, Wordmark } from '../components/Brand';
 import { SwipeBackGesture } from '../components/BackNavigation';
 import { PublicDisplayBar } from '../components/AppChrome';
 import { TermsOptIn, TermsText } from '../components/Terms';
 import TurnstileWidget from '../components/TurnstileWidget';
-import { Button, ErrorBox, Field, Spinner, useAction, useConfirm } from '../components/ui';
+import { Button, ErrorBox, Field, Notice, Spinner, useAction, useConfirm } from '../components/ui';
+import { detectInAppBrowser, inAppBrowserName } from '../inAppBrowser';
 import { useTurnstile } from '../turnstile';
 import { passkeySupported, registerPasskey } from '../webauthn';
 import { useTranslation } from 'react-i18next';
@@ -54,7 +55,22 @@ export default function Invite() {
   const [fieldErrors, setFieldErrors] = useState<{ name?: string; email?: string; phone?: string; terms?: string }>({});
   const [emailTaken, setEmailTaken] = useState(false);
   const { busy, error: actErr, run } = useAction();
+  const pwAct = useAction();
+  const [googleEnabled, setGoogleEnabled] = useState(false);
+  const [pwOpen, setPwOpen] = useState(false);
+  const [newPassword, setNewPassword] = useState('');
+  const [confirmPassword, setConfirmPassword] = useState('');
+  const [pwValidationErr, setPwValidationErr] = useState('');
+  const [passwordSaved, setPasswordSaved] = useState(false);
+  const [linkCopied, setLinkCopied] = useState(false);
+  const inApp = detectInAppBrowser();
   const inviteTurnstile = useTurnstile();
+
+  useEffect(() => {
+    api<{ enabled?: boolean }>('/auth/google/config')
+      .then((res) => setGoogleEnabled(Boolean(res?.enabled)))
+      .catch(() => setGoogleEnabled(false));
+  }, []);
 
   // An invite made for a named person arrives with their details filled in.
   useEffect(() => {
@@ -134,8 +150,8 @@ export default function Invite() {
         setStep('details');
         return;
       }
+      clearClientSessionStorage();
       clearAutoLock();
-      clearOfflineSnapshots();
       await refresh();
       setStep('passkey');
     });
@@ -163,6 +179,49 @@ export default function Invite() {
       tone: 'danger',
     });
     if (ok) nav('/', { replace: true });
+  };
+
+  const verifyGoogleAccount = () =>
+    run(async () => {
+      const res = await post<{ url: string }>('/auth/google/link/start', {
+        redirect: '/me?section=security',
+      });
+      if (res?.url) {
+        window.location.assign(res.url);
+      }
+    });
+
+  const saveInvitePassword = async (e: FormEvent) => {
+    e.preventDefault();
+    if (newPassword.length < 10) {
+      setPwValidationErr(apiMessage({ code: 'PASSWORD_TOO_SHORT' }, 'network'));
+      return;
+    }
+    if (newPassword !== confirmPassword) {
+      setPwValidationErr(t('passwordsDoNotMatch'));
+      return;
+    }
+    setPwValidationErr('');
+    const ok = await pwAct.run(async () => {
+      await post('/auth/password', { new_password: newPassword });
+      await refresh();
+    }, t('passwordSaved'));
+    if (ok) {
+      setPasswordSaved(true);
+      setPwOpen(false);
+      setNewPassword('');
+      setConfirmPassword('');
+    }
+  };
+
+  const copySecurityLink = async () => {
+    try {
+      await navigator.clipboard?.writeText(`${window.location.origin}/me?section=security`);
+      setLinkCopied(true);
+      window.setTimeout(() => setLinkCopied(false), 2500);
+    } catch {
+      /* clipboard may be blocked in embedded webviews */
+    }
   };
 
   const stepTitle =
@@ -312,6 +371,20 @@ export default function Invite() {
         {step === 'passkey' && (
           <div className="stack">
             <h1 className="auth-title">{t('setupPasskey')}</h1>
+            {inApp && (
+              <Notice tone="warning" icon={<ExternalLink size={20} />}>
+                <div className="stack-xs">
+                  <div className="bold">{t('inAppTitle')}</div>
+                  <p className="small no-margin">{t('inAppBody', { app: inAppBrowserName(inApp) })}</p>
+                  <div>
+                    <Button variant="secondary" size="sm" type="button" onClick={copySecurityLink}>
+                      {linkCopied ? <Check size={16} /> : <Copy size={16} />}
+                      {linkCopied ? t('linkCopied') : t('copySecurityLink')}
+                    </Button>
+                  </div>
+                </div>
+              </Notice>
+            )}
             <div className="passkey-explainer-card row nowrap">
               <Fingerprint size={28} className="passkey-icon" aria-hidden="true" />
               <p className="passkey-explainer-text">{t('passkeyExplainer')}</p>
@@ -324,15 +397,109 @@ export default function Invite() {
               size="lg"
               block
               onClick={addPasskey}
-              disabled={busy || !passkeySupported()}
+              disabled={busy || pwAct.busy || !passkeySupported()}
               loading={busy}
             >
               <Fingerprint size={20} />
               {t('setNow')}
             </Button>
-            <Button variant="ghost" block onClick={skipPasskey} disabled={busy}>
-              {t('setLater')}
-            </Button>
+
+            {googleEnabled && (
+              <>
+                <div className="divider" />
+                <div className="stack-sm">
+                  <div className="bold">{t('verifyGoogleTitle')}</div>
+                  <p className="muted small no-margin">
+                    {t('verifyGoogleDesc', { email: email || data.email })}
+                  </p>
+                  <Button
+                    variant="secondary"
+                    type="button"
+                    block
+                    disabled={busy || pwAct.busy}
+                    onClick={verifyGoogleAccount}
+                  >
+                    {t('verifyGoogleBtn')}
+                  </Button>
+                </div>
+              </>
+            )}
+
+            <div className="divider" />
+            {passwordSaved ? (
+              <div className="notice ok">{t('passwordSaved')}</div>
+            ) : !pwOpen ? (
+              <Button
+                variant="ghost"
+                type="button"
+                block
+                disabled={busy || pwAct.busy}
+                onClick={() => {
+                  setPwOpen(true);
+                  setPwValidationErr('');
+                  pwAct.setError(null);
+                }}
+              >
+                <KeyRound size={16} />
+                {t('setupPasswordToggle')}
+              </Button>
+            ) : (
+              <form className="stack-sm" onSubmit={saveInvitePassword}>
+                <div className="bold">{t('setupPasswordTitle')}</div>
+                <Field label={t('newPassword')} hint={t('passwordMinHint')}>
+                  <input
+                    className="input"
+                    type="password"
+                    autoComplete="new-password"
+                    minLength={10}
+                    required
+                    value={newPassword}
+                    onChange={(e) => {
+                      setNewPassword(e.target.value);
+                      if (pwValidationErr) setPwValidationErr('');
+                    }}
+                  />
+                </Field>
+                <Field label={t('confirmPassword')}>
+                  <input
+                    className="input"
+                    type="password"
+                    autoComplete="new-password"
+                    minLength={10}
+                    required
+                    value={confirmPassword}
+                    onChange={(e) => {
+                      setConfirmPassword(e.target.value);
+                      if (pwValidationErr) setPwValidationErr('');
+                    }}
+                  />
+                </Field>
+                <ErrorBox error={pwValidationErr || pwAct.error} />
+                <div className="btn-row">
+                  <Button variant="primary" type="submit" loading={pwAct.busy} disabled={busy || pwAct.busy}>
+                    {t('savePassword')}
+                  </Button>
+                  <Button
+                    variant="ghost"
+                    type="button"
+                    disabled={pwAct.busy}
+                    onClick={() => setPwOpen(false)}
+                  >
+                    {t('back')}
+                  </Button>
+                </div>
+              </form>
+            )}
+
+            {passwordSaved ? (
+              <Button variant="primary" block onClick={() => nav('/', { replace: true })} disabled={busy}>
+                {t('continueToApp')}
+              </Button>
+            ) : (
+              <Button variant="ghost" block onClick={skipPasskey} disabled={busy}>
+                {t('setLater')}
+              </Button>
+            )}
           </div>
         )}
       </div>

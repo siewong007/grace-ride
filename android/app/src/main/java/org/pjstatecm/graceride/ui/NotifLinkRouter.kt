@@ -44,19 +44,18 @@ object NotifLinkRouter {
         val host = uri.host?.lowercase() ?: return null
         val rawPath = uri.rawPath.orEmpty().ifEmpty { "/" }
         val query = uri.rawQuery?.takeIf { it.isNotBlank() }?.let { "?$it" }.orEmpty()
+        val candidate = rawPath + query
+        if (Routes.sanitizeCleanPath(candidate) == null) return null
         return when {
-            scheme == "graceride" && host == "open" -> rawPath + query
-            scheme == "https" && (host in trustedHosts || host in extraTrustedHosts) -> rawPath + query
+            scheme == "graceride" && host == "open" -> candidate
+            scheme == "https" && (host in trustedHosts || host in extraTrustedHosts) -> candidate
             else -> null
         }
     }
 
     fun resolve(link: String?): NotifDestination {
         val raw = link?.trim() ?: return NotifDestination.None
-        if (raw.isEmpty() || !raw.startsWith("/") || raw.startsWith("//") || raw.startsWith("/api/")) {
-            return NotifDestination.None
-        }
-        val clean = raw.substringBefore('?').substringBefore('#').trimEnd('/').ifEmpty { "/" }
+        val clean = Routes.sanitizeCleanPath(raw) ?: return NotifDestination.None
         val query = raw.substringAfter('?', "").substringBefore('#')
         val params = if (query.isBlank()) {
             emptyMap()
@@ -66,7 +65,6 @@ object NotifLinkRouter {
                 if (idx <= 0) null else kv.substring(0, idx) to decodeQueryValue(kv.substring(idx + 1))
             }.toMap()
         }
-        if (clean.contains(':')) return NotifDestination.None
 
         rideDetailRe.find(clean)?.let {
             val id = it.groupValues[1].toLongOrNull() ?: return NotifDestination.None
@@ -233,11 +231,7 @@ object NotifLinkRouter {
 
     fun resolvePublic(link: String?): AppRoute? {
         val raw = link?.trim() ?: return null
-        if (raw.isEmpty() || !raw.startsWith("/") || raw.startsWith("//") || raw.startsWith("/api/")) {
-            return null
-        }
-        val clean = raw.substringBefore('?').substringBefore('#').trimEnd('/').ifEmpty { "/" }
-        if (clean.contains(':')) return null
+        val clean = Routes.sanitizeCleanPath(raw) ?: return null
         inviteTokenRe.find(clean)?.let { return AppRoute.Invite(it.groupValues[1]) }
         visitTokenRe.find(clean)?.let { return AppRoute.Visit(it.groupValues[1]) }
         careTokenRe.find(clean)?.let { return AppRoute.CarePass(it.groupValues[1]) }

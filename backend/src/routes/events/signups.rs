@@ -241,8 +241,21 @@ pub(super) async fn withdraw(
     if event_status != "published" {
         return Err(bad(u.lang, ErrorKey::EventNotOpen));
     }
+    let cur_signup: Option<(String, Option<i64>)> = sqlx::query_as(
+        "SELECT status, attended FROM event_signups WHERE event_id=$1 AND user_id=$2 FOR UPDATE",
+    )
+    .bind(id)
+    .bind(u.id)
+    .fetch_optional(&mut *tx)
+    .await?;
+    if let Some((ref cur_status, attended)) = cur_signup {
+        if attended == Some(1) && cur_status != "cancelled" {
+            return Err(bad(u.lang, ErrorKey::InvalidAction));
+        }
+    }
     let withdrew = sqlx::query(
-        "UPDATE event_signups SET status='cancelled', self_transport=0 WHERE event_id=$1 AND user_id=$2 AND status <> 'cancelled'",
+        "UPDATE event_signups SET status='cancelled', self_transport=0
+         WHERE event_id=$1 AND user_id=$2 AND status <> 'cancelled' AND COALESCE(attended, 0) <> 1",
     )
     .bind(id)
     .bind(u.id)
@@ -291,6 +304,19 @@ pub(super) async fn withdraw(
     .bind(now())
     .fetch_all(&mut *tx)
     .await?;
+    sqlx::query(
+        "UPDATE plan_visitors pv SET driver_id = NULL, updated_at = $3
+         WHERE pv.event_id = $1 AND pv.driver_id = $2
+           AND NOT EXISTS (
+               SELECT 1 FROM reimbursements r
+               WHERE r.plan_visitor_id = pv.id AND r.status <> 'rejected'
+           )",
+    )
+    .bind(id)
+    .bind(u.id)
+    .bind(now())
+    .execute(&mut *tx)
+    .await?;
     tx.commit().await?;
     notify_promoted(&st, id, &e.title, &promoted).await;
     let ride_ids: Vec<i64> = rides.iter().map(|(rid, _, _)| *rid).collect();
@@ -306,7 +332,20 @@ pub(super) async fn withdraw(
     for (rid, d, t) in rides {
         if let Some(d) = d {
             st.routing.invalidate(d, t.unwrap_or(rid)).await;
-            let body = format!("{} · {}", u.name, e.title);
+            let sees = crate::audience::member_sees_event(&st.db, d, id)
+                .await
+                .unwrap_or(false);
+            let (body_zh, body_en) = if sees {
+                (
+                    format!("{} · {}", u.name, e.title),
+                    format!("{} · {}", u.name, e.title),
+                )
+            } else {
+                (
+                    format!("{} · 教会活动", u.name),
+                    format!("{} · Church event", u.name),
+                )
+            };
             notify(
                 &st.db,
                 d,
@@ -314,7 +353,7 @@ pub(super) async fn withdraw(
                     "乘客已取消，座位已释放",
                     "Passenger cancelled, seat released",
                 ),
-                (&body, &body),
+                (&body_zh, &body_en),
                 "/drive",
             )
             .await;
@@ -323,9 +362,14 @@ pub(super) async fn withdraw(
     let mut batch = Vec::new();
     let staff_ids: Vec<i64> = if !released.is_empty() {
         sqlx::query_scalar(crate::dyn_sql!(
-            "SELECT u.id FROM users u WHERE {}",
-            crate::perms::sql_holds("u", crate::perms::Perm(Page::AdminRides, Act::Update))
+            "SELECT u.id FROM users u
+             WHERE u.status = 'active'
+               AND ({})
+               AND (({}) OR u.id = $1)",
+            crate::perms::sql_holds("u", crate::perms::Perm(Page::AdminRides, Act::Update)),
+            crate::perms::sql_holds("u", crate::perms::Perm(Page::AdminDashboard, Act::View))
         ))
+        .bind(e.created_by)
         .fetch_all(&st.db)
         .await
         .unwrap_or_default()

@@ -191,14 +191,19 @@ pub(super) async fn get_alert_settings(
             _ => {}
         }
     }
+    let can_update = u.can(Page::AdminSettings, Act::Update);
     let tg_configured = !tg_token.trim().is_empty();
-    let telegram_webhook_secret = if tg_configured {
+    let telegram_webhook_secret = if tg_configured && can_update {
         crate::routes::community::telegram_webhook_secret(&tg_token)
     } else {
         String::new()
     };
     let telegram_webhook_path = if tg_configured {
-        format!("/api/push/telegram/webhook/{telegram_webhook_secret}")
+        if can_update {
+            format!("/api/push/telegram/webhook/{telegram_webhook_secret}")
+        } else {
+            "/api/push/telegram/webhook/<redacted>".to_string()
+        }
     } else {
         String::new()
     };
@@ -285,6 +290,18 @@ pub(super) async fn update_alert_settings(
         .filter(|s| !s.is_empty())
     {
         if !req.clear_telegram_bot_token.unwrap_or(false) && !validate_telegram_bot_token(tok) {
+            return Err(bad(u.lang, ErrorKey::InvalidAction));
+        }
+    }
+
+    if let Some(username) = req.telegram_bot_username.as_deref() {
+        let cleaned = username.trim().trim_start_matches('@');
+        if !cleaned.is_empty()
+            && (!(5..=32).contains(&cleaned.len())
+                || !cleaned
+                    .bytes()
+                    .all(|b| b.is_ascii_alphanumeric() || b == b'_'))
+        {
             return Err(bad(u.lang, ErrorKey::InvalidAction));
         }
     }
@@ -533,7 +550,8 @@ pub(super) async fn test_alert_webhook(
     if url.is_empty() {
         return Err(bad(u.lang, ErrorKey::InvalidAction));
     }
-    let Some(client) = crate::notifications::build_pinned_client(&url, st.cfg.dev_mode).await
+    let Some((target_url, client)) =
+        crate::notifications::build_pinned_client_with_url(&url, st.cfg.dev_mode).await
     else {
         return Err(bad(u.lang, ErrorKey::InvalidAction));
     };
@@ -550,7 +568,7 @@ pub(super) async fn test_alert_webhook(
     let (ts, sig) = crate::notifications::sign_webhook_headers(&secret, &payload_bytes);
     let started = std::time::Instant::now();
     let mut req = client
-        .post(&url)
+        .post(&target_url)
         .header("Content-Type", "application/json")
         .header("X-GraceRide-Timestamp", ts)
         .header("X-GraceRide-Delivery-Id", &delivery_id);

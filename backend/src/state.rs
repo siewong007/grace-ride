@@ -7,6 +7,7 @@ use url::Url;
 use webauthn_rs::prelude::*;
 
 use crate::{
+    google_oauth::{GoogleOAuthClient, GoogleOAuthConfig},
     routing::{RoutingConfig, RoutingState},
     security::RateLimiter,
     stream::EventHub,
@@ -47,6 +48,8 @@ pub struct Config {
     pub notification_retention_days: i64,
     /// Optional Cloudflare Turnstile verification on public web auth/onboarding/visitor flows.
     pub turnstile: TurnstileConfig,
+    /// Optional Google OAuth 2.0 / OpenID Connect client configuration (`GOOGLE_CLIENT_ID` + `GOOGLE_CLIENT_SECRET`).
+    pub google_oauth: GoogleOAuthConfig,
     /// Optional comma-separated SHA-256 signing certificate fingerprints (colon-hex)
     /// for native Android passkeys (`android:apk-key-hash:` + `/.well-known/assetlinks.json`).
     pub android_cert_sha256_fingerprints: Vec<String>,
@@ -140,8 +143,15 @@ impl Config {
                 .parse()
                 .map_err(|_| anyhow::anyhow!("{k} must be a number"))
         };
+        let dev_mode = env("DEV_MODE", "false") == "true";
+        let android_cert_sha256_fingerprints =
+            parse_android_fingerprints(&env("ANDROID_CERT_SHA256_FINGERPRINTS", ""))?;
+        let require_biometric_attestation = crate::attestation::require_attestation_enabled_for(
+            dev_mode,
+            &android_cert_sha256_fingerprints,
+        );
         let cfg = Config {
-            dev_mode: env("DEV_MODE", "false") == "true",
+            dev_mode,
             database_url: std::env::var("DATABASE_URL")
                 .ok()
                 .filter(|v| !v.trim().is_empty())
@@ -166,12 +176,10 @@ impl Config {
             housekeeping_interval_mins: num("HOUSEKEEPING_INTERVAL_MINS", 60)?,
             notification_retention_days: num("NOTIFICATION_RETENTION_DAYS", 90)?,
             turnstile: TurnstileConfig::from_env(),
-            android_cert_sha256_fingerprints: parse_android_fingerprints(&env(
-                "ANDROID_CERT_SHA256_FINGERPRINTS",
-                "",
-            ))?,
+            google_oauth: GoogleOAuthConfig::from_env(),
+            android_cert_sha256_fingerprints,
             ios_app_ids: parse_ios_app_ids(&env("IOS_APP_IDS", ""))?,
-            require_biometric_attestation: crate::attestation::require_attestation_enabled(),
+            require_biometric_attestation,
         };
         cfg.validate()?;
         Ok(cfg)
@@ -217,10 +225,15 @@ impl Config {
                 ("NOMINATIM_URL", &self.routing.nominatim_url),
                 ("PHOTON_URL", &self.routing.photon_url),
             ] {
-                Url::parse(v).map_err(|_| anyhow::anyhow!("{k} is not a valid URL"))?;
+                let parsed =
+                    Url::parse(v).map_err(|_| anyhow::anyhow!("{k} is not a valid URL"))?;
+                if !matches!(parsed.scheme(), "http" | "https") {
+                    anyhow::bail!("{k} must use http:// or https://");
+                }
             }
         }
         self.turnstile.validate(local)?;
+        self.google_oauth.validate(local)?;
         for fp in &self.android_cert_sha256_fingerprints {
             android_apk_key_hash_origin(fp)?;
         }
@@ -274,6 +287,8 @@ pub struct AppState {
     pub routing: Arc<RoutingState>,
     /// Cloudflare Turnstile verifier for public web forms.
     pub turnstile: Arc<TurnstileVerifier>,
+    /// Google OAuth client for member verification, sign-in, and password reset.
+    pub google_oauth: Arc<GoogleOAuthClient>,
     /// Live updates for open tabs (`/api/stream`).
     pub events: EventHub,
     /// Signals open SSE streams and background tasks to drain on `SIGTERM`/`SIGINT`.

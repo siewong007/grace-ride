@@ -99,6 +99,8 @@ class MainActivity : FragmentActivity() {
         super.onCreate(savedInstanceState)
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
             setRecentsScreenshotEnabled(false)
+        } else {
+            window?.addFlags(android.view.WindowManager.LayoutParams.FLAG_SECURE)
         }
         window?.decorView?.filterTouchesWhenObscured = true
         NotificationHelper.ensureChannels(this, container.lang)

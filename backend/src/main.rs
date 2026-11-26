@@ -7,6 +7,50 @@ use tracing_subscriber::{
     filter::LevelFilter, layer::SubscriberExt, util::SubscriberInitExt, EnvFilter, Layer,
 };
 
+fn scrub_sentry_text(raw: &str) -> String {
+    let mut out = grace_ride::redact_uri_path(raw).into_owned();
+    let mut redacted_emails = Vec::new();
+    for tok in out.split_whitespace() {
+        let trimmed =
+            tok.trim_matches(|c: char| !c.is_ascii_alphanumeric() && c != '@' && c != '.');
+        if trimmed.contains('@') && trimmed.contains('.') && trimmed.len() >= 5 {
+            redacted_emails.push(trimmed.to_string());
+        }
+    }
+    for e in redacted_emails {
+        out = out.replace(&e, "[email]");
+    }
+    let bytes = out.as_bytes();
+    let mut cleaned = String::with_capacity(out.len());
+    let mut i = 0;
+    while i < bytes.len() {
+        if bytes[i].is_ascii_digit()
+            || (bytes[i] == b'+' && bytes.get(i + 1).is_some_and(u8::is_ascii_digit))
+        {
+            let start = i;
+            let mut digits = 0usize;
+            while i < bytes.len()
+                && (bytes[i].is_ascii_digit() || matches!(bytes[i], b'+' | b'-' | b' '))
+            {
+                if bytes[i].is_ascii_digit() {
+                    digits += 1;
+                }
+                i += 1;
+            }
+            if digits >= 8 {
+                cleaned.push_str("[phone]");
+            } else {
+                cleaned.push_str(&out[start..i]);
+            }
+        } else {
+            let ch = out[i..].chars().next().unwrap_or(' ');
+            cleaned.push(ch);
+            i += ch.len_utf8();
+        }
+    }
+    cleaned
+}
+
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
     let _ = dotenvy::dotenv();
@@ -50,13 +94,33 @@ async fn main() -> anyhow::Result<()> {
                         | "authorization"
                         | "x-telegram-bot-api-secret-token"
                         | "x-forwarded-for"
+                        | "referer"
+                        | "x-real-ip"
+                        | "cf-connecting-ip"
+                        | "true-client-ip"
+                        | "forwarded"
                 )
             });
+        }
+        event.extra.clear();
+        if let Some(ref mut msg) = event.message {
+            *msg = scrub_sentry_text(msg);
+        }
+        if let Some(ref mut le) = event.logentry {
+            le.message = scrub_sentry_text(&le.message);
+        }
+        for exc in &mut event.exception.values {
+            if let Some(ref mut val) = exc.value {
+                *val = scrub_sentry_text(val);
+            }
         }
         for bc in &mut event.breadcrumbs.values {
             bc.data.remove("url");
             bc.data.remove("to");
             bc.data.remove("from");
+            if let Some(ref mut msg) = bc.message {
+                *msg = scrub_sentry_text(msg);
+            }
         }
         Some(event)
     }));

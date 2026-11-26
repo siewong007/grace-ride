@@ -50,39 +50,46 @@ pub(super) async fn recovery_request(
     if email.is_empty() || email.len() > 254 {
         return Ok(Json(json!({ "ok": true })));
     }
-    let exists: Option<(i64,)> = sqlx::query_as("SELECT id FROM users WHERE email=$1")
+    let exists: Option<(i64,)> =
+        sqlx::query_as("SELECT id FROM users WHERE email=$1 AND status IN ('active', 'pending')")
+            .bind(&email)
+            .fetch_optional(&st.db)
+            .await?;
+    if let Some((uid,)) = exists {
+        let open_exists: Option<(i64,)> = sqlx::query_as(
+            "SELECT id FROM recovery_requests WHERE email=$1 AND status IN ('pending', 'awaiting_second') LIMIT 1",
+        )
         .bind(&email)
         .fetch_optional(&st.db)
         .await?;
-    if let Some((uid,)) = exists {
-        sqlx::query("INSERT INTO recovery_requests (email, reason, created_at) VALUES ($1,$2,$3)")
+        if open_exists.is_none() {
+            sqlx::query(
+                "INSERT INTO recovery_requests (email, reason, created_at) VALUES ($1,$2,$3)",
+            )
             .bind(&email)
             .bind(req.reason.chars().take(500).collect::<String>())
             .bind(now())
             .execute(&st.db)
             .await?;
-        // No actor: the request comes from someone who cannot sign in.
-        audit(
-            &st.db,
-            None,
-            "recovery.request",
-            "user",
-            Some(uid),
-            req.email.trim(),
-        )
-        .await;
-        notify_perm(
-            &st.db,
-            Page::AdminRecovery,
-            Act::Update,
-            ("新的账号恢复申请", "New account recovery request"),
-            (
-                &format!("会员 {} 提交了账号恢复申请", req.email),
-                &format!("Member {} submitted an account recovery request", req.email),
-            ),
-            "/admin/members",
-        )
-        .await;
+            let db = st.db.clone();
+            let raw_email = req.email.trim().to_string();
+            tokio::spawn(async move {
+                // No actor: the request comes from someone who cannot sign in.
+                audit(&db, None, "recovery.request", "user", Some(uid), &raw_email).await;
+                notify_perm(
+                    &db,
+                    Page::AdminRecovery,
+                    Act::Update,
+                    ("新的账号恢复申请", "New account recovery request"),
+                    (
+                        &format!("会员 {raw_email} 提交了账号恢复申请"),
+                        &format!("Member {raw_email} submitted an account recovery request"),
+                    ),
+                    "/admin/members",
+                )
+                .await;
+            });
+        }
     }
     Ok(Json(json!({ "ok": true })))
 }

@@ -241,9 +241,40 @@ pub async fn notify_perm_except(
     link: &str,
 ) {
     let users: Vec<(i64,)> = sqlx::query_as(crate::dyn_sql!(
-        "SELECT u.id FROM users u WHERE {}",
+        "SELECT u.id FROM users u WHERE u.status = 'active' AND ({})",
         crate::perms::sql_holds("u", Perm(page, act))
     ))
+    .fetch_all(db)
+    .await
+    .unwrap_or_default();
+    let ids: Vec<i64> = users
+        .into_iter()
+        .map(|(id,)| id)
+        .filter(|id| exclude_user_id != Some(*id))
+        .collect();
+    let meta = infer_meta(link, title.1);
+    notify_many_with(db, &ids, title, body, link, meta).await;
+}
+
+/// Notify only active traffic staff scoped to `event_created_by` (global transport leads via
+/// `AdminDashboard.View`, plus event-scoped traffic staff matching `event_created_by`).
+pub async fn notify_traffic_for_event(
+    db: &PgPool,
+    event_created_by: Option<i64>,
+    exclude_user_id: Option<i64>,
+    title: (&str, &str),
+    body: (&str, &str),
+    link: &str,
+) {
+    let users: Vec<(i64,)> = sqlx::query_as(crate::dyn_sql!(
+        "SELECT u.id FROM users u
+         WHERE u.status = 'active'
+           AND ({})
+           AND (({}) OR ($1::BIGINT IS NOT NULL AND u.id = $1))",
+        crate::perms::sql_holds("u", Perm(Page::AdminRides, Act::Update)),
+        crate::perms::sql_holds("u", Perm(Page::AdminDashboard, Act::View))
+    ))
+    .bind(event_created_by)
     .fetch_all(db)
     .await
     .unwrap_or_default();
@@ -267,8 +298,11 @@ pub async fn notify_trip_chat(
     message_body: &str,
 ) {
     let ids: Vec<(i64,)> = sqlx::query_as(
-        "SELECT passenger_id FROM rides WHERE trip_id=$1 AND status <> 'cancelled'
-         UNION SELECT driver_id FROM rides WHERE trip_id=$1 AND driver_id IS NOT NULL",
+        "SELECT passenger_id FROM rides
+          WHERE trip_id=$1 AND status NOT IN ('cancelled', 'no_show', 'alt_transport')
+         UNION SELECT driver_id FROM rides
+          WHERE trip_id=$1 AND driver_id IS NOT NULL
+            AND status NOT IN ('cancelled', 'no_show', 'alt_transport')",
     )
     .bind(trip_id)
     .fetch_all(db)

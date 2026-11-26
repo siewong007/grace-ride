@@ -462,8 +462,9 @@ pub async fn send_push_message_rich(
             }
         }
         Err(e) => {
-            tracing::warn!(host, error = %e, "web push request failed");
-            PushOutcome::Retryable(e.to_string())
+            let sanitized = e.without_url();
+            tracing::warn!(host, error = %sanitized, "web push request failed");
+            PushOutcome::Retryable(sanitized.to_string())
         }
     }
 }

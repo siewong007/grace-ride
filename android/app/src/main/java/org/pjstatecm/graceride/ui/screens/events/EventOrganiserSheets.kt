@@ -107,7 +107,7 @@ fun VenueCheckinQrDialog(
                 Row(horizontalArrangement = Arrangement.spacedBy(Spacing.xs)) {
                     OutlinedButton(
                         onClick = {
-                            if (copyToClipboard(context, "Check-in URL", checkinUrl)) {
+                            if (copyToClipboard(context, "Check-in URL", checkinUrl, sensitive = true)) {
                                 onCopied()
                             }
                         },

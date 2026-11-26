@@ -44,6 +44,7 @@ struct ReimbRow {
     paid_ref: String,
     paid_at: Option<String>,
     created_at: String,
+    updated_at: String,
     plan_visitor_id: Option<i64>,
     visitor_name: Option<String>,
     special_reason: String,
@@ -55,7 +56,7 @@ const REIMB_SELECT: &str = "SELECT r.id, r.user_id, u.name AS user_name, r.ride_
     (SELECT pa.name || ' ↔ ' || COALESCE(ea.name, '?') FROM areas pa LEFT JOIN events ev ON ev.id = rd.event_id LEFT JOIN areas ea ON ea.id = ev.area_id WHERE pa.id = rd.pickup_area_id) AS ride_route,
     COALESCE(r.event_id, rd.event_id) AS event_id, ev.title AS event_title, ev.starts_at AS event_starts_at,
     r.amount_cents, r.description,
-    r.receipt_file_id, r.payee_name, r.payee_phone, r.status, r.review_note, rv.name AS reviewer, r.payee_verified, r.paid_ref, r.paid_at, r.created_at,
+    r.receipt_file_id, r.payee_name, r.payee_phone, r.status, r.review_note, rv.name AS reviewer, r.payee_verified, r.paid_ref, r.paid_at, r.created_at, r.updated_at,
     r.plan_visitor_id, pv.name AS visitor_name, r.special_reason, r.requested_by, rq.name AS requester_name
     FROM reimbursements r
     JOIN users u ON u.id=r.user_id
@@ -76,7 +77,7 @@ fn reimb_json(r: &ReimbRow, u: &CurrentUser) -> Value {
         "payee_name": if own || finance { Some(r.payee_name.clone()) } else { None },
         "payee_phone": if own || finance { Some(r.payee_phone.clone()) } else { None },
         "status": r.status, "review_note": r.review_note, "reviewer": r.reviewer, "payee_verified": r.payee_verified == 1,
-        "paid_ref": if own || finance { Some(r.paid_ref.clone()) } else { None }, "paid_at": r.paid_at, "created_at": r.created_at,
+        "paid_ref": if own || finance { Some(r.paid_ref.clone()) } else { None }, "paid_at": r.paid_at, "created_at": r.created_at, "updated_at": r.updated_at,
         // A traffic lead's special reimbursement for a visitor: who, why and who asked.
         "visitor": r.plan_visitor_id.map(|id| json!({"id": id, "name": r.visitor_name})),
         "special_reason": if r.kind == "visitor_special" { Some(r.special_reason.clone()) } else { None },
@@ -249,7 +250,11 @@ fn is_mileage(req: &ReimbIn) -> bool {
     req.kind.as_deref() == Some("mileage")
 }
 
-async fn validate_reimb(st: &AppState, u: &CurrentUser, req: &ReimbIn) -> AppResult<Option<i64>> {
+async fn validate_reimb(
+    tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+    u: &CurrentUser,
+    req: &ReimbIn,
+) -> AppResult<Option<i64>> {
     if let Some(ref k) = req.kind {
         if k != "grab" && k != "mileage" {
             return Err(bad(u.lang, ErrorKey::InvalidAction));
@@ -261,9 +266,9 @@ async fn validate_reimb(st: &AppState, u: &CurrentUser, req: &ReimbIn) -> AppRes
     if req.payee_name.trim().is_empty() || req.payee_phone.trim().is_empty() {
         return Err(bad(u.lang, ErrorKey::PayeeNameAndPhoneRequired));
     }
-    let (owner,): (i64,) = sqlx::query_as("SELECT owner_id FROM files WHERE id=$1")
+    let (owner,): (i64,) = sqlx::query_as("SELECT owner_id FROM files WHERE id=$1 FOR KEY SHARE")
         .bind(req.receipt_file_id)
-        .fetch_optional(&st.db)
+        .fetch_optional(&mut **tx)
         .await?
         .ok_or_else(|| bad(u.lang, ErrorKey::ReceiptRequired))?;
     if owner != u.id {
@@ -274,31 +279,55 @@ async fn validate_reimb(st: &AppState, u: &CurrentUser, req: &ReimbIn) -> AppRes
         let rid = req
             .ride_id
             .ok_or_else(|| bad(u.lang, ErrorKey::InvalidAction))?;
-        let (driver, needed, ride_event_id, excluded): (Option<i64>, i64, Option<i64>, i64) =
-            sqlx::query_as(
-                "SELECT driver_id, mileage_receipt_needed, event_id, reimbursement_excluded FROM rides WHERE id=$1",
-            )
-            .bind(rid)
-            .fetch_optional(&st.db)
-            .await?
-            .ok_or(not_found(u.lang))?;
+        let (driver, needed, ride_event_id, excluded, status): (
+            Option<i64>,
+            i64,
+            Option<i64>,
+            i64,
+            String,
+        ) = sqlx::query_as(
+            "SELECT driver_id, mileage_receipt_needed, event_id, reimbursement_excluded, status
+             FROM rides WHERE id=$1 FOR SHARE",
+        )
+        .bind(rid)
+        .fetch_optional(&mut **tx)
+        .await?
+        .ok_or(not_found(u.lang))?;
         if driver != Some(u.id) {
             return Err(forbidden(u.lang, ErrorKey::OnlyLinkOwnRides));
         }
-        if needed != 1 || excluded == 1 {
+        if status != "completed" || needed != 1 || excluded == 1 {
             return Err(bad(u.lang, ErrorKey::InvalidAction));
         }
-        Ok(ride_event_id)
+        let Some(eid) = ride_event_id else {
+            return Err(bad(u.lang, ErrorKey::InvalidAction));
+        };
+        let ev_row: Option<(String, i64)> =
+            sqlx::query_as("SELECT status, mileage_claimable FROM events WHERE id=$1 FOR SHARE")
+                .bind(eid)
+                .fetch_optional(&mut **tx)
+                .await?;
+        let Some((ev_status, claimable)) = ev_row else {
+            return Err(not_found(u.lang));
+        };
+        if !matches!(ev_status.as_str(), "published" | "finished") || claimable != 1 {
+            return Err(bad(u.lang, ErrorKey::InvalidAction));
+        }
+        Ok(Some(eid))
     } else {
         let ride_info: Option<(i64, Option<i64>)> = if let Some(rid) = req.ride_id {
-            let row: Option<(i64, Option<i64>)> =
-                sqlx::query_as("SELECT passenger_id, event_id FROM rides WHERE id=$1")
-                    .bind(rid)
-                    .fetch_optional(&st.db)
-                    .await?;
-            let (p, eid) = row.ok_or(not_found(u.lang))?;
+            let row: Option<(i64, Option<i64>, String)> = sqlx::query_as(
+                "SELECT passenger_id, event_id, status FROM rides WHERE id=$1 FOR SHARE",
+            )
+            .bind(rid)
+            .fetch_optional(&mut **tx)
+            .await?;
+            let (p, eid, r_status) = row.ok_or(not_found(u.lang))?;
             if p != u.id {
                 return Err(forbidden(u.lang, ErrorKey::OnlyLinkOwnRides));
+            }
+            if matches!(r_status.as_str(), "completed" | "no_show" | "in_progress") {
+                return Err(bad(u.lang, ErrorKey::InvalidAction));
             }
             Some((p, eid))
         } else {
@@ -318,10 +347,11 @@ async fn validate_reimb(st: &AppState, u: &CurrentUser, req: &ReimbIn) -> AppRes
             (None, None) => return Err(bad(u.lang, ErrorKey::EventRequiredForReimbursement)),
         };
 
-        let event_row: Option<(String,)> = sqlx::query_as("SELECT status FROM events WHERE id=$1")
-            .bind(target_event_id)
-            .fetch_optional(&st.db)
-            .await?;
+        let event_row: Option<(String,)> =
+            sqlx::query_as("SELECT status FROM events WHERE id=$1 FOR SHARE")
+                .bind(target_event_id)
+                .fetch_optional(&mut **tx)
+                .await?;
         let Some((status,)) = event_row else {
             return Err(not_found(u.lang));
         };
@@ -329,12 +359,13 @@ async fn validate_reimb(st: &AppState, u: &CurrentUser, req: &ReimbIn) -> AppRes
             return Err(bad(u.lang, ErrorKey::EventNotOpen));
         }
 
-        let signup: Option<(String,)> =
-            sqlx::query_as("SELECT status FROM event_signups WHERE event_id=$1 AND user_id=$2")
-                .bind(target_event_id)
-                .bind(u.id)
-                .fetch_optional(&st.db)
-                .await?;
+        let signup: Option<(String,)> = sqlx::query_as(
+            "SELECT status FROM event_signups WHERE event_id=$1 AND user_id=$2 FOR SHARE",
+        )
+        .bind(target_event_id)
+        .bind(u.id)
+        .fetch_optional(&mut **tx)
+        .await?;
 
         if signup.as_ref().map(|(s,)| s.as_str()) != Some("going") {
             return Err(bad(u.lang, ErrorKey::EventReimbursementNeedsSignup));
@@ -360,20 +391,54 @@ async fn ensure_not_claimed(
     )
     .execute(&mut **tx)
     .await?;
+    let claim_kind = if is_mileage(req) { "mileage" } else { "grab" };
     let (taken,): (i64,) = sqlx::query_as(
         "SELECT COUNT(*) FROM reimbursements
          WHERE status <> 'rejected' AND id IS DISTINCT FROM $1
-           AND (receipt_file_id = $2 OR ($3::BIGINT IS NOT NULL AND ride_id = $3))",
+           AND (receipt_file_id = $2 OR ($3::BIGINT IS NOT NULL AND ride_id = $3 AND kind = $4))",
     )
     .bind(except)
     .bind(req.receipt_file_id)
     .bind(req.ride_id)
+    .bind(claim_kind)
     .fetch_one(&mut **tx)
     .await?;
     if taken > 0 {
         return Err(bad(lang, ErrorKey::ReimbursementAlreadyClaimed));
     }
     if is_mileage(req) {
+        if let Some(rid) = req.ride_id {
+            let trip_id: Option<Option<i64>> =
+                sqlx::query_scalar("SELECT trip_id FROM rides WHERE id = $1 FOR SHARE")
+                    .bind(rid)
+                    .fetch_optional(&mut **tx)
+                    .await?;
+            if let Some(Some(tid)) = trip_id {
+                let sibling_taken: bool = sqlx::query_scalar(
+                    "SELECT EXISTS (
+                         SELECT 1 FROM rides s
+                         WHERE s.trip_id = $1 AND s.driver_id = $2 AND s.id <> $3
+                           AND (
+                               s.reimbursement_amount_cents > 0
+                               OR EXISTS (
+                                   SELECT 1 FROM reimbursements r
+                                   WHERE r.ride_id = s.id AND r.kind = 'mileage'
+                                     AND r.status <> 'rejected' AND r.id IS DISTINCT FROM $4
+                               )
+                           )
+                     )",
+                )
+                .bind(tid)
+                .bind(user_id)
+                .bind(rid)
+                .bind(except)
+                .fetch_one(&mut **tx)
+                .await?;
+                if sibling_taken {
+                    return Err(bad(lang, ErrorKey::ReimbursementAlreadyClaimed));
+                }
+            }
+        }
         if let Some(eid) = resolved_event_id {
             let (post_event_taken,): (i64,) = sqlx::query_as(
                 "SELECT COUNT(*) FROM reimbursements
@@ -400,8 +465,8 @@ pub(super) async fn create_reimbursement(
     Json(req): Json<ReimbIn>,
 ) -> AppResult<Json<Value>> {
     require(&u, Page::Reimbursements, Act::Create)?;
-    let resolved_event_id = validate_reimb(&st, &u, &req).await?;
     let mut tx = st.db.begin().await?;
+    let resolved_event_id = validate_reimb(&mut tx, &u, &req).await?;
     ensure_not_claimed(&mut tx, u.lang, u.id, resolved_event_id, &req, None).await?;
     let (id,): (i64,) = sqlx::query_as(
         "INSERT INTO reimbursements (user_id, ride_id, event_id, amount_cents, description, receipt_file_id, payee_name, payee_phone, created_at, updated_at, kind) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11) RETURNING id",
@@ -455,21 +520,26 @@ pub(super) async fn resubmit_reimbursement(
     Path(id): Path<i64>,
     Json(req): Json<ReimbIn>,
 ) -> AppResult<Json<Value>> {
-    let r = load_reimb(&st, u.lang, id).await?;
+    let mut tx = st.db.begin().await?;
+    let locked: Option<(i64, String, String)> =
+        sqlx::query_as("SELECT user_id, status, kind FROM reimbursements WHERE id=$1 FOR UPDATE")
+            .bind(id)
+            .fetch_optional(&mut *tx)
+            .await?;
+    let (r_user_id, r_status, r_kind) = locked.ok_or_else(|| not_found(u.lang))?;
     // A visitor special reimbursement is corrected by the traffic lead, not the driver.
-    if r.user_id != u.id || r.status != "returned" || r.kind == "visitor_special" {
+    if r_user_id != u.id || r_status != "returned" || r_kind == "visitor_special" {
         return Err(bad(u.lang, ErrorKey::OnlyReturnedReimbCanBeResubmitted));
     }
     require(&u, Page::Reimbursements, Act::Update)?;
     if let Some(ref k) = req.kind {
-        if k != &r.kind {
+        if k != &r_kind {
             return Err(bad(u.lang, ErrorKey::InvalidAction));
         }
     }
     let mut normalized = req;
-    normalized.kind = Some(r.kind.clone());
-    let resolved_event_id = validate_reimb(&st, &u, &normalized).await?;
-    let mut tx = st.db.begin().await?;
+    normalized.kind = Some(r_kind);
+    let resolved_event_id = validate_reimb(&mut tx, &u, &normalized).await?;
     ensure_not_claimed(
         &mut tx,
         u.lang,
@@ -528,6 +598,8 @@ pub(super) async fn resubmit_reimbursement(
 pub(super) struct ReviewIn {
     action: String, // approve | return | reject
     note: Option<String>,
+    #[serde(default)]
+    expected_updated_at: Option<String>,
 }
 
 pub(super) async fn review_reimbursement(
@@ -537,14 +609,6 @@ pub(super) async fn review_reimbursement(
     Json(req): Json<ReviewIn>,
 ) -> AppResult<Json<Value>> {
     require(&u, Page::AdminReimbReview, Act::Update)?;
-    let r = load_reimb(&st, u.lang, id).await?;
-    if r.status != "pending" {
-        return Err(bad(u.lang, ErrorKey::ReimbAlreadyReviewed));
-    }
-    // Neither the payee nor whoever asked for it (a visitor special reimbursement) reviews it.
-    if r.user_id == u.id || r.requested_by == Some(u.id) {
-        return Err(forbidden(u.lang, ErrorKey::CannotReviewOwnRequest));
-    }
     let note = req.note.unwrap_or_default();
     let status = match req.action.as_str() {
         "approve" => "approved",
@@ -556,9 +620,55 @@ pub(super) async fn review_reimbursement(
         return Err(bad(u.lang, ErrorKey::ReasonRequired));
     }
     let mut tx = st.db.begin().await?;
+    let locked: Option<(
+        i64,
+        Option<i64>,
+        String,
+        String,
+        Option<i64>,
+        i64,
+        String,
+        String,
+    )> = sqlx::query_as(
+        "SELECT r.user_id, r.requested_by, r.status, r.kind, r.ride_id, r.amount_cents,
+                    r.updated_at, u.name
+             FROM reimbursements r
+             JOIN users u ON u.id = r.user_id
+             WHERE r.id = $1
+             FOR UPDATE OF r",
+    )
+    .bind(id)
+    .fetch_optional(&mut *tx)
+    .await?;
+    let (
+        r_user_id,
+        r_requested_by,
+        r_status,
+        r_kind,
+        r_ride_id,
+        r_amount_cents,
+        r_updated_at,
+        r_user_name,
+    ) = locked.ok_or_else(|| not_found(u.lang))?;
+    if r_status != "pending" {
+        return Err(bad(u.lang, ErrorKey::ReimbAlreadyReviewed));
+    }
+    if let Some(ref exp) = req.expected_updated_at {
+        if exp != &r_updated_at {
+            return Err(conflict(u.lang, ErrorKey::RequestAlreadyHandled));
+        }
+    }
+    // Neither the payee nor whoever asked for it (a visitor special reimbursement) reviews it.
+    if r_user_id == u.id || r_requested_by == Some(u.id) {
+        return Err(forbidden(u.lang, ErrorKey::CannotReviewOwnRequest));
+    }
+    // Returning a post-event mileage batch claim has no driver-editable resubmit path.
+    if status == "returned" && r_kind == "mileage" && r_ride_id.is_none() {
+        return Err(bad(u.lang, ErrorKey::InvalidAction));
+    }
     let changed = sqlx::query(
         "UPDATE reimbursements SET status=$1, review_note=$2, reviewed_by=$3, updated_at=$4
-         WHERE id=$5 AND status='pending' AND requested_by IS DISTINCT FROM $3",
+         WHERE id=$5 AND status='pending' AND user_id <> $3 AND requested_by IS DISTINCT FROM $3",
     )
     .bind(status)
     .bind(&note)
@@ -571,16 +681,40 @@ pub(super) async fn review_reimbursement(
     if changed == 0 {
         return Err(conflict(u.lang, ErrorKey::ReimbAlreadyReviewed));
     }
-    // Approving a mileage receipt confirms the ride's reimbursement.
-    if status == "approved" && r.kind == "mileage" {
-        if let Some(rid) = r.ride_id {
+    // Approving a mileage receipt confirms the ride's reimbursement (unless excluded) and
+    // clears any sibling trip receipt-needed flags.
+    if status == "approved" && r_kind == "mileage" {
+        if let Some(rid) = r_ride_id {
+            let ride_row: Option<(i64, Option<i64>)> = sqlx::query_as(
+                "SELECT reimbursement_excluded, trip_id FROM rides WHERE id=$1 FOR UPDATE",
+            )
+            .bind(rid)
+            .fetch_optional(&mut *tx)
+            .await?;
+            let Some((excluded, ride_trip_id)) = ride_row else {
+                return Err(not_found(u.lang));
+            };
+            if excluded == 1 {
+                return Err(conflict(u.lang, ErrorKey::InvalidAction));
+            }
             sqlx::query(
                 "UPDATE rides SET reimbursement_amount_cents=$1, mileage_receipt_needed=0 WHERE id=$2",
             )
-            .bind(r.amount_cents)
+            .bind(r_amount_cents)
             .bind(rid)
             .execute(&mut *tx)
             .await?;
+            if let Some(tid) = ride_trip_id {
+                sqlx::query(
+                    "UPDATE rides SET mileage_receipt_needed=0
+                     WHERE trip_id=$1 AND driver_id=$2 AND id <> $3 AND mileage_receipt_needed=1",
+                )
+                .bind(tid)
+                .bind(r_user_id)
+                .bind(rid)
+                .execute(&mut *tx)
+                .await?;
+            }
         }
     }
     tx.commit().await?;
@@ -591,11 +725,11 @@ pub(super) async fn review_reimbursement(
     };
     notify(
         &st.db,
-        r.user_id,
+        r_user_id,
         title,
         (
-            &format!("{} {}", fmt_rm(r.amount_cents), note),
-            &format!("{} {}", fmt_rm(r.amount_cents), note),
+            &format!("{} {}", fmt_rm(r_amount_cents), note),
+            &format!("{} {}", fmt_rm(r_amount_cents), note),
         ),
         &format!("/reimbursements/{id}"),
     )
@@ -608,8 +742,8 @@ pub(super) async fn review_reimbursement(
             Some(u.id),
             ("有报销待付款", "Reimbursement awaiting payment"),
             (
-                &format!("{} · {}", r.user_name, fmt_rm(r.amount_cents)),
-                &format!("{} · {}", r.user_name, fmt_rm(r.amount_cents)),
+                &format!("{} · {}", r_user_name, fmt_rm(r_amount_cents)),
+                &format!("{} · {}", r_user_name, fmt_rm(r_amount_cents)),
             ),
             "/admin/reimbursements",
         )

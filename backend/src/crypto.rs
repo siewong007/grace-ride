@@ -55,8 +55,8 @@ pub fn encrypt_with_key(
     context: &str,
     plaintext: &str,
 ) -> anyhow::Result<String> {
-    if plaintext.is_empty() || plaintext.starts_with(PREFIX) {
-        return Ok(plaintext.to_string());
+    if plaintext.is_empty() {
+        return Ok(String::new());
     }
     let mut nonce_bytes = [0u8; NONCE_LEN];
     SystemRandom::new()

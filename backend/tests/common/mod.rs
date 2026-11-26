@@ -55,6 +55,7 @@ pub async fn setup() -> (Router, AppState) {
         housekeeping_interval_mins: 60,
         notification_retention_days: 90,
         turnstile: Default::default(),
+        google_oauth: Default::default(),
         android_cert_sha256_fingerprints: Vec::new(),
         ios_app_ids: Vec::new(),
         require_biometric_attestation: false,
@@ -202,6 +203,23 @@ pub async fn call(
     body: Option<Value>,
 ) -> Res {
     call_with(app, method, path, cookie, body, Some(ORIGIN)).await
+}
+
+pub fn cookie_from(res: &Res) -> Option<String> {
+    res.headers
+        .get_all(header::SET_COOKIE)
+        .iter()
+        .filter_map(|v| v.to_str().ok())
+        .find_map(|raw| {
+            let pair = raw.split(';').next()?.trim();
+            if (pair.starts_with("gr_session=") || pair.starts_with("__Host-gr_session="))
+                && !pair.ends_with('=')
+            {
+                Some(pair.to_string())
+            } else {
+                None
+            }
+        })
 }
 
 pub async fn call_with(

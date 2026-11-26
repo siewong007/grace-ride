@@ -326,7 +326,7 @@ fun VisitorInvitesSection(
                 Row {
                     TextButton(
                         onClick = {
-                            if (copyToClipboard(context, "Visitor pass", url)) {
+                            if (copyToClipboard(context, "Visitor pass", url, sensitive = true)) {
                                 onCopiedToast()
                             }
                         },

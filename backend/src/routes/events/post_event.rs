@@ -144,10 +144,11 @@ pub(super) async fn get_post_event_drivers(
     });
 
     // 2. Collect candidate drivers who actually drove or were assigned to drive for this event:
-    // a) Drivers assigned to non-cancelled rides for this event (outbound or return)
+    // a) Drivers assigned to live/completed rides for this event (outbound or return)
     let ride_drivers: Vec<(i64,)> = sqlx::query_as(
         "SELECT DISTINCT driver_id FROM rides
-         WHERE event_id = $1 AND driver_id IS NOT NULL AND status <> 'cancelled'",
+         WHERE event_id = $1 AND driver_id IS NOT NULL
+           AND status IN ('confirmed', 'in_progress', 'completed')",
     )
     .bind(event_id)
     .fetch_all(&st.db)
@@ -233,7 +234,8 @@ pub(super) async fn get_post_event_drivers(
                 COUNT(*)::BIGINT,
                 COUNT(*) FILTER (WHERE reimbursement_excluded = 1)::BIGINT
              FROM rides
-             WHERE event_id = $1 AND driver_id = ANY($2) AND status <> 'cancelled'
+             WHERE event_id = $1 AND driver_id = ANY($2)
+               AND status IN ('confirmed', 'in_progress', 'completed')
              GROUP BY driver_id",
         )
         .bind(event_id)
@@ -365,6 +367,22 @@ pub(super) async fn create_post_event_reimbursements(
 
     let mut tx = st.db.begin().await?;
 
+    // Re-check and lock event status/mileage inside the transaction to close concurrent edit/cancel TOCTOU.
+    let ev_row: Option<(String, i64)> =
+        sqlx::query_as("SELECT status, mileage_claimable FROM events WHERE id = $1 FOR SHARE")
+            .bind(event_id)
+            .fetch_optional(&mut *tx)
+            .await?;
+    let Some((ev_status, ev_claimable)) = ev_row else {
+        return Err(not_found(u.lang));
+    };
+    if !matches!(ev_status.as_str(), "published" | "finished") {
+        return Err(bad(u.lang, ErrorKey::EventNotOpen));
+    }
+    if ev_claimable != 1 {
+        return Err(bad(u.lang, ErrorKey::EventMileageNotClaimable));
+    }
+
     // Advisory locks shared with `reimbursements.rs::ensure_not_claimed` to prevent double-claim races.
     sqlx::query(
         "SELECT pg_advisory_xact_lock(hashtextextended('grace_ride_post_event_reimb', $1))",
@@ -416,7 +434,8 @@ pub(super) async fn create_post_event_reimbursements(
         let participated_as_driver: bool = sqlx::query_scalar(
             "SELECT EXISTS (
                  SELECT 1 FROM rides
-                 WHERE event_id = $1 AND driver_id = $2 AND status <> 'cancelled'
+                 WHERE event_id = $1 AND driver_id = $2
+                   AND status IN ('confirmed', 'in_progress', 'completed')
              ) OR EXISTS (
                  SELECT 1 FROM plan_visitors
                  WHERE event_id = $1 AND driver_id = $2
@@ -454,7 +473,8 @@ pub(super) async fn create_post_event_reimbursements(
             "SELECT COUNT(*)::BIGINT,
                     COUNT(*) FILTER (WHERE reimbursement_excluded = 1)::BIGINT
              FROM rides
-             WHERE event_id = $1 AND driver_id = $2 AND status <> 'cancelled'",
+             WHERE event_id = $1 AND driver_id = $2
+               AND status IN ('confirmed', 'in_progress', 'completed')",
         )
         .bind(event_id)
         .bind(claim.driver_id)

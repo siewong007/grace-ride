@@ -776,7 +776,7 @@ pub(super) async fn approve_ride_draft(
     u: CurrentUser,
     Path((id, did)): Path<(i64, i64)>,
 ) -> AppResult<Json<Value>> {
-    require(&u, Page::AdminRides, Act::View)?;
+    require(&u, Page::AdminRides, Act::Update)?;
     if !u.is_traffic_lead() {
         return Err(forbidden(u.lang, ErrorKey::OnlyTrafficLeadCanApprove));
     }
@@ -880,7 +880,7 @@ pub(super) async fn approve_ride_draft(
         }
         "reimbursement_excluded" => {
             let ex = excl.unwrap_or(1) == 1;
-            exec_set_reimbursement_excluded_tx(&mut tx, &r, ex).await?;
+            exec_set_reimbursement_excluded_tx(&mut tx, u.lang, &r, ex).await?;
             PostApply::ReimbExcluded(ex)
         }
         _ => return Err(bad(u.lang, ErrorKey::InvalidAction)),
@@ -995,7 +995,7 @@ pub(super) async fn return_ride_draft(
     Path((id, did)): Path<(i64, i64)>,
     Json(req): Json<ReturnRideDraftReq>,
 ) -> AppResult<Json<Value>> {
-    require(&u, Page::AdminRides, Act::View)?;
+    require(&u, Page::AdminRides, Act::Update)?;
     if !u.is_traffic_lead() {
         return Err(forbidden(u.lang, ErrorKey::OnlyTrafficLeadCanApprove));
     }

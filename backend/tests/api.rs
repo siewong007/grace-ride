@@ -48,6 +48,7 @@ async fn setup() -> (Router, AppState) {
         housekeeping_interval_mins: 60,
         notification_retention_days: 90,
         turnstile: Default::default(),
+        google_oauth: Default::default(),
         android_cert_sha256_fingerprints: Vec::new(),
         ios_app_ids: Vec::new(),
         require_biometric_attestation: false,
@@ -62,6 +63,23 @@ struct Res {
     status: StatusCode,
     headers: HeaderMap,
     json: Value,
+}
+
+fn cookie_from(res: &Res) -> Option<String> {
+    res.headers
+        .get_all(header::SET_COOKIE)
+        .iter()
+        .filter_map(|v| v.to_str().ok())
+        .find_map(|raw| {
+            let pair = raw.split(';').next()?.trim();
+            if (pair.starts_with("gr_session=") || pair.starts_with("__Host-gr_session="))
+                && !pair.ends_with('=')
+            {
+                Some(pair.to_string())
+            } else {
+                None
+            }
+        })
 }
 
 async fn call(
@@ -339,6 +357,7 @@ async fn totp_backup_codes_and_auto_lock_flow() {
     )
     .await;
     assert_eq!(enable_res.status, StatusCode::OK);
+    let cookie = cookie_from(&enable_res).expect("rotated cookie");
     let codes = enable_res.json["backup_codes"]
         .as_array()
         .expect("backup_codes array");
@@ -372,6 +391,7 @@ async fn totp_backup_codes_and_auto_lock_flow() {
     assert_eq!(verify_res.status, StatusCode::OK);
     assert_eq!(verify_res.json["method"], "backup_code");
     assert_eq!(verify_res.json["remaining_backup_codes"], 7);
+    let cookie = cookie_from(&verify_res).expect("rotated cookie");
 
     let me_after_use = call(&app, Method::GET, "/api/auth/me", Some(&cookie), None).await;
     assert_eq!(me_after_use.json["backup_codes_count"], 7);
@@ -429,6 +449,7 @@ async fn backup_codes_issued_before_salting_still_work() {
     )
     .await;
     assert_eq!(enable_res.status, StatusCode::OK, "{}", enable_res.json);
+    let cookie = cookie_from(&enable_res).expect("rotated cookie");
 
     // Replace the stored codes with one in the old, unsalted format.
     let legacy = json!([hash_token("ABCD2345")]).to_string();
@@ -449,13 +470,16 @@ async fn backup_codes_issued_before_salting_still_work() {
     assert_eq!(r.status, StatusCode::OK, "{}", r.json);
     assert_eq!(r.json["method"], "backup_code");
     assert_eq!(r.json["remaining_backup_codes"], 0);
+    let rotated = cookie_from(&r).expect("rotated cookie");
+    let stale_old = call(&app, Method::GET, "/api/auth/me", Some(&cookie), None).await;
+    assert_eq!(stale_old.status, StatusCode::UNAUTHORIZED);
 
     // Still single-use.
     let again = call(
         &app,
         Method::POST,
         "/api/auth/totp/verify",
-        Some(&cookie),
+        Some(&rotated),
         Some(json!({ "code": "ABCD-2345" })),
     )
     .await;
@@ -488,6 +512,8 @@ async fn totp_backup_code_concurrent_use_one_wins() {
     )
     .await;
     assert_eq!(enable_res.status, StatusCode::OK);
+    let cookie1 = cookie_from(&enable_res).expect("rotated cookie");
+    let cookie2 = login(&st, "member@example.org").await;
     let codes = enable_res.json["backup_codes"]
         .as_array()
         .expect("backup_codes array");
@@ -500,8 +526,6 @@ async fn totp_backup_code_concurrent_use_one_wins() {
     // consume it. The loser re-reads after the row lock and finds the code gone.
     let app1 = app.clone();
     let app2 = app.clone();
-    let cookie1 = cookie.clone();
-    let cookie2 = cookie.clone();
     let path = "/api/auth/totp/verify";
     let (verify1, verify2) = tokio::join!(
         call(
@@ -539,27 +563,209 @@ async fn totp_backup_code_concurrent_use_one_wins() {
         verify1.json, verify2.json
     );
 
+    let live_cookie = if verify1.status == StatusCode::OK {
+        cookie_from(&verify1).expect("rotated cookie1")
+    } else {
+        cookie_from(&verify2).expect("rotated cookie2")
+    };
     // The account still has 7 codes left and is still signed in.
-    let me = call(&app, Method::GET, "/api/auth/me", Some(&cookie), None).await;
+    let me = call(&app, Method::GET, "/api/auth/me", Some(&live_cookie), None).await;
     assert_eq!(me.json["backup_codes_count"], 7);
 }
 
 #[tokio::test]
-async fn password_login_is_disabled() {
-    let (app, _) = setup().await;
-    // Password login stays off in every mode; passkeys / invites are the only path.
-    for email in ["member@example.org", "nobody@example.org"] {
-        let r = call(
+async fn password_login_lockout_and_totp() {
+    let (app, st) = setup().await;
+    // Unknown email fails with INVALID_CREDENTIALS.
+    let unknown = call(
+        &app,
+        Method::POST,
+        "/api/auth/login",
+        None,
+        Some(json!({"email": "nobody@example.org", "password": PW})),
+    )
+    .await;
+    assert_eq!(unknown.status, StatusCode::BAD_REQUEST, "{}", unknown.json);
+    assert_eq!(unknown.json["code"], "INVALID_CREDENTIALS");
+
+    // Valid member password login succeeds and sets a session cookie (mfa_ok=false when no 2FA).
+    let ok = call(
+        &app,
+        Method::POST,
+        "/api/auth/login",
+        None,
+        Some(json!({"email": "member@example.org", "password": PW})),
+    )
+    .await;
+    assert_eq!(ok.status, StatusCode::OK, "{}", ok.json);
+    let member_cookie = cookie_from(&ok).expect("session cookie on password login");
+    let me = call(
+        &app,
+        Method::GET,
+        "/api/auth/me",
+        Some(&member_cookie),
+        None,
+    )
+    .await;
+    assert_eq!(me.status, StatusCode::OK);
+    assert_eq!(me.json["email"], "member@example.org");
+
+    // Disabled user with right password gets AUTH_DISABLED; wrong password still gets INVALID_CREDENTIALS.
+    sqlx::query("UPDATE users SET status='disabled' WHERE email='yawen@example.org'")
+        .execute(&st.db)
+        .await
+        .unwrap();
+    let disabled_bad_pw = call(
+        &app,
+        Method::POST,
+        "/api/auth/login",
+        None,
+        Some(json!({"email": "yawen@example.org", "password": "wrong-password"})),
+    )
+    .await;
+    assert_eq!(disabled_bad_pw.status, StatusCode::BAD_REQUEST);
+    assert_eq!(disabled_bad_pw.json["code"], "INVALID_CREDENTIALS");
+    let disabled_ok_pw = call(
+        &app,
+        Method::POST,
+        "/api/auth/login",
+        None,
+        Some(json!({"email": "yawen@example.org", "password": PW})),
+    )
+    .await;
+    assert_eq!(disabled_ok_pw.status, StatusCode::FORBIDDEN);
+    assert_eq!(disabled_ok_pw.json["code"], "AUTH_DISABLED");
+
+    // 5 failed password attempts lock out that email for 15 minutes.
+    for i in 0..5 {
+        let fail = call(
             &app,
             Method::POST,
             "/api/auth/login",
             None,
-            Some(json!({"email": email, "password": PW})),
+            Some(json!({"email": "member@example.org", "password": format!("wrong-{i}")})),
         )
         .await;
-        assert_eq!(r.status, StatusCode::BAD_REQUEST, "{email}: {}", r.json);
-        assert_eq!(r.json["code"], "AUTH_DISABLED");
+        assert_eq!(fail.status, StatusCode::BAD_REQUEST, "{i}: {}", fail.json);
+        assert_eq!(fail.json["code"], "INVALID_CREDENTIALS");
     }
+    let locked = call(
+        &app,
+        Method::POST,
+        "/api/auth/login",
+        None,
+        Some(json!({"email": "member@example.org", "password": PW})),
+    )
+    .await;
+    assert_eq!(
+        locked.status,
+        StatusCode::TOO_MANY_REQUESTS,
+        "{}",
+        locked.json
+    );
+    assert_eq!(locked.json["code"], "TOO_MANY_FAILED_LOGINS");
+
+    // TOTP-enabled user requires a valid 2FA code to complete password sign-in
+    // (fresh app state avoids hitting the per-IP 10/min login rate limit above).
+    let (app, st) = setup().await;
+    let admin_cookie = login(&st, "admin@example.org").await;
+    let setup_totp = call(
+        &app,
+        Method::POST,
+        "/api/auth/totp/setup",
+        Some(&admin_cookie),
+        None,
+    )
+    .await;
+    let secret = setup_totp.json["secret"].as_str().unwrap().to_string();
+    let code = totp_code(&secret, "admin@example.org");
+    let enable = call(
+        &app,
+        Method::POST,
+        "/api/auth/totp/enable",
+        Some(&admin_cookie),
+        Some(json!({"code": code})),
+    )
+    .await;
+    assert_eq!(enable.status, StatusCode::OK, "{}", enable.json);
+
+    let need_code = call(
+        &app,
+        Method::POST,
+        "/api/auth/login",
+        None,
+        Some(json!({"email": "admin@example.org", "password": PW})),
+    )
+    .await;
+    assert_eq!(
+        need_code.status,
+        StatusCode::BAD_REQUEST,
+        "{}",
+        need_code.json
+    );
+    assert_eq!(need_code.json["code"], "TOTP_REQUIRED");
+
+    let bad_code = call(
+        &app,
+        Method::POST,
+        "/api/auth/login",
+        None,
+        Some(json!({"email": "admin@example.org", "password": PW, "code": "000000"})),
+    )
+    .await;
+    assert_eq!(
+        bad_code.status,
+        StatusCode::BAD_REQUEST,
+        "{}",
+        bad_code.json
+    );
+    assert_eq!(bad_code.json["code"], "INVALID_CODE");
+
+    // Replaying an already-consumed TOTP step returns CODE_ALREADY_USED deterministically.
+    sqlx::query(
+        "UPDATE users SET totp_last_step = (EXTRACT(EPOCH FROM NOW())::BIGINT / 30) + 10 WHERE email = 'admin@example.org'",
+    )
+    .execute(&st.db)
+    .await
+    .unwrap();
+    let cur_code = totp_code(&secret, "admin@example.org");
+    let replay_code = call(
+        &app,
+        Method::POST,
+        "/api/auth/login",
+        None,
+        Some(json!({"email": "admin@example.org", "password": PW, "code": cur_code})),
+    )
+    .await;
+    assert_eq!(
+        replay_code.status,
+        StatusCode::BAD_REQUEST,
+        "{}",
+        replay_code.json
+    );
+    assert_eq!(replay_code.json["code"], "CODE_ALREADY_USED");
+
+    // Backup code succeeds and yields mfa_ok=true.
+    let backup_code = enable.json["backup_codes"][0].as_str().unwrap();
+    let totp_ok = call(
+        &app,
+        Method::POST,
+        "/api/auth/login",
+        None,
+        Some(json!({"email": "admin@example.org", "password": PW, "code": backup_code})),
+    )
+    .await;
+    assert_eq!(totp_ok.status, StatusCode::OK, "{}", totp_ok.json);
+    let admin_pw_cookie = cookie_from(&totp_ok).expect("admin cookie after 2fa");
+    let admin_me = call(
+        &app,
+        Method::GET,
+        "/api/auth/me",
+        Some(&admin_pw_cookie),
+        None,
+    )
+    .await;
+    assert_eq!(admin_me.json["mfa_ok"], true);
 }
 
 #[tokio::test]
@@ -1469,6 +1675,7 @@ fn production_config_rejects_dev_mode_and_plain_http() {
         housekeeping_interval_mins: 60,
         notification_retention_days: 90,
         turnstile: Default::default(),
+        google_oauth: Default::default(),
         android_cert_sha256_fingerprints: Vec::new(),
         ios_app_ids: Vec::new(),
         require_biometric_attestation: false,
@@ -2323,6 +2530,31 @@ async fn activity_events_group_scoped_signup_waitlist() {
         StatusCode::OK
     );
 
+    // Already marked attended: withdrawal must be refused until attendance is cleared.
+    let blocked = call(
+        &app,
+        Method::POST,
+        "/api/events/1/withdraw",
+        Some(&member),
+        None,
+    )
+    .await;
+    assert_eq!(blocked.status, StatusCode::BAD_REQUEST, "{}", blocked.json);
+    assert_eq!(blocked.json["code"], "INVALID_ACTION");
+
+    assert_eq!(
+        call(
+            &app,
+            Method::POST,
+            "/api/events/1/attendance",
+            Some(&leader),
+            Some(json!({ "user_id": 6, "attended": false }))
+        )
+        .await
+        .status,
+        StatusCode::OK
+    );
+
     assert_eq!(
         call(
             &app,
@@ -2402,6 +2634,7 @@ async fn disaster_recovery_backup_restore_drill() {
     let out = Command::new("bash")
         .env("DATABASE_URL", &database_url)
         .env("BACKUP_SCHEMA", &test_schema)
+        .env("REQUIRE_ENCRYPTION", "false")
         .current_dir(&repo)
         .arg("./scripts/backup.sh")
         .arg(data_dir)

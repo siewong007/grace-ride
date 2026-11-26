@@ -12,6 +12,9 @@ public enum QrParsing {
         guard !trimmed.isEmpty else { return .invalid }
 
         let lower = trimmed.lowercased()
+        if lower.hasPrefix("grpass:") {
+            return .invalid
+        }
         let looksLikeUrl = lower.hasPrefix("http://")
             || lower.hasPrefix("https://")
             || lower.hasPrefix("/events/")

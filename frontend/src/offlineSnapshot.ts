@@ -4,6 +4,28 @@ const SNAPSHOT_KEY = 'gr_today_rides_v1';
 const QUEUE_KEY = 'gr_offline_actions_v1';
 const QUEUE_EVENT = 'gr:offline-queue-changed';
 
+let lockedInMemory = false;
+if (typeof window !== 'undefined') {
+  window.addEventListener('gr:session-locked', () => {
+    lockedInMemory = true;
+  });
+  window.addEventListener('gr:session-unlocked', () => {
+    lockedInMemory = false;
+  });
+  window.addEventListener('gr:unauthorized', () => {
+    lockedInMemory = false;
+  });
+}
+
+function isLocalSessionLocked(): boolean {
+  if (lockedInMemory) return true;
+  try {
+    return typeof localStorage !== 'undefined' && Boolean(localStorage.getItem('gr_locked_user'));
+  } catch {
+    return false;
+  }
+}
+
 function todayStr(): string {
   const d = new Date();
   const pad = (n: number) => String(n).padStart(2, '0');
@@ -103,6 +125,10 @@ function readRaw(userId: number): TodaySnapshot | null {
  * Staff-only views and terminal/future rides are excluded to preserve privacy.
  */
 export function saveTodayRidesSnapshot(userId: number, rides: Ride[]): void {
+  if (isLocalSessionLocked()) {
+    clearSnapshotOnly();
+    return;
+  }
   const today = todayStr();
   const eligible = rides.filter(
     (r) =>

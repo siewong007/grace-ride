@@ -90,6 +90,7 @@ import org.pjstatecm.graceride.di.AppContainer
 import org.pjstatecm.graceride.domain.KlTime
 import org.pjstatecm.graceride.domain.Money
 import org.pjstatecm.graceride.ui.AppRoute
+import org.pjstatecm.graceride.ui.SecureScreenEffect
 import org.pjstatecm.graceride.ui.UiHaptics
 import org.pjstatecm.graceride.ui.components.DetailSkeleton
 import org.pjstatecm.graceride.ui.components.ErrorView
@@ -114,6 +115,7 @@ fun SettlementDetailScreen(
         key = "settlement-$id",
         factory = SettlementDetailViewModel.factory(container, id),
     )
+    SecureScreenEffect()
     val state by vm.state.collectAsStateWithLifecycle()
     val snackbar = remember { SnackbarHostState() }
     val lifecycleOwner = LocalLifecycleOwner.current
@@ -352,7 +354,7 @@ fun SettlementDetailScreen(
                                         if (d.payeeAccount.isNotBlank()) {
                                             OutlinedButton(
                                                 onClick = {
-                                                    copyToClipboard(context, d.payeeName.ifBlank { "Payee" }, d.payeeAccount)
+                                                    copyToClipboard(context, d.payeeName.ifBlank { "Payee" }, d.payeeAccount, sensitive = true)
                                                     UiHaptics.confirm(view)
                                                     scope.launch { snackbar.showSnackbar(copiedMsg) }
                                                 },

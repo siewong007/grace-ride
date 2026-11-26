@@ -40,6 +40,7 @@ async fn setup_capacity() -> (Router, AppState) {
         housekeeping_interval_mins: 60,
         notification_retention_days: 90,
         turnstile: Default::default(),
+        google_oauth: Default::default(),
         android_cert_sha256_fingerprints: Vec::new(),
         ios_app_ids: Vec::new(),
         require_biometric_attestation: false,

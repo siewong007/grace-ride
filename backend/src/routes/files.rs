@@ -60,8 +60,35 @@ pub fn sniff(b: &[u8]) -> Option<(&'static str, &'static str)> {
     }
 }
 
-/// A JPEG without its APP1 (Exif, incl. GPS location; XMP) and APP13 (IPTC) segments.
-/// `None` when the data is not a well-formed JPEG header or nothing was removed.
+/// Validate and resolve a stored upload filename strictly inside `upload_dir` without symlinks.
+pub fn safe_upload_path(
+    upload_dir: &std::path::Path,
+    stored_name: &str,
+) -> anyhow::Result<std::path::PathBuf> {
+    if stored_name.is_empty()
+        || !stored_name
+            .bytes()
+            .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'.' | b'-' | b'_'))
+    {
+        anyhow::bail!("invalid stored upload filename");
+    }
+    let mut comps = std::path::Path::new(stored_name).components();
+    match (comps.next(), comps.next()) {
+        (Some(std::path::Component::Normal(_)), None) => {}
+        _ => anyhow::bail!("non-local upload path component"),
+    }
+    let candidate = upload_dir.join(stored_name);
+    if let Ok(meta) = std::fs::symlink_metadata(&candidate) {
+        if meta.file_type().is_symlink() {
+            anyhow::bail!("refusing symlink in upload directory");
+        }
+    }
+    Ok(candidate)
+}
+
+/// A JPEG without APP1 (Exif/XMP), APP2 (MPF/extended ICC), APP13 (IPTC), COM comments, or
+/// trailing post-EOI bytes (e.g. embedded secondary Motion Photo / MPF images).
+/// `None` when the data is not well-formed JPEG or nothing needed removal.
 pub fn strip_jpeg_metadata(data: &[u8]) -> Option<Vec<u8>> {
     if !data.starts_with(&[0xFF, 0xD8]) {
         return None;
@@ -80,9 +107,12 @@ pub fn strip_jpeg_metadata(data: &[u8]) -> Option<Vec<u8>> {
             pos += 1;
             continue;
         }
-        // Start of scan or end of image: the rest is image data, copied as it is.
-        if marker == 0xDA || marker == 0xD9 {
-            out.extend_from_slice(&data[pos..]);
+        // End of primary image: copy EOI marker and drop any trailing post-EOI bytes.
+        if marker == 0xD9 {
+            out.extend_from_slice(&[0xFF, 0xD9]);
+            if pos + 2 < data.len() {
+                removed = true;
+            }
             break;
         }
         // Markers without a length.
@@ -99,7 +129,37 @@ pub fn strip_jpeg_metadata(data: &[u8]) -> Option<Vec<u8>> {
             return None;
         }
         let end = pos + 2 + len;
-        if marker == 0xE1 || marker == 0xED {
+        if marker == 0xDA {
+            // SOS header + entropy-coded scan until the next non-stuffed/non-RST marker.
+            out.extend_from_slice(&data[pos..end]);
+            let scan_start = end;
+            let mut i = scan_start;
+            let next_marker_pos = loop {
+                if i >= data.len() {
+                    return None;
+                }
+                if data[i] != 0xFF {
+                    i += 1;
+                    continue;
+                }
+                while i + 1 < data.len() && data[i + 1] == 0xFF {
+                    i += 1;
+                }
+                if i + 1 >= data.len() {
+                    return None;
+                }
+                let next = data[i + 1];
+                if next == 0x00 || (0xD0..=0xD7).contains(&next) {
+                    i += 2;
+                    continue;
+                }
+                break i;
+            };
+            out.extend_from_slice(&data[scan_start..next_marker_pos]);
+            pos = next_marker_pos;
+            continue;
+        }
+        if matches!(marker, 0xE1 | 0xE2 | 0xED | 0xFE) {
             removed = true;
         } else {
             out.extend_from_slice(&data[pos..end]);
@@ -185,17 +245,26 @@ pub fn strip_webp_metadata(data: &[u8]) -> Option<Vec<u8>> {
     Some(out)
 }
 
-fn contains_metadata_markers(data: &[u8]) -> bool {
-    const PATTERNS: &[&[u8]] = &[
+fn contains_metadata_markers(mime: &str, data: &[u8]) -> bool {
+    const COMMON_PATTERNS: &[&[u8]] = &[
         b"Exif\0\0",
         b"Exif\0",
         b"http://ns.adobe.com/xap",
         b"eXIf",
         b"XMP ",
+        b"XMP DataXMP",
     ];
-    PATTERNS
+    if COMMON_PATTERNS
         .iter()
         .any(|pat| data.windows(pat.len()).any(|w| w == *pat))
+    {
+        return true;
+    }
+    match mime {
+        "image/gif" => data.windows(2).any(|w| w == [0x21, 0xFE]),
+        "image/heic" => data.windows(4).any(|w| w == b"Exif"),
+        _ => false,
+    }
 }
 
 async fn upload(
@@ -239,41 +308,20 @@ async fn upload(
             return Err(bad(u.lang, ErrorKey::InvalidFileType));
         }
         // Strip EXIF/XMP/IPTC/text metadata across JPEG, PNG, and WebP; reject metadata-bearing
-        // HEIC or malformed metadata-bearing containers fail-closed instead of storing raw GPS tags.
+        // containers or unstrippable metadata fail-closed after stripping.
         let stripped = match mime {
-            "image/jpeg" => {
-                let s = strip_jpeg_metadata(&data);
-                if s.is_none() && contains_metadata_markers(&data) {
-                    return Err(bad(u.lang, ErrorKey::InvalidFileType));
-                }
-                s
-            }
-            "image/png" => {
-                let s = strip_png_metadata(&data);
-                if s.is_none() && contains_metadata_markers(&data) {
-                    return Err(bad(u.lang, ErrorKey::InvalidFileType));
-                }
-                s
-            }
-            "image/webp" => {
-                let s = strip_webp_metadata(&data);
-                if s.is_none() && contains_metadata_markers(&data) {
-                    return Err(bad(u.lang, ErrorKey::InvalidFileType));
-                }
-                s
-            }
-            "image/heic" => {
-                if contains_metadata_markers(&data) {
-                    return Err(bad(u.lang, ErrorKey::InvalidFileType));
-                }
-                None
-            }
+            "image/jpeg" => strip_jpeg_metadata(&data),
+            "image/png" => strip_png_metadata(&data),
+            "image/webp" => strip_webp_metadata(&data),
             _ => None,
         };
         let payload = stripped.as_deref().unwrap_or(&data);
+        if mime.starts_with("image/") && contains_metadata_markers(mime, payload) {
+            return Err(bad(u.lang, ErrorKey::InvalidFileType));
+        }
         let mime = mime.to_string();
         let stored = format!("{}.{}", uuid::Uuid::new_v4(), ext);
-        let path = st.cfg.upload_dir.join(&stored);
+        let path = safe_upload_path(&st.cfg.upload_dir, &stored).map_err(AppError::Other)?;
         tokio::fs::create_dir_all(&st.cfg.upload_dir)
             .await
             .map_err(anyhow::Error::from)?;
@@ -394,6 +442,16 @@ async fn load_file_and_access(
              WHERE r.file_id = $1 AND (t.user_id = $3 OR $4)
          )
          OR EXISTS (
+             SELECT 1 FROM settlement_revisions sr
+             JOIN settlements s ON s.id = sr.settlement_id
+             WHERE (
+                 sr.snapshot @> jsonb_build_object('payee_qr_file_id', $1)
+                 OR sr.snapshot->'items' @> jsonb_build_array(jsonb_build_object('receipt_file_id', $1))
+                 OR sr.snapshot->'shares' @> jsonb_build_array(jsonb_build_object('proof_file_id', $1))
+             )
+             AND ($2 OR s.created_by = $3)
+         )
+         OR EXISTS (
              SELECT 1 FROM reimbursements
              WHERE receipt_file_id = $1
                AND (user_id = $3 OR $5 OR ($6 AND status IN ('approved', 'paid')))
@@ -462,7 +520,8 @@ async fn download(
             .body(Body::empty())
             .map_err(|e| AppError::Other(anyhow::anyhow!(e)));
     }
-    let mut file = tokio::fs::File::open(st.cfg.upload_dir.join(&stored))
+    let safe_path = safe_upload_path(&st.cfg.upload_dir, &stored).map_err(|_| not_found(u.lang))?;
+    let mut file = tokio::fs::File::open(&safe_path)
         .await
         .map_err(|_| not_found(u.lang))?;
     let content_len = file
@@ -687,6 +746,9 @@ async fn extract_ref(
     let Some((owner_id, stored, name)) = file_row else {
         return Err(forbidden(u.lang, ErrorKey::CannotViewFile));
     };
+    if u.status != "active" && owner_id != u.id {
+        return Err(forbidden(u.lang, ErrorKey::CannotViewFile));
+    }
 
     let mut allowed = owner_id == u.id;
     if !allowed
@@ -724,8 +786,10 @@ async fn extract_ref(
         .ok()
         .and_then(|v| v.text);
     let mut data = Vec::new();
-    if let Ok(f) = tokio::fs::File::open(st.cfg.upload_dir.join(&stored)).await {
-        let _ = f.take(512 * 1024).read_to_end(&mut data).await;
+    if let Ok(safe_path) = safe_upload_path(&st.cfg.upload_dir, &stored) {
+        if let Ok(f) = tokio::fs::File::open(&safe_path).await {
+            let _ = f.take(512 * 1024).read_to_end(&mut data).await;
+        }
     }
     let safe_name: String = name
         .chars()

@@ -29,6 +29,13 @@ class ReadinessActionReceiver : BroadcastReceiver() {
         val pending = goAsync()
         CoroutineScope(SupervisorJob() + Dispatchers.IO).launch {
             try {
+                app.container.biometric.ensureLoaded()
+                val uid = app.container.auth.me?.id ?: app.container.biometric.enrollment.value?.userId
+                val sessionLocked = app.container.auth.state.value is org.pjstatecm.graceride.data.repo.AuthState.Locked ||
+                    (uid != null && app.container.biometric.requiresAppGate(uid))
+                if (sessionLocked) {
+                    return@launch
+                }
                 withTimeout(7_500) {
                     app.container.rides.readiness(rideId, status)
                     if (notifItemId > 0L) {

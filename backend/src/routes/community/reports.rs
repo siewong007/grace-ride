@@ -553,7 +553,7 @@ pub(super) async fn monthly_report(
     let can_events = if is_self {
         true
     } else {
-        u.can(Page::AdminEvents, Act::View) || u.traffic_is_global()
+        u.can(Page::AdminEvents, Act::View)
     };
     let can_driving = if is_self {
         true

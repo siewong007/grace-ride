@@ -71,6 +71,12 @@
   --art-cyan: #22D3EE;
   --art-slate: #475569;
 
+  /* Google Sign-In mark brand palette */
+  --google-blue: #4285F4;
+  --google-green: #34A853;
+  --google-yellow: #FBBC05;
+  --google-red: #EA4335;
+
   /* Achievement role accent tokens */
   --badge-member: #10B981;
   --badge-driver: #2563EB;
@@ -1941,6 +1947,23 @@ p.empty-title { font-weight: 400; color: var(--muted); }
 .auth-alt-actions .link-btn:disabled { opacity: 0.5; cursor: default; }
 .auth-footnote { display: grid; gap: var(--space-1); margin-top: var(--space-6); text-align: center; font-size: var(--fs-sm); }
 .auth-footnote p { color: var(--muted); }
+.auth-divider {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  color: var(--muted);
+  font-size: var(--fs-sm);
+}
+.auth-divider::before,
+.auth-divider::after {
+  content: '';
+  flex: 1;
+  height: 1px;
+  background: var(--border);
+}
+.btn-google {
+  gap: var(--space-2);
+}
 /* The size and language buttons sit together, not pushed apart. */
 .public-display-bar .lang-toggle { margin-left: 0; }
 

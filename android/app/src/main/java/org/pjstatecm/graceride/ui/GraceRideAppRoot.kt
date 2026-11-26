@@ -245,9 +245,15 @@ fun GraceRideAppRoot(
         }
     }
 
-    LaunchedEffect(syncKey, isOnline, currentLang) {
+    LaunchedEffect(syncKey, isOnline, currentLang, biometricEnrollment?.userId, biometricAppUnlocked) {
         val signedIn = authState as? AuthState.SignedIn ?: return@LaunchedEffect
-        if (!signedIn.me.termsAccepted || !isOnline || !container.isLangPendingSync()) return@LaunchedEffect
+        if (!signedIn.me.termsAccepted ||
+            !isOnline ||
+            !container.isLangPendingSync() ||
+            container.biometric.requiresAppGate(signedIn.me.id)
+        ) {
+            return@LaunchedEffect
+        }
         kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
             if (signedIn.me.lang != currentLang) {
                 runSuspendCatching {
