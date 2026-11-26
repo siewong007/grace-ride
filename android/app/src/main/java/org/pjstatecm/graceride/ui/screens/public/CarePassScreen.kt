@@ -3,14 +3,14 @@ package org.pjstatecm.graceride.ui.screens.public
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.ExperimentalLayoutApi
-import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.defaultMinSize
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -47,13 +47,16 @@ import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import org.pjstatecm.graceride.R
 import org.pjstatecm.graceride.di.AppContainer
 import org.pjstatecm.graceride.domain.KlTime
+import org.pjstatecm.graceride.ui.UiHaptics
 import org.pjstatecm.graceride.ui.components.CalloutBanner
 import org.pjstatecm.graceride.ui.components.ErrorView
 import org.pjstatecm.graceride.ui.components.GraceRideLiveMap
@@ -67,7 +70,7 @@ import org.pjstatecm.graceride.ui.theme.Spacing
 import org.pjstatecm.graceride.ui.theme.graceRidePrimaryButtonColors
 import kotlin.math.roundToInt
 
-@OptIn(ExperimentalMaterial3Api::class, ExperimentalLayoutApi::class)
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun CarePassScreen(
     container: AppContainer,
@@ -80,6 +83,7 @@ fun CarePassScreen(
     )
     val state by vm.state.collectAsStateWithLifecycle()
     val context = LocalContext.current
+    val view = LocalView.current
     val snackbar = remember { SnackbarHostState() }
     val statusColors = LocalStatusColors.current
 
@@ -97,6 +101,8 @@ fun CarePassScreen(
         }
     }
 
+    val activeCare = state.status?.takeIf { it.completedAt == null && it.status != "cancelled" && !state.closedError }
+
     Scaffold(
         topBar = {
             TopAppBar(
@@ -107,12 +113,87 @@ fun CarePassScreen(
                     }
                 },
                 actions = {
-                    IconButton(onClick = { vm.refresh(initial = true) }) {
+                    IconButton(onClick = { UiHaptics.tick(view); vm.refresh(initial = true) }) {
                         Icon(Icons.Outlined.Refresh, contentDescription = stringResource(R.string.common_retry))
                     }
                 },
                 colors = TopAppBarDefaults.topAppBarColors(containerColor = MaterialTheme.colorScheme.background),
             )
+        },
+        bottomBar = {
+            if (activeCare != null) {
+                Surface(
+                    color = MaterialTheme.colorScheme.surface,
+                    modifier = Modifier.fillMaxWidth(),
+                ) {
+                    Column(Modifier.navigationBarsPadding()) {
+                        HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
+                        Column(
+                            Modifier
+                                .fillMaxWidth()
+                                .padding(horizontal = Spacing.sm, vertical = Spacing.xs),
+                            verticalArrangement = Arrangement.spacedBy(Spacing.xs),
+                        ) {
+                            Text(
+                                stringResource(R.string.care_readiness_label),
+                                style = MaterialTheme.typography.labelMedium,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                            Button(
+                                onClick = {
+                                    UiHaptics.confirm(view)
+                                    vm.sendReadiness("ready")
+                                },
+                                enabled = !state.updating,
+                                colors = graceRidePrimaryButtonColors(),
+                                modifier = Modifier.fillMaxWidth().defaultMinSize(minHeight = 48.dp),
+                            ) {
+                                Text(
+                                    stringResource(R.string.care_rider_ready, activeCare.riderName.ifBlank { activeCare.label }),
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis,
+                                )
+                            }
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.spacedBy(Spacing.xs),
+                            ) {
+                                activeCare.driver?.phone?.takeIf { it.isNotBlank() }?.let { phone ->
+                                    FilledTonalButton(
+                                        onClick = {
+                                            UiHaptics.tick(view)
+                                            dialPhone(context, phone)
+                                        },
+                                        modifier = Modifier.weight(1f).defaultMinSize(minHeight = 48.dp),
+                                    ) {
+                                        Icon(Icons.Outlined.Call, contentDescription = null, modifier = Modifier.size(18.dp))
+                                        Spacer(Modifier.width(Spacing.xxs))
+                                        Text(
+                                            stringResource(R.string.visit_call_driver),
+                                            maxLines = 1,
+                                            overflow = TextOverflow.Ellipsis,
+                                        )
+                                    }
+                                }
+                                OutlinedButton(
+                                    onClick = {
+                                        UiHaptics.tick(view)
+                                        vm.sendReadiness("delayed_5m")
+                                    },
+                                    enabled = !state.updating,
+                                    modifier = Modifier.weight(1f).defaultMinSize(minHeight = 48.dp),
+                                ) {
+                                    Text(
+                                        stringResource(R.string.visit_late),
+                                        maxLines = 1,
+                                        overflow = TextOverflow.Ellipsis,
+                                    )
+                                }
+                            }
+                        }
+                    }
+                }
+            }
         },
         snackbarHost = { SnackbarHost(snackbar) },
         containerColor = MaterialTheme.colorScheme.background,
@@ -154,12 +235,15 @@ fun CarePassScreen(
                             ) {
                                 Row(
                                     Modifier.fillMaxWidth(),
-                                    horizontalArrangement = Arrangement.SpaceBetween,
+                                    horizontalArrangement = Arrangement.spacedBy(Spacing.xs),
                                     verticalAlignment = Alignment.CenterVertically,
                                 ) {
                                     Text(
                                         stringResource(R.string.care_title, care.riderName.ifBlank { care.label }),
                                         style = MaterialTheme.typography.headlineSmall,
+                                        maxLines = 2,
+                                        overflow = TextOverflow.Ellipsis,
+                                        modifier = Modifier.weight(1f),
                                     )
                                     RideStatusPill(care.status)
                                 }
@@ -265,10 +349,10 @@ fun CarePassScreen(
                                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                                         )
                                     }
-                                    if (!driver.phone.isNullOrBlank()) {
+                                    if (!driver.phone.isNullOrBlank() && activeCare == null) {
                                         FilledTonalButton(
                                             onClick = { dialPhone(context, driver.phone) },
-                                            modifier = Modifier.fillMaxWidth(),
+                                            modifier = Modifier.fillMaxWidth().defaultMinSize(minHeight = 48.dp),
                                         ) {
                                             Icon(Icons.Outlined.Call, contentDescription = null, modifier = Modifier.size(18.dp))
                                             Spacer(Modifier.width(Spacing.xs))
@@ -310,43 +394,6 @@ fun CarePassScreen(
                                             .fillMaxWidth()
                                             .height(200.dp),
                                     )
-                                }
-                            }
-                        }
-                    }
-
-                    if (care.completedAt == null && care.status != "cancelled") {
-                        item {
-                            OutlinedCard(
-                                modifier = Modifier.fillMaxWidth(),
-                                border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
-                            ) {
-                                Column(
-                                    Modifier.padding(Spacing.sm),
-                                    verticalArrangement = Arrangement.spacedBy(Spacing.xs),
-                                ) {
-                                    Text(
-                                        stringResource(R.string.care_readiness_label),
-                                        style = MaterialTheme.typography.titleSmall,
-                                    )
-                                    FlowRow(
-                                        horizontalArrangement = Arrangement.spacedBy(Spacing.xs),
-                                        verticalArrangement = Arrangement.spacedBy(Spacing.xs),
-                                    ) {
-                                        Button(
-                                            onClick = { vm.sendReadiness("ready") },
-                                            enabled = !state.updating,
-                                            colors = graceRidePrimaryButtonColors(),
-                                        ) {
-                                            Text(stringResource(R.string.care_rider_ready, care.riderName.ifBlank { care.label }))
-                                        }
-                                        OutlinedButton(
-                                            onClick = { vm.sendReadiness("delayed_5m") },
-                                            enabled = !state.updating,
-                                        ) {
-                                            Text(stringResource(R.string.visit_late))
-                                        }
-                                    }
                                 }
                             }
                         }

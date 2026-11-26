@@ -57,6 +57,8 @@ data class RideNewUiState(
     val returnMinute: Int = 0,
     val suggestions: List<Place> = emptyList(),
     val pickedPlace: Place? = null,
+    val pickedLat: Double? = null,
+    val pickedLng: Double? = null,
     val submitting: Boolean = false,
     val loadError: String? = null,
     val error: String? = null,
@@ -345,13 +347,31 @@ class RideNewViewModel(
     }
 
     fun onAddressChange(value: String) {
-        _state.value = _state.value.copy(address = value)
-        if (_state.value.tripType != TripType.RETURN) searchPlaces(value)
+        val cur = _state.value
+        val clearCoords = cur.tripType != TripType.RETURN &&
+            cur.pickedPlace?.label?.trim()?.equals(value.trim(), ignoreCase = true) != true
+        _state.value = cur.copy(
+            address = value,
+            pickedLat = if (clearCoords) null else cur.pickedLat,
+            pickedLng = if (clearCoords) null else cur.pickedLng,
+        )
+        if (cur.tripType != TripType.RETURN) searchPlaces(value)
     }
 
     fun onDestinationChange(value: String) {
-        _state.value = _state.value.copy(destination = value)
-        if (_state.value.tripType == TripType.RETURN) searchPlaces(value)
+        val cur = _state.value
+        val clearCoords = cur.tripType == TripType.RETURN &&
+            cur.pickedPlace?.label?.trim()?.equals(value.trim(), ignoreCase = true) != true
+        _state.value = cur.copy(
+            destination = value,
+            pickedLat = if (clearCoords) null else cur.pickedLat,
+            pickedLng = if (clearCoords) null else cur.pickedLng,
+        )
+        if (cur.tripType == TripType.RETURN) searchPlaces(value)
+    }
+
+    fun setPickedCoordinates(lat: Double?, lng: Double?) {
+        _state.value = _state.value.copy(pickedLat = lat, pickedLng = lng)
     }
 
     private fun searchPlaces(value: String) {
@@ -387,6 +407,8 @@ class RideNewViewModel(
             cur.copy(
                 destination = place.label,
                 pickedPlace = place,
+                pickedLat = place.lat,
+                pickedLng = place.lng,
                 areaId = inferred,
                 suggestions = emptyList(),
             )
@@ -394,6 +416,8 @@ class RideNewViewModel(
             cur.copy(
                 address = place.label,
                 pickedPlace = place,
+                pickedLat = place.lat,
+                pickedLng = place.lng,
                 areaId = inferred,
                 suggestions = emptyList(),
             )
@@ -429,6 +453,8 @@ class RideNewViewModel(
             address = if (isReturn) s.address else place.address,
             destination = if (isReturn) place.address else s.destination,
             notes = mergedNotes,
+            pickedLat = place.lat,
+            pickedLng = place.lng,
             suggestions = emptyList(),
             saveAddress = false,
             saveAddressLabel = "",
@@ -510,8 +536,8 @@ class RideNewViewModel(
                                 address = memberAddr,
                                 gate_notes = s.notes.trim().take(300),
                                 is_default = s.savedPlaces.isEmpty(),
-                                lat = matchingCoords?.lat,
-                                lng = matchingCoords?.lng,
+                                lat = s.pickedLat ?: matchingCoords?.lat,
+                                lng = s.pickedLng ?: matchingCoords?.lng,
                             )
                         )
                     } catch (_: ApiException) { }

@@ -10,7 +10,9 @@ import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.HourglassTop
 import androidx.compose.material3.Button
@@ -39,6 +41,7 @@ import kotlinx.coroutines.launch
 import org.pjstatecm.graceride.R
 import org.pjstatecm.graceride.di.AppContainer
 import org.pjstatecm.graceride.ui.components.InlineButtonSpinner
+import org.pjstatecm.graceride.ui.components.PendingChecklistCard
 import org.pjstatecm.graceride.ui.theme.Spacing
 
 @Composable
@@ -53,7 +56,8 @@ fun PendingScreen(container: AppContainer) {
     val scope = rememberCoroutineScope()
     var refreshing by remember { mutableStateOf(false) }
     val authState by container.auth.state.collectAsStateWithLifecycle()
-    val pendingMeId = (authState as? org.pjstatecm.graceride.data.repo.AuthState.Pending)?.me?.id ?: 0L
+    val pendingMe = (authState as? org.pjstatecm.graceride.data.repo.AuthState.Pending)?.me
+    val pendingMeId = pendingMe?.id ?: 0L
     val vm: UnlockViewModel = viewModel(
         key = "pending-$pendingMeId",
         factory = UnlockViewModel.factory(container),
@@ -62,9 +66,10 @@ fun PendingScreen(container: AppContainer) {
     Column(
         Modifier
             .fillMaxSize()
+            .verticalScroll(rememberScrollState())
             .statusBarsPadding()
             .navigationBarsPadding()
-            .padding(horizontal = Spacing.md),
+            .padding(horizontal = Spacing.md, vertical = Spacing.md),
         horizontalAlignment = Alignment.CenterHorizontally,
         verticalArrangement = Arrangement.Center,
     ) {
@@ -123,6 +128,12 @@ fun PendingScreen(container: AppContainer) {
                     }
                 }
             }
+        }
+        if (pendingMe != null) {
+            PendingChecklistCard(
+                me = pendingMe,
+                modifier = Modifier.padding(top = Spacing.sm),
+            )
         }
         TextButton(onClick = { vm.signOut() }, modifier = Modifier.padding(top = Spacing.sm)) {
             Text(stringResource(R.string.profile_logout))

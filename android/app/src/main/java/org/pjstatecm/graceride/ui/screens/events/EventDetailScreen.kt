@@ -117,7 +117,6 @@ import org.pjstatecm.graceride.ui.components.StatusPill
 import org.pjstatecm.graceride.ui.components.animatorsEnabled
 import org.pjstatecm.graceride.ui.copyToClipboard
 import org.pjstatecm.graceride.ui.openInMaps
-import org.pjstatecm.graceride.ui.openInWebApp
 import org.pjstatecm.graceride.ui.shareText
 import org.pjstatecm.graceride.ui.theme.LocalStatusColors
 import org.pjstatecm.graceride.ui.theme.Spacing
@@ -803,6 +802,9 @@ fun EventDetailScreen(
 
                             // Visitor Passes Section
                             if (open && (isGoing || event.canManage) && canCreateRide) {
+                                LaunchedEffect(event.id, event.status) {
+                                    vm.loadVisitorsAndAreas()
+                                }
                                 VisitorInvitesSection(
                                     eventTitle = event.title,
                                     eventStartsAt = event.startsAt,
@@ -994,14 +996,14 @@ fun EventDetailScreen(
                                             val settleRef = event.settlement
                                             if (settleRef != null) {
                                                 OutlinedButton(
-                                                    onClick = { openInWebApp(context, container.webUrl("settlements/${settleRef.id}")) },
+                                                    onClick = { nav.navigate(AppRoute.SettlementDetail(settleRef.id)) },
                                                     modifier = Modifier.fillMaxWidth(),
                                                 ) {
                                                     Text(stringResource(R.string.event_view_settlement))
                                                 }
                                             } else if (me?.can("settlements", "create") == true) {
                                                 OutlinedButton(
-                                                    onClick = { openInWebApp(context, container.webUrl("events/${event.id}/settle")) },
+                                                    onClick = { nav.navigate(AppRoute.SettlementForm(eventId = event.id)) },
                                                     modifier = Modifier.fillMaxWidth(),
                                                 ) {
                                                     Text(stringResource(R.string.event_create_settlement))

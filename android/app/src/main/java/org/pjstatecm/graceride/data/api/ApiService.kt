@@ -1,6 +1,7 @@
 package org.pjstatecm.graceride.data.api
 
 import okhttp3.MultipartBody
+import okhttp3.ResponseBody
 import retrofit2.http.Body
 import retrofit2.http.DELETE
 import retrofit2.http.GET
@@ -11,6 +12,7 @@ import retrofit2.http.PUT
 import retrofit2.http.Part
 import retrofit2.http.Path
 import retrofit2.http.Query
+import retrofit2.http.Streaming
 
 /**
  * Typed client for the existing Grace Ride REST API. The backend is reused as-is;
@@ -368,6 +370,8 @@ interface ApiService {
     @GET("api/admin/settings/fares") suspend fun areaFares(): AreaFaresRespDto
     @PUT("api/admin/settings/fares") suspend fun putAreaFare(@Body body: PutFareReq): IdRespDto
     @DELETE("api/admin/settings/fares/{id}") suspend fun deleteAreaFare(@Path("id") id: Long): OkResponse
+    @PUT("api/admin/settings/fares/bulk") suspend fun bulkAreaFares(@Body body: BulkFaresReq): BulkFaresRespDto
+    @Streaming @GET("api/admin/settings/fares/export") suspend fun exportFaresCsv(): ResponseBody
 
     // ---- admin user management (members, roles, invites, recovery) ----
     @GET("api/admin/users") suspend fun adminUsers(
@@ -384,6 +388,39 @@ interface ApiService {
         @Body body: UpdateAdminUserReq,
     ): OkResponse
     @GET("api/admin/roles") suspend fun adminRoles(): AdminRolesRespDto
+    @POST("api/admin/roles") suspend fun createAdminRole(@Body body: RoleSaveReq): RoleKeyRespDto
+    @PUT("api/admin/roles/{key}") suspend fun updateAdminRole(@Path("key") key: String, @Body body: RoleSaveReq): OkResponse
+    @DELETE("api/admin/roles/{key}") suspend fun deleteAdminRole(@Path("key") key: String): OkResponse
+    @GET("api/admin/audit") suspend fun adminAudit(
+        @Query("q") q: String? = null,
+        @Query("entity") entity: String? = null,
+        @Query("entity_id") entityId: Long? = null,
+        @Query("action") action: String? = null,
+        @Query("actor_id") actorId: Long? = null,
+        @Query("from") from: String? = null,
+        @Query("to") to: String? = null,
+        @Query("before") before: Long? = null,
+        @Query("limit") limit: Int = 50,
+    ): AuditPageDto
+    @Streaming @GET("api/admin/audit/export") suspend fun exportAdminAuditCsv(
+        @Query("q") q: String? = null,
+        @Query("entity") entity: String? = null,
+        @Query("entity_id") entityId: Long? = null,
+        @Query("action") action: String? = null,
+        @Query("actor_id") actorId: Long? = null,
+        @Query("from") from: String? = null,
+        @Query("to") to: String? = null,
+    ): ResponseBody
+    @GET("api/admin/settings/system") suspend fun systemSettings(): SystemSettingsDto
+    @PUT("api/admin/settings/system") suspend fun updateSystemSettings(@Body body: UpdateSystemSettingsReq): OkResponse
+    @GET("api/admin/settings/alerts") suspend fun alertSettings(): AlertSettingsDto
+    @PUT("api/admin/settings/alerts") suspend fun updateAlertSettings(@Body body: UpdateAlertSettingsReq): OkResponse
+    @POST("api/admin/settings/alerts/test-webhook") suspend fun testAlertWebhook(): TestWebhookRespDto
+    @POST("api/admin/groups") suspend fun createGroup(@Body body: GroupUpsertReq): IdRespDto
+    @PUT("api/admin/groups/{id}") suspend fun updateGroup(@Path("id") id: Long, @Body body: GroupUpsertReq): OkResponse
+    @DELETE("api/admin/groups/{id}") suspend fun deleteGroup(@Path("id") id: Long): OkResponse
+    @GET("api/admin/groups/{id}/members") suspend fun groupMembers(@Path("id") id: Long): List<UserRefDto>
+    @PUT("api/admin/groups/{id}/members") suspend fun setGroupMembers(@Path("id") id: Long, @Body body: GroupMembersReq): OkResponse
     @GET("api/admin/invites") suspend fun adminInvites(): List<AdminInviteDto>
     @POST("api/admin/invites") suspend fun createAdminInvite(): CreateInviteResDto
     @DELETE("api/admin/invites/{id}") suspend fun revokeAdminInvite(@Path("id") id: Long): OkResponse
@@ -391,7 +428,147 @@ interface ApiService {
     @POST("api/admin/recovery/{id}/approve") suspend fun approveRecovery(@Path("id") id: Long): ApproveRecoveryResDto
     @POST("api/admin/recovery/{id}/reject") suspend fun rejectRecovery(@Path("id") id: Long): OkResponse
 
+    // ---- rides paging & care link ----
+    @GET("api/rides") suspend fun myRidesPage(
+        @Query("scope") scope: String = "past",
+        @Query("before") before: String? = null,
+        @Query("limit") limit: Int = 30,
+    ): RidesPageDto
+    @POST("api/rides/{id}/care-link") suspend fun createCareLink(
+        @Path("id") id: Long,
+        @Body body: CareLinkReq = CareLinkReq(),
+    ): CareLinkResp
+    @DELETE("api/rides/{id}/care-link") suspend fun revokeCareLink(@Path("id") id: Long): OkResponse
+
+    // ---- settlements, shares verify, reimbursements & payout batches ----
+    @GET("api/settlements") suspend fun settlements(
+        @Query("page") page: Int = 1,
+        @Query("limit") limit: Int = 25,
+    ): SettlementsPageDto
+    @POST("api/events/{id}/settlements") suspend fun createSettlement(
+        @Path("id") eventId: Long,
+        @Body body: SettlementInReq,
+    ): IdRespDto
+    @GET("api/settlements/{id}") suspend fun settlementDetail(@Path("id") id: Long): SettlementDetailDto
+    @PUT("api/settlements/{id}") suspend fun updateSettlement(
+        @Path("id") id: Long,
+        @Body body: SettlementInReq,
+    ): OkResponse
+    @DELETE("api/settlements/{id}") suspend fun deleteSettlement(@Path("id") id: Long): OkResponse
+    @POST("api/settlements/{id}/publish") suspend fun publishSettlement(@Path("id") id: Long): OkResponse
+    @POST("api/settlements/{id}/close") suspend fun closeSettlement(@Path("id") id: Long): OkResponse
+    @GET("api/settlements/{id}/revisions") suspend fun settlementRevisions(@Path("id") id: Long): List<SettlementRevisionDto>
+    @POST("api/shares/{id}/verify") suspend fun verifyShare(
+        @Path("id") shareId: Long,
+        @Body body: VerifyShareReq,
+    ): OkResponse
+
+    @GET("api/reimbursements") suspend fun reimbursements(
+        @Query("scope") scope: String = "mine",
+        @Query("q") q: String? = null,
+        @Query("status") status: String? = null,
+        @Query("sort") sort: String? = null,
+        @Query("dir") dir: String? = null,
+        @Query("page") page: Int = 1,
+        @Query("limit") limit: Int = 25,
+    ): ReimbursementsPageDto
+    @GET("api/reimbursements/{id}") suspend fun reimbursementDetail(@Path("id") id: Long): ReimbursementDto
+    @POST("api/reimbursements") suspend fun createReimbursement(@Body body: CreateReimbursementReq): IdRespDto
+    @PUT("api/reimbursements/{id}") suspend fun updateReimbursement(
+        @Path("id") id: Long,
+        @Body body: CreateReimbursementReq,
+    ): OkResponse
+    @POST("api/reimbursements/{id}/review") suspend fun reviewReimbursement(
+        @Path("id") id: Long,
+        @Body body: ReviewReimbursementReq,
+    ): OkResponse
+    @POST("api/reimbursements/{id}/pay") suspend fun payReimbursement(
+        @Path("id") id: Long,
+        @Body body: PayReimbursementReq,
+    ): OkResponse
+    @GET("api/reimbursements/batches") suspend fun payoutBatches(): List<PayoutBatchDto>
+    @POST("api/reimbursements/batches") suspend fun createPayoutBatch(@Body body: CreatePayoutBatchReq): CreatePayoutBatchResp
+    @DELETE("api/reimbursements/batches/{id}") suspend fun cancelPayoutBatch(@Path("id") id: Long): OkResponse
+    @GET("api/reimbursements/batches/{id}/csv") suspend fun payoutBatchCsv(@Path("id") id: Long): okhttp3.ResponseBody
+    @POST("api/reimbursements/batches/{id}/pay") suspend fun payPayoutBatch(
+        @Path("id") id: Long,
+        @Body body: PayReimbursementReq,
+    ): OkResponse
+
+    // ---- help, guides & reports ----
+    @GET("api/help") suspend fun helpTickets(
+        @Query("all") all: Boolean? = null,
+        @Query("status") status: String? = null,
+        @Query("q") q: String? = null,
+        @Query("assigned") assigned: String? = null,
+    ): List<TicketSummaryDto>
+    @GET("api/help/counts") suspend fun helpCounts(): HelpCountsDto
+    @GET("api/help/members") suspend fun helpMembers(@Query("q") q: String = ""): List<HelpMemberDto>
+    @GET("api/help/{id}") suspend fun helpTicketDetail(@Path("id") id: Long): TicketDetailDto
+    @POST("api/help") suspend fun createHelpTicket(@Body body: CreateTicketReq): IdRespDto
+    @POST("api/help/{id}/replies") suspend fun replyHelpTicket(
+        @Path("id") id: Long,
+        @Body body: TicketReplyReq,
+    ): OkResponse
+    @POST("api/help/{id}/close") suspend fun closeHelpTicket(@Path("id") id: Long): OkResponse
+    @POST("api/help/{id}/reopen") suspend fun reopenHelpTicket(@Path("id") id: Long): OkResponse
+    @POST("api/help/{id}/claim") suspend fun claimHelpTicket(
+        @Path("id") id: Long,
+        @Body body: ClaimTicketReq,
+    ): OkResponse
+
+    @GET("api/help/guides") suspend fun helpGuides(
+        @Query("include_drafts") includeDrafts: Boolean? = null,
+        @Query("full") full: Boolean? = null,
+    ): List<GuideSummaryDto>
+    @POST("api/help/guides") suspend fun createHelpGuide(@Body body: SaveGuideReq): IdRespDto
+    @GET("api/help/guides/{key}") suspend fun helpGuideDetail(@Path("key") key: String): GuideDetailDto
+    @PUT("api/help/guides/{key}") suspend fun updateHelpGuide(
+        @Path("key") key: String,
+        @Body body: SaveGuideReq,
+    ): OkResponse
+    @DELETE("api/help/guides/{key}") suspend fun deleteHelpGuide(@Path("key") key: String): OkResponse
+    @POST("api/help/guides/reorder") suspend fun reorderHelpGuides(@Body body: GuideReorderReq): OkResponse
+    @POST("api/help/guides/{id}/feedback") suspend fun helpGuideFeedback(
+        @Path("id") id: Long,
+        @Body body: GuideFeedbackReq,
+    ): GuideFeedbackResp
+
+    @GET("api/reports/monthly") suspend fun monthlyReport(
+        @Query("month") month: String? = null,
+        @Query("range") range: String? = null,
+        @Query("type") type: String? = null,
+        @Query("user_id") userId: Long? = null,
+        @Query("lang") lang: String? = null,
+    ): MonthReportDto
+    @GET("api/admin/reports/capabilities") suspend fun reportCapabilities(): ReportCapabilitiesDto
+    @GET("api/admin/reports/overview") suspend fun overviewReport(
+        @Query("month") month: String? = null,
+        @Query("range") range: String? = null,
+    ): OverviewReportDto
+    @GET("api/admin/reports/events") suspend fun eventsReport(
+        @Query("month") month: String? = null,
+        @Query("range") range: String? = null,
+    ): EventsReportDto
+    @GET("api/admin/reports/demand") suspend fun demandReport(
+        @Query("month") month: String? = null,
+        @Query("range") range: String? = null,
+    ): DemandReportDto
+    @GET("api/admin/reports/finance") suspend fun financeReport(
+        @Query("month") month: String? = null,
+        @Query("range") range: String? = null,
+    ): FinanceReportDto
+    @PUT("api/admin/users/{id}/badges/{badgeKey}/icon") suspend fun updateUserBadgeIcon(
+        @Path("id") userId: Long,
+        @Path("badgeKey") badgeKey: String,
+        @Body body: UpdateBadgeIconReq,
+    ): OkResponse
+
     // ---- files ----
     @Multipart
     @POST("api/files") suspend fun upload(@Part file: MultipartBody.Part): FileRef
+    @POST("api/files/{id}/extract-ref") suspend fun extractFileRef(
+        @Path("id") id: Long,
+        @Body body: ExtractRefReq = ExtractRefReq(),
+    ): ExtractRefResp
 }

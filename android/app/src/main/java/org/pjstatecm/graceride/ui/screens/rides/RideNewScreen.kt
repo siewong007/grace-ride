@@ -93,6 +93,8 @@ import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
+import org.pjstatecm.graceride.ui.components.LocationPinPickerSheet
+import org.pjstatecm.graceride.ui.theme.tabular
 import androidx.navigation.NavHostController
 import org.pjstatecm.graceride.R
 import org.pjstatecm.graceride.di.AppContainer
@@ -614,6 +616,63 @@ fun RideNewScreen(
                                         }
                                     }
                                 }
+                            }
+                        }
+
+                        var showPinPicker by remember { mutableStateOf(false) }
+                        if (!s.isProxy) {
+                            Row(
+                                Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.spacedBy(Spacing.xs),
+                                verticalAlignment = Alignment.CenterVertically,
+                            ) {
+                                OutlinedButton(
+                                    onClick = { showPinPicker = true },
+                                    modifier = Modifier.defaultMinSize(minHeight = 48.dp),
+                                ) {
+                                    Icon(Icons.Outlined.Place, contentDescription = null, modifier = Modifier.size(18.dp))
+                                    Spacer(Modifier.width(Spacing.xs))
+                                    Text(stringResource(R.string.pin_picker_btn))
+                                }
+                                if (s.pickedLat != null && s.pickedLng != null) {
+                                    Surface(
+                                        color = MaterialTheme.colorScheme.secondaryContainer,
+                                        shape = MaterialTheme.shapes.small,
+                                        modifier = Modifier.weight(1f),
+                                    ) {
+                                        Row(
+                                            Modifier.padding(start = Spacing.xs, end = Spacing.xxs, top = Spacing.xxs, bottom = Spacing.xxs),
+                                            verticalAlignment = Alignment.CenterVertically,
+                                        ) {
+                                            Text(
+                                                String.format(java.util.Locale.US, "%.5f, %.5f", s.pickedLat, s.pickedLng),
+                                                style = MaterialTheme.typography.labelSmall.tabular(),
+                                                color = MaterialTheme.colorScheme.onSecondaryContainer,
+                                                maxLines = 1,
+                                                overflow = TextOverflow.Ellipsis,
+                                                modifier = Modifier.weight(1f),
+                                            )
+                                            IconButton(
+                                                onClick = { vm.setPickedCoordinates(null, null) },
+                                                modifier = Modifier.size(32.dp),
+                                            ) {
+                                                Icon(
+                                                    Icons.Outlined.Close,
+                                                    contentDescription = stringResource(R.string.a11y_clear),
+                                                    modifier = Modifier.size(16.dp),
+                                                )
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                            if (showPinPicker) {
+                                LocationPinPickerSheet(
+                                    initialLat = s.pickedLat,
+                                    initialLng = s.pickedLng,
+                                    onDismiss = { showPinPicker = false },
+                                    onConfirm = { lat, lng -> vm.setPickedCoordinates(lat, lng) },
+                                )
                             }
                         }
 

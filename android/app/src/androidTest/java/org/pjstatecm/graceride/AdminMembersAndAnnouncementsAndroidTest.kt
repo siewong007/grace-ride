@@ -1,6 +1,8 @@
 package org.pjstatecm.graceride
 
 import androidx.compose.ui.test.assertIsDisplayed
+import androidx.compose.ui.test.hasSetTextAction
+import androidx.compose.ui.test.hasText
 import androidx.compose.ui.test.isToggleable
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onAllNodesWithText
@@ -8,6 +10,7 @@ import androidx.compose.ui.test.onLast
 import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
+import androidx.compose.ui.test.performScrollTo
 import androidx.compose.ui.test.performTextInput
 import androidx.navigation.compose.rememberNavController
 import androidx.test.ext.junit.runners.AndroidJUnit4
@@ -200,9 +203,14 @@ class AdminMembersAndAnnouncementsAndroidTest {
         // Open Publish sheet and confirm notification dialog
         compose.onNodeWithText(res(R.string.announcements_publish_fab)).performClick()
         waitForText(res(R.string.announcements_create_title))
-        compose.onNodeWithText(res(R.string.announcements_title_label)).performTextInput("Camp Update")
-        compose.onNodeWithText(res(R.string.announcements_body_label)).performTextInput("Meet at 8am")
-        compose.onAllNodesWithText(res(R.string.announcements_publish_fab)).onLast().performClick()
+        compose.onNode(hasSetTextAction() and hasText(res(R.string.announcements_title_label)))
+            .performTextInput("Camp Update")
+        compose.onNode(hasSetTextAction() and hasText(res(R.string.announcements_body_label)))
+            .performTextInput("Meet at 8am")
+        compose.onAllNodesWithText(res(R.string.announcements_publish_fab))
+            .onLast()
+            .performScrollTo()
+            .performClick()
         waitForText(res(R.string.announcements_notify_all_confirm_title))
         compose.onAllNodesWithText(res(R.string.announcements_publish_fab)).onLast().performClick()
         compose.waitUntil(5_000L) { calls.any { it.startsWith("POST /api/announcements") } }
@@ -236,7 +244,7 @@ class AdminMembersAndAnnouncementsAndroidTest {
         compose.onNode(isToggleable()).performClick()
         waitForText(res(R.string.members_selected_count, 1))
         compose.onNodeWithText(res(R.string.members_batch_approve, 1)).assertIsDisplayed()
-        compose.onNodeWithText(res(R.string.common_cancel)).performClick()
+        compose.onAllNodesWithText(res(R.string.common_cancel)).onLast().performClick()
         compose.waitUntil(5_000L) {
             compose.onAllNodesWithText(res(R.string.members_selected_count, 1)).fetchSemanticsNodes().isEmpty()
         }

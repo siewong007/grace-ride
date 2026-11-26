@@ -611,7 +611,7 @@ class FullAppPagesAndScenariosAndroidTest {
         val openChat = """{"open":true,"can_post":true,"members":["Driver Dan","Role Tester"],"messages":[{"id":1,"user_id":5,"sender_name":"Driver Dan","body":"Heading out now","created_at":"2026-11-26 08:45:00","reactions":[]}]}"""
         val savedList = """[{"id":1,"label":"Home","area_id":1,"area_name":"PJ Section 14","address":"10 Jalan Test","gate_notes":"","is_default":1}]"""
         val proxyList = """[{"id":2,"name":"Uncle Tan","phone":"012-1112222","relationship":"parent","notes":"","area_id":1,"pickup_address":"10 Jalan Test","gate_notes":""}]"""
-        val pastRide = """[{"id":95,"status":"completed","pickup_at":"2026-11-10 09:00:00","area":{"id":1,"name":"PJ Section 14"},"destination":"Completed Ride Alpha","seats":1,"passenger":{"id":1,"name":"Role Tester"},"viewer":{"is_passenger":true}}]"""
+        val pastRide = """{"items":[{"id":95,"status":"completed","pickup_at":"2026-11-10 09:00:00","area":{"id":1,"name":"PJ Section 14"},"destination":"Completed Ride Alpha","seats":1,"passenger":{"id":1,"name":"Role Tester"},"viewer":{"is_passenger":true}}],"next_before":null}"""
 
         setupSignedInDispatcher(
             routes = mapOf(

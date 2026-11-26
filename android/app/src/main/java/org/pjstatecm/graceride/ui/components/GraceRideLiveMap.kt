@@ -105,7 +105,7 @@ data class LiveMapPoint(
     val stale: Boolean = false,
 )
 
-private object OsmTileLoader {
+internal object OsmTileLoader {
     private const val TILE_CACHE_KB = 16 * 1024
     private val memory = object : LruCache<String, ImageBitmap>(TILE_CACHE_KB) {
         override fun sizeOf(key: String, value: ImageBitmap): Int =
@@ -166,9 +166,9 @@ private object OsmTileLoader {
     }
 }
 
-private const val DEFAULT_LAT = 3.1073
-private const val DEFAULT_LNG = 101.6067
-private const val TILE_PX = 256.0
+internal const val DEFAULT_LAT = 3.1073
+internal const val DEFAULT_LNG = 101.6067
+internal const val TILE_PX = 256.0
 private val AMBER_PIN = Color(0xFFB47616)
 
 private val DARK_MAP_FILTER = ColorFilter.colorMatrix(
@@ -182,14 +182,20 @@ private val DARK_MAP_FILTER = ColorFilter.colorMatrix(
     ),
 )
 
-private fun lngToWorldX(lng: Double, zoom: Int): Double =
+internal fun lngToWorldX(lng: Double, zoom: Int): Double =
     ((lng + 180.0) / 360.0) * TILE_PX * 2.0.pow(zoom)
 
-private fun latToWorldY(lat: Double, zoom: Int): Double {
+internal fun latToWorldY(lat: Double, zoom: Int): Double {
     val rad = Math.toRadians(lat.coerceIn(-85.0511, 85.0511))
     val n = ln(tan(rad) + 1.0 / cos(rad))
     return ((1.0 - n / PI) / 2.0) * TILE_PX * 2.0.pow(zoom)
 }
+
+internal fun worldXToLng(worldX: Double, zoom: Int): Double =
+    (worldX / (TILE_PX * 2.0.pow(zoom))) * 360.0 - 180.0
+
+internal fun worldYToLat(worldY: Double, zoom: Int): Double =
+    Math.toDegrees(kotlin.math.atan(kotlin.math.sinh(PI * (1.0 - 2.0 * worldY / (TILE_PX * 2.0.pow(zoom))))))
 
 private fun fitViewport(
     points: List<LiveMapPoint>,

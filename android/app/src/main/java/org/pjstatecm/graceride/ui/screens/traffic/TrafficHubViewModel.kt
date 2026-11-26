@@ -21,6 +21,8 @@ import org.pjstatecm.graceride.data.api.ApiException
 import org.pjstatecm.graceride.data.api.Area
 import org.pjstatecm.graceride.data.api.AreaFareDto
 import org.pjstatecm.graceride.data.api.AreaPhotosDto
+import org.pjstatecm.graceride.data.api.BulkFareItemReq
+import org.pjstatecm.graceride.data.api.BulkFaresRespDto
 import org.pjstatecm.graceride.data.api.LiveDriversDto
 import org.pjstatecm.graceride.data.api.Me
 import org.pjstatecm.graceride.data.api.RideChangeDraftDto
@@ -658,6 +660,25 @@ class TrafficHubViewModel(
                 }
                 .onFailure { err -> _state.value = _state.value.copy(message = err.message) }
             _state.value = _state.value.copy(areasBusy = false)
+        }
+    }
+
+    fun bulkImportFares(
+        fares: List<BulkFareItemReq>,
+        createMissingAreas: Boolean,
+        onResult: (Result<BulkFaresRespDto>) -> Unit,
+    ) {
+        if (_state.value.areasBusy || fares.isEmpty()) return
+        _state.value = _state.value.copy(areasBusy = true)
+        viewModelScope.launch {
+            val res = container.traffic.bulkAreaFares(fares, createMissingAreas)
+            res.onSuccess {
+                loadAreasData(silent = true)
+            }.onFailure { err ->
+                _state.value = _state.value.copy(message = err.message)
+            }
+            _state.value = _state.value.copy(areasBusy = false)
+            onResult(res)
         }
     }
 

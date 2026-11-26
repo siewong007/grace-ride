@@ -232,13 +232,13 @@ class RoleAndFeatureMatrixAndroidTest {
             }
 
             if (spec.key in setOf("member", "driver", "leader", "finance", "auditor", "admin", "superadmin")) {
-                val webSectionLabel = res(R.string.profile_section_web)
+                val adminSectionLabel = res(R.string.profile_section_admin)
                 val settlementsLabel = res(R.string.profile_settlements)
-                val staffLabel = res(R.string.profile_web_staff)
+                val staffLabel = res(R.string.admin_console_title)
                 val adminReportsLabel = res(R.string.profile_admin_reports)
                 if (spec.expectSettlements || spec.expectStaffConsole) {
-                    compose.onNode(hasScrollAction()).performScrollToNode(hasText(webSectionLabel))
-                    compose.onNodeWithText(webSectionLabel).assertIsDisplayed()
+                    compose.onNode(hasScrollAction()).performScrollToNode(hasText(adminSectionLabel))
+                    compose.onNodeWithText(adminSectionLabel).assertIsDisplayed()
                     if (spec.expectSettlements) {
                         compose.onNode(hasScrollAction()).performScrollToNode(hasText(settlementsLabel))
                         compose.onNodeWithText(settlementsLabel).assertIsDisplayed()
@@ -252,7 +252,7 @@ class RoleAndFeatureMatrixAndroidTest {
                         compose.onNodeWithText(staffLabel).assertDoesNotExist()
                     }
                 } else {
-                    compose.onNodeWithText(webSectionLabel).assertDoesNotExist()
+                    compose.onNodeWithText(adminSectionLabel).assertDoesNotExist()
                     compose.onNodeWithText(settlementsLabel).assertDoesNotExist()
                     compose.onNodeWithText(staffLabel).assertDoesNotExist()
                     compose.onNodeWithText(adminReportsLabel).assertDoesNotExist()
@@ -379,12 +379,15 @@ class RoleAndFeatureMatrixAndroidTest {
     @Test
     fun eventsAndCheckinSheetCoverTabsCancelledAndWrongEvent() {
         var screen by mutableIntStateOf(0)
-        val futureEvent = """{"id":50,"title":"Youth Retreat","starts_at":"2026-12-20 09:00:00","location":"Camp Site","status":"published","attendance_enabled":true,"going":8,"capacity":40,"spots_left":32,"my_signup":{"status":"going","attended":false,"pass_code":"PASS50"}}"""
+        var canManageEvent = false
+        fun futureEventJson() = """{"id":50,"title":"Youth Retreat","starts_at":"2026-12-20 09:00:00","location":"Camp Site","status":"published","attendance_enabled":true,"can_manage":$canManageEvent,"going":8,"capacity":40,"spots_left":32,"my_signup":{"status":"going","attended":false,"pass_code":"PASS50"}}"""
         val cancelledEvent = """{"id":51,"title":"Summer Picnic","starts_at":"2026-12-21 09:00:00","location":"Park","status":"cancelled","going":2}"""
         val routes = mapOf<String, (RecordedRequest) -> MockResponse>(
-            "/api/events/50" to { MockResponse().setBody(futureEvent) },
+            "/api/events/50/signups" to { MockResponse().setBody("[]") },
+            "/api/events/50/rides" to { MockResponse().setBody("[]") },
+            "/api/events/50" to { MockResponse().setBody(futureEventJson()) },
             "/api/events/51" to { MockResponse().setBody(cancelledEvent) },
-            "/api/events" to { MockResponse().setBody("[$futureEvent]") },
+            "/api/events" to { MockResponse().setBody("[${futureEventJson()}]") },
         )
 
         signInWith(listOf("member"), listOf("events.view"), routes = routes)
@@ -405,11 +408,12 @@ class RoleAndFeatureMatrixAndroidTest {
         waitForText("Youth Retreat")
         compose.onNodeWithText(res(R.string.events_tab_managing)).assertDoesNotExist()
 
-        // Member on EventDetail does NOT see "Open check-in & full event in Web" redirection button
+        // Member on EventDetail does NOT see organiser member-pass scanner button
         compose.runOnIdle { screen = 3 }
         waitForText(res(R.string.event_pass_label))
-        compose.onNodeWithText(res(R.string.event_open_web_full)).assertDoesNotExist()
+        compose.onNodeWithText(res(R.string.event_scan_member_btn)).assertDoesNotExist()
 
+        canManageEvent = true
         signInWith(listOf("leader"), listOf("events.view", "events.create", "events.update"), routes = routes)
         compose.runOnIdle { screen = 1 }
         waitForText(res(R.string.events_tab_managing))
@@ -420,10 +424,10 @@ class RoleAndFeatureMatrixAndroidTest {
         compose.onAllNodesWithText(res(R.string.event_status_cancelled)).onFirst().assertIsDisplayed()
         compose.onNodeWithText(res(R.string.event_signup)).assertDoesNotExist()
 
-        // Leader sees "Open check-in & full event in Web" and wrong-event QR validation works
+        // Leader sees organiser scanner button + self check-in button and wrong-event QR validation works
         compose.runOnIdle { screen = 4 }
         waitForText(res(R.string.event_pass_label))
-        compose.onNodeWithText(res(R.string.event_open_web_full)).performScrollTo().assertIsDisplayed()
+        compose.onNodeWithText(res(R.string.event_scan_member_btn)).performScrollTo().assertIsDisplayed()
         compose.onNodeWithText(res(R.string.event_checkin_btn)).performScrollTo().performClick()
         waitForText(res(R.string.event_code_hint))
         compose.onNodeWithText(res(R.string.event_code_hint)).performTextInput("/events/999/checkin?code=ABC123")

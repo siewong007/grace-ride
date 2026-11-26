@@ -24,6 +24,7 @@ import androidx.compose.material.icons.automirrored.outlined.Logout
 import androidx.compose.material.icons.automirrored.outlined.ReceiptLong
 import androidx.compose.material.icons.automirrored.outlined.AltRoute
 import androidx.compose.material.icons.outlined.AdminPanelSettings
+import androidx.compose.material.icons.outlined.Assessment
 import androidx.compose.material.icons.outlined.AutoAwesome
 import androidx.compose.material.icons.outlined.BarChart
 import androidx.compose.material.icons.outlined.Campaign
@@ -32,12 +33,16 @@ import androidx.compose.material.icons.outlined.DirectionsCar
 import androidx.compose.material.icons.outlined.Edit
 import androidx.compose.material.icons.outlined.Groups
 import androidx.compose.material.icons.outlined.Gavel
+import androidx.compose.material.icons.outlined.History
 import androidx.compose.material.icons.outlined.LocationOn
 import androidx.compose.material.icons.outlined.NotificationsActive
 import androidx.compose.material.icons.outlined.Palette
 import androidx.compose.material.icons.outlined.PeopleOutline
 import androidx.compose.material.icons.outlined.Person
+import androidx.compose.material.icons.outlined.RequestQuote
 import androidx.compose.material.icons.outlined.Security
+import androidx.compose.material.icons.outlined.Settings
+import androidx.compose.material.icons.outlined.Shield
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
@@ -81,7 +86,6 @@ import org.pjstatecm.graceride.ui.Routes
 import org.pjstatecm.graceride.ui.components.GrokBotSpec
 import org.pjstatecm.graceride.ui.components.MemberAvatar
 import org.pjstatecm.graceride.ui.components.SectionHeader
-import org.pjstatecm.graceride.ui.openInWebApp
 import org.pjstatecm.graceride.ui.theme.Spacing
 import org.pjstatecm.graceride.ui.theme.ThemeMode
 
@@ -378,12 +382,49 @@ fun ProfileScreen(container: AppContainer, nav: NavHostController) {
                 }
             }
 
-            // 3b. Native staff workspaces (Traffic Hub, Members & invites, Announcements)
+            // 3a. Member Tools (Reimbursements, Monthly Report, Help & Guides)
             if (me != null && me.status != "pending") {
+                val memberTools = buildList<Triple<Int, ImageVector, AppRoute>> {
+                    if (me.can("reimbursements")) add(Triple(R.string.profile_reimbursements, Icons.Outlined.RequestQuote, AppRoute.Reimbursements))
+                    if (me.can("report")) add(Triple(R.string.profile_report, Icons.Outlined.Assessment, AppRoute.Report))
+                    if (me.can("help") || me.can("admin_help")) add(Triple(R.string.profile_help, Icons.AutoMirrored.Outlined.HelpOutline, AppRoute.Help()))
+                }
+                if (memberTools.isNotEmpty()) {
+                    item { SectionHeader(stringResource(R.string.profile_section_tools)) }
+                    item {
+                        OutlinedCard(
+                            modifier = Modifier.fillMaxWidth(),
+                            border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
+                        ) {
+                            Column {
+                                memberTools.forEachIndexed { idx, (labelRes, icon, route) ->
+                                    if (idx > 0) HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
+                                    ProfileRow(
+                                        label = stringResource(labelRes),
+                                        icon = icon,
+                                    ) { nav.navigate(route) }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
+            // 3b. Native staff & admin workspaces (100% native navigation, no web handoff)
+            if (me != null && me.status != "pending") {
+                val hasConsole = me.can("admin_dashboard") || Routes.canAdminConsole(me)
                 val hasTraffic = Routes.canTrafficHub(me)
                 val hasMembers = Routes.canAdminMembers(me)
+                val hasSettlements = Routes.canManageSettlements(me)
+                val hasAdminReimb = me.can("admin_reimb_review") || me.can("admin_reimb_pay")
                 val hasAnnouncements = Routes.canManageAnnouncements(me)
-                if (hasTraffic || hasMembers || hasAnnouncements) {
+                val hasAdminReports = me.can("admin_reports")
+                val hasRoles = me.can("admin_roles")
+                val hasAudit = me.can("admin_audit")
+                val hasSettings = me.can("admin_settings") || me.can("admin_groups")
+                if (hasConsole || hasTraffic || hasMembers || hasSettlements || hasAdminReimb ||
+                    hasAnnouncements || hasAdminReports || hasRoles || hasAudit || hasSettings
+                ) {
                     item { SectionHeader(stringResource(R.string.profile_section_admin)) }
                     item {
                         OutlinedCard(
@@ -392,7 +433,15 @@ fun ProfileScreen(container: AppContainer, nav: NavHostController) {
                         ) {
                             Column {
                                 var needDivider = false
+                                if (hasConsole) {
+                                    ProfileRow(
+                                        label = stringResource(R.string.admin_console_title),
+                                        icon = Icons.Outlined.AdminPanelSettings,
+                                    ) { nav.navigate(AppRoute.AdminConsole) }
+                                    needDivider = true
+                                }
                                 if (hasTraffic) {
+                                    if (needDivider) HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
                                     ProfileRow(
                                         label = stringResource(R.string.profile_traffic_workspace),
                                         subtitle = stringResource(R.string.profile_traffic_workspace_desc),
@@ -409,6 +458,22 @@ fun ProfileScreen(container: AppContainer, nav: NavHostController) {
                                     ) { nav.navigate(AppRoute.AdminMembers()) }
                                     needDivider = true
                                 }
+                                if (hasSettlements) {
+                                    if (needDivider) HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
+                                    ProfileRow(
+                                        label = stringResource(R.string.profile_settlements),
+                                        icon = Icons.AutoMirrored.Outlined.ReceiptLong,
+                                    ) { nav.navigate(AppRoute.Settlements) }
+                                    needDivider = true
+                                }
+                                if (hasAdminReimb) {
+                                    if (needDivider) HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
+                                    ProfileRow(
+                                        label = stringResource(R.string.reimb_admin_title),
+                                        icon = Icons.Outlined.RequestQuote,
+                                    ) { nav.navigate(AppRoute.AdminReimbursements()) }
+                                    needDivider = true
+                                }
                                 if (hasAnnouncements) {
                                     if (needDivider) HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
                                     ProfileRow(
@@ -416,40 +481,38 @@ fun ProfileScreen(container: AppContainer, nav: NavHostController) {
                                         subtitle = stringResource(R.string.profile_admin_announcements_desc),
                                         icon = Icons.Outlined.Campaign,
                                     ) { nav.navigate(AppRoute.Announcements(manage = true)) }
+                                    needDivider = true
                                 }
-                            }
-                        }
-                    }
-                }
-            }
-
-            // 4. More in Web App (staff, admin, and event organisers only — permission-gated)
-            if (me != null && me.status != "pending" && Routes.canUseStaffWeb(me)) {
-                val webRows = buildList<Triple<Int, ImageVector, String>> {
-                    staffConsolePathFor(me)?.let { add(Triple(R.string.profile_web_staff, Icons.Outlined.AdminPanelSettings, it)) }
-                    if (me.can("admin_reports")) add(Triple(R.string.profile_admin_reports, Icons.Outlined.BarChart, "admin/reports"))
-                    if (Routes.canManageSettlements(me)) add(Triple(R.string.profile_settlements, Icons.AutoMirrored.Outlined.ReceiptLong, "settlements"))
-                    if (me.can("reimbursements")) add(Triple(R.string.profile_reimbursements, Icons.AutoMirrored.Outlined.ReceiptLong, "reimbursements"))
-                    if (me.can("report")) add(Triple(R.string.profile_report, Icons.Outlined.BarChart, "report"))
-                    if (me.can("help") || me.can("admin_help")) add(Triple(R.string.profile_help, Icons.AutoMirrored.Outlined.HelpOutline, "help"))
-                }
-                if (webRows.isNotEmpty()) {
-                    item { SectionHeader(stringResource(R.string.profile_section_web)) }
-                    item {
-                        OutlinedCard(
-                            modifier = Modifier.fillMaxWidth(),
-                            border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
-                        ) {
-                            Column {
-                                webRows.forEachIndexed { idx, (labelRes, icon, path) ->
-                                    if (idx > 0) HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
+                                if (hasAdminReports) {
+                                    if (needDivider) HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
                                     ProfileRow(
-                                        label = stringResource(labelRes),
-                                        icon = icon,
-                                        isExternal = true,
-                                    ) {
-                                        openInWebApp(context, container.webUrl(path))
-                                    }
+                                        label = stringResource(R.string.profile_admin_reports),
+                                        icon = Icons.Outlined.BarChart,
+                                    ) { nav.navigate(AppRoute.AdminReports()) }
+                                    needDivider = true
+                                }
+                                if (hasRoles) {
+                                    if (needDivider) HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
+                                    ProfileRow(
+                                        label = stringResource(R.string.roles_title),
+                                        icon = Icons.Outlined.Shield,
+                                    ) { nav.navigate(AppRoute.AdminRoles) }
+                                    needDivider = true
+                                }
+                                if (hasAudit) {
+                                    if (needDivider) HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
+                                    ProfileRow(
+                                        label = stringResource(R.string.audit_title),
+                                        icon = Icons.Outlined.History,
+                                    ) { nav.navigate(AppRoute.AdminAudit) }
+                                    needDivider = true
+                                }
+                                if (hasSettings) {
+                                    if (needDivider) HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
+                                    ProfileRow(
+                                        label = stringResource(R.string.settings_title),
+                                        icon = Icons.Outlined.Settings,
+                                    ) { nav.navigate(AppRoute.AdminSettings()) }
                                 }
                             }
                         }
@@ -518,39 +581,5 @@ fun ProfileScreen(container: AppContainer, nav: NavHostController) {
                 vm.saveAvatarStyle(icon, color) { showAvatarEditor = false }
             },
         )
-    }
-}
-
-private val TRAFFIC_HUB_PERMS = listOf(
-    "admin_plan",
-    "admin_rides",
-    "admin_live",
-    "admin_area_photos",
-    "admin_areas",
-    "admin_fares",
-)
-
-private val NON_TRAFFIC_STAFF_PERMS = listOf(
-    "admin_members",
-    "admin_invites",
-    "admin_recovery",
-    "admin_roles",
-    "admin_reimb_review",
-    "admin_reimb_pay",
-    "admin_reports",
-    "admin_announcements",
-    "admin_help",
-    "admin_groups",
-    "admin_settings",
-    "admin_audit",
-)
-
-internal fun staffConsolePathFor(me: Me): String? {
-    val canTraffic = TRAFFIC_HUB_PERMS.any { me.can(it) }
-    val hasNonTraffic = NON_TRAFFIC_STAFF_PERMS.any { me.can(it) }
-    return when {
-        canTraffic && !hasNonTraffic -> "admin/traffic"
-        canTraffic || hasNonTraffic || me.can("admin_dashboard") -> "admin/menu"
-        else -> null
     }
 }

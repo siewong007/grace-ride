@@ -83,6 +83,10 @@ import org.pjstatecm.graceride.service.LiveTripLocationService
 import org.pjstatecm.graceride.ui.AppRoute
 import org.pjstatecm.graceride.ui.UiHaptics
 import org.pjstatecm.graceride.ui.components.AnimatedOfflineBanner
+import androidx.compose.material.icons.outlined.CloudOff
+import androidx.compose.material.icons.outlined.Sync
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material3.TextButton
 import org.pjstatecm.graceride.ui.components.CalloutBanner
 import org.pjstatecm.graceride.ui.components.EmptyView
 import org.pjstatecm.graceride.ui.components.ErrorView
@@ -235,6 +239,40 @@ fun DriveHubScreen(container: AppContainer, nav: NavHostController) {
                 visible = state.offline,
                 modifier = Modifier.padding(horizontal = Spacing.sm, vertical = Spacing.xxs),
             )
+            if (state.queuedOffline.isNotEmpty()) {
+                val warnColors = LocalStatusColors.current
+                Surface(
+                    color = warnColors.warningSoft,
+                    shape = RoundedCornerShape(12.dp),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = Spacing.sm, vertical = Spacing.xxs),
+                ) {
+                    Row(
+                        Modifier
+                            .fillMaxWidth()
+                            .padding(horizontal = Spacing.sm, vertical = Spacing.xs),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(Spacing.xs),
+                    ) {
+                        Icon(Icons.Outlined.CloudOff, contentDescription = null, tint = warnColors.warning)
+                        Text(
+                            stringResource(R.string.offline_queue_banner, state.queuedOffline.size),
+                            style = MaterialTheme.typography.bodySmall,
+                            color = warnColors.warning,
+                            modifier = Modifier.weight(1f),
+                        )
+                        TextButton(
+                            onClick = vm::syncOfflineQueue,
+                            enabled = !state.offlineSyncing,
+                        ) {
+                            Icon(Icons.Outlined.Sync, contentDescription = null, modifier = Modifier.size(16.dp))
+                            Spacer(Modifier.width(Spacing.xxs))
+                            Text(stringResource(R.string.offline_queue_sync_now))
+                        }
+                    }
+                }
+            }
             when {
                 state.loading -> SkeletonLoadingList(count = 4)
                 state.error != null && state.requests.isEmpty() && state.schedule.isEmpty() ->

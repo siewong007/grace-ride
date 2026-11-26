@@ -155,28 +155,6 @@ class EventDetailViewModel(private val container: AppContainer, private val id: 
             } else {
                 emptyList()
             }
-            val canVisitorSection = event.status == "published" &&
-                (event.mySignup?.status == "going" || event.canManage) &&
-                container.auth.me?.can("rides", "create") == true
-            val visitorsList = if (canVisitorSection) {
-                try {
-                    container.events.visitors(id)
-                } catch (_: ApiException) {
-                    emptyList()
-                }
-            } else {
-                emptyList()
-            }
-            val areasList = if (canVisitorSection) {
-                try {
-                    container.rides.areas()
-                } catch (_: ApiException) {
-                    emptyList()
-                }
-            } else {
-                emptyList()
-            }
-
             _state.value = _state.value.copy(
                 loading = false,
                 refreshing = false,
@@ -185,8 +163,6 @@ class EventDetailViewModel(private val container: AppContainer, private val id: 
                 returnRide = returnRide,
                 drivingForEvent = driving,
                 signups = signupsList,
-                visitors = visitorsList,
-                areas = areasList,
                 error = null,
             )
         } catch (e: ApiException) {
@@ -409,12 +385,40 @@ class EventDetailViewModel(private val container: AppContainer, private val id: 
         }
     }
 
+    fun loadVisitorsAndAreas() {
+        viewModelScope.launch {
+            refreshVisitorsAndAreas()
+        }
+    }
+
+    private suspend fun refreshVisitorsAndAreas() {
+        val (visitorsList, areasList) = coroutineScope {
+            val vDef = async {
+                try {
+                    container.events.visitors(id)
+                } catch (_: ApiException) {
+                    _state.value.visitors
+                }
+            }
+            val aDef = async {
+                try {
+                    container.rides.areas()
+                } catch (_: ApiException) {
+                    _state.value.areas
+                }
+            }
+            vDef.await() to aDef.await()
+        }
+        _state.value = _state.value.copy(visitors = visitorsList, areas = areasList)
+    }
+
     fun createVisitor(req: CreateVisitorPassReq) {
         if (_state.value.busy) return
         _state.value = _state.value.copy(busy = true, message = null)
         viewModelScope.launch {
             try {
                 val res = container.events.createVisitor(id, req)
+                refreshVisitorsAndAreas()
                 reloadDetail()
                 _state.value = _state.value.copy(visitorSharePair = req.name to container.webUrl(res.url))
             } catch (e: ApiException) {
@@ -431,6 +435,7 @@ class EventDetailViewModel(private val container: AppContainer, private val id: 
         viewModelScope.launch {
             try {
                 val res = container.events.reissueVisitor(pass.id)
+                refreshVisitorsAndAreas()
                 reloadDetail()
                 _state.value = _state.value.copy(visitorSharePair = pass.name to container.webUrl(res.url))
             } catch (e: ApiException) {
@@ -447,6 +452,7 @@ class EventDetailViewModel(private val container: AppContainer, private val id: 
         viewModelScope.launch {
             try {
                 container.events.revokeVisitor(passId)
+                refreshVisitorsAndAreas()
                 reloadDetail()
             } catch (e: ApiException) {
                 _state.value = _state.value.copy(message = e.message)

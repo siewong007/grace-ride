@@ -7,7 +7,10 @@ import org.pjstatecm.graceride.data.api.ApiService
 import org.pjstatecm.graceride.data.api.Area
 import org.pjstatecm.graceride.data.api.AuthEventBus
 import org.pjstatecm.graceride.data.api.CancelReq
+import org.pjstatecm.graceride.data.api.CareLinkReq
+import org.pjstatecm.graceride.data.api.CareLinkResp
 import org.pjstatecm.graceride.data.api.ChatThreadDto
+import org.pjstatecm.graceride.data.api.RidesPageDto
 import org.pjstatecm.graceride.data.api.CreateProxyRiderRes
 import org.pjstatecm.graceride.data.api.CreateRideReq
 import org.pjstatecm.graceride.data.api.CreateRideRes
@@ -142,6 +145,11 @@ class RidesRepository(private val apiProvider: ApiProvider, private val bus: Aut
         apiCall(bus) { api.updateDriverVehicle(id, req) }
     suspend fun deleteDriverVehicle(id: Long) = apiCall(bus) { api.deleteDriverVehicle(id) }
     suspend fun selectDriverVehicle(id: Long): SelectVehicleRes = apiCall(bus) { api.selectDriverVehicle(id) }
+    suspend fun pastPage(before: String? = null, limit: Int = 30): RidesPageDto =
+        apiCall(bus) { api.myRidesPage(scope = "past", before = before, limit = limit) }
+    suspend fun createCareLink(id: Long, label: String? = null): CareLinkResp =
+        apiCall(bus) { api.createCareLink(id, CareLinkReq(label = label?.trim()?.ifBlank { null })) }
+    suspend fun revokeCareLink(id: Long) = apiCall(bus) { api.revokeCareLink(id) }
 
     companion object {
         private const val AREAS_TTL_MS = 5 * 60_000L

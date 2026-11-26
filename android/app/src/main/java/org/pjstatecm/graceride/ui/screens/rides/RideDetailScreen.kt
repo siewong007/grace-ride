@@ -24,11 +24,28 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.lazy.LazyRow
+import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.layout.ContentScale
+import coil.compose.AsyncImage
+import coil.request.ImageRequest
+import androidx.compose.material.icons.outlined.CloudOff
+import androidx.compose.material.icons.outlined.ContentCopy
+import androidx.compose.material.icons.outlined.Share
+import androidx.compose.material.icons.outlined.Shield
+import androidx.compose.material.icons.outlined.Sync
+import androidx.compose.material3.ModalBottomSheet
+import androidx.compose.material3.rememberModalBottomSheetState
+import org.pjstatecm.graceride.data.api.AreaPhotoDto
+import org.pjstatecm.graceride.ui.copyToClipboard
+import org.pjstatecm.graceride.ui.shareText
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.outlined.Accessible
-import androidx.compose.material.icons.automirrored.outlined.OpenInNew
+import androidx.compose.material.icons.automirrored.outlined.HelpOutline
 import androidx.compose.material.icons.outlined.AirlineSeatReclineNormal
 import androidx.compose.material.icons.outlined.Call
 import androidx.compose.material.icons.outlined.Cancel
@@ -73,6 +90,7 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -89,6 +107,7 @@ import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.repeatOnLifecycle
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
 import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.navigation.NavHostController
 import org.pjstatecm.graceride.R
@@ -111,7 +130,6 @@ import org.pjstatecm.graceride.ui.components.SectionHeader
 import org.pjstatecm.graceride.ui.components.animatorsEnabled
 import org.pjstatecm.graceride.ui.dialPhone
 import org.pjstatecm.graceride.ui.openInMaps
-import org.pjstatecm.graceride.ui.openInWebApp
 import org.pjstatecm.graceride.ui.theme.LocalStatusColors
 import org.pjstatecm.graceride.ui.theme.Spacing
 import org.pjstatecm.graceride.ui.theme.graceRidePrimaryButtonColors
@@ -135,6 +153,7 @@ fun RideDetailScreen(
     val context = LocalContext.current
     val view = LocalView.current
     val snackbar = remember { SnackbarHostState() }
+    val scope = rememberCoroutineScope()
     var confirmCancel by remember { mutableStateOf(false) }
     var cancelReason by remember { mutableStateOf("") }
     var confirmWithdraw by remember { mutableStateOf(false) }
@@ -144,6 +163,7 @@ fun RideDetailScreen(
     var unableNotes by remember { mutableStateOf("") }
     val staleMsg = stringResource(R.string.error_ride_changed)
     val bookedMsg = stringResource(R.string.ride_new_success)
+    val queuedMsg = stringResource(R.string.offline_queue_saved)
     val lifecycleOwner = LocalLifecycleOwner.current
     var resumedOnce by remember { mutableStateOf(false) }
 
@@ -173,7 +193,20 @@ fun RideDetailScreen(
         }
     }
 
+    LaunchedEffect(state.queuedOfflineNotice) {
+        if (state.queuedOfflineNotice) {
+            snackbar.showSnackbar(queuedMsg)
+            vm.clearQueuedNotice()
+        }
+    }
+
+    LaunchedEffect(state.ride?.area?.id) {
+        state.ride?.area?.id?.let { vm.loadAreaPhotos(it) }
+    }
+
     var showChat by remember { mutableStateOf(false) }
+    var showCareSheet by remember { mutableStateOf(false) }
+    var zoomedAreaPhoto by remember { mutableStateOf<AreaPhotoDto?>(null) }
     var confirmUnable by remember { mutableStateOf(false) }
     var showStartTripLocDialog by remember { mutableStateOf(false) }
     val startTripPermLauncher = rememberLauncherForActivityResult(
@@ -235,6 +268,37 @@ fun RideDetailScreen(
                                 .padding(Spacing.sm),
                             verticalArrangement = Arrangement.spacedBy(Spacing.sm),
                         ) {
+                            if (state.queuedOffline.isNotEmpty()) {
+                                Surface(
+                                    color = c.warningSoft,
+                                    shape = RoundedCornerShape(12.dp),
+                                    modifier = Modifier.fillMaxWidth(),
+                                ) {
+                                    Row(
+                                        Modifier
+                                            .fillMaxWidth()
+                                            .padding(horizontal = Spacing.sm, vertical = Spacing.xs),
+                                        verticalAlignment = Alignment.CenterVertically,
+                                        horizontalArrangement = Arrangement.spacedBy(Spacing.xs),
+                                    ) {
+                                        Icon(Icons.Outlined.CloudOff, contentDescription = null, tint = c.warning)
+                                        Text(
+                                            stringResource(R.string.offline_queue_banner, state.queuedOffline.size),
+                                            style = MaterialTheme.typography.bodySmall,
+                                            color = c.warning,
+                                            modifier = Modifier.weight(1f),
+                                        )
+                                        TextButton(
+                                            onClick = vm::syncOfflineQueue,
+                                            enabled = !state.offlineSyncing,
+                                        ) {
+                                            Icon(Icons.Outlined.Sync, contentDescription = null, modifier = Modifier.size(16.dp))
+                                            Spacer(Modifier.width(Spacing.xxs))
+                                            Text(stringResource(R.string.offline_queue_sync_now))
+                                        }
+                                    }
+                                }
+                            }
                             // Hero header
                             Row(
                                 Modifier.fillMaxWidth(),
@@ -571,6 +635,65 @@ fun RideDetailScreen(
                                     if (ride.notes.isNotBlank()) {
                                         InfoRow(stringResource(R.string.ride_notes), ride.notes)
                                     }
+                                }
+                            }
+
+                            if (state.areaPhotos.isNotEmpty()) {
+                                SectionHeader(stringResource(R.string.ride_area_photos_title, ride.area.name))
+                                LazyRow(
+                                    horizontalArrangement = Arrangement.spacedBy(Spacing.xs),
+                                    modifier = Modifier.fillMaxWidth(),
+                                ) {
+                                    items(state.areaPhotos, key = { it.id }) { photo ->
+                                        OutlinedCard(
+                                            onClick = { zoomedAreaPhoto = photo },
+                                            modifier = Modifier.width(148.dp),
+                                        ) {
+                                            Column {
+                                                AsyncImage(
+                                                    model = ImageRequest.Builder(context)
+                                                        .data(container.fileUrl(photo.fileId))
+                                                        .crossfade(true)
+                                                        .build(),
+                                                    contentDescription = photo.caption.ifBlank { ride.area.name },
+                                                    contentScale = ContentScale.Crop,
+                                                    modifier = Modifier
+                                                        .fillMaxWidth()
+                                                        .height(92.dp),
+                                                )
+                                                if (photo.caption.isNotBlank()) {
+                                                    Text(
+                                                        photo.caption,
+                                                        style = MaterialTheme.typography.labelSmall,
+                                                        maxLines = 2,
+                                                        overflow = TextOverflow.Ellipsis,
+                                                        modifier = Modifier.padding(Spacing.xs),
+                                                    )
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+
+                            if (ride.viewer.isPassenger || ride.viewer.isDriver || ride.viewer.isStaff) {
+                                OutlinedButton(
+                                    onClick = { showCareSheet = true },
+                                    modifier = Modifier.fillMaxWidth().defaultMinSize(minHeight = 48.dp),
+                                ) {
+                                    Icon(Icons.Outlined.Shield, contentDescription = null, modifier = Modifier.size(18.dp))
+                                    Spacer(Modifier.width(Spacing.xs))
+                                    Text(stringResource(R.string.care_link_btn))
+                                }
+                            }
+                            if (me?.can("help") == true) {
+                                OutlinedButton(
+                                    onClick = { nav.navigate(AppRoute.Help(rideId = ride.id, tab = "tickets")) },
+                                    modifier = Modifier.fillMaxWidth().defaultMinSize(minHeight = 48.dp),
+                                ) {
+                                    Icon(Icons.AutoMirrored.Outlined.HelpOutline, contentDescription = null, modifier = Modifier.size(18.dp))
+                                    Spacer(Modifier.width(Spacing.xs))
+                                    Text(stringResource(R.string.ride_need_help))
                                 }
                             }
 
@@ -1043,11 +1166,11 @@ fun RideDetailScreen(
                                 }
                             } else if (ride.viewer.isStaff && ride.status in setOf("confirmed", "in_progress") && canViewLive) {
                                 OutlinedButton(
-                                    onClick = { openInWebApp(context, container.webUrl("rides/${ride.id}")) },
+                                    onClick = { nav.navigate(AppRoute.TrafficHub(tab = "live")) },
                                     modifier = Modifier.fillMaxWidth(),
                                 ) {
-                                    Icon(Icons.AutoMirrored.Outlined.OpenInNew, contentDescription = null, modifier = Modifier.padding(end = Spacing.xs))
-                                    Text(stringResource(R.string.ride_open_web_live))
+                                    Icon(Icons.Outlined.Map, contentDescription = null, modifier = Modifier.padding(end = Spacing.xs))
+                                    Text(stringResource(R.string.traffic_tab_live))
                                 }
                             }
                         }
@@ -1063,6 +1186,126 @@ fun RideDetailScreen(
             rideId = id,
             onDismiss = { showChat = false },
         )
+    }
+
+    if (zoomedAreaPhoto != null) {
+        val photo = zoomedAreaPhoto!!
+        AlertDialog(
+            onDismissRequest = { zoomedAreaPhoto = null },
+            title = { Text(photo.caption.ifBlank { state.ride?.area?.name ?: "" }) },
+            text = {
+                AsyncImage(
+                    model = container.fileUrl(photo.fileId),
+                    contentDescription = photo.caption,
+                    contentScale = ContentScale.Fit,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(300.dp)
+                        .clip(RoundedCornerShape(12.dp)),
+                )
+            },
+            confirmButton = {
+                TextButton(onClick = { zoomedAreaPhoto = null }) {
+                    Text(stringResource(R.string.common_close))
+                }
+            },
+        )
+    }
+
+    if (showCareSheet) {
+        val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
+        var careLabel by remember { mutableStateOf("") }
+        ModalBottomSheet(
+            onDismissRequest = {
+                showCareSheet = false
+                vm.clearCareLinkResult()
+            },
+            sheetState = sheetState,
+        ) {
+            Column(
+                Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = Spacing.sm)
+                    .padding(bottom = Spacing.md),
+                verticalArrangement = Arrangement.spacedBy(Spacing.xs),
+            ) {
+                Text(stringResource(R.string.care_link_title), style = MaterialTheme.typography.titleMedium)
+                Text(
+                    stringResource(R.string.care_link_desc),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                OutlinedTextField(
+                    value = careLabel,
+                    onValueChange = { careLabel = it.take(60) },
+                    label = { Text(stringResource(R.string.care_link_label_field)) },
+                    placeholder = { Text(stringResource(R.string.care_link_label_placeholder)) },
+                    singleLine = true,
+                    modifier = Modifier.fillMaxWidth(),
+                )
+                Button(
+                    onClick = { vm.createCareLink(careLabel) },
+                    enabled = !state.careBusy,
+                    modifier = Modifier.fillMaxWidth().defaultMinSize(minHeight = 48.dp),
+                ) {
+                    if (state.careBusy) {
+                        InlineButtonSpinner(color = MaterialTheme.colorScheme.onPrimary)
+                    } else {
+                        Text(stringResource(R.string.care_link_generate))
+                    }
+                }
+                state.careLink?.let { link ->
+                    val fullUrl = container.webUrl(link.url.ifBlank { "/care/${link.token}" })
+                    val copiedToast = stringResource(R.string.care_link_copied)
+                    OutlinedCard(Modifier.fillMaxWidth()) {
+                        Column(
+                            Modifier.padding(Spacing.sm),
+                            verticalArrangement = Arrangement.spacedBy(Spacing.xs),
+                        ) {
+                            Text(
+                                fullUrl,
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.primary,
+                            )
+                            Row(
+                                Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.spacedBy(Spacing.xs),
+                            ) {
+                                OutlinedButton(
+                                    onClick = {
+                                        copyToClipboard(context, "care-link", fullUrl)
+                                        scope.launch { snackbar.showSnackbar(copiedToast) }
+                                    },
+                                    modifier = Modifier.weight(1f).defaultMinSize(minHeight = 48.dp),
+                                ) {
+                                    Icon(Icons.Outlined.ContentCopy, contentDescription = null, modifier = Modifier.size(16.dp))
+                                    Spacer(Modifier.width(Spacing.xxs))
+                                    Text(stringResource(R.string.care_link_copy))
+                                }
+                                Button(
+                                    onClick = { shareText(context, context.getString(R.string.care_link_share_text), fullUrl) },
+                                    modifier = Modifier.weight(1f).defaultMinSize(minHeight = 48.dp),
+                                ) {
+                                    Icon(Icons.Outlined.Share, contentDescription = null, modifier = Modifier.size(16.dp))
+                                    Spacer(Modifier.width(Spacing.xxs))
+                                    Text(stringResource(R.string.care_link_share))
+                                }
+                            }
+                        }
+                    }
+                }
+                TextButton(
+                    onClick = {
+                        vm.revokeCareLink()
+                        showCareSheet = false
+                    },
+                    enabled = !state.careBusy,
+                    modifier = Modifier.align(Alignment.End),
+                ) {
+                    Text(stringResource(R.string.care_link_revoke_old))
+                }
+            }
+        }
     }
 
     if (confirmUnable) {

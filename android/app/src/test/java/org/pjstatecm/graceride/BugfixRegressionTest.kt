@@ -99,8 +99,8 @@ class BugfixRegressionTest {
     fun notifLinkRouterHandlesHomeCostsAndSettlementsWebFallback() {
         assertEquals(NotifDestination.Native(Routes.HOME), NotifLinkRouter.resolve("/"))
         assertEquals(NotifDestination.Native(Routes.COSTS), NotifLinkRouter.resolve("/costs?tab=unpaid"))
-        assertEquals(NotifDestination.Web("/settlements"), NotifLinkRouter.resolve("/settlements"))
-        assertEquals(NotifDestination.Web("/settlements/5?tab=1"), NotifLinkRouter.resolve("/settlements/5?tab=1"))
+        assertEquals(NotifDestination.Native(Routes.SETTLEMENTS), NotifLinkRouter.resolve("/settlements"))
+        assertEquals(NotifDestination.Native(Routes.settlementDetail(5L)), NotifLinkRouter.resolve("/settlements/5?tab=1"))
     }
 
     @Test

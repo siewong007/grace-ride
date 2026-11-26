@@ -17,11 +17,15 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import org.pjstatecm.graceride.data.api.AdminDriverDto
 import org.pjstatecm.graceride.data.api.ApiException
+import org.pjstatecm.graceride.data.api.AreaPhotoDto
+import org.pjstatecm.graceride.data.api.CareLinkResp
 import org.pjstatecm.graceride.data.api.Ride
 import org.pjstatecm.graceride.data.api.RideChangeDraftDto
 import org.pjstatecm.graceride.data.api.RideDraftInReq
 import org.pjstatecm.graceride.data.api.RideLocationDto
 import org.pjstatecm.graceride.data.api.runSuspendCatching
+import org.pjstatecm.graceride.data.cache.OfflineActionQueue
+import org.pjstatecm.graceride.data.cache.QueuedRideAction
 import org.pjstatecm.graceride.di.AppContainer
 import org.pjstatecm.graceride.notifications.RealtimeEvent
 import org.pjstatecm.graceride.service.LiveTripLocationService
@@ -41,12 +45,21 @@ data class RideDetailUiState(
     val drafts: List<RideChangeDraftDto> = emptyList(),
     val draftBusy: Boolean = false,
     val nextPendingRide: Ride? = null,
+    val areaPhotos: List<AreaPhotoDto> = emptyList(),
+    val careLink: CareLinkResp? = null,
+    val careBusy: Boolean = false,
+    val queuedOffline: List<QueuedRideAction> = emptyList(),
+    val queuedOfflineNotice: Boolean = false,
+    val offlineSyncing: Boolean = false,
 )
 
 class RideDetailViewModel(private val container: AppContainer, private val id: Long) : ViewModel() {
-    private val _state = MutableStateFlow(RideDetailUiState())
+    private val _state = MutableStateFlow(
+        RideDetailUiState(queuedOffline = container.offlineQueue.pendingForRide(id)),
+    )
     val state: StateFlow<RideDetailUiState> = _state.asStateFlow()
     private var loadJob: Job? = null
+    private var loadedAreaPhotoId: Long? = null
 
     init {
         load()
@@ -57,6 +70,16 @@ class RideDetailViewModel(private val container: AppContainer, private val id: L
         }
         viewModelScope.launch {
             container.networkMonitor.isOnline.drop(1).filter { it }.collect { refresh() }
+        }
+        viewModelScope.launch {
+            container.offlineQueue.pending.collect { all ->
+                _state.value = _state.value.copy(queuedOffline = all.filter { it.rideId == id })
+            }
+        }
+        viewModelScope.launch {
+            container.offlineQueue.syncing.collect { syncing ->
+                _state.value = _state.value.copy(offlineSyncing = syncing)
+            }
         }
     }
 
@@ -123,18 +146,30 @@ class RideDetailViewModel(private val container: AppContainer, private val id: L
 
     private fun action(
         onSuccess: (() -> Unit)? = null,
+        offlineKind: String? = null,
+        offlineMinutes: Int? = null,
+        offlineReadiness: Pair<String, String?>? = null,
         block: suspend () -> Unit,
     ) {
         if (_state.value.busy) return
         loadJob?.cancel()
-        _state.value = _state.value.copy(busy = true, message = null)
+        _state.value = _state.value.copy(busy = true, message = null, queuedOfflineNotice = false)
         viewModelScope.launch {
             try {
                 block()
                 reloadRide()
                 onSuccess?.invoke()
             } catch (e: ApiException) {
-                if (e.code == "RIDE_STATUS_CHANGED") {
+                if (e.status == 0 && offlineKind != null) {
+                    container.offlineQueue.enqueue(
+                        rideId = id,
+                        kind = offlineKind,
+                        minutes = offlineMinutes,
+                        readinessStatus = offlineReadiness?.first,
+                        notes = offlineReadiness?.second,
+                    )
+                    _state.value = _state.value.copy(queuedOfflineNotice = true)
+                } else if (e.code == "RIDE_STATUS_CHANGED") {
                     // Optimistic concurrency: someone else moved the ride. Re-fetch.
                     _state.value = _state.value.copy(staleReload = true)
                     reloadRide()
@@ -145,6 +180,58 @@ class RideDetailViewModel(private val container: AppContainer, private val id: L
                 _state.value = _state.value.copy(busy = false)
             }
         }
+    }
+
+    fun syncOfflineQueue() {
+        viewModelScope.launch {
+            val synced = runSuspendCatching { container.offlineQueue.flush(container.rides) }.getOrDefault(0)
+            if (synced > 0) reloadRide()
+        }
+    }
+
+    /** Lazy load triggered only by UI when rendering area pickup photos (`areaId`). */
+    fun loadAreaPhotos(areaId: Long) {
+        if (loadedAreaPhotoId == areaId && _state.value.areaPhotos.isNotEmpty()) return
+        loadedAreaPhotoId = areaId
+        viewModelScope.launch {
+            container.traffic.areaPhotos(areaId).onSuccess { dto ->
+                _state.value = _state.value.copy(areaPhotos = dto.photos)
+            }
+        }
+    }
+
+    fun createCareLink(label: String?) {
+        if (_state.value.careBusy) return
+        _state.value = _state.value.copy(careBusy = true, message = null)
+        viewModelScope.launch {
+            try {
+                val resp = container.rides.createCareLink(id, label)
+                _state.value = _state.value.copy(careBusy = false, careLink = resp)
+            } catch (e: ApiException) {
+                _state.value = _state.value.copy(careBusy = false, message = e.message)
+            }
+        }
+    }
+
+    fun revokeCareLink() {
+        if (_state.value.careBusy) return
+        _state.value = _state.value.copy(careBusy = true, message = null)
+        viewModelScope.launch {
+            try {
+                container.rides.revokeCareLink(id)
+                _state.value = _state.value.copy(careBusy = false, careLink = null)
+            } catch (e: ApiException) {
+                _state.value = _state.value.copy(careBusy = false, message = e.message)
+            }
+        }
+    }
+
+    fun clearCareLinkResult() {
+        _state.value = _state.value.copy(careLink = null)
+    }
+
+    fun clearQueuedNotice() {
+        _state.value = _state.value.copy(queuedOfflineNotice = false)
     }
 
     private suspend fun stopLiveLocationIfNoActiveTrip() {
@@ -161,28 +248,44 @@ class RideDetailViewModel(private val container: AppContainer, private val id: L
         stopLiveLocationIfNoActiveTrip()
     }
     fun respond(accept: Boolean) = action { container.rides.respond(id, accept) }
-    fun readiness(status: String, notes: String? = null) = action {
-        container.rides.readiness(id, status, notes?.trim()?.ifBlank { null })
+    fun readiness(status: String, notes: String? = null) {
+        val cleanNotes = notes?.trim()?.ifBlank { null }
+        action(
+            offlineKind = OfflineActionQueue.KIND_READINESS,
+            offlineReadiness = status to cleanNotes,
+        ) {
+            container.rides.readiness(id, status, cleanNotes)
+        }
     }
     fun supperChoice(choice: String) = action { container.rides.supperChoice(id, choice) }
     fun claim() = action { container.rides.claimRide(id) }
     fun confirmAssignment() = action { container.rides.confirmAssignment(id) }
     fun startRide(onStarted: ((Ride) -> Unit)? = null) = action(
         onSuccess = { if (onStarted != null) _state.value.ride?.let(onStarted) },
+        offlineKind = OfflineActionQueue.KIND_START,
     ) {
         container.rides.startRide(id)
     }
-    fun arrivedGate() = action { container.rides.arrivedGate(id) }
-    fun pickup() = action { container.rides.pickupRide(id) }
+    fun arrivedGate() = action(offlineKind = OfflineActionQueue.KIND_ARRIVED_GATE) {
+        container.rides.arrivedGate(id)
+    }
+    fun pickup() = action(offlineKind = OfflineActionQueue.KIND_PICKUP) {
+        container.rides.pickupRide(id)
+    }
     fun noShow() = action {
         container.rides.noShowRide(id)
         stopLiveLocationIfNoActiveTrip()
     }
-    fun complete() = action {
+    fun complete() = action(offlineKind = OfflineActionQueue.KIND_COMPLETE) {
         container.rides.completeRide(id)
         stopLiveLocationIfNoActiveTrip()
     }
-    fun driverDelay(minutes: Int) = action { container.rides.driverDelay(id, minutes) }
+    fun driverDelay(minutes: Int) = action(
+        offlineKind = OfflineActionQueue.KIND_DELAY,
+        offlineMinutes = minutes,
+    ) {
+        container.rides.driverDelay(id, minutes)
+    }
     fun withdraw(reason: String?) = action {
         container.rides.withdrawRide(id, reason)
         stopLiveLocationIfNoActiveTrip()

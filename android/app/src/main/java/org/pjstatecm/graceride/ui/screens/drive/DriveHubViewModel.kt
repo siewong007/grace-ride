@@ -17,6 +17,7 @@ import org.pjstatecm.graceride.data.api.ApiException
 import org.pjstatecm.graceride.data.api.Ride
 import org.pjstatecm.graceride.data.api.TripRouteDto
 import org.pjstatecm.graceride.data.api.runSuspendCatching
+import org.pjstatecm.graceride.data.cache.QueuedRideAction
 import org.pjstatecm.graceride.di.AppContainer
 import org.pjstatecm.graceride.domain.KlTime
 import org.pjstatecm.graceride.notifications.RealtimeEvent
@@ -36,11 +37,15 @@ data class DriveHubUiState(
     val error: String? = null,
     val actionError: String? = null,
     val claimedNotice: Boolean = false,
+    val queuedOffline: List<QueuedRideAction> = emptyList(),
+    val offlineSyncing: Boolean = false,
 )
 
 class DriveHubViewModel(private val container: AppContainer) : ViewModel() {
 
-    private val _state = MutableStateFlow(DriveHubUiState())
+    private val _state = MutableStateFlow(
+        DriveHubUiState(queuedOffline = container.offlineQueue.pending.value),
+    )
     val state: StateFlow<DriveHubUiState> = _state.asStateFlow()
     private var loadJob: Job? = null
 
@@ -53,6 +58,23 @@ class DriveHubViewModel(private val container: AppContainer) : ViewModel() {
         }
         viewModelScope.launch {
             container.networkMonitor.isOnline.drop(1).filter { it }.collect { refresh() }
+        }
+        viewModelScope.launch {
+            container.offlineQueue.pending.collect { list ->
+                _state.value = _state.value.copy(queuedOffline = list)
+            }
+        }
+        viewModelScope.launch {
+            container.offlineQueue.syncing.collect { syncing ->
+                _state.value = _state.value.copy(offlineSyncing = syncing)
+            }
+        }
+    }
+
+    fun syncOfflineQueue() {
+        viewModelScope.launch {
+            val synced = runSuspendCatching { container.offlineQueue.flush(container.rides) }.getOrDefault(0)
+            if (synced > 0) refresh()
         }
     }
 

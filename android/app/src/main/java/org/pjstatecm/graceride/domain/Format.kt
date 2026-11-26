@@ -32,6 +32,36 @@ object Money {
             }
         }
     }
+
+    /**
+     * Split [totalCents] equally among [count] members, matching server `equal_split`:
+     * remainder cents go to the first `totalCents % count` people so the sum matches exactly.
+     */
+    fun equalSplit(totalCents: Long, count: Int): List<Long> {
+        if (count <= 0) return emptyList()
+        val n = count.toLong()
+        val safeTotal = totalCents.coerceAtLeast(0L)
+        val base = safeTotal / n
+        val rem = safeTotal % n
+        return List(count) { i -> base + if (i < rem) 1L else 0L }
+    }
+
+    /** Parses a non-negative decimal MYR amount string (e.g. "12.50" or "RM 15") to integer cents without float drift. */
+    fun parseCents(raw: String): Long? {
+        var clean = raw.trim()
+        val upper = clean.uppercase(Locale.US)
+        when {
+            upper.startsWith("MYR") -> clean = clean.substring(3).trim()
+            upper.startsWith("RM") -> clean = clean.substring(2).trim()
+        }
+        clean = clean.replace(",", "")
+        if (clean.isEmpty()) return null
+        val bd = clean.toBigDecimalOrNull() ?: return null
+        if (bd < java.math.BigDecimal.ZERO) return null
+        return runCatching {
+            bd.movePointRight(2).setScale(0, java.math.RoundingMode.HALF_UP).longValueExact()
+        }.getOrNull()
+    }
 }
 
 /** Backend timestamps are KL-local text: "yyyy-MM-dd HH:mm:ss" (sometimes minute precision). */

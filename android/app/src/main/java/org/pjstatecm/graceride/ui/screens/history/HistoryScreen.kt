@@ -5,24 +5,32 @@ import androidx.compose.animation.core.tween
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
+import androidx.compose.foundation.layout.defaultMinSize
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.outlined.History
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
+import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.pulltorefresh.PullToRefreshBox
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.remember
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.unit.dp
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.initializer
@@ -52,15 +60,18 @@ import org.pjstatecm.graceride.ui.theme.Spacing
 data class HistoryUiState(
     val loading: Boolean = true,
     val refreshing: Boolean = false,
+    val loadingMore: Boolean = false,
     val offline: Boolean = false,
     val error: String? = null,
     val rides: List<Ride> = emptyList(),
+    val nextBefore: String? = null,
 )
 
 class HistoryViewModel(private val container: AppContainer) : ViewModel() {
     private val _state = MutableStateFlow(HistoryUiState())
     val state: StateFlow<HistoryUiState> = _state.asStateFlow()
     private var loadJob: kotlinx.coroutines.Job? = null
+    private var moreJob: kotlinx.coroutines.Job? = null
 
     init {
         load(first = true)
@@ -78,19 +89,52 @@ class HistoryViewModel(private val container: AppContainer) : ViewModel() {
 
     private fun load(first: Boolean) {
         loadJob?.cancel()
+        moreJob?.cancel()
         if (container.auth.me?.can("rides", "view") != true) {
-            _state.value = _state.value.copy(loading = false, refreshing = false)
+            _state.value = _state.value.copy(loading = false, refreshing = false, loadingMore = false)
             return
         }
         loadJob = viewModelScope.launch {
-            _state.value = _state.value.copy(loading = first, refreshing = !first)
+            _state.value = _state.value.copy(loading = first, refreshing = !first, loadingMore = false)
             try {
-                _state.value = _state.value.copy(loading = false, refreshing = false, rides = container.rides.past(), error = null, offline = false)
+                val page = container.rides.pastPage(before = null, limit = 30)
+                _state.value = _state.value.copy(
+                    loading = false,
+                    refreshing = false,
+                    rides = page.items,
+                    nextBefore = page.nextBefore,
+                    error = null,
+                    offline = false,
+                )
             } catch (e: ApiException) {
                 _state.value = _state.value.copy(
-                    loading = false, refreshing = false,
+                    loading = false,
+                    refreshing = false,
                     error = if (e.status == 0) null else e.message,
                     offline = e.status == 0,
+                )
+            }
+        }
+    }
+
+    fun loadMore() {
+        val cursor = _state.value.nextBefore ?: return
+        if (_state.value.loading || _state.value.loadingMore) return
+        moreJob?.cancel()
+        moreJob = viewModelScope.launch {
+            _state.value = _state.value.copy(loadingMore = true)
+            try {
+                val page = container.rides.pastPage(before = cursor, limit = 30)
+                val merged = (_state.value.rides + page.items).distinctBy { it.id }
+                _state.value = _state.value.copy(
+                    loadingMore = false,
+                    rides = merged,
+                    nextBefore = page.nextBefore,
+                )
+            } catch (e: ApiException) {
+                _state.value = _state.value.copy(
+                    loadingMore = false,
+                    offline = e.status == 0 || _state.value.offline,
                 )
             }
         }
@@ -155,8 +199,20 @@ fun HistoryScreen(container: AppContainer, nav: NavHostController) {
                         onRefresh = vm::refresh,
                         modifier = Modifier.weight(1f),
                     ) {
+                        val listState = rememberLazyListState()
+                        val shouldLoadMore by remember(state.nextBefore, state.loadingMore, state.rides.size) {
+                            derivedStateOf {
+                                val total = listState.layoutInfo.totalItemsCount
+                                val lastVisible = listState.layoutInfo.visibleItemsInfo.lastOrNull()?.index ?: 0
+                                state.nextBefore != null && !state.loadingMore && total > 0 && lastVisible >= total - 3
+                            }
+                        }
+                        LaunchedEffect(shouldLoadMore) {
+                            if (shouldLoadMore) vm.loadMore()
+                        }
                         LazyColumn(
-                            Modifier.fillMaxSize().padding(horizontal = Spacing.sm),
+                            state = listState,
+                            modifier = Modifier.fillMaxSize().padding(horizontal = Spacing.sm),
                             verticalArrangement = Arrangement.spacedBy(Spacing.xs),
                             contentPadding = PaddingValues(vertical = Spacing.xs),
                         ) {
@@ -175,6 +231,21 @@ fun HistoryScreen(container: AppContainer, nav: NavHostController) {
                                     onClick = { nav.navigate(AppRoute.RideDetail(ride.id)) },
                                     modifier = Modifier.animateItem(),
                                 )
+                            }
+                            if (state.nextBefore != null) {
+                                item(key = "history_load_more") {
+                                    OutlinedButton(
+                                        onClick = vm::loadMore,
+                                        enabled = !state.loadingMore,
+                                        modifier = Modifier.fillMaxWidth().defaultMinSize(minHeight = 48.dp),
+                                    ) {
+                                        Text(
+                                            stringResource(
+                                                if (state.loadingMore) R.string.common_loading else R.string.history_load_more,
+                                            ),
+                                        )
+                                    }
+                                }
                             }
                         }
                     }

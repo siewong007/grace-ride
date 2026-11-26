@@ -1,6 +1,7 @@
 package org.pjstatecm.graceride.ui.screens.traffic
 
 import android.net.Uri
+import android.provider.OpenableColumns
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.PickVisualMediaRequest
 import androidx.activity.result.contract.ActivityResultContracts
@@ -19,9 +20,12 @@ import androidx.compose.foundation.layout.ExperimentalLayoutApi
 import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.defaultMinSize
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -29,6 +33,7 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.itemsIndexed
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
@@ -37,10 +42,13 @@ import androidx.compose.material.icons.outlined.ArrowDownward
 import androidx.compose.material.icons.outlined.ArrowUpward
 import androidx.compose.material.icons.outlined.Close
 import androidx.compose.material.icons.outlined.DeleteOutline
+import androidx.compose.material.icons.outlined.Description
+import androidx.compose.material.icons.outlined.Download
 import androidx.compose.material.icons.outlined.Edit
 import androidx.compose.material.icons.outlined.LocationOn
 import androidx.compose.material.icons.outlined.PhotoCamera
 import androidx.compose.material.icons.outlined.Search
+import androidx.compose.material.icons.outlined.UploadFile
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.DropdownMenuItem
@@ -49,19 +57,23 @@ import androidx.compose.material3.ExposedDropdownMenuAnchorType
 import androidx.compose.material3.ExposedDropdownMenuBox
 import androidx.compose.material3.ExposedDropdownMenuDefaults
 import androidx.compose.material3.FilterChip
+import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedCard
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.SegmentedButton
 import androidx.compose.material3.SegmentedButtonDefaults
 import androidx.compose.material3.SingleChoiceSegmentedButtonRow
+import androidx.compose.material3.Surface
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.pulltorefresh.PullToRefreshBox
+import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -73,11 +85,16 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
+import androidx.compose.ui.text.style.TextDecoration
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
+import androidx.compose.foundation.selection.toggleable
 import coil.compose.AsyncImage
 import coil.request.ImageRequest
 import kotlinx.coroutines.Dispatchers
@@ -87,11 +104,22 @@ import org.pjstatecm.graceride.R
 import org.pjstatecm.graceride.data.api.Area
 import org.pjstatecm.graceride.data.api.AreaFareDto
 import org.pjstatecm.graceride.data.api.AreaPhotoDto
+import org.pjstatecm.graceride.data.api.BulkFareItemReq
 import org.pjstatecm.graceride.data.api.Me
 import org.pjstatecm.graceride.data.media.PreparedUpload
 import org.pjstatecm.graceride.data.media.prepareImageUpload
+import org.pjstatecm.graceride.domain.FareImportRowStatus
+import org.pjstatecm.graceride.domain.FareIssueKind
+import org.pjstatecm.graceride.domain.FareSheetCodec
+import org.pjstatecm.graceride.domain.FareSheetLayout
+import org.pjstatecm.graceride.domain.FareWorkbookParseResult
 import org.pjstatecm.graceride.domain.Money
 import org.pjstatecm.graceride.domain.RideStatusKind
+import org.pjstatecm.graceride.domain.XlsxErrorCode
+import org.pjstatecm.graceride.domain.XlsxException
+import org.pjstatecm.graceride.platform.ExportShare
+import java.nio.charset.StandardCharsets
+import org.pjstatecm.graceride.ui.UiHaptics
 import org.pjstatecm.graceride.ui.components.EmptyView
 import org.pjstatecm.graceride.ui.components.ErrorView
 import org.pjstatecm.graceride.ui.components.GraceRideSpringEasing
@@ -99,7 +127,9 @@ import org.pjstatecm.graceride.ui.components.InlineButtonSpinner
 import org.pjstatecm.graceride.ui.components.LoadingView
 import org.pjstatecm.graceride.ui.components.StatusPill
 import org.pjstatecm.graceride.ui.components.animatorsEnabled
+import org.pjstatecm.graceride.ui.theme.LocalStatusColors
 import org.pjstatecm.graceride.ui.theme.Spacing
+import org.pjstatecm.graceride.ui.theme.graceRidePrimaryButtonColors
 import org.pjstatecm.graceride.ui.theme.tabular
 import java.math.BigDecimal
 
@@ -174,7 +204,7 @@ internal fun TrafficAreasSection(
         ) { subTab ->
             when (subTab) {
                 "photos" -> AreaPhotosPane(state, vm, fileUrlFor, bottomClearance)
-                "fares" -> AreaFaresPane(state, vm, bottomClearance)
+                "fares" -> AreaFaresPane(state, me, vm, bottomClearance)
                 else -> AreasManagePane(state, vm, bottomClearance)
             }
         }
@@ -488,19 +518,82 @@ private fun AreaPhotosPane(
     }
 }
 
-@OptIn(ExperimentalMaterial3Api::class)
+@OptIn(ExperimentalMaterial3Api::class, ExperimentalLayoutApi::class)
 @Composable
 private fun AreaFaresPane(
     state: TrafficHubUiState,
+    me: Me?,
     vm: TrafficHubViewModel,
     bottomClearance: Dp,
 ) {
+    val context = LocalContext.current
+    val scope = rememberCoroutineScope()
     var showEditDialog by remember { mutableStateOf(false) }
     var isEditingFare by remember { mutableStateOf(false) }
     var areaAId by remember { mutableStateOf<Long?>(null) }
     var areaBId by remember { mutableStateOf<Long?>(null) }
     var amountText by remember { mutableStateOf("") }
     var deleteTarget by remember { mutableStateOf<AreaFareDto?>(null) }
+
+    var showImportDialog by remember { mutableStateOf(false) }
+    var importWorkbook by remember { mutableStateOf<FareWorkbookParseResult?>(null) }
+    var importSheetIndex by remember { mutableStateOf(0) }
+    var createMissingAreas by remember { mutableStateOf(false) }
+    var parseError by remember { mutableStateOf<String?>(null) }
+    var importStatusBanner by remember { mutableStateOf<String?>(null) }
+
+    val canUpdateFares = me?.can("admin_fares", "update") == true
+    val canCreateAreas = me?.can("admin_areas", "create") == true
+    val originLabel = stringResource(R.string.traffic_fare_sheet_origin)
+    val sheetTitle = stringResource(R.string.traffic_fare_sheet_name)
+
+    val fareSheetPicker = rememberLauncherForActivityResult(
+        ActivityResultContracts.OpenDocument(),
+    ) { uri: Uri? ->
+        if (uri == null) return@rememberLauncherForActivityResult
+        scope.launch {
+            parseError = null
+            val res = withContext(Dispatchers.IO) {
+                runCatching {
+                    val cr = context.contentResolver
+                    var fileName = "fares.xlsx"
+                    cr.query(uri, arrayOf(OpenableColumns.DISPLAY_NAME), null, null, null)?.use { c ->
+                        if (c.moveToFirst()) {
+                            c.getString(0)?.takeIf { it.isNotBlank() }?.let { fileName = it }
+                        }
+                    }
+                    val bytes = cr.openInputStream(uri)?.use { it.readBytes() }
+                        ?: throw IllegalStateException("Unable to read selected file")
+                    FareSheetCodec.readFareBytes(
+                        bytes = bytes,
+                        fileName = fileName,
+                        allAreas = state.areas,
+                        existingFares = state.areaFares,
+                    )
+                }
+            }
+            res.onSuccess { wb ->
+                val firstPopulated = wb.sheets.indexOfFirst {
+                    it.parsed.rows.isNotEmpty() || it.parsed.issues.isNotEmpty()
+                }.coerceAtLeast(0)
+                importWorkbook = wb
+                importSheetIndex = firstPopulated
+                createMissingAreas = false
+                parseError = null
+                showImportDialog = true
+            }.onFailure { err ->
+                importWorkbook = null
+                parseError = when ((err as? XlsxException)?.code) {
+                    XlsxErrorCode.LEGACY_XLS -> context.getString(R.string.traffic_fare_import_err_xls)
+                    XlsxErrorCode.TOO_LARGE -> context.getString(R.string.traffic_fare_import_err_large)
+                    XlsxErrorCode.INVALID_XLSX -> context.getString(R.string.traffic_fare_import_err_invalid)
+                    null -> err.message ?: context.getString(R.string.traffic_fare_import_err_invalid)
+                }
+                showImportDialog = true
+            }
+        }
+    }
+
     val filteredFares = remember(state.areaFares, state.fareSearchQuery) {
         val q = state.fareSearchQuery.trim()
         if (q.isEmpty()) state.areaFares
@@ -564,6 +657,108 @@ private fun AreaFaresPane(
                         Icon(Icons.Outlined.Add, contentDescription = null, modifier = Modifier.size(18.dp))
                         Spacer(Modifier.width(Spacing.xxs))
                         Text(stringResource(R.string.traffic_fare_add))
+                    }
+                }
+            }
+
+            item {
+                FlowRow(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(Spacing.xs),
+                    verticalArrangement = Arrangement.spacedBy(Spacing.xxs),
+                ) {
+                    if (state.areas.any { it.active }) {
+                        OutlinedButton(
+                            onClick = {
+                                scope.launch {
+                                    val bytes = withContext(Dispatchers.Default) {
+                                        FareSheetCodec.buildFaresXlsx(
+                                            areas = state.areas,
+                                            fares = state.areaFares,
+                                            sheetName = sheetTitle,
+                                            originLabel = originLabel,
+                                        )
+                                    }
+                                    ExportShare.writeAndShareFile(
+                                        context = context,
+                                        filename = "grace-ride-area-fares.xlsx",
+                                        mimeType = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                                        bytes = bytes,
+                                    )
+                                }
+                            },
+                            enabled = !state.areasBusy,
+                        ) {
+                            Icon(Icons.Outlined.Description, contentDescription = null, modifier = Modifier.size(18.dp))
+                            Spacer(Modifier.width(Spacing.xxs))
+                            Text(stringResource(R.string.traffic_fare_export_xlsx))
+                        }
+                        OutlinedButton(
+                            onClick = {
+                                scope.launch {
+                                    val csv = withContext(Dispatchers.Default) {
+                                        FareSheetCodec.buildFaresCsv(
+                                            areas = state.areas,
+                                            fares = state.areaFares,
+                                            originLabel = originLabel,
+                                        )
+                                    }
+                                    ExportShare.writeAndShareFile(
+                                        context = context,
+                                        filename = "grace-ride-area-fares.csv",
+                                        mimeType = "text/csv",
+                                        bytes = csv.toByteArray(StandardCharsets.UTF_8),
+                                    )
+                                }
+                            },
+                            enabled = !state.areasBusy,
+                        ) {
+                            Icon(Icons.Outlined.Download, contentDescription = null, modifier = Modifier.size(18.dp))
+                            Spacer(Modifier.width(Spacing.xxs))
+                            Text(stringResource(R.string.traffic_fare_export_csv))
+                        }
+                    }
+                    if (canUpdateFares) {
+                        OutlinedButton(
+                            onClick = {
+                                parseError = null
+                                fareSheetPicker.launch(
+                                    arrayOf(
+                                        "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                                        "text/csv",
+                                        "text/comma-separated-values",
+                                        "text/tab-separated-values",
+                                        "application/octet-stream",
+                                        "*/*",
+                                    ),
+                                )
+                            },
+                            enabled = !state.areasBusy,
+                        ) {
+                            Icon(Icons.Outlined.UploadFile, contentDescription = null, modifier = Modifier.size(18.dp))
+                            Spacer(Modifier.width(Spacing.xxs))
+                            Text(stringResource(R.string.traffic_fare_import_action))
+                        }
+                    }
+                }
+            }
+
+            importStatusBanner?.let { banner ->
+                item {
+                    OutlinedCard(
+                        modifier = Modifier.fillMaxWidth(),
+                        border = BorderStroke(1.dp, MaterialTheme.colorScheme.primary),
+                    ) {
+                        Row(
+                            Modifier.fillMaxWidth().padding(Spacing.sm),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                        ) {
+                            Text(banner, style = MaterialTheme.typography.bodySmall, modifier = Modifier.weight(1f))
+                            IconButton(onClick = { importStatusBanner = null }) {
+                                Icon(Icons.Outlined.Close, contentDescription = stringResource(R.string.common_close))
+                            }
+                        }
                     }
                 }
             }
@@ -684,6 +879,276 @@ private fun AreaFaresPane(
                 TextButton(onClick = { deleteTarget = null }) { Text(stringResource(R.string.common_cancel)) }
             },
         )
+    }
+
+    if (showImportDialog) {
+        val wb = importWorkbook
+        val sheet = wb?.sheets?.getOrNull(importSheetIndex) ?: wb?.sheets?.firstOrNull()
+        val parsed = sheet?.parsed
+        val applicable = remember(parsed, canCreateAreas, createMissingAreas) {
+            parsed?.rows.orEmpty().mapNotNull { r ->
+                val effectiveNew = r.status == FareImportRowStatus.UNKNOWN_AREA && canCreateAreas && createMissingAreas
+                if (r.status == FareImportRowStatus.NEW || r.status == FareImportRowStatus.UPDATE || effectiveNew) {
+                    BulkFareItemReq(areaA = r.areaAName, areaB = r.areaBName, amountCents = r.amountCents)
+                } else {
+                    null
+                }
+            }
+        }
+        val newCount = parsed?.rows?.count {
+            it.status == FareImportRowStatus.NEW ||
+                (it.status == FareImportRowStatus.UNKNOWN_AREA && canCreateAreas && createMissingAreas)
+        } ?: 0
+        val updateCount = parsed?.rows?.count { it.status == FareImportRowStatus.UPDATE } ?: 0
+        val unchangedCount = parsed?.rows?.count { it.status == FareImportRowStatus.UNCHANGED } ?: 0
+        val skippedCount = parsed?.rows?.count {
+            it.status == FareImportRowStatus.UNKNOWN_AREA && !(canCreateAreas && createMissingAreas)
+        } ?: 0
+        val canApply = !state.areasBusy && parsed != null && parsed.issues.isEmpty() && applicable.isNotEmpty()
+        val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
+        val view = LocalView.current
+        val statusColors = LocalStatusColors.current
+        var importFilter by remember(importSheetIndex, showImportDialog) {
+            mutableStateOf(if (parsed?.issues?.isNotEmpty() == true) "issues" else "changes")
+        }
+
+        ModalBottomSheet(
+            onDismissRequest = { showImportDialog = false },
+            sheetState = sheetState,
+        ) {
+            Column(
+                Modifier
+                    .fillMaxWidth()
+                    .navigationBarsPadding()
+                    .padding(horizontal = Spacing.sm)
+                    .padding(bottom = Spacing.md),
+                verticalArrangement = Arrangement.spacedBy(Spacing.xs),
+            ) {
+                Text(
+                    stringResource(R.string.traffic_fare_import_title),
+                    style = MaterialTheme.typography.titleMedium,
+                )
+                parseError?.let { err ->
+                    Surface(
+                        color = statusColors.dangerSoft,
+                        contentColor = statusColors.danger,
+                        shape = MaterialTheme.shapes.small,
+                        modifier = Modifier.fillMaxWidth(),
+                    ) {
+                        Text(err, style = MaterialTheme.typography.bodyMedium, modifier = Modifier.padding(Spacing.xs))
+                    }
+                }
+                if (wb != null && parsed != null) {
+                    Text(
+                        "${wb.fileName} (${stringResource(if (parsed.layout == FareSheetLayout.MATRIX) R.string.traffic_fare_layout_matrix else R.string.traffic_fare_layout_list)})",
+                        style = MaterialTheme.typography.labelLarge,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                    if (wb.sheets.size > 1) {
+                        LazyRow(horizontalArrangement = Arrangement.spacedBy(Spacing.xs)) {
+                            itemsIndexed(wb.sheets) { idx, s ->
+                                FilterChip(
+                                    selected = idx == importSheetIndex,
+                                    onClick = {
+                                        UiHaptics.tick(view)
+                                        importSheetIndex = idx
+                                        createMissingAreas = false
+                                    },
+                                    label = { Text(s.name) },
+                                )
+                            }
+                        }
+                    }
+                    FlowRow(
+                        horizontalArrangement = Arrangement.spacedBy(Spacing.xs),
+                        verticalArrangement = Arrangement.spacedBy(Spacing.xs),
+                    ) {
+                        StatusPill(stringResource(R.string.traffic_fare_pill_new, newCount), RideStatusKind.ACTIVE)
+                        StatusPill(stringResource(R.string.traffic_fare_pill_update, updateCount), RideStatusKind.PENDING)
+                        StatusPill(stringResource(R.string.traffic_fare_pill_same, unchangedCount), RideStatusKind.DONE)
+                        if (skippedCount > 0) {
+                            StatusPill(stringResource(R.string.traffic_fare_pill_skipped, skippedCount), RideStatusKind.CANCELLED)
+                        }
+                    }
+                    if (parsed.unknownAreas.isNotEmpty() && canCreateAreas) {
+                        Row(
+                            Modifier
+                                .fillMaxWidth()
+                                .defaultMinSize(minHeight = 48.dp)
+                                .toggleable(
+                                    value = createMissingAreas,
+                                    role = Role.Switch,
+                                    onValueChange = {
+                                        UiHaptics.tick(view)
+                                        createMissingAreas = it
+                                    },
+                                ),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                        ) {
+                            Text(
+                                stringResource(R.string.traffic_fare_import_create_areas, parsed.unknownAreas.joinToString(", ")),
+                                style = MaterialTheme.typography.bodySmall,
+                                modifier = Modifier.weight(1f).padding(end = Spacing.xs),
+                            )
+                            Switch(checked = createMissingAreas, onCheckedChange = null)
+                        }
+                    }
+
+                    val changeRows = remember(parsed, canCreateAreas, createMissingAreas) {
+                        parsed.rows.filter { r ->
+                            r.status == FareImportRowStatus.NEW ||
+                                r.status == FareImportRowStatus.UPDATE ||
+                                (r.status == FareImportRowStatus.UNKNOWN_AREA && canCreateAreas && createMissingAreas)
+                        }
+                    }
+                    LazyRow(horizontalArrangement = Arrangement.spacedBy(Spacing.xs)) {
+                        item {
+                            FilterChip(
+                                selected = importFilter == "changes",
+                                onClick = { UiHaptics.tick(view); importFilter = "changes" },
+                                label = { Text("${stringResource(R.string.traffic_fare_filter_changes)} (${newCount + updateCount})") },
+                            )
+                        }
+                        if (parsed.issues.isNotEmpty()) {
+                            item {
+                                FilterChip(
+                                    selected = importFilter == "issues",
+                                    onClick = { UiHaptics.tick(view); importFilter = "issues" },
+                                    label = { Text("${stringResource(R.string.traffic_fare_filter_issues)} (${parsed.issues.size})") },
+                                )
+                            }
+                        }
+                        item {
+                            FilterChip(
+                                selected = importFilter == "all",
+                                onClick = { UiHaptics.tick(view); importFilter = "all" },
+                                label = { Text("${stringResource(R.string.traffic_fare_filter_all)} (${parsed.rows.size})") },
+                            )
+                        }
+                    }
+
+                    val visibleRows = if (importFilter == "all") parsed.rows else changeRows
+                    LazyColumn(
+                        Modifier
+                            .fillMaxWidth()
+                            .heightIn(max = 320.dp),
+                        verticalArrangement = Arrangement.spacedBy(Spacing.xxs),
+                    ) {
+                        if (importFilter == "issues") {
+                            items(parsed.issues.take(25)) { issue ->
+                                val msg = when (issue.kind) {
+                                    FareIssueKind.CONFLICT -> stringResource(R.string.traffic_fare_issue_conflict, issue.row, issue.col, issue.route.orEmpty())
+                                    FareIssueKind.INVALID_AMOUNT -> stringResource(R.string.traffic_fare_issue_amount, issue.row, issue.col, issue.route.orEmpty(), issue.raw.orEmpty())
+                                    FareIssueKind.INVALID_AREA_NAME -> stringResource(R.string.traffic_fare_issue_area, issue.row, issue.col, issue.raw.orEmpty())
+                                    FareIssueKind.MISSING_AREA -> stringResource(R.string.traffic_fare_issue_missing_area, issue.row, issue.col)
+                                }
+                                Surface(
+                                    color = statusColors.dangerSoft,
+                                    contentColor = statusColors.danger,
+                                    shape = MaterialTheme.shapes.small,
+                                    modifier = Modifier.fillMaxWidth(),
+                                ) {
+                                    Text(msg, style = MaterialTheme.typography.bodySmall, modifier = Modifier.padding(Spacing.xs))
+                                }
+                            }
+                        }
+                        if (importFilter != "issues") {
+                            items(visibleRows.take(80)) { row ->
+                                val effectiveStatus = if (row.status == FareImportRowStatus.UNKNOWN_AREA && canCreateAreas && createMissingAreas) {
+                                    FareImportRowStatus.NEW
+                                } else {
+                                    row.status
+                                }
+                                val (statusText, statusKind) = when (effectiveStatus) {
+                                    FareImportRowStatus.NEW -> stringResource(R.string.traffic_fare_row_new) to RideStatusKind.ACTIVE
+                                    FareImportRowStatus.UPDATE -> stringResource(R.string.traffic_fare_row_update) to RideStatusKind.PENDING
+                                    FareImportRowStatus.UNCHANGED -> stringResource(R.string.traffic_fare_row_same) to RideStatusKind.DONE
+                                    FareImportRowStatus.UNKNOWN_AREA -> stringResource(R.string.traffic_fare_row_skipped) to RideStatusKind.CANCELLED
+                                }
+                                OutlinedCard(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
+                                ) {
+                                    Row(
+                                        Modifier
+                                            .fillMaxWidth()
+                                            .padding(horizontal = Spacing.sm, vertical = Spacing.xs),
+                                        horizontalArrangement = Arrangement.SpaceBetween,
+                                        verticalAlignment = Alignment.CenterVertically,
+                                    ) {
+                                        Column(Modifier.weight(1f).padding(end = Spacing.xs)) {
+                                            Text(
+                                                "${row.areaAName} ↔ ${row.areaBName}",
+                                                style = MaterialTheme.typography.bodyMedium,
+                                                fontWeight = FontWeight.Medium,
+                                            )
+                                            Row(
+                                                horizontalArrangement = Arrangement.spacedBy(Spacing.xs),
+                                                verticalAlignment = Alignment.CenterVertically,
+                                            ) {
+                                                row.previousCents?.takeIf { effectiveStatus == FareImportRowStatus.UPDATE }?.let { old ->
+                                                    Text(
+                                                        Money.rm(old),
+                                                        style = MaterialTheme.typography.bodySmall.tabular().copy(
+                                                            textDecoration = TextDecoration.LineThrough,
+                                                        ),
+                                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                                    )
+                                                }
+                                                Text(
+                                                    Money.rm(row.amountCents),
+                                                    style = MaterialTheme.typography.bodySmall.tabular().copy(fontWeight = FontWeight.SemiBold),
+                                                    color = when (effectiveStatus) {
+                                                        FareImportRowStatus.NEW -> statusColors.success
+                                                        FareImportRowStatus.UPDATE -> statusColors.warning
+                                                        else -> MaterialTheme.colorScheme.onSurfaceVariant
+                                                    },
+                                                )
+                                            }
+                                        }
+                                        StatusPill(text = statusText, kind = statusKind)
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+
+                HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
+                Row(
+                    Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(Spacing.xs),
+                ) {
+                    OutlinedButton(
+                        onClick = { showImportDialog = false },
+                        modifier = Modifier.weight(1f).defaultMinSize(minHeight = 48.dp),
+                    ) {
+                        Text(stringResource(R.string.common_cancel))
+                    }
+                    Button(
+                        onClick = {
+                            UiHaptics.confirm(view)
+                            vm.bulkImportFares(applicable, canCreateAreas && createMissingAreas) { res ->
+                                res.onSuccess { done ->
+                                    importStatusBanner = context.getString(
+                                        R.string.traffic_fare_import_done,
+                                        done.created,
+                                        done.updated,
+                                    )
+                                    showImportDialog = false
+                                }
+                            }
+                        },
+                        enabled = canApply,
+                        colors = graceRidePrimaryButtonColors(),
+                        modifier = Modifier.weight(1f).defaultMinSize(minHeight = 48.dp),
+                    ) {
+                        Text(stringResource(R.string.traffic_fare_import_apply, applicable.size))
+                    }
+                }
+            }
+        }
     }
 }
 

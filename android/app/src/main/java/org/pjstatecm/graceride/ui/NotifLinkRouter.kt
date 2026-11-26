@@ -18,6 +18,13 @@ object NotifLinkRouter {
     private val inviteTokenRe = Regex("^/invite/([^/]+)$")
     private val visitTokenRe = Regex("^/visit/([^/]+)$")
     private val careTokenRe = Regex("^/care/([^/]+)$")
+    private val settlementDetailRe = Regex("^/settlements/(\\d+)$")
+    private val settlementEditRe = Regex("^/settlements/(\\d+)/edit$")
+    private val eventSettleRe = Regex("^/events/(\\d+)/settle$")
+    private val reimbDetailRe = Regex("^/reimbursements/(\\d+)$")
+    private val helpDetailRe = Regex("^/help/(\\d+)$")
+    private val helpGuideEditRe = Regex("^/help/guides/([^/]+)/edit$")
+    private val helpGuideDetailRe = Regex("^/help/guides/([^/]+)$")
     private val trustedHosts = setOf("graceride.saliminn.my")
 
     fun extractRideId(link: String?): Long? {
@@ -95,6 +102,37 @@ object NotifLinkRouter {
         careTokenRe.find(clean)?.let {
             return NotifDestination.Native(Routes.carePass(it.groupValues[1]))
         }
+        settlementEditRe.find(clean)?.let {
+            val id = it.groupValues[1].toLongOrNull() ?: return NotifDestination.None
+            return NotifDestination.Native(Routes.settlementForm(settlementId = id))
+        }
+        settlementDetailRe.find(clean)?.let {
+            val id = it.groupValues[1].toLongOrNull() ?: return NotifDestination.None
+            return NotifDestination.Native(Routes.settlementDetail(id))
+        }
+        eventSettleRe.find(clean)?.let {
+            val id = it.groupValues[1].toLongOrNull() ?: return NotifDestination.None
+            return NotifDestination.Native(Routes.settlementForm(eventId = id))
+        }
+        reimbDetailRe.find(clean)?.let {
+            val id = it.groupValues[1].toLongOrNull() ?: return NotifDestination.None
+            return NotifDestination.Native(Routes.reimbursementDetail(id))
+        }
+        helpDetailRe.find(clean)?.let {
+            val id = it.groupValues[1].toLongOrNull() ?: return NotifDestination.None
+            return NotifDestination.Native(Routes.helpDetail(id))
+        }
+        helpGuideEditRe.find(clean)?.let {
+            return NotifDestination.Native(Routes.helpGuideEditor(it.groupValues[1]))
+        }
+        helpGuideDetailRe.find(clean)?.let {
+            val key = it.groupValues[1]
+            return if (key == "new") {
+                NotifDestination.Native(Routes.helpGuideEditor(null))
+            } else {
+                NotifDestination.Native(Routes.helpGuideDetail(key))
+            }
+        }
 
         return when {
             clean == "/" -> NotifDestination.Native(Routes.HOME)
@@ -147,6 +185,46 @@ object NotifLinkRouter {
             )
             clean == "/admin/announcements" -> NotifDestination.Native(Routes.announcements(manage = true))
             clean == "/announcements" -> NotifDestination.Native(Routes.announcements(manage = false))
+            clean == "/settlements" -> NotifDestination.Native(Routes.SETTLEMENTS)
+            clean == "/reimbursements" -> NotifDestination.Native(Routes.REIMBURSEMENTS)
+            clean == "/reimbursements/new" -> NotifDestination.Native(
+                Routes.reimbursementForm(editId = params["edit"]?.toLongOrNull()),
+            )
+            clean == "/admin/reimbursements" -> NotifDestination.Native(
+                Routes.adminReimbursements(
+                    tab = params["tab"]?.takeIf { it in setOf("review", "payout", "batches") } ?: "review",
+                ),
+            )
+            clean == "/help" -> NotifDestination.Native(
+                Routes.help(
+                    rideId = params["ride"]?.toLongOrNull(),
+                    tab = params["tab"]?.takeIf { it in setOf("guides", "tickets") },
+                ),
+            )
+            clean == "/help/guides/new" -> NotifDestination.Native(Routes.helpGuideEditor(null))
+            clean == "/report" -> NotifDestination.Native(Routes.REPORT)
+            clean == "/admin/reports" -> NotifDestination.Native(
+                Routes.adminReports(tab = params["tab"]?.takeIf { it.isNotBlank() }),
+            )
+            clean == "/admin" || clean == "/admin/menu" || clean == "/admin/dashboard" ->
+                NotifDestination.Native(Routes.ADMIN_CONSOLE)
+            clean == "/admin/roles" -> NotifDestination.Native(Routes.ADMIN_ROLES)
+            clean == "/admin/audit" -> NotifDestination.Native(Routes.ADMIN_AUDIT)
+            clean == "/admin/fares" -> NotifDestination.Native(
+                Routes.traffic(tab = "areas", areaTab = "fares"),
+            )
+            clean == "/admin/areas" -> NotifDestination.Native(
+                Routes.traffic(tab = "areas", areaTab = "areas"),
+            )
+            clean == "/admin/groups" -> NotifDestination.Native(Routes.adminSettings(tab = "groups"))
+            clean == "/admin/settings" -> when (params["tab"]) {
+                "fares" -> NotifDestination.Native(Routes.traffic(tab = "areas", areaTab = "fares"))
+                "photos" -> NotifDestination.Native(Routes.traffic(tab = "areas", areaTab = "photos"))
+                "org", "groups" -> NotifDestination.Native(Routes.adminSettings(tab = "groups"))
+                "alerts" -> NotifDestination.Native(Routes.adminSettings(tab = "alerts"))
+                "rates", "system" -> NotifDestination.Native(Routes.adminSettings(tab = "system"))
+                else -> NotifDestination.Native(Routes.adminSettings(tab = null))
+            }
             else -> NotifDestination.Web(raw)
         }
     }
@@ -176,8 +254,18 @@ object NotifLinkRouter {
      */
     fun resolveFor(link: String?, me: org.pjstatecm.graceride.data.api.Me): NotifDestination =
         when (val dest = resolve(link)) {
-            is NotifDestination.Native ->
-                if (Routes.isLegacyRoutePermitted(dest.route, me)) dest else NotifDestination.None
+            is NotifDestination.Native -> {
+                val cleanRoute = dest.route.substringBefore('?')
+                if ((cleanRoute == Routes.SETTLEMENTS || cleanRoute.startsWith("settlement/")) &&
+                    !Routes.canManageSettlements(me) && me.can("costs")
+                ) {
+                    NotifDestination.Native(Routes.COSTS)
+                } else if (Routes.isLegacyRoutePermitted(dest.route, me)) {
+                    dest
+                } else {
+                    NotifDestination.None
+                }
+            }
             is NotifDestination.Web -> {
                 val clean = dest.path.substringBefore('?').substringBefore('#').trimEnd('/')
                 when {

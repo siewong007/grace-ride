@@ -19,6 +19,13 @@ data class AdminDashboardStatsDto(
     @SerialName("pending_members") val pendingMembers: Long = 0,
     @SerialName("pending_recovery") val pendingRecovery: Long = 0,
     @SerialName("open_invites") val openInvites: Long = 0,
+    @SerialName("open_help") val openHelp: Long = 0,
+    @SerialName("pending_reimbursements") val pendingReimbursements: Long = 0,
+    @SerialName("awaiting_payment") val awaitingPayment: Long = 0,
+    @SerialName("oldest_approval_at") val oldestApprovalAt: String? = null,
+    @SerialName("next_no_driver_at") val nextNoDriverAt: String? = null,
+    @SerialName("oldest_help_at") val oldestHelpAt: String? = null,
+    @SerialName("help_claimed_by_me") val helpClaimedByMe: Long = 0,
     @SerialName("pending_plan_drafts") val pendingPlanDrafts: Long = 0,
     @SerialName("pending_ride_drafts") val pendingRideDrafts: Long = 0,
     @SerialName("my_returned_plan_drafts") val myReturnedPlanDrafts: Long = 0,
@@ -550,4 +557,26 @@ data class PutFareReq(
 data class AreaUpsertReq(
     val name: String,
     val active: Boolean = true,
+)
+
+@Serializable
+data class BulkFareItemReq(
+    @SerialName("area_a") val areaA: String,
+    @SerialName("area_b") val areaB: String,
+    @SerialName("amount_cents") val amountCents: Long,
+)
+
+@Serializable
+data class BulkFaresReq(
+    val fares: List<BulkFareItemReq>,
+    @SerialName("create_missing_areas") val createMissingAreas: Boolean = false,
+)
+
+@Serializable
+data class BulkFaresRespDto(
+    val created: Int = 0,
+    val updated: Int = 0,
+    val unchanged: Int = 0,
+    val total: Int = 0,
+    @SerialName("areas_created") val areasCreated: List<String> = emptyList(),
 )

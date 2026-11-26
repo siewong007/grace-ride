@@ -53,7 +53,9 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
@@ -61,6 +63,7 @@ import org.pjstatecm.graceride.R
 import org.pjstatecm.graceride.di.AppContainer
 import org.pjstatecm.graceride.domain.KlTime
 import org.pjstatecm.graceride.platform.addEventToCalendar
+import org.pjstatecm.graceride.ui.UiHaptics
 import org.pjstatecm.graceride.ui.components.CalloutBanner
 import org.pjstatecm.graceride.ui.components.ErrorView
 import org.pjstatecm.graceride.ui.components.GraceRideLiveMap
@@ -89,6 +92,7 @@ fun VisitScreen(
     )
     val state by vm.state.collectAsStateWithLifecycle()
     val context = LocalContext.current
+    val view = LocalView.current
     val snackbar = remember { SnackbarHostState() }
     val statusColors = LocalStatusColors.current
     var unableOpen by remember { mutableStateOf(false) }
@@ -168,12 +172,15 @@ fun VisitScreen(
                             ) {
                                 Row(
                                     Modifier.fillMaxWidth(),
-                                    horizontalArrangement = Arrangement.SpaceBetween,
+                                    horizontalArrangement = Arrangement.spacedBy(Spacing.xs),
                                     verticalAlignment = Alignment.CenterVertically,
                                 ) {
                                     Text(
                                         stringResource(R.string.visit_hello, rideData.name),
                                         style = MaterialTheme.typography.titleLarge,
+                                        maxLines = 2,
+                                        overflow = TextOverflow.Ellipsis,
+                                        modifier = Modifier.weight(1f),
                                     )
                                     RideStatusPill(detail.status)
                                 }
@@ -336,7 +343,10 @@ fun VisitScreen(
                                     verticalArrangement = Arrangement.spacedBy(Spacing.xs),
                                 ) {
                                     Button(
-                                        onClick = { vm.sendReadiness("ready") },
+                                        onClick = {
+                                            UiHaptics.confirm(view)
+                                            vm.sendReadiness("ready")
+                                        },
                                         enabled = !state.updatingReadiness,
                                         colors = graceRidePrimaryButtonColors(),
                                     ) {
@@ -345,13 +355,19 @@ fun VisitScreen(
                                         Text(stringResource(R.string.visit_ready))
                                     }
                                     OutlinedButton(
-                                        onClick = { vm.sendReadiness("delayed_5m") },
+                                        onClick = {
+                                            UiHaptics.tick(view)
+                                            vm.sendReadiness("delayed_5m")
+                                        },
                                         enabled = !state.updatingReadiness,
                                     ) {
                                         Text(stringResource(R.string.visit_late))
                                     }
                                     OutlinedButton(
-                                        onClick = { unableOpen = true },
+                                        onClick = {
+                                            UiHaptics.tick(view)
+                                            unableOpen = true
+                                        },
                                         enabled = !state.updatingReadiness,
                                         colors = ButtonDefaults.outlinedButtonColors(
                                             contentColor = MaterialTheme.colorScheme.error,

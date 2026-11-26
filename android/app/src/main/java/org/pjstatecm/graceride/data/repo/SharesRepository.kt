@@ -7,6 +7,8 @@ import okhttp3.RequestBody.Companion.toRequestBody
 import org.pjstatecm.graceride.data.api.ApiProvider
 import org.pjstatecm.graceride.data.api.ApiService
 import org.pjstatecm.graceride.data.api.AuthEventBus
+import org.pjstatecm.graceride.data.api.ExtractRefReq
+import org.pjstatecm.graceride.data.api.ExtractRefResp
 import org.pjstatecm.graceride.data.api.FileRef
 import org.pjstatecm.graceride.data.api.ProofReq
 import org.pjstatecm.graceride.data.api.Share
@@ -30,6 +32,9 @@ class SharesRepository(private val apiProvider: ApiProvider, private val bus: Au
         )
         return apiCall(bus) { api.upload(part) }
     }
+
+    suspend fun extractFileRef(fileId: Long, text: String? = null): ExtractRefResp =
+        apiCall(bus) { api.extractFileRef(fileId, ExtractRefReq(text = text)) }
 
     suspend fun submitProof(
         shareId: Long,

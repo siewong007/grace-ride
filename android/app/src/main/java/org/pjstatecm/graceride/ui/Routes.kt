@@ -67,6 +67,26 @@ sealed interface AppRoute {
     @Serializable data class Announcements(
         val manage: Boolean = false,
     ) : AppRoute
+    @Serializable data object Settlements : AppRoute
+    @Serializable data class SettlementDetail(val id: Long) : AppRoute
+    @Serializable data class SettlementForm(
+        val settlementId: Long? = null,
+        val eventId: Long? = null,
+    ) : AppRoute
+    @Serializable data object Reimbursements : AppRoute
+    @Serializable data class ReimbursementDetail(val id: Long) : AppRoute
+    @Serializable data class ReimbursementForm(val editId: Long? = null) : AppRoute
+    @Serializable data class AdminReimbursements(val tab: String = "review") : AppRoute
+    @Serializable data class Help(val rideId: Long? = null, val tab: String? = null) : AppRoute
+    @Serializable data class HelpDetail(val id: Long) : AppRoute
+    @Serializable data class HelpGuideDetail(val key: String) : AppRoute
+    @Serializable data class HelpGuideEditor(val key: String? = null) : AppRoute
+    @Serializable data object Report : AppRoute
+    @Serializable data class AdminReports(val tab: String? = null) : AppRoute
+    @Serializable data object AdminConsole : AppRoute
+    @Serializable data object AdminRoles : AppRoute
+    @Serializable data object AdminAudit : AppRoute
+    @Serializable data class AdminSettings(val tab: String? = null) : AppRoute
 
     companion object {
         fun fromLegacyRoute(route: String): AppRoute? {
@@ -136,6 +156,32 @@ sealed interface AppRoute {
                 clean == Routes.ANNOUNCEMENTS -> Announcements(
                     manage = params["manage"] == "1" || params["manage"].equals("true", ignoreCase = true),
                 )
+                clean == Routes.SETTLEMENTS -> Settlements
+                clean.startsWith("settlement/") -> clean.removePrefix("settlement/").toLongOrNull()?.let { SettlementDetail(it) }
+                clean == "settlement-form" -> SettlementForm(
+                    settlementId = params["id"]?.toLongOrNull(),
+                    eventId = params["event"]?.toLongOrNull(),
+                )
+                clean == Routes.REIMBURSEMENTS -> Reimbursements
+                clean.startsWith("reimbursement/") -> clean.removePrefix("reimbursement/").toLongOrNull()?.let { ReimbursementDetail(it) }
+                clean == "reimbursement-form" -> ReimbursementForm(editId = params["edit"]?.toLongOrNull())
+                clean == Routes.ADMIN_REIMBURSEMENTS -> AdminReimbursements(
+                    tab = params["tab"]?.takeIf { it in setOf("review", "payout", "batches") } ?: "review",
+                )
+                clean == Routes.HELP -> Help(
+                    rideId = params["ride"]?.toLongOrNull(),
+                    tab = params["tab"]?.takeIf { it in setOf("guides", "tickets") },
+                )
+                clean.startsWith("help-detail/") -> clean.removePrefix("help-detail/").toLongOrNull()?.let { HelpDetail(it) }
+                clean.startsWith("help-guide-edit/") -> HelpGuideEditor(key = clean.removePrefix("help-guide-edit/").takeIf { it.isNotBlank() && it != "new" })
+                clean == "help-guide-new" -> HelpGuideEditor(key = null)
+                clean.startsWith("help-guide/") -> clean.removePrefix("help-guide/").takeIf { it.isNotBlank() }?.let { HelpGuideDetail(it) }
+                clean == Routes.REPORT -> Report
+                clean == Routes.ADMIN_REPORTS -> AdminReports(tab = params["tab"]?.takeIf { it.isNotBlank() })
+                clean == Routes.ADMIN_CONSOLE -> AdminConsole
+                clean == Routes.ADMIN_ROLES -> AdminRoles
+                clean == Routes.ADMIN_AUDIT -> AdminAudit
+                clean == Routes.ADMIN_SETTINGS -> AdminSettings(tab = params["tab"]?.takeIf { it.isNotBlank() })
                 clean.startsWith("ride/") -> clean.removePrefix("ride/").toLongOrNull()?.let { id ->
                     RideDetail(id = id, justBooked = params["new"] == "1")
                 }
@@ -194,6 +240,53 @@ object Routes {
     const val STUDIO = "studio?shape={shape}&color={color}&face={face}"
     const val ADMIN_MEMBERS = "admin-members"
     const val ANNOUNCEMENTS = "announcements"
+    const val SETTLEMENTS = "settlements"
+    const val REIMBURSEMENTS = "reimbursements"
+    const val ADMIN_REIMBURSEMENTS = "admin-reimbursements"
+
+    fun settlementDetail(id: Long) = "settlement/$id"
+    fun settlementForm(settlementId: Long? = null, eventId: Long? = null) = buildString {
+        append("settlement-form")
+        val params = mutableListOf<String>()
+        if (settlementId != null) params.add("id=$settlementId")
+        if (eventId != null) params.add("event=$eventId")
+        if (params.isNotEmpty()) {
+            append("?")
+            append(params.joinToString("&"))
+        }
+    }
+    fun reimbursementDetail(id: Long) = "reimbursement/$id"
+    fun reimbursementForm(editId: Long? = null) =
+        if (editId != null) "reimbursement-form?edit=$editId" else "reimbursement-form"
+    fun adminReimbursements(tab: String = "review") =
+        if (tab != "review") "$ADMIN_REIMBURSEMENTS?tab=${encodeQueryComponent(tab)}" else ADMIN_REIMBURSEMENTS
+    const val HELP = "help"
+    const val REPORT = "report"
+    const val ADMIN_REPORTS = "admin-reports"
+    const val ADMIN_CONSOLE = "admin-console"
+    const val ADMIN_ROLES = "admin-roles"
+    const val ADMIN_AUDIT = "admin-audit"
+    const val ADMIN_SETTINGS = "admin-settings"
+
+    fun help(rideId: Long? = null, tab: String? = null): String = buildString {
+        append(HELP)
+        val params = mutableListOf<String>()
+        if (rideId != null) params.add("ride=$rideId")
+        if (!tab.isNullOrBlank()) params.add("tab=${encodeQueryComponent(tab)}")
+        if (params.isNotEmpty()) {
+            append("?")
+            append(params.joinToString("&"))
+        }
+    }
+    fun helpDetail(id: Long) = "help-detail/$id"
+    fun helpGuideDetail(key: String) = "help-guide/${encodeQueryComponent(key)}"
+    fun helpGuideEditor(key: String? = null) =
+        if (key.isNullOrBlank()) "help-guide-new" else "help-guide-edit/${encodeQueryComponent(key)}"
+    fun adminReports(tab: String? = null) =
+        if (!tab.isNullOrBlank()) "$ADMIN_REPORTS?tab=${encodeQueryComponent(tab)}" else ADMIN_REPORTS
+
+    fun adminSettings(tab: String? = null) =
+        if (!tab.isNullOrBlank()) "$ADMIN_SETTINGS?tab=${encodeQueryComponent(tab)}" else ADMIN_SETTINGS
 
     fun adminMembers(tab: String = "members", status: String? = null): String = buildString {
         append(ADMIN_MEMBERS)
@@ -310,8 +403,30 @@ object Routes {
             else -> canAdminMembers(me)
         }
         is AppRoute.Announcements -> if (route.manage) me.can("admin_announcements") else true
+        AppRoute.Settlements, is AppRoute.SettlementDetail -> canManageSettlements(me)
+        is AppRoute.SettlementForm -> me.can("settlements", "create") || me.can("settlements", "update") || me.can("admin_bills")
+        AppRoute.Reimbursements -> me.can("reimbursements")
+        is AppRoute.ReimbursementDetail -> me.can("reimbursements") || me.can("admin_reimb_review") || me.can("admin_reimb_pay")
+        is AppRoute.ReimbursementForm -> me.can("reimbursements", "create") || me.can("reimbursements", "update")
+        is AppRoute.AdminReimbursements -> me.can("admin_reimb_review") || me.can("admin_reimb_pay")
+        is AppRoute.Help, is AppRoute.HelpDetail, is AppRoute.HelpGuideDetail -> me.can("help") || me.can("admin_help")
+        is AppRoute.HelpGuideEditor -> me.can("admin_help", "update")
+        AppRoute.Report -> me.can("report")
+        is AppRoute.AdminReports -> me.can("admin_reports")
+        AppRoute.AdminConsole -> me.can("admin_dashboard") || canAdminConsole(me)
+        AppRoute.AdminRoles -> me.can("admin_roles")
+        AppRoute.AdminAudit -> me.can("admin_audit")
+        is AppRoute.AdminSettings -> when (route.tab) {
+            "groups" -> me.can("admin_groups")
+            "alerts", "system" -> me.can("admin_settings")
+            else -> me.can("admin_settings") || me.can("admin_groups")
+        }
         else -> true
     }
+
+    /** True when the account can open the native Staff & Admin Console. */
+    fun canAdminConsole(me: org.pjstatecm.graceride.data.api.Me): Boolean =
+        adminMenuPerms.any { me.can(it) }
 
     /** True when the account has permission for at least one Traffic Hub tab. */
     fun canTrafficHub(me: org.pjstatecm.graceride.data.api.Me): Boolean =

@@ -89,8 +89,10 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import org.pjstatecm.graceride.R
 import org.pjstatecm.graceride.data.api.Area
+import androidx.compose.material.icons.outlined.Place
 import org.pjstatecm.graceride.data.api.Place
 import org.pjstatecm.graceride.data.api.SavedPlace
+import org.pjstatecm.graceride.ui.components.LocationPinPickerSheet
 import org.pjstatecm.graceride.di.AppContainer
 import org.pjstatecm.graceride.domain.inferAreaId
 import org.pjstatecm.graceride.ui.UiHaptics
@@ -413,6 +415,7 @@ private fun SavedAddressSheet(
     var gpsPinnedManually by remember(editing) { mutableStateOf(false) }
     var coordsCleared by remember(editing) { mutableStateOf(false) }
     var areaExpanded by remember { mutableStateOf(false) }
+    var showPinPicker by remember(editing) { mutableStateOf(false) }
     var confirmDelete by remember { mutableStateOf(false) }
     val context = LocalContext.current
     val view = LocalView.current
@@ -625,17 +628,51 @@ private fun SavedAddressSheet(
                     }
                 }
             }
-            OutlinedButton(
-                onClick = { requestOrCaptureGps() },
-                enabled = !busy && gpsStatus != "locating",
-                modifier = Modifier.fillMaxWidth().height(48.dp),
+            Row(
+                Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(Spacing.xs),
             ) {
-                Icon(Icons.Outlined.MyLocation, contentDescription = null)
-                Text(
-                    stringResource(
-                        if (gpsStatus == "locating") R.string.saved_addresses_locating else R.string.saved_addresses_use_gps,
-                    ),
-                    modifier = Modifier.padding(start = Spacing.xs),
+                OutlinedButton(
+                    onClick = { requestOrCaptureGps() },
+                    enabled = !busy && gpsStatus != "locating",
+                    modifier = Modifier.weight(1f).height(48.dp),
+                ) {
+                    Icon(Icons.Outlined.MyLocation, contentDescription = null)
+                    Text(
+                        stringResource(
+                            if (gpsStatus == "locating") R.string.saved_addresses_locating else R.string.saved_addresses_use_gps,
+                        ),
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                        modifier = Modifier.padding(start = Spacing.xs),
+                    )
+                }
+                OutlinedButton(
+                    onClick = { showPinPicker = true },
+                    enabled = !busy,
+                    modifier = Modifier.weight(1f).height(48.dp),
+                ) {
+                    Icon(Icons.Outlined.Place, contentDescription = null)
+                    Text(
+                        stringResource(R.string.pin_picker_btn),
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                        modifier = Modifier.padding(start = Spacing.xs),
+                    )
+                }
+            }
+            if (showPinPicker) {
+                LocationPinPickerSheet(
+                    initialLat = lat,
+                    initialLng = lng,
+                    onDismiss = { showPinPicker = false },
+                    onConfirm = { pickedLat, pickedLng ->
+                        lat = pickedLat
+                        lng = pickedLng
+                        gpsPinnedManually = true
+                        coordsCleared = false
+                        gpsStatus = "idle"
+                    },
                 )
             }
             if (gpsStatus == "captured" || (gpsStatus != "denied" && lat != null && lng != null)) {

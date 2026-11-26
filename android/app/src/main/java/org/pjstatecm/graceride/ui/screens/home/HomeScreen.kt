@@ -36,6 +36,7 @@ import androidx.compose.material.icons.outlined.Payments
 import androidx.compose.material.icons.outlined.Place
 import androidx.compose.material.icons.outlined.PushPin
 import androidx.compose.material.icons.outlined.Schedule
+import androidx.compose.material.icons.outlined.Search
 import androidx.compose.material.icons.outlined.TouchApp
 import androidx.compose.material.icons.outlined.WarningAmber
 import androidx.compose.material3.Badge
@@ -92,6 +93,8 @@ import org.pjstatecm.graceride.ui.components.GraceRideBrandMark
 import org.pjstatecm.graceride.ui.components.GraceRideWordmark
 import org.pjstatecm.graceride.ui.components.HomeSkeleton
 import org.pjstatecm.graceride.ui.components.MemberAvatar
+import org.pjstatecm.graceride.ui.components.OnboardingChecklistCard
+import org.pjstatecm.graceride.ui.components.QuickJumpSheet
 import org.pjstatecm.graceride.ui.components.RideCard
 import org.pjstatecm.graceride.ui.components.RideStatusPill
 import org.pjstatecm.graceride.ui.components.SectionHeader
@@ -185,6 +188,25 @@ fun HomeScreen(container: AppContainer, nav: NavHostController) {
                                             stringResource(R.string.notif_a11y_unread_count, unreadCount)
                                         } else {
                                             null
+                                        }
+                                        var showQuickJump by remember { mutableStateOf(false) }
+                                        LaunchedEffect(me?.id, me?.onboardingDismissed, me?.status) {
+                                            if (me != null && me.status == "active" && !me.onboardingDismissed) {
+                                                vm.loadOnboardingChecks()
+                                            }
+                                        }
+                                        if (showQuickJump) {
+                                            QuickJumpSheet(
+                                                me = me,
+                                                onNavigate = { route -> nav.navigate(route) },
+                                                onDismiss = { showQuickJump = false },
+                                            )
+                                        }
+                                        IconButton(onClick = { showQuickJump = true }) {
+                                            Icon(
+                                                Icons.Outlined.Search,
+                                                contentDescription = stringResource(R.string.quick_jump_title),
+                                            )
                                         }
                                         IconButton(
                                             onClick = { nav.navigate(AppRoute.Notifications) },
@@ -550,6 +572,21 @@ fun HomeScreen(container: AppContainer, nav: NavHostController) {
                                         }
                                     }
                                 }
+                            }
+                        }
+
+                        if (me != null && me.status == "active" && !me.onboardingDismissed && state.onboardingLoaded) {
+                            item(key = "onboarding_checklist") {
+                                OnboardingChecklistCard(
+                                    me = me,
+                                    hasSavedPlace = state.onboardingHasPlace,
+                                    hasRide = state.onboardingHasRide,
+                                    hasEvent = state.onboardingHasEvent,
+                                    hasVehicle = state.onboardingHasVehicle,
+                                    onNavigate = { route -> nav.navigate(route) },
+                                    onHide = vm::dismissOnboarding,
+                                    modifier = Modifier.animateItem(),
+                                )
                             }
                         }
 

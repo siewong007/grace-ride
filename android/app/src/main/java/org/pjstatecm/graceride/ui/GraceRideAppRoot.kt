@@ -122,7 +122,11 @@ import org.pjstatecm.graceride.R
 import org.pjstatecm.graceride.data.api.AuthEvent
 import org.pjstatecm.graceride.data.repo.AuthState
 import org.pjstatecm.graceride.di.AppContainer
+import org.pjstatecm.graceride.ui.screens.admin.AdminAuditScreen
+import org.pjstatecm.graceride.ui.screens.admin.AdminConsoleScreen
 import org.pjstatecm.graceride.ui.screens.admin.AdminMembersScreen
+import org.pjstatecm.graceride.ui.screens.admin.AdminRolesScreen
+import org.pjstatecm.graceride.ui.screens.admin.AdminSettingsScreen
 import org.pjstatecm.graceride.ui.screens.announcements.AnnouncementsScreen
 import org.pjstatecm.graceride.ui.screens.costs.CostsScreen
 import org.pjstatecm.graceride.ui.screens.events.EventDetailScreen
@@ -148,6 +152,19 @@ import org.pjstatecm.graceride.ui.screens.public.VisitScreen
 import org.pjstatecm.graceride.ui.screens.rides.RideDetailScreen
 import org.pjstatecm.graceride.ui.screens.rides.RideNewScreen
 import org.pjstatecm.graceride.ui.screens.rides.RidesScreen
+import org.pjstatecm.graceride.ui.screens.reimbursements.AdminReimbursementsScreen
+import org.pjstatecm.graceride.ui.screens.reimbursements.ReimbursementDetailScreen
+import org.pjstatecm.graceride.ui.screens.reimbursements.ReimbursementFormScreen
+import org.pjstatecm.graceride.ui.screens.reimbursements.ReimbursementsScreen
+import org.pjstatecm.graceride.ui.screens.settlements.SettlementDetailScreen
+import org.pjstatecm.graceride.ui.screens.settlements.SettlementFormScreen
+import org.pjstatecm.graceride.ui.screens.settlements.SettlementsScreen
+import org.pjstatecm.graceride.ui.screens.help.HelpDetailScreen
+import org.pjstatecm.graceride.ui.screens.help.HelpGuideDetailScreen
+import org.pjstatecm.graceride.ui.screens.help.HelpGuideEditorScreen
+import org.pjstatecm.graceride.ui.screens.help.HelpScreen
+import org.pjstatecm.graceride.ui.screens.reports.AdminReportsScreen
+import org.pjstatecm.graceride.ui.screens.reports.ReportScreen
 import org.pjstatecm.graceride.ui.screens.traffic.PlanTransportScreen
 import org.pjstatecm.graceride.ui.screens.traffic.TrafficHubScreen
 
@@ -796,6 +813,82 @@ fun GraceRideAppRoot(
                                         nav = navController,
                                         manage = args.manage,
                                     )
+                                }
+                                composable<AppRoute.Settlements> {
+                                    SettlementsScreen(container = container, nav = navController)
+                                }
+                                composable<AppRoute.SettlementDetail> { entry ->
+                                    val args = entry.toRoute<AppRoute.SettlementDetail>()
+                                    SettlementDetailScreen(container = container, nav = navController, id = args.id)
+                                }
+                                composable<AppRoute.SettlementForm> { entry ->
+                                    val args = entry.toRoute<AppRoute.SettlementForm>()
+                                    SettlementFormScreen(
+                                        container = container,
+                                        nav = navController,
+                                        settlementId = args.settlementId,
+                                        eventId = args.eventId,
+                                    )
+                                }
+                                composable<AppRoute.Reimbursements> {
+                                    ReimbursementsScreen(container = container, nav = navController)
+                                }
+                                composable<AppRoute.ReimbursementDetail> { entry ->
+                                    val args = entry.toRoute<AppRoute.ReimbursementDetail>()
+                                    ReimbursementDetailScreen(container = container, nav = navController, id = args.id)
+                                }
+                                composable<AppRoute.ReimbursementForm> { entry ->
+                                    val args = entry.toRoute<AppRoute.ReimbursementForm>()
+                                    ReimbursementFormScreen(container = container, nav = navController, editId = args.editId)
+                                }
+                                composable<AppRoute.AdminReimbursements> { entry ->
+                                    val args = entry.toRoute<AppRoute.AdminReimbursements>()
+                                    AdminReimbursementsScreen(
+                                        container = container,
+                                        nav = navController,
+                                        initialTab = args.tab,
+                                    )
+                                }
+                                composable<AppRoute.Help> { entry ->
+                                    val args = entry.toRoute<AppRoute.Help>()
+                                    HelpScreen(
+                                        container = container,
+                                        nav = navController,
+                                        rideId = args.rideId,
+                                        initialTab = args.tab,
+                                    )
+                                }
+                                composable<AppRoute.HelpDetail> { entry ->
+                                    val args = entry.toRoute<AppRoute.HelpDetail>()
+                                    HelpDetailScreen(container = container, nav = navController, id = args.id)
+                                }
+                                composable<AppRoute.HelpGuideDetail> { entry ->
+                                    val args = entry.toRoute<AppRoute.HelpGuideDetail>()
+                                    HelpGuideDetailScreen(container = container, nav = navController, key = args.key)
+                                }
+                                composable<AppRoute.HelpGuideEditor> { entry ->
+                                    val args = entry.toRoute<AppRoute.HelpGuideEditor>()
+                                    HelpGuideEditorScreen(container = container, nav = navController, key = args.key)
+                                }
+                                composable<AppRoute.Report> {
+                                    ReportScreen(container = container, nav = navController)
+                                }
+                                composable<AppRoute.AdminReports> { entry ->
+                                    val args = entry.toRoute<AppRoute.AdminReports>()
+                                    AdminReportsScreen(container = container, nav = navController, initialTab = args.tab)
+                                }
+                                composable<AppRoute.AdminConsole> {
+                                    AdminConsoleScreen(container = container, nav = navController)
+                                }
+                                composable<AppRoute.AdminRoles> {
+                                    AdminRolesScreen(container = container, nav = navController)
+                                }
+                                composable<AppRoute.AdminAudit> {
+                                    AdminAuditScreen(container = container, nav = navController)
+                                }
+                                composable<AppRoute.AdminSettings> { entry ->
+                                    val args = entry.toRoute<AppRoute.AdminSettings>()
+                                    AdminSettingsScreen(container = container, nav = navController, initialTab = args.tab)
                                 }
                             }
                         }

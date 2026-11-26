@@ -10,9 +10,13 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
+import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.IntrinsicSize
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
+import androidx.compose.material3.FilterChip
+import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
@@ -111,7 +115,7 @@ fun CostsScreen(container: AppContainer, nav: NavHostController) {
     }
 
     val pickImage = rememberLauncherForActivityResult(ActivityResultContracts.PickVisualMedia()) { uri ->
-        vm.setProof(uri)
+        vm.onProofPicked(context, uri)
     }
 
     LaunchedEffect(state.doneMessage) {
@@ -336,6 +340,36 @@ fun CostsScreen(container: AppContainer, nav: NavHostController) {
                     singleLine = true,
                     modifier = Modifier.fillMaxWidth(),
                 )
+                if (state.ocrExtracting) {
+                    Row(
+                        Modifier.fillMaxWidth(),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(Spacing.xs),
+                    ) {
+                        LinearProgressIndicator(Modifier.weight(1f))
+                        Text(
+                            stringResource(R.string.costs_ocr_detecting),
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
+                } else if (state.ocrCandidates.isNotEmpty()) {
+                    Text(
+                        stringResource(R.string.costs_ocr_suggestions),
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                    @OptIn(ExperimentalLayoutApi::class)
+                    FlowRow(horizontalArrangement = Arrangement.spacedBy(Spacing.xs)) {
+                        state.ocrCandidates.forEach { cand ->
+                            FilterChip(
+                                selected = state.txnRef.trim() == cand,
+                                onClick = { vm.setTxnRef(cand) },
+                                label = { Text(cand) },
+                            )
+                        }
+                    }
+                }
 
                 state.proofUri?.let { uri ->
                     Surface(

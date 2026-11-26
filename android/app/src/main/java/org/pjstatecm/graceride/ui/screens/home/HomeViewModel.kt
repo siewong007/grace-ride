@@ -21,8 +21,10 @@ import org.pjstatecm.graceride.data.api.Announcement
 import org.pjstatecm.graceride.data.api.ApiException
 import org.pjstatecm.graceride.data.api.EventItem
 import org.pjstatecm.graceride.data.api.Me
+import org.pjstatecm.graceride.data.api.ProfileUpdateReq
 import org.pjstatecm.graceride.data.api.Ride
 import org.pjstatecm.graceride.data.api.Share
+import org.pjstatecm.graceride.data.api.runSuspendCatching
 import org.pjstatecm.graceride.data.session.OfflineSnapshotStore
 import org.pjstatecm.graceride.di.AppContainer
 import org.pjstatecm.graceride.domain.KlTime
@@ -46,6 +48,11 @@ data class HomeUiState(
     val unpaidShareCount: Int = 0,
     val announcements: List<Announcement> = emptyList(),
     val trafficStats: AdminDashboardStatsDto? = null,
+    val onboardingLoaded: Boolean = false,
+    val onboardingHasPlace: Boolean = false,
+    val onboardingHasRide: Boolean = false,
+    val onboardingHasEvent: Boolean = false,
+    val onboardingHasVehicle: Boolean = false,
 )
 
 class HomeViewModel(private val container: AppContainer) : ViewModel() {
@@ -53,6 +60,7 @@ class HomeViewModel(private val container: AppContainer) : ViewModel() {
     private val _state = MutableStateFlow(HomeUiState())
     val state: StateFlow<HomeUiState> = _state.asStateFlow()
     private var loadJob: Job? = null
+    private var onboardingJob: Job? = null
 
     init {
         load(first = true)
@@ -239,6 +247,11 @@ class HomeViewModel(private val container: AppContainer) : ViewModel() {
                 unpaidShareCount = unpaidShareCount,
                 announcements = finalAnn,
                 trafficStats = trafficStats ?: if (sameUser && (Routes.canTrafficHub(me) || Routes.canAdminMembers(me) || me?.can("admin_dashboard") == true)) prev.trafficStats else null,
+                onboardingLoaded = if (sameUser) prev.onboardingLoaded else false,
+                onboardingHasPlace = if (sameUser) prev.onboardingHasPlace else false,
+                onboardingHasRide = if (sameUser) prev.onboardingHasRide else false,
+                onboardingHasEvent = if (sameUser) prev.onboardingHasEvent else false,
+                onboardingHasVehicle = if (sameUser) prev.onboardingHasVehicle else false,
             )
             container.appContext?.let { ctx ->
                 withContext(Dispatchers.IO) {
@@ -258,6 +271,73 @@ class HomeViewModel(private val container: AppContainer) : ViewModel() {
 
     companion object {
         fun factory(container: AppContainer) = viewModelFactory { initializer { HomeViewModel(container) } }
+    }
+
+    /** Lazy check triggered from `HomeScreen` when onboarding checklist is visible so unit test HTTP order is unchanged. */
+    fun loadOnboardingChecks() {
+        val me = _state.value.me ?: container.auth.me ?: return
+        if (me.status != "active" || me.onboardingDismissed) return
+        if (onboardingJob?.isActive == true) return
+        onboardingJob = viewModelScope.launch {
+            val (hasPlace, hasEvent, hasRide, hasVehicle) = coroutineScope {
+                val placeDef = async {
+                    if (me.can("rides", "create")) {
+                        runSuspendCatching { container.rides.savedPlaces().isNotEmpty() }.getOrDefault(false)
+                    } else {
+                        true
+                    }
+                }
+                val eventDef = async {
+                    if (me.can("events")) {
+                        val cachedAny = _state.value.events.any { it.mySignup != null }
+                        if (cachedAny) true else runSuspendCatching {
+                            container.events.upcoming().any { it.mySignup != null }
+                        }.getOrDefault(false)
+                    } else {
+                        true
+                    }
+                }
+                val rideDef = async {
+                    if (me.can("rides", "create")) {
+                        val hasNext = _state.value.nextRide != null
+                        if (hasNext) true else runSuspendCatching {
+                            container.rides.upcoming().isNotEmpty() ||
+                                container.rides.pastPage(before = null, limit = 1).items.isNotEmpty()
+                        }.getOrDefault(false)
+                    } else {
+                        true
+                    }
+                }
+                val vehicleDef = async {
+                    if (me.can("drive")) {
+                        runSuspendCatching { container.rides.driverProfile().vehicles.isNotEmpty() }.getOrDefault(false)
+                    } else {
+                        true
+                    }
+                }
+                listOf(placeDef.await(), eventDef.await(), rideDef.await(), vehicleDef.await())
+            }
+            _state.value = _state.value.copy(
+                onboardingLoaded = true,
+                onboardingHasPlace = hasPlace,
+                onboardingHasEvent = hasEvent,
+                onboardingHasRide = hasRide,
+                onboardingHasVehicle = hasVehicle,
+            )
+        }
+    }
+
+    fun dismissOnboarding() {
+        viewModelScope.launch {
+            val current = _state.value.me
+            if (current != null) {
+                _state.value = _state.value.copy(me = current.copy(onboardingDismissed = true))
+            }
+            runSuspendCatching {
+                container.community.updateProfile(ProfileUpdateReq(onboarding_dismissed = true))
+                container.auth.refresh()
+            }
+        }
     }
 }
 

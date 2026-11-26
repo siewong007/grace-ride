@@ -9,6 +9,8 @@ import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.drop
+import kotlinx.coroutines.flow.filter
 import kotlinx.coroutines.launch
 import okhttp3.Cache
 import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
@@ -20,12 +22,16 @@ import org.pjstatecm.graceride.data.api.ApiProvider
 import org.pjstatecm.graceride.data.api.ApiService
 import org.pjstatecm.graceride.data.api.AuthEventBus
 import org.pjstatecm.graceride.data.api.apiJson
+import org.pjstatecm.graceride.data.api.runSuspendCatching
+import org.pjstatecm.graceride.data.cache.OfflineActionQueue
 import org.pjstatecm.graceride.data.cache.OfflineCache
 import org.pjstatecm.graceride.data.repo.AdminRepository
 import org.pjstatecm.graceride.data.repo.AuthRepository
 import org.pjstatecm.graceride.data.repo.AuthState
 import org.pjstatecm.graceride.data.repo.CommunityRepository
 import org.pjstatecm.graceride.data.repo.EventsRepository
+import org.pjstatecm.graceride.data.repo.FinanceRepository
+import org.pjstatecm.graceride.data.repo.HelpRepository
 import org.pjstatecm.graceride.data.repo.PublicFlowRepository
 import org.pjstatecm.graceride.data.repo.RidesRepository
 import org.pjstatecm.graceride.data.repo.SharesRepository
@@ -275,6 +281,7 @@ class AppContainer(
 
     val networkMonitor: NetworkMonitor = NetworkMonitor(appContext)
     val offlineCache: OfflineCache = OfflineCache(appContext)
+    val offlineQueue: OfflineActionQueue = OfflineActionQueue(secureStore)
 
     private fun buildApi(): ApiService =
         Retrofit.Builder()
@@ -298,6 +305,8 @@ class AppContainer(
     val community: CommunityRepository = CommunityRepository(apiProvider, authEvents)
     val traffic: TrafficRepository = TrafficRepository(apiProvider, authEvents)
     val admin: AdminRepository = AdminRepository(apiProvider, authEvents)
+    val finance: FinanceRepository = FinanceRepository(apiProvider, authEvents)
+    val help: HelpRepository = HelpRepository(apiProvider, authEvents)
     val publicFlow: PublicFlowRepository = PublicFlowRepository(apiProvider)
     val auth: AuthRepository = AuthRepository(
         apiProvider,
@@ -307,6 +316,7 @@ class AppContainer(
         store = secureStore,
         onCleared = {
             rides.clearAreasCache()
+            offlineQueue.clear()
             appScope.launch {
                 offlineCache.clearAll()
                 appContext?.let { ctx ->
@@ -344,6 +354,7 @@ class AppContainer(
         },
         onUserSwitched = { prevId ->
             rides.clearAreasCache()
+            offlineQueue.clear()
             offlineCache.clearUser(prevId)
             appContext?.let { ctx ->
                 runCatching { androidx.core.app.NotificationManagerCompat.from(ctx).cancelAll() }
@@ -381,6 +392,13 @@ class AppContainer(
                         auth.onLocked()
                     }
                     org.pjstatecm.graceride.data.api.AuthEvent.Pending -> auth.onPending()
+                }
+            }
+        }
+        appScope.launch {
+            networkMonitor.isOnline.drop(1).filter { it }.collect {
+                if (auth.state.value is AuthState.SignedIn && offlineQueue.pending.value.isNotEmpty()) {
+                    runSuspendCatching { offlineQueue.flush(rides) }
                 }
             }
         }

@@ -890,3 +890,28 @@ data class ScanMemberResp(
 
 @Serializable
 data class MarkAttendanceReq(val user_id: Long, val attended: Boolean? = null)
+
+@Serializable
+data class RidesPageDto(
+    val items: List<Ride> = emptyList(),
+    @SerialName("next_before") val nextBefore: String? = null,
+)
+
+@Serializable
+data class CareLinkReq(val label: String? = null)
+
+@Serializable
+data class CareLinkResp(
+    val token: String = "",
+    val url: String = "",
+    @SerialName("valid_until") val validUntil: String = "",
+)
+
+@Serializable
+data class ExtractRefReq(val text: String? = null)
+
+@Serializable
+data class ExtractRefResp(
+    val ref: String = "",
+    val candidates: List<String> = emptyList(),
+)

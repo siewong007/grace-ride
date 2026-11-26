@@ -20,6 +20,7 @@ import kotlinx.coroutines.withContext
 import org.pjstatecm.graceride.R
 import org.pjstatecm.graceride.data.api.ApiException
 import org.pjstatecm.graceride.data.api.Share
+import org.pjstatecm.graceride.data.api.runSuspendCatching
 import org.pjstatecm.graceride.data.media.prepareImageUpload
 import org.pjstatecm.graceride.di.AppContainer
 import org.pjstatecm.graceride.notifications.RealtimeEvent
@@ -33,6 +34,8 @@ data class CostsUiState(
     val paying: Share? = null,
     val proofUri: Uri? = null,
     val txnRef: String = "",
+    val ocrExtracting: Boolean = false,
+    val ocrCandidates: List<String> = emptyList(),
     val submitting: Boolean = false,
     val sheetError: String? = null,
     @param:StringRes @get:StringRes val sheetErrorRes: Int? = null,
@@ -43,6 +46,7 @@ class CostsViewModel(private val container: AppContainer) : ViewModel() {
     private val _state = MutableStateFlow(CostsUiState())
     val state: StateFlow<CostsUiState> = _state.asStateFlow()
     private var loadJob: Job? = null
+    private var extractJob: Job? = null
     private var uploadedForUri: Uri? = null
     private var uploadedFileId: Long? = null
 
@@ -83,12 +87,15 @@ class CostsViewModel(private val container: AppContainer) : ViewModel() {
 
     fun openPay(share: Share) {
         if (_state.value.submitting) return
+        extractJob?.cancel()
         uploadedForUri = null
         uploadedFileId = null
         _state.value = _state.value.copy(
             paying = share,
             proofUri = null,
             txnRef = share.txnRef,
+            ocrExtracting = false,
+            ocrCandidates = emptyList(),
             sheetError = null,
             sheetErrorRes = null,
         )
@@ -96,17 +103,73 @@ class CostsViewModel(private val container: AppContainer) : ViewModel() {
 
     fun closePay() {
         if (_state.value.submitting) return
+        extractJob?.cancel()
         uploadedForUri = null
         uploadedFileId = null
-        _state.value = _state.value.copy(paying = null, sheetError = null, sheetErrorRes = null)
+        _state.value = _state.value.copy(
+            paying = null,
+            ocrExtracting = false,
+            ocrCandidates = emptyList(),
+            sheetError = null,
+            sheetErrorRes = null,
+        )
     }
 
     fun setProof(uri: Uri?) {
+        extractJob?.cancel()
         if (uri != uploadedForUri) {
             uploadedForUri = null
             uploadedFileId = null
         }
-        _state.value = _state.value.copy(proofUri = uri, sheetError = null, sheetErrorRes = null)
+        _state.value = _state.value.copy(
+            proofUri = uri,
+            ocrExtracting = false,
+            ocrCandidates = emptyList(),
+            sheetError = null,
+            sheetErrorRes = null,
+        )
+    }
+
+    /**
+     * Picks proof photo, uploads it eagerly, caches `uploadedFileId`, and runs server OCR
+     * (`POST /api/files/{id}/extract-ref`) to auto-fill & suggest transaction reference chips.
+     */
+    fun onProofPicked(context: Context, uri: Uri?) {
+        setProof(uri)
+        if (uri == null) return
+        extractJob?.cancel()
+        _state.value = _state.value.copy(ocrExtracting = true, ocrCandidates = emptyList())
+        extractJob = viewModelScope.launch {
+            val fileId = runSuspendCatching {
+                val prepared = withContext(Dispatchers.IO) {
+                    prepareImageUpload(
+                        context = context,
+                        uri = uri,
+                        prefix = "proof",
+                        maxDimensionPx = 1600,
+                        quality = 85,
+                    )
+                }
+                container.shares.upload(prepared.bytes, prepared.filename, prepared.mime).id
+            }.getOrNull()
+            if (_state.value.proofUri != uri) return@launch
+            if (fileId == null) {
+                _state.value = _state.value.copy(ocrExtracting = false)
+                return@launch
+            }
+            uploadedForUri = uri
+            uploadedFileId = fileId
+            val extracted = runSuspendCatching { container.shares.extractFileRef(fileId) }.getOrNull()
+            if (_state.value.proofUri != uri) return@launch
+            val curRef = _state.value.txnRef
+            val best = extracted?.ref?.trim().orEmpty()
+            val cands = extracted?.candidates.orEmpty().map { it.trim() }.filter { it.isNotEmpty() }.distinct().take(6)
+            _state.value = _state.value.copy(
+                ocrExtracting = false,
+                ocrCandidates = cands,
+                txnRef = if (curRef.isBlank() && best.isNotEmpty()) best else curRef,
+            )
+        }
     }
 
     fun setTxnRef(value: String) {

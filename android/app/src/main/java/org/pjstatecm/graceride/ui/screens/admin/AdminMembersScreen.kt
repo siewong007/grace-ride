@@ -46,6 +46,7 @@ import androidx.compose.material.icons.outlined.Badge
 import androidx.compose.material.icons.outlined.Call
 import androidx.compose.material.icons.outlined.Close
 import androidx.compose.material.icons.outlined.ContentCopy
+import androidx.compose.material.icons.outlined.Download
 import androidx.compose.material.icons.outlined.Info
 import androidx.compose.material.icons.outlined.Key
 import androidx.compose.material.icons.outlined.MarkEmailUnread
@@ -113,6 +114,8 @@ import org.pjstatecm.graceride.domain.KlTime
 import org.pjstatecm.graceride.domain.MemberAdminRules
 import org.pjstatecm.graceride.domain.RideStatusKind
 import org.pjstatecm.graceride.domain.RoleLabels
+import org.pjstatecm.graceride.platform.CsvBuilder
+import org.pjstatecm.graceride.platform.ExportShare
 import org.pjstatecm.graceride.ui.SecureScreenEffect
 import org.pjstatecm.graceride.ui.UiHaptics
 import org.pjstatecm.graceride.ui.components.CalloutBanner
@@ -255,6 +258,41 @@ fun AdminMembersScreen(
                     }
                 },
                 actions = {
+                    if (state.tab == "members" && state.usersPage.items.isNotEmpty()) {
+                        IconButton(
+                            onClick = {
+                                scope.launch {
+                                    val bytes = CsvBuilder.buildBytes(
+                                        headers = listOf("ID", "Name", "Email", "Phone", "Status", "Roles", "Groups", "Passkeys", "Created"),
+                                        rows = state.usersPage.items.map { u ->
+                                            listOf(
+                                                u.id.toString(),
+                                                u.name,
+                                                u.email,
+                                                u.phone,
+                                                u.status,
+                                                u.roles.joinToString("; "),
+                                                u.groups,
+                                                u.passkeys.toString(),
+                                                u.createdAt,
+                                            )
+                                        },
+                                    )
+                                    ExportShare.writeAndShareFile(
+                                        context = context,
+                                        filename = "grace-ride-members.csv",
+                                        mimeType = "text/csv",
+                                        bytes = bytes,
+                                    )
+                                }
+                            },
+                        ) {
+                            Icon(
+                                Icons.Outlined.Download,
+                                contentDescription = stringResource(R.string.common_export_csv),
+                            )
+                        }
+                    }
                     if (permittedTabs.isNotEmpty()) {
                         IconButton(onClick = { vm.refreshActive(silent = false) }) {
                             Icon(

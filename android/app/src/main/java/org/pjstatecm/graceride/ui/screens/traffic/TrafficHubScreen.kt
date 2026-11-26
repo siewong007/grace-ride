@@ -45,6 +45,7 @@ import androidx.compose.material.icons.automirrored.outlined.Accessible
 import androidx.compose.material.icons.automirrored.outlined.AltRoute
 import androidx.compose.material.icons.outlined.Close
 import androidx.compose.material.icons.outlined.DirectionsCar
+import androidx.compose.material.icons.outlined.Download
 import androidx.compose.material.icons.outlined.EditNote
 import androidx.compose.material.icons.outlined.FilterList
 import androidx.compose.material.icons.outlined.LocationOn
@@ -95,6 +96,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.input.ImeAction
@@ -108,6 +110,9 @@ import androidx.lifecycle.repeatOnLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.navigation.NavHostController
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
+import org.pjstatecm.graceride.platform.CsvBuilder
+import org.pjstatecm.graceride.platform.ExportShare
 import org.pjstatecm.graceride.R
 import org.pjstatecm.graceride.data.api.LiveDriverDto
 import org.pjstatecm.graceride.data.api.Me
@@ -862,6 +867,8 @@ private fun TrafficRidesTab(
     var returningDraft by remember { mutableStateOf<RideChangeDraftDto?>(null) }
     var returnNotes by remember { mutableStateOf("") }
     var showFiltersSheet by remember { mutableStateOf(false) }
+    val context = LocalContext.current
+    val exportScope = androidx.compose.runtime.rememberCoroutineScope()
     val canUpdateRides = me?.can("admin_rides", "update") == true || me?.can("rides", "update") == true
     val pendingDraftCount = remember(state.rideDrafts, state.stats) {
         if (state.rideDrafts.isNotEmpty()) state.rideDrafts.count { it.status == "pending_approval" }
@@ -933,6 +940,33 @@ private fun TrafficRidesTab(
                             )
                         },
                     )
+                    if (state.ridesPage.items.isNotEmpty()) {
+                        IconButton(
+                            onClick = {
+                                exportScope.launch {
+                                    val bytes = CsvBuilder.buildBytes(
+                                        headers = listOf("ID", "Pickup", "Passenger", "Seats", "Area", "Destination", "Driver", "Status", "Attention"),
+                                        rows = state.ridesPage.items.map { r ->
+                                            listOf(
+                                                r.id.toString(),
+                                                r.pickupAt,
+                                                r.passenger.name,
+                                                r.seats.toString(),
+                                                r.area.name,
+                                                r.destination,
+                                                r.driver?.name.orEmpty(),
+                                                r.status,
+                                                if (r.needsAttention) "yes" else "no",
+                                            )
+                                        },
+                                    )
+                                    ExportShare.writeAndShareFile(context, "grace-ride-rides.csv", "text/csv", bytes)
+                                }
+                            },
+                        ) {
+                            Icon(Icons.Outlined.Download, contentDescription = stringResource(R.string.common_export_csv))
+                        }
+                    }
                 }
             }
 

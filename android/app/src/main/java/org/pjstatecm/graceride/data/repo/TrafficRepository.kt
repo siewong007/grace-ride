@@ -299,4 +299,22 @@ class TrafficRepository(
 
     suspend fun deleteAreaFare(id: Long): Result<Unit> =
         runSuspendCatching { apiCall(bus) { api.deleteAreaFare(id) }; Unit }
+
+    suspend fun bulkAreaFares(
+        fares: List<org.pjstatecm.graceride.data.api.BulkFareItemReq>,
+        createMissingAreas: Boolean,
+    ): Result<org.pjstatecm.graceride.data.api.BulkFaresRespDto> =
+        runSuspendCatching {
+            apiCall(bus) {
+                api.bulkAreaFares(
+                    org.pjstatecm.graceride.data.api.BulkFaresReq(
+                        fares = fares,
+                        createMissingAreas = createMissingAreas,
+                    ),
+                )
+            }
+        }
+
+    suspend fun exportFaresCsvBytes(): Result<ByteArray> =
+        runSuspendCatching { apiCall(bus) { api.exportFaresCsv().bytes() } }
 }
