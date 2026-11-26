@@ -57,6 +57,7 @@ export default {
     "TWO_FACTOR_NOT_CONFIGURED": "请先设置双重验证",
     "START_SETUP_FIRST": "请先开始设置",
     "PASSWORD_TOO_SHORT": "密码至少需要 10 个字符",
+    "PASSWORD_TOO_LONG": "密码不能超过 1024 个字符",
     "CURRENT_PASSWORD_INCORRECT": "目前密码不正确",
     "INVITE_EXPIRED": "邀请连结已失效，请联系管理员",
     "INVITE_ALREADY_USED": "邀请连结已被使用",

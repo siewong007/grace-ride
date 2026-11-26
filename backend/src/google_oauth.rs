@@ -90,6 +90,9 @@ impl GoogleOAuthConfig {
             ] {
                 let parsed =
                     Url::parse(raw).map_err(|_| anyhow::anyhow!("{k} is not a valid URL"))?;
+                if !matches!(parsed.scheme(), "http" | "https") {
+                    anyhow::bail!("{k} must use http:// or https://");
+                }
                 if !public_url_is_local && parsed.scheme() != "https" {
                     anyhow::bail!("{k} must use https:// outside localhost");
                 }
@@ -328,6 +331,14 @@ mod tests {
         };
         assert!(http_cfg.validate(true).is_ok());
         assert!(http_cfg.validate(false).is_err());
+
+        let js_scheme = GoogleOAuthConfig {
+            client_id: Some("cid".into()),
+            client_secret: Some("sec".into()),
+            auth_url: "javascript:alert(1)".into(),
+            ..Default::default()
+        };
+        assert!(js_scheme.validate(true).is_err());
 
         let prod_ok = GoogleOAuthConfig {
             client_id: Some("cid".into()),

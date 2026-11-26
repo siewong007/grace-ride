@@ -57,6 +57,7 @@ export default {
     "TWO_FACTOR_NOT_CONFIGURED": "Set up two-factor authentication first",
     "START_SETUP_FIRST": "Please start setup first",
     "PASSWORD_TOO_SHORT": "Password must be at least 10 characters",
+    "PASSWORD_TOO_LONG": "Password cannot exceed 1024 characters",
     "CURRENT_PASSWORD_INCORRECT": "Current password is incorrect",
     "INVITE_EXPIRED": "This invite link is no longer valid; contact an admin",
     "INVITE_ALREADY_USED": "This invite link has already been used",

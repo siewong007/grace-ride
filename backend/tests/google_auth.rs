@@ -1201,3 +1201,458 @@ async fn security_audit_regressions_recent_signin_locked_link_and_recovery() {
 
     h.abort();
 }
+
+#[tokio::test]
+async fn deep_audit_hardening_atomic_totp_lifecycle_and_password_cap() {
+    let (mock_url, mock_id, h) = start_mock_google(MockGoogleIdentity {
+        sub: "google-sub-hardened".into(),
+        email: "hardened@example.org".into(),
+        email_verified: true,
+        fail_token: false,
+    })
+    .await;
+    let (app, st) = setup_with_google(&mock_url, false).await;
+
+    let uid: i64 = sqlx::query_scalar(
+        "INSERT INTO users (name, email, phone, roles, status, password_hash, webauthn_uuid, terms_accepted_at, terms_version)
+         VALUES ('Hardened User', 'hardened@example.org', '0123450010', '', 'active', $1, $2, app_now(), 3)
+         RETURNING id",
+    )
+    .bind(grace_ride::routes::auth::hash_password(PW).unwrap())
+    .bind(uuid::Uuid::new_v4().to_string())
+    .fetch_one(&st.db)
+    .await
+    .unwrap();
+
+    // Link Google and enable TOTP on hardened@example.org.
+    let initial_cookie = login(&st, "hardened@example.org").await;
+    let ls = call(
+        &app,
+        Method::POST,
+        "/api/auth/google/link/start",
+        Some(&initial_cookie),
+        None,
+    )
+    .await;
+    let ln = cookie_value(&ls.headers, "gr_oauth_nonce").unwrap();
+    let lstate = query_param(ls.json["url"].as_str().unwrap(), "state").unwrap();
+    let (_, _, lloc) = get_redirect(
+        &app,
+        &format!("/api/auth/google/callback?code=link_hardened&state={lstate}"),
+        Some(&format!("{initial_cookie}; {ln}")),
+    )
+    .await;
+    assert_eq!(query_param(&lloc, "google").as_deref(), Some("linked"));
+
+    let setup_res = call(
+        &app,
+        Method::POST,
+        "/api/auth/totp/setup",
+        Some(&initial_cookie),
+        None,
+    )
+    .await;
+    assert_eq!(setup_res.status, StatusCode::OK, "{}", setup_res.json);
+    let secret = setup_res.json["secret"].as_str().unwrap().to_string();
+    let enable_code = totp_code(&secret, "hardened@example.org");
+    let enable_res = call(
+        &app,
+        Method::POST,
+        "/api/auth/totp/enable",
+        Some(&initial_cookie),
+        Some(json!({ "code": enable_code })),
+    )
+    .await;
+    assert_eq!(enable_res.status, StatusCode::OK, "{}", enable_res.json);
+    let backup_1 = enable_res.json["backup_codes"][0]
+        .as_str()
+        .unwrap()
+        .to_string();
+
+    // 1. Google TOTP challenge: CODE_ALREADY_USED refunds attempt slot; 5 invalid codes atomically delete challenge.
+    let gs = call(
+        &app,
+        Method::POST,
+        "/api/auth/google/start",
+        None,
+        Some(json!({ "purpose": "login" })),
+    )
+    .await;
+    let gn = cookie_value(&gs.headers, "gr_oauth_nonce").unwrap();
+    let gst = query_param(gs.json["url"].as_str().unwrap(), "state").unwrap();
+    let (_, headers, loc) = get_redirect(
+        &app,
+        &format!("/api/auth/google/callback?code=gtotp_h&state={gst}"),
+        Some(&gn),
+    )
+    .await;
+    assert_eq!(loc, "/login?google_totp=1");
+    let totp_cookie = cookie_value(&headers, "gr_google_totp").unwrap();
+
+    let replay_try = call(
+        &app,
+        Method::POST,
+        "/api/auth/google/totp/complete",
+        Some(&totp_cookie),
+        Some(json!({ "code": enable_code })),
+    )
+    .await;
+    assert_eq!(
+        replay_try.status,
+        StatusCode::BAD_REQUEST,
+        "{}",
+        replay_try.json
+    );
+    assert_eq!(replay_try.json["code"], "CODE_ALREADY_USED");
+
+    let attempts_after_replay: i64 = sqlx::query_scalar(
+        "SELECT COALESCE((state::jsonb->>'attempts')::int, -1) FROM auth_challenges WHERE user_id = $1 AND kind = 'google_totp'",
+    )
+    .bind(uid)
+    .fetch_one(&st.db)
+    .await
+    .unwrap();
+    assert_eq!(attempts_after_replay, 0);
+
+    for i in 0..5 {
+        let wrong = call(
+            &app,
+            Method::POST,
+            "/api/auth/google/totp/complete",
+            Some(&totp_cookie),
+            Some(json!({ "code": "000000" })),
+        )
+        .await;
+        assert_eq!(
+            wrong.status,
+            StatusCode::BAD_REQUEST,
+            "try {i}: {}",
+            wrong.json
+        );
+        assert_eq!(wrong.json["code"], "INVALID_CODE");
+    }
+
+    let burnt_complete = call(
+        &app,
+        Method::POST,
+        "/api/auth/google/totp/complete",
+        Some(&totp_cookie),
+        Some(json!({ "code": backup_1 })),
+    )
+    .await;
+    assert_eq!(burnt_complete.status, StatusCode::BAD_REQUEST);
+    assert_eq!(burnt_complete.json["code"], "VERIFICATION_EXPIRED");
+
+    let burnt_status = call(
+        &app,
+        Method::GET,
+        "/api/auth/google/totp/status",
+        Some(&totp_cookie),
+        None,
+    )
+    .await;
+    assert_eq!(burnt_status.json["valid"], false);
+    let left_totp: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM auth_challenges WHERE user_id = $1 AND kind = 'google_totp'",
+    )
+    .bind(uid)
+    .fetch_one(&st.db)
+    .await
+    .unwrap();
+    assert_eq!(left_totp, 0);
+
+    // 2. Password length caps (>1024 bytes) before Argon2.
+    let huge_pw = "a".repeat(1025);
+    let huge_login = call(
+        &app,
+        Method::POST,
+        "/api/auth/login",
+        None,
+        Some(json!({ "email": "hardened@example.org", "password": huge_pw })),
+    )
+    .await;
+    assert_eq!(huge_login.status, StatusCode::BAD_REQUEST);
+    assert_eq!(huge_login.json["code"], "INVALID_CREDENTIALS");
+
+    let reset_start = call(
+        &app,
+        Method::POST,
+        "/api/auth/google/start",
+        None,
+        Some(json!({ "purpose": "password_reset" })),
+    )
+    .await;
+    let rn = cookie_value(&reset_start.headers, "gr_oauth_nonce").unwrap();
+    let rst = query_param(reset_start.json["url"].as_str().unwrap(), "state").unwrap();
+    let (_, rheaders, _) = get_redirect(
+        &app,
+        &format!("/api/auth/google/callback?code=rst_h&state={rst}"),
+        Some(&rn),
+    )
+    .await;
+    let reset_cookie = cookie_value(&rheaders, "gr_pw_reset").unwrap();
+
+    let huge_reset = call(
+        &app,
+        Method::POST,
+        "/api/auth/password-reset/complete",
+        Some(&reset_cookie),
+        Some(json!({ "new_password": "b".repeat(1025) })),
+    )
+    .await;
+    assert_eq!(
+        huge_reset.status,
+        StatusCode::BAD_REQUEST,
+        "{}",
+        huge_reset.json
+    );
+    assert_eq!(huge_reset.json["code"], "PASSWORD_TOO_LONG");
+
+    // Leave a google_totp challenge & oauth_state attached, then verify password_reset_complete cleans them.
+    sqlx::query(
+        "INSERT INTO auth_challenges (id, user_id, kind, state, created_at) VALUES ('totp-stale-h', $1, 'google_totp', '{\"redirect\":\"/\",\"attempts\":0}', app_now())",
+    )
+    .bind(uid)
+    .execute(&st.db)
+    .await
+    .unwrap();
+    sqlx::query(
+        "INSERT INTO oauth_states (state, purpose, user_id, code_verifier, redirect_to, lang, email_hint, nonce_hash, created_at)
+         VALUES ('st-stale-h', 'link', $1, 'v', '/', 'en', 'hardened@example.org', 'nh', app_now())",
+    )
+    .bind(uid)
+    .execute(&st.db)
+    .await
+    .unwrap();
+
+    let ok_reset = call(
+        &app,
+        Method::POST,
+        "/api/auth/password-reset/complete",
+        Some(&reset_cookie),
+        Some(json!({ "new_password": "ResetPassword2026!" })),
+    )
+    .await;
+    assert_eq!(ok_reset.status, StatusCode::OK, "{}", ok_reset.json);
+    let left_after_reset: (i64, i64) = sqlx::query_as(
+        "SELECT (SELECT COUNT(*) FROM auth_challenges WHERE user_id = $1),
+                (SELECT COUNT(*) FROM oauth_states WHERE user_id = $1)",
+    )
+    .bind(uid)
+    .fetch_one(&st.db)
+    .await
+    .unwrap();
+    assert_eq!(left_after_reset, (0, 0));
+
+    // 3. Log in with new password + backup code, verify set_password cap + reset-token cleanup,
+    //    then verify create_session revokes any superseded session cookie sent in the jar.
+    let login1 = call(
+        &app,
+        Method::POST,
+        "/api/auth/login",
+        None,
+        Some(json!({
+            "email": "hardened@example.org",
+            "password": "ResetPassword2026!",
+            "code": backup_1
+        })),
+    )
+    .await;
+    assert_eq!(login1.status, StatusCode::OK, "{}", login1.json);
+    let sess1 = cookie_from(&login1).unwrap();
+
+    let huge_set_pw = call(
+        &app,
+        Method::POST,
+        "/api/auth/password",
+        Some(&sess1),
+        Some(json!({ "current": "ResetPassword2026!", "new_password": "c".repeat(1025) })),
+    )
+    .await;
+    assert_eq!(
+        huge_set_pw.status,
+        StatusCode::BAD_REQUEST,
+        "{}",
+        huge_set_pw.json
+    );
+    assert_eq!(huge_set_pw.json["code"], "PASSWORD_TOO_LONG");
+
+    sqlx::query(
+        "INSERT INTO password_reset_tokens (token_hash, user_id, expires_at, created_at) VALUES ('pr-hash-setpw', $1, '2099-01-01T00:00:00', app_now())",
+    )
+    .bind(uid)
+    .execute(&st.db)
+    .await
+    .unwrap();
+    sqlx::query(
+        "INSERT INTO login_failures (email, ip, created_at) VALUES ('hardened@example.org', '127.0.0.1', app_now())",
+    )
+    .execute(&st.db)
+    .await
+    .unwrap();
+
+    let set_pw_ok = call(
+        &app,
+        Method::POST,
+        "/api/auth/password",
+        Some(&sess1),
+        Some(json!({ "current": "ResetPassword2026!", "new_password": "FinalPassword2026!" })),
+    )
+    .await;
+    assert_eq!(set_pw_ok.status, StatusCode::OK, "{}", set_pw_ok.json);
+    let cleared_on_pw: (i64, i64) = sqlx::query_as(
+        "SELECT (SELECT COUNT(*) FROM password_reset_tokens WHERE user_id = $1),
+                (SELECT COUNT(*) FROM login_failures WHERE lower(email) = 'hardened@example.org')",
+    )
+    .bind(uid)
+    .fetch_one(&st.db)
+    .await
+    .unwrap();
+    assert_eq!(cleared_on_pw, (0, 0));
+
+    let backup_2 = enable_res.json["backup_codes"][1]
+        .as_str()
+        .unwrap()
+        .to_string();
+    let login2 = call(
+        &app,
+        Method::POST,
+        "/api/auth/login",
+        Some(&sess1),
+        Some(json!({
+            "email": "hardened@example.org",
+            "password": "FinalPassword2026!",
+            "code": backup_2
+        })),
+    )
+    .await;
+    assert_eq!(login2.status, StatusCode::OK, "{}", login2.json);
+    let sess2 = cookie_from(&login2).unwrap();
+    assert_ne!(sess1, sess2);
+    let old_me = call(&app, Method::GET, "/api/auth/me", Some(&sess1), None).await;
+    assert_eq!(old_me.status, StatusCode::UNAUTHORIZED);
+
+    // 4. logout-all clears sessions, auth_challenges, password_reset_tokens, oauth_states, and ephemeral cookies.
+    sqlx::query(
+        "INSERT INTO auth_challenges (id, user_id, kind, state, created_at) VALUES ('totp-la', $1, 'google_totp', '{\"redirect\":\"/\",\"attempts\":0}', app_now())",
+    )
+    .bind(uid)
+    .execute(&st.db)
+    .await
+    .unwrap();
+    sqlx::query(
+        "INSERT INTO password_reset_tokens (token_hash, user_id, expires_at, created_at) VALUES ('pr-hash-la', $1, '2099-01-01T00:00:00', app_now())",
+    )
+    .bind(uid)
+    .execute(&st.db)
+    .await
+    .unwrap();
+    sqlx::query(
+        "INSERT INTO oauth_states (state, purpose, user_id, code_verifier, redirect_to, lang, email_hint, nonce_hash, created_at)
+         VALUES ('st-la', 'link', $1, 'v', '/', 'en', 'hardened@example.org', 'nh', app_now())",
+    )
+    .bind(uid)
+    .execute(&st.db)
+    .await
+    .unwrap();
+
+    let la = call(
+        &app,
+        Method::POST,
+        "/api/auth/logout-all",
+        Some(&sess2),
+        None,
+    )
+    .await;
+    assert_eq!(la.status, StatusCode::OK, "{}", la.json);
+    let left_la: (i64, i64, i64, i64) = sqlx::query_as(
+        "SELECT (SELECT COUNT(*) FROM sessions WHERE user_id = $1),
+                (SELECT COUNT(*) FROM auth_challenges WHERE user_id = $1),
+                (SELECT COUNT(*) FROM password_reset_tokens WHERE user_id = $1),
+                (SELECT COUNT(*) FROM oauth_states WHERE user_id = $1)",
+    )
+    .bind(uid)
+    .fetch_one(&st.db)
+    .await
+    .unwrap();
+    assert_eq!(left_la, (0, 0, 0, 0));
+    let set_cookies: Vec<&str> = la
+        .headers
+        .get_all(header::SET_COOKIE)
+        .iter()
+        .filter_map(|v| v.to_str().ok())
+        .collect();
+    for cleared_prefix in [
+        "gr_session=;",
+        "gr_oauth_nonce=;",
+        "gr_pw_reset=;",
+        "gr_google_totp=;",
+    ] {
+        assert!(
+            set_cookies.iter().any(|c| c.starts_with(cleared_prefix)),
+            "expected {cleared_prefix} in {set_cookies:?}"
+        );
+    }
+
+    // 5. Idle-locked session (last_seen_at overdue while locked_at IS NULL) is blocked from finishing Google link.
+    let idle_uid: i64 = sqlx::query_scalar(
+        "INSERT INTO users (name, email, phone, roles, status, password_hash, webauthn_uuid, terms_accepted_at, terms_version)
+         VALUES ('Idle Linker', 'idlelink@example.org', '0123450011', '', 'active', $1, $2, app_now(), 3)
+         RETURNING id",
+    )
+    .bind(grace_ride::routes::auth::hash_password(PW).unwrap())
+    .bind(uuid::Uuid::new_v4().to_string())
+    .fetch_one(&st.db)
+    .await
+    .unwrap();
+    sqlx::query(
+        "INSERT INTO passkeys (user_id, cred_id, passkey, label, created_at)
+         VALUES ($1, 'idle-cred-1', '{}', 'Phone', app_now())",
+    )
+    .bind(idle_uid)
+    .execute(&st.db)
+    .await
+    .unwrap();
+    {
+        let mut g = mock_id.lock().unwrap();
+        g.sub = "google-sub-idle".into();
+        g.email = "idlelink@example.org".into();
+    }
+    let idle_cookie = login_mfa(&st, "idlelink@example.org", true).await;
+    let ls_idle = call(
+        &app,
+        Method::POST,
+        "/api/auth/google/link/start",
+        Some(&idle_cookie),
+        None,
+    )
+    .await;
+    assert_eq!(ls_idle.status, StatusCode::OK, "{}", ls_idle.json);
+    let ln_idle = cookie_value(&ls_idle.headers, "gr_oauth_nonce").unwrap();
+    let lstate_idle = query_param(ls_idle.json["url"].as_str().unwrap(), "state").unwrap();
+    sqlx::query("UPDATE sessions SET last_seen_at = $1, locked_at = NULL WHERE user_id = $2")
+        .bind(grace_ride::util::minutes_ago(30))
+        .bind(idle_uid)
+        .execute(&st.db)
+        .await
+        .unwrap();
+    let (_, _, idle_loc) = get_redirect(
+        &app,
+        &format!("/api/auth/google/callback?code=idle_cb&state={lstate_idle}"),
+        Some(&format!("{idle_cookie}; {ln_idle}")),
+    )
+    .await;
+    assert_eq!(
+        query_param(&idle_loc, "google_error").as_deref(),
+        Some("CHALLENGE_MISMATCH")
+    );
+    let idle_links: i64 =
+        sqlx::query_scalar("SELECT COUNT(*) FROM oauth_accounts WHERE user_id = $1")
+            .bind(idle_uid)
+            .fetch_one(&st.db)
+            .await
+            .unwrap();
+    assert_eq!(idle_links, 0);
+
+    h.abort();
+}

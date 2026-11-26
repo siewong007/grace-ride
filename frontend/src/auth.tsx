@@ -1,5 +1,6 @@
 import { createContext, ReactNode, useCallback, useContext, useEffect, useMemo, useState } from 'react';
 import { api, ApiError, clearClientSessionStorage, isSessionLocked, isStreamConnected, post, subscribe } from './api';
+import { clearAutoLock } from './offlineSnapshot';
 import { resetPushState, syncAppBadge } from './pushNotifications';
 import type { Act, Can, PageKey } from './perms';
 
@@ -84,6 +85,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       if (err instanceof ApiError && err.status === 401) {
         syncAppBadge(0);
         resetPushState();
+        clearAutoLock();
         clearClientSessionStorage();
         setMe(null);
       }

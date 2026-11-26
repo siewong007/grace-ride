@@ -392,4 +392,33 @@ describe('Google Sign-In, Password Login & Forgot Password UI', () => {
       Object.defineProperty(navigator, 'userAgent', { value: origUa, configurable: true });
     }
   });
+
+  it('clears gr_locked_user before starting Google Sign-In redirect', async () => {
+    localStorage.setItem('gr_locked_user', '10');
+    const assignMock = vi.fn();
+    Object.defineProperty(window, 'location', {
+      configurable: true,
+      value: { ...window.location, assign: assignMock },
+    });
+    mockApi.post.mockImplementation(async (path: string) => {
+      if (path === '/auth/google/start') {
+        return { url: 'https://accounts.google.com/o/oauth2/v2/auth?state=s_lock' };
+      }
+      return { ok: true };
+    });
+
+    render(
+      <MemoryRouter initialEntries={['/login']}>
+        <Login />
+      </MemoryRouter>,
+    );
+
+    const btn = await screen.findByRole('button', { name: /sign in with google/i });
+    fireEvent.click(btn);
+
+    await waitFor(() =>
+      expect(assignMock).toHaveBeenCalledWith('https://accounts.google.com/o/oauth2/v2/auth?state=s_lock'),
+    );
+    expect(localStorage.getItem('gr_locked_user')).toBeNull();
+  });
 });

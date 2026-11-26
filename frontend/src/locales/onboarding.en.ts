@@ -6,7 +6,7 @@ export default {
   waitingBody: 'Your profile is with the transport team. While you wait, finish these so you’re ready to go.',
   joined: 'Joined with your invite link',
   passkey: 'Add a passkey',
-  passkeyHint: 'Sign in with your face, fingerprint or screen lock. There is no password.',
+  passkeyHint: 'Sign in with your face, fingerprint or screen lock — no password needed.',
   photo: 'Add a profile photo',
   photoHint: 'Optional. Helps drivers and passengers recognise you.',
   review: 'An admin assigns your role and group',

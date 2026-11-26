@@ -12,6 +12,7 @@ const { post } = vi.hoisted(() => ({ post: vi.fn() }));
 vi.mock('./api', async (orig) => ({ ...(await orig<typeof import('./api')>()), post }));
 
 const tooOld = () => new ApiError(403, 'sign in again', 'RECENT_SIGN_IN_REQUIRED');
+const needsMfa = () => new ApiError(403, 'mfa required', 'MFA_REQUIRED');
 
 describe('withRecentSignIn', () => {
   beforeEach(() => post.mockReset());
@@ -19,8 +20,35 @@ describe('withRecentSignIn', () => {
   it('passes the error on without a passkey prompt when the member has no usable passkey', async () => {
     const fn = vi.fn().mockRejectedValue(tooOld());
     await expect(withRecentSignIn(fn, false)).rejects.toMatchObject({ code: 'RECENT_SIGN_IN_REQUIRED' });
+    await expect(withRecentSignIn(vi.fn().mockRejectedValue(needsMfa()), false)).rejects.toMatchObject({
+      code: 'MFA_REQUIRED',
+    });
     expect(fn).toHaveBeenCalledTimes(1);
     expect(post).not.toHaveBeenCalled();
+  });
+
+  it('asks for the passkey once and retries on MFA_REQUIRED when the member has a passkey', async () => {
+    const fn = vi.fn().mockRejectedValueOnce(needsMfa()).mockResolvedValueOnce('elevated');
+    post
+      .mockResolvedValueOnce({ challenge_id: 'c-mfa', options: { publicKey: { challenge: 'AA', allowCredentials: [] } } })
+      .mockResolvedValueOnce({ ok: true });
+    const cred = {
+      id: 'x',
+      rawId: new Uint8Array([1]).buffer,
+      type: 'public-key',
+      response: {
+        authenticatorData: new Uint8Array([1]).buffer,
+        clientDataJSON: new Uint8Array([1]).buffer,
+        signature: new Uint8Array([1]).buffer,
+        userHandle: new Uint8Array([1]).buffer,
+      },
+      getClientExtensionResults: () => ({}),
+    };
+    vi.stubGlobal('navigator', { ...navigator, credentials: { get: vi.fn().mockResolvedValue(cred) } });
+    await expect(withRecentSignIn(fn, true)).resolves.toBe('elevated');
+    expect(post).toHaveBeenCalledTimes(2);
+    expect(fn).toHaveBeenCalledTimes(2);
+    vi.unstubAllGlobals();
   });
 
   it('passes other errors on untouched', async () => {

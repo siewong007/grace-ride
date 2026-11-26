@@ -219,6 +219,7 @@ export default function Login() {
     setOauthError(null);
     setResetNotice(null);
     void googleAct.run(async () => {
+      clearAutoLock();
       clearClientSessionStorage();
       const res = await post<{ url: string }>('/auth/google/start', {
         purpose: 'login',

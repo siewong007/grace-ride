@@ -25,7 +25,9 @@ use serde::Deserialize;
 use serde_json::{json, Value};
 use totp_rs::{Secret, Totp};
 
-use crate::auth::{hash_token, CurrentUser, SESSION_COOKIE, SESSION_COOKIE_SECURE};
+use crate::auth::{
+    hash_token, session_cookie_name, CurrentUser, SESSION_COOKIE, SESSION_COOKIE_SECURE,
+};
 use crate::error::{bad, forbidden, not_found, too_many_requests, AppError, AppResult};
 use crate::i18n::ErrorKey;
 use crate::perms;
@@ -144,6 +146,8 @@ pub fn router() -> Router<AppState> {
         )
 }
 
+pub(super) const MAX_PASSWORD_BYTES: usize = 1024;
+
 pub fn hash_password(pw: &str) -> AppResult<String> {
     Argon2::default()
         .hash_password(pw.as_bytes())
@@ -246,6 +250,18 @@ pub(super) async fn create_session(
     user_id: i64,
     mfa_ok: bool,
 ) -> AppResult<CookieJar> {
+    let cookie_name = session_cookie_name(state.cfg.secure_cookies());
+    if let Some(prev) = jar
+        .get(cookie_name)
+        .map(|c| c.value().to_string())
+        .filter(|t| t.len() == 48)
+    {
+        sqlx::query("DELETE FROM sessions WHERE token=$1")
+            .bind(hash_token(&prev))
+            .execute(&state.db)
+            .await?;
+    }
+    let jar = google::clear_pending_auth_cookies(jar);
     let (roles,): (String,) = sqlx::query_as("SELECT roles FROM users WHERE id=$1")
         .bind(user_id)
         .fetch_one(&state.db)
@@ -358,13 +374,15 @@ pub(super) async fn revoke_other_sessions(
 }
 
 fn clear_cookies(jar: CookieJar) -> CookieJar {
-    jar.remove(Cookie::build(SESSION_COOKIE).path("/").build())
+    let jar = jar
+        .remove(Cookie::build(SESSION_COOKIE).path("/").build())
         .remove(
             Cookie::build(SESSION_COOKIE_SECURE)
                 .path("/")
                 .secure(true)
                 .build(),
-        )
+        );
+    google::clear_all_ephemeral_cookies(jar)
 }
 
 #[derive(sqlx::FromRow)]
@@ -409,7 +427,7 @@ async fn me(State(st): State<AppState>, u: CurrentUser) -> AppResult<Json<Value>
                 s.locked_at,
                 (SELECT COUNT(*) FROM passkeys p WHERE p.user_id = u.id) AS passkey_count,
                 (SELECT COUNT(*) FROM biometric_credentials b WHERE b.user_id = u.id) AS biometric_count,
-                (SELECT oa.email FROM oauth_accounts oa WHERE oa.user_id = u.id AND oa.provider = 'google' AND oa.email = u.email LIMIT 1) AS google_email,
+                (SELECT oa.email FROM oauth_accounts oa WHERE oa.user_id = u.id AND oa.provider = 'google' AND lower(oa.email) = lower(u.email) LIMIT 1) AS google_email,
                 (SELECT COUNT(*) FROM notifications n WHERE n.user_id = u.id AND n.read_at IS NULL) AS unread_count,
                 (SELECT value FROM system_settings WHERE key = 'session_timeout_mins') AS org_timeout,
                 COALESCE((
@@ -606,7 +624,11 @@ async fn login_password(
         .await?;
 
     let email = req.email.trim().to_lowercase();
-    if email.is_empty() || email.len() > 254 || req.password.is_empty() {
+    if email.is_empty()
+        || email.len() > 254
+        || req.password.is_empty()
+        || req.password.len() > MAX_PASSWORD_BYTES
+    {
         return Err(bad(lang, ErrorKey::InvalidCredentials));
     }
 
@@ -839,18 +861,32 @@ async fn logout_all(
     jar: CookieJar,
     u: CurrentUser,
 ) -> AppResult<(CookieJar, Json<Value>)> {
+    let mut tx = st.db.begin().await?;
     sqlx::query("DELETE FROM sessions WHERE user_id=$1")
         .bind(u.id)
-        .execute(&st.db)
+        .execute(&mut *tx)
+        .await?;
+    sqlx::query("DELETE FROM auth_challenges WHERE user_id=$1")
+        .bind(u.id)
+        .execute(&mut *tx)
+        .await?;
+    sqlx::query("DELETE FROM password_reset_tokens WHERE user_id=$1")
+        .bind(u.id)
+        .execute(&mut *tx)
+        .await?;
+    sqlx::query("DELETE FROM oauth_states WHERE user_id=$1")
+        .bind(u.id)
+        .execute(&mut *tx)
         .await?;
     sqlx::query("DELETE FROM push_subscriptions WHERE user_id=$1")
         .bind(u.id)
-        .execute(&st.db)
+        .execute(&mut *tx)
         .await?;
     sqlx::query("DELETE FROM mobile_push_tokens WHERE user_id=$1")
         .bind(u.id)
-        .execute(&st.db)
+        .execute(&mut *tx)
         .await?;
+    tx.commit().await?;
     audit(&st.db, Some(u.id), "logout.all", "user", Some(u.id), "").await;
     Ok((clear_cookies(jar), Json(json!({"ok": true}))))
 }

@@ -33,3 +33,9 @@ CREATE INDEX IF NOT EXISTS idx_password_reset_tokens_expires
 ALTER TABLE auth_challenges DROP CONSTRAINT IF EXISTS chk_auth_challenges_kind;
 ALTER TABLE auth_challenges ADD CONSTRAINT chk_auth_challenges_kind
     CHECK (kind IN ('reg', 'auth', 'reauth', 'bio_reg', 'bio_login', 'bio_reauth', 'google_totp'));
+
+CREATE INDEX IF NOT EXISTS idx_oauth_states_created_at
+    ON oauth_states (created_at);
+
+CREATE INDEX IF NOT EXISTS idx_oauth_states_user
+    ON oauth_states (user_id);

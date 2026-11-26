@@ -323,6 +323,10 @@ pub(super) async fn approve_recovery(
         .bind(uid)
         .execute(&mut *tx)
         .await?;
+    sqlx::query("DELETE FROM oauth_states WHERE user_id=$1")
+        .bind(uid)
+        .execute(&mut *tx)
+        .await?;
     tx.commit().await?;
     st.limiter
         .reset(&format!("pw_attempt:user:{}", email.to_lowercase()));

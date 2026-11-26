@@ -7,7 +7,9 @@ import { post } from '../api';
 import { signOutClient } from '../pushNotifications';
 import { Avatar } from './ui';
 import { passkeySupported, reauthWithPasskey } from '../webauthn';
-import { clearOfflineSnapshots } from '../offlineSnapshot';
+import { clearAutoLock, clearOfflineSnapshots } from '../offlineSnapshot';
+
+export { clearAutoLock };
 
 interface AutoLockCtx {
   isLocked: boolean;
@@ -48,9 +50,6 @@ const writeStore = (key: string, value: string | null) => {
     /* storage blocked: the lock still works for this page */
   }
 };
-
-/** Forgets a saved lock. Call after a fresh sign-in, which proves who is at the device. */
-export const clearAutoLock = () => writeStore(LOCKED_KEY, null);
 
 export function AutoLockProvider({ children }: { children: ReactNode }) {
   const { me, refresh, clearLocalAuth } = useAuth();

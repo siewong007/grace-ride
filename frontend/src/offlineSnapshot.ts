@@ -76,6 +76,17 @@ export function clearOfflineSnapshots(): void {
   }
 }
 
+/** Forget a saved lock flag. Call after a fresh sign-in or when a session is invalidated. */
+export function clearAutoLock(): void {
+  try {
+    if (typeof localStorage !== 'undefined') {
+      localStorage.removeItem('gr_locked_user');
+    }
+  } catch {
+    /* ignore storage errors */
+  }
+}
+
 /** Clear all client-side session caches, drafts, passkey hints, and lock markers. */
 export function clearClientSessionStorage(): void {
   clearOfflineSnapshots();

@@ -606,6 +606,10 @@ pub(super) async fn update_user(
             .bind(id)
             .execute(&mut *tx)
             .await?;
+        sqlx::query("DELETE FROM oauth_states WHERE user_id=$1")
+            .bind(id)
+            .execute(&mut *tx)
+            .await?;
         sqlx::query(
             "UPDATE invites SET expires_at=$2 WHERE kind='recovery' AND user_id=$1 AND used_at IS NULL",
         )

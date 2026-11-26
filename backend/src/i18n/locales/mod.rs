@@ -97,6 +97,7 @@ pub fn render(lang: Lang, key: &ErrorKey) -> String {
         ErrorKey::TwoFactorNotConfigured => auth::render(lang, AuthError::TwoFactorNotConfigured),
         ErrorKey::StartSetupFirst => auth::render(lang, AuthError::StartSetupFirst),
         ErrorKey::PasswordTooShort => auth::render(lang, AuthError::PasswordTooShort),
+        ErrorKey::PasswordTooLong => auth::render(lang, AuthError::PasswordTooLong),
         ErrorKey::CurrentPasswordIncorrect => {
             auth::render(lang, AuthError::CurrentPasswordIncorrect)
         }
@@ -575,6 +576,7 @@ mod tests {
             ErrorKey::TwoFactorNotConfigured => ErrorKey::TwoFactorNotConfigured,
             ErrorKey::StartSetupFirst => ErrorKey::StartSetupFirst,
             ErrorKey::PasswordTooShort => ErrorKey::PasswordTooShort,
+            ErrorKey::PasswordTooLong => ErrorKey::PasswordTooLong,
             ErrorKey::CurrentPasswordIncorrect => ErrorKey::CurrentPasswordIncorrect,
             ErrorKey::InviteExpired => ErrorKey::InviteExpired,
             ErrorKey::InviteAlreadyUsed => ErrorKey::InviteAlreadyUsed,

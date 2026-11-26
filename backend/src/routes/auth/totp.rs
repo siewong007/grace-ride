@@ -483,13 +483,16 @@ pub(super) async fn set_password(
     if req.new_password.chars().count() < 10 {
         return Err(bad(u.lang, ErrorKey::PasswordTooShort));
     }
+    if req.new_password.len() > super::MAX_PASSWORD_BYTES {
+        return Err(bad(u.lang, ErrorKey::PasswordTooLong));
+    }
     let (hash,): (Option<String>,) = sqlx::query_as("SELECT password_hash FROM users WHERE id=$1")
         .bind(u.id)
         .fetch_one(&st.db)
         .await?;
     if let Some(h) = hash {
         let current = req.current.unwrap_or_default();
-        if !verify_password_async(current, h).await? {
+        if current.len() > super::MAX_PASSWORD_BYTES || !verify_password_async(current, h).await? {
             audit(
                 &st.db,
                 Some(u.id),
@@ -503,12 +506,32 @@ pub(super) async fn set_password(
         }
     }
     let new_hash = hash_password_async(req.new_password).await?;
+    let mut tx = st.db.begin().await?;
     sqlx::query("UPDATE users SET password_hash=$1 WHERE id=$2")
         .bind(new_hash)
         .bind(u.id)
-        .execute(&st.db)
+        .execute(&mut *tx)
         .await?;
-    revoke_other_sessions(&st.db, u.id, &u.session_id).await?;
+    sqlx::query("DELETE FROM sessions WHERE user_id=$1 AND token <> $2")
+        .bind(u.id)
+        .bind(&u.session_id)
+        .execute(&mut *tx)
+        .await?;
+    sqlx::query("DELETE FROM password_reset_tokens WHERE user_id=$1")
+        .bind(u.id)
+        .execute(&mut *tx)
+        .await?;
+    sqlx::query("DELETE FROM auth_challenges WHERE user_id=$1 AND kind='google_totp'")
+        .bind(u.id)
+        .execute(&mut *tx)
+        .await?;
+    sqlx::query("DELETE FROM login_failures WHERE lower(email)=lower($1)")
+        .bind(&u.email)
+        .execute(&mut *tx)
+        .await?;
+    tx.commit().await?;
+    st.limiter
+        .reset(&format!("pw_attempt:user:{}", u.email.to_lowercase()));
     audit(&st.db, Some(u.id), "password.set", "user", Some(u.id), "").await;
     Ok(Json(json!({ "ok": true })))
 }

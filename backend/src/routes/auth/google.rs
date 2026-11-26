@@ -54,6 +54,16 @@ fn clear_ephemeral_cookie(
         .remove(Cookie::build(secure_name).path("/").secure(true).build())
 }
 
+pub(super) fn clear_pending_auth_cookies(jar: CookieJar) -> CookieJar {
+    let jar = clear_ephemeral_cookie(jar, PW_RESET_COOKIE, PW_RESET_COOKIE_SECURE);
+    clear_ephemeral_cookie(jar, GOOGLE_TOTP_COOKIE, GOOGLE_TOTP_COOKIE_SECURE)
+}
+
+pub(super) fn clear_all_ephemeral_cookies(jar: CookieJar) -> CookieJar {
+    let jar = clear_ephemeral_cookie(jar, OAUTH_NONCE_COOKIE, OAUTH_NONCE_COOKIE_SECURE);
+    clear_pending_auth_cookies(jar)
+}
+
 fn extract_ephemeral_cookie(
     jar: &CookieJar,
     secure: bool,
@@ -278,6 +288,13 @@ pub(super) async fn google_callback(
         OAUTH_NONCE_COOKIE_SECURE,
     );
     let jar = clear_ephemeral_cookie(jar, OAUTH_NONCE_COOKIE, OAUTH_NONCE_COOKIE_SECURE);
+    if !st.google_oauth.is_enabled() {
+        return Ok(redirect_err(
+            jar,
+            "/login",
+            ErrorKey::GoogleNotConfigured.code(),
+        ));
+    }
 
     let Some(raw_state) = q.state.as_deref().map(str::trim).filter(|s| !s.is_empty()) else {
         return Ok(redirect_err(
@@ -389,6 +406,14 @@ async fn handle_link_callback(
             ErrorKey::ChallengeMismatch.code(),
         ));
     };
+    let session_hash = hash_token(&sess_token);
+    if !crate::security::evaluate_session_alive_and_lock_checked(st, &session_hash).await? {
+        return Ok(redirect_err(
+            jar,
+            err_base,
+            ErrorKey::ChallengeMismatch.code(),
+        ));
+    }
 
     let sess_row: Option<(i64, String)> = sqlx::query_as(
         "SELECT u.id, u.email
@@ -398,7 +423,7 @@ async fn handle_link_callback(
            AND s.locked_at IS NULL
            AND u.status IN ('active', 'pending')",
     )
-    .bind(hash_token(&sess_token))
+    .bind(&session_hash)
     .bind(now())
     .fetch_optional(&st.db)
     .await?;
@@ -483,6 +508,14 @@ async fn handle_link_callback(
         }
         return Err(err.into());
     }
+    sqlx::query("DELETE FROM password_reset_tokens WHERE user_id = $1")
+        .bind(sess_uid)
+        .execute(&mut *tx)
+        .await?;
+    sqlx::query("DELETE FROM auth_challenges WHERE user_id = $1 AND kind = 'google_totp'")
+        .bind(sess_uid)
+        .execute(&mut *tx)
+        .await?;
     tx.commit().await?;
 
     audit(
@@ -551,7 +584,7 @@ async fn handle_login_callback(
         let target = safe_redirect(Some(&row.redirect_to), "/");
         if totp_enabled == 1 {
             let raw_challenge = random_token(48);
-            let state_json = json!({ "redirect": target }).to_string();
+            let state_json = json!({ "redirect": target, "attempts": 0 }).to_string();
             let mut tx = st.db.begin().await?;
             sqlx::query(
                 "DELETE FROM auth_challenges WHERE (user_id = $1 AND kind = 'google_totp') OR created_at < $2",
@@ -763,15 +796,29 @@ pub(super) async fn google_unlink(
     u: CurrentUser,
 ) -> AppResult<Json<Value>> {
     super::passkeys::require_recent_sign_in(&st, &u).await?;
+    let mut tx = st.db.begin().await?;
     sqlx::query("DELETE FROM oauth_accounts WHERE user_id = $1 AND provider = 'google'")
         .bind(u.id)
-        .execute(&st.db)
+        .execute(&mut *tx)
         .await?;
     sqlx::query("DELETE FROM password_reset_tokens WHERE user_id = $1")
         .bind(u.id)
-        .execute(&st.db)
+        .execute(&mut *tx)
         .await?;
-    revoke_other_sessions(&st.db, u.id, &u.session_id).await?;
+    sqlx::query("DELETE FROM auth_challenges WHERE user_id = $1 AND kind = 'google_totp'")
+        .bind(u.id)
+        .execute(&mut *tx)
+        .await?;
+    sqlx::query("DELETE FROM oauth_states WHERE user_id = $1")
+        .bind(u.id)
+        .execute(&mut *tx)
+        .await?;
+    sqlx::query("DELETE FROM sessions WHERE user_id = $1 AND token <> $2")
+        .bind(u.id)
+        .bind(&u.session_id)
+        .execute(&mut *tx)
+        .await?;
+    tx.commit().await?;
     audit(&st.db, Some(u.id), "google.unlink", "user", Some(u.id), "").await;
     Ok(Json(json!({ "ok": true })))
 }
@@ -802,8 +849,9 @@ pub(super) async fn google_totp_status(
         "SELECT u.email
          FROM auth_challenges c
          JOIN users u ON u.id = c.user_id
-         JOIN oauth_accounts oa ON oa.user_id = u.id AND oa.provider = 'google' AND oa.email = u.email
+         JOIN oauth_accounts oa ON oa.user_id = u.id AND oa.provider = 'google' AND lower(oa.email) = lower(u.email)
          WHERE c.id = $1 AND c.kind = 'google_totp' AND c.created_at >= $2
+           AND COALESCE((c.state::jsonb->>'attempts')::int, 0) < 5
            AND u.status IN ('active', 'pending') AND u.totp_enabled = 1",
     )
     .bind(hash_token(&raw))
@@ -846,28 +894,47 @@ pub(super) async fn google_totp_complete(
     };
     let challenge_id = hash_token(&raw);
 
-    let row: Option<(
-        i64,
-        String,
-        String,
-        String,
-        i64,
-        Option<String>,
-        Option<String>,
-    )> = sqlx::query_as(
-        "SELECT u.id, c.state, u.email, u.status, u.totp_enabled, u.totp_secret, oa.email
-             FROM auth_challenges c
-             JOIN users u ON u.id = c.user_id
-             LEFT JOIN oauth_accounts oa ON oa.user_id = u.id AND oa.provider = 'google'
-             WHERE c.id = $1 AND c.kind = 'google_totp' AND c.created_at >= $2",
+    let reserved: Option<(i64, String)> = sqlx::query_as(
+        "UPDATE auth_challenges
+         SET state = jsonb_set(
+             state::jsonb,
+             '{attempts}',
+             to_jsonb(COALESCE((state::jsonb->>'attempts')::int, 0) + 1)
+         )::text
+         WHERE id = $1
+           AND kind = 'google_totp'
+           AND created_at >= $2
+           AND COALESCE((state::jsonb->>'attempts')::int, 0) < 5
+         RETURNING user_id, state",
     )
     .bind(&challenge_id)
     .bind(minutes_ago(10))
     .fetch_optional(&st.db)
     .await?;
 
-    let Some((uid, state_json, user_email, user_status, totp_enabled, totp_secret, oa_email)) = row
-    else {
+    let Some((uid, state_json)) = reserved else {
+        let _ = sqlx::query("DELETE FROM auth_challenges WHERE id = $1 AND kind = 'google_totp'")
+            .bind(&challenge_id)
+            .execute(&st.db)
+            .await;
+        return Err(bad(lang, ErrorKey::VerificationExpired));
+    };
+
+    let user_row: Option<(String, String, i64, Option<String>, Option<String>)> = sqlx::query_as(
+        "SELECT u.email, u.status, u.totp_enabled, u.totp_secret, oa.email
+         FROM users u
+         LEFT JOIN oauth_accounts oa ON oa.user_id = u.id AND oa.provider = 'google'
+         WHERE u.id = $1",
+    )
+    .bind(uid)
+    .fetch_optional(&st.db)
+    .await?;
+
+    let Some((user_email, user_status, totp_enabled, totp_secret, oa_email)) = user_row else {
+        let _ = sqlx::query("DELETE FROM auth_challenges WHERE id = $1")
+            .bind(&challenge_id)
+            .execute(&st.db)
+            .await;
         return Err(bad(lang, ErrorKey::VerificationExpired));
     };
     if !matches!(user_status.as_str(), "active" | "pending") {
@@ -892,34 +959,14 @@ pub(super) async fn google_totp_complete(
     let parsed_state: GoogleTotpState =
         serde_json::from_str(&state_json).unwrap_or(GoogleTotpState {
             redirect: "/".into(),
-            attempts: 0,
+            attempts: 1,
         });
-    if parsed_state.attempts >= 5 {
-        let _ = sqlx::query("DELETE FROM auth_challenges WHERE id = $1")
-            .bind(&challenge_id)
-            .execute(&st.db)
-            .await;
-        return Err(bad(lang, ErrorKey::VerificationExpired));
-    }
-
     let redirect_target = safe_redirect(Some(&parsed_state.redirect), "/");
-    match verify_totp_or_backup(&st, uid, totp_secret.as_deref(), &user_email, clean, lang).await? {
-        SecondFactorOutcome::Verified => {}
-        SecondFactorOutcome::InvalidCode => {
-            let next_attempts = parsed_state.attempts.saturating_add(1);
-            if next_attempts >= 5 {
+    match verify_totp_or_backup(&st, uid, totp_secret.as_deref(), &user_email, clean, lang).await {
+        Ok(SecondFactorOutcome::Verified) => {}
+        Ok(SecondFactorOutcome::InvalidCode) => {
+            if parsed_state.attempts >= 5 {
                 let _ = sqlx::query("DELETE FROM auth_challenges WHERE id = $1")
-                    .bind(&challenge_id)
-                    .execute(&st.db)
-                    .await;
-            } else {
-                let updated_state = json!({
-                    "redirect": redirect_target,
-                    "attempts": next_attempts,
-                })
-                .to_string();
-                let _ = sqlx::query("UPDATE auth_challenges SET state = $1 WHERE id = $2")
-                    .bind(updated_state)
                     .bind(&challenge_id)
                     .execute(&st.db)
                     .await;
@@ -934,6 +981,21 @@ pub(super) async fn google_totp_complete(
             )
             .await;
             return Err(bad(lang, ErrorKey::InvalidCode));
+        }
+        Err(err) => {
+            let _ = sqlx::query(
+                "UPDATE auth_challenges
+                 SET state = jsonb_set(
+                     state::jsonb,
+                     '{attempts}',
+                     to_jsonb(GREATEST(0, COALESCE((state::jsonb->>'attempts')::int, 1) - 1))
+                 )::text
+                 WHERE id = $1 AND kind = 'google_totp'",
+            )
+            .bind(&challenge_id)
+            .execute(&st.db)
+            .await;
+            return Err(err);
         }
     }
 
@@ -977,7 +1039,7 @@ pub(super) async fn password_reset_status(
         "SELECT u.email
          FROM password_reset_tokens t
          JOIN users u ON u.id = t.user_id
-         JOIN oauth_accounts oa ON oa.user_id = u.id AND oa.provider = 'google' AND oa.email = u.email
+         JOIN oauth_accounts oa ON oa.user_id = u.id AND oa.provider = 'google' AND lower(oa.email) = lower(u.email)
          WHERE t.token_hash = $1 AND t.expires_at >= $2 AND u.status IN ('active', 'pending')",
     )
     .bind(hash_token(&raw))
@@ -1007,6 +1069,9 @@ pub(super) async fn password_reset_complete(
     let lang = visitor_lang(&headers);
     if req.new_password.chars().count() < 10 {
         return Err(bad(lang, ErrorKey::PasswordTooShort));
+    }
+    if req.new_password.len() > super::MAX_PASSWORD_BYTES {
+        return Err(bad(lang, ErrorKey::PasswordTooLong));
     }
     let Some(raw) = extract_ephemeral_cookie(
         &jar,
@@ -1088,7 +1153,15 @@ pub(super) async fn password_reset_complete(
         .bind(uid)
         .execute(&mut *tx)
         .await?;
-    sqlx::query("DELETE FROM login_failures WHERE email = $1")
+    sqlx::query("DELETE FROM auth_challenges WHERE user_id = $1")
+        .bind(uid)
+        .execute(&mut *tx)
+        .await?;
+    sqlx::query("DELETE FROM oauth_states WHERE user_id = $1")
+        .bind(uid)
+        .execute(&mut *tx)
+        .await?;
+    sqlx::query("DELETE FROM login_failures WHERE lower(email) = lower($1)")
         .bind(&user_email)
         .execute(&mut *tx)
         .await?;
@@ -1096,7 +1169,7 @@ pub(super) async fn password_reset_complete(
     st.limiter
         .reset(&format!("pw_attempt:user:{}", user_email.to_lowercase()));
 
-    let jar = clear_ephemeral_cookie(jar, PW_RESET_COOKIE, PW_RESET_COOKIE_SECURE);
+    let jar = clear_pending_auth_cookies(jar);
     audit(&st.db, Some(uid), "password.reset", "user", Some(uid), "").await;
     Ok((jar, Json(json!({ "ok": true }))))
 }

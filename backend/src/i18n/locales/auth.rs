@@ -13,6 +13,7 @@ pub enum AuthError<'a> {
     TwoFactorNotConfigured,
     StartSetupFirst,
     PasswordTooShort,
+    PasswordTooLong,
     CurrentPasswordIncorrect,
     InviteExpired,
     InviteAlreadyUsed,
@@ -79,6 +80,11 @@ pub fn render(lang: Lang, key: AuthError<'_>) -> String {
             lang,
             "密码至少需要 10 个字符",
             "Password must be at least 10 characters",
+        ),
+        AuthError::PasswordTooLong => pair(
+            lang,
+            "密码不能超过 1024 个字符",
+            "Password cannot exceed 1024 characters",
         ),
         AuthError::CurrentPasswordIncorrect => {
             pair(lang, "目前密码不正确", "Current password is incorrect")

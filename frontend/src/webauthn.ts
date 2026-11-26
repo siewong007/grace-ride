@@ -113,7 +113,8 @@ export async function withRecentSignIn<T>(fn: () => Promise<T>, canPasskey: bool
   try {
     return await fn();
   } catch (e) {
-    if (!canPasskey || (e as ApiError).code !== 'RECENT_SIGN_IN_REQUIRED') throw e;
+    const code = (e as ApiError).code;
+    if (!canPasskey || (code !== 'RECENT_SIGN_IN_REQUIRED' && code !== 'MFA_REQUIRED')) throw e;
     await reauthWithPasskey();
     return fn();
   }
