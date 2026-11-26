@@ -34,4 +34,13 @@ graceride.saliminn.my {
 		health_uri /api/health
 		health_interval 30s
 	}
+	log {
+		output stdout
+		format filter {
+			wrap json
+			fields {
+				request>uri regexp "((?:/api)?/(?:invites?|visit|care)/|/api/(?:calendar|push/telegram/webhook)/)[^/?]+" "${1}[REDACTED]"
+			}
+		}
+	}
 }

@@ -123,6 +123,7 @@ pub enum ErrorKey {
     MileageAuthorisationRestricted,
     EventNotDraft,
     EventCannotHideWithSignups,
+    EventMileageNotClaimable,
 
     // === Rides ===
     InvalidPickupTime,
@@ -238,10 +239,12 @@ pub enum ErrorKey {
     MonthFormatInvalid,
     BatchEmpty,
     BatchAlreadyPaid,
+    CannotPayOwnBatch,
     VisitorReimbNeedsDriver,
     VisitorReimbAlreadyLive,
     VisitorHasReimbursement,
     AmountMustBePositive,
+    TelegramPairingRequired,
 
     // === Files ===
     NoFileReceived,
@@ -382,6 +385,7 @@ impl ErrorKey {
             Self::MileageAuthorisationRestricted => "MILEAGE_AUTHORISATION_RESTRICTED",
             Self::EventNotDraft => "EVENT_NOT_DRAFT",
             Self::EventCannotHideWithSignups => "EVENT_CANNOT_HIDE_WITH_SIGNUPS",
+            Self::EventMileageNotClaimable => "EVENT_MILEAGE_NOT_CLAIMABLE",
 
             Self::InvalidPickupTime => "INVALID_PICKUP_TIME",
             Self::PickupTimeInPast => "PICKUP_TIME_IN_PAST",
@@ -494,10 +498,12 @@ impl ErrorKey {
             Self::MonthFormatInvalid => "MONTH_FORMAT_INVALID",
             Self::BatchEmpty => "BATCH_EMPTY",
             Self::BatchAlreadyPaid => "BATCH_ALREADY_PAID",
+            Self::CannotPayOwnBatch => "CANNOT_PAY_OWN_BATCH",
             Self::VisitorReimbNeedsDriver => "VISITOR_REIMB_NEEDS_DRIVER",
             Self::VisitorReimbAlreadyLive => "VISITOR_REIMB_ALREADY_LIVE",
             Self::VisitorHasReimbursement => "VISITOR_HAS_REIMBURSEMENT",
             Self::AmountMustBePositive => "AMOUNT_MUST_BE_POSITIVE",
+            Self::TelegramPairingRequired => "TELEGRAM_PAIRING_REQUIRED",
 
             Self::NoFileReceived => "NO_FILE_RECEIVED",
             Self::FileTooLarge => "FILE_TOO_LARGE",

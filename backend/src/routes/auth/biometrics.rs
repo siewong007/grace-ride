@@ -22,6 +22,10 @@ use crate::util::{audit, now, random_token, t, Lang};
 
 const MAX_BIOMETRICS_PER_USER: usize = 10;
 
+fn attestation_required(st: &AppState) -> bool {
+    st.cfg.require_biometric_attestation && !st.cfg.dev_mode
+}
+
 /// ASN.1 DER SubjectPublicKeyInfo header for an EC P-256 (`secp256r1`) uncompressed key.
 const P256_SPKI_PREFIX: [u8; 26] = [
     0x30, 0x59, 0x30, 0x13, 0x06, 0x07, 0x2a, 0x86, 0x48, 0xce, 0x3d, 0x02, 0x01, 0x06, 0x08, 0x2a,
@@ -130,6 +134,9 @@ pub(super) async fn biometric_register_finish(
                 .map_err(|_| bad(u.lang, ErrorKey::BiometricRegistrationFailed))?;
             chain_der.push(der);
         }
+        if attestation_required(&st) && st.cfg.android_cert_sha256_fingerprints.is_empty() {
+            return Err(bad(u.lang, ErrorKey::BiometricRegistrationFailed));
+        }
         let trusted_roots = crate::attestation::trusted_root_spki_hashes();
         if let Err(err) = crate::attestation::verify_android_key_attestation(
             &chain_der,
@@ -143,7 +150,7 @@ pub(super) async fn biometric_register_finish(
             return Err(bad(u.lang, ErrorKey::BiometricRegistrationFailed));
         }
         attested = true;
-    } else if crate::attestation::require_attestation_enabled() && !st.cfg.dev_mode {
+    } else if attestation_required(&st) {
         return Err(bad(u.lang, ErrorKey::BiometricRegistrationFailed));
     }
     let label = req
@@ -241,9 +248,9 @@ pub(super) async fn biometric_login_start(
         .await?;
     let challenge = random_challenge_b64();
     let cred_id = req.credential_id.trim();
-    let row: Option<(i64, i64)> = if !cred_id.is_empty() && cred_id.len() <= 128 {
+    let row: Option<(i64, i64, bool)> = if !cred_id.is_empty() && cred_id.len() <= 128 {
         sqlx::query_as(
-            "SELECT bc.id, bc.user_id
+            "SELECT bc.id, bc.user_id, bc.attested
              FROM biometric_credentials bc
              JOIN users u ON u.id = bc.user_id
              WHERE bc.cred_id = $1 AND u.status IN ('active', 'pending')",
@@ -255,13 +262,20 @@ pub(super) async fn biometric_login_start(
         None
     };
 
-    // Unknown or revoked credential_id: answer with a decoy challenge so enumeration reveals nothing.
-    let Some((bc_id, uid)) = row else {
+    // Unknown, revoked, or unattested (when attestation required) credential_id:
+    // answer with an indistinguishable decoy challenge.
+    let Some((bc_id, uid, attested)) = row else {
         return Ok(Json(json!({
             "challenge_id": uuid::Uuid::new_v4().to_string(),
             "challenge": challenge,
         })));
     };
+    if attestation_required(&st) && !attested {
+        return Ok(Json(json!({
+            "challenge_id": uuid::Uuid::new_v4().to_string(),
+            "challenge": challenge,
+        })));
+    }
 
     let state = serde_json::to_string(&BioChallengeState {
         cred_row_id: bc_id,
@@ -303,8 +317,8 @@ pub(super) async fn biometric_login_finish(
     };
     let st_data: BioChallengeState =
         serde_json::from_str(&state_json).map_err(anyhow::Error::from)?;
-    let row: Option<(Vec<u8>, String)> = sqlx::query_as(
-        "SELECT bc.public_key, u.status
+    let row: Option<(Vec<u8>, String, bool)> = sqlx::query_as(
+        "SELECT bc.public_key, u.status, bc.attested
          FROM biometric_credentials bc
          JOIN users u ON u.id = bc.user_id
          WHERE bc.id = $1 AND bc.user_id = $2 AND bc.cred_id = $3",
@@ -315,7 +329,7 @@ pub(super) async fn biometric_login_finish(
     .fetch_optional(&st.db)
     .await?;
 
-    let Some((pubkey, status)) = row else {
+    let Some((pubkey, status, attested)) = row else {
         audit(
             &st.db,
             None,
@@ -327,6 +341,18 @@ pub(super) async fn biometric_login_finish(
         .await;
         return Err(bad(lang, ErrorKey::BiometricFailed));
     };
+    if attestation_required(&st) && !attested {
+        audit(
+            &st.db,
+            None,
+            "login.failed",
+            "user",
+            Some(uid),
+            format!("unattested biometric credential rejected; from {ip}"),
+        )
+        .await;
+        return Err(bad(lang, ErrorKey::BiometricFailed));
+    }
     if !matches!(status.as_str(), "active" | "pending") {
         audit(
             &st.db,
@@ -375,18 +401,23 @@ pub(super) async fn biometric_reauth_start(
     Json(req): Json<BioReauthStartReq>,
 ) -> AppResult<Json<Value>> {
     let cred_id = req.credential_id.trim();
-    let row: Option<(i64,)> = if !cred_id.is_empty() && cred_id.len() <= 128 {
-        sqlx::query_as("SELECT id FROM biometric_credentials WHERE user_id=$1 AND cred_id=$2")
-            .bind(u.id)
-            .bind(cred_id)
-            .fetch_optional(&st.db)
-            .await?
+    let row: Option<(i64, bool)> = if !cred_id.is_empty() && cred_id.len() <= 128 {
+        sqlx::query_as(
+            "SELECT id, attested FROM biometric_credentials WHERE user_id=$1 AND cred_id=$2",
+        )
+        .bind(u.id)
+        .bind(cred_id)
+        .fetch_optional(&st.db)
+        .await?
     } else {
         None
     };
-    let Some((bc_id,)) = row else {
+    let Some((bc_id, attested)) = row else {
         return Err(bad(u.lang, ErrorKey::BiometricFailed));
     };
+    if attestation_required(&st) && !attested {
+        return Err(bad(u.lang, ErrorKey::BiometricFailed));
+    }
     let challenge = random_challenge_b64();
     let state = serde_json::to_string(&BioChallengeState {
         cred_row_id: bc_id,
@@ -408,17 +439,20 @@ pub(super) async fn biometric_reauth_finish(
     }
     let st_data: BioChallengeState =
         serde_json::from_str(&state_json).map_err(anyhow::Error::from)?;
-    let row: Option<(Vec<u8>,)> = sqlx::query_as(
-        "SELECT public_key FROM biometric_credentials WHERE id=$1 AND user_id=$2 AND cred_id=$3",
+    let row: Option<(Vec<u8>, bool)> = sqlx::query_as(
+        "SELECT public_key, attested FROM biometric_credentials WHERE id=$1 AND user_id=$2 AND cred_id=$3",
     )
     .bind(st_data.cred_row_id)
     .bind(u.id)
     .bind(req.credential_id.trim())
     .fetch_optional(&st.db)
     .await?;
-    let Some((pubkey,)) = row else {
+    let Some((pubkey, attested)) = row else {
         return Err(bad(u.lang, ErrorKey::BiometricFailed));
     };
+    if attestation_required(&st) && !attested {
+        return Err(bad(u.lang, ErrorKey::BiometricFailed));
+    }
     if !verify_p256_signature(&pubkey, "reauth", &st_data.challenge, &req.signature) {
         audit(
             &st.db,
@@ -461,8 +495,8 @@ pub(super) async fn list_biometrics(
     State(st): State<AppState>,
     u: CurrentUser,
 ) -> AppResult<Json<Value>> {
-    let rows: Vec<(i64, String, String, String, Option<String>)> = sqlx::query_as(
-        "SELECT id, cred_id, label, created_at, last_used
+    let rows: Vec<(i64, String, String, String, Option<String>, bool)> = sqlx::query_as(
+        "SELECT id, cred_id, label, created_at, last_used, attested
          FROM biometric_credentials
          WHERE user_id=$1
          ORDER BY id",
@@ -472,13 +506,16 @@ pub(super) async fn list_biometrics(
     .await?;
     Ok(Json(json!(rows
         .into_iter()
-        .map(|(id, cred_id, label, created_at, last_used)| json!({
-            "id": id,
-            "credential_id": cred_id,
-            "label": label,
-            "created_at": created_at,
-            "last_used": last_used,
-        }))
+        .map(
+            |(id, cred_id, label, created_at, last_used, attested)| json!({
+                "id": id,
+                "credential_id": cred_id,
+                "label": label,
+                "created_at": created_at,
+                "last_used": last_used,
+                "attested": attested,
+            })
+        )
         .collect::<Vec<_>>())))
 }
 

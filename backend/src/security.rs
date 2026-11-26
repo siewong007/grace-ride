@@ -625,7 +625,7 @@ pub async fn session_guard(State(st): State<AppState>, mut req: Request, next: N
             .and_then(|v| v.to_str().ok())
             .map(str::trim)
             != Some("1");
-        if let Some((lang, no_mfa)) = eval_lock_fields(
+        if let Some((lang, _no_mfa)) = eval_lock_fields(
             &st,
             &token_hash,
             LockFields {
@@ -644,15 +644,7 @@ pub async fn session_guard(State(st): State<AppState>, mut req: Request, next: N
         )
         .await
         {
-            let sub = path.strip_prefix("/api").unwrap_or(&path);
-            if !(no_mfa
-                && (sub == "/auth/passkey/register/start"
-                    || sub == "/auth/passkey/register/finish"
-                    || sub == "/auth/biometric/register/start"
-                    || sub == "/auth/biometric/register/finish"))
-            {
-                return locked(lang, ErrorKey::SessionLocked).into_response();
-            }
+            return locked(lang, ErrorKey::SessionLocked).into_response();
         }
     }
 

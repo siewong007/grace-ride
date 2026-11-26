@@ -209,23 +209,20 @@ async fn guard_rank(
         .filter(|p| !before.contains(*p))
         .collect();
     if !perms::is_superadmin(&roles) && !added.is_empty() {
+        let held = perms::for_roles(&mut *conn, &roles).await?;
+        if perms::role_rank(key).is_none()
+            && added.iter().any(|p| p.0.area() == perms::Area::Finance)
+        {
+            return Err(forbidden(u.lang, ErrorKey::CannotGrantUnheldPermission));
+        }
         let caller_holds_role = key == MEMBER_ROLE || roles.iter().any(|r| r == key);
-        let needs_held_check = perms::role_rank(key).is_some()
-            || caller_holds_role
-            || added.iter().any(|p| p.0 == Page::AdminAudit);
-        if needs_held_check {
-            let held = perms::for_roles(&mut *conn, &roles).await?;
-            if (perms::role_rank(key).is_some() || caller_holds_role)
-                && added.iter().any(|p| !held.contains(*p))
-            {
-                return Err(forbidden(u.lang, ErrorKey::CannotGrantUnheldPermission));
-            }
-            if added
-                .iter()
-                .any(|p| p.0 == Page::AdminAudit && !held.contains(*p))
-            {
-                return Err(forbidden(u.lang, ErrorKey::CannotGrantUnheldPermission));
-            }
+        let unheld_disallowed = if perms::role_rank(key).is_some() || caller_holds_role {
+            added.iter().any(|p| !held.contains(*p))
+        } else {
+            added.iter().any(|p| p.0.sensitive() && !held.contains(*p))
+        };
+        if unheld_disallowed {
+            return Err(forbidden(u.lang, ErrorKey::CannotGrantUnheldPermission));
         }
     }
     let power = perms::admin_power_keys();

@@ -44,6 +44,7 @@ pub enum EventsError {
     MileageAuthorisationRestricted,
     EventNotDraft,
     EventCannotHideWithSignups,
+    EventMileageNotClaimable,
 }
 
 pub fn render(lang: Lang, key: EventsError) -> String {
@@ -223,6 +224,11 @@ pub fn render(lang: Lang, key: EventsError) -> String {
             lang,
             "已有会员报名或预约接送，无法退回草稿",
             "Cannot hide to draft while active signups or rides exist",
+        ),
+        EventsError::EventMileageNotClaimable => pair(
+            lang,
+            "此活动未开放车贴报销",
+            "This event is not authorised for mileage reimbursement",
         ),
     }
 }

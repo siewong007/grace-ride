@@ -32,6 +32,7 @@ struct PayoutBatchRow {
     claim_count: i64,
     status: String,
     paid_ref: String,
+    created_by_id: i64,
     created_by: String,
     paid_by: Option<String>,
     paid_at: Option<String>,
@@ -45,7 +46,7 @@ pub(super) async fn list_payout_batches(
     require(&u, Page::AdminReimbPay, Act::View)?;
     let rows: Vec<PayoutBatchRow> = sqlx::query_as(
         "SELECT b.id, b.month, b.title, b.total_cents, b.claim_count, b.status, b.paid_ref,
-                c.name AS created_by, p.name AS paid_by, b.paid_at, b.created_at
+                b.created_by AS created_by_id, c.name AS created_by, p.name AS paid_by, b.paid_at, b.created_at
          FROM payout_batches b
          JOIN users c ON c.id = b.created_by
          LEFT JOIN users p ON p.id = b.paid_by
@@ -63,6 +64,7 @@ pub(super) async fn list_payout_batches(
             "claim_count": b.claim_count,
             "status": b.status,
             "paid_ref": b.paid_ref,
+            "created_by_id": b.created_by_id,
             "created_by": b.created_by,
             "paid_by": b.paid_by,
             "paid_at": b.paid_at,
@@ -106,7 +108,7 @@ pub(super) async fn create_payout_batch(
         let rows: Vec<(i64, i64)> = sqlx::query_as(
             "SELECT id, amount_cents FROM reimbursements
              WHERE id = ANY($1) AND status = 'approved' AND batch_id IS NULL
-               AND user_id <> $2 AND reviewed_by IS DISTINCT FROM $2
+               AND user_id <> $2 AND reviewed_by IS DISTINCT FROM $2 AND requested_by IS DISTINCT FROM $2
              FOR UPDATE",
         )
         .bind(&unique_ids)
@@ -122,7 +124,7 @@ pub(super) async fn create_payout_batch(
             "SELECT id, amount_cents FROM reimbursements
              WHERE status = 'approved' AND batch_id IS NULL
                AND substr(created_at, 1, 7) <= $1
-               AND user_id <> $2 AND reviewed_by IS DISTINCT FROM $2
+               AND user_id <> $2 AND reviewed_by IS DISTINCT FROM $2 AND requested_by IS DISTINCT FROM $2
              FOR UPDATE",
         )
         .bind(&month)
@@ -319,19 +321,22 @@ pub(super) async fn pay_payout_batch(
     }
 
     let mut tx = st.db.begin().await?;
-    let batch: Option<(String,)> =
-        sqlx::query_as("SELECT status FROM payout_batches WHERE id=$1 FOR UPDATE")
+    let batch: Option<(String, i64)> =
+        sqlx::query_as("SELECT status, created_by FROM payout_batches WHERE id=$1 FOR UPDATE")
             .bind(id)
             .fetch_optional(&mut *tx)
             .await?;
-    let Some((status,)) = batch else {
+    let Some((status, created_by)) = batch else {
         return Err(not_found(u.lang));
     };
     if status != "open" {
         return Err(bad(u.lang, ErrorKey::BatchAlreadyPaid));
     }
-    let claims: Vec<(i64, i64, Option<i64>, i64)> = sqlx::query_as(
-        "SELECT id, user_id, reviewed_by, amount_cents FROM reimbursements
+    if created_by == u.id {
+        return Err(forbidden(u.lang, ErrorKey::CannotPayOwnBatch));
+    }
+    let claims: Vec<(i64, i64, Option<i64>, Option<i64>, i64)> = sqlx::query_as(
+        "SELECT id, user_id, reviewed_by, requested_by, amount_cents FROM reimbursements
          WHERE batch_id=$1 AND status='approved' FOR UPDATE",
     )
     .bind(id)
@@ -340,8 +345,8 @@ pub(super) async fn pay_payout_batch(
     if claims.is_empty() {
         return Err(bad(u.lang, ErrorKey::BatchEmpty));
     }
-    for &(_cid, uid, reviewed_by, _amt) in &claims {
-        if uid == u.id {
+    for &(_cid, uid, reviewed_by, requested_by, _amt) in &claims {
+        if uid == u.id || requested_by == Some(u.id) {
             return Err(forbidden(u.lang, ErrorKey::CannotPayOwnRequest));
         }
         if reviewed_by == Some(u.id) {
@@ -361,8 +366,9 @@ pub(super) async fn pay_payout_batch(
     .bind(&claim_ids)
     .execute(&mut *tx)
     .await?;
-    sqlx::query(
-        "UPDATE payout_batches SET status='paid', paid_ref=$1, paid_by=$2, paid_at=$3 WHERE id=$4",
+    let updated = sqlx::query(
+        "UPDATE payout_batches SET status='paid', paid_ref=$1, paid_by=$2, paid_at=$3
+         WHERE id=$4 AND status='open' AND created_by <> $2",
     )
     .bind(paid_ref)
     .bind(u.id)
@@ -370,11 +376,14 @@ pub(super) async fn pay_payout_batch(
     .bind(id)
     .execute(&mut *tx)
     .await?;
+    if updated.rows_affected() != 1 {
+        return Err(conflict(u.lang, ErrorKey::BatchAlreadyPaid));
+    }
     tx.commit().await?;
 
     let batch: Vec<BatchNotifItem> = claims
         .into_iter()
-        .map(|(cid, uid, _, amt)| BatchNotifItem {
+        .map(|(cid, uid, _, _, amt)| BatchNotifItem {
             user_id: uid,
             title_zh: "报销款项已转账".into(),
             title_en: "Reimbursement paid".into(),

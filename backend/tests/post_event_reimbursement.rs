@@ -23,13 +23,14 @@ async fn post_event_driver_reimbursement_and_passenger_supper_flow() {
             .await
             .unwrap();
 
-    // 1. Create an event in area 1 (e.g. Subang Jaya)
+    // 1. Create a mileage-claimable event in area 1 (e.g. Subang Jaya)
+    let root = login(&st, "superadmin@example.org").await;
     let at = "2026-12-10T19:00:00";
     let res = call(
         &app,
         Method::POST,
         "/api/events",
-        Some(&organiser),
+        Some(&root),
         Some(json!({
             "title": "Youth Supper Night",
             "kind": "other",
@@ -37,7 +38,8 @@ async fn post_event_driver_reimbursement_and_passenger_supper_flow() {
             "location": "Church Hall",
             "capacity": 30,
             "group_ids": [1],
-            "area_id": 1
+            "area_id": 1,
+            "mileage_claimable": true
         })),
     )
     .await;

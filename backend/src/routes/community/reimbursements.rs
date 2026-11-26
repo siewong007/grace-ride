@@ -350,6 +350,8 @@ async fn validate_reimb(st: &AppState, u: &CurrentUser, req: &ReimbIn) -> AppRes
 async fn ensure_not_claimed(
     tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
     lang: Lang,
+    user_id: i64,
+    resolved_event_id: Option<i64>,
     req: &ReimbIn,
     except: Option<i64>,
 ) -> AppResult<()> {
@@ -371,6 +373,24 @@ async fn ensure_not_claimed(
     if taken > 0 {
         return Err(bad(lang, ErrorKey::ReimbursementAlreadyClaimed));
     }
+    if is_mileage(req) {
+        if let Some(eid) = resolved_event_id {
+            let (post_event_taken,): (i64,) = sqlx::query_as(
+                "SELECT COUNT(*) FROM reimbursements
+                 WHERE status <> 'rejected' AND id IS DISTINCT FROM $1
+                   AND event_id = $2 AND user_id = $3
+                   AND kind = 'mileage' AND ride_id IS NULL",
+            )
+            .bind(except)
+            .bind(eid)
+            .bind(user_id)
+            .fetch_one(&mut **tx)
+            .await?;
+            if post_event_taken > 0 {
+                return Err(bad(lang, ErrorKey::ReimbursementAlreadyClaimed));
+            }
+        }
+    }
     Ok(())
 }
 
@@ -382,7 +402,7 @@ pub(super) async fn create_reimbursement(
     require(&u, Page::Reimbursements, Act::Create)?;
     let resolved_event_id = validate_reimb(&st, &u, &req).await?;
     let mut tx = st.db.begin().await?;
-    ensure_not_claimed(&mut tx, u.lang, &req, None).await?;
+    ensure_not_claimed(&mut tx, u.lang, u.id, resolved_event_id, &req, None).await?;
     let (id,): (i64,) = sqlx::query_as(
         "INSERT INTO reimbursements (user_id, ride_id, event_id, amount_cents, description, receipt_file_id, payee_name, payee_phone, created_at, updated_at, kind) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11) RETURNING id",
     )
@@ -450,7 +470,15 @@ pub(super) async fn resubmit_reimbursement(
     normalized.kind = Some(r.kind.clone());
     let resolved_event_id = validate_reimb(&st, &u, &normalized).await?;
     let mut tx = st.db.begin().await?;
-    ensure_not_claimed(&mut tx, u.lang, &normalized, Some(id)).await?;
+    ensure_not_claimed(
+        &mut tx,
+        u.lang,
+        u.id,
+        resolved_event_id,
+        &normalized,
+        Some(id),
+    )
+    .await?;
     // Still sent back and still theirs at the moment of writing: a review or another
     // resubmission in between wins, and this one is refused.
     let changed = sqlx::query("UPDATE reimbursements SET ride_id=$1, event_id=$2, amount_cents=$3, description=$4, receipt_file_id=$5, payee_name=$6, payee_phone=$7, status='pending', payee_verified=0, updated_at=$8 WHERE id=$9 AND user_id=$10 AND status='returned' AND kind <> 'visitor_special'")
@@ -617,7 +645,7 @@ pub(super) async fn pay_reimbursement(
     if r.status != "approved" {
         return Err(bad(u.lang, ErrorKey::OnlyApprovedReimbCanBePaid));
     }
-    if r.user_id == u.id {
+    if r.user_id == u.id || r.requested_by == Some(u.id) {
         return Err(forbidden(u.lang, ErrorKey::CannotPayOwnRequest));
     }
     // Two people see every payout: whoever approved it doesn't also pay it.
@@ -642,7 +670,7 @@ pub(super) async fn pay_reimbursement(
         "UPDATE reimbursements
          SET status='paid', payee_verified=1, paid_ref=$1, paid_by=$2, paid_at=$3, updated_at=$4
          WHERE id=$5 AND status='approved' AND batch_id IS NULL
-           AND user_id <> $2 AND reviewed_by IS DISTINCT FROM $2",
+           AND user_id <> $2 AND reviewed_by IS DISTINCT FROM $2 AND requested_by IS DISTINCT FROM $2",
     )
     .bind(req.paid_ref.trim())
     .bind(u.id)

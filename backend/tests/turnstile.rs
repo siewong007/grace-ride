@@ -91,6 +91,7 @@ async fn setup_with_turnstile(turnstile: TurnstileConfig) -> (Router, AppState) 
         turnstile,
         android_cert_sha256_fingerprints: Vec::new(),
         ios_app_ids: Vec::new(),
+        require_biometric_attestation: false,
     };
     cfg.validate().unwrap();
     let state = init(cfg).await.unwrap();
@@ -152,6 +153,7 @@ fn production_config_validates_turnstile_rules() {
         turnstile: Default::default(),
         android_cert_sha256_fingerprints: Vec::new(),
         ios_app_ids: Vec::new(),
+        require_biometric_attestation: false,
     };
 
     // Half-configured rejected

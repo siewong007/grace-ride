@@ -285,7 +285,12 @@ async fn traffic_lead_requests_it_and_it_goes_through_review_and_payout() {
     assert_eq!(r.status, StatusCode::CONFLICT, "{}", r.json);
     assert_eq!(r.json["code"], "VISITOR_HAS_REIMBURSEMENT");
 
-    // It doesn't count as the driver's post-event mileage for this event.
+    // It doesn't count as the driver's post-event mileage for this event (once the event allows mileage).
+    sqlx::query("UPDATE events SET mileage_claimable = 1 WHERE id = $1")
+        .bind(ev)
+        .execute(&st.db)
+        .await
+        .unwrap();
     let area: i64 = sqlx::query_scalar("SELECT id FROM areas WHERE active = 1 ORDER BY id LIMIT 1")
         .fetch_one(&st.db)
         .await

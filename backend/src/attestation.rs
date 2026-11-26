@@ -365,6 +365,17 @@ fn parse_auth_list(seq_bytes: &[u8]) -> anyhow::Result<AuthListSummary> {
             504 => {
                 out.no_auth_required = true;
             }
+            505 => {
+                let (_wi, ib, _) = expect_universal(val, 2)?;
+                out.auth_timeout = Some(parse_der_int_i64(ib)?);
+            }
+            702 => {
+                let (_wi, ib, _) = expect_universal(val, 2)?;
+                out.origin = Some(parse_der_int_i64(ib)?);
+            }
+            704 => {
+                out.root_of_trust = Some(parse_root_of_trust(val)?);
+            }
             709 => {
                 let (_wo, oct, _) = expect_universal(val, 4)?;
                 out.app_id = Some(parse_attestation_app_id(oct)?);
@@ -373,6 +384,36 @@ fn parse_auth_list(seq_bytes: &[u8]) -> anyhow::Result<AuthListSummary> {
         }
     }
     Ok(out)
+}
+
+fn parse_root_of_trust(der: &[u8]) -> anyhow::Result<RootOfTrust> {
+    let (_w, body, rest) = expect_universal(der, 16)?;
+    if !rest.is_empty() {
+        anyhow::bail!("trailing bytes in RootOfTrust");
+    }
+    let (_wk, _boot_key, cur) = expect_universal(body, 4)?;
+    let (_wl, locked_b, cur) = expect_universal(cur, 1)?;
+    if locked_b.len() != 1 {
+        anyhow::bail!("invalid RootOfTrust deviceLocked BOOLEAN");
+    }
+    let (_ws, vbs_b, cur) = expect_universal(cur, 10)?;
+    let verified_boot_state = parse_der_int_i64(vbs_b)?;
+    if !cur.is_empty() {
+        let (_wh, _boot_hash, tail) = expect_universal(cur, 4)?;
+        if !tail.is_empty() {
+            anyhow::bail!("trailing fields in RootOfTrust");
+        }
+    }
+    Ok(RootOfTrust {
+        device_locked: locked_b[0] != 0,
+        verified_boot_state,
+    })
+}
+
+#[derive(Default)]
+struct RootOfTrust {
+    device_locked: bool,
+    verified_boot_state: i64,
 }
 
 #[derive(Default)]
@@ -388,6 +429,9 @@ struct AuthListSummary {
     key_size: Option<i64>,
     user_auth_type: Option<i64>,
     no_auth_required: bool,
+    auth_timeout: Option<i64>,
+    origin: Option<i64>,
+    root_of_trust: Option<RootOfTrust>,
     app_id: Option<AttestationAppId>,
 }
 
@@ -550,9 +594,20 @@ pub fn verify_android_key_attestation(
         || tee.algorithm != Some(3)
         || tee.key_size != Some(256)
         || tee.no_auth_required
-        || tee.user_auth_type.is_none_or(|t| (t & 2) == 0)
+        || tee.user_auth_type != Some(2)
+        || tee.origin != Some(0)
+        || tee.auth_timeout.is_some_and(|t| t != 0)
     {
-        anyhow::bail!("TEE authorization list must enforce biometric P-256 signing");
+        anyhow::bail!(
+            "TEE authorization list must enforce generated, per-use biometric P-256 signing"
+        );
+    }
+    let rot = tee
+        .root_of_trust
+        .as_ref()
+        .ok_or_else(|| anyhow::anyhow!("TEE authorization list missing rootOfTrust"))?;
+    if !rot.device_locked || rot.verified_boot_state != 0 {
+        anyhow::bail!("device must have locked bootloader and Verified boot state");
     }
 
     // Check APK package name & signing certificate SHA-256 when configured.
@@ -608,5 +663,329 @@ mod tests {
         buf = vec![0x9f, 0x85, 0x45, 0x00]; // [709] primitive len 0
         let (tag2, _, _, _) = parse_tlv(&buf).unwrap();
         assert_eq!(tag2.number, 709);
+    }
+
+    fn push_len(out: &mut Vec<u8>, len: usize) {
+        if len < 0x80 {
+            out.push(len as u8);
+        } else {
+            let bytes = len.to_be_bytes();
+            let start = bytes.iter().position(|b| *b != 0).unwrap();
+            let slice = &bytes[start..];
+            out.push(0x80 | (slice.len() as u8));
+            out.extend_from_slice(slice);
+        }
+    }
+
+    fn der_tlv(tag: u8, val: &[u8]) -> Vec<u8> {
+        let mut out = vec![tag];
+        push_len(&mut out, val.len());
+        out.extend_from_slice(val);
+        out
+    }
+
+    fn der_seq(parts: &[&[u8]]) -> Vec<u8> {
+        let mut body = Vec::new();
+        for p in parts {
+            body.extend_from_slice(p);
+        }
+        der_tlv(0x30, &body)
+    }
+
+    fn der_set(parts: &[&[u8]]) -> Vec<u8> {
+        let mut body = Vec::new();
+        for p in parts {
+            body.extend_from_slice(p);
+        }
+        der_tlv(0x31, &body)
+    }
+
+    fn der_int(v: i64) -> Vec<u8> {
+        let bytes = v.to_be_bytes();
+        let mut idx = 0;
+        while idx < 7 {
+            if (bytes[idx] == 0x00 && (bytes[idx + 1] & 0x80) == 0)
+                || (bytes[idx] == 0xff && (bytes[idx + 1] & 0x80) != 0)
+            {
+                idx += 1;
+            } else {
+                break;
+            }
+        }
+        der_tlv(0x02, &bytes[idx..])
+    }
+
+    fn der_enum(v: i64) -> Vec<u8> {
+        let mut node = der_int(v);
+        node[0] = 0x0a;
+        node
+    }
+
+    fn der_bitstring(bytes: &[u8]) -> Vec<u8> {
+        let mut val = Vec::with_capacity(1 + bytes.len());
+        val.push(0x00);
+        val.extend_from_slice(bytes);
+        der_tlv(0x03, &val)
+    }
+
+    fn der_ctx_explicit(num: u32, inner: &[u8]) -> Vec<u8> {
+        let mut out = Vec::new();
+        if num < 31 {
+            out.push(0xA0 | (num as u8));
+        } else {
+            out.push(0xBF);
+            let mut parts = Vec::new();
+            let mut v = num;
+            parts.push((v & 0x7f) as u8);
+            v >>= 7;
+            while v > 0 {
+                parts.push(((v & 0x7f) as u8) | 0x80);
+                v >>= 7;
+            }
+            parts.reverse();
+            out.extend_from_slice(&parts);
+        }
+        push_len(&mut out, inner.len());
+        out.extend_from_slice(inner);
+        out
+    }
+
+    struct AttestCaseOpts {
+        user_auth_type: i64,
+        auth_timeout: Option<i64>,
+        origin: Option<i64>,
+        include_root_of_trust: bool,
+        device_locked: bool,
+        verified_boot_state: i64,
+    }
+
+    impl Default for AttestCaseOpts {
+        fn default() -> Self {
+            Self {
+                user_auth_type: 2,
+                auth_timeout: Some(0),
+                origin: Some(0),
+                include_root_of_trust: true,
+                device_locked: true,
+                verified_boot_state: 0,
+            }
+        }
+    }
+
+    fn build_synthetic_chain(
+        opts: AttestCaseOpts,
+        challenge: &str,
+        cert_sha256: &[u8; 32],
+    ) -> (Vec<Vec<u8>>, Vec<u8>, String) {
+        use ring::rand::SystemRandom;
+        use ring::signature::{EcdsaKeyPair, KeyPair, ECDSA_P256_SHA256_ASN1_SIGNING};
+
+        let rng = SystemRandom::new();
+        let root_pkcs8 =
+            EcdsaKeyPair::generate_pkcs8(&ECDSA_P256_SHA256_ASN1_SIGNING, &rng).unwrap();
+        let root_kp =
+            EcdsaKeyPair::from_pkcs8(&ECDSA_P256_SHA256_ASN1_SIGNING, root_pkcs8.as_ref(), &rng)
+                .unwrap();
+        let leaf_pkcs8 =
+            EcdsaKeyPair::generate_pkcs8(&ECDSA_P256_SHA256_ASN1_SIGNING, &rng).unwrap();
+        let leaf_kp =
+            EcdsaKeyPair::from_pkcs8(&ECDSA_P256_SHA256_ASN1_SIGNING, leaf_pkcs8.as_ref(), &rng)
+                .unwrap();
+
+        let ec_alg = der_seq(&[
+            &der_tlv(0x06, OID_EC_PUBLIC_KEY),
+            &der_tlv(0x06, OID_PRIME256V1),
+        ]);
+        let sig_alg = der_seq(&[&der_tlv(0x06, OID_ECDSA_WITH_SHA256)]);
+        let root_spki = der_seq(&[&ec_alg, &der_bitstring(root_kp.public_key().as_ref())]);
+        let leaf_spki = der_seq(&[&ec_alg, &der_bitstring(leaf_kp.public_key().as_ref())]);
+        let root_spki_hash = hex::encode(Sha256::digest(&root_spki));
+
+        let validity = der_seq(&[
+            &der_tlv(0x17, b"250101000000Z"),
+            &der_tlv(0x17, b"350101000000Z"),
+        ]);
+        let rdn = |cn: &[u8]| {
+            let atv = der_seq(&[&der_tlv(0x06, &[0x55, 0x04, 0x03]), &der_tlv(0x0c, cn)]);
+            der_seq(&[&der_set(&[&atv])])
+        };
+        let root_name = rdn(b"Test Root");
+        let leaf_name = rdn(b"Test Leaf");
+
+        let bc_true = der_seq(&[
+            &der_tlv(0x06, OID_BASIC_CONSTRAINTS),
+            &der_tlv(0x04, &der_seq(&[&[0x01, 0x01, 0xff]])),
+        ]);
+        let root_tbs = der_seq(&[
+            &der_ctx_explicit(0, &der_int(2)),
+            &der_int(1),
+            &sig_alg,
+            &root_name,
+            &validity,
+            &root_name,
+            &root_spki,
+            &der_ctx_explicit(3, &der_seq(&[&bc_true])),
+        ]);
+        let root_sig = root_kp.sign(&rng, &root_tbs).unwrap();
+        let root_cert = der_seq(&[&root_tbs, &sig_alg, &der_bitstring(root_sig.as_ref())]);
+
+        // Android attestation extension
+        let app_id_der = der_seq(&[
+            &der_set(&[&der_seq(&[
+                &der_tlv(0x04, EXPECTED_ANDROID_PACKAGE.as_bytes()),
+                &der_int(1),
+            ])]),
+            &der_set(&[&der_tlv(0x04, cert_sha256)]),
+        ]);
+        let sw_list = der_seq(&[&der_ctx_explicit(709, &der_tlv(0x04, &app_id_der))]);
+
+        let mut tee_fields = vec![
+            der_ctx_explicit(1, &der_set(&[&der_int(2)])),
+            der_ctx_explicit(2, &der_int(3)),
+            der_ctx_explicit(3, &der_int(256)),
+            der_ctx_explicit(503, &der_int(opts.user_auth_type)),
+        ];
+        if let Some(t) = opts.auth_timeout {
+            tee_fields.push(der_ctx_explicit(505, &der_int(t)));
+        }
+        if let Some(o) = opts.origin {
+            tee_fields.push(der_ctx_explicit(702, &der_int(o)));
+        }
+        if opts.include_root_of_trust {
+            let boot_key = [0x11u8; 32];
+            let locked = [0x01, 0x01, if opts.device_locked { 0xff } else { 0x00 }];
+            let vbs = der_enum(opts.verified_boot_state);
+            let rot = der_seq(&[&der_tlv(0x04, &boot_key), &locked, &vbs]);
+            tee_fields.push(der_ctx_explicit(704, &rot));
+        }
+        let tee_refs: Vec<&[u8]> = tee_fields.iter().map(Vec::as_slice).collect();
+        let tee_list = der_seq(&tee_refs);
+
+        let key_desc = der_seq(&[
+            &der_int(3),
+            &der_enum(1),
+            &der_int(4),
+            &der_enum(1),
+            &der_tlv(0x04, challenge.as_bytes()),
+            &der_tlv(0x04, b""),
+            &sw_list,
+            &tee_list,
+        ]);
+        let att_ext = der_seq(&[
+            &der_tlv(0x06, OID_ANDROID_ATTESTATION),
+            &der_tlv(0x04, &key_desc),
+        ]);
+        let bc_false = der_seq(&[
+            &der_tlv(0x06, OID_BASIC_CONSTRAINTS),
+            &der_tlv(0x04, &der_seq(&[])),
+        ]);
+        let leaf_tbs = der_seq(&[
+            &der_ctx_explicit(0, &der_int(2)),
+            &der_int(2),
+            &sig_alg,
+            &root_name,
+            &validity,
+            &leaf_name,
+            &leaf_spki,
+            &der_ctx_explicit(3, &der_seq(&[&bc_false, &att_ext])),
+        ]);
+        let leaf_sig = root_kp.sign(&rng, &leaf_tbs).unwrap();
+        let leaf_cert = der_seq(&[&leaf_tbs, &sig_alg, &der_bitstring(leaf_sig.as_ref())]);
+
+        (
+            vec![leaf_cert, root_cert],
+            leaf_kp.public_key().as_ref().to_vec(),
+            root_spki_hash,
+        )
+    }
+
+    #[test]
+    fn android_attestation_enforces_boot_integrity_origin_and_per_use_biometrics() {
+        let cert_fp_bytes = [0xAAu8; 32];
+        let cert_fp_hex = hex::encode(cert_fp_bytes);
+        let now = DateTime::parse_from_rfc3339("2026-06-01T00:00:00Z")
+            .unwrap()
+            .with_timezone(&Utc);
+
+        let (chain, pubkey, root_hash) =
+            build_synthetic_chain(AttestCaseOpts::default(), "chal-ok", &cert_fp_bytes);
+        verify_android_key_attestation(
+            &chain,
+            &pubkey,
+            "chal-ok",
+            std::slice::from_ref(&cert_fp_hex),
+            std::slice::from_ref(&root_hash),
+            now,
+        )
+        .expect("locked Verified Boot, GENERATED, biometric-only key must pass");
+
+        let bad_cases = [
+            (
+                "unlocked bootloader",
+                AttestCaseOpts {
+                    device_locked: false,
+                    ..Default::default()
+                },
+            ),
+            (
+                "self-signed boot state",
+                AttestCaseOpts {
+                    verified_boot_state: 1,
+                    ..Default::default()
+                },
+            ),
+            (
+                "missing rootOfTrust",
+                AttestCaseOpts {
+                    include_root_of_trust: false,
+                    ..Default::default()
+                },
+            ),
+            (
+                "imported origin",
+                AttestCaseOpts {
+                    origin: Some(2),
+                    ..Default::default()
+                },
+            ),
+            (
+                "missing origin",
+                AttestCaseOpts {
+                    origin: None,
+                    ..Default::default()
+                },
+            ),
+            (
+                "non-zero authTimeout",
+                AttestCaseOpts {
+                    auth_timeout: Some(60),
+                    ..Default::default()
+                },
+            ),
+            (
+                "PIN/password allowed in userAuthType=3",
+                AttestCaseOpts {
+                    user_auth_type: 3,
+                    ..Default::default()
+                },
+            ),
+        ];
+
+        for (label, opts) in bad_cases {
+            let (bad_chain, bad_pk, bad_root) =
+                build_synthetic_chain(opts, "chal-bad", &cert_fp_bytes);
+            assert!(
+                verify_android_key_attestation(
+                    &bad_chain,
+                    &bad_pk,
+                    "chal-bad",
+                    std::slice::from_ref(&cert_fp_hex),
+                    &[bad_root],
+                    now,
+                )
+                .is_err(),
+                "{label} must be rejected"
+            );
+        }
     }
 }

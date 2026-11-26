@@ -273,10 +273,12 @@ pub(in crate::routes::admin) async fn finance_report(
             "SELECT b.id, b.month, b.title, b.status, b.claim_count, b.total_cents,
                     c.name AS created_by_name, b.paid_by, p.name AS paid_by_name,
                     b.paid_at, b.paid_ref,
-                    COALESCE((SELECT COUNT(*) FROM reimbursements r
-                              WHERE r.batch_id = b.id
-                                AND (COALESCE(r.paid_by, b.paid_by) = r.user_id
-                                     OR COALESCE(r.paid_by, b.paid_by) = r.reviewed_by)), 0)::BIGINT AS sod_violations
+                    ((CASE WHEN b.paid_by IS NOT NULL AND b.paid_by = b.created_by THEN 1 ELSE 0 END)
+                     + COALESCE((SELECT COUNT(*) FROM reimbursements r
+                                 WHERE r.batch_id = b.id
+                                   AND (COALESCE(r.paid_by, b.paid_by) = r.user_id
+                                        OR COALESCE(r.paid_by, b.paid_by) = r.reviewed_by
+                                        OR COALESCE(r.paid_by, b.paid_by) = r.requested_by)), 0))::BIGINT AS sod_violations
              FROM payout_batches b
              JOIN users c ON c.id = b.created_by
              LEFT JOIN users p ON p.id = b.paid_by

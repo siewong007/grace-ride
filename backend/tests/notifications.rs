@@ -771,16 +771,17 @@ async fn preferences_quiet_hours_hide_lock_details_and_telegram_pairing() {
     let member = login(&st, "member@example.org").await;
     let uid = user_id(&st, "member@example.org").await;
 
-    // Non-numeric Telegram Chat ID must be rejected (never strip '@' and corrupt).
+    // Manual Telegram Chat ID entry must be rejected (requires verified /start webhook pairing).
     let bad_tg = call(
         &app,
         Method::PUT,
         "/api/notifications/preferences",
         Some(&member),
-        Some(json!({ "telegram_chat_id": "@handle_not_numeric" })),
+        Some(json!({ "telegram_chat_id": "123456789" })),
     )
     .await;
     assert_eq!(bad_tg.status, StatusCode::BAD_REQUEST);
+    assert_eq!(bad_tg.json["code"], "TELEGRAM_PAIRING_REQUIRED");
 
     // Configure Telegram bot credentials + webhook secret path.
     assert_eq!(

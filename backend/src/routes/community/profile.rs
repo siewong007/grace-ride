@@ -232,15 +232,24 @@ pub(super) async fn update_profile(
             return Err(bad(u.lang, ErrorKey::InvalidAction));
         }
     }
-    if let Some(ref tg) = req.telegram_chat_id {
-        if !crate::notifications::validate_telegram_chat_id(tg) {
-            return Err(bad(u.lang, ErrorKey::InvalidAction));
+    let mut tg: Option<String> = None;
+    let mut clear_tg_blocked = false;
+    if let Some(ref raw_tg) = req.telegram_chat_id {
+        let trimmed = raw_tg.trim();
+        if trimmed.is_empty() {
+            tg = Some(String::new());
+            clear_tg_blocked = true;
+        } else {
+            let current_tg: String =
+                sqlx::query_scalar("SELECT COALESCE(telegram_chat_id, '') FROM users WHERE id=$1")
+                    .bind(u.id)
+                    .fetch_one(&st.db)
+                    .await?;
+            if trimmed != current_tg.trim() {
+                return Err(bad(u.lang, ErrorKey::TelegramPairingRequired));
+            }
         }
     }
-    let tg = req
-        .telegram_chat_id
-        .as_deref()
-        .map(|s| s.trim().to_string());
     sqlx::query(
         "UPDATE users SET
             name=COALESCE($1, name),
@@ -279,7 +288,7 @@ pub(super) async fn update_profile(
     .bind(req.avatar_icon.as_deref())
     .execute(&st.db)
     .await?;
-    if tg.is_some() {
+    if clear_tg_blocked {
         let _ = sqlx::query(
             "UPDATE user_notification_prefs SET telegram_blocked=0, updated_at=$2 WHERE user_id=$1 AND telegram_blocked=1",
         )

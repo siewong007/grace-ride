@@ -13,7 +13,7 @@ use serde_json::{json, Value};
 use crate::auth::CurrentUser;
 use crate::error::{bad, not_found, AppResult};
 use crate::i18n::ErrorKey;
-use crate::notifications::{is_valid_hhmm, validate_telegram_chat_id, VALID_CATEGORIES};
+use crate::notifications::{is_valid_hhmm, VALID_CATEGORIES};
 use crate::state::AppState;
 use crate::util::now;
 
@@ -324,12 +324,6 @@ pub(super) async fn update_preferences(
             return Err(bad(u.lang, ErrorKey::InvalidAction));
         }
     }
-    if let Some(ref tg) = req.telegram_chat_id {
-        if !validate_telegram_chat_id(tg) {
-            return Err(bad(u.lang, ErrorKey::InvalidAction));
-        }
-    }
-
     let muted_json = if let Some(ref cats) = req.muted_categories {
         let mut seen = HashSet::new();
         let mut cleaned = Vec::new();
@@ -369,7 +363,24 @@ pub(super) async fn update_preferences(
     };
 
     let mut tx = st.db.begin().await?;
-    let tg_cleaned = req.telegram_chat_id.as_deref().map(str::trim);
+    let mut tg_cleaned: Option<&str> = None;
+    let mut clear_tg_blocked = false;
+    if let Some(ref raw_tg) = req.telegram_chat_id {
+        let trimmed = raw_tg.trim();
+        if trimmed.is_empty() {
+            tg_cleaned = Some("");
+            clear_tg_blocked = true;
+        } else {
+            let current_tg: String =
+                sqlx::query_scalar("SELECT COALESCE(telegram_chat_id, '') FROM users WHERE id=$1")
+                    .bind(u.id)
+                    .fetch_one(&mut *tx)
+                    .await?;
+            if trimmed != current_tg.trim() {
+                return Err(bad(u.lang, ErrorKey::TelegramPairingRequired));
+            }
+        }
+    }
     if req.push_opt_in.is_some()
         || req.whatsapp_opt_in.is_some()
         || req.readiness_prompt_mins.is_some()
@@ -393,7 +404,6 @@ pub(super) async fn update_preferences(
     }
 
     let ts_now = now();
-    let clear_tg_blocked = tg_cleaned.is_some();
     sqlx::query(
         "INSERT INTO user_notification_prefs
             (user_id, muted_categories, quiet_hours_start, quiet_hours_end,

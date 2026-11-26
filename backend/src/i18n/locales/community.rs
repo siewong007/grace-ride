@@ -35,10 +35,12 @@ pub enum CommunityError {
     MonthFormatInvalid,
     BatchEmpty,
     BatchAlreadyPaid,
+    CannotPayOwnBatch,
     VisitorReimbNeedsDriver,
     VisitorReimbAlreadyLive,
     VisitorHasReimbursement,
     AmountMustBePositive,
+    TelegramPairingRequired,
 }
 
 pub fn render(lang: Lang, key: CommunityError) -> String {
@@ -189,6 +191,16 @@ pub fn render(lang: Lang, key: CommunityError) -> String {
             lang,
             "此付款批次已完成付款",
             "This payout batch has already been paid",
+        ),
+        CommunityError::CannotPayOwnBatch => pair(
+            lang,
+            "创建与付款需由不同的人处理：此付款批次由您创建，请交给另一位财务同工付款",
+            "Creating and paying a batch need two people: you created this payout batch, so another finance member must pay it",
+        ),
+        CommunityError::TelegramPairingRequired => pair(
+            lang,
+            "请使用一键连接机器人绑定 Telegram，无法手动填写 Chat ID",
+            "Please connect Telegram using the one-tap bot link instead of entering a Chat ID manually",
         ),
     }
 }

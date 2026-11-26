@@ -623,13 +623,10 @@ async fn admin_cannot_grant_self_finance() {
 async fn privileged_recovery_needs_two_admins() {
     let (app, st) = setup().await;
     let admin = login(&st, "admin@example.org").await;
-    sqlx::query("UPDATE users SET roles='transport,admin' WHERE email='transport@example.org'")
-        .execute(&st.db)
-        .await
-        .unwrap();
-    let second = login(&st, "transport@example.org").await;
+    let first = login(&st, "president@example.org").await;
+    let second = login(&st, "vicepresident@example.org").await;
 
-    // finance@example.org is a privileged target.
+    // finance@example.org is a privileged ranked target.
     let _ = call(
         &app,
         Method::POST,
@@ -645,8 +642,8 @@ async fn privileged_recovery_needs_two_admins() {
     .await
     .unwrap();
 
-    // First admin only flags it; no link is issued yet.
-    let first = call(
+    // Unranked admin cannot approve recovery of a ranked account.
+    let unranked = call(
         &app,
         Method::POST,
         &format!("/api/admin/recovery/{rid}/approve"),
@@ -654,9 +651,21 @@ async fn privileged_recovery_needs_two_admins() {
         None,
     )
     .await;
-    assert_eq!(first.status, StatusCode::OK, "{}", first.json);
-    assert_eq!(first.json["awaiting_second"], true);
-    assert!(first.json["url"].is_null());
+    assert_eq!(unranked.status, StatusCode::FORBIDDEN, "{}", unranked.json);
+    assert_eq!(unranked.json["code"], "RANK_TOO_LOW");
+
+    // First higher-ranked officer only flags it; no link is issued yet.
+    let stage1 = call(
+        &app,
+        Method::POST,
+        &format!("/api/admin/recovery/{rid}/approve"),
+        Some(&first),
+        None,
+    )
+    .await;
+    assert_eq!(stage1.status, StatusCode::OK, "{}", stage1.json);
+    assert_eq!(stage1.json["awaiting_second"], true);
+    assert!(stage1.json["url"].is_null());
     let (status,): (String,) = sqlx::query_as("SELECT status FROM recovery_requests WHERE id=$1")
         .bind(rid)
         .fetch_one(&st.db)
@@ -671,19 +680,19 @@ async fn privileged_recovery_needs_two_admins() {
     .unwrap();
     assert_eq!(invites, 0);
 
-    // The same admin cannot confirm their own flag.
+    // The same officer cannot confirm their own flag.
     let again = call(
         &app,
         Method::POST,
         &format!("/api/admin/recovery/{rid}/approve"),
-        Some(&admin),
+        Some(&first),
         None,
     )
     .await;
     assert_eq!(again.status, StatusCode::FORBIDDEN, "{}", again.json);
     assert_eq!(again.json["code"], "SECOND_ADMIN_REQUIRED");
 
-    // A different admin confirms and receives the link.
+    // A different higher-ranked officer confirms and receives the link.
     let confirmed = call(
         &app,
         Method::POST,
@@ -695,8 +704,8 @@ async fn privileged_recovery_needs_two_admins() {
     assert_eq!(confirmed.status, StatusCode::OK, "{}", confirmed.json);
     assert!(confirmed.json["url"].is_string());
 
-    // The link is shown once, to the confirming admin. Nobody can read it back from
-    // the invite list, so the admin who only flagged the request never holds it.
+    // The link is shown once, to the confirming officer. Nobody can read it back from
+    // the invite list, so the first officer who only flagged the request never holds it.
     let link_token = confirmed.json["url"]
         .as_str()
         .unwrap()
@@ -704,7 +713,7 @@ async fn privileged_recovery_needs_two_admins() {
         .next()
         .unwrap()
         .to_string();
-    for who in [&admin, &second] {
+    for who in [&first, &second] {
         let list = call(&app, Method::GET, "/api/admin/invites", Some(who), None).await;
         assert_eq!(list.status, StatusCode::OK, "{}", list.json);
         let listed = list
@@ -766,14 +775,15 @@ async fn superadmin_recovery_refuses_ordinary_admin_in_both_stages() {
         .unwrap();
     let second_admin = login(&st, "transport@example.org").await;
 
-    // superadmin@example.org is the superadmin target
-    // We create a second superadmin to test the valid two-superadmin flow
-    sqlx::query("UPDATE users SET roles='superadmin,admin' WHERE email='sophie@example.org'")
+    // superadmin@example.org is the superadmin target.
+    // We create two peer superadmins to test non-self two-superadmin recovery.
+    sqlx::query("UPDATE users SET roles='superadmin,admin' WHERE email IN ('sophie@example.org', 'president@example.org')")
         .execute(&st.db)
         .await
         .unwrap();
     let root = login(&st, "superadmin@example.org").await;
     let root2 = login(&st, "sophie@example.org").await;
+    let root3 = login(&st, "president@example.org").await;
 
     // File recovery request for superadmin@example.org
     let _ = call(
@@ -790,6 +800,23 @@ async fn superadmin_recovery_refuses_ordinary_admin_in_both_stages() {
     .fetch_one(&st.db)
     .await
     .unwrap();
+
+    // Target cannot approve their own recovery even as superadmin
+    let self_stage1 = call(
+        &app,
+        Method::POST,
+        &format!("/api/admin/recovery/{rid}/approve"),
+        Some(&root),
+        None,
+    )
+    .await;
+    assert_eq!(
+        self_stage1.status,
+        StatusCode::FORBIDDEN,
+        "{}",
+        self_stage1.json
+    );
+    assert_eq!(self_stage1.json["code"], "SECOND_ADMIN_REQUIRED");
 
     // Stage 1 (status: 'pending'): ordinary admin attempts to approve recovery for superadmin
     let admin_stage1 = call(
@@ -808,12 +835,12 @@ async fn superadmin_recovery_refuses_ordinary_admin_in_both_stages() {
     );
     assert_eq!(admin_stage1.json["code"], "SUPERADMIN_ONLY");
 
-    // Superadmin 1 approves stage 1 -> moves to awaiting_second
+    // Superadmin 2 approves stage 1 -> moves to awaiting_second
     let super_stage1 = call(
         &app,
         Method::POST,
         &format!("/api/admin/recovery/{rid}/approve"),
-        Some(&root),
+        Some(&root2),
         None,
     )
     .await;
@@ -837,29 +864,29 @@ async fn superadmin_recovery_refuses_ordinary_admin_in_both_stages() {
     );
     assert_eq!(admin_stage2.json["code"], "SUPERADMIN_ONLY");
 
-    // Superadmin 1 cannot confirm their own flag
-    let super1_again = call(
-        &app,
-        Method::POST,
-        &format!("/api/admin/recovery/{rid}/approve"),
-        Some(&root),
-        None,
-    )
-    .await;
-    assert_eq!(
-        super1_again.status,
-        StatusCode::FORBIDDEN,
-        "{}",
-        super1_again.json
-    );
-    assert_eq!(super1_again.json["code"], "SECOND_ADMIN_REQUIRED");
-
-    // Superadmin 2 confirms and completes recovery
-    let super_stage2 = call(
+    // Superadmin 2 cannot confirm their own flag
+    let super2_again = call(
         &app,
         Method::POST,
         &format!("/api/admin/recovery/{rid}/approve"),
         Some(&root2),
+        None,
+    )
+    .await;
+    assert_eq!(
+        super2_again.status,
+        StatusCode::FORBIDDEN,
+        "{}",
+        super2_again.json
+    );
+    assert_eq!(super2_again.json["code"], "SECOND_ADMIN_REQUIRED");
+
+    // Superadmin 3 confirms and completes recovery
+    let super_stage2 = call(
+        &app,
+        Method::POST,
+        &format!("/api/admin/recovery/{rid}/approve"),
+        Some(&root3),
         None,
     )
     .await;

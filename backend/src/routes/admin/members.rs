@@ -384,6 +384,34 @@ pub(super) async fn update_user(
             .filter(|r| !old_parsed.contains(r))
             .cloned()
             .collect();
+        if !added.is_empty() && !caller_super {
+            let added_unranked: Vec<String> = added
+                .iter()
+                .filter(|r| perms::role_rank(r).is_none())
+                .cloned()
+                .collect();
+            if !added_unranked.is_empty() {
+                let perm_rows: Vec<(String, i64)> = sqlx::query_as(
+                    "SELECT rp.permission, r.is_system
+                     FROM role_permissions rp
+                     JOIN roles r ON r.key = rp.role_key
+                     WHERE rp.role_key = ANY($1)",
+                )
+                .bind(&added_unranked)
+                .fetch_all(&mut *tx)
+                .await?;
+                let caller_held = perms::for_roles(&mut *tx, &caller_roles).await?;
+                for (perm_key, is_system) in perm_rows {
+                    if let Some(perm) = perms::Perm::parse(&perm_key) {
+                        if perm.0.area() == perms::Area::Finance
+                            || (is_system == 0 && perm.0.sensitive() && !caller_held.contains(perm))
+                        {
+                            return Err(forbidden(u.lang, ErrorKey::CannotGrantUnheldPermission));
+                        }
+                    }
+                }
+            }
+        }
         if !added.is_empty() && !perms::can_manage_admins(&caller_roles) {
             let (power,): (i64,) = sqlx::query_as(
                 "SELECT COUNT(*) FROM role_permissions WHERE role_key = ANY($1) AND permission = ANY($2)",

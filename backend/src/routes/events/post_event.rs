@@ -56,6 +56,7 @@ pub struct PostEventDriverItem {
 pub struct PostEventDriversResponse {
     pub event_id: i64,
     pub event_title: String,
+    pub mileage_claimable: bool,
     pub event_area: Option<AreaFareOption>,
     pub available_areas: Vec<AreaFareOption>,
     pub drivers: Vec<PostEventDriverItem>,
@@ -65,13 +66,15 @@ async fn check_post_event_auth(
     st: &AppState,
     u: &CurrentUser,
     event_id: i64,
-) -> AppResult<(i64, String, Option<i64>)> {
-    let row: Option<(i64, String, Option<i64>, String)> =
-        sqlx::query_as("SELECT created_by, title, area_id, status FROM events WHERE id = $1")
-            .bind(event_id)
-            .fetch_optional(&st.db)
-            .await?;
-    let (created_by, title, area_id, status) = row.ok_or_else(|| not_found(u.lang))?;
+) -> AppResult<(i64, String, Option<i64>, bool)> {
+    let row: Option<(i64, String, Option<i64>, String, i64)> = sqlx::query_as(
+        "SELECT created_by, title, area_id, status, mileage_claimable FROM events WHERE id = $1",
+    )
+    .bind(event_id)
+    .fetch_optional(&st.db)
+    .await?;
+    let (created_by, title, area_id, status, mileage_claimable) =
+        row.ok_or_else(|| not_found(u.lang))?;
 
     let allowed = can_manage(u, created_by, Act::Update)
         || (u.can(Page::AdminPlan, Act::Update) && (u.traffic_is_global() || created_by == u.id))
@@ -85,7 +88,7 @@ async fn check_post_event_auth(
         return Err(bad(u.lang, ErrorKey::EventNotOpen));
     }
 
-    Ok((created_by, title, area_id))
+    Ok((created_by, title, area_id, mileage_claimable == 1))
 }
 
 pub(super) async fn get_post_event_drivers(
@@ -93,7 +96,8 @@ pub(super) async fn get_post_event_drivers(
     u: CurrentUser,
     Path(event_id): Path<i64>,
 ) -> AppResult<Json<PostEventDriversResponse>> {
-    let (created_by, event_title, event_area_id) = check_post_event_auth(&st, &u, event_id).await?;
+    let (created_by, event_title, event_area_id, mileage_claimable) =
+        check_post_event_auth(&st, &u, event_id).await?;
     let show_phone = u.can(Page::AdminMembers, Act::View)
         || (u.can(Page::AdminRides, Act::View) && (u.traffic_is_global() || created_by == u.id));
 
@@ -139,18 +143,20 @@ pub(super) async fn get_post_event_drivers(
             })
     });
 
-    // 2. Collect candidate drivers:
-    // a) Drivers assigned to rides for this event (outbound or return)
+    // 2. Collect candidate drivers who actually drove or were assigned to drive for this event:
+    // a) Drivers assigned to non-cancelled rides for this event (outbound or return)
     let ride_drivers: Vec<(i64,)> = sqlx::query_as(
-        "SELECT DISTINCT driver_id FROM rides WHERE event_id = $1 AND driver_id IS NOT NULL",
+        "SELECT DISTINCT driver_id FROM rides
+         WHERE event_id = $1 AND driver_id IS NOT NULL AND status <> 'cancelled'",
     )
     .bind(event_id)
     .fetch_all(&st.db)
     .await?;
 
-    // b) Attendees who signed up and offered to drive
-    let signup_drivers: Vec<(i64,)> = sqlx::query_as(
-        "SELECT es.user_id FROM event_signups es WHERE es.event_id = $1 AND es.status = 'going' AND es.offer_drive = 1",
+    // b) Drivers assigned to event visitors
+    let visitor_drivers: Vec<(i64,)> = sqlx::query_as(
+        "SELECT DISTINCT driver_id FROM plan_visitors
+         WHERE event_id = $1 AND driver_id IS NOT NULL",
     )
     .bind(event_id)
     .fetch_all(&st.db)
@@ -160,7 +166,7 @@ pub(super) async fn get_post_event_drivers(
     for (d,) in ride_drivers {
         driver_ids.insert(d);
     }
-    for (d,) in signup_drivers {
+    for (d,) in visitor_drivers {
         driver_ids.insert(d);
     }
 
@@ -311,6 +317,7 @@ pub(super) async fn get_post_event_drivers(
     Ok(Json(PostEventDriversResponse {
         event_id,
         event_title,
+        mileage_claimable,
         event_area,
         available_areas,
         drivers: driver_items,
@@ -339,8 +346,11 @@ pub(super) async fn create_post_event_reimbursements(
     Path(event_id): Path<i64>,
     Json(req): Json<PostEventReimbursementsIn>,
 ) -> AppResult<Json<Value>> {
-    let (_created_by, event_title, _event_area_id) =
+    let (_created_by, event_title, event_area_id, mileage_claimable) =
         check_post_event_auth(&st, &u, event_id).await?;
+    if !mileage_claimable {
+        return Err(bad(u.lang, ErrorKey::EventMileageNotClaimable));
+    }
 
     if req.claims.is_empty() {
         return Err(bad(u.lang, ErrorKey::InvalidAction));
@@ -348,11 +358,16 @@ pub(super) async fn create_post_event_reimbursements(
 
     let mut tx = st.db.begin().await?;
 
-    // Advisory lock to prevent race conditions during batch creation
+    // Advisory locks shared with `reimbursements.rs::ensure_not_claimed` to prevent double-claim races.
     sqlx::query(
         "SELECT pg_advisory_xact_lock(hashtextextended('grace_ride_post_event_reimb', $1))",
     )
     .bind(event_id)
+    .execute(&mut *tx)
+    .await?;
+    sqlx::query(
+        "SELECT pg_advisory_xact_lock(hashtextextended('grace_ride_reimbursement_claim', 0))",
+    )
     .execute(&mut *tx)
     .await?;
 
@@ -398,9 +413,6 @@ pub(super) async fn create_post_event_reimbursements(
              ) OR EXISTS (
                  SELECT 1 FROM plan_visitors
                  WHERE event_id = $1 AND driver_id = $2
-             ) OR EXISTS (
-                 SELECT 1 FROM event_signups
-                 WHERE event_id = $1 AND user_id = $2 AND status = 'going' AND offer_drive = 1
              )",
         )
         .bind(event_id)
@@ -461,8 +473,26 @@ pub(super) async fn create_post_event_reimbursements(
             trip_label, event_title, dest_area_name, note_suffix
         );
 
-        let can_auto_approve =
-            !is_excluded && u.can(Page::AdminReimbReview, Act::Update) && claim.driver_id != u.id;
+        let configured_fare: Option<i64> = match event_area_id {
+            Some(ea_id) if ea_id != claim.destination_area_id => {
+                sqlx::query_scalar(
+                    "SELECT amount_cents FROM area_fares
+                     WHERE area_a_id = LEAST($1, $2) AND area_b_id = GREATEST($1, $2)",
+                )
+                .bind(ea_id)
+                .bind(claim.destination_area_id)
+                .fetch_optional(&mut *tx)
+                .await?
+            }
+            _ => None,
+        };
+        let matches_configured_fare =
+            configured_fare.is_some_and(|fare| fare > 0 && fare == claim.amount_cents);
+
+        let can_auto_approve = !is_excluded
+            && matches_configured_fare
+            && u.can(Page::AdminReimbReview, Act::Update)
+            && claim.driver_id != u.id;
         let (claim_status, claim_reviewer, claim_requester): (&str, Option<i64>, Option<i64>) =
             if can_auto_approve {
                 ("approved", Some(u.id), None)

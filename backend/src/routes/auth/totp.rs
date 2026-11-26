@@ -118,7 +118,7 @@ async fn consume_backup_code(
     if st
         .limiter
         .check(
-            &format!("totp_user:{user_id}"),
+            &format!("totp_backup:user:{user_id}"),
             10,
             std::time::Duration::from_secs(300),
         )
@@ -174,15 +174,46 @@ async fn consume_backup_code(
 
 pub(super) async fn lock_session(
     State(st): State<AppState>,
+    jar: axum_extra::extract::cookie::CookieJar,
     u: CurrentUser,
-) -> AppResult<Json<Value>> {
+) -> AppResult<(axum_extra::extract::cookie::CookieJar, Json<Value>)> {
+    let (totp_enabled, passkey_count, biometric_count): (i64, i64, i64) = sqlx::query_as(
+        "SELECT u.totp_enabled,
+                (SELECT COUNT(*) FROM passkeys WHERE user_id=u.id),
+                (SELECT COUNT(*) FROM biometric_credentials WHERE user_id=u.id)
+         FROM users u WHERE u.id=$1",
+    )
+    .bind(u.id)
+    .fetch_one(&st.db)
+    .await?;
+    let has_unlock_method =
+        passkey_count > 0 || biometric_count > 0 || totp_enabled == 1 || st.cfg.dev_mode;
+    if !has_unlock_method {
+        sqlx::query("DELETE FROM sessions WHERE token=$1")
+            .bind(&u.session_id)
+            .execute(&st.db)
+            .await?;
+        audit(
+            &st.db,
+            Some(u.id),
+            "session.lock_logout",
+            "user",
+            Some(u.id),
+            "",
+        )
+        .await;
+        return Ok((
+            super::clear_cookies(jar),
+            Json(json!({ "ok": true, "logged_out": true })),
+        ));
+    }
     sqlx::query("UPDATE sessions SET locked_at=$1 WHERE token=$2")
         .bind(now())
         .bind(&u.session_id)
         .execute(&st.db)
         .await?;
     audit(&st.db, Some(u.id), "session.lock", "user", Some(u.id), "").await;
-    Ok(Json(json!({ "ok": true })))
+    Ok((jar, Json(json!({ "ok": true }))))
 }
 
 #[derive(Deserialize)]
@@ -375,25 +406,29 @@ pub(super) async fn totp_verify(
     // instead of HTTP 200.
     let norm = clean.replace(['-', ' '], "").to_uppercase();
     if norm.len() == 8 {
-        if let Ok(remaining) = consume_backup_code(&st, u.id, &norm, u.lang).await {
-            sqlx::query("UPDATE sessions SET mfa_ok=1, failed_totp_attempts=0 WHERE token=$1")
-                .bind(&u.session_id)
-                .execute(&st.db)
-                .await?;
-            audit(
-                &st.db,
-                Some(u.id),
-                "totp.backup_code_used",
-                "user",
-                Some(u.id),
-                format!("remaining: {remaining}"),
-            )
-            .await;
-            return Ok(Json(json!({
-                "ok": true,
-                "method": "backup_code",
-                "remaining_backup_codes": remaining
-            })));
+        match consume_backup_code(&st, u.id, &norm, u.lang).await {
+            Ok(remaining) => {
+                sqlx::query("UPDATE sessions SET mfa_ok=1, failed_totp_attempts=0 WHERE token=$1")
+                    .bind(&u.session_id)
+                    .execute(&st.db)
+                    .await?;
+                audit(
+                    &st.db,
+                    Some(u.id),
+                    "totp.backup_code_used",
+                    "user",
+                    Some(u.id),
+                    format!("remaining: {remaining}"),
+                )
+                .await;
+                return Ok(Json(json!({
+                    "ok": true,
+                    "method": "backup_code",
+                    "remaining_backup_codes": remaining
+                })));
+            }
+            Err(err @ AppError::TooManyRequests { .. }) => return Err(err),
+            Err(_) => {}
         }
     }
 

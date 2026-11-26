@@ -1004,7 +1004,7 @@ async fn settlement_qr_receipt_extraction_payout_batches_and_demand() {
         .contains("text/csv"));
     assert!(csv_body.contains("Driver One") && csv_body.contains("25.00"));
 
-    // Reviewer (`transport`) cannot pay the batch they approved
+    // Reviewer (`transport`) and batch creator (`finance`) cannot pay the batch
     let rev_pay = call(
         &app,
         Method::POST,
@@ -1015,11 +1015,23 @@ async fn settlement_qr_receipt_extraction_payout_batches_and_demand() {
     .await;
     assert_eq!(rev_pay.status, StatusCode::FORBIDDEN);
 
-    let fin_pay = call(
+    let self_batch_pay = call(
         &app,
         Method::POST,
         &format!("/api/reimbursements/batches/{batch_id}/pay"),
         Some(&finance),
+        Some(json!({ "payee_verified": true, "paid_ref": "FT-SELF-BATCH" })),
+    )
+    .await;
+    assert_eq!(self_batch_pay.status, StatusCode::FORBIDDEN);
+    assert_eq!(self_batch_pay.json["code"], "CANNOT_PAY_OWN_BATCH");
+
+    let finance2 = login(&st, "superadmin@example.org").await;
+    let fin_pay = call(
+        &app,
+        Method::POST,
+        &format!("/api/reimbursements/batches/{batch_id}/pay"),
+        Some(&finance2),
         Some(json!({ "payee_verified": true, "paid_ref": "FT-BATCH-01" })),
     )
     .await;
@@ -1029,7 +1041,7 @@ async fn settlement_qr_receipt_extraction_payout_batches_and_demand() {
         &app,
         Method::POST,
         &format!("/api/reimbursements/batches/{batch_id}/pay"),
-        Some(&finance),
+        Some(&finance2),
         Some(json!({ "payee_verified": true, "paid_ref": "FT-BATCH-02" })),
     )
     .await;

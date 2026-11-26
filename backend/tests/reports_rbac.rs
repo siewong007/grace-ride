@@ -1034,15 +1034,16 @@ async fn reports_hardening_metrics_and_custom_roles() {
     assert!(dem_cell.json["by_area"][0]["registered_drivers"].is_null());
 
     // 8. Finance maker-checker accuracy & cross-month payout trend
-    // Single finance officer creating AND paying a valid batch (applicant=member_id, reviewer=admin_id)
-    // must be maker_checker_ok=true! Plus an SoD violating batch (paid_by == reviewer) -> false!
+    // Two finance-capable officers creating & paying a valid batch (applicant=member_id, reviewer=admin_id)
+    // must be maker_checker_ok=true! Plus self-created & paid batch -> false, and paid_by == reviewer -> false!
     let receipt_id = upload_png(&app, &member_cookie).await;
     let valid_b: i64 = sqlx::query_scalar(
         "INSERT INTO payout_batches (month, title, total_cents, claim_count, status, paid_ref, created_by, paid_by, paid_at, created_at)
-         VALUES ($1, 'Valid Self-Executed Batch', 1100, 1, 'paid', 'REF-OK', $2, $2, '2031-05-20T12:00:00', '2031-05-20T10:00:00') RETURNING id",
+         VALUES ($1, 'Valid Dual-Control Batch', 1100, 1, 'paid', 'REF-OK', $2, $3, '2031-05-20T12:00:00', '2031-05-20T10:00:00') RETURNING id",
     )
     .bind(month)
     .bind(finance_id)
+    .bind(president_id)
     .fetch_one(&st.db)
     .await
     .unwrap();
@@ -1055,8 +1056,55 @@ async fn reports_hardening_metrics_and_custom_roles() {
     .bind(admin_ev)
     .bind(receipt_id)
     .bind(admin_id)
-    .bind(finance_id)
+    .bind(president_id)
     .bind(valid_b)
+    .execute(&st.db)
+    .await
+    .unwrap();
+
+    // Dual-control DB constraint blocks inserting a self-paid batch directly; simulate a historical
+    // pre-migration self-paid batch by dropping and re-adding the constraint NOT VALID.
+    let direct_self = sqlx::query(
+        "INSERT INTO payout_batches (month, title, total_cents, claim_count, status, paid_ref, created_by, paid_by, paid_at, created_at)
+         VALUES ($1, 'Self-Executed Batch Violation', 500, 1, 'paid', 'REF-SELF-B', $2, $2, '2031-05-20T13:00:00', '2031-05-20T10:00:00')",
+    )
+    .bind(month)
+    .bind(finance_id)
+    .execute(&st.db)
+    .await;
+    assert!(
+        direct_self.is_err(),
+        "chk_payout_batches_dual_control must block direct created_by == paid_by insert"
+    );
+    sqlx::query("ALTER TABLE payout_batches DROP CONSTRAINT chk_payout_batches_dual_control")
+        .execute(&st.db)
+        .await
+        .unwrap();
+    let self_b: i64 = sqlx::query_scalar(
+        "INSERT INTO payout_batches (month, title, total_cents, claim_count, status, paid_ref, created_by, paid_by, paid_at, created_at)
+         VALUES ($1, 'Self-Executed Batch Violation', 500, 1, 'paid', 'REF-SELF-B', $2, $2, '2031-05-20T13:00:00', '2031-05-20T10:00:00') RETURNING id",
+    )
+    .bind(month)
+    .bind(finance_id)
+    .fetch_one(&st.db)
+    .await
+    .unwrap();
+    sqlx::query(
+        "ALTER TABLE payout_batches ADD CONSTRAINT chk_payout_batches_dual_control CHECK (paid_by IS NULL OR paid_by <> created_by) NOT VALID",
+    )
+    .execute(&st.db)
+    .await
+    .unwrap();
+    sqlx::query(
+        "INSERT INTO reimbursements (user_id, event_id, amount_cents, description, receipt_file_id, payee_name, payee_phone, status, reviewed_by, payee_verified, paid_ref, paid_by, paid_at, batch_id, created_at, updated_at)
+         VALUES ($1, $2, 500, 'Self-Batch Claim', $3, 'Member', '0123456789', 'paid', $4, 1, 'REF-SELF-B', $5, '2031-05-20T13:00:00', $6, '2031-05-20T09:00:00', '2031-05-20T13:00:00')",
+    )
+    .bind(member_id)
+    .bind(admin_ev)
+    .bind(receipt_id)
+    .bind(admin_id)
+    .bind(finance_id)
+    .bind(self_b)
     .execute(&st.db)
     .await
     .unwrap();
@@ -1098,13 +1146,18 @@ async fn reports_hardening_metrics_and_custom_roles() {
         .unwrap();
     let ok_batch = batches
         .iter()
-        .find(|b| b["title"] == "Valid Self-Executed Batch")
+        .find(|b| b["title"] == "Valid Dual-Control Batch")
+        .unwrap();
+    let self_batch = batches
+        .iter()
+        .find(|b| b["title"] == "Self-Executed Batch Violation")
         .unwrap();
     let bad_batch = batches
         .iter()
         .find(|b| b["title"] == "SoD Violation Batch")
         .unwrap();
     assert_eq!(ok_batch["maker_checker_ok"], true);
+    assert_eq!(self_batch["maker_checker_ok"], false);
     assert_eq!(bad_batch["maker_checker_ok"], false);
     // Quarterly monthly_trend has zero-filled April, May, June; May has paid_count >= 1
     let trend = fin_q.json["reimbursement_payouts"]["monthly_trend"]
@@ -1117,11 +1170,12 @@ async fn reports_hardening_metrics_and_custom_roles() {
     assert!(trend[1]["claim_count"].as_i64().unwrap() >= 2);
 
     // 9. Single-domain custom roles: bills-only custom role gets visible_sections.badges=false
+    let root = login(&st, "superadmin@example.org").await;
     let bills_role = call(
         &app,
         Method::POST,
         "/api/admin/roles",
-        Some(&admin),
+        Some(&root),
         Some(json!({
             "name": "Bills Viewer Only",
             "description": "Can only see bills and admin reports",

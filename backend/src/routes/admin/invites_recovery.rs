@@ -11,7 +11,54 @@ use crate::error::{bad, conflict, forbidden, not_found, AppResult};
 use crate::i18n::ErrorKey;
 use crate::perms::{self, parse_roles, Act, Page};
 use crate::state::AppState;
-use crate::util::{audit, in_days, minutes_ago, now, random_token, require};
+use crate::util::{audit, in_days, minutes_ago, now, random_token, require, Lang};
+
+async fn has_admin_power(
+    tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+    roles: &[String],
+) -> AppResult<bool> {
+    if roles.is_empty() {
+        return Ok(false);
+    }
+    if roles.iter().any(|r| r == perms::ADMIN_ROLE) {
+        return Ok(true);
+    }
+    let power = perms::admin_power_keys();
+    let count: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM role_permissions WHERE role_key = ANY($1) AND permission = ANY($2)",
+    )
+    .bind(roles)
+    .bind(&power)
+    .fetch_one(&mut **tx)
+    .await?;
+    Ok(count > 0)
+}
+
+async fn guard_recovery_authority(
+    tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+    lang: Lang,
+    caller_id: i64,
+    caller_roles: &[String],
+    target_uid: i64,
+    target_roles: &[String],
+) -> AppResult<()> {
+    if target_uid == caller_id {
+        return Err(forbidden(lang, ErrorKey::SecondAdminRequired));
+    }
+    if perms::is_superadmin(target_roles) && !perms::is_superadmin(caller_roles) {
+        return Err(forbidden(lang, ErrorKey::SuperadminOnly));
+    }
+    if !perms::is_superadmin(caller_roles) && !perms::outranks(caller_roles, target_roles) {
+        return Err(forbidden(lang, ErrorKey::RankTooLow));
+    }
+    if has_admin_power(tx, target_roles).await?
+        && !perms::can_manage_admins(caller_roles)
+        && !has_admin_power(tx, caller_roles).await?
+    {
+        return Err(forbidden(lang, ErrorKey::AdminAppointmentRestricted));
+    }
+    Ok(())
+}
 
 pub(super) async fn create_invite(
     State(st): State<AppState>,
@@ -113,6 +160,20 @@ pub(super) async fn approve_recovery(
 ) -> AppResult<Json<Value>> {
     require(&u, Page::AdminRecovery, Act::Update)?;
     let mut tx = st.db.begin().await?;
+    sqlx::query("SELECT pg_advisory_xact_lock(hashtextextended('grace_ride_roles_mutation', 0))")
+        .execute(&mut *tx)
+        .await?;
+    let caller_roles_raw: String = sqlx::query_scalar("SELECT roles FROM users WHERE id=$1")
+        .bind(u.id)
+        .fetch_one(&mut *tx)
+        .await?;
+    let caller_roles = parse_roles(&caller_roles_raw);
+    if !perms::for_roles(&mut *tx, &caller_roles)
+        .await?
+        .has(Page::AdminRecovery, Act::Update)
+    {
+        return Err(forbidden(u.lang, ErrorKey::NoPermission));
+    }
     let email: String = sqlx::query_scalar("SELECT email FROM recovery_requests WHERE id=$1")
         .bind(id)
         .fetch_optional(&mut *tx)
@@ -145,12 +206,13 @@ pub(super) async fn approve_recovery(
         .fetch_one(&mut *tx)
         .await?;
     let target_roles = parse_roles(&roles);
-    if perms::is_superadmin(&target_roles) && !perms::is_superadmin(&u.roles) {
-        return Err(forbidden(u.lang, ErrorKey::SuperadminOnly));
-    }
+    guard_recovery_authority(&mut tx, u.lang, u.id, &caller_roles, uid, &target_roles).await?;
+    let target_privileged = perms::for_roles(&mut *tx, &target_roles)
+        .await?
+        .privileged();
     // Recovering a privileged account needs two different admins: the first
     // only flags the request, the second confirms and receives the link.
-    if status == "pending" && perms::is_privileged(&st.db, &roles).await? {
+    if status == "pending" && target_privileged {
         let changed = sqlx::query(
             "UPDATE recovery_requests SET status='awaiting_second', resolved_by=$1 WHERE id=$2 AND status IN ('pending','awaiting_second')",
         )
@@ -265,16 +327,35 @@ pub(super) async fn reject_recovery(
 ) -> AppResult<Json<Value>> {
     require(&u, Page::AdminRecovery, Act::Update)?;
     let mut tx = st.db.begin().await?;
+    sqlx::query("SELECT pg_advisory_xact_lock(hashtextextended('grace_ride_roles_mutation', 0))")
+        .execute(&mut *tx)
+        .await?;
+    let caller_roles_raw: String = sqlx::query_scalar("SELECT roles FROM users WHERE id=$1")
+        .bind(u.id)
+        .fetch_one(&mut *tx)
+        .await?;
+    let caller_roles = parse_roles(&caller_roles_raw);
+    if !perms::for_roles(&mut *tx, &caller_roles)
+        .await?
+        .has(Page::AdminRecovery, Act::Update)
+    {
+        return Err(forbidden(u.lang, ErrorKey::NoPermission));
+    }
     let email: String = sqlx::query_scalar("SELECT email FROM recovery_requests WHERE id=$1")
         .bind(id)
         .fetch_optional(&mut *tx)
         .await?
         .ok_or(not_found(u.lang))?;
-    let user_id: Option<i64> =
-        sqlx::query_scalar("SELECT id FROM users WHERE email=lower($1) FOR UPDATE")
+    let target_row: Option<(i64, String)> =
+        sqlx::query_as("SELECT id, roles FROM users WHERE email=lower($1) FOR UPDATE")
             .bind(&email)
             .fetch_optional(&mut *tx)
             .await?;
+    let user_id = target_row.as_ref().map(|(uid, _)| *uid);
+    if let Some((uid, roles_raw)) = target_row {
+        let target_roles = parse_roles(&roles_raw);
+        guard_recovery_authority(&mut tx, u.lang, u.id, &caller_roles, uid, &target_roles).await?;
+    }
     let status: String =
         sqlx::query_scalar("SELECT status FROM recovery_requests WHERE id=$1 FOR UPDATE")
             .bind(id)

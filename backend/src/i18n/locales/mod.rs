@@ -185,6 +185,9 @@ pub fn render(lang: Lang, key: &ErrorKey) -> String {
         ErrorKey::EventCannotHideWithSignups => {
             events::render(lang, EventsError::EventCannotHideWithSignups)
         }
+        ErrorKey::EventMileageNotClaimable => {
+            events::render(lang, EventsError::EventMileageNotClaimable)
+        }
 
         ErrorKey::InvalidPickupTime => rides::render(lang, RidesError::InvalidPickupTime),
         ErrorKey::PickupTimeInPast => rides::render(lang, RidesError::PickupTimeInPast),
@@ -459,6 +462,10 @@ pub fn render(lang: Lang, key: &ErrorKey) -> String {
         ErrorKey::MonthFormatInvalid => community::render(lang, CommunityError::MonthFormatInvalid),
         ErrorKey::BatchEmpty => community::render(lang, CommunityError::BatchEmpty),
         ErrorKey::BatchAlreadyPaid => community::render(lang, CommunityError::BatchAlreadyPaid),
+        ErrorKey::CannotPayOwnBatch => community::render(lang, CommunityError::CannotPayOwnBatch),
+        ErrorKey::TelegramPairingRequired => {
+            community::render(lang, CommunityError::TelegramPairingRequired)
+        }
 
         ErrorKey::NoFileReceived => files::render(lang, FilesError::NoFileReceived),
         ErrorKey::FileTooLarge => files::render(lang, FilesError::FileTooLarge),
@@ -619,6 +626,7 @@ mod tests {
             ErrorKey::MileageAuthorisationRestricted => ErrorKey::MileageAuthorisationRestricted,
             ErrorKey::EventNotDraft => ErrorKey::EventNotDraft,
             ErrorKey::EventCannotHideWithSignups => ErrorKey::EventCannotHideWithSignups,
+            ErrorKey::EventMileageNotClaimable => ErrorKey::EventMileageNotClaimable,
 
             ErrorKey::InvalidPickupTime => ErrorKey::InvalidPickupTime,
             ErrorKey::PickupTimeInPast => ErrorKey::PickupTimeInPast,
@@ -736,10 +744,12 @@ mod tests {
             ErrorKey::MonthFormatInvalid => ErrorKey::MonthFormatInvalid,
             ErrorKey::BatchEmpty => ErrorKey::BatchEmpty,
             ErrorKey::BatchAlreadyPaid => ErrorKey::BatchAlreadyPaid,
+            ErrorKey::CannotPayOwnBatch => ErrorKey::CannotPayOwnBatch,
             ErrorKey::VisitorReimbNeedsDriver => ErrorKey::VisitorReimbNeedsDriver,
             ErrorKey::VisitorReimbAlreadyLive => ErrorKey::VisitorReimbAlreadyLive,
             ErrorKey::VisitorHasReimbursement => ErrorKey::VisitorHasReimbursement,
             ErrorKey::AmountMustBePositive => ErrorKey::AmountMustBePositive,
+            ErrorKey::TelegramPairingRequired => ErrorKey::TelegramPairingRequired,
 
             ErrorKey::NoFileReceived => ErrorKey::NoFileReceived,
             ErrorKey::FileTooLarge => ErrorKey::FileTooLarge,

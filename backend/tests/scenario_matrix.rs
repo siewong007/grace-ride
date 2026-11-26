@@ -1250,6 +1250,13 @@ async fn payout_batch_validation_separation_of_duties_and_concurrent_pay_race() 
     let member_id = user_id(&st, "member@example.org").await;
     let transport_id = user_id(&st, "transport@example.org").await;
     let finance_id = user_id(&st, "finance@example.org").await;
+    let second_finance_email = "president@example.org";
+    sqlx::query("UPDATE users SET roles='finance' WHERE email=$1")
+        .bind(second_finance_email)
+        .execute(&st.db)
+        .await
+        .unwrap();
+    let finance2 = login(&st, second_finance_email).await;
 
     // Month without approved claims fails with BATCH_EMPTY
     let empty_batch = call(
@@ -1317,7 +1324,7 @@ async fn payout_batch_validation_separation_of_duties_and_concurrent_pay_race() 
         &app,
         Method::POST,
         &format!("/api/reimbursements/batches/{batch_id}/pay"),
-        Some(&finance),
+        Some(&finance2),
         Some(json!({ "payee_verified": false, "paid_ref": "FT-999" })),
     )
     .await;
@@ -1328,33 +1335,47 @@ async fn payout_batch_validation_separation_of_duties_and_concurrent_pay_race() 
         &app,
         Method::POST,
         &format!("/api/reimbursements/batches/{batch_id}/pay"),
-        Some(&finance),
+        Some(&finance2),
         Some(json!({ "payee_verified": true, "paid_ref": "ab" })),
     )
     .await;
     assert_eq!(short_ref.status, StatusCode::BAD_REQUEST);
     assert_eq!(short_ref.json["code"], "TXN_REF_REQUIRED");
 
-    // 2-person separation of duties: payer cannot equal approver or requester
-    sqlx::query("UPDATE reimbursements SET reviewed_by=$1 WHERE id=$2")
-        .bind(finance_id)
-        .bind(claim_id)
-        .execute(&st.db)
-        .await
-        .unwrap();
-    let own_approval = call(
+    // Batch dual-control: batch creator cannot pay their own batch.
+    let own_batch = call(
         &app,
         Method::POST,
         &format!("/api/reimbursements/batches/{batch_id}/pay"),
         Some(&finance),
+        Some(json!({ "payee_verified": true, "paid_ref": "FT-SELF-BATCH" })),
+    )
+    .await;
+    assert_eq!(own_batch.status, StatusCode::FORBIDDEN);
+    assert_eq!(own_batch.json["code"], "CANNOT_PAY_OWN_BATCH");
+
+    // 2-person separation of duties: payer cannot equal approver or requester
+    sqlx::query(
+        "UPDATE reimbursements SET reviewed_by=(SELECT id FROM users WHERE email=$1) WHERE id=$2",
+    )
+    .bind(second_finance_email)
+    .bind(claim_id)
+    .execute(&st.db)
+    .await
+    .unwrap();
+    let own_approval = call(
+        &app,
+        Method::POST,
+        &format!("/api/reimbursements/batches/{batch_id}/pay"),
+        Some(&finance2),
         Some(json!({ "payee_verified": true, "paid_ref": "FT-SELF-APP" })),
     )
     .await;
     assert_eq!(own_approval.status, StatusCode::FORBIDDEN);
     assert_eq!(own_approval.json["code"], "CANNOT_PAY_OWN_APPROVAL");
 
-    sqlx::query("UPDATE reimbursements SET user_id=$1, reviewed_by=$2 WHERE id=$3")
-        .bind(finance_id)
+    sqlx::query("UPDATE reimbursements SET user_id=(SELECT id FROM users WHERE email=$1), reviewed_by=$2 WHERE id=$3")
+        .bind(second_finance_email)
         .bind(transport_id)
         .bind(claim_id)
         .execute(&st.db)
@@ -1364,7 +1385,7 @@ async fn payout_batch_validation_separation_of_duties_and_concurrent_pay_race() 
         &app,
         Method::POST,
         &format!("/api/reimbursements/batches/{batch_id}/pay"),
-        Some(&finance),
+        Some(&finance2),
         Some(json!({ "payee_verified": true, "paid_ref": "FT-SELF-REQ" })),
     )
     .await;
@@ -1379,21 +1400,22 @@ async fn payout_batch_validation_separation_of_duties_and_concurrent_pay_race() 
         .await
         .unwrap();
 
-    // Concurrent double-pay: exactly one succeeds (200) and one gets BATCH_ALREADY_PAID (400)
+    // Concurrent double-pay by second finance officer: exactly one succeeds (200) and one gets BATCH_ALREADY_PAID (400)
+    let _ = finance_id;
     let pay_url = format!("/api/reimbursements/batches/{batch_id}/pay");
     let (p1, p2) = tokio::join!(
         call(
             &app,
             Method::POST,
             &pay_url,
-            Some(&finance),
+            Some(&finance2),
             Some(json!({ "payee_verified": true, "paid_ref": "FT-RACE-1" })),
         ),
         call(
             &app,
             Method::POST,
             &pay_url,
-            Some(&finance),
+            Some(&finance2),
             Some(json!({ "payee_verified": true, "paid_ref": "FT-RACE-2" })),
         )
     );

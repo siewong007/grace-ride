@@ -53,6 +53,8 @@ pub struct Config {
     /// Optional comma-separated Apple App IDs (`<TEAM_ID>.<BUNDLE_ID>`)
     /// for iOS Universal Links and WebAuthn Associated Domains (`/.well-known/apple-app-site-association`).
     pub ios_app_ids: Vec<String>,
+    /// Require hardware key attestation (`REQUIRE_BIOMETRIC_ATTESTATION=true`) for native biometrics in production.
+    pub require_biometric_attestation: bool,
 }
 
 /// How the app talks to Postgres.
@@ -169,6 +171,7 @@ impl Config {
                 "",
             ))?,
             ios_app_ids: parse_ios_app_ids(&env("IOS_APP_IDS", ""))?,
+            require_biometric_attestation: crate::attestation::require_attestation_enabled(),
         };
         cfg.validate()?;
         Ok(cfg)
@@ -223,6 +226,14 @@ impl Config {
         }
         for app_id in &self.ios_app_ids {
             normalize_ios_app_id(app_id)?;
+        }
+        if self.require_biometric_attestation
+            && !self.dev_mode
+            && self.android_cert_sha256_fingerprints.is_empty()
+        {
+            anyhow::bail!(
+                "ANDROID_CERT_SHA256_FINGERPRINTS must be configured when REQUIRE_BIOMETRIC_ATTESTATION=true and DEV_MODE=false"
+            );
         }
         crate::crypto::validate_configured_key()?;
         Ok(())

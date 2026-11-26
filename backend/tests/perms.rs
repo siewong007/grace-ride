@@ -411,12 +411,25 @@ async fn nobody_grants_themselves_finance_or_drops_their_own_role_access() {
     assert_eq!(r.status, StatusCode::FORBIDDEN, "{}", r.json);
     assert_eq!(r.json["code"], "CANNOT_GRANT_SELF_FINANCE");
 
-    // A custom finance role is fine to create, but not to take for oneself.
-    let made = call(
+    // An admin cannot create an unranked role carrying finance permissions…
+    let blocked = call(
         &app,
         Method::POST,
         "/api/admin/roles",
         Some(&admin),
+        Some(json!({ "name": "Blocked Treasurer", "permissions": ["admin_bills.view"] })),
+    )
+    .await;
+    assert_eq!(blocked.status, StatusCode::FORBIDDEN, "{}", blocked.json);
+    assert_eq!(blocked.json["code"], "CANNOT_GRANT_UNHELD_PERMISSION");
+
+    // …and if a superadmin creates a custom finance role, the admin cannot grant it to themselves or anyone else.
+    let root = login(&st, "superadmin@example.org").await;
+    let made = call(
+        &app,
+        Method::POST,
+        "/api/admin/roles",
+        Some(&root),
         Some(json!({ "name": "Treasurer", "permissions": ["admin_bills.view"] })),
     )
     .await;
@@ -432,6 +445,18 @@ async fn nobody_grants_themselves_finance_or_drops_their_own_role_access() {
     .await;
     assert_eq!(r.status, StatusCode::FORBIDDEN, "{}", r.json);
     assert_eq!(r.json["code"], "CANNOT_GRANT_SELF_FINANCE");
+
+    let member_id = user_id(&st, "member@example.org").await;
+    let r = call(
+        &app,
+        Method::PUT,
+        &format!("/api/admin/users/{member_id}"),
+        Some(&admin),
+        Some(json!({"roles": [key], "status": "active"})),
+    )
+    .await;
+    assert_eq!(r.status, StatusCode::FORBIDDEN, "{}", r.json);
+    assert_eq!(r.json["code"], "CANNOT_GRANT_UNHELD_PERMISSION");
 
     // Dropping the admin role would leave the caller unable to manage roles.
     let r = call(
