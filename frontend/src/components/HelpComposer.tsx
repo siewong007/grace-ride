@@ -39,7 +39,8 @@ export default function HelpComposer({
   const ft = useFormatT();
   const pick = usePick();
   const nav = useNavigate();
-  const { can } = useAuth();
+  const { can, me } = useAuth();
+  const draftKey = me?.id ? `${DRAFT_KEY}_${me.id}` : DRAFT_KEY;
   const toast = useToast();
   const { busy, error, run } = useAction();
   const isStaffEditor = can('admin_help', 'update');
@@ -68,11 +69,11 @@ export default function HelpComposer({
   );
   const memberResults = membersApi.data ?? [];
 
-  // Restore draft on mount if not overridden by initial props
+  // Restore draft on mount / user change if not overridden by initial props
   useEffect(() => {
     if (initialSubject || initialRideId != null) return;
     try {
-      const saved = localStorage.getItem(DRAFT_KEY);
+      const saved = localStorage.getItem(draftKey);
       if (saved) {
         const parsed = JSON.parse(saved);
         if (parsed.subject) setSubject(parsed.subject);
@@ -82,20 +83,20 @@ export default function HelpComposer({
     } catch {
       // Ignore corrupt storage
     }
-  }, [initialSubject, initialRideId]);
+  }, [initialSubject, initialRideId, draftKey]);
 
   // Persist draft on changes
   useEffect(() => {
-    if (!subject && !body && rideId == null) {
-      localStorage.removeItem(DRAFT_KEY);
-      return;
-    }
     try {
-      localStorage.setItem(DRAFT_KEY, JSON.stringify({ subject, body, rideId }));
+      if (!subject && !body && rideId == null) {
+        localStorage.removeItem(draftKey);
+        return;
+      }
+      localStorage.setItem(draftKey, JSON.stringify({ subject, body, rideId }));
     } catch {
       // Ignore storage errors
     }
-  }, [subject, body, rideId]);
+  }, [subject, body, rideId, draftKey]);
 
   // Find suggested guides based on subject
   const suggestedGuides = (() => {
@@ -134,7 +135,7 @@ export default function HelpComposer({
 
       const res = await post<{ id: number }>('/help', payload);
       try {
-        localStorage.removeItem(DRAFT_KEY);
+        localStorage.removeItem(draftKey);
       } catch {
         // ignore
       }

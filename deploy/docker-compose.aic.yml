@@ -80,6 +80,7 @@ services:
       DEV_MODE: "false"
       TRUST_PROXY: "true"
       LOG_FORMAT: json
+      SECRETS_ENCRYPTION_KEY: ${SECRETS_ENCRYPTION_KEY:?SECRETS_ENCRYPTION_KEY must be set (64 hex chars / 32-byte key)}
       BIND: "0.0.0.0:8080"
       UPLOAD_DIR: /data/uploads
       STATIC_DIR: /app/web

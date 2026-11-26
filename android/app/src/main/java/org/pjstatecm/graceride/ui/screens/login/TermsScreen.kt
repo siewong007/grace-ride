@@ -4,14 +4,20 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.defaultMinSize
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.selection.toggleable
 import androidx.compose.material3.Button
 import androidx.compose.material3.Checkbox
+import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedCard
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
@@ -25,11 +31,14 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.unit.dp
 import kotlinx.coroutines.launch
 import org.pjstatecm.graceride.R
 import org.pjstatecm.graceride.data.api.ApiException
 import org.pjstatecm.graceride.di.AppContainer
+import org.pjstatecm.graceride.ui.components.InlineButtonSpinner
 import org.pjstatecm.graceride.ui.theme.Spacing
+import org.pjstatecm.graceride.ui.theme.graceRidePrimaryButtonColors
 
 /**
  * Terms gate, mirroring the web's TermsGate: the full terms text, an opt-in
@@ -53,6 +62,7 @@ fun TermsScreen(container: AppContainer) {
         R.string.terms_location_title to R.string.terms_location_body,
         R.string.terms_see_title to R.string.terms_see_body,
         R.string.terms_third_title to R.string.terms_third_body,
+        R.string.terms_external_title to R.string.terms_external_body,
         R.string.terms_retention_title to R.string.terms_retention_body,
         R.string.terms_rights_title to R.string.terms_rights_body,
         R.string.terms_drivers_title to R.string.terms_drivers_body,
@@ -63,42 +73,59 @@ fun TermsScreen(container: AppContainer) {
     )
 
     LazyColumn(
-        Modifier.fillMaxSize().padding(horizontal = Spacing.sm).testTag("termsList"),
+        Modifier
+            .fillMaxSize()
+            .statusBarsPadding()
+            .navigationBarsPadding()
+            .padding(horizontal = Spacing.sm)
+            .testTag("termsList"),
         verticalArrangement = Arrangement.spacedBy(Spacing.sm),
         contentPadding = PaddingValues(vertical = Spacing.sm),
     ) {
         item {
-            Column {
-                Text(stringResource(R.string.terms_title), style = MaterialTheme.typography.headlineSmall, color = MaterialTheme.colorScheme.onSurface)
-                Text(stringResource(R.string.terms_updated), style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.padding(top = Spacing.xxs))
-                Text(stringResource(R.string.terms_intro), style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurface, modifier = Modifier.padding(top = Spacing.xs))
+            OutlinedCard(Modifier.fillMaxWidth()) {
+                Column(Modifier.padding(Spacing.sm)) {
+                    Text(stringResource(R.string.terms_title), style = MaterialTheme.typography.headlineSmall, color = MaterialTheme.colorScheme.onSurface)
+                    Text(stringResource(R.string.terms_updated), style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.primary, modifier = Modifier.padding(top = Spacing.xxs))
+                    Text(stringResource(R.string.terms_intro), style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurface, modifier = Modifier.padding(top = Spacing.xs))
+                }
             }
         }
         items(sections.size) { i ->
             val (title, body) = sections[i]
-            Column {
+            Column(Modifier.fillMaxWidth().padding(vertical = Spacing.xs)) {
                 Text(stringResource(title), style = MaterialTheme.typography.titleSmall, color = MaterialTheme.colorScheme.onSurface)
                 Text(stringResource(body), style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.padding(top = Spacing.xxs))
-            }
-        }
-        item {
-            Row(
-                Modifier.fillMaxWidth().toggleable(value = checked, role = Role.Checkbox, onValueChange = { checked = it }),
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                Checkbox(checked = checked, onCheckedChange = null)
-                Text(
-                    stringResource(R.string.terms_opt_in),
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = MaterialTheme.colorScheme.onSurface,
-                    modifier = Modifier.padding(start = Spacing.xs),
+                HorizontalDivider(
+                    color = MaterialTheme.colorScheme.outlineVariant,
+                    modifier = Modifier.padding(top = Spacing.sm),
                 )
             }
         }
         item {
-            Column {
+            OutlinedCard(Modifier.fillMaxWidth()) {
+                Row(
+                    Modifier
+                        .fillMaxWidth()
+                        .defaultMinSize(minHeight = 52.dp)
+                        .toggleable(value = checked, role = Role.Checkbox, onValueChange = { checked = it })
+                        .padding(horizontal = Spacing.sm, vertical = Spacing.xs),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Checkbox(checked = checked, onCheckedChange = null)
+                    Text(
+                        stringResource(R.string.terms_opt_in),
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSurface,
+                        modifier = Modifier.padding(start = Spacing.xs),
+                    )
+                }
+            }
+        }
+        item {
+            Column(verticalArrangement = Arrangement.spacedBy(Spacing.xs)) {
                 error?.let {
-                    Text(it, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodyMedium, modifier = Modifier.padding(bottom = Spacing.xs))
+                    Text(it, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodyMedium)
                 }
                 Button(
                     onClick = {
@@ -117,8 +144,15 @@ fun TermsScreen(container: AppContainer) {
                         }
                     },
                     enabled = checked && !busy,
-                    modifier = Modifier.fillMaxWidth(),
-                ) { Text(stringResource(R.string.terms_agree)) }
+                    colors = graceRidePrimaryButtonColors(),
+                    modifier = Modifier.fillMaxWidth().height(52.dp),
+                ) {
+                    if (busy) {
+                        InlineButtonSpinner(color = MaterialTheme.colorScheme.onPrimary)
+                    } else {
+                        Text(stringResource(R.string.terms_agree))
+                    }
+                }
                 TextButton(
                     onClick = { scope.launch { container.auth.logout() } },
                     modifier = Modifier.fillMaxWidth(),

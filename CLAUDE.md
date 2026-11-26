@@ -13,9 +13,10 @@
 | Database | PostgreSQL 18 · integer cents · KL local-time text timestamps |
 | Frontend | React 19 · TypeScript 6 · Vite 8 · i18next · Leaflet |
 | Android | Kotlin 2.2 · Jetpack Compose · Material 3 · MVVM |
+| iOS | Swift 5.10 · SwiftUI (iOS 17+) · `GraceRideKit` SPM · WidgetKit + AppIntents |
 | Auth | WebAuthn passkeys · TOTP · backup codes · Argon2 password hash |
 | Infra | Docker (multi-stage) · Caddy · GitHub Actions CI/CD |
-| Package managers | cargo (backend) · npm (frontend) · gradle (android) |
+| Package managers | cargo (backend) · npm (frontend) · gradle (android) · SwiftPM / Xcode (ios) |
 
 ---
 
@@ -67,10 +68,11 @@
 │   │   │   │   ├── groups_areas.rs  # groups, group members & pickup areas CRUD
 │   │   │   │   ├── invites_recovery.rs # invite links & account recovery approvals
 │   │   │   │   ├── members.rs       # member directory, roles, status & group assignments
-│   │   │   │   ├── reports.rs       # demand breakdown report, badge icons & scope helpers
+│   │   │   │   ├── reports/         # role-scoped admin reports directory module (mod, overview, events, demand, finance)
 │   │   │   │   └── settings.rs      # system retention/concurrency & external alert channel settings
 │   │   │   ├── auth/                # directory module for authentication routes
 │   │   │   │   ├── mod.rs           # auth router, login, session, password, terms
+│   │   │   │   ├── biometrics.rs    # Android hardware-backed ECDSA P-256 biometric login & reauth
 │   │   │   │   ├── passkeys.rs      # WebAuthn registration and authentication
 │   │   │   │   ├── totp.rs          # TOTP setup, verify, backup codes
 │   │   │   │   └── invites_recovery.rs # invitation accept & account recovery request
@@ -135,8 +137,8 @@
 │   │   ├── turnstile.rs     # opt-in Cloudflare Turnstile siteverify verifier & config
 │   │   ├── util.rs          # audit log, notify, require/require_one, fmt helpers, dyn_sql!
 │   │   └── web_push.rs      # VAPID web-push implementation
-│   ├── migrations/          # squashed 0001_init.sql baseline + additive migrations (0002–0009)
-│   ├── tests/               # integration tests (uses TEST_DATABASE_URL; isolated schema per test)
+│   ├── migrations/          # squashed 0001_init.sql baseline + additive migrations (0002–0013)
+│   ├── tests/               # 49 integration test files (uses TEST_DATABASE_URL; isolated schema per test)
 │   ├── .cargo/audit.toml    # suppressed cargo-audit advisories with justification
 │   ├── rust-toolchain.toml  # pins Rust stable + clippy + rustfmt
 │   └── .env.example         # all env vars with comments
@@ -168,19 +170,24 @@
 │   └── .nvmrc               # pins Node 22
 ├── android/
 │   ├── app/                 # Kotlin Android app (package org.pjstatecm.graceride)
-│   │   ├── src/main/java/   # Jetpack Compose UI, MVVM, API client, CookieJar session
-│   │   ├── src/main/assets/ # bundled animated Bloub GIF icons (avatars, badges, events)
-│   │   ├── src/test/        # 74 MockWebServer / JVM unit tests
-│   │   └── src/androidTest/ # 7 Compose UI tests
+│   │   ├── src/main/java/   # Jetpack Compose UI, MVVM, Retrofit + ApiProvider, AndroidKeyStore AES-256-GCM SecureStore, BiometricPrompt + ECDSA P-256 direct login & app gate, OkHttp SSE, WorkManager, DriveHub, TripChat, LiveTripLocationService, ZXing/Code Scanner QR, Glance widget, OfflineCache, NetworkMonitor
+│   │   ├── src/main/assets/ # 77 bundled lossless WebP icon assets (avatars, badges, events)
+│   │   ├── src/test/        # 122 MockWebServer / JVM unit tests across 10 files
+│   │   └── src/androidTest/ # 18 Compose UI tests across 2 files
 │   ├── build.gradle.kts     # Gradle root configuration
 │   └── gradle/              # Gradle wrapper
+├── ios/
+│   ├── GraceRide.xcodeproj/ # Xcode app + WidgetKit extension project & shared scheme
+│   ├── GraceRideKit/        # Zero-dependency local Swift Package (DTOs, URLSession/SSE/cookie/Keychain, domain, repositories, ViewModels + 25 unit tests)
+│   ├── GraceRide/           # Native SwiftUI iOS 17+ app (org.pjstatecm.graceride): Passkeys, CoreLocation trip sharing, AVFoundation QR scanner, PhotosUI, EventKit, 77 WebP assets, EN/zh-Hans Localizable.xcstrings
+│   └── GraceRideWidget/     # WidgetKit Next-Trip widget + MarkRideReadyIntent AppIntent (group.org.pjstatecm.graceride)
 ├── scripts/                 # backup.sh, restore.sh, restore_drill.sh, setup_osrm_malaysia.sh, capacity_baseline.sh, generate_animated_icon_gifs.py
 ├── docs/
 │   ├── TECHNICAL.md         # authoritative technical reference (single-manual policy)
-│   ├── USER_MANUAL.md       # end-user guide (bilingual context, elder-friendly)
-│   ├── ADMIN_MANUAL.md      # administration & transport operations manual
-│   ├── BETA_TESTING_PLAN.md # closed beta implementation plan & verification schedule
-│   ├── android/             # native Android app documentation (README.md, DESIGN.md)
+│   ├── ANDROID.md           # consolidated native Android architecture, design system & test guide
+│   ├── IOS.md               # consolidated native iOS SwiftUI architecture, design system & test guide
+│   ├── USER_MANUAL.md       # end-user guide (Chinese, elder-friendly)
+│   ├── ADMIN_MANUAL.md      # administration, reports & transport operations manual (Chinese)
 │   └── brand/               # logo kit, brand guidelines, SVG/PNG assets
 ├── .github/workflows/
 │   ├── ci.yml               # lint + typecheck + test + e2e + build on push/PR
@@ -202,14 +209,17 @@
 | Start frontend (dev) | `make dev-web` |
 | Start Android debug | `cd android && ./gradlew :app:assembleDebug` |
 | Lint everything | `make lint` |
+| Lint Android | `make lint-android` |
 | Format everything | `make fmt` |
 | Type-check | `cd frontend && npm run typecheck` |
 | Run all unit/integration tests | `make test` |
 | Run backend tests only | `make test-api` (or `cd backend && cargo test --locked` with `TEST_DATABASE_URL`) |
 | Run frontend unit tests only | `make test-web` (or `cd frontend && npm test`) |
 | Run Playwright E2E | `make test-e2e` |
-| Run Android unit tests | `cd android && ./gradlew :app:testDebugUnitTest` |
+| Run Android unit & compile UI tests | `make test-android` (or `cd android && ./gradlew :app:testDebugUnitTest :app:compileDebugAndroidTestKotlin`) |
+| Run iOS package tests & Simulator build | `make test-ios` (or `swift test --package-path ios/GraceRideKit` + `xcodebuild -project ios/GraceRide.xcodeproj -scheme GraceRide -destination 'generic/platform=iOS Simulator' CODE_SIGNING_ALLOWED=NO build`) |
 | Production build | `make build` |
+| Direct production deploy (AIC VPS, no GitHub Actions) | `make deploy-aic` |
 | Dependency audit | `make audit` |
 | DB up (Docker) | `make db-up` |
 
@@ -234,6 +244,6 @@
 ## Active Status & Boundaries
 
 1. **Production Readiness:** Backend modularization complete across all domains; frontend modularized; all 73 permissions, 29 pages, and 14 built-in roles tested.
-2. **Multi-Client Support:** React 19 PWA web app + Kotlin Jetpack Compose native Android client.
-3. **Single-Manual Policy:** All engineering and operational reference lives in `docs/TECHNICAL.md`; user operations in `docs/USER_MANUAL.md` and `docs/ADMIN_MANUAL.md`; testing verification in `docs/BETA_TESTING_PLAN.md`.
+2. **Multi-Client Support:** React 19 PWA web app + Kotlin Jetpack Compose native Android client + SwiftUI native iOS client.
+3. **Single-Manual Policy (One File Per Document Type):** All engineering and operational reference lives in `docs/TECHNICAL.md`; native Android reference in `docs/ANDROID.md`; native iOS reference in `docs/IOS.md`; user operations in `docs/USER_MANUAL.md` and `docs/ADMIN_MANUAL.md`; overview in `README.md`; security policy in `SECURITY.md`; release history in `CHANGELOG.md`. Do not keep duplicate PDFs or separate implemented/stale plans.
 4. **Governance & Pre-Launch:** Legal review of PDPA notices, written church licensing confirmation, and Play Store account enrollment before public rollout.

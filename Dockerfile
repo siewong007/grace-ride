@@ -5,7 +5,7 @@
 FROM node:22-alpine AS web
 WORKDIR /web
 COPY frontend/package.json frontend/package-lock.json ./
-RUN npm ci --no-audit --no-fund
+RUN npm ci --no-audit --no-fund --ignore-scripts
 COPY frontend/ ./
 RUN npm run build
 
@@ -50,8 +50,9 @@ ENV TZ=Asia/Kuala_Lumpur \
     UPLOAD_DIR=/data/uploads \
     STATIC_DIR=/app/web \
     DEV_MODE=false \
-    TRUST_PROXY=true \
-    LOG_FORMAT=json
+    TRUST_PROXY=false \
+    LOG_FORMAT=json \
+    RUST_LOG=grace_ride=info,tower_http=warn
 USER grace
 VOLUME ["/data"]
 EXPOSE 8080

@@ -225,11 +225,12 @@ pub async fn ensure_vapid_keys(db: &PgPool) -> anyhow::Result<String> {
     .execute(&mut *tx)
     .await?;
     if res.rows_affected() > 0 {
+        let enc_priv = crate::crypto::encrypt_secret("app_secret:vapid_private_key", &priv_k)?;
         sqlx::query(
             "INSERT INTO app_secrets (name, value) VALUES ('vapid_private_key', $1)
              ON CONFLICT (name) DO UPDATE SET value = EXCLUDED.value",
         )
-        .bind(&priv_k)
+        .bind(&enc_priv)
         .execute(&mut *tx)
         .await?;
     }
@@ -253,9 +254,11 @@ pub async fn load_vapid_signer(db: &PgPool) -> Option<Arc<VapidSigner>> {
     let mut pub_k = String::new();
     let mut priv_k = String::new();
     for (k, v) in rows {
+        let plain =
+            crate::crypto::decrypt_secret(&format!("app_secret:{k}"), &v).unwrap_or_default();
         match k.as_str() {
-            "vapid_public_key" => pub_k = v,
-            "vapid_private_key" => priv_k = v,
+            "vapid_public_key" => pub_k = plain,
+            "vapid_private_key" => priv_k = plain,
             _ => {}
         }
     }

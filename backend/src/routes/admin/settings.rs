@@ -178,25 +178,34 @@ pub(super) async fn get_alert_settings(
     let mut vapid_public_key = String::new();
     let mut vapid_private_key = String::new();
     for (k, v) in rows {
+        let plain = crate::crypto::decrypt_secret(&format!("app_secret:{k}"), &v)
+            .map_err(AppError::Other)?;
         match k.as_str() {
-            "telegram_bot_token" => tg_token = v,
-            "telegram_bot_username" => tg_username = v,
-            "alert_webhook_url" => webhook_url = v,
-            "alert_webhook_secret" => webhook_secret_configured = !v.trim().is_empty(),
-            "mobile_push_webhook_url" => mobile_webhook_url = v,
-            "vapid_public_key" => vapid_public_key = v,
-            "vapid_private_key" => vapid_private_key = v,
+            "telegram_bot_token" => tg_token = plain,
+            "telegram_bot_username" => tg_username = plain,
+            "alert_webhook_url" => webhook_url = plain,
+            "alert_webhook_secret" => webhook_secret_configured = !plain.trim().is_empty(),
+            "mobile_push_webhook_url" => mobile_webhook_url = plain,
+            "vapid_public_key" => vapid_public_key = plain,
+            "vapid_private_key" => vapid_private_key = plain,
             _ => {}
         }
     }
     let tg_configured = !tg_token.trim().is_empty();
-    let telegram_webhook_path = if tg_configured {
-        format!(
-            "/api/push/telegram/webhook/{}",
-            crate::routes::community::telegram_webhook_secret(&tg_token)
-        )
+    let telegram_webhook_secret = if tg_configured {
+        crate::routes::community::telegram_webhook_secret(&tg_token)
     } else {
         String::new()
+    };
+    let telegram_webhook_path = if tg_configured {
+        format!("/api/push/telegram/webhook/{telegram_webhook_secret}")
+    } else {
+        String::new()
+    };
+    let telegram_webhook_header_path = if tg_configured {
+        "/api/push/telegram/webhook"
+    } else {
+        ""
     };
     let vapid_private_configured =
         crate::web_push::VapidSigner::from_stored(&vapid_public_key, &vapid_private_key).is_ok();
@@ -231,6 +240,8 @@ pub(super) async fn get_alert_settings(
         "telegram_bot_configured": tg_configured,
         "telegram_bot_username": tg_username,
         "telegram_webhook_path": telegram_webhook_path,
+        "telegram_webhook_header_path": telegram_webhook_header_path,
+        "telegram_webhook_secret": telegram_webhook_secret,
         "alert_webhook_configured": !webhook_url.trim().is_empty(),
         "alert_webhook_url": mask_webhook_url(&webhook_url),
         "alert_webhook_secret_configured": webhook_secret_configured,
@@ -333,11 +344,13 @@ pub(super) async fn update_alert_settings(
         .map(str::trim)
         .filter(|s| !s.is_empty())
     {
+        let enc = crate::crypto::encrypt_secret("app_secret:telegram_bot_token", tok)
+            .map_err(AppError::Other)?;
         sqlx::query(
             "INSERT INTO app_secrets (name, value) VALUES ('telegram_bot_token', $1)
              ON CONFLICT (name) DO UPDATE SET value = EXCLUDED.value",
         )
-        .bind(tok)
+        .bind(&enc)
         .execute(&mut *tx)
         .await?;
     }
@@ -358,11 +371,13 @@ pub(super) async fn update_alert_settings(
             .execute(&mut *tx)
             .await?;
     } else if let Some(cleaned) = new_webhook.filter(|s| !s.is_empty()) {
+        let enc = crate::crypto::encrypt_secret("app_secret:alert_webhook_url", cleaned)
+            .map_err(AppError::Other)?;
         sqlx::query(
             "INSERT INTO app_secrets (name, value) VALUES ('alert_webhook_url', $1)
              ON CONFLICT (name) DO UPDATE SET value = EXCLUDED.value",
         )
-        .bind(cleaned)
+        .bind(&enc)
         .execute(&mut *tx)
         .await?;
     }
@@ -377,11 +392,13 @@ pub(super) async fn update_alert_settings(
         .map(str::trim)
         .filter(|s| !s.is_empty())
     {
+        let enc = crate::crypto::encrypt_secret("app_secret:alert_webhook_secret", sec)
+            .map_err(AppError::Other)?;
         sqlx::query(
             "INSERT INTO app_secrets (name, value) VALUES ('alert_webhook_secret', $1)
              ON CONFLICT (name) DO UPDATE SET value = EXCLUDED.value",
         )
-        .bind(sec)
+        .bind(&enc)
         .execute(&mut *tx)
         .await?;
     }
@@ -391,11 +408,13 @@ pub(super) async fn update_alert_settings(
             .execute(&mut *tx)
             .await?;
     } else if let Some(cleaned) = new_mobile_hook.filter(|s| !s.is_empty()) {
+        let enc = crate::crypto::encrypt_secret("app_secret:mobile_push_webhook_url", cleaned)
+            .map_err(AppError::Other)?;
         sqlx::query(
             "INSERT INTO app_secrets (name, value) VALUES ('mobile_push_webhook_url', $1)
              ON CONFLICT (name) DO UPDATE SET value = EXCLUDED.value",
         )
-        .bind(cleaned)
+        .bind(&enc)
         .execute(&mut *tx)
         .await?;
     }
@@ -415,11 +434,13 @@ pub(super) async fn update_alert_settings(
         .bind(&gen_pub)
         .execute(&mut *tx)
         .await?;
+        let enc_priv = crate::crypto::encrypt_secret("app_secret:vapid_private_key", &gen_priv)
+            .map_err(AppError::Other)?;
         sqlx::query(
             "INSERT INTO app_secrets (name, value) VALUES ('vapid_private_key', $1)
              ON CONFLICT (name) DO UPDATE SET value = EXCLUDED.value",
         )
-        .bind(&gen_priv)
+        .bind(&enc_priv)
         .execute(&mut *tx)
         .await?;
         sqlx::query("DELETE FROM push_subscriptions")
@@ -428,6 +449,8 @@ pub(super) async fn update_alert_settings(
     } else if let Some(signer) = validated_signer {
         let pub_key = signer.public_key_b64();
         let priv_key = new_vapid_priv.unwrap_or_default();
+        let enc_priv = crate::crypto::encrypt_secret("app_secret:vapid_private_key", priv_key)
+            .map_err(AppError::Other)?;
         sqlx::query(
             "INSERT INTO app_secrets (name, value) VALUES ('vapid_public_key', $1)
              ON CONFLICT (name) DO UPDATE SET value = EXCLUDED.value",
@@ -439,7 +462,7 @@ pub(super) async fn update_alert_settings(
             "INSERT INTO app_secrets (name, value) VALUES ('vapid_private_key', $1)
              ON CONFLICT (name) DO UPDATE SET value = EXCLUDED.value",
         )
-        .bind(priv_key)
+        .bind(&enc_priv)
         .execute(&mut *tx)
         .await?;
         if current_pub.as_deref().map(str::trim) != Some(pub_key) {
@@ -499,9 +522,11 @@ pub(super) async fn test_alert_webhook(
     let mut url = String::new();
     let mut secret = String::new();
     for (k, v) in rows {
+        let plain = crate::crypto::decrypt_secret(&format!("app_secret:{k}"), &v)
+            .map_err(AppError::Other)?;
         match k.as_str() {
-            "alert_webhook_url" => url = v.trim().to_string(),
-            "alert_webhook_secret" => secret = v.trim().to_string(),
+            "alert_webhook_url" => url = plain.trim().to_string(),
+            "alert_webhook_secret" => secret = plain.trim().to_string(),
             _ => {}
         }
     }

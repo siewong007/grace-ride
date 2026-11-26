@@ -216,7 +216,9 @@ pub(super) async fn get_reimbursement(
     Path(id): Path<i64>,
 ) -> AppResult<Json<Value>> {
     let r = load_reimb(&st, u.lang, id).await?;
-    if r.user_id != u.id {
+    if r.user_id == u.id {
+        require(&u, Page::Reimbursements, Act::View)?;
+    } else if matches!(r.status.as_str(), "approved" | "paid") {
         require_one(
             &u,
             &[
@@ -224,6 +226,8 @@ pub(super) async fn get_reimbursement(
                 (Page::AdminReimbPay, Act::View),
             ],
         )?;
+    } else {
+        require(&u, Page::AdminReimbReview, Act::View)?;
     }
     Ok(Json(reimb_json(&r, &u)))
 }
@@ -246,6 +250,11 @@ fn is_mileage(req: &ReimbIn) -> bool {
 }
 
 async fn validate_reimb(st: &AppState, u: &CurrentUser, req: &ReimbIn) -> AppResult<Option<i64>> {
+    if let Some(ref k) = req.kind {
+        if k != "grab" && k != "mileage" {
+            return Err(bad(u.lang, ErrorKey::InvalidAction));
+        }
+    }
     if req.amount_cents <= 0 || req.amount_cents > 50_000 {
         return Err(bad(u.lang, ErrorKey::AmountRangeInvalid));
     }
@@ -432,19 +441,26 @@ pub(super) async fn resubmit_reimbursement(
         return Err(bad(u.lang, ErrorKey::OnlyReturnedReimbCanBeResubmitted));
     }
     require(&u, Page::Reimbursements, Act::Update)?;
-    let resolved_event_id = validate_reimb(&st, &u, &req).await?;
+    if let Some(ref k) = req.kind {
+        if k != &r.kind {
+            return Err(bad(u.lang, ErrorKey::InvalidAction));
+        }
+    }
+    let mut normalized = req;
+    normalized.kind = Some(r.kind.clone());
+    let resolved_event_id = validate_reimb(&st, &u, &normalized).await?;
     let mut tx = st.db.begin().await?;
-    ensure_not_claimed(&mut tx, u.lang, &req, Some(id)).await?;
+    ensure_not_claimed(&mut tx, u.lang, &normalized, Some(id)).await?;
     // Still sent back and still theirs at the moment of writing: a review or another
     // resubmission in between wins, and this one is refused.
     let changed = sqlx::query("UPDATE reimbursements SET ride_id=$1, event_id=$2, amount_cents=$3, description=$4, receipt_file_id=$5, payee_name=$6, payee_phone=$7, status='pending', payee_verified=0, updated_at=$8 WHERE id=$9 AND user_id=$10 AND status='returned' AND kind <> 'visitor_special'")
-        .bind(req.ride_id)
+        .bind(normalized.ride_id)
         .bind(resolved_event_id)
-        .bind(req.amount_cents)
-        .bind(req.description.trim())
-        .bind(req.receipt_file_id)
-        .bind(req.payee_name.trim())
-        .bind(req.payee_phone.trim())
+        .bind(normalized.amount_cents)
+        .bind(normalized.description.trim())
+        .bind(normalized.receipt_file_id)
+        .bind(normalized.payee_name.trim())
+        .bind(normalized.payee_phone.trim())
         .bind(now())
         .bind(id)
         .bind(u.id)
@@ -462,8 +478,8 @@ pub(super) async fn resubmit_reimbursement(
         Some(u.id),
         ("报销申请已补资料", "Reimbursement updated and resubmitted"),
         (
-            &format!("{} · {}", u.name, fmt_rm(req.amount_cents)),
-            &format!("{} · {}", u.name, fmt_rm(req.amount_cents)),
+            &format!("{} · {}", u.name, fmt_rm(normalized.amount_cents)),
+            &format!("{} · {}", u.name, fmt_rm(normalized.amount_cents)),
         ),
         "/admin/reimbursements",
     )
@@ -474,7 +490,7 @@ pub(super) async fn resubmit_reimbursement(
         "reimbursement.resubmit",
         "reimbursement",
         Some(id),
-        fmt_rm(req.amount_cents),
+        fmt_rm(normalized.amount_cents),
     )
     .await;
     Ok(Json(json!({"ok": true})))
@@ -511,6 +527,7 @@ pub(super) async fn review_reimbursement(
     if status != "approved" && note.trim().is_empty() {
         return Err(bad(u.lang, ErrorKey::ReasonRequired));
     }
+    let mut tx = st.db.begin().await?;
     let changed = sqlx::query(
         "UPDATE reimbursements SET status=$1, review_note=$2, reviewed_by=$3, updated_at=$4
          WHERE id=$5 AND status='pending' AND requested_by IS DISTINCT FROM $3",
@@ -520,7 +537,7 @@ pub(super) async fn review_reimbursement(
     .bind(u.id)
     .bind(now())
     .bind(id)
-    .execute(&st.db)
+    .execute(&mut *tx)
     .await?
     .rows_affected();
     if changed == 0 {
@@ -534,10 +551,11 @@ pub(super) async fn review_reimbursement(
             )
             .bind(r.amount_cents)
             .bind(rid)
-            .execute(&st.db)
+            .execute(&mut *tx)
             .await?;
         }
     }
+    tx.commit().await?;
     let title = match status {
         "approved" => ("报销申请已批准", "Reimbursement approved"),
         "returned" => ("报销申请需补资料", "Reimbursement needs more info"),

@@ -276,15 +276,16 @@ export default function AreaFares() {
               </div>
 
               {matrixPair && (
-                <div className="fare-matrix-editor">
+                <ul className="fare-matrix-editor list">
                   <FareRow
+                    key={`${matrixPair.from.id}-${matrixPair.to.id}`}
                     from={matrixPair.from}
                     to={matrixPair.to}
                     fare={byPair.get(pairKey(matrixPair.from.id, matrixPair.to.id))}
                     canUpdate={canUpdate}
                     onChanged={fares.reload}
                   />
-                </div>
+                </ul>
               )}
             </div>
           )}

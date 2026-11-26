@@ -922,14 +922,17 @@ async fn older_terms_version_asks_again() {
     };
     assert_eq!(accept().await.status, StatusCode::OK);
     assert_eq!(accepted().await, json!(true));
-    // A member who agreed to version 1 is gated until they opt in to the current version.
-    sqlx::query("UPDATE users SET terms_version=1 WHERE email='member@example.org'")
-        .execute(&st.db)
-        .await
-        .unwrap();
-    assert_eq!(accepted().await, json!(false));
-    assert_eq!(accept().await.status, StatusCode::OK);
-    assert_eq!(accepted().await, json!(true));
+    // A member who agreed to version 1 or 2 is gated until they opt in to the current version.
+    for old_v in [1, 2] {
+        sqlx::query("UPDATE users SET terms_version=$1 WHERE email='member@example.org'")
+            .bind(old_v)
+            .execute(&st.db)
+            .await
+            .unwrap();
+        assert_eq!(accepted().await, json!(false));
+        assert_eq!(accept().await.status, StatusCode::OK);
+        assert_eq!(accepted().await, json!(true));
+    }
     let (version,): (i32,) =
         sqlx::query_as("SELECT terms_version FROM users WHERE email='member@example.org'")
             .fetch_one(&st.db)

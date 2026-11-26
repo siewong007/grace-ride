@@ -66,7 +66,16 @@ export default function GuideSteps({
   // Scroll to #step-N on arrival (search results link straight to a step).
   useEffect(() => {
     const hash = window.location.hash;
-    if (hash && hash.startsWith('#step-')) document.querySelector(hash)?.scrollIntoView({ behavior: 'smooth' });
+    if (hash && hash.startsWith('#step-')) {
+      const rawId = hash.slice(1);
+      let targetId = rawId;
+      try {
+        targetId = decodeURIComponent(rawId);
+      } catch {
+        // Keep raw fragment id when malformed percent-encoding is present.
+      }
+      document.getElementById(targetId)?.scrollIntoView({ behavior: 'smooth' });
+    }
   }, []);
 
   const doneCount = completed.length;

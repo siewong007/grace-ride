@@ -45,6 +45,7 @@ pub(crate) struct ResolvedSessionData {
     pub auto_lock_mins: i64,
     pub totp_enabled: i64,
     pub passkey_count: i64,
+    pub biometric_count: i64,
     pub org_timeout: Option<String>,
 }
 
@@ -54,39 +55,50 @@ pub(crate) enum ResolvedSession {
     Valid(Box<ResolvedSessionData>),
 }
 
-/// Fixed-window counter keyed by "bucket:ip". Single-process is fine: the app runs
-/// as one instance of this app. Move to Redis if it is ever scaled horizontally.
+/// Fixed-window rate limiter with isolated user-credential and unauthenticated IP maps.
+/// Separating per-user credential keys from per-IP traffic prevents IP-floods from
+/// evicting active per-user TOTP/password lockouts.
 pub struct RateLimiter {
-    windows: Mutex<HashMap<String, (Instant, Duration, u32)>>,
+    ip_windows: Mutex<HashMap<String, (Instant, Duration, u32)>>,
+    user_windows: Mutex<HashMap<String, (Instant, Duration, u32)>>,
 }
 
 impl Default for RateLimiter {
     fn default() -> Self {
         Self {
-            windows: Mutex::new(HashMap::new()),
+            ip_windows: Mutex::new(HashMap::new()),
+            user_windows: Mutex::new(HashMap::new()),
         }
     }
+}
+
+fn is_user_scoped_key(key: &str) -> bool {
+    key.contains(":user:") || key.starts_with("user:")
 }
 
 impl RateLimiter {
     /// Returns Err(seconds_to_wait) when `limit` hits within `window` are exceeded.
     pub fn check(&self, key: &str, limit: u32, window: Duration) -> Result<(), u64> {
         let now = Instant::now();
-        let mut map = self.windows.lock().unwrap_or_else(|e| e.into_inner());
+        let target = if is_user_scoped_key(key) {
+            &self.user_windows
+        } else {
+            &self.ip_windows
+        };
+        let mut map = target.lock().unwrap_or_else(|e| e.into_inner());
         if map.len() > 50_000 {
             map.retain(|_, (start, w, _)| now.duration_since(*start) < *w);
             if !map.contains_key(key) && map.len() >= 50_000 {
-                // Full of live windows: evict the oldest batch to make room instead of
-                // rejecting every new address (which locked legitimate visitors out).
-                // Surviving counters keep their state; evicted keys start fresh, so a
-                // flood of new keys can at worst reset the oldest windows.
-                let mut oldest: Vec<(String, Instant)> = map
+                let mut entries: Vec<(String, Instant)> = map
                     .iter()
                     .map(|(k, (start, _, _))| (k.clone(), *start))
                     .collect();
-                oldest.sort_by_key(|(_, start)| *start);
-                for (k, _) in oldest.into_iter().take(5_000) {
-                    map.remove(&k);
+                let drop_n = 5_000.min(entries.len().saturating_sub(1));
+                if drop_n > 0 {
+                    entries.select_nth_unstable_by_key(drop_n, |(_, start)| *start);
+                    for (k, _) in entries.into_iter().take(drop_n) {
+                        map.remove(&k);
+                    }
                 }
             }
         }
@@ -106,16 +118,47 @@ impl RateLimiter {
     }
 }
 
+pub fn trusted_proxy_count() -> usize {
+    std::env::var("TRUSTED_PROXY_COUNT")
+        .ok()
+        .and_then(|v| v.trim().parse::<usize>().ok())
+        .map(|n| n.clamp(1, 8))
+        .unwrap_or(1)
+}
+
+fn is_internal_proxy_ip(s: &str) -> bool {
+    match s.parse::<std::net::IpAddr>() {
+        Ok(std::net::IpAddr::V4(ip)) => ip.is_private() || ip.is_loopback() || ip.is_link_local(),
+        Ok(std::net::IpAddr::V6(ip)) => ip.is_loopback() || ((ip.segments()[0] & 0xfe00) == 0xfc00),
+        Err(_) => false,
+    }
+}
+
 pub fn client_ip(headers: &HeaderMap, req_ip: Option<SocketAddr>, trust_proxy: bool) -> String {
     if trust_proxy {
-        if let Some(ip) = headers
-            .get("x-forwarded-for")
-            .and_then(|v| v.to_str().ok())
-            .and_then(|v| v.split(',').next())
-            .map(str::trim)
-            .filter(|s| !s.is_empty())
-        {
-            return ip.to_string();
+        if let Some(raw) = headers.get("x-forwarded-for").and_then(|v| v.to_str().ok()) {
+            let hops: Vec<&str> = raw
+                .split(',')
+                .map(str::trim)
+                .filter(|s| !s.is_empty())
+                .collect();
+            if !hops.is_empty() {
+                if std::env::var("TRUSTED_PROXY_COUNT")
+                    .ok()
+                    .is_some_and(|v| !v.trim().is_empty())
+                {
+                    let idx = hops.len().saturating_sub(trusted_proxy_count());
+                    return hops[idx].to_string();
+                }
+                // Walk right-to-left skipping trailing private/internal proxy hops (e.g. "203.0.113.9, 10.0.0.1")
+                // while rejecting client-spoofed leftmost public entries (e.g. "9.9.9.9, 203.0.113.42").
+                for &hop in hops.iter().rev() {
+                    if !is_internal_proxy_ip(hop) {
+                        return hop.to_string();
+                    }
+                }
+                return hops[hops.len() - 1].to_string();
+            }
         }
     }
     req_ip
@@ -159,9 +202,12 @@ pub async fn rate_limit(State(st): State<AppState>, req: Request, next: Next) ->
     } else if path == "/api/auth/login"
         || path == "/api/auth/dev-login"
         || path.starts_with("/api/auth/passkey/login")
+        || path.starts_with("/api/auth/biometric/login")
     {
         Some(("login", 10, 60))
-    } else if path.starts_with("/api/auth/passkey/reauth/") {
+    } else if path.starts_with("/api/auth/passkey/reauth/")
+        || path.starts_with("/api/auth/biometric/reauth/")
+    {
         Some(("reauth", 20, 300))
     } else if path == "/api/auth/totp/verify"
         || path == "/api/auth/totp/enable"
@@ -195,6 +241,11 @@ pub async fn rate_limit(State(st): State<AppState>, req: Request, next: Next) ->
         Some(("password", 5, 300))
     } else if path == "/api/me/family/people" {
         Some(("family_add", 10, 600))
+    } else if path == "/api/events/checkin"
+        || (path.starts_with("/api/events/")
+            && (path.ends_with("/checkin") || path.ends_with("/checkin/scan-member")))
+    {
+        Some(("checkin", 20, 60))
     } else if path == "/api/admin/settings/alerts/test-webhook" {
         Some(("test_webhook", 10, 600))
     } else {
@@ -207,8 +258,18 @@ pub async fn rate_limit(State(st): State<AppState>, req: Request, next: Next) ->
             .map(|c| c.0);
         let ip = client_ip(req.headers(), peer, st.cfg.trust_proxy);
         // Credential/enumeration checks count per member and per address; everything else per address.
-        if matches!(bucket, "totp" | "password" | "family_add") {
+        if matches!(bucket, "totp" | "password" | "family_add" | "checkin") {
             if let Some(owner) = session_user_key(&st, req.headers()).await {
+                if bucket == "family_add" {
+                    if let Err(wait) = st.limiter.check(
+                        &format!("family_add_daily:{owner}"),
+                        20,
+                        Duration::from_secs(86_400),
+                    ) {
+                        tracing::warn!(bucket = "family_add_daily", ip, "rate limited");
+                        return too_many(wait, Lang::from_headers(req.headers()));
+                    }
+                }
                 if let Err(wait) = st.limiter.check(
                     &format!("{bucket}:{owner}"),
                     limit,
@@ -276,6 +337,7 @@ fn pending_profile_only(path: &str) -> bool {
         || path.starts_with("/visit/")
         || path.starts_with("/care/")
         || path.starts_with("/calendar/")
+        || path == "/push/telegram/webhook"
         || path.starts_with("/push/telegram/webhook/")
 }
 
@@ -294,10 +356,14 @@ fn lock_bypass_path(path: &str) -> bool {
         || path == "/auth/passkey/reauth/start"
         || path == "/auth/passkey/reauth/finish"
         || path.starts_with("/auth/passkey/login")
+        || path == "/auth/biometric/reauth/start"
+        || path == "/auth/biometric/reauth/finish"
+        || path.starts_with("/auth/biometric/login")
         || path.starts_with("/invites/")
         || path.starts_with("/visit/")
         || path.starts_with("/care/")
         || path.starts_with("/calendar/")
+        || path == "/push/telegram/webhook"
         || path.starts_with("/push/telegram/webhook/")
 }
 
@@ -311,6 +377,7 @@ struct LockRow {
     status: String,
     totp_enabled: i64,
     passkey_count: i64,
+    biometric_count: i64,
     org_timeout: Option<String>,
 }
 
@@ -323,6 +390,7 @@ struct LockFields<'a> {
     status: &'a str,
     totp_enabled: i64,
     passkey_count: i64,
+    biometric_count: i64,
     org_timeout: Option<&'a str>,
 }
 
@@ -336,7 +404,10 @@ async fn eval_lock_fields(
     if fields.expires_at < now_str.as_str() {
         return None;
     }
-    let has_unlock_method = fields.passkey_count > 0 || fields.totp_enabled == 1 || st.cfg.dev_mode;
+    let has_unlock_method = fields.passkey_count > 0
+        || fields.biometric_count > 0
+        || fields.totp_enabled == 1
+        || st.cfg.dev_mode;
     if fields.locked_at.is_some() {
         return Some((Lang::from_code(fields.lang), !has_unlock_method));
     }
@@ -392,6 +463,7 @@ pub async fn evaluate_session_lock(
         "SELECT s.locked_at, s.last_seen_at, u.auto_lock_mins, u.lang, s.expires_at,
                 u.status, u.totp_enabled,
                 (SELECT COUNT(*) FROM passkeys p WHERE p.user_id = u.id) AS passkey_count,
+                (SELECT COUNT(*) FROM biometric_credentials b WHERE b.user_id = u.id) AS biometric_count,
                 (SELECT value FROM system_settings WHERE key = 'session_timeout_mins') AS org_timeout
          FROM sessions s JOIN users u ON u.id = s.user_id
          WHERE s.token = $1",
@@ -414,6 +486,7 @@ pub async fn evaluate_session_lock(
             status: &row.status,
             totp_enabled: row.totp_enabled,
             passkey_count: row.passkey_count,
+            biometric_count: row.biometric_count,
             org_timeout: row.org_timeout.as_deref(),
         },
         touch,
@@ -432,19 +505,24 @@ struct LockAliveRow {
     status: String,
     totp_enabled: i64,
     passkey_count: i64,
+    biometric_count: i64,
     org_timeout: Option<String>,
     granted: String,
 }
 
 /// Checks session existence, status, expiration, 12h privileged cap, and idle auto-lock in one query for SSE.
-/// A database hiccup keeps the stream alive (`true`); only a clear expired/locked/disabled
-/// state returns `false`.
-pub(crate) async fn evaluate_session_alive_and_lock(st: &AppState, token_hash: &str) -> bool {
+/// Checks session liveness including server-enforced idle auto-lock, preserving SQL errors
+/// so callers (like SSE streams) can cap consecutive DB failure ticks.
+pub(crate) async fn evaluate_session_alive_and_lock_checked(
+    st: &AppState,
+    token_hash: &str,
+) -> Result<bool, sqlx::Error> {
     let now_str = now();
-    let res: Result<Option<LockAliveRow>, _> = sqlx::query_as(
+    let res: Option<LockAliveRow> = sqlx::query_as(
         "SELECT s.locked_at, s.last_seen_at, s.created_at, u.auto_lock_mins, u.lang, s.expires_at,
                 u.status, u.totp_enabled,
                 (SELECT COUNT(*) FROM passkeys p WHERE p.user_id = u.id) AS passkey_count,
+                (SELECT COUNT(*) FROM biometric_credentials b WHERE b.user_id = u.id) AS biometric_count,
                 (SELECT value FROM system_settings WHERE key = 'session_timeout_mins') AS org_timeout,
                 COALESCE((SELECT string_agg(rp.permission, ',') FROM role_permissions rp
                           WHERE rp.role_key = $3
@@ -456,37 +534,35 @@ pub(crate) async fn evaluate_session_alive_and_lock(st: &AppState, token_hash: &
     .bind(&now_str)
     .bind(perms::MEMBER_ROLE)
     .fetch_optional(&st.db)
-    .await;
-    match res {
-        Err(_) => true,
-        Ok(None) => false,
-        Ok(Some(row)) => {
-            if row.status == "active" {
-                let privileged = PermSet::from_keys(row.granted.split(',')).privileged();
-                if privileged && row.created_at < crate::util::minutes_ago(12 * 60) {
-                    return false;
-                }
-            }
-            eval_lock_fields(
-                st,
-                token_hash,
-                LockFields {
-                    locked_at: row.locked_at.as_deref(),
-                    last_seen_at: &row.last_seen_at,
-                    auto_lock_mins: row.auto_lock_mins,
-                    lang: &row.lang,
-                    expires_at: &row.expires_at,
-                    status: &row.status,
-                    totp_enabled: row.totp_enabled,
-                    passkey_count: row.passkey_count,
-                    org_timeout: row.org_timeout.as_deref(),
-                },
-                false,
-            )
-            .await
-            .is_none()
+    .await?;
+    let Some(row) = res else {
+        return Ok(false);
+    };
+    if row.status == "active" {
+        let privileged = PermSet::from_keys(row.granted.split(',')).privileged();
+        if privileged && row.created_at < crate::util::minutes_ago(12 * 60) {
+            return Ok(false);
         }
     }
+    Ok(eval_lock_fields(
+        st,
+        token_hash,
+        LockFields {
+            locked_at: row.locked_at.as_deref(),
+            last_seen_at: &row.last_seen_at,
+            auto_lock_mins: row.auto_lock_mins,
+            lang: &row.lang,
+            expires_at: &row.expires_at,
+            status: &row.status,
+            totp_enabled: row.totp_enabled,
+            passkey_count: row.passkey_count,
+            biometric_count: row.biometric_count,
+            org_timeout: row.org_timeout.as_deref(),
+        },
+        false,
+    )
+    .await
+    .is_none())
 }
 
 /// Unified per-request guard: resolves the session + user + permissions + lock/pending state
@@ -507,6 +583,7 @@ pub async fn session_guard(State(st): State<AppState>, mut req: Request, next: N
                 s.token AS session_id,
                 s.locked_at, s.last_seen_at, u.auto_lock_mins, u.totp_enabled,
                 (SELECT COUNT(*) FROM passkeys p WHERE p.user_id = u.id) AS passkey_count,
+                (SELECT COUNT(*) FROM biometric_credentials b WHERE b.user_id = u.id) AS biometric_count,
                 (SELECT value FROM system_settings WHERE key = 'session_timeout_mins') AS org_timeout
          FROM sessions s JOIN users u ON u.id = s.user_id
          WHERE s.token = $1 AND u.status IN ('active', 'pending')",
@@ -542,6 +619,12 @@ pub async fn session_guard(State(st): State<AppState>, mut req: Request, next: N
     }
 
     if !lock_bypass_path(&path) {
+        let touch = req
+            .headers()
+            .get("x-passive-poll")
+            .and_then(|v| v.to_str().ok())
+            .map(str::trim)
+            != Some("1");
         if let Some((lang, no_mfa)) = eval_lock_fields(
             &st,
             &token_hash,
@@ -554,16 +637,19 @@ pub async fn session_guard(State(st): State<AppState>, mut req: Request, next: N
                 status: &data.status,
                 totp_enabled: data.totp_enabled,
                 passkey_count: data.passkey_count,
+                biometric_count: data.biometric_count,
                 org_timeout: data.org_timeout.as_deref(),
             },
-            true,
+            touch,
         )
         .await
         {
             let sub = path.strip_prefix("/api").unwrap_or(&path);
             if !(no_mfa
                 && (sub == "/auth/passkey/register/start"
-                    || sub == "/auth/passkey/register/finish"))
+                    || sub == "/auth/passkey/register/finish"
+                    || sub == "/auth/biometric/register/start"
+                    || sub == "/auth/biometric/register/finish"))
             {
                 return locked(lang, ErrorKey::SessionLocked).into_response();
             }
@@ -575,30 +661,55 @@ pub async fn session_guard(State(st): State<AppState>, mut req: Request, next: N
     next.run(req).await
 }
 
+fn origin_forbidden(headers: &HeaderMap) -> Response {
+    let accept = crate::util::t(
+        Lang::from_headers(headers),
+        "请求来源不被允许",
+        "Request origin not allowed",
+    );
+    (
+        StatusCode::FORBIDDEN,
+        Json(json!({ "error": accept, "code": "FORBIDDEN" })),
+    )
+        .into_response()
+}
+
 /// Reject cross-site state-changing requests. Browsers always send Origin on
 /// cross-origin POST/PUT/DELETE; non-browser clients (curl, tests) send none.
 pub async fn origin_guard(State(st): State<AppState>, req: Request, next: Next) -> Response {
     let safe = matches!(*req.method(), Method::GET | Method::HEAD | Method::OPTIONS);
     if !safe {
         let h = req.headers();
-        let origin = h.get(header::ORIGIN).and_then(|v| v.to_str().ok());
-        let fetch_site = h.get("sec-fetch-site").and_then(|v| v.to_str().ok());
+        let mut origins = h.get_all(header::ORIGIN).iter();
+        let origin = match (origins.next(), origins.next()) {
+            (_, Some(_)) => return origin_forbidden(h),
+            (Some(v), None) => match v.to_str() {
+                Ok(s) => Some(s),
+                Err(_) => return origin_forbidden(h),
+            },
+            (None, None) => None,
+        };
+        let mut fetch_sites = h.get_all("sec-fetch-site").iter();
+        let fetch_site = match (fetch_sites.next(), fetch_sites.next()) {
+            (_, Some(_)) => return origin_forbidden(h),
+            (Some(v), None) => match v.to_str() {
+                Ok(s) => Some(s),
+                Err(_) => return origin_forbidden(h),
+            },
+            (None, None) => None,
+        };
         let ok = match origin {
             Some(o) => o == st.cfg.origin(),
-            None => fetch_site != Some("cross-site"),
+            None => matches!(fetch_site, None | Some("same-origin") | Some("none")),
         };
         if !ok {
-            tracing::warn!(?origin, ?fetch_site, path = %req.uri().path(), "blocked cross-origin request");
-            let accept = crate::util::t(
-                Lang::from_headers(req.headers()),
-                "请求来源不被允许",
-                "Request origin not allowed",
+            tracing::warn!(
+                ?origin,
+                ?fetch_site,
+                path = %crate::redact_uri_path(req.uri().path()),
+                "blocked cross-origin request"
             );
-            return (
-                StatusCode::FORBIDDEN,
-                Json(json!({ "error": accept, "code": "FORBIDDEN" })),
-            )
-                .into_response();
+            return origin_forbidden(req.headers());
         }
     }
     next.run(req).await

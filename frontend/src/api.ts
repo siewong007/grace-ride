@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import i18n from './i18n';
-import { clearOfflineSnapshots } from './offlineSnapshot';
+import { clearClientSessionStorage } from './offlineSnapshot';
+export { clearClientSessionStorage };
 
 const ERROR_GROUPS = ['common', 'admin', 'auth', 'events', 'rides', 'settlements', 'community', 'files', 'family'] as const
 
@@ -77,15 +78,14 @@ export async function api<T = unknown>(
     throw new ApiError(res.status, apiMessage(data, 'network'), data?.code);
   }
   if (path.startsWith('/auth/logout')) {
-    clearOfflineSnapshots();
-    if (typeof window !== 'undefined') {
-      window.dispatchEvent(new Event('gr:push-reset'));
-    }
+    clearClientSessionStorage();
     try {
-      localStorage.removeItem('gr_autolock_mins');
-      localStorage.removeItem('gr_locked_user');
+      localStorage.removeItem('gr_pending_logout');
     } catch {
       /* ignore storage errors */
+    }
+    if (typeof window !== 'undefined') {
+      window.dispatchEvent(new Event('gr:push-reset'));
     }
   }
   return data as T;

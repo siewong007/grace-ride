@@ -278,7 +278,9 @@ export default function Report() {
               className="input"
               type="month"
               value={month}
-              onChange={(e) => setMonth(e.target.value)}
+              onChange={(e) => {
+                if (e.target.value) setMonth(e.target.value);
+              }}
             />
           </Field>
           <Field label={t('rangeLabel')}>

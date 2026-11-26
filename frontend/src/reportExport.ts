@@ -6,7 +6,7 @@ import { createPdfWriter } from './pdfWriter';
  */
 export function escapeCsv(v: unknown): string {
   const raw =
-    typeof v === 'string' && (/^[=+\-@\t\r]/.test(v) || /^[=+\-@]/.test(v.trimStart()))
+    typeof v === 'string' && (/^[=+\-@\t\r|%]/.test(v) || /^[=+\-@|%]/.test(v.trimStart()))
       ? `'${v}`
       : String(v ?? '');
   if (/[",\n\r]/.test(raw)) return `"${raw.replace(/"/g, '""')}"`;
@@ -105,6 +105,12 @@ export async function exportReportPdf({
       nextPage();
     }
   };
+  const drawWrapped = (text: string, x: number, opts?: Parameters<typeof w.text>[3], gap = 1.5) => {
+    const estLines = Math.max(1, Math.ceil(text.length / 45) + (text.match(/\n/g)?.length ?? 0));
+    const estH = estLines * ((opts?.size ?? 11) * (25.4 / 72) * 1.35) + gap;
+    room(Math.max(14, estH));
+    y += w.text(text, x, y, opts) + gap;
+  };
   const heading = (text: string) => {
     room(18);
     w.band(M, y - 1, w.width - 2 * M, 7.5);
@@ -112,8 +118,7 @@ export async function exportReportPdf({
   };
   const list = (items: string[]) => {
     for (const item of items) {
-      room(14);
-      y += w.text(item, M + 4, y, { maxWidth: body }) + 1.5;
+      drawWrapped(item, M + 4, { maxWidth: body }, 1.5);
     }
     y += 5;
   };

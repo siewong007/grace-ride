@@ -20,19 +20,49 @@ import './styles.css';
 // Sentry: opt-in error monitoring. Set VITE_SENTRY_DSN in the production environment.
 // Dynamically imported only when configured so zero-DSN builds stay lean.
 // Never send personal data (names, phone numbers, addresses) in Sentry events.
+function scrubSentryUrl(raw: string): string {
+  return raw
+    .replace(/(\/(?:visit|care|invite)\/)[^/?#]+/g, '$1[REDACTED]')
+    .replace(/\?.*$/, '');
+}
+
 if (import.meta.env.VITE_SENTRY_DSN) {
   void import('@sentry/react').then((Sentry) => {
     Sentry.init({
       dsn: import.meta.env.VITE_SENTRY_DSN,
       environment: import.meta.env.MODE,
-      integrations: [],
       tracesSampleRate: 0.0, // Errors only; performance tracing is off.
       beforeSend(event) {
-        // Strip any PII that may appear in breadcrumbs or extras.
         if (event.user) {
+          delete event.user.id;
           delete event.user.email;
           delete event.user.username;
           delete event.user.ip_address;
+        }
+        if (event.request) {
+          if (typeof event.request.url === 'string') {
+            event.request.url = scrubSentryUrl(event.request.url);
+          }
+          delete event.request.query_string;
+          delete event.request.data;
+          if (event.request.headers) {
+            delete event.request.headers.cookie;
+            delete event.request.headers.Cookie;
+            delete event.request.headers.authorization;
+            delete event.request.headers.Authorization;
+          }
+        }
+        if (Array.isArray(event.breadcrumbs)) {
+          event.breadcrumbs = event.breadcrumbs.map((bc) => ({
+            ...bc,
+            data: bc.data
+              ? Object.fromEntries(
+                  Object.entries(bc.data).filter(
+                    ([k]) => k !== 'url' && k !== 'to' && k !== 'from',
+                  ),
+                )
+              : bc.data,
+          }));
         }
         return event;
       },

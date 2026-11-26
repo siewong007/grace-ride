@@ -4,7 +4,7 @@ BACKEND_CARGO = $(patsubst ./%,../%,$(CARGO))
 
 .DEFAULT_GOAL := help
 
-.PHONY: help dev-api dev-web db-up db-down fmt lint lint-android test test-api test-web test-android test-e2e audit build image up backup restore restore-drill osrm-setup capacity
+.PHONY: help dev-api dev-web db-up db-down fmt lint lint-android test test-api test-web test-android test-ios test-e2e audit build image up deploy-aic backup restore restore-drill osrm-setup capacity
 
 help: ## Show available Make targets
 	@grep -E '^[a-zA-Z0-9_-]+:.*?## ' $(MAKEFILE_LIST) | awk 'BEGIN {FS = ":.*?## "}; {printf "  \033[36m%-15s\033[0m %s\n", $$1, $$2}'
@@ -44,6 +44,10 @@ test-web: ## Run frontend TypeScript typecheck + Vitest suites
 test-android: ## Run Android unit tests and compile instrumentation tests
 	cd android && ./gradlew :app:testDebugUnitTest :app:compileDebugAndroidTestKotlin --no-daemon
 
+test-ios: ## Run GraceRideKit Swift package unit tests and build unsigned iOS Simulator target
+	DEVELOPER_DIR="/Applications/Xcode.app/Contents/Developer" swift test --package-path ios/GraceRideKit && \
+	DEVELOPER_DIR="/Applications/Xcode.app/Contents/Developer" xcodebuild -project ios/GraceRide.xcodeproj -scheme GraceRide -destination 'generic/platform=iOS Simulator' CODE_SIGNING_ALLOWED=NO build
+
 test-e2e: ## Run Playwright browser end-to-end suites
 	cd frontend && npm run test:e2e
 
@@ -61,11 +65,18 @@ image: ## Build production container image (grace-ride:latest)
 up: ## Start production Docker Compose stack (requires .env.production)
 	docker compose --env-file .env.production up -d --build
 
+deploy-aic: ## Build linux/amd64 image and roll directly onto the AIC VPS (no GitHub Actions)
+	./scripts/deploy_aic.sh
+
 backup: ## Snapshot database + receipts into ./backups
 	@set -a; \
+	prod_env=0; \
 	if [ -z "$${DATABASE_URL:-}" ] && [ -z "$${PG_CONTAINER:-}" ] && [ -z "$${DOCKER_DB_CONTAINER:-}" ]; then \
-		if [ -f .env.production ]; then . ./.env.production; \
+		if [ -f .env.production ]; then . ./.env.production; prod_env=1; \
 		elif [ -f backend/.env ]; then . ./backend/.env; fi; \
+	fi; \
+	if [ "$$prod_env" = "1" ] && [ -z "$${REQUIRE_ENCRYPTION:-}" ]; then \
+		export REQUIRE_ENCRYPTION=true; \
 	fi; \
 	set +a; \
 	./scripts/backup.sh

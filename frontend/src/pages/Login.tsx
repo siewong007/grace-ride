@@ -20,7 +20,8 @@ export default function Login() {
   const { me, refresh } = useAuth();
   const nav = useNavigate();
   const loc = useLocation();
-  const from = (loc.state as { from?: string } | null)?.from ?? '/';
+  const rawFrom = (loc.state as { from?: string } | null)?.from ?? '/';
+  const from = rawFrom.startsWith('/') && !rawFrom.startsWith('//') && !rawFrom.startsWith('/api/') ? rawFrom : '/';
   const [devicePasskey] = useState<DevicePasskeyInfo | null>(() => getDevicePasskey());
   const [switchingAccount, setSwitchingAccount] = useState(false);
   const [email, setEmail] = useState(() => getDevicePasskey()?.email ?? '');

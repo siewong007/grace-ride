@@ -13,6 +13,7 @@ import okhttp3.mockwebserver.MockWebServer
 import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Test
@@ -107,10 +108,10 @@ class RegressionTest {
         assertFalse(AvatarStyle.isAnimatedAvatar(null))
 
         val reg = BadgeIcons.resolve(icon = "moon")
-        assertTrue(reg is BadgeIcons.ResolvedBadgeIcon.GifAsset)
+        assertTrue(reg is BadgeIcons.ResolvedBadgeIcon.AnimatedAsset)
         assertEquals(
-            "file:///android_asset/icons/badges/moon.gif",
-            (reg as BadgeIcons.ResolvedBadgeIcon.GifAsset).assetUri,
+            "file:///android_asset/icons/badges/moon.webp",
+            (reg as BadgeIcons.ResolvedBadgeIcon.AnimatedAsset).assetUri,
         )
 
         for (animBadge in listOf(
@@ -118,10 +119,10 @@ class RegressionTest {
             "badge_helping_wheels", "badge_traffic_light", "badge_route_compass", "badge_traffic_whistle", "badge_care_shield",
         )) {
             val resolved = BadgeIcons.resolve(icon = animBadge)
-            assertTrue("$animBadge should resolve to GifAsset", resolved is BadgeIcons.ResolvedBadgeIcon.GifAsset)
+            assertTrue("$animBadge should resolve to AnimatedAsset", resolved is BadgeIcons.ResolvedBadgeIcon.AnimatedAsset)
             assertEquals(
-                "file:///android_asset/icons/badges/$animBadge.gif",
-                (resolved as BadgeIcons.ResolvedBadgeIcon.GifAsset).assetUri,
+                "file:///android_asset/icons/badges/$animBadge.webp",
+                (resolved as BadgeIcons.ResolvedBadgeIcon.AnimatedAsset).assetUri,
             )
         }
 
@@ -132,22 +133,22 @@ class RegressionTest {
         val fallback = BadgeIcons.resolve(badge = badge, fallbackChar = "R")
         assertEquals(BadgeIcons.ResolvedBadgeIcon.Text("R"), fallback)
 
-        assertEquals("file:///android_asset/icons/avatars/grace_car.gif", AvatarStyle.gifAssetUri("grace_car"))
-        assertEquals("file:///android_asset/icons/avatars/grok_gray.gif", AvatarStyle.gifAssetUri("grok"))
-        assertEquals("file:///android_asset/icons/avatars/grok_coral.gif", AvatarStyle.gifAssetUri("grok", "coral"))
-        assertEquals("file:///android_asset/icons/avatars/grok_coral.gif", AvatarStyle.gifAssetUri("grok:circle:coral", "white:hexagon"))
-        assertEquals("file:///android_asset/icons/avatars/muse_amber.gif", AvatarStyle.gifAssetUri("muse"))
-        assertEquals("file:///android_asset/icons/avatars/muse_pink.gif", AvatarStyle.gifAssetUri("muse", "pink"))
-        assertEquals("file:///android_asset/icons/avatars/car.gif", AvatarStyle.gifAssetUri("car"))
-        assertEquals(null, AvatarStyle.gifAssetUri(null))
-        assertEquals(null, AvatarStyle.gifAssetUri("initials::teal"))
+        assertEquals("file:///android_asset/icons/avatars/grace_car.webp", AvatarStyle.assetUri("grace_car"))
+        assertNull(AvatarStyle.assetUri("grok"))
+        assertNull(AvatarStyle.assetUri("grok", "coral"))
+        assertNull(AvatarStyle.assetUri("grok:circle:coral", "white:hexagon"))
+        assertNull(AvatarStyle.assetUri("muse"))
+        assertNull(AvatarStyle.assetUri("muse", "pink"))
+        assertEquals("file:///android_asset/icons/avatars/car.webp", AvatarStyle.assetUri("car"))
+        assertNull(AvatarStyle.assetUri(null))
+        assertNull(AvatarStyle.assetUri("initials::teal"))
 
-        assertEquals("file:///android_asset/icons/events/utensils.gif", EventIcons.gifAssetUri("utensils"))
-        assertEquals("file:///android_asset/icons/events/trophy.gif", EventIcons.gifAssetUri(null, "badminton"))
-        assertEquals(null, EventIcons.gifAssetUri("🍲"))
+        assertEquals("file:///android_asset/icons/events/utensils.webp", EventIcons.assetUri("utensils"))
+        assertEquals("file:///android_asset/icons/events/trophy.webp", EventIcons.assetUri(null, "badminton"))
+        assertNull(EventIcons.assetUri("🍲"))
     }
 
-    @Test fun bundledGifAssetsExistAndAreGif89a() {
+    @Test fun bundledWebpAssetsExistAndAreValid() {
         val baseDir = listOf(
             File("src/main/assets/icons"),
             File("android/app/src/main/assets/icons"),
@@ -156,32 +157,33 @@ class RegressionTest {
 
         val expectedFiles = mutableSetOf<String>()
         for (icon in AvatarStyle.ALL_ICONS) {
-            expectedFiles += "avatars/$icon.gif"
-            if (icon == "grok" || icon == "muse") {
-                for (color in AvatarStyle.COLORS) {
-                    expectedFiles += "avatars/${icon}_$color.gif"
-                }
+            if (icon != "grok" && icon != "muse") {
+                expectedFiles += "avatars/$icon.webp"
             }
         }
-        assertEquals(40, expectedFiles.count { it.startsWith("avatars/") })
+        assertEquals(20, expectedFiles.count { it.startsWith("avatars/") })
 
-        for (badgeKey in BadgeIcons.allGifKeys) {
-            expectedFiles += "badges/$badgeKey.gif"
+        for (badgeKey in BadgeIcons.allAssetKeys) {
+            expectedFiles += "badges/$badgeKey.webp"
         }
         assertEquals(29, expectedFiles.count { it.startsWith("badges/") })
 
         for (eventKey in EventIcons.PRESET_KEYS) {
-            expectedFiles += "events/$eventKey.gif"
+            expectedFiles += "events/$eventKey.webp"
         }
         assertEquals(28, expectedFiles.count { it.startsWith("events/") })
-        assertEquals(97, expectedFiles.size)
+        assertEquals(77, expectedFiles.size)
+
+        val leftoverGifs = baseDir.walkTopDown().filter { it.isFile && it.extension.equals("gif", ignoreCase = true) }.toList()
+        assertTrue("Expected zero leftover GIFs, found: $leftoverGifs", leftoverGifs.isEmpty())
 
         for (rel in expectedFiles) {
             val file = File(baseDir, rel)
             assertTrue("Missing asset $rel at ${file.absolutePath}", file.isFile)
             val bytes = file.readBytes()
-            assertTrue("Asset $rel too short", bytes.size >= 6)
-            assertEquals("GIF89a", String(bytes, 0, 6, Charsets.US_ASCII))
+            assertTrue("Asset $rel too short", bytes.size >= 12)
+            assertEquals("RIFF", String(bytes, 0, 4, Charsets.US_ASCII))
+            assertEquals("WEBP", String(bytes, 8, 4, Charsets.US_ASCII))
         }
     }
 
@@ -263,11 +265,8 @@ class RegressionTest {
         assertTrue(AvatarStyle.isShapeableAvatar("muse:droplet:pink"))
         assertFalse(AvatarStyle.isShapeableAvatar("car::purple"))
         assertEquals("blue", AvatarStyle.defaultColorFor("grace_car"))
-        assertEquals(
-            "file:///android_asset/icons/avatars/grok_coral.gif",
-            AvatarStyle.gifAssetUri("grok::coral", "white:hexagon"),
-        )
-        assertEquals(null, AvatarStyle.gifAssetUri("initials::teal", "white:rounded"))
+        assertNull(AvatarStyle.assetUri("grok::coral", "white:hexagon"))
+        assertNull(AvatarStyle.assetUri("initials::teal", "white:rounded"))
     }
 
     @Test fun grokBotStudioSpecParsesEncodesAndGeneratesSvg() {

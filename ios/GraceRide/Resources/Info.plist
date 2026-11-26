@@ -1,0 +1,106 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>BGTaskSchedulerPermittedIdentifiers</key>
+	<array>
+		<string>org.pjstatecm.graceride.sync</string>
+	</array>
+	<key>CFBundleDevelopmentRegion</key>
+	<string>$(DEVELOPMENT_LANGUAGE)</string>
+	<key>CFBundleDisplayName</key>
+	<string>Grace Ride</string>
+	<key>CFBundleExecutable</key>
+	<string>$(EXECUTABLE_NAME)</string>
+	<key>CFBundleIdentifier</key>
+	<string>$(PRODUCT_BUNDLE_IDENTIFIER)</string>
+	<key>CFBundleInfoDictionaryVersion</key>
+	<string>6.0</string>
+	<key>CFBundleName</key>
+	<string>$(PRODUCT_NAME)</string>
+	<key>CFBundlePackageType</key>
+	<string>$(PRODUCT_BUNDLE_PACKAGE_TYPE)</string>
+	<key>CFBundleShortVersionString</key>
+	<string>$(MARKETING_VERSION)</string>
+	<key>CFBundleURLTypes</key>
+	<array>
+		<dict>
+			<key>CFBundleTypeRole</key>
+			<string>Editor</string>
+			<key>CFBundleURLName</key>
+			<string>org.pjstatecm.graceride</string>
+			<key>CFBundleURLSchemes</key>
+			<array>
+				<string>graceride</string>
+			</array>
+		</dict>
+	</array>
+	<key>CFBundleVersion</key>
+	<string>$(CURRENT_PROJECT_VERSION)</string>
+	<key>ITSAppUsesNonExemptEncryption</key>
+	<false/>
+	<key>LSApplicationQueriesSchemes</key>
+	<array>
+		<string>comgooglemaps</string>
+		<string>waze</string>
+	</array>
+	<key>NSCalendarsUsageDescription</key>
+	<string>Grace Ride saves church event dates and times to your calendar when you tap Add to Calendar.</string>
+	<key>NSCalendarsWriteOnlyAccessUsageDescription</key>
+	<string>Grace Ride saves church event dates and times to your calendar when you tap Add to Calendar.</string>
+	<key>NSCameraUsageDescription</key>
+	<string>Grace Ride uses your camera to scan event check-in QR codes and member pass codes.</string>
+	<key>NSLocationAlwaysAndWhenInUseUsageDescription</key>
+	<string>Grace Ride continues sharing your live trip location while you actively drive an in-progress church ride.</string>
+	<key>NSLocationWhenInUseUsageDescription</key>
+	<string>Grace Ride uses your location when capturing a pickup spot or sharing live location during an active ride.</string>
+	<key>NSPhotoLibraryUsageDescription</key>
+	<string>Grace Ride lets you select an avatar photo or upload supporting images for rides and events.</string>
+	<key>UIApplicationSceneManifest</key>
+	<dict>
+		<key>UIApplicationSupportsMultipleScenes</key>
+		<false/>
+	</dict>
+	<key>UIApplicationShortcutItems</key>
+	<array>
+		<dict>
+			<key>UIApplicationShortcutItemIconSymbolName</key>
+			<string>plus.circle</string>
+			<key>UIApplicationShortcutItemTitle</key>
+			<string>Book a ride</string>
+			<key>UIApplicationShortcutItemType</key>
+			<string>org.pjstatecm.graceride.shortcut.newRide</string>
+		</dict>
+		<dict>
+			<key>UIApplicationShortcutItemIconSymbolName</key>
+			<string>calendar</string>
+			<key>UIApplicationShortcutItemTitle</key>
+			<string>Events</string>
+			<key>UIApplicationShortcutItemType</key>
+			<string>org.pjstatecm.graceride.shortcut.events</string>
+		</dict>
+		<dict>
+			<key>UIApplicationShortcutItemIconSymbolName</key>
+			<string>steeringwheel</string>
+			<key>UIApplicationShortcutItemTitle</key>
+			<string>Drive hub</string>
+			<key>UIApplicationShortcutItemType</key>
+			<string>org.pjstatecm.graceride.shortcut.drive</string>
+		</dict>
+	</array>
+	<key>UIBackgroundModes</key>
+	<array>
+		<string>fetch</string>
+		<string>location</string>
+		<string>remote-notification</string>
+	</array>
+	<key>UILaunchScreen</key>
+	<dict/>
+	<key>UISupportedInterfaceOrientations</key>
+	<array>
+		<string>UIInterfaceOrientationPortrait</string>
+		<string>UIInterfaceOrientationLandscapeLeft</string>
+		<string>UIInterfaceOrientationLandscapeRight</string>
+	</array>
+</dict>
+</plist>

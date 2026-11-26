@@ -11,6 +11,7 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.outlined.History
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -37,12 +38,12 @@ import org.pjstatecm.graceride.R
 import org.pjstatecm.graceride.data.api.ApiException
 import org.pjstatecm.graceride.data.api.Ride
 import org.pjstatecm.graceride.di.AppContainer
-import org.pjstatecm.graceride.ui.Routes
+import org.pjstatecm.graceride.ui.AppRoute
 import org.pjstatecm.graceride.ui.components.AnimatedOfflineBanner
 import org.pjstatecm.graceride.ui.components.EmptyView
 import org.pjstatecm.graceride.ui.components.ErrorView
-import org.pjstatecm.graceride.ui.components.LoadingView
 import org.pjstatecm.graceride.ui.components.RideCard
+import org.pjstatecm.graceride.ui.components.SkeletonLoadingList
 import org.pjstatecm.graceride.ui.theme.Spacing
 
 data class HistoryUiState(
@@ -56,13 +57,19 @@ data class HistoryUiState(
 class HistoryViewModel(private val container: AppContainer) : ViewModel() {
     private val _state = MutableStateFlow(HistoryUiState())
     val state: StateFlow<HistoryUiState> = _state.asStateFlow()
+    private var loadJob: kotlinx.coroutines.Job? = null
 
     init { load(first = true) }
 
     fun refresh() = load(first = false)
 
     private fun load(first: Boolean) {
-        viewModelScope.launch {
+        loadJob?.cancel()
+        if (container.auth.me?.can("rides", "view") != true) {
+            _state.value = _state.value.copy(loading = false, refreshing = false)
+            return
+        }
+        loadJob = viewModelScope.launch {
             _state.value = _state.value.copy(loading = first, refreshing = !first)
             try {
                 _state.value = _state.value.copy(loading = false, refreshing = false, rides = container.rides.past(), error = null, offline = false)
@@ -111,7 +118,7 @@ fun HistoryScreen(container: AppContainer, nav: NavHostController) {
             modifier = Modifier.padding(padding),
         ) { mode ->
             when (mode) {
-                "loading" -> LoadingView()
+                "loading" -> SkeletonLoadingList(count = 4)
                 "error" -> ErrorView(state.error ?: "", vm::refresh)
                 else -> Column(Modifier.fillMaxSize()) {
                     AnimatedOfflineBanner(
@@ -128,11 +135,19 @@ fun HistoryScreen(container: AppContainer, nav: NavHostController) {
                             verticalArrangement = Arrangement.spacedBy(Spacing.xs),
                             contentPadding = PaddingValues(vertical = Spacing.xs),
                         ) {
-                            if (state.rides.isEmpty()) item { EmptyView(stringResource(R.string.history_empty)) }
+                            if (state.rides.isEmpty()) {
+                                item {
+                                    EmptyView(
+                                        text = stringResource(R.string.history_empty),
+                                        icon = Icons.Outlined.History,
+                                    )
+                                }
+                            }
                             items(state.rides, key = { it.id }) { ride ->
                                 RideCard(
                                     ride,
-                                    onClick = { nav.navigate(Routes.rideDetail(ride.id)) },
+                                    photoUrlFor = container::fileUrl,
+                                    onClick = { nav.navigate(AppRoute.RideDetail(ride.id)) },
                                     modifier = Modifier.animateItem(),
                                 )
                             }

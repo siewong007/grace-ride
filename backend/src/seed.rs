@@ -1419,7 +1419,7 @@ async fn seed_core(db: &PgPool) -> anyhow::Result<()> {
     // --- announcements ---
     sqlx::query("INSERT INTO announcements (id, title, body, pinned, created_by, demo_batch, created_at) VALUES ($1,'欢迎使用恩典同行','接送、活动与重要消息，集中在同一个平台。如有问题，请到帮助中心提问。',1,$2,$3,$4) ON CONFLICT DO NOTHING")
         .bind(101i64).bind(admin).bind(DEMO_BATCH).bind(now()).execute(db).await?;
-    sqlx::query("INSERT INTO announcements (id, title, body, pinned, created_by, demo_batch, created_at) VALUES ($2,'本周日接送安排','请于周五前提交周日崇拜的接送报名，交通组会在周六确认。',0,$2,$3,$4) ON CONFLICT DO NOTHING")
+    sqlx::query("INSERT INTO announcements (id, title, body, pinned, created_by, demo_batch, created_at) VALUES ($1,'本周日接送安排','请于周五前提交周日崇拜的接送报名，交通组会在周六确认。',0,$2,$3,$4) ON CONFLICT DO NOTHING")
         .bind(102i64).bind(transport).bind(DEMO_BATCH).bind(now()).execute(db).await?;
 
     // --- notifications ---
@@ -2345,6 +2345,38 @@ pub async fn seed_edge(db: &PgPool) -> anyhow::Result<()> {
             "February receipt",
             23456,
         ),
+        (
+            20003,
+            90007,
+            "receipt_mar.png",
+            "image/png",
+            "March receipt",
+            21000,
+        ),
+        (
+            20004,
+            90007,
+            "receipt_apr.png",
+            "image/png",
+            "April receipt",
+            19500,
+        ),
+        (
+            20005,
+            90007,
+            "receipt_may.png",
+            "image/png",
+            "May receipt",
+            31200,
+        ),
+        (
+            20006,
+            90005,
+            "receipt_short.png",
+            "image/png",
+            "Short trip receipt",
+            9800,
+        ),
     ];
     for (id, owner_id, stored_name, mime, original_name, size) in edge_files {
         sqlx::query(
@@ -2388,7 +2420,7 @@ pub async fn seed_edge(db: &PgPool) -> anyhow::Result<()> {
             None,
             3000,
             "Grab fare February",
-            20001,
+            20002,
             "Edge Member",
             "012-300 9007",
             "approved",
@@ -2405,7 +2437,7 @@ pub async fn seed_edge(db: &PgPool) -> anyhow::Result<()> {
             None,
             2000,
             "Grab fare March",
-            20002,
+            20003,
             "Edge Member",
             "012-300 9007",
             "returned",
@@ -2422,7 +2454,7 @@ pub async fn seed_edge(db: &PgPool) -> anyhow::Result<()> {
             None,
             1500,
             "Grab fare April",
-            20002,
+            20004,
             "Edge Member",
             "012-300 9007",
             "rejected",
@@ -2439,7 +2471,7 @@ pub async fn seed_edge(db: &PgPool) -> anyhow::Result<()> {
             None,
             5000,
             "Grab fare May",
-            20001,
+            20005,
             "Edge Member",
             "012-300 9007",
             "paid",
@@ -2456,7 +2488,7 @@ pub async fn seed_edge(db: &PgPool) -> anyhow::Result<()> {
             None,
             800,
             "Short trip",
-            20001,
+            20006,
             "Edge Driver",
             "012-300 9005",
             "pending",
@@ -2923,6 +2955,7 @@ async fn sync_identity_sequences(db: &PgPool) -> anyhow::Result<()> {
         "users",
         "invites",
         "passkeys",
+        "biometric_credentials",
         "recovery_requests",
         "areas",
         "groups",
@@ -2943,9 +2976,11 @@ async fn sync_identity_sequences(db: &PgPool) -> anyhow::Result<()> {
         "settlement_items",
         "settlement_shares",
         "settlement_revisions",
+        "proxy_riders",
+        "guide_workflows",
     ] {
         let sql = format!(
-            "SELECT setval(pg_get_serial_sequence('{table}', 'id'), COALESCE((SELECT MAX(id) FROM {table}), 1))"
+            "SELECT setval(pg_get_serial_sequence('{table}', 'id'), COALESCE((SELECT MAX(id) FROM {table}), 1), (SELECT MAX(id) FROM {table}) IS NOT NULL)"
         );
         sqlx::query(sqlx::AssertSqlSafe(&*sql)).execute(db).await?;
     }

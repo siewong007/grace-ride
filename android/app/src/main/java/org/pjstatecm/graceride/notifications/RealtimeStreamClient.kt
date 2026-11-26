@@ -2,6 +2,7 @@ package org.pjstatecm.graceride.notifications
 
 import android.content.Context
 import androidx.lifecycle.DefaultLifecycleObserver
+import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleOwner
 import androidx.lifecycle.ProcessLifecycleOwner
 import kotlinx.coroutines.CoroutineScope
@@ -29,7 +30,7 @@ import okhttp3.sse.EventSourceListener
 import okhttp3.sse.EventSources
 import org.pjstatecm.graceride.data.api.AuthEvent
 import org.pjstatecm.graceride.data.api.AuthEventBus
-import org.pjstatecm.graceride.data.api.NotificationDto
+import org.pjstatecm.graceride.data.api.NotificationItem
 import org.pjstatecm.graceride.data.repo.AuthRepository
 import org.pjstatecm.graceride.data.repo.AuthState
 import org.pjstatecm.graceride.data.repo.CommunityRepository
@@ -37,6 +38,22 @@ import org.pjstatecm.graceride.data.session.SecureStore
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicBoolean
 import kotlin.random.Random
+
+sealed interface RealtimeEvent {
+    data object Chat : RealtimeEvent
+    data object Notify : RealtimeEvent
+    data object Resume : RealtimeEvent
+    data class Other(val kind: String) : RealtimeEvent
+
+    companion object {
+        fun parse(kind: String): RealtimeEvent = when (kind) {
+            "chat" -> Chat
+            "notify" -> Notify
+            "resume" -> Resume
+            else -> Other(kind)
+        }
+    }
+}
 
 class RealtimeStreamClient(
     private val okHttp: OkHttpClient,
@@ -48,13 +65,16 @@ class RealtimeStreamClient(
     private val langProvider: (() -> String)? = null,
     private val hideLockDetailsProvider: (() -> Boolean)? = null,
     private val store: SecureStore? = null,
+    private val biometric: org.pjstatecm.graceride.platform.BiometricAuthManager? = null,
 ) {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private val started = AtomicBoolean(false)
-    private val isForeground = MutableStateFlow(true)
+    private val isForeground = MutableStateFlow(false)
     private val syncMutex = Mutex()
     private val _refreshEvents = MutableSharedFlow<String>(extraBufferCapacity = 16)
     val refreshEvents: SharedFlow<String> = _refreshEvents.asSharedFlow()
+    private val _events = MutableSharedFlow<RealtimeEvent>(extraBufferCapacity = 16)
+    val events: SharedFlow<RealtimeEvent> = _events.asSharedFlow()
 
     @Volatile
     private var activeSource: EventSource? = null
@@ -77,6 +97,7 @@ class RealtimeStreamClient(
         override fun onStart(owner: LifecycleOwner) {
             isForeground.value = true
             _refreshEvents.tryEmit("resume")
+            _events.tryEmit(RealtimeEvent.Resume)
         }
 
         override fun onStop(owner: LifecycleOwner) {
@@ -89,11 +110,16 @@ class RealtimeStreamClient(
         if (!started.compareAndSet(false, true)) return
 
         scope.launch(Dispatchers.Main) {
-            ProcessLifecycleOwner.get().lifecycle.addObserver(lifecycleObserver)
+            val lifecycle = ProcessLifecycleOwner.get().lifecycle
+            isForeground.value = lifecycle.currentState.isAtLeast(Lifecycle.State.STARTED)
+            lifecycle.addObserver(lifecycleObserver)
         }
 
         supervisorJob = scope.launch {
-            combine(auth.state, isForeground) { st, fg ->
+            val bioEnrollment = biometric?.enrollment
+                ?: MutableStateFlow<org.pjstatecm.graceride.data.api.BiometricEnrollment?>(null)
+            val bioUnlocked = biometric?.appUnlocked ?: MutableStateFlow(true)
+            combine(auth.state, isForeground, bioEnrollment, bioUnlocked) { st, fg, enrollment, unlocked ->
                 val uid = (st as? AuthState.SignedIn)?.me?.id
                 if (uid != lastUserId) {
                     lastUserId = uid
@@ -105,11 +131,12 @@ class RealtimeStreamClient(
                         lastSeenNotifId = 0L
                         baselineInitialized = false
                     }
-                    if (uid != null && appContext != null) {
+                    if (uid != null) {
                         runCatching { BackgroundNotificationWorker.schedule(appContext) }
                     }
                 }
-                st is AuthState.SignedIn && fg
+                val gateBlocked = uid != null && enrollment?.userId == uid && !unlocked
+                st is AuthState.SignedIn && st.me.termsAccepted && fg && !gateBlocked
             }.distinctUntilChanged().collectLatest { shouldConnect ->
                 activeSource?.cancel()
                 activeSource = null
@@ -161,6 +188,7 @@ class RealtimeStreamClient(
                         }
                         if (trimmed.isNotEmpty()) {
                             _refreshEvents.tryEmit(trimmed)
+                            _events.tryEmit(RealtimeEvent.parse(trimmed))
                             if (trimmed == "notify") {
                                 scope.launch { syncLatestAndNotify(surfaceNew = true) }
                             }
@@ -232,7 +260,7 @@ class RealtimeStreamClient(
 
     data class SyncResult(
         val newWatermark: Long,
-        val surfaced: List<NotificationDto>,
+        val surfaced: List<NotificationItem>,
     )
 
     companion object {
@@ -243,6 +271,60 @@ class RealtimeStreamClient(
 
         fun writeWatermark(store: SecureStore?, userId: Long, id: Long) {
             store?.putString(watermarkKey(userId), id.toString())
+        }
+
+        fun readCachedPrefs(store: SecureStore?): org.pjstatecm.graceride.data.api.NotificationPrefsDto? {
+            val raw = store?.getString(AuthRepository.NOTIF_PREFS_KEY) ?: return null
+            return runCatching {
+                org.pjstatecm.graceride.data.api.apiJson.decodeFromString(
+                    org.pjstatecm.graceride.data.api.NotificationPrefsDto.serializer(),
+                    raw,
+                )
+            }.getOrNull()
+        }
+
+        fun writeCachedPrefs(store: SecureStore?, prefs: org.pjstatecm.graceride.data.api.NotificationPrefsDto) {
+            store?.putString(
+                AuthRepository.NOTIF_PREFS_KEY,
+                org.pjstatecm.graceride.data.api.apiJson.encodeToString(
+                    org.pjstatecm.graceride.data.api.NotificationPrefsDto.serializer(),
+                    prefs,
+                ),
+            )
+            store?.putString("notif_hide_lock_details", if (prefs.hideLockDetails) "1" else "0")
+        }
+
+        private fun parseHmMinutes(hm: String?): Int? {
+            val parts = hm?.trim()?.split(':') ?: return null
+            if (parts.size != 2) return null
+            val h = parts[0].toIntOrNull() ?: return null
+            val m = parts[1].toIntOrNull() ?: return null
+            if (h !in 0..23 || m !in 0..59) return null
+            return h * 60 + m
+        }
+
+        fun shouldSurfaceNotification(
+            item: NotificationItem,
+            prefs: org.pjstatecm.graceride.data.api.NotificationPrefsDto?,
+            nowHm: String = java.time.ZonedDateTime.now(org.pjstatecm.graceride.domain.KlTime.zone)
+                .let { String.format(java.util.Locale.US, "%02d:%02d", it.hour, it.minute) },
+        ): Boolean {
+            if (prefs == null) return true
+            if (!prefs.pushOptIn) return false
+            if (item.priority == "urgent") return true
+            if (item.category in prefs.mutedCategories) return false
+            val startMin = parseHmMinutes(prefs.quietHoursStart)
+            val endMin = parseHmMinutes(prefs.quietHoursEnd)
+            val nowMin = parseHmMinutes(nowHm)
+            if (startMin != null && endMin != null && nowMin != null && startMin != endMin) {
+                val inQuiet = if (startMin < endMin) {
+                    nowMin in startMin until endMin
+                } else {
+                    nowMin >= startMin || nowMin < endMin
+                }
+                if (inQuiet) return false
+            }
+            return true
         }
 
         /**
@@ -260,8 +342,10 @@ class RealtimeStreamClient(
             surfaceNew: Boolean = true,
             lang: String? = null,
             hideLockDetails: Boolean = false,
+            prefs: org.pjstatecm.graceride.data.api.NotificationPrefsDto? = readCachedPrefs(store),
+            passive: Boolean = false,
         ): SyncResult {
-            val page = community.notificationsPage(limit = 5)
+            val page = community.notificationsPage(limit = 5, passive = passive)
             auth.updateUnread(page.unread)
             val maxId = page.items.maxOfOrNull { it.id } ?: 0L
             val existing = readWatermark(store, userId) ?: inMemoryLastSeenId
@@ -269,9 +353,10 @@ class RealtimeStreamClient(
                 writeWatermark(store, userId, maxId)
                 return SyncResult(newWatermark = maxId, surfaced = emptyList())
             }
+            val effectiveHideLock = hideLockDetails || (prefs?.hideLockDetails == true)
             val newlySurfaced = if (surfaceNew && maxId > existing) {
                 page.items
-                    .filter { it.id > existing && !it.read }
+                    .filter { it.id > existing && !it.read && shouldSurfaceNotification(it, prefs) }
                     .sortedBy { it.id }
             } else {
                 emptyList()
@@ -282,7 +367,7 @@ class RealtimeStreamClient(
                         appContext,
                         it,
                         lang = lang,
-                        hideLockDetails = hideLockDetails,
+                        hideLockDetails = effectiveHideLock,
                     )
                 }
             }

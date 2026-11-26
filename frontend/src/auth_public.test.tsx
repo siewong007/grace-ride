@@ -4,7 +4,10 @@ import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { MemoryRouter, Route, Routes } from 'react-router-dom';
 import NotFound from './pages/NotFound';
 import Invite from './pages/Invite';
-import { TermsGate, TermsText } from './components/Terms';
+import { TERMS_SECTIONS, TermsGate, TermsText } from './components/Terms';
+import termsEn from './locales/terms.en';
+import termsMs from './locales/terms.ms';
+import termsZh from './locales/terms.zh';
 import { ConfirmProvider } from './components/ui';
 import { ApiError } from './api';
 
@@ -59,7 +62,18 @@ describe('NotFound page', () => {
 });
 
 describe('Terms and TermsGate', () => {
-  it('renders readable terms text with section headings', () => {
+  it('renders readable terms text with all location and service sections across locales', () => {
+    for (const key of TERMS_SECTIONS) {
+      const titleKey = `${key}Title` as keyof typeof termsMs;
+      const bodyKey = `${key}Body` as keyof typeof termsMs;
+      expect(termsEn[titleKey]).toBeTruthy();
+      expect(termsEn[bodyKey]).toBeTruthy();
+      expect(termsZh[titleKey]).toBeTruthy();
+      expect(termsZh[bodyKey]).toBeTruthy();
+      expect(termsMs[titleKey]).toBeTruthy();
+      expect(termsMs[bodyKey]).toBeTruthy();
+    }
+
     render(
       <MemoryRouter>
         <TermsText />
@@ -68,7 +82,19 @@ describe('Terms and TermsGate', () => {
 
     expect(screen.getByRole('heading', { level: 2 })).toBeInTheDocument();
     const headings = screen.getAllByRole('heading', { level: 3 });
-    expect(headings.length).toBeGreaterThanOrEqual(5);
+    expect(headings).toHaveLength(TERMS_SECTIONS.length);
+    expect(screen.getByText(/Version 3/i)).toBeInTheDocument();
+    expect(screen.getByText(/foreground location service/i)).toBeInTheDocument();
+    expect(screen.getByText(/waiting-spot pin/i)).toBeInTheDocument();
+    expect(screen.getByText(/Use my current location/i)).toBeInTheDocument();
+    expect(screen.getByText(/Google Maps, Waze/i)).toBeInTheDocument();
+    expect(screen.getByText(/Cloudflare Turnstile/i)).toBeInTheDocument();
+    expect(screen.getByText(/Google Play Services Code Scanner/i)).toBeInTheDocument();
+    expect(screen.getByText(/Care Link/i)).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Bahasa Malaysia' }));
+    expect(screen.getByText(/Versi 3/i)).toBeInTheDocument();
+    expect(screen.getByText(/Pautan Prihatin/i)).toBeInTheDocument();
   });
 
   it('renders sticky accept bar with checkbox gating agree button', () => {

@@ -412,8 +412,9 @@ export default function HelpGuideEditor() {
                   onChange={(e) => {
                     setIsDirty(true);
                     setAutoSlug(false);
-                    setF({ ...f, slug: slugify(e.target.value) });
+                    setF({ ...f, slug: e.target.value.toLowerCase().replace(/[^a-z0-9-]/g, '') });
                   }}
+                  onBlur={() => setF((prev) => ({ ...prev, slug: slugify(prev.slug) }))}
                 />
               </Field>
 

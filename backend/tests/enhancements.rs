@@ -261,8 +261,9 @@ async fn audit_entity_name_persists_after_deletion_and_set_password_checks_recen
     .await;
     assert_eq!(audit_res.status, StatusCode::OK, "{}", audit_res.json);
     let items = audit_res.json["items"].as_array().unwrap();
-    assert_eq!(items.len(), 1, "{items:?}");
-    assert_eq!(items[0]["entity_name"], "Snapshot Choir");
+    assert_eq!(items.len(), 2, "{items:?}");
+    assert!(items.iter().all(|it| it["entity_name"] == "Snapshot Choir"));
+    assert!(items.iter().any(|it| it["action"] == "group.snapshot_test"));
 
     // Account with TOTP enabled and a >15m-old session cannot change password without re-auth.
     sqlx::query("UPDATE users SET totp_enabled=1 WHERE id=$1")

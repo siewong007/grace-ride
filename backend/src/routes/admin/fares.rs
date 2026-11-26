@@ -22,15 +22,15 @@ use crate::util::{audit, fmt_rm, now, require};
 const MAX_BULK_FARES: usize = 10_000;
 const MAX_AREA_NAME_CHARS: usize = 80;
 
-fn normalize_area_name(s: &str) -> String {
+pub(super) fn normalize_area_name(s: &str) -> String {
     s.split_whitespace().collect::<Vec<_>>().join(" ")
 }
 
-fn area_lookup_key(s: &str) -> String {
+pub(super) fn area_lookup_key(s: &str) -> String {
     normalize_area_name(s).to_lowercase()
 }
 
-fn valid_area_name(s: &str) -> bool {
+pub(super) fn valid_area_name(s: &str) -> bool {
     !s.is_empty() && s.chars().count() <= MAX_AREA_NAME_CHARS && !s.chars().any(char::is_control)
 }
 

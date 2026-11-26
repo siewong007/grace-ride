@@ -210,10 +210,37 @@ pub(super) async fn event_owner(
         .ok_or(not_found(lang))
 }
 
+/// Verify all referenced participant user IDs exist before writing settlement shares.
+pub(super) async fn ensure_users_exist_on(
+    conn: &mut sqlx::PgConnection,
+    lang: Lang,
+    user_ids: &[i64],
+) -> AppResult<()> {
+    let unique: Vec<i64> = {
+        let mut s = std::collections::BTreeSet::new();
+        user_ids
+            .iter()
+            .copied()
+            .filter(|id| s.insert(*id))
+            .collect()
+    };
+    if unique.is_empty() {
+        return Ok(());
+    }
+    let count: i64 = sqlx::query_scalar("SELECT COUNT(DISTINCT id) FROM users WHERE id = ANY($1)")
+        .bind(&unique)
+        .fetch_one(&mut *conn)
+        .await?;
+    if count != unique.len() as i64 {
+        return Err(bad(lang, ErrorKey::InvalidAction));
+    }
+    Ok(())
+}
+
 /// Only members recorded as attended may be charged. Publish and later revisions use
 /// the same gate, otherwise a published bill could silently add an absent member.
-pub(super) async fn ensure_all_attended(
-    st: &AppState,
+pub(super) async fn ensure_all_attended_on(
+    conn: &mut sqlx::PgConnection,
     lang: Lang,
     event_id: i64,
     user_ids: Vec<i64>,
@@ -221,7 +248,7 @@ pub(super) async fn ensure_all_attended(
     let att_enabled: Option<(i64,)> =
         sqlx::query_as("SELECT attendance_enabled FROM events WHERE id=$1")
             .bind(event_id)
-            .fetch_optional(&st.db)
+            .fetch_optional(&mut *conn)
             .await?;
     if att_enabled.map(|(a,)| a == 0).unwrap_or(false) {
         // Attendance is not tracked, but a bill must still only reach people connected
@@ -236,7 +263,7 @@ pub(super) async fn ensure_all_attended(
         ))
         .bind(event_id)
         .bind(user_ids)
-        .fetch_one(&st.db)
+        .fetch_one(&mut *conn)
         .await?;
         if outside > 0 {
             return Err(bad(lang, ErrorKey::UnattendedMembers(outside)));
@@ -249,7 +276,7 @@ pub(super) async fn ensure_all_attended(
     )
     .bind(event_id)
     .bind(user_ids)
-    .fetch_one(&st.db)
+    .fetch_one(&mut *conn)
     .await?;
     if not_attended > 0 {
         return Err(bad(lang, ErrorKey::UnattendedMembers(not_attended)));

@@ -1,6 +1,7 @@
 # One process serves the API and the SPA. Replace X-Forwarded-For so the
 # app's first-hop trust sees the visitor Caddy already resolved
 # (global trusted_proxies + Cf-Connecting-Ip), not a client-supplied chain.
+# Host Caddy MUST also configure global servers { trusted_proxies static <Cloudflare CIDRs>; client_ip_headers Cf-Connecting-Ip }.
 graceride.saliminn.my {
 	# Cloudflare SSL/TLS mode MUST be set to "Full (strict)".
 	# Install the 15-year Cloudflare Origin CA certificate and key (0640 root:caddy):
@@ -14,6 +15,11 @@ graceride.saliminn.my {
 	#       }
 	#   }
 	tls {$ORIGIN_CERT:/etc/caddy/certs/graceride-origin.pem} {$ORIGIN_KEY:/etc/caddy/certs/graceride-origin.key}
+	# Recommended when host Caddy has Cloudflare Origin Pull CA provisioned:
+	#   client_auth {
+	#       mode require_and_verify
+	#       trust_pool file /etc/caddy/certs/cloudflare-origin-pull-ca.pem
+	#   }
 	# Server-sent events (/api/stream) must not be buffered or compressed.
 	@notsse not path /api/stream
 	encode @notsse zstd gzip

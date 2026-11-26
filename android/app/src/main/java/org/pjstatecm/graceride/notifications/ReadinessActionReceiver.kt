@@ -28,6 +28,8 @@ class ReadinessActionReceiver : BroadcastReceiver() {
                     if (notifId > 0) {
                         NotificationManagerCompat.from(context).cancel(notifId)
                     }
+                    org.pjstatecm.graceride.widget.WidgetSnapshotStore.markReadyLocally(context, rideId, status)
+                    org.pjstatecm.graceride.widget.refreshGraceRideWidget(context)
                     app.container.auth.refresh()
                 }
             } catch (_: Exception) {

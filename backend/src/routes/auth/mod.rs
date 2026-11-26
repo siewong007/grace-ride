@@ -1,5 +1,6 @@
 //! 登入与账号安全: invites, passkeys (WebAuthn), password + TOTP 2FA, account recovery.
 
+mod biometrics;
 mod invites_recovery;
 mod passkeys;
 mod totp;
@@ -76,6 +77,35 @@ pub fn router() -> Router<AppState> {
         )
         .route("/auth/passkeys", get(passkeys::list_passkeys))
         .route("/auth/passkeys/{id}", delete(passkeys::delete_passkey))
+        .route(
+            "/auth/biometric/register/start",
+            post(biometrics::biometric_register_start),
+        )
+        .route(
+            "/auth/biometric/register/finish",
+            post(biometrics::biometric_register_finish),
+        )
+        .route(
+            "/auth/biometric/login/start",
+            post(biometrics::biometric_login_start),
+        )
+        .route(
+            "/auth/biometric/login/finish",
+            post(biometrics::biometric_login_finish),
+        )
+        .route(
+            "/auth/biometric/reauth/start",
+            post(biometrics::biometric_reauth_start),
+        )
+        .route(
+            "/auth/biometric/reauth/finish",
+            post(biometrics::biometric_reauth_finish),
+        )
+        .route("/auth/biometrics", get(biometrics::list_biometrics))
+        .route(
+            "/auth/biometrics/{id}",
+            delete(biometrics::delete_biometric),
+        )
         .route("/auth/totp/setup", post(totp::totp_setup))
         .route("/auth/totp/enable", post(totp::totp_enable))
         .route("/auth/totp/verify", post(totp::totp_verify))
@@ -274,6 +304,11 @@ async fn me(State(st): State<AppState>, u: CurrentUser) -> AppResult<Json<Value>
         .bind(u.id)
         .fetch_one(&st.db)
         .await?;
+    let biometrics: (i64,) =
+        sqlx::query_as("SELECT COUNT(*) FROM biometric_credentials WHERE user_id=$1")
+            .bind(u.id)
+            .fetch_one(&st.db)
+            .await?;
     let unread: (i64,) =
         sqlx::query_as("SELECT COUNT(*) FROM notifications WHERE user_id=$1 AND read_at IS NULL")
             .bind(u.id)
@@ -310,7 +345,7 @@ async fn me(State(st): State<AppState>, u: CurrentUser) -> AppResult<Json<Value>
         // until the member signs in with a passkey or 2FA (`privileged` says they exist).
         "permissions": u.perms.usable_keys(u.mfa_ok),
         "mfa_ok": u.mfa_ok, "totp_enabled": row.totp_enabled == 1,
-        "has_password": row.password_hash.is_some(), "passkey_count": passkeys.0,
+        "has_password": row.password_hash.is_some(), "passkey_count": passkeys.0, "biometric_count": biometrics.0,
         "badges_opt_out": row.badges_opt_out == 1, "carpool_enabled": row.carpool_enabled == 1, "spare_seats": row.spare_seats,
         "readiness_prompt_mins": row.readiness_prompt_mins.unwrap_or(45), "gate_wait_mins": row.gate_wait_mins.unwrap_or(5),
         "auto_lock_mins": row.auto_lock_mins.unwrap_or(0), "session_timeout_mins": session_timeout, "backup_codes_count": backup_codes_count,

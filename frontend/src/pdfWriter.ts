@@ -35,11 +35,19 @@ const PAGE_H = 297;
 const MM_PER_PT = 25.4 / 72;
 const LINE = 1.35; // line height as a multiple of the font size
 
-/** True when every character is one the built-in PDF fonts can draw. */
+const CP1252_EXTRA = new Set([
+  0x20ac, 0x201a, 0x0192, 0x201e, 0x2026, 0x2020, 0x2021, 0x02c6, 0x2030,
+  0x0160, 0x2039, 0x0152, 0x017d, 0x2018, 0x2019, 0x201c, 0x201d, 0x2022,
+  0x2013, 0x2014, 0x02dc, 0x2122, 0x0161, 0x203a, 0x0153, 0x017e, 0x0178,
+]);
+
+/** True when every character is representable in PDF WinAnsi/CP1252 encoding. */
 export function isLatin(s: string): boolean {
   for (let i = 0; i < s.length; i++) {
     const c = s.charCodeAt(i);
-    if (c > 0x24f && !(c >= 0x2000 && c <= 0x206f)) return false;
+    const isAscii = c === 0x09 || c === 0x0a || c === 0x0d || (c >= 0x20 && c <= 0x7e);
+    const isLatin1 = c >= 0xa0 && c <= 0xff;
+    if (!isAscii && !isLatin1 && !CP1252_EXTRA.has(c)) return false;
   }
   return true;
 }
@@ -102,19 +110,21 @@ function canvasWriter(JsPdf: typeof import('jspdf').default): PdfWriter {
   newPage();
 
   const lineH = (size: number) => size * MM_PER_PT * LINE;
-  /** Greedy wrap that also breaks inside runs of Chinese, which have no spaces. */
+  /** Greedy wrap that also breaks inside runs of Chinese and honours explicit newlines. */
   const wrap = (s: string, maxPx: number): string[] => {
     const out: string[] = [];
-    let line = '';
-    for (const ch of s) {
-      if (line && ctx.measureText(line + ch).width > maxPx) {
-        out.push(line);
-        line = ch === ' ' ? '' : ch;
-      } else {
-        line += ch;
+    for (const para of s.split(/\r?\n/)) {
+      let line = '';
+      for (const ch of para) {
+        if (line && ctx.measureText(line + ch).width > maxPx) {
+          out.push(line);
+          line = ch === ' ' ? '' : ch;
+        } else {
+          line += ch;
+        }
       }
+      out.push(line);
     }
-    out.push(line);
     return out;
   };
 

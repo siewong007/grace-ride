@@ -121,9 +121,10 @@ export function roleLabel(key: string, ft: (k: string) => string, names?: Record
 const WEEKDAY = ['format:weekday.0', 'format:weekday.1', 'format:weekday.2', 'format:weekday.3', 'format:weekday.4', 'format:weekday.5', 'format:weekday.6'];
 
 export function parseLocal(s: string): Date {
-  // "YYYY-MM-DDTHH:MM[:SS]" in local time
-  // Accepts both "T" and space separators.
-  const [d, t = '00:00'] = s.trim().split(/[T ]/);
+  // "YYYY-MM-DDTHH:MM[:SS]" in local time. Accepts "T" or space separator and
+  // strips any fractional seconds or timezone suffix cleanly.
+  const clean = s.trim().replace(/(\.\d+)?(Z|[+-]\d{2}:?\d{2})$/i, '');
+  const [d, t = '00:00'] = clean.split(/[T ]/);
   const [y, m, day] = d.split('-').map(Number);
   const [hh, mm, ss = 0] = t.split(':').map(Number);
   return new Date(y, m - 1, day, hh, mm, ss);
@@ -214,7 +215,7 @@ export const greeting = (t: (k: string) => string) => {
 export function escapeCsvCell(val: unknown): string {
   if (val === null || val === undefined) return '""';
   const raw =
-    typeof val === 'string' && (/^[=+\-@\t\r]/.test(val) || /^[=+\-@]/.test(val.trimStart()))
+    typeof val === 'string' && (/^[=+\-@\t\r|%]/.test(val) || /^[=+\-@|%]/.test(val.trimStart()))
       ? `'${val}`
       : String(val);
   const str = raw.replace(/"/g, '""');

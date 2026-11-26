@@ -99,13 +99,13 @@ export default function EventForm() {
       as_group_ids: existing.as_group_ids ?? [],
       photo_file_id: keepPhoto ? (existing.photo_file_id ?? null) : null,
       attendance_enabled: existing.attendance_enabled ?? true,
-      mileage_claimable: existing.mileage_claimable ?? false,
+      mileage_claimable: !duplicateId || canMileage ? (existing.mileage_claimable ?? false) : false,
       area_id: existing.area ? String(existing.area.id) : '',
       repeat_frequency: 'none',
       repeat_count: '4',
     });
     setNarrow((existing.as_group_ids ?? []).length > 0);
-  }, [existing, duplicateId, me?.id]);
+  }, [existing, duplicateId, me?.id, canMileage]);
 
   const set = (k: keyof typeof f) => (e: { target: { value: string } }) =>
     setF({ ...f, [k]: e.target.value });
@@ -143,7 +143,7 @@ export default function EventForm() {
     group_ids: f.group_ids,
     photo_file_id: f.photo_file_id,
     attendance_enabled: f.attendance_enabled,
-    mileage_claimable: f.mileage_claimable,
+    mileage_claimable: !id && !canMileage ? false : f.mileage_claimable,
     area_id: f.area_id ? Number(f.area_id) : null,
     // Empty: people choose from the audience groups and their sub-groups.
     as_group_ids: narrow ? f.as_group_ids.filter((g) => joinable.some((j) => j.id === g)) : [],

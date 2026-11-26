@@ -58,7 +58,7 @@ export function DriveSchedule() {
   const { busy, error: actErr, run } = useAction();
   const queueTick = useOfflineQueueTick();
   const offlineSnap = !data && error && me?.id ? loadTodayRidesSnapshot(me.id) : null;
-  const scheduleRides = data ?? (offlineSnap ? offlineSnap.rides : null);
+  const scheduleRides = data ?? (offlineSnap ? offlineSnap.rides.filter((r) => r.viewer?.is_driver) : null);
   const active = scheduleRides?.some((r) => r.status === 'in_progress');
 
   useEffect(() => {
@@ -107,8 +107,8 @@ export function DriveSchedule() {
   };
 
   const focusRide = useMemo(() => {
-    if (!data?.length) return null;
-    const sorted = data.slice().sort((a, b) => a.pickup_at.localeCompare(b.pickup_at));
+    if (!scheduleRides?.length) return null;
+    const sorted = scheduleRides.slice().sort((a, b) => a.pickup_at.localeCompare(b.pickup_at));
     const inProgPickup = sorted.find((r) => r.status === 'in_progress' && !r.picked_up_at);
     if (inProgPickup) return inProgPickup;
     const inProgDrop = sorted.find((r) => r.status === 'in_progress');
@@ -121,12 +121,12 @@ export function DriveSchedule() {
         return diffMins >= -30 && diffMins <= 45;
       }) ?? null
     );
-  }, [data]);
+  }, [scheduleRides]);
 
   const byDay = useMemo(() => {
     const map = new Map<string, Ride[]>();
-    if (!data) return map;
-    const sorted = data
+    if (!scheduleRides) return map;
+    const sorted = scheduleRides
       .filter((r) => r.id !== focusRide?.id)
       .sort((a, b) => a.pickup_at.localeCompare(b.pickup_at));
     sorted.forEach((r) => {
@@ -134,7 +134,7 @@ export function DriveSchedule() {
       map.set(k, [...(map.get(k) ?? []), r]);
     });
     return map;
-  }, [data, focusRide]);
+  }, [scheduleRides, focusRide]);
 
   const renderTripCard = (r: Ride, isNextStop = false) => {
     const canDelay = r.status === 'confirmed' || (r.status === 'in_progress' && !r.picked_up_at);
@@ -231,7 +231,7 @@ export function DriveSchedule() {
                 onStarted={reload}
                 block
                 label={t('startTrip')}
-                others={(data ?? [])
+                others={(scheduleRides ?? [])
                   .filter(
                     (o) =>
                       o.id !== r.id &&
@@ -407,7 +407,7 @@ export function DriveSchedule() {
             {t('week7')}
           </button>
         </div>
-        <span className="muted small">{t('slotRides', { count: data?.length ?? 0 })}</span>
+        <span className="muted small">{t('slotRides', { count: scheduleRides?.length ?? 0 })}</span>
       </div>
 
       {active && <ShareLocation />}

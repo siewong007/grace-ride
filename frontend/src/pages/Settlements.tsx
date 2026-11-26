@@ -81,7 +81,7 @@ export default function Settlements() {
   const [params, setParams] = useSearchParams();
   const page = Math.max(1, Number(params.get('page') ?? '1') || 1);
   const pageSize = Number(params.get('limit') ?? '25') || 25;
-  const pagingQs = page > 1 || pageSize !== 25 ? `?page=${page}&limit=${pageSize}` : '';
+  const pagingQs = `?page=${page}&limit=${pageSize}`;
   const { data, error, loading } = useApi<PaginatedSettlements | SettlementSummary[]>(
     `/settlements${pagingQs}`,
   );
@@ -98,7 +98,7 @@ export default function Settlements() {
           subtitle={t('desc')}
           actions={
             can('settlements', 'create') ? (
-              <Button variant="secondary" to="/events?scope=managing">
+              <Button variant="secondary" to="/events?tab=managing">
                 {t('fromEvent')}
               </Button>
             ) : undefined
@@ -236,34 +236,56 @@ export function SettlementForm() {
 
   const addItem = () => setItems([...items, { label: '', amount: '', receipt: null }]);
   const removeItem = (i: number) => setItems(items.filter((_, ix) => ix !== i));
-  const total = useMemo(
-    () => items.reduce((s, it) => s + (toCents(it.amount) || 0), 0) - (toCents(subsidy) || 0),
-    [items, subsidy],
+  const subsidyCents = useMemo(() => {
+    if (!subsidy.trim()) return 0;
+    const c = toCents(subsidy);
+    return Number.isFinite(c) ? c : Number.NaN;
+  }, [subsidy]);
+  const itemsValid = useMemo(
+    () =>
+      items.length > 0 &&
+      items.every((it) => {
+        const c = toCents(it.amount);
+        return it.label.trim().length > 0 && Number.isFinite(c) && c > 0;
+      }),
+    [items],
   );
-  const equalAmounts = useMemo(() => equalSplit(Math.max(total, 0), selected.length), [total, selected.length]);
+  const total = useMemo(() => {
+    if (!Number.isFinite(subsidyCents) || subsidyCents < 0) return Number.NaN;
+    return (
+      items.reduce((s, it) => {
+        const c = toCents(it.amount);
+        return s + (Number.isFinite(c) ? c : 0);
+      }, 0) - subsidyCents
+    );
+  }, [items, subsidyCents]);
+  const equalAmounts = useMemo(
+    () => equalSplit(Number.isFinite(total) ? Math.max(total, 0) : 0, selected.length),
+    [total, selected.length],
+  );
   const equalFor = (uid: number) => equalAmounts[selected.indexOf(uid)] ?? 0;
 
   const customSum = useMemo(() => {
     return selected.reduce((sum, uid) => {
       const v = custom[uid];
       const cents = v !== undefined && v !== '' ? toCents(v) : null;
-      return sum + (cents !== null && cents >= 0 ? cents : 0);
+      return sum + (cents !== null && Number.isFinite(cents) && cents >= 0 ? cents : 0);
     }, 0);
   }, [selected, custom]);
 
   const customValid = useMemo(() => {
     if (mode !== 'custom') return true;
-    if (selected.length === 0) return false;
+    if (selected.length === 0 || !Number.isFinite(total)) return false;
     for (const uid of selected) {
       const v = custom[uid];
       const cents = v !== undefined && v !== '' ? toCents(v) : null;
-      if (cents === null || cents < 0) return false;
+      if (cents === null || !Number.isFinite(cents) || cents < 0) return false;
     }
     return customSum === total;
   }, [mode, selected, custom, customSum, total]);
 
   const save = (publish: boolean) => {
-    if (!customValid) return;
+    if (!itemsValid || !Number.isFinite(subsidyCents) || subsidyCents < 0 || !Number.isFinite(total) || total <= 0 || !customValid) return;
     const body = {
       title,
       items: items.map((it) => ({
@@ -271,7 +293,7 @@ export function SettlementForm() {
         amount_cents: toCents(it.amount),
         receipt_file_id: it.receipt,
       })),
-      subsidy_cents: toCents(subsidy),
+      subsidy_cents: subsidyCents,
       split_mode: mode,
       payee_name: payee.name,
       payee_account: payee.account,
@@ -305,7 +327,16 @@ export function SettlementForm() {
   };
 
   const canSave =
-    !!title && !!payee.name && !!payee.account && selected.length > 0 && total > 0 && customValid;
+    !!title &&
+    !!payee.name &&
+    !!payee.account &&
+    itemsValid &&
+    Number.isFinite(subsidyCents) &&
+    subsidyCents >= 0 &&
+    selected.length > 0 &&
+    Number.isFinite(total) &&
+    total > 0 &&
+    customValid;
   const confirmedShares = existing ? existing.shares.filter((x) => x.status === 'confirmed').length : 0;
 
   return (

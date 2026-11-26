@@ -7,7 +7,7 @@ use axum::{
 use serde_json::{json, Value};
 
 use crate::auth::{hash_token, CurrentUser};
-use crate::error::{conflict, forbidden, not_found, AppResult};
+use crate::error::{bad, conflict, forbidden, not_found, AppResult};
 use crate::i18n::ErrorKey;
 use crate::perms::{self, parse_roles, Act, Page};
 use crate::state::AppState;
@@ -47,7 +47,7 @@ pub(super) async fn list_invites(
 ) -> AppResult<Json<Value>> {
     require(&u, Page::AdminInvites, Act::View)?;
     let rows: Vec<(i64, String, String, String, String, String, String, Option<String>, String)> = sqlx::query_as(
-        "SELECT id, token, kind, email, name, roles, expires_at, used_at, created_at FROM invites ORDER BY id DESC LIMIT 200",
+        "SELECT id, token, kind, email, name, roles, expires_at, used_at, created_at FROM invites WHERE kind <> 'family' ORDER BY id DESC LIMIT 200",
     )
     .fetch_all(&st.db)
     .await?;
@@ -68,12 +68,27 @@ pub(super) async fn revoke_invite(
     Path(id): Path<i64>,
 ) -> AppResult<Json<Value>> {
     require(&u, Page::AdminInvites, Act::Delete)?;
-    sqlx::query("UPDATE invites SET expires_at=$1 WHERE id=$2 AND used_at IS NULL")
-        .bind(now())
-        .bind(id)
-        .execute(&st.db)
-        .await?;
-    audit(&st.db, Some(u.id), "invite.revoke", "invite", Some(id), "").await;
+    let existing: Option<(Option<String>,)> =
+        sqlx::query_as("SELECT used_at FROM invites WHERE id=$1 AND kind='invite'")
+            .bind(id)
+            .fetch_optional(&st.db)
+            .await?;
+    let Some((used_at,)) = existing else {
+        return Err(not_found(u.lang));
+    };
+    if used_at.is_some() {
+        return Ok(Json(json!({"ok": true})));
+    }
+    let res = sqlx::query(
+        "UPDATE invites SET expires_at=$1 WHERE id=$2 AND kind='invite' AND used_at IS NULL",
+    )
+    .bind(minutes_ago(1))
+    .bind(id)
+    .execute(&st.db)
+    .await?;
+    if res.rows_affected() > 0 {
+        audit(&st.db, Some(u.id), "invite.revoke", "invite", Some(id), "").await;
+    }
     Ok(Json(json!({"ok": true})))
 }
 
@@ -103,11 +118,15 @@ pub(super) async fn approve_recovery(
         .fetch_optional(&mut *tx)
         .await?
         .ok_or(not_found(u.lang))?;
-    let uid: i64 = sqlx::query_scalar("SELECT id FROM users WHERE email=lower($1) FOR UPDATE")
-        .bind(&email)
-        .fetch_optional(&mut *tx)
-        .await?
-        .ok_or(not_found(u.lang))?;
+    let (uid, target_status): (i64, String) =
+        sqlx::query_as("SELECT id, status FROM users WHERE email=lower($1) FOR UPDATE")
+            .bind(&email)
+            .fetch_optional(&mut *tx)
+            .await?
+            .ok_or(not_found(u.lang))?;
+    if target_status == "disabled" {
+        return Err(bad(u.lang, ErrorKey::InvalidAction));
+    }
     let (locked_email, status, resolved_by): (String, String, Option<i64>) = sqlx::query_as(
         "SELECT email, status, resolved_by FROM recovery_requests WHERE id=$1 FOR UPDATE",
     )
@@ -200,7 +219,15 @@ pub(super) async fn approve_recovery(
         .bind(uid)
         .execute(&mut *tx)
         .await?;
-    sqlx::query("UPDATE users SET totp_enabled=0, totp_secret=NULL, totp_last_step=0, totp_backup_codes=NULL, calendar_token_hash=NULL WHERE id=$1")
+    sqlx::query("DELETE FROM biometric_credentials WHERE user_id=$1")
+        .bind(uid)
+        .execute(&mut *tx)
+        .await?;
+    sqlx::query("UPDATE users SET totp_enabled=0, totp_secret=NULL, totp_last_step=0, totp_backup_codes=NULL, calendar_token_hash=NULL, telegram_chat_id='' WHERE id=$1")
+        .bind(uid)
+        .execute(&mut *tx)
+        .await?;
+    sqlx::query("DELETE FROM telegram_link_tokens WHERE user_id=$1")
         .bind(uid)
         .execute(&mut *tx)
         .await?;

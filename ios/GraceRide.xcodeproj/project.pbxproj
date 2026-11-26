@@ -1,0 +1,668 @@
+// !$*UTF8*$!
+{
+	archiveVersion = 1;
+	classes = {
+	};
+	objectVersion = 56;
+	objects = {
+
+/* Begin PBXBuildFile section */
+		B9AC43E152612F6C6B5E0C62 /* AvatarView.swift */ = {isa = PBXBuildFile; fileRef = 24CE248FDBB2008196793818 /* AvatarView.swift */; };
+		A11B1C0150A07E14E0B2E0A4 /* BadgeAndEventIcons.swift */ = {isa = PBXBuildFile; fileRef = F075FA30339197032BC7687C /* BadgeAndEventIcons.swift */; };
+		6687121CAC286F392C4EC288 /* EventScheduleTimelineView.swift */ = {isa = PBXBuildFile; fileRef = A441C3586EBDECAD6875D6A0 /* EventScheduleTimelineView.swift */; };
+		BEAB0D1F07FAA31801CF2B70 /* GraceRideBrandMark.swift */ = {isa = PBXBuildFile; fileRef = F198D8480FC51587FB4A994C /* GraceRideBrandMark.swift */; };
+		7E2132889E28E5C48BBCFE05 /* GrokBotCanvasView.swift */ = {isa = PBXBuildFile; fileRef = 4068094F9CA59A79E6045CB6 /* GrokBotCanvasView.swift */; };
+		DE5CC3044D059417B5F7BFC4 /* MascotCanvasView.swift */ = {isa = PBXBuildFile; fileRef = 620B06DC4B803F42870BED36 /* MascotCanvasView.swift */; };
+		AFB5353832C50E29EFC5EE44 /* StateViews.swift */ = {isa = PBXBuildFile; fileRef = BAF63AA2823590F777BC047A /* StateViews.swift */; };
+		2AD2DD75693F48164BDF84C1 /* Colors.swift */ = {isa = PBXBuildFile; fileRef = E5E22F575824C7230FB12383 /* Colors.swift */; };
+		82E08FDFC81DC559A16CF1F8 /* Haptics.swift */ = {isa = PBXBuildFile; fileRef = 72BED040CEAA7767B64E522F /* Haptics.swift */; };
+		940C207E8B89050629FA3B7F /* L10n.swift */ = {isa = PBXBuildFile; fileRef = 94958CCCB251858D913103C6 /* L10n.swift */; };
+		EB8DF7940BA570EB46554B5B /* Theme.swift */ = {isa = PBXBuildFile; fileRef = CD65C7BBD67AA84E140D11F4 /* Theme.swift */; };
+		3D264A64B076C9E483376A5E /* WebPImageLoader.swift */ = {isa = PBXBuildFile; fileRef = 63F4526290A9EDE47E581507 /* WebPImageLoader.swift */; };
+		B33152FDBC6522231F57650D /* GraceRideApp.swift */ = {isa = PBXBuildFile; fileRef = C4AE3DE71043AA5B385F51A1 /* GraceRideApp.swift */; };
+		36A6806D3269BC6259108B4F /* GraceRideAppRoot.swift */ = {isa = PBXBuildFile; fileRef = 0AA2C146E236E1CEABA2E935 /* GraceRideAppRoot.swift */; };
+		CD3A091022F167E27E29534C /* DeviceActions.swift */ = {isa = PBXBuildFile; fileRef = C1D22C10F8CC04BD6AC1536C /* DeviceActions.swift */; };
+		D6DD5B5DD00C42BD3242934F /* ImageUploadPrep.swift */ = {isa = PBXBuildFile; fileRef = 34995A6D5B5F177D94FE75A7 /* ImageUploadPrep.swift */; };
+		40F10F34BBE6756958A1B38D /* LiveTripLocationManager.swift */ = {isa = PBXBuildFile; fileRef = B15C7B8F36B3097AD4C8B131 /* LiveTripLocationManager.swift */; };
+		350503821A98340B202E1D0B /* PasskeyAuthManager.swift */ = {isa = PBXBuildFile; fileRef = 8AD9424BAFB04383A9F37DAF /* PasskeyAuthManager.swift */; };
+		597CE06F3B70356ABC8AB181 /* QrCodeTools.swift */ = {isa = PBXBuildFile; fileRef = C166B719B68B1D15415ED8E3 /* QrCodeTools.swift */; };
+		D4302468D82BF7EB68EC1140 /* AuthScreens.swift */ = {isa = PBXBuildFile; fileRef = B1EB34F668AE7A4F8EFFEF54 /* AuthScreens.swift */; };
+		2FBA6E94DB41F4D2AE7763E3 /* CostsAndNotificationsScreens.swift */ = {isa = PBXBuildFile; fileRef = 5B07A400DFDB1444946D9BEA /* CostsAndNotificationsScreens.swift */; };
+		D4B006952AB572260329CA9A /* DriveHubScreen.swift */ = {isa = PBXBuildFile; fileRef = 55F348EDA518AAA6607FD3F3 /* DriveHubScreen.swift */; };
+		E9A4BB7444068B2D94C92BDB /* EventsScreens.swift */ = {isa = PBXBuildFile; fileRef = D0E69F3AF3154C6238B12E3C /* EventsScreens.swift */; };
+		AC26489E55936B99B185D9AD /* HomeScreen.swift */ = {isa = PBXBuildFile; fileRef = 51AAD3DBE20331AA710353F0 /* HomeScreen.swift */; };
+		B847DE85A49469D78C70E58B /* AvatarStudioScreens.swift */ = {isa = PBXBuildFile; fileRef = F7CF624595CCFB419611E6DD /* AvatarStudioScreens.swift */; };
+		6AF1E6E66E8BC79322576949 /* ProfileAndSubScreens.swift */ = {isa = PBXBuildFile; fileRef = FE9E30EFCC50BA200B3B0E2E /* ProfileAndSubScreens.swift */; };
+		EF66CAF9E23262ACCD5EFF2B /* RideDetailAndChatScreens.swift */ = {isa = PBXBuildFile; fileRef = CADF5C65051902D7FA735B0F /* RideDetailAndChatScreens.swift */; };
+		29683658C7B210EAF4931C56 /* RidesAndWizardScreens.swift */ = {isa = PBXBuildFile; fileRef = A9F23AAC28F390FC189A85F0 /* RidesAndWizardScreens.swift */; };
+		8A1DF745DE21B0E37418FD2B /* GraceRideWidget.swift */ = {isa = PBXBuildFile; fileRef = 57A064D5C42F282B007CC412 /* GraceRideWidget.swift */; };
+		F46B89C1DE4C92A7AC6F5ED1 /* GraceRideWidgetBundle.swift */ = {isa = PBXBuildFile; fileRef = 26B2296FC4B3DB54F36F5C5A /* GraceRideWidgetBundle.swift */; };
+		3EF641FDF47C29D36306DA01 /* MarkRideReadyIntent.swift */ = {isa = PBXBuildFile; fileRef = B81748948AADD5C62FA61864 /* MarkRideReadyIntent.swift */; };
+		3E7721AA7374491512E00702 /* Assets.xcassets */ = {isa = PBXBuildFile; fileRef = 2244351F783C7F3092652049 /* Assets.xcassets */; };
+		D002BF383B84F3A35F4F4E90 /* Localizable.xcstrings */ = {isa = PBXBuildFile; fileRef = F07202F32708F5878974FA96 /* Localizable.xcstrings */; };
+		6A15C3438B10B0FA69F83542 /* PrivacyInfo.xcprivacy */ = {isa = PBXBuildFile; fileRef = 36276BCCED281795355DFC70 /* PrivacyInfo.xcprivacy */; };
+		A1B2C3D4E5F6012345678901 /* PrivacyInfo.xcprivacy in Resources */ = {isa = PBXBuildFile; fileRef = A1B2C3D4E5F6012345678902 /* PrivacyInfo.xcprivacy */; };
+		0EC2752E4745FDCB70269E22 /* Icons */ = {isa = PBXBuildFile; fileRef = 4460D64DDF5B6FDC87DB9321 /* Icons */; };
+		ABE503B36F87F51D2E897B51 /* GraceRideWidgetExtension.appex */ = {isa = PBXBuildFile; fileRef = 78090CBEC2E7EA4E59560055 /* GraceRideWidgetExtension.appex */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy); }; };
+		CE4B5EEEEC3AACF58C8DB592 /* GraceRideKit */ = {isa = PBXBuildFile; productRef = 89EA5C0BB5289594D2F8BCAF /* GraceRideKit */; };
+		CD396004991B3F26B35F592E /* GraceRideKit */ = {isa = PBXBuildFile; productRef = AEA1A911F4455A0B67797625 /* GraceRideKit */; };
+/* End PBXBuildFile section */
+
+/* Begin PBXContainerItemProxy section */
+		CC6037DBF2224EBBAED1C2D3 /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = 1E8D267BB15946287A8A01F8 /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = 5FA24ACBC35A697ADCD947BA;
+			remoteInfo = GraceRideWidgetExtension;
+		};
+/* End PBXContainerItemProxy section */
+
+/* Begin PBXCopyFilesBuildPhase section */
+		354DE1AFDDAA7FBB961D5290 /* Embed Foundation Extensions */ = {
+			isa = PBXCopyFilesBuildPhase;
+			buildActionMask = 2147483647;
+			dstPath = "";
+			dstSubfolderSpec = 13;
+			files = (
+				ABE503B36F87F51D2E897B51 /* GraceRideWidgetExtension.appex in Embed Foundation Extensions */,
+			);
+			name = "Embed Foundation Extensions";
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXCopyFilesBuildPhase section */
+
+/* Begin PBXFileReference section */
+		24CE248FDBB2008196793818 /* AvatarView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = "AvatarView.swift"; path = "GraceRide/Components/AvatarView.swift"; sourceTree = SOURCE_ROOT; };
+		F075FA30339197032BC7687C /* BadgeAndEventIcons.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = "BadgeAndEventIcons.swift"; path = "GraceRide/Components/BadgeAndEventIcons.swift"; sourceTree = SOURCE_ROOT; };
+		A441C3586EBDECAD6875D6A0 /* EventScheduleTimelineView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = "EventScheduleTimelineView.swift"; path = "GraceRide/Components/EventScheduleTimelineView.swift"; sourceTree = SOURCE_ROOT; };
+		F198D8480FC51587FB4A994C /* GraceRideBrandMark.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = "GraceRideBrandMark.swift"; path = "GraceRide/Components/GraceRideBrandMark.swift"; sourceTree = SOURCE_ROOT; };
+		4068094F9CA59A79E6045CB6 /* GrokBotCanvasView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = "GrokBotCanvasView.swift"; path = "GraceRide/Components/GrokBotCanvasView.swift"; sourceTree = SOURCE_ROOT; };
+		620B06DC4B803F42870BED36 /* MascotCanvasView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = "MascotCanvasView.swift"; path = "GraceRide/Components/MascotCanvasView.swift"; sourceTree = SOURCE_ROOT; };
+		BAF63AA2823590F777BC047A /* StateViews.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = "StateViews.swift"; path = "GraceRide/Components/StateViews.swift"; sourceTree = SOURCE_ROOT; };
+		E5E22F575824C7230FB12383 /* Colors.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = "Colors.swift"; path = "GraceRide/DesignSystem/Colors.swift"; sourceTree = SOURCE_ROOT; };
+		72BED040CEAA7767B64E522F /* Haptics.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = "Haptics.swift"; path = "GraceRide/DesignSystem/Haptics.swift"; sourceTree = SOURCE_ROOT; };
+		94958CCCB251858D913103C6 /* L10n.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = "L10n.swift"; path = "GraceRide/DesignSystem/L10n.swift"; sourceTree = SOURCE_ROOT; };
+		CD65C7BBD67AA84E140D11F4 /* Theme.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = "Theme.swift"; path = "GraceRide/DesignSystem/Theme.swift"; sourceTree = SOURCE_ROOT; };
+		63F4526290A9EDE47E581507 /* WebPImageLoader.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = "WebPImageLoader.swift"; path = "GraceRide/DesignSystem/WebPImageLoader.swift"; sourceTree = SOURCE_ROOT; };
+		C4AE3DE71043AA5B385F51A1 /* GraceRideApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = "GraceRideApp.swift"; path = "GraceRide/GraceRideApp.swift"; sourceTree = SOURCE_ROOT; };
+		0AA2C146E236E1CEABA2E935 /* GraceRideAppRoot.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = "GraceRideAppRoot.swift"; path = "GraceRide/GraceRideAppRoot.swift"; sourceTree = SOURCE_ROOT; };
+		C1D22C10F8CC04BD6AC1536C /* DeviceActions.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = "DeviceActions.swift"; path = "GraceRide/Platform/DeviceActions.swift"; sourceTree = SOURCE_ROOT; };
+		34995A6D5B5F177D94FE75A7 /* ImageUploadPrep.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = "ImageUploadPrep.swift"; path = "GraceRide/Platform/ImageUploadPrep.swift"; sourceTree = SOURCE_ROOT; };
+		B15C7B8F36B3097AD4C8B131 /* LiveTripLocationManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = "LiveTripLocationManager.swift"; path = "GraceRide/Platform/LiveTripLocationManager.swift"; sourceTree = SOURCE_ROOT; };
+		8AD9424BAFB04383A9F37DAF /* PasskeyAuthManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = "PasskeyAuthManager.swift"; path = "GraceRide/Platform/PasskeyAuthManager.swift"; sourceTree = SOURCE_ROOT; };
+		C166B719B68B1D15415ED8E3 /* QrCodeTools.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = "QrCodeTools.swift"; path = "GraceRide/Platform/QrCodeTools.swift"; sourceTree = SOURCE_ROOT; };
+		B1EB34F668AE7A4F8EFFEF54 /* AuthScreens.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = "AuthScreens.swift"; path = "GraceRide/Screens/Auth/AuthScreens.swift"; sourceTree = SOURCE_ROOT; };
+		5B07A400DFDB1444946D9BEA /* CostsAndNotificationsScreens.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = "CostsAndNotificationsScreens.swift"; path = "GraceRide/Screens/CostsAndNotifications/CostsAndNotificationsScreens.swift"; sourceTree = SOURCE_ROOT; };
+		55F348EDA518AAA6607FD3F3 /* DriveHubScreen.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = "DriveHubScreen.swift"; path = "GraceRide/Screens/Drive/DriveHubScreen.swift"; sourceTree = SOURCE_ROOT; };
+		D0E69F3AF3154C6238B12E3C /* EventsScreens.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = "EventsScreens.swift"; path = "GraceRide/Screens/Events/EventsScreens.swift"; sourceTree = SOURCE_ROOT; };
+		51AAD3DBE20331AA710353F0 /* HomeScreen.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = "HomeScreen.swift"; path = "GraceRide/Screens/Home/HomeScreen.swift"; sourceTree = SOURCE_ROOT; };
+		F7CF624595CCFB419611E6DD /* AvatarStudioScreens.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = "AvatarStudioScreens.swift"; path = "GraceRide/Screens/Profile/AvatarStudioScreens.swift"; sourceTree = SOURCE_ROOT; };
+		FE9E30EFCC50BA200B3B0E2E /* ProfileAndSubScreens.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = "ProfileAndSubScreens.swift"; path = "GraceRide/Screens/Profile/ProfileAndSubScreens.swift"; sourceTree = SOURCE_ROOT; };
+		CADF5C65051902D7FA735B0F /* RideDetailAndChatScreens.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = "RideDetailAndChatScreens.swift"; path = "GraceRide/Screens/Rides/RideDetailAndChatScreens.swift"; sourceTree = SOURCE_ROOT; };
+		A9F23AAC28F390FC189A85F0 /* RidesAndWizardScreens.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = "RidesAndWizardScreens.swift"; path = "GraceRide/Screens/Rides/RidesAndWizardScreens.swift"; sourceTree = SOURCE_ROOT; };
+		57A064D5C42F282B007CC412 /* GraceRideWidget.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = "GraceRideWidget.swift"; path = "GraceRideWidget/GraceRideWidget.swift"; sourceTree = SOURCE_ROOT; };
+		26B2296FC4B3DB54F36F5C5A /* GraceRideWidgetBundle.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = "GraceRideWidgetBundle.swift"; path = "GraceRideWidget/GraceRideWidgetBundle.swift"; sourceTree = SOURCE_ROOT; };
+		B81748948AADD5C62FA61864 /* MarkRideReadyIntent.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = "MarkRideReadyIntent.swift"; path = "GraceRideWidget/MarkRideReadyIntent.swift"; sourceTree = SOURCE_ROOT; };
+		2244351F783C7F3092652049 /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; name = "Assets.xcassets"; path = "GraceRide/Resources/Assets.xcassets"; sourceTree = SOURCE_ROOT; };
+		F07202F32708F5878974FA96 /* Localizable.xcstrings */ = {isa = PBXFileReference; lastKnownFileType = text.json.xcstrings; name = "Localizable.xcstrings"; path = "GraceRide/Resources/Localizable.xcstrings"; sourceTree = SOURCE_ROOT; };
+		36276BCCED281795355DFC70 /* PrivacyInfo.xcprivacy */ = {isa = PBXFileReference; lastKnownFileType = text.xml; name = "PrivacyInfo.xcprivacy"; path = "GraceRide/Resources/PrivacyInfo.xcprivacy"; sourceTree = SOURCE_ROOT; };
+		4460D64DDF5B6FDC87DB9321 /* Icons */ = {isa = PBXFileReference; lastKnownFileType = folder; name = "Icons"; path = "GraceRide/Resources/Icons"; sourceTree = SOURCE_ROOT; };
+		9A2052ABDF2B79682AFAC8D8 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; name = "Info.plist"; path = "GraceRide/Resources/Info.plist"; sourceTree = SOURCE_ROOT; };
+		082EB50B755ECA4C33CF4A47 /* GraceRide.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; name = "GraceRide.entitlements"; path = "GraceRide/Resources/GraceRide.entitlements"; sourceTree = SOURCE_ROOT; };
+		7B1A14CBE07C017765DC64E2 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; name = "Info.plist"; path = "GraceRideWidget/Info.plist"; sourceTree = SOURCE_ROOT; };
+		024512AA8F4275FDE6011F2A /* GraceRideWidget.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; name = "GraceRideWidget.entitlements"; path = "GraceRideWidget/GraceRideWidget.entitlements"; sourceTree = SOURCE_ROOT; };
+		A1B2C3D4E5F6012345678902 /* PrivacyInfo.xcprivacy */ = {isa = PBXFileReference; lastKnownFileType = text.xml; name = "PrivacyInfo.xcprivacy"; path = "GraceRideWidget/PrivacyInfo.xcprivacy"; sourceTree = SOURCE_ROOT; };
+		A1B2C3D4E5F6012345678903 /* GraceRide.Release.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; name = "GraceRide.Release.entitlements"; path = "GraceRide/Resources/GraceRide.Release.entitlements"; sourceTree = SOURCE_ROOT; };
+		E1EB9376230DAF8BE2FE8D55 /* GraceRide.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = GraceRide.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		78090CBEC2E7EA4E59560055 /* GraceRideWidgetExtension.appex */ = {isa = PBXFileReference; explicitFileType = "wrapper.app-extension"; includeInIndex = 0; path = GraceRideWidgetExtension.appex; sourceTree = BUILT_PRODUCTS_DIR; };
+/* End PBXFileReference section */
+
+/* Begin PBXFrameworksBuildPhase section */
+		F001BC2AF9EB5498B3360756 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				CE4B5EEEEC3AACF58C8DB592 /* GraceRideKit in Frameworks */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		71954D8FB57131FFAB69C9AB /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				CD396004991B3F26B35F592E /* GraceRideKit in Frameworks */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXFrameworksBuildPhase section */
+
+/* Begin PBXGroup section */
+		1BA709937FF2CCE548A4A9CA /* Components */ = {
+			isa = PBXGroup;
+			children = (
+				24CE248FDBB2008196793818 /* AvatarView.swift */,
+				F075FA30339197032BC7687C /* BadgeAndEventIcons.swift */,
+				A441C3586EBDECAD6875D6A0 /* EventScheduleTimelineView.swift */,
+				F198D8480FC51587FB4A994C /* GraceRideBrandMark.swift */,
+				4068094F9CA59A79E6045CB6 /* GrokBotCanvasView.swift */,
+				620B06DC4B803F42870BED36 /* MascotCanvasView.swift */,
+				BAF63AA2823590F777BC047A /* StateViews.swift */,
+			);
+			name = "Components";
+			sourceTree = "<group>";
+		};
+		105088EA03104B6A223FAD08 /* DesignSystem */ = {
+			isa = PBXGroup;
+			children = (
+				E5E22F575824C7230FB12383 /* Colors.swift */,
+				72BED040CEAA7767B64E522F /* Haptics.swift */,
+				94958CCCB251858D913103C6 /* L10n.swift */,
+				CD65C7BBD67AA84E140D11F4 /* Theme.swift */,
+				63F4526290A9EDE47E581507 /* WebPImageLoader.swift */,
+			);
+			name = "DesignSystem";
+			sourceTree = "<group>";
+		};
+		208B1404C01D6857BC3BE9CE /* Platform */ = {
+			isa = PBXGroup;
+			children = (
+				C1D22C10F8CC04BD6AC1536C /* DeviceActions.swift */,
+				34995A6D5B5F177D94FE75A7 /* ImageUploadPrep.swift */,
+				B15C7B8F36B3097AD4C8B131 /* LiveTripLocationManager.swift */,
+				8AD9424BAFB04383A9F37DAF /* PasskeyAuthManager.swift */,
+				C166B719B68B1D15415ED8E3 /* QrCodeTools.swift */,
+			);
+			name = "Platform";
+			sourceTree = "<group>";
+		};
+		869BC9B071AE99C60860CC93 /* Resources */ = {
+			isa = PBXGroup;
+			children = (
+				2244351F783C7F3092652049 /* Assets.xcassets */,
+				082EB50B755ECA4C33CF4A47 /* GraceRide.entitlements */,
+				4460D64DDF5B6FDC87DB9321 /* Icons */,
+				9A2052ABDF2B79682AFAC8D8 /* Info.plist */,
+				F07202F32708F5878974FA96 /* Localizable.xcstrings */,
+				36276BCCED281795355DFC70 /* PrivacyInfo.xcprivacy */,
+			);
+			name = "Resources";
+			sourceTree = "<group>";
+		};
+		7EC4279F2A75AA09A141AE67 /* Auth */ = {
+			isa = PBXGroup;
+			children = (
+				B1EB34F668AE7A4F8EFFEF54 /* AuthScreens.swift */,
+			);
+			name = "Auth";
+			sourceTree = "<group>";
+		};
+		D9B0FD45D182FEB2BD6B920F /* CostsAndNotifications */ = {
+			isa = PBXGroup;
+			children = (
+				5B07A400DFDB1444946D9BEA /* CostsAndNotificationsScreens.swift */,
+			);
+			name = "CostsAndNotifications";
+			sourceTree = "<group>";
+		};
+		9417B7336A3DBF966E35B1BF /* Drive */ = {
+			isa = PBXGroup;
+			children = (
+				55F348EDA518AAA6607FD3F3 /* DriveHubScreen.swift */,
+			);
+			name = "Drive";
+			sourceTree = "<group>";
+		};
+		A588FF1E4BE04B49CD85B7B1 /* Events */ = {
+			isa = PBXGroup;
+			children = (
+				D0E69F3AF3154C6238B12E3C /* EventsScreens.swift */,
+			);
+			name = "Events";
+			sourceTree = "<group>";
+		};
+		F0D872E6B6D27D934656570D /* Home */ = {
+			isa = PBXGroup;
+			children = (
+				51AAD3DBE20331AA710353F0 /* HomeScreen.swift */,
+			);
+			name = "Home";
+			sourceTree = "<group>";
+		};
+		2F6C98F078CB86422A627AF1 /* Profile */ = {
+			isa = PBXGroup;
+			children = (
+				F7CF624595CCFB419611E6DD /* AvatarStudioScreens.swift */,
+				FE9E30EFCC50BA200B3B0E2E /* ProfileAndSubScreens.swift */,
+			);
+			name = "Profile";
+			sourceTree = "<group>";
+		};
+		932BC238902C118F9271E746 /* Rides */ = {
+			isa = PBXGroup;
+			children = (
+				CADF5C65051902D7FA735B0F /* RideDetailAndChatScreens.swift */,
+				A9F23AAC28F390FC189A85F0 /* RidesAndWizardScreens.swift */,
+			);
+			name = "Rides";
+			sourceTree = "<group>";
+		};
+		9F3F67178D92C39A2E5B83A7 /* Screens */ = {
+			isa = PBXGroup;
+			children = (
+				7EC4279F2A75AA09A141AE67 /* Auth */,
+				D9B0FD45D182FEB2BD6B920F /* CostsAndNotifications */,
+				9417B7336A3DBF966E35B1BF /* Drive */,
+				A588FF1E4BE04B49CD85B7B1 /* Events */,
+				F0D872E6B6D27D934656570D /* Home */,
+				2F6C98F078CB86422A627AF1 /* Profile */,
+				932BC238902C118F9271E746 /* Rides */,
+			);
+			name = "Screens";
+			sourceTree = "<group>";
+		};
+		5F96AF6FC42AEF845C3C7915 /* GraceRide */ = {
+			isa = PBXGroup;
+			children = (
+				1BA709937FF2CCE548A4A9CA /* Components */,
+				105088EA03104B6A223FAD08 /* DesignSystem */,
+				C4AE3DE71043AA5B385F51A1 /* GraceRideApp.swift */,
+				0AA2C146E236E1CEABA2E935 /* GraceRideAppRoot.swift */,
+				208B1404C01D6857BC3BE9CE /* Platform */,
+				869BC9B071AE99C60860CC93 /* Resources */,
+				9F3F67178D92C39A2E5B83A7 /* Screens */,
+			);
+			name = "GraceRide";
+			sourceTree = "<group>";
+		};
+		4E086CA9F5F2CDAB434B7C6B /* GraceRideWidget */ = {
+			isa = PBXGroup;
+			children = (
+				024512AA8F4275FDE6011F2A /* GraceRideWidget.entitlements */,
+				57A064D5C42F282B007CC412 /* GraceRideWidget.swift */,
+				26B2296FC4B3DB54F36F5C5A /* GraceRideWidgetBundle.swift */,
+				7B1A14CBE07C017765DC64E2 /* Info.plist */,
+				B81748948AADD5C62FA61864 /* MarkRideReadyIntent.swift */,
+				A1B2C3D4E5F6012345678902 /* PrivacyInfo.xcprivacy */,
+			);
+			name = "GraceRideWidget";
+			sourceTree = "<group>";
+		};
+		FE09FC8ADF379301B19F0D84 /* Products */ = {
+			isa = PBXGroup;
+			children = (
+				E1EB9376230DAF8BE2FE8D55 /* GraceRide.app */,
+				78090CBEC2E7EA4E59560055 /* GraceRideWidgetExtension.appex */,
+			);
+			name = Products;
+			sourceTree = "<group>";
+		};
+		0D5D91345795D3093A02EE22 = {
+			isa = PBXGroup;
+			children = (
+				5F96AF6FC42AEF845C3C7915 /* GraceRide */,
+				4E086CA9F5F2CDAB434B7C6B /* GraceRideWidget */,
+				FE09FC8ADF379301B19F0D84 /* Products */,
+			);
+			sourceTree = "<group>";
+		};
+/* End PBXGroup section */
+
+/* Begin PBXNativeTarget section */
+		BF698598AD04FBAE79799322 /* GraceRide */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = 23746EFE221170E24101FE05 /* Build configuration list for PBXNativeTarget "GraceRide" */;
+			buildPhases = (
+				8682261519D15BD64A9E5D31 /* Sources */,
+				F001BC2AF9EB5498B3360756 /* Frameworks */,
+				E28FAD8F60ECDED9B4AD087A /* Resources */,
+				354DE1AFDDAA7FBB961D5290 /* Embed Foundation Extensions */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+				AD65BFD2924656A8E134393A /* PBXTargetDependency */,
+			);
+			name = GraceRide;
+			packageProductDependencies = (
+				89EA5C0BB5289594D2F8BCAF /* GraceRideKit */,
+			);
+			productName = GraceRide;
+			productReference = E1EB9376230DAF8BE2FE8D55 /* GraceRide.app */;
+			productType = "com.apple.product-type.application";
+		};
+		5FA24ACBC35A697ADCD947BA /* GraceRideWidgetExtension */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = 0FE9D88A879543BBEB61FB72 /* Build configuration list for PBXNativeTarget "GraceRideWidgetExtension" */;
+			buildPhases = (
+				C48D7807398619AA23649A85 /* Sources */,
+				71954D8FB57131FFAB69C9AB /* Frameworks */,
+				1D42810680407EEDFF7A7992 /* Resources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+			);
+			name = GraceRideWidgetExtension;
+			packageProductDependencies = (
+				AEA1A911F4455A0B67797625 /* GraceRideKit */,
+			);
+			productName = GraceRideWidgetExtension;
+			productReference = 78090CBEC2E7EA4E59560055 /* GraceRideWidgetExtension.appex */;
+			productType = "com.apple.product-type.app-extension";
+		};
+/* End PBXNativeTarget section */
+
+/* Begin PBXProject section */
+		1E8D267BB15946287A8A01F8 /* Project object */ = {
+			isa = PBXProject;
+			attributes = {
+				BuildIndependentTargetsInParallel = 1;
+				LastSwiftUpdateCheck = 1600;
+				LastUpgradeCheck = 1600;
+				TargetAttributes = {
+					BF698598AD04FBAE79799322 = {
+						CreatedOnToolsVersion = 16.0;
+					};
+					5FA24ACBC35A697ADCD947BA = {
+						CreatedOnToolsVersion = 16.0;
+					};
+				};
+			};
+			buildConfigurationList = B0D3B7D22269663DD77FCD84 /* Build configuration list for PBXProject "GraceRide" */;
+			compatibilityVersion = "Xcode 14.0";
+			developmentRegion = en;
+			hasScannedForEncodings = 0;
+			knownRegions = (
+				en,
+				Base,
+				"zh-Hans",
+			);
+			mainGroup = 0D5D91345795D3093A02EE22;
+			packageReferences = (
+				FE8AAD0259A5B5FF7BB990B1 /* XCLocalSwiftPackageReference "GraceRideKit" */,
+			);
+			productRefGroup = FE09FC8ADF379301B19F0D84 /* Products */;
+			projectDirPath = "";
+			projectRoot = "";
+			targets = (
+				BF698598AD04FBAE79799322 /* GraceRide */,
+				5FA24ACBC35A697ADCD947BA /* GraceRideWidgetExtension */,
+			);
+		};
+/* End PBXProject section */
+
+/* Begin PBXResourcesBuildPhase section */
+		E28FAD8F60ECDED9B4AD087A /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				3E7721AA7374491512E00702 /* Assets.xcassets in Resources */,
+				D002BF383B84F3A35F4F4E90 /* Localizable.xcstrings in Resources */,
+				6A15C3438B10B0FA69F83542 /* PrivacyInfo.xcprivacy in Resources */,
+				0EC2752E4745FDCB70269E22 /* Icons in Resources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		1D42810680407EEDFF7A7992 /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				A1B2C3D4E5F6012345678901 /* PrivacyInfo.xcprivacy in Resources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXResourcesBuildPhase section */
+
+/* Begin PBXSourcesBuildPhase section */
+		8682261519D15BD64A9E5D31 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				B9AC43E152612F6C6B5E0C62 /* AvatarView.swift in Sources */,
+				A11B1C0150A07E14E0B2E0A4 /* BadgeAndEventIcons.swift in Sources */,
+				6687121CAC286F392C4EC288 /* EventScheduleTimelineView.swift in Sources */,
+				BEAB0D1F07FAA31801CF2B70 /* GraceRideBrandMark.swift in Sources */,
+				7E2132889E28E5C48BBCFE05 /* GrokBotCanvasView.swift in Sources */,
+				DE5CC3044D059417B5F7BFC4 /* MascotCanvasView.swift in Sources */,
+				AFB5353832C50E29EFC5EE44 /* StateViews.swift in Sources */,
+				2AD2DD75693F48164BDF84C1 /* Colors.swift in Sources */,
+				82E08FDFC81DC559A16CF1F8 /* Haptics.swift in Sources */,
+				940C207E8B89050629FA3B7F /* L10n.swift in Sources */,
+				EB8DF7940BA570EB46554B5B /* Theme.swift in Sources */,
+				3D264A64B076C9E483376A5E /* WebPImageLoader.swift in Sources */,
+				B33152FDBC6522231F57650D /* GraceRideApp.swift in Sources */,
+				36A6806D3269BC6259108B4F /* GraceRideAppRoot.swift in Sources */,
+				CD3A091022F167E27E29534C /* DeviceActions.swift in Sources */,
+				D6DD5B5DD00C42BD3242934F /* ImageUploadPrep.swift in Sources */,
+				40F10F34BBE6756958A1B38D /* LiveTripLocationManager.swift in Sources */,
+				350503821A98340B202E1D0B /* PasskeyAuthManager.swift in Sources */,
+				597CE06F3B70356ABC8AB181 /* QrCodeTools.swift in Sources */,
+				D4302468D82BF7EB68EC1140 /* AuthScreens.swift in Sources */,
+				2FBA6E94DB41F4D2AE7763E3 /* CostsAndNotificationsScreens.swift in Sources */,
+				D4B006952AB572260329CA9A /* DriveHubScreen.swift in Sources */,
+				E9A4BB7444068B2D94C92BDB /* EventsScreens.swift in Sources */,
+				AC26489E55936B99B185D9AD /* HomeScreen.swift in Sources */,
+				B847DE85A49469D78C70E58B /* AvatarStudioScreens.swift in Sources */,
+				6AF1E6E66E8BC79322576949 /* ProfileAndSubScreens.swift in Sources */,
+				EF66CAF9E23262ACCD5EFF2B /* RideDetailAndChatScreens.swift in Sources */,
+				29683658C7B210EAF4931C56 /* RidesAndWizardScreens.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		C48D7807398619AA23649A85 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				8A1DF745DE21B0E37418FD2B /* GraceRideWidget.swift in Sources */,
+				F46B89C1DE4C92A7AC6F5ED1 /* GraceRideWidgetBundle.swift in Sources */,
+				3EF641FDF47C29D36306DA01 /* MarkRideReadyIntent.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXSourcesBuildPhase section */
+
+/* Begin PBXTargetDependency section */
+		AD65BFD2924656A8E134393A /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = 5FA24ACBC35A697ADCD947BA /* GraceRideWidgetExtension */;
+			targetProxy = CC6037DBF2224EBBAED1C2D3 /* PBXContainerItemProxy */;
+		};
+/* End PBXTargetDependency section */
+
+/* Begin XCBuildConfiguration section */
+		6A7A9C00E9D82F8B527AF6B5 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				CLANG_ENABLE_MODULES = YES;
+				CLANG_ENABLE_OBJC_ARC = YES;
+				CURRENT_PROJECT_VERSION = 1;
+				ENABLE_STRICT_OBJC_MSGSEND = YES;
+				ENABLE_TESTABILITY = YES;
+				GCC_DYNAMIC_NO_PIC = NO;
+				GCC_OPTIMIZATION_LEVEL = 0;
+				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
+				MARKETING_VERSION = 1.0.0;
+				MTL_ENABLE_DEBUG_INFO = INCLUDE_SOURCE;
+				ONLY_ACTIVE_ARCH = YES;
+				SDKROOT = iphoneos;
+				SWIFT_ACTIVE_COMPILATION_CONDITIONS = "DEBUG $(inherited)";
+				SWIFT_OPTIMIZATION_LEVEL = "-Onone";
+				SWIFT_VERSION = 5.0;
+			};
+			name = Debug;
+		};
+		01172647D9872636A9E33D38 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				CLANG_ENABLE_MODULES = YES;
+				CLANG_ENABLE_OBJC_ARC = YES;
+				COPY_PHASE_STRIP = NO;
+				CURRENT_PROJECT_VERSION = 1;
+				ENABLE_NS_ASSERTIONS = NO;
+				ENABLE_STRICT_OBJC_MSGSEND = YES;
+				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
+				MARKETING_VERSION = 1.0.0;
+				SDKROOT = iphoneos;
+				SWIFT_COMPILATION_MODE = wholemodule;
+				VALIDATE_PRODUCT = YES;
+				SWIFT_VERSION = 5.0;
+			};
+			name = Release;
+		};
+		967DE5DAE8F9C3546488D3FD /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
+				CODE_SIGN_ENTITLEMENTS = GraceRide/Resources/GraceRide.entitlements;
+				CODE_SIGN_STYLE = Automatic;
+				ENABLE_PREVIEWS = YES;
+				GENERATE_INFOPLIST_FILE = NO;
+				INFOPLIST_FILE = GraceRide/Resources/Info.plist;
+				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = org.pjstatecm.graceride;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				STRING_CATALOG_GENERATE_SYMBOLS = YES;
+				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
+				SUPPORTS_MACCATALYST = NO;
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+			};
+			name = Debug;
+		};
+		70A5F3AAC43D0790B57ED51A /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
+				CODE_SIGN_ENTITLEMENTS = GraceRide/Resources/GraceRide.Release.entitlements;
+				CODE_SIGN_STYLE = Automatic;
+				ENABLE_PREVIEWS = NO;
+				GENERATE_INFOPLIST_FILE = NO;
+				INFOPLIST_FILE = GraceRide/Resources/Info.plist;
+				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = org.pjstatecm.graceride;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				STRING_CATALOG_GENERATE_SYMBOLS = YES;
+				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
+				SUPPORTS_MACCATALYST = NO;
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+			};
+			name = Release;
+		};
+		CA5AF8C0076B0CAA91B5C57F /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				APPLICATION_EXTENSION_API_ONLY = YES;
+				CODE_SIGN_ENTITLEMENTS = GraceRideWidget/GraceRideWidget.entitlements;
+				CODE_SIGN_STYLE = Automatic;
+				GENERATE_INFOPLIST_FILE = NO;
+				INFOPLIST_FILE = GraceRideWidget/Info.plist;
+				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+					"@executable_path/../../Frameworks",
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = org.pjstatecm.graceride.widget;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SKIP_INSTALL = YES;
+				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
+				SUPPORTS_MACCATALYST = NO;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+			};
+			name = Debug;
+		};
+		767A0FF512D6E42C3BD5FE05 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				APPLICATION_EXTENSION_API_ONLY = YES;
+				CODE_SIGN_ENTITLEMENTS = GraceRideWidget/GraceRideWidget.entitlements;
+				CODE_SIGN_STYLE = Automatic;
+				GENERATE_INFOPLIST_FILE = NO;
+				INFOPLIST_FILE = GraceRideWidget/Info.plist;
+				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+					"@executable_path/../../Frameworks",
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = org.pjstatecm.graceride.widget;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SKIP_INSTALL = YES;
+				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
+				SUPPORTS_MACCATALYST = NO;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+			};
+			name = Release;
+		};
+/* End XCBuildConfiguration section */
+
+/* Begin XCConfigurationList section */
+		B0D3B7D22269663DD77FCD84 /* Build configuration list for PBXProject "GraceRide" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				6A7A9C00E9D82F8B527AF6B5 /* Debug */,
+				01172647D9872636A9E33D38 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		23746EFE221170E24101FE05 /* Build configuration list for PBXNativeTarget "GraceRide" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				967DE5DAE8F9C3546488D3FD /* Debug */,
+				70A5F3AAC43D0790B57ED51A /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		0FE9D88A879543BBEB61FB72 /* Build configuration list for PBXNativeTarget "GraceRideWidgetExtension" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				CA5AF8C0076B0CAA91B5C57F /* Debug */,
+				767A0FF512D6E42C3BD5FE05 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+/* End XCConfigurationList section */
+
+/* Begin XCLocalSwiftPackageReference section */
+		FE8AAD0259A5B5FF7BB990B1 /* XCLocalSwiftPackageReference "GraceRideKit" */ = {
+			isa = XCLocalSwiftPackageReference;
+			relativePath = GraceRideKit;
+		};
+/* End XCLocalSwiftPackageReference section */
+
+/* Begin XCSwiftPackageProductDependency section */
+		89EA5C0BB5289594D2F8BCAF /* GraceRideKit */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = FE8AAD0259A5B5FF7BB990B1 /* XCLocalSwiftPackageReference "GraceRideKit" */;
+			productName = GraceRideKit;
+		};
+		AEA1A911F4455A0B67797625 /* GraceRideKit */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = FE8AAD0259A5B5FF7BB990B1 /* XCLocalSwiftPackageReference "GraceRideKit" */;
+			productName = GraceRideKit;
+		};
+/* End XCSwiftPackageProductDependency section */
+	};
+	rootObject = 1E8D267BB15946287A8A01F8 /* Project object */;
+}

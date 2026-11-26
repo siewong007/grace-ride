@@ -45,6 +45,8 @@ pub(super) struct SavedPlaceIn {
     lat: Option<f64>,
     #[serde(default)]
     lng: Option<f64>,
+    #[serde(default)]
+    clear_coords: bool,
 }
 
 fn validate_coords(
@@ -117,6 +119,8 @@ pub(super) async fn create_saved_place(
     let explicit_coords = validate_coords(req.lat, req.lng, u.lang)?;
     let (lat, lng) = if let Some((la, ln)) = explicit_coords {
         (Some(la), Some(ln))
+    } else if req.clear_coords {
+        (None, None)
     } else {
         let cached: Option<(Option<f64>, Option<f64>)> =
             sqlx::query_as("SELECT lat, lng FROM geocode_cache WHERE query=$1")
@@ -199,6 +203,8 @@ pub(super) async fn update_saved_place(
 
     let (lat, lng) = if let Some((la, ln)) = explicit_coords {
         (Some(la), Some(ln))
+    } else if req.clear_coords {
+        (None, None)
     } else {
         let cached: Option<(Option<f64>, Option<f64>)> =
             sqlx::query_as("SELECT lat, lng FROM geocode_cache WHERE query=$1")

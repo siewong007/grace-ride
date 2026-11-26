@@ -32,16 +32,48 @@ function nowLocalIso(): string {
   return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`;
 }
 
-/** Wipe any saved offline trip snapshot immediately (on logout, 401, or AutoLock). */
+function clearSnapshotOnly(): void {
+  try {
+    localStorage.removeItem(SNAPSHOT_KEY);
+  } catch {
+    // storage unavailable
+  }
+}
+
+/** Wipe any saved offline trip snapshot and queue immediately (on logout, 401, or AutoLock). */
 export function clearOfflineSnapshots(): void {
   try {
     localStorage.removeItem(SNAPSHOT_KEY);
     localStorage.removeItem(QUEUE_KEY);
     if (typeof window !== 'undefined') {
+      window.dispatchEvent(new Event('gr:offline-queue-abort'));
       window.dispatchEvent(new Event(QUEUE_EVENT));
     }
   } catch {
     // storage unavailable
+  }
+}
+
+/** Clear all client-side session caches, drafts, passkey hints, and lock markers. */
+export function clearClientSessionStorage(): void {
+  clearOfflineSnapshots();
+  try {
+    if (typeof localStorage !== 'undefined') {
+      localStorage.removeItem('gr_autolock_mins');
+      localStorage.removeItem('gr_locked_user');
+      localStorage.removeItem('gr_last_active');
+      localStorage.removeItem('gr_device_passkey');
+      for (const k of Object.keys(localStorage)) {
+        if (k.startsWith('graceride_help_draft') || k.startsWith('gr-share-loc-')) {
+          localStorage.removeItem(k);
+        }
+      }
+    }
+    if (typeof sessionStorage !== 'undefined') {
+      sessionStorage.removeItem('graceride_walkthrough');
+    }
+  } catch {
+    /* ignore storage errors */
   }
 }
 
@@ -56,12 +88,12 @@ function readRaw(userId: number): TodaySnapshot | null {
       parsed.date !== todayStr() ||
       !Array.isArray(parsed.rides)
     ) {
-      clearOfflineSnapshots();
+      clearSnapshotOnly();
       return null;
     }
     return parsed;
   } catch {
-    clearOfflineSnapshots();
+    clearSnapshotOnly();
     return null;
   }
 }
@@ -96,7 +128,7 @@ export function saveTodayRidesSnapshot(userId: number, rides: Ride[]): void {
   }
   const merged = [...byId.values()].sort((a, b) => a.pickup_at.localeCompare(b.pickup_at));
   if (merged.length === 0) {
-    clearOfflineSnapshots();
+    clearSnapshotOnly();
     return;
   }
   try {

@@ -1,35 +1,82 @@
 package org.pjstatecm.graceride.data.repo
 
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
+import org.pjstatecm.graceride.data.api.ApiProvider
 import org.pjstatecm.graceride.data.api.ApiService
 import org.pjstatecm.graceride.data.api.Area
 import org.pjstatecm.graceride.data.api.AuthEventBus
 import org.pjstatecm.graceride.data.api.CancelReq
+import org.pjstatecm.graceride.data.api.ChatThreadDto
 import org.pjstatecm.graceride.data.api.CreateProxyRiderRes
 import org.pjstatecm.graceride.data.api.CreateRideReq
 import org.pjstatecm.graceride.data.api.CreateRideRes
 import org.pjstatecm.graceride.data.api.CreateSavedPlaceRes
 import org.pjstatecm.graceride.data.api.DriverDelayReq
+import org.pjstatecm.graceride.data.api.DriverLocationReq
 import org.pjstatecm.graceride.data.api.DriverProfile
 import org.pjstatecm.graceride.data.api.DriverProfileReq
+import org.pjstatecm.graceride.data.api.DriverRouteResp
 import org.pjstatecm.graceride.data.api.DriverVehicle
 import org.pjstatecm.graceride.data.api.DriverVehicleReq
+import org.pjstatecm.graceride.data.api.LocationShareResp
+import org.pjstatecm.graceride.data.api.MarkReadReq
+import org.pjstatecm.graceride.data.api.PassengerLocationReq
 import org.pjstatecm.graceride.data.api.Place
+import org.pjstatecm.graceride.data.api.PostMessageReq
+import org.pjstatecm.graceride.data.api.PostMessageRes
 import org.pjstatecm.graceride.data.api.ProxyRider
 import org.pjstatecm.graceride.data.api.ProxyRiderReq
+import org.pjstatecm.graceride.data.api.ReactReq
+import org.pjstatecm.graceride.data.api.ReactRes
 import org.pjstatecm.graceride.data.api.ReadinessReq
 import org.pjstatecm.graceride.data.api.RespondReq
 import org.pjstatecm.graceride.data.api.Ride
+import org.pjstatecm.graceride.data.api.RideLocationDto
 import org.pjstatecm.graceride.data.api.SavedPlace
 import org.pjstatecm.graceride.data.api.SavedPlaceReq
 import org.pjstatecm.graceride.data.api.SelectVehicleRes
 import org.pjstatecm.graceride.data.api.WithdrawReq
 import org.pjstatecm.graceride.data.api.apiCall
 
-class RidesRepository(private val api: ApiService, private val bus: AuthEventBus) {
-    suspend fun upcoming(): List<Ride> = apiCall(bus) { api.myRides("upcoming") }
+class RidesRepository(private val apiProvider: ApiProvider, private val bus: AuthEventBus) {
+    private val api: ApiService get() = apiProvider.get()
+    private val areasMutex = Mutex()
+    @Volatile private var cachedAreas: List<Area>? = null
+    @Volatile private var areasFetchedAtMs: Long = 0L
+
+    suspend fun upcoming(passive: Boolean = false): List<Ride> =
+        apiCall(bus) { api.myRides("upcoming", passivePoll = if (passive) "1" else null) }
     suspend fun past(): List<Ride> = apiCall(bus) { api.myRides("past") }
     suspend fun detail(id: Long): Ride = apiCall(bus) { api.ride(id) }
-    suspend fun areas(): List<Area> = apiCall(bus) { api.areas() }
+
+    /**
+     * Fetches service areas with a 5-minute in-memory TTL cache so repeated navigation between
+     * Ride New, Saved Addresses, Proxy Riders, and Driver Settings avoids duplicate round-trips.
+     */
+    suspend fun areas(forceRefresh: Boolean = false): List<Area> {
+        val now = System.currentTimeMillis()
+        val cached = cachedAreas
+        if (!forceRefresh && cached != null && (now - areasFetchedAtMs) < AREAS_TTL_MS) {
+            return cached
+        }
+        return areasMutex.withLock {
+            val recheckNow = System.currentTimeMillis()
+            val lockedCached = cachedAreas
+            if (!forceRefresh && lockedCached != null && (recheckNow - areasFetchedAtMs) < AREAS_TTL_MS) {
+                return@withLock lockedCached
+            }
+            apiCall(bus) { api.areas() }.also { fresh ->
+                cachedAreas = fresh
+                areasFetchedAtMs = System.currentTimeMillis()
+            }
+        }
+    }
+
+    fun clearAreasCache() {
+        cachedAreas = null
+        areasFetchedAtMs = 0L
+    }
     suspend fun places(q: String): List<Place> = apiCall(bus) { api.places(q) }
     suspend fun savedPlaces(): List<SavedPlace> = apiCall(bus) { api.savedPlaces() }
     suspend fun createSavedPlace(req: SavedPlaceReq): CreateSavedPlaceRes = apiCall(bus) { api.createSavedPlace(req) }
@@ -55,6 +102,23 @@ class RidesRepository(private val api: ApiService, private val bus: AuthEventBus
         apiCall(bus) { api.driverSchedule(from, to) }
     suspend fun driverRequests(mineAreas: Boolean? = null): List<Ride> =
         apiCall(bus) { api.driverRequests(mineAreas) }
+    suspend fun claimRide(id: Long) = apiCall(bus) { api.claimRide(id) }
+    suspend fun driverRoute(): DriverRouteResp = apiCall(bus) { api.driverRoute() }
+    suspend fun postDriverLocation(lat: Double, lng: Double, heading: Double? = null): LocationShareResp =
+        apiCall(bus) { api.postDriverLocation(DriverLocationReq(lat, lng, heading)) }
+    suspend fun stopDriverLocation() = apiCall(bus) { api.stopDriverLocation() }
+    suspend fun rideLocation(id: Long): RideLocationDto = apiCall(bus) { api.rideLocation(id) }
+    suspend fun postPassengerLocation(id: Long, lat: Double, lng: Double): LocationShareResp =
+        apiCall(bus) { api.postPassengerLocation(id, PassengerLocationReq(lat, lng)) }
+    suspend fun stopPassengerLocation(id: Long) = apiCall(bus) { api.stopPassengerLocation(id) }
+    suspend fun rideMessages(id: Long, after: Long? = null): ChatThreadDto =
+        apiCall(bus) { api.rideMessages(id, after) }
+    suspend fun postMessage(id: Long, body: String): PostMessageRes =
+        apiCall(bus) { api.postRideMessage(id, PostMessageReq(body)) }
+    suspend fun markChatRead(id: Long, upTo: Long) =
+        apiCall(bus) { api.markRideChatRead(id, MarkReadReq(upTo)) }
+    suspend fun reactMessage(id: Long, messageId: Long, emoji: String): ReactRes =
+        apiCall(bus) { api.reactRideMessage(id, messageId, ReactReq(emoji)) }
     suspend fun driverProfile(): DriverProfile = apiCall(bus) { api.driverProfile() }
     suspend fun updateDriverProfile(req: DriverProfileReq) = apiCall(bus) { api.updateDriverProfile(req) }
     suspend fun createDriverVehicle(req: DriverVehicleReq): DriverVehicle =
@@ -63,4 +127,8 @@ class RidesRepository(private val api: ApiService, private val bus: AuthEventBus
         apiCall(bus) { api.updateDriverVehicle(id, req) }
     suspend fun deleteDriverVehicle(id: Long) = apiCall(bus) { api.deleteDriverVehicle(id) }
     suspend fun selectDriverVehicle(id: Long): SelectVehicleRes = apiCall(bus) { api.selectDriverVehicle(id) }
+
+    companion object {
+        private const val AREAS_TTL_MS = 5 * 60_000L
+    }
 }

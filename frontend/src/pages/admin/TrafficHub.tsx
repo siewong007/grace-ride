@@ -145,20 +145,33 @@ export default function TrafficHub() {
   const rideDrafts = useApi<HubRideDraft[]>(canRides ? '/admin/ride-drafts' : null, 30000);
 
   const pendingPlanCount = useMemo(
-    () => (plans.data ?? []).filter((e) => e.pending_draft_count > 0).length || (dash.data?.pending_plan_drafts ?? 0),
+    () =>
+      plans.data != null
+        ? plans.data.filter((e) => e.pending_draft_count > 0).length
+        : (dash.data?.pending_plan_drafts ?? 0),
     [plans.data, dash.data?.pending_plan_drafts],
   );
   const returnedPlanCount = useMemo(
-    () => (plans.data ?? []).filter((e) => e.returned_draft_count > 0).length || (dash.data?.my_returned_plan_drafts ?? 0),
-    [plans.data, dash.data?.my_returned_plan_drafts],
+    () =>
+      plans.data != null
+        ? isLead
+          ? plans.data.filter((e) => e.returned_draft_count > 0).length
+          : (dash.data?.my_returned_plan_drafts ?? 0)
+        : (dash.data?.my_returned_plan_drafts ?? 0),
+    [plans.data, dash.data?.my_returned_plan_drafts, isLead],
   );
   const pendingRideDraftCount = useMemo(
-    () => (rideDrafts.data ?? []).filter((d) => d.status === 'pending_approval').length || (dash.data?.pending_ride_drafts ?? 0),
+    () =>
+      rideDrafts.data != null
+        ? rideDrafts.data.filter((d) => d.status === 'pending_approval').length
+        : (dash.data?.pending_ride_drafts ?? 0),
     [rideDrafts.data, dash.data?.pending_ride_drafts],
   );
   const returnedRideDraftCount = useMemo(
-    () => (rideDrafts.data ?? []).filter((d) => d.status === 'returned' && d.created_by.id === me?.id).length
-      || (dash.data?.my_returned_ride_drafts ?? 0),
+    () =>
+      rideDrafts.data != null
+        ? rideDrafts.data.filter((d) => d.status === 'returned' && d.created_by.id === me?.id).length
+        : (dash.data?.my_returned_ride_drafts ?? 0),
     [rideDrafts.data, dash.data?.my_returned_ride_drafts, me?.id],
   );
 

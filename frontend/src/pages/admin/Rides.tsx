@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
 import { Download, AlertTriangle, CheckCircle2, X } from 'lucide-react';
@@ -69,6 +69,10 @@ export function AdminRidesContent({ showExportTop = true }: { showExportTop?: bo
     defaultSort: null,
     filterKeys: ['q', 'status', 'date', 'attention'],
   });
+
+  useEffect(() => {
+    setSelectedIds(new Set());
+  }, [page, pageSize, queryString]);
 
   const apiQuery = new URLSearchParams(queryString);
   apiQuery.set('page', String(page));

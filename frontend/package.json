@@ -61,6 +61,9 @@
     "eslint-plugin-jsx-a11y": {
       "eslint": "$eslint"
     },
-    "playwright-core": "1.65.0"
+    "playwright-core": "1.65.0",
+    "@typescript-eslint/typescript-estree": {
+      "minimatch": "^11.0.1"
+    }
   }
 }

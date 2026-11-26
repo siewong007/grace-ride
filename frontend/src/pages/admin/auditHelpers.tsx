@@ -50,6 +50,11 @@ export const ENTITIES = [
   'visitor_pass',
   'area_fares',
   'system_settings',
+  'payout_batch',
+  'app_secrets',
+  'family',
+  'finance_report',
+  'users',
 ];
 
 export const SECURITY_ACTIONS = [

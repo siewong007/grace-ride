@@ -193,27 +193,32 @@ self.addEventListener('push', (event) => {
 
 self.addEventListener('pushsubscriptionchange', (event) => {
   event.waitUntil(
-    fetch('/api/push/config', { credentials: 'same-origin' })
-      .then((res) => (res.ok ? res.json() : null))
-      .then(async (cfg) => {
-        if (!cfg || !cfg.vapid_public_key) return;
-        const appKey = urlBase64ToUint8Array(cfg.vapid_public_key);
-        const sub = await self.registration.pushManager.subscribe({
-          userVisibleOnly: true,
-          applicationServerKey: appKey,
-        });
-        const json = sub.toJSON();
-        if (!json.endpoint) return;
-        await fetch('/api/push/subscribe', {
-          method: 'POST',
-          credentials: 'same-origin',
-          headers: { 'content-type': 'application/json' },
-          body: JSON.stringify({
-            endpoint: json.endpoint,
-            p256dh: (json.keys && json.keys.p256dh) || '',
-            auth: (json.keys && json.keys.auth) || '',
-          }),
-        });
+    fetch('/api/auth/me', { credentials: 'same-origin' })
+      .then((meRes) => (meRes.ok ? meRes.json() : null))
+      .then((me) => {
+        if (!me || me.push_opt_in !== true) return null;
+        return fetch('/api/push/config', { credentials: 'same-origin' })
+          .then((res) => (res.ok ? res.json() : null))
+          .then(async (cfg) => {
+            if (!cfg || !cfg.vapid_public_key) return;
+            const appKey = urlBase64ToUint8Array(cfg.vapid_public_key);
+            const sub = await self.registration.pushManager.subscribe({
+              userVisibleOnly: true,
+              applicationServerKey: appKey,
+            });
+            const json = sub.toJSON();
+            if (!json.endpoint) return;
+            await fetch('/api/push/subscribe', {
+              method: 'POST',
+              credentials: 'same-origin',
+              headers: { 'content-type': 'application/json' },
+              body: JSON.stringify({
+                endpoint: json.endpoint,
+                p256dh: (json.keys && json.keys.p256dh) || '',
+                auth: (json.keys && json.keys.auth) || '',
+              }),
+            });
+          });
       })
       .catch(() => {}),
   );
@@ -223,21 +228,10 @@ self.addEventListener('message', (event) => {
   const msg = event.data;
   if (msg && msg.type === 'SKIP_WAITING') {
     self.skipWaiting();
-    return;
-  }
-  if (msg && msg.type === 'SHOW_NOTIFICATION') {
-    event.waitUntil(
-      self.registration.showNotification(msg.title || 'Grace Ride', {
-        body: msg.body || '',
-        icon: NOTIFICATION_ICON,
-        badge: NOTIFICATION_BADGE,
-        data: { url: msg.url || '/notifications' },
-      }),
-    );
   }
 });
 
-function safeTargetUrl(raw, action) {
+function safeTargetUrl(raw) {
   let resolved;
   try {
     resolved = new URL(typeof raw === 'string' && raw ? raw : '/notifications', self.location.origin);
@@ -251,31 +245,39 @@ function safeTargetUrl(raw, action) {
   } catch {
     resolved = new URL('/notifications', self.location.origin);
   }
-  if (action === 'ready' || action === 'delayed_5m') {
-    resolved.searchParams.set('quick', action);
-  }
   return resolved.href;
 }
 
 self.addEventListener('notificationclick', (event) => {
   event.notification.close();
-  const targetUrl = safeTargetUrl(
-    event.notification.data && event.notification.data.url,
-    event.action,
-  );
+  const targetUrl = safeTargetUrl(event.notification.data && event.notification.data.url);
+  const action = event.action;
+  const parsedPath = new URL(targetUrl).pathname;
+  const rideMatch = /^\/rides\/(\d+)/.exec(parsedPath);
+  const quickPromise =
+    rideMatch && (action === 'ready' || action === 'delayed_5m')
+      ? fetch('/api/rides/' + rideMatch[1] + '/readiness', {
+          method: 'POST',
+          credentials: 'same-origin',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({ status: action }),
+        }).catch(() => {})
+      : Promise.resolve();
   event.waitUntil(
-    self.clients.matchAll({ type: 'window', includeUncontrolled: true }).then((clients) => {
-      for (const client of clients) {
-        if ('focus' in client && 'navigate' in client) {
-          return Promise.resolve(client.navigate(targetUrl))
-            .catch(() => undefined)
-            .then(() => client.focus());
+    quickPromise.then(() =>
+      self.clients.matchAll({ type: 'window', includeUncontrolled: true }).then((clients) => {
+        for (const client of clients) {
+          if ('focus' in client && 'navigate' in client) {
+            return Promise.resolve(client.navigate(targetUrl))
+              .catch(() => undefined)
+              .then(() => client.focus());
+          }
         }
-      }
-      if (self.clients.openWindow) {
-        return self.clients.openWindow(targetUrl);
-      }
-      return undefined;
-    }),
+        if (self.clients.openWindow) {
+          return self.clients.openWindow(targetUrl);
+        }
+        return undefined;
+      }),
+    ),
   );
 });

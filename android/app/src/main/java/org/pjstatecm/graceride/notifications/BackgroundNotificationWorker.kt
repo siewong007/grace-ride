@@ -32,10 +32,10 @@ class BackgroundNotificationWorker(
                 return Result.success()
             }
             try {
-                container.auth.refresh()
+                container.auth.refresh(throwOnError = true)
                 signedIn = container.auth.state.value as? AuthState.SignedIn
             } catch (e: ApiException) {
-                return if (e.status == 401 || e.status == 423 || runAttemptCount >= 3) {
+                return if (e.status == 401 || e.status == 403 || e.status == 423 || runAttemptCount >= 3) {
                     Result.success()
                 } else {
                     Result.retry()
@@ -44,9 +44,14 @@ class BackgroundNotificationWorker(
                 return if (runAttemptCount < 3) Result.retry() else Result.success()
             }
         }
-        val uid = signedIn?.me?.id ?: return Result.success()
+        val me = signedIn?.me ?: return Result.success()
+        if (!me.termsAccepted) return Result.success()
+        val uid = me.id
 
         return try {
+            val prefs = runCatching { container.community.notificationPrefs(passive = true) }.getOrNull()?.also {
+                RealtimeStreamClient.writeCachedPrefs(container.secureStore, it)
+            } ?: RealtimeStreamClient.readCachedPrefs(container.secureStore)
             val hideLockDetails = container.secureStore.getString("notif_hide_lock_details") == "1"
             RealtimeStreamClient.syncNotifications(
                 community = container.community,
@@ -57,7 +62,28 @@ class BackgroundNotificationWorker(
                 surfaceNew = true,
                 lang = container.lang,
                 hideLockDetails = hideLockDetails,
+                prefs = prefs,
+                passive = true,
             )
+            // Keep home-screen widget fresh when scheduled worker wakes up.
+            val nextRide = if (me.can("rides")) {
+                runCatching {
+                    container.rides.upcoming(passive = true)
+                        .filter { it.status in org.pjstatecm.graceride.domain.RideStatus.active && it.viewer.isPassenger }
+                        .minByOrNull { it.pickupAt }
+                }.getOrNull()
+            } else null
+            val nextEvent = if (nextRide == null && me.can("events")) {
+                runCatching { container.events.upcoming(passive = true).firstOrNull() }.getOrNull()
+            } else null
+            org.pjstatecm.graceride.widget.WidgetSnapshotStore.saveFromHome(
+                applicationContext,
+                signedIn = true,
+                nextRide = nextRide,
+                nextEvent = nextEvent,
+                hideLockDetails = hideLockDetails || (prefs?.hideLockDetails == true),
+            )
+            org.pjstatecm.graceride.widget.refreshGraceRideWidget(applicationContext)
             Result.success()
         } catch (e: ApiException) {
             if (e.status == 401 || e.status == 423 || runAttemptCount >= 3) {

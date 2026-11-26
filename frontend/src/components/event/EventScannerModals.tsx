@@ -51,7 +51,10 @@ export function EventScannerModal({
         {cameraActive && (
           <QrCameraScanner
             active={cameraActive}
-            onScan={handleCheckin}
+            onScan={(val) => {
+              setCameraActive(false);
+              handleCheckin(val);
+            }}
           />
         )}
 
@@ -148,6 +151,7 @@ export function ScanMemberPassModal({
           <QrCameraScanner
             active={cameraOn}
             onScan={(val) => {
+              setCameraOn(false);
               void submitCode(val);
             }}
             hint={t('scanMemberPassDesc')}
@@ -217,6 +221,7 @@ export function UniversalCheckinScannerModal({
   const { busy, error, run } = useAction();
 
   const handleScan = (scanned: string) => {
+    setCameraActive(false);
     const details = extractCheckinDetails(scanned);
     if (details.eventId) {
       onClose();

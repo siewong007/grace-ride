@@ -97,7 +97,7 @@ async fn apply_plan_impl(
                 return Err(conflict(u.lang, ErrorKey::DraftNotEditable));
             }
             Some(r)
-        } else if is_approve_route {
+        } else {
             sqlx::query_as(
                 "SELECT id, status, visitors, submitted_by, created_by, updated_by
                  FROM event_plan_drafts
@@ -109,8 +109,6 @@ async fn apply_plan_impl(
             .bind(id)
             .fetch_optional(&mut *tx)
             .await?
-        } else {
-            None
         };
 
     // Permission check:

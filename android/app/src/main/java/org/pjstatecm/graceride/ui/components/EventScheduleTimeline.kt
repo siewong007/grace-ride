@@ -140,39 +140,47 @@ fun ScheduleTimeline(
                     Spacer(Modifier.height(14.dp))
                     when (node.state) {
                         TimelineState.ACTIVE -> {
-                            val halo = rememberInfiniteTransition(label = "timeline_active")
-                            val haloScale by halo.animateFloat(
-                                initialValue = 1.0f,
-                                targetValue = 1.9f,
-                                animationSpec = infiniteRepeatable(
-                                    animation = tween(1800, easing = FastOutSlowInEasing),
-                                    repeatMode = RepeatMode.Restart,
-                                ),
-                                label = "halo_scale",
-                            )
-                            val haloAlpha by halo.animateFloat(
-                                initialValue = 0.35f,
-                                targetValue = 0f,
-                                animationSpec = infiniteRepeatable(
-                                    animation = tween(1800, easing = FastOutSlowInEasing),
-                                    repeatMode = RepeatMode.Restart,
-                                ),
-                                label = "halo_alpha",
-                            )
-                            Box(modifier = Modifier.size(12.dp), contentAlignment = Alignment.Center) {
-                                Box(
-                                    modifier = Modifier
-                                        .matchParentSize()
-                                        .graphicsLayer {
-                                            scaleX = haloScale
-                                            scaleY = haloScale
-                                            alpha = haloAlpha
-                                        }
-                                        .background(MaterialTheme.colorScheme.primary, CircleShape),
+                            if (animatorsEnabled()) {
+                                val halo = rememberInfiniteTransition(label = "timeline_active")
+                                val haloScale by halo.animateFloat(
+                                    initialValue = 1.0f,
+                                    targetValue = 1.9f,
+                                    animationSpec = infiniteRepeatable(
+                                        animation = tween(1800, easing = FastOutSlowInEasing),
+                                        repeatMode = RepeatMode.Restart,
+                                    ),
+                                    label = "halo_scale",
                                 )
+                                val haloAlpha by halo.animateFloat(
+                                    initialValue = 0.35f,
+                                    targetValue = 0f,
+                                    animationSpec = infiniteRepeatable(
+                                        animation = tween(1800, easing = FastOutSlowInEasing),
+                                        repeatMode = RepeatMode.Restart,
+                                    ),
+                                    label = "halo_alpha",
+                                )
+                                Box(modifier = Modifier.size(12.dp), contentAlignment = Alignment.Center) {
+                                    Box(
+                                        modifier = Modifier
+                                            .matchParentSize()
+                                            .graphicsLayer {
+                                                scaleX = haloScale
+                                                scaleY = haloScale
+                                                alpha = haloAlpha
+                                            }
+                                            .background(MaterialTheme.colorScheme.primary, CircleShape),
+                                    )
+                                    Box(
+                                        modifier = Modifier
+                                            .matchParentSize()
+                                            .background(MaterialTheme.colorScheme.primary, CircleShape),
+                                    )
+                                }
+                            } else {
                                 Box(
                                     modifier = Modifier
-                                        .matchParentSize()
+                                        .size(12.dp)
                                         .background(MaterialTheme.colorScheme.primary, CircleShape),
                                 )
                             }

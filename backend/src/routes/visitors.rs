@@ -36,6 +36,15 @@ use crate::state::AppState;
 use crate::util::{audit, check_phone, norm_dt, now, parse_dt, random_token, require, Lang};
 
 const VISIT_COOKIE: &str = "gr_visit";
+const VISIT_COOKIE_SECURE: &str = "__Secure-gr_visit";
+
+fn visit_cookie_name(secure: bool) -> &'static str {
+    if secure {
+        VISIT_COOKIE_SECURE
+    } else {
+        VISIT_COOKIE
+    }
+}
 const VISIT_PATH: &str = "/api/visit";
 const TOKEN_LEN: usize = 48;
 /// The link opens this long before pickup.
@@ -218,8 +227,9 @@ impl FromRequestParts<AppState> for VisitorPass {
     async fn from_request_parts(parts: &mut Parts, st: &AppState) -> Result<Self, Self::Rejection> {
         let lang = lang_of(parts);
         let jar = CookieJar::from_headers(&parts.headers);
+        let cname = visit_cookie_name(st.cfg.secure_cookies());
         let token = jar
-            .get(VISIT_COOKIE)
+            .get(cname)
             .map(|c| c.value().to_string())
             .ok_or(unauthorized(lang))?;
         if token.len() != TOKEN_LEN {
@@ -259,7 +269,8 @@ async fn pass_by_token(st: &AppState, lang: Lang, token: &str) -> AppResult<Pass
 
 /// Does this browser already hold the pass?
 async fn holds(st: &AppState, jar: &CookieJar, pass: i64) -> AppResult<bool> {
-    let Some(c) = jar.get(VISIT_COOKIE) else {
+    let cname = visit_cookie_name(st.cfg.secure_cookies());
+    let Some(c) = jar.get(cname) else {
         return Ok(false);
     };
     let n: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM visitor_sessions WHERE token_hash=$1 AND pass_id=$2 AND expires_at > $3")
@@ -394,7 +405,8 @@ async fn claim(
         .unwrap_or(3600)
         .max(60)
         + 7 * 24 * 3600;
-    let cookie = Cookie::build((VISIT_COOKIE, session))
+    let cname = visit_cookie_name(st.cfg.secure_cookies());
+    let cookie = Cookie::build((cname, session))
         .http_only(true)
         .same_site(SameSite::Lax)
         .secure(st.cfg.secure_cookies())

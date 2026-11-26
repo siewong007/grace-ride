@@ -1,4 +1,4 @@
-import { FormEvent, useCallback, useEffect, useState } from 'react';
+import { FormEvent, useCallback, useEffect, useRef, useState } from 'react';
 import { useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
 import {
@@ -42,6 +42,17 @@ export default function EventCheckin() {
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [cameraActive, setCameraActive] = useState(!queryCode);
+  const reqGenRef = useRef(0);
+
+  useEffect(() => {
+    reqGenRef.current += 1;
+    setCheckedIn(false);
+    setAlreadyAttended(false);
+    setError(null);
+    setBusy(false);
+    setManualCode('');
+    setCameraActive(!queryCode);
+  }, [id, queryCode]);
 
   // Pending or disabled accounts cannot check in.
   const isNonMember = Boolean(me && me.status !== 'active');
@@ -49,23 +60,36 @@ export default function EventCheckin() {
   const submitCheckin = useCallback(
     (codeToSubmit: string) => {
       if (!id || !codeToSubmit.trim() || isNonMember) return;
+      const gen = ++reqGenRef.current;
       setBusy(true);
       setError(null);
       post<{ ok: boolean; already_attended: boolean }>(`/events/${id}/checkin`, {
         code: codeToSubmit.trim(),
       })
         .then((res) => {
+          if (reqGenRef.current !== gen) return;
           setCheckedIn(true);
           setAlreadyAttended(res.already_attended);
           setCameraActive(false);
         })
         .catch((err) => {
+          if (reqGenRef.current !== gen) return;
           setError(err instanceof Error ? err.message : String(err));
         })
-        .finally(() => setBusy(false));
+        .finally(() => {
+          if (reqGenRef.current === gen) {
+            setBusy(false);
+          }
+        });
     },
     [id, isNonMember],
   );
+
+  useEffect(() => {
+    if (window.location.search.includes('code=')) {
+      window.history.replaceState(window.history.state, '', window.location.pathname);
+    }
+  }, []);
 
   useEffect(() => {
     if (!id || !queryCode || isNonMember) return;

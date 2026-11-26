@@ -33,9 +33,10 @@ pub fn router() -> Router<AppState> {
 }
 
 const MAX_BYTES: usize = 8 * 1024 * 1024;
-/// Files one member may upload in 24 hours. Receipts and photos are a handful a week;
-/// this only stops one account filling the disk (the per-IP limit resets every 10 min).
+/// Files one active member may upload in 24 hours.
 pub const MAX_UPLOADS_PER_DAY: i64 = 100;
+/// Unapproved `pending` accounts are restricted to a small image quota for profile avatars.
+pub const MAX_PENDING_UPLOADS_PER_DAY: i64 = 5;
 
 /// Identify allowed file types by magic bytes.
 pub fn sniff(b: &[u8]) -> Option<(&'static str, &'static str)> {
@@ -108,18 +109,112 @@ pub fn strip_jpeg_metadata(data: &[u8]) -> Option<Vec<u8>> {
     removed.then_some(out)
 }
 
+/// Strip PNG ancillary text/metadata chunks (`eXIf`, `tEXt`, `zTXt`, `iTXt`).
+/// Returns `None` when the buffer lacks valid PNG chunk framing or contains none of those chunks.
+pub fn strip_png_metadata(data: &[u8]) -> Option<Vec<u8>> {
+    const SIG: &[u8; 8] = b"\x89PNG\r\n\x1a\n";
+    if !data.starts_with(SIG) || data.len() < 20 {
+        return None;
+    }
+    let mut out = Vec::with_capacity(data.len());
+    out.extend_from_slice(SIG);
+    let mut pos = 8usize;
+    let mut removed = false;
+    while pos + 12 <= data.len() {
+        let len =
+            u32::from_be_bytes([data[pos], data[pos + 1], data[pos + 2], data[pos + 3]]) as usize;
+        let total = 12usize.checked_add(len)?;
+        if pos + total > data.len() {
+            return None;
+        }
+        let ctype = &data[pos + 4..pos + 8];
+        if matches!(ctype, b"eXIf" | b"tEXt" | b"zTXt" | b"iTXt") {
+            removed = true;
+        } else {
+            out.extend_from_slice(&data[pos..pos + total]);
+        }
+        pos += total;
+        if ctype == b"IEND" {
+            break;
+        }
+    }
+    if pos != data.len() {
+        return None;
+    }
+    removed.then_some(out)
+}
+
+/// Strip WebP `EXIF` and `XMP ` RIFF chunks and clear matching `VP8X` feature bits.
+/// Returns `None` when not valid RIFF/WEBP or no metadata chunks are present.
+pub fn strip_webp_metadata(data: &[u8]) -> Option<Vec<u8>> {
+    if data.len() < 20 || &data[..4] != b"RIFF" || &data[8..12] != b"WEBP" {
+        return None;
+    }
+    let mut body = Vec::with_capacity(data.len());
+    let mut pos = 12usize;
+    let mut removed = false;
+    while pos + 8 <= data.len() {
+        let fourcc = &data[pos..pos + 4];
+        let size = u32::from_le_bytes([data[pos + 4], data[pos + 5], data[pos + 6], data[pos + 7]])
+            as usize;
+        let padded = size.saturating_add(size & 1);
+        let end = pos.checked_add(8)?.checked_add(padded)?;
+        if end > data.len() {
+            return None;
+        }
+        if matches!(fourcc, b"EXIF" | b"XMP ") {
+            removed = true;
+        } else {
+            body.extend_from_slice(&data[pos..end]);
+        }
+        pos = end;
+    }
+    if !removed || pos != data.len() {
+        return None;
+    }
+    // Clear VP8X EXIF (0x08) and XMP (0x04) bits when VP8X is first chunk.
+    if body.len() >= 12 && &body[0..4] == b"VP8X" {
+        body[8] &= !(0x08 | 0x04);
+    }
+    let riff_size = u32::try_from(4usize.saturating_add(body.len())).ok()?;
+    let mut out = Vec::with_capacity(12 + body.len());
+    out.extend_from_slice(b"RIFF");
+    out.extend_from_slice(&riff_size.to_le_bytes());
+    out.extend_from_slice(b"WEBP");
+    out.extend_from_slice(&body);
+    Some(out)
+}
+
+fn contains_metadata_markers(data: &[u8]) -> bool {
+    const PATTERNS: &[&[u8]] = &[
+        b"Exif\0\0",
+        b"Exif\0",
+        b"http://ns.adobe.com/xap",
+        b"eXIf",
+        b"XMP ",
+    ];
+    PATTERNS
+        .iter()
+        .any(|pat| data.windows(pat.len()).any(|w| w == *pat))
+}
+
 async fn upload(
     State(st): State<AppState>,
     u: CurrentUser,
     mut mp: Multipart,
 ) -> AppResult<Json<Value>> {
+    let max_uploads = if u.status == "pending" {
+        MAX_PENDING_UPLOADS_PER_DAY
+    } else {
+        MAX_UPLOADS_PER_DAY
+    };
     let (today,): (i64,) =
         sqlx::query_as("SELECT COUNT(*) FROM files WHERE owner_id=$1 AND created_at >= $2")
             .bind(u.id)
             .bind(in_hours(-24))
             .fetch_one(&st.db)
             .await?;
-    if today >= MAX_UPLOADS_PER_DAY {
+    if today >= max_uploads {
         return Err(too_many_requests(u.lang, ErrorKey::UploadQuotaReached));
     }
     while let Some(field) = mp
@@ -140,11 +235,40 @@ async fn upload(
         }
         // Trust the bytes, not the browser-supplied Content-Type.
         let (mime, ext) = sniff(&data).ok_or_else(|| bad(u.lang, ErrorKey::InvalidFileType))?;
-        // Strip EXIF/XMP/IPTC (including GPS tags) on all JPEG uploads regardless of usage.
-        let stripped = if mime == "image/jpeg" {
-            strip_jpeg_metadata(&data)
-        } else {
-            None
+        if u.status == "pending" && !mime.starts_with("image/") {
+            return Err(bad(u.lang, ErrorKey::InvalidFileType));
+        }
+        // Strip EXIF/XMP/IPTC/text metadata across JPEG, PNG, and WebP; reject metadata-bearing
+        // HEIC or malformed metadata-bearing containers fail-closed instead of storing raw GPS tags.
+        let stripped = match mime {
+            "image/jpeg" => {
+                let s = strip_jpeg_metadata(&data);
+                if s.is_none() && contains_metadata_markers(&data) {
+                    return Err(bad(u.lang, ErrorKey::InvalidFileType));
+                }
+                s
+            }
+            "image/png" => {
+                let s = strip_png_metadata(&data);
+                if s.is_none() && contains_metadata_markers(&data) {
+                    return Err(bad(u.lang, ErrorKey::InvalidFileType));
+                }
+                s
+            }
+            "image/webp" => {
+                let s = strip_webp_metadata(&data);
+                if s.is_none() && contains_metadata_markers(&data) {
+                    return Err(bad(u.lang, ErrorKey::InvalidFileType));
+                }
+                s
+            }
+            "image/heic" => {
+                if contains_metadata_markers(&data) {
+                    return Err(bad(u.lang, ErrorKey::InvalidFileType));
+                }
+                None
+            }
+            _ => None,
         };
         let payload = stripped.as_deref().unwrap_or(&data);
         let mime = mime.to_string();
@@ -196,11 +320,13 @@ enum FileAccess {
 }
 
 async fn file_access(st: &AppState, u: &CurrentUser, file_id: i64) -> AppResult<FileAccess> {
-    let (owner,): (i64,) = sqlx::query_as("SELECT owner_id FROM files WHERE id=$1")
+    let row: Option<(i64,)> = sqlx::query_as("SELECT owner_id FROM files WHERE id=$1")
         .bind(file_id)
         .fetch_optional(&st.db)
-        .await?
-        .ok_or(not_found(u.lang))?;
+        .await?;
+    let Some((owner,)) = row else {
+        return Err(forbidden(u.lang, ErrorKey::CannotViewFile));
+    };
     // Pending (unapproved) accounts can only access files they uploaded themselves.
     if u.status != "active" {
         return Ok(if owner == u.id {
@@ -306,9 +432,11 @@ async fn file_access(st: &AppState, u: &CurrentUser, file_id: i64) -> AppResult<
     if help > 0 {
         return Ok(FileAccess::Private);
     }
-    // Grab reimbursement receipts: claimant, 报销审核 (交通组), 报销付款 (finance).
+    // Grab reimbursement receipts: claimant, 报销审核 (all statuses), 报销付款 (approved/paid only).
     let (reimb,): (i64,) = sqlx::query_as(
-        "SELECT COUNT(*) FROM reimbursements WHERE receipt_file_id=$1 AND (user_id=$2 OR $3 OR $4)",
+        "SELECT COUNT(*) FROM reimbursements
+         WHERE receipt_file_id=$1
+           AND (user_id=$2 OR $3 OR ($4 AND status IN ('approved','paid')))",
     )
     .bind(file_id)
     .bind(u.id)
@@ -595,7 +723,7 @@ async fn extract_ref(
             .fetch_optional(&st.db)
             .await?;
     let Some((owner_id, stored, name)) = file_row else {
-        return Err(not_found(u.lang));
+        return Err(forbidden(u.lang, ErrorKey::CannotViewFile));
     };
 
     let mut allowed = owner_id == u.id;

@@ -21,7 +21,7 @@ mod reports;
 
 pub(crate) use family::FAMILY_CAP;
 pub(crate) use guides::any_admin_page;
-pub(crate) use push::telegram_webhook_secret;
+pub use push::telegram_webhook_secret;
 pub use reports::compute_badges;
 pub(crate) use reports::{parse_report_month, BADGE_KEYS};
 
@@ -88,8 +88,16 @@ pub fn router() -> Router<AppState> {
             post(push::register_mobile_token).delete(push::unregister_mobile_token),
         )
         .route(
+            "/push/mobile-tokens/{id}",
+            delete(push::delete_mobile_token),
+        )
+        .route(
             "/push/telegram/link-token",
             post(push::create_telegram_link_token),
+        )
+        .route(
+            "/push/telegram/webhook",
+            post(push::telegram_webhook_header),
         )
         .route(
             "/push/telegram/webhook/{secret}",

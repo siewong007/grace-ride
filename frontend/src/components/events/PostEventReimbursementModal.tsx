@@ -47,7 +47,13 @@ interface DriverRowState {
   tripType: 'supper' | 'direct_return';
   destAreaId: number | '';
   amountCents: number;
+  amountInput: string;
   note: string;
+}
+
+function parseAmountCents(raw: string): number {
+  const n = Number(raw);
+  return Number.isFinite(n) ? Math.max(0, Math.round(n * 100)) : 0;
 }
 
 export default function PostEventReimbursementModal({
@@ -62,7 +68,7 @@ export default function PostEventReimbursementModal({
   const { t } = useTranslation('events');
   const toast = useToast();
   const { busy, error, run } = useAction();
-  const { data, loading } = useApi<PostEventDriversResponse>(
+  const { data, error: loadError, loading, reload } = useApi<PostEventDriversResponse>(
     `/events/${eventId}/post-event-drivers`
   );
 
@@ -86,6 +92,7 @@ export default function PostEventReimbursementModal({
         tripType: isSupper ? 'supper' : 'direct_return',
         destAreaId,
         amountCents,
+        amountInput: (amountCents / 100).toFixed(2),
         note: '',
       };
     }
@@ -108,6 +115,7 @@ export default function PostEventReimbursementModal({
             ...row,
             destAreaId: newAreaId,
             amountCents: fare,
+            amountInput: (fare / 100).toFixed(2),
           };
         }
       }
@@ -136,6 +144,7 @@ export default function PostEventReimbursementModal({
         tripType: type,
         destAreaId: targetAreaId,
         amountCents: fare,
+        amountInput: (fare / 100).toFixed(2),
       },
     }));
   };
@@ -151,6 +160,7 @@ export default function PostEventReimbursementModal({
         ...prev[driverId],
         destAreaId: areaId,
         amountCents: fare,
+        amountInput: (fare / 100).toFixed(2),
       },
     }));
   };
@@ -165,37 +175,60 @@ export default function PostEventReimbursementModal({
     }));
   };
 
-  const handleAmountChange = (driverId: number, cents: number) => {
+  const handleAmountInputChange = (driverId: number, raw: string) => {
+    const cents = parseAmountCents(raw);
     setRows((prev) => ({
       ...prev,
       [driverId]: {
         ...prev[driverId],
-        amountCents: Math.max(0, cents),
+        amountInput: raw,
+        amountCents: cents,
       },
     }));
   };
 
-  const selectedCount = Object.values(rows).filter((r) => r.selected).length;
-  const totalCents = Object.values(rows)
-    .filter((r) => r.selected)
-    .reduce((sum, r) => sum + r.amountCents, 0);
+  const handleAmountBlur = (driverId: number) => {
+    setRows((prev) => {
+      const cur = prev[driverId];
+      if (!cur) return prev;
+      const cents = parseAmountCents(cur.amountInput);
+      return {
+        ...prev,
+        [driverId]: {
+          ...cur,
+          amountCents: cents,
+          amountInput: (cents / 100).toFixed(2),
+        },
+      };
+    });
+  };
+
+  const selectedRows = Object.entries(rows).filter(([_, r]) => r.selected);
+  const submittableClaims = selectedRows
+    .map(([did, r]) => ({
+      driver_id: Number(did),
+      trip_type: r.tripType,
+      destination_area_id: r.destAreaId,
+      amount_cents: parseAmountCents(r.amountInput),
+      note: r.note.trim() || undefined,
+    }))
+    .filter((c) => c.destination_area_id !== '' && c.amount_cents > 0);
+  const selectedCount = submittableClaims.length;
+  const totalCents = submittableClaims.reduce((sum, c) => sum + c.amount_cents, 0);
 
   const handleSubmit = () => {
     if (!data) return;
-    const claims = Object.entries(rows)
-      .filter(([_, r]) => r.selected && r.destAreaId !== '')
-      .map(([did, r]) => ({
-        driver_id: Number(did),
-        trip_type: r.tripType,
-        destination_area_id: Number(r.destAreaId),
-        amount_cents: r.amountCents,
-        note: r.note.trim() || undefined,
-      }));
-
-    if (claims.length === 0) {
+    const missingAreaOrAmount = selectedRows.some(
+      ([_, r]) => r.destAreaId === '' || parseAmountCents(r.amountInput) <= 0,
+    );
+    if (missingAreaOrAmount || submittableClaims.length === 0) {
       toast.error(t('postEventReimbNoSelection'));
       return;
     }
+    const claims = submittableClaims.map((c) => ({
+      ...c,
+      destination_area_id: Number(c.destination_area_id),
+    }));
 
     run(async () => {
       const res = await post<{ pending_review_count?: number }>(`/events/${eventId}/post-event-reimbursements`, {
@@ -254,7 +287,7 @@ export default function PostEventReimbursementModal({
       }
     >
       <div className="stack">
-        <ErrorBox error={error} />
+        <ErrorBox error={loadError ?? error} onRetry={loadError ? reload : undefined} />
 
         {loading ? (
           <Spinner />
@@ -414,15 +447,14 @@ export default function PostEventReimbursementModal({
                           <div className="row items-center gap-xs">
                             <span className="tiny muted">RM</span>
                             <input
-                              type="number"
-                              step="0.5"
-                              min="0"
-                              max="500"
+                              type="text"
+                              inputMode="decimal"
                               className="input text-right"
                               style={{ width: '85px' }}
                               disabled={!row.selected || busy}
-                              value={(row.amountCents / 100).toFixed(2)}
-                              onChange={(e) => handleAmountChange(d.id, Math.round(parseFloat(e.target.value || '0') * 100))}
+                              value={row.amountInput}
+                              onChange={(e) => handleAmountInputChange(d.id, e.target.value)}
+                              onBlur={() => handleAmountBlur(d.id)}
                             />
                           </div>
                         </div>

@@ -1,0 +1,39 @@
+<?xml version="1.0" encoding="utf-8"?>
+<shortcuts xmlns:android="http://schemas.android.com/apk/res/android">
+    <shortcut
+        android:shortcutId="book_ride"
+        android:enabled="true"
+        android:icon="@drawable/ic_launcher_monochrome"
+        android:shortcutShortLabel="@string/shortcut_book_ride_short"
+        android:shortcutLongLabel="@string/shortcut_book_ride_long">
+        <intent
+            android:action="android.intent.action.VIEW"
+            android:data="graceride://open/ride-new"
+            android:targetPackage="org.pjstatecm.graceride"
+            android:targetClass="org.pjstatecm.graceride.MainActivity" />
+    </shortcut>
+    <shortcut
+        android:shortcutId="my_rides"
+        android:enabled="true"
+        android:icon="@drawable/ic_launcher_monochrome"
+        android:shortcutShortLabel="@string/shortcut_my_rides_short"
+        android:shortcutLongLabel="@string/shortcut_my_rides_long">
+        <intent
+            android:action="android.intent.action.VIEW"
+            android:data="graceride://open/rides"
+            android:targetPackage="org.pjstatecm.graceride"
+            android:targetClass="org.pjstatecm.graceride.MainActivity" />
+    </shortcut>
+    <shortcut
+        android:shortcutId="events"
+        android:enabled="true"
+        android:icon="@drawable/ic_launcher_monochrome"
+        android:shortcutShortLabel="@string/shortcut_events_short"
+        android:shortcutLongLabel="@string/shortcut_events_long">
+        <intent
+            android:action="android.intent.action.VIEW"
+            android:data="graceride://open/events"
+            android:targetPackage="org.pjstatecm.graceride"
+            android:targetClass="org.pjstatecm.graceride.MainActivity" />
+    </shortcut>
+</shortcuts>

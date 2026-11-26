@@ -7,6 +7,8 @@ import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.test.UnconfinedTestDispatcher
 import kotlinx.coroutines.test.resetMain
 import kotlinx.coroutines.test.setMain
+import kotlinx.serialization.json.jsonObject
+import kotlinx.serialization.json.jsonPrimitive
 import okhttp3.mockwebserver.MockResponse
 import okhttp3.mockwebserver.MockWebServer
 import org.junit.After
@@ -17,6 +19,7 @@ import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Test
 import java.util.concurrent.TimeUnit
+import org.pjstatecm.graceride.data.api.Me
 import org.pjstatecm.graceride.data.api.NotificationPageDto
 import org.pjstatecm.graceride.data.api.NotificationPrefsDto
 import org.pjstatecm.graceride.data.api.apiJson
@@ -53,10 +56,15 @@ class NotificationsTest {
     private fun json(body: String) = MockResponse().setBody(body)
 
     @Test fun notifLinkRouterMapsNativeAndWebDestinationsSafely() {
+        assertEquals(NotifDestination.Native(Routes.HOME), NotifLinkRouter.resolve("/"))
         assertEquals(NotifDestination.Native(Routes.rideDetail(42)), NotifLinkRouter.resolve("/rides/42?action=readiness"))
         assertEquals(NotifDestination.Native(Routes.RIDES), NotifLinkRouter.resolve("/rides"))
         assertEquals(NotifDestination.Native(Routes.eventDetail(9)), NotifLinkRouter.resolve("/events/9#top"))
-        assertEquals(NotifDestination.Native(Routes.COSTS), NotifLinkRouter.resolve("/settlements/5"))
+        assertEquals(NotifDestination.Native(Routes.COSTS), NotifLinkRouter.resolve("/costs"))
+        assertEquals(NotifDestination.Web("/settlements"), NotifLinkRouter.resolve("/settlements"))
+        assertEquals(NotifDestination.Web("/settlements/5"), NotifLinkRouter.resolve("/settlements/5"))
+        assertEquals(NotifDestination.Native(Routes.DRIVE_HUB), NotifLinkRouter.resolve("/drive"))
+        assertEquals(NotifDestination.Native(Routes.rideNew()), NotifLinkRouter.resolve("/ride-new"))
         assertEquals(NotifDestination.Native(Routes.DRIVER_SETTINGS), NotifLinkRouter.resolve("/driver"))
         assertEquals(NotifDestination.Native(Routes.PROFILE), NotifLinkRouter.resolve("/me"))
         assertEquals(NotifDestination.Web("/help?ride=12"), NotifLinkRouter.resolve("/help?ride=12"))
@@ -64,6 +72,20 @@ class NotificationsTest {
         assertEquals(NotifDestination.None, NotifLinkRouter.resolve("//evil.example/phish"))
         assertEquals(NotifDestination.None, NotifLinkRouter.resolve("/api/auth/logout"))
         assertEquals(NotifDestination.None, NotifLinkRouter.resolve("javascript:alert(1)"))
+    }
+
+    @Test fun notifLinkRouterExtractsTrustedIntentUrisOnly() {
+        assertEquals(
+            "/rides/42?action=readiness",
+            NotifLinkRouter.extractPathFromIntentUri("https://graceride.saliminn.my/rides/42?action=readiness"),
+        )
+        assertEquals(
+            "/drive",
+            NotifLinkRouter.extractPathFromIntentUri("graceride://open/drive"),
+        )
+        assertEquals(null, NotifLinkRouter.extractPathFromIntentUri("https://evil.example/rides/42"))
+        assertEquals(null, NotifLinkRouter.extractPathFromIntentUri("http://graceride.saliminn.my/rides/42"))
+        assertEquals(null, NotifLinkRouter.extractPathFromIntentUri("javascript:alert(1)"))
     }
 
     @Test fun dtosDecodeNotificationPageAndPrefs() {
@@ -98,7 +120,8 @@ class NotificationsTest {
             }
         """.trimIndent()
         val prefs = apiJson.decodeFromString<NotificationPrefsDto>(prefsJson)
-        assertTrue(prefs.telegramBlocked)
+        assertTrue(prefs.pushOptIn)
+        assertFalse(prefs.whatsappOptIn)
         assertEquals(90, prefs.driverRemindMins)
         assertEquals(listOf("cost"), prefs.mutedCategories)
         assertEquals("22:00", prefs.quietHoursStart)
@@ -203,7 +226,7 @@ class NotificationsTest {
         assertEquals("/api/notifications/14", delReq.path)
     }
 
-    @Test fun profileViewModelRejectsNonNumericTelegramChatId() = runBlocking {
+    @Test fun profileViewModelSavesNameAndPhoneWithoutSendingTelegramChatId() = runBlocking {
         server.enqueue(json(Fixtures.ME_MEMBER))
         container.auth.refresh()
         server.takeRequest()
@@ -211,9 +234,23 @@ class NotificationsTest {
         val vm = ProfileViewModel(container)
         server.takeRequest()
 
-        vm.saveProfile("Alice", "+60123456789", "@not_a_number")
-        assertEquals("invalid_telegram_chat_id", vm.state.value.error)
-        assertEquals(2, server.requestCount)
+        server.enqueue(json("""{"ok":true}"""))
+        server.enqueue(json(Fixtures.ME_MEMBER))
+        vm.saveProfile("Alice", "+60123456789")
+        kotlinx.coroutines.withTimeout(5.seconds) {
+            vm.state.test {
+                var st = awaitItem()
+                while (st.message != "saved") st = awaitItem()
+                cancelAndIgnoreRemainingEvents()
+            }
+        }
+        val putReq = server.takeRequest(5, TimeUnit.SECONDS)
+        assertNotNull(putReq)
+        val body = apiJson.parseToJsonElement(putReq!!.body.readUtf8()).jsonObject
+        assertEquals("Alice", body["name"]?.jsonPrimitive?.content)
+        assertEquals("+60123456789", body["phone"]?.jsonPrimitive?.content)
+        assertFalse(body.containsKey("telegram_chat_id"))
+        assertEquals(4, server.requestCount)
     }
 
     @Test fun syncNotificationsPersistsPerUserWatermarkAndDeduplicates() = runBlocking {
@@ -291,5 +328,154 @@ class NotificationsTest {
         assertEquals(12L, otherUser.newWatermark)
         assertTrue(otherUser.surfaced.isEmpty())
         assertEquals("12", store.getString(RealtimeStreamClient.watermarkKey(2L)))
+    }
+
+    @Test fun notifLinkRouterParsesCheckinCodeAndProxyRideParams() {
+        assertEquals(
+            NotifDestination.Native(Routes.eventDetail(42L, checkinCode = "ABC123")),
+            NotifLinkRouter.resolve("/events/42/checkin?code=ABC123"),
+        )
+        assertEquals(
+            NotifDestination.Native(Routes.rideNew(eventId = 9L, proxy = true)),
+            NotifLinkRouter.resolve("/ride-new?event=9&proxy=1"),
+        )
+    }
+
+    @Test fun shouldSurfaceNotificationEnforcesOptInMutedQuietHoursAndUrgentBypass() {
+        val normalRide = org.pjstatecm.graceride.data.api.NotificationItem(
+            id = 1L,
+            title = "Ride confirmed",
+            category = "ride",
+            priority = "normal",
+        )
+        val urgentRide = normalRide.copy(id = 2L, priority = "urgent")
+        val prefs = NotificationPrefsDto(
+            pushOptIn = true,
+            mutedCategories = listOf("event"),
+            quietHoursStart = "22:00",
+            quietHoursEnd = "07:00",
+        )
+
+        assertFalse(RealtimeStreamClient.shouldSurfaceNotification(normalRide, prefs.copy(pushOptIn = false), "10:00"))
+        assertFalse(RealtimeStreamClient.shouldSurfaceNotification(urgentRide, prefs.copy(pushOptIn = false), "10:00"))
+        assertFalse(
+            RealtimeStreamClient.shouldSurfaceNotification(
+                normalRide.copy(category = "event"),
+                prefs,
+                "10:00",
+            ),
+        )
+        assertFalse(RealtimeStreamClient.shouldSurfaceNotification(normalRide, prefs, "23:30"))
+        assertFalse(RealtimeStreamClient.shouldSurfaceNotification(normalRide, prefs, "06:15"))
+        assertTrue(RealtimeStreamClient.shouldSurfaceNotification(normalRide, prefs, "10:00"))
+        assertTrue(RealtimeStreamClient.shouldSurfaceNotification(urgentRide, prefs, "23:30"))
+    }
+
+    @Test fun notifLinkRouterResolveForRoutesMemberAwayFromAdminAndWebSettlements() {
+        val member = Me(
+            id = 6L,
+            name = "Member",
+            email = "member@example.org",
+            roles = listOf("member"),
+            permissions = listOf("rides.view", "events.view", "costs.view", "settlements.view"),
+        )
+        assertEquals(NotifDestination.None, NotifLinkRouter.resolveFor("/admin/rides", member))
+        assertEquals(NotifDestination.None, NotifLinkRouter.resolveFor("/admin/members", member))
+        assertEquals(NotifDestination.None, NotifLinkRouter.resolveFor("/admin", member))
+        assertEquals(NotifDestination.Native(Routes.COSTS), NotifLinkRouter.resolveFor("/settlements", member))
+        assertEquals(NotifDestination.Native(Routes.COSTS), NotifLinkRouter.resolveFor("/settlements/5", member))
+        assertEquals(NotifDestination.Native(Routes.PROXY_RIDERS), NotifLinkRouter.resolveFor("/me/family", member))
+        assertEquals(NotifDestination.Native(Routes.eventDetail(9L)), NotifLinkRouter.resolveFor("/events/9", member))
+
+        val finance = Me(
+            id = 7L,
+            name = "Finance",
+            email = "finance@example.org",
+            roles = listOf("finance"),
+            permissions = listOf("admin_bills.view", "admin_reports.view"),
+        )
+        assertEquals(NotifDestination.Web("/settlements"), NotifLinkRouter.resolveFor("/settlements", finance))
+
+        val transport = Me(
+            id = 8L,
+            name = "Transport",
+            email = "transport@example.org",
+            roles = listOf("transport"),
+            permissions = listOf("admin_rides.view"),
+        )
+        assertEquals(NotifDestination.Web("/admin/rides"), NotifLinkRouter.resolveFor("/admin/rides", transport))
+    }
+
+    @Test fun notificationsViewModelStageDeleteSupportsUndoAndCommit() = runBlocking {
+        val page = """
+            {
+              "items": [
+                {"id":31,"title":"Event reminder","body":"Tonight","link":"/events/1","read":false,"created_at":"2026-11-25 09:00:00","category":"event"},
+                {"id":30,"title":"Cost update","body":"RM 15","link":"/costs","read":true,"created_at":"2026-11-25 08:00:00","category":"cost"}
+              ],
+              "next_before": null,
+              "unread": 1
+            }
+        """.trimIndent()
+        server.enqueue(json(page))
+        val vm = NotificationsViewModel(container)
+        kotlinx.coroutines.withTimeout(5.seconds) {
+            vm.state.test {
+                var st = awaitItem()
+                while (st.loading) st = awaitItem()
+                assertEquals(2, st.items.size)
+                cancelAndIgnoreRemainingEvents()
+            }
+        }
+        assertNotNull(server.takeRequest(5, TimeUnit.SECONDS))
+
+        val first = vm.state.value.items[0]
+        vm.stageDelete(first)
+        assertEquals(listOf(30L), vm.state.value.items.map { it.id })
+        assertEquals(0, vm.state.value.unreadCount)
+        assertEquals(1, server.requestCount)
+
+        vm.undoDelete(first.id)
+        assertEquals(listOf(31L, 30L), vm.state.value.items.map { it.id })
+        assertEquals(1, vm.state.value.unreadCount)
+        assertEquals(1, vm.state.value.restoreTick)
+        assertEquals(1, server.requestCount)
+
+        server.enqueue(json("""{"ok":true,"unread":0}"""))
+        vm.stageDelete(first)
+        vm.commitDelete(first.id)
+        val delReq = server.takeRequest(5, TimeUnit.SECONDS)
+        assertNotNull(delReq)
+        assertEquals("DELETE", delReq!!.method)
+        assertEquals("/api/notifications/31", delReq.path)
+    }
+
+    @Test fun syncNotificationsSendsPassivePollHeaderWhenRequested() = runBlocking {
+        val page = """{"items":[],"next_before":null,"unread":0}"""
+        server.enqueue(json(page))
+        RealtimeStreamClient.syncNotifications(
+            community = container.community,
+            auth = container.auth,
+            store = InMemoryStore(),
+            userId = 1L,
+            surfaceNew = false,
+            passive = true,
+        )
+        val req = server.takeRequest(5, TimeUnit.SECONDS)
+        assertNotNull(req)
+        assertEquals("1", req!!.getHeader("X-Passive-Poll"))
+
+        server.enqueue(json(page))
+        RealtimeStreamClient.syncNotifications(
+            community = container.community,
+            auth = container.auth,
+            store = InMemoryStore(),
+            userId = 1L,
+            surfaceNew = false,
+            passive = false,
+        )
+        val activeReq = server.takeRequest(5, TimeUnit.SECONDS)
+        assertNotNull(activeReq)
+        assertEquals(null, activeReq!!.getHeader("X-Passive-Poll"))
     }
 }

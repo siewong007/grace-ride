@@ -123,6 +123,7 @@ impl Default for RoutingState {
             // servers also drop idle keep-alive connections, so don't hold ours long.
             http: reqwest::Client::builder()
                 .use_rustls_tls()
+                .redirect(reqwest::redirect::Policy::none())
                 .pool_idle_timeout(Duration::from_secs(10))
                 .timeout(Duration::from_secs(8))
                 .build()

@@ -30,7 +30,12 @@ class PersistentCookieJar(
 
     private val key = "cookies"
     private val lock = Any()
-    private var cache: MutableList<StoredCookie> = load()
+    private var cache: MutableList<StoredCookie>? = null
+
+    private fun ensureLoadedLocked(): MutableList<StoredCookie> {
+        cache?.let { return it }
+        return load().also { cache = it }
+    }
 
     private fun load(): MutableList<StoredCookie> {
         val raw = store.getString(key) ?: return mutableListOf()
@@ -41,18 +46,22 @@ class PersistentCookieJar(
         }
     }
 
-    private fun persist() {
-        store.putString(key, json.encodeToString(ListSerializer(StoredCookie.serializer()), cache))
+    private fun persist(list: List<StoredCookie>) {
+        store.putString(key, json.encodeToString(ListSerializer(StoredCookie.serializer()), list))
     }
 
     override fun saveFromResponse(url: HttpUrl, cookies: List<Cookie>) {
         synchronized(lock) {
+            val list = ensureLoadedLocked()
             val now = System.currentTimeMillis()
-            cache.removeAll { it.expiresAt <= now }
+            list.removeAll { it.expiresAt <= now }
             for (c in cookies) {
-                cache.removeAll { it.name == c.name && it.domain == c.domain && it.path == c.path }
+                if (!isValidPrefixPolicy(c.name, c.path, c.secure, c.hostOnly, url.isHttps)) {
+                    continue
+                }
+                list.removeAll { it.name == c.name && it.domain == c.domain && it.path == c.path }
                 if (c.expiresAt > now) {
-                    cache.add(
+                    list.add(
                         StoredCookie(
                             c.name, c.value, c.domain, c.path, c.expiresAt,
                             c.secure, c.httpOnly, c.hostOnly,
@@ -60,15 +69,17 @@ class PersistentCookieJar(
                     )
                 }
             }
-            persist()
+            persist(list)
         }
     }
 
     override fun loadForRequest(url: HttpUrl): List<Cookie> {
         synchronized(lock) {
+            val list = ensureLoadedLocked()
             val now = System.currentTimeMillis()
-            val matches = cache.filter { c ->
+            val matches = list.filter { c ->
                 c.expiresAt > now &&
+                    isValidPrefixPolicy(c.name, c.path, c.secure, c.hostOnly, url.isHttps) &&
                     (if (c.hostOnly) url.host == c.domain else url.host == c.domain || url.host.endsWith(".${c.domain}")) &&
                     pathMatch(url.encodedPath, c.path) &&
                     (!c.secure || url.scheme == "https")
@@ -90,18 +101,32 @@ class PersistentCookieJar(
     }
 
     fun hasCookies(): Boolean = synchronized(lock) {
+        val list = ensureLoadedLocked()
         val now = System.currentTimeMillis()
-        cache.any { it.expiresAt > now }
+        list.any { it.expiresAt > now }
     }
 
     fun clear() {
         synchronized(lock) {
-            cache.clear()
+            cache = mutableListOf()
             store.remove(key)
         }
     }
 
     companion object {
+        /** Enforce RFC 6265bis `__Host-` and `__Secure-` cookie prefix requirements. */
+        fun isValidPrefixPolicy(
+            name: String,
+            path: String,
+            secure: Boolean,
+            hostOnly: Boolean,
+            isHttps: Boolean,
+        ): Boolean = when {
+            name.startsWith("__Host-") -> isHttps && secure && hostOnly && path == "/"
+            name.startsWith("__Secure-") -> isHttps && secure
+            else -> true
+        }
+
         /** RFC 6265 path-match: "/api" must not match "/apix". */
         fun pathMatch(requestPath: String, cookiePath: String): Boolean {
             if (requestPath == cookiePath) return true

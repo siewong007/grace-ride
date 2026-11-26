@@ -1,9 +1,39 @@
 <vector xmlns:android="http://schemas.android.com/apk/res/android"
-    android:width="192dp" android:height="192dp" android:viewportWidth="240" android:viewportHeight="240">
-    <path android:pathData="M41.76,146.04 A81,81 0 0,1 107,87.05" android:strokeColor="#1F5DB4" android:strokeWidth="5" android:fillColor="#00000000"/>
-    <path android:pathData="M133,87.05 A81,81 0 0,1 198.24,146.04" android:strokeColor="#1F5DB4" android:strokeWidth="5" android:fillColor="#00000000"/>
-    <path android:pathData="M39.26,146.04 a2.5,2.5 0 1,0 5,0 a2.5,2.5 0 1,0 -5,0" android:fillColor="#1F5DB4"/>
-    <path android:pathData="M195.74,146.04 a2.5,2.5 0 1,0 5,0 a2.5,2.5 0 1,0 -5,0" android:fillColor="#1F5DB4"/>
-    <path android:pathData="M100,209 a20,5.5 0 1,0 40,0 a20,5.5 0 1,0 -40,0" android:strokeColor="#1F5DB4" android:strokeWidth="2.5" android:fillColor="#00000000"/>
-    <path android:pathData="M113,26 H127 V48 H159 V62 H127 V154 L120,208 L113,154 V62 H81 V48 H113 Z" android:fillColor="#E8462F"/>
+    android:width="288dp"
+    android:height="288dp"
+    android:viewportWidth="288"
+    android:viewportHeight="288">
+    <!-- Scaled to 0.72 inside 288dp so the full 240x240 mark sits comfortably inside Android 12+'s 160dp safe circle. -->
+    <group
+        android:translateX="57.6"
+        android:translateY="54.0"
+        android:scaleX="0.72"
+        android:scaleY="0.72">
+        <path
+            android:pathData="M41.76,150.04 A81,81 0 0,1 107,91.05"
+            android:strokeColor="#1F5DB4"
+            android:strokeWidth="5"
+            android:strokeLineCap="round"
+            android:fillColor="#00000000" />
+        <path
+            android:pathData="M133,91.05 A81,81 0 0,1 198.24,150.04"
+            android:strokeColor="#1F5DB4"
+            android:strokeWidth="5"
+            android:strokeLineCap="round"
+            android:fillColor="#00000000" />
+        <path
+            android:pathData="M39.26,150.04 a2.5,2.5 0 1,0 5,0 a2.5,2.5 0 1,0 -5,0"
+            android:fillColor="#1F5DB4" />
+        <path
+            android:pathData="M195.74,150.04 a2.5,2.5 0 1,0 5,0 a2.5,2.5 0 1,0 -5,0"
+            android:fillColor="#1F5DB4" />
+        <path
+            android:pathData="M100,213 a20,5.5 0 1,0 40,0 a20,5.5 0 1,0 -40,0"
+            android:strokeColor="#1F5DB4"
+            android:strokeWidth="2.5"
+            android:fillColor="#00000000" />
+        <path
+            android:pathData="M113,30 H127 V52 H159 V66 H127 V158 L120,212 L113,158 V66 H81 V52 H113 Z"
+            android:fillColor="#E8462F" />
+    </group>
 </vector>

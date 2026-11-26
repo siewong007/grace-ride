@@ -3,6 +3,7 @@ import { Link, useNavigate } from 'react-router-dom';
 import { ArrowLeft } from 'lucide-react';
 import { post } from '../api';
 import { useAuth } from '../auth';
+import { signOutClient } from '../pushNotifications';
 import { SwipeBackGesture, useSmartBack } from './BackNavigation';
 import { Globe } from 'lucide-react';
 import { Button, ErrorBox, useAction } from './ui';
@@ -12,7 +13,7 @@ import i18n, { setLanguage, SupportedLanguage } from '../i18n';
 
 export const TERMS_SECTIONS = [
   'service', 'who', 'controller', 'info', 'sensitive', 'purpose', 'location', 'see', 'third',
-  'retention', 'rights', 'drivers', 'conduct', 'ownership', 'changes', 'accept',
+  'external', 'retention', 'rights', 'drivers', 'conduct', 'ownership', 'changes', 'accept',
 ] as const;
 
 /**
@@ -88,7 +89,7 @@ export function TermsOptIn({ checked, onChange }: { checked: boolean; onChange: 
 /** Blocks the app after sign-in until the person opts in. */
 export function TermsGate() {
   const { t } = useTranslation('terms');
-  const { refresh } = useAuth();
+  const { refresh, clearLocalAuth } = useAuth();
   const nav = useNavigate();
   const [checked, setChecked] = useState(false);
   const { busy, error, run } = useAction();
@@ -108,7 +109,7 @@ export function TermsGate() {
             <Button
               variant="ghost"
               disabled={busy}
-              onClick={() => run(async () => { await post('/auth/logout'); await refresh(); nav('/login'); })}
+              onClick={() => run(async () => { await signOutClient(); clearLocalAuth?.(); nav('/login'); })}
             >
               {t('logout')}
             </Button>

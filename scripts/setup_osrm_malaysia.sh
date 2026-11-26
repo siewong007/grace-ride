@@ -29,6 +29,13 @@ curl -fL --retry 3 --output "$STAGING/${PBF_BASE}.osm.pbf.md5" "$MD5_URL"
     expected="$(awk '{print $1}' "${PBF_BASE}.osm.pbf.md5")"
     actual="$(md5 -q "${PBF_BASE}.osm.pbf")"
     [[ "$expected" == "$actual" ]] || { echo "MD5 mismatch: expected $expected, got $actual" >&2; exit 1; }
+  elif command -v openssl >/dev/null 2>&1; then
+    expected="$(awk '{print $1}' "${PBF_BASE}.osm.pbf.md5")"
+    actual="$(openssl dgst -md5 -r "${PBF_BASE}.osm.pbf" | awk '{print $1}')"
+    [[ "$expected" == "$actual" ]] || { echo "MD5 mismatch: expected $expected, got $actual" >&2; exit 1; }
+  else
+    echo "No MD5 checksum tool (md5sum, md5, or openssl) available to verify download" >&2
+    exit 1
   fi
 )
 

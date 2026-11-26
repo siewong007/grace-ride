@@ -200,7 +200,34 @@ describe('Layout and Navigation', () => {
     expect(bottomNav).toHaveTextContent('Events');
     expect(bottomNav).toHaveTextContent('Profile');
     expect(bottomNav).not.toHaveTextContent('My costs');
+    expect(bottomNav).toHaveAttribute('data-tab-count', '3');
+    expect(bottomNav).toHaveAttribute('data-has-active', 'true');
+    expect(bottomNav.style.getPropertyValue('--tab-count')).toBe('3');
+    expect(bottomNav.style.getPropertyValue('--active-index')).toBe('0');
+    expect(bottomNav.querySelectorAll('.bottom-tab-label.sr-only')).toHaveLength(3);
+    expect(bottomNav.querySelector('.bottom-tab-avatar .avatar')).toBeInTheDocument();
 
     expect(screen.getAllByRole('button', { name: /Search/i }).length).toBeGreaterThanOrEqual(2);
+  });
+
+  it('slides the active pill and applies directional transition when tapping bottom tabs', () => {
+    render(
+      <MemoryRouter initialEntries={['/']}>
+        <Routes>
+          <Route element={<Layout />}>
+            <Route path="/" element={<div>Home content</div>} />
+            <Route path="/events" element={<div>Events content</div>} />
+            <Route path="/me" element={<div>Profile content</div>} />
+          </Route>
+        </Routes>
+      </MemoryRouter>
+    );
+
+    const bottomNav = screen.getByRole('navigation', { name: 'Bottom navigation' });
+    const eventsLink = screen.getByRole('link', { name: 'Events' });
+    fireEvent.click(eventsLink);
+
+    expect(bottomNav.style.getPropertyValue('--active-index')).toBe('1');
+    expect(screen.getByRole('main')).toHaveAttribute('data-nav-dir', 'left');
   });
 });

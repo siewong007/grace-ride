@@ -178,7 +178,7 @@ export default function FamilySection() {
                     <Button
                       variant="secondary"
                       size="sm"
-                      onClick={() => navigator.clipboard.writeText(inv.url)}
+                      onClick={() => void navigator.clipboard?.writeText(inv.url).catch(() => {})}
                     >
                       {t('copyLink')}
                     </Button>

@@ -356,6 +356,9 @@ async fn delete_visitor(
 ) -> AppResult<Json<Value>> {
     require(&u, Page::AdminPlan, Act::Update)?;
     load_event(&st, &u, id).await?;
+    if !may_edit(&u) {
+        return Err(forbidden(u.lang, ErrorKey::Forbidden));
+    }
     let mut tx = st.db.begin().await?;
     let row: Option<(i64,)> =
         sqlx::query_as("SELECT id FROM plan_visitors WHERE id = $1 AND event_id = $2 FOR UPDATE")

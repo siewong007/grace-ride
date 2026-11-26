@@ -12,14 +12,18 @@ import androidx.compose.ui.test.performScrollToIndex
 import androidx.compose.ui.test.performTextInput
 import androidx.navigation.compose.rememberNavController
 import androidx.test.ext.junit.runners.AndroidJUnit4
+import okhttp3.mockwebserver.Dispatcher
 import okhttp3.mockwebserver.MockResponse
 import okhttp3.mockwebserver.MockWebServer
+import okhttp3.mockwebserver.RecordedRequest
 import org.junit.After
 import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
+import org.pjstatecm.graceride.data.api.BiometricEnrollment
+import org.pjstatecm.graceride.data.api.Me
 import org.pjstatecm.graceride.data.api.Ride
 import org.pjstatecm.graceride.data.api.RideArea
 import org.pjstatecm.graceride.data.api.RidePassenger
@@ -27,11 +31,15 @@ import org.pjstatecm.graceride.data.api.RideViewer
 import org.pjstatecm.graceride.data.api.Share
 import org.pjstatecm.graceride.data.session.InMemoryStore
 import org.pjstatecm.graceride.di.AppContainer
+import org.pjstatecm.graceride.platform.BiometricAvailability
+import org.pjstatecm.graceride.platform.BiometricCryptoDriver
+import org.pjstatecm.graceride.platform.BiometricSignResult
 import org.pjstatecm.graceride.ui.components.EmptyView
 import org.pjstatecm.graceride.ui.components.ErrorView
 import org.pjstatecm.graceride.ui.components.RideCard
 import org.pjstatecm.graceride.ui.components.ShareCard
 import org.pjstatecm.graceride.ui.screens.events.EventDetailScreen
+import org.pjstatecm.graceride.ui.screens.login.BiometricGateScreen
 import org.pjstatecm.graceride.ui.screens.login.LoginScreen
 import org.pjstatecm.graceride.ui.screens.login.UnlockScreen
 import org.pjstatecm.graceride.ui.screens.profile.ProxyRidersScreen
@@ -109,7 +117,7 @@ class ComposeUiTest {
         }
         compose.onNodeWithText("Terms of use and privacy notice").assertIsDisplayed()
         // The opt-in row and agree button are the last items of a long list.
-        compose.onNodeWithTag("termsList").performScrollToIndex(18)
+        compose.onNodeWithTag("termsList").performScrollToIndex(19)
         compose.onNodeWithText("Agree and continue").assertIsNotEnabled()
         compose.onNodeWithText("I have read these terms and the privacy notice, and I opt in", substring = true)
             .performClick()
@@ -207,7 +215,9 @@ class ComposeUiTest {
     }
 
     @Test fun rideNewWithoutEventHasTopAppBarAndBrowseButton() {
-        server.enqueue(MockResponse().setBody("[]"))
+        server.dispatcher = object : Dispatcher() {
+            override fun dispatch(request: RecordedRequest): MockResponse = MockResponse().setBody("[]")
+        }
         compose.setContent {
             GraceRideTheme {
                 val nav = rememberNavController()
@@ -219,12 +229,16 @@ class ComposeUiTest {
     }
 
     @Test fun proxyRidersScreenLocalizesCellMemberLabel() {
-        server.enqueue(
-            MockResponse().setBody(
-                """[{"id":4,"name":"Uncle Lim","phone":"0123456","relationship":"cell_member","notes":"","area_id":null,"pickup_address":"10 SS2","gate_notes":""}]"""
-            )
-        )
-        server.enqueue(MockResponse().setBody("[]"))
+        server.dispatcher = object : Dispatcher() {
+            override fun dispatch(request: RecordedRequest): MockResponse =
+                when {
+                    request.path?.startsWith("/api/proxy-riders") == true ->
+                        MockResponse().setBody(
+                            """[{"id":4,"name":"Uncle Lim","phone":"0123456","relationship":"cell_member","notes":"","area_id":null,"pickup_address":"10 SS2","gate_notes":""}]"""
+                        )
+                    else -> MockResponse().setBody("[]")
+                }
+        }
         compose.setContent {
             GraceRideTheme {
                 val nav = rememberNavController()
@@ -241,5 +255,69 @@ class ComposeUiTest {
         }
         compose.onNodeWithText("Cell group member").assertIsDisplayed()
         compose.onNodeWithText("cell_member").assertDoesNotExist()
+    }
+
+    @Test fun loginScreenShowsDirectBiometricButtonWhenEnrolled() {
+        server.enqueue(MockResponse().setBody("[]")) // dev users
+        container.biometric.saveEnrollment(
+            BiometricEnrollment(
+                id = 1L,
+                credentialId = "cred-ui-0123456789abcdef",
+                userId = 1L,
+                email = "member@example.org",
+                userName = "Test Member",
+                label = "Pixel",
+            )
+        )
+        compose.setContent {
+            GraceRideTheme { LoginScreen(container) }
+        }
+        compose.onNodeWithText("Sign in with biometrics").assertIsDisplayed()
+        compose.onNodeWithText("Test Member", substring = true).assertIsDisplayed()
+        compose.onNodeWithText("Sign in with passkey").assertIsDisplayed()
+    }
+
+    @Test fun biometricGateScreenUnlocksAppWithHardwareDriver() {
+        val fakeDriver = object : BiometricCryptoDriver {
+            override fun availability(context: android.content.Context?) = BiometricAvailability.AVAILABLE
+            override suspend fun generateAndSign(
+                context: android.content.Context,
+                payload: ByteArray,
+                title: String,
+                subtitle: String,
+                cancelText: String,
+                attestationChallenge: ByteArray?,
+            ) = BiometricSignResult.Success("sig", "pub")
+            override suspend fun signWithEnrolledKey(
+                context: android.content.Context,
+                payload: ByteArray,
+                title: String,
+                subtitle: String,
+                cancelText: String,
+            ) = BiometricSignResult.Success("sig", "pub")
+            override suspend fun verifyLocalUnlock(
+                context: android.content.Context,
+                title: String,
+                subtitle: String,
+                cancelText: String,
+            ) = BiometricSignResult.Success("sig", "pub")
+            override fun deleteKey() {}
+        }
+        val gatedContainer = AppContainer(null, InMemoryStore(), fakeDriver)
+        val me = Me(id = 1L, name = "Test Member", email = "member@example.org", passkeyCount = 1)
+        gatedContainer.biometric.saveEnrollment(
+            BiometricEnrollment(
+                id = 1L,
+                credentialId = "cred-ui-0123456789abcdef",
+                userId = 1L,
+                email = "member@example.org",
+                userName = "Test Member",
+            )
+        )
+        compose.setContent {
+            GraceRideTheme { BiometricGateScreen(gatedContainer, me) }
+        }
+        compose.waitUntil(5_000) { gatedContainer.biometric.appUnlocked.value }
+        assertTrue(gatedContainer.biometric.appUnlocked.value)
     }
 }

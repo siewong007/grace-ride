@@ -63,6 +63,7 @@ export default function LocationPinPicker({
         <TileLayer
           attribution="&copy; OpenStreetMap contributors"
           url="https://tile.openstreetmap.org/{z}/{x}/{y}.png"
+          referrerPolicy="no-referrer"
         />
         <MapEventsAndCenter lat={lat} lng={lng} onPick={onPick} />
         {hasPin && (

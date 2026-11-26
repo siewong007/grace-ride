@@ -15,6 +15,11 @@ export class ErrorBoundary extends Component<{ children: ReactNode }, { failed: 
   }
   componentDidCatch(error: Error, info: ErrorInfo) {
     console.error('UI error', error, info.componentStack);
+    if (import.meta.env.VITE_SENTRY_DSN) {
+      void import('@sentry/react')
+        .then((Sentry) => Sentry.captureException(error))
+        .catch(() => {});
+    }
     hideSplash();
   }
   render() {

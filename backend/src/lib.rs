@@ -5,8 +5,10 @@
 #![allow(clippy::type_complexity)]
 
 pub mod arrange;
+pub mod attestation;
 pub mod audience;
 pub mod auth;
+pub mod crypto;
 pub mod error;
 pub mod i18n;
 pub mod jobs;
@@ -330,6 +332,25 @@ async fn request_id_middleware(mut req: Request, next: Next) -> Response {
     res
 }
 
+/// Redact bearer capability tokens and static webhook secrets from URI paths before logging or error reporting.
+pub fn redact_uri_path(path: &str) -> std::borrow::Cow<'_, str> {
+    for prefix in [
+        "/api/invites/",
+        "/api/visit/",
+        "/api/care/",
+        "/api/calendar/",
+        "/api/push/telegram/webhook/",
+        "/invite/",
+        "/visit/",
+        "/care/",
+    ] {
+        if path.starts_with(prefix) && path.len() > prefix.len() {
+            return std::borrow::Cow::Owned(format!("{prefix}[REDACTED]"));
+        }
+    }
+    std::borrow::Cow::Borrowed(path)
+}
+
 async fn assetlinks_json(State(st): State<AppState>) -> Json<Value> {
     if st.cfg.android_cert_sha256_fingerprints.is_empty() {
         return Json(json!([]));
@@ -347,6 +368,47 @@ async fn assetlinks_json(State(st): State<AppState>) -> Json<Value> {
     }]))
 }
 
+pub fn apple_app_site_association_json(app_ids: &[String]) -> Value {
+    if app_ids.is_empty() {
+        return json!({
+            "applinks": { "details": [] },
+            "webcredentials": { "apps": [] }
+        });
+    }
+    json!({
+        "applinks": {
+            "details": [{
+                "appIDs": app_ids,
+                "components": [
+                    { "/": "/api/*", "exclude": true },
+                    { "/": "/events/new", "exclude": true },
+                    { "/": "/events/*/edit", "exclude": true },
+                    { "/": "/events/*/settle", "exclude": true },
+                    { "/": "/rides" },
+                    { "/": "/rides/*" },
+                    { "/": "/ride-new" },
+                    { "/": "/events" },
+                    { "/": "/events/*" },
+                    { "/": "/drive" },
+                    { "/": "/driver" },
+                    { "/": "/costs" },
+                    { "/": "/history" },
+                    { "/": "/notifications" },
+                    { "/": "/me" },
+                    { "/": "/profile" }
+                ]
+            }]
+        },
+        "webcredentials": {
+            "apps": app_ids
+        }
+    })
+}
+
+async fn apple_app_site_association(State(st): State<AppState>) -> Json<Value> {
+    Json(apple_app_site_association_json(&st.cfg.ios_app_ids))
+}
+
 pub fn router(state: AppState) -> Router {
     let api = routes::api()
         .route("/stream", get(stream::handler))
@@ -355,7 +417,11 @@ pub fn router(state: AppState) -> Router {
         .layer(from_fn_with_state(state.clone(), security::session_guard));
     let mut app = Router::new()
         .nest("/api", api)
-        .route("/.well-known/assetlinks.json", get(assetlinks_json));
+        .route("/.well-known/assetlinks.json", get(assetlinks_json))
+        .route(
+            "/.well-known/apple-app-site-association",
+            get(apple_app_site_association),
+        );
 
     // In production the compiled React app is served from the same origin.
     if let Some(dir) = &state.cfg.static_dir {
@@ -372,7 +438,20 @@ pub fn router(state: AppState) -> Router {
             state.clone(),
             security::security_headers,
         ))
-        .layer(TraceLayer::new_for_http())
+        .layer(TraceLayer::new_for_http().make_span_with(|req: &Request| {
+            let safe_path = redact_uri_path(req.uri().path());
+            let req_id = req
+                .headers()
+                .get("x-request-id")
+                .and_then(|v| v.to_str().ok())
+                .unwrap_or("-");
+            tracing::info_span!(
+                "http_request",
+                method = %req.method(),
+                uri = %safe_path,
+                request_id = %req_id
+            )
+        }))
         .layer(from_fn(request_id_middleware))
         .with_state(state)
 }
@@ -428,5 +507,24 @@ mod history_tests {
         let mut applied = shipped();
         applied.push((99, vec![0u8; 48]));
         assert_eq!(classify_history(&applied, &migrator), History::Diverged(99));
+    }
+
+    #[test]
+    fn apple_app_site_association_handles_empty_and_configured_ids() {
+        let empty = super::apple_app_site_association_json(&[]);
+        assert_eq!(empty["applinks"]["details"], serde_json::json!([]));
+        assert_eq!(empty["webcredentials"]["apps"], serde_json::json!([]));
+
+        let populated = super::apple_app_site_association_json(&[
+            "ABCDE12345.org.pjstatecm.graceride".to_string(),
+        ]);
+        assert_eq!(
+            populated["webcredentials"]["apps"],
+            serde_json::json!(["ABCDE12345.org.pjstatecm.graceride"])
+        );
+        assert_eq!(
+            populated["applinks"]["details"][0]["appIDs"],
+            serde_json::json!(["ABCDE12345.org.pjstatecm.graceride"])
+        );
     }
 }

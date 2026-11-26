@@ -61,6 +61,11 @@ pub(super) async fn signup(
     if req.offer_drive.unwrap_or(false) && !u.can(Page::Drive, Act::Create) {
         return Err(bad(u.lang, ErrorKey::DriverRegistrationRequired));
     }
+    if let Some(s) = req.offer_seats {
+        if !(0..=8).contains(&s) {
+            return Err(bad(u.lang, ErrorKey::SeatsRange));
+        }
+    }
     let choices = join_choices(&st.db, &u, id).await?;
     // Lock the event row while counting seats and inserting the signup. Concurrent
     // signups then queue behind each other and the last seat cannot be handed out twice.
@@ -233,6 +238,9 @@ pub(super) async fn withdraw(
             .bind(id)
             .fetch_one(&mut *tx)
             .await?;
+    if event_status != "published" {
+        return Err(bad(u.lang, ErrorKey::EventNotOpen));
+    }
     let withdrew = sqlx::query(
         "UPDATE event_signups SET status='cancelled', self_transport=0 WHERE event_id=$1 AND user_id=$2 AND status <> 'cancelled'",
     )
@@ -242,11 +250,13 @@ pub(super) async fn withdraw(
     .await?
     .rows_affected()
         > 0;
+    if !withdrew {
+        tx.commit().await?;
+        return Ok(Json(json!({"ok": true})));
+    }
     // Fill every free place from the waitlist, in order, rather than exactly one per
     // withdrawal; this also heals any place left open earlier.
     let promoted = promote_waitlist(&mut tx, id, capacity, &event_status).await?;
-    tx.commit().await?;
-    notify_promoted(&st, id, &e.title, &promoted).await;
     let rides: Vec<(i64, Option<i64>, Option<i64>)> = sqlx::query_as(
         // Only their own ride: a visitor they invited may still come, and the host can cancel
         // that ride from the ride page.
@@ -258,8 +268,31 @@ pub(super) async fn withdraw(
     .bind(id)
     .bind(u.id)
     .bind(now())
-    .fetch_all(&st.db)
+    .fetch_all(&mut *tx)
     .await?;
+    // A driver who leaves the event can no longer drive for it: hand their unstarted rides
+    // back to the pool and tell the passengers and transport staff. Capture pre-update
+    // trip_id so routing cache invalidation targets the real trip.
+    let released: Vec<(i64, i64, Option<i64>)> = sqlx::query_as(
+        "UPDATE rides SET status='pending_driver', driver_id=NULL, trip_id=NULL,
+                needs_attention = CASE WHEN old.old_status IN ('confirmed','pending_driver_confirm') THEN 1 ELSE 0 END,
+                attention_reason=$3, updated_at=$4
+         FROM (SELECT id, status AS old_status, trip_id AS old_trip_id
+               FROM rides
+               WHERE event_id=$1 AND driver_id=$2
+                 AND status IN ('pending_passenger','pending_approval','pending_driver_confirm','confirmed')
+               FOR UPDATE) old
+         WHERE rides.id = old.id
+         RETURNING rides.id, rides.passenger_id, old.old_trip_id",
+    )
+    .bind(id)
+    .bind(u.id)
+    .bind(format!("司机 {} 已退出活动报名", u.name))
+    .bind(now())
+    .fetch_all(&mut *tx)
+    .await?;
+    tx.commit().await?;
+    notify_promoted(&st, id, &e.title, &promoted).await;
     let ride_ids: Vec<i64> = rides.iter().map(|(rid, _, _)| *rid).collect();
     audit_many(
         &st.db,
@@ -287,22 +320,6 @@ pub(super) async fn withdraw(
             .await;
         }
     }
-    // A driver who leaves the event can no longer drive for it: hand their unstarted rides
-    // back to the pool and tell the passengers and transport staff.
-    let released: Vec<(i64, i64, Option<i64>)> = sqlx::query_as(
-        "UPDATE rides SET status='pending_driver', driver_id=NULL, trip_id=NULL,
-                needs_attention = CASE WHEN status IN ('confirmed','pending_driver_confirm') THEN 1 ELSE 0 END,
-                attention_reason=$3, updated_at=$4
-         WHERE event_id=$1 AND driver_id=$2
-           AND status IN ('pending_passenger','pending_approval','pending_driver_confirm','confirmed')
-         RETURNING id, passenger_id, trip_id",
-    )
-    .bind(id)
-    .bind(u.id)
-    .bind(format!("司机 {} 已退出活动报名", u.name))
-    .bind(now())
-    .fetch_all(&st.db)
-    .await?;
     let mut batch = Vec::new();
     let staff_ids: Vec<i64> = if !released.is_empty() {
         sqlx::query_scalar(crate::dyn_sql!(

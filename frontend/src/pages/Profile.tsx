@@ -41,7 +41,12 @@ import { WaitingRoom } from '../components/Onboarding';
 import AvatarEditor from '../components/AvatarEditor';
 import { PwaInstallModal } from '../components/PwaInstallModal';
 import { usePwaInstall } from '../pwaInstall';
-import { disableDevicePush, enablePushNotifications, getCurrentPushEndpoint, usePushNotifications } from '../pushNotifications';
+import {
+  disableDevicePush,
+  enablePushNotifications,
+  signOutClient,
+  usePushNotifications,
+} from '../pushNotifications';
 import FamilySection from './family/FamilySection';
 import ProxyRidersSection from './family/ProxyRidersSection';
 import SavedAddressesSection from './SavedAddressesSection';
@@ -55,7 +60,7 @@ export default function Profile() {
   const { t } = useTranslation('profile');
   const ft = useFormatT();
   const confirm = useConfirm();
-  const { me, refresh, can } = useAuth();
+  const { me, refresh, clearLocalAuth, can } = useAuth();
   // A too-old sign-in can be renewed in place only with a passkey this browser can use.
   const canReauth = passkeySupported() && (me?.passkey_count ?? 0) > 0;
   const recentSignIn = <T,>(fn: () => Promise<T>) => withRecentSignIn(fn, canReauth);
@@ -118,7 +123,14 @@ export default function Profile() {
     optOut: me?.badges_opt_out ?? false,
   });
   const [readinessPrompt, setReadinessPrompt] = useState(me?.readiness_prompt_mins ?? 45);
-  const [autoLockMins, setAutoLockMins] = useState(me?.auto_lock_mins ?? (parseInt(localStorage.getItem('gr_autolock_mins') || '0', 10) || 0));
+  const [autoLockMins, setAutoLockMins] = useState(() => {
+    if (me?.auto_lock_mins != null) return me.auto_lock_mins;
+    try {
+      return parseInt(localStorage.getItem('gr_autolock_mins') || '0', 10) || 0;
+    } catch {
+      return 0;
+    }
+  });
   const [telegramChatId, setTelegramChatId] = useState(me?.telegram_chat_id ?? '');
   const [whatsappOptIn, setWhatsappOptIn] = useState(Boolean(me?.whatsapp_opt_in));
   const [pushOptIn, setPushOptIn] = useState(me?.push_opt_in ?? true);
@@ -140,6 +152,7 @@ export default function Profile() {
         optOut: me.badges_opt_out ?? false,
       });
       setReadinessPrompt(me.readiness_prompt_mins ?? 45);
+      if (me.auto_lock_mins != null) setAutoLockMins(me.auto_lock_mins);
       setTelegramChatId(me.telegram_chat_id ?? '');
       setWhatsappOptIn(Boolean(me.whatsapp_opt_in));
       setPushOptIn(me.push_opt_in ?? true);
@@ -228,12 +241,7 @@ export default function Profile() {
 
   const savePersonal = () => put('/me', { name: f.name, phone: f.phone }).then(refresh);
   const savePreferences = async () => {
-    setPrefsError('');
     const cleanedTg = telegramChatId.trim();
-    if (cleanedTg && !/^-?\d{5,20}$/.test(cleanedTg)) {
-      setPrefsError(t('telegramInvalidId'));
-      return;
-    }
     await put('/me', {
       badges_opt_out: f.optOut,
       readiness_prompt_mins: readinessPrompt,
@@ -380,16 +388,9 @@ export default function Profile() {
 
   const handleLogout = () =>
     run(async () => {
-      if (push.isSubscribed) {
-        const endpoint = await getCurrentPushEndpoint().catch(() => '');
-        await disableDevicePush().catch(() => {});
-        await (endpoint
-          ? post('/auth/logout', { push_endpoint: endpoint })
-          : post('/auth/logout'));
-      } else {
-        await post('/auth/logout');
-      }
-      await refresh();
+      await signOutClient();
+      if (clearLocalAuth) clearLocalAuth();
+      else await refresh();
       nav('/login');
     }, t('loggedOut'));
 
@@ -402,8 +403,9 @@ export default function Profile() {
     });
     if (ok) {
       run(async () => {
-        await post('/auth/logout-all');
-        await refresh();
+        await signOutClient({ allDevices: true });
+        if (clearLocalAuth) clearLocalAuth();
+        else await refresh();
         nav('/login');
       });
     }
@@ -931,7 +933,19 @@ export default function Profile() {
               <div className="divider" />
               <DisplayPreferences />
               <div className="btn-row">
-                <Button variant="primary" onClick={() => run(savePreferences, t('saved'))} loading={busy}>
+                <Button
+                  variant="primary"
+                  onClick={() => {
+                    setPrefsError('');
+                    const cleanedTg = telegramChatId.trim();
+                    if (cleanedTg && !/^-?\d{5,20}$/.test(cleanedTg)) {
+                      setPrefsError(t('telegramInvalidId'));
+                      return;
+                    }
+                    void run(savePreferences, t('saved'));
+                  }}
+                  loading={busy}
+                >
                   {t('save')}
                 </Button>
               </div>
@@ -1070,7 +1084,11 @@ export default function Profile() {
                         onChange={async (e) => {
                           const val = Number(e.target.value);
                           setAutoLockMins(val);
-                          localStorage.setItem('gr_autolock_mins', String(val));
+                          try {
+                            localStorage.setItem('gr_autolock_mins', String(val));
+                          } catch {
+                            /* storage blocked */
+                          }
                           await run(() => put('/me', { auto_lock_mins: val }).then(refresh), t('saved'));
                         }}
                       >
@@ -1165,7 +1183,7 @@ function BackupCodesModal({
   const [copied, setCopied] = useState(false);
 
   const copy = () => {
-    navigator.clipboard.writeText(codes.join('\n'));
+    void navigator.clipboard?.writeText(codes.join('\n')).catch(() => {});
     setCopied(true);
     setTimeout(() => setCopied(false), 2000);
   };
@@ -1225,7 +1243,7 @@ function TotpModal({
 
   if (backupCodes) {
     const copy = () => {
-      navigator.clipboard.writeText(backupCodes.join('\n'));
+      void navigator.clipboard?.writeText(backupCodes.join('\n')).catch(() => {});
       setCopied(true);
       setTimeout(() => setCopied(false), 2000);
     };
@@ -1337,7 +1355,7 @@ function Verify2faModal({ onClose, onDone }: { onClose: () => void; onDone: () =
           {t('verify2fa')}
         </Button>
         <Button variant="ghost" onClick={onClose}>
-          {t('remove')}
+          {t('cancel')}
         </Button>
       </div>
     </Modal>

@@ -9,7 +9,7 @@ use serde_json::{json, Value};
 
 use crate::audience::MATCH_GROUP_SQL;
 use crate::auth::CurrentUser;
-use crate::error::{bad, forbidden, not_found, AppResult};
+use crate::error::{bad, conflict, forbidden, not_found, AppResult};
 use crate::perms::{Act, Page};
 use crate::state::AppState;
 use crate::util::{audit, now, require, ErrorKey};
@@ -121,6 +121,9 @@ pub(super) async fn driver_route(
     State(st): State<AppState>,
     u: CurrentUser,
 ) -> AppResult<Json<Value>> {
+    if !u.can(Page::Drive, Act::View) {
+        return Ok(Json(json!({ "route": null })));
+    }
     let route = crate::routing::driver_route(&st, u.id, None).await?;
     Ok(Json(json!({ "route": route })))
 }
@@ -264,14 +267,38 @@ pub(super) async fn put_driver_profile(
         return Err(bad(u.lang, ErrorKey::SpareSeatsRange));
     }
     if let Some(ref v) = req.vehicle {
-        if v.model.trim().is_empty() || v.plate.trim().is_empty() {
+        if v.model.trim().is_empty() || v.plate.trim().is_empty() || v.color.trim().is_empty() {
             return Err(bad(u.lang, ErrorKey::VehicleModelAndPlateRequired));
+        }
+        if !matches!(v.vehicle_type.trim(), "standard" | "other") {
+            return Err(bad(u.lang, ErrorKey::InvalidAction));
         }
         if !(2..=9).contains(&v.seats) {
             return Err(bad(u.lang, ErrorKey::VehicleSeatsRange));
         }
     }
     let mut tx = st.db.begin().await?;
+    sqlx::query("SELECT id FROM users WHERE id=$1 FOR UPDATE")
+        .bind(u.id)
+        .execute(&mut *tx)
+        .await?;
+    let uniq_areas: Vec<i64> = {
+        let mut s = std::collections::BTreeSet::new();
+        req.area_ids
+            .iter()
+            .copied()
+            .filter(|a| s.insert(*a))
+            .collect()
+    };
+    if !uniq_areas.is_empty() {
+        let valid_count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM areas WHERE id = ANY($1)")
+            .bind(&uniq_areas)
+            .fetch_one(&mut *tx)
+            .await?;
+        if valid_count != uniq_areas.len() as i64 {
+            return Err(bad(u.lang, ErrorKey::InvalidAction));
+        }
+    }
     let mut active_seats: Option<i64> = req.vehicle.as_ref().map(|v| v.seats);
     if active_seats.is_none() {
         active_seats = if let Some(target_id) = req.active_vehicle_id {
@@ -374,7 +401,7 @@ pub(super) async fn put_driver_profile(
             .bind(v.color.trim())
             .bind(v.plate.trim().to_uppercase())
             .bind(v.seats)
-            .bind(&v.vehicle_type)
+            .bind(v.vehicle_type.trim())
             .bind(v.wheelchair_ok.map(|b| if b { 1i64 } else { 0i64 }))
             .bind(v.low_step.map(|b| if b { 1i64 } else { 0i64 }))
             .bind(v.child_seat.map(|b| if b { 1i64 } else { 0i64 }))
@@ -469,31 +496,67 @@ pub(super) async fn create_driver_vehicle(
     let model = req.model.trim();
     let plate = req.plate.trim().to_uppercase();
     let color = req.color.trim();
-    if model.is_empty() || plate.is_empty() {
+    let vtype = req.vehicle_type.trim();
+    if model.is_empty() || plate.is_empty() || color.is_empty() {
         return Err(bad(u.lang, ErrorKey::VehicleModelAndPlateRequired));
+    }
+    if !matches!(vtype, "standard" | "other") {
+        return Err(bad(u.lang, ErrorKey::InvalidAction));
     }
     if !(2..=9).contains(&req.seats) {
         return Err(bad(u.lang, ErrorKey::VehicleSeatsRange));
     }
 
+    let mut tx = st.db.begin().await?;
+    sqlx::query("SELECT id FROM users WHERE id=$1 FOR UPDATE")
+        .bind(u.id)
+        .execute(&mut *tx)
+        .await?;
+
+    let existing_by_plate: Option<(i64, i64)> = sqlx::query_as(
+        "SELECT id, is_active FROM vehicles WHERE user_id=$1 AND plate=$2 FOR UPDATE",
+    )
+    .bind(u.id)
+    .bind(&plate)
+    .fetch_optional(&mut *tx)
+    .await?;
     let count: (i64,) = sqlx::query_as("SELECT COUNT(*) FROM vehicles WHERE user_id=$1")
         .bind(u.id)
-        .fetch_one(&st.db)
+        .fetch_one(&mut *tx)
         .await?;
-    if count.0 >= 10 {
+    if existing_by_plate.is_none() && count.0 >= 10 {
         return Err(bad(u.lang, ErrorKey::InvalidAction));
     }
 
-    let should_activate = req.is_active.unwrap_or(false) || count.0 == 0;
-    let mut tx = st.db.begin().await?;
+    let mut should_activate = req.is_active.unwrap_or(false) || count.0 == 0;
+    if !should_activate && existing_by_plate.as_ref().is_some_and(|(_, act)| *act == 1) {
+        let other: Option<(i64, i64)> = sqlx::query_as(
+            "SELECT id, seats FROM vehicles WHERE user_id=$1 AND plate<>$2 ORDER BY id ASC LIMIT 1",
+        )
+        .bind(u.id)
+        .bind(&plate)
+        .fetch_optional(&mut *tx)
+        .await?;
+        if let Some((other_id, other_seats)) = other {
+            sqlx::query("UPDATE vehicles SET is_active=1 WHERE id=$1 AND user_id=$2")
+                .bind(other_id)
+                .bind(u.id)
+                .execute(&mut *tx)
+                .await?;
+            clamp_spare_seats(&mut tx, u.id, other_seats).await?;
+        } else {
+            should_activate = true;
+        }
+    }
     if should_activate {
-        sqlx::query("UPDATE vehicles SET is_active=0 WHERE user_id=$1")
+        sqlx::query("UPDATE vehicles SET is_active=0 WHERE user_id=$1 AND plate<>$2")
             .bind(u.id)
+            .bind(&plate)
             .execute(&mut *tx)
             .await?;
     }
     let is_act_val = if should_activate { 1i64 } else { 0i64 };
-    let row: (i64,) = sqlx::query_as(
+    let row: (i64, i64, i64, i64) = sqlx::query_as(
         "INSERT INTO vehicles (user_id, model, color, plate, seats, vehicle_type, wheelchair_ok, low_step, child_seat, is_active)
          VALUES ($1,$2,$3,$4,$5,$6,COALESCE($7, 0),COALESCE($8, 0),COALESCE($9, 0),$10)
          ON CONFLICT (user_id, plate) DO UPDATE SET
@@ -501,19 +564,19 @@ pub(super) async fn create_driver_vehicle(
              color=excluded.color,
              seats=excluded.seats,
              vehicle_type=excluded.vehicle_type,
-             wheelchair_ok=excluded.wheelchair_ok,
-             low_step=excluded.low_step,
-             child_seat=excluded.child_seat,
+             wheelchair_ok=COALESCE($7, vehicles.wheelchair_ok),
+             low_step=COALESCE($8, vehicles.low_step),
+             child_seat=COALESCE($9, vehicles.child_seat),
              is_active=excluded.is_active,
              updated_at=app_now()
-         RETURNING id",
+         RETURNING id, wheelchair_ok, low_step, child_seat",
     )
     .bind(u.id)
     .bind(model)
     .bind(color)
     .bind(&plate)
     .bind(req.seats)
-    .bind(&req.vehicle_type)
+    .bind(vtype)
     .bind(req.wheelchair_ok.map(|b| if b { 1i64 } else { 0i64 }))
     .bind(req.low_step.map(|b| if b { 1i64 } else { 0i64 }))
     .bind(req.child_seat.map(|b| if b { 1i64 } else { 0i64 }))
@@ -545,11 +608,11 @@ pub(super) async fn create_driver_vehicle(
         "color": color,
         "plate": plate,
         "seats": req.seats,
-        "type": req.vehicle_type,
-        "vehicle_type": req.vehicle_type,
-        "wheelchair_ok": req.wheelchair_ok.unwrap_or(false),
-        "low_step": req.low_step.unwrap_or(false),
-        "child_seat": req.child_seat.unwrap_or(false),
+        "type": vtype,
+        "vehicle_type": vtype,
+        "wheelchair_ok": row.1 != 0,
+        "low_step": row.2 != 0,
+        "child_seat": row.3 != 0,
         "is_active": should_activate,
     })))
 }
@@ -566,34 +629,62 @@ pub(super) async fn update_driver_vehicle(
     let model = req.model.trim();
     let plate = req.plate.trim().to_uppercase();
     let color = req.color.trim();
-    if model.is_empty() || plate.is_empty() {
+    let vtype = req.vehicle_type.trim();
+    if model.is_empty() || plate.is_empty() || color.is_empty() {
         return Err(bad(u.lang, ErrorKey::VehicleModelAndPlateRequired));
+    }
+    if !matches!(vtype, "standard" | "other") {
+        return Err(bad(u.lang, ErrorKey::InvalidAction));
     }
     if !(2..=9).contains(&req.seats) {
         return Err(bad(u.lang, ErrorKey::VehicleSeatsRange));
     }
 
+    let mut tx = st.db.begin().await?;
+    sqlx::query("SELECT id FROM users WHERE id=$1 FOR UPDATE")
+        .bind(u.id)
+        .execute(&mut *tx)
+        .await?;
+
     let existing: Option<(i64, i64)> =
-        sqlx::query_as("SELECT id, is_active FROM vehicles WHERE id=$1 AND user_id=$2")
+        sqlx::query_as("SELECT id, is_active FROM vehicles WHERE id=$1 AND user_id=$2 FOR UPDATE")
             .bind(id)
             .bind(u.id)
-            .fetch_optional(&st.db)
+            .fetch_optional(&mut *tx)
             .await?;
     let Some((_, current_active)) = existing else {
         return Err(not_found(u.lang));
     };
 
-    let mut tx = st.db.begin().await?;
-    let should_activate = req.is_active.unwrap_or(current_active == 1);
-    if should_activate && current_active != 1 {
-        sqlx::query("UPDATE vehicles SET is_active=0 WHERE user_id=$1")
+    let mut should_activate = req.is_active.unwrap_or(current_active == 1);
+    if !should_activate && current_active == 1 {
+        let other: Option<(i64, i64)> = sqlx::query_as(
+            "SELECT id, seats FROM vehicles WHERE user_id=$1 AND id<>$2 ORDER BY id ASC LIMIT 1",
+        )
+        .bind(u.id)
+        .bind(id)
+        .fetch_optional(&mut *tx)
+        .await?;
+        if let Some((other_id, other_seats)) = other {
+            sqlx::query("UPDATE vehicles SET is_active=1 WHERE id=$1 AND user_id=$2")
+                .bind(other_id)
+                .bind(u.id)
+                .execute(&mut *tx)
+                .await?;
+            clamp_spare_seats(&mut tx, u.id, other_seats).await?;
+        } else {
+            should_activate = true;
+        }
+    } else if should_activate && current_active != 1 {
+        sqlx::query("UPDATE vehicles SET is_active=0 WHERE user_id=$1 AND id<>$2")
             .bind(u.id)
+            .bind(id)
             .execute(&mut *tx)
             .await?;
     }
 
     let is_act_val = if should_activate { 1i64 } else { 0i64 };
-    sqlx::query(
+    let updated: (i64, i64, i64) = match sqlx::query_as(
         "UPDATE vehicles SET
             model=$1, color=$2, plate=$3, seats=$4, vehicle_type=$5,
             wheelchair_ok=COALESCE($6, wheelchair_ok),
@@ -601,21 +692,29 @@ pub(super) async fn update_driver_vehicle(
             child_seat=COALESCE($8, child_seat),
             is_active=$9,
             updated_at=app_now()
-         WHERE id=$10 AND user_id=$11",
+         WHERE id=$10 AND user_id=$11
+         RETURNING wheelchair_ok, low_step, child_seat",
     )
     .bind(model)
     .bind(color)
     .bind(&plate)
     .bind(req.seats)
-    .bind(&req.vehicle_type)
+    .bind(vtype)
     .bind(req.wheelchair_ok.map(|b| if b { 1i64 } else { 0i64 }))
     .bind(req.low_step.map(|b| if b { 1i64 } else { 0i64 }))
     .bind(req.child_seat.map(|b| if b { 1i64 } else { 0i64 }))
     .bind(is_act_val)
     .bind(id)
     .bind(u.id)
-    .execute(&mut *tx)
-    .await?;
+    .fetch_one(&mut *tx)
+    .await
+    {
+        Ok(row) => row,
+        Err(sqlx::Error::Database(e)) if e.code().as_deref() == Some("23505") => {
+            return Err(conflict(u.lang, ErrorKey::InvalidAction));
+        }
+        Err(e) => return Err(e.into()),
+    };
     if should_activate {
         clamp_spare_seats(&mut tx, u.id, req.seats).await?;
     }
@@ -641,11 +740,11 @@ pub(super) async fn update_driver_vehicle(
         "color": color,
         "plate": plate,
         "seats": req.seats,
-        "type": req.vehicle_type,
-        "vehicle_type": req.vehicle_type,
-        "wheelchair_ok": req.wheelchair_ok.unwrap_or(false),
-        "low_step": req.low_step.unwrap_or(false),
-        "child_seat": req.child_seat.unwrap_or(false),
+        "type": vtype,
+        "vehicle_type": vtype,
+        "wheelchair_ok": updated.0 != 0,
+        "low_step": updated.1 != 0,
+        "child_seat": updated.2 != 0,
         "is_active": should_activate,
     })))
 }
@@ -658,17 +757,23 @@ pub(super) async fn delete_driver_vehicle(
     if !u.can(Page::Drive, Act::Update) {
         return Err(forbidden(u.lang, ErrorKey::OnlyVolunteerDriversCanSet));
     }
-    let existing: Option<(i64, String, i64)> =
-        sqlx::query_as("SELECT id, plate, is_active FROM vehicles WHERE id=$1 AND user_id=$2")
-            .bind(id)
-            .bind(u.id)
-            .fetch_optional(&st.db)
-            .await?;
+    let mut tx = st.db.begin().await?;
+    sqlx::query("SELECT id FROM users WHERE id=$1 FOR UPDATE")
+        .bind(u.id)
+        .execute(&mut *tx)
+        .await?;
+
+    let existing: Option<(i64, String, i64)> = sqlx::query_as(
+        "SELECT id, plate, is_active FROM vehicles WHERE id=$1 AND user_id=$2 FOR UPDATE",
+    )
+    .bind(id)
+    .bind(u.id)
+    .fetch_optional(&mut *tx)
+    .await?;
     let Some((_, plate, is_active)) = existing else {
         return Err(not_found(u.lang));
     };
 
-    let mut tx = st.db.begin().await?;
     sqlx::query("DELETE FROM vehicles WHERE id=$1 AND user_id=$2")
         .bind(id)
         .bind(u.id)

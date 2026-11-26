@@ -31,6 +31,8 @@ services:
       db: { condition: service_healthy }
     environment:
       DATABASE_URL: postgres://grace:${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env.production}@db/grace_ride
+      TRUST_PROXY: "true"
+      RUST_LOG: ${RUST_LOG:-grace_ride=info,tower_http=warn}
     env_file: .env.production
     volumes:
       - app-data:/data

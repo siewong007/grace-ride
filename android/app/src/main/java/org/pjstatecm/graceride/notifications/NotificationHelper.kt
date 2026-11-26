@@ -24,6 +24,29 @@ object NotificationHelper {
     const val CHANNEL_CHAT = "chat_messages"
     const val CHANNEL_COMMUNITY = "community"
     const val EXTRA_NOTIF_LINK = "notif_link"
+    const val EXTRA_NOTIF_TOKEN = "notif_token"
+    private const val GUARD_PREFS = "gr_intent_guard"
+    private const val KEY_INTERNAL_TOKEN = "internal_link_token"
+
+    @Volatile
+    private var cachedToken: String? = null
+
+    fun internalToken(context: Context): String {
+        cachedToken?.let { return it }
+        return synchronized(this) {
+            cachedToken?.let { return@synchronized it }
+            val prefs = context.applicationContext.getSharedPreferences(GUARD_PREFS, Context.MODE_PRIVATE)
+            val tok = prefs.getString(KEY_INTERNAL_TOKEN, null)?.takeIf { it.length >= 16 }
+                ?: java.util.UUID.randomUUID().toString().also { generated ->
+                    prefs.edit().putString(KEY_INTERNAL_TOKEN, generated).apply()
+                }
+            cachedToken = tok
+            tok
+        }
+    }
+
+    @Volatile
+    private var lastRegisteredLang: String? = null
 
     private fun localizedContext(context: Context, lang: String?): Context {
         val code = lang?.takeIf { it == "zh" || it == "en" } ?: return context
@@ -33,44 +56,50 @@ object NotificationHelper {
     }
 
     fun ensureChannels(context: Context, lang: String? = null) {
-        val manager = context.getSystemService(NotificationManager::class.java) ?: return
-        val ctx = localizedContext(context, lang)
-        val channels = listOf(
-            NotificationChannel(
-                CHANNEL_RIDES_URGENT,
-                ctx.getString(R.string.notif_channel_rides_urgent_name),
-                NotificationManager.IMPORTANCE_HIGH,
-            ).apply {
-                description = ctx.getString(R.string.notif_channel_rides_urgent_desc)
-            },
-            NotificationChannel(
-                CHANNEL_RIDES_UPDATES,
-                ctx.getString(R.string.notif_channel_rides_updates_name),
-                NotificationManager.IMPORTANCE_DEFAULT,
-            ).apply {
-                description = ctx.getString(R.string.notif_channel_rides_updates_desc)
-            },
-            NotificationChannel(
-                CHANNEL_CHAT,
-                ctx.getString(R.string.notif_channel_chat_name),
-                NotificationManager.IMPORTANCE_DEFAULT,
-            ).apply {
-                description = ctx.getString(R.string.notif_channel_chat_desc)
-            },
-            NotificationChannel(
-                CHANNEL_COMMUNITY,
-                ctx.getString(R.string.notif_channel_community_name),
-                NotificationManager.IMPORTANCE_LOW,
-            ).apply {
-                description = ctx.getString(R.string.notif_channel_community_desc)
-            },
-        )
-        manager.createNotificationChannels(channels)
+        val key = lang?.takeIf { it == "zh" || it == "en" } ?: "default"
+        if (lastRegisteredLang == key) return
+        synchronized(this) {
+            if (lastRegisteredLang == key) return
+            val manager = context.getSystemService(NotificationManager::class.java) ?: return
+            val ctx = localizedContext(context, lang)
+            val channels = listOf(
+                NotificationChannel(
+                    CHANNEL_RIDES_URGENT,
+                    ctx.getString(R.string.notif_channel_rides_urgent_name),
+                    NotificationManager.IMPORTANCE_HIGH,
+                ).apply {
+                    description = ctx.getString(R.string.notif_channel_rides_urgent_desc)
+                },
+                NotificationChannel(
+                    CHANNEL_RIDES_UPDATES,
+                    ctx.getString(R.string.notif_channel_rides_updates_name),
+                    NotificationManager.IMPORTANCE_DEFAULT,
+                ).apply {
+                    description = ctx.getString(R.string.notif_channel_rides_updates_desc)
+                },
+                NotificationChannel(
+                    CHANNEL_CHAT,
+                    ctx.getString(R.string.notif_channel_chat_name),
+                    NotificationManager.IMPORTANCE_DEFAULT,
+                ).apply {
+                    description = ctx.getString(R.string.notif_channel_chat_desc)
+                },
+                NotificationChannel(
+                    CHANNEL_COMMUNITY,
+                    ctx.getString(R.string.notif_channel_community_name),
+                    NotificationManager.IMPORTANCE_LOW,
+                ).apply {
+                    description = ctx.getString(R.string.notif_channel_community_desc)
+                },
+            )
+            manager.createNotificationChannels(channels)
+            lastRegisteredLang = key
+        }
     }
 
     fun channelFor(category: String, eventType: String, priority: String): String = when {
         priority == "urgent" -> CHANNEL_RIDES_URGENT
-        eventType == "trip_chat" -> CHANNEL_CHAT
+        category == "chat" || eventType == "trip_chat" -> CHANNEL_CHAT
         category == "ride" -> CHANNEL_RIDES_UPDATES
         else -> CHANNEL_COMMUNITY
     }
@@ -96,6 +125,7 @@ object NotificationHelper {
         val tapIntent = Intent(context, MainActivity::class.java).apply {
             flags = Intent.FLAG_ACTIVITY_SINGLE_TOP or Intent.FLAG_ACTIVITY_CLEAR_TOP
             putExtra(EXTRA_NOTIF_LINK, item.link ?: "/notifications")
+            putExtra(EXTRA_NOTIF_TOKEN, internalToken(context))
         }
         val tapPending = PendingIntent.getActivity(
             context,
@@ -128,6 +158,35 @@ object NotificationHelper {
         }
 
         val rideId = NotifLinkRouter.extractRideId(item.link)
+        if (!hideLockDetails && rideId != null && (item.category == "chat" || item.eventType == "trip_chat")) {
+            val senderName = item.title.ifBlank { ctx.getString(R.string.app_name) }
+            val sender = androidx.core.app.Person.Builder()
+                .setName(senderName)
+                .build()
+            builder.setStyle(
+                NotificationCompat.MessagingStyle(sender)
+                    .addMessage(item.body, System.currentTimeMillis(), sender),
+            )
+            val replyInput = androidx.core.app.RemoteInput.Builder(ChatReplyReceiver.KEY_CHAT_REPLY)
+                .setLabel(ctx.getString(R.string.notif_reply_hint))
+                .build()
+            val replyPending = PendingIntent.getBroadcast(
+                context,
+                notifId * 10 + 3,
+                ChatReplyReceiver.createIntent(context, rideId, notifId),
+                PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_MUTABLE,
+            )
+            builder.addAction(
+                NotificationCompat.Action.Builder(
+                    R.drawable.ic_launcher_monochrome,
+                    ctx.getString(R.string.notif_action_reply),
+                    replyPending,
+                ).addRemoteInput(replyInput)
+                    .setAllowGeneratedReplies(true)
+                    .setAuthenticationRequired(true)
+                    .build(),
+            )
+        }
         if (rideId != null && item.link?.contains("action=readiness") == true) {
             val baseReq = (notifId * 31) and 0x3FFFFFFF
             val readyIntent = ReadinessActionReceiver.createIntent(context, rideId, "ready", notifId)
@@ -137,7 +196,13 @@ object NotificationHelper {
                 readyIntent,
                 PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
             )
-            builder.addAction(0, ctx.getString(R.string.notif_action_ready), readyPending)
+            builder.addAction(
+                NotificationCompat.Action.Builder(
+                    0,
+                    ctx.getString(R.string.notif_action_ready),
+                    readyPending,
+                ).setAuthenticationRequired(true).build(),
+            )
 
             val lateIntent = ReadinessActionReceiver.createIntent(context, rideId, "delayed_5m", notifId)
             val latePending = PendingIntent.getBroadcast(
@@ -146,7 +211,13 @@ object NotificationHelper {
                 lateIntent,
                 PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
             )
-            builder.addAction(0, ctx.getString(R.string.notif_action_delayed_5m), latePending)
+            builder.addAction(
+                NotificationCompat.Action.Builder(
+                    0,
+                    ctx.getString(R.string.notif_action_delayed_5m),
+                    latePending,
+                ).setAuthenticationRequired(true).build(),
+            )
         }
 
         try {

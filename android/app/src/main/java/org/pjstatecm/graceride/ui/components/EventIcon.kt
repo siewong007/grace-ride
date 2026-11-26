@@ -3,6 +3,7 @@ package org.pjstatecm.graceride.ui.components
 import androidx.compose.foundation.layout.size
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.remember
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
@@ -52,16 +53,16 @@ object EventIcons {
         "other" to "sparkles",
     )
 
-    fun gifAssetUri(icon: String?, kind: String = ""): String? {
+    fun assetUri(icon: String?, kind: String = ""): String? {
         val trimmed = icon?.trim().orEmpty()
         if (trimmed in PRESET_KEYS) {
-            return "file:///android_asset/icons/events/$trimmed.gif"
+            return "file:///android_asset/icons/events/$trimmed.webp"
         }
         if (trimmed.isNotEmpty()) {
             return null
         }
         val fallbackKey = DEFAULT_KIND_ICON[kind] ?: "calendar"
-        return "file:///android_asset/icons/events/$fallbackKey.gif"
+        return "file:///android_asset/icons/events/$fallbackKey.webp"
     }
 }
 
@@ -72,13 +73,17 @@ fun EventIcon(
     size: Dp = 22.dp,
     modifier: Modifier = Modifier,
 ) {
-    val assetUri = EventIcons.gifAssetUri(icon, kind)
+    val assetUri = remember(icon, kind) { EventIcons.assetUri(icon, kind) }
     if (assetUri != null) {
-        AsyncImage(
-            model = ImageRequest.Builder(LocalContext.current)
+        val context = LocalContext.current
+        val request = remember(context, assetUri) {
+            ImageRequest.Builder(context)
                 .data(assetUri)
                 .crossfade(false)
-                .build(),
+                .build()
+        }
+        AsyncImage(
+            model = request,
             contentDescription = null,
             contentScale = ContentScale.Fit,
             modifier = modifier.size(size),

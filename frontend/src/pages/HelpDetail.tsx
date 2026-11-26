@@ -97,7 +97,16 @@ export default function HelpDetail({
   const [optimisticReplies, setOptimisticReplies] = useState<Reply[]>([]);
   const [sendErr, setSendErr] = useState<string | null>(null);
   const [guidePickerOpen, setGuidePickerOpen] = useState(false);
+  const [sending, setSending] = useState(false);
   const { busy, error: actErr, run } = useAction();
+
+  useEffect(() => {
+    setBody('');
+    setPhoto(null);
+    setOptimisticReplies([]);
+    setSendErr(null);
+    setGuidePickerOpen(false);
+  }, [id]);
 
   const logRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
@@ -149,18 +158,22 @@ export default function HelpDetail({
     if (e) e.preventDefault();
     const trimmed = body.trim();
     const fileId = photo;
-    if ((!trimmed && !fileId) || busy) return;
+    if ((!trimmed && !fileId) || busy || sending) return;
 
+    const nowDate = new Date();
+    const pad = (n: number) => String(n).padStart(2, '0');
+    const localTs = `${nowDate.getFullYear()}-${pad(nowDate.getMonth() + 1)}-${pad(nowDate.getDate())}T${pad(nowDate.getHours())}:${pad(nowDate.getMinutes())}:${pad(nowDate.getSeconds())}`;
     const tempReply: Reply = {
       id: Date.now(),
       user_id: me?.id ?? 0,
       name: me?.name ?? '',
       body: trimmed,
       staff: !!isStaff,
-      created_at: new Date().toISOString(),
+      created_at: localTs,
       file_id: fileId,
     };
 
+    setSending(true);
     setOptimisticReplies((prev) => [...prev, tempReply]);
     setBody('');
     setPhoto(null);
@@ -176,6 +189,8 @@ export default function HelpDetail({
       setBody(trimmed);
       setPhoto(fileId);
       setSendErr((x as Error).message);
+    } finally {
+      setSending(false);
     }
   };
 
@@ -229,7 +244,7 @@ export default function HelpDetail({
         subtitle={
           tk.ride_id ? (
             <Link
-              to={isStaff ? `/admin/rides/${tk.ride_id}` : `/rides/${tk.ride_id}`}
+              to={can('admin_rides') ? `/admin/rides/${tk.ride_id}` : `/rides/${tk.ride_id}`}
               className="row nowrap gap-xs small"
             >
               <ExternalLink size={14} aria-hidden="true" />

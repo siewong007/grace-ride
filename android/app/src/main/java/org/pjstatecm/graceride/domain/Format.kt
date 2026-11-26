@@ -9,6 +9,7 @@ import java.time.ZoneOffset
 import java.time.ZonedDateTime
 import java.time.format.DateTimeFormatter
 import java.util.Locale
+import java.util.concurrent.ConcurrentHashMap
 
 /** Money is integer cents everywhere (backend convention). Format without floats. */
 object Money {
@@ -25,65 +26,83 @@ object Money {
 /** Backend timestamps are KL-local text: "yyyy-MM-dd HH:mm:ss" (sometimes minute precision). */
 object KlTime {
     val zone: ZoneId = ZoneId.of("Asia/Kuala_Lumpur")
-    private val full = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss")
-    private val minuteFmt = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm")
-    private val dateOnly = DateTimeFormatter.ofPattern("yyyy-MM-dd")
-    private val timeOnly = DateTimeFormatter.ofPattern("HH:mm", Locale.getDefault())
+    private val full = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss", Locale.US)
+    private val minuteFmt = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm", Locale.US)
+    private val dateOnly = DateTimeFormatter.ofPattern("yyyy-MM-dd", Locale.US)
+    private val time24 = DateTimeFormatter.ofPattern("HH:mm", Locale.US)
+    private val zhDisplay = DateTimeFormatter.ofPattern("M月d日 EEE HH:mm", Locale.CHINESE)
+    private val localeFormatters = ConcurrentHashMap<Pair<String, Locale>, DateTimeFormatter>()
 
-    fun parse(text: String): LocalDateTime? {
-        // The API emits KL-local stamps; some fields use ISO 'T' separators.
-        val t = text.trim().replace('T', ' ')
-        return try {
-            when {
-                t.length >= 19 -> LocalDateTime.parse(t.substring(0, 19), full)
-                t.length >= 16 -> LocalDateTime.parse(t.substring(0, 16), minuteFmt)
-                t.length >= 10 -> LocalDate.parse(t.substring(0, 10), dateOnly).atStartOfDay()
-                else -> null
-            }
-        } catch (_: Exception) {
-            null
-        }
+    private fun localizedFormatter(
+        pattern: String,
+        locale: Locale = Locale.getDefault(),
+    ): DateTimeFormatter = localeFormatters.getOrPut(pattern to locale) {
+        DateTimeFormatter.ofPattern(pattern, locale)
     }
 
-    /** "Sat, 21 Nov · 09:30" in the app's current locale (MainActivity sets it). */
+    fun parse(text: String): LocalDateTime? {
+        val clean = text.trim()
+        if (clean.isEmpty()) return null
+        if (clean.endsWith("Z") || clean.matches(Regex("^\\d{4}-\\d{2}-\\d{2}[T ]\\d{2}:\\d{2}(:\\d{2}(\\.\\d+)?)?([+-]\\d{2}:?\\d{2})$"))) {
+            runCatching {
+                return java.time.OffsetDateTime.parse(clean.replace(' ', 'T'))
+                    .atZoneSameInstant(zone)
+                    .toLocalDateTime()
+            }
+        }
+        val t = clean.replace('T', ' ')
+        return runCatching { LocalDateTime.parse(t.take(19), full) }.getOrNull()
+            ?: runCatching { LocalDateTime.parse(t.take(16), minuteFmt) }.getOrNull()
+            ?: runCatching { LocalDate.parse(t.take(10), dateOnly).atStartOfDay() }.getOrNull()
+    }
+
+    private fun isZh(locale: Locale = Locale.getDefault()): Boolean = locale.language == "zh"
+
+    /** "Sat, 21 Nov · 09:30" (EN) / "11月21日 周六 · 09:30" (ZH). */
     fun display(text: String): String {
         val dt = parse(text) ?: return text
-        return dt.format(DateTimeFormatter.ofPattern("EEE, d MMM · HH:mm", Locale.getDefault()))
+        val locale = Locale.getDefault()
+        val pattern = if (isZh(locale)) "M月d日 EEE · HH:mm" else "EEE, d MMM · HH:mm"
+        return dt.format(localizedFormatter(pattern, locale))
     }
 
     fun displayDate(text: String): String {
         val dt = parse(text) ?: return text
-        return dt.format(DateTimeFormatter.ofPattern("EEE, d MMM", Locale.getDefault()))
+        val locale = Locale.getDefault()
+        val pattern = if (isZh(locale)) "M月d日 EEE" else "EEE, d MMM"
+        return dt.format(localizedFormatter(pattern, locale))
     }
 
     fun displayTime(text: String): String {
         val dt = parse(text) ?: return text
-        return dt.format(DateTimeFormatter.ofPattern("HH:mm", Locale.getDefault()))
+        return dt.format(localizedFormatter("HH:mm"))
     }
 
     fun weekdayShort(text: String): String {
         val dt = parse(text) ?: return text
-        return dt.format(DateTimeFormatter.ofPattern("EEE", Locale.getDefault()))
+        return dt.format(localizedFormatter("EEE"))
     }
 
     fun dayMonthShort(text: String): String {
         val dt = parse(text) ?: return text
-        return dt.format(DateTimeFormatter.ofPattern("d MMM", Locale.getDefault()))
+        val locale = Locale.getDefault()
+        val pattern = if (isZh(locale)) "M月d日" else "d MMM"
+        return dt.format(localizedFormatter(pattern, locale))
     }
 
     fun displayZh(text: String): String {
         val dt = parse(text) ?: return text
-        return dt.format(DateTimeFormatter.ofPattern("M月d日 EEE HH:mm", Locale.CHINESE))
+        return dt.format(zhDisplay)
     }
 
     fun time(text: String): String {
         val dt = parse(text) ?: return text
-        return dt.format(DateTimeFormatter.ofPattern("HH:mm"))
+        return dt.format(time24)
     }
 
     fun date(text: String): String {
         val dt = parse(text) ?: return text
-        return dt.format(DateTimeFormatter.ofPattern("yyyy-MM-dd"))
+        return dt.format(dateOnly)
     }
 
     fun isToday(text: String): Boolean {
@@ -97,11 +116,14 @@ object KlTime {
 
     fun todayPlusDays(days: Long): String = LocalDate.now(zone).plusDays(days).format(dateOnly)
 
+    /** Current Kuala Lumpur local date-time. */
+    fun now(): LocalDateTime = LocalDateTime.now(zone)
+
     /** Current Kuala Lumpur timestamp to minute precision ("yyyy-MM-dd HH:mm"). */
     fun nowStamp(): String = ZonedDateTime.now(zone).format(minuteFmt)
 
     fun formatEpochMillis(millis: Long): String =
-        Instant.ofEpochMilli(millis).atZone(zone).format(timeOnly)
+        Instant.ofEpochMilli(millis).atZone(zone).format(localizedFormatter("HH:mm"))
 
     enum class DayLabel { TODAY, TOMORROW, OTHER }
 

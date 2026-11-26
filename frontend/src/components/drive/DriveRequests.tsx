@@ -11,7 +11,6 @@ import {
   ErrorBox,
   Pill,
   useAction,
-  useToast,
 } from '../ui';
 import { fmtDay, fmtTime, useFormatT } from '../../format';
 import type { Area } from './types';
@@ -21,7 +20,6 @@ import type { Area } from './types';
 export function DriveRequests({ eventId }: { eventId?: number } = {}) {
   const { t } = useTranslation('drive');
   const ft = useFormatT();
-  const toast = useToast();
   const { can } = useAuth();
   const { data: areas } = useApi<Area[]>('/areas');
   const [area, setArea] = useState<string>(eventId ? '' : 'mine');
@@ -37,18 +35,11 @@ export function DriveRequests({ eventId }: { eventId?: number } = {}) {
     `/driver/requests?${q}`,
     30000,
   );
-  const { busy, error: actErr } = useAction();
+  const { busy, error: actErr, run } = useAction();
 
   const claim = async (rideId: number) => {
-    try {
-      await post(`/rides/${rideId}/claim`);
-      toast.success(t('claimed'));
-      reload();
-    } catch (err: unknown) {
-      const message = err instanceof Error ? err.message : t('conflictNotice');
-      toast.error(message);
-      reload();
-    }
+    const ok = await run(() => post(`/rides/${rideId}/claim`), t('claimed'));
+    if (ok) reload();
   };
 
   return (

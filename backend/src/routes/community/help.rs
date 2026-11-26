@@ -8,7 +8,7 @@ use serde::Deserialize;
 use serde_json::{json, Value};
 
 use crate::auth::CurrentUser;
-use crate::error::{bad, forbidden, not_found, AppResult};
+use crate::error::{bad, conflict, forbidden, not_found, AppResult};
 use crate::i18n::ErrorKey;
 use crate::notifications::notify_perm_except;
 use crate::perms::{Act, Page};
@@ -155,7 +155,7 @@ pub(super) async fn help_members(
     require(&u, Page::AdminHelp, Act::Update)?;
     let search = like_pattern(q.q.as_deref().unwrap_or(""));
     let rows: Vec<(i64, String)> = sqlx::query_as(
-        "SELECT id, name FROM users WHERE name ILIKE $1 ESCAPE '\\' ORDER BY name LIMIT 20",
+        "SELECT id, name FROM users WHERE status='active' AND name ILIKE $1 ESCAPE '\\' ORDER BY name LIMIT 20",
     )
     .bind(search)
     .fetch_all(&st.db)
@@ -194,11 +194,16 @@ pub(super) async fn create_ticket(
     let owner_id = on_behalf.unwrap_or(u.id);
     check_attachment(&st, &u, req.file_id).await?;
     if on_behalf.is_some() {
-        let exists: Option<(i64,)> = sqlx::query_as("SELECT id FROM users WHERE id=$1")
+        let status_row: Option<(String,)> = sqlx::query_as("SELECT status FROM users WHERE id=$1")
             .bind(owner_id)
             .fetch_optional(&st.db)
             .await?;
-        exists.ok_or(not_found(u.lang))?;
+        let Some((target_status,)) = status_row else {
+            return Err(not_found(u.lang));
+        };
+        if target_status == "disabled" {
+            return Err(bad(u.lang, ErrorKey::InvalidAction));
+        }
     }
     if let Some(r) = req.ride_id {
         let (p, d): (i64, Option<i64>) =
@@ -216,6 +221,7 @@ pub(super) async fn create_ticket(
     } else {
         "open"
     };
+    let mut tx = st.db.begin().await?;
     let (id,): (i64,) = sqlx::query_as("INSERT INTO help_tickets (user_id, ride_id, subject, status, created_at, updated_at) VALUES ($1,$2,$3,$4,$5,$6) RETURNING id")
         .bind(owner_id)
         .bind(req.ride_id)
@@ -223,7 +229,7 @@ pub(super) async fn create_ticket(
         .bind(status)
         .bind(now())
         .bind(now())
-        .fetch_one(&st.db)
+        .fetch_one(&mut *tx)
         .await?;
     sqlx::query(
         "INSERT INTO help_replies (ticket_id, user_id, body, file_id, created_at) VALUES ($1,$2,$3,$4,$5)",
@@ -233,8 +239,9 @@ pub(super) async fn create_ticket(
     .bind(req.body.trim())
     .bind(req.file_id)
     .bind(now())
-    .execute(&st.db)
+    .execute(&mut *tx)
     .await?;
+    tx.commit().await?;
     if on_behalf.is_some() {
         notify(
             &st.db,
@@ -300,6 +307,9 @@ pub(super) async fn get_ticket(
     Path(id): Path<i64>,
 ) -> AppResult<Json<Value>> {
     let (owner, subject, status, ride) = ticket_owner(&st, &u, id, Act::View).await?;
+    if owner == u.id && !u.can(Page::AdminHelp, Act::View) {
+        require(&u, Page::Help, Act::View)?;
+    }
     let replies: Vec<(i64, i64, String, String, String, Option<i64>)> = sqlx::query_as(
         "SELECT r.id, r.user_id, u.name, r.body, r.created_at, r.file_id FROM help_replies r JOIN users u ON u.id=r.user_id WHERE r.ticket_id=$1 ORDER BY r.id",
     )
@@ -470,11 +480,16 @@ pub(super) async fn reopen_ticket(
     if status != "closed" {
         return Ok(Json(json!({"ok": true})));
     }
-    sqlx::query("UPDATE help_tickets SET status='open', updated_at=$1 WHERE id=$2")
-        .bind(now())
-        .bind(id)
-        .execute(&st.db)
-        .await?;
+    let res = sqlx::query(
+        "UPDATE help_tickets SET status='open', updated_at=$1 WHERE id=$2 AND status='closed'",
+    )
+    .bind(now())
+    .bind(id)
+    .execute(&st.db)
+    .await?;
+    if res.rows_affected() == 0 {
+        return Err(conflict(u.lang, ErrorKey::RequestAlreadyHandled));
+    }
     if u.id == owner {
         notify_perm_except(
             &st.db,
@@ -526,18 +541,30 @@ pub(super) async fn claim_ticket(
     Json(req): Json<ClaimIn>,
 ) -> AppResult<Json<Value>> {
     require(&u, Page::AdminHelp, Act::Update)?;
-    let exists: Option<(i64,)> = sqlx::query_as("SELECT id FROM help_tickets WHERE id=$1")
-        .bind(id)
-        .fetch_optional(&st.db)
-        .await?;
-    exists.ok_or(not_found(u.lang))?;
-    let n = if req.claim {
-        sqlx::query("UPDATE help_tickets SET assignee_id=$1 WHERE id=$2")
-            .bind(u.id)
+    let exists: Option<(i64, String)> =
+        sqlx::query_as("SELECT id, status FROM help_tickets WHERE id=$1")
             .bind(id)
-            .execute(&st.db)
-            .await?
-            .rows_affected()
+            .fetch_optional(&st.db)
+            .await?;
+    let Some((_, tk_status)) = exists else {
+        return Err(not_found(u.lang));
+    };
+    if req.claim && tk_status == "closed" {
+        return Err(conflict(u.lang, ErrorKey::InvalidAction));
+    }
+    let n = if req.claim {
+        let rows = sqlx::query(
+            "UPDATE help_tickets SET assignee_id=$1 WHERE id=$2 AND status <> 'closed' AND (assignee_id IS NULL OR assignee_id=$1)",
+        )
+        .bind(u.id)
+        .bind(id)
+        .execute(&st.db)
+        .await?
+        .rows_affected();
+        if rows == 0 {
+            return Err(conflict(u.lang, ErrorKey::RequestAlreadyHandled));
+        }
+        rows
     } else {
         sqlx::query("UPDATE help_tickets SET assignee_id=NULL WHERE id=$1 AND assignee_id=$2")
             .bind(id)

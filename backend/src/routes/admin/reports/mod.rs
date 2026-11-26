@@ -306,7 +306,10 @@ pub(super) async fn update_user_badge_icon(
     let Some(target_roles) = target_roles else {
         return Err(not_found(u.lang));
     };
-    if user_id != u.id && !perms::outranks(&u.roles, &perms::parse_roles(&target_roles)) {
+    if user_id != u.id
+        && !perms::is_superadmin(&u.roles)
+        && !perms::outranks(&u.roles, &perms::parse_roles(&target_roles))
+    {
         return Err(forbidden(u.lang, ErrorKey::NoPermission));
     }
 

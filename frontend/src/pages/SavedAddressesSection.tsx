@@ -82,6 +82,7 @@ export default function SavedAddressesSection({
         address: sp.address,
         gate_notes: sp.gate_notes ?? '',
         is_default: true,
+        ...(sp.lat != null && sp.lng != null ? { lat: sp.lat, lng: sp.lng } : {}),
       });
       await reloadPlaces();
     }, t('defaultAddressSet'));

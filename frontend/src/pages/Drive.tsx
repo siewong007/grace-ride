@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
 import { useAuth } from '../auth';
@@ -15,7 +15,12 @@ export default function Drive() {
   const { t } = useTranslation('drive');
   const { can } = useAuth();
   const [searchParams] = useSearchParams();
-  const [tab, setTab] = useState<'schedule' | 'settings'>(searchParams.get('tab') === 'settings' ? 'settings' : 'schedule');
+  const paramTab = searchParams.get('tab') === 'settings' ? 'settings' : 'schedule';
+  const [tab, setTab] = useState<'schedule' | 'settings'>(paramTab);
+
+  useEffect(() => {
+    setTab(paramTab);
+  }, [paramTab]);
 
   if (!can('drive')) {
     return (

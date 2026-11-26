@@ -339,7 +339,7 @@ describe('Notifications filters, actions and subscribe_failed', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Mark as read' }));
     await waitFor(() => expect(post).toHaveBeenCalledWith('/notifications/101/read'));
 
-    fireEvent.click(screen.getByRole('button', { name: 'Mark as unread' }));
+    fireEvent.click(screen.getAllByRole('button', { name: 'Mark as unread' })[1]);
     await waitFor(() => expect(post).toHaveBeenCalledWith('/notifications/102/unread'));
 
     const removeButtons = screen.getAllByRole('button', { name: 'Remove notification' });

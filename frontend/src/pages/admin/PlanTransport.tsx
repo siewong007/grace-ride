@@ -142,7 +142,11 @@ export default function PlanTransport() {
       }
     }
     setDraft(base);
-    setDraftVisitors(targetDraft?.visitors ?? []);
+    setDraftVisitors(
+      targetDraft && targetDraft.status !== 'approved' && targetDraft.status !== 'superseded'
+        ? (targetDraft.visitors ?? [])
+        : [],
+    );
     setUndoStack([]);
     setReasons({});
     setNoRoom(new Set());
@@ -327,16 +331,19 @@ export default function PlanTransport() {
     setDraftVisitors(next);
   };
 
+  const driverIds = new Set(plan.drivers.map((d) => d.id));
   const loads = new Map(plan.drivers.map((d) => [d.id, driverLoad(plan, draft, d)]));
   const anyOver = plan.drivers.some((d) => loads.get(d.id)!.over);
-  const unassigned = plan.rides.filter((r) => draft[r.id] == null);
+  const unassigned = plan.rides.filter((r) => draft[r.id] == null || !driverIds.has(draft[r.id]!));
   const placed = plan.rides.length - unassigned.length;
-  const seatsUsed = plan.rides.filter((r) => draft[r.id] != null).reduce((n, r) => n + r.seats, 0);
+  const seatsUsed = plan.rides
+    .filter((r) => draft[r.id] != null && driverIds.has(draft[r.id]!))
+    .reduce((n, r) => n + r.seats, 0);
   const assistanceCount = plan.rides.filter((r) => Boolean(r.assistance)).length;
   const uniqueAreas = Array.from(new Set(plan.rides.map((r) => r.area.name)));
 
   const matchesFilter = (r: PlanRide): boolean => {
-    if (filter === 'unassigned') return draft[r.id] == null;
+    if (filter === 'unassigned') return draft[r.id] == null || !driverIds.has(draft[r.id]!);
     if (filter === 'assistance') return Boolean(r.assistance);
     if (filter.startsWith('area:')) return r.area.name === filter.slice(5);
     return true;
@@ -438,7 +445,7 @@ export default function PlanTransport() {
       } else {
         await post(`/admin/events/${plan.event.id}/plan/draft`, {
           assignments: draftEntries(plan, draft),
-          ...(draftVisitors.length > 0 ? { visitors: draftVisitors } : {}),
+          visitors: draftVisitors,
         });
       }
       toast.success(t('draftSaved'));
@@ -473,7 +480,7 @@ export default function PlanTransport() {
       await post(`/admin/events/${plan.event.id}/plan/request-approval`, {
         ...(activeDraft?.id != null ? { draft_id: activeDraft.id } : {}),
         assignments: draftEntries(plan, draft),
-        ...(draftVisitors.length > 0 ? { visitors: draftVisitors } : {}),
+        visitors: draftVisitors,
       });
       toast.success(t('submittedForApproval'));
       reload();
@@ -689,8 +696,18 @@ export default function PlanTransport() {
   };
 
   const diffSummary = activeDraft ? summarizeDraftDiff(plan, draft, draftVisitors) : null;
-  const canApproveDraftNow = !busy && (dirty || activeDraft?.status === 'pending_approval');
+  const canApproveDraftNow =
+    !busy &&
+    (dirty ||
+      activeDraft?.status === 'pending_approval' ||
+      (activeDraft != null &&
+        activeDraft.status !== 'approved' &&
+        activeDraft.status !== 'superseded' &&
+        draftVisitors.length > 0));
   const canToggleReimb = canApprove || canEditRides;
+  const orphanedVisitors = visitorList.filter(
+    (v) => v.driver_id != null && !driverIds.has(v.driver_id),
+  );
 
   const openExportModal = () => {
     setExporting(true);
@@ -1108,6 +1125,16 @@ export default function PlanTransport() {
             ) : (
               visibleUnassigned.map(card)
             )}
+            {orphanedVisitors.length > 0 && (
+              <div className="plan-driver-visitors">
+                <span className="muted">{t('visitorsChip', { count: orphanedVisitors.length })}:</span>
+                {orphanedVisitors.map((v) => (
+                  <span key={v.id} className="plan-visitor-chip">
+                    {v.name} ({v.seats})
+                  </span>
+                ))}
+              </div>
+            )}
           </section>
 
           {filter !== 'unassigned' && (
@@ -1507,12 +1534,12 @@ function DiagnosisDrawerModal({
   const driversById = useMemo(() => new Map(plan.drivers.map((d) => [d.id, d])), [plan.drivers]);
 
   const placedRides = useMemo(
-    () => plan.rides.filter((r) => draft[r.id] != null),
-    [plan.rides, draft],
+    () => plan.rides.filter((r) => draft[r.id] != null && driversById.has(draft[r.id]!)),
+    [plan.rides, draft, driversById],
   );
   const unassignedRides = useMemo(
-    () => plan.rides.filter((r) => draft[r.id] == null),
-    [plan.rides, draft],
+    () => plan.rides.filter((r) => draft[r.id] == null || !driversById.has(draft[r.id]!)),
+    [plan.rides, draft, driversById],
   );
 
   const clusterCount = useMemo(
@@ -1529,17 +1556,17 @@ function DiagnosisDrawerModal({
         )}
 
         {/* Top metrics summary */}
-        <div className="row wrap gap-sm" role="region" aria-label="Summary statistics">
+        <div className="row wrap gap-sm" role="region" aria-label={t('diagnosisSummaryLabel')}>
           <div className="card flat tight plan-diag-metric">
-            <div className="muted tiny">Placed Rides</div>
+            <div className="muted tiny">{t('diagnosisPlacedLabel')}</div>
             <div className="bold plan-diag-val">{placedRides.length} / {plan.rides.length}</div>
           </div>
           <div className="card flat tight plan-diag-metric">
-            <div className="muted tiny">Carpool Clusters</div>
-            <div className="bold plan-diag-val text-success">{clusterCount} rides</div>
+            <div className="muted tiny">{t('diagnosisClustersLabel')}</div>
+            <div className="bold plan-diag-val text-success">{t('diagnosisClusterRides', { count: clusterCount })}</div>
           </div>
           <div className="card flat tight plan-diag-metric">
-            <div className="muted tiny">Unassigned</div>
+            <div className="muted tiny">{t('diagnosisUnassignedLabel')}</div>
             <div className={`bold plan-diag-val ${unassignedRides.length > 0 ? 'text-warning' : 'text-muted'}`}>
               {unassignedRides.length}
             </div>
@@ -1554,10 +1581,11 @@ function DiagnosisDrawerModal({
           ) : (
             <ul className="stack-xs plan-diag-list">
               {unassignedRides.map((r) => {
-                const areaDrivers = plan.drivers.filter((d) => d.area_ids.includes(r.area.id));
+                const rideLeg = r.leg === 'return' ? 'return' : 'outbound';
+                const areaDrivers = plan.drivers.filter((d) => d.id !== r.passenger.id && d.area_ids.includes(r.area.id));
                 const allFull =
                   areaDrivers.length > 0 &&
-                  areaDrivers.every((d) => driverLoad(plan, draft, d).seats >= d.cap);
+                  areaDrivers.every((d) => driverLoad(plan, draft, d, rideLeg).seats >= d.cap);
                 const diagnosisMsg = r.assistance
                   ? t('diagnosisBottleneckAssistance', { assistance: r.assistance })
                   : areaDrivers.length === 0
@@ -1585,22 +1613,27 @@ function DiagnosisDrawerModal({
                         <span className="muted tiny">{t('diagnosisActionAssign')}</span>
                         <select
                           className="input plan-diag-select"
-                          aria-label={`Driver for ${r.passenger.name}`}
+                          aria-label={t('assignTo', { name: r.passenger.name })}
                           value=""
                           onChange={(e) => {
                             const val = e.target.value ? Number(e.target.value) : null;
                             if (val != null) onAssign(r.id, val);
                           }}
                         >
-                          <option value="">-- Choose driver --</option>
-                          {plan.drivers.map((d) => {
-                            const used = driverLoad(plan, draft, d).seats;
-                            return (
-                              <option key={d.id} value={d.id} disabled={used >= d.cap}>
-                                {d.name} ({used}/{d.cap} seats{used >= d.cap ? ' - Full' : ''})
-                              </option>
-                            );
-                          })}
+                          <option value="">{t('diagnosisChooseDriver')}</option>
+                          {plan.drivers
+                            .filter((d) => d.id !== r.passenger.id)
+                            .map((d) => {
+                              const used = driverLoad(plan, draft, d, rideLeg).seats;
+                              const full = used >= d.cap;
+                              return (
+                                <option key={d.id} value={d.id} disabled={full}>
+                                  {full
+                                    ? t('diagnosisDriverFull', { name: d.name, used, cap: d.cap })
+                                    : t('driverOption', { name: d.name, used, cap: d.cap })}
+                                </option>
+                              );
+                            })}
                         </select>
                       </div>
                     )}
@@ -1623,12 +1656,14 @@ function DiagnosisDrawerModal({
                   <div key={r.id} className="card flat tight row between wrap gap-xs">
                     <div>
                       <span className="bold small">{r.passenger.name}</span>
-                      <span className="muted tiny"> ➔ {driver?.name ?? 'Assigned'}</span>
+                      <span className="muted tiny"> ➔ {driver?.name ?? t('assigned')}</span>
                     </div>
                     <div>
                       {reason?.near ? (
                         <Pill tone="success">
-                          {t('diagnosisClusterKm', { km: reason.near.km, name: reason.near.name })}
+                          {reason.near.km != null
+                            ? t('diagnosisClusterKm', { km: reason.near.km, name: reason.near.name })
+                            : t('whySameArea', { name: reason.near.name })}
                         </Pill>
                       ) : reason?.in_area ? (
                         <Pill tone="info">

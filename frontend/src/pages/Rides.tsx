@@ -141,7 +141,10 @@ export default function Rides() {
   const error = scope === 'upcoming' ? (offlineSnap ? null : upcoming.error) : pastError;
 
   const dateGroups = useMemo(() => {
-    const activeRides = scope === 'upcoming' ? upcomingList ?? offlineSnap?.rides ?? [] : pastItems;
+    const activeRides =
+      scope === 'upcoming'
+        ? upcomingList ?? offlineSnap?.rides.filter((r) => r.viewer?.is_passenger) ?? []
+        : pastItems;
     if (activeRides.length === 0) return [];
     return groupRidesByDate(activeRides, ft, t);
   }, [scope, upcomingList, offlineSnap?.rides, pastItems, ft, t]);

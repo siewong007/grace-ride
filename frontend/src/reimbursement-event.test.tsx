@@ -221,8 +221,12 @@ describe('Reimbursement List and Detail Event Display', () => {
   });
 
   it('renders event title in admin reimbursement list and review modal', () => {
+    const otherClaim = {
+      ...claimWithEvent,
+      user: { id: 9, name: 'Driver Bob' },
+    };
     mocks.useApi.mockReturnValue({
-      data: { items: [claimWithEvent], total: 1, page: 1, page_size: 25, total_pages: 1 },
+      data: { items: [claimWithEvent, { ...otherClaim, id: 56 }], total: 2, page: 1, page_size: 25, total_pages: 1 },
       loading: false,
       error: null,
       reload: vi.fn(),
@@ -236,11 +240,13 @@ describe('Reimbursement List and Detail Event Display', () => {
       </MemoryRouter>
     );
 
-    // Event title visible in admin table
-    expect(screen.getByText('Sunday Worship Service')).toBeInTheDocument();
+    // Event title visible in admin table; own claim cannot be self-reviewed
+    expect(screen.getAllByText('Sunday Worship Service').length).toBeGreaterThanOrEqual(1);
+    const reviewButtons = screen.getAllByRole('button', { name: 'Review' });
+    expect(reviewButtons).toHaveLength(1);
 
-    // Open review dialog
-    fireEvent.click(screen.getByRole('button', { name: 'Review' }));
+    // Open review dialog for the other member's claim
+    fireEvent.click(reviewButtons[0]);
     const dialog = screen.getByRole('dialog');
     expect(dialog).toBeInTheDocument();
     expect(within(dialog).getByText(/Sunday Worship Service/i)).toBeInTheDocument();

@@ -32,7 +32,7 @@ async fn load_passkeys(st: &AppState, user_id: i64) -> AppResult<Vec<Passkey>> {
         .collect())
 }
 
-async fn save_challenge(
+pub(super) async fn save_challenge(
     st: &AppState,
     user_id: i64,
     kind: &str,
@@ -56,7 +56,7 @@ async fn save_challenge(
     Ok(id)
 }
 
-async fn take_challenge(
+pub(super) async fn take_challenge(
     st: &AppState,
     id: &str,
     kind: &str,
@@ -139,16 +139,21 @@ pub(super) async fn passkey_login_start(
 async fn decoy_key(st: &AppState) -> AppResult<Vec<u8>> {
     let fresh = WebauthnFakeCredentialGenerator::<FakePasskeyDistribution>::new_hmac_key()
         .map_err(|e| AppError::Other(anyhow::anyhow!("webauthn: {e:?}")))?;
+    let encoded =
+        crate::crypto::encrypt_secret("app_secret:decoy_passkey_hmac", &hex::encode(fresh))
+            .map_err(AppError::Other)?;
     sqlx::query(
         "INSERT INTO app_secrets (name, value) VALUES ('decoy_passkey_hmac', $1) ON CONFLICT (name) DO NOTHING",
     )
-    .bind(hex::encode(fresh))
+    .bind(&encoded)
     .execute(&st.db)
     .await?;
-    let (key,): (String,) =
+    let (key_raw,): (String,) =
         sqlx::query_as("SELECT value FROM app_secrets WHERE name='decoy_passkey_hmac'")
             .fetch_one(&st.db)
             .await?;
+    let key = crate::crypto::decrypt_secret("app_secret:decoy_passkey_hmac", &key_raw)
+        .map_err(AppError::Other)?;
     hex::decode(key).map_err(|e| AppError::Other(anyhow::anyhow!("decoy key: {e}")))
 }
 
@@ -207,8 +212,9 @@ async fn decoy_challenge(st: &AppState, email: &str) -> AppResult<Value> {
 /// quietly add the thief's own device and keep access after the session ends.
 /// Accounts with nothing set up yet (new members, after recovery) are not held back.
 pub(super) async fn require_recent_sign_in(st: &AppState, u: &CurrentUser) -> AppResult<()> {
-    let (keys, totp, signed_in): (i64, i64, String) = sqlx::query_as(
+    let (keys, biometrics, totp, signed_in): (i64, i64, i64, String) = sqlx::query_as(
         "SELECT (SELECT COUNT(*) FROM passkeys WHERE user_id=$1),
+                (SELECT COUNT(*) FROM biometric_credentials WHERE user_id=$1),
                 (SELECT totp_enabled FROM users WHERE id=$1),
                 (SELECT created_at FROM sessions WHERE token=$2)",
     )
@@ -216,7 +222,9 @@ pub(super) async fn require_recent_sign_in(st: &AppState, u: &CurrentUser) -> Ap
     .bind(&u.session_id)
     .fetch_one(&st.db)
     .await?;
-    if (keys > 0 || totp == 1) && signed_in < minutes_ago(15) {
+    if (keys > 0 || biometrics > 0 || totp == 1)
+        && (signed_in < minutes_ago(15) || (!u.mfa_ok && !st.cfg.dev_mode))
+    {
         return Err(forbidden(u.lang, ErrorKey::RecentSignInRequired));
     }
     Ok(())

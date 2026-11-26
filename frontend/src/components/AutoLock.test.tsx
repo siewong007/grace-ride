@@ -29,6 +29,7 @@ vi.mock('../auth', () => ({
     me: currentMe,
     can: () => true,
     refresh: vi.fn(),
+    clearLocalAuth: vi.fn(),
   }),
 }));
 
@@ -93,7 +94,8 @@ describe('AutoLockProvider', () => {
     vi.useRealTimers();
     renderLocked();
 
-    expect(screen.getByTestId('status')).toHaveTextContent('locked');
+    expect(screen.queryByTestId('status')).toBeNull();
+    expect(document.querySelector('[data-autolock-state="locked"]')).toBeInTheDocument();
     const dialog = screen.getByRole('dialog');
     expect(dialog).toHaveAttribute('aria-modal', 'true');
     expect(screen.getByText('Grace Member')).toBeInTheDocument();
@@ -114,14 +116,16 @@ describe('AutoLockProvider', () => {
     fireEvent.click(screen.getByRole('button', { name: /unlockWithPasskey|^Unlock$/i }));
 
     expect(await screen.findByRole('alert')).toHaveTextContent('Passkey verification failed');
-    expect(screen.getByTestId('status')).toHaveTextContent('locked');
+    expect(screen.queryByTestId('status')).toBeNull();
+    expect(document.querySelector('[data-autolock-state="locked"]')).toBeInTheDocument();
   });
 
   it('offers no unlock button when the member has no passkey', () => {
     currentMe = { ...defaultMockMe, passkey_count: 0 };
     renderLocked();
 
-    expect(screen.getByTestId('status')).toHaveTextContent('locked');
+    expect(screen.queryByTestId('status')).toBeNull();
+    expect(document.querySelector('[data-autolock-state="locked"]')).toBeInTheDocument();
     expect(screen.queryByRole('button', { name: /unlock/i })).toBeNull();
     expect(screen.getByRole('button', { name: /logout|Log out/i })).toBeInTheDocument();
     expect(reauth).not.toHaveBeenCalled();
@@ -135,7 +139,11 @@ describe('AutoLockProvider', () => {
 
     expect(screen.queryByRole('textbox')).toBeNull();
     fireEvent.click(screen.getByRole('button', { name: /unlockWithCode|backup code/i }));
-    fireEvent.change(screen.getByRole('textbox'), { target: { value: '123456' } });
+    const codeInput = screen.getByRole('textbox');
+    expect(codeInput).toHaveAttribute('type', 'text');
+    fireEvent.change(codeInput, { target: { value: 'BACKUP-CODE-1' } });
+    expect(codeInput).toHaveAttribute('type', 'password');
+    fireEvent.change(codeInput, { target: { value: '123456' } });
     fireEvent.click(screen.getByRole('button', { name: /^(unlock|Unlock)$/ }));
 
     await waitFor(() => expect(screen.getByTestId('status')).toHaveTextContent('unlocked'));
@@ -182,7 +190,8 @@ describe('AutoLockProvider', () => {
       vi.advanceTimersByTime(15 * 60 * 1000 + 5000);
     });
 
-    expect(screen.getByTestId('status')).toHaveTextContent('locked');
+    expect(screen.queryByTestId('status')).toBeNull();
+    expect(document.querySelector('[data-autolock-state="locked"]')).toBeInTheDocument();
     expect(screen.getByRole('dialog')).toBeInTheDocument();
   });
 
@@ -216,7 +225,8 @@ describe('AutoLockProvider', () => {
       vi.advanceTimersByTime(5 * 60 * 1000 + 5000);
     });
 
-    expect(screen.getByTestId('status')).toHaveTextContent('locked');
+    expect(screen.queryByTestId('status')).toBeNull();
+    expect(document.querySelector('[data-autolock-state="locked"]')).toBeInTheDocument();
   });
 
   it('falls back to organization session_timeout_mins when auto_lock_mins is 0', () => {
@@ -241,7 +251,8 @@ describe('AutoLockProvider', () => {
       vi.advanceTimersByTime(10 * 60 * 1000 + 5000);
     });
 
-    expect(screen.getByTestId('status')).toHaveTextContent('locked');
+    expect(screen.queryByTestId('status')).toBeNull();
+    expect(document.querySelector('[data-autolock-state="locked"]')).toBeInTheDocument();
     expect(screen.getByRole('dialog')).toBeInTheDocument();
   });
 
@@ -286,7 +297,8 @@ describe('AutoLockProvider', () => {
     first.unmount();
 
     renderProvider();
-    expect(screen.getByTestId('status')).toHaveTextContent('locked');
+    expect(screen.queryByTestId('status')).toBeNull();
+    expect(document.querySelector('[data-autolock-state="locked"]')).toBeInTheDocument();
     expect(screen.getByRole('dialog')).toBeInTheDocument();
   });
 
@@ -331,7 +343,8 @@ describe('AutoLockProvider', () => {
       localStorage.setItem('gr_locked_user', '1');
       window.dispatchEvent(new StorageEvent('storage', { key: 'gr_locked_user', newValue: '1' }));
     });
-    expect(screen.getByTestId('status')).toHaveTextContent('locked');
+    expect(screen.queryByTestId('status')).toBeNull();
+    expect(document.querySelector('[data-autolock-state="locked"]')).toBeInTheDocument();
 
     act(() => {
       localStorage.removeItem('gr_locked_user');

@@ -34,9 +34,11 @@ pub const CHAT_REACTIONS: &[&str] = &[
 struct ChatAccess {
     trip: i64,
     open: bool,
-    /// Passenger (not cancelled) or driver of a ride on this trip. Only members move
+    /// Passenger (not cancelled/terminal) or driver of a ride on this trip. Only members move
     /// receipt cursors and count as recipients; staff who can view the chat do not.
     is_member: bool,
+    /// True for trip members or traffic staff permitted to update this ride's traffic state.
+    can_post: bool,
     /// Every member's user id.
     members: Vec<i64>,
 }
@@ -53,12 +55,13 @@ async fn chat_access(st: &AppState, u: &CurrentUser, ride_id: i64) -> AppResult<
             .await?;
     let mut members: Vec<i64> = Vec::new();
     for (p, d, s) in &rows {
-        if s != "cancelled" && !members.contains(p) {
+        let active_on_trip = !matches!(s.as_str(), "cancelled" | "no_show" | "alt_transport");
+        if active_on_trip && !members.contains(p) {
             members.push(*p);
         }
-        // A cancelled ride's driver is no longer on the trip; counting them would pin
-        // every receipt at "sent" because they never open the chat again.
-        if let Some(d) = (*d).filter(|_| s != "cancelled") {
+        // A cancelled/no-show/alt-transport ride's driver is no longer on the trip; counting
+        // them would pin every receipt at "sent" because they never open the chat again.
+        if let Some(d) = (*d).filter(|_| active_on_trip) {
             if !members.contains(&d) {
                 members.push(d);
             }
@@ -68,6 +71,7 @@ async fn chat_access(st: &AppState, u: &CurrentUser, ride_id: i64) -> AppResult<
     if !is_member && !traffic_can(u, &r, Act::View) {
         return Err(forbidden(u.lang, ErrorKey::OnlyTripMembersCanViewChat));
     }
+    let can_post = is_member || traffic_can(u, &r, Act::Update);
     let open = rows
         .iter()
         .any(|(_, _, s)| s == "confirmed" || s == "in_progress");
@@ -75,6 +79,7 @@ async fn chat_access(st: &AppState, u: &CurrentUser, ride_id: i64) -> AppResult<
         trip,
         open,
         is_member,
+        can_post,
         members,
     })
 }
@@ -145,7 +150,7 @@ pub(super) async fn list_messages(
 
     let members: Vec<(String,)> = sqlx::query_as(
         "SELECT DISTINCT u.name FROM rides r JOIN users u ON u.id = r.passenger_id OR u.id = r.driver_id
-         WHERE r.trip_id=$1 AND r.status NOT IN ('cancelled')",
+         WHERE r.trip_id=$1 AND r.status NOT IN ('cancelled','no_show','alt_transport')",
     )
     .bind(trip)
     .fetch_all(&st.db)
@@ -231,6 +236,7 @@ pub(super) async fn list_messages(
 
     Ok(Json(json!({
         "open": acc.open,
+        "can_post": acc.can_post,
         "members": members.into_iter().map(|m| m.0).collect::<Vec<_>>(),
         "reactions_allowed": CHAT_REACTIONS,
         "messages": messages,
@@ -249,6 +255,9 @@ pub(super) async fn post_message(
     Json(req): Json<MsgIn>,
 ) -> AppResult<Json<Value>> {
     let acc = chat_access(&st, &u, id).await?;
+    if !acc.can_post {
+        return Err(forbidden(u.lang, ErrorKey::OnlyTripMembersCanViewChat));
+    }
     if !acc.open {
         return Err(bad(u.lang, ErrorKey::GroupChatClosed));
     }
@@ -316,6 +325,9 @@ pub(super) async fn react(
     Json(req): Json<ReactionIn>,
 ) -> AppResult<Json<Value>> {
     let acc = chat_access(&st, &u, id).await?;
+    if !acc.can_post {
+        return Err(forbidden(u.lang, ErrorKey::OnlyTripMembersCanViewChat));
+    }
     if !acc.open {
         return Err(bad(u.lang, ErrorKey::GroupChatClosed));
     }

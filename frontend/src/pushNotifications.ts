@@ -4,6 +4,7 @@
 
 import { useEffect, useState } from 'react';
 import { api, post, put } from './api';
+import { clearClientSessionStorage } from './offlineSnapshot';
 import { detectPlatform, isStandalone, PwaPlatform } from './pwaInstall';
 
 export type PushAvailability =
@@ -139,6 +140,50 @@ export async function getCurrentPushEndpoint(): Promise<string> {
 export function resetPushState(): void {
   knownSubscribed = null;
   notifyPushListeners();
+}
+
+export async function signOutClient(opts: { allDevices?: boolean } = {}): Promise<void> {
+  let endpoint = '';
+  const sw =
+    typeof navigator !== 'undefined' &&
+    typeof navigator.serviceWorker?.getRegistration === 'function'
+      ? navigator.serviceWorker
+      : undefined;
+  if (sw) {
+    try {
+      const reg = await Promise.race([
+        sw.getRegistration(),
+        new Promise<undefined>((resolve) => setTimeout(() => resolve(undefined), 1500)),
+      ]);
+      const sub = await reg?.pushManager?.getSubscription?.();
+      if (sub) {
+        endpoint = sub.endpoint;
+        await sub.unsubscribe().catch(() => {});
+      }
+    } catch {
+      /* ignore push teardown errors */
+    }
+  }
+  const path = opts.allDevices ? '/auth/logout-all' : '/auth/logout';
+  try {
+    await (endpoint ? post(path, { push_endpoint: endpoint }) : post(path));
+    if (typeof localStorage !== 'undefined') {
+      localStorage.removeItem('gr_pending_logout');
+    }
+  } catch (err) {
+    const isHttpErr =
+      typeof err === 'object' &&
+      err !== null &&
+      'status' in err &&
+      typeof (err as { status?: unknown }).status === 'number';
+    if (!isHttpErr && typeof localStorage !== 'undefined') {
+      localStorage.setItem('gr_pending_logout', '1');
+    }
+  } finally {
+    clearClientSessionStorage();
+    resetPushState();
+    syncAppBadge(0);
+  }
 }
 
 if (typeof window !== 'undefined') {

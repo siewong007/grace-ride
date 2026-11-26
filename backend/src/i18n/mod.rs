@@ -33,32 +33,46 @@ impl Lang {
     }
 
     /// Return `Some(Lang)` only when an `Accept-Language` header value explicitly
-    /// requests a supported `zh*` or `en*` tag (ignoring `q=0` exclusions).
+    /// requests a supported `zh*` or `en*` tag according to RFC 9110 `q=` weights.
     pub fn parse_accept_language(v: &str) -> Option<Lang> {
+        let mut best: Option<(f32, Lang)> = None;
         for raw_item in v.split(',') {
             let mut parts = raw_item.split(';');
             let tag = parts.next().unwrap_or("").trim().to_ascii_lowercase();
             if tag.is_empty() {
                 continue;
             }
-            let excluded = parts.any(|param| {
-                param
-                    .trim()
-                    .strip_prefix("q=")
-                    .and_then(|q| q.trim().parse::<f32>().ok())
-                    .is_some_and(|q| q <= 0.0)
-            });
-            if excluded {
+            let mut q = 1.0_f32;
+            let mut valid_q = true;
+            for param in parts {
+                let p = param.trim();
+                if let Some(raw_q) = p.strip_prefix("q=").or_else(|| p.strip_prefix("Q=")) {
+                    match raw_q.trim().parse::<f32>() {
+                        Ok(val) if val.is_finite() => q = val.clamp(0.0, 1.0),
+                        _ => {
+                            valid_q = false;
+                            break;
+                        }
+                    }
+                }
+            }
+            if !valid_q || q <= 0.0 {
                 continue;
             }
-            if tag == "zh" || tag.starts_with("zh-") || tag.starts_with("zh_") {
-                return Some(Lang::Zh);
-            }
-            if tag == "en" || tag.starts_with("en-") || tag.starts_with("en_") {
-                return Some(Lang::En);
+            let cand = if tag == "zh" || tag.starts_with("zh-") || tag.starts_with("zh_") {
+                Some(Lang::Zh)
+            } else if tag == "en" || tag.starts_with("en-") || tag.starts_with("en_") {
+                Some(Lang::En)
+            } else {
+                None
+            };
+            if let Some(lang) = cand {
+                if best.is_none_or(|(best_q, _)| q > best_q) {
+                    best = Some((q, lang));
+                }
             }
         }
-        None
+        best.map(|(_, l)| l)
     }
 
     /// Unauthenticated requests carry no `users.lang`; fall back to `Accept-Language`,

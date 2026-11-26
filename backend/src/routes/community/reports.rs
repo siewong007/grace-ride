@@ -636,7 +636,7 @@ pub(super) async fn monthly_report(
         (Some(0), Some(0), Some(0))
     } else {
         let (cnt, dist, reimb): (i64, Option<i64>, i64) = sqlx::query_as(
-            "SELECT COUNT(*), COALESCE(SUM(r.distance_km),0)::BIGINT, COALESCE(SUM(r.reimbursement_amount_cents),0)::BIGINT
+            "SELECT COUNT(*), COALESCE(SUM(r.distance_km),0)::BIGINT, COALESCE(SUM(r.reimbursement_amount_cents) FILTER (WHERE r.reimbursement_excluded = 0),0)::BIGINT
              FROM rides r WHERE r.driver_id=$1 AND r.status='completed' AND r.pickup_at >= $2 AND r.pickup_at < $3",
         )
         .bind(target)

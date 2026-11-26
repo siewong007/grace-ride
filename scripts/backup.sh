@@ -31,7 +31,17 @@ fi
 
 umask 077
 mkdir -p "$DEST" "$DATA_DIR/uploads"
-trap 'rm -rf "$DEST"' ERR
+ARCHIVE="$DEST.tar.gz"
+SUCCESS=0
+cleanup() {
+  rm -rf "$DEST"
+  if (( SUCCESS == 0 )); then
+    rm -f "$ARCHIVE" "${ARCHIVE}.age" "${ARCHIVE}.gpg"
+  elif [[ -n "${BACKUP_AGE_RECIPIENT:-}" || -n "${BACKUP_GPG_RECIPIENT:-}" ]]; then
+    rm -f "$ARCHIVE"
+  fi
+}
+trap cleanup EXIT
 
 pg_dump_args=(--format=custom --no-owner)
 if [[ -n "${BACKUP_SCHEMA:-}" ]]; then
@@ -54,10 +64,8 @@ else
 fi
 
 tar -C "$DATA_DIR" -czf "$DEST/uploads.tar.gz" uploads
-ARCHIVE="$DEST.tar.gz"
 tar -C "$BACKUP_DIR" -czf "$ARCHIVE" "grace-ride-$STAMP"
 rm -rf "$DEST"
-trap - ERR
 
 FINAL_ARCHIVE="$ARCHIVE"
 if [[ -n "${BACKUP_AGE_RECIPIENT:-}" ]]; then
@@ -70,6 +78,7 @@ elif [[ -n "${BACKUP_GPG_RECIPIENT:-}" ]]; then
   FINAL_ARCHIVE="${ARCHIVE}.gpg"
 fi
 
+SUCCESS=1
 find "$BACKUP_DIR" \( -name 'grace-ride-*.tar.gz' -o -name 'grace-ride-*.tar.gz.age' -o -name 'grace-ride-*.tar.gz.gpg' \) -mtime +"$KEEP_DAYS" -delete
 echo "Backup written: $FINAL_ARCHIVE"
 # Contains personal data (addresses, receipts): store encrypted and off-site.

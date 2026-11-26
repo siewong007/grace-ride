@@ -1,4 +1,4 @@
-import { FormEvent, useState } from 'react';
+import { FormEvent, useEffect, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
 import { Download, Share2 } from 'lucide-react';
@@ -193,10 +193,15 @@ function MemberList() {
   const [selectedIds, setSelectedIds] = useState<number[]>([]);
   const [batchModalOpen, setBatchModalOpen] = useState(false);
 
+  useEffect(() => {
+    setSelectedIds([]);
+  }, [page, pageSize, queryString]);
+
   const users = Array.isArray(data) ? data : data?.items ?? [];
+  const editableUsers = users.filter((u) => editable(u));
   const total = Array.isArray(data) ? data.length : data?.total ?? 0;
   const totalPages = Array.isArray(data) ? 1 : data?.total_pages ?? 1;
-  const selectedUsers = users.filter((u) => selectedIds.includes(u.id));
+  const selectedUsers = users.filter((u) => editable(u) && selectedIds.includes(u.id));
 
   const filterDefs: TableFilter[] = [
     { type: 'text', key: 'q', label: t('members.search') },
@@ -238,18 +243,18 @@ function MemberList() {
         <input
           type="checkbox"
           aria-label={t('members.selectAll')}
-          checked={users.length > 0 && users.every((u) => selectedIds.includes(u.id))}
+          checked={editableUsers.length > 0 && editableUsers.every((u) => selectedIds.includes(u.id))}
           ref={(el) => {
             if (el) {
-              const count = users.filter((u) => selectedIds.includes(u.id)).length;
-              el.indeterminate = count > 0 && count < users.length;
+              const count = editableUsers.filter((u) => selectedIds.includes(u.id)).length;
+              el.indeterminate = count > 0 && count < editableUsers.length;
             }
           }}
           onChange={(e) => {
             if (e.target.checked) {
-              setSelectedIds(Array.from(new Set([...selectedIds, ...users.map((u) => u.id)])));
+              setSelectedIds(Array.from(new Set([...selectedIds, ...editableUsers.map((u) => u.id)])));
             } else {
-              const pageIds = new Set(users.map((u) => u.id));
+              const pageIds = new Set(editableUsers.map((u) => u.id));
               setSelectedIds(selectedIds.filter((id) => !pageIds.has(id)));
             }
           }}
@@ -257,20 +262,21 @@ function MemberList() {
       ),
       headerClassName: 'col-select',
       cellClassName: 'col-select',
-      render: (u) => (
-        <input
-          type="checkbox"
-          aria-label={`Select ${u.name}`}
-          checked={selectedIds.includes(u.id)}
-          onChange={(e) => {
-            if (e.target.checked) {
-              setSelectedIds((prev) => [...prev, u.id]);
-            } else {
-              setSelectedIds((prev) => prev.filter((id) => id !== u.id));
-            }
-          }}
-        />
-      ),
+      render: (u) =>
+        editable(u) ? (
+          <input
+            type="checkbox"
+            aria-label={`Select ${u.name}`}
+            checked={selectedIds.includes(u.id)}
+            onChange={(e) => {
+              if (e.target.checked) {
+                setSelectedIds((prev) => [...prev, u.id]);
+              } else {
+                setSelectedIds((prev) => prev.filter((id) => id !== u.id));
+              }
+            }}
+          />
+        ) : null,
     });
   }
   columns.push(
@@ -388,7 +394,7 @@ function MemberList() {
             itemKey={(u) => u.id}
             compactRow={(u) => (
               <>
-                {canEdit && (
+                {canEdit && editable(u) && (
                   <input
                     type="checkbox"
                     aria-label={`Select ${u.name}`}
@@ -521,29 +527,49 @@ function BatchApproveModal({
 }) {
   const { t } = useTranslation('admin');
   const ft = useFormatT();
-  const { can } = useAuth();
+  const { can, me } = useAuth();
+  const confirm = useConfirm();
   const canAssign = can('admin_roles', 'update');
   const { assignable, names } = useRoleOptions();
   const { data: groups } = useApi<Group[]>('/groups');
   const [selectedGroups, setSelectedGroups] = useState<number[]>([]);
+  const [groupsTouched, setGroupsTouched] = useState(false);
   const [role, setRole] = useState<string>('member');
   const { busy, error, run } = useAction();
 
   const toggleGroup = (id: number) => {
+    setGroupsTouched(true);
     setSelectedGroups((curr) =>
       curr.includes(id) ? curr.filter((g) => g !== id) : [...curr, id],
     );
   };
 
-  const handleBatchSubmit = () => {
+  const handleBatchSubmit = async () => {
+    const viceNeedsAck =
+      !!me?.roles?.includes('vice_president') &&
+      !me.roles.includes('president') &&
+      !me.roles.includes('superadmin');
+    const promotingAdmin = canAssign && role === 'admin' && selectedUsers.some((u) => !u.roles.includes('admin'));
+    if (viceNeedsAck && promotingAdmin) {
+      const ok = await confirm({
+        title: t('members.presidentAckTitle'),
+        body: t('members.presidentAckBody', { name: selectedUsers.map((u) => u.name).join(', ') }),
+        confirmLabel: t('members.presidentAckConfirm'),
+        tone: 'primary',
+      });
+      if (!ok) return;
+    }
     run(async () => {
       const payloadRoles = role === 'member' ? [] : [role];
       await Promise.all(
         selectedUsers.map((u) =>
           put(`/admin/users/${u.id}`, {
-            roles: payloadRoles,
+            roles: canAssign ? payloadRoles : u.roles,
             status: 'active',
-            ...(groups ? { group_ids: selectedGroups } : {}),
+            ...(groups && (groupsTouched || u.status === 'pending') ? { group_ids: selectedGroups } : {}),
+            ...(viceNeedsAck && promotingAdmin && !u.roles.includes('admin')
+              ? { president_acknowledged: true }
+              : {}),
           }),
         ),
       );
@@ -597,7 +623,9 @@ function BatchApproveModal({
         <div className="stack-xs">
           <label className="label small bold">{t('members.batchAssignGroups')}</label>
           <div className="chips">
-            {(groups ?? []).map((g) => {
+            {(groups ?? [])
+              .filter((g) => !g.is_all && !g.is_visitor)
+              .map((g) => {
               const active = selectedGroups.includes(g.id);
               return (
                 <button

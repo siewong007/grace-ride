@@ -32,18 +32,22 @@ import androidx.compose.material.icons.outlined.ThumbUp
 import androidx.compose.material.icons.outlined.WbSunny
 import androidx.compose.material.icons.outlined.WorkspacePremium
 import androidx.compose.material3.LocalContentColor
+import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.luminance
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import coil.compose.AsyncImage
 import coil.request.ImageRequest
 import org.pjstatecm.graceride.data.api.Badge
@@ -84,15 +88,15 @@ object BadgeIcons {
         "badge_care_shield",
     )
 
-    val allGifKeys: Set<String> = animatedKeys + registered.keys
+    val allAssetKeys: Set<String> = animatedKeys + registered.keys
 
-    fun gifAssetUri(key: String?): String? =
-        key?.trim()?.takeIf { it in allGifKeys }?.let { "file:///android_asset/icons/badges/$it.gif" }
+    fun assetUri(key: String?): String? =
+        key?.trim()?.takeIf { it in allAssetKeys }?.let { "file:///android_asset/icons/badges/$it.webp" }
 
-    fun isAnimated(key: String?): Boolean = gifAssetUri(key) != null
+    fun isAnimated(key: String?): Boolean = assetUri(key) != null
 
     sealed interface ResolvedBadgeIcon {
-        data class GifAsset(val key: String, val assetUri: String) : ResolvedBadgeIcon
+        data class AnimatedAsset(val key: String, val assetUri: String) : ResolvedBadgeIcon
         data class Text(val text: String) : ResolvedBadgeIcon
     }
 
@@ -101,10 +105,10 @@ object BadgeIcons {
         icon: String? = null,
         fallbackChar: String? = null,
     ): ResolvedBadgeIcon {
-        val chosen = (icon ?: badge?.icon)?.trim()
-        val gifUri = gifAssetUri(chosen)
-        if (!chosen.isNullOrEmpty() && gifUri != null) {
-            return ResolvedBadgeIcon.GifAsset(chosen, gifUri)
+        val chosen = icon?.trim()?.takeIf { it.isNotEmpty() } ?: badge?.icon?.trim()
+        val uri = assetUri(chosen)
+        if (!chosen.isNullOrEmpty() && uri != null) {
+            return ResolvedBadgeIcon.AnimatedAsset(chosen, uri)
         }
         if (!chosen.isNullOrEmpty()) {
             return ResolvedBadgeIcon.Text(chosen)
@@ -122,19 +126,29 @@ fun BadgeIcon(
     tint: Color = LocalContentColor.current,
     modifier: Modifier = Modifier,
 ) {
-    when (val resolved = BadgeIcons.resolve(badge, icon, fallbackChar)) {
-        is BadgeIcons.ResolvedBadgeIcon.GifAsset -> AsyncImage(
-            model = ImageRequest.Builder(LocalContext.current)
-                .data(resolved.assetUri)
-                .crossfade(false)
-                .build(),
-            contentDescription = null,
-            contentScale = ContentScale.Fit,
-            modifier = modifier.size(size),
-        )
+    val resolved = remember(badge, icon, fallbackChar) {
+        BadgeIcons.resolve(badge, icon, fallbackChar)
+    }
+    when (resolved) {
+        is BadgeIcons.ResolvedBadgeIcon.AnimatedAsset -> {
+            val context = LocalContext.current
+            val request = remember(context, resolved.assetUri) {
+                ImageRequest.Builder(context)
+                    .data(resolved.assetUri)
+                    .crossfade(false)
+                    .build()
+            }
+            AsyncImage(
+                model = request,
+                contentDescription = null,
+                contentScale = ContentScale.Fit,
+                modifier = modifier.size(size),
+            )
+        }
         is BadgeIcons.ResolvedBadgeIcon.Text -> Text(
             text = resolved.text,
             color = tint,
+            fontSize = (size.value * 0.85f).sp,
             modifier = modifier,
         )
     }
@@ -156,34 +170,66 @@ object BadgeTierStyle {
         return if (badge.earned) "bronze" else "none"
     }
 
-    fun palette(tier: String?): BadgeTierPalette = when (tier) {
-        "bronze" -> BadgeTierPalette(
-            bg = Color(0xFFFEF3E6),
-            ring = Color(0xFFD97706),
-            ink = Color(0xFF92400E),
-        )
-        "silver" -> BadgeTierPalette(
-            bg = Color(0xFFF1F5F9),
-            ring = Color(0xFF94A3B8),
-            ink = Color(0xFF334155),
-        )
-        "gold" -> BadgeTierPalette(
-            bg = Color(0xFFFEF9C3),
-            ring = Color(0xFFF59E0B),
-            ink = Color(0xFF854D0E),
-            spark = Color(0xFFFBBF24),
-        )
-        "platinum" -> BadgeTierPalette(
-            bg = Color(0xFFE0F2FE),
-            ring = Color(0xFF38BDF8),
-            ink = Color(0xFF075985),
-            spark = Color(0xFFA855F7),
-        )
-        else -> BadgeTierPalette(
-            bg = Color(0xFFF1F5F9),
-            ring = Color(0xFFCBD5E1),
-            ink = Color(0xFF64748B),
-        )
+    fun palette(tier: String?, darkTheme: Boolean = false): BadgeTierPalette = if (darkTheme) {
+        when (tier) {
+            "bronze" -> BadgeTierPalette(
+                bg = Color(0xFF2C2115),
+                ring = Color(0xFFD97706),
+                ink = Color(0xFFFCD39B),
+            )
+            "silver" -> BadgeTierPalette(
+                bg = Color(0xFF1F242C),
+                ring = Color(0xFF94A3B8),
+                ink = Color(0xFFE2E8F0),
+            )
+            "gold" -> BadgeTierPalette(
+                bg = Color(0xFF2D2610),
+                ring = Color(0xFFF59E0B),
+                ink = Color(0xFFFDE68A),
+                spark = Color(0xFFFBBF24),
+            )
+            "platinum" -> BadgeTierPalette(
+                bg = Color(0xFF112536),
+                ring = Color(0xFF38BDF8),
+                ink = Color(0xFFBAE6FD),
+                spark = Color(0xFFA855F7),
+            )
+            else -> BadgeTierPalette(
+                bg = Color(0xFF1F2124),
+                ring = Color(0xFF3A3F47),
+                ink = Color(0xFFA3A3A3),
+            )
+        }
+    } else {
+        when (tier) {
+            "bronze" -> BadgeTierPalette(
+                bg = Color(0xFFFEF3E6),
+                ring = Color(0xFFD97706),
+                ink = Color(0xFF92400E),
+            )
+            "silver" -> BadgeTierPalette(
+                bg = Color(0xFFF1F5F9),
+                ring = Color(0xFF94A3B8),
+                ink = Color(0xFF334155),
+            )
+            "gold" -> BadgeTierPalette(
+                bg = Color(0xFFFEF9C3),
+                ring = Color(0xFFF59E0B),
+                ink = Color(0xFF854D0E),
+                spark = Color(0xFFFBBF24),
+            )
+            "platinum" -> BadgeTierPalette(
+                bg = Color(0xFFE0F2FE),
+                ring = Color(0xFF38BDF8),
+                ink = Color(0xFF075985),
+                spark = Color(0xFFA855F7),
+            )
+            else -> BadgeTierPalette(
+                bg = Color(0xFFF1F5F9),
+                ring = Color(0xFFCBD5E1),
+                ink = Color(0xFF64748B),
+            )
+        }
     }
 }
 
@@ -196,7 +242,8 @@ fun TieredBadgeMedallion(
     modifier: Modifier = Modifier,
 ) {
     val tier = BadgeTierStyle.resolveTier(badge)
-    val palette = BadgeTierStyle.palette(tier)
+    val darkTheme = MaterialTheme.colorScheme.background.luminance() < 0.5f
+    val palette = BadgeTierStyle.palette(tier, darkTheme = darkTheme)
     val ringColor = if (tier == "gold" || tier == "platinum") {
         val pulse by rememberInfiniteTransition(label = "tier_medallion").animateFloat(
             initialValue = 0.68f,

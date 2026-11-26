@@ -20,8 +20,14 @@ run_sql() {
   local db="$1"
   local sql="$2"
   if [[ -n "${ADMIN_DATABASE_URL:-}" ]]; then
-    local base="${ADMIN_DATABASE_URL%/*}"
-    psql "${base}/${db}" -v ON_ERROR_STOP=1 -tAq -c "$sql"
+    local suffix=""
+    local base_part="$ADMIN_DATABASE_URL"
+    if [[ "$ADMIN_DATABASE_URL" == *\?* ]]; then
+      suffix="?${ADMIN_DATABASE_URL#*\?}"
+      base_part="${ADMIN_DATABASE_URL%%\?*}"
+    fi
+    local base="${base_part%/*}"
+    psql "${base}/${db}${suffix}" -v ON_ERROR_STOP=1 -tAq -c "$sql"
   elif [[ -n "${PG_CONTAINER:-}" ]]; then
     local user="${POSTGRES_USER:-grace}"
     docker exec "$PG_CONTAINER" psql -U "$user" -d "$db" -v ON_ERROR_STOP=1 -tAq -c "$sql"
@@ -44,11 +50,17 @@ trap cleanup EXIT
 echo "== Creating disposable drill database: ${DRILL_DB} =="
 if [[ -n "${ADMIN_DATABASE_URL:-}" ]]; then
   psql "$ADMIN_DATABASE_URL" -v ON_ERROR_STOP=1 -tAq -c "CREATE DATABASE \"${DRILL_DB}\";"
-  BASE_URL="${ADMIN_DATABASE_URL%/*}"
-  DATABASE_URL="${BASE_URL}/${DRILL_DB}" "$SCRIPT_DIR/restore.sh" "$ARCHIVE" "$TMP_DATA"
+  URL_SUFFIX=""
+  URL_BASE_PART="$ADMIN_DATABASE_URL"
+  if [[ "$ADMIN_DATABASE_URL" == *\?* ]]; then
+    URL_SUFFIX="?${ADMIN_DATABASE_URL#*\?}"
+    URL_BASE_PART="${ADMIN_DATABASE_URL%%\?*}"
+  fi
+  BASE_URL="${URL_BASE_PART%/*}"
+  env -u PG_CONTAINER -u DOCKER_DB_CONTAINER DATABASE_URL="${BASE_URL}/${DRILL_DB}${URL_SUFFIX}" "$SCRIPT_DIR/restore.sh" "$ARCHIVE" "$TMP_DATA"
 elif [[ -n "${PG_CONTAINER:-}" ]]; then
   docker exec "$PG_CONTAINER" psql -U "${POSTGRES_USER:-grace}" -d postgres -v ON_ERROR_STOP=1 -tAq -c "CREATE DATABASE \"${DRILL_DB}\";"
-  PG_CONTAINER="$PG_CONTAINER" POSTGRES_DB="$DRILL_DB" "$SCRIPT_DIR/restore.sh" "$ARCHIVE" "$TMP_DATA"
+  env -u DATABASE_URL PG_CONTAINER="$PG_CONTAINER" POSTGRES_DB="$DRILL_DB" "$SCRIPT_DIR/restore.sh" "$ARCHIVE" "$TMP_DATA"
 else
   echo "set ADMIN_DATABASE_URL or PG_CONTAINER" >&2
   exit 1

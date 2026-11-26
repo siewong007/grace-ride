@@ -5,10 +5,14 @@ import androidx.lifecycle.viewModelScope
 import androidx.lifecycle.viewmodel.initializer
 import androidx.lifecycle.viewmodel.viewModelFactory
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.async
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.drop
+import kotlinx.coroutines.flow.filter
 import kotlinx.coroutines.launch
 import org.pjstatecm.graceride.data.api.ApiException
 import org.pjstatecm.graceride.data.api.Area
@@ -19,6 +23,7 @@ import org.pjstatecm.graceride.di.AppContainer
 
 data class ProxyRidersUiState(
     val loading: Boolean = true,
+    val refreshing: Boolean = false,
     val riders: List<ProxyRider> = emptyList(),
     val areas: List<Area> = emptyList(),
     val suggestions: List<Place> = emptyList(),
@@ -31,29 +36,75 @@ class ProxyRidersViewModel(private val container: AppContainer) : ViewModel() {
 
     private val _state = MutableStateFlow(ProxyRidersUiState())
     val state: StateFlow<ProxyRidersUiState> = _state.asStateFlow()
+    private var loadJob: Job? = null
     private var searchJob: Job? = null
 
     init {
         load()
+        viewModelScope.launch {
+            container.realtimeStream.events.collect { ev ->
+                if (ev != org.pjstatecm.graceride.notifications.RealtimeEvent.Resume) refresh()
+            }
+        }
+        viewModelScope.launch {
+            container.networkMonitor.isOnline.drop(1).filter { it }.collect { refresh() }
+        }
     }
 
-    fun load() {
-        viewModelScope.launch {
-            _state.value = _state.value.copy(loading = _state.value.riders.isEmpty(), error = null)
+    fun load() = loadInternal(refreshing = false)
+
+    fun refresh() = loadInternal(refreshing = _state.value.riders.isNotEmpty())
+
+    private fun loadInternal(refreshing: Boolean) {
+        loadJob?.cancel()
+        loadJob = viewModelScope.launch {
+            val uid = container.auth.me?.id
+            if (_state.value.riders.isEmpty() && uid != null) {
+                kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+                    container.offlineCache.read(
+                        uid,
+                        "proxy_riders",
+                        kotlinx.serialization.builtins.ListSerializer(org.pjstatecm.graceride.data.api.ProxyRider.serializer()),
+                    )
+                }?.let { cached ->
+                    _state.value = _state.value.copy(riders = cached.data, loading = false)
+                }
+            }
+            _state.value = _state.value.copy(
+                loading = _state.value.riders.isEmpty() && !refreshing,
+                refreshing = refreshing,
+                error = null,
+            )
             try {
-                val riders = container.rides.proxyRiders()
-                val areas = try {
-                    container.rides.areas().filter { it.active }
-                } catch (_: ApiException) {
-                    _state.value.areas
+                val (riders, areas) = coroutineScope {
+                    val ridersDef = async { container.rides.proxyRiders() }
+                    val areasDef = async {
+                        try {
+                            container.rides.areas().filter { it.active }
+                        } catch (_: ApiException) {
+                            _state.value.areas
+                        }
+                    }
+                    ridersDef.await() to areasDef.await()
+                }
+                if (uid != null) {
+                    kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+                        container.offlineCache.write(
+                            uid,
+                            "proxy_riders",
+                            riders,
+                            kotlinx.serialization.builtins.ListSerializer(org.pjstatecm.graceride.data.api.ProxyRider.serializer()),
+                        )
+                    }
                 }
                 _state.value = _state.value.copy(
                     loading = false,
+                    refreshing = false,
                     riders = riders,
                     areas = areas,
                 )
             } catch (e: ApiException) {
-                _state.value = _state.value.copy(loading = false, error = e.message)
+                _state.value = _state.value.copy(loading = false, refreshing = false, error = e.message)
             }
         }
     }
@@ -113,6 +164,16 @@ class ProxyRidersViewModel(private val container: AppContainer) : ViewModel() {
                     container.rides.updateProxyRider(editingId, payload)
                 }
                 val riders = container.rides.proxyRiders()
+                container.auth.me?.id?.let { uid ->
+                    kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+                        container.offlineCache.write(
+                            uid,
+                            "proxy_riders",
+                            riders,
+                            kotlinx.serialization.builtins.ListSerializer(ProxyRider.serializer()),
+                        )
+                    }
+                }
                 _state.value = _state.value.copy(
                     busy = false,
                     riders = riders,
@@ -133,6 +194,16 @@ class ProxyRidersViewModel(private val container: AppContainer) : ViewModel() {
             try {
                 container.rides.deleteProxyRider(id)
                 val riders = container.rides.proxyRiders()
+                container.auth.me?.id?.let { uid ->
+                    kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+                        container.offlineCache.write(
+                            uid,
+                            "proxy_riders",
+                            riders,
+                            kotlinx.serialization.builtins.ListSerializer(ProxyRider.serializer()),
+                        )
+                    }
+                }
                 _state.value = _state.value.copy(
                     busy = false,
                     riders = riders,

@@ -339,7 +339,7 @@ async fn create(
     if !perms::is_superadmin(&caller_roles) && holds_settings(&set) {
         return Err(forbidden(u.lang, ErrorKey::SettingsSuperadminOnly));
     }
-    guard_rank(&mut *tx, &u, &key, &set, &PermSet::default()).await?;
+    guard_rank(&mut tx, &u, &key, &set, &PermSet::default()).await?;
     sqlx::query("INSERT INTO roles (key, name, description, is_system) VALUES ($1, $2, $3, 0)")
         .bind(&key)
         .bind(&name)
@@ -392,8 +392,8 @@ async fn update(
     if !perms::is_superadmin(&caller_roles) && adds_settings(&set, &before) {
         return Err(forbidden(u.lang, ErrorKey::SettingsSuperadminOnly));
     }
-    guard_own_access(&mut *tx, &u, &key, Some(&set)).await?;
-    guard_rank(&mut *tx, &u, &key, &set, &before).await?;
+    guard_own_access(&mut tx, &u, &key, Some(&set)).await?;
+    guard_rank(&mut tx, &u, &key, &set, &before).await?;
     // Built-in roles are named by the app in each member's language.
     let name = if is_system == 1 {
         old_name
@@ -486,7 +486,7 @@ async fn remove(
     if !perms::can_manage_admins(&caller_roles) && before.keys().iter().any(|k| power.contains(k)) {
         return Err(forbidden(u.lang, ErrorKey::AdminAppointmentRestricted));
     }
-    guard_own_access(&mut *tx, &u, &key, None).await?;
+    guard_own_access(&mut tx, &u, &key, None).await?;
     // Members who held the role simply lose it.
     let held = sqlx::query(
         "UPDATE users SET roles = array_to_string(array_remove(string_to_array(roles, ','), $1), ',')

@@ -8,8 +8,8 @@ use serde::Deserialize;
 use serde_json::{json, Value};
 
 use super::{
-    check_receipts, compute_shares, ensure_all_attended, event_owner, load, load_on, paid_amount,
-    snapshot, snapshot_on, write_body, SettlementIn,
+    check_receipts, compute_shares, ensure_all_attended_on, ensure_users_exist_on, event_owner,
+    load, load_on, paid_amount, snapshot, snapshot_on, write_body, SettlementIn,
 };
 use crate::auth::CurrentUser;
 use crate::error::{bad, conflict, forbidden, AppResult};
@@ -41,7 +41,9 @@ pub(super) async fn create(
     }
     let shares = compute_shares(u.lang, &req)?;
     check_receipts(&st, &u, &req).await?;
+    let share_uids: Vec<i64> = shares.iter().map(|s| s.0).collect();
     let mut tx = st.db.begin().await?;
+    ensure_users_exist_on(&mut tx, u.lang, &share_uids).await?;
     let (sid,): (i64,) = sqlx::query_as(
         "INSERT INTO settlements (event_id, created_by, title, created_at) VALUES ($1,$2,$3,$4) RETURNING id",
     )
@@ -129,7 +131,7 @@ pub(super) async fn list_mine_organised(
 
         let page = q.page.unwrap_or(1).max(1);
         let limit = q.limit.unwrap_or(25).clamp(1, 100);
-        let offset = (page - 1) * limit;
+        let offset = (page - 1).saturating_mul(limit);
 
         let rows: Vec<(i64, String, String, String, i64, i64, i64)> = sqlx::query_as(
             "SELECT s.id, s.title, e.title, s.status,
@@ -194,21 +196,16 @@ pub(super) async fn update(
     }
     let shares = compute_shares(u.lang, &req)?;
     check_receipts(&st, &u, &req).await?;
+    let share_uids: Vec<i64> = shares.iter().map(|s| s.0).collect();
     if s.status == "published" {
+        if req.payee_account.trim().is_empty() {
+            return Err(bad(u.lang, ErrorKey::PayeeDetailsRequired));
+        }
         let reason = req
             .reason
             .clone()
             .filter(|r| !r.trim().is_empty())
             .ok_or_else(|| bad(u.lang, ErrorKey::RevisionReasonRequired))?;
-        // A revision must obey the same attendance rule as publishing: never charge
-        // someone who was not recorded as attending the event.
-        ensure_all_attended(
-            &st,
-            u.lang,
-            s.event_id,
-            shares.iter().map(|s| s.0).collect(),
-        )
-        .await?;
         // 发布后若改金额，必须保留旧版并通知
         // One transaction for the saved old version, the version bump and the new body,
         // with the bill row locked so two revisions at once can't share a version number.
@@ -222,6 +219,10 @@ pub(super) async fn update(
         if s.status != "published" {
             return Err(bad(u.lang, ErrorKey::BillClosedCannotEdit));
         }
+        ensure_users_exist_on(&mut tx, u.lang, &share_uids).await?;
+        // A revision must obey the same attendance rule as publishing: never charge
+        // someone who was not recorded as attending the event.
+        ensure_all_attended_on(&mut tx, u.lang, s.event_id, share_uids.clone()).await?;
         let before: Vec<(i64, i64, String, i64)> = sqlx::query_as(
             "SELECT user_id, amount_cents, status, paid_cents FROM settlement_shares WHERE settlement_id=$1",
         )
@@ -355,6 +356,7 @@ pub(super) async fn update(
         if status != "draft" {
             return Err(conflict(u.lang, ErrorKey::SettlementAlreadyPublished));
         }
+        ensure_users_exist_on(&mut tx, u.lang, &share_uids).await?;
         write_body(&mut tx, id, &req, &shares).await?;
         tx.commit().await?;
         audit(
@@ -429,8 +431,8 @@ pub(super) async fn publish(
     .bind(id)
     .fetch_all(&mut *tx)
     .await?;
-    ensure_all_attended(
-        &st,
+    ensure_all_attended_on(
+        &mut tx,
         u.lang,
         s.event_id,
         shares.iter().map(|s| s.0).collect(),

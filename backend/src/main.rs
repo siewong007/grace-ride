@@ -24,9 +24,35 @@ async fn main() -> anyhow::Result<()> {
     sentry_options.release = sentry::release_name!();
     sentry_options.before_send = Some(std::sync::Arc::new(|mut event| {
         if let Some(user) = event.user.as_mut() {
+            user.id = None;
             user.email = None;
             user.username = None;
             user.ip_address = None;
+        }
+        if let Some(req) = event.request.as_mut() {
+            if let Some(url) = req.url.as_mut() {
+                let redacted = grace_ride::redact_uri_path(url.path()).into_owned();
+                url.set_path(&redacted);
+                url.set_query(None);
+                url.set_fragment(None);
+            }
+            req.query_string = None;
+            req.data = None;
+            req.headers.retain(|k, _| {
+                let lower = k.to_ascii_lowercase();
+                !matches!(
+                    lower.as_str(),
+                    "cookie"
+                        | "authorization"
+                        | "x-telegram-bot-api-secret-token"
+                        | "x-forwarded-for"
+                )
+            });
+        }
+        for bc in &mut event.breadcrumbs.values {
+            bc.data.remove("url");
+            bc.data.remove("to");
+            bc.data.remove("from");
         }
         Some(event)
     }));
@@ -36,9 +62,10 @@ async fn main() -> anyhow::Result<()> {
     ));
 
     let cfg = Config::from_env()?;
+    cfg.validate_production_secrets()?;
 
     let filter = EnvFilter::try_from_default_env()
-        .unwrap_or_else(|_| "grace_ride=info,tower_http=info".into());
+        .unwrap_or_else(|_| "grace_ride=info,tower_http=warn".into());
     let registry = tracing_subscriber::registry()
         .with(filter)
         .with(sentry::integrations::tracing::ErrorLayer::new().with_filter(LevelFilter::ERROR));

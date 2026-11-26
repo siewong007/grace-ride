@@ -120,7 +120,7 @@ pub(super) async fn serve_calendar_ics(
     headers: HeaderMap,
     Path(raw_token): Path<String>,
 ) -> AppResult<Response> {
-    let lang = Lang::from_accept_language(
+    let accept_lang = Lang::from_accept_language(
         headers
             .get(header::ACCEPT_LANGUAGE)
             .and_then(|v| v.to_str().ok())
@@ -128,17 +128,22 @@ pub(super) async fn serve_calendar_ics(
     );
     let token = raw_token.strip_suffix(".ics").unwrap_or(&raw_token);
     if token.len() < 16 {
-        return Err(not_found(lang));
+        return Err(not_found(accept_lang));
     }
-    let user: Option<(i64, String)> = sqlx::query_as(
-        "SELECT id, name FROM users WHERE calendar_token_hash=$1 AND status='active'",
+    let user: Option<(i64, String, String)> = sqlx::query_as(
+        "SELECT id, name, lang FROM users WHERE calendar_token_hash=$1 AND status='active'",
     )
     .bind(hash_token(token))
     .fetch_optional(&st.db)
     .await?;
-    let Some((uid, _uname)) = user else {
-        return Err(not_found(lang));
+    let Some((uid, _uname, user_lang)) = user else {
+        return Err(not_found(accept_lang));
     };
+    let lang = headers
+        .get(header::ACCEPT_LANGUAGE)
+        .and_then(|v| v.to_str().ok())
+        .and_then(Lang::parse_accept_language)
+        .unwrap_or_else(|| Lang::from_code(&user_lang));
 
     let cutoff = crate::util::in_days(-30);
     let rides: Vec<(i64, i64, Option<i64>, String, String, String, String, String, String)> = sqlx::query_as(
@@ -156,14 +161,18 @@ pub(super) async fn serve_calendar_ics(
     .fetch_all(&st.db)
     .await?;
 
-    let events: Vec<(i64, String, String, String, String)> = sqlx::query_as(
+    let (scope, _) = crate::audience::group_scopes(&st.db, uid).await?;
+    let events: Vec<(i64, String, String, String, String)> = sqlx::query_as(crate::dyn_sql!(
         "SELECT e.id, e.title, e.starts_at, e.location, e.description
          FROM event_signups es JOIN events e ON e.id = es.event_id
          WHERE es.user_id=$1 AND es.status='going' AND e.status IN ('published','finished') AND e.starts_at >= $2
+           AND {}
          ORDER BY e.starts_at",
-    )
+        crate::audience::visible_events_sql("$1", "$3")
+    ))
     .bind(uid)
     .bind(&cutoff)
+    .bind(&scope)
     .fetch_all(&st.db)
     .await?;
 
@@ -215,9 +224,6 @@ pub(super) async fn serve_calendar_ics(
     }
 
     for (eid, title, starts_at, location, desc) in events {
-        if !crate::audience::member_sees_event(&st.db, uid, eid).await? {
-            continue;
-        }
         lines.push("BEGIN:VEVENT".to_string());
         lines.push(format!("UID:gr-event-{eid}@graceride.cmc"));
         lines.push(format!("DTSTAMP:{stamp}"));

@@ -44,12 +44,13 @@ env:
   PUBLIC_URL: https://graceride.saliminn.my
 
 jobs:
-  deploy:
-    name: Build and roll onto AIC
+  build:
+    name: Build release image
     runs-on: ubuntu-latest
-    timeout-minutes: 45
-    environment: production
-    # Deploy master push with passed CI, or manual dispatch restricted to master.
+    timeout-minutes: 30
+    outputs:
+      sha: ${{ steps.meta.outputs.sha }}
+    # Build master push with passed CI, or manual dispatch restricted to master.
     if: >-
       (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/master') ||
       (github.event.workflow_run.conclusion == 'success' &&
@@ -67,18 +68,20 @@ jobs:
           sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /usr/local/share/boost || true
 
       - name: Resolve commit SHA
+        id: meta
         shell: bash
         run: |
           set -euo pipefail
           sha=$(git rev-parse HEAD)
           [[ "$sha" =~ ^[0-9a-f]{40}$ ]]
+          echo "sha=$sha" >> "$GITHUB_OUTPUT"
           echo "SHA=$sha" >> "$GITHUB_ENV"
 
       - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
+        uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3
 
       - name: Build the linux/amd64 image
-        uses: docker/build-push-action@v6
+        uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6
         with:
           context: .
           platforms: linux/amd64
@@ -89,14 +92,49 @@ jobs:
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
-      - name: Export compressed image tarball
+      - name: Export compressed image tarball and deploy manifests
         shell: bash
         run: |
           set -euo pipefail
           sha="$SHA"
           test "$(docker image inspect --format '{{.Os}}/{{.Architecture}}' "grace-ride:$sha")" = "linux/amd64"
-          docker save "grace-ride:$sha" | gzip -1 > "$RUNNER_TEMP/grace-ride-$sha.tar.gz"
-          gzip -t "$RUNNER_TEMP/grace-ride-$sha.tar.gz"
+          mkdir -p "$RUNNER_TEMP/deploy-bundle"
+          docker save "grace-ride:$sha" | gzip -1 > "$RUNNER_TEMP/deploy-bundle/grace-ride-$sha.tar.gz"
+          gzip -t "$RUNNER_TEMP/deploy-bundle/grace-ride-$sha.tar.gz"
+          cp deploy/docker-compose.aic.yml "$RUNNER_TEMP/deploy-bundle/docker-compose.aic.yml"
+          if [[ -f deploy/docker-compose.osrm.yml ]]; then
+            cp deploy/docker-compose.osrm.yml "$RUNNER_TEMP/deploy-bundle/docker-compose.osrm.yml"
+          fi
+
+      - name: Upload deploy bundle
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: grace-ride-deploy-${{ env.SHA }}
+          path: ${{ runner.temp }}/deploy-bundle
+          retention-days: 1
+
+  deploy:
+    name: Roll onto AIC
+    needs: build
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    environment: production
+    env:
+      SHA: ${{ needs.build.outputs.sha }}
+    steps:
+      - name: Download deploy bundle
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: grace-ride-deploy-${{ needs.build.outputs.sha }}
+          path: ${{ runner.temp }}/deploy-bundle
+
+      - name: Stage tarball for deploy
+        shell: bash
+        run: |
+          set -euo pipefail
+          [[ "$SHA" =~ ^[0-9a-f]{40}$ ]]
+          gzip -t "$RUNNER_TEMP/deploy-bundle/grace-ride-$SHA.tar.gz"
+          mv "$RUNNER_TEMP/deploy-bundle/grace-ride-$SHA.tar.gz" "$RUNNER_TEMP/grace-ride-$SHA.tar.gz"
 
       - name: Configure pinned SSH access
         shell: bash
@@ -136,11 +174,11 @@ jobs:
           echo "OLD_TAG=$prev_tag" >> "$GITHUB_ENV"
 
           scp "${ssh_opts[@]}" -P "$VPS_PORT" \
-            deploy/docker-compose.aic.yml \
+            "$RUNNER_TEMP/deploy-bundle/docker-compose.aic.yml" \
             "$VPS_USER@$VPS_HOST:/tmp/docker-compose.aic.$SHA.yml"
-          if [[ -f deploy/docker-compose.osrm.yml ]]; then
+          if [[ -f "$RUNNER_TEMP/deploy-bundle/docker-compose.osrm.yml" ]]; then
             scp "${ssh_opts[@]}" -P "$VPS_PORT" \
-              deploy/docker-compose.osrm.yml \
+              "$RUNNER_TEMP/deploy-bundle/docker-compose.osrm.yml" \
               "$VPS_USER@$VPS_HOST:/tmp/docker-compose.osrm.$SHA.yml"
           fi
           scp "${ssh_opts[@]}" -P "$VPS_PORT" \
@@ -161,9 +199,15 @@ jobs:
             exit 1
           fi
 
+          if [[ -f /opt/grace-ride/docker-compose.aic.yml ]]; then
+            cp -a /opt/grace-ride/docker-compose.aic.yml /opt/grace-ride/docker-compose.aic.yml.prev
+          fi
           install -m 0644 "/tmp/docker-compose.aic.$SHA.yml" /opt/grace-ride/docker-compose.aic.yml
           rm -f "/tmp/docker-compose.aic.$SHA.yml"
           if [[ -f "/tmp/docker-compose.osrm.$SHA.yml" ]]; then
+            if [[ -f /opt/grace-ride/docker-compose.osrm.yml ]]; then
+              cp -a /opt/grace-ride/docker-compose.osrm.yml /opt/grace-ride/docker-compose.osrm.yml.prev
+            fi
             install -m 0644 "/tmp/docker-compose.osrm.$SHA.yml" /opt/grace-ride/docker-compose.osrm.yml
             rm -f "/tmp/docker-compose.osrm.$SHA.yml"
           fi
@@ -185,6 +229,61 @@ jobs:
               printf 'IMAGE_TAG=%s\n' "$tag" >> /opt/grace-ride/secrets.env
             fi
           }
+
+          mkdir -p /opt/grace-ride/pre-roll-backups
+          chmod 700 /opt/grace-ride/pre-roll-backups
+
+          ensure_secrets_encryption_key() {
+            chmod 600 /opt/grace-ride/secrets.env 2>/dev/null || true
+            if ! grep -qE '^SECRETS_ENCRYPTION_KEY=[^[:space:]]+' /opt/grace-ride/secrets.env; then
+              local new_key
+              new_key="$(openssl rand -hex 32)"
+              [[ -s /opt/grace-ride/secrets.env && -n "$(tail -c 1 /opt/grace-ride/secrets.env)" ]] \
+                && printf '\n' >> /opt/grace-ride/secrets.env
+              printf 'SECRETS_ENCRYPTION_KEY=%s\n' "$new_key" >> /opt/grace-ride/secrets.env
+              echo "Initialized SECRETS_ENCRYPTION_KEY in /opt/grace-ride/secrets.env"
+            fi
+          }
+
+          write_pre_roll_dump() {
+            local dump_base="/opt/grace-ride/pre-roll-backups/pre-${SHA}.dump"
+            local age_pub
+            age_pub=$(grep -E '^BACKUP_AGE_RECIPIENT=' /opt/grace-ride/secrets.env 2>/dev/null | head -n 1 | cut -d= -f2- | tr -d "\"'\r\n" || true)
+            if [[ -n "$age_pub" ]] && command -v age >/dev/null 2>&1; then
+              docker exec grace-ride-db pg_dump -U grace -d grace_ride -Fc | age -r "$age_pub" -o "${dump_base}.age"
+              chmod 600 "${dump_base}.age"
+            else
+              docker exec grace-ride-db pg_dump -U grace -d grace_ride -Fc > "$dump_base"
+              chmod 600 "$dump_base"
+            fi
+            ls -1t /opt/grace-ride/pre-roll-backups/pre-*.dump* 2>/dev/null | tail -n +3 | xargs -r rm -f
+          }
+
+          initial_users=0
+          pre_dump_done=0
+          if [[ "$(docker inspect -f '{{.State.Running}}' grace-ride-db 2>/dev/null || echo false)" == "true" ]]; then
+            initial_users=$(docker exec grace-ride-db psql -U grace -d grace_ride -tAc 'SELECT COUNT(*) FROM users' 2>/dev/null || echo 0)
+            initial_users=${initial_users//[$'\t\r\n ']/}
+            initial_users=${initial_users:-0}
+            if [[ "$initial_users" =~ ^[0-9]+$ ]] && (( initial_users > 0 )); then
+              write_pre_roll_dump
+              pre_dump_done=1
+            fi
+          fi
+
+          mv "/tmp/grace-ride-$SHA.tar.gz.part" "/tmp/grace-ride-$SHA.tar.gz"
+          gzip -t "/tmp/grace-ride-$SHA.tar.gz"
+          gunzip -c "/tmp/grace-ride-$SHA.tar.gz" | docker load
+          rm -f "/tmp/grace-ride-$SHA.tar.gz"
+
+          net_internal=$(docker network inspect -f '{{.Internal}}' grace-ride_database 2>/dev/null || echo missing)
+          if [[ "$net_internal" == "false" ]] && grep -qE '^[[:space:]]+internal:[[:space:]]+true' /opt/grace-ride/docker-compose.aic.yml; then
+            echo "Migrating grace-ride_database network to internal: true (preserving volumes)..."
+            IMAGE_TAG="${SHA}" docker compose \
+              --env-file /opt/grace-ride/secrets.env \
+              -f /opt/grace-ride/docker-compose.aic.yml \
+              down
+          fi
 
           # Ensure grace-ride-db is running and healthy (handles first boot on a fresh VPS).
           if [[ "$(docker inspect -f '{{.State.Running}}' grace-ride-db 2>/dev/null || echo false)" != "true" ]]; then
@@ -212,14 +311,12 @@ jobs:
           users_before=$(docker exec grace-ride-db psql -U grace -d grace_ride -tAc 'SELECT COUNT(*) FROM users' 2>/dev/null || echo 0)
           users_before=${users_before//[$'\t\r\n ']/}
           users_before=${users_before:-0}
+          if [[ "$initial_users" =~ ^[0-9]+$ ]] && (( initial_users > 0 )); then
+            users_before="$initial_users"
+          fi
           db_before=$(docker inspect -f '{{.Id}}' grace-ride-db)
           echo "users_before=$users_before"
           echo "old_image=$old_image"
-
-          mv "/tmp/grace-ride-$SHA.tar.gz.part" "/tmp/grace-ride-$SHA.tar.gz"
-          gzip -t "/tmp/grace-ride-$SHA.tar.gz"
-          gunzip -c "/tmp/grace-ride-$SHA.tar.gz" | docker load
-          rm -f "/tmp/grace-ride-$SHA.tar.gz"
 
           rollback() {
             trap - ERR
@@ -227,23 +324,28 @@ jobs:
               echo "No previous image to restore" >&2
               return 0
             fi
+            if [[ -f /opt/grace-ride/docker-compose.aic.yml.prev ]]; then
+              mv -f /opt/grace-ride/docker-compose.aic.yml.prev /opt/grace-ride/docker-compose.aic.yml
+            fi
+            if [[ -f /opt/grace-ride/docker-compose.osrm.yml.prev ]]; then
+              mv -f /opt/grace-ride/docker-compose.osrm.yml.prev /opt/grace-ride/docker-compose.osrm.yml
+            fi
             set_image_tag "$old_tag"
-            docker compose --env-file /opt/grace-ride/secrets.env -f /opt/grace-ride/docker-compose.aic.yml up -d --no-deps app
+            if ! docker compose --env-file /opt/grace-ride/secrets.env -f /opt/grace-ride/docker-compose.aic.yml up -d --no-deps --force-recreate app; then
+              IMAGE_TAG="$old_tag" docker compose --env-file /opt/grace-ride/secrets.env -f /opt/grace-ride/docker-compose.aic.yml down
+              IMAGE_TAG="$old_tag" docker compose --env-file /opt/grace-ride/secrets.env -f /opt/grace-ride/docker-compose.aic.yml up -d
+            fi
           }
           trap rollback ERR
 
-          mkdir -p /opt/grace-ride/pre-roll-backups
-          chmod 700 /opt/grace-ride/pre-roll-backups
-          if (( users_before > 0 )); then
-            dump_path="/opt/grace-ride/pre-roll-backups/pre-${SHA}.dump"
-            docker exec grace-ride-db pg_dump -U grace -d grace_ride -Fc > "$dump_path"
-            chmod 600 "$dump_path"
-            ls -1t /opt/grace-ride/pre-roll-backups/pre-*.dump | tail -n +3 | xargs -r rm -f
+          if [[ "$pre_dump_done" == "0" ]] && (( users_before > 0 )); then
+            write_pre_roll_dump
           fi
 
+          ensure_secrets_encryption_key
           set_image_tag "$SHA"
           grep -q "^IMAGE_TAG=${SHA}$" /opt/grace-ride/secrets.env
-          docker compose --env-file /opt/grace-ride/secrets.env -f /opt/grace-ride/docker-compose.aic.yml up -d --no-deps app
+          docker compose --env-file /opt/grace-ride/secrets.env -f /opt/grace-ride/docker-compose.aic.yml up -d --no-deps --force-recreate app
 
           ok=0
           for i in $(seq 1 30); do
@@ -329,12 +431,21 @@ jobs:
             "OLD_TAG='$OLD_TAG' bash -s" <<'REMOTE'
           set -euo pipefail
           [[ "$OLD_TAG" =~ ^[A-Za-z0-9._-]+$ ]]
+          if [[ -f /opt/grace-ride/docker-compose.aic.yml.prev ]]; then
+            mv -f /opt/grace-ride/docker-compose.aic.yml.prev /opt/grace-ride/docker-compose.aic.yml
+          fi
+          if [[ -f /opt/grace-ride/docker-compose.osrm.yml.prev ]]; then
+            mv -f /opt/grace-ride/docker-compose.osrm.yml.prev /opt/grace-ride/docker-compose.osrm.yml
+          fi
           if grep -q '^IMAGE_TAG=' /opt/grace-ride/secrets.env; then
             sed -i "s/^IMAGE_TAG=.*/IMAGE_TAG=${OLD_TAG}/" /opt/grace-ride/secrets.env
           else
             printf 'IMAGE_TAG=%s\n' "$OLD_TAG" >> /opt/grace-ride/secrets.env
           fi
-          docker compose --env-file /opt/grace-ride/secrets.env -f /opt/grace-ride/docker-compose.aic.yml up -d --no-deps app
+          if ! docker compose --env-file /opt/grace-ride/secrets.env -f /opt/grace-ride/docker-compose.aic.yml up -d --no-deps --force-recreate app; then
+            IMAGE_TAG="$OLD_TAG" docker compose --env-file /opt/grace-ride/secrets.env -f /opt/grace-ride/docker-compose.aic.yml down
+            IMAGE_TAG="$OLD_TAG" docker compose --env-file /opt/grace-ride/secrets.env -f /opt/grace-ride/docker-compose.aic.yml up -d
+          fi
           echo "Rolled back app_image=$(docker inspect -f '{{.Config.Image}}' grace-ride)"
           REMOTE
 
@@ -343,6 +454,10 @@ jobs:
         shell: bash
         run: |
           if [[ -s "$RUNNER_TEMP/vps-key" && -s "$RUNNER_TEMP/vps-known-hosts" && -n "${SHA:-}" ]]; then
+            clean_prev=""
+            if [[ "${{ steps.public_check.outcome }}" == "success" ]]; then
+              clean_prev="/opt/grace-ride/docker-compose.aic.yml.prev /opt/grace-ride/docker-compose.osrm.yml.prev"
+            fi
             ssh \
               -i "$RUNNER_TEMP/vps-key" \
               -p "$VPS_PORT" \
@@ -352,7 +467,8 @@ jobs:
               -o StrictHostKeyChecking=yes \
               -o "UserKnownHostsFile=$RUNNER_TEMP/vps-known-hosts" \
               "$VPS_USER@$VPS_HOST" \
-              "rm -f -- /tmp/grace-ride-$SHA.tar.gz.part /tmp/grace-ride-$SHA.tar.gz /tmp/docker-compose.aic.$SHA.yml /tmp/docker-compose.osrm.$SHA.yml" \
+              "rm -f -- /tmp/grace-ride-$SHA.tar.gz.part /tmp/grace-ride-$SHA.tar.gz /tmp/docker-compose.aic.$SHA.yml /tmp/docker-compose.osrm.$SHA.yml $clean_prev" \
               || true
           fi
           rm -f "$RUNNER_TEMP/vps-key" "$RUNNER_TEMP/vps-known-hosts" "$RUNNER_TEMP/grace-ride-$SHA.tar.gz"
+          rm -rf "$RUNNER_TEMP/deploy-bundle"

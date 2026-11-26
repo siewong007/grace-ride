@@ -33,6 +33,7 @@ import org.pjstatecm.graceride.di.AppContainer
 import org.pjstatecm.graceride.data.session.InMemoryStore
 import org.pjstatecm.graceride.domain.KlTime
 import org.pjstatecm.graceride.domain.inferAreaId
+import org.pjstatecm.graceride.ui.screens.costs.CostsViewModel
 import org.pjstatecm.graceride.ui.screens.events.EventActionNotice
 import org.pjstatecm.graceride.ui.screens.events.EventDetailViewModel
 import org.pjstatecm.graceride.ui.screens.events.EventsViewModel
@@ -310,23 +311,29 @@ class ViewModelTest {
             "destination":"Church","event":{"id":20},"passenger":{"id":7,"name":"Auntie"}}"""
         val otherDrive = """{"id":51,"status":"confirmed","pickup_at":"2026-11-29 18:10:00","area":{"id":2,"name":"PJ"},
             "destination":"Hall","event":{"id":99},"passenger":{"id":8,"name":"Uncle"}}"""
-        server.enqueue(json(goingEvent))
-        server.enqueue(json("[$out,$ret]"))
-        server.enqueue(json("[$drive,$otherDrive]"))
+        val notSigned = """{"id":21,"title":"Prayer","starts_at":"2026-12-02 20:00:00"}"""
 
-        val vm = org.pjstatecm.graceride.ui.screens.events.EventDetailViewModel(container, 20L)
+        dispatchByPath(
+            mapOf(
+                "/api/events/20" to { json(goingEvent) },
+                "/api/events/21" to { json(notSigned) },
+                "/api/rides" to { json("[$out,$ret]") },
+                "/api/driver/schedule" to { json("[$drive,$otherDrive]") },
+            )
+        )
+
+        val vm = EventDetailViewModel(container, 20L)
         val state = vm.state.awaitUntil { !it.loading && it.event != null }
         assertEquals("/api/events/20", server.takeRequest().path)
-        assertTrue(server.takeRequest().path!!.startsWith("/api/rides"))
-        assertEquals("/api/driver/schedule?from=2026-11-29&to=2026-11-29", server.takeRequest().path)
+        val followPaths = setOf(server.takeRequest().path!!, server.takeRequest().path!!)
+        assertTrue(followPaths.any { it.startsWith("/api/rides") })
+        assertTrue(followPaths.contains("/api/driver/schedule?from=2026-11-29&to=2026-11-29"))
         assertEquals(44L, state.outboundRide?.id)
         assertEquals(45L, state.returnRide?.id)
         assertEquals(listOf(50L), state.drivingForEvent.map { it.id })
 
         // Not signed up: no ride or driving calls
-        val notSigned = """{"id":21,"title":"Prayer","starts_at":"2026-12-02 20:00:00"}"""
-        server.enqueue(json(notSigned))
-        val vm2 = org.pjstatecm.graceride.ui.screens.events.EventDetailViewModel(container, 21L)
+        val vm2 = EventDetailViewModel(container, 21L)
         val s2 = vm2.state.awaitUntil { !it.loading && it.event != null }
         assertEquals("/api/events/21", server.takeRequest().path)
         assertNull(s2.outboundRide)
@@ -339,12 +346,16 @@ class ViewModelTest {
         val savedJson = """[{"id":5,"label":"Home","area_id":2,"address":"12 Jalan Home","is_default":1}]"""
         val eventJson = """{"id":20,"title":"Sunday Service","starts_at":"2026-11-29 10:00:00","location":"Church Hall","my_signup":{"status":"going"}}"""
 
-        // Test 1: Return-only swaps address/destination and clears return fields
-        server.enqueue(json(areasJson))
-        server.enqueue(json(savedJson))
-        server.enqueue(json("[]"))
-        server.enqueue(json(eventJson))
+        dispatchByPath(
+            mapOf(
+                "/api/areas" to { json(areasJson) },
+                "/api/saved-places" to { json(savedJson) },
+                "/api/proxy-riders" to { json("[]") },
+                "/api/events/20" to { json(eventJson) },
+            )
+        )
 
+        // Test 1: Return-only swaps address/destination and clears return fields
         val returnVm = RideNewViewModel(container, 20L, initialProxy = false)
         val loaded = returnVm.state.awaitUntil { !it.loading && it.event != null }
         assertEquals(TripType.OUTBOUND, loaded.tripType)
@@ -362,6 +373,7 @@ class ViewModelTest {
         assertEquals("12 Jalan Home", retState.destination)
 
         repeat(4) { server.takeRequest() } // drain init calls
+        server.dispatcher = okhttp3.mockwebserver.QueueDispatcher()
         server.enqueue(json("""{"id":99}"""))
         returnVm.submit()
         returnVm.state.awaitUntil { it.createdId == 99L }
@@ -374,14 +386,19 @@ class ViewModelTest {
         assertNull(retPost["return_destination"])
 
         // Test 2: Round-trip swaps return_pickup_address and return_destination
-        server.enqueue(json(areasJson))
-        server.enqueue(json(savedJson))
-        server.enqueue(json("[]"))
-        server.enqueue(json(eventJson))
-
+        // (/api/areas is served from the 5-minute repository cache on the same container)
+        dispatchByPath(
+            mapOf(
+                "/api/areas" to { json(areasJson) },
+                "/api/saved-places" to { json(savedJson) },
+                "/api/proxy-riders" to { json("[]") },
+                "/api/events/20" to { json(eventJson) },
+            )
+        )
         val roundVm = RideNewViewModel(container, 20L, initialProxy = false)
         roundVm.state.awaitUntil { !it.loading && it.event != null }
-        repeat(4) { server.takeRequest() }
+        repeat(3) { server.takeRequest() }
+        server.dispatcher = okhttp3.mockwebserver.QueueDispatcher()
         roundVm.setTripType(TripType.ROUND)
         server.enqueue(json("""{"id":100}"""))
         roundVm.submit()
@@ -401,11 +418,17 @@ class ViewModelTest {
         val notGoingEvent = """{"id":20,"title":"Sunday Service","starts_at":"2026-11-29 10:00:00","location":"Church Hall"}"""
         val goingEvent = """{"id":20,"title":"Sunday Service","starts_at":"2026-11-29 10:00:00","location":"Church Hall","my_signup":{"status":"going"}}"""
 
+        var currentEventJson = notGoingEvent
+        dispatchByPath(
+            mapOf(
+                "/api/areas" to { json(areasJson) },
+                "/api/saved-places" to { json(savedJson) },
+                "/api/proxy-riders" to { json("[]") },
+                "/api/events/20" to { json(currentEventJson) },
+            )
+        )
+
         // Signup gate blocks submission when not going
-        server.enqueue(json(areasJson))
-        server.enqueue(json(savedJson))
-        server.enqueue(json("[]"))
-        server.enqueue(json(notGoingEvent))
         val blockedVm = RideNewViewModel(container, 20L)
         blockedVm.state.awaitUntil { !it.loading && it.event != null }
         repeat(4) { server.takeRequest() }
@@ -413,20 +436,22 @@ class ViewModelTest {
         assertNotNull(blockedVm.state.value.error ?: blockedVm.state.value.errorRes)
 
         // Proxy booking sends proxy fields and rejects blank riderName
-        server.enqueue(json(areasJson))
-        server.enqueue(json(savedJson))
-        server.enqueue(json("[]"))
-        server.enqueue(json(goingEvent))
+        currentEventJson = goingEvent
         val proxyVm = RideNewViewModel(container, 20L, initialProxy = true)
         val initState = proxyVm.state.awaitUntil { !it.loading && it.event != null }
         assertTrue(initState.isProxy)
-        repeat(4) { server.takeRequest() }
+        assertEquals("", initState.address)
+        assertNull(initState.areaId)
+        repeat(3) { server.takeRequest() } // /api/areas served from cache on the same container
+        server.dispatcher = okhttp3.mockwebserver.QueueDispatcher()
 
         proxyVm.submit()
         assertNotNull(proxyVm.state.value.error ?: proxyVm.state.value.errorRes)
 
         proxyVm.update {
             it.copy(
+                areaId = 2L,
+                address = "88 Jalan Grandma",
                 riderName = "Grandma Lee",
                 riderPhone = "0123456789",
                 riderRelationship = "parent",
@@ -444,7 +469,7 @@ class ViewModelTest {
         assertEquals(true, post["save_proxy_rider"]?.jsonPrimitive?.boolean)
     }
 
-    @Test fun profileNormalizesTelegramAndSavesAnimatedAvatar() = runBlocking {
+    @Test fun profileSavesNamePhoneAndAnimatedAvatarWithoutTelegram() = runBlocking {
         signIn()
         server.takeRequest() // /api/auth/me
         server.enqueue(json("[]")) // /api/auth/passkeys from init
@@ -453,13 +478,13 @@ class ViewModelTest {
 
         server.enqueue(json("""{"ok":true}"""))
         server.enqueue(json(Fixtures.ME_MEMBER))
-        vm.saveProfile("Alice", "+60123456789", "  123456789  ")
+        vm.saveProfile("Alice", "+60123456789")
         vm.state.awaitUntil { it.message == "saved" }
         val profilePut = apiJson.parseToJsonElement(server.takeRequest().body.readUtf8()).jsonObject
         server.takeRequest() // /api/auth/me refresh
         assertEquals("Alice", profilePut["name"]?.jsonPrimitive?.content)
         assertEquals("+60123456789", profilePut["phone"]?.jsonPrimitive?.content)
-        assertEquals("123456789", profilePut["telegram_chat_id"]?.jsonPrimitive?.content)
+        assertFalse(profilePut.containsKey("telegram_chat_id"))
 
         vm.clearMessage()
         server.enqueue(json("""{"ok":true}"""))
@@ -489,12 +514,17 @@ class ViewModelTest {
         ]"""
         val afterDelete = """[{"id":2,"label":"Work HQ","area_id":3,"area_name":"Subang","address":"88 Tower B","gate_notes":"Gate 3","is_default":1}]"""
 
-        server.enqueue(json(initialPlaces))
-        server.enqueue(json("""[{"id":2,"name":"PJ","active":true},{"id":3,"name":"Subang","active":true}]"""))
+        dispatchByPath(
+            mapOf(
+                "/api/saved-places" to { json(initialPlaces) },
+                "/api/areas" to { json("""[{"id":2,"name":"PJ","active":true},{"id":3,"name":"Subang","active":true}]""") },
+            )
+        )
         val vm = SavedAddressesViewModel(container)
         val loaded = vm.state.awaitUntil { !it.loading }
         assertEquals(1, loaded.places.size)
         repeat(2) { server.takeRequest() }
+        server.dispatcher = okhttp3.mockwebserver.QueueDispatcher()
 
         // Create second saved address
         server.enqueue(json("""{"id":2,"ok":true}"""))
@@ -557,16 +587,21 @@ class ViewModelTest {
         ]"""
         val eventJson = """{"id":20,"title":"Sunday Service","starts_at":"2026-11-29 10:00:00","location":"Church Hall","my_signup":{"status":"going"}}"""
 
-        server.enqueue(json(areasJson))
-        server.enqueue(json(savedJson))
-        server.enqueue(json("[]"))
-        server.enqueue(json(eventJson))
+        dispatchByPath(
+            mapOf(
+                "/api/areas" to { json(areasJson) },
+                "/api/saved-places" to { json(savedJson) },
+                "/api/proxy-riders" to { json("[]") },
+                "/api/events/20" to { json(eventJson) },
+            )
+        )
 
         val vm = RideNewViewModel(container, 20L, initialProxy = false)
         val init = vm.state.awaitUntil { !it.loading && it.event != null }
         assertEquals("12 Jalan Home", init.address)
         assertEquals("Ring bell 1", init.notes)
         repeat(4) { server.takeRequest() }
+        server.dispatcher = okhttp3.mockwebserver.QueueDispatcher()
 
         val home = SavedPlace(1L, "Home", 2L, "PJ", "12 Jalan Home", "Ring bell 1", 1)
         val office = SavedPlace(2L, "Office", 3L, "Subang", "88 Tower B", "Guardhouse", 0)
@@ -676,13 +711,19 @@ class ViewModelTest {
     }
 
     @Test fun driverSettingsHandlesZeroVehiclesAndVehicleCrud() = runBlocking {
+        signIn()
+        server.takeRequest()
         val areasJson = """[{"id":1,"name":"Petaling Jaya","active":true},{"id":2,"name":"Subang Jaya","active":true}]"""
         val emptyProfile = """{"carpool_enabled":false,"spare_seats":1,"gate_wait_mins":5,"area_ids":[],"vehicle":null,"vehicles":[],"active_vehicle_id":null}"""
         val oneVehicleProfile = """{"carpool_enabled":false,"spare_seats":1,"gate_wait_mins":5,"area_ids":[],"vehicle":{"id":10,"model":"Toyota Vios","color":"Silver","plate":"WXX 8888","seats":5,"is_active":true},"vehicles":[{"id":10,"model":"Toyota Vios","color":"Silver","plate":"WXX 8888","seats":5,"is_active":true}],"active_vehicle_id":10}"""
         val twoVehicleClampedProfile = """{"carpool_enabled":true,"spare_seats":1,"gate_wait_mins":5,"area_ids":[1],"vehicle":{"id":11,"model":"Smart Fortwo","color":"Yellow","plate":"SMT 202","seats":2,"is_active":true},"vehicles":[{"id":10,"model":"Toyota Vios","color":"Silver","plate":"WXX 8888","seats":5,"is_active":false},{"id":11,"model":"Smart Fortwo","color":"Yellow","plate":"SMT 202","seats":2,"is_active":true}],"active_vehicle_id":11}"""
 
-        server.enqueue(json(emptyProfile))
-        server.enqueue(json(areasJson))
+        dispatchByPath(
+            mapOf(
+                "/api/driver/profile" to { json(emptyProfile) },
+                "/api/areas" to { json(areasJson) },
+            )
+        )
 
         val vm = DriverSettingsViewModel(container)
         val init = vm.state.awaitUntil { !it.loading }
@@ -690,6 +731,7 @@ class ViewModelTest {
         assertFalse(init.dirty)
         assertNull(init.error)
         repeat(2) { server.takeRequest() }
+        server.dispatcher = okhttp3.mockwebserver.QueueDispatcher()
 
         // Add first vehicle -> dirty stays false
         server.enqueue(json("""{"id":10,"model":"Toyota Vios","color":"Silver","plate":"WXX 8888","seats":5,"is_active":true}"""))
@@ -740,11 +782,16 @@ class ViewModelTest {
         assertEquals(1L, inferAreaId("88 Jalan Barat, PJ", areas))
         assertNull(inferAreaId("Unknown Street", areas))
 
-        server.enqueue(json("[]"))
-        server.enqueue(json("""[{"id":1,"name":"PJ","active":true},{"id":2,"name":"Subang Jaya","active":true}]"""))
+        dispatchByPath(
+            mapOf(
+                "/api/saved-places" to { json("[]") },
+                "/api/areas" to { json("""[{"id":1,"name":"PJ","active":true},{"id":2,"name":"Subang Jaya","active":true}]""") },
+            )
+        )
         val vm = SavedAddressesViewModel(container)
         vm.state.awaitUntil { !it.loading }
         repeat(2) { server.takeRequest() }
+        server.dispatcher = okhttp3.mockwebserver.QueueDispatcher()
 
         server.enqueue(json("""{"id":5,"ok":true,"lat":3.073,"lng":101.588}"""))
         server.enqueue(json("""[{"id":5,"label":"Work","area_id":2,"area_name":"Subang Jaya","address":"Jalan SS15, Subang Jaya","gate_notes":"","is_default":1,"lat":3.073,"lng":101.588}]"""))
@@ -757,12 +804,17 @@ class ViewModelTest {
     }
 
     @Test fun proxyRidersCrudAndRefresh() = runBlocking {
-        server.enqueue(json("[]"))
-        server.enqueue(json("""[{"id":1,"name":"PJ","active":true}]"""))
+        dispatchByPath(
+            mapOf(
+                "/api/proxy-riders" to { json("[]") },
+                "/api/areas" to { json("""[{"id":1,"name":"PJ","active":true}]""") },
+            )
+        )
         val vm = ProxyRidersViewModel(container)
         val init = vm.state.awaitUntil { !it.loading }
         assertTrue(init.riders.isEmpty())
         repeat(2) { server.takeRequest() }
+        server.dispatcher = okhttp3.mockwebserver.QueueDispatcher()
 
         server.enqueue(json("""{"id":9,"ok":true}"""))
         server.enqueue(json("""[{"id":9,"name":"Sister Chen","phone":"012-3456","relationship":"parent","notes":"Cane","area_id":1,"pickup_address":"10 SS2","gate_notes":"Gate 1"}]"""))
@@ -891,5 +943,300 @@ class ViewModelTest {
         assertEquals("POST", unpubReq.method)
         assertEquals("/api/events/81/unpublish", unpubReq.path)
         assertEquals("Cannot hide event with active signups", conflict.message)
+    }
+
+    @Test fun rideDetailRefreshKeepsContentAndUpdatesRide() = runBlocking {
+        signIn()
+        server.takeRequest() // /api/auth/me
+
+        val ridePending = """{"id":10,"status":"pending_driver","pickup_at":"2026-11-22 09:30:00","area":{"id":2,"name":"SS2"},"destination":"Church Hall","passenger":{"id":1,"name":"Test Member"},"viewer":{"is_passenger":true}}"""
+        val rideConfirmed = """{"id":10,"status":"confirmed","pickup_at":"2026-11-22 09:30:00","area":{"id":2,"name":"SS2"},"destination":"Church Hall","passenger":{"id":1,"name":"Test Member"},"viewer":{"is_passenger":true}}"""
+
+        server.enqueue(json(ridePending))
+        val vm = RideDetailViewModel(container, 10L)
+        val initial = vm.state.awaitUntil { !it.loading && it.ride != null }
+        assertEquals("pending_driver", initial.ride?.status)
+        server.takeRequest()
+
+        server.enqueue(json(rideConfirmed))
+        vm.refresh()
+        val refreshed = vm.state.awaitUntil { !it.refreshing && it.ride?.status == "confirmed" }
+        assertFalse(refreshed.loading)
+        assertEquals("confirmed", refreshed.ride?.status)
+    }
+
+    @Test fun eventDetailRefreshUpdatesEvent() = runBlocking {
+        signIn()
+        server.takeRequest() // /api/auth/me
+
+        val event1 = """{"id":91,"title":"Prayer Night","starts_at":"2026-12-15 20:00:00","status":"published","going":5,"capacity":20}"""
+        val event2 = """{"id":91,"title":"Prayer Night","starts_at":"2026-12-15 20:00:00","status":"published","going":8,"capacity":20}"""
+
+        server.enqueue(json(event1))
+        val vm = EventDetailViewModel(container, 91L)
+        val initial = vm.state.awaitUntil { !it.loading && it.event != null }
+        assertEquals(5L, initial.event?.going)
+        server.takeRequest()
+
+        server.enqueue(json(event2))
+        vm.refresh()
+        val refreshed = vm.state.awaitUntil { !it.refreshing && it.event?.going == 8L }
+        assertFalse(refreshed.loading)
+        assertEquals(8L, refreshed.event?.going)
+    }
+
+    @Test fun tripChatViewModelLoadsSendsAndReacts() = runBlocking {
+        signIn()
+        val recordedPaths = java.util.concurrent.CopyOnWriteArrayList<String>()
+        var messagesJson = """{"open":true,"members":["Alice","Bob"],"reactions_allowed":["👍","❤️"],"messages":[{"id":1,"name":"Alice","body":"At gate","created_at":"2026-11-22 09:00:00","mine":false,"reactions":[]}]}"""
+
+        server.dispatcher = object : okhttp3.mockwebserver.Dispatcher() {
+            override fun dispatch(request: okhttp3.mockwebserver.RecordedRequest): MockResponse {
+                val p = request.path ?: ""
+                recordedPaths.add("${request.method} $p")
+                return when {
+                    p == "/api/rides/10/messages" && request.method == "GET" -> json(messagesJson)
+                    p == "/api/rides/10/messages" && request.method == "POST" -> {
+                        messagesJson = """{"open":true,"members":["Alice","Bob"],"reactions_allowed":["👍","❤️"],"messages":[{"id":1,"name":"Alice","body":"At gate","created_at":"2026-11-22 09:00:00","mine":false,"reactions":[]},{"id":2,"name":"Test Member","body":"On my way","created_at":"2026-11-22 09:01:00","mine":true,"status":"sent","reactions":[]}]}"""
+                        json("""{"ok":true,"id":2}""")
+                    }
+                    p == "/api/rides/10/messages/read" -> json("""{"ok":true}""")
+                    p == "/api/rides/10/messages/1/reactions" -> json("""{"ok":true,"emoji":"👍"}""")
+                    else -> MockResponse().setBody("{}")
+                }
+            }
+        }
+
+        val vm = org.pjstatecm.graceride.ui.screens.rides.TripChatViewModel(container, 10L)
+        val loaded = vm.state.awaitUntil { !it.loading && it.messages.size == 1 }
+        assertEquals(listOf("Alice", "Bob"), loaded.members)
+        assertEquals("At gate", loaded.messages.first().body)
+
+        var sentCallbackFired = false
+        vm.send("On my way") { sentCallbackFired = true }
+        val afterSend = vm.state.awaitUntil { !it.sending && it.messages.size == 2 }
+        assertTrue(sentCallbackFired)
+        assertEquals("On my way", afterSend.messages.last().body)
+
+        vm.react(1L, "👍")
+        val afterReact = kotlinx.coroutines.withTimeout(5.seconds) {
+            while (!recordedPaths.any { it == "POST /api/rides/10/messages/1/reactions" }) {
+                kotlinx.coroutines.delay(15)
+            }
+            vm.state.value
+        }
+        assertNotNull(afterReact)
+        assertTrue(recordedPaths.contains("POST /api/rides/10/messages/read"))
+        assertTrue(recordedPaths.contains("POST /api/rides/10/messages"))
+        assertTrue(recordedPaths.contains("POST /api/rides/10/messages/1/reactions"))
+    }
+
+    @Test fun driveHubViewModelLoadsAndClaimsRide() = runBlocking {
+        signIn()
+        val recordedPaths = java.util.concurrent.CopyOnWriteArrayList<String>()
+        val openRide = """{"id":55,"status":"pending_driver","pickup_at":"2026-11-25 09:00:00","area":{"id":1,"name":"PJ"},"destination":"Main Sanctuary","seats":2,"passenger":{"id":9,"name":"Grace"},"viewer":{"is_passenger":false,"is_driver":false,"is_staff":false}}"""
+        val scheduledRide = """{"id":56,"status":"confirmed","pickup_at":"2026-11-26 09:00:00","area":{"id":1,"name":"PJ"},"destination":"Church Hall","seats":1,"passenger":{"id":8,"name":"Peter"},"viewer":{"is_passenger":false,"is_driver":true,"is_staff":false}}"""
+        val routeJson = """{"route":{"trip_id":99,"live":true,"onboard":1,"stops":[],"destination":{"name":"Church"},"distance_m":3200.0,"duration_s":420.0}}"""
+
+        server.dispatcher = object : okhttp3.mockwebserver.Dispatcher() {
+            override fun dispatch(request: okhttp3.mockwebserver.RecordedRequest): MockResponse {
+                val p = request.path ?: ""
+                recordedPaths.add("${request.method} $p")
+                return when {
+                    p.startsWith("/api/driver/requests") -> json("""[$openRide]""")
+                    p.startsWith("/api/driver/schedule") -> json("""[$scheduledRide]""")
+                    p.startsWith("/api/rides/55/claim") -> json("""{"ok":true}""")
+                    p == "/api/driver/route" -> json(routeJson)
+                    else -> MockResponse().setBody("[]")
+                }
+            }
+        }
+
+        val vm = org.pjstatecm.graceride.ui.screens.drive.DriveHubViewModel(container)
+        val loaded = vm.state.awaitUntil { !it.loading && it.requests.isNotEmpty() && it.route != null }
+        assertEquals(55L, loaded.requests.single().id)
+        assertEquals(56L, loaded.schedule.single().id)
+        assertEquals(99L, loaded.route?.tripId)
+
+        vm.claim(55L)
+        val claimed = vm.state.awaitUntil { it.claimedNotice && it.busyRideId == null }
+        assertTrue(claimed.claimedNotice)
+        assertTrue(recordedPaths.contains("POST /api/rides/55/claim"))
+    }
+
+    @Test fun rideDetailLoadsLiveLocationAndSharesPassengerPin() = runBlocking {
+        signIn()
+        var passengerShared = false
+        val rideJson = """{"id":10,"status":"in_progress","pickup_at":"2026-11-22 09:30:00","area":{"id":2,"name":"SS2"},"destination":"Church Hall","trip_id":7,"passenger":{"id":1,"name":"Test Member"},"viewer":{"is_passenger":true}}"""
+
+        dispatchByPath(
+            mapOf(
+                "/api/rides/10/location" to {
+                    val pJson = if (passengerShared) ""","passenger":{"lat":3.1234,"lng":101.5678,"updated_at":"2026-11-22 09:35:00"}""" else ""
+                    json("""{"sharing":true,"lat":3.11,"lng":101.55,"heading":90.0$pJson,"eta":{"phase":"pickup","located":true,"stops_before":0,"eta":"09:38"}}""")
+                },
+                "/api/rides/10/passenger-location" to {
+                    passengerShared = !passengerShared
+                    json("""{"ok":true,"sharing":$passengerShared}""")
+                },
+                "/api/rides/10" to { json(rideJson) },
+            ),
+        )
+
+        val vm = RideDetailViewModel(container, 10L)
+        val initial = vm.state.awaitUntil { !it.loading && it.liveLocation != null }
+        assertTrue(initial.liveLocation?.sharing == true)
+        assertEquals("09:38", initial.liveLocation?.eta?.eta)
+
+        vm.sharePassengerSpot(3.1234, 101.5678)
+        val withPin = vm.state.awaitUntil { it.sharingPassengerPin && it.liveLocation?.passenger != null }
+        assertEquals(3.1234, withPin.liveLocation?.passenger?.lat ?: 0.0, 0.0001)
+
+        vm.stopPassengerSpot()
+        val afterStop = vm.state.awaitUntil { !it.sharingPassengerPin && it.liveLocation?.passenger == null }
+        assertFalse(afterStop.sharingPassengerPin)
+    }
+
+    @Test fun eventDetailSelfCheckinAndScanMemberPass() = runBlocking {
+        signIn()
+        val eventJson = """{"id":91,"title":"Sunday Service","starts_at":"2026-12-15 09:00:00","status":"published","attendance_enabled":true,"can_manage":true,"going":12,"my_signup":{"status":"going","attended":false,"pass_code":"ABCD"}}"""
+
+        dispatchByPath(
+            mapOf(
+                "/api/events/91/checkin/scan-member" to {
+                    json("""{"ok":true,"user_id":14,"member_name":"Grace Lim","already_attended":false}""")
+                },
+                "/api/events/91/checkin" to {
+                    json("""{"ok":true,"already_attended":false,"event_id":91,"title":"Sunday Service","starts_at":"2026-12-15 09:00:00","location":"Main Hall"}""")
+                },
+                "/api/events/91" to { json(eventJson) },
+            ),
+        )
+
+        val vm = EventDetailViewModel(container, 91L)
+        vm.state.awaitUntil { !it.loading && it.event != null }
+
+        vm.selfCheckin("GR2026")
+        val checkedIn = vm.state.awaitUntil { !it.busy && it.checkinResult != null }
+        assertEquals("Sunday Service", checkedIn.checkinResult?.title)
+        assertFalse(checkedIn.checkinResult?.alreadyAttended ?: true)
+
+        vm.scanMemberPass("GRPASS:91:XYZ")
+        val scanned = vm.state.awaitUntil { !it.busy && it.scanMemberResult != null }
+        assertEquals("Grace Lim", scanned.scanMemberResult?.memberName)
+        assertEquals(14L, scanned.scanMemberResult?.userId)
+    }
+
+    @Test fun costsValidateProofInputChecksPhotoAndMinimumRefLength() {
+        assertEquals(R.string.costs_err_missing_photo, CostsViewModel.validateProofInput(hasPhoto = false, txnRef = "1234"))
+        assertEquals(R.string.costs_err_missing_ref, CostsViewModel.validateProofInput(hasPhoto = true, txnRef = "   "))
+        assertEquals(R.string.costs_err_ref_short, CostsViewModel.validateProofInput(hasPhoto = true, txnRef = " 123 "))
+        assertNull(CostsViewModel.validateProofInput(hasPhoto = true, txnRef = "1234"))
+    }
+
+    @Test fun driveHubNonDriverSetsAccessDeniedWithoutNetworkCalls() = runBlocking {
+        server.enqueue(json("""{"id":1,"name":"Member","email":"m@x.org","status":"active","permissions":["rides.view"],"mfa_ok":true}"""))
+        container.auth.refresh()
+        var driverCalls = 0
+        dispatchByPath(
+            mapOf(
+                "/api/driver" to {
+                    driverCalls++
+                    json("[]")
+                },
+                "/api/rides/open" to {
+                    driverCalls++
+                    json("[]")
+                },
+            ),
+        )
+        val vm = org.pjstatecm.graceride.ui.screens.drive.DriveHubViewModel(container)
+        val denied = vm.state.awaitUntil { !it.loading && it.accessDenied }
+        assertTrue(denied.accessDenied)
+        assertEquals(0, driverCalls)
+    }
+
+    @Test fun homeViewModelExposesFullUnpaidShareCountAndFiltersNoShowDrives() = runBlocking {
+        signIn()
+        val tomorrow = KlTime.todayPlusDays(1)
+        val share2 = Fixtures.SHARE.replace("\"id\":30", "\"id\":31")
+        val share3 = Fixtures.SHARE.replace("\"id\":30", "\"id\":32")
+        val driveConfirmed = """{"id":101,"status":"confirmed","pickup_at":"$tomorrow 09:00:00","area":{"id":1,"name":"PJ"},"destination":"Hall","seats":1,"passenger":{"id":2,"name":"Rider A"}}"""
+        val driveNoShow = """{"id":102,"status":"no_show","pickup_at":"$tomorrow 10:00:00","area":{"id":1,"name":"PJ"},"destination":"Hall","seats":1,"passenger":{"id":3,"name":"Rider B"}}"""
+        dispatchByPath(
+            mapOf(
+                "/api/rides" to { json("[]") },
+                "/api/events" to { json("[]") },
+                "/api/me/shares" to { json("[${Fixtures.SHARE},$share2,$share3]") },
+                "/api/announcements" to { json("[]") },
+                "/api/driver/schedule" to { json("[$driveConfirmed,$driveNoShow]") },
+            ),
+        )
+        val vm = HomeViewModel(container)
+        val state = vm.state.awaitUntil { !it.loading }
+        assertEquals(3, state.unpaidShareCount)
+        assertEquals(listOf(101L), state.upcomingDrives.map { it.id })
+    }
+
+    @Test fun rideDetailSkipsLocationFetchWhenViewerIsUnrelated() = runBlocking {
+        signIn()
+        var unrelatedLocationCalls = 0
+        var passengerLocationCalls = 0
+        val unrelatedRide = """{"id":88,"status":"in_progress","pickup_at":"2026-11-22 09:30:00","area":{"id":2,"name":"SS2"},"destination":"Church Hall","trip_id":7,"passenger":{"id":5,"name":"Other Member"},"viewer":{"is_passenger":false,"is_driver":false,"is_staff":false}}"""
+        val passengerRide = """{"id":89,"status":"in_progress","pickup_at":"2026-11-22 09:30:00","area":{"id":2,"name":"SS2"},"destination":"Church Hall","trip_id":8,"passenger":{"id":1,"name":"Test Member"},"viewer":{"is_passenger":true,"is_driver":false,"is_staff":false}}"""
+        dispatchByPath(
+            mapOf(
+                "/api/rides/88/location" to {
+                    unrelatedLocationCalls++
+                    json("""{"sharing":true}""")
+                },
+                "/api/rides/88" to { json(unrelatedRide) },
+                "/api/rides/89/location" to {
+                    passengerLocationCalls++
+                    json("""{"sharing":true}""")
+                },
+                "/api/rides/89" to { json(passengerRide) },
+            ),
+        )
+        val vm88 = RideDetailViewModel(container, 88L)
+        val st88 = vm88.state.awaitUntil { !it.loading && it.ride != null }
+        assertEquals(0, unrelatedLocationCalls)
+        assertNull(st88.liveLocation)
+
+        val vm89 = RideDetailViewModel(container, 89L)
+        val st89 = vm89.state.awaitUntil { !it.loading && it.liveLocation != null }
+        assertTrue(passengerLocationCalls >= 1)
+        assertTrue(st89.liveLocation?.sharing == true)
+    }
+
+    @Test fun rideDetailIgnoresPassengerSpotWhenNotInProgressOrAlreadyPickedUp() = runBlocking {
+        signIn()
+        var passengerSpotPosts = 0
+        val confirmedRide = """{"id":90,"status":"confirmed","pickup_at":"2026-11-22 09:30:00","area":{"id":2,"name":"SS2"},"destination":"Church Hall","trip_id":9,"passenger":{"id":1,"name":"Test Member"},"viewer":{"is_passenger":true,"is_driver":false,"is_staff":false}}"""
+        val pickedUpRide = """{"id":91,"status":"in_progress","picked_up_at":"2026-11-22 09:15:00","pickup_at":"2026-11-22 09:30:00","area":{"id":2,"name":"SS2"},"destination":"Church Hall","trip_id":9,"passenger":{"id":1,"name":"Test Member"},"viewer":{"is_passenger":true,"is_driver":false,"is_staff":false}}"""
+        dispatchByPath(
+            mapOf(
+                "/api/rides/90/passenger-location" to {
+                    passengerSpotPosts++
+                    json("""{"ok":true,"sharing":true}""")
+                },
+                "/api/rides/90" to { json(confirmedRide) },
+                "/api/rides/91/passenger-location" to {
+                    passengerSpotPosts++
+                    json("""{"ok":true,"sharing":true}""")
+                },
+                "/api/rides/91/location" to { json("""{"sharing":true}""") },
+                "/api/rides/91" to { json(pickedUpRide) },
+            ),
+        )
+        val vm90 = RideDetailViewModel(container, 90L)
+        vm90.state.awaitUntil { !it.loading && it.ride != null }
+        vm90.sharePassengerSpot(3.12, 101.62)
+
+        val vm91 = RideDetailViewModel(container, 91L)
+        vm91.state.awaitUntil { !it.loading && it.ride != null }
+        vm91.sharePassengerSpot(3.12, 101.62)
+
+        assertEquals(0, passengerSpotPosts)
     }
 }

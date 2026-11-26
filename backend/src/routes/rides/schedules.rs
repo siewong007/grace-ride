@@ -14,7 +14,7 @@ use crate::auth::CurrentUser;
 use crate::error::{bad, forbidden, not_found, AppResult};
 use crate::perms::{Act, Page, Perm};
 use crate::state::AppState;
-use crate::util::{audit, notify, now, require, ErrorKey};
+use crate::util::{audit, notify, now, ErrorKey};
 
 // ---------------- Standing / Recurring Ride & Driver Schedules ----------------
 
@@ -169,7 +169,8 @@ pub(super) async fn update_recurring_schedule(
     Json(req): Json<RecurringScheduleIn>,
 ) -> AppResult<Json<Value>> {
     match req.kind.as_str() {
-        "passenger" => require(&u, Page::Rides, Act::Update)?,
+        // Rides exist only for events now; a standing weekly passenger schedule has no event.
+        "passenger" => return Err(bad(u.lang, ErrorKey::EventRideNeedsSignup)),
         "driver" => {
             if !u.can(Page::Drive, Act::Create) && !u.can(Page::Drive, Act::Update) {
                 return Err(forbidden(u.lang, ErrorKey::OnlyVolunteerDriversCanSet));

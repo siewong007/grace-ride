@@ -66,7 +66,7 @@ export default function Reimbursements() {
   const [params, setParams] = useSearchParams();
   const page = Math.max(1, Number(params.get('page') ?? '1') || 1);
   const pageSize = Number(params.get('limit') ?? '25') || 25;
-  const pagingQs = page > 1 || pageSize !== 25 ? `?page=${page}&limit=${pageSize}` : '';
+  const pagingQs = `?page=${page}&limit=${pageSize}`;
   const { data, error, loading } = useApi<PaginatedReimbursements | Reimb[]>(`/reimbursements${pagingQs}`);
 
   const items = Array.isArray(data) ? data : data?.items ?? [];
@@ -215,13 +215,17 @@ export function ReimbursementForm() {
     }
   }, [f.ride, f.event_id, pastRides]);
 
+  const parsedAmountCents = toCents(f.amount);
+  const validAmount = Number.isFinite(parsedAmountCents) && parsedAmountCents > 0;
+
   const submit = (e: FormEvent) => {
     e.preventDefault();
+    if (!validAmount) return;
     const body = {
       kind: mileage ? 'mileage' : 'grab',
       event_id: !mileage && f.event_id ? Number(f.event_id) : undefined,
       ride_id: f.ride ? Number(f.ride) : null,
-      amount_cents: toCents(f.amount),
+      amount_cents: parsedAmountCents,
       description: f.desc,
       receipt_file_id: f.file,
       payee_name: f.payee,

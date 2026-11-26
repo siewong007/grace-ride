@@ -8,6 +8,7 @@ import type { GuideDetailData, GuideStep, GuideSummary } from '../types/help';
 import { usePick } from '../hooks/usePick';
 import { Button, useToast } from './ui';
 import { useApi } from '../api';
+import { useAuth } from '../auth';
 import { guideForPage, isHere, isPatternLink, navigableLink } from '../guideLinks';
 
 const STORAGE_KEY = 'graceride_walkthrough';
@@ -159,6 +160,8 @@ function WalkthroughCard({ active, minimised, onMinimise, onPrev, onNext, onStop
 
 export function GuideRunnerProvider({ children }: { children: ReactNode }) {
   const { t } = useTranslation('help');
+  const { me } = useAuth();
+  const meId = me?.id ?? null;
   const nav = useNavigate();
   const loc = useLocation();
   const toast = useToast();
@@ -173,17 +176,30 @@ export function GuideRunnerProvider({ children }: { children: ReactNode }) {
   });
 
   const [minimised, setMinimised] = useState(false);
+  const prevUserRef = useRef<number | null>(meId);
 
-  // Sync to sessionStorage
   useEffect(() => {
-    if (!active) {
-      sessionStorage.removeItem(STORAGE_KEY);
-    } else {
+    if (prevUserRef.current !== null && meId !== prevUserRef.current) {
+      setActive(null);
       try {
-        sessionStorage.setItem(STORAGE_KEY, JSON.stringify(active));
+        sessionStorage.removeItem(STORAGE_KEY);
       } catch {
         // ignore
       }
+    }
+    prevUserRef.current = meId;
+  }, [meId]);
+
+  // Sync to sessionStorage
+  useEffect(() => {
+    try {
+      if (!active) {
+        sessionStorage.removeItem(STORAGE_KEY);
+      } else {
+        sessionStorage.setItem(STORAGE_KEY, JSON.stringify(active));
+      }
+    } catch {
+      // ignore
     }
   }, [active]);
 

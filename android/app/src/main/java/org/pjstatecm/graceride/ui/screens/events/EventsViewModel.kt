@@ -4,16 +4,22 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewmodel.initializer
 import androidx.lifecycle.viewmodel.viewModelFactory
 import androidx.lifecycle.viewModelScope
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.drop
+import kotlinx.coroutines.flow.filter
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
+import kotlinx.serialization.builtins.ListSerializer
 import org.pjstatecm.graceride.data.api.ApiException
 import org.pjstatecm.graceride.data.api.EventItem
 import org.pjstatecm.graceride.data.api.Ride
 import org.pjstatecm.graceride.di.AppContainer
 import org.pjstatecm.graceride.domain.KlTime
+import org.pjstatecm.graceride.notifications.RealtimeEvent
 
 enum class EventActionNotice { PUBLISHED, UNPUBLISHED }
 
@@ -40,7 +46,17 @@ class EventsViewModel(private val container: AppContainer) : ViewModel() {
     val state: StateFlow<EventsUiState> = _state.asStateFlow()
     private var loadJob: Job? = null
 
-    init { load(first = true) }
+    init {
+        load(first = true)
+        viewModelScope.launch {
+            container.realtimeStream.events.collect { ev ->
+                if (ev != RealtimeEvent.Resume) refresh()
+            }
+        }
+        viewModelScope.launch {
+            container.networkMonitor.isOnline.drop(1).filter { it }.collect { refresh() }
+        }
+    }
 
     fun setTab(tab: Int) {
         if (tab == _state.value.tab) return
@@ -119,14 +135,40 @@ class EventsViewModel(private val container: AppContainer) : ViewModel() {
     }
 
     private suspend fun reloadData(first: Boolean) {
-        _state.value = _state.value.copy(loading = first, refreshing = !first)
+        val tab = _state.value.tab
+        val uid = container.auth.me?.id
+        val cacheKey = when (tab) {
+            0 -> "events_upcoming"
+            2 -> "events_past"
+            else -> null
+        }
+        if (first && uid != null && cacheKey != null) {
+            val cached = withContext(Dispatchers.IO) {
+                container.offlineCache.read(uid, cacheKey, ListSerializer(EventItem.serializer()))
+            }
+            if (cached != null && _state.value.events.isEmpty()) {
+                _state.value = _state.value.copy(
+                    loading = false,
+                    refreshing = true,
+                    events = cached.data,
+                )
+            } else {
+                _state.value = _state.value.copy(loading = true, refreshing = false)
+            }
+        } else {
+            _state.value = _state.value.copy(loading = first, refreshing = !first)
+        }
         try {
-            val tab = _state.value.tab
             val hideDrafts = _state.value.hideDrafts
             val events = when (tab) {
                 2 -> container.events.past()
                 3 -> container.events.managing(hideDrafts = hideDrafts)
                 else -> container.events.upcoming()
+            }
+            if (uid != null && cacheKey != null) {
+                withContext(Dispatchers.IO) {
+                    container.offlineCache.write(uid, cacheKey, events, ListSerializer(EventItem.serializer()))
+                }
             }
             val draftCount = if (tab == 3 && !hideDrafts) {
                 events.count { it.status == "draft" }

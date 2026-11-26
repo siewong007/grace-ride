@@ -8,6 +8,7 @@ import androidx.lifecycle.viewmodel.initializer
 import androidx.lifecycle.viewmodel.viewModelFactory
 import androidx.lifecycle.viewModelScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -16,8 +17,8 @@ import kotlinx.coroutines.withContext
 import org.pjstatecm.graceride.R
 import org.pjstatecm.graceride.data.api.ApiException
 import org.pjstatecm.graceride.data.api.Share
+import org.pjstatecm.graceride.data.media.prepareImageUpload
 import org.pjstatecm.graceride.di.AppContainer
-import java.io.File
 
 data class CostsUiState(
     val loading: Boolean = true,
@@ -37,13 +38,21 @@ data class CostsUiState(
 class CostsViewModel(private val container: AppContainer) : ViewModel() {
     private val _state = MutableStateFlow(CostsUiState())
     val state: StateFlow<CostsUiState> = _state.asStateFlow()
+    private var loadJob: Job? = null
+    private var uploadedForUri: Uri? = null
+    private var uploadedFileId: Long? = null
 
     init { load(first = true) }
 
     fun refresh() = load(first = false)
 
     private fun load(first: Boolean) {
-        viewModelScope.launch {
+        loadJob?.cancel()
+        if (container.auth.me?.can("costs", "view") != true) {
+            _state.value = _state.value.copy(loading = false, refreshing = false)
+            return
+        }
+        loadJob = viewModelScope.launch {
             _state.value = _state.value.copy(loading = first, refreshing = !first)
             try {
                 val shares = container.shares.mine()
@@ -59,6 +68,8 @@ class CostsViewModel(private val container: AppContainer) : ViewModel() {
     }
 
     fun openPay(share: Share) {
+        uploadedForUri = null
+        uploadedFileId = null
         _state.value = _state.value.copy(
             paying = share,
             proofUri = null,
@@ -69,10 +80,16 @@ class CostsViewModel(private val container: AppContainer) : ViewModel() {
     }
 
     fun closePay() {
+        uploadedForUri = null
+        uploadedFileId = null
         _state.value = _state.value.copy(paying = null, sheetError = null, sheetErrorRes = null)
     }
 
     fun setProof(uri: Uri?) {
+        if (uri != uploadedForUri) {
+            uploadedForUri = null
+            uploadedFileId = null
+        }
         _state.value = _state.value.copy(proofUri = uri, sheetError = null, sheetErrorRes = null)
     }
 
@@ -89,36 +106,48 @@ class CostsViewModel(private val container: AppContainer) : ViewModel() {
     fun submitProof(context: Context) {
         val s = _state.value
         val share = s.paying ?: return
+        if (container.auth.me?.can("costs", "update") != true) {
+            _state.value = s.copy(sheetError = null, sheetErrorRes = R.string.role_costs_access_required)
+            return
+        }
         val uri = s.proofUri
-        if (uri == null) {
-            _state.value = s.copy(sheetError = null, sheetErrorRes = R.string.costs_err_missing_photo)
+        val validationErr = validateProofInput(uri != null, s.txnRef)
+        if (validationErr != null) {
+            _state.value = s.copy(sheetError = null, sheetErrorRes = validationErr)
             return
         }
-        if (s.txnRef.isBlank()) {
-            _state.value = s.copy(sheetError = null, sheetErrorRes = R.string.costs_err_missing_ref)
-            return
-        }
+        uri!!
+        val cleanRef = s.txnRef.trim()
         if (s.submitting) return
         _state.value = s.copy(submitting = true, sheetError = null, sheetErrorRes = null)
         viewModelScope.launch {
-            var tmpFile: File? = null
             try {
-                val mime = context.contentResolver.getType(uri) ?: "image/jpeg"
-                val ext = when {
-                    mime.equals("image/png", ignoreCase = true) -> ".png"
-                    mime.equals("image/webp", ignoreCase = true) -> ".webp"
-                    else -> ".jpg"
+                val fileId = if (uploadedForUri == uri && uploadedFileId != null) {
+                    uploadedFileId!!
+                } else {
+                    val prepared = withContext(Dispatchers.IO) {
+                        try {
+                            prepareImageUpload(
+                                context = context,
+                                uri = uri,
+                                prefix = "proof",
+                                maxDimensionPx = 1600,
+                                quality = 85,
+                            )
+                        } catch (e: org.pjstatecm.graceride.data.media.FileTooLargeException) {
+                            throw IllegalStateException(context.getString(R.string.costs_err_file_too_large), e)
+                        } catch (e: Exception) {
+                            throw IllegalStateException(context.getString(R.string.costs_err_unreadable), e)
+                        }
+                    }
+                    val uploaded = container.shares.upload(prepared.bytes, prepared.filename, prepared.mime)
+                    uploadedForUri = uri
+                    uploadedFileId = uploaded.id
+                    uploaded.id
                 }
-                val file = withContext(Dispatchers.IO) {
-                    val tmp = File.createTempFile("proof-", ext, context.cacheDir)
-                    tmpFile = tmp
-                    context.contentResolver.openInputStream(uri)?.use { input ->
-                        tmp.outputStream().use { output -> input.copyTo(output) }
-                    } ?: throw IllegalStateException(context.getString(R.string.costs_err_unreadable))
-                    tmp
-                }
-                val uploaded = container.shares.upload(file, mime)
-                container.shares.submitProof(share.id, uploaded.id, s.txnRef.trim())
+                container.shares.submitProof(share.id, fileId, cleanRef)
+                uploadedForUri = null
+                uploadedFileId = null
                 _state.value = _state.value.copy(submitting = false, paying = null, doneMessage = "ok")
                 load(first = false)
             } catch (e: ApiException) {
@@ -129,13 +158,18 @@ class CostsViewModel(private val container: AppContainer) : ViewModel() {
                     sheetError = e.message,
                     sheetErrorRes = if (e.message == null) R.string.costs_err_upload else null,
                 )
-            } finally {
-                tmpFile?.delete()
             }
         }
     }
 
     companion object {
+        internal fun validateProofInput(hasPhoto: Boolean, txnRef: String): Int? = when {
+            !hasPhoto -> R.string.costs_err_missing_photo
+            txnRef.trim().isEmpty() -> R.string.costs_err_missing_ref
+            txnRef.trim().length < 4 -> R.string.costs_err_ref_short
+            else -> null
+        }
+
         fun factory(container: AppContainer) = viewModelFactory { initializer { CostsViewModel(container) } }
     }
 }

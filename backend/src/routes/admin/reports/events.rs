@@ -184,7 +184,11 @@ pub(in crate::routes::admin) async fn events_report(
 
     let rides_global = u.traffic_is_global();
     let plan_visitors_count: Option<i64> = if can_rides && q.group_id.is_none() {
-        let pv_scope: Option<i64> = if rides_global { None } else { Some(u.id) };
+        let pv_scope: Option<i64> = if global_events && rides_global {
+            None
+        } else {
+            Some(u.id)
+        };
         let (cnt,): (i64,) = sqlx::query_as(
             "SELECT COUNT(*)::BIGINT
              FROM plan_visitors pv

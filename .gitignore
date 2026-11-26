@@ -26,3 +26,14 @@ frontend/public/third-party-licenses.json
 
 # CodeGraph local index
 .codegraph/
+
+# Native iOS / Xcode / SwiftPM artifacts
+ios/GraceRideKit/.build/
+ios/.build/
+ios/DerivedData/
+.swiftpm/
+*.xcuserdata/
+*.xcworkspace/xcuserdata/
+*.ipa
+*.dSYM.zip
+*.dSYM

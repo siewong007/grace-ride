@@ -3,6 +3,7 @@ import { Link, useSearchParams } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
 import { Download, ExternalLink, Eye, FileText, ShieldAlert } from 'lucide-react';
 import { createPdfWriter } from '../../pdfWriter';
+import { escapeCsv, downloadCsv } from '../../reportExport';
 import { api } from '../../api';
 import {
   BackToTop,
@@ -55,6 +56,10 @@ export default function Audit() {
   const from = params.get('from') ?? '';
   const to = params.get('to') ?? '';
   const [search, setSearch] = useState(q);
+
+  useEffect(() => {
+    setSearch(q);
+  }, [q]);
 
   const [selectedItem, setSelectedItem] = useState<AuditItem | null>(null);
   const [isStreaming, setIsStreaming] = useState(false);
@@ -180,12 +185,6 @@ export default function Audit() {
     item.entity === entity && String(item.entity_id) === entityId,
   );
 
-  const escapeCsv = (v: unknown): string => {
-    const s = String(v ?? '');
-    if (/[",\n\r]/.test(s)) return `"${s.replace(/"/g, '""')}"`;
-    return s;
-  };
-
   const exportCsv = () => {
     if (!items.length) return;
     const lines: string[] = [];
@@ -208,14 +207,8 @@ export default function Audit() {
         ].join(','),
       );
     }
-    const blob = new Blob([lines.join('\n')], { type: 'text/csv;charset=utf-8;' });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
     const dateStr = new Date().toISOString().slice(0, 10);
-    a.download = `grace-ride-audit-${dateStr}.csv`;
-    a.click();
-    URL.revokeObjectURL(url);
+    downloadCsv(`grace-ride-audit-${dateStr}`, lines);
   };
 
   const exportStreamCsv = async () => {
@@ -308,7 +301,10 @@ export default function Audit() {
           <button
             type="button"
             className="table-filter-link"
-            onClick={() => set('q', a.actor!)}
+            onClick={() => {
+              setSearch(a.actor!);
+              set('q', a.actor!);
+            }}
             title={t('audit.filterByActor')}
           >
             {highlightText(a.actor, search)}
@@ -550,7 +546,11 @@ export default function Audit() {
         <Button
           variant={isSecurityActive ? 'primary' : 'ghost'}
           size="sm"
-          onClick={() => set('q', isSecurityActive ? '' : 'failed')}
+          onClick={() => {
+            const nextQ = isSecurityActive ? '' : 'failed';
+            setSearch(nextQ);
+            set('q', nextQ);
+          }}
           icon={<ShieldAlert size={14} />}
         >
           {t('audit.securityOnly')}

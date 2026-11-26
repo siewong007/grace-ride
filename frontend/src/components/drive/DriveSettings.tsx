@@ -169,6 +169,7 @@ function VehicleModal({ vehicle, onClose, onSave }: VehicleModalProps) {
           <input
             type="checkbox"
             checked={!!form.is_active}
+            disabled={!!vehicle?.is_active}
             onChange={(e) => setF('is_active', e.target.checked)}
           />
           {t('setAsActive')}
@@ -216,7 +217,7 @@ export function DriveSettings() {
   const confirm = useConfirm();
   const toast = useToast();
   const { data: areas } = useApi<Area[]>('/areas');
-  const { data: profile, loading } = useApi<Profile>('/driver/profile');
+  const { data: profile, error: loadError, loading, reload } = useApi<Profile>('/driver/profile');
   const [p, setP] = useState<Profile | null>(null);
   const [vehicles, setVehicles] = useState<Vehicle[]>([]);
   const [modalVehicle, setModalVehicle] = useState<Vehicle | null | undefined>(undefined);
@@ -272,7 +273,8 @@ export function DriveSettings() {
     return JSON.stringify(normalizePrefs(p)) !== initialRef.current;
   }, [p]);
 
-  if (loading || !p) return <Spinner />;
+  if (loading && !p) return <Spinner />;
+  if (!p) return <ErrorBox error={loadError} onRetry={reload} />;
 
   const toggleArea = (id: number) => {
     setP({
@@ -300,10 +302,11 @@ export function DriveSettings() {
 
   const selectVehicle = async (item: Vehicle) => {
     if (item.id != null) {
-      await run(
+      const ok = await run(
         () => post(`/driver/vehicles/${item.id}/select`),
         t('vehicleSelected'),
       );
+      if (!ok) return;
     }
     const updated = vehicles.map((vh) => ({
       ...vh,
@@ -328,10 +331,11 @@ export function DriveSettings() {
     if (!ok) return;
 
     if (item.id != null) {
-      await run(
+      const deleted = await run(
         () => del(`/driver/vehicles/${item.id}`),
         t('vehicleDeleted'),
       );
+      if (!deleted) return;
     }
     const remaining = vehicles
       .filter((vh) => (vh.id != null && item.id != null ? vh.id !== item.id : vh.plate !== item.plate))
@@ -386,9 +390,18 @@ export function DriveSettings() {
       toast(t('vehicleSaved'));
     } else {
       const res = await post<Vehicle>('/driver/vehicles', vData);
-      const updated: Vehicle[] = res.is_active
-        ? [...vehicles.map((vh) => ({ ...vh, is_active: false })), res]
-        : [...vehicles, res];
+      const exists = vehicles.some((vh) => vh.id === res.id);
+      const updated: Vehicle[] = exists
+        ? vehicles.map((vh) =>
+            vh.id === res.id
+              ? { ...vh, ...res }
+              : res.is_active
+                ? { ...vh, is_active: false }
+                : vh,
+          )
+        : res.is_active
+          ? [...vehicles.map((vh) => ({ ...vh, is_active: false })), res]
+          : [...vehicles, res];
       const activeV = updated.find((vh) => vh.is_active) || updated[0] || null;
       const nextSpare = clampForVehicle(p.spare_seats, activeV);
       syncClampedInitial(nextSpare);

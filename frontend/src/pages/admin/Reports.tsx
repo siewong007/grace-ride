@@ -949,10 +949,10 @@ export default function AdminReports() {
                   onClick={() => setEditingBadge(null)}
                   disabled={savingIcon}
                 >
-                  {t('common.cancel', { defaultValue: 'Cancel' })}
+                  {t('common:cancel')}
                 </Button>
                 <Button variant="primary" onClick={saveBadgeIcon} loading={savingIcon}>
-                  {t('common.save', { defaultValue: 'Save' })}
+                  {t('common:save')}
                 </Button>
               </div>
             </div>

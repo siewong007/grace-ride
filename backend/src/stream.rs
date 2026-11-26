@@ -189,11 +189,6 @@ pub async fn session_alive(db: &sqlx::PgPool, session_id: &str) -> bool {
     .map_or(true, |n| n > 0)
 }
 
-/// Checks session liveness including server-enforced idle auto-lock in one query.
-async fn session_alive_checked(st: &AppState, session_id: &str) -> bool {
-    crate::security::evaluate_session_alive_and_lock(st, session_id).await
-}
-
 pub async fn handler(
     State(st): State<AppState>,
     u: CurrentUser,
@@ -224,10 +219,29 @@ pub async fn handler(
     let mut checks =
         tokio::time::interval_at(tokio::time::Instant::now() + SESSION_CHECK, SESSION_CHECK);
     checks.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+    let err_ticks = Arc::new(std::sync::atomic::AtomicU8::new(0));
     let checks = IntervalStream::new(checks).then(move |_| {
         let state = state.clone();
         let session_id = session_id.clone();
-        async move { Tick::Session(session_alive_checked(&state, &session_id).await) }
+        let err_ticks = err_ticks.clone();
+        async move {
+            let tick =
+                match crate::security::evaluate_session_alive_and_lock_checked(&state, &session_id)
+                    .await
+                {
+                    Ok(true) => {
+                        err_ticks.store(0, std::sync::atomic::Ordering::Relaxed);
+                        true
+                    }
+                    Ok(false) => false,
+                    Err(_) => {
+                        // Fail closed after 3 consecutive DB errors (~3 min) instead of staying open forever.
+                        let n = err_ticks.fetch_add(1, std::sync::atomic::Ordering::Relaxed) + 1;
+                        n < 3
+                    }
+                };
+            Tick::Session(tick)
+        }
     });
     let shutdown = WatchStream::new(st.shutdown.subscribe())
         .filter_map(|stop| stop.then_some(Tick::Session(false)));

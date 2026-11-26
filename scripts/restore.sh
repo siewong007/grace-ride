@@ -41,7 +41,7 @@ elif [[ "$ARCHIVE" == *.gpg ]]; then
   gpg --batch --yes --decrypt -o "$TARBALL" "$ARCHIVE"
 fi
 
-tar -C "$TMP" -xzf "$TARBALL"
+tar --no-same-owner --no-same-permissions -C "$TMP" -xzf "$TARBALL"
 SRC="$(find "$TMP" -maxdepth 1 -type d -name 'grace-ride-*' | head -1)"
 if [[ -z "$SRC" || ! -s "$SRC/db.dump" || ! -f "$SRC/uploads.tar.gz" ]]; then
   echo "Invalid backup archive '$ARCHIVE': missing db.dump or uploads.tar.gz" >&2
@@ -60,5 +60,5 @@ fi
 mkdir -p "$DATA_DIR"
 # Remove stale uploads first so post-backup orphan files do not remain on disk.
 rm -rf "$DATA_DIR/uploads"
-tar -C "$DATA_DIR" -xzf "$SRC/uploads.tar.gz"
+tar --no-same-owner --no-same-permissions -C "$DATA_DIR" -xzf "$SRC/uploads.tar.gz"
 echo "Restored archive ($ARCHIVE) and uploads ($DATA_DIR). Start the app and check /api/health."

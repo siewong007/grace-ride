@@ -85,15 +85,17 @@ if (typeof window !== 'undefined') {
 }
 
 export async function promptInstall(): Promise<'accepted' | 'dismissed' | null> {
-  if (!deferredPrompt) return null;
+  const evt = deferredPrompt;
+  if (!evt) return null;
+  deferredPrompt = null;
+  notify();
   try {
-    await deferredPrompt.prompt();
-    const choice = await deferredPrompt.userChoice;
+    await evt.prompt();
+    const choice = await evt.userChoice;
     if (choice.outcome === 'accepted') {
       isInstalledOverride = true;
-      deferredPrompt = null;
+      notify();
     }
-    notify();
     return choice.outcome;
   } catch (err) {
     console.error('Failed to prompt PWA install:', err);

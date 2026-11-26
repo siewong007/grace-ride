@@ -2639,3 +2639,379 @@ async fn ride_lifecycle_cursors_search_escaping_csv_year_and_guides() {
     );
     assert_eq!(bad_guide.json["code"], "GUIDE_LINK_INVALID");
 }
+
+#[tokio::test]
+async fn security_audit_2026_backend_hardening() {
+    use axum::body::Body;
+    use axum::http::{header, HeaderMap, HeaderValue, Request};
+    use base64::Engine as _;
+    use grace_ride::redact_uri_path;
+    use grace_ride::routes::files::{strip_png_metadata, strip_webp_metadata};
+    use grace_ride::security::{client_ip, RateLimiter};
+    use ring::signature::KeyPair as _;
+    use std::time::Duration;
+    use tower::ServiceExt;
+
+    let (app, st) = setup().await;
+    let admin = login(&st, "admin@example.org").await;
+    let member = login(&st, "member@example.org").await;
+    let member_id = user_id(&st, "member@example.org").await;
+
+    // 1. WEB-03: RateLimiter isolates user-credential buckets from >50k IP flood keys
+    let limiter = RateLimiter::default();
+    for i in 0..10 {
+        assert!(
+            limiter
+                .check("totp:user:999", 10, Duration::from_secs(300))
+                .is_ok(),
+            "attempt {i}"
+        );
+    }
+    assert!(limiter
+        .check("totp:user:999", 10, Duration::from_secs(300))
+        .is_err());
+    for ip_idx in 0..55_000 {
+        let _ = limiter.check(
+            &format!("visit:10.0.{}.{}", ip_idx / 256, ip_idx % 256),
+            30,
+            Duration::from_secs(600),
+        );
+    }
+    // User lockout bucket MUST NOT be evicted by unauthenticated IP churn.
+    assert!(limiter
+        .check("totp:user:999", 10, Duration::from_secs(300))
+        .is_err());
+
+    // 2. WEB-03: Rightmost proxy hop extraction blocks client-spoofed leftmost X-Forwarded-For
+    let mut hdrs = HeaderMap::new();
+    hdrs.insert(
+        "x-forwarded-for",
+        HeaderValue::from_static("9.9.9.9, 203.0.113.42"),
+    );
+    assert_eq!(client_ip(&hdrs, None, true), "203.0.113.42");
+
+    // 3. WEB-03: Persistent session revocation after 11 failed TOTP guesses across windows
+    sqlx::query("UPDATE users SET totp_enabled=1, totp_secret='JBSWY3DPEHPK3PXP' WHERE id=$1")
+        .bind(member_id)
+        .execute(&st.db)
+        .await
+        .unwrap();
+    let revocable_cookie = login(&st, "member@example.org").await;
+    let rev_raw_tok = revocable_cookie.split('=').nth(1).unwrap();
+    let rev_hash = grace_ride::auth::hash_token(rev_raw_tok);
+    sqlx::query("UPDATE sessions SET failed_totp_attempts=10 WHERE token=$1")
+        .bind(&rev_hash)
+        .execute(&st.db)
+        .await
+        .unwrap();
+    let revoke_res = call(
+        &app,
+        Method::POST,
+        "/api/auth/totp/verify",
+        Some(&revocable_cookie),
+        Some(json!({ "code": "000000" })),
+    )
+    .await;
+    assert_eq!(revoke_res.status, StatusCode::UNAUTHORIZED);
+    let me_after_rev = call(
+        &app,
+        Method::GET,
+        "/api/auth/me",
+        Some(&revocable_cookie),
+        None,
+    )
+    .await;
+    assert_eq!(me_after_rev.status, StatusCode::UNAUTHORIZED);
+
+    // 4. WEB-04: origin_guard rejects Sec-Fetch-Site: same-site (no Origin), duplicates, non-UTF-8
+    let same_site_req = Request::builder()
+        .method(Method::POST)
+        .uri("/api/auth/logout-all")
+        .header(header::COOKIE, &member)
+        .header("sec-fetch-site", "same-site")
+        .header(header::CONTENT_TYPE, "application/json")
+        .body(Body::from("{}"))
+        .unwrap();
+    let same_site_res = app.clone().oneshot(same_site_req).await.unwrap();
+    assert_eq!(same_site_res.status(), StatusCode::FORBIDDEN);
+
+    let dup_origin_req = Request::builder()
+        .method(Method::POST)
+        .uri("/api/auth/logout-all")
+        .header(header::COOKIE, &member)
+        .header(header::ORIGIN, ORIGIN)
+        .header(header::ORIGIN, "https://evil.example")
+        .body(Body::empty())
+        .unwrap();
+    let dup_origin_res = app.clone().oneshot(dup_origin_req).await.unwrap();
+    assert_eq!(dup_origin_res.status(), StatusCode::FORBIDDEN);
+
+    let bad_utf8_req = Request::builder()
+        .method(Method::POST)
+        .uri("/api/auth/logout-all")
+        .header(header::COOKIE, &member)
+        .header(
+            header::ORIGIN,
+            HeaderValue::from_bytes(b"https://bad-\xff").unwrap(),
+        )
+        .body(Body::empty())
+        .unwrap();
+    let bad_utf8_res = app.clone().oneshot(bad_utf8_req).await.unwrap();
+    assert_eq!(bad_utf8_res.status(), StatusCode::FORBIDDEN);
+
+    // 5. WEB-05: URI token redaction + Telegram header-secret webhook auth
+    assert_eq!(
+        redact_uri_path("/api/invites/secret123"),
+        "/api/invites/[REDACTED]"
+    );
+    assert_eq!(
+        redact_uri_path("/api/visit/visittok"),
+        "/api/visit/[REDACTED]"
+    );
+    assert_eq!(redact_uri_path("/api/care/caretok"), "/api/care/[REDACTED]");
+    assert_eq!(
+        redact_uri_path("/api/calendar/caltok"),
+        "/api/calendar/[REDACTED]"
+    );
+    assert_eq!(
+        redact_uri_path("/api/push/telegram/webhook/topsecret"),
+        "/api/push/telegram/webhook/[REDACTED]"
+    );
+
+    let bot_token = "123456:TESTBOTTOKENHEADERSECRET";
+    sqlx::query(
+        "INSERT INTO app_secrets (name, value) VALUES ('telegram_bot_token', $1), ('telegram_bot_username', 'HeaderBot')
+         ON CONFLICT (name) DO UPDATE SET value = EXCLUDED.value",
+    )
+    .bind(bot_token)
+    .execute(&st.db)
+    .await
+    .unwrap();
+    let link_tok_res = call(
+        &app,
+        Method::POST,
+        "/api/push/telegram/link-token",
+        Some(&member),
+        None,
+    )
+    .await;
+    assert_eq!(link_tok_res.status, StatusCode::OK, "{}", link_tok_res.json);
+    let start_tok = link_tok_res.json["url"]
+        .as_str()
+        .unwrap()
+        .split("start=")
+        .nth(1)
+        .unwrap()
+        .to_string();
+    let wh_secret = grace_ride::routes::community::telegram_webhook_secret(bot_token);
+    let hdr_wh_req = Request::builder()
+        .method(Method::POST)
+        .uri("/api/push/telegram/webhook")
+        .header("x-telegram-bot-api-secret-token", &wh_secret)
+        .header(header::CONTENT_TYPE, "application/json")
+        .body(Body::from(
+            json!({
+                "message": { "chat": { "id": 11223344i64 }, "text": format!("/start {start_tok}") }
+            })
+            .to_string(),
+        ))
+        .unwrap();
+    let hdr_wh_res = app.clone().oneshot(hdr_wh_req).await.unwrap();
+    assert_eq!(hdr_wh_res.status(), StatusCode::OK);
+
+    // 6. WEB-07 & WEB-13: PNG/WebP metadata stripping, malformed fail-closed, uniform 403 oracle
+    let png_ihdr = [
+        0x00, 0x00, 0x00, 0x01, b'I', b'H', b'D', b'R', 0x01, 0, 0, 0, 0,
+    ];
+    let mut png = b"\x89PNG\r\n\x1a\n".to_vec();
+    png.extend_from_slice(&png_ihdr);
+    png.extend_from_slice(&[
+        0x00, 0x00, 0x00, 0x04, b'e', b'X', b'I', b'f', b'E', b'x', b'i', b'f', 0, 0, 0, 0,
+    ]);
+    png.extend_from_slice(&[0x00, 0x00, 0x00, 0x00, b'I', b'E', b'N', b'D', 0, 0, 0, 0]);
+    let clean_png = strip_png_metadata(&png).expect("strip eXIf chunk from PNG");
+    assert!(!clean_png.windows(4).any(|w| w == b"eXIf"));
+
+    let mut webp = b"RIFF\x2c\x00\x00\x00WEBPVP8X\x0a\x00\x00\x00\x0c\x00\x00\x00\x00\x00\x00\x00\x00\x00EXIF\x04\x00\x00\x00Exif".to_vec();
+    webp.extend_from_slice(b"XMP \x04\x00\x00\x00xmp!");
+    let clean_webp = strip_webp_metadata(&webp).expect("strip EXIF/XMP from WebP");
+    assert!(!clean_webp.windows(4).any(|w| w == b"EXIF" || w == b"XMP "));
+
+    // Nonexistent file id must return uniform 403 Forbidden (never 404 existence oracle)
+    let missing_file = call(
+        &app,
+        Method::GET,
+        "/api/files/999999999",
+        Some(&member),
+        None,
+    )
+    .await;
+    assert_eq!(missing_file.status, StatusCode::FORBIDDEN);
+    assert_eq!(missing_file.json["code"], "CANNOT_VIEW_FILE");
+
+    // Corrupt EXIF-bearing JPEG rejected fail-closed on upload
+    let boundary = "----GraceBoundaryAudit";
+    let mut corrupt_jpg = vec![0xFF, 0xD8, 0xFF, 0xE1, 0x00, 0xFF];
+    corrupt_jpg.extend_from_slice(b"Exif\0\0GPSDATA");
+    let mut mp_body = Vec::new();
+    mp_body.extend_from_slice(format!("--{boundary}\r\nContent-Disposition: form-data; name=\"file\"; filename=\"bad.jpg\"\r\nContent-Type: image/jpeg\r\n\r\n").as_bytes());
+    mp_body.extend_from_slice(&corrupt_jpg);
+    mp_body.extend_from_slice(format!("\r\n--{boundary}--\r\n").as_bytes());
+    let up_req = Request::builder()
+        .method(Method::POST)
+        .uri("/api/files")
+        .header(header::COOKIE, &member)
+        .header(header::ORIGIN, ORIGIN)
+        .header(
+            header::CONTENT_TYPE,
+            format!("multipart/form-data; boundary={boundary}"),
+        )
+        .body(Body::from(mp_body))
+        .unwrap();
+    let up_res = app.clone().oneshot(up_req).await.unwrap();
+    assert_eq!(up_res.status(), StatusCode::BAD_REQUEST);
+
+    // 7. WEB-08: push_subscriptions cascades delete when its owning session signs out
+    let sub_ep = "https://fcm.googleapis.com/fcm/send/audit-cascade-endpoint";
+    let sub_res = call(
+        &app,
+        Method::POST,
+        "/api/push/subscribe",
+        Some(&member),
+        Some(json!({
+            "endpoint": sub_ep,
+            "p256dh": base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(vec![4u8; 65]),
+            "auth": base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(vec![7u8; 16]),
+        })),
+    )
+    .await;
+    assert_eq!(sub_res.status, StatusCode::OK, "{}", sub_res.json);
+    let lo_res = call(
+        &app,
+        Method::POST,
+        "/api/auth/logout",
+        Some(&member),
+        Some(json!({})),
+    )
+    .await;
+    assert_eq!(lo_res.status, StatusCode::OK);
+    let remaining_sub: i64 =
+        sqlx::query_scalar("SELECT COUNT(*) FROM push_subscriptions WHERE endpoint=$1")
+            .bind(sub_ep)
+            .fetch_one(&st.db)
+            .await
+            .unwrap();
+    assert_eq!(remaining_sub, 0);
+
+    // 8. AND-02 / IOS-04: X-Passive-Poll: 1 must NOT bump sessions.last_seen_at
+    let poll_cookie = login(&st, "sophie@example.org").await;
+    let poll_hash = grace_ride::auth::hash_token(poll_cookie.split('=').nth(1).unwrap());
+    sqlx::query("UPDATE sessions SET last_seen_at='2026-01-01 00:00' WHERE token=$1")
+        .bind(&poll_hash)
+        .execute(&st.db)
+        .await
+        .unwrap();
+    let passive_req = Request::builder()
+        .method(Method::GET)
+        .uri("/api/notifications?limit=1")
+        .header(header::COOKIE, &poll_cookie)
+        .header("x-passive-poll", "1")
+        .body(Body::empty())
+        .unwrap();
+    let passive_res = app.clone().oneshot(passive_req).await.unwrap();
+    assert_eq!(passive_res.status(), StatusCode::LOCKED);
+
+    // Also verify an active unexpired session gets 200 OK on X-Passive-Poll: 1 without updating last_seen_at
+    let active_poll_cookie = login(&st, "sophie@example.org").await;
+    let active_hash = grace_ride::auth::hash_token(active_poll_cookie.split('=').nth(1).unwrap());
+    let five_ago = grace_ride::util::minutes_ago(5);
+    sqlx::query("UPDATE sessions SET last_seen_at=$1 WHERE token=$2")
+        .bind(&five_ago)
+        .bind(&active_hash)
+        .execute(&st.db)
+        .await
+        .unwrap();
+    let active_passive_req = Request::builder()
+        .method(Method::GET)
+        .uri("/api/notifications?limit=1")
+        .header(header::COOKIE, &active_poll_cookie)
+        .header("x-passive-poll", "1")
+        .body(Body::empty())
+        .unwrap();
+    let active_passive_res = app.clone().oneshot(active_passive_req).await.unwrap();
+    assert_eq!(active_passive_res.status(), StatusCode::OK);
+    let after_seen: String = sqlx::query_scalar("SELECT last_seen_at FROM sessions WHERE token=$1")
+        .bind(&active_hash)
+        .fetch_one(&st.db)
+        .await
+        .unwrap();
+    assert_eq!(after_seen, five_ago);
+
+    // 9. AND-05: Biometric enrollment rejects forged/invalid attestation chain
+    let bio_cookie = login(&st, "member@example.org").await;
+    let bio_start = call(
+        &app,
+        Method::POST,
+        "/api/auth/biometric/register/start",
+        Some(&bio_cookie),
+        Some(json!({})),
+    )
+    .await;
+    assert_eq!(bio_start.status, StatusCode::OK);
+    let cid = bio_start.json["challenge_id"].as_str().unwrap();
+    let challenge = bio_start.json["challenge"].as_str().unwrap();
+    let rng = ring::rand::SystemRandom::new();
+    let pkcs8 = ring::signature::EcdsaKeyPair::generate_pkcs8(
+        &ring::signature::ECDSA_P256_SHA256_FIXED_SIGNING,
+        &rng,
+    )
+    .unwrap();
+    let kp = ring::signature::EcdsaKeyPair::from_pkcs8(
+        &ring::signature::ECDSA_P256_SHA256_FIXED_SIGNING,
+        pkcs8.as_ref(),
+        &rng,
+    )
+    .unwrap();
+    let pub_b64 = base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(kp.public_key().as_ref());
+    let sig = kp
+        .sign(
+            &rng,
+            format!("graceride-biometric-v1:register:{challenge}").as_bytes(),
+        )
+        .unwrap();
+    let sig_b64 = base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(sig.as_ref());
+    let forged_att = call(
+        &app,
+        Method::POST,
+        "/api/auth/biometric/register/finish",
+        Some(&bio_cookie),
+        Some(json!({
+            "challenge_id": cid,
+            "public_key": pub_b64,
+            "signature": sig_b64,
+            "attestation_chain": [base64::engine::general_purpose::STANDARD.encode(b"not-a-der-cert")],
+        })),
+    )
+    .await;
+    assert_eq!(forged_att.status, StatusCode::BAD_REQUEST);
+
+    // 10. IOS-07: APNs token endpoint rejects non-hex / short tokens and accepts valid 64-hex token
+    let bad_apns = call(
+        &app,
+        Method::POST,
+        "/api/push/mobile-token",
+        Some(&admin),
+        Some(json!({ "platform": "ios", "provider": "apns", "token": "not-valid-apns-hex" })),
+    )
+    .await;
+    assert_eq!(bad_apns.status, StatusCode::BAD_REQUEST);
+    let ok_apns = call(
+        &app,
+        Method::POST,
+        "/api/push/mobile-token",
+        Some(&admin),
+        Some(json!({ "platform": "ios", "provider": "apns", "token": "a1b2c3d4".repeat(8) })),
+    )
+    .await;
+    assert_eq!(ok_apns.status, StatusCode::OK);
+}

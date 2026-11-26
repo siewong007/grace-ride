@@ -12,10 +12,10 @@ use serde::Deserialize;
 use serde_json::{json, Value};
 
 use crate::auth::CurrentUser;
-use crate::error::{conflict, not_found, AppResult};
+use crate::error::{not_found, AppResult};
 use crate::perms::{Act, Page};
 use crate::state::AppState;
-use crate::util::{now, ErrorKey, Lang};
+use crate::util::Lang;
 
 mod chat;
 mod drafts;
@@ -447,33 +447,6 @@ pub(super) fn traffic_owned_events_sql(u: &CurrentUser) -> String {
         "(r.event_id IN (SELECT id FROM events WHERE created_by = {}))",
         u.id
     )
-}
-
-pub(super) async fn set_status(
-    st: &AppState,
-    id: i64,
-    from: &[&str],
-    to: &str,
-    lang: Lang,
-) -> AppResult<()> {
-    let placeholders = (0..from.len())
-        .map(|i| format!("${}", i + 4))
-        .collect::<Vec<_>>()
-        .join(",");
-    let sql = format!(
-        "UPDATE rides SET status=$1, updated_at=$2 WHERE id=$3 AND status IN ({placeholders})"
-    );
-    let mut q = sqlx::query(sqlx::AssertSqlSafe(&*sql))
-        .bind(to)
-        .bind(now())
-        .bind(id);
-    for f in from {
-        q = q.bind(*f);
-    }
-    if q.execute(&st.db).await?.rows_affected() == 0 {
-        return Err(conflict(lang, ErrorKey::RideStatusChanged));
-    }
-    Ok(())
 }
 
 // ---------------- Areas ----------------

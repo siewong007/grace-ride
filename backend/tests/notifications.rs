@@ -275,6 +275,31 @@ async fn decoupled_driver_and_passenger_reminders_and_carpool_grouping() {
         .status,
         StatusCode::OK
     );
+    assert_eq!(
+        call(
+            &app,
+            Method::POST,
+            &format!("/api/rides/{r1_id}/respond"),
+            Some(&p1),
+            Some(json!({ "accept": true })),
+        )
+        .await
+        .status,
+        StatusCode::OK
+    );
+    let admin = login(&st, "admin@example.org").await;
+    assert_eq!(
+        call(
+            &app,
+            Method::POST,
+            &format!("/api/rides/{r1_id}/approve"),
+            Some(&admin),
+            None,
+        )
+        .await
+        .status,
+        StatusCode::OK
+    );
     let trip_id: i64 = sqlx::query_scalar("SELECT trip_id FROM rides WHERE id=$1")
         .bind(r1_id)
         .fetch_one(&st.db)
@@ -324,9 +349,10 @@ async fn decoupled_driver_and_passenger_reminders_and_carpool_grouping() {
 
     // Driver gets ONE grouped carpool reminder for the whole trip rather than N separate pings.
     let drv_notifs: Vec<(String, String)> = sqlx::query_as(
-        "SELECT title, body FROM notifications WHERE user_id=$1 AND event_type='driver_trip_reminder'",
+        "SELECT title, body FROM notifications WHERE user_id=$1 AND event_type='ride_reminder' AND entity_id = ANY($2)",
     )
     .bind(drv_id)
+    .bind(vec![r1_id, r2_id])
     .fetch_all(&st.db)
     .await
     .unwrap();
@@ -511,6 +537,7 @@ async fn inbox_pagination_filters_unread_delete_and_category_read_all() {
 async fn single_device_logout_cleans_only_matching_push_endpoint() {
     let (app, st) = setup().await;
     let session_a = login(&st, "member@example.org").await;
+    let session_b = login(&st, "member@example.org").await;
     let uid = user_id(&st, "member@example.org").await;
 
     let rng = SystemRandom::new();
@@ -523,15 +550,15 @@ async fn single_device_logout_cleans_only_matching_push_endpoint() {
         .compute_public_key()
         .unwrap();
 
-    for (ep, pubk) in [
-        ("https://push.example/dev-a", p1.as_ref()),
-        ("https://push.example/dev-b", p2.as_ref()),
+    for (sess, ep, pubk) in [
+        (&session_a, "https://push.example/dev-a", p1.as_ref()),
+        (&session_b, "https://push.example/dev-b", p2.as_ref()),
     ] {
         let res = call(
             &app,
             Method::POST,
             "/api/push/subscribe",
-            Some(&session_a),
+            Some(sess),
             Some(json!({
                 "endpoint": ep,
                 "p256dh": URL_SAFE_NO_PAD.encode(pubk),
@@ -702,7 +729,7 @@ async fn outbox_webhook_retry_and_web_push_410_pruning() {
     // Wait until webhook row reaches status='retry' with attempts=1, then force next_attempt_at due now and process_due_deliveries.
     for _ in 0..20 {
         let st_str: Option<String> = sqlx::query_scalar(
-            "SELECT status FROM notification_deliveries WHERE user_id=$1 AND channel='webhook' ORDER BY id DESC LIMIT 1",
+            "SELECT status FROM notification_deliveries WHERE user_id=$1 AND channel='whatsapp_webhook' ORDER BY id DESC LIMIT 1",
         )
         .bind(uid)
         .fetch_optional(&st.db)
@@ -716,7 +743,7 @@ async fn outbox_webhook_retry_and_web_push_410_pruning() {
 
     sqlx::query(
         "UPDATE notification_deliveries SET next_attempt_at='2020-01-01T00:00:00'
-         WHERE user_id=$1 AND channel='webhook'",
+         WHERE user_id=$1 AND channel='whatsapp_webhook'",
     )
     .bind(uid)
     .execute(&st.db)
@@ -727,7 +754,7 @@ async fn outbox_webhook_retry_and_web_push_410_pruning() {
 
     let (status, attempts): (String, i64) = sqlx::query_as(
         "SELECT status, attempts FROM notification_deliveries
-         WHERE user_id=$1 AND channel='webhook' ORDER BY id DESC LIMIT 1",
+         WHERE user_id=$1 AND channel='whatsapp_webhook' ORDER BY id DESC LIMIT 1",
     )
     .bind(uid)
     .fetch_one(&st.db)
@@ -834,7 +861,7 @@ async fn preferences_quiet_hours_hide_lock_details_and_telegram_pairing() {
     .await;
     let (ext_title, ext_body): (String, String) = sqlx::query_as(
         "SELECT title, body FROM notification_deliveries
-         WHERE user_id=$1 AND channel='webhook' ORDER BY id DESC LIMIT 1",
+         WHERE user_id=$1 AND channel='whatsapp_webhook' ORDER BY id DESC LIMIT 1",
     )
     .bind(uid)
     .fetch_one(&st.db)
@@ -1028,6 +1055,31 @@ async fn throttled_offline_trip_chat_alerts() {
         .status,
         StatusCode::OK
     );
+    assert_eq!(
+        call(
+            &app,
+            Method::POST,
+            &format!("/api/rides/{ride_id}/respond"),
+            Some(&p1),
+            Some(json!({ "accept": true })),
+        )
+        .await
+        .status,
+        StatusCode::OK
+    );
+    let admin = login(&st, "admin@example.org").await;
+    assert_eq!(
+        call(
+            &app,
+            Method::POST,
+            &format!("/api/rides/{ride_id}/approve"),
+            Some(&admin),
+            None,
+        )
+        .await
+        .status,
+        StatusCode::OK
+    );
     let trip_id: i64 = sqlx::query_scalar("SELECT trip_id FROM rides WHERE id=$1")
         .bind(ride_id)
         .fetch_one(&st.db)
@@ -1038,16 +1090,15 @@ async fn throttled_offline_trip_chat_alerts() {
     assert_eq!(
         call(
             &app,
-            Method::POST,
+            Method::PUT,
             "/api/notifications/preferences",
             None,
-            None,
+            Some(json!({})),
         )
         .await
         .status,
         StatusCode::UNAUTHORIZED
     );
-    let admin = login(&st, "admin@example.org").await;
     assert_eq!(
         call(
             &app,

@@ -135,7 +135,10 @@ pub(super) async fn create_payout_batch(
         return Err(bad(u.lang, ErrorKey::BatchEmpty));
     }
     let claim_ids: Vec<i64> = eligible.iter().map(|(id, _)| *id).collect();
-    let total_cents: i64 = eligible.iter().map(|(_, amt)| *amt).sum();
+    let total_cents: i64 = eligible
+        .iter()
+        .try_fold(0i64, |acc, (_, amt)| acc.checked_add(*amt))
+        .ok_or_else(|| bad(u.lang, ErrorKey::InvalidAction))?;
     let claim_count = claim_ids.len() as i64;
     let title = req
         .title
@@ -185,8 +188,8 @@ pub(super) async fn create_payout_batch(
 }
 
 fn csv_cell(v: &str) -> String {
-    let needs_neutralize = v.starts_with(['=', '+', '-', '@', '\t', '\r'])
-        || v.trim_start().starts_with(['=', '+', '-', '@']);
+    let needs_neutralize = v.starts_with(['=', '+', '-', '@', '|', '%', '\t', '\r'])
+        || v.trim_start().starts_with(['=', '+', '-', '@', '|', '%']);
     let safe = if needs_neutralize {
         format!("'{v}")
     } else {
@@ -222,7 +225,7 @@ pub(super) async fn export_payout_batch_csv(
     .await?;
 
     let mut out = String::from(
-        "Claim ID,Payee Name,DuitNow / Phone,Amount (MYR),Applicant,Ride ID,Description,Status\r\n",
+        "\u{FEFF}Claim ID,Payee Name,DuitNow / Phone,Amount (MYR),Applicant,Ride ID,Description,Status\r\n",
     );
     for (cid, pname, pphone, cents, uname, ride_id, desc, status) in rows {
         let sign = if cents < 0 { "-" } else { "" };
@@ -251,6 +254,7 @@ pub(super) async fn export_payout_batch_csv(
     Response::builder()
         .status(StatusCode::OK)
         .header(header::CONTENT_TYPE, "text/csv; charset=utf-8")
+        .header(header::CACHE_CONTROL, "no-cache, no-store, must-revalidate")
         .header(
             header::CONTENT_DISPOSITION,
             format!("attachment; filename=\"grace-ride-payout-batch-{id}-{month}.csv\""),

@@ -65,6 +65,7 @@ data class Me(
     @SerialName("totp_enabled") val totpEnabled: Boolean = false,
     @SerialName("has_password") val hasPassword: Boolean = false,
     @SerialName("passkey_count") val passkeyCount: Int = 0,
+    @SerialName("biometric_count") val biometricCount: Int = 0,
     @SerialName("auto_lock_mins") val autoLockMins: Int = 0,
     @SerialName("session_timeout_mins") val sessionTimeoutMins: Int = 0,
     @SerialName("backup_codes_count") val backupCodesCount: Int = 0,
@@ -75,19 +76,27 @@ data class Me(
     @SerialName("dev_mode") val devMode: Boolean = false,
     @SerialName("push_opt_in") val pushOptIn: Boolean = true,
     @SerialName("onboarding_dismissed") val onboardingDismissed: Boolean = false,
-    @SerialName("telegram_chat_id") val telegramChatId: String? = null,
     @SerialName("whatsapp_opt_in") val whatsappOptIn: Boolean = false,
     @SerialName("badges_opt_out") val badgesOptOut: Boolean = false,
     @SerialName("readiness_prompt_mins") val readinessPromptMins: Int? = null,
 ) {
     fun can(page: String, act: String = "view"): Boolean = permissions.contains("$page.$act")
+
+    /** True when this account holds any staff/admin (`admin_*`) permission. */
+    fun hasStaffAccess(): Boolean = permissions.any { it.startsWith("admin_") }
 }
 
 @Serializable
 data class DevUser(val name: String, val email: String, val roles: String = "")
 
 @Serializable
-data class PasskeyStartReq(val email: String)
+data class TurnstileConfigDto(
+    val enabled: Boolean = false,
+    @SerialName("site_key") val siteKey: String? = null,
+)
+
+@Serializable
+data class PasskeyStartReq(val email: String, val turnstile_token: String? = null)
 
 @Serializable
 data class PasskeyStart(val challenge_id: String, val options: JsonObject)
@@ -97,6 +106,59 @@ data class PasskeyFinishReq(val challenge_id: String, val credential: kotlinx.se
 
 @Serializable
 data class PasskeyInfo(val id: Long, val label: String = "", val created_at: String = "", val last_used: String? = null)
+
+@Serializable
+data class BiometricEnrollment(
+    val id: Long,
+    val credentialId: String,
+    val userId: Long,
+    val email: String,
+    val userName: String,
+    val label: String = "",
+    val enrolledAtMs: Long = 0L,
+)
+
+@Serializable
+data class BiometricChallengeRes(val challenge_id: String, val challenge: String)
+
+@Serializable
+data class BiometricRegisterFinishReq(
+    val challenge_id: String,
+    val public_key: String,
+    val signature: String,
+    val label: String? = null,
+    val attestation_chain: List<String>? = null,
+)
+
+@Serializable
+data class BiometricRegisterFinishRes(
+    val ok: Boolean = true,
+    val id: Long = 0L,
+    val credential_id: String = "",
+    val label: String = "",
+)
+
+@Serializable
+data class BiometricLoginStartReq(val credential_id: String, val turnstile_token: String? = null)
+
+@Serializable
+data class BiometricReauthStartReq(val credential_id: String)
+
+@Serializable
+data class BiometricFinishReq(
+    val challenge_id: String,
+    val credential_id: String,
+    val signature: String,
+)
+
+@Serializable
+data class BiometricInfo(
+    val id: Long,
+    val credential_id: String = "",
+    val label: String = "",
+    val created_at: String = "",
+    val last_used: String? = null,
+)
 
 @Serializable
 data class UnlockReq(
@@ -133,6 +195,7 @@ data class SavedPlaceReq(
     val is_default: Boolean? = null,
     val lat: Double? = null,
     val lng: Double? = null,
+    val clear_coords: Boolean? = null,
 )
 
 @Serializable
@@ -281,6 +344,7 @@ data class MySignup(
     val status: String,
     @SerialName("need_ride") val needRide: Boolean = false,
     @SerialName("offer_drive") val offerDrive: Boolean = false,
+    @SerialName("self_transport") val selfTransport: Boolean = false,
     @Serializable(with = FlexibleBooleanSerializer::class) val attended: Boolean? = null,
     @SerialName("pass_code") val passCode: String? = null,
     @SerialName("as_group") val asGroup: GroupRef? = null,
@@ -396,8 +460,6 @@ data class ReadAllReq(val category: String? = null)
 data class NotificationPrefsDto(
     @SerialName("push_opt_in") val pushOptIn: Boolean = true,
     @SerialName("whatsapp_opt_in") val whatsappOptIn: Boolean = false,
-    @SerialName("telegram_chat_id") val telegramChatId: String = "",
-    @SerialName("telegram_blocked") val telegramBlocked: Boolean = false,
     @SerialName("readiness_prompt_mins") val readinessPromptMins: Int = 45,
     @SerialName("driver_remind_mins") val driverRemindMins: Int = 60,
     @SerialName("muted_categories") val mutedCategories: List<String> = emptyList(),
@@ -410,7 +472,6 @@ data class NotificationPrefsDto(
 data class UpdateNotificationPrefsReq(
     val push_opt_in: Boolean? = null,
     val whatsapp_opt_in: Boolean? = null,
-    val telegram_chat_id: String? = null,
     val readiness_prompt_mins: Int? = null,
     val driver_remind_mins: Int? = null,
     val muted_categories: List<String>? = null,
@@ -437,19 +498,6 @@ data class LogoutReq(
 )
 
 @Serializable
-data class TelegramLinkTokenResp(
-    val url: String = "",
-    @SerialName("expires_at") val expiresAt: String = "",
-)
-
-@Serializable
-data class TelegramTestResp(
-    val ok: Boolean = false,
-    val delivered: Boolean = false,
-    val error: String? = null,
-)
-
-@Serializable
 data class FileRef(val id: Long, val mime: String = "", val name: String = "")
 
 @Serializable
@@ -458,7 +506,6 @@ data class ProfileUpdateReq(
     val phone: String? = null,
     val lang: String? = null,
     val auto_lock_mins: Int? = null,
-    val telegram_chat_id: String? = null,
     val whatsapp_opt_in: Boolean? = null,
     val push_opt_in: Boolean? = null,
     val badges_opt_out: Boolean? = null,
@@ -479,6 +526,7 @@ data class ProxyRider(
     @SerialName("area_id") val areaId: Long? = null,
     @SerialName("pickup_address") val pickupAddress: String = "",
     @SerialName("gate_notes") val gateNotes: String = "",
+    @SerialName("caregiver_user_id") val caregiverUserId: Long? = null,
 )
 
 @Serializable
@@ -550,17 +598,18 @@ data class DriverProfileReq(
     val active_vehicle_id: Long? = null,
 )
 
+@OptIn(kotlinx.serialization.ExperimentalSerializationApi::class)
 @Serializable
 data class DriverVehicleReq(
     val model: String,
     val color: String,
     val plate: String,
     val seats: Int,
-    val vehicle_type: String = "standard",
-    val wheelchair_ok: Boolean = false,
-    val low_step: Boolean = false,
-    val child_seat: Boolean = false,
-    val is_active: Boolean = false,
+    @kotlinx.serialization.EncodeDefault val vehicle_type: String = "standard",
+    @kotlinx.serialization.EncodeDefault val wheelchair_ok: Boolean = false,
+    @kotlinx.serialization.EncodeDefault val low_step: Boolean = false,
+    @kotlinx.serialization.EncodeDefault val child_seat: Boolean = false,
+    @kotlinx.serialization.EncodeDefault val is_active: Boolean = false,
 )
 
 @Serializable
@@ -578,7 +627,197 @@ data class ProxyRiderReq(
     val area_id: Long? = null,
     val pickup_address: String? = null,
     val gate_notes: String? = null,
+    val caregiver_user_id: Long? = null,
 )
 
 @Serializable
 data class CreateProxyRiderRes(val id: Long, val ok: Boolean = true)
+
+// ---- Trip Group Chat ----
+
+@Serializable
+data class ChatReactionDto(
+    val emoji: String,
+    val count: Int = 0,
+    val mine: Boolean = false,
+    val names: List<String> = emptyList(),
+)
+
+@Serializable
+data class ChatMessageDto(
+    val id: Long,
+    @SerialName("user_id") val userId: Long? = null,
+    val name: String? = null,
+    val body: String = "",
+    @SerialName("created_at") val createdAt: String = "",
+    val mine: Boolean = false,
+    val status: String? = null,
+    val reactions: List<ChatReactionDto> = emptyList(),
+)
+
+@Serializable
+data class ChatThreadDto(
+    val open: Boolean = false,
+    @SerialName("can_post") val canPost: Boolean = true,
+    val members: List<String> = emptyList(),
+    @SerialName("reactions_allowed") val reactionsAllowed: List<String> = emptyList(),
+    val messages: List<ChatMessageDto> = emptyList(),
+)
+
+@Serializable
+data class PostMessageReq(val body: String)
+
+@Serializable
+data class PostMessageRes(val ok: Boolean = true, val id: Long = 0)
+
+@Serializable
+data class MarkReadReq(val up_to: Long)
+
+@Serializable
+data class ReactReq(val emoji: String)
+
+@Serializable
+data class ReactRes(val ok: Boolean = true, val emoji: String? = null)
+
+// ---- Driver Hub Route & Live Location ----
+
+@Serializable
+data class RouteOriginDto(
+    val lat: Double,
+    val lng: Double,
+    val heading: Double? = null,
+    @SerialName("updated_at") val updatedAt: String = "",
+)
+
+@Serializable
+data class RouteStopDto(
+    @SerialName("ride_id") val rideId: Long,
+    val passenger: String = "",
+    val address: String = "",
+    @SerialName("pickup_at") val pickupAt: String = "",
+    val seats: Long = 1,
+    val started: Boolean = false,
+    val lat: Double? = null,
+    val lng: Double? = null,
+    val location: String? = null,
+    @SerialName("leg_distance_m") val legDistanceM: Double? = null,
+    @SerialName("leg_duration_s") val legDurationS: Double? = null,
+    @SerialName("distance_m") val distanceM: Double? = null,
+    @SerialName("duration_s") val durationS: Double? = null,
+    val eta: String? = null,
+)
+
+@Serializable
+data class RouteDestinationDto(
+    val name: String = "",
+    val lat: Double? = null,
+    val lng: Double? = null,
+    val approx: Boolean = false,
+    @SerialName("distance_m") val distanceM: Double? = null,
+    @SerialName("duration_s") val durationS: Double? = null,
+    val eta: String? = null,
+)
+
+@Serializable
+data class TripRouteDto(
+    @SerialName("trip_id") val tripId: Long,
+    val live: Boolean = false,
+    val origin: RouteOriginDto? = null,
+    val stops: List<RouteStopDto> = emptyList(),
+    val onboard: Long = 0,
+    val destination: RouteDestinationDto = RouteDestinationDto(),
+    @SerialName("distance_m") val distanceM: Double = 0.0,
+    @SerialName("duration_s") val durationS: Double = 0.0,
+    val approximate: Boolean = false,
+    @SerialName("computed_at") val computedAt: String = "",
+    val geometry: List<List<Double>> = emptyList(),
+)
+
+@Serializable
+data class DriverRouteResp(val route: TripRouteDto? = null)
+
+@Serializable
+data class DriverLocationReq(val lat: Double, val lng: Double, val heading: Double? = null)
+
+@Serializable
+data class PassengerLocationReq(val lat: Double, val lng: Double)
+
+@Serializable
+data class LocationShareResp(val ok: Boolean = true, val sharing: Boolean = false)
+
+@Serializable
+data class PassengerSpotDto(
+    val lat: Double,
+    val lng: Double,
+    @SerialName("updated_at") val updatedAt: String = "",
+)
+
+@Serializable
+data class RideEtaDto(
+    val phase: String = "pickup",
+    val located: Boolean = false,
+    @SerialName("stops_before") val stopsBefore: Int = 0,
+    val approximate: Boolean = false,
+    @SerialName("computed_at") val computedAt: String = "",
+    @SerialName("distance_m") val distanceM: Double? = null,
+    @SerialName("duration_s") val durationS: Double? = null,
+    val eta: String? = null,
+    val destination: String? = null,
+    val location: String? = null,
+    val target: List<Double>? = null,
+    val path: List<List<Double>> = emptyList(),
+)
+
+@Serializable
+data class RideLocationDto(
+    val sharing: Boolean = false,
+    val lat: Double? = null,
+    val lng: Double? = null,
+    val heading: Double? = null,
+    @SerialName("updated_at") val updatedAt: String? = null,
+    val passenger: PassengerSpotDto? = null,
+    val eta: RideEtaDto? = null,
+)
+
+// ---- Event Check-In & Attendance ----
+
+@Serializable
+data class CheckinInfoDto(
+    val id: Long,
+    val title: String = "",
+    @SerialName("starts_at") val startsAt: String = "",
+    val location: String = "",
+    @SerialName("attendance_enabled") val attendanceEnabled: Boolean = false,
+    @SerialName("my_attended") val myAttended: Boolean = false,
+    @SerialName("is_member") val isMember: Boolean = false,
+)
+
+@Serializable
+data class CheckinReq(val code: String? = null)
+
+@Serializable
+data class CheckinByCodeReq(val code: String)
+
+@Serializable
+data class CheckinResp(
+    val ok: Boolean = true,
+    @SerialName("already_attended") val alreadyAttended: Boolean = false,
+    @SerialName("event_id") val eventId: Long = 0,
+    val title: String = "",
+    @SerialName("starts_at") val startsAt: String = "",
+    val location: String = "",
+)
+
+@Serializable
+data class ScanMemberReq(val pass_code: String)
+
+@Serializable
+data class ScanMemberResp(
+    val ok: Boolean = true,
+    @SerialName("user_id") val userId: Long = 0,
+    @SerialName("member_name") val memberName: String = "",
+    @SerialName("already_attended") val alreadyAttended: Boolean = false,
+)
+
+@Serializable
+data class MarkAttendanceReq(val user_id: Long, val attended: Boolean? = null)

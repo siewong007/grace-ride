@@ -202,7 +202,12 @@ function SendLink({ event, name, url, onClose }: { event: string; name: string; 
           <Button
             variant="secondary"
             icon={<Copy size={18} />}
-            onClick={() => navigator.clipboard?.writeText(url).then(() => toast(t('copied'), 'success'))}
+            onClick={() =>
+              void navigator.clipboard
+                ?.writeText(url)
+                .then(() => toast(t('copied'), 'success'))
+                .catch(() => {})
+            }
           >
             {t('copy')}
           </Button>

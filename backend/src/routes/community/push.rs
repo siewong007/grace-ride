@@ -69,7 +69,7 @@ fn mask_endpoint(endpoint: &str) -> String {
     "***".to_string()
 }
 
-pub(crate) fn telegram_webhook_secret(bot_token: &str) -> String {
+pub fn telegram_webhook_secret(bot_token: &str) -> String {
     let key = hmac::Key::new(hmac::HMAC_SHA256, bot_token.trim().as_bytes());
     let tag = hmac::sign(&key, b"graceride-tg-webhook");
     hex::encode(tag.as_ref())[..32].to_string()
@@ -104,12 +104,14 @@ pub(super) async fn push_config(
     let mut telegram_bot_username = String::new();
     let mut whatsapp_configured = false;
     for (name, value) in secrets {
+        let plain = crate::crypto::decrypt_secret(&format!("app_secret:{name}"), &value)
+            .unwrap_or_default();
         match name.as_str() {
-            "telegram_bot_token" => telegram_configured = !value.trim().is_empty(),
+            "telegram_bot_token" => telegram_configured = !plain.trim().is_empty(),
             "telegram_bot_username" => {
-                telegram_bot_username = value.trim().trim_start_matches('@').to_string();
+                telegram_bot_username = plain.trim().trim_start_matches('@').to_string();
             }
-            "alert_webhook_url" => whatsapp_configured = !value.trim().is_empty(),
+            "alert_webhook_url" => whatsapp_configured = !plain.trim().is_empty(),
             _ => {}
         }
     }
@@ -172,11 +174,12 @@ pub(super) async fn push_subscribe(
         .map(|s| s.chars().take(80).collect::<String>())
         .unwrap_or_else(|| parse_device_label(&ua));
     sqlx::query(
-        "INSERT INTO push_subscriptions (user_id, endpoint, p256dh, auth, user_agent, device_label, created_at)
-         VALUES ($1,$2,$3,$4,$5,$6,$7)
+        "INSERT INTO push_subscriptions (user_id, endpoint, p256dh, auth, user_agent, device_label, created_at, session_token)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8)
          ON CONFLICT (endpoint) DO UPDATE
          SET user_id=excluded.user_id, p256dh=excluded.p256dh, auth=excluded.auth,
-             user_agent=excluded.user_agent, device_label=excluded.device_label, created_at=excluded.created_at",
+             user_agent=excluded.user_agent, device_label=excluded.device_label, created_at=excluded.created_at,
+             session_token=excluded.session_token",
     )
     .bind(u.id)
     .bind(endpoint)
@@ -185,6 +188,7 @@ pub(super) async fn push_subscribe(
     .bind(&ua)
     .bind(&label)
     .bind(now())
+    .bind(&u.session_id)
     .execute(&st.db)
     .await?;
     sqlx::query(
@@ -303,14 +307,15 @@ pub(super) async fn push_test(
         "This device is connected to Grace Ride alerts.",
     );
     let subject = crate::util::vapid_subject();
-    let client = crate::util::alert_client();
     let mut delivered = 0usize;
     for (sub_id, endpoint, p256dh, auth) in subs {
-        if !crate::util::validate_push_endpoint(&endpoint, st.cfg.dev_mode).await {
+        let Some(client) =
+            crate::notifications::build_pinned_client(&endpoint, st.cfg.dev_mode).await
+        else {
             continue;
-        }
+        };
         match crate::web_push::send_push_message(
-            client, &signer, &subject, &endpoint, &p256dh, &auth, title, body, "/me",
+            &client, &signer, &subject, &endpoint, &p256dh, &auth, title, body, "/me",
         )
         .await
         {
@@ -365,8 +370,15 @@ pub(super) async fn register_mobile_token(
     let provider = req.provider.trim();
     let token = req.token.trim();
     if (platform != "android" && platform != "ios")
-        || (provider != "fcm" && provider != "unifiedpush")
+        || (provider != "fcm" && provider != "unifiedpush" && provider != "apns")
         || !(10..=512).contains(&token.len())
+    {
+        return Err(bad(u.lang, ErrorKey::InvalidAction));
+    }
+    if provider == "apns"
+        && (!(64..=256).contains(&token.len())
+            || token.len() % 2 != 0
+            || !token.bytes().all(|b| b.is_ascii_hexdigit()))
     {
         return Err(bad(u.lang, ErrorKey::InvalidAction));
     }
@@ -425,6 +437,22 @@ pub(super) async fn unregister_mobile_token(
     Ok(Json(json!({ "ok": true })))
 }
 
+pub(super) async fn delete_mobile_token(
+    State(st): State<AppState>,
+    u: CurrentUser,
+    Path(id): Path<i64>,
+) -> AppResult<Json<Value>> {
+    let res = sqlx::query("DELETE FROM mobile_push_tokens WHERE id=$1 AND user_id=$2")
+        .bind(id)
+        .bind(u.id)
+        .execute(&st.db)
+        .await?;
+    if res.rows_affected() == 0 {
+        return Err(not_found(u.lang));
+    }
+    Ok(Json(json!({ "ok": true })))
+}
+
 // ---------------- One-tap Telegram Pairing & Self-Test ----------------
 
 pub(super) async fn create_telegram_link_token(
@@ -439,10 +467,12 @@ pub(super) async fn create_telegram_link_token(
     let mut has_token = false;
     let mut bot_username = String::new();
     for (k, v) in rows {
+        let plain =
+            crate::crypto::decrypt_secret(&format!("app_secret:{k}"), &v).unwrap_or_default();
         match k.as_str() {
-            "telegram_bot_token" => has_token = !v.trim().is_empty(),
+            "telegram_bot_token" => has_token = !plain.trim().is_empty(),
             "telegram_bot_username" => {
-                bot_username = v.trim().trim_start_matches('@').to_string();
+                bot_username = plain.trim().trim_start_matches('@').to_string();
             }
             _ => {}
         }
@@ -489,19 +519,24 @@ fn ct_eq(a: &[u8], b: &[u8]) -> bool {
     diff == 0
 }
 
-pub(super) async fn telegram_webhook(
-    State(st): State<AppState>,
-    Path(secret): Path<String>,
-    Json(update): Json<Value>,
+async fn handle_telegram_webhook_inner(
+    st: &AppState,
+    presented_secret: Option<&str>,
+    update: Value,
 ) -> AppResult<Json<Value>> {
     let token_opt: Option<String> =
         sqlx::query_scalar("SELECT value FROM app_secrets WHERE name='telegram_bot_token'")
             .fetch_optional(&st.db)
             .await?;
-    let Some(bot_token) = token_opt.filter(|s| !s.trim().is_empty()) else {
+    let Some(bot_token_raw) = token_opt.filter(|s| !s.trim().is_empty()) else {
         return Err(not_found(Lang::En));
     };
+    let bot_token = crate::crypto::decrypt_secret("app_secret:telegram_bot_token", &bot_token_raw)
+        .map_err(AppError::Other)?;
     let expected = telegram_webhook_secret(&bot_token);
+    let Some(secret) = presented_secret.filter(|s| !s.is_empty()) else {
+        return Err(not_found(Lang::En));
+    };
     if !ct_eq(expected.as_bytes(), secret.as_bytes()) {
         return Err(not_found(Lang::En));
     }
@@ -530,30 +565,30 @@ pub(super) async fn telegram_webhook(
     }
 
     let token_hash = hash_token(raw_token);
-    let row: Option<(i64, String)> =
-        sqlx::query_as("SELECT user_id, expires_at FROM telegram_link_tokens WHERE token_hash=$1")
-            .bind(&token_hash)
-            .fetch_optional(&st.db)
-            .await?;
-
-    let Some((user_id, expires_at)) = row else {
-        return Ok(Json(json!({ "ok": true })));
-    };
-    if expires_at < now() {
-        let _ = sqlx::query("DELETE FROM telegram_link_tokens WHERE token_hash=$1")
-            .bind(&token_hash)
-            .execute(&st.db)
-            .await;
-        return Ok(Json(json!({ "ok": true })));
-    }
-
     let chat_str = chat_id.to_string();
     let mut tx = st.db.begin().await?;
-    sqlx::query("UPDATE users SET telegram_chat_id=$1 WHERE id=$2")
-        .bind(&chat_str)
-        .bind(user_id)
-        .execute(&mut *tx)
-        .await?;
+    let consumed_user_id: Option<i64> = sqlx::query_scalar(
+        "DELETE FROM telegram_link_tokens WHERE token_hash=$1 AND expires_at >= $2 RETURNING user_id",
+    )
+    .bind(&token_hash)
+    .bind(now())
+    .fetch_optional(&mut *tx)
+    .await?;
+    let Some(user_id) = consumed_user_id else {
+        tx.commit().await?;
+        return Ok(Json(json!({ "ok": true })));
+    };
+    let lang_s: Option<String> = sqlx::query_scalar(
+        "UPDATE users SET telegram_chat_id=$1 WHERE id=$2 AND status='active' RETURNING lang",
+    )
+    .bind(&chat_str)
+    .bind(user_id)
+    .fetch_optional(&mut *tx)
+    .await?;
+    let Some(lang_code) = lang_s else {
+        tx.commit().await?;
+        return Ok(Json(json!({ "ok": true })));
+    };
     sqlx::query(
         "INSERT INTO user_notification_prefs (user_id, telegram_blocked, updated_at)
          VALUES ($1, 0, $2)
@@ -563,17 +598,9 @@ pub(super) async fn telegram_webhook(
     .bind(now())
     .execute(&mut *tx)
     .await?;
-    sqlx::query("DELETE FROM telegram_link_tokens WHERE token_hash=$1")
-        .bind(&token_hash)
-        .execute(&mut *tx)
-        .await?;
     tx.commit().await?;
 
-    let lang_s: Option<String> = sqlx::query_scalar("SELECT lang FROM users WHERE id=$1")
-        .bind(user_id)
-        .fetch_optional(&st.db)
-        .await?;
-    let lang = lang_s.map(|l| Lang::from_code(&l)).unwrap_or(Lang::Zh);
+    let lang = Lang::from_code(&lang_code);
     let reply = t(
         lang,
         "已成功绑定您的 Grace Ride 账号！您将会在此收到接送和活动通知。",
@@ -592,14 +619,43 @@ pub(super) async fn telegram_webhook(
     Ok(Json(json!({ "ok": true })))
 }
 
+pub(super) async fn telegram_webhook_header(
+    State(st): State<AppState>,
+    headers: HeaderMap,
+    Json(update): Json<Value>,
+) -> AppResult<Json<Value>> {
+    let header_secret = headers
+        .get("x-telegram-bot-api-secret-token")
+        .and_then(|v| v.to_str().ok())
+        .map(str::trim);
+    handle_telegram_webhook_inner(&st, header_secret, update).await
+}
+
+pub(super) async fn telegram_webhook(
+    State(st): State<AppState>,
+    headers: HeaderMap,
+    Path(path_secret): Path<String>,
+    Json(update): Json<Value>,
+) -> AppResult<Json<Value>> {
+    let presented = headers
+        .get("x-telegram-bot-api-secret-token")
+        .and_then(|v| v.to_str().ok())
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .unwrap_or(path_secret.as_str());
+    handle_telegram_webhook_inner(&st, Some(presented), update).await
+}
+
 pub(super) async fn telegram_test(
     State(st): State<AppState>,
     u: CurrentUser,
 ) -> AppResult<Json<Value>> {
-    let bot_token: Option<String> =
+    let bot_token_raw: Option<String> =
         sqlx::query_scalar("SELECT value FROM app_secrets WHERE name='telegram_bot_token'")
             .fetch_optional(&st.db)
             .await?;
+    let bot_token = bot_token_raw
+        .and_then(|raw| crate::crypto::decrypt_secret("app_secret:telegram_bot_token", &raw).ok());
     let Some(bot_token) = bot_token
         .map(|s| s.trim().to_string())
         .filter(|s| !s.is_empty())

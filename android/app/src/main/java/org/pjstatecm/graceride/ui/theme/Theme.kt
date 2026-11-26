@@ -2,6 +2,8 @@ package org.pjstatecm.graceride.ui.theme
 
 import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material3.ButtonColors
+import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Shapes
 import androidx.compose.material3.darkColorScheme
@@ -28,6 +30,13 @@ private val LightColors = lightColorScheme(
     onSurface = GrText,
     surfaceVariant = GrSurface2,
     onSurfaceVariant = GrMuted,
+    surfaceBright = GrBg,
+    surfaceDim = GrSurfaceHigh,
+    surfaceContainerLowest = GrSurfaceLowest,
+    surfaceContainerLow = GrSurfaceLow,
+    surfaceContainer = GrSurfaceContainer,
+    surfaceContainerHigh = GrSurfaceHigh,
+    surfaceContainerHighest = GrSurfaceHighest,
     outline = GrMuted,
     outlineVariant = GrBorder,
     error = GrDanger,
@@ -39,11 +48,11 @@ private val LightColors = lightColorScheme(
 private val DarkColors = darkColorScheme(
     primary = GrPrimaryDark,
     onPrimary = GrPrimaryInkDark,
-    primaryContainer = GrInfoSoftDark,
+    primaryContainer = GrPrimarySoftDark,
     onPrimaryContainer = GrPrimaryHoverDark,
     secondary = GrInfoDark,
     onSecondary = GrPrimaryInkDark,
-    secondaryContainer = GrInfoSoftDark,
+    secondaryContainer = GrPrimarySoftDark,
     onSecondaryContainer = GrInfoDark,
     background = GrBgDark,
     onBackground = GrTextDark,
@@ -51,6 +60,13 @@ private val DarkColors = darkColorScheme(
     onSurface = GrTextDark,
     surfaceVariant = GrSurface2Dark,
     onSurfaceVariant = GrMutedDark,
+    surfaceBright = GrSurfaceHighDark,
+    surfaceDim = GrSurfaceLowestDark,
+    surfaceContainerLowest = GrSurfaceLowestDark,
+    surfaceContainerLow = GrSurfaceLowDark,
+    surfaceContainer = GrSurfaceContainerDark,
+    surfaceContainerHigh = GrSurfaceHighDark,
+    surfaceContainerHighest = GrSurfaceHighestDark,
     outline = GrMutedDark,
     outlineVariant = GrBorderDark,
     error = GrDangerDark,
@@ -58,6 +74,24 @@ private val DarkColors = darkColorScheme(
     errorContainer = GrDangerSoftDark,
     onErrorContainer = GrDangerDark,
 )
+
+/** Consistent Ride Blue CTA button fill in both Light and Dark themes (matching `--btn-bg`). */
+@Composable
+fun graceRidePrimaryButtonColors(): ButtonColors = ButtonDefaults.buttonColors(
+    containerColor = GrPrimary,
+    contentColor = Color.White,
+)
+
+enum class ThemeMode(val key: String) {
+    SYSTEM("system"),
+    LIGHT("light"),
+    DARK("dark"),
+    ;
+
+    companion object {
+        fun fromKey(raw: String?): ThemeMode = entries.firstOrNull { it.key == raw } ?: SYSTEM
+    }
+}
 
 @Immutable
 data class StatusColors(
@@ -71,13 +105,13 @@ val LocalStatusColors = staticCompositionLocalOf {
     StatusColors(GrSuccess, GrSuccessSoft, GrWarning, GrWarningSoft, GrDanger, GrDangerSoft, GrInfo, GrInfoSoft)
 }
 
-// One radius (8dp) like the web; pills use CircleShape directly.
+// Native Material 3 shape progression while keeping pills explicitly CircleShape.
 private val GrShapes = Shapes(
     extraSmall = RoundedCornerShape(8.dp),
-    small = RoundedCornerShape(8.dp),
-    medium = RoundedCornerShape(8.dp),
-    large = RoundedCornerShape(8.dp),
-    extraLarge = RoundedCornerShape(8.dp),
+    small = RoundedCornerShape(10.dp),
+    medium = RoundedCornerShape(12.dp),
+    large = RoundedCornerShape(16.dp),
+    extraLarge = RoundedCornerShape(24.dp),
 )
 
 object Spacing {

@@ -19,8 +19,8 @@ use crate::auth::CurrentUser;
 use crate::perms::{Act, Page};
 
 /// SQL: the group a ride (alias `r`) is matched on for drivers — the host's group for a
-/// visitor's ride, otherwise the group the passenger joined as. NULL: any driver.
-pub const MATCH_GROUP_SQL: &str = "COALESCE((SELECT vp.host_group_id FROM visitor_passes vp WHERE vp.ride_id = r.id ORDER BY vp.id DESC LIMIT 1), r.as_group_id)";
+/// visitor's ride, otherwise the group the passenger joined as. NULL (or `is_all`): any driver.
+pub const MATCH_GROUP_SQL: &str = "(SELECT CASE WHEN g.is_all = 1 THEN NULL ELSE g.id END FROM groups g WHERE g.id = COALESCE((SELECT vp.host_group_id FROM visitor_passes vp WHERE vp.ride_id = r.id ORDER BY vp.id DESC LIMIT 1), r.as_group_id))";
 
 /// Every member's drive scope (their groups and every group below them), by user id.
 pub async fn drive_scopes_on<'e, E: sqlx::PgExecutor<'e>>(
@@ -29,9 +29,6 @@ pub async fn drive_scopes_on<'e, E: sqlx::PgExecutor<'e>>(
     let rows: Vec<(i64, Vec<i64>)> = sqlx::query_as(
         "WITH RECURSIVE down(user_id, id) AS (
              SELECT user_id, group_id FROM group_members
-             UNION
-             SELECT u.id, g.id FROM users u CROSS JOIN groups g
-             WHERE u.status = 'active' AND g.is_all = 1
              UNION
              SELECT d.user_id, g.id FROM groups g JOIN down d ON g.parent_id = d.id
          ) SELECT user_id, array_agg(DISTINCT id) FROM down GROUP BY user_id",
@@ -54,8 +51,6 @@ pub async fn group_scopes(db: &PgPool, user_id: i64) -> Result<(Vec<i64>, Vec<i6
              SELECT g.parent_id FROM groups g JOIN up ON g.id = up.id WHERE g.parent_id IS NOT NULL
          ), down AS (
              SELECT group_id AS id FROM group_members WHERE user_id = $1
-             UNION
-             SELECT g.id FROM groups g WHERE g.is_all = 1
              UNION
              SELECT g.id FROM groups g JOIN down ON g.parent_id = down.id
          )
@@ -226,7 +221,11 @@ pub async fn join_choices(
 }
 
 /// Would making `parent` the parent of `group` create a loop, or a tree deeper than 3?
-pub async fn parent_ok(db: &PgPool, group: i64, parent: i64) -> Result<bool, sqlx::Error> {
+pub async fn parent_ok_on(
+    conn: &mut sqlx::PgConnection,
+    group: i64,
+    parent: i64,
+) -> Result<bool, sqlx::Error> {
     if group == parent {
         return Ok(false);
     }
@@ -240,7 +239,7 @@ pub async fn parent_ok(db: &PgPool, group: i64, parent: i64) -> Result<bool, sql
          ) SELECT id, depth FROM up",
     )
     .bind(parent)
-    .fetch_all(db)
+    .fetch_all(&mut *conn)
     .await?;
     if ancestors.iter().any(|(id, _)| *id == group) {
         return Ok(false);
@@ -254,8 +253,13 @@ pub async fn parent_ok(db: &PgPool, group: i64, parent: i64) -> Result<bool, sql
          ) SELECT MAX(depth) FROM down",
     )
     .bind(group)
-    .fetch_one(db)
+    .fetch_one(&mut *conn)
     .await?;
     let parent_depth = ancestors.iter().map(|(_, d)| *d).max().unwrap_or(1);
     Ok(parent_depth + height <= 3)
+}
+
+pub async fn parent_ok(db: &PgPool, group: i64, parent: i64) -> Result<bool, sqlx::Error> {
+    let mut conn = db.acquire().await?;
+    parent_ok_on(&mut conn, group, parent).await
 }

@@ -433,7 +433,12 @@ pub(super) async fn post_supper_choice(
     if !is_passenger && !is_admin {
         return Err(forbidden(u.lang, ErrorKey::OnlyPassengerCanRespond));
     }
-    if r.leg != "return" {
+    if r.leg != "return"
+        || matches!(
+            r.status.as_str(),
+            "completed" | "cancelled" | "no_show" | "alt_transport"
+        )
+    {
         return Err(bad(u.lang, ErrorKey::InvalidAction));
     }
     let choice = req.choice.trim();
@@ -442,12 +447,18 @@ pub(super) async fn post_supper_choice(
     }
 
     let timestamp = now();
-    sqlx::query("UPDATE rides SET supper_choice = $1, updated_at = $2 WHERE id = $3")
-        .bind(choice)
-        .bind(&timestamp)
-        .bind(id)
-        .execute(&st.db)
-        .await?;
+    let res = sqlx::query(
+        "UPDATE rides SET supper_choice = $1, updated_at = $2
+         WHERE id = $3 AND status NOT IN ('completed','cancelled','no_show','alt_transport')",
+    )
+    .bind(choice)
+    .bind(&timestamp)
+    .bind(id)
+    .execute(&st.db)
+    .await?;
+    if res.rows_affected() == 0 {
+        return Err(conflict(u.lang, ErrorKey::RideStatusChanged));
+    }
 
     let rider_disp = if r.is_proxy == 1 && !r.rider_name.is_empty() {
         format!("{}（由 {} 代订）", r.rider_name, r.p_name)

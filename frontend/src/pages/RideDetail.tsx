@@ -1,8 +1,8 @@
 import { useEffect, useRef, useState } from 'react';
-import { Link, useLocation, useParams, useSearchParams } from 'react-router-dom';
+import { Link, useLocation, useParams } from 'react-router-dom';
 import { AlertTriangle, LifeBuoy, Repeat, ShieldCheck } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
-import { post, useApi } from '../api';
+import { useApi } from '../api';
 import { useAuth } from '../auth';
 import Chat from '../components/Chat';
 import type { Ride } from '../components/RideCard';
@@ -48,48 +48,19 @@ export default function RideDetail() {
   const loc = useLocation();
   const ft = useFormatT();
   const { id } = useParams();
-  const [searchParams, setSearchParams] = useSearchParams();
-  const quickParam = searchParams.get('quick');
   const chatRef = useRef<HTMLDivElement>(null);
-  const handledQuickRef = useRef<string | null>(null);
   const { data: liveRide, error, reload } = useApi<Ride>(`/rides/${id}`, 15000);
   const auth = useAuth();
   const canAct = auth?.can ?? (() => true);
-  const canUpdateRides = canAct('rides', 'update');
   const [staleRefreshed, setStaleRefreshed] = useState(false);
   const [careModal, setCareModal] = useState(false);
 
+  // Strip legacy quick-action query parameters without firing state-changing POSTs on GET navigation.
   useEffect(() => {
-    if (
-      !liveRide ||
-      String(liveRide.id) !== id ||
-      (quickParam !== 'ready' && quickParam !== 'delayed_5m')
-    ) {
-      return;
+    if (window.location.search.includes('quick=')) {
+      window.history.replaceState(window.history.state, '', window.location.pathname);
     }
-    const key = `${liveRide.id}:${quickParam}`;
-    if (handledQuickRef.current === key) return;
-    if (
-      !liveRide.viewer.is_passenger ||
-      !canUpdateRides ||
-      (liveRide.status !== 'confirmed' && liveRide.status !== 'in_progress') ||
-      liveRide.picked_up_at
-    ) {
-      return;
-    }
-    handledQuickRef.current = key;
-    setSearchParams(
-      (prev) => {
-        const next = new URLSearchParams(prev);
-        next.delete('quick');
-        return next;
-      },
-      { replace: true },
-    );
-    void post(`/rides/${liveRide.id}/readiness`, { status: quickParam })
-      .then(() => reload())
-      .catch(() => {});
-  }, [liveRide, id, quickParam, canUpdateRides, setSearchParams, reload]);
+  }, [id]);
 
   useEffect(() => {
     if (auth?.me?.id && liveRide && String(liveRide.id) === id) {

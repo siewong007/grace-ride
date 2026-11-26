@@ -4,6 +4,9 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import androidx.lifecycle.viewmodel.initializer
 import androidx.lifecycle.viewmodel.viewModelFactory
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.async
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -18,6 +21,7 @@ import org.pjstatecm.graceride.di.AppContainer
 
 data class DriverSettingsUiState(
     val loading: Boolean = true,
+    val refreshing: Boolean = false,
     val busy: Boolean = false,
     val areas: List<Area> = emptyList(),
     val vehicles: List<DriverVehicle> = emptyList(),
@@ -27,6 +31,7 @@ data class DriverSettingsUiState(
     val gateWaitMins: Int = 5,
     val selectedAreaIds: Set<Long> = emptySet(),
     val dirty: Boolean = false,
+    val accessDenied: Boolean = false,
     val message: String? = null,
     val error: String? = null,
 ) {
@@ -51,24 +56,49 @@ class DriverSettingsViewModel(private val container: AppContainer) : ViewModel()
     private val _state = MutableStateFlow(DriverSettingsUiState())
     val state: StateFlow<DriverSettingsUiState> = _state.asStateFlow()
     private var savedPrefs: SavedPrefs? = null
+    private var loadJob: Job? = null
 
     init {
         load()
     }
 
-    fun load() {
-        viewModelScope.launch {
-            _state.value = _state.value.copy(loading = savedPrefs == null, error = null)
+    fun load() = loadInternal(refreshing = false)
+
+    fun refresh() = loadInternal(refreshing = savedPrefs != null)
+
+    private fun loadInternal(refreshing: Boolean) {
+        loadJob?.cancel()
+        if (container.auth.me?.can("drive", "view") != true) {
+            _state.value = _state.value.copy(
+                loading = false,
+                refreshing = false,
+                accessDenied = true,
+                error = null,
+            )
+            return
+        }
+        loadJob = viewModelScope.launch {
+            _state.value = _state.value.copy(
+                accessDenied = false,
+                loading = savedPrefs == null && !refreshing,
+                refreshing = refreshing,
+                error = null,
+            )
             try {
-                val profile = container.rides.driverProfile()
-                val areas = try {
-                    container.rides.areas().filter { it.active }
-                } catch (_: ApiException) {
-                    _state.value.areas
+                val (profile, areas) = coroutineScope {
+                    val profileDef = async { container.rides.driverProfile() }
+                    val areasDef = async {
+                        try {
+                            container.rides.areas().filter { it.active }
+                        } catch (_: ApiException) {
+                            _state.value.areas
+                        }
+                    }
+                    profileDef.await() to areasDef.await()
                 }
                 applyProfile(profile, areas, resetPrefs = true)
             } catch (e: ApiException) {
-                _state.value = _state.value.copy(loading = false, error = e.message)
+                _state.value = _state.value.copy(loading = false, refreshing = false, error = e.message)
             }
         }
     }
@@ -105,6 +135,7 @@ class DriverSettingsViewModel(private val container: AppContainer) : ViewModel()
             savedPrefs = prefs
             _state.value = _state.value.copy(
                 loading = false,
+                refreshing = false,
                 busy = false,
                 areas = areas,
                 vehicles = vehicles,
@@ -125,6 +156,7 @@ class DriverSettingsViewModel(private val container: AppContainer) : ViewModel()
             val clampedSpare = cur.spareSeats.coerceIn(1, maxSpare)
             val updated = cur.copy(
                 loading = false,
+                refreshing = false,
                 busy = false,
                 areas = areas,
                 vehicles = vehicles,

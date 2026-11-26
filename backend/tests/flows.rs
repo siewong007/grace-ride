@@ -264,6 +264,7 @@ async fn prod_app() -> Router {
         notification_retention_days: 90,
         turnstile: Default::default(),
         android_cert_sha256_fingerprints: Vec::new(),
+        ios_app_ids: Vec::new(),
     };
     cfg.validate().unwrap();
     let state = init(cfg).await.unwrap();

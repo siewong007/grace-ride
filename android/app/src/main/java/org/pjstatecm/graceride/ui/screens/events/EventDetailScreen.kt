@@ -1,33 +1,55 @@
 package org.pjstatecm.graceride.ui.screens.events
 
+
 import androidx.compose.animation.Crossfade
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.defaultMinSize
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.selection.toggleable
 import androidx.compose.foundation.shape.CircleShape
-import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.outlined.OpenInNew
+import androidx.compose.material.icons.outlined.CalendarToday
+import androidx.compose.material.icons.outlined.CheckCircle
+import androidx.compose.material.icons.outlined.ContentCopy
+import androidx.compose.material.icons.outlined.DirectionsCar
+import androidx.compose.material.icons.outlined.EventAvailable
+import androidx.compose.material.icons.outlined.Map
 import androidx.compose.material.icons.outlined.People
+import androidx.compose.material.icons.outlined.Place
+import androidx.compose.material.icons.outlined.QrCode2
+import androidx.compose.material.icons.outlined.QrCodeScanner
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
+import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Checkbox
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.ExposedDropdownMenuAnchorType
 import androidx.compose.material3.ExposedDropdownMenuBox
 import androidx.compose.material3.ExposedDropdownMenuDefaults
+import androidx.compose.material3.FilledTonalButton
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
+import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.MenuAnchorType
+import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedCard
 import androidx.compose.material3.OutlinedTextField
@@ -38,18 +60,25 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
+import androidx.compose.material3.pulltorefresh.PullToRefreshBox
+import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.text.font.FontFamily
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
@@ -57,37 +86,68 @@ import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.navigation.NavHostController
+import kotlinx.coroutines.launch
 import org.pjstatecm.graceride.R
 import org.pjstatecm.graceride.data.api.EventItem
 import org.pjstatecm.graceride.data.api.MySignup
 import org.pjstatecm.graceride.data.api.Ride
+import org.pjstatecm.graceride.data.repo.AuthState
 import org.pjstatecm.graceride.di.AppContainer
 import org.pjstatecm.graceride.domain.KlTime
 import org.pjstatecm.graceride.domain.RideStatus
 import org.pjstatecm.graceride.domain.RideStatusKind
-import org.pjstatecm.graceride.ui.Routes
+import org.pjstatecm.graceride.ui.AppRoute
+import org.pjstatecm.graceride.ui.UiHaptics
+import org.pjstatecm.graceride.ui.components.DetailSkeleton
 import org.pjstatecm.graceride.ui.components.ErrorView
 import org.pjstatecm.graceride.ui.components.EventIcon
-import org.pjstatecm.graceride.ui.components.LoadingView
+import org.pjstatecm.graceride.ui.components.InlineButtonSpinner
 import org.pjstatecm.graceride.ui.components.ScheduleTimeline
+import org.pjstatecm.graceride.ui.components.StatusPill
 import org.pjstatecm.graceride.ui.components.TimelineBadge
 import org.pjstatecm.graceride.ui.components.TimelineKind
 import org.pjstatecm.graceride.ui.components.TimelineNode
 import org.pjstatecm.graceride.ui.components.TimelineState
+import org.pjstatecm.graceride.ui.copyToClipboard
+import org.pjstatecm.graceride.ui.openInMaps
 import org.pjstatecm.graceride.ui.openInWebApp
 import org.pjstatecm.graceride.ui.theme.LocalStatusColors
 import org.pjstatecm.graceride.ui.theme.Spacing
+import org.pjstatecm.graceride.ui.theme.graceRidePrimaryButtonColors
+import org.pjstatecm.graceride.ui.theme.tabular
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun EventDetailScreen(container: AppContainer, nav: NavHostController, id: Long) {
-    val vm: EventDetailViewModel = viewModel(factory = EventDetailViewModel.factory(container, id))
+fun EventDetailScreen(
+    container: AppContainer,
+    nav: NavHostController,
+    id: Long,
+    checkinCode: String? = null,
+) {
+    val vm: EventDetailViewModel = viewModel(
+        key = "event-$id",
+        factory = EventDetailViewModel.factory(container, id),
+    )
     val state by vm.state.collectAsStateWithLifecycle()
+    val authState by container.auth.state.collectAsStateWithLifecycle()
+    val me = (authState as? AuthState.SignedIn)?.me ?: container.auth.me
     val context = LocalContext.current
+    val view = LocalView.current
+    val scope = rememberCoroutineScope()
     val snackbar = remember { SnackbarHostState() }
     val publishedNotice = stringResource(R.string.event_published_notice)
     val unpublishedNotice = stringResource(R.string.event_unpublished_notice)
+    val copiedNotice = stringResource(R.string.common_copied)
+    val calendarErrMsg = stringResource(R.string.event_calendar_unavailable)
     var showSignup by remember { mutableStateOf(false) }
+    var showPassQr by remember { mutableStateOf(false) }
+    var checkinOrganiserMode by remember { mutableStateOf<Boolean?>(null) }
+    var prefillCheckinCode by remember { mutableStateOf("") }
+    var deepCheckinHandled by remember(id, checkinCode) { mutableStateOf(false) }
+    val checkinSuccessFmt = stringResource(R.string.event_checkin_success, "%s")
+    val checkinAlreadyFmt = stringResource(R.string.event_checkin_already, "%s")
+    val scanMemberSuccessFmt = stringResource(R.string.event_scan_member_success, "%s")
+    val scanMemberAlreadyFmt = stringResource(R.string.event_scan_member_already, "%s")
     var confirmWithdraw by remember { mutableStateOf(false) }
     var confirmPublish by remember { mutableStateOf(false) }
     var confirmUnpublish by remember { mutableStateOf(false) }
@@ -118,6 +178,42 @@ fun EventDetailScreen(container: AppContainer, nav: NavHostController, id: Long)
         }
         if (state.actionNotice != null) vm.clearNotice()
     }
+    LaunchedEffect(state.checkinResult, state.scanMemberResult) {
+        state.checkinResult?.let { res ->
+            val eventTitle = res.title.ifBlank { state.event?.title.orEmpty() }
+            val msg = if (res.alreadyAttended) {
+                checkinAlreadyFmt.format(eventTitle)
+            } else {
+                checkinSuccessFmt.format(eventTitle)
+            }
+            snackbar.showSnackbar(msg)
+            checkinOrganiserMode = null
+            prefillCheckinCode = ""
+            vm.clearCheckinResults()
+        }
+        state.scanMemberResult?.let { res ->
+            val name = res.memberName.ifBlank { "#${res.userId}" }
+            val msg = if (res.alreadyAttended) {
+                scanMemberAlreadyFmt.format(name)
+            } else {
+                scanMemberSuccessFmt.format(name)
+            }
+            snackbar.showSnackbar(msg)
+            checkinOrganiserMode = null
+            prefillCheckinCode = ""
+            vm.clearCheckinResults()
+        }
+    }
+    LaunchedEffect(state.event?.id, checkinCode) {
+        val ev = state.event ?: return@LaunchedEffect
+        if (!deepCheckinHandled && checkinCode != null) {
+            deepCheckinHandled = true
+            if (ev.attendanceEnabled && ev.status == "published" && ev.mySignup?.attended != true) {
+                prefillCheckinCode = checkinCode.trim()
+                checkinOrganiserMode = false
+            }
+        }
+    }
 
     Scaffold(
         topBar = {
@@ -126,6 +222,30 @@ fun EventDetailScreen(container: AppContainer, nav: NavHostController, id: Long)
                 navigationIcon = {
                     IconButton(onClick = { nav.popBackStack() }) {
                         Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = stringResource(R.string.a11y_back))
+                    }
+                },
+                actions = {
+                    state.event?.let { ev ->
+                        IconButton(
+                            onClick = {
+                                UiHaptics.tick(view)
+                                val ok = org.pjstatecm.graceride.platform.addEventToCalendar(
+                                    context = context,
+                                    title = ev.title,
+                                    startsAt = ev.startsAt,
+                                    location = ev.location,
+                                    description = ev.description,
+                                )
+                                if (!ok) {
+                                    scope.launch { snackbar.showSnackbar(calendarErrMsg) }
+                                }
+                            },
+                        ) {
+                            Icon(
+                                Icons.Outlined.EventAvailable,
+                                contentDescription = stringResource(R.string.event_add_to_calendar),
+                            )
+                        }
                     }
                 },
             )
@@ -144,7 +264,7 @@ fun EventDetailScreen(container: AppContainer, nav: NavHostController, id: Long)
             modifier = Modifier.padding(padding),
         ) { mode ->
             when (mode) {
-                "loading" -> LoadingView()
+                "loading" -> DetailSkeleton()
                 "error" -> ErrorView(state.error ?: "", vm::load)
                 else -> {
                     val event = state.event!!
@@ -152,14 +272,20 @@ fun EventDetailScreen(container: AppContainer, nav: NavHostController, id: Long)
                     // treat it as no signup so the member can sign up again.
                     val signup = event.mySignup?.takeIf { it.status == "going" || it.status == "waitlist" }
                     val nowKl = KlTime.nowStamp()
+                    val startDt = KlTime.parse(event.startsAt)
                     val isPast = event.startsAt.take(16).replace('T', ' ') < nowKl
+                    val isEndedByTime = startDt != null && KlTime.now().isAfter(startDt.plusHours(12))
                     val deadlinePassed = !event.signupDeadline.isNullOrBlank() &&
                         event.signupDeadline.take(16).replace('T', ' ') < nowKl
-                    val open = event.status == "published" && !isPast
-                    val canSignUp = open && !deadlinePassed
+                    val isPublished = event.status == "published"
+                    val open = isPublished && !isEndedByTime
+                    val canSignUp = isPublished && !isPast && !deadlinePassed
                     val myRide = event.myRide
                     val isGoing = signup?.status == "going"
-                    val hasTransport = myRide != null || event.myReturnRide != null || state.drivingForEvent.isNotEmpty()
+                    val hasTransport = myRide != null ||
+                        event.myReturnRide != null ||
+                        state.drivingForEvent.isNotEmpty() ||
+                        signup?.selfTransport == true
                     val canCreateRide = container.auth.me?.can("rides", "create") == true
                     val timelineNodes = buildEventWorkflowNodes(
                         event = event,
@@ -167,248 +293,542 @@ fun EventDetailScreen(container: AppContainer, nav: NavHostController, id: Long)
                         outboundRide = state.outboundRide,
                         returnRide = state.returnRide,
                         drivingForEvent = state.drivingForEvent,
-                        onOpenRide = { rideId -> nav.navigate(Routes.rideDetail(rideId)) },
+                        onOpenRide = { rideId -> nav.navigate(AppRoute.RideDetail(rideId)) },
                     )
 
-                    Column(
-                        Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(Spacing.sm),
-                        verticalArrangement = Arrangement.spacedBy(Spacing.sm),
+                    PullToRefreshBox(
+                        isRefreshing = state.refreshing,
+                        onRefresh = vm::refresh,
+                        modifier = Modifier.fillMaxSize(),
                     ) {
-                    Row(
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(Spacing.xs),
-                        modifier = Modifier.fillMaxWidth(),
-                    ) {
-                        EventIcon(icon = event.icon, kind = event.kind, size = 28.dp)
-                        Text(
-                            event.title,
-                            style = MaterialTheme.typography.headlineSmall,
-                            color = MaterialTheme.colorScheme.onSurface,
-                            modifier = Modifier.weight(1f),
-                        )
-                        if (event.status == "draft") {
-                            val c = LocalStatusColors.current
-                            Surface(color = c.warningSoft, contentColor = c.warning, shape = CircleShape) {
-                                Text(
-                                    stringResource(R.string.event_status_draft),
-                                    style = MaterialTheme.typography.labelMedium,
-                                    modifier = Modifier.padding(horizontal = Spacing.xs, vertical = Spacing.xxs),
-                                )
-                            }
-                        }
-                    }
-                    Text(KlTime.display(event.startsAt), style = MaterialTheme.typography.titleMedium, color = MaterialTheme.colorScheme.primary)
-
-                    if (event.status == "draft") {
-                        val c = LocalStatusColors.current
-                        Surface(
-                            color = c.warningSoft,
-                            contentColor = c.warning,
-                            border = BorderStroke(1.dp, c.warning.copy(alpha = 0.4f)),
-                            shape = MaterialTheme.shapes.medium,
-                            modifier = Modifier.fillMaxWidth(),
+                        Column(
+                            Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(Spacing.sm),
+                            verticalArrangement = Arrangement.spacedBy(Spacing.sm),
                         ) {
-                            Text(
-                                stringResource(R.string.event_draft_banner),
-                                style = MaterialTheme.typography.bodyMedium,
-                                modifier = Modifier.padding(Spacing.sm),
-                            )
-                        }
-                    }
-
-                    OutlinedCard(Modifier.fillMaxWidth()) {
-                        Column(Modifier.padding(Spacing.sm), verticalArrangement = Arrangement.spacedBy(Spacing.xs)) {
-                            Text(
-                                stringResource(
-                                    if (isGoing && state.drivingForEvent.isNotEmpty() && myRide == null) {
-                                        R.string.event_you_are_driving
-                                    } else {
-                                        R.string.event_schedule_title
-                                    },
-                                ),
-                                style = MaterialTheme.typography.labelLarge,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                            )
-                            ScheduleTimeline(items = timelineNodes)
-                        }
-                    }
-
-                    if (canSignUp && signup == null) {
-                        Button(onClick = { showSignup = true }, enabled = !state.busy, modifier = Modifier.fillMaxWidth()) {
-                            Text(stringResource(R.string.event_signup))
-                        }
-                    } else if (open && deadlinePassed && signup == null) {
-                        Text(
-                            stringResource(R.string.event_signup_closed),
-                            style = MaterialTheme.typography.bodyMedium,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        )
-                    } else if (open && signup != null) {
-                        OutlinedButton(onClick = { confirmWithdraw = true }, enabled = !state.busy, modifier = Modifier.fillMaxWidth()) {
-                            Text(stringResource(R.string.event_withdraw), color = MaterialTheme.colorScheme.error)
-                        }
-                    }
-
-                    if (open && isGoing && canCreateRide) {
-                        if (!hasTransport) {
-                            Button(
-                                onClick = { nav.navigate(Routes.rideNew(event.id)) },
-                                enabled = !state.busy,
-                                modifier = Modifier.fillMaxWidth(),
-                            ) { Text(stringResource(R.string.ride_request)) }
-                        } else {
-                            OutlinedButton(
-                                onClick = { nav.navigate(Routes.rideNew(event.id, proxy = true)) },
-                                enabled = !state.busy,
+                            // Hero Header
+                            Row(
+                                verticalAlignment = Alignment.Top,
+                                horizontalArrangement = Arrangement.spacedBy(Spacing.sm),
                                 modifier = Modifier.fillMaxWidth(),
                             ) {
-                                Icon(Icons.Outlined.People, contentDescription = null, modifier = Modifier.padding(end = Spacing.xs))
-                                Text(stringResource(R.string.event_book_for_family))
+                                Surface(
+                                    color = MaterialTheme.colorScheme.surfaceVariant,
+                                    shape = MaterialTheme.shapes.medium,
+                                    modifier = Modifier.size(52.dp),
+                                ) {
+                                    Box(contentAlignment = Alignment.Center) {
+                                        EventIcon(icon = event.icon, kind = event.kind, size = 34.dp)
+                                    }
+                                }
+                                Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(Spacing.xxs)) {
+                                    Text(
+                                        event.title,
+                                        style = MaterialTheme.typography.headlineSmall,
+                                        color = MaterialTheme.colorScheme.onSurface,
+                                    )
+                                    Row(horizontalArrangement = Arrangement.spacedBy(Spacing.xs)) {
+                                        when (event.status) {
+                                            "draft" -> StatusPill(stringResource(R.string.event_status_draft), RideStatusKind.PENDING)
+                                            "cancelled" -> StatusPill(stringResource(R.string.event_status_cancelled), RideStatusKind.CANCELLED)
+                                            "finished" -> StatusPill(stringResource(R.string.event_status_finished), RideStatusKind.DONE)
+                                        }
+                                        if (event.status != "cancelled") {
+                                            signup?.let {
+                                                StatusPill(
+                                                    text = stringResource(if (it.status == "going") R.string.event_going else R.string.event_waitlist),
+                                                    kind = if (it.status == "going") RideStatusKind.ACTIVE else RideStatusKind.PENDING,
+                                                )
+                                            }
+                                        }
+                                    }
+                                }
                             }
-                        }
-                    }
 
-                    OutlinedCard(Modifier.fillMaxWidth()) {
-                        Column(Modifier.padding(Spacing.sm), verticalArrangement = Arrangement.spacedBy(Spacing.xs)) {
-                            if (event.location.isNotBlank()) InfoRow(stringResource(R.string.event_location), event.location)
-                            if (event.capacity > 0) {
-                                val spots = event.spotsLeft
-                                InfoRow(
-                                    stringResource(R.string.event_going),
-                                    event.going.toString() + " / " + event.capacity +
-                                        (spots?.let { " · " + stringResource(R.string.event_spots_left, it) } ?: ""),
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(Spacing.xs),
+                            ) {
+                                Icon(
+                                    Icons.Outlined.CalendarToday,
+                                    contentDescription = null,
+                                    tint = MaterialTheme.colorScheme.primary,
+                                    modifier = Modifier.size(18.dp),
+                                )
+                                Text(
+                                    KlTime.display(event.startsAt),
+                                    style = MaterialTheme.typography.titleMedium.tabular(),
+                                    color = MaterialTheme.colorScheme.primary,
                                 )
                             }
-                            if (event.costNote.isNotBlank()) InfoRow(stringResource(R.string.event_cost), event.costNote)
-                            event.signupDeadline?.takeIf { it.isNotBlank() }?.let {
-                                InfoRow(stringResource(R.string.event_deadline), KlTime.display(it))
+
+                            if (event.status == "draft") {
+                                val c = LocalStatusColors.current
+                                Surface(
+                                    color = c.warningSoft,
+                                    contentColor = c.warning,
+                                    border = BorderStroke(1.dp, c.warning.copy(alpha = 0.4f)),
+                                    shape = MaterialTheme.shapes.medium,
+                                    modifier = Modifier.fillMaxWidth(),
+                                ) {
+                                    Text(
+                                        stringResource(R.string.event_draft_banner),
+                                        style = MaterialTheme.typography.bodyMedium,
+                                        modifier = Modifier.padding(Spacing.sm),
+                                    )
+                                }
                             }
-                            signup?.let { mine ->
-                                InfoRow(
-                                    stringResource(R.string.event_my_status),
-                                    stringResource(if (mine.status == "going") R.string.event_going else R.string.event_waitlist),
+
+                            // Check-in pass spotlight card
+                            if (event.attendanceEnabled && isPublished) {
+                                signup?.passCode?.takeIf { it.isNotBlank() }?.let { code ->
+                                    OutlinedCard(
+                                        border = BorderStroke(1.dp, MaterialTheme.colorScheme.primary.copy(alpha = 0.55f)),
+                                        modifier = Modifier
+                                            .fillMaxWidth()
+                                            .clickable {
+                                                UiHaptics.tick(view)
+                                                showPassQr = true
+                                            },
+                                    ) {
+                                        Row(
+                                            Modifier.fillMaxWidth().padding(Spacing.sm),
+                                            verticalAlignment = Alignment.CenterVertically,
+                                            horizontalArrangement = Arrangement.spacedBy(Spacing.sm),
+                                        ) {
+                                            Icon(
+                                                Icons.Outlined.QrCode2,
+                                                contentDescription = null,
+                                                tint = MaterialTheme.colorScheme.primary,
+                                                modifier = Modifier.size(28.dp),
+                                            )
+                                            Column(Modifier.weight(1f)) {
+                                                Text(
+                                                    stringResource(R.string.event_pass_label),
+                                                    style = MaterialTheme.typography.labelMedium,
+                                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                                )
+                                                Text(
+                                                    code,
+                                                    style = MaterialTheme.typography.headlineMedium.tabular(),
+                                                    fontFamily = FontFamily.Monospace,
+                                                    fontWeight = FontWeight.Bold,
+                                                    color = MaterialTheme.colorScheme.onSurface,
+                                                )
+                                            }
+                                            FilledTonalButton(
+                                                onClick = {
+                                                    UiHaptics.tick(view)
+                                                    if (copyToClipboard(context, "Check-in pass", code, sensitive = true)) {
+                                                        scope.launch { snackbar.showSnackbar(copiedNotice) }
+                                                    }
+                                                },
+                                            ) {
+                                                Icon(Icons.Outlined.ContentCopy, contentDescription = null, modifier = Modifier.size(16.dp))
+                                                Spacer(Modifier.width(4.dp))
+                                                Text(stringResource(R.string.common_copy))
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+
+                            OutlinedCard(Modifier.fillMaxWidth()) {
+                                Column(Modifier.padding(Spacing.sm), verticalArrangement = Arrangement.spacedBy(Spacing.xs)) {
+                                    Text(
+                                        stringResource(
+                                            if (isGoing && state.drivingForEvent.isNotEmpty() && myRide == null) {
+                                                R.string.event_you_are_driving
+                                            } else {
+                                                R.string.event_schedule_title
+                                            },
+                                        ),
+                                        style = MaterialTheme.typography.labelLarge,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    )
+                                    ScheduleTimeline(items = timelineNodes)
+                                }
+                            }
+
+                            if (canSignUp && signup == null) {
+                                Button(
+                                    onClick = { showSignup = true },
+                                    enabled = !state.busy,
+                                    colors = graceRidePrimaryButtonColors(),
+                                    modifier = Modifier.fillMaxWidth().height(52.dp),
+                                ) {
+                                    if (state.busy) {
+                                        InlineButtonSpinner(color = MaterialTheme.colorScheme.onPrimary)
+                                    } else {
+                                        Text(stringResource(R.string.event_signup))
+                                    }
+                                }
+                            } else if (isPublished && (isPast || deadlinePassed) && signup == null && !isEndedByTime) {
+                                Text(
+                                    stringResource(R.string.event_signup_closed),
+                                    style = MaterialTheme.typography.bodyMedium,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
                                 )
-                                mine.passCode?.let { InfoRow(stringResource(R.string.event_checkin_code), it) }
+                            } else if (open && signup != null) {
+                                OutlinedButton(
+                                    onClick = { confirmWithdraw = true },
+                                    enabled = !state.busy,
+                                    colors = ButtonDefaults.outlinedButtonColors(contentColor = MaterialTheme.colorScheme.error),
+                                    modifier = Modifier.fillMaxWidth(),
+                                ) {
+                                    Text(stringResource(R.string.event_withdraw))
+                                }
                             }
-                        }
-                    }
 
-                    if (event.description.isNotBlank()) {
-                        Text(event.description, style = MaterialTheme.typography.bodyLarge, color = MaterialTheme.colorScheme.onSurface)
-                    }
+                            if (open && isGoing && canCreateRide) {
+                                if (!hasTransport) {
+                                    Button(
+                                        onClick = { nav.navigate(AppRoute.RideNew(event.id)) },
+                                        enabled = !state.busy,
+                                        colors = graceRidePrimaryButtonColors(),
+                                        modifier = Modifier.fillMaxWidth().height(52.dp),
+                                    ) {
+                                        Icon(Icons.Outlined.DirectionsCar, contentDescription = null, modifier = Modifier.size(18.dp))
+                                        Spacer(Modifier.width(Spacing.xs))
+                                        Text(stringResource(R.string.ride_request))
+                                    }
+                                } else {
+                                    OutlinedButton(
+                                        onClick = { nav.navigate(AppRoute.RideNew(event.id, proxy = true)) },
+                                        enabled = !state.busy,
+                                        modifier = Modifier.fillMaxWidth(),
+                                    ) {
+                                        Icon(Icons.Outlined.People, contentDescription = null, modifier = Modifier.padding(end = Spacing.xs))
+                                        Text(stringResource(R.string.event_book_for_family))
+                                    }
+                                }
+                            }
 
-                    if (event.status == "draft" && event.canPublish) {
-                        Button(
-                            onClick = { confirmPublish = true },
-                            enabled = !state.busy,
-                            modifier = Modifier.fillMaxWidth(),
-                        ) {
-                            Text(stringResource(R.string.event_publish))
-                        }
-                    } else if (open && event.canManage) {
-                        OutlinedButton(
-                            onClick = { confirmUnpublish = true },
-                            enabled = event.canUnpublish && !state.busy,
-                            modifier = Modifier.fillMaxWidth(),
-                        ) {
-                            Text(stringResource(R.string.event_unpublish))
-                        }
-                        if (!event.canUnpublish) {
-                            Text(
-                                stringResource(R.string.event_unpublish_blocked),
-                                style = MaterialTheme.typography.bodySmall,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                            )
-                        }
-                    }
+                            OutlinedCard(Modifier.fillMaxWidth()) {
+                                Column(Modifier.padding(Spacing.sm), verticalArrangement = Arrangement.spacedBy(Spacing.xs)) {
+                                    if (event.location.isNotBlank()) {
+                                        Row(
+                                            Modifier.fillMaxWidth(),
+                                            verticalAlignment = Alignment.CenterVertically,
+                                            horizontalArrangement = Arrangement.spacedBy(Spacing.xs),
+                                        ) {
+                                            Column(Modifier.weight(1f)) {
+                                                InfoRow(stringResource(R.string.event_location), event.location)
+                                            }
+                                            IconButton(onClick = { openInMaps(context, event.location) }) {
+                                                Icon(
+                                                    Icons.Outlined.Map,
+                                                    contentDescription = stringResource(R.string.common_open_maps),
+                                                    tint = MaterialTheme.colorScheme.primary,
+                                                )
+                                            }
+                                        }
+                                    }
+                                    if (event.capacity > 0) {
+                                        val spots = event.spotsLeft
+                                        val ratio = (event.going.toFloat() / event.capacity.toFloat()).coerceIn(0f, 1f)
+                                        val c = LocalStatusColors.current
+                                        Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                                            InfoRow(
+                                                stringResource(R.string.event_going),
+                                                event.going.toString() + " / " + event.capacity +
+                                                    (spots?.let { " · " + stringResource(R.string.event_spots_left, it) } ?: ""),
+                                            )
+                                            LinearProgressIndicator(
+                                                progress = { ratio },
+                                                color = if (ratio >= 0.85f) c.warning else MaterialTheme.colorScheme.primary,
+                                                trackColor = MaterialTheme.colorScheme.surfaceVariant,
+                                                modifier = Modifier
+                                                    .fillMaxWidth()
+                                                    .height(6.dp)
+                                                    .clip(CircleShape),
+                                            )
+                                        }
+                                    }
+                                    if (event.costNote.isNotBlank()) InfoRow(stringResource(R.string.event_cost), event.costNote)
+                                    event.signupDeadline?.takeIf { it.isNotBlank() }?.let {
+                                        InfoRow(stringResource(R.string.event_deadline), KlTime.display(it))
+                                    }
+                                    signup?.let { mine ->
+                                        InfoRow(
+                                            stringResource(R.string.event_my_status),
+                                            stringResource(if (mine.status == "going") R.string.event_going else R.string.event_waitlist),
+                                        )
+                                    }
+                                }
+                            }
 
-                    OutlinedButton(
-                        onClick = { openInWebApp(context, container.webUrl("events/${event.id}")) },
-                        modifier = Modifier.fillMaxWidth(),
-                    ) {
-                        Icon(Icons.AutoMirrored.Outlined.OpenInNew, contentDescription = null, modifier = Modifier.padding(end = Spacing.xs))
-                        Text(stringResource(R.string.event_open_web_full))
-                    }
-                }
-            }
-        }
-    }
-    }
+                            if (event.description.isNotBlank()) {
+                                Text(event.description, style = MaterialTheme.typography.bodyLarge, color = MaterialTheme.colorScheme.onSurface)
+                            }
 
-    val event = state.event
-    if (showSignup && event != null) {
-        val canOfferDrive = container.auth.me?.can("drive", "create") == true
-        var needRide by remember { mutableStateOf(false) }
-        var offerDrive by remember { mutableStateOf(false) }
-        var groupId by remember { mutableStateOf(event.joinAs.firstOrNull()?.id) }
-        var groupExpanded by remember { mutableStateOf(false) }
+                            if (event.status == "draft" && event.canPublish) {
+                                Button(
+                                    onClick = { confirmPublish = true },
+                                    enabled = !state.busy,
+                                    modifier = Modifier.fillMaxWidth(),
+                                ) {
+                                    Text(stringResource(R.string.event_publish))
+                                }
+                            } else if (isPublished && event.canManage) {
+                                OutlinedButton(
+                                    onClick = { confirmUnpublish = true },
+                                    enabled = event.canUnpublish && !state.busy,
+                                    modifier = Modifier.fillMaxWidth(),
+                                ) {
+                                    Text(stringResource(R.string.event_unpublish))
+                                }
+                                if (!event.canUnpublish) {
+                                    Text(
+                                        stringResource(R.string.event_unpublish_blocked),
+                                        style = MaterialTheme.typography.bodySmall,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    )
+                                }
+                            }
 
-        AlertDialog(
-            onDismissRequest = { showSignup = false },
-            title = { Text(stringResource(R.string.event_signup)) },
-            text = {
-                Column {
-                    Row(
-                        verticalAlignment = Alignment.CenterVertically,
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .toggleable(
-                                value = needRide,
-                                role = Role.Checkbox,
-                                onValueChange = { checked ->
-                                    needRide = checked
-                                    if (checked) offerDrive = false
-                                },
-                            ),
-                    ) {
-                        Checkbox(checked = needRide, onCheckedChange = null)
-                        Text(stringResource(R.string.event_need_ride), modifier = Modifier.padding(start = Spacing.xs))
-                    }
-                    if (canOfferDrive) {
-                        Row(
-                            verticalAlignment = Alignment.CenterVertically,
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .toggleable(
-                                    value = offerDrive,
-                                    role = Role.Checkbox,
-                                    onValueChange = { checked ->
-                                        offerDrive = checked
-                                        if (checked) needRide = false
-                                    },
-                                ),
-                        ) {
-                            Checkbox(checked = offerDrive, onCheckedChange = null)
-                            Text(stringResource(R.string.event_offer_drive), modifier = Modifier.padding(start = Spacing.xs))
-                        }
-                    }
-                    if (event.joinAs.size > 1) {
-                        ExposedDropdownMenuBox(expanded = groupExpanded, onExpandedChange = { groupExpanded = it }) {
-                            OutlinedTextField(
-                                value = event.joinAs.firstOrNull { it.id == groupId }?.name ?: "",
-                                onValueChange = {},
-                                readOnly = true,
-                                label = { Text(stringResource(R.string.event_join_as_group)) },
-                                trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded = groupExpanded) },
-                                modifier = Modifier.menuAnchor(MenuAnchorType.PrimaryNotEditable).fillMaxWidth().padding(top = Spacing.xs),
-                            )
-                            ExposedDropdownMenu(expanded = groupExpanded, onDismissRequest = { groupExpanded = false }) {
-                                event.joinAs.forEach { g ->
-                                    DropdownMenuItem(text = { Text(g.name) }, onClick = { groupId = g.id; groupExpanded = false })
+                            if (event.attendanceEnabled) {
+                                if (event.mySignup?.attended == true) {
+                                    Row(
+                                        Modifier.fillMaxWidth(),
+                                        verticalAlignment = Alignment.CenterVertically,
+                                        horizontalArrangement = Arrangement.spacedBy(Spacing.xs),
+                                    ) {
+                                        Icon(
+                                            Icons.Outlined.CheckCircle,
+                                            contentDescription = null,
+                                            tint = MaterialTheme.colorScheme.primary,
+                                        )
+                                        Text(
+                                            stringResource(R.string.event_checkin_done),
+                                            style = MaterialTheme.typography.titleSmall,
+                                            color = MaterialTheme.colorScheme.primary,
+                                        )
+                                    }
+                                } else if (isPublished && container.auth.me?.status == "active" && !isEndedByTime) {
+                                    Button(
+                                        onClick = {
+                                            UiHaptics.tick(view)
+                                            vm.clearCheckinError()
+                                            checkinOrganiserMode = false
+                                        },
+                                        enabled = !state.busy,
+                                        modifier = Modifier.fillMaxWidth().height(50.dp),
+                                    ) {
+                                        Icon(Icons.Outlined.QrCodeScanner, contentDescription = null, modifier = Modifier.padding(end = Spacing.xs))
+                                        Text(stringResource(R.string.event_checkin_btn))
+                                    }
+                                }
+                                if (isPublished && event.canManage) {
+                                    OutlinedButton(
+                                        onClick = {
+                                            UiHaptics.tick(view)
+                                            vm.clearCheckinError()
+                                            checkinOrganiserMode = true
+                                        },
+                                        enabled = !state.busy,
+                                        modifier = Modifier.fillMaxWidth(),
+                                    ) {
+                                        Icon(Icons.Outlined.QrCodeScanner, contentDescription = null, modifier = Modifier.padding(end = Spacing.xs))
+                                        Text(stringResource(R.string.event_scan_member_btn))
+                                    }
+                                }
+                            }
+
+                            val canOpenEventWeb = event.canManage ||
+                                me?.can("admin_events") == true ||
+                                me?.can("events", "update") == true
+                            if (canOpenEventWeb) {
+                                OutlinedButton(
+                                    onClick = { openInWebApp(context, container.webUrl("events/${event.id}")) },
+                                    modifier = Modifier.fillMaxWidth(),
+                                ) {
+                                    Icon(Icons.AutoMirrored.Outlined.OpenInNew, contentDescription = null, modifier = Modifier.padding(end = Spacing.xs))
+                                    Text(stringResource(R.string.event_open_web_full))
                                 }
                             }
                         }
                     }
                 }
-            },
-            confirmButton = {
-                TextButton(onClick = {
-                    vm.signup(needRide, offerDrive, if (event.joinAs.size == 1) event.joinAs.first().id else groupId)
-                    showSignup = false
-                }) { Text(stringResource(R.string.common_confirm)) }
-            },
-            dismissButton = { TextButton(onClick = { showSignup = false }) { Text(stringResource(R.string.common_cancel)) } },
+            }
+        }
+    }
+
+    val event = state.event
+    val passCode = event?.mySignup?.passCode?.takeIf { it.isNotBlank() && event.attendanceEnabled && event.status == "published" }
+    if (showPassQr && event != null && passCode != null) {
+        EventPassQrSheet(
+            eventId = event.id,
+            passCode = passCode,
+            eventTitle = event.title,
+            onDismiss = { showPassQr = false },
         )
+    }
+    val organiserScanMode = checkinOrganiserMode
+    if (organiserScanMode != null && event != null) {
+        EventCheckInSheet(
+            eventId = event.id,
+            busy = state.busy,
+            error = state.checkinError,
+            scannerModeForOrganiser = organiserScanMode,
+            initialCode = if (organiserScanMode) "" else prefillCheckinCode,
+            onSelfCheckin = vm::selfCheckin,
+            onScanMemberPass = vm::scanMemberPass,
+            onClearError = vm::clearCheckinError,
+            onDismiss = {
+                vm.clearCheckinError()
+                checkinOrganiserMode = null
+                prefillCheckinCode = ""
+            },
+        )
+    }
+    if (showSignup && event != null) {
+        val canOfferDrive = container.auth.me?.can("drive", "create") == true
+        var needRide by remember { mutableStateOf(false) }
+        var offerDrive by remember { mutableStateOf(false) }
+        var offerSeats by remember { mutableStateOf(3) }
+        var groupId by remember { mutableStateOf(event.joinAs.firstOrNull()?.id) }
+        var groupExpanded by remember { mutableStateOf(false) }
+        val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
+
+        ModalBottomSheet(
+            onDismissRequest = { showSignup = false },
+            sheetState = sheetState,
+        ) {
+            Column(
+                Modifier
+                    .fillMaxWidth()
+                    .navigationBarsPadding()
+                    .padding(horizontal = Spacing.md)
+                    .padding(bottom = Spacing.md),
+                verticalArrangement = Arrangement.spacedBy(Spacing.sm),
+            ) {
+                Text(event.title, style = MaterialTheme.typography.titleLarge, color = MaterialTheme.colorScheme.onSurface)
+                OutlinedCard(Modifier.fillMaxWidth()) {
+                    Column {
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .defaultMinSize(minHeight = 52.dp)
+                                .toggleable(
+                                    value = needRide,
+                                    role = Role.Checkbox,
+                                    onValueChange = { checked ->
+                                        UiHaptics.tick(view)
+                                        needRide = checked
+                                        if (checked) offerDrive = false
+                                    },
+                                )
+                                .padding(horizontal = Spacing.sm),
+                        ) {
+                            Checkbox(checked = needRide, onCheckedChange = null)
+                            Icon(
+                                Icons.Outlined.Place,
+                                contentDescription = null,
+                                tint = MaterialTheme.colorScheme.primary,
+                                modifier = Modifier.padding(start = Spacing.xs).size(20.dp),
+                            )
+                            Text(
+                                stringResource(R.string.event_need_ride),
+                                style = MaterialTheme.typography.bodyLarge,
+                                modifier = Modifier.padding(start = Spacing.xs),
+                            )
+                        }
+                        if (canOfferDrive) {
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically,
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .defaultMinSize(minHeight = 52.dp)
+                                    .toggleable(
+                                        value = offerDrive,
+                                        role = Role.Checkbox,
+                                        onValueChange = { checked ->
+                                            UiHaptics.tick(view)
+                                            offerDrive = checked
+                                            if (checked) needRide = false
+                                        },
+                                    )
+                                    .padding(horizontal = Spacing.sm),
+                            ) {
+                                Checkbox(checked = offerDrive, onCheckedChange = null)
+                                Icon(
+                                    Icons.Outlined.DirectionsCar,
+                                    contentDescription = null,
+                                    tint = MaterialTheme.colorScheme.primary,
+                                    modifier = Modifier.padding(start = Spacing.xs).size(20.dp),
+                                )
+                                Text(
+                                    stringResource(R.string.event_offer_drive),
+                                    style = MaterialTheme.typography.bodyLarge,
+                                    modifier = Modifier.padding(start = Spacing.xs),
+                                )
+                            }
+                            if (offerDrive) {
+                                Row(
+                                    Modifier.fillMaxWidth().padding(horizontal = Spacing.sm, vertical = Spacing.xs),
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.SpaceBetween,
+                                ) {
+                                    Text(
+                                        stringResource(R.string.event_offer_seats),
+                                        style = MaterialTheme.typography.bodyMedium,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    )
+                                    Row(verticalAlignment = Alignment.CenterVertically) {
+                                        TextButton(
+                                            onClick = { if (offerSeats > 1) offerSeats-- },
+                                            enabled = offerSeats > 1,
+                                        ) { Text("-") }
+                                        Text(
+                                            "$offerSeats",
+                                            style = MaterialTheme.typography.titleMedium.tabular(),
+                                            modifier = Modifier.padding(horizontal = Spacing.xs),
+                                        )
+                                        TextButton(
+                                            onClick = { if (offerSeats < 8) offerSeats++ },
+                                            enabled = offerSeats < 8,
+                                        ) { Text("+") }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+                if (event.joinAs.size > 1) {
+                    ExposedDropdownMenuBox(expanded = groupExpanded, onExpandedChange = { groupExpanded = it }) {
+                        OutlinedTextField(
+                            value = event.joinAs.firstOrNull { it.id == groupId }?.name ?: "",
+                            onValueChange = {},
+                            readOnly = true,
+                            label = { Text(stringResource(R.string.event_join_as_group)) },
+                            trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded = groupExpanded) },
+                            modifier = Modifier.menuAnchor(ExposedDropdownMenuAnchorType.PrimaryNotEditable).fillMaxWidth(),
+                        )
+                        ExposedDropdownMenu(expanded = groupExpanded, onDismissRequest = { groupExpanded = false }) {
+                            event.joinAs.forEach { g ->
+                                DropdownMenuItem(text = { Text(g.name) }, onClick = { groupId = g.id; groupExpanded = false })
+                            }
+                        }
+                    }
+                }
+                Button(
+                    onClick = {
+                        UiHaptics.confirm(view)
+                        vm.signup(
+                            needRide = needRide,
+                            offerDrive = offerDrive,
+                            asGroupId = if (event.joinAs.size == 1) event.joinAs.first().id else groupId,
+                            offerSeats = if (offerDrive) offerSeats else null,
+                        )
+                        showSignup = false
+                    },
+                    modifier = Modifier.fillMaxWidth().height(52.dp),
+                ) {
+                    Text(stringResource(R.string.common_confirm))
+                }
+            }
+        }
     }
 
     if (confirmWithdraw) {
@@ -417,7 +837,10 @@ fun EventDetailScreen(container: AppContainer, nav: NavHostController, id: Long)
             title = { Text(stringResource(R.string.event_withdraw)) },
             text = { Text(stringResource(R.string.event_withdraw_confirm)) },
             confirmButton = {
-                TextButton(onClick = { vm.withdraw(); confirmWithdraw = false }) { Text(stringResource(R.string.common_confirm)) }
+                TextButton(
+                    onClick = { vm.withdraw(); confirmWithdraw = false },
+                    colors = ButtonDefaults.textButtonColors(contentColor = MaterialTheme.colorScheme.error),
+                ) { Text(stringResource(R.string.common_confirm)) }
             },
             dismissButton = { TextButton(onClick = { confirmWithdraw = false }) { Text(stringResource(R.string.common_cancel)) } },
         )
@@ -444,254 +867,6 @@ fun EventDetailScreen(container: AppContainer, nav: NavHostController, id: Long)
                 TextButton(onClick = { vm.unpublish(); confirmUnpublish = false }) { Text(stringResource(R.string.common_confirm)) }
             },
             dismissButton = { TextButton(onClick = { confirmUnpublish = false }) { Text(stringResource(R.string.common_cancel)) } },
-        )
-    }
-}
-
-@Composable
-private fun InfoRow(label: String, value: String) {
-    Column {
-        Text(label, style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
-        Text(value, style = MaterialTheme.typography.bodyLarge, color = MaterialTheme.colorScheme.onSurface)
-    }
-}
-
-@Composable
-private fun buildEventWorkflowNodes(
-    event: EventItem,
-    signup: MySignup?,
-    outboundRide: Ride?,
-    returnRide: Ride?,
-    drivingForEvent: List<Ride>,
-    onOpenRide: (Long) -> Unit,
-): List<TimelineNode> {
-    val open = event.status == "published" && event.startsAt.take(16).replace('T', ' ') >= KlTime.nowStamp()
-    val going = signup?.status == "going"
-    val hasTransport = event.myRide != null || event.myReturnRide != null || drivingForEvent.isNotEmpty()
-    val eventTime = KlTime.time(event.startsAt)
-    val nodes = mutableListOf<TimelineNode>()
-
-    if (!open) {
-        appendTransportTimelineNodes(
-            nodes = nodes,
-            event = event,
-            outboundRide = outboundRide,
-            returnRide = returnRide,
-            drivingForEvent = drivingForEvent,
-            doneAll = true,
-            onOpenRide = onOpenRide,
-        )
-        return nodes
-    }
-
-    if (signup == null) {
-        val full = event.capacity > 0 && event.going >= event.capacity
-        nodes += TimelineNode(
-            id = "wf-signup",
-            timeLabel = stringResource(R.string.event_workflow_rsvp),
-            title = stringResource(if (full) R.string.event_full else R.string.event_workflow_signup_title),
-            subtitle = event.signupDeadline?.takeIf { it.isNotBlank() }?.let {
-                stringResource(R.string.event_workflow_signup_deadline, KlTime.display(it))
-            } ?: stringResource(R.string.event_workflow_signup_hint),
-            kind = TimelineKind.SIGNUP,
-            state = TimelineState.ACTIVE,
-        )
-        nodes += TimelineNode(
-            id = "wf-transport",
-            timeLabel = stringResource(R.string.event_workflow_before),
-            title = stringResource(R.string.event_workflow_transport_title),
-            subtitle = stringResource(R.string.event_workflow_transport_unlocks),
-            kind = TimelineKind.RIDE,
-            state = TimelineState.UPCOMING,
-        )
-        nodes += TimelineNode(
-            id = "evt-${event.id}",
-            timeLabel = eventTime,
-            title = stringResource(R.string.event_workflow_event_start),
-            subtitle = event.location.ifBlank { null },
-            kind = TimelineKind.EVENT,
-            state = TimelineState.UPCOMING,
-            eventIcon = event.icon,
-            eventKind = event.kind,
-        )
-        if (event.attendanceEnabled) {
-            nodes += TimelineNode(
-                id = "wf-checkin",
-                timeLabel = stringResource(R.string.event_workflow_at_venue),
-                title = stringResource(R.string.event_workflow_checkin_title),
-                subtitle = stringResource(R.string.event_workflow_checkin_hint),
-                kind = TimelineKind.CHECKIN,
-                state = TimelineState.UPCOMING,
-            )
-        }
-        return nodes
-    }
-
-    if (!going) {
-        nodes += TimelineNode(
-            id = "wf-waitlist",
-            timeLabel = stringResource(R.string.event_workflow_rsvp),
-            title = stringResource(R.string.event_waitlist),
-            subtitle = stringResource(R.string.event_workflow_waitlist_note),
-            kind = TimelineKind.SIGNUP,
-            state = TimelineState.ACTIVE,
-            badge = TimelineBadge(stringResource(R.string.event_waitlist), RideStatusKind.PENDING),
-        )
-        nodes += TimelineNode(
-            id = "evt-${event.id}",
-            timeLabel = eventTime,
-            title = stringResource(R.string.event_workflow_event_start),
-            subtitle = event.location.ifBlank { null },
-            kind = TimelineKind.EVENT,
-            state = TimelineState.UPCOMING,
-            eventIcon = event.icon,
-            eventKind = event.kind,
-        )
-        return nodes
-    }
-
-    if (!hasTransport) {
-        val attended = signup.attended == true
-        nodes += TimelineNode(
-            id = "wf-transport",
-            timeLabel = stringResource(R.string.event_workflow_before),
-            title = stringResource(R.string.event_workflow_transport_title),
-            subtitle = stringResource(R.string.event_workflow_transport_pending),
-            kind = TimelineKind.RIDE,
-            state = TimelineState.ACTIVE,
-        )
-        nodes += TimelineNode(
-            id = "evt-${event.id}",
-            timeLabel = eventTime,
-            title = stringResource(R.string.event_workflow_event_start),
-            subtitle = event.location.ifBlank { null },
-            kind = TimelineKind.EVENT,
-            state = TimelineState.ACTIVE,
-            badge = TimelineBadge(stringResource(R.string.event_going), RideStatusKind.ACTIVE),
-            eventIcon = event.icon,
-            eventKind = event.kind,
-        )
-        if (event.attendanceEnabled) {
-            nodes += TimelineNode(
-                id = "wf-checkin",
-                timeLabel = stringResource(R.string.event_workflow_at_venue),
-                title = stringResource(R.string.event_workflow_checkin_title),
-                subtitle = if (attended) null else stringResource(R.string.event_workflow_checkin_hint),
-                kind = TimelineKind.CHECKIN,
-                state = if (attended) TimelineState.DONE else TimelineState.UPCOMING,
-                badge = if (attended) TimelineBadge(stringResource(R.string.event_status_attended), RideStatusKind.ACTIVE) else null,
-            )
-        }
-        return nodes
-    }
-
-    appendTransportTimelineNodes(
-        nodes = nodes,
-        event = event,
-        outboundRide = outboundRide,
-        returnRide = returnRide,
-        drivingForEvent = drivingForEvent,
-        doneAll = false,
-        onOpenRide = onOpenRide,
-    )
-    return nodes
-}
-
-@Composable
-private fun appendTransportTimelineNodes(
-    nodes: MutableList<TimelineNode>,
-    event: EventItem,
-    outboundRide: Ride?,
-    returnRide: Ride?,
-    drivingForEvent: List<Ride>,
-    doneAll: Boolean,
-    onOpenRide: (Long) -> Unit,
-) {
-    val preDrives = drivingForEvent
-        .filter { it.leg != "return" && it.pickupAt <= event.startsAt }
-        .sortedBy { it.pickupAt }
-    val postDrives = drivingForEvent
-        .filter { it.leg == "return" || it.pickupAt > event.startsAt }
-        .sortedBy { it.pickupAt }
-
-    event.myRide?.let { ref ->
-        nodes += TimelineNode(
-            id = "out-${ref.id}",
-            timeLabel = outboundRide?.pickupAt?.let(KlTime::time) ?: stringResource(R.string.event_outbound_step),
-            title = stringResource(R.string.event_my_ride),
-            subtitle = outboundRide?.driver?.name,
-            kind = TimelineKind.RIDE,
-            state = if (doneAll || ref.status == "completed") TimelineState.DONE else TimelineState.ACTIVE,
-            badge = TimelineBadge(stringResource(RideStatus.labelRes(ref.status)), RideStatus.kind(ref.status)),
-            onClick = { onOpenRide(ref.id) },
-        )
-    }
-
-    preDrives.forEach { ride ->
-        val riderName = if (ride.isProxy && !ride.proxy?.riderName.isNullOrBlank()) ride.proxy!!.riderName else ride.passenger.name
-        nodes += TimelineNode(
-            id = "drv-${ride.id}",
-            timeLabel = KlTime.time(ride.pickupAt),
-            title = riderName,
-            subtitle = "${ride.area.name} → ${ride.destination}",
-            kind = TimelineKind.DRIVE,
-            state = if (doneAll || ride.status == "completed") TimelineState.DONE else TimelineState.ACTIVE,
-            badge = TimelineBadge(stringResource(RideStatus.labelRes(ride.status)), RideStatus.kind(ride.status)),
-            onClick = { onOpenRide(ride.id) },
-        )
-    }
-
-    val attended = event.attendanceEnabled && event.mySignup?.attended == true
-    val isDraft = event.status == "draft"
-    nodes += TimelineNode(
-        id = "evt-${event.id}",
-        timeLabel = KlTime.time(event.startsAt),
-        title = stringResource(R.string.event_workflow_event_start),
-        subtitle = event.location.ifBlank { null },
-        kind = TimelineKind.EVENT,
-        state = when {
-            isDraft -> TimelineState.UPCOMING
-            doneAll -> TimelineState.DONE
-            else -> TimelineState.ACTIVE
-        },
-        badge = when {
-            isDraft -> TimelineBadge(stringResource(R.string.event_status_draft), RideStatusKind.PENDING)
-            doneAll -> TimelineBadge(
-                stringResource(if (event.status == "cancelled") R.string.event_status_cancelled else R.string.event_status_finished),
-                RideStatusKind.DONE,
-            )
-            attended -> TimelineBadge(stringResource(R.string.event_status_attended), RideStatusKind.ACTIVE)
-            else -> null
-        },
-        eventIcon = event.icon,
-        eventKind = event.kind,
-    )
-
-    postDrives.forEach { ride ->
-        val riderName = if (ride.isProxy && !ride.proxy?.riderName.isNullOrBlank()) ride.proxy!!.riderName else ride.passenger.name
-        nodes += TimelineNode(
-            id = "drv-${ride.id}",
-            timeLabel = KlTime.time(ride.pickupAt),
-            title = riderName,
-            subtitle = "${ride.area.name} → ${ride.destination}",
-            kind = TimelineKind.RETURN,
-            state = if (doneAll || ride.status == "completed") TimelineState.DONE else TimelineState.UPCOMING,
-            badge = TimelineBadge(stringResource(RideStatus.labelRes(ride.status)), RideStatus.kind(ride.status)),
-            onClick = { onOpenRide(ride.id) },
-        )
-    }
-
-    val retRef = event.myReturnRide
-    if (retRef != null && retRef.id != event.myRide?.id) {
-        nodes += TimelineNode(
-            id = "ret-${retRef.id}",
-            timeLabel = returnRide?.pickupAt?.let(KlTime::time) ?: stringResource(R.string.event_return_step),
-            title = stringResource(R.string.event_return_ride),
-            subtitle = returnRide?.driver?.name,
-            kind = TimelineKind.RETURN,
-            state = if (doneAll || retRef.status == "completed") TimelineState.DONE else TimelineState.UPCOMING,
-            badge = TimelineBadge(stringResource(RideStatus.labelRes(retRef.status)), RideStatus.kind(retRef.status)),
-            onClick = { onOpenRide(retRef.id) },
         )
     }
 }

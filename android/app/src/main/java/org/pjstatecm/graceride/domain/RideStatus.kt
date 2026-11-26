@@ -8,6 +8,8 @@ object RideStatus {
     val active = setOf("pending_driver", "pending_passenger", "pending_approval", "pending_driver_confirm", "confirmed", "in_progress")
     val terminal = setOf("completed", "cancelled", "no_show", "alt_transport")
 
+    fun isTerminal(status: String): Boolean = status in terminal
+
     fun labelRes(status: String): Int = when (status) {
         "pending_driver" -> R.string.ride_status_pending_driver
         "pending_passenger" -> R.string.ride_status_pending_passenger

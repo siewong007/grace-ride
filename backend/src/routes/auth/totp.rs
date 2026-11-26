@@ -27,8 +27,10 @@ pub(super) async fn totp_setup(
     }
     require_recent_sign_in(&st, &u).await?;
     let secret = Secret::generate().to_base32();
+    let stored_secret = crate::crypto::encrypt_secret(&format!("totp_secret:{}", u.id), &secret)
+        .map_err(AppError::Other)?;
     sqlx::query("UPDATE users SET totp_secret=$1, totp_enabled=0 WHERE id=$2")
-        .bind(&secret)
+        .bind(&stored_secret)
         .bind(u.id)
         .execute(&st.db)
         .await?;
@@ -84,7 +86,9 @@ pub(super) async fn totp_enable(
     if enabled == 1 {
         return Err(bad(u.lang, ErrorKey::TwoFactorAlreadyEnabled));
     }
-    let secret = secret.ok_or_else(|| bad(u.lang, ErrorKey::StartSetupFirst))?;
+    let secret_raw = secret.ok_or_else(|| bad(u.lang, ErrorKey::StartSetupFirst))?;
+    let secret = crate::crypto::decrypt_secret(&format!("totp_secret:{}", u.id), &secret_raw)
+        .map_err(|_| bad(u.lang, ErrorKey::Invalid2FaSecret))?;
     if let Err(e) = verify_totp(&st, u.id, &secret, &u.email, &req.code, u.lang).await {
         audit(&st.db, Some(u.id), "totp.failed", "user", Some(u.id), "").await;
         return Err(e);
@@ -193,9 +197,16 @@ pub(super) async fn unlock_session(
     u: CurrentUser,
     Json(req): Json<UnlockReq>,
 ) -> AppResult<Json<Value>> {
-    let (totp_enabled, totp_secret, passkey_count): (i64, Option<String>, i64) = sqlx::query_as(
-        "SELECT u.totp_enabled, u.totp_secret, (SELECT COUNT(*) FROM passkeys WHERE user_id=u.id)
-         FROM users u WHERE u.id=$1",
+    let (totp_enabled, totp_secret, passkey_count, biometric_count): (
+        i64,
+        Option<String>,
+        i64,
+        i64,
+    ) = sqlx::query_as(
+        "SELECT u.totp_enabled, u.totp_secret,
+                    (SELECT COUNT(*) FROM passkeys WHERE user_id=u.id),
+                    (SELECT COUNT(*) FROM biometric_credentials WHERE user_id=u.id)
+             FROM users u WHERE u.id=$1",
     )
     .bind(u.id)
     .fetch_one(&st.db)
@@ -211,7 +222,9 @@ pub(super) async fn unlock_session(
         if totp_enabled != 1 {
             return Err(bad(u.lang, ErrorKey::TwoFactorNotConfigured));
         }
-        let sec = totp_secret.ok_or_else(|| bad(u.lang, ErrorKey::TwoFactorNotConfigured))?;
+        let sec_raw = totp_secret.ok_or_else(|| bad(u.lang, ErrorKey::TwoFactorNotConfigured))?;
+        let sec = crate::crypto::decrypt_secret(&format!("totp_secret:{}", u.id), &sec_raw)
+            .map_err(|_| bad(u.lang, ErrorKey::Invalid2FaSecret))?;
         if let Err(err) = verify_totp(&st, u.id, &sec, &u.email, code, u.lang).await {
             audit(
                 &st.db,
@@ -222,7 +235,7 @@ pub(super) async fn unlock_session(
                 "unlock",
             )
             .await;
-            return Err(err);
+            return Err(record_totp_failure(&st, &u, err).await);
         }
         mfa_verified = true;
     } else if let Some(bcode) = req
@@ -234,10 +247,21 @@ pub(super) async fn unlock_session(
         if totp_enabled != 1 {
             return Err(bad(u.lang, ErrorKey::TwoFactorNotConfigured));
         }
-        consume_backup_code(&st, u.id, bcode, u.lang).await?;
+        if let Err(err) = consume_backup_code(&st, u.id, bcode, u.lang).await {
+            audit(
+                &st.db,
+                Some(u.id),
+                "totp.failed",
+                "user",
+                Some(u.id),
+                "unlock_backup",
+            )
+            .await;
+            return Err(record_totp_failure(&st, &u, err).await);
+        }
         mfa_verified = true;
     } else if req.dev_unlock == Some(true) && st.cfg.dev_mode {
-        if passkey_count > 0 || totp_enabled == 1 {
+        if passkey_count > 0 || biometric_count > 0 || totp_enabled == 1 {
             return Err(bad(u.lang, ErrorKey::UnlockMethodRequired));
         }
     } else {
@@ -246,7 +270,7 @@ pub(super) async fn unlock_session(
 
     let ts_now = now();
     if mfa_verified {
-        sqlx::query("UPDATE sessions SET locked_at=NULL, last_seen_at=$1, mfa_ok=1 WHERE token=$2")
+        sqlx::query("UPDATE sessions SET locked_at=NULL, last_seen_at=$1, mfa_ok=1, failed_totp_attempts=0 WHERE token=$2")
             .bind(&ts_now)
             .bind(&u.session_id)
             .execute(&st.db)
@@ -270,6 +294,35 @@ pub(super) async fn unlock_session(
     Ok(Json(json!({ "ok": true })))
 }
 
+async fn record_totp_failure(st: &AppState, u: &CurrentUser, default_err: AppError) -> AppError {
+    let attempts: i64 = sqlx::query_scalar(
+        "UPDATE sessions SET failed_totp_attempts = failed_totp_attempts + 1 WHERE token = $1 RETURNING failed_totp_attempts",
+    )
+    .bind(&u.session_id)
+    .fetch_optional(&st.db)
+    .await
+    .ok()
+    .flatten()
+    .unwrap_or(1);
+    if attempts >= 11 {
+        let _ = sqlx::query("DELETE FROM sessions WHERE token = $1")
+            .bind(&u.session_id)
+            .execute(&st.db)
+            .await;
+        audit(
+            &st.db,
+            Some(u.id),
+            "totp.session_revoked",
+            "user",
+            Some(u.id),
+            "revoked after 11 failed TOTP attempts",
+        )
+        .await;
+        return crate::error::unauthorized(u.lang);
+    }
+    default_err
+}
+
 pub(super) async fn totp_verify(
     State(st): State<AppState>,
     u: CurrentUser,
@@ -289,12 +342,14 @@ pub(super) async fn totp_verify(
     let clean = req.code.trim();
     // 1. Check if 6 digits TOTP
     if clean.len() == 6 && clean.chars().all(|c| c.is_ascii_digit()) {
-        if let Some(sec) = secret {
+        if let Some(sec_raw) = secret {
+            let sec = crate::crypto::decrypt_secret(&format!("totp_secret:{}", u.id), &sec_raw)
+                .map_err(|_| bad(u.lang, ErrorKey::Invalid2FaSecret))?;
             if verify_totp(&st, u.id, &sec, &u.email, clean, u.lang)
                 .await
                 .is_ok()
             {
-                sqlx::query("UPDATE sessions SET mfa_ok=1 WHERE token=$1")
+                sqlx::query("UPDATE sessions SET mfa_ok=1, failed_totp_attempts=0 WHERE token=$1")
                     .bind(&u.session_id)
                     .execute(&st.db)
                     .await?;
@@ -320,26 +375,26 @@ pub(super) async fn totp_verify(
     // instead of HTTP 200.
     let norm = clean.replace(['-', ' '], "").to_uppercase();
     if norm.len() == 8 {
-        let remaining = consume_backup_code(&st, u.id, &norm, u.lang).await?;
-
-        sqlx::query("UPDATE sessions SET mfa_ok=1 WHERE token=$1")
-            .bind(&u.session_id)
-            .execute(&st.db)
-            .await?;
-        audit(
-            &st.db,
-            Some(u.id),
-            "totp.backup_code_used",
-            "user",
-            Some(u.id),
-            format!("remaining: {remaining}"),
-        )
-        .await;
-        return Ok(Json(json!({
-            "ok": true,
-            "method": "backup_code",
-            "remaining_backup_codes": remaining
-        })));
+        if let Ok(remaining) = consume_backup_code(&st, u.id, &norm, u.lang).await {
+            sqlx::query("UPDATE sessions SET mfa_ok=1, failed_totp_attempts=0 WHERE token=$1")
+                .bind(&u.session_id)
+                .execute(&st.db)
+                .await?;
+            audit(
+                &st.db,
+                Some(u.id),
+                "totp.backup_code_used",
+                "user",
+                Some(u.id),
+                format!("remaining: {remaining}"),
+            )
+            .await;
+            return Ok(Json(json!({
+                "ok": true,
+                "method": "backup_code",
+                "remaining_backup_codes": remaining
+            })));
+        }
     }
 
     audit(
@@ -351,7 +406,7 @@ pub(super) async fn totp_verify(
         "verify",
     )
     .await;
-    Err(bad(u.lang, ErrorKey::InvalidCode))
+    Err(record_totp_failure(&st, &u, bad(u.lang, ErrorKey::InvalidCode)).await)
 }
 
 pub(super) async fn totp_regenerate_backup_codes(

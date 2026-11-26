@@ -4,6 +4,7 @@ import { useTranslation } from 'react-i18next';
 import { Lock } from 'lucide-react';
 import { useAuth } from '../auth';
 import { post } from '../api';
+import { signOutClient } from '../pushNotifications';
 import { Avatar } from './ui';
 import { passkeySupported, reauthWithPasskey } from '../webauthn';
 import { clearOfflineSnapshots } from '../offlineSnapshot';
@@ -52,7 +53,7 @@ const writeStore = (key: string, value: string | null) => {
 export const clearAutoLock = () => writeStore(LOCKED_KEY, null);
 
 export function AutoLockProvider({ children }: { children: ReactNode }) {
-  const { me, refresh } = useAuth();
+  const { me, refresh, clearLocalAuth } = useAuth();
   const { t } = useTranslation('common');
   const nav = useNavigate();
   const meId = me ? String(me.id) : null;
@@ -84,13 +85,14 @@ export function AutoLockProvider({ children }: { children: ReactNode }) {
   // 2. If user set auto_lock_mins === -1: user explicitly disabled auto-lock
   // 3. Otherwise: fallback to organization's configured default session_timeout_mins (fallback 15)
   const defaultTimeout = me?.session_timeout_mins ?? 15;
-  const userPref = me?.auto_lock_mins ?? (parseInt(localStorage.getItem('gr_autolock_mins') || '0', 10) || 0);
+  const userPref = me?.auto_lock_mins ?? (parseInt(readStore('gr_autolock_mins') || '0', 10) || 0);
   const timeoutMins = userPref > 0 ? userPref : userPref === -1 ? 0 : defaultTimeout;
 
   const lock = useCallback(() => {
     if (meIdRef.current) writeStore(LOCKED_KEY, meIdRef.current);
     clearOfflineSnapshots();
     setIsLocked(true);
+    window.dispatchEvent(new Event('gr:session-locked'));
     void post('/auth/lock').catch(() => {});
   }, []);
 
@@ -137,6 +139,7 @@ export function AutoLockProvider({ children }: { children: ReactNode }) {
       const locked = meIdRef.current !== null && readStore(LOCKED_KEY) === meIdRef.current;
       if (!locked) lastActiveRef.current = Date.now();
       setIsLocked(locked);
+      window.dispatchEvent(new Event(locked ? 'gr:session-locked' : 'gr:session-unlocked'));
     };
     window.addEventListener('storage', onStorage);
     return () => window.removeEventListener('storage', onStorage);
@@ -251,22 +254,18 @@ export function AutoLockProvider({ children }: { children: ReactNode }) {
   };
 
   const handleLogout = async () => {
-    await post('/auth/logout');
+    await signOutClient();
     clearAutoLock();
+    clearLocalAuth?.();
     setIsLocked(false);
     setUnlockError(null);
-    await refresh();
     nav('/login');
   };
 
   return (
     <Ctx.Provider value={{ isLocked, canLock, lock, unlock }}>
-      <div
-        ref={bgRef}
-        aria-hidden={Boolean(isLocked && me) || undefined}
-        style={isLocked && me ? { pointerEvents: 'none', userSelect: 'none' } : undefined}
-      >
-        {children}
+      <div ref={bgRef} data-autolock-state={isLocked && me ? 'locked' : 'unlocked'}>
+        {!(isLocked && me) && children}
       </div>
       {isLocked && me && (
         <div
@@ -305,8 +304,9 @@ export function AutoLockProvider({ children }: { children: ReactNode }) {
                 <input
                   className="input"
                   ref={codeInputRef}
+                  type={code.trim() !== '' && !/^\d+$/.test(code.trim()) ? 'password' : 'text'}
                   inputMode="text"
-                  autoComplete="one-time-code"
+                  autoComplete="off"
                   value={code}
                   onChange={(e) => setCode(e.target.value)}
                   placeholder={t('unlockCodePlaceholder')}

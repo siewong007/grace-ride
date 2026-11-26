@@ -50,6 +50,9 @@ pub struct Config {
     /// Optional comma-separated SHA-256 signing certificate fingerprints (colon-hex)
     /// for native Android passkeys (`android:apk-key-hash:` + `/.well-known/assetlinks.json`).
     pub android_cert_sha256_fingerprints: Vec<String>,
+    /// Optional comma-separated Apple App IDs (`<TEAM_ID>.<BUNDLE_ID>`)
+    /// for iOS Universal Links and WebAuthn Associated Domains (`/.well-known/apple-app-site-association`).
+    pub ios_app_ids: Vec<String>,
 }
 
 /// How the app talks to Postgres.
@@ -165,6 +168,7 @@ impl Config {
                 "ANDROID_CERT_SHA256_FINGERPRINTS",
                 "",
             ))?,
+            ios_app_ids: parse_ios_app_ids(&env("IOS_APP_IDS", ""))?,
         };
         cfg.validate()?;
         Ok(cfg)
@@ -216,6 +220,23 @@ impl Config {
         self.turnstile.validate(local)?;
         for fp in &self.android_cert_sha256_fingerprints {
             android_apk_key_hash_origin(fp)?;
+        }
+        for app_id in &self.ios_app_ids {
+            normalize_ios_app_id(app_id)?;
+        }
+        crate::crypto::validate_configured_key()?;
+        Ok(())
+    }
+
+    /// Enforce secrets-at-rest key configuration on production HTTPS server startup.
+    pub fn validate_production_secrets(&self) -> anyhow::Result<()> {
+        if !self.dev_mode
+            && self.public_url.starts_with("https://")
+            && crate::crypto::load_configured_key()?.is_none()
+        {
+            anyhow::bail!(
+                "SECRETS_ENCRYPTION_KEY must be configured (64 hex chars / 32-byte key) when DEV_MODE=false on HTTPS"
+            );
         }
         Ok(())
     }
@@ -304,4 +325,59 @@ pub fn build_webauthn_with_android_certs(
 
 pub fn build_webauthn(public_url: &str) -> anyhow::Result<Webauthn> {
     build_webauthn_with_android_certs(public_url, &[])
+}
+
+pub fn normalize_ios_app_id(raw: &str) -> anyhow::Result<String> {
+    let trimmed = raw.trim();
+    let Some((team, bundle)) = trimmed.split_once('.') else {
+        anyhow::bail!("IOS_APP_IDS entries must be <TEAM_ID>.<bundle_id> (got {trimmed})");
+    };
+    if team.len() != 10
+        || !team
+            .chars()
+            .all(|c| c.is_ascii_uppercase() || c.is_ascii_digit())
+    {
+        anyhow::bail!("IOS_APP_IDS team prefix must be 10 uppercase alphanumeric characters");
+    }
+    if bundle.is_empty()
+        || !bundle
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || c == '.' || c == '-')
+    {
+        anyhow::bail!("IOS_APP_IDS bundle identifier contains invalid characters");
+    }
+    Ok(format!("{team}.{bundle}"))
+}
+
+pub fn parse_ios_app_ids(raw: &str) -> anyhow::Result<Vec<String>> {
+    let mut out = Vec::new();
+    for part in raw.split(',').map(str::trim).filter(|s| !s.is_empty()) {
+        let norm = normalize_ios_app_id(part)?;
+        if !out.contains(&norm) {
+            out.push(norm);
+        }
+    }
+    Ok(out)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::parse_ios_app_ids;
+
+    #[test]
+    fn parse_ios_app_ids_accepts_valid_and_dedups() {
+        let ids = parse_ios_app_ids(
+            "ABCDE12345.org.pjstatecm.graceride, ABCDE12345.org.pjstatecm.graceride",
+        )
+        .unwrap();
+        assert_eq!(ids, vec!["ABCDE12345.org.pjstatecm.graceride"]);
+        assert!(parse_ios_app_ids("").unwrap().is_empty());
+    }
+
+    #[test]
+    fn parse_ios_app_ids_rejects_invalid_team_or_bundle() {
+        assert!(parse_ios_app_ids("bad.org.pjstatecm.graceride").is_err());
+        assert!(parse_ios_app_ids("ABCDE12345").is_err());
+        assert!(parse_ios_app_ids("ABCDE12345.").is_err());
+    }
 }

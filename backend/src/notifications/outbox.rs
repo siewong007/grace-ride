@@ -113,13 +113,15 @@ async fn load_alert_secrets(db: &PgPool) -> AlertSecrets {
     let mut vapid_pub = String::new();
     let mut vapid_priv = String::new();
     for (k, v) in rows {
+        let plain =
+            crate::crypto::decrypt_secret(&format!("app_secret:{k}"), &v).unwrap_or_default();
         match k.as_str() {
-            "telegram_bot_token" => s.telegram_bot_token = v.trim().to_string(),
-            "alert_webhook_url" => s.alert_webhook_url = v.trim().to_string(),
-            "alert_webhook_secret" => s.alert_webhook_secret = v.trim().to_string(),
-            "mobile_push_webhook_url" => s.mobile_push_webhook_url = v.trim().to_string(),
-            "vapid_public_key" => vapid_pub = v,
-            "vapid_private_key" => vapid_priv = v,
+            "telegram_bot_token" => s.telegram_bot_token = plain.trim().to_string(),
+            "alert_webhook_url" => s.alert_webhook_url = plain.trim().to_string(),
+            "alert_webhook_secret" => s.alert_webhook_secret = plain.trim().to_string(),
+            "mobile_push_webhook_url" => s.mobile_push_webhook_url = plain.trim().to_string(),
+            "vapid_public_key" => vapid_pub = plain,
+            "vapid_private_key" => vapid_priv = plain,
             _ => {}
         }
     }

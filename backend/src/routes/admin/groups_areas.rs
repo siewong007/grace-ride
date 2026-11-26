@@ -30,23 +30,28 @@ fn present<'de, D: serde::Deserializer<'de>>(d: D) -> Result<Option<Option<i64>>
 
 /// A parent must be an ordinary group (not 全体会员 or visitors), keep the tree free of
 /// loops, and leave it at most three levels deep.
-async fn check_parent(st: &AppState, lang: Lang, group: i64, parent: Option<i64>) -> AppResult<()> {
+async fn check_parent_on(
+    conn: &mut sqlx::PgConnection,
+    lang: Lang,
+    group: i64,
+    parent: Option<i64>,
+) -> AppResult<()> {
     let Some(p) = parent else { return Ok(()) };
     let special: Option<(i64, i64)> =
         sqlx::query_as("SELECT is_all, is_visitor FROM groups WHERE id=$1")
             .bind(p)
-            .fetch_optional(&st.db)
+            .fetch_optional(&mut *conn)
             .await?;
     let mine: Option<(i64, i64)> =
         sqlx::query_as("SELECT is_all, is_visitor FROM groups WHERE id=$1")
             .bind(group)
-            .fetch_optional(&st.db)
+            .fetch_optional(&mut *conn)
             .await?;
     let plain = |g: Option<(i64, i64)>| g.is_none_or(|(a, v)| a == 0 && v == 0);
     if special.is_none()
         || !plain(special)
         || !plain(mine)
-        || !crate::audience::parent_ok(&st.db, group, p).await?
+        || !crate::audience::parent_ok_on(&mut *conn, group, p).await?
     {
         return Err(bad(lang, ErrorKey::InvalidParentGroup));
     }
@@ -63,15 +68,19 @@ pub(super) async fn create_group(
         return Err(bad(u.lang, ErrorKey::GroupNameRequired));
     }
     let parent = req.parent_id.flatten();
+    let mut tx = st.db.begin().await?;
+    sqlx::query("SELECT pg_advisory_xact_lock(hashtextextended('grace_ride_groups_tree', 0))")
+        .execute(&mut *tx)
+        .await?;
     // 0 is never a group id: a new group has no children and cannot be its own ancestor.
-    check_parent(&st, u.lang, 0, parent).await?;
+    check_parent_on(&mut tx, u.lang, 0, parent).await?;
     let result = sqlx::query_as(
         "INSERT INTO groups (name, description, parent_id) VALUES ($1,$2,$3) RETURNING id",
     )
     .bind(req.name.trim())
     .bind(req.description.unwrap_or_default())
     .bind(parent)
-    .fetch_one(&st.db)
+    .fetch_one(&mut *tx)
     .await;
     let (id,): (i64,) = match result {
         Ok(row) => row,
@@ -80,6 +89,7 @@ pub(super) async fn create_group(
         }
         Err(e) => return Err(e.into()),
     };
+    tx.commit().await?;
     audit(
         &st.db,
         Some(u.id),
@@ -99,21 +109,37 @@ pub(super) async fn update_group(
     Json(req): Json<GroupIn>,
 ) -> AppResult<Json<Value>> {
     require(&u, Page::AdminGroups, Act::Update)?;
-    if req.name.trim().is_empty() {
+    let name = req.name.trim();
+    if name.is_empty() {
         return Err(bad(u.lang, ErrorKey::GroupNameRequired));
     }
+    let mut tx = st.db.begin().await?;
+    sqlx::query("SELECT pg_advisory_xact_lock(hashtextextended('grace_ride_groups_tree', 0))")
+        .execute(&mut *tx)
+        .await?;
+    let special: Option<(i64, i64)> =
+        sqlx::query_as("SELECT is_all, is_visitor FROM groups WHERE id=$1 FOR UPDATE")
+            .bind(id)
+            .fetch_optional(&mut *tx)
+            .await?;
+    let Some((is_all, is_visitor)) = special else {
+        return Err(not_found(u.lang));
+    };
+    if (is_all == 1 || is_visitor == 1) && req.parent_id.flatten().is_some() {
+        return Err(bad(u.lang, ErrorKey::InvalidParentGroup));
+    }
     if let Some(parent) = req.parent_id {
-        check_parent(&st, u.lang, id, parent).await?;
+        check_parent_on(&mut tx, u.lang, id, parent).await?;
     }
     let result = sqlx::query(
         "UPDATE groups SET name=$1, description=$2, parent_id = CASE WHEN $4 THEN $5 ELSE parent_id END WHERE id=$3",
     )
-        .bind(req.name.trim())
+        .bind(name)
         .bind(req.description.unwrap_or_default())
         .bind(id)
         .bind(req.parent_id.is_some())
         .bind(req.parent_id.flatten())
-        .execute(&st.db)
+        .execute(&mut *tx)
         .await;
     match result {
         Ok(result) if result.rows_affected() == 0 => return Err(not_found(u.lang)),
@@ -123,15 +149,8 @@ pub(super) async fn update_group(
         }
         Err(e) => return Err(e.into()),
     }
-    audit(
-        &st.db,
-        Some(u.id),
-        "group.update",
-        "group",
-        Some(id),
-        req.name.trim(),
-    )
-    .await;
+    tx.commit().await?;
+    audit(&st.db, Some(u.id), "group.update", "group", Some(id), name).await;
     Ok(Json(json!({"ok": true})))
 }
 
@@ -260,11 +279,20 @@ pub(super) async fn create_area(
     Json(req): Json<AreaIn>,
 ) -> AppResult<Json<Value>> {
     require(&u, Page::AdminAreas, Act::Create)?;
-    if req.name.trim().is_empty() {
+    let name = super::fares::normalize_area_name(&req.name);
+    if !super::fares::valid_area_name(&name) {
         return Err(bad(u.lang, ErrorKey::AreaNameRequired));
     }
+    let key = super::fares::area_lookup_key(&name);
+    let dup: Option<(i64,)> = sqlx::query_as("SELECT id FROM areas WHERE LOWER(name) = $1")
+        .bind(&key)
+        .fetch_optional(&st.db)
+        .await?;
+    if dup.is_some() {
+        return Err(bad(u.lang, ErrorKey::AreaExists));
+    }
     let result = sqlx::query_as("INSERT INTO areas (name, active) VALUES ($1, 1) RETURNING id")
-        .bind(req.name.trim())
+        .bind(&name)
         .fetch_one(&st.db)
         .await;
     let (id,): (i64,) = match result {
@@ -274,15 +302,7 @@ pub(super) async fn create_area(
         }
         Err(e) => return Err(e.into()),
     };
-    audit(
-        &st.db,
-        Some(u.id),
-        "area.create",
-        "area",
-        Some(id),
-        req.name.trim(),
-    )
-    .await;
+    audit(&st.db, Some(u.id), "area.create", "area", Some(id), &name).await;
     Ok(Json(json!({"id": id})))
 }
 
@@ -293,11 +313,22 @@ pub(super) async fn update_area(
     Json(req): Json<AreaIn>,
 ) -> AppResult<Json<Value>> {
     require(&u, Page::AdminAreas, Act::Update)?;
-    if req.name.trim().is_empty() {
+    let name = super::fares::normalize_area_name(&req.name);
+    if !super::fares::valid_area_name(&name) {
         return Err(bad(u.lang, ErrorKey::AreaNameRequired));
     }
+    let key = super::fares::area_lookup_key(&name);
+    let dup: Option<(i64,)> =
+        sqlx::query_as("SELECT id FROM areas WHERE LOWER(name) = $1 AND id <> $2")
+            .bind(&key)
+            .bind(id)
+            .fetch_optional(&st.db)
+            .await?;
+    if dup.is_some() {
+        return Err(bad(u.lang, ErrorKey::AreaExists));
+    }
     let result = sqlx::query("UPDATE areas SET name=$1, active=$2 WHERE id=$3")
-        .bind(req.name.trim())
+        .bind(&name)
         .bind(req.active.unwrap_or(true) as i64)
         .bind(id)
         .execute(&st.db)
@@ -317,8 +348,7 @@ pub(super) async fn update_area(
         "area",
         Some(id),
         format!(
-            "{}; {}",
-            req.name.trim(),
+            "{name}; {}",
             if req.active.unwrap_or(true) {
                 "active"
             } else {

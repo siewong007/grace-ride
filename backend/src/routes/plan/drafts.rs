@@ -14,7 +14,7 @@ use crate::routes::plan_visitors::{clean as clean_visitor, VisitorIn};
 use crate::state::AppState;
 use crate::util::{audit, in_minutes, now, require, ErrorKey};
 
-use super::{load_event, plan_rides, DraftEntry};
+use super::{load_event, DraftEntry};
 
 const DRAFT_LOCK_MINUTES: i64 = 10;
 const LABEL_MAX: usize = 60;

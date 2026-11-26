@@ -1,6 +1,5 @@
 import { createContext, ReactNode, useCallback, useContext, useEffect, useMemo, useState } from 'react';
-import { api, isSessionLocked, isStreamConnected, subscribe } from './api';
-import { clearOfflineSnapshots } from './offlineSnapshot';
+import { api, ApiError, clearClientSessionStorage, isSessionLocked, isStreamConnected, post, subscribe } from './api';
 import { resetPushState, syncAppBadge } from './pushNotifications';
 import type { Act, Can, PageKey } from './perms';
 
@@ -48,6 +47,7 @@ interface AuthCtx {
   me: Me | null;
   loading: boolean;
   refresh: () => Promise<void>;
+  clearLocalAuth: () => void;
   /** May the member do `act` (default: view) on `page`? */
   can: Can;
 }
@@ -58,11 +58,30 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [me, setMe] = useState<Me | null>(null);
   const [loading, setLoading] = useState(true);
 
+  const clearLocalAuth = useCallback(() => {
+    setMe(null);
+  }, []);
+
   const refresh = useCallback(async () => {
     try {
+      if (typeof localStorage !== 'undefined' && localStorage.getItem('gr_pending_logout') === '1') {
+        try {
+          await post('/auth/logout', {});
+          localStorage.removeItem('gr_pending_logout');
+        } catch (logoutErr) {
+          if (logoutErr instanceof ApiError && logoutErr.status === 401) {
+            localStorage.removeItem('gr_pending_logout');
+          } else {
+            setMe(null);
+            return;
+          }
+        }
+      }
       setMe(await api<Me>('/auth/me'));
-    } catch {
-      setMe(null);
+    } catch (err) {
+      if (err instanceof ApiError && err.status === 401) {
+        setMe(null);
+      }
     } finally {
       setLoading(false);
     }
@@ -73,12 +92,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     const onUnauth = () => {
       syncAppBadge(0);
       resetPushState();
-      clearOfflineSnapshots();
-      try {
-        localStorage.removeItem('gr_autolock_mins');
-      } catch {
-        /* ignore storage errors */
-      }
+      clearClientSessionStorage();
       setMe(null);
     };
     window.addEventListener('gr:unauthorized', onUnauth);
@@ -124,7 +138,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const granted = useMemo(() => new Set(me?.permissions ?? []), [me?.permissions]);
   const can = useCallback((page: PageKey, act: Act = 'view') => granted.has(`${page}.${act}`), [granted]);
 
-  return <Ctx.Provider value={{ me, loading, refresh, can }}>{children}</Ctx.Provider>;
+  return <Ctx.Provider value={{ me, loading, refresh, clearLocalAuth, can }}>{children}</Ctx.Provider>;
 }
 
 export const useAuth = () => useContext(Ctx);

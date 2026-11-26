@@ -69,6 +69,7 @@ interface AlertSettingsData {
   telegram_bot_configured?: boolean;
   telegram_bot_username?: string;
   telegram_webhook_path?: string;
+  telegram_webhook_header_path?: string;
   alert_webhook_url?: string;
   alert_webhook_configured?: boolean;
   alert_webhook_secret_configured?: boolean;
@@ -309,7 +310,7 @@ function SettingsSummaryStrip({
             onClick={() => onSelectTab('alerts')}
           >
             <div className="label">{t('settings.statAlertChannels')}</div>
-            <div className="num">{channelsCount}/3</div>
+            <div className="num">{channelsCount}/4</div>
             <div className="muted tiny">
               {t('settings.statReadyCount', { count: channelsCount })}
             </div>
@@ -350,7 +351,7 @@ function Groups() {
         <h3>{t('settings.groups')}</h3>
         {data && (
           <span className="muted tiny">
-            {t('settings.memberCount', { count: data.length })}
+            {t('settings.groupCount', { count: data.length })}
           </span>
         )}
       </div>
@@ -1344,16 +1345,18 @@ function AlertChannelSettings() {
               </label>
             )}
 
-            {cfg?.telegram_bot_configured && cfg?.telegram_webhook_path && (
+            {cfg?.telegram_bot_configured && (cfg?.telegram_webhook_header_path || cfg?.telegram_webhook_path) && (
               <Field
                 label={t('settings.tgWebhookPath')}
-                hint={t('settings.tgWebhookPathHint', { path: cfg.telegram_webhook_path })}
+                hint={t('settings.tgWebhookPathHint', {
+                  path: cfg.telegram_webhook_header_path ?? cfg.telegram_webhook_path ?? '',
+                })}
               >
                 <input
                   readOnly
                   aria-label={t('settings.tgWebhookPath')}
                   className="input mono"
-                  value={cfg.telegram_webhook_path}
+                  value={cfg.telegram_webhook_header_path ?? cfg.telegram_webhook_path}
                 />
               </Field>
             )}

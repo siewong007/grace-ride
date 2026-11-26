@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import {
   Bell,
@@ -147,10 +147,13 @@ export default function Notifications() {
   const [loadMoreError, setLoadMoreError] = useState(false);
   const [readOverrides, setReadOverrides] = useState<Record<number, boolean>>({});
   const [deletedIds, setDeletedIds] = useState<number[]>([]);
+  const filterGenRef = useRef(0);
 
   useEffect(() => {
+    filterGenRef.current += 1;
     setOlderItems([]);
     setNextBefore(null);
+    setLoadingMore(false);
     setLoadMoreError(false);
     setReadOverrides({});
     setDeletedIds([]);
@@ -200,12 +203,14 @@ export default function Notifications() {
 
   const loadMore = useCallback(async () => {
     if (nextBefore == null || loadingMore) return;
+    const gen = filterGenRef.current;
     setLoadingMore(true);
     setLoadMoreError(false);
     try {
       const res = await api<NotifsPage | Notif[]>(
         buildNotifsPath(unreadOnly, category, nextBefore),
       );
+      if (filterGenRef.current !== gen) return;
       const newItems = Array.isArray(res) ? res : res.items;
       const nb = Array.isArray(res) ? null : res.next_before;
       setOlderItems((prev) => {
@@ -214,9 +219,12 @@ export default function Notifications() {
       });
       setNextBefore(nb);
     } catch {
+      if (filterGenRef.current !== gen) return;
       setLoadMoreError(true);
     } finally {
-      setLoadingMore(false);
+      if (filterGenRef.current === gen) {
+        setLoadingMore(false);
+      }
     }
   }, [nextBefore, loadingMore, unreadOnly, category]);
 

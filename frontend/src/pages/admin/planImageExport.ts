@@ -431,9 +431,10 @@ export function measurePlanLayout(
     tone: (isApproved ? 'success' : 'amber') as 'success' | 'amber',
   };
 
+  const driverIds = new Set(plan.drivers.map((d) => d.id));
   const totalRiders = plan.rides.reduce((acc, r) => acc + (r.seats || 1), 0);
-  const unassignedRides = plan.rides.filter((r) => draft[r.id] == null);
-  const assignedRides = plan.rides.filter((r) => draft[r.id] != null);
+  const unassignedRides = plan.rides.filter((r) => draft[r.id] == null || !driverIds.has(draft[r.id]!));
+  const assignedRides = plan.rides.filter((r) => draft[r.id] != null && driverIds.has(draft[r.id]!));
   const totalAssignedSeats = assignedRides.reduce((acc, r) => acc + (r.seats || 1), 0);
 
   const driverRidesMap = new Map<number, PlanRide[]>();

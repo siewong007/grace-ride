@@ -12,7 +12,6 @@ import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
 import androidx.compose.foundation.gestures.detectDragGestures
 import androidx.compose.foundation.gestures.detectTapGestures
-import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -51,6 +50,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -58,6 +58,7 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.luminance
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalContext
@@ -74,6 +75,7 @@ import org.pjstatecm.graceride.R
 import org.pjstatecm.graceride.data.api.ApiException
 import org.pjstatecm.graceride.data.api.ProfileUpdateReq
 import org.pjstatecm.graceride.di.AppContainer
+import org.pjstatecm.graceride.ui.copyToClipboard
 import org.pjstatecm.graceride.ui.components.GrokBotCanvas
 import org.pjstatecm.graceride.ui.components.GrokBotControlsPanel
 import org.pjstatecm.graceride.ui.components.GrokBotGeometry
@@ -97,18 +99,19 @@ fun GrokBotStudioScreen(
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
     val snackbar = remember { SnackbarHostState() }
-    val isDark = isSystemInDarkTheme()
+    val isDark = MaterialTheme.colorScheme.background.luminance() < 0.5f
 
     val savedSpec = GrokBotSpec.parse(container.auth.me?.avatarIcon) ?: GrokBotSpec.DEFAULT
-    var spec by remember {
-        mutableStateOf(
-            GrokBotSpec(
-                shape = initialShape?.takeIf { it in GrokBotSpec.SHAPES } ?: savedSpec.shape,
-                face = initialFace?.takeIf { it in GrokBotSpec.FACES } ?: savedSpec.face,
-                color = initialColor?.takeIf { it in GrokBotSpec.COLORS } ?: savedSpec.color,
-            ),
-        )
+    var shape by rememberSaveable(initialShape, savedSpec.shape) {
+        mutableStateOf(initialShape?.takeIf { it in GrokBotSpec.SHAPES } ?: savedSpec.shape)
     }
+    var face by rememberSaveable(initialFace, savedSpec.face) {
+        mutableStateOf(initialFace?.takeIf { it in GrokBotSpec.FACES } ?: savedSpec.face)
+    }
+    var color by rememberSaveable(initialColor, savedSpec.color) {
+        mutableStateOf(initialColor?.takeIf { it in GrokBotSpec.COLORS } ?: savedSpec.color)
+    }
+    val spec = GrokBotSpec(shape = shape, face = face, color = color)
     var activeMove by remember { mutableStateOf("idle") }
     var gazeOffset by remember { mutableStateOf(Offset.Zero) }
     var stageSize by remember { mutableStateOf(IntSize(1, 1)) }
@@ -132,7 +135,7 @@ fun GrokBotStudioScreen(
                         val bmp = renderGrokBotPngBitmap(spec, 512)
                         try {
                             context.contentResolver.openOutputStream(uri)?.use { out ->
-                                bmp.compress(Bitmap.CompressFormat.PNG, 100, out)
+                                if (!bmp.compress(Bitmap.CompressFormat.PNG, 100, out)) error("Compress failed")
                             } ?: error("No stream")
                         } finally {
                             bmp.recycle()
@@ -163,9 +166,9 @@ fun GrokBotStudioScreen(
     }
 
     fun copyPlainText(label: String, text: String, notice: String) {
-        val cm = context.getSystemService(Context.CLIPBOARD_SERVICE) as? ClipboardManager
-        cm?.setPrimaryClip(ClipData.newPlainText(label, text))
-        scope.launch { snackbar.showSnackbar(notice) }
+        if (copyToClipboard(context, label, text)) {
+            scope.launch { snackbar.showSnackbar(notice) }
+        }
     }
 
     fun copyImageToClipboard() {
@@ -205,7 +208,7 @@ fun GrokBotStudioScreen(
                     }.getOrNull()
                 }
                 if (clipUri != null) {
-                    val cm = context.getSystemService(Context.CLIPBOARD_SERVICE) as? ClipboardManager
+                    val cm = context.getSystemService(ClipboardManager::class.java)
                     cm?.setPrimaryClip(ClipData.newUri(context.contentResolver, "Grok Bot", clipUri))
                     snackbar.showSnackbar(copiedImageMsg)
                 } else {
@@ -300,7 +303,12 @@ fun GrokBotStudioScreen(
                                 modifier = Modifier.weight(1f),
                             )
                             AssistChip(
-                                onClick = { spec = GrokBotSpec.random(spec) },
+                                onClick = {
+                                    val next = GrokBotSpec.random(spec)
+                                    shape = next.shape
+                                    face = next.face
+                                    color = next.color
+                                },
                                 label = { Text(stringResource(R.string.studio_surprise_me)) },
                                 leadingIcon = {
                                     Icon(Icons.Outlined.Shuffle, contentDescription = null, modifier = Modifier.size(16.dp))
@@ -323,6 +331,7 @@ fun GrokBotStudioScreen(
                                 .onSizeChanged { stageSize = it }
                                 .pointerInput(Unit) {
                                     detectTapGestures { pos ->
+                                        if (stageSize.width <= 0 || stageSize.height <= 0) return@detectTapGestures
                                         val nx = ((pos.x - stageSize.width * 0.5f) / (stageSize.width * 0.45f)).coerceIn(-1f, 1f)
                                         val ny = ((pos.y - stageSize.height * 0.46f) / (stageSize.height * 0.45f)).coerceIn(-1f, 1f)
                                         gazeOffset = Offset(nx, ny)
@@ -334,6 +343,7 @@ fun GrokBotStudioScreen(
                                         onDragCancel = { gazeOffset = Offset.Zero },
                                     ) { change, _ ->
                                         change.consume()
+                                        if (stageSize.width <= 0 || stageSize.height <= 0) return@detectDragGestures
                                         val pos = change.position
                                         val nx = ((pos.x - stageSize.width * 0.5f) / (stageSize.width * 0.45f)).coerceIn(-1f, 1f)
                                         val ny = ((pos.y - stageSize.height * 0.46f) / (stageSize.height * 0.45f)).coerceIn(-1f, 1f)
@@ -441,7 +451,11 @@ fun GrokBotStudioScreen(
                     Box(Modifier.padding(Spacing.sm)) {
                         GrokBotControlsPanel(
                             spec = spec,
-                            onSpecChange = { spec = it },
+                            onSpecChange = { next ->
+                                shape = next.shape
+                                face = next.face
+                                color = next.color
+                            },
                             activeMove = activeMove,
                             onMoveChange = { activeMove = it },
                             tilePreviewSize = 48.dp,

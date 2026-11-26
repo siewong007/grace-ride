@@ -148,7 +148,7 @@ export default function Invite() {
 
   const addPasskey = () =>
     run(async () => {
-      await registerPasskey(t('myPhone'), email);
+      await registerPasskey(t('myPhone'), email || data.email);
       await refresh();
       nav('/', { replace: true });
     }, t('passkeySet'));
@@ -249,7 +249,7 @@ export default function Invite() {
               <input
                 className={`input ${fieldErrors.phone ? 'invalid' : ''}`}
                 type="tel"
-                required
+                required={data.kind !== 'family'}
                 autoComplete="tel"
                 maxLength={PHONE_CHARS.max}
                 readOnly={data.kind === 'family'}

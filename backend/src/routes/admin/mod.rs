@@ -142,11 +142,12 @@ async fn dashboard(State(st): State<AppState>, u: CurrentUser) -> AppResult<Json
     .await?;
     // Invites still waiting to be used, and approved claims waiting for finance to pay them:
     // the counts on the Members "Invites" and Reimbursements "Finance payout" tabs.
-    let (open_invites,): (i64,) =
-        sqlx::query_as("SELECT COUNT(*) FROM invites WHERE used_at IS NULL AND expires_at >= $1")
-            .bind(now())
-            .fetch_one(&st.db)
-            .await?;
+    let (open_invites,): (i64,) = sqlx::query_as(
+        "SELECT COUNT(*) FROM invites WHERE kind <> 'family' AND used_at IS NULL AND expires_at >= $1",
+    )
+    .bind(now())
+    .fetch_one(&st.db)
+    .await?;
     let (awaiting_payment,): (i64,) =
         sqlx::query_as("SELECT COUNT(*) FROM reimbursements WHERE status='approved'")
             .fetch_one(&st.db)

@@ -6,6 +6,8 @@ import androidx.lifecycle.viewModelScope
 import androidx.lifecycle.viewmodel.initializer
 import androidx.lifecycle.viewmodel.viewModelFactory
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.async
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -77,6 +79,7 @@ class RideNewViewModel(
     )
     val state: StateFlow<RideNewUiState> = _state.asStateFlow()
     private var loadJob: Job? = null
+    private var refreshPlacesJob: Job? = null
     private var searchJob: Job? = null
     private var lastAppliedPlaceNotes: String? = null
 
@@ -87,15 +90,28 @@ class RideNewViewModel(
         _state.value = _state.value.copy(loading = eventId != null, loadError = null)
         loadJob = viewModelScope.launch {
             try {
-                val areas = container.rides.areas()
-                val saved = try { container.rides.savedPlaces() } catch (_: ApiException) { emptyList() }
-                val proxyRiders = try { container.rides.proxyRiders() } catch (_: ApiException) { emptyList() }
-                val defaultPlace = saved.firstOrNull { it.isDefault == 1 } ?: saved.firstOrNull()
+                val (areas, saved, proxyRiders, event) = coroutineScope {
+                    val areasDef = async { container.rides.areas() }
+                    val savedDef = async { try { container.rides.savedPlaces() } catch (_: ApiException) { emptyList() } }
+                    val proxiesDef = async { try { container.rides.proxyRiders() } catch (_: ApiException) { emptyList() } }
+                    val eventDef = async { eventId?.let { container.events.detail(it) } }
+                    LoadResult(
+                        areas = areasDef.await(),
+                        saved = savedDef.await(),
+                        proxyRiders = proxiesDef.await(),
+                        event = eventDef.await(),
+                    )
+                }
+                val initialProxy = _state.value.isProxy
+                val defaultPlace = if (initialProxy) {
+                    null
+                } else {
+                    saved.firstOrNull { it.isDefault == 1 } ?: saved.firstOrNull()
+                }
                 val defaultNotes = defaultPlace?.gateNotes?.trim().orEmpty()
                 if (defaultNotes.isNotBlank()) {
                     lastAppliedPlaceNotes = defaultNotes
                 }
-                var event: EventItem? = null
                 var date = _state.value.date
                 var hour = _state.value.hour
                 var minute = _state.value.minute
@@ -103,8 +119,7 @@ class RideNewViewModel(
                 var returnHour = _state.value.returnHour
                 var returnMinute = _state.value.returnMinute
                 var destination = _state.value.destination
-                if (eventId != null) {
-                    event = container.events.detail(eventId)
+                if (event != null) {
                     KlTime.parse(event.startsAt)?.let { dt ->
                         val startMins = dt.hour * 60 + dt.minute
                         val outMins = (startMins - 40).coerceAtLeast(0)
@@ -147,12 +162,27 @@ class RideNewViewModel(
     }
 
     fun refreshPlacesAndProxies() {
-        viewModelScope.launch {
-            val saved = try { container.rides.savedPlaces() } catch (_: ApiException) { _state.value.savedPlaces }
-            val proxyRiders = try { container.rides.proxyRiders() } catch (_: ApiException) { _state.value.proxyRiders }
+        refreshPlacesJob?.cancel()
+        refreshPlacesJob = viewModelScope.launch {
+            val (saved, proxyRiders) = coroutineScope {
+                val savedDef = async {
+                    try { container.rides.savedPlaces() } catch (_: ApiException) { _state.value.savedPlaces }
+                }
+                val proxyDef = async {
+                    try { container.rides.proxyRiders() } catch (_: ApiException) { _state.value.proxyRiders }
+                }
+                savedDef.await() to proxyDef.await()
+            }
             _state.value = _state.value.copy(savedPlaces = saved, proxyRiders = proxyRiders)
         }
     }
+
+    private data class LoadResult(
+        val areas: List<Area>,
+        val saved: List<SavedPlace>,
+        val proxyRiders: List<ProxyRider>,
+        val event: EventItem?,
+    )
 
     fun setTripType(newType: TripType) {
         val s = _state.value
@@ -241,6 +271,16 @@ class RideNewViewModel(
         } else {
             s.destination
         }
+        val combinedProxyNotes = listOf(rider.gateNotes.trim(), rider.notes.trim())
+            .filter { it.isNotBlank() }
+            .joinToString(" · ")
+        val updatedNotes = when {
+            combinedProxyNotes.isNotBlank() && (s.notes.isBlank() || s.notes == lastAppliedPlaceNotes) -> {
+                lastAppliedPlaceNotes = combinedProxyNotes
+                combinedProxyNotes
+            }
+            else -> s.notes
+        }
         _state.value = s.copy(
             isProxy = true,
             riderName = rider.name,
@@ -249,7 +289,7 @@ class RideNewViewModel(
             areaId = rider.areaId ?: s.areaId,
             address = updatedAddress,
             destination = updatedDestination,
-            notes = if (s.notes.isBlank() && rider.notes.isNotBlank()) rider.notes else s.notes,
+            notes = updatedNotes,
         )
     }
 

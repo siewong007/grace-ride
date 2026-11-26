@@ -165,18 +165,28 @@ function List({ scope }: { scope: 'review' | 'payout' }) {
         });
 
   /** Review or Pay when this member may act on the claim now; otherwise the receipt. */
-  const actionCell = (r: Reimb) =>
-    // Whoever asked for a visitor special reimbursement doesn't review it.
-    scope === 'review' && r.status === 'pending' && r.requested_by && r.requested_by.id === me?.id ? (
-      <span className="muted tiny">{t('reimb.ownRequest')}</span>
-    ) : canAct &&
-    ((scope === 'review' && r.status === 'pending') || (scope === 'payout' && r.status === 'approved')) ? (
-      <Button variant="primary" size="sm" onClick={() => setOpen(r)}>
-        {scope === 'review' ? t('reimb.reviewBtn') : t('reimb.payBtn')}
-      </Button>
-    ) : (
-      <ReceiptLink id={r.receipt_file_id} label={t('reimb.receipt')} />
-    );
+  const actionCell = (r: Reimb) => {
+    const isSelf = r.user.id === me?.id;
+    const isOwnRequest = Boolean(r.requested_by && r.requested_by.id === me?.id);
+    if (scope === 'review' && r.status === 'pending' && (isSelf || isOwnRequest)) {
+      return <span className="muted tiny">{t('reimb.ownRequest')}</span>;
+    }
+    if (scope === 'payout' && r.status === 'approved' && isSelf) {
+      return <span className="muted tiny">{t('reimb.ownRequest')}</span>;
+    }
+    if (
+      canAct &&
+      ((scope === 'review' && r.status === 'pending') ||
+        (scope === 'payout' && r.status === 'approved'))
+    ) {
+      return (
+        <Button variant="primary" size="sm" onClick={() => setOpen(r)}>
+          {scope === 'review' ? t('reimb.reviewBtn') : t('reimb.payBtn')}
+        </Button>
+      );
+    }
+    return <ReceiptLink id={r.receipt_file_id} label={t('reimb.receipt')} />;
+  };
 
   const columns: TableColumn<Reimb>[] = [
     {
@@ -369,6 +379,7 @@ function ReviewModal({
   const [note, setNote] = useState('');
   const [zoom, setZoom] = useState(1);
   const [rotation, setRotation] = useState(0);
+  const [imgFailed, setImgFailed] = useState(false);
   const needsNote = !note.trim();
   const { busy, error, run } = useAction();
 
@@ -440,14 +451,21 @@ function ReviewModal({
               </div>
             </div>
             <div className="receipt-zoom-container">
-              <img
-                className="receipt-zoom-img"
-                style={{
-                  transform: `scale(${zoom}) rotate(${rotation}deg)`,
-                }}
-                src={`/api/files/${r.receipt_file_id}`}
-                alt={t('reimb.receiptAlt')}
-              />
+              {!imgFailed ? (
+                <img
+                  className="receipt-zoom-img"
+                  style={{
+                    transform: `scale(${zoom}) rotate(${rotation}deg)`,
+                  }}
+                  src={`/api/files/${r.receipt_file_id}`}
+                  alt={t('reimb.receiptAlt')}
+                  onError={() => setImgFailed(true)}
+                />
+              ) : (
+                <div className="stack-xs center pad-md">
+                  <ReceiptLink id={r.receipt_file_id} label={t('reimb.openReceipt')} />
+                </div>
+              )}
             </div>
             <ReceiptLink id={r.receipt_file_id} label={t('reimb.openReceipt')} />
           </div>

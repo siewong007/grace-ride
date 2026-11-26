@@ -20,8 +20,12 @@ function normalizeLanguage(raw?: string): SupportedLanguage {
 }
 
 function detectLanguage(): SupportedLanguage {
-  const stored = localStorage.getItem(LANG_KEY) as SupportedLanguage | null
-  if (stored === 'en' || stored === 'zh') return stored
+  try {
+    const stored = localStorage.getItem(LANG_KEY) as SupportedLanguage | null
+    if (stored === 'en' || stored === 'zh') return stored
+  } catch {
+    /* storage blocked */
+  }
   const browser = (navigator.language || 'en').toLowerCase()
   if (browser.startsWith('zh')) return 'zh'
   return 'en'

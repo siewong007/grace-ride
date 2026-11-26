@@ -100,7 +100,10 @@ export default function Home() {
     }
   }, [me?.id, rides.data, driving.data]);
 
-  const offlineSnap = !rides.data && rides.error && me?.id ? loadTodayRidesSnapshot(me.id) : null;
+  const offlineSnap =
+    ((!rides.data && rides.error) || (!driving.data && driving.error)) && me?.id
+      ? loadTodayRidesSnapshot(me.id)
+      : null;
   const myRides = rides.data ?? (offlineSnap ? offlineSnap.rides.filter((r) => r.viewer?.is_passenger) : []);
   const allDriving = driving.data ?? (offlineSnap ? offlineSnap.rides.filter((r) => r.viewer?.is_driver) : []);
   const todaysDriving = allDriving.filter((r) => r.pickup_at.slice(0, 10) === today);

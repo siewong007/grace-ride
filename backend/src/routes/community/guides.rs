@@ -123,13 +123,37 @@ pub(super) async fn reorder_guides(
     Json(req): Json<ReorderIn>,
 ) -> AppResult<Json<Value>> {
     require(&u, Page::AdminHelp, Act::Update)?;
+    if req.ids.len() > 200 {
+        return Err(bad(u.lang, ErrorKey::InvalidAction));
+    }
+    let mut seen = std::collections::HashSet::new();
+    let mut ids = Vec::with_capacity(req.ids.len());
+    for &id in &req.ids {
+        if seen.insert(id) {
+            ids.push(id);
+        }
+    }
     let mut tx = st.db.begin().await?;
-    for (i, id) in req.ids.iter().enumerate() {
-        sqlx::query("UPDATE guide_workflows SET sort_order=$1 WHERE id=$2")
-            .bind(i as i32)
-            .bind(id)
-            .execute(&mut *tx)
-            .await?;
+    if !ids.is_empty() {
+        let positions: Vec<i32> = (0..ids.len()).map(|i| i as i32).collect();
+        sqlx::query(
+            "UPDATE guide_workflows g SET sort_order = v.pos
+             FROM UNNEST($1::BIGINT[], $2::INT[]) AS v(id, pos)
+             WHERE g.id = v.id",
+        )
+        .bind(&ids)
+        .bind(&positions)
+        .execute(&mut *tx)
+        .await?;
+        let tail_start = ids.len() as i32;
+        sqlx::query(
+            "UPDATE guide_workflows SET sort_order = sort_order + $1
+             WHERE NOT (id = ANY($2))",
+        )
+        .bind(tail_start)
+        .bind(&ids)
+        .execute(&mut *tx)
+        .await?;
     }
     tx.commit().await?;
     audit(
@@ -221,6 +245,7 @@ fn validate_guide(
     }
     let slug = req.slug.trim().to_lowercase();
     let ok_slug = !slug.is_empty()
+        && slug != "reorder"
         && !slug.starts_with('-')
         && !slug.ends_with('-')
         && slug
@@ -243,11 +268,18 @@ fn validate_guide(
         }
         let link = s.link.as_deref().map(str::trim).filter(|l| !l.is_empty());
         if let Some(l) = link {
-            // Internal app paths only: must start with '/', no protocol-relative or /api URLs.
+            // Internal app paths only: must start with '/', no protocol-relative, backslashes,
+            // control/whitespace chars, traversal, colons, or /api URLs.
             if !l.starts_with('/')
                 || l.starts_with("//")
+                || l == "/api"
                 || l.starts_with("/api/")
+                || l.starts_with("/api?")
+                || l.contains('\\')
+                || l.contains("..")
                 || l.contains(':')
+                || l.bytes()
+                    .any(|b| b <= 0x1F || b == 0x7F || b.is_ascii_whitespace())
             {
                 return Err(bad(lang, ErrorKey::GuideLinkInvalid));
             }
@@ -368,9 +400,9 @@ pub(super) async fn create_guide(
     if dup.is_some() {
         return Err(bad(u.lang, ErrorKey::GuideSlugExists));
     }
-    let (id,): (i64,) = sqlx::query_as(
-        "INSERT INTO guide_workflows (slug, title_en, title_zh, summary_en, summary_zh, published, audience, steps, updated_at, updated_by)
-         VALUES ($1,$2,$3,$4,$5,$6,$7,$8::jsonb,$9,$10) RETURNING id",
+    let id: i64 = match sqlx::query_scalar(
+        "INSERT INTO guide_workflows (slug, title_en, title_zh, summary_en, summary_zh, published, audience, steps, sort_order, updated_at, updated_by)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8::jsonb,COALESCE((SELECT MAX(sort_order)+1 FROM guide_workflows), 0),$9,$10) RETURNING id",
     )
     .bind(&slug)
     .bind(&ten)
@@ -383,7 +415,14 @@ pub(super) async fn create_guide(
     .bind(now())
     .bind(u.id)
     .fetch_one(&st.db)
-    .await?;
+    .await
+    {
+        Ok(id) => id,
+        Err(sqlx::Error::Database(e)) if e.is_unique_violation() => {
+            return Err(bad(u.lang, ErrorKey::GuideSlugExists));
+        }
+        Err(e) => return Err(e.into()),
+    };
     audit(
         &st.db,
         Some(u.id),
@@ -414,7 +453,7 @@ pub(super) async fn update_guide(
     if dup.is_some() {
         return Err(bad(u.lang, ErrorKey::GuideSlugExists));
     }
-    let n = sqlx::query(
+    let n = match sqlx::query(
         "UPDATE guide_workflows SET slug=$1, title_en=$2, title_zh=$3, summary_en=$4, summary_zh=$5,
                 published=$6, audience=$7, steps=$8::jsonb, updated_at=$9, updated_by=$10 WHERE id=$11",
     )
@@ -430,8 +469,14 @@ pub(super) async fn update_guide(
     .bind(u.id)
     .bind(key)
     .execute(&st.db)
-    .await?
-    .rows_affected();
+    .await
+    {
+        Ok(res) => res.rows_affected(),
+        Err(sqlx::Error::Database(e)) if e.is_unique_violation() => {
+            return Err(bad(u.lang, ErrorKey::GuideSlugExists));
+        }
+        Err(e) => return Err(e.into()),
+    };
     if n == 0 {
         return Err(not_found(u.lang));
     }

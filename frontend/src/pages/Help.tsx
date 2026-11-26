@@ -551,6 +551,7 @@ export default function Help() {
                       {selectedTicketId ? (
                         <PageChromeContext.Provider value={null}>
                           <HelpDetail
+                            key={selectedTicketId}
                             ticketId={selectedTicketId}
                             isTwoPane
                             onStatusChange={() => {

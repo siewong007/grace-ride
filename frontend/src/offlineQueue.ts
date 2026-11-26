@@ -3,6 +3,13 @@ import { ApiError, post } from './api';
 
 const QUEUE_KEY = 'gr_offline_actions_v1';
 export const OFFLINE_QUEUE_EVENT = 'gr:offline-queue-changed';
+let queueEpoch = 0;
+
+if (typeof window !== 'undefined') {
+  window.addEventListener('gr:offline-queue-abort', () => {
+    queueEpoch += 1;
+  });
+}
 
 export interface OfflineAction {
   id: string;
@@ -108,11 +115,20 @@ export function enqueueOfflineAction(
 }
 
 export function clearOfflineQueue(): void {
+  queueEpoch += 1;
   try {
     localStorage.removeItem(QUEUE_KEY);
     emitQueueChange();
   } catch {
     // storage unavailable
+  }
+}
+
+export function pruneForeignOfflineActions(activeUserId: number): void {
+  const all = readAll();
+  const mine = all.filter((item) => item.userId === activeUserId);
+  if (mine.length !== all.length) {
+    writeAll(mine);
   }
 }
 
@@ -165,7 +181,9 @@ let activeFlush: Promise<FlushResult> | null = null;
 
 export function flushOfflineQueue(userId: number): Promise<FlushResult> {
   if (activeFlush) return activeFlush;
+  const startEpoch = queueEpoch;
   activeFlush = (async (): Promise<FlushResult> => {
+    pruneForeignOfflineActions(userId);
     const queue = readAll();
     const mine = queue.filter((item) => item.userId === userId);
     if (mine.length === 0) {
@@ -177,6 +195,9 @@ export function flushOfflineQueue(userId: number): Promise<FlushResult> {
     const droppedIds = new Set<string>();
 
     for (const item of mine) {
+      if (startEpoch !== queueEpoch) {
+        return { synced, conflicts, remaining: 0 };
+      }
       if (typeof navigator !== 'undefined' && navigator.onLine === false) {
         break;
       }
@@ -186,9 +207,15 @@ export function flushOfflineQueue(userId: number): Promise<FlushResult> {
         } else {
           await post(item.path);
         }
+        if (startEpoch !== queueEpoch) {
+          return { synced, conflicts, remaining: 0 };
+        }
         droppedIds.add(item.id);
         synced += 1;
       } catch (err) {
+        if (startEpoch !== queueEpoch) {
+          return { synced, conflicts, remaining: 0 };
+        }
         if (isApiError(err)) {
           if (err.status === 401 || err.status === 423) {
             break;
@@ -204,6 +231,9 @@ export function flushOfflineQueue(userId: number): Promise<FlushResult> {
       }
     }
 
+    if (startEpoch !== queueEpoch) {
+      return { synced, conflicts, remaining: 0 };
+    }
     if (droppedIds.size > 0) {
       const remainingAll = readAll().filter((item) => !droppedIds.has(item.id));
       writeAll(remainingAll);

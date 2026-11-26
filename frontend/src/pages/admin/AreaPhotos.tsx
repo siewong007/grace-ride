@@ -77,7 +77,7 @@ export default function AreaPhotos() {
 function AreaPhotoManager({ areaId, onChanged }: { areaId: number; onChanged: () => void }) {
   const { t } = useTranslation('admin');
   const confirm = useConfirm();
-  const { data, loading, reload } = useApi<AreaPhotosResponse>(`/areas/${areaId}/photos`);
+  const { data, error: loadError, loading, reload } = useApi<AreaPhotosResponse>(`/areas/${areaId}/photos`);
   const { busy, error, setError, run } = useAction();
   const [caption, setCaption] = useState('');
   const [progress, setProgress] = useState<{ done: number; total: number } | null>(null);
@@ -86,7 +86,9 @@ function AreaPhotoManager({ areaId, onChanged }: { areaId: number; onChanged: ()
   const fileRef = useRef<HTMLInputElement>(null);
 
   if (loading && !data) return <CardSkeleton count={1} />;
-  if (!data || !Array.isArray(data.photos)) return <ErrorBox error={error} />;
+  if (!data || !Array.isArray(data.photos)) {
+    return <ErrorBox error={loadError ?? error} onRetry={reload} />;
+  }
 
   const photos = data.photos;
   const room = Math.max(0, data.max - photos.length);

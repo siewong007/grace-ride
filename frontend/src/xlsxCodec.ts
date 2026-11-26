@@ -281,8 +281,15 @@ function splitDirFile(path: string): { dir: string; file: string } {
   return { dir: path.slice(0, idx), file: path.slice(idx + 1) };
 }
 
+export function assertSafeXlsxXml(text: string): void {
+  if (/<!(?:DOCTYPE|ENTITY)\b/i.test(text)) {
+    throw new XlsxError('INVALID_XLSX', 'Unsafe XML declaration inside .xlsx archive');
+  }
+}
+
 function parseXml(bytes: Uint8Array): Document {
   const text = utf8Decoder.decode(bytes);
+  assertSafeXlsxXml(text);
   const doc = new DOMParser().parseFromString(text, 'application/xml');
   if (
     !doc.documentElement ||
@@ -511,7 +518,15 @@ export async function readXlsxWorkbook(bytes: Uint8Array): Promise<XlsxWorkbook>
 }
 
 function escapeXml(text: string): string {
-  return text
+  // Strip XML 1.0 illegal control characters (keeping tab, LF, CR).
+  let cleaned = '';
+  for (let i = 0; i < text.length; i += 1) {
+    const code = text.charCodeAt(i);
+    if (code === 9 || code === 10 || code === 13 || code >= 32) {
+      cleaned += text[i];
+    }
+  }
+  return cleaned
     .replace(/&/g, '&amp;')
     .replace(/</g, '&lt;')
     .replace(/>/g, '&gt;')
@@ -640,7 +655,9 @@ export function buildXlsxWorkbook(
 
   const sharedStrings: string[] = [];
   const sstMap = new Map<string, number>();
+  let sharedStringRefs = 0;
   const internString = (s: string): number => {
+    sharedStringRefs += 1;
     const existing = sstMap.get(s);
     if (existing !== undefined) return existing;
     const idx = sharedStrings.length;
@@ -707,7 +724,7 @@ export function buildXlsxWorkbook(
     .join('');
   const sharedStringsXml =
     `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>` +
-    `<sst xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" count="${sharedStrings.length}" uniqueCount="${sharedStrings.length}">${sstItemsXml}</sst>`;
+    `<sst xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" count="${sharedStringRefs}" uniqueCount="${sharedStrings.length}">${sstItemsXml}</sst>`;
 
   const stylesXml =
     `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>` +

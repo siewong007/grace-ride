@@ -198,12 +198,18 @@ function RoleEditor({
 
   const save = () =>
     run(async () => {
-      const body = { name: name.trim(), description: description.trim(), permissions: [...granted] };
+      const nextName = name.trim();
+      const nextDesc = description.trim();
+      const body = { name: nextName, description: nextDesc, permissions: [...granted] };
       if (isNew) {
         const made = await post<{ key: string }>('/admin/roles', body);
+        setName(nextName);
+        setDescription(nextDesc);
         onChanged(made.key);
       } else {
         await put(`/admin/roles/${role.key}`, body);
+        setName(nextName);
+        setDescription(nextDesc);
         onChanged(role.key);
       }
     }, isNew ? t('roles.created') : t('roles.saved'));

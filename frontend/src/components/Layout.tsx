@@ -1,4 +1,4 @@
-import { ReactNode, useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { CSSProperties, ReactNode, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Link, NavLink, Navigate, Outlet, useLocation, useNavigate } from 'react-router-dom';
 import {
   ArrowLeft, Bell, Calendar, Car, CarFront, ChevronRight, ClipboardList, Clock, Fingerprint, HandCoins, Home,
@@ -13,7 +13,7 @@ import { TermsGate } from './Terms';
 import { Avatar, Button, IconButton, Notice, useToast } from './ui';
 import { GuideRunnerProvider, PageHeaderGuideButton } from './GuideRunner';
 import { SwipeTabsGesture, useMobileNav } from './SwipeTabs';
-import { getBottomNavTabs } from '../bottomNav';
+import { getBottomNavTabs, matchBottomTab } from '../bottomNav';
 import QuickJump, { useQuickJumpShortcut } from './QuickJump';
 import { useTranslation } from 'react-i18next';
 import { useStaffNav, waitingBadge } from '../staffNav';
@@ -184,7 +184,6 @@ function LayoutInner() {
   useEffect(() => {
     const onOnline = () => {
       setIsOffline(false);
-      void runQueueSync();
     };
     const onOffline = () => setIsOffline(true);
     window.addEventListener('online', onOnline);
@@ -243,8 +242,7 @@ function LayoutInner() {
     { to: '/help', label: t('help'), icon: <LifeBuoy size={sz} />, show: can('help') && !helpDesk },
   ]);
   const profileTab: NavItem = { to: '/me', label: t('profile'), icon: <User size={sz} /> };
-  // Phone tab bar: home, events. Rides and driving are asked for from an event, and their
-  // history lives in the profile. Staff get an Admin tab that opens the staff menu.
+  // Phone tab bar: home, events, optional staff/traffic tab, and profile.
   // Swipe uses this same list so it cannot wander onto sidebar-only pages.
   const bottomTabs = getBottomNavTabs({
     pending,
@@ -252,15 +250,93 @@ function LayoutInner() {
     hasStaffNav: !pending && staff.length > 0,
     trafficOnly: isTrafficOnlyStaff,
   });
-  const showTrafficTab = bottomTabs.some((tab) => tab.id === 'traffic');
-  const showAdminTab = bottomTabs.some((tab) => tab.id === 'admin');
-  const bottom: NavItem[] = bottomTabs
-    .filter((tab) => tab.id === 'home' || tab.id === 'events')
-    .map((tab) => (tab.id === 'home'
-      ? { to: '/', label: t('home'), icon: <Home size={sz} />, end: true }
-      : { to: '/events', label: t('events'), icon: <Calendar size={sz} /> }));
   const onAdminPage = loc.pathname.startsWith('/admin') || (helpDesk && loc.pathname.startsWith('/help'));
   const badge = (n?: number) => waitingBadge(n, t('waitingCount', { count: n ?? 0 }));
+  const tabIconSize = 22;
+  const bottomNavItems = bottomTabs.map((tab) => {
+    switch (tab.id) {
+      case 'home':
+        return {
+          id: tab.id,
+          to: '/',
+          end: true,
+          label: t('home'),
+          icon: <Home size={tabIconSize} />,
+          active: loc.pathname === '/',
+          isActiveOverride: undefined as boolean | undefined,
+        };
+      case 'events':
+        return {
+          id: tab.id,
+          to: '/events',
+          end: false,
+          label: t('events'),
+          icon: <Calendar size={tabIconSize} />,
+          active: loc.pathname === '/events' || loc.pathname.startsWith('/events/'),
+          isActiveOverride: undefined as boolean | undefined,
+        };
+      case 'traffic':
+        return {
+          id: tab.id,
+          to: '/admin/traffic',
+          end: false,
+          label: t('trafficTab'),
+          icon: (
+            <>
+              <Route size={tabIconSize} />
+              {badge(trafficBadge)}
+            </>
+          ),
+          active: onAdminPage,
+          isActiveOverride: onAdminPage,
+        };
+      case 'admin':
+        return {
+          id: tab.id,
+          to: '/admin/menu',
+          end: false,
+          label: t('sectionAdmin'),
+          icon: (
+            <>
+              <LayoutGrid size={tabIconSize} />
+              {badge(staffWaiting)}
+            </>
+          ),
+          active: onAdminPage,
+          isActiveOverride: onAdminPage,
+        };
+      case 'profile':
+        return {
+          id: tab.id,
+          to: '/me',
+          end: false,
+          label: t('profile'),
+          icon: (
+            <span className="bottom-tab-avatar">
+              <Avatar name={me.name} fileId={me.photo_file_id} color={me.avatar_color} icon={me.avatar_icon} size="sm" />
+            </span>
+          ),
+          active: loc.pathname === '/me' || loc.pathname.startsWith('/me/'),
+          isActiveOverride: undefined as boolean | undefined,
+        };
+    }
+  });
+  const activeBottomIndex = bottomNavItems.findIndex((item) => item.active);
+  const matchedTab = matchBottomTab(loc.pathname, bottomTabs, helpDesk);
+  const matchedTabIndex = matchedTab ? bottomTabs.findIndex((tab) => tab.id === matchedTab.id) : -1;
+  const triggerNavDir = (direction: 'left' | 'right' | null) => {
+    if (navDirTimerRef.current !== null) window.clearTimeout(navDirTimerRef.current);
+    setNavDir(direction);
+    navDirTimerRef.current = window.setTimeout(() => {
+      setNavDir(null);
+      navDirTimerRef.current = null;
+    }, 280);
+  };
+  const handleBottomTabClick = (targetIdx: number) => {
+    if (matchedTabIndex !== -1 && targetIdx !== matchedTabIndex) {
+      triggerNavDir(targetIdx > matchedTabIndex ? 'left' : 'right');
+    }
+  };
 
   const sidebarLink = (n: NavItem) => (
     <NavLink
@@ -473,49 +549,30 @@ function LayoutInner() {
         </main>
       </div>
 
-      <nav className="bottom-nav" aria-label={t('bottomNav')}>
-        {bottom.map((n) => (
+      <nav
+        className="bottom-nav"
+        aria-label={t('bottomNav')}
+        data-has-active={activeBottomIndex >= 0 ? 'true' : 'false'}
+        data-tab-count={bottomNavItems.length}
+        style={{
+          '--tab-count': bottomNavItems.length,
+          '--active-index': Math.max(0, activeBottomIndex),
+        } as CSSProperties}
+      >
+        {bottomNavItems.map((item, idx) => (
           <NavLink
-            key={n.to}
-            to={n.to}
-            end={n.end}
-            className={({ isActive }) => `bottom-tab ${isActive ? 'active' : ''}`}
+            key={item.id}
+            to={item.to}
+            end={item.end}
+            onClick={() => handleBottomTabClick(idx)}
+            className={({ isActive }) =>
+              `bottom-tab ${(item.isActiveOverride ?? isActive) ? 'active' : ''}`
+            }
           >
-            <span className="bottom-tab-icon">{n.icon}</span>
-            <span className="bottom-tab-label">{n.label}</span>
+            <span className="bottom-tab-icon">{item.icon}</span>
+            <span className="bottom-tab-label sr-only">{item.label}</span>
           </NavLink>
         ))}
-        {showTrafficTab && (
-          <NavLink
-            to="/admin/traffic"
-            className={`bottom-tab ${onAdminPage ? 'active' : ''}`}
-          >
-            <span className="bottom-tab-icon">
-              <Route size={sz} />
-              {badge(trafficBadge)}
-            </span>
-            <span className="bottom-tab-label">{t('trafficTab')}</span>
-          </NavLink>
-        )}
-        {showAdminTab && (
-          <NavLink
-            to="/admin/menu"
-            className={`bottom-tab ${onAdminPage ? 'active' : ''}`}
-          >
-            <span className="bottom-tab-icon">
-              <LayoutGrid size={sz} />
-              {badge(staffWaiting)}
-            </span>
-            <span className="bottom-tab-label">{t('sectionAdmin')}</span>
-          </NavLink>
-        )}
-        <NavLink
-          to={profileTab.to}
-          className={({ isActive }) => `bottom-tab ${isActive ? 'active' : ''}`}
-        >
-          <span className="bottom-tab-icon">{profileTab.icon}</span>
-          <span className="bottom-tab-label">{profileTab.label}</span>
-        </NavLink>
       </nav>
 
       {jumpOpen && !pending && (
@@ -545,12 +602,7 @@ function LayoutInner() {
         canGoBack={canSwipeBack}
         canGoForward={canSwipeForward}
         onAction={(action, direction) => {
-          if (navDirTimerRef.current !== null) window.clearTimeout(navDirTimerRef.current);
-          setNavDir(direction ?? null);
-          navDirTimerRef.current = window.setTimeout(() => {
-            setNavDir(null);
-            navDirTimerRef.current = null;
-          }, 280);
+          triggerNavDir(direction ?? null);
           if (action.type === 'history-back') navigate(-1);
           else if (action.type === 'history-forward') navigate(1);
           else navigate(action.to);

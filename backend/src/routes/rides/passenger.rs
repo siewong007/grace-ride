@@ -18,7 +18,7 @@ use crate::util::{
 };
 
 use super::driver::driver_load;
-use super::{can_view, load_ride, ride_json, set_status, traffic_can, RideRow, RIDE_SELECT};
+use super::{can_view, load_ride, ride_json, traffic_can, RideRow, RIDE_SELECT};
 
 // ---------------- Passenger ----------------
 
@@ -179,7 +179,7 @@ pub(super) async fn create_ride(
     // the booking is refused) or waits and then cancels this new ride with the rest.
     let mut tx = st.db.begin().await?;
     {
-        if !crate::routes::events::can_see_event(&st, &u, eid).await? {
+        if !crate::routes::events::can_see_event_on(&mut *tx, &u, eid).await? {
             return Err(forbidden(u.lang, ErrorKey::CannotViewEvent));
         }
         let event_status: Option<(String,)> =
@@ -577,29 +577,27 @@ pub(super) async fn cancel_ride(
         return Err(forbidden(u.lang, ErrorKey::OnlyPassengerOrStaffCanCancel));
     }
     let reason = body.and_then(|b| b.0.reason).unwrap_or_default();
-    set_status(
-        &st,
-        id,
-        &[
-            "pending_driver",
-            "pending_passenger",
-            "pending_approval",
-            "pending_driver_confirm",
-            "confirmed",
-        ],
-        "cancelled",
-        u.lang,
+    let old: Option<(String, Option<i64>, Option<i64>)> = sqlx::query_as(
+        "UPDATE rides SET status='cancelled', needs_attention=0, attention_reason=$2, updated_at=$3
+         FROM (SELECT id, status AS old_status, driver_id AS old_driver_id, trip_id AS old_trip_id
+               FROM rides
+               WHERE id=$1 AND status IN ('pending_driver','pending_passenger','pending_approval','pending_driver_confirm','confirmed')
+               FOR UPDATE) old
+         WHERE rides.id = old.id
+         RETURNING old.old_status, old.old_driver_id, old.old_trip_id",
     )
+    .bind(id)
+    .bind(&reason)
+    .bind(now())
+    .fetch_optional(&st.db)
     .await?;
-    sqlx::query("UPDATE rides SET needs_attention=0, attention_reason=$1 WHERE id=$2")
-        .bind(&reason)
-        .bind(id)
-        .execute(&st.db)
-        .await?;
-    if let (Some(d), Some(t)) = (r.driver_id, r.trip_id) {
+    let Some((old_status, old_driver_id, old_trip_id)) = old else {
+        return Err(conflict(u.lang, ErrorKey::RideStatusChanged));
+    };
+    if let (Some(d), Some(t)) = (old_driver_id, old_trip_id) {
         st.routing.invalidate(d, t).await;
     }
-    if let Some(d) = r.driver_id {
+    if let Some(d) = old_driver_id {
         let line = format!(
             "{} · {} {}",
             r.p_name,
@@ -615,7 +613,7 @@ pub(super) async fn cancel_ride(
         )
         .await;
     }
-    if let Some(t) = r.trip_id {
+    if let Some(t) = old_trip_id {
         system_message(
             &st.db,
             t,
@@ -627,7 +625,7 @@ pub(super) async fn cancel_ride(
         )
         .await;
     }
-    if r.status == "confirmed" {
+    if old_status == "confirmed" {
         let line = format!("{} · {}", r.p_name, r.pickup_at.replace('T', " "));
         notify_perm(
             &st.db,

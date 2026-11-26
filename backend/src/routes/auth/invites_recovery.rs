@@ -135,7 +135,7 @@ pub(super) async fn invite_preview(
 /// Version of the terms and privacy notice in `frontend/src/locales/terms.*.ts`. Raise it
 /// when their meaning changes (and the column default in a new migration, see 0007): every
 /// member who agreed to an older version is asked to opt in again.
-pub const TERMS_VERSION: i32 = 2;
+pub const TERMS_VERSION: i32 = 3;
 
 #[derive(Deserialize)]
 pub(super) struct TermsIn {

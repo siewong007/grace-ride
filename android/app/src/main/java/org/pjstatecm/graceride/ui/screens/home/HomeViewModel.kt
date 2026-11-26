@@ -4,12 +4,18 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewmodel.initializer
 import androidx.lifecycle.viewmodel.viewModelFactory
 import androidx.lifecycle.viewModelScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.async
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.drop
+import kotlinx.coroutines.flow.filter
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
+import kotlinx.serialization.builtins.ListSerializer
 import org.pjstatecm.graceride.data.api.Announcement
 import org.pjstatecm.graceride.data.api.ApiException
 import org.pjstatecm.graceride.data.api.EventItem
@@ -20,6 +26,7 @@ import org.pjstatecm.graceride.data.session.OfflineSnapshotStore
 import org.pjstatecm.graceride.di.AppContainer
 import org.pjstatecm.graceride.domain.KlTime
 import org.pjstatecm.graceride.domain.RideStatus
+import org.pjstatecm.graceride.notifications.RealtimeEvent
 
 data class HomeUiState(
     val loading: Boolean = true,
@@ -34,6 +41,7 @@ data class HomeUiState(
     val upcomingDrives: List<Ride> = emptyList(),
     val events: List<EventItem> = emptyList(),
     val unpaidShares: List<Share> = emptyList(),
+    val unpaidShareCount: Int = 0,
     val announcements: List<Announcement> = emptyList(),
 )
 
@@ -41,13 +49,25 @@ class HomeViewModel(private val container: AppContainer) : ViewModel() {
 
     private val _state = MutableStateFlow(HomeUiState())
     val state: StateFlow<HomeUiState> = _state.asStateFlow()
+    private var loadJob: Job? = null
 
-    init { load(first = true) }
+    init {
+        load(first = true)
+        viewModelScope.launch {
+            container.realtimeStream.events.collect { ev ->
+                if (ev != RealtimeEvent.Resume) refresh()
+            }
+        }
+        viewModelScope.launch {
+            container.networkMonitor.isOnline.drop(1).filter { it }.collect { refresh() }
+        }
+    }
 
     fun refresh() = load(first = false)
 
     private fun load(first: Boolean) {
-        viewModelScope.launch {
+        loadJob?.cancel()
+        loadJob = viewModelScope.launch {
             _state.value = _state.value.copy(
                 loading = first && _state.value.me == null,
                 refreshing = !first,
@@ -103,44 +123,86 @@ class HomeViewModel(private val container: AppContainer) : ViewModel() {
 
             var effectiveRides = rides
             var effectiveDrivingAll = drivingAll
+            var effectiveEvents = events
+            var effectiveAnn = ann
             var offlineSnapshotAt: Long? = null
             if (me != null) {
                 if (ridesRes.ok || drivingRes.ok) {
-                    OfflineSnapshotStore.save(container.secureStore, me.id, (rides + drivingAll).distinctBy { it.id })
+                    val combined = (rides + drivingAll).distinctBy { it.id }
+                    withContext(Dispatchers.IO) {
+                        OfflineSnapshotStore.save(container.secureStore, me.id, combined)
+                    }
                 } else if (offline && rides.isEmpty() && drivingAll.isEmpty()) {
-                    val snap = OfflineSnapshotStore.load(container.secureStore, me.id)
+                    val snap = withContext(Dispatchers.IO) {
+                        OfflineSnapshotStore.load(container.secureStore, me.id)
+                    }
                     if (snap != null) {
                         effectiveRides = snap.rides.filter { it.viewer.isPassenger }
                         effectiveDrivingAll = snap.rides.filter { it.viewer.isDriver }
                         offlineSnapshotAt = snap.savedAtMillis
                     }
                 }
+                if (eventsRes.ok) {
+                    withContext(Dispatchers.IO) {
+                        container.offlineCache.write(me.id, "home_events", events, ListSerializer(EventItem.serializer()))
+                    }
+                } else if (offline && effectiveEvents.isEmpty()) {
+                    withContext(Dispatchers.IO) {
+                        container.offlineCache.read(me.id, "home_events", ListSerializer(EventItem.serializer()))
+                    }?.let { effectiveEvents = it.data }
+                }
+                if (annRes.ok) {
+                    withContext(Dispatchers.IO) {
+                        container.offlineCache.write(me.id, "home_announcements", ann, ListSerializer(Announcement.serializer()))
+                    }
+                } else if (offline && effectiveAnn.isEmpty()) {
+                    withContext(Dispatchers.IO) {
+                        container.offlineCache.read(me.id, "home_announcements", ListSerializer(Announcement.serializer()))
+                    }?.let { effectiveAnn = it.data }
+                }
             }
 
             val drivingToday = effectiveDrivingAll.filter { it.pickupAt.take(10) == today }
-            val upcomingDrives = effectiveDrivingAll.filter { it.pickupAt.take(10) > today }.sortedBy { it.pickupAt }
+            val upcomingDrives = effectiveDrivingAll
+                .filter { it.pickupAt.take(10) > today && it.status in RideStatus.active }
+                .sortedBy { it.pickupAt }
             val nextUpcomingDrive = upcomingDrives.firstOrNull()
 
             val next = effectiveRides
                 .filter { it.status in RideStatus.active && it.viewer.isPassenger }
                 .minByOrNull { it.pickupAt }
-            val unpaidShares = shares.filter { it.status == "unpaid" || it.status == "needs_info" }.take(3)
+            val allUnpaid = shares.filter { it.status == "unpaid" || it.status == "needs_info" }
+            val unpaidShares = allUnpaid.take(3)
 
             _state.value = HomeUiState(
                 loading = false,
                 refreshing = false,
                 offline = offline,
                 offlineSnapshotAt = offlineSnapshotAt,
-                error = if (effectiveRides.isEmpty() && events.isEmpty() && unpaidShares.isEmpty() && ann.isEmpty() && effectiveDrivingAll.isEmpty()) error else null,
+                error = if (effectiveRides.isEmpty() && effectiveEvents.isEmpty() && unpaidShares.isEmpty() && effectiveAnn.isEmpty() && effectiveDrivingAll.isEmpty()) error else null,
                 me = me,
                 nextRide = next,
                 drivingToday = drivingToday,
                 nextUpcomingDrive = nextUpcomingDrive,
                 upcomingDrives = upcomingDrives,
-                events = events.take(3),
+                events = effectiveEvents.take(3),
                 unpaidShares = unpaidShares,
-                announcements = ann.sortedByDescending { it.pinned }.take(3),
+                unpaidShareCount = allUnpaid.size,
+                announcements = effectiveAnn.sortedByDescending { it.pinned }.take(3),
             )
+            container.appContext?.let { ctx ->
+                withContext(Dispatchers.IO) {
+                    val hideLockDetails = container.secureStore.getString("notif_hide_lock_details") == "1"
+                    org.pjstatecm.graceride.widget.WidgetSnapshotStore.saveFromHome(
+                        ctx,
+                        signedIn = me != null,
+                        nextRide = next,
+                        nextEvent = effectiveEvents.firstOrNull(),
+                        hideLockDetails = hideLockDetails,
+                    )
+                    org.pjstatecm.graceride.widget.refreshGraceRideWidget(ctx)
+                }
+            }
         }
     }
 

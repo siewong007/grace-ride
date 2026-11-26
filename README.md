@@ -8,6 +8,7 @@
   [![Rust](https://img.shields.io/badge/Rust-Axum-000000?style=flat-square&logo=rust)](backend/)
   [![Frontend](https://img.shields.io/badge/React_19-TypeScript-1F5DB4?style=flat-square&logo=react)](frontend/)
   [![Android](https://img.shields.io/badge/Android-Compose-3DDC84?style=flat-square&logo=android)](android/)
+  [![iOS](https://img.shields.io/badge/iOS-SwiftUI-000000?style=flat-square&logo=apple)](ios/)
   [![Database](https://img.shields.io/badge/PostgreSQL-18-336791?style=flat-square&logo=postgresql)](backend/migrations/)
   [![Auth](https://img.shields.io/badge/Auth-Passkeys_%26_2FA-2B7549?style=flat-square)](docs/TECHNICAL.md#7-security-model)
   [![License](https://img.shields.io/badge/License-Proprietary-474A4F?style=flat-square)](LICENSE)
@@ -24,7 +25,7 @@
 - **Group Events & QR Check-In** — Draft/publish lifecycle, custom event icons, self-transport status, schedule timeline, recursive sub-group audiences, FIFO waitlists, self-service QR attendance (2 h pre-start to 12 h post-start), live ICS feeds, and one-time `/visit/:token` guest ride passes.
 - **Traffic Workspace & Planning** — Unified `/admin/traffic` hub with drag-and-drop & mobile event ride planner, multi-version plan and single-ride change drafts with 10-min single-editor lease locks and lead approval, accessibility-aware auto-arrange with explainability drawer, ER-diagram plan image export, plan visitors, and atomic row-locked saves.
 - **Transparent Ministry Finance** — Flat area-to-area mileage fares (with XLSX/CSV sheet import/export), post-event driver dispersal & visitor special reimbursements, integer-cent activity cost splitting with DuitNow QR & revision reconciliation, receipt-backed claims, and two-person monthly payout batches.
-- **Bilingual & Multi-Client** — Chinese and English UI (with Bahasa Malaysia PDPA notice), dark mode, adjustable text scale, CJK PDF exports, Grok Bot Studio & animated mascot avatars, 4-tier achievement badges, an installable PWA shell, and a native Android app (Kotlin / Jetpack Compose).
+- **Bilingual & Multi-Client** — Chinese and English UI (with Bahasa Malaysia PDPA notice), dark mode, adjustable text scale, CJK PDF exports, Grok Bot Studio & animated mascot avatars, 4-tier achievement badges, an installable PWA shell, centralized notification preferences & durable outbox, and a native Android app (Kotlin / Jetpack Compose with Drive Hub, Trip Chat, live foreground GPS, QR check-in, and Glance widget).
 
 ## Quick Start
 
@@ -65,24 +66,29 @@ Password for all demo accounts: `GraceRide2026!` · Simulated TOTP secret: `MFRG
 | **API & Jobs** | Rust, Axum, SQLx, WebAuthn, Tokio, SSE | [`backend/`](backend/) |
 | **Web App** | React 19, TypeScript, Vite, Leaflet, i18next | [`frontend/`](frontend/) |
 | **Android App** | Kotlin 2.2, Jetpack Compose, Material 3, MVVM | [`android/`](android/) |
-| **Database** | PostgreSQL 18 (squashed `0001` baseline + additive migrations `0002`–`0006`) | [`backend/migrations/`](backend/migrations/) |
+| **iOS App** | Swift 5.10 / SwiftUI (iOS 17+), `GraceRideKit` SPM, WidgetKit + AppIntents | [`ios/`](ios/) |
+| **Database** | PostgreSQL 18 (squashed `0001` baseline + additive migrations `0002`–`0010`) | [`backend/migrations/`](backend/migrations/) |
 | **Ops & Deploy** | Docker, Caddy, OSRM, GitHub Actions, encrypted backup/restore scripts | [`deploy/`](deploy/), [`scripts/`](scripts/) |
 
 ## Documentation
 
+One authoritative file per document type:
+
 - **[`docs/TECHNICAL.md`](docs/TECHNICAL.md)** — Authoritative engineering, architecture, configuration & compliance reference
-- **[`docs/USER_MANUAL.md`](docs/USER_MANUAL.md)** — Church member & elder user guide (bilingual context, elder-friendly)
-- **[`docs/ADMIN_MANUAL.md`](docs/ADMIN_MANUAL.md)** — Administration, transport planning, and finance operations manual
-- **[`docs/BETA_TESTING_PLAN.md`](docs/BETA_TESTING_PLAN.md)** — Closed beta testing rollout & verification plan
-- **[`docs/android/README.md`](docs/android/README.md)** & **[`docs/android/DESIGN.md`](docs/android/DESIGN.md)** — Native Android app architecture, setup, design system & test guide
+- **[`docs/ANDROID.md`](docs/ANDROID.md)** — Native Android app architecture, capabilities, design system, signing & test guide
+- **[`docs/IOS.md`](docs/IOS.md)** — Native iOS SwiftUI app, `GraceRideKit` SPM package, WidgetKit & build/test guide
+- **[`docs/USER_MANUAL.md`](docs/USER_MANUAL.md)** — Church member & elder user guide (Chinese, elder-friendly)
+- **[`docs/ADMIN_MANUAL.md`](docs/ADMIN_MANUAL.md)** — Administration, transport planning, reports & finance operations manual (Chinese)
 - **[`SECURITY.md`](SECURITY.md)** — Vulnerability reporting policy and responsible disclosure runbook
+- **[`CLAUDE.md`](CLAUDE.md)** — Developer & AI session conventions and repository structure
+- **[`CHANGELOG.md`](CHANGELOG.md)** — Release and change history
 
 Detailed sections in **[`docs/TECHNICAL.md`](docs/TECHNICAL.md)**:
 
 - [Local Development & Tooling](docs/TECHNICAL.md#1-local-development--tooling) — setup, `docker-compose.dev.yml`, demo fixtures, and `Makefile` shortcuts
 - [Features & Module Inventory](docs/TECHNICAL.md#2-features--module-inventory) — all 16 modules, routes, and explicit boundaries
 - [User & Operational Workflows](docs/TECHNICAL.md#3-user--operational-workflows) — ride state machine, concurrency locks, and maintenance rules
-- [System Architecture & Database](docs/TECHNICAL.md#4-system-architecture--database) — topology, 29-page / 73-permission catalog, and the consolidated `0001` baseline + `0002`–`0006` migrations
+- [System Architecture & Database](docs/TECHNICAL.md#4-system-architecture--database) — topology, 29-page / 73-permission catalog, and the consolidated `0001` baseline + `0002`–`0010` migrations
 - [Configuration & Deployment](docs/TECHNICAL.md#5-configuration--deployment-runbook) — environment variables, Docker Compose, self-hosted OSRM, AIC VPS CI/CD, and encrypted backups
 - [Testing & Verification](docs/TECHNICAL.md#6-testing--verification) — Cargo, Vitest, Android, and Playwright suites
 - [Security Model](docs/TECHNICAL.md#7-security-model) — auth, RBAC invariants, pass isolation, privacy projections, and accepted risks

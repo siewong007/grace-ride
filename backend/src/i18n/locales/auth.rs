@@ -19,6 +19,8 @@ pub enum AuthError<'a> {
     RecoveryLinkInvalid,
     PasskeyFailed,
     PasskeyRegistrationFailed(&'a str),
+    BiometricFailed,
+    BiometricRegistrationFailed,
     ChallengeMismatch,
     NameRequired,
     NameTooLong,
@@ -84,6 +86,10 @@ pub fn render(lang: Lang, key: AuthError<'_>) -> String {
             Lang::Zh => format!("通行密钥注册失败：{detail}"),
             Lang::En => format!("Passkey registration failed: {detail}"),
         },
+        AuthError::BiometricFailed => pair(lang, "生物识别验证失败", "Biometric verification failed"),
+        AuthError::BiometricRegistrationFailed => {
+            pair(lang, "生物识别注册失败", "Biometric registration failed")
+        }
         AuthError::ChallengeMismatch => pair(lang, "验证不匹配", "Challenge does not match"),
         AuthError::NameRequired => pair(lang, "请填写姓名", "Please enter your name"),
         AuthError::NameTooLong => pair(

@@ -613,7 +613,7 @@ export function StaffActions({ ride: r, reload }: { ride: Ride; reload: () => vo
   const openEditDraftModal = async (d: RideDraftItem) => {
     if (!d.lock_is_mine) {
       const ok = await run(() => post(`/rides/${r.id}/drafts/${d.id}/lock`, {}).then(() => rideDrafts.reload()));
-      if (ok === undefined) return;
+      if (!ok) return;
     }
     setEditingDraft(d);
     setDraftAction(d.action);
@@ -645,7 +645,7 @@ export function StaffActions({ ride: r, reload }: { ride: Ride; reload: () => vo
       }
       rideDrafts.reload();
     }, andSubmit ? t('proposeSubmitted') : editingDraft ? t('proposeUpdated') : t('proposeCreated'));
-    if (res !== undefined) {
+    if (res) {
       setProposeOpen(false);
       setEditingDraft(null);
     }
@@ -964,7 +964,7 @@ export function StaffActions({ ride: r, reload }: { ride: Ride; reload: () => vo
                       ),
                     t('proposeReturned'),
                   );
-                  if (res !== undefined) {
+                  if (res) {
                     setReturningDraft(null);
                     setReturnNotes('');
                   }
@@ -1009,12 +1009,38 @@ export function MobileStickyActions({
   passengerTurn: boolean;
 }) {
   const { t } = useTranslation('rideDetail');
+  const { t: tc } = useTranslation();
+  const toast = useToast();
   const auth = useAuth();
+  const meId = auth?.me?.id;
   const can = auth?.can ?? (() => true);
   const { busy, error, run } = useAction();
   const [showMore, setShowMore] = useState(false);
 
   const act = (path: string, msg: string) => run(() => post(`/rides/${r.id}/${path}`).then(reload), msg);
+
+  const actQueueable = async (path: string, label: string, successMsg: string) => {
+    if (!meId) {
+      if (await run(() => post(`/rides/${r.id}/${path}`).then(reload))) {
+        toast.success(successMsg);
+      }
+      return;
+    }
+    await run(async () => {
+      const res = await postOrQueue({
+        userId: meId,
+        rideId: r.id,
+        path: `/rides/${r.id}/${path}`,
+        label,
+      });
+      if (res.queued) {
+        toast.info(tc('queuedOffline'));
+      } else {
+        toast.success(successMsg);
+        reload();
+      }
+    });
+  };
 
   const isVolunteerClaimable =
     !r.viewer.is_passenger && !r.viewer.is_driver && !r.viewer.is_staff && r.status === 'pending_driver';
@@ -1048,13 +1074,13 @@ export function MobileStickyActions({
       primaryButton = <StartTripButton ride={r} onStarted={reload} block label={t('startTrip')} />;
     } else if (r.status === 'in_progress' && !r.picked_up_at) {
       primaryButton = (
-        <Button variant="primary" block disabled={busy} onClick={() => act('pickup', t('respondedPickedUp'))}>
+        <Button variant="primary" block disabled={busy} onClick={() => actQueueable('pickup', t('pickedUp'), t('respondedPickedUp'))}>
           {t('pickedUp')}
         </Button>
       );
     } else if (r.status === 'in_progress' && r.picked_up_at) {
       primaryButton = (
-        <Button variant="primary" block disabled={busy} onClick={() => act('complete', t('respondedCompleted'))}>
+        <Button variant="primary" block disabled={busy} onClick={() => actQueueable('complete', t('completedTrip'), t('respondedCompleted'))}>
           {t('completedTrip')}
         </Button>
       );

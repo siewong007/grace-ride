@@ -36,7 +36,7 @@ pub(super) async fn mark_attendance(
             ErrorKey::OnlyOrganiserCanRecordAttendance,
         ));
     }
-    if e.status == "draft" {
+    if e.status == "draft" || e.status == "cancelled" {
         return Err(bad(u.lang, ErrorKey::EventNotOpen));
     }
     if e.attendance_enabled != 1 {
@@ -44,6 +44,13 @@ pub(super) async fn mark_attendance(
     }
     let v = req.attended.map(|a| a as i64);
     let mut tx = st.db.begin().await?;
+    let ev_status: String = sqlx::query_scalar("SELECT status FROM events WHERE id=$1 FOR SHARE")
+        .bind(id)
+        .fetch_one(&mut *tx)
+        .await?;
+    if ev_status == "draft" || ev_status == "cancelled" {
+        return Err(bad(u.lang, ErrorKey::EventNotOpen));
+    }
     let target_status: Option<(String,)> = sqlx::query_as("SELECT status FROM users WHERE id=$1")
         .bind(req.user_id)
         .fetch_optional(&mut *tx)
@@ -163,6 +170,7 @@ async fn do_checkin(
         }
     }
 
+    let choices = join_choices(&st.db, u, id).await.unwrap_or_default();
     let mut tx = st.db.begin().await?;
     let (capacity,): (i64,) = sqlx::query_as("SELECT capacity FROM events WHERE id=$1 FOR UPDATE")
         .bind(id)
@@ -203,7 +211,6 @@ async fn do_checkin(
             .await?;
         } else {
             // Member participates directly via check-in without requiring a ride.
-            let choices = join_choices(&st.db, u, id).await.unwrap_or_default();
             let as_group = choices.first().map(|c| c.0);
             let pass_code = allocate_pass_code(&mut tx, id).await?;
             sqlx::query(
@@ -219,7 +226,9 @@ async fn do_checkin(
             .execute(&mut *tx)
             .await?;
         }
-
+    }
+    tx.commit().await?;
+    if !already_attended {
         audit(
             &st.db,
             Some(u.id),
@@ -230,7 +239,6 @@ async fn do_checkin(
         )
         .await;
     }
-    tx.commit().await?;
 
     Ok(Json(json!({
         "ok": true,

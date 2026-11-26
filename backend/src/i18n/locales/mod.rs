@@ -107,6 +107,10 @@ pub fn render(lang: Lang, key: &ErrorKey) -> String {
         ErrorKey::PasskeyRegistrationFailed(detail) => {
             auth::render(lang, AuthError::PasskeyRegistrationFailed(detail))
         }
+        ErrorKey::BiometricFailed => auth::render(lang, AuthError::BiometricFailed),
+        ErrorKey::BiometricRegistrationFailed => {
+            auth::render(lang, AuthError::BiometricRegistrationFailed)
+        }
         ErrorKey::ChallengeMismatch => auth::render(lang, AuthError::ChallengeMismatch),
         ErrorKey::NameRequired => auth::render(lang, AuthError::NameRequired),
         ErrorKey::NameTooLong => auth::render(lang, AuthError::NameTooLong),
@@ -559,6 +563,8 @@ mod tests {
             ErrorKey::RecoveryLinkInvalid => ErrorKey::RecoveryLinkInvalid,
             ErrorKey::PasskeyFailed => ErrorKey::PasskeyFailed,
             ErrorKey::PasskeyRegistrationFailed(_) => ErrorKey::PasskeyRegistrationFailed("x".into()),
+            ErrorKey::BiometricFailed => ErrorKey::BiometricFailed,
+            ErrorKey::BiometricRegistrationFailed => ErrorKey::BiometricRegistrationFailed,
             ErrorKey::ChallengeMismatch => ErrorKey::ChallengeMismatch,
             ErrorKey::NameRequired => ErrorKey::NameRequired,
             ErrorKey::NameTooLong => ErrorKey::NameTooLong,
