@@ -121,7 +121,8 @@ export default {
     "CARE_PASS_NOT_OPEN_YET": "This link opens 24 hours before pickup",
     "MILEAGE_AUTHORISATION_RESTRICTED": "Only the super admin, President or Vice-President can allow an event to be claimable for mileage",
     "EVENT_NOT_DRAFT": "This event is not a draft",
-    "EVENT_CANNOT_HIDE_WITH_SIGNUPS": "Cannot hide to draft while active signups or rides exist"
+    "EVENT_CANNOT_HIDE_WITH_SIGNUPS": "Cannot hide to draft while active signups or rides exist",
+    "EVENT_MILEAGE_NOT_CLAIMABLE": "This event is not authorised for mileage reimbursement"
   },
   "rides": {
     "PICKUP_TIME_REQUIRED": "Please enter a pickup time",
@@ -259,10 +260,12 @@ export default {
     "MONTH_FORMAT_INVALID": "Month must be in YYYY-MM format",
     "BATCH_EMPTY": "No eligible approved reimbursements available for this batch",
     "BATCH_ALREADY_PAID": "This payout batch has already been paid",
+    "CANNOT_PAY_OWN_BATCH": "Creating and paying a batch need two people: you created this payout batch, so another finance member must pay it",
     "VISITOR_REIMB_NEEDS_DRIVER": "Choose the car this visitor rode in first: the special reimbursement pays that driver",
     "VISITOR_REIMB_ALREADY_LIVE": "This visitor already has a special reimbursement in progress or approved; a new one is only possible after it is rejected",
     "VISITOR_HAS_REIMBURSEMENT": "This visitor has a special reimbursement on record and can't be removed",
-    "AMOUNT_MUST_BE_POSITIVE": "The amount must be more than RM0"
+    "AMOUNT_MUST_BE_POSITIVE": "The amount must be more than RM0",
+    "TELEGRAM_PAIRING_REQUIRED": "Please connect Telegram using the one-tap bot link instead of entering a Chat ID manually"
   },
   "files": {
     "NO_FILE_RECEIVED": "No file received",

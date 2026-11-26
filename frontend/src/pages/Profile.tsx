@@ -142,7 +142,6 @@ export default function Profile() {
   const [telegramBlocked, setTelegramBlocked] = useState(false);
   const [tgFeedback, setTgFeedback] = useState('');
   const [tgBusy, setTgBusy] = useState(false);
-  const [prefsError, setPrefsError] = useState('');
 
   useEffect(() => {
     if (me) {
@@ -242,10 +241,12 @@ export default function Profile() {
   const savePersonal = () => put('/me', { name: f.name, phone: f.phone }).then(refresh);
   const savePreferences = async () => {
     const cleanedTg = telegramChatId.trim();
+    const serverTg = (notifPrefs?.telegram_chat_id ?? me.telegram_chat_id ?? '').trim();
+    const disconnectedTg = Boolean(serverTg && !cleanedTg);
     await put('/me', {
       badges_opt_out: f.optOut,
       readiness_prompt_mins: readinessPrompt,
-      telegram_chat_id: cleanedTg,
+      ...(disconnectedTg ? { telegram_chat_id: '' } : {}),
       whatsapp_opt_in: whatsappOptIn,
       push_opt_in: pushOptIn,
     });
@@ -253,7 +254,7 @@ export default function Profile() {
       await put('/notifications/preferences', {
         push_opt_in: pushOptIn,
         whatsapp_opt_in: whatsappOptIn,
-        telegram_chat_id: cleanedTg,
+        ...(disconnectedTg ? { telegram_chat_id: '' } : {}),
         readiness_prompt_mins: readinessPrompt,
         driver_remind_mins: driverRemindMins,
         muted_categories: mutedCategories,
@@ -676,7 +677,7 @@ export default function Profile() {
                   ))}
                 </div>
               </div>
-              <ErrorBox error={prefsError || error} />
+              <ErrorBox error={error} />
             </div>
           )}
 
@@ -833,17 +834,28 @@ export default function Profile() {
                       )}
                     </div>
                     {tgFeedback && <p className="muted tiny" role="status">{tgFeedback}</p>}
-                    <Field
-                      label={t('telegramChatId')}
-                      hint={telegramBot ? t('telegramGuidedHint') : t('telegramChatIdHint')}
-                    >
-                      <input
-                        className="input"
-                        value={telegramChatId}
-                        onChange={(e) => setTelegramChatId(e.target.value)}
-                        placeholder="123456789"
-                      />
-                    </Field>
+                    <div className="stack-xs">
+                      <div className="small bold">{t('telegramChatId')}</div>
+                      {telegramChatId.trim() ? (
+                        <div className="row between items-center wrap gap-xs">
+                          <span className="small">{t('telegramLinkedId', { id: telegramChatId.trim() })}</span>
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            onClick={() => {
+                              setTelegramChatId('');
+                              setTelegramBlocked(false);
+                            }}
+                          >
+                            {t('telegramDisconnect')}
+                          </Button>
+                        </div>
+                      ) : (
+                        <p className="muted tiny no-margin">
+                          {telegramBot ? t('telegramGuidedHint') : t('telegramChatIdHint')}
+                        </p>
+                      )}
+                    </div>
                   </div>
                 )}
               </div>
@@ -936,12 +948,6 @@ export default function Profile() {
                 <Button
                   variant="primary"
                   onClick={() => {
-                    setPrefsError('');
-                    const cleanedTg = telegramChatId.trim();
-                    if (cleanedTg && !/^-?\d{5,20}$/.test(cleanedTg)) {
-                      setPrefsError(t('telegramInvalidId'));
-                      return;
-                    }
                     void run(savePreferences, t('saved'));
                   }}
                   loading={busy}
@@ -949,7 +955,7 @@ export default function Profile() {
                   {t('save')}
                 </Button>
               </div>
-              <ErrorBox error={prefsError || error} />
+              <ErrorBox error={error} />
               <div className="divider" />
               <div className="list">
                 {!isPending && (
@@ -1118,7 +1124,7 @@ export default function Profile() {
                 </>
               )}
 
-              <ErrorBox error={prefsError || error} />
+              <ErrorBox error={error} />
             </div>
           )}
         </>

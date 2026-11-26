@@ -246,7 +246,7 @@ const profileStrings: Record<string, string> = {
   whatsappNotConfigured: 'WhatsApp alerts are not enabled by the church office yet.',
   telegramNotConfigured: 'Telegram alerts are not enabled by the church office yet.',
   telegramOpenBot: 'Open @{bot} in Telegram',
-  telegramGuidedHint: '1. Tap above and press Start in Telegram. 2. Copy the numeric Chat ID shown and paste it below.',
+  telegramGuidedHint: 'Tap above and send /start in Telegram to complete verified pairing.',
   pickOnMap: 'Adjust pin on map',
   hideMapPicker: 'Hide map',
   mapPickerHint: 'Tap the map or drag the pin to mark your exact pickup gate.',
@@ -842,7 +842,10 @@ describe('Profile compact layout', () => {
 
     const botLink = screen.getByRole('link', { name: 'Open @GraceRideBot in Telegram' });
     expect(botLink).toHaveAttribute('href', 'https://t.me/GraceRideBot');
-    expect(screen.getByPlaceholderText('123456789')).toBeInTheDocument();
+    expect(screen.queryByPlaceholderText('123456789')).not.toBeInTheDocument();
+    expect(
+      screen.getByText('Tap above and send /start in Telegram to complete verified pairing.'),
+    ).toBeInTheDocument();
   });
 
   it('infers pickup area, shows missing-area/pin status, and captures GPS coords on saved address', async () => {
@@ -1066,13 +1069,17 @@ describe('Profile compact layout', () => {
     }
   });
 
-  it('warns when /push/test delivers to 0 devices, removes connected web device, and blocks non-numeric Telegram Chat ID', async () => {
+  it('warns when /push/test delivers to 0 devices, removes connected web device, and allows disconnecting linked Telegram without manual Chat ID input', async () => {
     pushConfigData = {
       enabled: true,
       configured: true,
       subscription_count: 1,
       telegram_configured: true,
       telegram_bot_username: 'GraceTestBot',
+    };
+    notifPrefsData = {
+      telegram_chat_id: '123456789',
+      notify_telegram: true,
     };
     pushSubsData = {
       web: [
@@ -1097,10 +1104,14 @@ describe('Profile compact layout', () => {
     fireEvent.click(screen.getByRole('button', { name: 'pushRemoveDevice' }));
     await waitFor(() => expect(del).toHaveBeenCalledWith('/push/subscriptions/77'));
 
-    const tgInput = screen.getByPlaceholderText('123456789');
-    fireEvent.change(tgInput, { target: { value: '@invalid_handle' } });
+    expect(screen.queryByPlaceholderText('123456789')).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: 'telegramDisconnect' }));
     fireEvent.click(screen.getByRole('button', { name: /^Save$/ }));
-    expect(await screen.findByText('telegramInvalidId')).toBeInTheDocument();
-    expect(put).not.toHaveBeenCalled();
+    await waitFor(() =>
+      expect(put).toHaveBeenCalledWith(
+        '/notifications/preferences',
+        expect.objectContaining({ telegram_chat_id: '' }),
+      ),
+    );
   });
 });

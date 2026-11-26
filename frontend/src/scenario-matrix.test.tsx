@@ -323,18 +323,16 @@ describe('Scenario Matrix — Frontend Components & Service Worker', () => {
       expect(mocks.del).toHaveBeenCalledWith('/me/calendar-feed');
       await user.click(screen.getByRole('link', { name: /back/i }));
 
-      // Preferences sheet (readiness prompt + WhatsApp + Telegram)
+      // Preferences sheet (readiness prompt + WhatsApp opt-in; Telegram Chat ID is verified read-only via bot link)
       await user.click(screen.getByRole('button', { name: /preferences/i }));
       const prefDlg = document.body;
       await user.selectOptions(within(prefDlg).getByRole('combobox'), '30');
       await user.click(within(prefDlg).getByLabelText(/allow whatsapp alert notifications/i));
-      await user.type(within(prefDlg).getByPlaceholderText('123456789'), '987654321');
       await user.click(within(prefDlg).getByRole('button', { name: /^save$/i }));
 
       expect(mocks.put).toHaveBeenCalledWith('/me', {
         badges_opt_out: false,
         readiness_prompt_mins: 30,
-        telegram_chat_id: '987654321',
         whatsapp_opt_in: true,
         push_opt_in: true,
       });

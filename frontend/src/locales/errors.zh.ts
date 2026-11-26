@@ -121,7 +121,8 @@ export default {
     "CARE_PASS_NOT_OPEN_YET": "此链接将于接送前 24 小时开放",
     "MILEAGE_AUTHORISATION_RESTRICTED": "只有超级管理员、会长或副会长可以允许活动报销里程车费",
     "EVENT_NOT_DRAFT": "此活动不是草稿状态",
-    "EVENT_CANNOT_HIDE_WITH_SIGNUPS": "已有会员报名或预约接送，无法退回草稿"
+    "EVENT_CANNOT_HIDE_WITH_SIGNUPS": "已有会员报名或预约接送，无法退回草稿",
+    "EVENT_MILEAGE_NOT_CLAIMABLE": "此活动未开放车贴报销"
   },
   "rides": {
     "PICKUP_TIME_REQUIRED": "请填写接送时间",
@@ -259,10 +260,12 @@ export default {
     "MONTH_FORMAT_INVALID": "月份格式应为 YYYY-MM",
     "BATCH_EMPTY": "没有符合条件可加入批次的已批准报销",
     "BATCH_ALREADY_PAID": "此付款批次已完成付款",
+    "CANNOT_PAY_OWN_BATCH": "创建与付款需由不同的人处理：此付款批次由您创建，请交给另一位财务同工付款",
     "VISITOR_REIMB_NEEDS_DRIVER": "请先为这位访客选好所乘的车：特别报销付给该司机",
     "VISITOR_REIMB_ALREADY_LIVE": "这位访客已有一笔特别报销在处理中或已批准；只有被拒绝后才能再申请",
     "VISITOR_HAS_REIMBURSEMENT": "这位访客有特别报销记录，不能删除",
-    "AMOUNT_MUST_BE_POSITIVE": "金额需大于 RM0"
+    "AMOUNT_MUST_BE_POSITIVE": "金额需大于 RM0",
+    "TELEGRAM_PAIRING_REQUIRED": "请使用一键连接机器人绑定 Telegram，无法手动填写 Chat ID"
   },
   "files": {
     "NO_FILE_RECEIVED": "没有收到文件",
