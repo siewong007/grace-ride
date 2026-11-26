@@ -68,8 +68,6 @@ import kotlin.math.abs
 import kotlin.math.cos
 import kotlin.math.exp
 import kotlin.math.hypot
-import kotlin.math.pow
-import kotlin.math.sign
 import kotlin.math.sin
 import kotlin.math.tan
 import kotlin.random.Random
@@ -313,47 +311,6 @@ object GrokBotGeometry {
         }
     }
 
-    val EXCLAMATION_STEM_COORDS: FloatArray by lazy {
-        buildPolar64Coords { theta ->
-            val c = cos(theta).toFloat()
-            val s = sin(theta).toFloat()
-            val y = s * 44f - 28f
-            val taper = 0.62f + 0.38f * ((1f - s) * 0.5f)
-            val x = sign(c) * abs(c).pow(0.72f) * (16.5f * taper)
-            Pair(x, y)
-        }
-    }
-
-    val ALERT_STEM_COORDS: FloatArray by lazy {
-        buildPolar64Coords { theta ->
-            val c = cos(theta).toFloat()
-            val s = sin(theta).toFloat()
-            val y0 = s * 46f - 26f
-            val taper = 0.58f + 0.42f * ((1f - s) * 0.5f)
-            val x0 = sign(c) * abs(c).pow(0.72f) * (17.5f * taper)
-            val ang = (17.7 * PI / 180.0).toFloat()
-            Pair(x0 * cos(ang) - y0 * sin(ang) + 8f, x0 * sin(ang) + y0 * cos(ang))
-        }
-    }
-
-    val SLEEP_CORE_COORDS: FloatArray by lazy {
-        buildPolar64Coords { theta ->
-            Pair(16f * cos(theta).toFloat(), 16f * sin(theta).toFloat() + 27f)
-        }
-    }
-
-    val BURST_CORE_COORDS: FloatArray by lazy {
-        buildPolar64Coords { theta ->
-            Pair(16.7f * cos(theta).toFloat(), 16.7f * sin(theta).toFloat())
-        }
-    }
-
-    val COMET_HEAD_COORDS: FloatArray by lazy {
-        buildPolar64Coords { theta ->
-            Pair(12.8f * cos(theta).toFloat(), 12.8f * sin(theta).toFloat())
-        }
-    }
-
     val FACE_DEFS: Map<String, GrokFaceDef> = mapOf(
         "neutral" to GrokFaceDef(pill(9.3f, 11.3f), pill(9.3f, 11.3f), -26f, -8f, 26f, -14f, -11f, -10f),
         "attentive" to GrokFaceDef(pill(10.5f, 11.5f), pill(10.5f, 11.5f), -26f, -10f, 28f, -12f, -5f, -4f),
@@ -415,13 +372,17 @@ object GrokBotGeometry {
         "droplet" to ShapeEyeLayout(-3.7f, 3f, 0.62f),
     )
 
-    fun computeFaceEyeTransforms(
+    fun buildEyeTransform(pose: GrokEyePose): GrokEyeTransform =
+        buildEyeTransform(pose.x, pose.y, pose.deg, pose.sy)
+
+    /** The face's eye cutouts and where they sit for a gaze offset (-1..1) and silhouette shape. */
+    fun computeFaceEyePoses(
         face: String,
         gazeX: Float = 0f,
         gazeY: Float = 0f,
         blinkScaleY: Float = 1f,
         shape: String = "circle",
-    ): Pair<GrokEyeTransform, GrokEyeTransform> {
+    ): Pair<GrokEyePose, GrokEyePose> {
         val def = FACE_DEFS[face] ?: FACE_DEFS.getValue("neutral")
         val lay = SHAPE_EYE_LAYOUT[shape] ?: SHAPE_EYE_LAYOUT.getValue("circle")
         val gx = (gazeX + def.gazeBiasX).coerceIn(-1f, 1f)
@@ -429,12 +390,21 @@ object GrokBotGeometry {
         val shiftX = gx * 18f
         val shiftY = gy * 14f
         val tilt = gx * 6f
-        val syL = def.lSy * blinkScaleY
-        val syR = def.rSy * blinkScaleY
         return Pair(
-            buildEyeTransform(lay.dx + def.lx * lay.s + shiftX, lay.dy + def.ly * lay.s + shiftY, def.lDeg + tilt, syL),
-            buildEyeTransform(lay.dx + def.rx * lay.s + shiftX, lay.dy + def.ry * lay.s + shiftY, def.rDeg + tilt, syR),
+            GrokEyePose(def.left, lay.dx + def.lx * lay.s + shiftX, lay.dy + def.ly * lay.s + shiftY, def.lDeg + tilt, def.lSy * blinkScaleY),
+            GrokEyePose(def.right, lay.dx + def.rx * lay.s + shiftX, lay.dy + def.ry * lay.s + shiftY, def.rDeg + tilt, def.rSy * blinkScaleY),
         )
+    }
+
+    fun computeFaceEyeTransforms(
+        face: String,
+        gazeX: Float = 0f,
+        gazeY: Float = 0f,
+        blinkScaleY: Float = 1f,
+        shape: String = "circle",
+    ): Pair<GrokEyeTransform, GrokEyeTransform> {
+        val (l, r) = computeFaceEyePoses(face, gazeX, gazeY, blinkScaleY, shape)
+        return Pair(buildEyeTransform(l), buildEyeTransform(r))
     }
 
     fun lerpCoords(

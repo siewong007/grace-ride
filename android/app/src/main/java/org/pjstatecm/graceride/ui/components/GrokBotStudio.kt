@@ -304,7 +304,7 @@ fun GrokBotControlsPanel(
                         GrokOptionTile(
                             selected = selected,
                             label = stringResource(grokMoveLabelRes(mv)),
-                            onClick = { onMoveChange(if (selected && mv != "idle") "idle" else mv) },
+                            onClick = { onMoveChange(mv) },
                             modifier = Modifier.weight(1f),
                         ) {
                             GrokBotCanvas(

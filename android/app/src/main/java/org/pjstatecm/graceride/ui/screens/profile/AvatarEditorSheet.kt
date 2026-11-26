@@ -87,6 +87,7 @@ import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
@@ -163,6 +164,7 @@ internal fun AvatarEditorSheet(
     var mode by remember { mutableStateOf(initialMode) }
     var studioSpec by remember { mutableStateOf(initGrokBot ?: GrokBotSpec.DEFAULT) }
     var studioMove by remember { mutableStateOf("idle") }
+    var studioPlayKey by remember { mutableIntStateOf(0) }
     var icon by remember { mutableStateOf(initialIconBase) }
     var avatarShape by remember {
         mutableStateOf(initParsedIcon.shape ?: AvatarStyle.defaultAvatarShape(initialIconBase))
@@ -241,6 +243,7 @@ internal fun AvatarEditorSheet(
                             move = studioMove,
                             variant = "stage",
                             modifier = Modifier.size(116.dp),
+                            playKey = studioPlayKey,
                         )
                         TextButton(onClick = { studioSpec = GrokBotSpec.random(studioSpec) }) {
                             Icon(Icons.Outlined.Shuffle, contentDescription = null, modifier = Modifier.size(15.dp))
@@ -420,7 +423,10 @@ internal fun AvatarEditorSheet(
                                 spec = studioSpec,
                                 onSpecChange = { studioSpec = it },
                                 activeMove = studioMove,
-                                onMoveChange = { studioMove = it },
+                                onMoveChange = {
+                                    studioMove = it
+                                    studioPlayKey++
+                                },
                                 tilePreviewSize = 36.dp,
                                 cols = 4,
                             )
